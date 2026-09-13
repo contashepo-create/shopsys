@@ -5,12 +5,13 @@
  * - كل فاتورة تولّد قيداً محاسبياً متوازناً تلقائياً (القرار 9)
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, Percent, CheckCircle2, ScanBarcode } from 'lucide-react'
+import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { computeTotals, type CartLine } from '../../core/pos.ts'
+import { parseScaleBarcode, matchScaleItem } from '../../core/barcode.ts'
 import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
@@ -43,26 +44,55 @@ export function PosPage() {
     return sellable.filter((it) => it.nameAr.includes(q) || it.sku.includes(q) || it.barcodes.some((b) => b.includes(q))).slice(0, 24)
   }, [sellable, query])
 
-  const addToCart = (itemId: number) => {
+  const addToCart = (itemId: number, weightQty?: number) => {
     const it = items.find((x) => x.id === itemId)
     if (!it) return
+    // حماية من خطأ «السعر صفر»: لا صنف بلا سعر بيع يدخل السلة بصمت
+    if (it.priceMinor <= 0) {
+      toast.show(`«${it.nameAr}» بلا سعر بيع! حدّد سعره من المخزون ← الأصناف أولاً`, 'error')
+      return
+    }
     setCart((prev) => {
       const idx = prev.findIndex((l) => l.itemId === itemId)
-      if (idx >= 0) {
+      if (idx >= 0 && !weightQty) {
         return prev.map((l, i) => (i === idx ? { ...l, qty: l.qty + (l.soldByWeight ? 0.5 : 1) } : l))
       }
+      if (idx >= 0 && weightQty) {
+        // مسح ميزان لصنف موجود: أضف الوزن الجديد للكمية
+        return prev.map((l, i) => (i === idx ? { ...l, qty: Math.round((l.qty + weightQty) * 1000) / 1000 } : l))
+      }
       return [...prev, {
-        itemId: it.id, nameAr: it.nameAr, qty: it.soldByWeight ? 0.5 : 1,
+        itemId: it.id, nameAr: it.nameAr,
+        qty: weightQty ?? (it.soldByWeight ? 0.5 : 1),
         unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor,
         discountPercent: 0, soldByWeight: it.soldByWeight,
       }]
     })
   }
 
-  /** مسح باركود: Enter في حقل البحث — لو الباركود مطابق تماماً أضِف فوراً */
+  /**
+   * مسح باركود (Enter):
+   * 1) باركود ميزان (22XXXXXWWWWW) → يضيف الصنف بوزنه من الملصق مباشرة
+   * 2) باركود عادي مطابق → إضافة فورية
+   * 3) نتيجة بحث وحيدة → إضافة
+   */
   const onSearchEnter = () => {
     const q = query.trim()
     if (!q) return
+    // باركود ميزان؟ (طلب المالك: بائع الأجبان يزن ويطبع، والكاشير يمسح)
+    const scale = parseScaleBarcode(q)
+    if (scale) {
+      const it = matchScaleItem(scale.itemCode, sellable)
+      if (it) {
+        addToCart(it.id, scale.weightKg)
+        toast.show(`⚖️ ${it.nameAr} — ${scale.weightKg} كجم من باركود الميزان`)
+        setQuery('')
+        return
+      }
+      toast.show(`باركود ميزان لصنف غير معروف (كود ${scale.itemCode})`, 'error')
+      setQuery('')
+      return
+    }
     const exact = sellable.find((it) => it.barcodes.includes(q) || it.sku === q)
     if (exact) {
       addToCart(exact.id)
@@ -205,57 +235,85 @@ export function PosPage() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {cart.length === 0 && (
-            <div className="h-full flex flex-col items-center justify-center text-slate-300 dark:text-slate-600">
-              <ShoppingCart size={40} className="mb-2 opacity-40" />
-              <span className="text-sm">السلة فارغة — امسح باركوداً أو اضغط صنفاً</span>
+        <div className="flex-1 overflow-y-auto min-h-[16rem]">
+          {cart.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-300 dark:text-slate-600 p-6">
+              <ShoppingCart size={44} className="mb-3 opacity-40" />
+              <span className="text-sm font-bold">السلة فارغة</span>
+              <span className="text-xs mt-1">امسح باركوداً أو اضغط صنفاً من الشبكة</span>
               {lastInvoice && (
-                <span className="mt-3 text-[11px] px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold flex items-center gap-1">
+                <span className="mt-4 text-[11px] px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold flex items-center gap-1">
                   <CheckCircle2 size={12} /> آخر فاتورة: {lastInvoice}
                 </span>
               )}
             </div>
-          )}
-          {cart.map((l, i) => (
-            <div key={i} className="anim-pop p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-bold text-[13px] text-slate-800 dark:text-white flex-1 truncate">{l.nameAr}</span>
-                <button onClick={() => setCart((c) => c.filter((_, j) => j !== i))} className="text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={13} /></button>
+          ) : (
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {/* رأس أعمدة السلة */}
+              <div className="grid grid-cols-[1fr_7.5rem_4.5rem_6rem_2rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
+                <span>الصنف</span>
+                <span className="text-center">الكمية</span>
+                <span className="text-center">خصم ٪</span>
+                <span className="text-left">الإجمالي</span>
+                <span></span>
               </div>
-              <div className="flex items-center gap-2 mt-2">
-                {/* كمية */}
-                <div className="flex items-center rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-                  <button onClick={() => setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.max(l.soldByWeight ? 0.1 : 1, x.qty - (l.soldByWeight ? 0.25 : 1)) } : x)))} className="px-2 py-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">−</button>
-                  <input
-                    value={l.qty}
-                    onChange={(e) => {
-                      const v = Number(e.target.value)
-                      if (v > 0) setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: v } : x)))
-                    }}
-                    className="w-14 text-center text-[13px] font-bold bg-transparent text-slate-800 dark:text-white outline-none"
-                  />
-                  <button onClick={() => setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: x.qty + (l.soldByWeight ? 0.25 : 1) } : x)))} className="px-2 py-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">+</button>
-                </div>
-                {/* خصم سطر */}
-                <div className="flex items-center gap-1 text-[11px] text-slate-400">
-                  <Percent size={11} />
+              {cart.map((l, i) => (
+                <div key={i} className="anim-pop grid grid-cols-[1fr_7.5rem_4.5rem_6rem_2rem] gap-2 items-center px-4 py-3 hover:bg-emerald-500/[0.03] transition-colors duration-150">
+                  {/* الصنف: الاسم + سعر الوحدة */}
+                  <div className="min-w-0">
+                    <div className="font-bold text-[13px] text-slate-800 dark:text-white truncate leading-snug">
+                      {l.soldByWeight && <span className="ml-1">⚖️</span>}{l.nameAr}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      {fmt(l.unitPriceMinor)} {cur.symbol} / {l.soldByWeight ? 'كجم' : 'وحدة'}
+                    </div>
+                  </div>
+                  {/* الكمية */}
+                  <div className="flex items-center justify-center rounded-xl border-2 border-slate-200 dark:border-slate-700 overflow-hidden h-9">
+                    <button
+                      onClick={() => setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.max(l.soldByWeight ? 0.1 : 1, Math.round((x.qty - (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000) } : x)))}
+                      className="w-8 h-full text-slate-500 font-bold hover:bg-rose-500/10 hover:text-rose-500 transition-colors"
+                    >−</button>
+                    <input
+                      value={l.qty}
+                      onChange={(e) => {
+                        const v = Number(e.target.value)
+                        if (v > 0) setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: v } : x)))
+                      }}
+                      className="w-full h-full text-center text-[13px] font-black bg-transparent text-slate-800 dark:text-white outline-none"
+                    />
+                    <button
+                      onClick={() => setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.round((x.qty + (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000 } : x)))}
+                      className="w-8 h-full text-slate-500 font-bold hover:bg-emerald-500/10 hover:text-emerald-600 transition-colors"
+                    >+</button>
+                  </div>
+                  {/* خصم السطر */}
                   <input
                     value={l.discountPercent || ''}
                     onChange={(e) => {
                       const v = Math.min(100, Math.max(0, Number(e.target.value) || 0))
                       setCart((c) => c.map((x, j) => (j === i ? { ...x, discountPercent: v } : x)))
                     }}
-                    placeholder="خصم"
-                    className="w-12 px-1 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-transparent text-center outline-none focus:border-brand-400"
+                    placeholder="—"
+                    className="h-9 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-transparent text-center text-[13px] font-bold text-rose-500 outline-none focus:border-rose-400 transition-colors"
                   />
+                  {/* إجمالي السطر */}
+                  <div className="text-left">
+                    <div className="font-black text-[14px] text-slate-800 dark:text-white">
+                      {fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}
+                    </div>
+                    {l.discountPercent > 0 && (
+                      <div className="text-[10px] text-rose-400 line-through">{fmt(Math.round(l.unitPriceMinor * l.qty))}</div>
+                    )}
+                  </div>
+                  {/* حذف */}
+                  <button onClick={() => setCart((c) => c.filter((_, j) => j !== i))} className="text-slate-300 hover:text-rose-500 hover:scale-125 transition-all duration-200 justify-self-center">
+                    <Trash2 size={15} />
+                  </button>
                 </div>
-                <span className="mr-auto font-black text-[13px] text-slate-800 dark:text-white">
-                  {fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}
-                </span>
-              </div>
+              ))}
             </div>
-          ))}
+          )}
         </div>
 
         {/* الإجماليات */}

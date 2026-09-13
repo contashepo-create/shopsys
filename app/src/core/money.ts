@@ -18,9 +18,18 @@ export interface CurrencyConfig {
   name: string
 }
 
+/** تطبيع الأرقام العربية والفارسية والفواصل العربية إلى ASCII — يمنع رفض «١٣٠» بصمت */
+export function normalizeDigits(s: string): string {
+  return s
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+    .replace(/٫/g, '.') // الفاصلة العشرية العربية
+    .replace(/[٬,]/g, '') // فواصل الآلاف
+}
+
 /** تحويل من نص/رقم مُدخل إلى أصغر وحدة (بأمان من أخطاء التعويم) */
 export function toMinor(value: string | number, decimals: number): Minor {
-  const s = String(value).trim().replace(/[٬,]/g, '')
+  const s = normalizeDigits(String(value).trim())
   if (s === '' || s === '-') return 0
   const neg = s.startsWith('-')
   const [intPart, fracRaw = ''] = s.replace('-', '').split('.')

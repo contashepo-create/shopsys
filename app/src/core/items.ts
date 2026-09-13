@@ -87,6 +87,8 @@ export function validateItem(draft: ItemDraft, existing: Item[], editingId?: num
   const errors: string[] = []
   if (!draft.nameAr.trim()) errors.push('اسم الصنف مطلوب')
   if (draft.priceMinor < 0 || draft.costMinor < 0) errors.push('الأسعار لا تكون سالبة')
+  if (draft.priceMinor === 0)
+    errors.push('تنبيه: سعر البيع صفر — لن يقبل الكاشير بيع هذا الصنف حتى تحدد سعره')
   if (draft.priceMinor > 0 && draft.costMinor > draft.priceMinor)
     errors.push('تنبيه: التكلفة أعلى من سعر البيع — بيع بخسارة')
   if (!draft.baseUnit.trim()) errors.push('الوحدة الأساسية مطلوبة')

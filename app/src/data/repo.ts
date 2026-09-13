@@ -20,7 +20,26 @@ export interface Warehouse {
   isMain: boolean
 }
 
-export interface Customer {
+/**
+ * بيانات موسعة للأطراف — كلها اختيارية (طلب المالك)،
+ * لكنها ضرورية لإصدار فاتورة ضريبية (السعودية: الرقم الضريبي والسجل والعنوان الوطني)
+ */
+export interface PartyExtended {
+  taxNumber: string // الرقم الضريبي (VAT/TIN)
+  commercialReg: string // السجل التجاري
+  email: string
+  address: string // الشارع/الحي
+  city: string
+  postalCode: string
+  buildingNo: string // رقم المبنى (العنوان الوطني السعودي)
+  nationalId: string // هوية/إقامة (للأفراد)
+}
+
+export const EMPTY_EXTENDED: PartyExtended = {
+  taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '',
+}
+
+export interface Customer extends PartyExtended {
   id: number
   nameAr: string
   phone: string
@@ -28,7 +47,7 @@ export interface Customer {
   notes: string
 }
 
-export interface Supplier {
+export interface Supplier extends PartyExtended {
   id: number
   nameAr: string
   phone: string
@@ -299,6 +318,8 @@ export const useDataStore = create<DataState>()(
           ...s,
           categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),
           items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0 })),
+          customers: (s.customers ?? []).map((c) => ({ ...EMPTY_EXTENDED, ...c })),
+          suppliers: (s.suppliers ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           purchases: s.purchases ?? [],
           sales: s.sales ?? [],
           journal: s.journal ?? [],

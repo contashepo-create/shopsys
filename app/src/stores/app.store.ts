@@ -6,6 +6,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
 import type { ActivityTemplate, ItemFeature, BusinessModule } from '../core/activities.ts'
+import type { FiscalYear } from '../core/fiscal.ts'
 
 export type ThemeMode = 'light' | 'dark'
 
@@ -26,12 +27,15 @@ interface AppState {
   theme: ThemeMode
   toggleTheme: () => void
   setup: SetupState
+  fiscalYears: FiscalYear[]
   completeSetup: (data: {
     country: Country
     activity: ActivityTemplate
     shopName: string
     ownerName: string
+    fiscalYear: Omit<FiscalYear, 'id' | 'status'>
   }) => void
+  addFiscalYear: (fy: Omit<FiscalYear, 'id' | 'status'>) => void
   setAccountingMode: (m: 'simple' | 'full') => void
   resetSetup: () => void
 }
@@ -53,8 +57,10 @@ export const useAppStore = create<AppState>()(
         vatPercent: 14,
         accountingMode: 'simple',
       },
-      completeSetup: ({ country, activity, shopName, ownerName }) =>
+      fiscalYears: [],
+      completeSetup: ({ country, activity, shopName, ownerName, fiscalYear }) =>
         set({
+          fiscalYears: [{ ...fiscalYear, id: 1, status: 'open' }],
           setup: {
             completed: true,
             countryCode: country.code,
@@ -68,12 +74,31 @@ export const useAppStore = create<AppState>()(
             accountingMode: 'simple',
           },
         }),
+      addFiscalYear: (fy) =>
+        set((s) => ({
+          fiscalYears: [...s.fiscalYears, { ...fy, id: s.fiscalYears.reduce((m, y) => Math.max(m, y.id), 0) + 1, status: 'open' }],
+        })),
       setAccountingMode: (m) => set((s) => ({ setup: { ...s.setup, accountingMode: m } })),
       resetSetup: () =>
         set((s) => ({
           setup: { ...s.setup, completed: false, countryCode: null, activityId: null },
         })),
     }),
-    { name: 'shopsys-app' },
+    {
+      name: 'shopsys-app',
+      onRehydrateStorage: () => (state) => {
+        // ترحيل: حسابات أُنشئت قبل خطوة السنة المالية تحصل على سنة ميلادية حالية تلقائياً
+        if (state && state.setup.completed && state.fiscalYears.length === 0) {
+          const y = new Date().getFullYear()
+          state.fiscalYears = [{
+            id: 1,
+            nameAr: `السنة المالية ${y}`,
+            startDate: `${y}-01-01`,
+            endDate: `${y}-12-31`,
+            status: 'open',
+          }]
+        }
+      },
+    },
   ),
 )

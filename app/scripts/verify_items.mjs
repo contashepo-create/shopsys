@@ -38,9 +38,15 @@ ok('التجاوز الفردي: غسالة بسيريال داخل هايبر �
   d.soldByWeight = false
   d.nameAr = 'غسالة'
   d.baseUnit = 'قطعة'
-  const errs = validateItem(d, [])
+  const errs = validateItem(d, []).filter((e) => !e.startsWith('تنبيه'))
   assert.equal(errs.length, 0)
   assert.equal(d.trackExpiry, true) // ما زال يرث صلاحية القسم حتى يُعطَّل
+})
+
+ok('تنبيه (غير مانع) عند سعر بيع صفر — درس خطأ الكاشير', () => {
+  const d = { ...draftFromCategory(groceryCat, 'X'), nameAr: 'بلا سعر', priceMinor: 0 }
+  const errs = validateItem(d, [])
+  assert.ok(errs.some((e) => e.startsWith('تنبيه') && e.includes('صفر')))
 })
 
 const existing = [{
