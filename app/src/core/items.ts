@@ -10,8 +10,41 @@ import type { Minor } from './money.ts'
 export interface Category {
   id: number
   nameAr: string
-  /** الخصائص المفعّلة لهذا القسم — تصبح الافتراضي لأصنافه */
+  /** القسم الأب — null = قسم رئيسي (شجرة متعددة المستويات) */
+  parentId: number | null
+  /** الخصائص المفعّلة لهذا القسم — تصبح الافتراضي لأصنافه، والفرعي يرث من أبيه عند الإنشاء */
   features: ItemFeature[]
+}
+
+/** المسار الكامل للقسم: أغذية ← ألبان ← أجبان */
+export function categoryPath(cat: Category, all: Category[]): string {
+  const parts = [cat.nameAr]
+  let cur = cat
+  let guard = 0
+  while (cur.parentId != null && guard++ < 10) {
+    const parent = all.find((c) => c.id === cur.parentId)
+    if (!parent) break
+    parts.unshift(parent.nameAr)
+    cur = parent
+  }
+  return parts.join(' ← ')
+}
+
+/** كل الأقسام التابعة لقسم (نفسه + أحفاده) — للفلترة الهرمية */
+export function categoryDescendants(catId: number, all: Category[]): number[] {
+  const result = [catId]
+  const queue = [catId]
+  let guard = 0
+  while (queue.length && guard++ < 100) {
+    const id = queue.shift()!
+    for (const c of all) {
+      if (c.parentId === id) {
+        result.push(c.id)
+        queue.push(c.id)
+      }
+    }
+  }
+  return result
 }
 
 export interface ItemUnit {
@@ -28,7 +61,14 @@ export interface Item {
   categoryId: number
   baseUnit: string // الوحدة الأساسية: قطعة / كجم / علبة
   extraUnits: ItemUnit[] // عند تفعيل multi_unit
+  /**
+   * تكلفة الوحدة (متوسط مرجح متحرك) — لا تُدخل يدوياً:
+   * تُحدَّث تلقائياً من فواتير الشراء بعد توزيع مصاريف الشراء (core/costing.ts).
+   * القيمة المدخلة عند إنشاء الصنف = تكلفة افتتاحية فقط.
+   */
   costMinor: Minor
+  /** كمية المخزون الحالية (تتحرك بالشراء والبيع) */
+  stockQty: number
   priceMinor: Minor
   minQty: number // حد إعادة الطلب
   // تجاوزات الخصائص لكل صنف (تبدأ من افتراضي القسم)
@@ -89,6 +129,7 @@ export function draftFromCategory(cat: Category | undefined, sku: string): ItemD
     baseUnit: f.has('weight_scale') ? 'كجم' : 'قطعة',
     extraUnits: [],
     costMinor: 0,
+    stockQty: 0,
     priceMinor: 0,
     minQty: 0,
     trackExpiry: f.has('expiry_batches'),

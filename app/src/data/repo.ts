@@ -10,6 +10,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
+import { computeLandedCosts, weightedAverage, type ExpenseInput, type CostLine } from '../core/costing.ts'
 
 export interface Warehouse {
   id: number
@@ -32,6 +33,35 @@ export interface Supplier {
   notes: string
 }
 
+/* ─── فواتير الشراء (مع مصاريف الشراء الموزعة) ─── */
+export interface PurchaseLine {
+  itemId: number
+  qty: number
+  unitPriceMinor: number // سعر الوحدة قبل المصاريف
+  expenseShareMinor: number // نصيب السطر من المصاريف (يُحسب)
+  landedUnitCostMinor: number // التكلفة النهائية للوحدة (يُحسب)
+}
+
+export interface PurchaseExpense {
+  nameAr: string // نولون، جمارك، تأمين...
+  amountMinor: number
+  method: 'value' | 'qty'
+}
+
+export interface PurchaseInvoice {
+  id: number
+  invoiceNumber: string
+  supplierId: number
+  date: string
+  lines: PurchaseLine[]
+  expenses: PurchaseExpense[]
+  goodsTotalMinor: number
+  expensesTotalMinor: number
+  grandTotalMinor: number
+  paidMinor: number
+  notes: string
+}
+
 interface DataState {
   seeded: boolean
   items: Item[]
@@ -39,13 +69,29 @@ interface DataState {
   warehouses: Warehouse[]
   customers: Customer[]
   suppliers: Supplier[]
+  purchases: PurchaseInvoice[]
   // بذر البيانات الأولية حسب النشاط المختار
   seed: (activityFeatures: ItemFeature[]) => void
   addItem: (item: Omit<Item, 'id'>) => void
   updateItem: (id: number, patch: Partial<Item>) => void
   removeItem: (id: number) => void
-  addCategory: (nameAr: string, features: ItemFeature[]) => void
+  addCategory: (nameAr: string, features: ItemFeature[], parentId?: number | null) => void
   updateCategory: (id: number, patch: Partial<Category>) => void
+  removeCategory: (id: number) => void
+  /**
+   * ترحيل فاتورة شراء — القلب المحاسبي للتكلفة:
+   * 1) يوزع المصاريف على السطور (Landed Cost)
+   * 2) يحدّث تكلفة كل صنف بالمتوسط المرجح المتحرك
+   * 3) يزيد رصيد المخزون
+   */
+  postPurchase: (inv: {
+    supplierId: number
+    date: string
+    lines: { itemId: number; qty: number; unitPriceMinor: number }[]
+    expenses: PurchaseExpense[]
+    paidMinor: number
+    notes: string
+  }) => PurchaseInvoice
   addWarehouse: (nameAr: string) => void
   removeWarehouse: (id: number) => void
   addCustomer: (c: Omit<Customer, 'id'>) => void
@@ -67,12 +113,13 @@ export const useDataStore = create<DataState>()(
       warehouses: [],
       customers: [],
       suppliers: [],
+      purchases: [],
 
       seed: (activityFeatures) => {
         if (get().seeded) return
         set({
           seeded: true,
-          categories: [{ id: 1, nameAr: 'عام', features: activityFeatures }],
+          categories: [{ id: 1, nameAr: 'عام', parentId: null, features: activityFeatures }],
           warehouses: [{ id: 1, nameAr: 'المخزن الرئيسي', isMain: true }],
         })
       },
@@ -82,10 +129,59 @@ export const useDataStore = create<DataState>()(
         set((s) => ({ items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) })),
       removeItem: (id) => set((s) => ({ items: s.items.filter((it) => it.id !== id) })),
 
-      addCategory: (nameAr, features) =>
-        set((s) => ({ categories: [...s.categories, { id: nextId(s.categories), nameAr, features }] })),
+      addCategory: (nameAr, features, parentId = null) =>
+        set((s) => ({ categories: [...s.categories, { id: nextId(s.categories), nameAr, parentId, features }] })),
       updateCategory: (id, patch) =>
         set((s) => ({ categories: s.categories.map((c) => (c.id === id ? { ...c, ...patch } : c)) })),
+      removeCategory: (id) =>
+        set((s) => {
+          // لا يُحذف قسم فيه أصناف أو له أقسام فرعية
+          const hasItems = s.items.some((it) => it.categoryId === id)
+          const hasChildren = s.categories.some((c) => c.parentId === id)
+          if (hasItems || hasChildren || s.categories.length === 1) return s
+          return { categories: s.categories.filter((c) => c.id !== id) }
+        }),
+
+      postPurchase: (inv) => {
+        const state = get()
+        const costLines: CostLine[] = inv.lines.map((l) => ({
+          itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
+        }))
+        const landed = computeLandedCosts(costLines, inv.expenses as ExpenseInput[])
+        const goodsTotal = landed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
+        const expensesTotal = inv.expenses.reduce((a, e) => a + e.amountMinor, 0)
+
+        const invoice: PurchaseInvoice = {
+          id: nextId(state.purchases),
+          invoiceNumber: `P-${String(nextId(state.purchases)).padStart(4, '0')}`,
+          supplierId: inv.supplierId,
+          date: inv.date,
+          lines: landed.map((l) => ({
+            itemId: l.itemId,
+            qty: l.qty,
+            unitPriceMinor: l.unitPriceMinor,
+            expenseShareMinor: l.expenseShareMinor,
+            landedUnitCostMinor: l.landedUnitCostMinor,
+          })),
+          expenses: inv.expenses,
+          goodsTotalMinor: goodsTotal,
+          expensesTotalMinor: expensesTotal,
+          grandTotalMinor: goodsTotal + expensesTotal,
+          paidMinor: inv.paidMinor,
+          notes: inv.notes,
+        }
+
+        // تحديث تكلفة الأصناف بالمتوسط المرجح + زيادة المخزون
+        const updatedItems = state.items.map((it) => {
+          const line = landed.find((l) => l.itemId === it.id)
+          if (!line) return it
+          const newCost = weightedAverage(it.stockQty ?? 0, it.costMinor, line.qty, line.landedTotalMinor)
+          return { ...it, costMinor: newCost, stockQty: (it.stockQty ?? 0) + line.qty }
+        })
+
+        set({ purchases: [...state.purchases, invoice], items: updatedItems })
+        return invoice
+      },
 
       addWarehouse: (nameAr) =>
         set((s) => ({ warehouses: [...s.warehouses, { id: nextId(s.warehouses), nameAr, isMain: false }] })),
@@ -102,6 +198,19 @@ export const useDataStore = create<DataState>()(
         set((s) => ({ suppliers: s.suppliers.map((x) => (x.id === id ? { ...x, ...patch } : x)) })),
       removeSupplier: (id) => set((s) => ({ suppliers: s.suppliers.filter((x) => x.id !== id) })),
     }),
-    { name: 'shopsys-data' },
+    {
+      name: 'shopsys-data',
+      version: 2,
+      // ترحيل البيانات المحفوظة بالشكل القديم (قبل الأقسام الهرمية وstockQty)
+      migrate: (persisted: unknown) => {
+        const s = persisted as Partial<DataState>
+        return {
+          ...s,
+          categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),
+          items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0 })),
+          purchases: s.purchases ?? [],
+        } as DataState
+      },
+    },
   ),
 )

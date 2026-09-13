@@ -4,7 +4,7 @@
  * node --experimental-strip-types scripts/verify_items.mjs
  */
 import { strict as assert } from 'node:assert'
-import { validateItem, nextSku, draftFromCategory } from '../src/core/items.ts'
+import { validateItem, nextSku, draftFromCategory, categoryPath, categoryDescendants } from '../src/core/items.ts'
 
 let passed = 0
 function ok(name, fn) {
@@ -99,6 +99,36 @@ ok('رفض معامل وحدة ≤ 1', () => {
 ok('توليد SKU تصاعدي', () => {
   assert.equal(nextSku(existing), 'ITM-1002')
   assert.equal(nextSku([]), 'ITM-1001')
+})
+
+console.log('🔍 فحص الأقسام الهرمية (رئيسي/فرعي)')
+
+const tree = [
+  { id: 1, nameAr: 'أغذية', parentId: null, features: ['expiry_batches'] },
+  { id: 2, nameAr: 'ألبان', parentId: 1, features: ['expiry_batches'] },
+  { id: 3, nameAr: 'أجبان', parentId: 2, features: ['expiry_batches', 'weight_scale'] },
+  { id: 4, nameAr: 'أجهزة', parentId: null, features: ['serial_warranty'] },
+]
+
+ok('المسار الكامل: أغذية ← ألبان ← أجبان', () => {
+  assert.equal(categoryPath(tree[2], tree), 'أغذية ← ألبان ← أجبان')
+  assert.equal(categoryPath(tree[0], tree), 'أغذية')
+})
+
+ok('الفلترة الهرمية: اختيار «أغذية» يشمل ألبان وأجبان', () => {
+  assert.deepEqual(categoryDescendants(1, tree).sort(), [1, 2, 3])
+  assert.deepEqual(categoryDescendants(4, tree), [4])
+})
+
+ok('حماية من الحلقات اللانهائية في شجرة فاسدة', () => {
+  const bad = [
+    { id: 1, nameAr: 'أ', parentId: 2, features: [] },
+    { id: 2, nameAr: 'ب', parentId: 1, features: [] },
+  ]
+  // لا يعلّق — يخرج بأمان
+  categoryPath(bad[0], bad)
+  categoryDescendants(1, bad)
+  assert.ok(true)
 })
 
 console.log(`\n${process.exitCode ? '💥 فشل الفحص' : `🎉 نجح الفحص — ${passed} اختباراً`}`)

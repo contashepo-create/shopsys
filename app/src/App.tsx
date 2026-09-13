@@ -9,6 +9,7 @@ import { PermissionsPage } from './ui/pages/PermissionsPage.tsx'
 import { ItemsPage } from './ui/pages/ItemsPage.tsx'
 import { WarehousesPage } from './ui/pages/WarehousesPage.tsx'
 import { CustomersPage, SuppliersPage } from './ui/pages/PartiesPages.tsx'
+import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
 import { ComingSoon } from './ui/pages/ComingSoon.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
@@ -42,7 +43,7 @@ function Shell() {
         <Route path="/sales/shifts" element={<ComingSoon title="ورديات الكاشير" phase="المرحلة 2" />} />
         <Route path="/inventory/transfers" element={<ComingSoon title="التحويلات المخزنية" phase="المرحلة 3" />} />
         <Route path="/inventory/counting" element={<ComingSoon title="الجرد بالباركود" phase="المرحلة 3" />} />
-        <Route path="/purchases/invoices" element={<ComingSoon title="فواتير الشراء" phase="المرحلة 3" />} />
+        <Route path="/purchases/invoices" element={<PurchasesPage />} />
         <Route path="/purchases/returns" element={<ComingSoon title="مرتجعات الشراء" phase="المرحلة 3" />} />
         <Route path="/parties/employees" element={<ComingSoon title="الموظفون" phase="المرحلة 5" />} />
         <Route path="/parties/installments" element={<ComingSoon title="الأقساط" phase="المرحلة 5" />} />
