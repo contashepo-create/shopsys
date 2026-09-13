@@ -10,6 +10,9 @@ import { ItemsPage } from './ui/pages/ItemsPage.tsx'
 import { WarehousesPage } from './ui/pages/WarehousesPage.tsx'
 import { CustomersPage, SuppliersPage } from './ui/pages/PartiesPages.tsx'
 import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
+import { PosPage } from './ui/pages/PosPage.tsx'
+import { SalesInvoicesPage } from './ui/pages/SalesInvoicesPage.tsx'
+import { JournalPage } from './ui/pages/JournalPage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
 import { ComingSoon } from './ui/pages/ComingSoon.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
@@ -37,8 +40,8 @@ function Shell() {
         <Route path="/parties/customers" element={<CustomersPage />} />
         <Route path="/purchases/suppliers" element={<SuppliersPage />} />
         {/* شاشات المراحل القادمة — كلها مسجلة في الراوتر منذ الآن */}
-        <Route path="/pos" element={<ComingSoon title="شاشة البيع (الكاشير)" phase="المرحلة 2 — قلب المنتج" />} />
-        <Route path="/sales/invoices" element={<ComingSoon title="فواتير المبيعات" phase="المرحلة 2" />} />
+        <Route path="/pos" element={<PosPage />} />
+        <Route path="/sales/invoices" element={<SalesInvoicesPage />} />
         <Route path="/sales/returns" element={<ComingSoon title="مرتجعات المبيعات" phase="المرحلة 3" />} />
         <Route path="/sales/shifts" element={<ComingSoon title="ورديات الكاشير" phase="المرحلة 2" />} />
         <Route path="/inventory/transfers" element={<ComingSoon title="التحويلات المخزنية" phase="المرحلة 3" />} />
@@ -52,7 +55,7 @@ function Shell() {
         <Route path="/rental/contracts" element={<ComingSoon title="عقود الإيجار" phase="المرحلة 6" />} />
         <Route path="/logistics/trips" element={<ComingSoon title="النقلات" phase="المرحلة 6" />} />
         <Route path="/logistics/fleet" element={<ComingSoon title="الأسطول والسائقون" phase="المرحلة 6" />} />
-        <Route path="/accounting/journal" element={<ComingSoon title="اليومية العامة" phase="المرحلة 4" />} />
+        <Route path="/accounting/journal" element={<JournalPage />} />
         <Route path="/accounting/coa" element={<ComingSoon title="شجرة الحسابات" phase="المرحلة 4" />} />
         <Route path="/accounting/trial-balance" element={<ComingSoon title="ميزان المراجعة" phase="المرحلة 4" />} />
         <Route path="/accounting/vouchers" element={<ComingSoon title="سندات القبض والصرف" phase="المرحلة 4" />} />

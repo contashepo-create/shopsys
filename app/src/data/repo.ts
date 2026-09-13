@@ -11,6 +11,8 @@ import { persist } from 'zustand/middleware'
 import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, type ExpenseInput, type CostLine } from '../core/costing.ts'
+import { computeTotals, buildSaleEntry, checkStock, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
+import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
   id: number
@@ -62,6 +64,20 @@ export interface PurchaseInvoice {
   notes: string
 }
 
+/* ─── فواتير البيع (الكاشير) ─── */
+export interface SaleInvoice {
+  id: number
+  invoiceNumber: string
+  date: string // ISO datetime
+  customerId: number | null // null = عميل نقدي
+  payment: PaymentMethod
+  lines: CartLine[]
+  invoiceDiscountPercent: number
+  totals: CartTotals
+  journalEntryId: number // القيد المتولد — كل مستند مربوط بقيده (القرار 9)
+  expiryOverrideBy: string | null // من وافق على تجاوز الصلاحية (القرار 8)
+}
+
 interface DataState {
   seeded: boolean
   items: Item[]
@@ -70,6 +86,8 @@ interface DataState {
   customers: Customer[]
   suppliers: Supplier[]
   purchases: PurchaseInvoice[]
+  sales: SaleInvoice[]
+  journal: JournalEntry[] // دفتر اليومية — Append-Only (القرار 9)
   // بذر البيانات الأولية حسب النشاط المختار
   seed: (activityFeatures: ItemFeature[]) => void
   addItem: (item: Omit<Item, 'id'>) => void
@@ -92,6 +110,21 @@ interface DataState {
     paidMinor: number
     notes: string
   }) => PurchaseInvoice
+  /**
+   * ترحيل فاتورة بيع من الكاشير:
+   * 1) يتحقق من المخزون  2) يخصم الكميات  3) يولّد القيد المحاسبي المتوازن
+   * يرمي خطأ لو نقص المخزون أو اختل القيد (بنيوياً لا يمكن حفظ فاتورة بلا قيد)
+   */
+  postSale: (args: {
+    lines: CartLine[]
+    customerId: number | null
+    payment: PaymentMethod
+    invoiceDiscountPercent: number
+    taxPercent: number
+    taxInclusive: boolean
+    expiryOverrideBy?: string | null
+    allowNegativeStock?: boolean
+  }) => SaleInvoice
   addWarehouse: (nameAr: string) => void
   removeWarehouse: (id: number) => void
   addCustomer: (c: Omit<Customer, 'id'>) => void
@@ -114,6 +147,8 @@ export const useDataStore = create<DataState>()(
       customers: [],
       suppliers: [],
       purchases: [],
+      sales: [],
+      journal: [],
 
       seed: (activityFeatures) => {
         if (get().seeded) return
@@ -183,6 +218,62 @@ export const useDataStore = create<DataState>()(
         return invoice
       },
 
+      postSale: (args) => {
+        const state = get()
+        // 1) فحص المخزون
+        if (!args.allowNegativeStock) {
+          const shortages = checkStock(args.lines, (id) => state.items.find((it) => it.id === id)?.stockQty ?? 0)
+          if (shortages.length) {
+            const msg = shortages.map((s) => `«${s.nameAr}»: متاح ${s.available} ومطلوب ${s.requested}`).join('، ')
+            throw new Error(`مخزون غير كافٍ — ${msg}`)
+          }
+        }
+        // 2) الإجماليات والقيد (يرمي UnbalancedEntryError لو اختل — مستحيل بنيوياً)
+        const totals = computeTotals(args.lines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
+        const entryLines = buildSaleEntry(totals, args.payment)
+        const saleId = nextId(state.sales)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const invoiceNumber = `S-${String(saleId).padStart(4, '0')}`
+
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `فاتورة بيع ${invoiceNumber}`,
+          sourceType: 'sale',
+          sourceId: saleId,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+
+        const sale: SaleInvoice = {
+          id: saleId,
+          invoiceNumber,
+          date: now,
+          customerId: args.customerId,
+          payment: args.payment,
+          lines: args.lines,
+          invoiceDiscountPercent: args.invoiceDiscountPercent,
+          totals,
+          journalEntryId: entryId,
+          expiryOverrideBy: args.expiryOverrideBy ?? null,
+        }
+
+        // 3) خصم المخزون
+        const qtyByItem = new Map<number, number>()
+        for (const l of args.lines) qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + l.qty)
+        const updatedItems = state.items.map((it) =>
+          qtyByItem.has(it.id) ? { ...it, stockQty: (it.stockQty ?? 0) - qtyByItem.get(it.id)! } : it,
+        )
+
+        set({ sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems })
+        return sale
+      },
+
       addWarehouse: (nameAr) =>
         set((s) => ({ warehouses: [...s.warehouses, { id: nextId(s.warehouses), nameAr, isMain: false }] })),
       removeWarehouse: (id) =>
@@ -209,6 +300,8 @@ export const useDataStore = create<DataState>()(
           categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),
           items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0 })),
           purchases: s.purchases ?? [],
+          sales: s.sales ?? [],
+          journal: s.journal ?? [],
         } as DataState
       },
     },
