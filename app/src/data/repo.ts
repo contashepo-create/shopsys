@@ -20,6 +20,7 @@ import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledg
 import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from '../core/installments.ts'
+import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals } from '../core/logistics.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -90,6 +91,36 @@ export interface InstallmentPlan {
   downPaymentMinor: number
   items: InstallmentItem[]
   downPaymentEntryId: number | null // قيد المقدم إن وُجد
+  notes: string
+}
+
+/** مركبة في أسطول النقل (المرحلة 6 — نمط logistics-web) */
+export interface Vehicle {
+  id: number
+  plateNumber: string
+  vehicleType: string // تريلا، قلاب، دينا…
+  defaultDriverId: number | null // سائق افتراضي (من الموظفين)
+  notes: string
+}
+
+/** نقلة مرحّلة — وحدة العمل في اللوجستيات، مربوطة بقيدها (القرار 13) */
+export interface Trip {
+  id: number
+  tripNumber: string // TR-0001
+  date: string // ISO
+  customerId: number | null // null = عميل نقدي
+  vehicleId: number | null
+  driverId: number | null // موظف بنوع سائق
+  fromLoc: string
+  toLoc: string
+  qty: number
+  unitPriceMinor: number
+  payment: 'cash' | 'credit'
+  vatPercent: number
+  containerNumbers: string[]
+  expenses: { nameAr: string; qty: number; unitAmountMinor: number; source: 'cash' | 'customer' | 'credit'; amountMinor: number }[]
+  totals: TripTotals
+  journalEntryId: number
   notes: string
 }
 
@@ -213,6 +244,8 @@ interface DataState {
   employees: Employee[]
   payrollRuns: PayrollRun[]
   installmentPlans: InstallmentPlan[]
+  vehicles: Vehicle[]
+  trips: Trip[]
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
@@ -340,6 +373,20 @@ interface DataState {
   }) => InstallmentPlan
   /** سداد دفعة على خطة: توزَّع على الأقساط الأقدم أولاً + قيد تحصيل متوازن */
   payInstallment: (planId: number, amountMinor: number, treasury: TreasuryAccount) => InstallmentPlan
+  addVehicle: (v: Omit<Vehicle, 'id'>) => void
+  updateVehicle: (id: number, patch: Partial<Vehicle>) => void
+  removeVehicle: (id: number) => void
+  /**
+   * ترحيل نقلة (المرحلة 6): تحقق شامل ← حساب الإجماليات بالنواة الخالصة ←
+   * قيد واحد متوازن بنيوياً (4105 إيراد / 5106 مصاريف / 2102 ضريبة)
+   */
+  postTrip: (args: {
+    customerId: number | null
+    vehicleId: number | null
+    driverId: number | null
+    input: TripInput
+    notes: string
+  }) => Trip
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
@@ -356,6 +403,8 @@ export const useDataStore = create<DataState>()(
       employees: [],
       payrollRuns: [],
       installmentPlans: [],
+      vehicles: [],
+      trips: [],
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
@@ -979,6 +1028,69 @@ export const useDataStore = create<DataState>()(
         })
         return updated
       },
+
+      addVehicle: (v) => set((s) => ({ vehicles: [...s.vehicles, { ...v, id: nextId(s.vehicles) }] })),
+      updateVehicle: (id, patch) =>
+        set((s) => ({ vehicles: s.vehicles.map((x) => (x.id === id ? { ...x, ...patch } : x)) })),
+      removeVehicle: (id) => {
+        const used = get().trips.some((t) => t.vehicleId === id)
+        if (used) throw new Error('لا يمكن حذف مركبة لها نقلات مرحّلة')
+        set((s) => ({ vehicles: s.vehicles.filter((x) => x.id !== id) }))
+      },
+
+      postTrip: (args) => {
+        const state = get()
+        // 1) تحقق شامل قبل أي كتابة
+        const errors = validateTrip(args.input)
+        if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) errors.push('العميل غير موجود')
+        if (args.input.payment === 'credit' && args.customerId == null) errors.push('النقلة الآجلة تتطلب عميلاً مسجلاً')
+        if (errors.length) throw new Error(errors.join(' — '))
+
+        // 2) الإجماليات والقيد بالنواة الخالصة
+        const totals = computeTripTotals(args.input)
+        const tripId = nextId(state.trips)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const tripNumber = `TR-${String(tripId).padStart(4, '0')}`
+        const entryLines = buildTripEntry(totals, args.input.payment, tripNumber)
+
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `نقلة ${tripNumber} — ${args.input.fromLoc} ← ${args.input.toLoc}${args.notes ? ` — ${args.notes}` : ''}`,
+          sourceType: 'logistics_trip',
+          sourceId: tripId,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+
+        const trip: Trip = {
+          id: tripId,
+          tripNumber,
+          date: now,
+          customerId: args.customerId,
+          vehicleId: args.vehicleId,
+          driverId: args.driverId,
+          fromLoc: args.input.fromLoc.trim(),
+          toLoc: args.input.toLoc.trim(),
+          qty: args.input.qty,
+          unitPriceMinor: args.input.unitPriceMinor,
+          payment: args.input.payment,
+          vatPercent: args.input.vatPercent,
+          containerNumbers: args.input.containerNumbers.filter((c) => c.trim()),
+          expenses: args.input.expenses.map((e) => ({ ...e, amountMinor: Math.round(e.unitAmountMinor * e.qty) })),
+          totals,
+          journalEntryId: entryId,
+          notes: args.notes,
+        }
+
+        set({ trips: [...state.trips, trip], journal: [...state.journal, entry] })
+        return trip
+      },
     }),
     {
       name: 'shopsys-data',
@@ -995,6 +1107,8 @@ export const useDataStore = create<DataState>()(
           employees: (s.employees ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           payrollRuns: s.payrollRuns ?? [],
           installmentPlans: s.installmentPlans ?? [],
+          vehicles: s.vehicles ?? [],
+          trips: s.trips ?? [],
           purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
           purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],

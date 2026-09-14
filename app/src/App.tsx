@@ -28,6 +28,8 @@ import { InstallmentsPage } from './ui/pages/InstallmentsPage.tsx'
 import { ReportsPage } from './ui/pages/ReportsPage.tsx'
 import { LicensePage } from './ui/pages/LicensePage.tsx'
 import { BackupPage } from './ui/pages/BackupPage.tsx'
+import { TripsPage } from './ui/pages/TripsPage.tsx'
+import { FleetPage } from './ui/pages/FleetPage.tsx'
 import { ComingSoon } from './ui/pages/ComingSoon.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
@@ -67,8 +69,8 @@ function Shell() {
         <Route path="/maintenance/tickets" element={<ComingSoon title="أوامر الصيانة" phase="المرحلة 6" />} />
         <Route path="/rental/fleet" element={<ComingSoon title="سجل المعدات" phase="المرحلة 6" />} />
         <Route path="/rental/contracts" element={<ComingSoon title="عقود الإيجار" phase="المرحلة 6" />} />
-        <Route path="/logistics/trips" element={<ComingSoon title="النقلات" phase="المرحلة 6" />} />
-        <Route path="/logistics/fleet" element={<ComingSoon title="الأسطول والسائقون" phase="المرحلة 6" />} />
+        <Route path="/logistics/trips" element={<TripsPage />} />
+        <Route path="/logistics/fleet" element={<FleetPage />} />
         <Route path="/accounting/journal" element={<JournalPage />} />
         <Route path="/accounting/coa" element={<CoaPage />} />
         <Route path="/accounting/trial-balance" element={<TrialBalancePage />} />
