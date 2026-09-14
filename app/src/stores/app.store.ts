@@ -8,6 +8,7 @@ import type { Country } from '../core/countries.ts'
 import type { ActivityTemplate, ItemFeature, BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
+import { generateDeviceId, type LicensePayload } from '../core/license.ts'
 
 export type ThemeMode = 'light' | 'dark'
 
@@ -43,7 +44,24 @@ interface AppState {
   autoPrintAfterSale: boolean
   updateReceipt: (patch: Partial<ReceiptSettings>) => void
   setAutoPrint: (v: boolean) => void
+  // ─── الترخيص (القرار 4) ───
+  deviceId: string // معرف الجهاز — يتولد مرة واحدة
+  trialStartedAt: string // مرساة بداية التجربة
+  lastSeenAt: string // مرساة ضد إرجاع الساعة
+  activatedKey: string | null // مفتاح التفعيل النصي كما أدخل
+  activatedPayload: LicensePayload | null // حمولته الموثقة بعد التحقق
+  setActivated: (key: string, payload: LicensePayload) => void
+  clearActivation: () => void
+  touchLastSeen: () => void
 }
+
+/** توليد معرف جهاز + مراسي زمنية عند أول تشغيل */
+const bootIdentity = () => {
+  const rnd = new Uint8Array(12)
+  crypto.getRandomValues(rnd)
+  return { deviceId: generateDeviceId(rnd), now: new Date().toISOString() }
+}
+const BOOT = bootIdentity()
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -93,6 +111,19 @@ export const useAppStore = create<AppState>()(
       autoPrintAfterSale: false,
       updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
       setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
+      deviceId: BOOT.deviceId,
+      trialStartedAt: BOOT.now,
+      lastSeenAt: BOOT.now,
+      activatedKey: null,
+      activatedPayload: null,
+      setActivated: (key, payload) => set({ activatedKey: key, activatedPayload: payload }),
+      clearActivation: () => set({ activatedKey: null, activatedPayload: null }),
+      touchLastSeen: () =>
+        set((s) => {
+          const now = new Date().toISOString()
+          // لا نرجع المرساة للخلف أبداً — هي خط دفاع ضد إرجاع الساعة
+          return now > s.lastSeenAt ? { lastSeenAt: now } : {}
+        }),
     }),
     {
       name: 'shopsys-app',
@@ -114,6 +145,14 @@ export const useAppStore = create<AppState>()(
         } else if (state) {
           // أي مفتاح جديد أُضيف لاحقاً يأخذ قيمته الافتراضية دون المساس بما اختاره المستخدم
           state.receipt = { ...DEFAULT_RECEIPT_SETTINGS, ...state.receipt }
+        }
+        // ترحيل: حسابات قبل ميزة الترخيص تحصل على هوية جهاز ومراسي زمنية
+        if (state && !state.deviceId) {
+          state.deviceId = BOOT.deviceId
+          state.trialStartedAt = BOOT.now
+          state.lastSeenAt = BOOT.now
+          state.activatedKey = null
+          state.activatedPayload = null
         }
       },
     },

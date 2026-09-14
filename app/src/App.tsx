@@ -26,6 +26,8 @@ import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
 import { InstallmentsPage } from './ui/pages/InstallmentsPage.tsx'
 import { ReportsPage } from './ui/pages/ReportsPage.tsx'
+import { LicensePage } from './ui/pages/LicensePage.tsx'
+import { BackupPage } from './ui/pages/BackupPage.tsx'
 import { ComingSoon } from './ui/pages/ComingSoon.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
@@ -74,10 +76,10 @@ function Shell() {
         <Route path="/accounting/treasury" element={<TreasuryPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings/printing" element={<PrintSettingsPage />} />
-        <Route path="/settings/backup" element={<ComingSoon title="النسخ الاحتياطي" phase="المرحلة 5" />} />
+        <Route path="/settings/backup" element={<BackupPage />} />
         <Route path="/settings/telegram" element={<ComingSoon title="بوت التليجرام" phase="المرحلة 5" />} />
         <Route path="/settings/appearance" element={<ComingSoon title="المظهر" phase="المرحلة 1" />} />
-        <Route path="/settings/license" element={<ComingSoon title="الترخيص" phase="المرحلة 5" />} />
+        <Route path="/settings/license" element={<LicensePage />} />
         <Route path="*" element={<Dashboard />} />
       </Routes>
     </MainLayout>
@@ -85,12 +87,19 @@ function Shell() {
 }
 
 export default function App() {
-  const { theme, setup } = useAppStore()
+  const { theme, setup, touchLastSeen } = useAppStore()
   const seed = useDataStore((s) => s.seed)
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
   }, [theme])
+
+  // مرساة «آخر ظهور» ضد إرجاع ساعة الجهاز (نظام الترخيص) — عند الإقلاع وكل ساعة
+  useEffect(() => {
+    touchLastSeen()
+    const t = setInterval(touchLastSeen, 60 * 60 * 1000)
+    return () => clearInterval(t)
+  }, [touchLastSeen])
 
   // بذر البيانات الأولية (قسم عام + مخزن رئيسي) فور اكتمال المعالج
   useEffect(() => {
