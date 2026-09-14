@@ -143,7 +143,7 @@ export function Sidebar() {
       {/* الإصدار */}
       <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-400 dark:text-slate-600 flex items-center justify-between">
         <span>حسبان v0.1.0</span>
-        <span className="px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 font-bold">المرحلة 0</span>
+        <span className="px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 font-bold">م / محمد عبدة</span>
       </div>
     </aside>
   )
