@@ -5,7 +5,8 @@
  * - سعر التكلفة محسوب تلقائياً من فواتير الشراء (متوسط مرجح) — لا يُعدَّل يدوياً بعد أول حركة
  */
 import { useMemo, useState } from 'react'
-import { Plus, Search, Pencil, Trash2, Barcode, FolderPlus, Package, Lock, CornerDownLeft } from 'lucide-react'
+import { useRef } from 'react'
+import { Plus, Search, Pencil, Trash2, Barcode, FolderPlus, Package, Lock, CornerDownLeft, FileDown, FileUp } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -15,6 +16,7 @@ import {
   type ItemDraft, type Item, type Category,
 } from '../../core/items.ts'
 import { FEATURE_LABELS, type ItemFeature } from '../../core/activities.ts'
+import { buildItemsCsv, parseItemsCsv } from '../../core/itemsCsv.ts'
 import { UNIT_GROUPS } from '../../core/units.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
@@ -101,6 +103,73 @@ export function ItemsPage() {
     setCatName(''); setCatFeatures([]); setCatParentId(null); setEditingCatId(null); setModal('category')
   }
 
+  /* ─── استيراد/تصدير CSV (Excel) ─── */
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const exportCsv = () => {
+    const csv = buildItemsCsv(
+      items.map((it) => ({
+        nameAr: it.nameAr,
+        barcode: it.barcodes[0] ?? '',
+        categoryName: categories.find((c) => c.id === it.categoryId)?.nameAr ?? '',
+        baseUnit: it.baseUnit,
+        priceMinor: it.priceMinor,
+        costMinor: it.costMinor,
+        stockQty: it.stockQty ?? 0,
+        minQty: it.minQty,
+      })),
+      cur,
+    )
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    a.download = `shopsys-items-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000)
+    toast.show(`صُدّر ${items.length} صنفاً — يفتح في Excel مباشرة 📄`)
+  }
+
+  const importCsv = async (file: File) => {
+    try {
+      const text = await file.text()
+      const report = parseItemsCsv(text, cur, {
+        names: new Set(items.map((it) => it.nameAr)),
+        barcodes: new Set(items.flatMap((it) => it.barcodes)),
+      })
+      if (report.errors.length && report.items.length === 0) {
+        toast.show(report.errors.slice(0, 3).join(' — '), 'error')
+        return
+      }
+      // أقسام غير موجودة تُنشأ تلقائياً (رئيسية بلا خصائص)
+      let cats = categories
+      for (const row of report.items) {
+        if (row.categoryName && !cats.some((c) => c.nameAr === row.categoryName)) {
+          addCategory(row.categoryName, [], null)
+          cats = useDataStore.getState().categories
+        }
+      }
+      for (const row of report.items) {
+        const cat = cats.find((c) => c.nameAr === row.categoryName) ?? cats[0]
+        const draft = draftFromCategory(cat, nextSku(useDataStore.getState().items))
+        addItem({
+          ...draft,
+          nameAr: row.nameAr,
+          barcodes: row.barcode ? [row.barcode] : [],
+          baseUnit: row.baseUnit,
+          priceMinor: row.priceMinor,
+          costMinor: row.costMinor,
+          stockQty: row.stockQty,
+          minQty: row.minQty,
+        })
+      }
+      const parts = [`استُورد ${report.items.length} صنفاً ✅`]
+      if (report.skippedDuplicates) parts.push(`تخطى ${report.skippedDuplicates} مكرراً`)
+      if (report.errors.length) parts.push(`رفض ${report.errors.length} صفاً معيباً`)
+      toast.show(parts.join(' — '), report.errors.length ? 'error' : 'success')
+    } catch {
+      toast.show('تعذرت قراءة الملف — تأكد أنه CSV مصدَّر من التطبيق', 'error')
+    }
+  }
+
   const openEditCategory = (c: Category) => {
     setCatName(c.nameAr); setCatFeatures(c.features); setCatParentId(c.parentId); setEditingCatId(c.id); setModal('category')
   }
@@ -158,6 +227,23 @@ export function ItemsPage() {
         <Btn variant="soft" onClick={openNewCategory}>
           <span className="flex items-center gap-1.5"><FolderPlus size={15} /> قسم جديد</span>
         </Btn>
+        <Btn variant="ghost" onClick={exportCsv} disabled={items.length === 0}>
+          <span className="flex items-center gap-1.5"><FileDown size={15} /> تصدير Excel</span>
+        </Btn>
+        <Btn variant="ghost" onClick={() => fileRef.current?.click()}>
+          <span className="flex items-center gap-1.5"><FileUp size={15} /> استيراد Excel</span>
+        </Btn>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv,text/csv"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) importCsv(f)
+            e.target.value = ''
+          }}
+        />
         <Btn onClick={openNewItem}>
           <span className="flex items-center gap-1.5"><Plus size={15} /> صنف جديد</span>
         </Btn>
