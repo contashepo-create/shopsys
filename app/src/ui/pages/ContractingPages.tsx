@@ -13,6 +13,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function ProjectsPage() {
@@ -75,14 +76,16 @@ export function ProjectsPage() {
   const [costAmount, setCostAmount] = useState('')
   const [costDesc, setCostDesc] = useState('')
   const [costPayment, setCostPayment] = useState<'cash' | 'credit'>('cash')
-  const [costTreasury, setCostTreasury] = useState('1101')
+  const [costPaySource, setCostPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
 
   const saveCost = () => {
     if (!costFor) return
     try {
       addProjectCost({
         projectId: costFor.id, kind: costKind, amountMinor: toMinor(costAmount, cur.decimals),
-        payment: costPayment, description: costDesc.trim(), treasury: costTreasury,
+        payment: costPayment, description: costDesc.trim(),
+        treasury: costPaySource.kind === 'treasury' ? costPaySource.treasury : undefined,
+        custodyFileId: costPayment === 'cash' && costPaySource.kind === 'custody' ? costPaySource.custodyFileId : null,
       })
       toast.show('سُجلت التكلفة على المشروع بقيد متوازن ✅')
       setCostFor(null); setCostAmount(''); setCostDesc('')
@@ -250,7 +253,7 @@ export function ProjectsPage() {
                     </button>
                   ))}
                 </div>
-                {costPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={costTreasury} onChange={setCostTreasury} compact /></div>}
+                {costPayment === 'cash' && <div className="mt-2"><PaySourcePicker value={costPaySource} onChange={setCostPaySource} /></div>}
               </Field>
             </div>
             <Field label="الوصف"><input value={costDesc} onChange={(e) => setCostDesc(e.target.value)} className={inputCls} placeholder="حديد تسليح، أجور نجارين…" /></Field>

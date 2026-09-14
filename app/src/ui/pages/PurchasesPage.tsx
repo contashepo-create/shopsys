@@ -12,7 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
-import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string }
@@ -21,7 +21,7 @@ interface DraftExpense { nameAr: string; amount: string; method: 'value' | 'qty'
 const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'شحن وتفريغ', 'عمولة مشتريات', 'أخرى']
 
 export function PurchasesPage() {
-  const { items, suppliers, purchases, journal, postPurchase } = useDataStore()
+  const { items, suppliers, purchases, journal, projects, postPurchase } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -33,7 +33,8 @@ export function PurchasesPage() {
   const [lines, setLines] = useState<DraftLine[]>([])
   const [expenses, setExpenses] = useState<DraftExpense[]>([])
   const [paid, setPaid] = useState('')
-  const [treasury, setTreasury] = useState('1101')
+  const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
+  const [projectId, setProjectId] = useState('')
   const [notes, setNotes] = useState('')
 
   const openNew = () => {
@@ -41,7 +42,8 @@ export function PurchasesPage() {
     setLines([{ itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '' }])
     setExpenses([])
     setPaid('')
-    setTreasury('1101')
+    setPaySource(DEFAULT_PAY_SOURCE)
+    setProjectId('')
     setNotes('')
     setOpen(true)
   }
@@ -90,7 +92,9 @@ export function PurchasesPage() {
         .filter((e) => Number(e.amount) > 0)
         .map((e) => ({ nameAr: e.nameAr, amountMinor: toMinor(e.amount, cur.decimals), method: e.method })),
       paidMinor: paid ? toMinor(paid, cur.decimals) : 0,
-      treasury,
+      treasury: paySource.kind === 'treasury' ? paySource.treasury : undefined,
+      custodyFileId: paySource.kind === 'custody' ? paySource.custodyFileId : null,
+      projectId: projectId ? Number(projectId) : null,
       notes,
     })
     toast.show(`رُحّلت الفاتورة ${inv.invoiceNumber} — تحدثت تكلفة الأصناف بالمتوسط المرجح ✓`)
@@ -181,10 +185,18 @@ export function PurchasesPage() {
             <Field label={`المدفوع الآن (${cur.symbol})`} hint="الباقي يُسجَّل ديناً على حسابك عند المورد">
               <input value={paid} onChange={(e) => setPaid(e.target.value)} type="number" min={0} className={inputCls} placeholder="0" />
             </Field>
-            <Field label="الدفع من أي خزينة/بنك؟" hint="المصاريف والمدفوع يخرجان منها">
-              <TreasuryPicker value={treasury} onChange={setTreasury} compact />
+            <Field label="مصدر الدفع" hint="خزينة/بنك — أو عهدة موظف تُخصم من ملفه">
+              <PaySourcePicker value={paySource} onChange={setPaySource} />
             </Field>
           </div>
+          {projects.some((p) => p.status === 'active') && (
+            <Field label="ربط بمشروع مقاولات (اختياري)" hint="الفاتورة تدخل تكاليف المشروع وربحيته">
+              <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
+                <option value="">— بلا مشروع —</option>
+                {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
+              </select>
+            </Field>
+          )}
 
           {/* السطور */}
           <div>

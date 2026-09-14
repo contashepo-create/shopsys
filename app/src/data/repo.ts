@@ -30,7 +30,13 @@ import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthly
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, type RateType, type OperatorShift } from '../core/rentalMeter.ts'
 import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
-import { validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, buildCustodyGrantEntry, buildCustodySettleEntry, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus, type ProjectCustody } from '../core/contracting.ts'
+import {
+  custodyFileNumber, validateCustodyFile, summarizeCustody, buildCustodyFundEntry,
+  splitCustodyExpense, buildCustodyExpenseEntry, buildCustodySettleEntry as buildCustodyFileSettleEntry,
+  assertFileOpen, CUSTODY_ACCOUNT,
+  type CustodyFile, type CustodyTx, type CustodySummary,
+} from '../core/custody.ts'
+import { validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus } from '../core/contracting.ts'
 import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, type VisitKind, type VisitTotals } from '../core/clinic.ts'
 import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
 import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
@@ -445,6 +451,8 @@ export interface PurchaseInvoice {
   grandTotalMinor: number
   paidMinor: number
   treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه
+  custodyFileId?: number | null // دُفعت من ملف عهدة موظف (طلب المالك)
+  projectId?: number | null // مربوطة بمشروع مقاولات
   notes: string
   journalEntryId: number | null // القيد المتولد (فواتير قديمة قبل الترحيل = null)
 }
@@ -489,13 +497,18 @@ export interface Voucher {
   partyId?: number | null
 }
 
-/** سلفة موظف — أصل على الموظف (1107) يُسترد من مسيرات الرواتب */
+/** سلفة موظف — أصل على الموظف (1107) تُخصم من الرواتب على دفعات بحرية المالك */
 export interface EmployeeAdvance {
   id: number
   advanceNumber: string // ADV-0001
   employeeId: number
   date: string
   amountMinor: number
+  /** المسترد حتى الآن من مسيرات الرواتب — المتبقي = amountMinor − recoveredMinor */
+  recoveredMinor: number
+  /** مصدرها: سلفة نقدية عادية أو عجز تسوية عهدة (طلب المالك) */
+  source: 'cash' | 'custody_shortage'
+  custodyFileId: number | null // لو كان مصدرها عجز عهدة
   treasury: TreasuryAccount
   notes: string
   journalEntryId: number
@@ -557,7 +570,8 @@ interface DataState {
   projectCosts: ProjectCost[]
   retentionReleases: RetentionRelease[]
   quotations: Quotation[] // عروض أسعار ومناقصات (طلب المالك)
-  custodies: ProjectCustody[] // عُهد المشاريع
+  custodyFiles: CustodyFile[] // ملفات عهد الموظفين (طلب المالك — نظام متكامل بنمط pro-acc)
+  custodyTxs: CustodyTx[] // حركات ملفات العهد (تعزيز/مصروف/فاتورة/مرتجع/عجز)
   clinicPatients: ClinicPatient[] // العيادة (القرار 27)
   clinicVisits: ClinicVisit[]
   treatmentPlans: TreatmentPlan[]
@@ -600,6 +614,10 @@ interface DataState {
     expenses: PurchaseExpense[]
     paidMinor: number
     treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه (افتراضياً الرئيسية)
+    /** الدفع من ملف عهدة موظف بدل الخزينة (طلب المالك) — يخصم من عهدته ويظهر في ملفه */
+    custodyFileId?: number | null
+    /** ربط الفاتورة بمشروع مقاولات → تدخل تكاليفه وربحيته */
+    projectId?: number | null
     notes: string
   }) => PurchaseInvoice
   /**
@@ -691,9 +709,15 @@ interface DataState {
     month: string
     payMode: PayrollPayMode
     treasury: TreasuryAccount
+    /** الصرف من ملف عهدة موظف بدل الخزينة (طلب المالك) — يخصم من عهدته */
+    custodyFileId?: number | null
     lines: PayrollLineInput[]
     notes: string
   }) => PayrollRun
+  /** المتبقي غير المسترد من سلف موظف (سلفة نقدية أو عجز عهدة) — للخصم الحر بالمسير */
+  getEmployeeAdvanceBalance: (employeeId: number) => { totalMinor: number; remainingMinor: number; advances: EmployeeAdvance[] }
+  /** مستحق الموظف من زيادات مصاريف العهد (2107) غير المصروف بعد */
+  getEmployeeExcessDue: (employeeId: number) => number
   /**
    * إنشاء خطة أقساط لعميل: جدول بتوزيع «أكبر البواقي»،
    * المقدم (إن وُجد) يولّد قيد تحصيل فوري: خزينة ← عملاء
@@ -785,14 +809,21 @@ interface DataState {
   setQuotationStatus: (id: number, status: QuotationStatus) => void
   /** تحويل عرض فائز لمشروع (يرث الاسم والعميل وقيمة العرض) */
   convertQuotationToProject: (id: number, retentionPercent: number) => Project
-  /** صرف عهدة لمشرف موقع: قيد 1107 ← خزينة */
-  grantCustody: (args: { projectId: number; holderName: string; amountMinor: number; treasury: string; notes: string }) => ProjectCustody
-  /** تسوية العهدة: المنصرف تكلفة على المشروع والمرتجع يعود للخزينة */
-  settleCustody: (id: number, spentMinor: number) => ProjectCustody
+  /* ─── ملفات العهد المتكاملة (طلب المالك — نمط pro-acc) ─── */
+  /** فتح ملف عهدة لموظف (بلا قيد — أول عهدة تُسجَّل فيه بعد الفتح) — أكثر من ملف لنفس الموظف */
+  openCustodyFile: (args: { employeeId: number; projectId: number | null; reason: string; notes: string }) => CustodyFile
+  /** تمويل/تعزيز ملف عهدة: قيد 1108 ← خزينة/بنك مختار */
+  fundCustodyFile: (args: { fileId: number; amountMinor: number; treasury: string; description: string }) => CustodyTx
+  /** مصروف من العهدة — الزيادة عن الرصيد (بموافقة) تُسجَّل مستحقاً للموظف على 2107 وتُصرف مع راتبه */
+  postCustodyExpense: (args: { fileId: number; amountMinor: number; description: string; expenseAccount?: string; projectId?: number | null; allowExcess?: boolean }) => CustodyTx
+  /** تسوية وإغلاق الملف: المرتجع نقداً للخزينة، والعجز سلفة (1107) تُخصم من الرواتب على دفعات */
+  settleCustodyFile: (args: { fileId: number; returnedMinor: number; treasury: string }) => CustodyFile
+  /** ملخص ملف عهدة (تعزيزات/منصرف/زيادة/متبقٍ) من حركاته */
+  getCustodySummary: (fileId: number) => CustodySummary
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
   addProjectExtract: (args: { projectId: number; grossMinor: number; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
-  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string }) => ProjectCost
+  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string; custodyFileId?: number | null }) => ProjectCost
   /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
   releaseRetention: (projectId: number, treasury?: string) => { amount: number }
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
@@ -885,7 +916,8 @@ export const useDataStore = create<DataState>()(
       projectCosts: [],
       retentionReleases: [],
       quotations: [],
-      custodies: [],
+      custodyFiles: [],
+      custodyTxs: [],
       clinicPatients: [],
       clinicVisits: [],
       treatmentPlans: [],
@@ -967,8 +999,21 @@ export const useDataStore = create<DataState>()(
         const expensesTotal = inv.expenses.reduce((a, e) => a + e.amountMinor, 0)
         const grandTotal = goodsTotal + expensesTotal
 
-        // القيد المحاسبي: مخزون مدين / خزينة مختارة + موردون دائن (يرمي لو المدفوع > الإجمالي)
-        const entryLines = buildPurchaseEntry(grandTotal, inv.paidMinor, inv.treasury ?? '1101')
+        // مصدر الدفع: خزينة/بنك أو ملف عهدة موظف (طلب المالك) — العهدة تُفحص قبل أي كتابة
+        let custodyFile: CustodyFile | null = null
+        if (inv.custodyFileId != null && inv.paidMinor > 0) {
+          custodyFile = state.custodyFiles.find((f) => f.id === inv.custodyFileId) ?? null
+          if (!custodyFile) throw new Error('ملف العهدة غير موجود')
+          assertFileOpen(custodyFile)
+          const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
+          if (inv.paidMinor > remaining) {
+            throw new Error(`المدفوع أكبر من المتبقي في ملف العهدة (${remaining}) — عزّز العهدة أو سجّل الباقي آجلاً`)
+          }
+        }
+        if (inv.projectId != null && !state.projects.find((p) => p.id === inv.projectId)) throw new Error('المشروع غير موجود')
+        // القيد المحاسبي: مخزون مدين / (خزينة أو 1108 عهد) + موردون دائن (يرمي لو المدفوع > الإجمالي)
+        const payAccount = custodyFile ? CUSTODY_ACCOUNT : (inv.treasury ?? '1101')
+        const entryLines = buildPurchaseEntry(grandTotal, inv.paidMinor, payAccount)
         const purchaseId = nextId(state.purchases)
         const entryId = nextId(state.journal)
         const invoiceNumber = `P-${String(purchaseId).padStart(4, '0')}`
@@ -1004,7 +1049,9 @@ export const useDataStore = create<DataState>()(
           expensesTotalMinor: expensesTotal,
           grandTotalMinor: grandTotal,
           paidMinor: inv.paidMinor,
-          treasury: inv.treasury ?? '1101',
+          treasury: custodyFile ? undefined : (inv.treasury ?? '1101'),
+          custodyFileId: custodyFile?.id ?? null,
+          projectId: inv.projectId ?? null,
           notes: inv.notes,
           journalEntryId: entryId,
         }
@@ -1055,12 +1102,35 @@ export const useDataStore = create<DataState>()(
           }
         })
 
+        // فاتورة مدفوعة من عهدة → حركة في ملف العهدة تظهر مقابل التعزيزات (طلب المالك)
+        let custodyTxs = state.custodyTxs
+        if (custodyFile && inv.paidMinor > 0) {
+          custodyTxs = [...custodyTxs, {
+            id: nextId(custodyTxs), fileId: custodyFile.id, type: 'invoice' as const,
+            date: inv.date, amountMinor: inv.paidMinor, excessMinor: 0,
+            description: `فاتورة شراء ${invoiceNumber}`,
+            treasury: null, projectId: inv.projectId ?? null, purchaseId, journalEntryId: entryId,
+          }]
+        }
+        // فاتورة مربوطة بمشروع → بند تكلفة «مواد» يدخل ربحيته (طلب المالك)
+        let projectCosts = state.projectCosts
+        if (inv.projectId != null) {
+          projectCosts = [...projectCosts, {
+            id: nextId(projectCosts), projectId: inv.projectId, kind: 'materials' as CostKind,
+            amountMinor: grandTotal, date: inv.date,
+            description: `فاتورة شراء ${invoiceNumber}${custodyFile ? ` — من عهدة ${custodyFile.fileNumber}` : ''}`,
+            payment: inv.paidMinor >= grandTotal ? 'cash' as const : 'credit' as const,
+            journalEntryId: entryId,
+          }]
+        }
         set({
           purchases: [...state.purchases, invoice],
           journal: [...state.journal, entry],
           items: updatedItems,
           batches: newBatches.length ? [...state.batches, ...newBatches] : state.batches,
           serials: newSerials.length ? [...state.serials, ...newSerials] : state.serials,
+          custodyTxs,
+          projectCosts,
         })
         return invoice
       },
@@ -1423,6 +1493,9 @@ export const useDataStore = create<DataState>()(
           employeeId: args.employeeId,
           date: now,
           amountMinor: args.amountMinor,
+          recoveredMinor: 0,
+          source: 'cash',
+          custodyFileId: null,
           treasury: args.treasury,
           notes: args.notes,
           journalEntryId: entryId,
@@ -1579,9 +1652,45 @@ export const useDataStore = create<DataState>()(
 
         const totals: PayrollTotals = computePayrollTotals(computed)
         const label = monthLabelAr(args.month)
-        // 3) القيد المتوازن بنيوياً — السلف المستقطعة تُقفل من حساب 1107
+        // تحقق السلف: المخصوم من كل موظف لا يتجاوز متبقي سلفه (الخصم حر على عدة رواتب — طلب المالك)
+        for (const l of computed) {
+          if (l.advancesMinor <= 0) continue
+          const remaining = state.employeeAdvances
+            .filter((a) => a.employeeId === l.employeeId)
+            .reduce((sum, a) => sum + (a.amountMinor - a.recoveredMinor), 0)
+          if (l.advancesMinor > remaining) {
+            const emp = state.employees.find((e) => e.id === l.employeeId)
+            throw new Error(`«${emp?.nameAr ?? l.employeeId}»: المخصوم (${l.advancesMinor}) أكبر من متبقي سلفه (${remaining})`)
+          }
+        }
+        // تحقق مستحقات زيادة العهد: المصروف لا يتجاوز مستحق الموظف على 2107
+        for (const l of computed) {
+          const excess = l.excessPaidMinor ?? 0
+          if (excess <= 0) continue
+          const due = get().getEmployeeExcessDue(l.employeeId)
+          if (excess > due) {
+            const emp = state.employees.find((e) => e.id === l.employeeId)
+            throw new Error(`«${emp?.nameAr ?? l.employeeId}»: المصروف من مستحق العهدة (${excess}) أكبر من رصيده (${due})`)
+          }
+        }
+        // مصدر الصرف: خزينة/بنك أو ملف عهدة موظف مفتوح برصيد كافٍ (طلب المالك)
+        let payCustodyFile: CustodyFile | null = null
+        let payAccount: TreasuryAccount = args.treasury
+        if (args.payMode === 'cash' && args.custodyFileId != null) {
+          payCustodyFile = state.custodyFiles.find((f) => f.id === args.custodyFileId) ?? null
+          if (!payCustodyFile) throw new Error('ملف العهدة غير موجود')
+          assertFileOpen(payCustodyFile)
+          payAccount = CUSTODY_ACCOUNT
+        }
+        // 3) القيد المتوازن بنيوياً — السلف المستقطعة تُقفل من 1107 ومستحقات العهد تُصفّى من 2107
         const advancesRecovered = computed.reduce((a, l) => a + l.advancesMinor, 0)
-        const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, args.treasury, label, advancesRecovered)
+        const excessPaid = computed.reduce((a, l) => a + (l.excessPaidMinor ?? 0), 0)
+        const totalOut = totals.netMinor + excessPaid
+        if (payCustodyFile) {
+          const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === payCustodyFile!.id)).remainingMinor
+          if (totalOut > remaining) throw new Error(`المسير (${totalOut}) أكبر من المتبقي في ملف العهدة (${remaining})`)
+        }
+        const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, payAccount, label, advancesRecovered, excessPaid)
 
         const runId = nextId(state.payrollRuns)
         const entryId = nextId(state.journal)
@@ -1615,8 +1724,49 @@ export const useDataStore = create<DataState>()(
           notes: args.notes,
         }
 
-        set({ payrollRuns: [...state.payrollRuns, run], journal: [...state.journal, entry] })
+        // توزيع المخصوم على سلف كل موظف — الأقدم أولاً (تتبع السلفة عبر عدة أشهر)
+        let employeeAdvances = state.employeeAdvances
+        for (const l of computed) {
+          let toRecover = l.advancesMinor
+          if (toRecover <= 0) continue
+          employeeAdvances = employeeAdvances.map((a) => {
+            if (a.employeeId !== l.employeeId || toRecover <= 0) return a
+            const open = a.amountMinor - a.recoveredMinor
+            if (open <= 0) return a
+            const take = Math.min(open, toRecover)
+            toRecover -= take
+            return { ...a, recoveredMinor: a.recoveredMinor + take }
+          })
+        }
+        // المسير المصروف من عهدة → حركة في ملف العهدة (طلب المالك)
+        let custodyTxs = state.custodyTxs
+        if (payCustodyFile && totalOut > 0) {
+          custodyTxs = [...custodyTxs, {
+            id: nextId(custodyTxs), fileId: payCustodyFile.id, type: 'expense' as const,
+            date: now.slice(0, 10), amountMinor: totalOut, excessMinor: 0,
+            description: `صرف مسير رواتب ${runNumber} — ${label}`,
+            treasury: null, projectId: null, purchaseId: null, journalEntryId: entryId,
+          }]
+        }
+        set({ payrollRuns: [...state.payrollRuns, run], journal: [...state.journal, entry], employeeAdvances, custodyTxs })
         return run
+      },
+
+      getEmployeeAdvanceBalance: (employeeId) => {
+        const advances = get().employeeAdvances.filter((a) => a.employeeId === employeeId)
+        const totalMinor = advances.reduce((s2, a) => s2 + a.amountMinor, 0)
+        const remainingMinor = advances.reduce((s2, a) => s2 + (a.amountMinor - a.recoveredMinor), 0)
+        return { totalMinor, remainingMinor, advances }
+      },
+
+      getEmployeeExcessDue: (employeeId) => {
+        const state = get()
+        // المستحق = زيادات مصاريف عهد الموظف (2107) − ما صُرف له بالمسيرات
+        const fileIds = new Set(state.custodyFiles.filter((f) => f.employeeId === employeeId).map((f) => f.id))
+        const accrued = state.custodyTxs.filter((t) => fileIds.has(t.fileId)).reduce((s2, t) => s2 + t.excessMinor, 0)
+        const paid = state.payrollRuns.reduce((s2, r) =>
+          s2 + r.lines.filter((l) => l.employeeId === employeeId).reduce((x, l) => x + (l.excessPaidMinor ?? 0), 0), 0)
+        return Math.max(0, accrued - paid)
       },
 
       createInstallmentPlan: (args) => {
@@ -2196,59 +2346,155 @@ export const useDataStore = create<DataState>()(
         return project
       },
 
-      grantCustody: (args) => {
+      openCustodyFile: (args) => {
         const state = get()
-        const project = state.projects.find((p) => p.id === args.projectId)
-        if (!project) throw new Error('المشروع غير موجود')
-        if (!args.holderName.trim()) throw new Error('اسم مستلم العهدة مطلوب')
-        const id = nextId(state.custodies)
-        const custodyNumber = `CUS-${String(id).padStart(4, '0')}`
-        const entryLines = buildCustodyGrantEntry(args.amountMinor, args.treasury, `${custodyNumber} — ${args.holderName}`)
-        const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
-        const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `عهدة ${custodyNumber} — ${args.holderName} (${project.nameAr})`,
-          sourceType: 'payment_voucher', sourceId: id, lines: entryLines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        const errors = validateCustodyFile(args)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (!state.employees.find((e) => e.id === args.employeeId)) throw new Error('الموظف غير موجود')
+        if (args.projectId != null && !state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
+        const id = nextId(state.custodyFiles)
+        const openedAt = new Date().toISOString().slice(0, 10)
+        const file: CustodyFile = {
+          id, fileNumber: custodyFileNumber(id, openedAt),
+          employeeId: args.employeeId, projectId: args.projectId,
+          reason: args.reason.trim(), notes: args.notes.trim(),
+          openedAt, status: 'open', settledAt: null,
+          returnedMinor: 0, shortageMinor: 0, settleTreasury: null,
         }
-        const custody: ProjectCustody = {
-          id, custodyNumber, projectId: args.projectId, holderName: args.holderName.trim(),
-          amountMinor: args.amountMinor, treasury: args.treasury, date: now.slice(0, 10),
-          status: 'open', spentMinor: 0, returnedMinor: 0,
-          grantEntryId: entryId, settleEntryId: null, notes: args.notes,
-        }
-        set({ custodies: [...state.custodies, custody], journal: [...state.journal, entry] })
-        return custody
+        set({ custodyFiles: [...state.custodyFiles, file] })
+        return file
       },
 
-      settleCustody: (id, spentMinor) => {
+      fundCustodyFile: (args) => {
         const state = get()
-        const c = state.custodies.find((x) => x.id === id)
-        if (!c) throw new Error('العهدة غير موجودة')
-        if (c.status === 'settled') throw new Error('سُوّيت هذه العهدة بالفعل')
-        const entryLines = buildCustodySettleEntry(c.amountMinor, spentMinor, c.treasury, c.custodyNumber)
+        const file = state.custodyFiles.find((f) => f.id === args.fileId)
+        if (!file) throw new Error('ملف العهدة غير موجود')
+        assertFileOpen(file)
+        const emp = state.employees.find((e) => e.id === file.employeeId)
+        const entryLines = buildCustodyFundEntry(args.amountMinor, args.treasury, `${file.fileNumber} — ${emp?.nameAr ?? ''}`)
+        const txId = nextId(state.custodyTxs)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
-        const project = state.projects.find((p) => p.id === c.projectId)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `تسوية عهدة ${c.custodyNumber} — منصرف ${spentMinor} (${project?.nameAr ?? ''})`,
-          sourceType: 'payment_voucher', sourceId: id, lines: entryLines,
+          description: `تعزيز عهدة ${file.fileNumber} — ${emp?.nameAr ?? ''}${args.description ? ` — ${args.description}` : ''}`,
+          sourceType: 'payment_voucher', sourceId: txId, lines: entryLines,
           createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        const returned = c.amountMinor - spentMinor
-        const updated: ProjectCustody = { ...c, status: 'settled', spentMinor, returnedMinor: returned, settleEntryId: entryId }
-        // المنصرف يُسجل تكلفة على المشروع (بند «أخرى») ليدخل ربحيته
-        const costId = nextId(state.projectCosts)
-        const costs = spentMinor > 0 ? [...state.projectCosts, {
-          id: costId, projectId: c.projectId, kind: 'other' as CostKind, amountMinor: spentMinor,
-          date: now.slice(0, 10), description: `تسوية عهدة ${c.custodyNumber} — ${c.holderName}`,
-          payment: 'cash' as const, journalEntryId: entryId,
-        }] : state.projectCosts
-        set({ custodies: state.custodies.map((x) => (x.id === id ? updated : x)), journal: [...state.journal, entry], projectCosts: costs })
-        return updated
+        const tx: CustodyTx = {
+          id: txId, fileId: file.id, type: 'fund', date: now.slice(0, 10),
+          amountMinor: args.amountMinor, excessMinor: 0, description: args.description.trim(),
+          treasury: args.treasury, projectId: null, purchaseId: null, journalEntryId: entryId,
+        }
+        set({ custodyTxs: [...state.custodyTxs, tx], journal: [...state.journal, entry] })
+        return tx
       },
+
+      postCustodyExpense: (args) => {
+        const state = get()
+        const file = state.custodyFiles.find((f) => f.id === args.fileId)
+        if (!file) throw new Error('ملف العهدة غير موجود')
+        assertFileOpen(file)
+        if (!args.description.trim()) throw new Error('بيان المصروف مطلوب')
+        const projectId = args.projectId !== undefined ? args.projectId : file.projectId
+        if (projectId != null && !state.projects.find((p) => p.id === projectId)) throw new Error('المشروع غير موجود')
+        const summary = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === file.id))
+        const { fromCustodyMinor, excessMinor } = splitCustodyExpense(summary.remainingMinor, args.amountMinor, args.allowExcess ?? false)
+        // المصروف على مشروع → 5110 يدخل ربحيته؛ وإلا مصروفات عمومية 5108
+        const expenseAccount = args.expenseAccount ?? (projectId != null ? '5110' : '5108')
+        const entryLines = buildCustodyExpenseEntry(expenseAccount, fromCustodyMinor, excessMinor, `${args.description.trim()} (${file.fileNumber})`)
+        const txId = nextId(state.custodyTxs)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const emp = state.employees.find((e) => e.id === file.employeeId)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مصروف من عهدة ${file.fileNumber} — ${args.description.trim()}${excessMinor > 0 ? ` (زيادة ${excessMinor} مستحقة لـ${emp?.nameAr ?? 'الموظف'})` : ''}`,
+          sourceType: 'payment_voucher', sourceId: txId, lines: entryLines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const tx: CustodyTx = {
+          id: txId, fileId: file.id, type: 'expense', date: now.slice(0, 10),
+          amountMinor: args.amountMinor, excessMinor, description: args.description.trim(),
+          treasury: null, projectId, purchaseId: null, journalEntryId: entryId,
+        }
+        // مصروف مربوط بمشروع → بند تكلفة يدخل ربحيته (طلب المالك)
+        let projectCosts = state.projectCosts
+        if (projectId != null) {
+          projectCosts = [...projectCosts, {
+            id: nextId(projectCosts), projectId, kind: 'other' as CostKind,
+            amountMinor: args.amountMinor, date: now.slice(0, 10),
+            description: `${args.description.trim()} — من عهدة ${file.fileNumber}`,
+            payment: 'cash' as const, journalEntryId: entryId,
+          }]
+        }
+        set({ custodyTxs: [...state.custodyTxs, tx], journal: [...state.journal, entry], projectCosts })
+        return tx
+      },
+
+      settleCustodyFile: (args) => {
+        const state = get()
+        const file = state.custodyFiles.find((f) => f.id === args.fileId)
+        if (!file) throw new Error('ملف العهدة غير موجود')
+        assertFileOpen(file)
+        const summary = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === file.id))
+        const entryLines = buildCustodyFileSettleEntry(summary.remainingMinor, args.returnedMinor, args.treasury, file.fileNumber)
+        const shortage = summary.remainingMinor - args.returnedMinor
+        const emp = state.employees.find((e) => e.id === file.employeeId)
+        const now = new Date().toISOString()
+
+        let journal = state.journal
+        let custodyTxs = state.custodyTxs
+        let employeeAdvances = state.employeeAdvances
+        let entryId: number | null = null
+
+        if (entryLines) {
+          entryId = nextId(journal)
+          journal = [...journal, {
+            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+            description: `تسوية عهدة ${file.fileNumber} — ${emp?.nameAr ?? ''}: مرتجع ${args.returnedMinor}${shortage > 0 ? ` + عجز ${shortage} سلفة تُخصم من الراتب` : ''}`,
+            sourceType: 'payment_voucher', sourceId: file.id, lines: entryLines,
+            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+          if (args.returnedMinor > 0) {
+            custodyTxs = [...custodyTxs, {
+              id: nextId(custodyTxs), fileId: file.id, type: 'return' as const, date: now.slice(0, 10),
+              amountMinor: args.returnedMinor, excessMinor: 0, description: 'مرتجع نقدي عند التسوية',
+              treasury: args.treasury, projectId: null, purchaseId: null, journalEntryId: entryId,
+            }]
+          }
+          if (shortage > 0) {
+            custodyTxs = [...custodyTxs, {
+              id: nextId(custodyTxs), fileId: file.id, type: 'shortage' as const, date: now.slice(0, 10),
+              amountMinor: shortage, excessMinor: 0, description: 'عجز عهدة — سلفة على الموظف',
+              treasury: null, projectId: null, purchaseId: null, journalEntryId: entryId,
+            }]
+            // العجز يصير سلفة تُخصم من الرواتب على دفعات بحرية المالك (طلب المالك)
+            const advId = nextId(employeeAdvances)
+            employeeAdvances = [...employeeAdvances, {
+              id: advId, advanceNumber: `ADV-${String(advId).padStart(4, '0')}`,
+              employeeId: file.employeeId, date: now,
+              amountMinor: shortage, recoveredMinor: 0,
+              source: 'custody_shortage' as const, custodyFileId: file.id,
+              treasury: args.treasury, notes: `عجز تسوية ${file.fileNumber}`,
+              journalEntryId: entryId,
+            }]
+          }
+        }
+
+        const settled: CustodyFile = {
+          ...file, status: 'settled', settledAt: now.slice(0, 10),
+          returnedMinor: args.returnedMinor, shortageMinor: Math.max(0, shortage),
+          settleTreasury: args.treasury,
+        }
+        set({
+          custodyFiles: state.custodyFiles.map((f) => (f.id === file.id ? settled : f)),
+          custodyTxs, journal, employeeAdvances,
+        })
+        return settled
+      },
+
+      getCustodySummary: (fileId) => summarizeCustody(get().custodyTxs.filter((t) => t.fileId === fileId)),
 
       addProjectExtract: (args) => {
         const state = get()
@@ -2278,13 +2524,23 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
-        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr, args.treasury ?? '1101')
+        // الدفع من عهدة موظف (طلب المالك): تُفحص وتُخصم من ملفه بدل الخزينة
+        let custodyFile: CustodyFile | null = null
+        if (args.payment === 'cash' && args.custodyFileId != null) {
+          custodyFile = state.custodyFiles.find((f) => f.id === args.custodyFileId) ?? null
+          if (!custodyFile) throw new Error('ملف العهدة غير موجود')
+          assertFileOpen(custodyFile)
+          const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
+          if (args.amountMinor > remaining) throw new Error(`التكلفة أكبر من المتبقي في ملف العهدة (${remaining})`)
+        }
+        const payAccount = custodyFile ? CUSTODY_ACCOUNT : (args.treasury ?? '1101')
+        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr, payAccount)
         const now = new Date().toISOString()
         const id = nextId(state.projectCosts)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `تكلفة على ${project.nameAr}: ${args.description || '—'}`,
+          description: `تكلفة على ${project.nameAr}: ${args.description || '—'}${custodyFile ? ` — من عهدة ${custodyFile.fileNumber}` : ''}`,
           sourceType: 'project_cost', sourceId: id, lines,
           createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
@@ -2292,7 +2548,16 @@ export const useDataStore = create<DataState>()(
           id, projectId: project.id, date: now, kind: args.kind,
           description: args.description, amountMinor: args.amountMinor, payment: args.payment, journalEntryId: entryId,
         }
-        set({ projectCosts: [...state.projectCosts, cost], journal: [...state.journal, entry] })
+        let custodyTxs = state.custodyTxs
+        if (custodyFile) {
+          custodyTxs = [...custodyTxs, {
+            id: nextId(custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
+            date: now.slice(0, 10), amountMinor: args.amountMinor, excessMinor: 0,
+            description: `تكلفة مشروع ${project.nameAr}: ${args.description || '—'}`,
+            treasury: null, projectId: project.id, purchaseId: null, journalEntryId: entryId,
+          }]
+        }
+        set({ projectCosts: [...state.projectCosts, cost], journal: [...state.journal, entry], custodyTxs })
         return cost
       },
       releaseRetention: (projectId, treasury = '1101') => {
@@ -2850,7 +3115,7 @@ export const useDataStore = create<DataState>()(
     }),
     {
       name: 'shopsys-data',
-      version: 7, // 7 = خزائن متعددة + دفع مجزأ
+      version: 8, // 8 = ملفات العهد المتكاملة + استرداد السلف على شهور (7 = خزائن متعددة + دفع مجزأ)
       // القرار 28: قاعدة البيانات مشفرة AES-256-GCM بمفتاح مشتق لهذا الجهاز
       storage: createJSONStorage(() => secureStorage),
       // ترحيل البيانات المحفوظة بالأشكال القديمة (أقسام هرمية، stockQty، مرتجعات وورديات وجرد)
@@ -2860,7 +3125,6 @@ export const useDataStore = create<DataState>()(
           ...s,
           // ترحيل الخزائن المتعددة: الحسابات القديمة تحصل على الافتراضيتين
           treasuries: s.treasuries && s.treasuries.length > 0 ? s.treasuries : DEFAULT_TREASURIES,
-          employeeAdvances: s.employeeAdvances ?? [],
           categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),
           items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0, warrantyMonths: it.warrantyMonths ?? 0 })),
           customers: (s.customers ?? []).map((c) => ({ ...EMPTY_EXTENDED, ...c })),
@@ -2895,7 +3159,14 @@ export const useDataStore = create<DataState>()(
           labOrders: s.labOrders ?? [],
           projects: s.projects ?? [],
           quotations: s.quotations ?? [],
-          custodies: s.custodies ?? [],
+          custodyFiles: s.custodyFiles ?? [],
+          custodyTxs: s.custodyTxs ?? [],
+          employeeAdvances: (s.employeeAdvances ?? []).map((a: EmployeeAdvance) => ({
+            ...a,
+            recoveredMinor: a.recoveredMinor ?? 0,
+            source: a.source ?? ('cash' as const),
+            custodyFileId: a.custodyFileId ?? null,
+          })),
           projectExtracts: s.projectExtracts ?? [],
           projectCosts: s.projectCosts ?? [],
           retentionReleases: s.retentionReleases ?? [],

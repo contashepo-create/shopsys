@@ -9,7 +9,7 @@ import {
   UserRound, Building2, UserCog, Landmark, FileSpreadsheet, Scale,
   PenLine, ListTree, PiggyBank, CalendarClock, Store, Percent,
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown,
-  Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote,
+  Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
   FileText,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -88,6 +88,7 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'customers', nameAr: 'العملاء', icon: UserRound, path: '/parties/customers' },
       { id: 'employees', nameAr: 'الموظفون', icon: UserCog, path: '/parties/employees' },
+      { id: 'custody', nameAr: 'ملفات عهد الموظفين', icon: Wallet2, path: '/parties/custody' },
       { id: 'installments', nameAr: 'الأقساط', icon: CreditCard, path: '/parties/installments', module: 'installments' },
     ],
   },
@@ -124,7 +125,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'contracting', nameAr: 'المقاولات', icon: HardHat, color: 'orange', module: 'contracting',
     children: [
       { id: 'projects', nameAr: 'المشروعات والمستخلصات', icon: HardHat, path: '/contracting/projects' },
-      { id: 'quotations', nameAr: 'عروض الأسعار والعُهد', icon: FileText, path: '/contracting/quotations' },
+      { id: 'quotations', nameAr: 'عروض الأسعار والمناقصات', icon: FileText, path: '/contracting/quotations' },
     ],
   },
   {

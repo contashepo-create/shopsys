@@ -198,53 +198,6 @@ export const QUOTATION_TRANSITIONS: Record<QuotationStatus, QuotationStatus[]> =
   lost: [],
 }
 
-/* ─── عُهد المشاريع (طلب المالك) ─── */
-
-/**
- * العهدة: مبلغ يُسلَّم لمشرف/مهندس الموقع من الخزينة (1107 سلف وعهد)
- * ثم تُسوَّى: المنصرف الفعلي تكلفة على المشروع (5110) والمرتجع يعود للخزينة.
- * قيد الصرف:  1107 ← الخزينة
- * قيد التسوية: 5110 (المنصرف) + الخزينة (المرتجع) ← 1107
- */
-export interface ProjectCustody {
-  id: number
-  custodyNumber: string // CUS-0001
-  projectId: number
-  holderName: string // المشرف/المهندس
-  amountMinor: Minor
-  treasury: string
-  date: string
-  status: 'open' | 'settled'
-  spentMinor: Minor // بعد التسوية
-  returnedMinor: Minor
-  grantEntryId: number
-  settleEntryId: number | null
-  notes: string
-}
-
-export function buildCustodyGrantEntry(amountMinor: Minor, treasury: string, label: string): JournalLine[] {
-  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('مبلغ العهدة يجب أن يكون موجباً')
-  const lines: JournalLine[] = [
-    { accountCode: '1107', debit: amountMinor, credit: 0, note: `عهدة ${label}` },
-    { accountCode: treasury, debit: 0, credit: amountMinor, note: 'صرف العهدة' },
-  ]
-  assertBalanced(lines)
-  return lines
-}
-
-export function buildCustodySettleEntry(
-  custodyMinor: Minor,
-  spentMinor: Minor,
-  treasury: string,
-  label: string,
-): JournalLine[] {
-  if (!Number.isInteger(spentMinor) || spentMinor < 0) throw new Error('المنصرف لا يكون سالباً')
-  if (spentMinor > custodyMinor) throw new Error('المنصرف أكبر من العهدة — سجّل الفرق تكلفة مباشرة على المشروع')
-  const returned = custodyMinor - spentMinor
-  const lines: JournalLine[] = []
-  if (spentMinor > 0) lines.push({ accountCode: '5110', debit: spentMinor, credit: 0, note: `منصرف عهدة ${label}` })
-  if (returned > 0) lines.push({ accountCode: treasury, debit: returned, credit: 0, note: 'مرتجع العهدة' })
-  lines.push({ accountCode: '1107', debit: 0, credit: custodyMinor, note: `تسوية عهدة ${label}` })
-  assertBalanced(lines)
-  return lines
-}
+/* ─── العُهد ─── */
+// نُقلت العهد البسيطة القديمة إلى نظام «ملفات العهد» المتكامل في core/custody.ts
+// (ملف لكل موظف، تعزيزات، صرف فواتير من العهدة، تسوية بعجز/فائض) — طلب المالك.

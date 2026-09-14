@@ -21,8 +21,10 @@ export interface PayrollLineInput {
   baseMinor: Minor // الراتب الأساسي
   allowancesMinor: Minor // بدلات (سكن، مواصلات…)
   overtimeMinor: Minor // إضافي
-  deductionsMinor: Minor // خصومات (جزاءات، غياب…)
-  advancesMinor: Minor // سلف مستقطعة
+  deductionsMinor: Minor // خصومات (جزاءات، غياب…) — يختار المالك كم يخصم هذا الشهر
+  advancesMinor: Minor // سلف مستقطعة هذا الشهر (المالك حر: كلها أو جزء على عدة رواتب)
+  /** مستحق زيادة مصاريف العهدة يُصرف مع الراتب (تصفية 2107) — لا يدخل مصروف الرواتب */
+  excessPaidMinor?: Minor
 }
 
 export interface PayrollLineComputed extends PayrollLineInput {
@@ -35,19 +37,21 @@ export interface PayrollTotals {
   grossMinor: Minor
   deductionsMinor: Minor // خصومات + سلف معاً
   netMinor: Minor
+  excessPaidMinor: Minor // مستحقات زيادة العهد المصروفة مع الرواتب
 }
 
 /** حساب سطر واحد — يرمي خطأ لو خرج الصافي سالباً (خصومات أكبر من الراتب) */
 export function computePayrollLine(input: PayrollLineInput): PayrollLineComputed {
-  for (const [k, v] of Object.entries(input)) {
-    if (k !== 'employeeId' && (!Number.isInteger(v) || v < 0)) {
+  const normalized = { ...input, excessPaidMinor: input.excessPaidMinor ?? 0 }
+  for (const [k, v] of Object.entries(normalized)) {
+    if (k !== 'employeeId' && (!Number.isInteger(v) || (v as number) < 0)) {
       throw new Error(`قيمة «${k}» يجب أن تكون رقماً صحيحاً موجباً`)
     }
   }
-  const grossMinor = input.baseMinor + input.allowancesMinor + input.overtimeMinor
-  const netMinor = grossMinor - input.deductionsMinor - input.advancesMinor
+  const grossMinor = normalized.baseMinor + normalized.allowancesMinor + normalized.overtimeMinor
+  const netMinor = grossMinor - normalized.deductionsMinor - normalized.advancesMinor
   if (netMinor < 0) throw new Error('الخصومات والسلف أكبر من إجمالي الراتب — الصافي لا يكون سالباً')
-  return { ...input, grossMinor, netMinor }
+  return { ...normalized, grossMinor, netMinor }
 }
 
 export function computePayrollTotals(lines: PayrollLineComputed[]): PayrollTotals {
@@ -56,6 +60,7 @@ export function computePayrollTotals(lines: PayrollLineComputed[]): PayrollTotal
     grossMinor: lines.reduce((a, l) => a + l.grossMinor, 0),
     deductionsMinor: lines.reduce((a, l) => a + l.deductionsMinor + l.advancesMinor, 0),
     netMinor: lines.reduce((a, l) => a + l.netMinor, 0),
+    excessPaidMinor: lines.reduce((a, l) => a + (l.excessPaidMinor ?? 0), 0),
   }
 }
 
@@ -87,18 +92,24 @@ export function validatePayrollRun(args: {
 export function buildPayrollEntry(
   netMinor: Minor,
   mode: PayrollPayMode,
-  treasury: TreasuryAccount,
+  payAccount: TreasuryAccount, // خزينة/بنك — أو 1108 لو الصرف من عهدة موظف (طلب المالك)
   monthLabel: string,
   advancesRecoveredMinor: Minor = 0,
+  excessPaidMinor: Minor = 0,
 ): JournalLine[] {
   if (netMinor <= 0) throw new Error('صافي المسير يجب أن يكون أكبر من صفر')
   if (advancesRecoveredMinor < 0) throw new Error('السلف المستردة لا تكون سالبة')
-  const creditAccount = mode === 'cash' ? treasury : '2104'
+  if (excessPaidMinor < 0) throw new Error('مستحقات العهد المصروفة لا تكون سالبة')
+  const creditAccount = mode === 'cash' ? payAccount : '2104'
   const lines: JournalLine[] = [
     // المصروف = الصافي المدفوع + السلف المستردة (كانت مصروفة مسبقاً من 1107 كأصل)
     { accountCode: '5102', debit: netMinor + advancesRecoveredMinor, credit: 0, note: `رواتب شهر ${monthLabel}` },
-    { accountCode: creditAccount, debit: 0, credit: netMinor, note: mode === 'cash' ? 'صرف نقدي' : 'استحقاق يُسدد لاحقاً' },
+    { accountCode: creditAccount, debit: 0, credit: netMinor + excessPaidMinor, note: mode === 'cash' ? 'صرف نقدي' : 'استحقاق يُسدد لاحقاً' },
   ]
+  if (excessPaidMinor > 0) {
+    // تصفية مستحق الموظف عن زيادة مصاريف عهدته (تجمّع على 2107 عند تسجيل المصروف)
+    lines.push({ accountCode: '2107', debit: excessPaidMinor, credit: 0, note: 'صرف مستحق زيادة مصاريف العهدة مع الراتب' })
+  }
   if (advancesRecoveredMinor > 0) {
     lines.push({ accountCode: '1107', debit: 0, credit: advancesRecoveredMinor, note: 'استرداد سلف الموظفين' })
   }

@@ -1,10 +1,10 @@
 /**
- * فحص عروض الأسعار/المناقصات والعُهد (الدفعة 5)
+ * فحص عروض الأسعار/المناقصات (الدفعة 5)
+ * ملاحظة: انتقلت اختبارات العُهد إلى verify_custody.mjs (نظام ملفات العهد المتكامل)
  * تشغيل: node --experimental-strip-types scripts/verify_quotations.mjs
  */
 import {
   quotationTotal, validateQuotation, QUOTATION_TRANSITIONS, QUOTATION_STATUS_LABELS,
-  buildCustodyGrantEntry, buildCustodySettleEntry,
 } from '../src/core/contracting.ts'
 
 let pass = 0, fail = 0
@@ -42,32 +42,6 @@ ok('فائز نهائي', QUOTATION_TRANSITIONS.won.length === 0)
 ok('خاسر نهائي', QUOTATION_TRANSITIONS.lost.length === 0)
 ok('تسميات عربية لكل حالة', ['draft', 'submitted', 'won', 'lost'].every((s) => QUOTATION_STATUS_LABELS[s]?.nameAr))
 
-console.log('🤝 قيد صرف العهدة')
-{
-  const lines = buildCustodyGrantEntry(50000, '1101', 'CUS-0001')
-  ok('قيد الصرف متوازن', balanced(lines))
-  ok('مدين 1107 عهد بكامل المبلغ', lines.some((l) => l.accountCode === '1107' && l.debit === 50000))
-  ok('دائن الخزينة المختارة', lines.some((l) => l.accountCode === '1101' && l.credit === 50000))
-  const bank = buildCustodyGrantEntry(70000, '1102', 'CUS-0002')
-  ok('يحترم اختيار البنك 1102', bank.some((l) => l.accountCode === '1102' && l.credit === 70000))
-}
-throws('عهدة بصفر تُرفض', () => buildCustodyGrantEntry(0, '1101', 'x'))
-
-console.log('🤝 قيد تسوية العهدة')
-{
-  const lines = buildCustodySettleEntry(50000, 30000, '1101', 'CUS-0001')
-  ok('قيد التسوية متوازن', balanced(lines))
-  ok('المنصرف 30000 على 5110 تكاليف', lines.some((l) => l.accountCode === '5110' && l.debit === 30000))
-  ok('المرتجع 20000 يعود للخزينة', lines.some((l) => l.accountCode === '1101' && l.debit === 20000))
-  ok('دائن 1107 بكامل العهدة', lines.some((l) => l.accountCode === '1107' && l.credit === 50000))
-}
-{
-  const full = buildCustodySettleEntry(50000, 50000, '1101', 'CUS-0003')
-  ok('منصرف بالكامل: لا سطر مرتجع للخزينة', !full.some((l) => l.accountCode === '1101' && l.debit > 0) && balanced(full))
-}
-throws('منصرف أكبر من العهدة يُرفض', () => buildCustodySettleEntry(50000, 60000, '1101', 'x'), 'تكلفة')
-throws('منصرف سالب يُرفض', () => buildCustodySettleEntry(50000, -1, '1101', 'x'))
-
 console.log(`\nPASS=${pass} FAIL=${fail}`)
 if (fail > 0) process.exit(1)
-console.log('🎉 نجح فحص عروض الأسعار والعُهد')
+console.log('🎉 نجح فحص عروض الأسعار')

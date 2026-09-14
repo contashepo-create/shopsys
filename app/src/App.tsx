@@ -47,6 +47,7 @@ import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
 import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from './ui/pages/LabPages.tsx'
 import { ProjectsPage } from './ui/pages/ContractingPages.tsx'
 import { QuotationsPage } from './ui/pages/QuotationsPage.tsx'
+import { CustodyPage } from './ui/pages/CustodyPage.tsx'
 import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
 import { CarsPage } from './ui/pages/CarsPage.tsx'
 import { AboutPage } from './ui/pages/AboutPage.tsx'
@@ -99,6 +100,7 @@ function Shell() {
         <Route path="/lab/referrers" element={<LabReferrersPage />} />
         <Route path="/contracting/projects" element={<ProjectsPage />} />
         <Route path="/contracting/quotations" element={<QuotationsPage />} />
+        <Route path="/parties/custody" element={<CustodyPage />} />
         <Route path="/clinic/patients" element={<ClinicPatientsPage />} />
         <Route path="/clinic/appointments" element={<ClinicAppointmentsPage />} />
         <Route path="/cars" element={<CarsPage />} />

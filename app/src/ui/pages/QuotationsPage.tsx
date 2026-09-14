@@ -4,21 +4,20 @@
  * العهدة تُصرف لمشرف الموقع (1107) وتُسوَّى: منصرف = تكلفة مشروع، ومرتجع للخزينة.
  */
 import { useMemo, useState } from 'react'
-import { Plus, FileText, Trophy, XCircle, Send, ArrowLeftCircle, Trash2, HandCoins, CheckCircle2 } from 'lucide-react'
+import { Plus, FileText, Trophy, XCircle, Send, ArrowLeftCircle, Trash2, CheckCircle2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { quotationTotal, QUOTATION_STATUS_LABELS, type Quotation, type QuotationLine } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
-import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 
 interface DraftLine { descriptionAr: string; qty: string; unitAr: string; unitPrice: string }
 
 const UNITS = ['مقطوعية', 'م2', 'م3', 'م.ط', 'طن', 'عدد', 'يوم عمل']
 
 export function QuotationsPage() {
-  const { quotations, projects, custodies, addQuotation, setQuotationStatus, convertQuotationToProject, grantCustody, settleCustody } = useDataStore()
+  const { quotations, projects, addQuotation, setQuotationStatus, convertQuotationToProject } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -27,7 +26,6 @@ export function QuotationsPage() {
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
 
-  const [tab, setTab] = useState<'quotes' | 'custodies'>('quotes')
 
   /* ─── عرض جديد ─── */
   const [open, setOpen] = useState(false)
@@ -82,54 +80,14 @@ export function QuotationsPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  /* ─── عهدة جديدة ─── */
-  const [custOpen, setCustOpen] = useState(false)
-  const [custProjectId, setCustProjectId] = useState(0)
-  const [custHolder, setCustHolder] = useState('')
-  const [custAmount, setCustAmount] = useState('')
-  const [custTreasury, setCustTreasury] = useState('1101')
-  const [custNotes, setCustNotes] = useState('')
-  const saveCustody = () => {
-    try {
-      const c = grantCustody({
-        projectId: custProjectId, holderName: custHolder,
-        amountMinor: toMinor(custAmount || '0', cur.decimals), treasury: custTreasury, notes: custNotes.trim(),
-      })
-      toast.show(`صُرفت العهدة ${c.custodyNumber} لـ${c.holderName} ✅ — سوِّها لاحقاً بالمنصرف الفعلي`)
-      setCustOpen(false)
-    } catch (e) { toast.show((e as Error).message, 'error') }
-  }
-
-  /* ─── تسوية عهدة ─── */
-  const [settleFor, setSettleFor] = useState<number | null>(null)
-  const [spentAmount, setSpentAmount] = useState('')
-  const settleTarget = settleFor != null ? custodies.find((c) => c.id === settleFor) : null
-  const doSettle = () => {
-    if (settleFor == null) return
-    try {
-      const c = settleCustody(settleFor, toMinor(spentAmount || '0', cur.decimals))
-      toast.show(`سُوّيت ${c.custodyNumber}: منصرف ${fmt(c.spentMinor)} تكلفة على المشروع + مرتجع ${fmt(c.returnedMinor)} للخزينة ✓`)
-      setSettleFor(null)
-    } catch (e) { toast.show((e as Error).message, 'error') }
-  }
-
-  const tabCls = (t: 'quotes' | 'custodies') =>
-    `px-4 py-2 rounded-xl text-[13px] font-bold transition-all ${tab === t ? 'bg-orange-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`
-
   return (
     <div className="space-y-4">
       <div className="anim-up flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <button onClick={() => setTab('quotes')} className={tabCls('quotes')}><FileText size={14} className="inline -mt-0.5 me-1" /> عروض الأسعار والمناقصات ({quotations.length})</button>
-          <button onClick={() => setTab('custodies')} className={tabCls('custodies')}><HandCoins size={14} className="inline -mt-0.5 me-1" /> العُهد ({custodies.length})</button>
-        </div>
-        {tab === 'quotes'
-          ? <Btn onClick={openNew}><Plus size={15} /> عرض / مناقصة</Btn>
-          : <Btn onClick={() => { setCustProjectId(projects.find((p) => p.status === 'active')?.id ?? 0); setCustHolder(''); setCustAmount(''); setCustTreasury('1101'); setCustNotes(''); setCustOpen(true) }} disabled={!projects.some((p) => p.status === 'active')}><Plus size={15} /> صرف عهدة</Btn>}
+        <h1 className="text-xl font-black flex items-center gap-2"><FileText className="w-6 h-6 text-orange-500" /> عروض الأسعار والمناقصات</h1>
+        <Btn onClick={openNew}><Plus size={15} /> عرض / مناقصة</Btn>
       </div>
 
-      {tab === 'quotes' && (
-        quotations.length === 0 ? (
+      {quotations.length === 0 ? (
           <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
             <EmptyState icon="📋" title="لا عروض أسعار بعد" sub="سجّل عرض سعر أو مناقصة ببنود الأعمال — الفائز يتحول لمشروع كامل بضغطة واحدة" />
           </div>
@@ -190,53 +148,6 @@ export function QuotationsPage() {
               </tbody>
             </table>
           </div>
-        )
-      )}
-
-      {tab === 'custodies' && (
-        custodies.length === 0 ? (
-          <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
-            <EmptyState icon="🤝" title="لا عُهد بعد" sub="اصرف عهدة لمشرف الموقع — تُقيَّد عليه، وعند التسوية يصير المنصرف تكلفة على المشروع ويرجع الباقي للخزينة" />
-          </div>
-        ) : (
-          <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                  <th className="px-4 py-3 font-bold">العهدة</th>
-                  <th className="px-4 py-3 font-bold">المشروع</th>
-                  <th className="px-4 py-3 font-bold">المستلم</th>
-                  <th className="px-4 py-3 font-bold">المبلغ</th>
-                  <th className="px-4 py-3 font-bold">الحالة</th>
-                  <th className="px-4 py-3 font-bold"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...custodies].reverse().map((c, i) => (
-                  <tr key={c.id} style={{ animationDelay: `${i * 25}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50">
-                    <td className="px-4 py-3">
-                      <div className="font-bold text-slate-800 dark:text-white">{c.custodyNumber}</div>
-                      <div className="text-[11px] text-slate-400">{c.date}{c.notes && ` · ${c.notes}`}</div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{projects.find((p) => p.id === c.projectId)?.nameAr ?? '—'}</td>
-                    <td className="px-4 py-3 font-bold text-slate-700 dark:text-slate-200">{c.holderName}</td>
-                    <td className="px-4 py-3 font-black">{fmt(c.amountMinor)}</td>
-                    <td className="px-4 py-3">
-                      {c.status === 'open'
-                        ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold">⏳ مفتوحة</span>
-                        : <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">✓ مُسوّاة — منصرف {fmt(c.spentMinor)} / مرتجع {fmt(c.returnedMinor)}</span>}
-                    </td>
-                    <td className="px-4 py-3 text-left">
-                      {c.status === 'open' && (
-                        <Btn variant="soft" onClick={() => { setSettleFor(c.id); setSpentAmount('') }}>تسوية</Btn>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
       )}
 
       {/* عرض جديد */}
@@ -307,56 +218,6 @@ export function QuotationsPage() {
         )}
       </Modal>
 
-      {/* صرف عهدة */}
-      <Modal open={custOpen} onClose={() => setCustOpen(false)} title="🤝 صرف عهدة لمشرف موقع">
-        <div className="space-y-4">
-          <Field label="المشروع *">
-            <select value={custProjectId} onChange={(e) => setCustProjectId(Number(e.target.value))} className={inputCls}>
-              {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-            </select>
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="اسم المستلم *"><input value={custHolder} onChange={(e) => setCustHolder(e.target.value)} className={inputCls} placeholder="م. أحمد — مشرف الموقع" autoFocus /></Field>
-            <Field label={`المبلغ (${cur.symbol}) *`}><input value={custAmount} onChange={(e) => setCustAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" /></Field>
-          </div>
-          <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={custTreasury} onChange={setCustTreasury} /></Field>
-          <Field label="ملاحظات"><input value={custNotes} onChange={(e) => setCustNotes(e.target.value)} className={inputCls} /></Field>
-          <div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setCustOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveCustody} disabled={!custProjectId || !custHolder.trim() || !custAmount.trim()}>💾 صرف العهدة</Btn>
-          </div>
-        </div>
-      </Modal>
-
-      {/* تسوية عهدة */}
-      <Modal open={settleFor != null} onClose={() => setSettleFor(null)} title={settleTarget ? `تسوية العهدة ${settleTarget.custodyNumber}` : ''}>
-        {settleTarget && (
-          <div className="space-y-4">
-            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 text-[13px]">
-              عهدة <b>{fmt(settleTarget.amountMinor)} {cur.symbol}</b> مع <b>{settleTarget.holderName}</b> —
-              اكتب المنصرف الفعلي: يُسجَّل تكلفة على المشروع، والباقي يرجع للخزينة تلقائياً.
-            </div>
-            <Field label={`المنصرف الفعلي (${cur.symbol})`}>
-              <input value={spentAmount} onChange={(e) => setSpentAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus />
-            </Field>
-            {spentAmount.trim() !== '' && (() => {
-              try {
-                const spent = toMinor(spentAmount, cur.decimals)
-                if (spent > settleTarget.amountMinor) return <div className="text-[12px] font-bold text-rose-500">⚠️ المنصرف أكبر من العهدة — سجّل الفرق تكلفة مباشرة على المشروع</div>
-                return (
-                  <div className="anim-pop text-[12px] font-bold text-emerald-600 bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3">
-                    ✓ تكلفة على المشروع: {fmt(spent)} — مرتجع للخزينة: {fmt(settleTarget.amountMinor - spent)}
-                  </div>
-                )
-              } catch { return null }
-            })()}
-            <div className="flex justify-end gap-2">
-              <Btn variant="ghost" onClick={() => setSettleFor(null)}>إلغاء</Btn>
-              <Btn onClick={doSettle} disabled={!spentAmount.trim()}>✅ تنفيذ التسوية</Btn>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   )
 }

@@ -12,9 +12,9 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
-import type { TreasuryAccount } from '../../core/accounting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 /** قسم البيانات الموسعة القابل للطي — نفس نمط العملاء والموردين */
@@ -70,10 +70,11 @@ interface DraftLine {
   overtime: string
   deductions: string
   advances: string
+  excessPaid: string // صرف مستحق زيادة مصاريف العهدة مع الراتب
 }
 
 export function EmployeesPage() {
-  const { employees, payrollRuns, journal, employeeAdvances, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeExcessDue } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -158,7 +159,7 @@ export function EmployeesPage() {
   const [runOpen, setRunOpen] = useState(false)
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7))
   const [payMode, setPayMode] = useState<PayrollPayMode>('cash')
-  const [treasury, setTreasury] = useState<TreasuryAccount>('1101')
+  const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [runNotes, setRunNotes] = useState('')
   const [draft, setDraft] = useState<DraftLine[]>([])
   const [viewingRun, setViewingRun] = useState<PayrollRun | null>(null)
@@ -171,10 +172,10 @@ export function EmployeesPage() {
       employeeId: e.id,
       base: toMajor(e.baseSalaryMinor),
       allowances: toMajor(e.allowancesMinor),
-      overtime: '', deductions: '', advances: '',
+      overtime: '', deductions: '', advances: '', excessPaid: '',
     })))
     setMonth(new Date().toISOString().slice(0, 7))
-    setPayMode('cash'); setTreasury('1101'); setRunNotes('')
+    setPayMode('cash'); setPaySource(DEFAULT_PAY_SOURCE); setRunNotes('')
     setRunOpen(true)
   }
   const patchDraft = (id: number, patch: Partial<DraftLine>) =>
@@ -183,12 +184,13 @@ export function EmployeesPage() {
 
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
   const draftTotals = useMemo(() => {
-    let gross = 0, ded = 0
+    let gross = 0, ded = 0, excess = 0
     for (const l of draft) {
       gross += toM(l.base) + toM(l.allowances) + toM(l.overtime)
       ded += toM(l.deductions) + toM(l.advances)
+      excess += toM(l.excessPaid)
     }
-    return { gross, ded, net: gross - ded }
+    return { gross, ded, excess, net: gross - ded }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, cur.decimals])
 
@@ -201,8 +203,14 @@ export function EmployeesPage() {
         overtimeMinor: toM(l.overtime),
         deductionsMinor: toM(l.deductions),
         advancesMinor: toM(l.advances),
+        excessPaidMinor: toM(l.excessPaid),
       }))
-      const run = postPayroll({ month, payMode, treasury, lines, notes: runNotes.trim() })
+      const run = postPayroll({
+        month, payMode,
+        treasury: paySource.kind === 'treasury' ? paySource.treasury : '1101',
+        custodyFileId: paySource.kind === 'custody' ? paySource.custodyFileId : null,
+        lines, notes: runNotes.trim(),
+      })
       toast.show(`رُحّل مسير ${run.runNumber} — صافي ${fmt(run.totals.netMinor)} ${cur.symbol} ✅`)
       setRunOpen(false)
     } catch (err) {
@@ -248,7 +256,9 @@ export function EmployeesPage() {
                     <th className="px-4 py-3 font-bold">السلفة</th>
                     <th className="px-4 py-3 font-bold">الموظف</th>
                     <th className="px-4 py-3 font-bold">المبلغ</th>
-                    <th className="px-4 py-3 font-bold">من خزينة</th>
+                    <th className="px-4 py-3 font-bold">المسترد</th>
+                    <th className="px-4 py-3 font-bold">المتبقي</th>
+                    <th className="px-4 py-3 font-bold">المصدر</th>
                     <th className="px-4 py-3 font-bold">القيد</th>
                   </tr>
                 </thead>
@@ -261,7 +271,17 @@ export function EmployeesPage() {
                       </td>
                       <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{employees.find((e) => e.id === a.employeeId)?.nameAr ?? '—'}</td>
                       <td className="px-4 py-3 font-black text-rose-500">{fmt(a.amountMinor)}</td>
-                      <td className="px-4 py-3 text-[12px] text-slate-500">{ACCOUNT_NAMES[a.treasury] ?? a.treasury}</td>
+                      <td className="px-4 py-3 font-bold text-emerald-600">{a.recoveredMinor ? fmt(a.recoveredMinor) : '—'}</td>
+                      <td className="px-4 py-3">
+                        {a.amountMinor - (a.recoveredMinor ?? 0) === 0
+                          ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">مُسدَّدة ✓</span>
+                          : <span className="font-black text-amber-600">{fmt(a.amountMinor - (a.recoveredMinor ?? 0))}</span>}
+                      </td>
+                      <td className="px-4 py-3 text-[12px] text-slate-500">
+                        {a.source === 'custody_shortage'
+                          ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-bold">عجز عهدة</span>
+                          : (ACCOUNT_NAMES[a.treasury] ?? a.treasury)}
+                      </td>
                       <td className="px-4 py-3"><span className="text-[11px] px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 font-bold">#{a.journalEntryId}</span></td>
                     </tr>
                   ))}
@@ -453,8 +473,8 @@ export function EmployeesPage() {
               </div>
             </Field>
             {payMode === 'cash' ? (
-              <Field label="الصرف من">
-                <TreasuryPicker value={treasury} onChange={setTreasury} compact />
+              <Field label="الصرف من" hint="خزينة/بنك — أو عهدة موظف مفتوحة">
+                <PaySourcePicker value={paySource} onChange={setPaySource} />
               </Field>
             ) : (
               <div className="text-[11px] text-amber-600 bg-amber-500/10 rounded-xl p-3 self-end">
@@ -472,7 +492,8 @@ export function EmployeesPage() {
                   <th className="px-2 py-2 font-bold">بدلات</th>
                   <th className="px-2 py-2 font-bold">إضافي</th>
                   <th className="px-2 py-2 font-bold">خصومات</th>
-                  <th className="px-2 py-2 font-bold">سلف</th>
+                  <th className="px-2 py-2 font-bold">خصم سلفة</th>
+                  <th className="px-2 py-2 font-bold">مستحق عهدة</th>
                   <th className="px-2 py-2 font-bold">الصافي</th>
                   <th className="px-1 py-2" />
                 </tr>
@@ -481,6 +502,12 @@ export function EmployeesPage() {
                 {draft.map((l) => {
                   const net = toM(l.base) + toM(l.allowances) + toM(l.overtime) - toM(l.deductions) - toM(l.advances)
                   const cell = 'w-20 px-1.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent text-center text-[12px] focus:border-brand-500 outline-none'
+                  // شفافية كاملة (طلب المالك): إجمالي سلف الموظف والمتبقي منها وسببها + مستحقه من زيادات العهد
+                  const advBal = getEmployeeAdvanceBalance(l.employeeId)
+                  const excessDue = getEmployeeExcessDue(l.employeeId)
+                  const advReasons = advBal.advances.filter((a) => a.amountMinor > a.recoveredMinor)
+                    .map((a) => `${a.advanceNumber}${a.source === 'custody_shortage' ? ' (عجز عهدة)' : ''}: متبقٍ ${fmt(a.amountMinor - a.recoveredMinor)}${a.notes ? ` — ${a.notes}` : ''}`)
+                    .join('\n')
                   return (
                     <tr key={l.employeeId} className="border-b border-slate-50 dark:border-slate-800/50">
                       <td className="px-3 py-1.5 font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">{empName(l.employeeId)}</td>
@@ -488,8 +515,28 @@ export function EmployeesPage() {
                       <td className="px-1 py-1.5 text-center"><input value={l.allowances} onChange={(e) => patchDraft(l.employeeId, { allowances: e.target.value })} className={cell} dir="ltr" /></td>
                       <td className="px-1 py-1.5 text-center"><input value={l.overtime} onChange={(e) => patchDraft(l.employeeId, { overtime: e.target.value })} className={cell} dir="ltr" placeholder="0" /></td>
                       <td className="px-1 py-1.5 text-center"><input value={l.deductions} onChange={(e) => patchDraft(l.employeeId, { deductions: e.target.value })} className={cell} dir="ltr" placeholder="0" /></td>
-                      <td className="px-1 py-1.5 text-center"><input value={l.advances} onChange={(e) => patchDraft(l.employeeId, { advances: e.target.value })} className={cell} dir="ltr" placeholder="0" /></td>
-                      <td className={`px-2 py-1.5 text-center font-black whitespace-nowrap ${net < 0 ? 'text-rose-500' : ''}`}>{fmt(net)}</td>
+                      <td className="px-1 py-1.5 text-center">
+                        <input value={l.advances} onChange={(e) => patchDraft(l.employeeId, { advances: e.target.value })} className={cell} dir="ltr" placeholder="0" title={advReasons || 'لا سلف على الموظف'} disabled={advBal.remainingMinor === 0} />
+                        {advBal.remainingMinor > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => patchDraft(l.employeeId, { advances: String(advBal.remainingMinor / 10 ** cur.decimals) })}
+                            title={`إجمالي السلف ${fmt(advBal.totalMinor)}\n${advReasons}`}
+                            className="block mx-auto mt-0.5 text-[9.5px] font-bold text-amber-600 hover:underline"
+                          >متبقٍ {fmt(advBal.remainingMinor)}</button>
+                        )}
+                      </td>
+                      <td className="px-1 py-1.5 text-center">
+                        <input value={l.excessPaid} onChange={(e) => patchDraft(l.employeeId, { excessPaid: e.target.value })} className={cell} dir="ltr" placeholder="0" disabled={excessDue === 0} title={excessDue > 0 ? `مستحق الموظف من زيادات مصاريف عهده: ${fmt(excessDue)}` : 'لا مستحقات عهد'} />
+                        {excessDue > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => patchDraft(l.employeeId, { excessPaid: String(excessDue / 10 ** cur.decimals) })}
+                            className="block mx-auto mt-0.5 text-[9.5px] font-bold text-emerald-600 hover:underline"
+                          >له {fmt(excessDue)}</button>
+                        )}
+                      </td>
+                      <td className={`px-2 py-1.5 text-center font-black whitespace-nowrap ${net < 0 ? 'text-rose-500' : ''}`}>{fmt(net)}{toM(l.excessPaid) > 0 && <span className="block text-[9px] text-emerald-600 font-bold">+{fmt(toM(l.excessPaid))} عهدة</span>}</td>
                       <td className="px-1 py-1.5">
                         <button onClick={() => dropDraft(l.employeeId)} title="استبعاد من هذا المسير" className="p-1 rounded text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={12} /></button>
                       </td>
