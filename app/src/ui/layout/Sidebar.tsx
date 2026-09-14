@@ -4,7 +4,7 @@
  */
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { ChevronDown, Store } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 
@@ -46,13 +46,11 @@ export function Sidebar() {
     <aside className="w-72 shrink-0 h-screen sticky top-0 flex flex-col border-l border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-card-dark/80 glass">
       {/* الشعار */}
       <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-500 to-fuchsia-500 flex items-center justify-center text-white shadow-lg shadow-brand-500/30">
-          <Store size={20} />
-        </div>
+        <img src="/app-icon.png" alt="قيود" className="w-10 h-10 rounded-xl shadow-lg shadow-brand-500/30 object-cover" />
         <div>
-          <div className="font-extrabold text-slate-800 dark:text-white leading-tight">ShopSys</div>
+          <div className="font-extrabold text-slate-800 dark:text-white leading-tight">قيود</div>
           <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate max-w-[150px]">
-            {setup.shopName || 'نظام إدارة المحلات'}
+            {setup.shopName || 'نظام المحاسبة والكاشير'}
           </div>
         </div>
       </div>
@@ -144,7 +142,7 @@ export function Sidebar() {
 
       {/* الإصدار */}
       <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-400 dark:text-slate-600 flex items-center justify-between">
-        <span>ShopSys v0.1.0</span>
+        <span>قيود v0.1.0</span>
         <span className="px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400 font-bold">المرحلة 0</span>
       </div>
     </aside>
