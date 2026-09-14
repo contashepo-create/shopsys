@@ -52,9 +52,12 @@ if (cmd === 'issue') {
   // زيادات فوق حد الباقة (تُباع من بوت المطوّر): --extra-users N --extra-branches N
   const extraUsers = Number(arg('extra-users', '0')) || 0
   const extraBranches = Number(arg('extra-branches', '0')) || 0
+  // قرار 28: ربط المفتاح بالنشاط الذي ظهر في بوت المطوّر: --activity pharmacy
+  const activityId = arg('activity')
   const payload = { v: 1, deviceId, customer, plan, features, issuedAt: today, expiresAt }
   if (extraUsers > 0) payload.extraUsers = extraUsers
   if (extraBranches > 0) payload.extraBranches = extraBranches
+  if (activityId) payload.activityId = activityId
   const priv = await crypto.subtle.importKey('pkcs8', b64uDecode(privB64u), 'Ed25519', false, ['sign'])
   const sig = new Uint8Array(await crypto.subtle.sign('Ed25519', priv, new TextEncoder().encode(canonicalPayload(payload))))
   console.log('── مفتاح التفعيل (أرسله للعميل) ──')
@@ -62,4 +65,4 @@ if (cmd === 'issue') {
   process.exit(0)
 }
 
-console.log('الاستخدام: genkeys | issue --device ... --customer ... --plan basic|pro|lifetime [--days N] [--features a,b] [--extra-users N] [--extra-branches N]')
+console.log('الاستخدام: genkeys | issue --device ... --customer ... --plan basic|pro|lifetime [--days N] [--features a,b] [--extra-users N] [--extra-branches N] [--activity pharmacy]')

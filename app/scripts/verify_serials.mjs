@@ -82,10 +82,10 @@ check('يمنع إلغاء آخر وحدة عمل', threw)
 check('إلغاء وحدة عمل مع بقاء أخرى مسموح', !toggleModuleList(['pos', 'logistics'], 'pos').includes('pos'))
 
 console.log('— حدود الباقات والزيادات من البوت —')
-check('التجريبي والأساسي: مستخدمان وفرع واحد', PLAN_LIMITS.trial.maxUsers === 2 && PLAN_LIMITS.basic.maxBranches === 1)
+check('التجريبي والأساسي: مستخدم واحد وفرع واحد (التعدد خدمة مدفوعة — قرار 28)', PLAN_LIMITS.trial.maxUsers === 1 && PLAN_LIMITS.basic.maxBranches === 1)
 check('الاحترافي وما فوق: نسخ متعددة على الشبكة', PLAN_LIMITS.pro.multiInstance && PLAN_LIMITS.lifetime.multiInstance && !PLAN_LIMITS.basic.multiInstance)
 const payloadBase = { v: 1, deviceId: 'SHOP-TEST', customer: 'X', plan: 'basic', features: [], issuedAt: '2026-09-14', expiresAt: null }
-check('بلا ترخيص = حدود التجريبي', effectiveLimits(null).maxUsers === 2)
+check('بلا ترخيص = حدود التجريبي', effectiveLimits(null).maxUsers === 1)
 const withExtras = { ...payloadBase, plan: 'pro', extraUsers: 3, extraBranches: 2 }
 const lim = effectiveLimits(withExtras)
 check('الزيادات من البوت تُضاف فوق حد الباقة', lim.maxUsers === 8 && lim.maxBranches === 4)

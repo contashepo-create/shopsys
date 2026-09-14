@@ -7,7 +7,8 @@
  * ثم PostgreSQL للفروع — دون أي تغيير في الواجهات أو النواة.
  */
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import { secureStorage } from './secureStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, type ExpenseInput, type CostLine } from '../core/costing.ts'
@@ -2502,6 +2503,8 @@ export const useDataStore = create<DataState>()(
     {
       name: 'shopsys-data',
       version: 6,
+      // القرار 28: قاعدة البيانات مشفرة AES-256-GCM بمفتاح مشتق لهذا الجهاز
+      storage: createJSONStorage(() => secureStorage),
       // ترحيل البيانات المحفوظة بالأشكال القديمة (أقسام هرمية، stockQty، مرتجعات وورديات وجرد)
       migrate: (persisted: unknown) => {
         const s = persisted as Partial<DataState>

@@ -1,7 +1,12 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { useAppStore } from './stores/app.store.ts'
 import { useDataStore } from './data/repo.ts'
+import { evaluateLicense, activityMatches, isRevoked } from './core/license.ts'
+import { lockReasonFor, isBackupDue } from './core/security.ts'
+import { fetchAbout, fetchRevocationList, DEFAULT_CLOUD_BASE_URL } from './core/cloud.ts'
+import { encryptForDevice } from './data/secureStorage.ts'
+import { LockScreen } from './ui/LockScreen.tsx'
 import { buildAccentCssVars } from './core/appearance.ts'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
@@ -37,6 +42,7 @@ import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from '
 import { ProjectsPage } from './ui/pages/ContractingPages.tsx'
 import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
 import { CarsPage } from './ui/pages/CarsPage.tsx'
+import { AboutPage } from './ui/pages/AboutPage.tsx'
 import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
 import { TransfersPage } from './ui/pages/TransfersPage.tsx'
 import { AppearancePage } from './ui/pages/AppearancePage.tsx'
@@ -102,6 +108,7 @@ function Shell() {
         <Route path="/settings/telegram" element={<TelegramPage />} />
         <Route path="/settings/appearance" element={<AppearancePage />} />
         <Route path="/settings/license" element={<LicensePage />} />
+        <Route path="/settings/about" element={<AboutPage />} />
         <Route path="*" element={<Dashboard />} />
       </Routes>
     </MainLayout>
@@ -109,8 +116,64 @@ function Shell() {
 }
 
 export default function App() {
-  const { theme, setup, touchLastSeen, appearance } = useAppStore()
+  const {
+    theme, setup, touchLastSeen, appearance,
+    activatedKey, activatedPayload, trialStartedAt, lastSeenAt, revokedKeys,
+    setCloudData, lastHourlyBackupAt, setLastHourlyBackupAt,
+  } = useAppStore()
   const seed = useDataStore((s) => s.seed)
+
+  // ─── بوابة الترخيص (القرار 28): تقييم الحالة + الحرق + مطابقة النشاط ───
+  const licenseState = useMemo(
+    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
+    [activatedPayload, trialStartedAt, lastSeenAt],
+  )
+  const lockReason = useMemo(
+    () => lockReasonFor(licenseState, {
+      revoked: activatedKey != null && isRevoked(activatedKey, revokedKeys),
+      activityMismatch: activatedPayload != null && setup.completed && !activityMatches(activatedPayload, setup.activityId),
+    }),
+    [licenseState, activatedKey, revokedKeys, activatedPayload, setup.completed, setup.activityId],
+  )
+
+  // ─── مزامنة السحابة (Cloudflare): صفحة «حول» + قائمة الحرق — عند الإقلاع وكل 6 ساعات ───
+  useEffect(() => {
+    let cancelled = false
+    const sync = async () => {
+      const [about, revoked] = await Promise.all([
+        fetchAbout(DEFAULT_CLOUD_BASE_URL),
+        fetchRevocationList(DEFAULT_CLOUD_BASE_URL),
+      ])
+      if (cancelled) return
+      // فشل الجلب (أوفلاين) لا يمس آخر بيانات محفوظة
+      if (about !== null || revoked !== null) {
+        setCloudData({ ...(about !== null ? { about } : {}), ...(revoked !== null ? { revoked } : {}) })
+      }
+    }
+    sync()
+    const t = setInterval(sync, 6 * 60 * 60 * 1000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [setCloudData])
+
+  // ─── النسخ الاحتياطي التلقائي كل ساعة (القرار 28): لقطة مشفرة على جهاز العميل ───
+  useEffect(() => {
+    if (!setup.completed) return
+    const takeSnapshot = async () => {
+      const now = new Date().toISOString()
+      if (!isBackupDue(useAppStore.getState().lastHourlyBackupAt, now)) return
+      try {
+        const payload = JSON.stringify({ at: now, store: useDataStore.getState() })
+        const encrypted = await encryptForDevice(payload)
+        // حلقة من 3 خانات: الأقدم يُستبدل تلقائياً
+        const slot = (Date.parse(now) / (60 * 60 * 1000)) % 3 | 0
+        localStorage.setItem(`shopsys-hourly-${slot}`, encrypted)
+        setLastHourlyBackupAt(now)
+      } catch { /* لا يعطل التطبيق أبداً */ }
+    }
+    takeSnapshot()
+    const t = setInterval(takeSnapshot, 5 * 60 * 1000) // فحص كل 5 دقائق، لقطة كل ساعة
+    return () => clearInterval(t)
+  }, [setup.completed, lastHourlyBackupAt, setLastHourlyBackupAt])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -135,6 +198,16 @@ export default function App() {
   useEffect(() => {
     if (setup.completed) seed(setup.features)
   }, [setup.completed, setup.features, seed])
+
+  // القفل (القرار 28): بعد اكتمال الإعداد، أي حالة غير سارية ⇒ الشاشة المقفلة فقط
+  if (setup.completed && lockReason) {
+    return (
+      <>
+        <LockScreen reason={lockReason} state={licenseState} />
+        <ToastHost />
+      </>
+    )
+  }
 
   return (
     <HashRouter>

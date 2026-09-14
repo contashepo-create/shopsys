@@ -24,7 +24,8 @@ export type LicenseFeature =
   | 'einvoice_sa'
   | 'multi_branch'
   | 'telegram_bot'
-  | 'cloud_sync' // مزامنة سحابية (Supabase) للفروع المتعددة — تمهيد ERP
+  | 'cloud_sync' // مزامنة سحابية (Supabase) للفروع المتعددة — خدمة مدفوعة
+  | 'multi_user_lan' // تعدد المستخدمين على الشبكة المحلية — خدمة مدفوعة
 
 export interface LicensePayload {
   v: 1 // إصدار الصيغة
@@ -38,6 +39,13 @@ export interface LicensePayload {
   extraUsers?: number
   /** فروع إضافية فوق حد الباقة — من البوت أيضاً (اختياري) */
   extraBranches?: number
+  /**
+   * قرار 28: المفتاح مربوط بالنشاط الذي سجّل به العميل (يظهر للمطوّر في
+   * البوت مع بيانات الجهاز). لو مسح قاعدة البيانات وأنشأ نشاطاً آخر،
+   * المفتاح القديم لا يعمل — والمطوّر يحرقه في قائمة الإبطال السحابية.
+   * غيابه (مفاتيح قديمة) = يعمل مع أي نشاط.
+   */
+  activityId?: string
 }
 
 /**
@@ -54,8 +62,9 @@ export interface PlanLimits {
 }
 
 export const PLAN_LIMITS: Record<LicensePlan, PlanLimits> = {
-  trial: { maxUsers: 2, maxBranches: 1, multiInstance: false },
-  basic: { maxUsers: 2, maxBranches: 1, multiInstance: false },
+  // تعدد المستخدمين خدمة مدفوعة (قرار 28): التجربة والأساسي مستخدم واحد
+  trial: { maxUsers: 1, maxBranches: 1, multiInstance: false },
+  basic: { maxUsers: 1, maxBranches: 1, multiInstance: false },
   pro: { maxUsers: 5, maxBranches: 2, multiInstance: true },
   lifetime: { maxUsers: 10, maxBranches: 3, multiInstance: true },
 }
@@ -107,7 +116,34 @@ export function canonicalPayload(p: LicensePayload): string {
   }
   if (p.extraUsers != null) base.extraUsers = p.extraUsers
   if (p.extraBranches != null) base.extraBranches = p.extraBranches
+  if (p.activityId != null) base.activityId = p.activityId
   return JSON.stringify(base)
+}
+
+/**
+ * قرار 28 — ربط المفتاح بالنشاط:
+ * المفتاح الموقّع على activityId يعمل فقط مع نفس النشاط الذي أُصدر له.
+ * مسح قاعدة البيانات وإنشاء نشاط آخر ⇒ المفتاح لا يعمل محلياً،
+ * والمطوّر يحرقه نهائياً في قائمة الإبطال (Cloudflare) فلا يعاد استخدامه.
+ */
+export function activityMatches(payload: LicensePayload, currentActivityId: string | null): boolean {
+  if (payload.activityId == null) return true // مفاتيح قديمة بلا ربط
+  return payload.activityId === currentActivityId
+}
+
+/**
+ * قائمة الإبطال (حرق المفاتيح): تُجلب من Cloudflare Worker وتُخزن محلياً.
+ * البصمة = checksum توقيع المفتاح — لا نحتاج المفتاح كاملاً في القائمة.
+ */
+export function keyFingerprint(key: string): string {
+  const sigPart = key.trim().split('.')[2] ?? key
+  let h = 5381
+  for (let i = 0; i < sigPart.length; i++) h = ((h << 5) + h + sigPart.charCodeAt(i)) >>> 0
+  return h.toString(16).padStart(8, '0')
+}
+
+export function isRevoked(key: string, revokedFingerprints: readonly string[]): boolean {
+  return revokedFingerprints.includes(keyFingerprint(key))
 }
 
 /** توليد معرّف جهاز ثابت المظهر: SHOP-XXXX-XXXX-XXXX */
@@ -218,4 +254,5 @@ export const FEATURE_LABELS: Record<LicenseFeature, string> = {
   multi_branch: 'فروع متعددة',
   telegram_bot: 'بوت التليجرام',
   cloud_sync: 'مزامنة سحابية للفروع (Supabase)',
+  multi_user_lan: 'تعدد المستخدمين على الشبكة المحلية',
 }

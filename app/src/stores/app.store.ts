@@ -11,6 +11,7 @@ import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.
 import { generateDeviceId, type LicensePayload } from '../core/license.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
+import type { AboutContent } from '../core/cloud.ts'
 
 export type ThemeMode = 'light' | 'dark'
 
@@ -61,6 +62,14 @@ interface AppState {
   setActivated: (key: string, payload: LicensePayload) => void
   clearActivation: () => void
   touchLastSeen: () => void
+  // ─── السحابة (القرار 28): آخر ما جُلب من Cloudflare — يعمل أوفلاين بآخر نسخة ───
+  cloudAbout: AboutContent | null
+  revokedKeys: string[] // بصمات المفاتيح المحروقة
+  cloudSyncedAt: string | null
+  setCloudData: (patch: { about?: AboutContent | null; revoked?: string[] }) => void
+  // ─── النسخ الاحتياطي التلقائي كل ساعة (القرار 28) ───
+  lastHourlyBackupAt: string | null
+  setLastHourlyBackupAt: (iso: string) => void
 }
 
 /** توليد معرف جهاز + مراسي زمنية عند أول تشغيل */
@@ -140,6 +149,17 @@ export const useAppStore = create<AppState>()(
           // لا نرجع المرساة للخلف أبداً — هي خط دفاع ضد إرجاع الساعة
           return now > s.lastSeenAt ? { lastSeenAt: now } : {}
         }),
+      cloudAbout: null,
+      revokedKeys: [],
+      cloudSyncedAt: null,
+      setCloudData: (patch) =>
+        set((s) => ({
+          cloudAbout: patch.about !== undefined ? patch.about : s.cloudAbout,
+          revokedKeys: patch.revoked !== undefined ? patch.revoked : s.revokedKeys,
+          cloudSyncedAt: new Date().toISOString(),
+        })),
+      lastHourlyBackupAt: null,
+      setLastHourlyBackupAt: (iso) => set({ lastHourlyBackupAt: iso }),
     }),
     {
       name: 'shopsys-app',

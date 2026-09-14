@@ -165,6 +165,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'telegram', nameAr: 'بوت التليجرام', icon: Bot, path: '/settings/telegram' },
       { id: 'appearance', nameAr: 'المظهر', icon: Palette, path: '/settings/appearance' },
       { id: 'license', nameAr: 'الترخيص', icon: KeyRound, path: '/settings/license' },
+      { id: 'about', nameAr: 'حول التطبيق', icon: BookOpenText, path: '/settings/about' },
     ],
   },
 ]
