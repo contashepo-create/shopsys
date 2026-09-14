@@ -5,7 +5,7 @@
  * - كل فاتورة تولّد قيداً محاسبياً متوازناً تلقائياً (القرار 9)
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode } from 'lucide-react'
+import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -13,6 +13,8 @@ import { formatMinor } from '../../core/money.ts'
 import { computeTotals, type CartLine } from '../../core/pos.ts'
 import { parseScaleBarcode, matchScaleItem } from '../../core/barcode.ts'
 import { currentOpenShift } from '../../core/shifts.ts'
+import { buildReceiptModel } from '../../core/receipt.ts'
+import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
@@ -20,7 +22,7 @@ interface HeldCart { id: number; label: string; lines: CartLine[]; discount: num
 export function PosPage() {
   const { items, customers, shifts, postSale } = useDataStore()
   const openShift = currentOpenShift(shifts)
-  const { setup } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -126,6 +128,24 @@ export function PosPage() {
     } catch { return null }
   }, [cart, invoiceDiscount, setup.vatPercent, setup.taxInclusive])
 
+  /** طباعة إيصال فاتورة (المرحلة 5) */
+  const printSale = (sale: { invoiceNumber: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null }) => {
+    const model = buildReceiptModel({
+      invoiceNumber: sale.invoiceNumber,
+      dateIso: sale.date,
+      lines: sale.lines,
+      totals: sale.totals,
+      payment: sale.payment,
+      customerName: sale.customerId ? customers.find((c) => c.id === sale.customerId)?.nameAr ?? null : null,
+      taxPercent: setup.vatPercent,
+      taxInclusive: setup.taxInclusive,
+      settings: receipt,
+    })
+    printHtml(renderReceiptHtml(model, cur, receipt.paperWidth))
+  }
+
+  const [lastSale, setLastSale] = useState<Parameters<typeof printSale>[0] | null>(null)
+
   const finishSale = () => {
     if (!cart.length) return
     try {
@@ -138,12 +158,14 @@ export function PosPage() {
         taxInclusive: setup.taxInclusive,
       })
       setLastInvoice(sale.invoiceNumber)
+      setLastSale(sale)
       setCart([])
       setInvoiceDiscount(0)
       setPayOpen(false)
       setPayment('cash')
       setCustomerId(null)
       toast.show(`تمت الفاتورة ${sale.invoiceNumber} — القيد المحاسبي تولّد تلقائياً ✓`)
+      if (autoPrintAfterSale) printSale(sale)
     } catch (e) {
       toast.show((e as Error).message, 'error')
     }
@@ -261,8 +283,17 @@ export function PosPage() {
               <span className="text-sm font-bold">السلة فارغة</span>
               <span className="text-xs mt-1">امسح باركوداً أو اضغط صنفاً من الشبكة</span>
               {lastInvoice && (
-                <span className="mt-4 text-[11px] px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold flex items-center gap-1">
+                <span className="mt-4 text-[11px] px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold flex items-center gap-1.5">
                   <CheckCircle2 size={12} /> آخر فاتورة: {lastInvoice}
+                  {lastSale && (
+                    <button
+                      onClick={() => { printSale(lastSale); toast.show('أُرسل الإيصال للطباعة 🖨️') }}
+                      title="طباعة الإيصال"
+                      className="mr-1 p-1 rounded-md hover:bg-emerald-500/15 transition-colors"
+                    >
+                      <Printer size={13} />
+                    </button>
+                  )}
                 </span>
               )}
             </div>

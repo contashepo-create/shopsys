@@ -1,19 +1,38 @@
-/** فواتير المبيعات — كل فاتورة مربوطة بقيدها (اضغط لعرض القيد) */
+/** فواتير المبيعات — كل فاتورة مربوطة بقيدها (اضغط لعرض القيد) + طباعة الإيصال */
 import { useState } from 'react'
-import { Eye, BookOpenText } from 'lucide-react'
+import { Eye, BookOpenText, Printer } from 'lucide-react'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { Modal, EmptyState } from '../components/ui.tsx'
+import { buildReceiptModel } from '../../core/receipt.ts'
+import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
+import { Modal, EmptyState, useToast } from '../components/ui.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function SalesInvoicesPage() {
   const { sales, customers, journal } = useDataStore()
-  const { setup } = useAppStore()
+  const { setup, receipt } = useAppStore()
+  const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [viewing, setViewing] = useState<SaleInvoice | null>(null)
+
+  const printInvoice = (s: SaleInvoice) => {
+    const model = buildReceiptModel({
+      invoiceNumber: s.invoiceNumber,
+      dateIso: s.date,
+      lines: s.lines,
+      totals: s.totals,
+      payment: s.payment,
+      customerName: s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : null,
+      taxPercent: setup.vatPercent,
+      taxInclusive: setup.taxInclusive,
+      settings: receipt,
+    })
+    printHtml(renderReceiptHtml(model, cur, receipt.paperWidth))
+    toast.show(`أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️`)
+  }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
 
@@ -62,7 +81,10 @@ export function SalesInvoicesPage() {
                     <BookOpenText size={11} /> قيد #{s.journalEntryId}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-left">
+                <td className="px-4 py-3 text-left whitespace-nowrap">
+                  <button onClick={() => printInvoice(s)} title="طباعة الإيصال" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all duration-200 hover:scale-110">
+                    <Printer size={15} />
+                  </button>
                   <button onClick={() => setViewing(s)} className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all duration-200 hover:scale-110">
                     <Eye size={15} />
                   </button>

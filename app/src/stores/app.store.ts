@@ -7,6 +7,7 @@ import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
 import type { ActivityTemplate, ItemFeature, BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
+import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 
 export type ThemeMode = 'light' | 'dark'
 
@@ -38,6 +39,10 @@ interface AppState {
   addFiscalYear: (fy: Omit<FiscalYear, 'id' | 'status'>) => void
   setAccountingMode: (m: 'simple' | 'full') => void
   resetSetup: () => void
+  receipt: ReceiptSettings
+  autoPrintAfterSale: boolean
+  updateReceipt: (patch: Partial<ReceiptSettings>) => void
+  setAutoPrint: (v: boolean) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -59,8 +64,9 @@ export const useAppStore = create<AppState>()(
       },
       fiscalYears: [],
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear }) =>
-        set({
+        set((s) => ({
           fiscalYears: [{ ...fiscalYear, id: 1, status: 'open' }],
+          receipt: { ...s.receipt, shopName }, // اسم المحل يظهر على الإيصال تلقائياً
           setup: {
             completed: true,
             countryCode: country.code,
@@ -73,7 +79,7 @@ export const useAppStore = create<AppState>()(
             vatPercent: country.vatPercent,
             accountingMode: 'simple',
           },
-        }),
+        })),
       addFiscalYear: (fy) =>
         set((s) => ({
           fiscalYears: [...s.fiscalYears, { ...fy, id: s.fiscalYears.reduce((m, y) => Math.max(m, y.id), 0) + 1, status: 'open' }],
@@ -83,6 +89,10 @@ export const useAppStore = create<AppState>()(
         set((s) => ({
           setup: { ...s.setup, completed: false, countryCode: null, activityId: null },
         })),
+      receipt: DEFAULT_RECEIPT_SETTINGS,
+      autoPrintAfterSale: false,
+      updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
+      setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
     }),
     {
       name: 'shopsys-app',
@@ -97,6 +107,10 @@ export const useAppStore = create<AppState>()(
             endDate: `${y}-12-31`,
             status: 'open',
           }]
+        }
+        // ترحيل: إعدادات إيصال لحسابات قديمة (قبل ميزة الطباعة)
+        if (state && !state.receipt) {
+          state.receipt = { ...DEFAULT_RECEIPT_SETTINGS, shopName: state.setup.shopName }
         }
       },
     },
