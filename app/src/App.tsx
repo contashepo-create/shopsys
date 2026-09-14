@@ -25,6 +25,7 @@ import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
 import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
 import { InstallmentsPage } from './ui/pages/InstallmentsPage.tsx'
+import { ReportsPage } from './ui/pages/ReportsPage.tsx'
 import { ComingSoon } from './ui/pages/ComingSoon.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
@@ -71,7 +72,7 @@ function Shell() {
         <Route path="/accounting/trial-balance" element={<TrialBalancePage />} />
         <Route path="/accounting/vouchers" element={<VouchersPage />} />
         <Route path="/accounting/treasury" element={<TreasuryPage />} />
-        <Route path="/reports" element={<ComingSoon title="مركز التقارير" phase="المرحلة 5" />} />
+        <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings/printing" element={<PrintSettingsPage />} />
         <Route path="/settings/backup" element={<ComingSoon title="النسخ الاحتياطي" phase="المرحلة 5" />} />
         <Route path="/settings/telegram" element={<ComingSoon title="بوت التليجرام" phase="المرحلة 5" />} />
