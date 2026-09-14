@@ -23,6 +23,7 @@ import { VouchersPage } from './ui/pages/VouchersPage.tsx'
 import { TreasuryPage } from './ui/pages/TreasuryPage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
 import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
+import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
 import { ComingSoon } from './ui/pages/ComingSoon.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
@@ -57,7 +58,7 @@ function Shell() {
         <Route path="/inventory/counting" element={<StocktakePage />} />
         <Route path="/purchases/invoices" element={<PurchasesPage />} />
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
-        <Route path="/parties/employees" element={<ComingSoon title="الموظفون" phase="المرحلة 5" />} />
+        <Route path="/parties/employees" element={<EmployeesPage />} />
         <Route path="/parties/installments" element={<ComingSoon title="الأقساط" phase="المرحلة 5" />} />
         <Route path="/maintenance/tickets" element={<ComingSoon title="أوامر الصيانة" phase="المرحلة 6" />} />
         <Route path="/rental/fleet" element={<ComingSoon title="سجل المعدات" phase="المرحلة 6" />} />

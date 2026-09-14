@@ -18,6 +18,7 @@ import { computeStocktake, buildAdjustmentEntry, type CountInput, type Stocktake
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
+import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -57,6 +58,33 @@ export interface Supplier extends PartyExtended {
   id: number
   nameAr: string
   phone: string
+  notes: string
+}
+
+/** موظف — نفس البيانات الموسعة الاختيارية للأطراف + بيانات التوظيف */
+export interface Employee extends PartyExtended {
+  id: number
+  nameAr: string
+  phone: string
+  jobTitle: string // المسمى الوظيفي
+  hireDate: string // تاريخ التعيين YYYY-MM-DD
+  baseSalaryMinor: number // الراتب الأساسي الشهري
+  allowancesMinor: number // بدلات شهرية ثابتة
+  active: boolean // موظف على رأس العمل؟
+  notes: string
+}
+
+/** مسير رواتب مرحّل لشهر — مربوط بقيده المحاسبي */
+export interface PayrollRun {
+  id: number
+  runNumber: string // SAL-0001
+  month: string // YYYY-MM
+  date: string // تاريخ الترحيل ISO
+  payMode: PayrollPayMode
+  treasury: TreasuryAccount // عند الصرف النقدي
+  lines: PayrollLineComputed[]
+  totals: PayrollTotals
+  journalEntryId: number
   notes: string
 }
 
@@ -163,6 +191,8 @@ interface DataState {
   warehouses: Warehouse[]
   customers: Customer[]
   suppliers: Supplier[]
+  employees: Employee[]
+  payrollRuns: PayrollRun[]
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
@@ -258,6 +288,21 @@ interface DataState {
   addSupplier: (s: Omit<Supplier, 'id'>) => void
   updateSupplier: (id: number, patch: Partial<Supplier>) => void
   removeSupplier: (id: number) => void
+  addEmployee: (e: Omit<Employee, 'id'>) => void
+  updateEmployee: (id: number, patch: Partial<Employee>) => void
+  removeEmployee: (id: number) => void
+  /**
+   * ترحيل مسير رواتب شهر كامل:
+   * 1) يتحقق (شهر صالح، لا تكرار، صافٍ موجب)  2) يحسب كل سطر بالنواة الخالصة
+   * 3) يولّد قيداً متوازناً بنيوياً (5102 → خزينة أو 2104 حسب طريقة الصرف)
+   */
+  postPayroll: (args: {
+    month: string
+    payMode: PayrollPayMode
+    treasury: TreasuryAccount
+    lines: PayrollLineInput[]
+    notes: string
+  }) => PayrollRun
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
@@ -271,6 +316,8 @@ export const useDataStore = create<DataState>()(
       warehouses: [],
       customers: [],
       suppliers: [],
+      employees: [],
+      payrollRuns: [],
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
@@ -741,10 +788,72 @@ export const useDataStore = create<DataState>()(
       updateSupplier: (id, patch) =>
         set((s) => ({ suppliers: s.suppliers.map((x) => (x.id === id ? { ...x, ...patch } : x)) })),
       removeSupplier: (id) => set((s) => ({ suppliers: s.suppliers.filter((x) => x.id !== id) })),
+
+      addEmployee: (e) => set((s) => ({ employees: [...s.employees, { ...e, id: nextId(s.employees) }] })),
+      updateEmployee: (id, patch) =>
+        set((s) => ({ employees: s.employees.map((x) => (x.id === id ? { ...x, ...patch } : x)) })),
+      removeEmployee: (id) => {
+        const used = get().payrollRuns.some((r) => r.lines.some((l) => l.employeeId === id))
+        if (used) throw new Error('لا يمكن حذف موظف له مسيرات رواتب مرحّلة — أوقف حالته «على رأس العمل» بدلاً من الحذف')
+        set((s) => ({ employees: s.employees.filter((x) => x.id !== id) }))
+      },
+
+      postPayroll: (args) => {
+        const state = get()
+        // 1) حساب كل سطر بالنواة الخالصة (يرمي لو صافي سطر سالب)
+        const computed: PayrollLineComputed[] = args.lines.map(computePayrollLine)
+        // 2) تحقق شامل قبل أي كتابة
+        const errors = validatePayrollRun({
+          month: args.month,
+          lines: computed,
+          existingMonths: state.payrollRuns.map((r) => r.month),
+        })
+        if (errors.length) throw new Error(errors.join(' — '))
+
+        const totals: PayrollTotals = computePayrollTotals(computed)
+        const label = monthLabelAr(args.month)
+        // 3) القيد المتوازن بنيوياً
+        const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, args.treasury, label)
+
+        const runId = nextId(state.payrollRuns)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const runNumber = `SAL-${String(runId).padStart(4, '0')}`
+
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `مسير رواتب ${runNumber} — ${label} (${totals.employeeCount} موظف)${args.notes ? ` — ${args.notes}` : ''}`,
+          sourceType: 'payroll',
+          sourceId: runId,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+
+        const run: PayrollRun = {
+          id: runId,
+          runNumber,
+          month: args.month,
+          date: now,
+          payMode: args.payMode,
+          treasury: args.treasury,
+          lines: computed,
+          totals,
+          journalEntryId: entryId,
+          notes: args.notes,
+        }
+
+        set({ payrollRuns: [...state.payrollRuns, run], journal: [...state.journal, entry] })
+        return run
+      },
     }),
     {
       name: 'shopsys-data',
-      version: 5,
+      version: 6,
       // ترحيل البيانات المحفوظة بالأشكال القديمة (أقسام هرمية، stockQty، مرتجعات وورديات وجرد)
       migrate: (persisted: unknown) => {
         const s = persisted as Partial<DataState>
@@ -754,6 +863,8 @@ export const useDataStore = create<DataState>()(
           items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0 })),
           customers: (s.customers ?? []).map((c) => ({ ...EMPTY_EXTENDED, ...c })),
           suppliers: (s.suppliers ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
+          employees: (s.employees ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
+          payrollRuns: s.payrollRuns ?? [],
           purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
           purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],
