@@ -125,6 +125,27 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
+    id: 'restaurant', nameAr: 'مطعم / كافيه', icon: '🍽️',
+    description: 'بيع سريع بالكاشير، خامات بصلاحية ووحدات، مشتريات يومية',
+    features: ['expiry_batches', 'multi_unit', 'weight_scale'],
+    modules: ['pos', 'inventory', 'purchases'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
+  },
+  {
+    id: 'jewelry', nameAr: 'ذهب ومجوهرات', icon: '💍',
+    description: 'بيع بالوزن (جرام)، أسعار متغيرة يومياً، فواتير موثقة',
+    features: ['weight_scale', 'price_lists', 'variants'],
+    modules: ['pos', 'inventory', 'purchases'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
+  },
+  {
+    id: 'laundry', nameAr: 'مغسلة ملابس', icon: '🧺',
+    description: 'استلام قطع بتذاكر ك أوامر الصيانة: استلام ← تجهيز ← تسليم وتحصيل',
+    features: [],
+    modules: ['maintenance'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
+  },
+  {
     id: 'general', nameAr: 'نشاط عام / آخر', icon: '🏪',
     description: 'قالب مرن — فعّل ما تحتاجه لاحقاً',
     features: ['multi_unit'],
