@@ -9,7 +9,7 @@ import {
   UserRound, Building2, UserCog, Landmark, FileSpreadsheet, Scale,
   PenLine, ListTree, PiggyBank, CalendarClock, Store, Percent,
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown,
-  Microscope, FlaskConical, HeartPulse, Stethoscope,
+  Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule } from '../core/activities.ts'
@@ -117,6 +117,25 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'tests', nameAr: 'كتالوج الفحوصات', icon: Microscope, path: '/lab/tests' },
       { id: 'patients', nameAr: 'المرضى', icon: HeartPulse, path: '/lab/patients' },
       { id: 'referrers', nameAr: 'الأطباء المحيلون', icon: Stethoscope, path: '/lab/referrers' },
+    ],
+  },
+  {
+    id: 'contracting', nameAr: 'المقاولات', icon: HardHat, color: 'orange', module: 'contracting',
+    children: [
+      { id: 'projects', nameAr: 'المشروعات والمستخلصات', icon: HardHat, path: '/contracting/projects' },
+    ],
+  },
+  {
+    id: 'clinic', nameAr: 'العيادة', icon: Stethoscope, color: 'cyan', module: 'clinic',
+    children: [
+      { id: 'patients', nameAr: 'ملفات المرضى', icon: HeartPulse, path: '/clinic/patients' },
+      { id: 'appointments', nameAr: 'المواعيد', icon: CalendarClock, path: '/clinic/appointments' },
+    ],
+  },
+  {
+    id: 'cars', nameAr: 'معرض السيارات', icon: Car, color: 'violet', module: 'cars',
+    children: [
+      { id: 'showroom', nameAr: 'السيارات', icon: Car, path: '/cars' },
     ],
   },
   {

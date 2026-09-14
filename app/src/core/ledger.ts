@@ -35,6 +35,8 @@ export type SourceType =
   | 'receipt_voucher' | 'payment_voucher' | 'adjustment'
   | 'payroll' | 'rental_contract' | 'logistics_trip' | 'maintenance_ticket'
   | 'lab_order' | 'lab_commission' | 'lab_commission_payout'
+  | 'clinic_visit' | 'project_extract' | 'project_cost' | 'retention_release'
+  | 'car_purchase' | 'car_sale'
   | 'opening' | 'manual' | 'reversal'
 
 export interface JournalEntry {
@@ -97,6 +99,7 @@ export const STANDARD_COA: Account[] = [
   { code: '1102', nameAr: 'البنوك', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'bank' },
   { code: '1103', nameAr: 'المخزون', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'inventory' },
   { code: '1104', nameAr: 'العملاء (المدينون)', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'customers' },
+  { code: '1105', nameAr: 'محتجزات ضمان أعمال', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'retention_receivable' },
   { code: '12', nameAr: 'الأصول الثابتة', rootType: 'assets', parentCode: '1', isPostable: false },
   { code: '1201', nameAr: 'أصول ومعدات', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'fixed_assets' },
   { code: '1202', nameAr: 'مجمع الإهلاك', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'acc_depreciation' },
@@ -116,6 +119,8 @@ export const STANDARD_COA: Account[] = [
   { code: '4104', nameAr: 'إيرادات إيجار معدات', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'rental_revenue' },
   { code: '4105', nameAr: 'إيرادات نقلات', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'logistics_revenue' },
   { code: '4106', nameAr: 'إيرادات تحاليل طبية', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'lab_revenue' },
+  { code: '4107', nameAr: 'إيرادات مقاولات', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'contracting_revenue' },
+  { code: '4108', nameAr: 'إيرادات كشف وعلاج', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'clinic_revenue' },
   { code: '5', nameAr: 'المصروفات', rootType: 'expenses', parentCode: null, isPostable: false },
   { code: '5101', nameAr: 'تكلفة البضاعة المباعة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'cogs' },
   { code: '5102', nameAr: 'رواتب وأجور', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'salaries' },
@@ -126,4 +131,5 @@ export const STANDARD_COA: Account[] = [
   { code: '5107', nameAr: 'إهلاك', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'depreciation' },
   { code: '5108', nameAr: 'مصروفات عمومية', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'general_expense' },
   { code: '5109', nameAr: 'عمولات أطباء محيلين', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'referral_commission' },
+  { code: '5110', nameAr: 'تكاليف مشروعات مقاولات', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'project_costs' },
 ]

@@ -29,6 +29,9 @@ import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthly
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, type RateType, type OperatorShift } from '../core/rentalMeter.ts'
 import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
+import { validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, type Project, type CostKind, type ExtractTotals, type ProjectProfit } from '../core/contracting.ts'
+import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, type VisitKind, type VisitTotals } from '../core/clinic.ts'
+import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -228,6 +231,127 @@ export interface LabOrder {
   notes: string
 }
 
+/* ─── المقاولات (القرار 27) ─── */
+
+/** مستخلص أعمال PRX-#### مربوط بقيده */
+export interface ProjectExtract {
+  id: number
+  extractNumber: string
+  projectId: number
+  date: string // ISO
+  description: string
+  payment: 'cash' | 'credit'
+  totals: ExtractTotals
+  journalEntryId: number
+}
+
+/** تكلفة مسجلة على مشروع ببند */
+export interface ProjectCost {
+  id: number
+  projectId: number
+  date: string
+  kind: CostKind
+  description: string
+  amountMinor: number
+  payment: 'cash' | 'credit'
+  journalEntryId: number
+}
+
+/** إفراج عن محتجز ضمان */
+export interface RetentionRelease {
+  id: number
+  projectId: number
+  date: string
+  amountMinor: number
+  journalEntryId: number
+}
+
+/* ─── العيادة (القرار 27) ─── */
+
+/** ملف مريض العيادة — بيانات + تاريخ طبي */
+export interface ClinicPatient {
+  id: number
+  nameAr: string
+  phone: string
+  gender: Gender
+  birthDate: string // '' = غير معروف
+  medicalHistory: string // أمراض مزمنة/حساسية/عمليات
+  notes: string
+}
+
+/** زيارة بملاحظات الكشف وقيمتها — مربوطة بقيدها */
+export interface ClinicVisit {
+  id: number
+  visitNumber: string // VIS-####
+  patientId: number
+  date: string // ISO
+  kind: VisitKind
+  complaint: string // الشكوى
+  diagnosis: string // التشخيص
+  treatment: string // العلاج / الإجراء المنفذ
+  totals: VisitTotals
+  planId: number | null // إن كانت جلسة ضمن خطة علاج
+  journalEntryId: number
+}
+
+/** خطة علاج متعددة الجلسات (أسنان/جلدية/علاج طبيعي) */
+export interface TreatmentPlan {
+  id: number
+  patientId: number
+  title: string // «تقويم»، «زراعة ضرس»…
+  totalSessions: number
+  totalFeeMinor: number
+  sessionFeesMinor: number[] // قسمة بلا فقد قرش
+  doneSessions: number
+  createdAt: string
+}
+
+/** تحصيل متأخرات مريض */
+export interface ClinicCollection {
+  id: number
+  patientId: number
+  date: string
+  amountMinor: number
+  journalEntryId: number
+}
+
+/** موعد قادم */
+export interface ClinicAppointment {
+  id: number
+  patientId: number
+  date: string // YYYY-MM-DD
+  time: string // HH:MM
+  purpose: string
+  done: boolean
+}
+
+/* ─── معرض السيارات (القرار 27) ─── */
+
+/** سيارة فريدة بتكلفتها الكاملة وربحيتها */
+export interface Car {
+  id: number
+  make: string
+  model: string
+  year: number
+  plateOrVin: string
+  purpose: CarPurpose
+  status: CarStatus
+  odometerKm: number
+  purchaseCostMinor: number
+  prepCostMinor: number // إجمالي التجهيزات المرسملة
+  purchaseEntryId: number
+  prepEntryIds: number[]
+  // بيانات البيع (إن بيعت)
+  salePriceMinor: number | null
+  saleProfitMinor: number | null
+  saleEntryId: number | null
+  soldAt: string | null
+  buyerName: string
+  /** ربط بسجل معدات الإيجار إن حُوّلت للتأجير */
+  rentalEquipmentId: number | null
+  notes: string
+}
+
 /** أصل ثابت — اقتناء بقيد، وإهلاك شهري بالقسط الثابت (مواصفة Easy Store) */
 export interface FixedAsset {
   id: number
@@ -406,6 +530,16 @@ interface DataState {
   labReferrers: Referrer[] // الأطباء المُحيلون
   labPatients: LabPatient[]
   labOrders: LabOrder[]
+  projects: Project[] // مشروعات المقاولات (القرار 27)
+  projectExtracts: ProjectExtract[]
+  projectCosts: ProjectCost[]
+  retentionReleases: RetentionRelease[]
+  clinicPatients: ClinicPatient[] // العيادة (القرار 27)
+  clinicVisits: ClinicVisit[]
+  treatmentPlans: TreatmentPlan[]
+  clinicCollections: ClinicCollection[]
+  clinicAppointments: ClinicAppointment[]
+  cars: Car[] // معرض السيارات (القرار 27)
   tickets: MaintenanceTicket[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
@@ -602,6 +736,39 @@ interface DataState {
   advanceLabTest: (orderId: number, testId: number, to: TestStatus, resultValue?: string) => LabOrder
   /** صرف كل عمولات مُحيل غير المدفوعة بقيد واحد (2105 ← 1101) */
   payReferrerCommissions: (referrerId: number) => { total: number; orderCount: number }
+  /* ─── المقاولات (القرار 27) ─── */
+  addProject: (p: Omit<Project, 'id' | 'code' | 'status'>) => Project
+  /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
+  addProjectExtract: (args: { projectId: number; grossMinor: number; vatPercent: number; payment: 'cash' | 'credit'; description: string }) => ProjectExtract
+  /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
+  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string }) => ProjectCost
+  /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
+  releaseRetention: (projectId: number) => { amount: number }
+  /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
+  getProjectProfit: (projectId: number) => ProjectProfit
+  /* ─── العيادة (القرار 27) ─── */
+  addClinicPatient: (p: Omit<ClinicPatient, 'id'>) => ClinicPatient
+  /** زيارة بملاحظات الكشف وقيمتها — سداد جزئي مدعوم، والمتبقي دين على المريض */
+  addClinicVisit: (args: {
+    patientId: number; kind: VisitKind; complaint: string; diagnosis: string; treatment: string
+    feeMinor: number; paidMinor: number; vatPercent: number; planId: number | null
+  }) => ClinicVisit
+  addTreatmentPlan: (args: { patientId: number; title: string; totalSessions: number; totalFeeMinor: number }) => TreatmentPlan
+  /** تحصيل متأخرات مريض بقيد 1101 ← 1104 */
+  collectFromPatient: (patientId: number, amountMinor: number) => ClinicCollection
+  /** رصيد المريض الحالي (المتبقي عليه) */
+  getPatientBalance: (patientId: number) => number
+  addAppointment: (a: Omit<ClinicAppointment, 'id' | 'done'>) => ClinicAppointment
+  markAppointmentDone: (id: number) => void
+  /* ─── معرض السيارات (القرار 27) ─── */
+  /** شراء سيارة كبضاعة بقيد 1103 ← 1101|2101 */
+  addCar: (args: CarInput & { payment: 'cash' | 'credit'; notes: string }) => Car
+  /** تجهيز يُرسمل على تكلفة السيارة (سمكرة/دهان/قطع) */
+  addCarPrep: (carId: number, amountMinor: number, payment: 'cash' | 'credit', description: string) => void
+  /** بيع سيارة: إيراد + إخراج التكلفة الكاملة من المخزون في قيد واحد */
+  sellCar: (args: { carId: number; priceMinor: number; vatPercent: number; payment: 'cash' | 'credit'; buyerName: string }) => Car
+  /** تحويل سيارة للتأجير: تُنشأ كمعدة في وحدة الإيجار وتُربط بها */
+  moveCarToRental: (carId: number, dailyRateMinor: number, monthlyRateMinor: number) => void
   /** فتح تذكرة صيانة — لا قيد عند الاستلام (لا التزام مالي بعد) */
   openTicket: (args: {
     customerId: number | null
@@ -653,6 +820,16 @@ export const useDataStore = create<DataState>()(
       labReferrers: [],
       labPatients: [],
       labOrders: [],
+      projects: [],
+      projectExtracts: [],
+      projectCosts: [],
+      retentionReleases: [],
+      clinicPatients: [],
+      clinicVisits: [],
+      treatmentPlans: [],
+      clinicCollections: [],
+      clinicAppointments: [],
+      cars: [],
       tickets: [],
       transfers: [],
       batches: [],
@@ -1815,6 +1992,287 @@ export const useDataStore = create<DataState>()(
         })
         return { total, orderCount: unpaid.length }
       },
+
+      /* ─── المقاولات (القرار 27) ─── */
+      addProject: (p) => {
+        const state = get()
+        const errors = validateProject(p)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const id = nextId(state.projects)
+        const project: Project = { ...p, id, code: `PRJ-${String(id).padStart(4, '0')}`, status: 'active' }
+        set({ projects: [...state.projects, project] })
+        return project
+      },
+      addProjectExtract: (args) => {
+        const state = get()
+        const project = state.projects.find((p) => p.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
+        const totals = computeExtractTotals(args.grossMinor, project.retentionPercent, args.vatPercent)
+        const id = nextId(state.projectExtracts)
+        const extractNumber = `PRX-${String(id).padStart(4, '0')}`
+        const lines = buildExtractEntry(totals, args.payment, extractNumber)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مستخلص ${extractNumber} — ${project.nameAr}`,
+          sourceType: 'project_extract', sourceId: id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const extract: ProjectExtract = {
+          id, extractNumber, projectId: project.id, date: now,
+          description: args.description, payment: args.payment, totals, journalEntryId: entryId,
+        }
+        set({ projectExtracts: [...state.projectExtracts, extract], journal: [...state.journal, entry] })
+        return extract
+      },
+      addProjectCost: (args) => {
+        const state = get()
+        const project = state.projects.find((p) => p.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr)
+        const now = new Date().toISOString()
+        const id = nextId(state.projectCosts)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تكلفة على ${project.nameAr}: ${args.description || '—'}`,
+          sourceType: 'project_cost', sourceId: id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const cost: ProjectCost = {
+          id, projectId: project.id, date: now, kind: args.kind,
+          description: args.description, amountMinor: args.amountMinor, payment: args.payment, journalEntryId: entryId,
+        }
+        set({ projectCosts: [...state.projectCosts, cost], journal: [...state.journal, entry] })
+        return cost
+      },
+      releaseRetention: (projectId) => {
+        const state = get()
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        const held = state.projectExtracts.filter((e) => e.projectId === projectId).reduce((a, e) => a + e.totals.retentionMinor, 0)
+        const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
+        const remaining = held - released
+        const lines = buildRetentionReleaseEntry(remaining, project.nameAr) // يرمي لو صفر
+        const now = new Date().toISOString()
+        const id = nextId(state.retentionReleases)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `إفراج عن محتجزات ${project.nameAr} وإقفال المشروع`,
+          sourceType: 'retention_release', sourceId: id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({
+          retentionReleases: [...state.retentionReleases, { id, projectId, date: now, amountMinor: remaining, journalEntryId: entryId }],
+          journal: [...state.journal, entry],
+          projects: state.projects.map((p) => (p.id === projectId ? { ...p, status: 'completed' as const } : p)),
+        })
+        return { amount: remaining }
+      },
+      getProjectProfit: (projectId) => {
+        const state = get()
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
+        return projectProfit(
+          project,
+          state.projectExtracts.filter((e) => e.projectId === projectId).map((e) => ({ grossMinor: e.totals.grossMinor, retentionMinor: e.totals.retentionMinor })),
+          state.projectCosts.filter((c) => c.projectId === projectId).map((c) => ({ kind: c.kind, amountMinor: c.amountMinor })),
+          released,
+        )
+      },
+
+      /* ─── العيادة (القرار 27) ─── */
+      addClinicPatient: (p) => {
+        const state = get()
+        if (!p.nameAr.trim()) throw new Error('اسم المريض مطلوب')
+        const patient: ClinicPatient = { ...p, id: nextId(state.clinicPatients) }
+        set({ clinicPatients: [...state.clinicPatients, patient] })
+        return patient
+      },
+      addClinicVisit: (args) => {
+        const state = get()
+        const patient = state.clinicPatients.find((p) => p.id === args.patientId)
+        if (!patient) throw new Error('المريض غير مسجل')
+        if (args.planId != null) {
+          const plan = state.treatmentPlans.find((pl) => pl.id === args.planId)
+          if (!plan) throw new Error('خطة العلاج غير موجودة')
+          if (plan.patientId !== patient.id) throw new Error('الخطة لمريض آخر')
+          if (plan.doneSessions >= plan.totalSessions) throw new Error('اكتملت جلسات هذه الخطة')
+        }
+        const totals = computeVisitTotals({ kind: args.kind, feeMinor: args.feeMinor, paidMinor: args.paidMinor, vatPercent: args.vatPercent })
+        const id = nextId(state.clinicVisits)
+        const visitNumber = `VIS-${String(id).padStart(4, '0')}`
+        const lines = buildVisitEntry(totals, `${visitNumber} — ${patient.nameAr}`)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `زيارة ${visitNumber} — ${patient.nameAr}`,
+          sourceType: 'clinic_visit', sourceId: id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const visit: ClinicVisit = {
+          id, visitNumber, patientId: patient.id, date: now, kind: args.kind,
+          complaint: args.complaint, diagnosis: args.diagnosis, treatment: args.treatment,
+          totals, planId: args.planId, journalEntryId: entryId,
+        }
+        set({
+          clinicVisits: [...state.clinicVisits, visit],
+          journal: [...state.journal, entry],
+          treatmentPlans: args.planId != null
+            ? state.treatmentPlans.map((pl) => (pl.id === args.planId ? { ...pl, doneSessions: pl.doneSessions + 1 } : pl))
+            : state.treatmentPlans,
+        })
+        return visit
+      },
+      addTreatmentPlan: (args) => {
+        const state = get()
+        if (!state.clinicPatients.some((p) => p.id === args.patientId)) throw new Error('المريض غير مسجل')
+        const errors = validateTreatmentPlan({ totalSessions: args.totalSessions, totalFeeMinor: args.totalFeeMinor })
+        if (errors.length) throw new Error(errors.join(' — '))
+        const plan: TreatmentPlan = {
+          id: nextId(state.treatmentPlans), patientId: args.patientId, title: args.title.trim() || 'خطة علاج',
+          totalSessions: args.totalSessions, totalFeeMinor: args.totalFeeMinor,
+          sessionFeesMinor: sessionFees(args.totalFeeMinor, args.totalSessions),
+          doneSessions: 0, createdAt: new Date().toISOString(),
+        }
+        set({ treatmentPlans: [...state.treatmentPlans, plan] })
+        return plan
+      },
+      collectFromPatient: (patientId, amountMinor) => {
+        const state = get()
+        const patient = state.clinicPatients.find((p) => p.id === patientId)
+        if (!patient) throw new Error('المريض غير مسجل')
+        const balance = get().getPatientBalance(patientId)
+        if (amountMinor > balance) throw new Error(`المبلغ أكبر من رصيد المريض المستحق`)
+        const lines = buildPatientCollectionEntry(amountMinor, patient.nameAr)
+        const now = new Date().toISOString()
+        const id = nextId(state.clinicCollections)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تحصيل متأخرات من ${patient.nameAr}`,
+          sourceType: 'clinic_visit', sourceId: id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const collection: ClinicCollection = { id, patientId, date: now, amountMinor, journalEntryId: entryId }
+        set({ clinicCollections: [...state.clinicCollections, collection], journal: [...state.journal, entry] })
+        return collection
+      },
+      getPatientBalance: (patientId) => {
+        const state = get()
+        return patientBalance(
+          state.clinicVisits.filter((v) => v.patientId === patientId).map((v) => ({ dueMinor: v.totals.dueMinor })),
+          state.clinicCollections.filter((c) => c.patientId === patientId).map((c) => ({ amountMinor: c.amountMinor })),
+        )
+      },
+      addAppointment: (a) => {
+        const state = get()
+        if (!state.clinicPatients.some((p) => p.id === a.patientId)) throw new Error('المريض غير مسجل')
+        const appt: ClinicAppointment = { ...a, id: nextId(state.clinicAppointments), done: false }
+        set({ clinicAppointments: [...state.clinicAppointments, appt] })
+        return appt
+      },
+      markAppointmentDone: (id) => {
+        set((s) => ({ clinicAppointments: s.clinicAppointments.map((a) => (a.id === id ? { ...a, done: true } : a)) }))
+      },
+
+      /* ─── معرض السيارات (القرار 27) ─── */
+      addCar: (args) => {
+        const state = get()
+        const errors = validateCar(args, state.cars.map((c) => c.plateOrVin))
+        if (errors.length) throw new Error(errors.join(' — '))
+        const label = `${args.make} ${args.model} ${args.year} (${args.plateOrVin})`
+        const lines = buildCarPurchaseEntry(args.purchaseCostMinor, args.payment, label)
+        const now = new Date().toISOString()
+        const id = nextId(state.cars)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `شراء سيارة ${label}`,
+          sourceType: 'car_purchase', sourceId: id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const car: Car = {
+          id, make: args.make.trim(), model: args.model.trim(), year: args.year,
+          plateOrVin: args.plateOrVin.trim(), purpose: args.purpose, status: 'in_stock',
+          odometerKm: args.odometerKm, purchaseCostMinor: args.purchaseCostMinor, prepCostMinor: 0,
+          purchaseEntryId: entryId, prepEntryIds: [],
+          salePriceMinor: null, saleProfitMinor: null, saleEntryId: null, soldAt: null, buyerName: '',
+          rentalEquipmentId: null, notes: args.notes,
+        }
+        set({ cars: [...state.cars, car], journal: [...state.journal, entry] })
+        return car
+      },
+      addCarPrep: (carId, amountMinor, payment, description) => {
+        const state = get()
+        const car = state.cars.find((c) => c.id === carId)
+        if (!car) throw new Error('السيارة غير موجودة')
+        if (car.status === 'sold') throw new Error('السيارة مباعة — لا ترسمل تجهيزات عليها')
+        const label = `${car.make} ${car.model} (${car.plateOrVin})`
+        const lines = buildCarPrepEntry(amountMinor, payment, `${label}: ${description || 'تجهيز'}`)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تجهيز ${label}: ${description || '—'}`,
+          sourceType: 'car_purchase', sourceId: carId, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({
+          journal: [...state.journal, entry],
+          cars: state.cars.map((c) => (c.id === carId
+            ? { ...c, prepCostMinor: c.prepCostMinor + amountMinor, prepEntryIds: [...c.prepEntryIds, entryId] }
+            : c)),
+        })
+      },
+      sellCar: (args) => {
+        const state = get()
+        const car = state.cars.find((c) => c.id === args.carId)
+        if (!car) throw new Error('السيارة غير موجودة')
+        if (car.status !== 'in_stock') throw new Error(car.status === 'sold' ? 'السيارة مباعة بالفعل' : 'السيارة مؤجرة حالياً — أنهِ عقدها أولاً')
+        const fullCost = car.purchaseCostMinor + car.prepCostMinor
+        const totals = computeCarSale(args.priceMinor, fullCost, args.vatPercent)
+        const label = `${car.make} ${car.model} ${car.year} (${car.plateOrVin})`
+        const lines = buildCarSaleEntry(totals, args.payment, label)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `بيع سيارة ${label}${args.buyerName ? ` — ${args.buyerName}` : ''}`,
+          sourceType: 'car_sale', sourceId: car.id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: Car = {
+          ...car, status: 'sold', salePriceMinor: totals.priceMinor, saleProfitMinor: totals.profitMinor,
+          saleEntryId: entryId, soldAt: now, buyerName: args.buyerName.trim(),
+        }
+        set({ cars: state.cars.map((c) => (c.id === car.id ? updated : c)), journal: [...state.journal, entry] })
+        return updated
+      },
+      moveCarToRental: (carId, dailyRateMinor, monthlyRateMinor) => {
+        const state = get()
+        const car = state.cars.find((c) => c.id === carId)
+        if (!car) throw new Error('السيارة غير موجودة')
+        if (car.status === 'sold') throw new Error('السيارة مباعة')
+        if (car.rentalEquipmentId != null) throw new Error('السيارة مضافة لوحدة الإيجار بالفعل')
+        if (dailyRateMinor <= 0 && monthlyRateMinor <= 0) throw new Error('حدد سعر إيجار يومياً أو شهرياً')
+        const eqId = nextId(state.equipment)
+        const eq: Equipment = {
+          id: eqId, nameAr: `${car.make} ${car.model} ${car.year}`, code: car.plateOrVin,
+          dailyRateMinor, hourlyRateMinor: 0, monthlyRateMinor,
+          meterReading: car.odometerKm, serviceEveryHours: 0, lastServiceReading: car.odometerKm,
+          notes: 'سيارة معرض محولة للتأجير',
+        }
+        set({
+          equipment: [...state.equipment, eq],
+          cars: state.cars.map((c) => (c.id === carId ? { ...c, status: 'renting' as const, purpose: 'rent' as const, rentalEquipmentId: eqId } : c)),
+        })
+      },
       openTicket: (args) => {
         const state = get()
         const errors = validateTicket({ deviceName: args.deviceName, issue: args.issue })
@@ -2081,6 +2539,16 @@ export const useDataStore = create<DataState>()(
           labReferrers: s.labReferrers ?? [],
           labPatients: s.labPatients ?? [],
           labOrders: s.labOrders ?? [],
+          projects: s.projects ?? [],
+          projectExtracts: s.projectExtracts ?? [],
+          projectCosts: s.projectCosts ?? [],
+          retentionReleases: s.retentionReleases ?? [],
+          clinicPatients: s.clinicPatients ?? [],
+          clinicVisits: s.clinicVisits ?? [],
+          treatmentPlans: s.treatmentPlans ?? [],
+          clinicCollections: s.clinicCollections ?? [],
+          clinicAppointments: s.clinicAppointments ?? [],
+          cars: s.cars ?? [],
           tickets: s.tickets ?? [],
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],

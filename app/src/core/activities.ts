@@ -21,6 +21,9 @@ export type BusinessModule =
   | 'equipment_rental' // إيجار المعدات
   | 'logistics' // الخدمات اللوجستية
   | 'lab' // معامل التحاليل الطبية (القرار 26)
+  | 'contracting' // محاسبة المقاولات (القرار 27)
+  | 'clinic' // عيادات الأطباء وملفات المرضى (القرار 27)
+  | 'cars' // معارض بيع وإيجار السيارات (القرار 27)
   | 'installments' // الأقساط
 
 export interface ActivityTemplate {
@@ -101,6 +104,27 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
+    id: 'contracting', nameAr: 'مقاولات وإنشاءات', icon: '🏗️',
+    description: 'مشروعات ومستخلصات ومحتجزات، تكاليف ببنود وربحية كل مشروع',
+    features: [],
+    modules: ['contracting'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
+  },
+  {
+    id: 'clinic', nameAr: 'عيادة طبيب / أسنان', icon: '🦷',
+    description: 'ملف لكل مريض، زيارات بملاحظات وقيمة، خطط علاج بجلسات ومواعيد',
+    features: [],
+    modules: ['clinic'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
+  },
+  {
+    id: 'cars', nameAr: 'معرض سيارات (بيع وإيجار)', icon: '🚗',
+    description: 'كل سيارة بتكلفتها وربحيتها، تجهيزات ترسمل، والإيجار بعقود وعدّاد',
+    features: [],
+    modules: ['cars', 'equipment_rental', 'installments'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
+  },
+  {
     id: 'general', nameAr: 'نشاط عام / آخر', icon: '🏪',
     description: 'قالب مرن — فعّل ما تحتاجه لاحقاً',
     features: ['multi_unit'],
@@ -122,9 +146,9 @@ export function toggleModuleList(current: BusinessModule[], m: BusinessModule): 
   if (current.includes(m)) {
     const next = current.filter((x) => x !== m)
     // لا يجوز إطفاء كل شيء: يجب أن تبقى وحدة «عمل» واحدة على الأقل
-    const workModules: BusinessModule[] = ['pos', 'maintenance', 'equipment_rental', 'logistics']
+    const workModules: BusinessModule[] = ['pos', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
     if (!next.some((x) => workModules.includes(x))) {
-      throw new Error('لا يمكن إلغاء آخر وحدة عمل — يجب أن تبقى وحدة واحدة على الأقل (كاشير أو صيانة أو إيجار أو لوجستيات)')
+      throw new Error('لا يمكن إلغاء آخر وحدة عمل — يجب أن تبقى وحدة عمل واحدة على الأقل')
     }
     return next
   }
@@ -148,8 +172,11 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   equipment_rental: { nameAr: 'إيجار المعدات', icon: '🚜', desc: 'المعدات، عقود الإيجار، التأمينات المستردة' },
   logistics: { nameAr: 'اللوجستيات', icon: '🛣️', desc: 'النقلات، الأسطول والسائقون، ربحية كل نقلة' },
   lab: { nameAr: 'معمل التحاليل', icon: '🔬', desc: 'المرضى، الطلبات والنتائج، عمولات الأطباء المحيلين' },
+  contracting: { nameAr: 'المقاولات', icon: '🏗️', desc: 'المشروعات، المستخلصات والمحتجزات، التكاليف والربحية' },
+  clinic: { nameAr: 'العيادة', icon: '🦷', desc: 'ملفات المرضى، الزيارات والكشوفات، خطط العلاج والمواعيد' },
+  cars: { nameAr: 'معرض السيارات', icon: '🚗', desc: 'سيارات بتكلفة وربحية لكل واحدة، تجهيزات ترسمل، بيع وإيجار' },
   installments: { nameAr: 'الأقساط', icon: '💳', desc: 'بيع بالتقسيط، جدولة الأقساط، تنبيهات الاستحقاق' },
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'maintenance', 'equipment_rental', 'logistics', 'lab']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
