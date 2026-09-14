@@ -24,6 +24,7 @@ import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type T
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals } from '../core/maintenance.ts'
 import { validateTransfer, computeWarehouseStock, transferTotalQty, type TransferLine } from '../core/transfers.ts'
+import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -316,6 +317,7 @@ interface DataState {
   rentalContracts: RentalContract[]
   tickets: MaintenanceTicket[]
   transfers: StockTransfer[]
+  batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
@@ -341,7 +343,7 @@ interface DataState {
   postPurchase: (inv: {
     supplierId: number
     date: string
-    lines: { itemId: number; qty: number; unitPriceMinor: number }[]
+    lines: { itemId: number; qty: number; unitPriceMinor: number; expiryDate?: string | null }[]
     expenses: PurchaseExpense[]
     paidMinor: number
     notes: string
@@ -516,6 +518,7 @@ export const useDataStore = create<DataState>()(
       rentalContracts: [],
       tickets: [],
       transfers: [],
+      batches: [],
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
@@ -554,6 +557,13 @@ export const useDataStore = create<DataState>()(
 
       postPurchase: (inv) => {
         const state = get()
+        // تحقق تواريخ الصلاحية للأصناف المتتبَّعة (القرار 5) قبل أي كتابة
+        for (const l of inv.lines) {
+          const item = state.items.find((it) => it.id === l.itemId)
+          if (item?.trackExpiry && l.expiryDate && !isValidExpiryDate(l.expiryDate)) {
+            throw new Error(`تاريخ صلاحية غير صحيح لـ«${item.nameAr}» — الصيغة YYYY-MM-DD`)
+          }
+        }
         const costLines: CostLine[] = inv.lines.map((l) => ({
           itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
         }))
@@ -611,7 +621,28 @@ export const useDataStore = create<DataState>()(
           return { ...it, costMinor: newCost, stockQty: (it.stockQty ?? 0) + line.qty }
         })
 
-        set({ purchases: [...state.purchases, invoice], journal: [...state.journal, entry], items: updatedItems })
+        // فتح دفعات صلاحية للأصناف المتتبَّعة (FEFO — القرار 5)
+        let batchId = nextId(state.batches)
+        const newBatches: StockBatch[] = []
+        for (const l of inv.lines) {
+          const item = state.items.find((it) => it.id === l.itemId)
+          if (!item?.trackExpiry) continue
+          newBatches.push({
+            id: batchId++,
+            itemId: l.itemId,
+            expiryDate: l.expiryDate ?? null,
+            qty: l.qty,
+            purchaseId: purchaseId,
+            receivedAt: nowIso,
+          })
+        }
+
+        set({
+          purchases: [...state.purchases, invoice],
+          journal: [...state.journal, entry],
+          items: updatedItems,
+          batches: newBatches.length ? [...state.batches, ...newBatches] : state.batches,
+        })
         return invoice
       },
 
@@ -625,7 +656,22 @@ export const useDataStore = create<DataState>()(
             throw new Error(`مخزون غير كافٍ — ${msg}`)
           }
         }
-        // 2) الإجماليات والقيد (يرمي UnbalancedEntryError لو اختل — مستحيل بنيوياً)
+        // 2) دفعات الصلاحية FEFO (القراران 5 و8): تخطيط الصرف وحظر المنتهي بلا تجاوز مدير
+        const now0 = new Date().toISOString()
+        const qtyPlanned = new Map<number, number>()
+        for (const l of args.lines) qtyPlanned.set(l.itemId, (qtyPlanned.get(l.itemId) ?? 0) + l.qty)
+        let workingBatches = state.batches
+        const expiredNames: string[] = []
+        for (const [itemId, qty] of qtyPlanned) {
+          const item = state.items.find((it) => it.id === itemId)
+          if (!item?.trackExpiry) continue
+          const plan = planFefo(workingBatches, itemId, qty, now0)
+          if (plan.touchesExpired && !args.expiryOverrideBy) expiredNames.push(item.nameAr)
+          workingBatches = applyFefo(workingBatches, plan)
+        }
+        if (expiredNames.length) throw new ExpiredStockError(expiredNames)
+
+        // 3) الإجماليات والقيد (يرمي UnbalancedEntryError لو اختل — مستحيل بنيوياً)
         const totals = computeTotals(args.lines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
         const entryLines = buildSaleEntry(totals, args.payment)
         const saleId = nextId(state.sales)
@@ -661,14 +707,14 @@ export const useDataStore = create<DataState>()(
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
         }
 
-        // 3) خصم المخزون
+        // 4) خصم المخزون (والدفعات المحدثة بعد صرف FEFO)
         const qtyByItem = new Map<number, number>()
         for (const l of args.lines) qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + l.qty)
         const updatedItems = state.items.map((it) =>
           qtyByItem.has(it.id) ? { ...it, stockQty: (it.stockQty ?? 0) - qtyByItem.get(it.id)! } : it,
         )
 
-        set({ sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems })
+        set({ sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches })
         return sale
       },
 
@@ -1472,6 +1518,7 @@ export const useDataStore = create<DataState>()(
           rentalContracts: s.rentalContracts ?? [],
           tickets: s.tickets ?? [],
           transfers: s.transfers ?? [],
+          batches: s.batches ?? [],
           purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
           purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],

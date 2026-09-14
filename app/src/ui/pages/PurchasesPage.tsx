@@ -14,7 +14,7 @@ import { computeLandedCosts } from '../../core/costing.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
-interface DraftLine { itemId: number; qty: string; unitPrice: string }
+interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string }
 interface DraftExpense { nameAr: string; amount: string; method: 'value' | 'qty' }
 
 const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'شحن وتفريغ', 'عمولة مشتريات', 'أخرى']
@@ -36,7 +36,7 @@ export function PurchasesPage() {
 
   const openNew = () => {
     setSupplierId(suppliers[0]?.id ?? 0)
-    setLines([{ itemId: items[0]?.id ?? 0, qty: '', unitPrice: '' }])
+    setLines([{ itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '' }])
     setExpenses([])
     setPaid('')
     setNotes('')
@@ -71,7 +71,13 @@ export function PurchasesPage() {
     const inv = postPurchase({
       supplierId,
       date: new Date().toISOString().slice(0, 10),
-      lines: preview.landed.map((l) => ({ itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor })),
+      lines: preview.landed.map((l) => ({
+        itemId: l.itemId,
+        qty: l.qty,
+        unitPriceMinor: l.unitPriceMinor,
+        // تاريخ الصلاحية من سطر الإدخال المطابق (FEFO — القرار 5)
+        expiryDate: lines.find((d) => d.itemId === l.itemId && Number(d.qty) === l.qty)?.expiryDate || null,
+      })),
       expenses: expenses
         .filter((e) => Number(e.amount) > 0)
         .map((e) => ({ nameAr: e.nameAr, amountMinor: toMinor(e.amount, cur.decimals), method: e.method })),
@@ -169,7 +175,7 @@ export function PurchasesPage() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5"><Receipt size={14} /> أصناف الفاتورة</span>
-              <Btn variant="soft" onClick={() => setLines((l) => [...l, { itemId: items[0]?.id ?? 0, qty: '', unitPrice: '' }])}>+ سطر</Btn>
+              <Btn variant="soft" onClick={() => setLines((l) => [...l, { itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '' }])}>+ سطر</Btn>
             </div>
             <div className="space-y-2">
               {lines.map((l, i) => (
@@ -191,6 +197,13 @@ export function PurchasesPage() {
                     onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))}
                     type="number" min={0} placeholder={`سعر الوحدة`} className={`${inputCls} w-32`}
                   />
+                  {items.find((it) => it.id === l.itemId)?.trackExpiry && (
+                    <input
+                      value={l.expiryDate}
+                      onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, expiryDate: e.target.value } : x)))}
+                      type="date" title="تاريخ الصلاحية (FEFO)" className={`${inputCls} w-36`} dir="ltr"
+                    />
+                  )}
                   <button onClick={() => setLines((arr) => arr.filter((_, j) => j !== i))} className="p-2 text-slate-300 hover:text-rose-500 transition-colors">
                     <Trash2 size={15} />
                   </button>

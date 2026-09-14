@@ -13,12 +13,13 @@ import {
   salesSummary, topItems, dailySales, customerBalances, supplierBalances,
   stockAlerts, inventoryValue, periodPresets, type Period,
 } from '../../core/reports.ts'
+import { expiryAlerts } from '../../core/batches.ts'
 import { inputCls } from '../components/ui.tsx'
 
 type TabId = 'sales' | 'items' | 'parties' | 'inventory'
 
 export function ReportsPage() {
-  const { sales, saleReturns, purchases, items, customers, suppliers, installmentPlans } = useDataStore()
+  const { sales, saleReturns, purchases, items, customers, suppliers, installmentPlans, batches } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -53,6 +54,10 @@ export function ReportsPage() {
   const suppRows = useMemo(() => supplierBalances(purchases, []), [purchases])
   const alerts = useMemo(() => stockAlerts(items), [items])
   const invValue = useMemo(() => inventoryValue(items), [items])
+  const expAlerts = useMemo(
+    () => expiryAlerts(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`, new Date().toISOString()),
+    [batches, items],
+  )
 
   const custName = (id: number) => customers.find((c) => c.id === id)?.nameAr ?? `عميل #${id}`
   const suppName = (id: number) => suppliers.find((s) => s.id === id)?.nameAr ?? `مورد #${id}`
@@ -256,6 +261,32 @@ export function ReportsPage() {
                   ))}
                 </tbody>
               </table>
+            )}
+          </div>
+          <div className={`${card} overflow-hidden`}>
+            <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+              <AlertTriangle size={14} className="text-rose-500" /> تنبيهات الصلاحية FEFO ({expAlerts.length})
+            </div>
+            {expAlerts.length === 0 ? (
+              <div className="text-center text-slate-400 text-[12px] py-8">لا دفعات منتهية أو تنتهي خلال 30 يوماً ✅</div>
+            ) : (
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-[12.5px]">
+                  <tbody>
+                    {expAlerts.map((r, i) => (
+                      <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                        <td className="px-4 py-2 text-slate-400 text-[11px]" dir="ltr">{r.expiryDate} — كمية {r.qty}</td>
+                        <td className="px-4 py-2 text-left">
+                          {r.status === 'expired'
+                            ? <span className="text-[10px] font-bold text-rose-600 bg-rose-500/10 px-2 py-0.5 rounded-full">منتهٍ منذ {-r.daysLeft} يوم</span>
+                            : <span className="text-[10px] font-bold text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded-full">ينتهي خلال {r.daysLeft} يوم</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
           <div className={`${card} overflow-hidden`}>

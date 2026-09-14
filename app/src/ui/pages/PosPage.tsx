@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { computeTotals, type CartLine } from '../../core/pos.ts'
 import { parseScaleBarcode, matchScaleItem } from '../../core/barcode.ts'
+import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift } from '../../core/shifts.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
@@ -152,7 +153,11 @@ export function PosPage() {
 
   const [lastSale, setLastSale] = useState<Parameters<typeof printSale>[0] | null>(null)
 
-  const finishSale = () => {
+  // تجاوز بيع منتهي الصلاحية بموافقة المدير (القرار 8) — يُسجَّل اسمه على الفاتورة
+  const [expiredBlock, setExpiredBlock] = useState<string[] | null>(null)
+  const [overrideName, setOverrideName] = useState('')
+
+  const finishSale = (expiryOverrideBy?: string) => {
     if (!cart.length) return
     try {
       const sale = postSale({
@@ -162,6 +167,7 @@ export function PosPage() {
         invoiceDiscountPercent: invoiceDiscount,
         taxPercent: setup.vatPercent,
         taxInclusive: setup.taxInclusive,
+        expiryOverrideBy: expiryOverrideBy ?? null,
       })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
@@ -170,9 +176,16 @@ export function PosPage() {
       setPayOpen(false)
       setPayment('cash')
       setCustomerId(null)
+      setExpiredBlock(null)
+      setOverrideName('')
       toast.show(`تمت الفاتورة ${sale.invoiceNumber} — القيد المحاسبي تولّد تلقائياً ✓`)
       if (autoPrintAfterSale) printSale(sale)
     } catch (e) {
+      // بيع يمس كمية منتهية: حوار موافقة المدير بدل رسالة الخطأ (القرار 8)
+      if (e instanceof ExpiredStockError) {
+        setExpiredBlock(e.itemNames)
+        return
+      }
       toast.show((e as Error).message, 'error')
     }
   }
@@ -444,9 +457,40 @@ export function PosPage() {
               {totals.taxMinor > 0 && <> / ض.ق.م {fmt(totals.taxMinor)}</>}
               {totals.cogsMinor > 0 && <> + تكلفة مبيعات {fmt(totals.cogsMinor)} / المخزون</>}
             </div>
-            <Btn onClick={finishSale} disabled={payment === 'credit' && !customerId} className="w-full py-3.5">
+            <Btn onClick={() => finishSale()} disabled={payment === 'credit' && !customerId} className="w-full py-3.5">
               ✅ تأكيد وطباعة
             </Btn>
+          </div>
+        )}
+      </Modal>
+
+      {/* حظر بيع منتهي الصلاحية — تجاوز بموافقة المدير (القرار 8) */}
+      <Modal open={!!expiredBlock} onClose={() => { setExpiredBlock(null); setOverrideName('') }} title="⛔ أصناف منتهية الصلاحية">
+        {expiredBlock && (
+          <div className="space-y-4">
+            <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/25 text-[12.5px] leading-relaxed text-rose-700 dark:text-rose-400">
+              البيع سيصرف كميات <b>منتهية الصلاحية</b> من:
+              <ul className="mt-1.5 space-y-0.5">
+                {expiredBlock.map((n, i) => <li key={i}>• <b>{n}</b></li>)}
+              </ul>
+            </div>
+            <p className="text-[12px] text-slate-500 leading-relaxed">
+              البيع محظور افتراضياً. للمتابعة يلزم <b>اسم المدير الموافق</b> — يُسجَّل على الفاتورة
+              ويظهر في سجل التدقيق (القرار 8).
+            </p>
+            <input
+              value={overrideName}
+              onChange={(e) => setOverrideName(e.target.value)}
+              className={inputCls}
+              placeholder="اسم المدير الموافق…"
+              autoFocus
+            />
+            <div className="flex gap-2 justify-end">
+              <Btn variant="ghost" onClick={() => { setExpiredBlock(null); setOverrideName('') }}>إلغاء البيع</Btn>
+              <Btn onClick={() => finishSale(overrideName.trim())} disabled={overrideName.trim().length < 2}>
+                ⚠️ موافقة المدير والمتابعة
+              </Btn>
+            </div>
           </div>
         )}
       </Modal>
