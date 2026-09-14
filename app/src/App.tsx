@@ -4,6 +4,9 @@ import { useAppStore } from './stores/app.store.ts'
 import { useDataStore } from './data/repo.ts'
 import { evaluateLicense, activityMatches, isRevoked } from './core/license.ts'
 import { lockReasonFor, isBackupDue } from './core/security.ts'
+import { isDailySendDue, localNowIso } from './core/schedule.ts'
+import { hasFeature } from './core/license.ts'
+import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSender.ts'
 import { fetchAbout, fetchRevocationList, DEFAULT_CLOUD_BASE_URL } from './core/cloud.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
@@ -158,6 +161,32 @@ export default function App() {
     const t = setInterval(sync, 6 * 60 * 60 * 1000)
     return () => { cancelled = true; clearInterval(t) }
   }, [setCloudData])
+
+  // ─── الإرسال المجدول عبر التليجرام (القرار 32): تقرير اليوم + نسخة — مرة يومياً بعد ساعة الجدولة ───
+  useEffect(() => {
+    if (!setup.completed) return
+    const tick = async () => {
+      const app = useAppStore.getState()
+      // شروط الإرسال: الجدولة مفعلة + ميزة telegram_bot بالمفتاح + اتصال بوت سليم
+      if (!app.schedule.enabled || !botConnected()) return
+      const lic = evaluateLicense({
+        activatedPayload: app.activatedPayload, trialStartedAt: app.trialStartedAt,
+        lastSeenAt: app.lastSeenAt, today: new Date().toISOString(),
+      })
+      if (!hasFeature(lic, 'telegram_bot')) return
+      const now = localNowIso()
+      if (!isDailySendDue(app.lastDailySentDay, now, app.schedule.hour)) return
+      try {
+        if (app.telegram.sendDailyReport) await sendDailyReportNow()
+        if (app.telegram.sendBackups) await sendBackupNow()
+        // يُسجل اليوم فقط بعد نجاح الإرسال — الفشل (أوفلاين) يعيد المحاولة بالفحص التالي
+        app.setLastDailySentDay(now.slice(0, 10))
+      } catch { /* صامت — لا يعطل التطبيق، وسيعاد تلقائياً */ }
+    }
+    tick()
+    const t = setInterval(tick, 5 * 60 * 1000) // فحص كل 5 دقائق
+    return () => clearInterval(t)
+  }, [setup.completed])
 
   // ─── النسخ الاحتياطي التلقائي كل ساعة (القرار 28): لقطة مشفرة على جهاز العميل ───
   useEffect(() => {

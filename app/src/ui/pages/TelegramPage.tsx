@@ -6,7 +6,7 @@
  * الميزة مقفلة بمفتاح ترخيص يحمل telegram_bot (نمط القرار 21).
  */
 import { useMemo, useState } from 'react'
-import { Bot, Send, KeyRound, MessageSquareText, PackageSearch, DatabaseBackup, Lock, CheckCircle2 } from 'lucide-react'
+import { Bot, Send, KeyRound, MessageSquareText, PackageSearch, DatabaseBackup, Lock, CheckCircle2, CalendarClock } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -15,6 +15,7 @@ import {
   buildDailyReportText, buildLowStockText, buildBackupCaption,
 } from '../../core/telegram.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
+import { sanitizeHour, hourLabelAr } from '../../core/schedule.ts'
 import { salesSummary, stockAlerts, type Period } from '../../core/reports.ts'
 import { buildBackup, backupFileName } from '../../core/backup.ts'
 import { decryptForDevice } from '../../data/secureStorage.ts'
@@ -23,7 +24,7 @@ import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 const DATA_VERSION = 6 // إصدار persist لمخزن shopsys-data
 
 export function TelegramPage() {
-  const { setup, telegram, updateTelegram, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
+  const { setup, telegram, updateTelegram, schedule, updateSchedule, lastDailySentDay, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const { sales, saleReturns, items } = useDataStore()
   const toast = useToast()
 
@@ -223,6 +224,40 @@ export function TelegramPage() {
             <input type="checkbox" checked={telegram[key]} onChange={(e) => updateTelegram({ [key]: e.target.checked })} className="w-4 h-4 accent-brand-600" />
           </label>
         ))}
+      </section>
+
+      {/* الجدولة التلقائية (القرار 32) */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-3" style={{ animationDelay: '160ms' }}>
+        <h2 className="text-[13px] font-black text-slate-700 dark:text-slate-200 flex items-center gap-2">
+          <CalendarClock size={15} className="text-slate-400" /> الإرسال التلقائي اليومي
+        </h2>
+        <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer">
+          <div>
+            <div className="text-[12.5px] font-bold text-slate-600 dark:text-slate-300">تفعيل الإرسال المجدول</div>
+            <div className="text-[10.5px] text-slate-400">
+              يُرسل التقرير والنسخة تلقائياً مرة واحدة يومياً بعد الساعة المحددة —
+              ولو كان الجهاز مطفأً وقتها يُرسل فور أول تشغيل تالٍ
+            </div>
+          </div>
+          <input type="checkbox" checked={schedule.enabled} onChange={(e) => updateSchedule({ enabled: e.target.checked })} className="w-4 h-4 accent-brand-600" />
+        </label>
+        <div className="flex items-center gap-3 flex-wrap">
+          <Field label="ساعة الإرسال اليومي">
+            <select
+              value={schedule.hour}
+              onChange={(e) => updateSchedule({ hour: sanitizeHour(e.target.value) })}
+              className={inputCls}
+              disabled={!schedule.enabled}
+            >
+              {Array.from({ length: 24 }, (_, h) => (
+                <option key={h} value={h}>{hourLabelAr(h)}</option>
+              ))}
+            </select>
+          </Field>
+          <div className="text-[11.5px] text-slate-400 pt-4">
+            {lastDailySentDay ? `آخر إرسال تلقائي ناجح: ${lastDailySentDay}` : 'لم يُرسل تلقائياً بعد'}
+          </div>
+        </div>
       </section>
     </div>
   )

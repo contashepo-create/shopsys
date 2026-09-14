@@ -12,6 +12,7 @@ import { generateDeviceId, type LicensePayload } from '../core/license.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
 import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
+import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
 import type { AboutContent } from '../core/cloud.ts'
 
 export type ThemeMode = 'light' | 'dark'
@@ -57,6 +58,11 @@ interface AppState {
   // ─── الفاتورة الإلكترونية (القرار 30 — ميزة بمفتاح ترخيص فقط) ───
   einvoice: EinvoiceSettings
   updateEinvoice: (patch: Partial<EinvoiceSettings>) => void
+  // ─── الإرسال المجدول عبر التليجرام (القرار 32) ───
+  schedule: ScheduleSettings
+  updateSchedule: (patch: Partial<ScheduleSettings>) => void
+  lastDailySentDay: string | null // «YYYY-MM-DD» — يمنع تكرار إرسال اليوم
+  setLastDailySentDay: (day: string) => void
   // ─── الترخيص (القرار 4) ───
   deviceId: string // معرف الجهاز — يتولد مرة واحدة
   trialStartedAt: string // مرساة بداية التجربة
@@ -162,6 +168,10 @@ export const useAppStore = create<AppState>()(
       updateTelegram: (patch) => set((s) => ({ telegram: { ...s.telegram, ...patch } })),
       einvoice: DEFAULT_EINVOICE_SETTINGS,
       updateEinvoice: (patch) => set((s) => ({ einvoice: { ...s.einvoice, ...patch } })),
+      schedule: DEFAULT_SCHEDULE_SETTINGS,
+      updateSchedule: (patch) => set((s) => ({ schedule: { ...s.schedule, ...patch } })),
+      lastDailySentDay: null,
+      setLastDailySentDay: (day) => set({ lastDailySentDay: day }),
       deviceId: BOOT.deviceId,
       trialStartedAt: BOOT.firstTrialAt,
       lastSeenAt: BOOT.now,
@@ -225,6 +235,8 @@ export const useAppStore = create<AppState>()(
         if (state) state.telegram = { ...DEFAULT_TELEGRAM_SETTINGS, ...state.telegram }
         // ترحيل: حسابات قبل ميزة الفاتورة الإلكترونية تحصل على الافتراضيات
         if (state) state.einvoice = { ...DEFAULT_EINVOICE_SETTINGS, ...state.einvoice }
+        // ترحيل: حسابات قبل الإرسال المجدول تحصل على الافتراضيات
+        if (state) state.schedule = { ...DEFAULT_SCHEDULE_SETTINGS, ...state.schedule }
         // ترحيل: حسابات قبل ميزة الترخيص تحصل على هوية جهاز ومراسي زمنية
         if (state && !state.deviceId) {
           state.deviceId = BOOT.deviceId
