@@ -13,6 +13,8 @@ import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, checkStock, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnEntry, deriveTaxConfig } from '../core/returns.ts'
+import { buildPurchaseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine } from '../core/purchases.ts'
+import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
@@ -83,6 +85,31 @@ export interface PurchaseInvoice {
   grandTotalMinor: number
   paidMinor: number
   notes: string
+  journalEntryId: number | null // القيد المتولد (فواتير قديمة قبل الترحيل = null)
+}
+
+/** مرتجع شراء — مربوط بفاتورة الشراء الأصلية، مُقيَّم بتكلفتها النهائية */
+export interface PurchaseReturn {
+  id: number
+  returnNumber: string // PR-0001
+  date: string
+  purchaseId: number
+  refund: 'cash' | 'debt' // استرداد نقدي أو تخفيض دين المورد
+  lines: PurchaseReturnLine[]
+  totalMinor: number
+  journalEntryId: number
+  reason: string
+}
+
+/** جلسة جرد مرحّلة — الفوارق وقيد التسوية */
+export interface Stocktake {
+  id: number
+  stocktakeNumber: string // ST-0001
+  date: string
+  result: StocktakeResult
+  countedItems: number // عدد الأصناف المشمولة بالجرد
+  journalEntryId: number | null // null لو الجرد مطابق تماماً (لا قيد)
+  notes: string
 }
 
 /* ─── فواتير البيع (الكاشير) ─── */
@@ -122,6 +149,8 @@ interface DataState {
   customers: Customer[]
   suppliers: Supplier[]
   purchases: PurchaseInvoice[]
+  purchaseReturns: PurchaseReturn[]
+  stocktakes: Stocktake[]
   sales: SaleInvoice[]
   saleReturns: SaleReturn[]
   shifts: Shift[]
@@ -174,6 +203,21 @@ interface DataState {
     refund: PaymentMethod
     reason: string
   }) => SaleReturn
+  /**
+   * ترحيل مرتجع شراء مربوط بفاتورة أصلية:
+   * يُقيَّم بالتكلفة النهائية للوحدة (Landed) — ولا يتجاوز المتبقي ولا المخزون الحالي
+   */
+  postPurchaseReturn: (args: {
+    purchaseId: number
+    qtyByItem: Map<number, number>
+    refund: 'cash' | 'debt'
+    reason: string
+  }) => PurchaseReturn
+  /**
+   * ترحيل جلسة جرد: يقارن المعدود بالدفتري، يضبط المخزون على المعدود،
+   * ويولّد قيد تسوية متوازناً (عجز = مصروف، زيادة = تخفيض مصروف)
+   */
+  postStocktake: (counts: CountInput[], notes: string) => Stocktake
   /** فتح وردية كاشير برصيد درج افتتاحي — لا ورديتين مفتوحتين معاً */
   openShift: (openedBy: string, openingCashMinor: number) => Shift
   /** إقفال الوردية بالنقدية المعدودة — يظهر العجز/الزيادة في الملخص */
@@ -200,6 +244,8 @@ export const useDataStore = create<DataState>()(
       customers: [],
       suppliers: [],
       purchases: [],
+      purchaseReturns: [],
+      stocktakes: [],
       sales: [],
       saleReturns: [],
       shifts: [],
@@ -240,10 +286,31 @@ export const useDataStore = create<DataState>()(
         const landed = computeLandedCosts(costLines, inv.expenses as ExpenseInput[])
         const goodsTotal = landed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
         const expensesTotal = inv.expenses.reduce((a, e) => a + e.amountMinor, 0)
+        const grandTotal = goodsTotal + expensesTotal
+
+        // القيد المحاسبي: مخزون مدين / خزينة + موردون دائن (يرمي لو المدفوع > الإجمالي)
+        const entryLines = buildPurchaseEntry(grandTotal, inv.paidMinor)
+        const purchaseId = nextId(state.purchases)
+        const entryId = nextId(state.journal)
+        const invoiceNumber = `P-${String(purchaseId).padStart(4, '0')}`
+        const nowIso = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: inv.date,
+          description: `فاتورة شراء ${invoiceNumber}`,
+          sourceType: 'purchase',
+          sourceId: purchaseId,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: nowIso,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
 
         const invoice: PurchaseInvoice = {
-          id: nextId(state.purchases),
-          invoiceNumber: `P-${String(nextId(state.purchases)).padStart(4, '0')}`,
+          id: purchaseId,
+          invoiceNumber,
           supplierId: inv.supplierId,
           date: inv.date,
           lines: landed.map((l) => ({
@@ -256,9 +323,10 @@ export const useDataStore = create<DataState>()(
           expenses: inv.expenses,
           goodsTotalMinor: goodsTotal,
           expensesTotalMinor: expensesTotal,
-          grandTotalMinor: goodsTotal + expensesTotal,
+          grandTotalMinor: grandTotal,
           paidMinor: inv.paidMinor,
           notes: inv.notes,
+          journalEntryId: entryId,
         }
 
         // تحديث تكلفة الأصناف بالمتوسط المرجح + زيادة المخزون
@@ -269,7 +337,7 @@ export const useDataStore = create<DataState>()(
           return { ...it, costMinor: newCost, stockQty: (it.stockQty ?? 0) + line.qty }
         })
 
-        set({ purchases: [...state.purchases, invoice], items: updatedItems })
+        set({ purchases: [...state.purchases, invoice], journal: [...state.journal, entry], items: updatedItems })
         return invoice
       },
 
@@ -388,6 +456,120 @@ export const useDataStore = create<DataState>()(
         return ret
       },
 
+      postPurchaseReturn: (args) => {
+        const state = get()
+        const purchase = state.purchases.find((p) => p.id === args.purchaseId)
+        if (!purchase) throw new Error('فاتورة الشراء الأصلية غير موجودة')
+        // 1) سطور المرتجع بتكلفة الوحدة النهائية — بلا تجاوز للمتبقي ولا للمخزون
+        const prior = state.purchaseReturns.filter((r) => r.purchaseId === purchase.id).flatMap((r) => r.lines)
+        const lines = buildPurchaseReturnLines(
+          purchase.lines, prior, args.qtyByItem,
+          (id) => {
+            const it = state.items.find((x) => x.id === id)
+            return it ? { nameAr: it.nameAr, stockQty: it.stockQty ?? 0 } : undefined
+          },
+        )
+        const total = purchaseReturnTotal(lines)
+        // منطق الاسترداد: لا نخفض ديناً أكبر من المتبقي غير المدفوع على الفاتورة
+        if (args.refund === 'debt') {
+          const priorDebtReturns = state.purchaseReturns
+            .filter((r) => r.purchaseId === purchase.id && r.refund === 'debt')
+            .reduce((a, r) => a + r.totalMinor, 0)
+          const unpaid = purchase.grandTotalMinor - purchase.paidMinor - priorDebtReturns
+          if (total > unpaid) {
+            throw new Error(`قيمة المرتجع أكبر من دين الفاتورة المتبقي (${unpaid}) — اختر الاسترداد النقدي`)
+          }
+        }
+        // 2) القيد المتوازن
+        const entryLines = buildPurchaseReturnEntry(total, args.refund)
+        const returnId = nextId(state.purchaseReturns)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const returnNumber = `PR-${String(returnId).padStart(4, '0')}`
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `مرتجع شراء ${returnNumber} عن الفاتورة ${purchase.invoiceNumber}`,
+          sourceType: 'purchase_return',
+          sourceId: returnId,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        const ret: PurchaseReturn = {
+          id: returnId,
+          returnNumber,
+          date: now,
+          purchaseId: purchase.id,
+          refund: args.refund,
+          lines,
+          totalMinor: total,
+          journalEntryId: entryId,
+          reason: args.reason,
+        }
+        // 3) خصم الكميات من المخزون (التكلفة المتوسطة تبقى كما هي — الإخراج بالمتوسط)
+        const qtyOut = new Map<number, number>()
+        for (const l of lines) qtyOut.set(l.itemId, (qtyOut.get(l.itemId) ?? 0) + l.qty)
+        const updatedItems = state.items.map((it) =>
+          qtyOut.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyOut.get(it.id)!) * 1000) / 1000 } : it,
+        )
+        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems })
+        return ret
+      },
+
+      postStocktake: (counts, notes) => {
+        const state = get()
+        if (!counts.length) throw new Error('لا أصناف في الجرد')
+        const result = computeStocktake(counts)
+        const stocktakeId = nextId(state.stocktakes)
+        const now = new Date().toISOString()
+        const stocktakeNumber = `ST-${String(stocktakeId).padStart(4, '0')}`
+
+        let entryId: number | null = null
+        let journal = state.journal
+        if (result.variances.length > 0) {
+          // قيد تسوية واحد متوازن للعجز والزيادة معاً
+          const entryLines = buildAdjustmentEntry(result)
+          entryId = nextId(state.journal)
+          const entry: JournalEntry = {
+            id: entryId,
+            entryNumber: entryId,
+            date: now.slice(0, 10),
+            description: `تسوية جرد ${stocktakeNumber}`,
+            sourceType: 'adjustment',
+            sourceId: stocktakeId,
+            lines: entryLines,
+            createdBy: 'المالك',
+            createdAt: now,
+            reversedByEntryId: null,
+            reversesEntryId: null,
+          }
+          journal = [...state.journal, entry]
+        }
+
+        const st: Stocktake = {
+          id: stocktakeId,
+          stocktakeNumber,
+          date: now,
+          result,
+          countedItems: counts.length,
+          journalEntryId: entryId,
+          notes,
+        }
+
+        // ضبط المخزون على المعدود فعلياً
+        const countedBy = new Map(counts.map((c) => [c.itemId, c.countedQty]))
+        const updatedItems = state.items.map((it) =>
+          countedBy.has(it.id) ? { ...it, stockQty: countedBy.get(it.id)! } : it,
+        )
+
+        set({ stocktakes: [...state.stocktakes, st], journal, items: updatedItems })
+        return st
+      },
+
       openShift: (openedBy, openingCashMinor) => {
         const state = get()
         const errors = validateOpenShift(openingCashMinor, state.shifts)
@@ -432,8 +614,8 @@ export const useDataStore = create<DataState>()(
     }),
     {
       name: 'shopsys-data',
-      version: 3,
-      // ترحيل البيانات المحفوظة بالأشكال القديمة (أقسام هرمية، stockQty، مرتجعات وورديات)
+      version: 4,
+      // ترحيل البيانات المحفوظة بالأشكال القديمة (أقسام هرمية، stockQty، مرتجعات وورديات وجرد)
       migrate: (persisted: unknown) => {
         const s = persisted as Partial<DataState>
         return {
@@ -442,7 +624,9 @@ export const useDataStore = create<DataState>()(
           items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0 })),
           customers: (s.customers ?? []).map((c) => ({ ...EMPTY_EXTENDED, ...c })),
           suppliers: (s.suppliers ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
-          purchases: s.purchases ?? [],
+          purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
+          purchaseReturns: s.purchaseReturns ?? [],
+          stocktakes: s.stocktakes ?? [],
           sales: (s.sales ?? []).map((x) => ({ ...x, shiftId: x.shiftId ?? null })),
           saleReturns: s.saleReturns ?? [],
           shifts: s.shifts ?? [],

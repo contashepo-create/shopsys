@@ -5,13 +5,14 @@
  * - الترحيل يحدّث تكلفة الأصناف بالمتوسط المرجح ويزيد المخزون
  */
 import { useMemo, useState } from 'react'
-import { Plus, Trash2, Receipt, TruckIcon, Eye } from 'lucide-react'
+import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText } from 'lucide-react'
 import { useDataStore, type PurchaseInvoice } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { ACCOUNT_NAMES } from './accountNames.ts'
 
 interface DraftLine { itemId: number; qty: string; unitPrice: string }
 interface DraftExpense { nameAr: string; amount: string; method: 'value' | 'qty' }
@@ -19,7 +20,7 @@ interface DraftExpense { nameAr: string; amount: string; method: 'value' | 'qty'
 const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'شحن وتفريغ', 'عمولة مشتريات', 'أخرى']
 
 export function PurchasesPage() {
-  const { items, suppliers, purchases, postPurchase } = useDataStore()
+  const { items, suppliers, purchases, journal, postPurchase } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -329,6 +330,31 @@ export function PurchasesPage() {
               <span className="text-amber-600">المصاريف: {fmt(viewing.expensesTotalMinor)}</span>
               <span className="text-emerald-600">الإجمالي: {fmt(viewing.grandTotalMinor)}</span>
             </div>
+
+            {/* القيد المحاسبي المرتبط — الشفافية بالاتجاهين (القرار 9) */}
+            {(() => {
+              const entry = viewing.journalEntryId ? journal.find((e) => e.id === viewing.journalEntryId) : null
+              return entry ? (
+                <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] overflow-hidden">
+                  <div className="px-4 py-2.5 text-[12px] font-bold text-rose-600 dark:text-rose-400 border-b border-rose-500/10 flex items-center gap-1.5">
+                    <BookOpenText size={13} /> القيد المحاسبي المتولد #{entry.entryNumber}
+                  </div>
+                  <table className="w-full text-[12px]">
+                    <tbody>
+                      {entry.lines.map((l, i) => (
+                        <tr key={i} className="border-t border-rose-500/5">
+                          <td className="px-4 py-1.5 text-slate-600 dark:text-slate-300">
+                            {l.debit > 0 ? '' : '\u00A0\u00A0\u00A0\u00A0إلى '} {ACCOUNT_NAMES[l.accountCode] ?? l.accountCode}
+                          </td>
+                          <td className="px-4 py-1.5 w-28 font-bold">{l.debit > 0 ? fmt(l.debit) : ''}</td>
+                          <td className="px-4 py-1.5 w-28 font-bold text-slate-400">{l.credit > 0 ? fmt(l.credit) : ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null
+            })()}
           </div>
         )}
       </Modal>

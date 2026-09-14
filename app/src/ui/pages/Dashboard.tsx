@@ -12,7 +12,7 @@ import { accountBalance, STANDARD_COA } from '../../core/ledger.ts'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, saleReturns, items, purchases } = useDataStore()
+  const { journal, sales, saleReturns, items, purchases, purchaseReturns } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur)
@@ -53,7 +53,12 @@ export function Dashboard() {
     todayReturns.reduce((a, r) => a + (r.totals.taxBaseMinor - r.totals.cogsMinor), 0)
 
   const lowStock = items.filter((it) => (it.stockQty ?? 0) <= it.minQty && it.minQty > 0)
-  const suppliersDebt = purchases.reduce((a, p) => a + Math.max(0, p.grandTotalMinor - p.paidMinor), 0)
+  // دين الموردين = فواتير غير مسددة − مرتجعات الشراء المخفِّضة للدين
+  const suppliersDebt = Math.max(
+    0,
+    purchases.reduce((a, p) => a + Math.max(0, p.grandTotalMinor - p.paidMinor), 0) -
+      purchaseReturns.filter((r) => r.refund === 'debt').reduce((a, r) => a + r.totalMinor, 0),
+  )
 
   const cards = [
     { title: 'مبيعات اليوم', value: fmt(todayRevenue), icon: TrendingUp, color: 'from-emerald-500 to-teal-500', glow: 'shadow-emerald-500/30', delta: `${todaySales.length} فاتورة` },

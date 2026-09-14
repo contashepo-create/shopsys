@@ -10,6 +10,8 @@ import { ItemsPage } from './ui/pages/ItemsPage.tsx'
 import { WarehousesPage } from './ui/pages/WarehousesPage.tsx'
 import { CustomersPage, SuppliersPage } from './ui/pages/PartiesPages.tsx'
 import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
+import { PurchaseReturnsPage } from './ui/pages/PurchaseReturnsPage.tsx'
+import { StocktakePage } from './ui/pages/StocktakePage.tsx'
 import { PosPage } from './ui/pages/PosPage.tsx'
 import { SalesInvoicesPage } from './ui/pages/SalesInvoicesPage.tsx'
 import { SaleReturnsPage } from './ui/pages/SaleReturnsPage.tsx'
@@ -47,9 +49,9 @@ function Shell() {
         <Route path="/sales/returns" element={<SaleReturnsPage />} />
         <Route path="/sales/shifts" element={<ShiftsPage />} />
         <Route path="/inventory/transfers" element={<ComingSoon title="التحويلات المخزنية" phase="المرحلة 3" />} />
-        <Route path="/inventory/counting" element={<ComingSoon title="الجرد بالباركود" phase="المرحلة 3" />} />
+        <Route path="/inventory/counting" element={<StocktakePage />} />
         <Route path="/purchases/invoices" element={<PurchasesPage />} />
-        <Route path="/purchases/returns" element={<ComingSoon title="مرتجعات الشراء" phase="المرحلة 3" />} />
+        <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
         <Route path="/parties/employees" element={<ComingSoon title="الموظفون" phase="المرحلة 5" />} />
         <Route path="/parties/installments" element={<ComingSoon title="الأقساط" phase="المرحلة 5" />} />
         <Route path="/maintenance/tickets" element={<ComingSoon title="أوامر الصيانة" phase="المرحلة 6" />} />
