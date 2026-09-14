@@ -59,7 +59,7 @@ function usePageTitle(): string {
     const child = sec.children.find((c) => c.path === pathname)
     if (child) return sec.children.length === 1 ? sec.nameAr : `${sec.nameAr} — ${child.nameAr}`
   }
-  return 'حسبان'
+  return 'TAHAKAM ERP'
 }
 
 function Shell() {

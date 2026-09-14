@@ -68,9 +68,9 @@ export function parseBackup(text: string): BackupFile {
   try {
     obj = JSON.parse(text) as BackupFile
   } catch {
-    throw new Error('الملف ليس JSON صالحاً — تأكد أنه ملف نسخة احتياطية من «حسبان»')
+    throw new Error('الملف ليس JSON صالحاً — تأكد أنه ملف نسخة احتياطية من «تَحَكَّم»')
   }
-  if (obj?.format !== BACKUP_FORMAT) throw new Error('الملف ليس نسخة احتياطية من «حسبان»')
+  if (obj?.format !== BACKUP_FORMAT) throw new Error('الملف ليس نسخة احتياطية من «تَحَكَّم»')
   if (typeof obj.version !== 'number' || obj.version > BACKUP_VERSION) {
     throw new Error(`النسخة من إصدار أحدث (v${obj.version}) — حدّث التطبيق أولاً`)
   }

@@ -108,7 +108,7 @@ export function EinvoicePage() {
     if (!saActive || !einvoice.taxNumber || !isValidSaVatNumber(einvoice.taxNumber)) return null
     try {
       return buildZatcaQr({
-        sellerName: setup.shopName || 'حسبان',
+        sellerName: setup.shopName || 'تَحَكَّم',
         vatNumber: einvoice.taxNumber,
         timestampIso: new Date().toISOString(),
         totalWithVatMinor: 115000,

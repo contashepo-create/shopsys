@@ -138,7 +138,7 @@ export function buildReceiptModel(args: {
       ? `ض.ق.م ${args.taxPercent}٪ ${args.taxInclusive ? '(مشمولة في الإجمالي)' : '(مضافة)'}`
       : null
   return {
-    shopName: settings.shopName || 'حسبان',
+    shopName: settings.shopName || 'تَحَكَّم',
     headerLines: settings.headerLines.filter((l) => l.trim()),
     invoiceNumber: args.invoiceNumber,
     dateLabel: args.dateIso.slice(0, 16).replace('T', ' '),

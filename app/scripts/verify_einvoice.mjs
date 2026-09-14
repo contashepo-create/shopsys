@@ -50,7 +50,7 @@ ok(JSON.stringify(base64ToBytes('TQ==')) === '[77]', 'فك مع الحشو')
 
 /* ─── رمز زاتكا كامل: بناء ← فك ← تطابق ─── */
 const fields = {
-  sellerName: 'مؤسسة حسبان التجارية',
+  sellerName: 'مؤسسة تَحَكَّم التجارية',
   vatNumber: '310122393500003',
   timestampIso: '2026-09-14T20:30:00Z',
   totalWithVatMinor: 115000,
@@ -61,7 +61,7 @@ ok(validateZatcaFields(fields).length === 0, 'حقول سليمة بلا أخط�
 const qr = buildZatcaQr(fields)
 ok(qr.length > 0 && /^[A-Za-z0-9+/]+=*$/.test(qr), 'الرمز Base64 صالح')
 const decoded = decodeZatcaQr(qr)
-ok(decoded.get(1) === 'مؤسسة حسبان التجارية', 'فك: اسم البائع عربي سليم')
+ok(decoded.get(1) === 'مؤسسة تَحَكَّم التجارية', 'فك: اسم البائع عربي سليم')
 ok(decoded.get(2) === '310122393500003', 'فك: الرقم الضريبي')
 ok(decoded.get(3) === '2026-09-14T20:30:00Z', 'فك: الطابع الزمني')
 ok(decoded.get(4) === '1150.00', 'فك: الإجمالي بالضريبة')
@@ -76,7 +76,7 @@ ok(validateZatcaFields({ ...fields, timestampIso: 'ليس تاريخاً' }).len
 
 /* ─── مستند البوابة المصرية ─── */
 const egInput = {
-  issuerName: 'محل حسبان',
+  issuerName: 'محل تَحَكَّم',
   issuerTaxNumber: '123456789',
   issuerAddress: 'شارع الجيش، المنصورة',
   receiverName: 'شركة النور',

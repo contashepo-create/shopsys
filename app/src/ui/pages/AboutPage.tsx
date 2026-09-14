@@ -29,7 +29,7 @@ export function AboutPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-4">
       <div className={`${card} text-center space-y-3`}>
-        <img src="/app-icon.png" alt="حسبان" className="w-20 h-20 rounded-2xl mx-auto shadow-lg" />
+        <img src="/app-logo.png" alt="TAHAKAM ERP" className="max-h-32 mx-auto object-contain rounded-2xl shadow-lg" />
         <h1 className="text-2xl font-black">{about.title}</h1>
         <p className="text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{about.body}</p>
         <div className="flex items-center justify-center gap-4 flex-wrap text-sm font-bold">
