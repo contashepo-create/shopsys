@@ -19,6 +19,7 @@ import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry,
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
+import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from '../core/installments.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -71,6 +72,24 @@ export interface Employee extends PartyExtended {
   baseSalaryMinor: number // الراتب الأساسي الشهري
   allowancesMinor: number // بدلات شهرية ثابتة
   active: boolean // موظف على رأس العمل؟
+  notes: string
+}
+
+/**
+ * خطة أقساط لعميل — الذمة أصلها قائم من فاتورة بيع آجلة (1104)،
+ * فالخطة جدولة للتحصيل فقط: إنشاؤها لا يولّد قيداً إلا للمقدم إن وُجد،
+ * وكل سداد يولّد قيده: من ح/ الخزينة → إلى ح/ العملاء
+ */
+export interface InstallmentPlan {
+  id: number
+  planNumber: string // INS-0001
+  customerId: number
+  saleId: number | null // الفاتورة الآجلة المرتبطة (اختياري)
+  createdAt: string
+  totalMinor: number // إجمالي المديونية المجدولة
+  downPaymentMinor: number
+  items: InstallmentItem[]
+  downPaymentEntryId: number | null // قيد المقدم إن وُجد
   notes: string
 }
 
@@ -193,6 +212,7 @@ interface DataState {
   suppliers: Supplier[]
   employees: Employee[]
   payrollRuns: PayrollRun[]
+  installmentPlans: InstallmentPlan[]
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
@@ -303,6 +323,23 @@ interface DataState {
     lines: PayrollLineInput[]
     notes: string
   }) => PayrollRun
+  /**
+   * إنشاء خطة أقساط لعميل: جدول بتوزيع «أكبر البواقي»،
+   * المقدم (إن وُجد) يولّد قيد تحصيل فوري: خزينة ← عملاء
+   */
+  createInstallmentPlan: (args: {
+    customerId: number
+    saleId: number | null
+    totalMinor: number
+    downPaymentMinor: number
+    count: number
+    intervalMonths: number
+    firstDueDate: string
+    treasury: TreasuryAccount
+    notes: string
+  }) => InstallmentPlan
+  /** سداد دفعة على خطة: توزَّع على الأقساط الأقدم أولاً + قيد تحصيل متوازن */
+  payInstallment: (planId: number, amountMinor: number, treasury: TreasuryAccount) => InstallmentPlan
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
@@ -318,6 +355,7 @@ export const useDataStore = create<DataState>()(
       suppliers: [],
       employees: [],
       payrollRuns: [],
+      installmentPlans: [],
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
@@ -850,6 +888,97 @@ export const useDataStore = create<DataState>()(
         set({ payrollRuns: [...state.payrollRuns, run], journal: [...state.journal, entry] })
         return run
       },
+
+      createInstallmentPlan: (args) => {
+        const state = get()
+        if (!state.customers.some((c) => c.id === args.customerId)) throw new Error('العميل غير موجود')
+        // 1) الجدول بالنواة الخالصة (ترمي لو المدخلات غير سليمة)
+        const items = buildSchedule({
+          totalMinor: args.totalMinor,
+          downPaymentMinor: args.downPaymentMinor,
+          count: args.count,
+          intervalMonths: args.intervalMonths,
+          firstDueDate: args.firstDueDate,
+        })
+        const planId = nextId(state.installmentPlans)
+        const now = new Date().toISOString()
+        const planNumber = `INS-${String(planId).padStart(4, '0')}`
+        const customerName = state.customers.find((c) => c.id === args.customerId)?.nameAr ?? ''
+
+        // 2) قيد المقدم إن وُجد: تحصيل فوري من الذمة (خزينة ← عملاء)
+        let downPaymentEntryId: number | null = null
+        const journal = [...state.journal]
+        if (args.downPaymentMinor > 0) {
+          const entryId = nextId(state.journal)
+          const entryLines = buildReceiptVoucherEntry(args.treasury, '1104', args.downPaymentMinor, `مقدم خطة أقساط ${planNumber}`)
+          journal.push({
+            id: entryId,
+            entryNumber: entryId,
+            date: now.slice(0, 10),
+            description: `مقدم خطة أقساط ${planNumber} — ${customerName}`,
+            sourceType: 'receipt_voucher',
+            sourceId: planId,
+            lines: entryLines,
+            createdBy: 'المالك',
+            createdAt: now,
+            reversedByEntryId: null,
+            reversesEntryId: null,
+          })
+          downPaymentEntryId = entryId
+        }
+
+        const plan: InstallmentPlan = {
+          id: planId,
+          planNumber,
+          customerId: args.customerId,
+          saleId: args.saleId,
+          createdAt: now,
+          totalMinor: args.totalMinor,
+          downPaymentMinor: args.downPaymentMinor,
+          items,
+          downPaymentEntryId,
+          notes: args.notes,
+        }
+        set({ installmentPlans: [...state.installmentPlans, plan], journal })
+        return plan
+      },
+
+      payInstallment: (planId, amountMinor, treasury) => {
+        const state = get()
+        const plan = state.installmentPlans.find((p) => p.id === planId)
+        if (!plan) throw new Error('خطة الأقساط غير موجودة')
+        const progress = planProgress(plan.items, new Date().toISOString().slice(0, 10))
+        if (progress.finished) throw new Error('الخطة مسددة بالكامل')
+        if (amountMinor > progress.remainingMinor) {
+          throw new Error(`المبلغ أكبر من المتبقي على الخطة (${progress.remainingMinor})`)
+        }
+        const now = new Date().toISOString()
+        // 1) توزيع الدفعة على الأقساط الأقدم أولاً (نواة خالصة)
+        const { items } = applyPayment(plan.items, amountMinor, now)
+        // 2) قيد التحصيل المتوازن: خزينة ← عملاء
+        const entryId = nextId(state.journal)
+        const entryLines = buildReceiptVoucherEntry(treasury, '1104', amountMinor, `سداد قسط ${plan.planNumber}`)
+        const customerName = state.customers.find((c) => c.id === plan.customerId)?.nameAr ?? ''
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `تحصيل قسط ${plan.planNumber} — ${customerName}`,
+          sourceType: 'receipt_voucher',
+          sourceId: plan.id,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        const updated: InstallmentPlan = { ...plan, items }
+        set({
+          installmentPlans: state.installmentPlans.map((p) => (p.id === planId ? updated : p)),
+          journal: [...state.journal, entry],
+        })
+        return updated
+      },
     }),
     {
       name: 'shopsys-data',
@@ -865,6 +994,7 @@ export const useDataStore = create<DataState>()(
           suppliers: (s.suppliers ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           employees: (s.employees ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           payrollRuns: s.payrollRuns ?? [],
+          installmentPlans: s.installmentPlans ?? [],
           purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
           purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],
