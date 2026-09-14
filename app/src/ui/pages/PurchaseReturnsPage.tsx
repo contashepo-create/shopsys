@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { remainingPurchasable } from '../../core/purchases.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function PurchaseReturnsPage() {
@@ -26,6 +27,7 @@ export function PurchaseReturnsPage() {
   const [purchase, setPurchase] = useState<PurchaseInvoice | null>(null)
   const [qtys, setQtys] = useState<Record<number, string>>({})
   const [refund, setRefund] = useState<'cash' | 'debt'>('cash')
+  const [treasury, setTreasury] = useState('1101')
   const [reason, setReason] = useState('')
   const [viewing, setViewing] = useState<PurchaseReturn | null>(null)
 
@@ -68,7 +70,7 @@ export function PurchaseReturnsPage() {
         const n = Number(v)
         if (n > 0) map.set(Number(id), n)
       }
-      const ret = postPurchaseReturn({ purchaseId: purchase.id, qtyByItem: map, refund, reason: reason.trim() })
+      const ret = postPurchaseReturn({ purchaseId: purchase.id, qtyByItem: map, refund, reason: reason.trim(), treasury })
       toast.show(`تم مرتجع الشراء ${ret.returnNumber} — خرجت البضاعة وتولد القيد ✓`)
       setPurchase(null)
     } catch (e) {
@@ -216,6 +218,7 @@ export function PurchaseReturnsPage() {
                 className={`p-3 rounded-2xl border-2 font-bold text-sm transition-all disabled:opacity-40 ${refund === 'debt' ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
               >📉 تخفيض دين المورد {unpaidDebt > 0 ? `(المتبقي ${fmt(unpaidDebt)})` : '(مسددة بالكامل)'}</button>
             </div>
+            {refund === 'cash' && <TreasuryPicker value={treasury} onChange={setTreasury} compact />}
 
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="سبب الإرجاع (اختياري): تالف، غير مطابق للمواصفات…" className={inputCls} />
 

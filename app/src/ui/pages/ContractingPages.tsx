@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function ProjectsPage() {
@@ -53,6 +54,7 @@ export function ProjectsPage() {
   const [exGross, setExGross] = useState('')
   const [exDesc, setExDesc] = useState('')
   const [exPayment, setExPayment] = useState<'cash' | 'credit'>('credit')
+  const [exTreasury, setExTreasury] = useState('1101')
   const [exVat, setExVat] = useState(true)
 
   const saveExtract = () => {
@@ -60,7 +62,7 @@ export function ProjectsPage() {
     try {
       const ex = addProjectExtract({
         projectId: extractFor.id, grossMinor: toMinor(exGross, cur.decimals),
-        vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(),
+        vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
       })
       toast.show(`سُجل المستخلص ${ex.extractNumber} — المستحق ${fmt(ex.totals.dueMinor)} والمحتجز ${fmt(ex.totals.retentionMinor)} ✅`)
       setExtractFor(null); setExGross(''); setExDesc('')
@@ -73,13 +75,14 @@ export function ProjectsPage() {
   const [costAmount, setCostAmount] = useState('')
   const [costDesc, setCostDesc] = useState('')
   const [costPayment, setCostPayment] = useState<'cash' | 'credit'>('cash')
+  const [costTreasury, setCostTreasury] = useState('1101')
 
   const saveCost = () => {
     if (!costFor) return
     try {
       addProjectCost({
         projectId: costFor.id, kind: costKind, amountMinor: toMinor(costAmount, cur.decimals),
-        payment: costPayment, description: costDesc.trim(),
+        payment: costPayment, description: costDesc.trim(), treasury: costTreasury,
       })
       toast.show('سُجلت التكلفة على المشروع بقيد متوازن ✅')
       setCostFor(null); setCostAmount(''); setCostDesc('')
@@ -99,10 +102,14 @@ export function ProjectsPage() {
   ])
   const viewEntries = journal.filter((e) => viewEntryIds.has(e.id))
 
-  const doRelease = (p: Project) => {
+  const [releaseFor, setReleaseFor] = useState<Project | null>(null)
+  const [releaseTreasury, setReleaseTreasury] = useState('1101')
+  const doRelease = () => {
+    if (!releaseFor) return
     try {
-      const r = releaseRetention(p.id)
+      const r = releaseRetention(releaseFor.id, releaseTreasury)
       toast.show(`أُفرج عن محتجزات ${fmt(r.amount)} ${cur.symbol} وأُقفل المشروع 🎉`)
+      setReleaseFor(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -151,7 +158,7 @@ export function ProjectsPage() {
                             <button onClick={() => { setExtractFor(p); setExGross(''); setExDesc('') }} title="مستخلص جديد" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Receipt className="w-4 h-4" /></button>
                             <button onClick={() => { setCostFor(p); setCostAmount(''); setCostDesc('') }} title="تسجيل تكلفة" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Hammer className="w-4 h-4" /></button>
                             {pr.retentionHeldMinor > 0 && (
-                              <button onClick={() => doRelease(p)} title={`الإفراج عن المحتجز (${fmt(pr.retentionHeldMinor)}) وإقفال المشروع`} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
+                              <button onClick={() => setReleaseFor(p)} title={`الإفراج عن المحتجز (${fmt(pr.retentionHeldMinor)}) وإقفال المشروع`} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
                             )}
                           </>
                         )}
@@ -199,6 +206,7 @@ export function ProjectsPage() {
                     </button>
                   ))}
                 </div>
+                {exPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={exTreasury} onChange={setExTreasury} compact /></div>}
               </Field>
               <Field label="الضريبة">
                 <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
@@ -242,6 +250,7 @@ export function ProjectsPage() {
                     </button>
                   ))}
                 </div>
+                {costPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={costTreasury} onChange={setCostTreasury} compact /></div>}
               </Field>
             </div>
             <Field label="الوصف"><input value={costDesc} onChange={(e) => setCostDesc(e.target.value)} className={inputCls} placeholder="حديد تسليح، أجور نجارين…" /></Field>
@@ -313,6 +322,22 @@ export function ProjectsPage() {
                 </tbody></table>
               </div>
             ))}
+          </div>
+        )}
+      </Modal>
+
+      {/* الإفراج عن المحتجزات — باختيار الخزينة (طلب المالك) */}
+      <Modal open={!!releaseFor} onClose={() => setReleaseFor(null)} title={releaseFor ? `الإفراج عن محتجزات ${releaseFor.nameAr}` : ''}>
+        {releaseFor && (
+          <div className="space-y-4">
+            <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
+              سيُحصَّل المحتجز المتبقي {fmt(getProjectProfit(releaseFor.id).retentionHeldMinor)} {cur.symbol} ويُقفل المشروع نهائياً.
+            </div>
+            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={releaseTreasury} onChange={setReleaseTreasury} compact /></Field>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setReleaseFor(null)}>إلغاء</Btn>
+              <Btn onClick={doRelease}>🏁 تحصيل وإقفال</Btn>
+            </div>
           </div>
         )}
       </Modal>

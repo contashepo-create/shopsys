@@ -104,11 +104,12 @@ export function buildExtraUsageEntry(
   vatPercent: number,
   payment: 'cash' | 'credit',
   label: string,
+  treasury = '1101',
 ): JournalLine[] {
   if (!Number.isInteger(extraMinor) || extraMinor <= 0) throw new Error('قيمة التجاوز يجب أن تكون موجبة')
   const vat = Math.round((extraMinor * vatPercent) / 100)
   const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? '1101' : '1104', debit: extraMinor + vat, credit: 0, note: `تجاوز استخدام ${label}` },
+    { accountCode: payment === 'cash' ? treasury : '1104', debit: extraMinor + vat, credit: 0, note: `تجاوز استخدام ${label}` },
     { accountCode: '4104', debit: 0, credit: extraMinor, note: 'إيراد تجاوز ساعات/مدة' },
   ]
   if (vat > 0) lines.push({ accountCode: '2102', debit: 0, credit: vat, note: 'ض.ق.م' })

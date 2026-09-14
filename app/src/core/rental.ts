@@ -62,10 +62,10 @@ export function computeRentalTotals(input: RentalInput): RentalTotals {
  *     إلى ح/ 2102 ض.ق.م (vat)
  *     إلى ح/ 2103 تأمينات مستردة (deposit — التزام لا إيراد)
  */
-export function buildRentalOpenEntry(totals: RentalTotals, label: string): JournalLine[] {
+export function buildRentalOpenEntry(totals: RentalTotals, label: string, treasury = '1101'): JournalLine[] {
   if (totals.rentMinor <= 0) throw new Error('قيمة الإيجار يجب أن تكون موجبة')
   const lines: JournalLine[] = []
-  if (totals.collectCashMinor > 0) lines.push({ accountCode: '1101', debit: totals.collectCashMinor, credit: 0, note: `تحصيل ${label}` })
+  if (totals.collectCashMinor > 0) lines.push({ accountCode: treasury, debit: totals.collectCashMinor, credit: 0, note: `تحصيل ${label}` })
   if (totals.collectCreditMinor > 0) lines.push({ accountCode: '1104', debit: totals.collectCreditMinor, credit: 0, note: `آجل ${label}` })
   lines.push({ accountCode: '4104', debit: 0, credit: totals.rentMinor, note: 'إيراد إيجار معدات' })
   if (totals.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: totals.vatMinor, note: 'ض.ق.م' })
@@ -81,7 +81,7 @@ export function buildRentalOpenEntry(totals: RentalTotals, label: string): Journ
  *     إلى ح/ 4104 إيراد إيجار (المخصوم أضراراً/غرامة — يُعترف به إيراداً)
  * يعيد null إذا لا تأمين أصلاً (لا حاجة لقيد).
  */
-export function buildRentalCloseEntry(depositMinor: Minor, deductMinor: Minor, label: string): JournalLine[] | null {
+export function buildRentalCloseEntry(depositMinor: Minor, deductMinor: Minor, label: string, treasury = '1101'): JournalLine[] | null {
   if (!isPosInt(depositMinor) || !isPosInt(deductMinor)) throw new Error('قيم التأمين والخصم لا تكون سالبة')
   if (deductMinor > depositMinor) throw new Error('الخصم لا يتجاوز التأمين المحصَّل')
   if (depositMinor === 0) return null
@@ -89,7 +89,7 @@ export function buildRentalCloseEntry(depositMinor: Minor, deductMinor: Minor, l
   const lines: JournalLine[] = [
     { accountCode: '2103', debit: depositMinor, credit: 0, note: `تصفية تأمين ${label}` },
   ]
-  if (refund > 0) lines.push({ accountCode: '1101', debit: 0, credit: refund, note: 'ردّ التأمين للعميل' })
+  if (refund > 0) lines.push({ accountCode: treasury, debit: 0, credit: refund, note: 'ردّ التأمين للعميل' })
   if (deductMinor > 0) lines.push({ accountCode: '4104', debit: 0, credit: deductMinor, note: 'خصم من التأمين (أضرار/غرامة)' })
   assertBalanced(lines)
   return lines

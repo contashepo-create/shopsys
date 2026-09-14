@@ -11,6 +11,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { assetsReport, depreciationSchedule, nextDepreciationMonth } from '../../core/assets.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 
 export function AssetsPage() {
   const { assets, journal, addAsset, postMonthlyDepreciation } = useDataStore()
@@ -35,6 +36,7 @@ export function AssetsPage() {
   const [salvage, setSalvage] = useState('')
   const [lifeYears, setLifeYears] = useState('5')
   const [paid, setPaid] = useState('')
+  const [treasury, setTreasury] = useState('1101')
   const [notes, setNotes] = useState('')
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
 
@@ -61,6 +63,7 @@ export function AssetsPage() {
         lifeMonths: Math.round(Number(lifeYears) * 12),
         paidMinor: paid.trim() ? toM(paid) : toM(cost),
         notes,
+        treasury,
       })
       toast.show(`سُجّل الأصل ${a.assetNumber} وتولّد قيد الاقتناء ✅`)
       setOpen(false)
@@ -171,6 +174,7 @@ export function AssetsPage() {
             </Field>
             <Field label={`المدفوع نقداً (${cur.symbol})`} hint="فارغ = كله نقداً؛ الباقي آجل على مورد">
               <input value={paid} onChange={(e) => setPaid(e.target.value)} className={inputCls} dir="ltr" placeholder={cost || '0'} />
+              <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>
             </Field>
           </div>
           {preview && (

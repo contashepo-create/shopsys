@@ -51,9 +51,9 @@ export function computeVisitTotals(v: VisitInput): VisitTotals {
  * قيد الزيارة المتوازن — يدعم السداد الجزئي:
  *   من ح/ 1101 المسدد + 1104 المتبقي ← إلى ح/ 4108 الإيراد + 2102 الضريبة
  */
-export function buildVisitEntry(t: VisitTotals, label: string): JournalLine[] {
+export function buildVisitEntry(t: VisitTotals, label: string, treasury = '1101'): JournalLine[] {
   const lines: JournalLine[] = []
-  if (t.paidMinor > 0) lines.push({ accountCode: '1101', debit: t.paidMinor, credit: 0, note: `تحصيل ${label}` })
+  if (t.paidMinor > 0) lines.push({ accountCode: treasury, debit: t.paidMinor, credit: 0, note: `تحصيل ${label}` })
   if (t.dueMinor > 0) lines.push({ accountCode: '1104', debit: t.dueMinor, credit: 0, note: 'متبقٍ على المريض' })
   lines.push({ accountCode: '4108', debit: 0, credit: t.feeMinor, note: 'إيراد كشف وعلاج' })
   if (t.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: t.vatMinor, note: 'ض.ق.م' })
@@ -62,10 +62,10 @@ export function buildVisitEntry(t: VisitTotals, label: string): JournalLine[] {
 }
 
 /** قيد تحصيل متأخرات مريض: 1101 ← 1104 */
-export function buildPatientCollectionEntry(amountMinor: Minor, label: string): JournalLine[] {
+export function buildPatientCollectionEntry(amountMinor: Minor, label: string, treasury = '1101'): JournalLine[] {
   if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('مبلغ التحصيل يجب أن يكون موجباً')
   const lines: JournalLine[] = [
-    { accountCode: '1101', debit: amountMinor, credit: 0, note: `تحصيل من ${label}` },
+    { accountCode: treasury, debit: amountMinor, credit: 0, note: `تحصيل من ${label}` },
     { accountCode: '1104', debit: 0, credit: amountMinor, note: 'تخفيض مديونية المريض' },
   ]
   assertBalanced(lines)

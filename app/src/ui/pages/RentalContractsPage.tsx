@@ -14,6 +14,7 @@ import { computeRentalTotals, rentalReport } from '../../core/rental.ts'
 import { RATE_TYPE_LABELS, type RateType } from '../../core/rentalMeter.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function RentalContractsPage() {
@@ -38,6 +39,7 @@ export function RentalContractsPage() {
   const [dailyRate, setDailyRate] = useState('')
   const [deposit, setDeposit] = useState('')
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [treasury, setTreasury] = useState('1101')
   const [withVat, setWithVat] = useState(false)
   const [notes, setNotes] = useState('')
   // ترقية القرار 25: نوع العقد الزمني + قراءة عدّاد التسليم للساعي
@@ -94,6 +96,7 @@ export function RentalContractsPage() {
         notes: notes.trim(),
         rateType,
         startReading: rateType === 'hourly' && startReading.trim() !== '' ? Number(startReading) : null,
+        treasury,
       })
       toast.show(`فُتح العقد ${c.contractNumber} — يُقبض الآن ${fmt(c.totals.collectCashMinor)} ${cur.symbol} ✅`)
       setOpen(false)
@@ -105,6 +108,7 @@ export function RentalContractsPage() {
   const [deduct, setDeduct] = useState('')
   const [endReading, setEndReading] = useState('')
   const [endDate, setEndDate] = useState('')
+  const [closeTreasury, setCloseTreasury] = useState('1101')
   const doClose = () => {
     if (!closing) return
     try {
@@ -114,7 +118,7 @@ export function RentalContractsPage() {
           : endDate
             ? { endDate }
             : undefined
-      const c = closeRental(closing.id, toM(deduct), usage)
+      const c = closeRental(closing.id, toM(deduct), usage, closeTreasury)
       const refund = c.totals.depositMinor - c.deductMinor
       const extraMsg = c.extraMinor > 0 ? ` — تجاوز استخدام ${fmt(c.extraMinor)} ${cur.symbol} بقيد منفصل` : ''
       toast.show(`أُقفل العقد ${c.contractNumber}${c.totals.depositMinor > 0 ? ` — يُرَدّ للعميل ${fmt(refund)} ${cur.symbol}` : ''}${extraMsg} ✅`)
@@ -304,6 +308,7 @@ export function RentalContractsPage() {
                 <input value={startReading} onChange={(e) => setStartReading(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} placeholder="0" />
               </Field>
             )}
+            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يُقبض نقداً ويُردّ عند الإقفال — لا يدخل الإيراد">
               <input value={deposit} onChange={(e) => setDeposit(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
             </Field>
@@ -372,6 +377,7 @@ export function RentalContractsPage() {
             ) : (
               <p className="text-[12.5px] text-slate-400">لا تأمين على هذا العقد — سيُقفل بلا قيد إضافي.</p>
             )}
+            <Field label="خزينة التسوية (ردّ التأمين / تحصيل التجاوز)"><TreasuryPicker value={closeTreasury} onChange={setCloseTreasury} compact /></Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setClosing(null)}>إلغاء</Btn>
               <Btn onClick={doClose}>🔒 إقفال العقد</Btn>

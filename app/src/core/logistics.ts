@@ -106,16 +106,16 @@ export function computeTripTotals(input: TripInput): TripTotals {
  *     إلى ح/ 1101 الخزينة (المصاريف النقدية)
  *     إلى ح/ 2101 الموردون (المصاريف الآجلة)
  */
-export function buildTripEntry(totals: TripTotals, payment: 'cash' | 'credit', tripLabel: string): JournalLine[] {
+export function buildTripEntry(totals: TripTotals, payment: 'cash' | 'credit', tripLabel: string, treasury = '1101'): JournalLine[] {
   if (totals.revenueMinor <= 0) throw new Error('إيراد النقلة يجب أن يكون موجباً')
   const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? '1101' : '1104', debit: totals.grandMinor, credit: 0, note: `تحصيل ${tripLabel}` },
+    { accountCode: payment === 'cash' ? treasury : '1104', debit: totals.grandMinor, credit: 0, note: `تحصيل ${tripLabel}` },
     { accountCode: '4105', debit: 0, credit: totals.revenueMinor, note: 'إيراد نقلات' },
   ]
   if (totals.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: totals.vatMinor, note: 'ض.ق.م' })
   if (totals.costMinor > 0) {
     lines.push({ accountCode: '5106', debit: totals.costMinor, credit: 0, note: 'مصاريف النقلة' })
-    if (totals.directCashMinor > 0) lines.push({ accountCode: '1101', debit: 0, credit: totals.directCashMinor, note: 'مصاريف نقدية' })
+    if (totals.directCashMinor > 0) lines.push({ accountCode: treasury, debit: 0, credit: totals.directCashMinor, note: 'مصاريف نقدية' })
     if (totals.creditMinor > 0) lines.push({ accountCode: '2101', debit: 0, credit: totals.creditMinor, note: 'مصاريف آجلة (محطات/موردون)' })
   }
   assertBalanced(lines)

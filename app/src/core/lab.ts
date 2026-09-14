@@ -155,10 +155,10 @@ export function computeLabTotals(prices: readonly Minor[], discountPercent: numb
  *   من ح/ 1101 خزينة (نقدي) أو 1104 عملاء (آجل — شركة تعاقد أو مريض بحساب)
  *     إلى ح/ 4106 إيرادات تحاليل + 2102 ض.ق.م (إن وجدت)
  */
-export function buildLabOrderEntry(totals: LabOrderTotals, payment: 'cash' | 'credit', label: string): JournalLine[] {
+export function buildLabOrderEntry(totals: LabOrderTotals, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
   if (totals.netMinor <= 0) throw new Error('قيمة الطلب يجب أن تكون موجبة')
   const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? '1101' : '1104', debit: totals.totalMinor, credit: 0, note: `تحصيل ${label}` },
+    { accountCode: payment === 'cash' ? treasury : '1104', debit: totals.totalMinor, credit: 0, note: `تحصيل ${label}` },
     { accountCode: '4106', debit: 0, credit: totals.netMinor, note: 'إيراد تحاليل طبية' },
   ]
   if (totals.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: totals.vatMinor, note: 'ض.ق.م' })
@@ -201,11 +201,11 @@ export function buildCommissionAccrualEntry(commissionMinor: Minor, label: strin
 }
 
 /** قيد صرف العمولات المتجمعة: 2105 ← 1101 */
-export function buildCommissionPayoutEntry(totalMinor: Minor, referrerName: string): JournalLine[] {
+export function buildCommissionPayoutEntry(totalMinor: Minor, referrerName: string, treasury = '1101'): JournalLine[] {
   if (!Number.isInteger(totalMinor) || totalMinor <= 0) throw new Error('لا عمولات مستحقة للصرف')
   const lines: JournalLine[] = [
     { accountCode: '2105', debit: totalMinor, credit: 0, note: `تصفية عمولات د. ${referrerName}` },
-    { accountCode: '1101', debit: 0, credit: totalMinor, note: 'صرف نقدي' },
+    { accountCode: treasury, debit: 0, credit: totalMinor, note: 'صرف نقدي' },
   ]
   assertBalanced(lines)
   return lines

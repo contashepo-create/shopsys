@@ -16,6 +16,7 @@ import { computeLabTotals, deriveOrderStatus, ORDER_STATUS_LABELS, referrerState
 import { printHtml } from '../print/printReceipt.ts'
 import { renderLabReportHtml } from '../print/printLabReport.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 function useCur() {
@@ -55,6 +56,7 @@ export function LabOrdersPage() {
   const [referrerId, setReferrerId] = useState('')
   const [selected, setSelected] = useState<number[]>([])
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [treasury, setTreasury] = useState('1101')
   const [discount, setDiscount] = useState('0')
   const [withVat, setWithVat] = useState(false)
   const [notes, setNotes] = useState('')
@@ -80,6 +82,7 @@ export function LabOrdersPage() {
         discountPercent: Number(discount) || 0,
         vatPercent: withVat ? setup.vatPercent : 0,
         notes: notes.trim(),
+        treasury,
       })
       toast.show(`سُجل الطلب ${o.orderNumber} بقيد متوازن${o.commissionMinor > 0 ? ` + استحقاق عمولة ${fmt(o.commissionMinor)}` : ''} ✅`)
       setOpen(false); resetForm()
@@ -207,6 +210,7 @@ export function LabOrdersPage() {
                   </button>
                 ))}
               </div>
+              {payment === 'cash' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
             </Field>
             <Field label="خصم ٪"><input value={discount} onChange={(e) => setDiscount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="الضريبة">
@@ -565,10 +569,14 @@ export function LabReferrersPage() {
     return referrerStatement(labOrders, stmtRef, { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` })
   }, [stmtRef, month, labOrders])
 
-  const payout = (id: number, name: string) => {
+  const [payoutFor, setPayoutFor] = useState<{ id: number; name: string } | null>(null)
+  const [payoutTreasury, setPayoutTreasury] = useState('1101')
+  const doPayout = () => {
+    if (!payoutFor) return
     try {
-      const r = payReferrerCommissions(id)
-      toast.show(`صُرفت عمولات د. ${name}: ${fmt(r.total)} ${cur.symbol} عن ${r.orderCount} طلب — بقيد متوازن ✅`)
+      const r = payReferrerCommissions(payoutFor.id, payoutTreasury)
+      toast.show(`صُرفت عمولات د. ${payoutFor.name}: ${fmt(r.total)} ${cur.symbol} عن ${r.orderCount} طلب — بقيد متوازن ✅`)
+      setPayoutFor(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -603,7 +611,7 @@ export function LabReferrersPage() {
                       <div className="flex gap-1 justify-end">
                         <button onClick={() => { setStmtRef(r.id); setMonth(thisMonth) }} title="كشف شهري" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><BookOpenText className="w-4 h-4" /></button>
                         {unpaid > 0 && (
-                          <button onClick={() => payout(r.id, r.nameAr)} title="صرف العمولات المستحقة" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
+                          <button onClick={() => setPayoutFor({ id: r.id, name: r.nameAr })} title="صرف العمولات المستحقة" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
                         )}
                       </div>
                     </td>
@@ -664,6 +672,22 @@ export function LabReferrersPage() {
                 </div>
               </>
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* صرف عمولات محيل — باختيار الخزينة (طلب المالك) */}
+      <Modal open={!!payoutFor} onClose={() => setPayoutFor(null)} title={payoutFor ? `صرف عمولات د. ${payoutFor.name}` : ''}>
+        {payoutFor && (
+          <div className="space-y-4">
+            <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
+              المستحق غير المدفوع: {fmt(unpaidFor(payoutFor.id))} {cur.symbol}
+            </div>
+            <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={payoutTreasury} onChange={setPayoutTreasury} compact /></Field>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setPayoutFor(null)}>إلغاء</Btn>
+              <Btn onClick={doPayout}>💸 صرف الآن</Btn>
+            </div>
           </div>
         )}
       </Modal>

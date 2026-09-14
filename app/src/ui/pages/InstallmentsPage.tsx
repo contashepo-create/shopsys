@@ -4,7 +4,7 @@
  * «أكبر البواقي»، سداد يتوزع على الأقدم أولاً بقيد تحصيل متوازن (خزينة ← عملاء).
  */
 import { useMemo, useState } from 'react'
-import { Plus, CalendarClock, AlarmClock, Eye, Landmark, HandCoins, BookOpenText, CheckCircle2 } from 'lucide-react'
+import { Plus, CalendarClock, AlarmClock, Eye, HandCoins, BookOpenText, CheckCircle2 } from 'lucide-react'
 import { useDataStore, type InstallmentPlan } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -12,7 +12,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { buildSchedule, planProgress, installmentStatus, collectAlerts, type InstallmentItem } from '../../core/installments.ts'
 import type { TreasuryAccount } from '../../core/accounting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
-import { ACCOUNT_NAMES } from './accountNames.ts'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   paid: { label: 'مدفوع', cls: 'text-emerald-600 bg-emerald-500/10' },
@@ -237,13 +237,7 @@ export function InstallmentsPage() {
 
           {Number(down.trim() ? toMinor(down, cur.decimals) : 0) > 0 && (
             <Field label="تحصيل المقدم في">
-              <div className="grid grid-cols-2 gap-1.5">
-                {(['1101', '1102'] as TreasuryAccount[]).map((t) => (
-                  <button key={t} onClick={() => setTreasury(t)} className={`p-2 rounded-lg border-2 text-[11px] font-bold transition-all ${treasury === t ? 'border-brand-500/60 bg-brand-500/10 text-brand-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
-                    <Landmark size={12} className="inline -mt-0.5 me-1" />{ACCOUNT_NAMES[t]}
-                  </button>
-                ))}
-              </div>
+              <TreasuryPicker value={treasury} onChange={setTreasury} compact />
             </Field>
           )}
 
@@ -327,13 +321,7 @@ export function InstallmentsPage() {
                 <div className="flex items-center gap-2 font-extrabold text-emerald-600 text-[13px]"><HandCoins size={16} /> تحصيل دفعة</div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} />
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {(['1101', '1102'] as TreasuryAccount[]).map((t) => (
-                      <button key={t} onClick={() => setPayTreasury(t)} className={`p-2 rounded-lg border-2 text-[11px] font-bold transition-all ${payTreasury === t ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
-                        <Landmark size={12} className="inline -mt-0.5 me-1" />{ACCOUNT_NAMES[t]}
-                      </button>
-                    ))}
-                  </div>
+                  <TreasuryPicker value={payTreasury} onChange={setPayTreasury} compact />
                   <Btn onClick={pay} disabled={!payAmount.trim()}>💾 تحصيل وتوليد القيد</Btn>
                 </div>
                 {liveProgress.nextDue && (

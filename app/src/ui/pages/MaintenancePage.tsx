@@ -13,6 +13,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeTicketTotals, maintenanceReport, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 const STATUS_COLORS: Record<TicketStatus, string> = {
@@ -79,6 +80,7 @@ export function MaintenancePage() {
   const [labor, setLabor] = useState('')
   const [parts, setParts] = useState<DraftPart[]>([])
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [treasury, setTreasury] = useState('1101')
   const [withVat, setWithVat] = useState(false)
   const startDeliver = (t: MaintenanceTicket) => {
     setDelivering(t)
@@ -117,6 +119,7 @@ export function MaintenancePage() {
         parts: parts.filter((p) => p.itemId).map((p) => ({ itemId: Number(p.itemId), qty: Number(p.qty) || 0, unitPriceMinor: toM(p.unitPrice) })),
         payment,
         vatPercent: withVat ? setup.vatPercent : 0,
+        treasury,
       })
       toast.show(`سُلِّمت ${t.ticketNumber} — المحصَّل ${fmt(t.totals!.grandMinor)} ${cur.symbol} ✅`)
       setDelivering(null)
@@ -325,6 +328,7 @@ export function MaintenancePage() {
                   <button onClick={() => setPayment('cash')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>نقدي</button>
                   <button onClick={() => setPayment('credit')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'credit' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>آجل</button>
                 </div>
+                {payment === 'cash' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
               </Field>
               <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer self-end">
                 <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">ض.ق.م {setup.vatPercent}٪</span>

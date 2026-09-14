@@ -32,7 +32,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, postVoucher } = useDataStore()
+  const { vouchers, journal, treasuries, customers, suppliers, postVoucher } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -45,6 +45,7 @@ export function VouchersPage() {
   const [counter, setCounter] = useState('')
   const [amount, setAmount] = useState('')
   const [desc, setDesc] = useState('')
+  const [partyId, setPartyId] = useState(0) // العميل (قبض 1104) أو المورد (صرف 2101) — يغذي كشف الحساب
   const [viewing, setViewing] = useState<Voucher | null>(null)
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
@@ -57,17 +58,24 @@ export function VouchersPage() {
     setCounter('')
     setAmount('')
     setDesc('')
+    setPartyId(0)
     setOpen(true)
   }
 
+  // سداد عميل (1104) في القبض أو سداد مورد (2101) في الصرف ⇒ نطلب تحديد الطرف
+  const needsParty = (kind === 'receipt' && counter === '1104') || (kind === 'payment' && counter === '2101')
+
   const save = () => {
     try {
+      if (needsParty && !partyId) throw new Error(kind === 'receipt' ? 'اختر العميل الذي سدد' : 'اختر المورد المسدد له')
       const v = postVoucher({
         kind,
         treasury,
         counterAccountCode: counter,
         amountMinor: toMinor(amount || '0', cur.decimals),
         description: desc.trim(),
+        partyKind: needsParty ? (kind === 'receipt' ? 'customer' : 'supplier') : null,
+        partyId: needsParty ? partyId : null,
       })
       toast.show(`تم ${kind === 'receipt' ? 'سند القبض' : 'سند الصرف'} ${v.voucherNumber} — تولد قيده تلقائياً ✓`)
       setOpen(false)
@@ -146,11 +154,19 @@ export function VouchersPage() {
             <TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} />
           </Field>
           <Field label={kind === 'receipt' ? 'مصدر النقدية (الحساب المقابل)' : 'وجهة النقدية (الحساب المقابل)'}>
-            <select value={counter} onChange={(e) => setCounter(e.target.value)} className={inputCls}>
+            <select value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0) }} className={inputCls}>
               <option value="">اختر…</option>
               {counters.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
             </select>
           </Field>
+          {needsParty && (
+            <Field label={kind === 'receipt' ? 'أي عميل؟ *' : 'أي مورد؟ *'} hint="يظهر السند في كشف حسابه">
+              <select value={partyId} onChange={(e) => setPartyId(Number(e.target.value))} className={inputCls}>
+                <option value={0}>اختر…</option>
+                {(kind === 'receipt' ? customers : suppliers).map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
+              </select>
+            </Field>
+          )}
           <Field label={`المبلغ (${cur.symbol})`}>
             <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputCls} dir="ltr" autoFocus />
           </Field>
@@ -159,7 +175,7 @@ export function VouchersPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!counter || !amount.trim()}>💾 حفظ السند</Btn>
+            <Btn onClick={save} disabled={!counter || !amount.trim() || (needsParty && !partyId)}>💾 حفظ السند</Btn>
           </div>
         </div>
       </Modal>

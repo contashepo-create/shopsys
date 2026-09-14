@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { showroomSummary } from '../../core/cars.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
@@ -40,13 +41,14 @@ export function CarsPage() {
   const [cost, setCost] = useState('')
   const [odometer, setOdometer] = useState('0')
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [treasury, setTreasury] = useState('1101')
 
   const save = () => {
     try {
       const c = addCar({
         make: make.trim(), model: model.trim(), year: Number(year) || 0, plateOrVin: plate.trim(),
         purpose: 'sale', purchaseCostMinor: toMinor(cost, cur.decimals), odometerKm: Number(odometer) || 0,
-        payment, notes: '',
+        payment, notes: '', treasury,
       })
       toast.show(`أُضيفت ${c.make} ${c.model} للمخزون بقيد شراء ✅`)
       setOpen(false); setMake(''); setModel(''); setPlate(''); setCost(''); setOdometer('0')
@@ -58,11 +60,12 @@ export function CarsPage() {
   const [prepAmount, setPrepAmount] = useState('')
   const [prepDesc, setPrepDesc] = useState('')
   const [prepPayment, setPrepPayment] = useState<'cash' | 'credit'>('cash')
+  const [prepTreasury, setPrepTreasury] = useState('1101')
 
   const savePrep = () => {
     if (!prepFor) return
     try {
-      addCarPrep(prepFor.id, toMinor(prepAmount, cur.decimals), prepPayment, prepDesc.trim())
+      addCarPrep(prepFor.id, toMinor(prepAmount, cur.decimals), prepPayment, prepDesc.trim(), prepTreasury)
       toast.show('رُسملت التكلفة على السيارة — ستدخل في حساب ربحية بيعها ✅')
       setPrepFor(null); setPrepAmount(''); setPrepDesc('')
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -74,13 +77,14 @@ export function CarsPage() {
   const [buyer, setBuyer] = useState('')
   const [sellVat, setSellVat] = useState(false)
   const [sellPayment, setSellPayment] = useState<'cash' | 'credit'>('cash')
+  const [sellTreasury, setSellTreasury] = useState('1101')
 
   const doSell = () => {
     if (!sellFor) return
     try {
       const c = sellCar({
         carId: sellFor.id, priceMinor: toMinor(price, cur.decimals),
-        vatPercent: sellVat ? setup.vatPercent : 0, payment: sellPayment, buyerName: buyer.trim(),
+        vatPercent: sellVat ? setup.vatPercent : 0, payment: sellPayment, buyerName: buyer.trim(), treasury: sellTreasury,
       })
       const p = c.saleProfitMinor ?? 0
       toast.show(p >= 0 ? `بيعت بربح ${fmt(p)} ${cur.symbol} 🎉` : `بيعت بخسارة ${fmt(-p)} ${cur.symbol}`, p >= 0 ? 'success' : 'error')
@@ -184,6 +188,7 @@ export function CarsPage() {
                 </button>
               ))}
             </div>
+            {payment === 'cash' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
@@ -206,6 +211,7 @@ export function CarsPage() {
                   </button>
                 ))}
               </div>
+              {prepPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={prepTreasury} onChange={setPrepTreasury} compact /></div>}
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setPrepFor(null)}>إلغاء</Btn>
@@ -235,6 +241,7 @@ export function CarsPage() {
                     </button>
                   ))}
                 </div>
+                {sellPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={sellTreasury} onChange={setSellTreasury} compact /></div>}
               </Field>
               <Field label="الضريبة">
                 <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">

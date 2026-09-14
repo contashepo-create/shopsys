@@ -13,6 +13,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeTripTotals, tripProfitReport, EXPENSE_SOURCE_LABELS, type TripExpenseSource } from '../../core/logistics.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 interface DraftExpense {
@@ -47,6 +48,7 @@ export function TripsPage() {
   const [qty, setQty] = useState('1')
   const [unitPrice, setUnitPrice] = useState('')
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [treasury, setTreasury] = useState('1101')
   const [withVat, setWithVat] = useState(false)
   const [containers, setContainers] = useState('')
   const [expenses, setExpenses] = useState<DraftExpense[]>([])
@@ -90,6 +92,7 @@ export function TripsPage() {
         driverId: driverId ? Number(driverId) : null,
         input: draftInput,
         notes: notes.trim(),
+        treasury,
       })
       toast.show(`رُحّلت النقلة ${trip.tripNumber} — ربحها ${fmt(trip.totals.profitMinor)} ${cur.symbol} ✅`)
       setOpen(false)
@@ -286,6 +289,9 @@ export function TripsPage() {
                 <button onClick={() => setPayment('credit')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'credit' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>آجل (على العميل)</button>
               </div>
             </Field>
+            {payment === 'cash' && (
+              <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>
+            )}
             <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer self-end">
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">ض.ق.م {setup.vatPercent}٪ (تضاف فوق السعر)</span>
               <input type="checkbox" checked={withVat} onChange={(e) => setWithVat(e.target.checked)} className="w-4 h-4 accent-fuchsia-600" />

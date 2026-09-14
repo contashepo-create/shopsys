@@ -104,11 +104,12 @@ export function purchaseReturnTotal(lines: PurchaseReturnLine[]): Minor {
 export function buildPurchaseReturnEntry(
   totalMinor: Minor,
   refund: 'cash' | 'debt',
+  treasury = '1101',
 ): JournalLine[] {
   if (totalMinor <= 0) throw new RangeError('قيمة المرتجع يجب أن تكون موجبة')
   const lines: JournalLine[] = [
     {
-      accountCode: refund === 'cash' ? '1101' : '2101',
+      accountCode: refund === 'cash' ? treasury : '2101',
       debit: totalMinor,
       credit: 0,
       note: refund === 'cash' ? 'استرداد نقدي من المورد' : 'تخفيض دين المورد',

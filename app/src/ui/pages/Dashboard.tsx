@@ -12,7 +12,7 @@ import { accountBalance, STANDARD_COA } from '../../core/ledger.ts'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, items, purchases, purchaseReturns } = useDataStore()
+  const { journal, sales, items, purchases, purchaseReturns, treasuries } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur)
@@ -32,14 +32,19 @@ export function Dashboard() {
       const t = totals.get(code) ?? { d: 0, c: 0 }
       return acc ? accountBalance(acc.rootType, t.d, t.c) : 0
     }
+    // «في الخزينة» = مجموع كل الخزائن والبنوك المسجلة مهما كان عددها (طلب المالك)
+    const cashCodes = treasuries.length ? treasuries.map((t) => t.code) : ['1101', '1102']
     return {
-      cash: bal('1101'),
+      cash: cashCodes.reduce((sum, code) => {
+        const t = totals.get(code) ?? { d: 0, c: 0 }
+        return sum + accountBalance('assets', t.d, t.c)
+      }, 0),
       customers: bal('1104'),
       salesTotal: bal('4101'),
       cogs: bal('5101'),
       vat: bal('2102'),
     }
-  }, [journal])
+  }, [journal, treasuries])
 
   const today = new Date().toISOString().slice(0, 10)
   const todaySales = useMemo(() => sales.filter((s) => s.date.startsWith(today)), [sales, today])

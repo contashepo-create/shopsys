@@ -37,6 +37,7 @@ import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
 import { InstallmentsPage } from './ui/pages/InstallmentsPage.tsx'
 import { ReportsPage } from './ui/pages/ReportsPage.tsx'
+import { StatementsPage } from './ui/pages/StatementsPage.tsx'
 import { LicensePage } from './ui/pages/LicensePage.tsx'
 import { BackupPage } from './ui/pages/BackupPage.tsx'
 import { TripsPage } from './ui/pages/TripsPage.tsx'
@@ -45,6 +46,7 @@ import { EquipmentPage } from './ui/pages/EquipmentPage.tsx'
 import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
 import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from './ui/pages/LabPages.tsx'
 import { ProjectsPage } from './ui/pages/ContractingPages.tsx'
+import { QuotationsPage } from './ui/pages/QuotationsPage.tsx'
 import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
 import { CarsPage } from './ui/pages/CarsPage.tsx'
 import { AboutPage } from './ui/pages/AboutPage.tsx'
@@ -96,6 +98,7 @@ function Shell() {
         <Route path="/lab/patients" element={<LabPatientsPage />} />
         <Route path="/lab/referrers" element={<LabReferrersPage />} />
         <Route path="/contracting/projects" element={<ProjectsPage />} />
+        <Route path="/contracting/quotations" element={<QuotationsPage />} />
         <Route path="/clinic/patients" element={<ClinicPatientsPage />} />
         <Route path="/clinic/appointments" element={<ClinicAppointmentsPage />} />
         <Route path="/cars" element={<CarsPage />} />
@@ -109,6 +112,7 @@ function Shell() {
         <Route path="/accounting/cheques" element={<ChequesPage />} />
         <Route path="/accounting/assets" element={<AssetsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/reports/statements" element={<StatementsPage />} />
         <Route path="/settings/printing" element={<PrintSettingsPage />} />
         <Route path="/settings/backup" element={<BackupPage />} />
         <Route path="/settings/telegram" element={<TelegramPage />} />

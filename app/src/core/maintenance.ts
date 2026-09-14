@@ -108,10 +108,10 @@ export function computeTicketTotals(input: TicketDeliveryInput): TicketTotals {
  *   من ح/ 5101 تكلفة البضاعة (partsCost — القطع المستهلكة)
  *     إلى ح/ 1103 المخزون (partsCost)
  */
-export function buildTicketDeliveryEntry(totals: TicketTotals, payment: 'cash' | 'credit', label: string): JournalLine[] {
+export function buildTicketDeliveryEntry(totals: TicketTotals, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
   if (totals.revenueMinor <= 0) throw new Error('إيراد التذكرة يجب أن يكون موجباً')
   const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? '1101' : '1104', debit: totals.grandMinor, credit: 0, note: `تحصيل ${label}` },
+    { accountCode: payment === 'cash' ? treasury : '1104', debit: totals.grandMinor, credit: 0, note: `تحصيل ${label}` },
     { accountCode: '4103', debit: 0, credit: totals.revenueMinor, note: 'إيراد صيانة' },
   ]
   if (totals.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: totals.vatMinor, note: 'ض.ق.م' })

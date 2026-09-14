@@ -30,7 +30,7 @@ import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthly
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, type RateType, type OperatorShift } from '../core/rentalMeter.ts'
 import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
-import { validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, type Project, type CostKind, type ExtractTotals, type ProjectProfit } from '../core/contracting.ts'
+import { validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, buildCustodyGrantEntry, buildCustodySettleEntry, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus, type ProjectCustody } from '../core/contracting.ts'
 import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, type VisitKind, type VisitTotals } from '../core/clinic.ts'
 import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
 import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
@@ -484,6 +484,21 @@ export interface Voucher {
   amountMinor: number
   description: string
   journalEntryId: number
+  // ربط السند بطرفه — يغذي كشوف حساب العميل/المورد (طلب المالك)
+  partyKind?: 'customer' | 'supplier' | null
+  partyId?: number | null
+}
+
+/** سلفة موظف — أصل على الموظف (1107) يُسترد من مسيرات الرواتب */
+export interface EmployeeAdvance {
+  id: number
+  advanceNumber: string // ADV-0001
+  employeeId: number
+  date: string
+  amountMinor: number
+  treasury: TreasuryAccount
+  notes: string
+  journalEntryId: number
 }
 
 /* ─── فواتير البيع (الكاشير) ─── */
@@ -541,6 +556,8 @@ interface DataState {
   projectExtracts: ProjectExtract[]
   projectCosts: ProjectCost[]
   retentionReleases: RetentionRelease[]
+  quotations: Quotation[] // عروض أسعار ومناقصات (طلب المالك)
+  custodies: ProjectCustody[] // عُهد المشاريع
   clinicPatients: ClinicPatient[] // العيادة (القرار 27)
   clinicVisits: ClinicVisit[]
   treatmentPlans: TreatmentPlan[]
@@ -557,6 +574,7 @@ interface DataState {
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
   vouchers: Voucher[]
+  employeeAdvances: EmployeeAdvance[] // سلف الموظفين (طلب المالك)
   sales: SaleInvoice[]
   saleReturns: SaleReturn[]
   shifts: Shift[]
@@ -621,6 +639,7 @@ interface DataState {
     qtyByItem: Map<number, number>
     refund: 'cash' | 'debt'
     reason: string
+    treasury?: string
   }) => PurchaseReturn
   /**
    * ترحيل جلسة جرد: يقارن المعدود بالدفتري، يضبط المخزون على المعدود،
@@ -634,7 +653,11 @@ interface DataState {
     counterAccountCode: string // في التحويل: الخزينة الوجهة
     amountMinor: number
     description: string
+    partyKind?: 'customer' | 'supplier' | null
+    partyId?: number | null
   }) => Voucher
+  /** صرف سلفة لموظف: قيد 1107 ← خزينة، وتُسترد من مسيرات الرواتب */
+  grantEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; notes: string }) => EmployeeAdvance
   /** قيد يدوي — يُرفض بنيوياً إن لم يتوازن (validateManualEntry ثم assertBalanced) */
   postManualEntry: (args: { date: string; description: string; lines: JournalLine[] }) => JournalEntry
   /** عكس قيد موثق — التصحيح الوحيد المسموح (Append-Only) */
@@ -701,6 +724,7 @@ interface DataState {
     driverId: number | null
     input: TripInput
     notes: string
+    treasury?: string
   }) => Trip
   addEquipment: (e: Omit<Equipment, 'id'>) => void
   updateEquipment: (id: number, patch: Partial<Equipment>) => void
@@ -717,13 +741,14 @@ interface DataState {
     /** ترقية القرار 25: نوع العقد (الافتراضي يومي) وقراءة العدّاد عند التسليم للساعي */
     rateType?: RateType
     startReading?: number | null
+    treasury?: string
   }) => RentalContract
   /**
    * إقفال عقد: ردّ التأمين نقداً مع خصم اختياري يُعترف به إيراداً (4104).
    * ترقية القرار 25: قراءة عدّاد الإرجاع (ساعي) أو تاريخ الإرجاع (يومي/شهري)
    * ⇒ تسوية تجاوز الاستخدام بقيد منفصل، وتقدُّم عدّاد المعدة.
    */
-  closeRental: (contractId: number, deductMinor: number, usage?: { endReading?: number; endDate?: string }) => RentalContract
+  closeRental: (contractId: number, deductMinor: number, usage?: { endReading?: number; endDate?: string }, treasury?: string) => RentalContract
   /** وردية مشغل على معدة — تتحقق من القراءات وتقدّم عدّاد المعدة */
   addOperatorShift: (s: Omit<OperatorShift, 'id'>) => OperatorShift
   /** تسجيل خدمة صيانة للمعدة عند قراءتها الحالية (يصفّر عدّاد الفترة الوقائية) */
@@ -747,19 +772,29 @@ interface DataState {
     discountPercent: number
     vatPercent: number
     notes: string
+    treasury?: string
   }) => LabOrder
   /** تقدُّم فحص في دورته: سحب العينة ← نتيجة (بقيمة) ← اعتماد. انتقالات مشروعة فقط */
   advanceLabTest: (orderId: number, testId: number, to: TestStatus, resultValue?: string) => LabOrder
   /** صرف كل عمولات مُحيل غير المدفوعة بقيد واحد (2105 ← 1101) */
-  payReferrerCommissions: (referrerId: number) => { total: number; orderCount: number }
+  payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
   addProject: (p: Omit<Project, 'id' | 'code' | 'status'>) => Project
+  /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
+  addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; titleAr: string; validUntil: string; lines: QuotationLine[]; notes: string }) => Quotation
+  setQuotationStatus: (id: number, status: QuotationStatus) => void
+  /** تحويل عرض فائز لمشروع (يرث الاسم والعميل وقيمة العرض) */
+  convertQuotationToProject: (id: number, retentionPercent: number) => Project
+  /** صرف عهدة لمشرف موقع: قيد 1107 ← خزينة */
+  grantCustody: (args: { projectId: number; holderName: string; amountMinor: number; treasury: string; notes: string }) => ProjectCustody
+  /** تسوية العهدة: المنصرف تكلفة على المشروع والمرتجع يعود للخزينة */
+  settleCustody: (id: number, spentMinor: number) => ProjectCustody
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
-  addProjectExtract: (args: { projectId: number; grossMinor: number; vatPercent: number; payment: 'cash' | 'credit'; description: string }) => ProjectExtract
+  addProjectExtract: (args: { projectId: number; grossMinor: number; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
-  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string }) => ProjectCost
+  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string }) => ProjectCost
   /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
-  releaseRetention: (projectId: number) => { amount: number }
+  releaseRetention: (projectId: number, treasury?: string) => { amount: number }
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
   getProjectProfit: (projectId: number) => ProjectProfit
   /* ─── العيادة (القرار 27) ─── */
@@ -767,22 +802,22 @@ interface DataState {
   /** زيارة بملاحظات الكشف وقيمتها — سداد جزئي مدعوم، والمتبقي دين على المريض */
   addClinicVisit: (args: {
     patientId: number; kind: VisitKind; complaint: string; diagnosis: string; treatment: string
-    feeMinor: number; paidMinor: number; vatPercent: number; planId: number | null
+    feeMinor: number; paidMinor: number; vatPercent: number; planId: number | null; treasury?: string
   }) => ClinicVisit
   addTreatmentPlan: (args: { patientId: number; title: string; totalSessions: number; totalFeeMinor: number }) => TreatmentPlan
   /** تحصيل متأخرات مريض بقيد 1101 ← 1104 */
-  collectFromPatient: (patientId: number, amountMinor: number) => ClinicCollection
+  collectFromPatient: (patientId: number, amountMinor: number, treasury?: string) => ClinicCollection
   /** رصيد المريض الحالي (المتبقي عليه) */
   getPatientBalance: (patientId: number) => number
   addAppointment: (a: Omit<ClinicAppointment, 'id' | 'done'>) => ClinicAppointment
   markAppointmentDone: (id: number) => void
   /* ─── معرض السيارات (القرار 27) ─── */
   /** شراء سيارة كبضاعة بقيد 1103 ← 1101|2101 */
-  addCar: (args: CarInput & { payment: 'cash' | 'credit'; notes: string }) => Car
+  addCar: (args: CarInput & { payment: 'cash' | 'credit'; notes: string; treasury?: string }) => Car
   /** تجهيز يُرسمل على تكلفة السيارة (سمكرة/دهان/قطع) */
-  addCarPrep: (carId: number, amountMinor: number, payment: 'cash' | 'credit', description: string) => void
+  addCarPrep: (carId: number, amountMinor: number, payment: 'cash' | 'credit', description: string, treasury?: string) => void
   /** بيع سيارة: إيراد + إخراج التكلفة الكاملة من المخزون في قيد واحد */
-  sellCar: (args: { carId: number; priceMinor: number; vatPercent: number; payment: 'cash' | 'credit'; buyerName: string }) => Car
+  sellCar: (args: { carId: number; priceMinor: number; vatPercent: number; payment: 'cash' | 'credit'; buyerName: string; treasury?: string }) => Car
   /** تحويل سيارة للتأجير: تُنشأ كمعدة في وحدة الإيجار وتُربط بها */
   moveCarToRental: (carId: number, dailyRateMinor: number, monthlyRateMinor: number) => void
   /** فتح تذكرة صيانة — لا قيد عند الاستلام (لا التزام مالي بعد) */
@@ -804,11 +839,12 @@ interface DataState {
    */
   deliverTicket: (ticketId: number, input: Omit<TicketDeliveryInput, 'parts'> & {
     parts: { itemId: number; qty: number; unitPriceMinor: number }[]
+    treasury?: string
   }) => MaintenanceTicket
   /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
   postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string }) => StockTransfer
   /** اقتناء أصل ثابت: قيد 1201 / 1101 + 2101 وترقيم FA-#### */
-  addAsset: (args: AssetInput & { notes: string }) => FixedAsset
+  addAsset: (args: AssetInput & { notes: string; treasury?: string }) => FixedAsset
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
   /* ─── الشيكات (أوراق القبض والدفع) ─── */
@@ -848,6 +884,8 @@ export const useDataStore = create<DataState>()(
       projectExtracts: [],
       projectCosts: [],
       retentionReleases: [],
+      quotations: [],
+      custodies: [],
       clinicPatients: [],
       clinicVisits: [],
       treatmentPlans: [],
@@ -864,6 +902,7 @@ export const useDataStore = create<DataState>()(
       purchaseReturns: [],
       stocktakes: [],
       vouchers: [],
+      employeeAdvances: [],
       sales: [],
       saleReturns: [],
       shifts: [],
@@ -1213,7 +1252,7 @@ export const useDataStore = create<DataState>()(
           }
         }
         // 2) القيد المتوازن
-        const entryLines = buildPurchaseReturnEntry(total, args.refund)
+        const entryLines = buildPurchaseReturnEntry(total, args.refund, args.treasury ?? '1101')
         const returnId = nextId(state.purchaseReturns)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -1343,10 +1382,53 @@ export const useDataStore = create<DataState>()(
           amountMinor: args.amountMinor,
           description: args.description,
           journalEntryId: entryId,
+          partyKind: args.partyKind ?? null,
+          partyId: args.partyId ?? null,
         }
 
         set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry] })
         return voucher
+      },
+
+      grantEmployeeAdvance: (args) => {
+        const state = get()
+        const emp = state.employees.find((e) => e.id === args.employeeId)
+        if (!emp) throw new Error('الموظف غير موجود')
+        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ السلفة يجب أن يكون موجباً')
+        // قيد السلفة: مدين 1107 (أصل على الموظف) / دائن الخزينة المختارة
+        const entryLines: JournalLine[] = [
+          { accountCode: '1107', debit: args.amountMinor, credit: 0, note: `سلفة ${emp.nameAr}` },
+          { accountCode: args.treasury, debit: 0, credit: args.amountMinor, note: 'صرف نقدي' },
+        ]
+        const advId = nextId(state.employeeAdvances)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const advanceNumber = `ADV-${String(advId).padStart(4, '0')}`
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `سلفة موظف ${advanceNumber} — ${emp.nameAr}${args.notes ? ` — ${args.notes}` : ''}`,
+          sourceType: 'payment_voucher',
+          sourceId: advId,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        const advance: EmployeeAdvance = {
+          id: advId,
+          advanceNumber,
+          employeeId: args.employeeId,
+          date: now,
+          amountMinor: args.amountMinor,
+          treasury: args.treasury,
+          notes: args.notes,
+          journalEntryId: entryId,
+        }
+        set({ employeeAdvances: [...state.employeeAdvances, advance], journal: [...state.journal, entry] })
+        return advance
       },
 
       postManualEntry: (args) => {
@@ -1497,8 +1579,9 @@ export const useDataStore = create<DataState>()(
 
         const totals: PayrollTotals = computePayrollTotals(computed)
         const label = monthLabelAr(args.month)
-        // 3) القيد المتوازن بنيوياً
-        const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, args.treasury, label)
+        // 3) القيد المتوازن بنيوياً — السلف المستقطعة تُقفل من حساب 1107
+        const advancesRecovered = computed.reduce((a, l) => a + l.advancesMinor, 0)
+        const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, args.treasury, label, advancesRecovered)
 
         const runId = nextId(state.payrollRuns)
         const entryId = nextId(state.journal)
@@ -1650,7 +1733,7 @@ export const useDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const tripNumber = `TR-${String(tripId).padStart(4, '0')}`
-        const entryLines = buildTripEntry(totals, args.input.payment, tripNumber)
+        const entryLines = buildTripEntry(totals, args.input.payment, tripNumber, args.treasury ?? '1101')
 
         const entry: JournalEntry = {
           id: entryId,
@@ -1723,7 +1806,7 @@ export const useDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const contractNumber = `RC-${String(contractId).padStart(4, '0')}`
-        const entryLines = buildRentalOpenEntry(totals, contractNumber)
+        const entryLines = buildRentalOpenEntry(totals, contractNumber, args.treasury ?? '1101')
 
         const entry: JournalEntry = {
           id: entryId,
@@ -1766,7 +1849,7 @@ export const useDataStore = create<DataState>()(
         set({ rentalContracts: [...state.rentalContracts, contract], journal: [...state.journal, entry] })
         return contract
       },
-      closeRental: (contractId, deductMinor, usage) => {
+      closeRental: (contractId, deductMinor, usage, treasury = '1101') => {
         const state = get()
         const contract = state.rentalContracts.find((c) => c.id === contractId)
         if (!contract) throw new Error('العقد غير موجود')
@@ -1803,7 +1886,7 @@ export const useDataStore = create<DataState>()(
         // قيد التجاوز — بنفس طريقة سداد العقد
         if (extraMinor > 0) {
           extraEntryId = nextId(journal)
-          const extraLines = buildExtraUsageEntry(extraMinor, contract.vatPercent, contract.payment, contract.contractNumber)
+          const extraLines = buildExtraUsageEntry(extraMinor, contract.vatPercent, contract.payment, contract.contractNumber, treasury)
           journal = [...journal, {
             id: extraEntryId,
             entryNumber: extraEntryId,
@@ -1820,7 +1903,7 @@ export const useDataStore = create<DataState>()(
         }
 
         // قيد الإقفال (null لو لا تأمين — يبقى العقد يُقفل بلا قيد)
-        const closeLines = buildRentalCloseEntry(contract.totals.depositMinor, deductMinor, contract.contractNumber)
+        const closeLines = buildRentalCloseEntry(contract.totals.depositMinor, deductMinor, contract.contractNumber, treasury)
         let closeEntryId: number | null = null
         if (closeLines) {
           closeEntryId = nextId(journal)
@@ -1949,7 +2032,7 @@ export const useDataStore = create<DataState>()(
         const now = new Date().toISOString()
         const orderId = nextId(state.labOrders)
         const orderNumber = `LAB-${String(orderId).padStart(4, '0')}`
-        const entryLines = buildLabOrderEntry(totals, args.payment, orderNumber)
+        const entryLines = buildLabOrderEntry(totals, args.payment, orderNumber, args.treasury ?? '1101')
 
         let journal = state.journal
         const entryId = nextId(journal)
@@ -2027,13 +2110,13 @@ export const useDataStore = create<DataState>()(
         set({ labOrders: state.labOrders.map((o) => (o.id === orderId ? updated : o)) })
         return updated
       },
-      payReferrerCommissions: (referrerId) => {
+      payReferrerCommissions: (referrerId, treasury = '1101') => {
         const state = get()
         const referrer = state.labReferrers.find((r) => r.id === referrerId)
         if (!referrer) throw new Error('الطبيب غير موجود')
         const unpaid = state.labOrders.filter((o) => o.referrerId === referrerId && !o.commissionPaid && o.commissionMinor > 0)
         const total = unpaid.reduce((a, o) => a + o.commissionMinor, 0)
-        const lines = buildCommissionPayoutEntry(total, referrer.nameAr) // يرمي لو صفر
+        const lines = buildCommissionPayoutEntry(total, referrer.nameAr, treasury) // يرمي لو صفر
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -2062,6 +2145,111 @@ export const useDataStore = create<DataState>()(
         set({ projects: [...state.projects, project] })
         return project
       },
+
+      addQuotation: (q) => {
+        const state = get()
+        const errors = validateQuotation(q)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const id = nextId(state.quotations)
+        const quote: Quotation = {
+          id,
+          quoteNumber: `${q.kind === 'tender' ? 'TN' : 'QT'}-${String(id).padStart(4, '0')}`,
+          kind: q.kind,
+          clientName: q.clientName.trim(),
+          titleAr: q.titleAr.trim(),
+          date: new Date().toISOString().slice(0, 10),
+          validUntil: q.validUntil,
+          lines: q.lines.filter((l) => l.descriptionAr.trim() && l.qty > 0),
+          status: 'draft',
+          notes: q.notes,
+          projectId: null,
+        }
+        set({ quotations: [...state.quotations, quote] })
+        return quote
+      },
+
+      setQuotationStatus: (id, status) => {
+        const state = get()
+        const q = state.quotations.find((x) => x.id === id)
+        if (!q) throw new Error('العرض غير موجود')
+        if (!QUOTATION_TRANSITIONS[q.status].includes(status)) {
+          throw new Error(`لا يمكن الانتقال من «${q.status}» إلى «${status}»`)
+        }
+        set({ quotations: state.quotations.map((x) => (x.id === id ? { ...x, status } : x)) })
+      },
+
+      convertQuotationToProject: (id, retentionPercent) => {
+        const state = get()
+        const q = state.quotations.find((x) => x.id === id)
+        if (!q) throw new Error('العرض غير موجود')
+        if (q.status !== 'won') throw new Error('يتحول للمشروع العرضُ الفائز فقط — علّمه «فائز» أولاً')
+        if (q.projectId != null) throw new Error('تحوّل هذا العرض لمشروع بالفعل')
+        const project = get().addProject({
+          nameAr: q.titleAr,
+          clientName: q.clientName,
+          contractValueMinor: quotationTotal(q.lines),
+          retentionPercent,
+          startDate: new Date().toISOString().slice(0, 10),
+          notes: `متولد من ${q.quoteNumber}`,
+        })
+        set((s) => ({ quotations: s.quotations.map((x) => (x.id === id ? { ...x, projectId: project.id } : x)) }))
+        return project
+      },
+
+      grantCustody: (args) => {
+        const state = get()
+        const project = state.projects.find((p) => p.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        if (!args.holderName.trim()) throw new Error('اسم مستلم العهدة مطلوب')
+        const id = nextId(state.custodies)
+        const custodyNumber = `CUS-${String(id).padStart(4, '0')}`
+        const entryLines = buildCustodyGrantEntry(args.amountMinor, args.treasury, `${custodyNumber} — ${args.holderName}`)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `عهدة ${custodyNumber} — ${args.holderName} (${project.nameAr})`,
+          sourceType: 'payment_voucher', sourceId: id, lines: entryLines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const custody: ProjectCustody = {
+          id, custodyNumber, projectId: args.projectId, holderName: args.holderName.trim(),
+          amountMinor: args.amountMinor, treasury: args.treasury, date: now.slice(0, 10),
+          status: 'open', spentMinor: 0, returnedMinor: 0,
+          grantEntryId: entryId, settleEntryId: null, notes: args.notes,
+        }
+        set({ custodies: [...state.custodies, custody], journal: [...state.journal, entry] })
+        return custody
+      },
+
+      settleCustody: (id, spentMinor) => {
+        const state = get()
+        const c = state.custodies.find((x) => x.id === id)
+        if (!c) throw new Error('العهدة غير موجودة')
+        if (c.status === 'settled') throw new Error('سُوّيت هذه العهدة بالفعل')
+        const entryLines = buildCustodySettleEntry(c.amountMinor, spentMinor, c.treasury, c.custodyNumber)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const project = state.projects.find((p) => p.id === c.projectId)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تسوية عهدة ${c.custodyNumber} — منصرف ${spentMinor} (${project?.nameAr ?? ''})`,
+          sourceType: 'payment_voucher', sourceId: id, lines: entryLines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const returned = c.amountMinor - spentMinor
+        const updated: ProjectCustody = { ...c, status: 'settled', spentMinor, returnedMinor: returned, settleEntryId: entryId }
+        // المنصرف يُسجل تكلفة على المشروع (بند «أخرى») ليدخل ربحيته
+        const costId = nextId(state.projectCosts)
+        const costs = spentMinor > 0 ? [...state.projectCosts, {
+          id: costId, projectId: c.projectId, kind: 'other' as CostKind, amountMinor: spentMinor,
+          date: now.slice(0, 10), description: `تسوية عهدة ${c.custodyNumber} — ${c.holderName}`,
+          payment: 'cash' as const, journalEntryId: entryId,
+        }] : state.projectCosts
+        set({ custodies: state.custodies.map((x) => (x.id === id ? updated : x)), journal: [...state.journal, entry], projectCosts: costs })
+        return updated
+      },
+
       addProjectExtract: (args) => {
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
@@ -2070,7 +2258,7 @@ export const useDataStore = create<DataState>()(
         const totals = computeExtractTotals(args.grossMinor, project.retentionPercent, args.vatPercent)
         const id = nextId(state.projectExtracts)
         const extractNumber = `PRX-${String(id).padStart(4, '0')}`
-        const lines = buildExtractEntry(totals, args.payment, extractNumber)
+        const lines = buildExtractEntry(totals, args.payment, extractNumber, args.treasury ?? '1101')
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -2090,7 +2278,7 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
-        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr)
+        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr, args.treasury ?? '1101')
         const now = new Date().toISOString()
         const id = nextId(state.projectCosts)
         const entryId = nextId(state.journal)
@@ -2107,14 +2295,14 @@ export const useDataStore = create<DataState>()(
         set({ projectCosts: [...state.projectCosts, cost], journal: [...state.journal, entry] })
         return cost
       },
-      releaseRetention: (projectId) => {
+      releaseRetention: (projectId, treasury = '1101') => {
         const state = get()
         const project = state.projects.find((p) => p.id === projectId)
         if (!project) throw new Error('المشروع غير موجود')
         const held = state.projectExtracts.filter((e) => e.projectId === projectId).reduce((a, e) => a + e.totals.retentionMinor, 0)
         const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
         const remaining = held - released
-        const lines = buildRetentionReleaseEntry(remaining, project.nameAr) // يرمي لو صفر
+        const lines = buildRetentionReleaseEntry(remaining, project.nameAr, treasury) // يرمي لو صفر
         const now = new Date().toISOString()
         const id = nextId(state.retentionReleases)
         const entryId = nextId(state.journal)
@@ -2165,7 +2353,7 @@ export const useDataStore = create<DataState>()(
         const totals = computeVisitTotals({ kind: args.kind, feeMinor: args.feeMinor, paidMinor: args.paidMinor, vatPercent: args.vatPercent })
         const id = nextId(state.clinicVisits)
         const visitNumber = `VIS-${String(id).padStart(4, '0')}`
-        const lines = buildVisitEntry(totals, `${visitNumber} — ${patient.nameAr}`)
+        const lines = buildVisitEntry(totals, `${visitNumber} — ${patient.nameAr}`, args.treasury ?? '1101')
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -2202,13 +2390,13 @@ export const useDataStore = create<DataState>()(
         set({ treatmentPlans: [...state.treatmentPlans, plan] })
         return plan
       },
-      collectFromPatient: (patientId, amountMinor) => {
+      collectFromPatient: (patientId, amountMinor, treasury = '1101') => {
         const state = get()
         const patient = state.clinicPatients.find((p) => p.id === patientId)
         if (!patient) throw new Error('المريض غير مسجل')
         const balance = get().getPatientBalance(patientId)
         if (amountMinor > balance) throw new Error(`المبلغ أكبر من رصيد المريض المستحق`)
-        const lines = buildPatientCollectionEntry(amountMinor, patient.nameAr)
+        const lines = buildPatientCollectionEntry(amountMinor, patient.nameAr, treasury)
         const now = new Date().toISOString()
         const id = nextId(state.clinicCollections)
         const entryId = nextId(state.journal)
@@ -2246,7 +2434,7 @@ export const useDataStore = create<DataState>()(
         const errors = validateCar(args, state.cars.map((c) => c.plateOrVin))
         if (errors.length) throw new Error(errors.join(' — '))
         const label = `${args.make} ${args.model} ${args.year} (${args.plateOrVin})`
-        const lines = buildCarPurchaseEntry(args.purchaseCostMinor, args.payment, label)
+        const lines = buildCarPurchaseEntry(args.purchaseCostMinor, args.payment, label, args.treasury ?? '1101')
         const now = new Date().toISOString()
         const id = nextId(state.cars)
         const entryId = nextId(state.journal)
@@ -2267,13 +2455,13 @@ export const useDataStore = create<DataState>()(
         set({ cars: [...state.cars, car], journal: [...state.journal, entry] })
         return car
       },
-      addCarPrep: (carId, amountMinor, payment, description) => {
+      addCarPrep: (carId, amountMinor, payment, description, treasury = '1101') => {
         const state = get()
         const car = state.cars.find((c) => c.id === carId)
         if (!car) throw new Error('السيارة غير موجودة')
         if (car.status === 'sold') throw new Error('السيارة مباعة — لا ترسمل تجهيزات عليها')
         const label = `${car.make} ${car.model} (${car.plateOrVin})`
-        const lines = buildCarPrepEntry(amountMinor, payment, `${label}: ${description || 'تجهيز'}`)
+        const lines = buildCarPrepEntry(amountMinor, payment, `${label}: ${description || 'تجهيز'}`, treasury)
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -2297,7 +2485,7 @@ export const useDataStore = create<DataState>()(
         const fullCost = car.purchaseCostMinor + car.prepCostMinor
         const totals = computeCarSale(args.priceMinor, fullCost, args.vatPercent)
         const label = `${car.make} ${car.model} ${car.year} (${car.plateOrVin})`
-        const lines = buildCarSaleEntry(totals, args.payment, label)
+        const lines = buildCarSaleEntry(totals, args.payment, label, args.treasury ?? '1101')
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -2405,7 +2593,7 @@ export const useDataStore = create<DataState>()(
         const totals = computeTicketTotals(delivery)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
-        const entryLines = buildTicketDeliveryEntry(totals, input.payment, ticket.ticketNumber)
+        const entryLines = buildTicketDeliveryEntry(totals, input.payment, ticket.ticketNumber, input.treasury ?? '1101')
 
         const entry: JournalEntry = {
           id: entryId,
@@ -2490,7 +2678,7 @@ export const useDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const assetNumber = `FA-${String(id).padStart(4, '0')}`
-        const entryLines = buildAssetPurchaseEntry(args.costMinor, args.paidMinor, assetNumber)
+        const entryLines = buildAssetPurchaseEntry(args.costMinor, args.paidMinor, assetNumber, args.treasury ?? '1101')
 
         const entry: JournalEntry = {
           id: entryId,
@@ -2672,6 +2860,7 @@ export const useDataStore = create<DataState>()(
           ...s,
           // ترحيل الخزائن المتعددة: الحسابات القديمة تحصل على الافتراضيتين
           treasuries: s.treasuries && s.treasuries.length > 0 ? s.treasuries : DEFAULT_TREASURIES,
+          employeeAdvances: s.employeeAdvances ?? [],
           categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),
           items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0, warrantyMonths: it.warrantyMonths ?? 0 })),
           customers: (s.customers ?? []).map((c) => ({ ...EMPTY_EXTENDED, ...c })),
@@ -2705,6 +2894,8 @@ export const useDataStore = create<DataState>()(
           labPatients: s.labPatients ?? [],
           labOrders: s.labOrders ?? [],
           projects: s.projects ?? [],
+          quotations: s.quotations ?? [],
+          custodies: s.custodies ?? [],
           projectExtracts: s.projectExtracts ?? [],
           projectCosts: s.projectCosts ?? [],
           retentionReleases: s.retentionReleases ?? [],

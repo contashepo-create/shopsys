@@ -15,7 +15,7 @@ import {
   validateItem, nextSku, draftFromCategory, categoryPath, categoryDescendants,
   type ItemDraft, type Item, type Category,
 } from '../../core/items.ts'
-import { FEATURE_LABELS, type ItemFeature } from '../../core/activities.ts'
+import { FEATURE_LABELS, getActivity, type ItemFeature } from '../../core/activities.ts'
 import { buildItemsCsv, parseItemsCsv } from '../../core/itemsCsv.ts'
 import { UNIT_GROUPS } from '../../core/units.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -281,12 +281,12 @@ export function ItemsPage() {
                   </button>
                   <button
                     onClick={() => openEditCategory(cat)}
-                    className={`px-2.5 py-1.5 rounded-l-full border-2 border-r-0 text-brand-500 hover:text-white hover:bg-brand-500 transition-colors duration-200 ${
+                    className={`px-2.5 py-1.5 rounded-l-full border-2 border-r-0 text-amber-600 dark:text-amber-400 hover:text-white hover:bg-amber-500 transition-colors duration-200 ${
                       catFilter === cat.id ? 'border-brand-500/50 bg-brand-500/10' : 'border-slate-200 dark:border-slate-700'
                     }`}
                     title="تعديل القسم"
                   >
-                    <Pencil size={14} />
+                    <Pencil size={16} strokeWidth={2.5} />
                   </button>
                 </span>
               )
@@ -490,11 +490,27 @@ function ItemForm({
   onCancel: () => void
 }) {
   const { categories } = useDataStore()
+  const { setup } = useAppStore()
   const [barcodeInput, setBarcodeInput] = useState('')
   const [colorInput, setColorInput] = useState('')
   const [sizeInput, setSizeInput] = useState('')
   const [customUnit, setCustomUnit] = useState(false)
+  // النشاط يحدد الخصائص البارزة تلقائياً (طلب المالك) — والبقية تحت «خيارات أكثر»
+  const activity = getActivity(setup.activityId)
+  const activityFeatures = new Set(activity?.features ?? [])
+  const [moreOpen, setMoreOpen] = useState(false)
   const p = (patch: Partial<ItemDraft>) => setDraft({ ...draft, ...patch })
+
+  // الخصائص الثلاث: ما يخص نشاطك يظهر دائماً — والباقي تحت «خيارات أكثر»
+  const allProps = [
+    { key: 'trackExpiry' as const, label: '📅 تتبع الصلاحية والدفعات', on: draft.trackExpiry, relevant: activityFeatures.has('expiry_batches') },
+    { key: 'trackSerial' as const, label: '🔢 تتبع السيريال والضمان', on: draft.trackSerial, relevant: activityFeatures.has('serial_warranty') },
+    { key: 'soldByWeight' as const, label: '⚖️ يُباع بالوزن', on: draft.soldByWeight, relevant: activityFeatures.has('weight_scale') },
+  ]
+  const mainProps = allProps.filter((x) => x.relevant || x.on)
+  const extraProps = allProps.filter((x) => !x.relevant && !x.on)
+  const showVariantsMain = activityFeatures.has('variants')
+  const showMultiUnitMain = activityFeatures.has('multi_unit')
 
   const moneyInput = (valueMinor: number, onChange: (m: number) => void, disabled = false) => (
     <div className="relative">
@@ -626,17 +642,17 @@ function ItemForm({
         )}
       </Field>
 
-      {/* خصائص الصنف */}
+      {/* خصائص الصنف — نشاطك يحدد البارز منها تلقائياً (طلب المالك) */}
       <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800">
         <div className="text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-3 flex items-center gap-1.5">
-          <Package size={14} /> خصائص هذا الصنف <span className="font-normal text-slate-400">(موروثة من القسم — عدّلها بحرية)</span>
+          <Package size={14} /> خصائص هذا الصنف
+          {activity && <span className="font-normal text-slate-400">— حسب نشاطك ({activity.icon} {activity.nameAr})، والبقية تحت «خيارات أكثر»</span>}
         </div>
+        {mainProps.length === 0 && (
+          <p className="text-[11.5px] text-slate-400">نشاطك لا يحتاج خصائص تتبع خاصة عادةً — كل الخيارات متاحة أسفل «خيارات أكثر».</p>
+        )}
         <div className="flex flex-wrap gap-2">
-          {([
-            ['trackExpiry', '📅 تتبع الصلاحية والدفعات', draft.trackExpiry],
-            ['trackSerial', '🔢 تتبع السيريال والضمان', draft.trackSerial],
-            ['soldByWeight', '⚖️ يُباع بالوزن', draft.soldByWeight],
-          ] as const).map(([key, label, on]) => (
+          {mainProps.map(({ key, label, on }) => (
             <button
               key={key}
               onClick={() => p({ [key]: !on } as Partial<ItemDraft>)}
@@ -665,56 +681,56 @@ function ItemForm({
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3 mt-3">
-          <Field label="🎨 ألوان (اكتب ثم Enter)">
-            <input
-              value={colorInput}
-              onChange={(e) => setColorInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && colorInput.trim()) {
-                  e.preventDefault()
-                  p({ variantColors: [...draft.variantColors, colorInput.trim()] })
-                  setColorInput('')
-                }
-              }}
-              placeholder="أسود، أحمر…"
-              className={inputCls}
-            />
-            <div className="flex flex-wrap gap-1 mt-1.5">
-              {draft.variantColors.map((c, i) => (
-                <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 font-bold">
-                  {c} <button onClick={() => p({ variantColors: draft.variantColors.filter((_, j) => j !== i) })}>×</button>
-                </span>
-              ))}
-            </div>
-          </Field>
-          <Field label="📏 مقاسات (اكتب ثم Enter)">
-            <input
-              value={sizeInput}
-              onChange={(e) => setSizeInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && sizeInput.trim()) {
-                  e.preventDefault()
-                  p({ variantSizes: [...draft.variantSizes, sizeInput.trim()] })
-                  setSizeInput('')
-                }
-              }}
-              placeholder="S، M، L، 42…"
-              className={inputCls}
-            />
-            <div className="flex flex-wrap gap-1 mt-1.5">
-              {draft.variantSizes.map((s, i) => (
-                <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 font-bold">
-                  {s} <button onClick={() => p({ variantSizes: draft.variantSizes.filter((_, j) => j !== i) })}>×</button>
-                </span>
-              ))}
-            </div>
-          </Field>
-        </div>
+        {/* المقاسات والألوان — أساسية لأنشطة الملابس ونحوها، وإلا فتحت «خيارات أكثر» */}
+        {(showVariantsMain || draft.variantColors.length > 0 || draft.variantSizes.length > 0) && (
+          <div className="grid grid-cols-2 gap-3 mt-3">
+            <VariantsFields draft={draft} p={p} colorInput={colorInput} setColorInput={setColorInput} sizeInput={sizeInput} setSizeInput={setSizeInput} />
+          </div>
+        )}
 
-        <div className="mt-3">
-          <UnitEditor draft={draft} p={p} />
-        </div>
+        {(showMultiUnitMain || draft.extraUnits.length > 0) && (
+          <div className="mt-3">
+            <UnitEditor draft={draft} p={p} />
+          </div>
+        )}
+      </div>
+
+      {/* خيارات أكثر (طلب المالك) — كل ما لا يخص نشاطك يبقى متاحاً هنا */}
+      <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setMoreOpen(!moreOpen)}
+          className="w-full flex items-center gap-2.5 px-4 py-3 text-[13px] font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors duration-200"
+        >
+          <Package size={15} className="text-brand-500" />
+          <span className="flex-1 text-right">خيارات أكثر لتسجيل الصنف (كل الإمكانات مهما كان نشاطك)</span>
+          <CornerDownLeft size={15} className={`opacity-50 transition-transform duration-300 ${moreOpen ? 'rotate-90' : ''}`} />
+        </button>
+        {moreOpen && (
+          <div className="p-4 pt-1 space-y-4 anim-in">
+            {extraProps.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {extraProps.map(({ key, label, on }) => (
+                  <button
+                    key={key}
+                    onClick={() => p({ [key]: !on } as Partial<ItemDraft>)}
+                    className={`px-3.5 py-2 rounded-xl text-[12px] font-bold border-2 transition-all duration-200 hover:scale-105 ${
+                      on ? 'border-brand-500/50 bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'
+                    }`}
+                  >
+                    {label} {on ? '✓' : ''}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!showVariantsMain && draft.variantColors.length === 0 && draft.variantSizes.length === 0 && (
+              <div className="grid grid-cols-2 gap-3">
+                <VariantsFields draft={draft} p={p} colorInput={colorInput} setColorInput={setColorInput} sizeInput={sizeInput} setSizeInput={setSizeInput} />
+              </div>
+            )}
+            {!showMultiUnitMain && draft.extraUnits.length === 0 && <UnitEditor draft={draft} p={p} />}
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end gap-2 pt-1">
@@ -725,40 +741,117 @@ function ItemForm({
   )
 }
 
+/** حقلا الألوان والمقاسات — مكوّن مشترك بين القسم الأساسي و«خيارات أكثر» */
+function VariantsFields({
+  draft, p, colorInput, setColorInput, sizeInput, setSizeInput,
+}: {
+  draft: ItemDraft
+  p: (x: Partial<ItemDraft>) => void
+  colorInput: string
+  setColorInput: (v: string) => void
+  sizeInput: string
+  setSizeInput: (v: string) => void
+}) {
+  return (
+    <>
+      <Field label="🎨 ألوان (اكتب ثم Enter)">
+        <input
+          value={colorInput}
+          onChange={(e) => setColorInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && colorInput.trim()) {
+              e.preventDefault()
+              p({ variantColors: [...draft.variantColors, colorInput.trim()] })
+              setColorInput('')
+            }
+          }}
+          placeholder="أسود، أحمر…"
+          className={inputCls}
+        />
+        <div className="flex flex-wrap gap-1 mt-1.5">
+          {draft.variantColors.map((c, i) => (
+            <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 font-bold">
+              {c} <button onClick={() => p({ variantColors: draft.variantColors.filter((_, j) => j !== i) })}>×</button>
+            </span>
+          ))}
+        </div>
+      </Field>
+      <Field label="📏 مقاسات (اكتب ثم Enter)">
+        <input
+          value={sizeInput}
+          onChange={(e) => setSizeInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && sizeInput.trim()) {
+              e.preventDefault()
+              p({ variantSizes: [...draft.variantSizes, sizeInput.trim()] })
+              setSizeInput('')
+            }
+          }}
+          placeholder="S، M، L، 42…"
+          className={inputCls}
+        />
+        <div className="flex flex-wrap gap-1 mt-1.5">
+          {draft.variantSizes.map((s, i) => (
+            <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 font-bold">
+              {s} <button onClick={() => p({ variantSizes: draft.variantSizes.filter((_, j) => j !== i) })}>×</button>
+            </span>
+          ))}
+        </div>
+      </Field>
+    </>
+  )
+}
+
 function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>) => void }) {
   const [name, setName] = useState('')
   const [factor, setFactor] = useState('')
+  const f = Number(factor)
+  const valid = name.trim() !== '' && f > 1
+  const add = () => {
+    if (!valid) return
+    p({ extraUnits: [...draft.extraUnits, { nameAr: name.trim(), factor: f }] })
+    setName('')
+    setFactor('')
+  }
   return (
-    <Field label={`📦 وحدات إضافية (الأساسية: ${draft.baseUnit || '—'})`} hint="مثال: كرتونة = 12 قطعة">
-      <div className="flex gap-2">
-        <select value={name} onChange={(e) => setName(e.target.value)} className={`${inputCls} flex-1`}>
-          <option value="">اختر وحدة…</option>
-          {UNIT_GROUPS.map((g) => (
-            <optgroup key={g.nameAr} label={`${g.icon} ${g.nameAr}`}>
-              {g.units.filter((u) => u !== draft.baseUnit).map((u) => <option key={u} value={u}>{u}</option>)}
-            </optgroup>
-          ))}
-        </select>
-        <input value={factor} onChange={(e) => setFactor(e.target.value)} type="number" min={2} placeholder="= كم؟" className={`${inputCls} w-24`} />
-        <Btn
-          variant="soft"
-          onClick={() => {
-            const f = Number(factor)
-            if (name.trim() && f > 1) {
-              p({ extraUnits: [...draft.extraUnits, { nameAr: name.trim(), factor: f }] })
-              setName('')
-              setFactor('')
-            }
-          }}
-        >
-          +
-        </Btn>
+    <Field label="📦 وحدات أكبر لنفس الصنف (اختياري)" hint={`تشتري بالكرتونة وتبيع بالـ${draft.baseUnit || 'قطعة'}؟ عرّف الوحدة الكبرى وكم ${draft.baseUnit || 'قطعة'} بداخلها`}>
+      {/* تخطيط عملي بعناوين واضحة (ملاحظة المالك): الوحدة الكبرى + محتواها + معاينة فورية */}
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
+        <div>
+          <div className="text-[10.5px] font-bold text-slate-400 mb-1">الوحدة الأكبر</div>
+          <select value={name} onChange={(e) => setName(e.target.value)} className={inputCls}>
+            <option value="">اختر…</option>
+            {UNIT_GROUPS.map((g) => (
+              <optgroup key={g.nameAr} label={`${g.icon} ${g.nameAr}`}>
+                {g.units.filter((u) => u !== draft.baseUnit).map((u) => <option key={u} value={u}>{u}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+        <div>
+          <div className="text-[10.5px] font-bold text-slate-400 mb-1">تحتوي كم {draft.baseUnit || 'وحدة'}؟</div>
+          <input
+            value={factor}
+            onChange={(e) => setFactor(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
+            type="number" min={2} placeholder="مثال: 12" className={inputCls} dir="ltr"
+          />
+        </div>
+        <Btn variant="soft" onClick={add} disabled={!valid}>+ إضافة</Btn>
       </div>
+      {/* معاينة حية تشرح المعادلة قبل الإضافة */}
+      {name.trim() && (
+        <div className={`mt-2 text-[11.5px] font-bold px-3 py-2 rounded-xl ${valid ? 'bg-teal-500/10 text-teal-700 dark:text-teal-400' : 'bg-amber-500/10 text-amber-600'}`}>
+          {valid
+            ? <>✓ يعني: 1 {name} = {f} {draft.baseUnit || 'وحدة'} — وسعر الـ{name} سيُحسب تلقائياً ({f} × سعر الـ{draft.baseUnit || 'وحدة'})</>
+            : <>⚠️ اكتب عدد الـ{draft.baseUnit || 'وحدات'} داخل الـ{name} (رقم أكبر من 1)</>}
+        </div>
+      )}
       {draft.extraUnits.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mt-2">
           {draft.extraUnits.map((u, i) => (
             <span key={i} className="anim-pop text-[11px] px-2.5 py-1 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold">
-              {u.nameAr} = {u.factor} {draft.baseUnit}
+              1 {u.nameAr} = {u.factor} {draft.baseUnit}
               <button onClick={() => p({ extraUnits: draft.extraUnits.filter((_, j) => j !== i) })} className="mr-1 text-rose-400">×</button>
             </span>
           ))}

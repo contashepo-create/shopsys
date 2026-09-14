@@ -266,7 +266,7 @@ export function PurchasesPage() {
                   <input
                     value={e.amount}
                     onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, amount: ev.target.value } : x)))}
-                    type="number" min={0} placeholder="المبلغ" className={`${inputCls} w-28`}
+                    type="number" min={0} placeholder="المبلغ" className={`${inputCls} w-36`}
                   />
                   <div className="flex rounded-xl overflow-hidden border-2 border-slate-200 dark:border-slate-700">
                     {([['qty', 'بالكمية'], ['value', 'بالقيمة']] as const).map(([m, label]) => (

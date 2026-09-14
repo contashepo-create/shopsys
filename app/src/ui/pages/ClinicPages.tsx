@@ -13,6 +13,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { VISIT_KIND_LABELS, patientFileSummary, type VisitKind } from '../../core/clinic.ts'
 import type { Gender } from '../../core/lab.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 function useCur() {
@@ -65,6 +66,7 @@ export function ClinicPatientsPage() {
   const [vTreatment, setVTreatment] = useState('')
   const [vFee, setVFee] = useState('')
   const [vPaid, setVPaid] = useState('')
+  const [vTreasury, setVTreasury] = useState('1101')
   const [vVat, setVVat] = useState(false)
   const [vPlan, setVPlan] = useState('')
 
@@ -95,6 +97,7 @@ export function ClinicPatientsPage() {
         patientId: file.id, kind: vKind, complaint: vComplaint.trim(), diagnosis: vDiagnosis.trim(), treatment: vTreatment.trim(),
         feeMinor: fee, paidMinor: paid, vatPercent: vVat ? setup.vatPercent : 0,
         planId: vPlan ? Number(vPlan) : null,
+        treasury: vTreasury,
       })
       toast.show(`سُجلت الزيارة ${v.visitNumber}${v.totals.dueMinor > 0 ? ` — متبقٍ ${fmt(v.totals.dueMinor)} على المريض` : ''} ✅`)
       setVisitOpen(false)
@@ -118,10 +121,11 @@ export function ClinicPatientsPage() {
 
   /* تحصيل */
   const [collectAmount, setCollectAmount] = useState('')
+  const [collectTreasury, setCollectTreasury] = useState('1101')
   const doCollect = () => {
     if (!file) return
     try {
-      collectFromPatient(file.id, toMinor(collectAmount, cur.decimals))
+      collectFromPatient(file.id, toMinor(collectAmount, cur.decimals), collectTreasury)
       toast.show('حُصّل المبلغ بقيد متوازن ✅')
       setCollectAmount('')
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -217,7 +221,8 @@ export function ClinicPatientsPage() {
               <Btn variant="ghost" onClick={() => setPlanOpen(true)}><ClipboardList className="w-4 h-4" /> خطة علاج بجلسات</Btn>
               {fileBalance > 0 && (
                 <div className="flex gap-1 items-center">
-                  <input value={collectAmount} onChange={(e) => setCollectAmount(e.target.value)} inputMode="decimal" className={`${inputCls} !w-28`} placeholder="مبلغ" />
+                  <input value={collectAmount} onChange={(e) => setCollectAmount(e.target.value)} inputMode="decimal" className={`${inputCls} !w-40`} placeholder="المبلغ المحصل" />
+                  <TreasuryPicker value={collectTreasury} onChange={setCollectTreasury} compact />
                   <Btn variant="ghost" onClick={doCollect} disabled={!collectAmount}><Banknote className="w-4 h-4" /> تحصيل</Btn>
                 </div>
               )}
@@ -295,6 +300,7 @@ export function ClinicPatientsPage() {
           <div className="grid grid-cols-3 gap-3">
             <Field label={`قيمة الزيارة (${cur.symbol}) *`}><input value={vFee} onChange={(e) => setVFee(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="المسدد الآن" hint="فارغ = سداد كامل"><input value={vPaid} onChange={(e) => setVPaid(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={vTreasury} onChange={setVTreasury} compact /></Field>
             <Field label="الضريبة">
               <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
                 <input type="checkbox" checked={vVat} onChange={(e) => setVVat(e.target.checked)} className="accent-cyan-600" />

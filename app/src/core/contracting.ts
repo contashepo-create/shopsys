@@ -58,9 +58,9 @@ export function computeExtractTotals(grossMinor: Minor, retentionPercent: number
  * قيد المستخلص المتوازن:
  *   من ح/ 1101|1104 المستحق + 1105 المحتجز ← إلى ح/ 4107 إيراد + 2102 ضريبة
  */
-export function buildExtractEntry(t: ExtractTotals, payment: 'cash' | 'credit', label: string): JournalLine[] {
+export function buildExtractEntry(t: ExtractTotals, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
   const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? '1101' : '1104', debit: t.dueMinor, credit: 0, note: `مستحق ${label}` },
+    { accountCode: payment === 'cash' ? treasury : '1104', debit: t.dueMinor, credit: 0, note: `مستحق ${label}` },
   ]
   if (t.retentionMinor > 0) lines.push({ accountCode: '1105', debit: t.retentionMinor, credit: 0, note: 'محتجز ضمان أعمال' })
   lines.push({ accountCode: '4107', debit: 0, credit: t.grossMinor, note: 'إيراد مقاولات' })
@@ -82,21 +82,21 @@ export const COST_KIND_LABELS: Record<CostKind, { nameAr: string; icon: string }
 }
 
 /** قيد تكلفة: 5110 ← 1101 نقدي أو 2101 آجل (مورد/مقاول باطن) */
-export function buildProjectCostEntry(amountMinor: Minor, payment: 'cash' | 'credit', label: string): JournalLine[] {
+export function buildProjectCostEntry(amountMinor: Minor, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
   if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة التكلفة يجب أن تكون موجبة')
   const lines: JournalLine[] = [
     { accountCode: '5110', debit: amountMinor, credit: 0, note: `تكلفة ${label}` },
-    { accountCode: payment === 'cash' ? '1101' : '2101', debit: 0, credit: amountMinor, note: payment === 'cash' ? 'سداد نقدي' : 'مستحق للمورد' },
+    { accountCode: payment === 'cash' ? treasury : '2101', debit: 0, credit: amountMinor, note: payment === 'cash' ? 'سداد نقدي' : 'مستحق للمورد' },
   ]
   assertBalanced(lines)
   return lines
 }
 
 /** قيد الإفراج عن المحتجز بعد التسليم النهائي: 1101 ← 1105 */
-export function buildRetentionReleaseEntry(amountMinor: Minor, label: string): JournalLine[] {
+export function buildRetentionReleaseEntry(amountMinor: Minor, label: string, treasury = '1101'): JournalLine[] {
   if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('لا محتجزات للإفراج عنها')
   const lines: JournalLine[] = [
-    { accountCode: '1101', debit: amountMinor, credit: 0, note: `تحصيل محتجز ${label}` },
+    { accountCode: treasury, debit: amountMinor, credit: 0, note: `تحصيل محتجز ${label}` },
     { accountCode: '1105', debit: 0, credit: amountMinor, note: 'إفراج عن محتجز ضمان' },
   ]
   assertBalanced(lines)
@@ -136,4 +136,115 @@ export function projectProfit(
     progressPercent: project.contractValueMinor > 0 ? Math.min(100, Math.round((extracted / project.contractValueMinor) * 1000) / 10) : 0,
     retentionHeldMinor: Math.max(0, retained - releasedRetentionMinor),
   }
+}
+
+/* ─── عروض الأسعار والمناقصات (طلب المالك — مرجعية pro-acc) ─── */
+
+/**
+ * عرض السعر/المناقصة: مستند غير محاسبي (لا قيد) يسبق العقد —
+ * draft → submitted → won | lost، والفائز يتحول لمشروع بضغطة واحدة.
+ */
+export type QuotationStatus = 'draft' | 'submitted' | 'won' | 'lost'
+
+export const QUOTATION_STATUS_LABELS: Record<QuotationStatus, { nameAr: string; icon: string }> = {
+  draft: { nameAr: 'مسودة', icon: '📝' },
+  submitted: { nameAr: 'مقدَّم', icon: '📤' },
+  won: { nameAr: 'فائز ✓', icon: '🏆' },
+  lost: { nameAr: 'خاسر', icon: '❌' },
+}
+
+export interface QuotationLine {
+  descriptionAr: string // بند الأعمال
+  qty: number
+  unitAr: string // م2، م.ط، مقطوعية…
+  unitPriceMinor: Minor
+}
+
+export interface Quotation {
+  id: number
+  quoteNumber: string // QT-0001
+  kind: 'quotation' | 'tender' // عرض سعر | مناقصة
+  clientName: string
+  titleAr: string
+  date: string
+  validUntil: string
+  lines: QuotationLine[]
+  status: QuotationStatus
+  notes: string
+  projectId: number | null // المشروع المتولد عند الفوز
+}
+
+export function quotationTotal(lines: readonly QuotationLine[]): Minor {
+  return lines.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
+}
+
+export function validateQuotation(q: Pick<Quotation, 'titleAr' | 'clientName' | 'lines'>): string[] {
+  const errors: string[] = []
+  if (!q.titleAr.trim()) errors.push('عنوان العرض مطلوب')
+  if (!q.clientName.trim()) errors.push('اسم العميل/الجهة مطلوب')
+  const meaningful = q.lines.filter((l) => l.descriptionAr.trim() && l.qty > 0)
+  if (meaningful.length === 0) errors.push('بند واحد على الأقل بكمية موجبة')
+  for (const l of meaningful) {
+    if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) errors.push(`سعر بند «${l.descriptionAr}» غير صحيح`)
+  }
+  return [...new Set(errors)]
+}
+
+/** انتقالات حالة العرض المسموحة */
+export const QUOTATION_TRANSITIONS: Record<QuotationStatus, QuotationStatus[]> = {
+  draft: ['submitted'],
+  submitted: ['won', 'lost'],
+  won: [],
+  lost: [],
+}
+
+/* ─── عُهد المشاريع (طلب المالك) ─── */
+
+/**
+ * العهدة: مبلغ يُسلَّم لمشرف/مهندس الموقع من الخزينة (1107 سلف وعهد)
+ * ثم تُسوَّى: المنصرف الفعلي تكلفة على المشروع (5110) والمرتجع يعود للخزينة.
+ * قيد الصرف:  1107 ← الخزينة
+ * قيد التسوية: 5110 (المنصرف) + الخزينة (المرتجع) ← 1107
+ */
+export interface ProjectCustody {
+  id: number
+  custodyNumber: string // CUS-0001
+  projectId: number
+  holderName: string // المشرف/المهندس
+  amountMinor: Minor
+  treasury: string
+  date: string
+  status: 'open' | 'settled'
+  spentMinor: Minor // بعد التسوية
+  returnedMinor: Minor
+  grantEntryId: number
+  settleEntryId: number | null
+  notes: string
+}
+
+export function buildCustodyGrantEntry(amountMinor: Minor, treasury: string, label: string): JournalLine[] {
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('مبلغ العهدة يجب أن يكون موجباً')
+  const lines: JournalLine[] = [
+    { accountCode: '1107', debit: amountMinor, credit: 0, note: `عهدة ${label}` },
+    { accountCode: treasury, debit: 0, credit: amountMinor, note: 'صرف العهدة' },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+
+export function buildCustodySettleEntry(
+  custodyMinor: Minor,
+  spentMinor: Minor,
+  treasury: string,
+  label: string,
+): JournalLine[] {
+  if (!Number.isInteger(spentMinor) || spentMinor < 0) throw new Error('المنصرف لا يكون سالباً')
+  if (spentMinor > custodyMinor) throw new Error('المنصرف أكبر من العهدة — سجّل الفرق تكلفة مباشرة على المشروع')
+  const returned = custodyMinor - spentMinor
+  const lines: JournalLine[] = []
+  if (spentMinor > 0) lines.push({ accountCode: '5110', debit: spentMinor, credit: 0, note: `منصرف عهدة ${label}` })
+  if (returned > 0) lines.push({ accountCode: treasury, debit: returned, credit: 0, note: 'مرتجع العهدة' })
+  lines.push({ accountCode: '1107', debit: 0, credit: custodyMinor, note: `تسوية عهدة ${label}` })
+  assertBalanced(lines)
+  return lines
 }

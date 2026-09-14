@@ -38,11 +38,11 @@ export function validateAsset(input: AssetInput): string[] {
  *     إلى ح/ 1101 الخزينة (paid)
  *     إلى ح/ 2101 الموردون (cost − paid)
  */
-export function buildAssetPurchaseEntry(costMinor: Minor, paidMinor: Minor, label: string): JournalLine[] {
+export function buildAssetPurchaseEntry(costMinor: Minor, paidMinor: Minor, label: string, treasury = '1101'): JournalLine[] {
   if (costMinor <= 0) throw new Error('تكلفة الأصل يجب أن تكون موجبة')
   if (paidMinor > costMinor) throw new Error('المدفوع لا يتجاوز التكلفة')
   const lines: JournalLine[] = [{ accountCode: '1201', debit: costMinor, credit: 0, note: `اقتناء ${label}` }]
-  if (paidMinor > 0) lines.push({ accountCode: '1101', debit: 0, credit: paidMinor, note: 'مدفوع نقداً' })
+  if (paidMinor > 0) lines.push({ accountCode: treasury, debit: 0, credit: paidMinor, note: 'مدفوع نقداً' })
   if (costMinor - paidMinor > 0) lines.push({ accountCode: '2101', debit: 0, credit: costMinor - paidMinor, note: 'آجل على المورد' })
   assertBalanced(lines)
   return lines

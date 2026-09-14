@@ -79,21 +79,29 @@ export function validatePayrollRun(args: {
 
 /**
  * قيد مسير الرواتب — بالصافي المستحق للموظفين:
- * نقدي:    من ح/ 5102 رواتب وأجور  إلى ح/ الخزينة (1101/1102)
- * استحقاق: من ح/ 5102 رواتب وأجور  إلى ح/ 2104 رواتب مستحقة
+ * نقدي:    من ح/ 5102 رواتب وأجور (بالصافي + السلف المستردة)  إلى ح/ الخزينة + 1107 سلف مستردة
+ * استحقاق: من ح/ 5102  إلى ح/ 2104 رواتب مستحقة + 1107
+ * السلف المستقطعة (advancesRecoveredMinor) تُقفل من حساب «سلف وعهد الموظفين» (1107)
+ * فيتصفّر رصيد الموظف تلقائياً في كشف حسابه (طلب المالك)
  */
 export function buildPayrollEntry(
   netMinor: Minor,
   mode: PayrollPayMode,
   treasury: TreasuryAccount,
   monthLabel: string,
+  advancesRecoveredMinor: Minor = 0,
 ): JournalLine[] {
   if (netMinor <= 0) throw new Error('صافي المسير يجب أن يكون أكبر من صفر')
+  if (advancesRecoveredMinor < 0) throw new Error('السلف المستردة لا تكون سالبة')
   const creditAccount = mode === 'cash' ? treasury : '2104'
   const lines: JournalLine[] = [
-    { accountCode: '5102', debit: netMinor, credit: 0, note: `رواتب شهر ${monthLabel}` },
+    // المصروف = الصافي المدفوع + السلف المستردة (كانت مصروفة مسبقاً من 1107 كأصل)
+    { accountCode: '5102', debit: netMinor + advancesRecoveredMinor, credit: 0, note: `رواتب شهر ${monthLabel}` },
     { accountCode: creditAccount, debit: 0, credit: netMinor, note: mode === 'cash' ? 'صرف نقدي' : 'استحقاق يُسدد لاحقاً' },
   ]
+  if (advancesRecoveredMinor > 0) {
+    lines.push({ accountCode: '1107', debit: 0, credit: advancesRecoveredMinor, note: 'استرداد سلف الموظفين' })
+  }
   assertBalanced(lines)
   return lines
 }

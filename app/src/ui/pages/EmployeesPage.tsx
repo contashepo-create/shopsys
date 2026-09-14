@@ -14,6 +14,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
 import type { TreasuryAccount } from '../../core/accounting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 /** قسم البيانات الموسعة القابل للطي — نفس نمط العملاء والموردين */
@@ -72,7 +73,7 @@ interface DraftLine {
 }
 
 export function EmployeesPage() {
-  const { employees, payrollRuns, journal, addEmployee, updateEmployee, removeEmployee, postPayroll } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -82,7 +83,26 @@ export function EmployeesPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const toMajor = (m: number) => (m ? String(m / 10 ** cur.decimals) : '')
 
-  const [tab, setTab] = useState<'staff' | 'payroll'>('staff')
+  const [tab, setTab] = useState<'staff' | 'payroll' | 'advances'>('staff')
+
+  /* ─── تبويب السلف (طلب المالك) ─── */
+  const [advOpen, setAdvOpen] = useState(false)
+  const [advEmployeeId, setAdvEmployeeId] = useState(0)
+  const [advAmount, setAdvAmount] = useState('')
+  const [advTreasury, setAdvTreasury] = useState('1101')
+  const [advNotes, setAdvNotes] = useState('')
+  const saveAdvance = () => {
+    try {
+      const adv = grantEmployeeAdvance({
+        employeeId: advEmployeeId,
+        amountMinor: toMinor(advAmount || '0', cur.decimals),
+        treasury: advTreasury,
+        notes: advNotes.trim(),
+      })
+      toast.show(`صُرفت السلفة ${adv.advanceNumber} — تُسترد من مسير الرواتب (خانة «سلف») ✓`)
+      setAdvOpen(false)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   /* ─── تبويب الموظفين ─── */
   const [query, setQuery] = useState('')
@@ -193,7 +213,7 @@ export function EmployeesPage() {
   const listedRuns = useMemo(() => [...payrollRuns].reverse(), [payrollRuns])
   const empName = (id: number) => employees.find((e) => e.id === id)?.nameAr ?? `موظف #${id}`
 
-  const tabCls = (t: 'staff' | 'payroll') =>
+  const tabCls = (t: 'staff' | 'payroll' | 'advances') =>
     `px-4 py-2 rounded-xl text-[13px] font-bold transition-all ${tab === t ? 'bg-brand-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`
 
   return (
@@ -201,7 +221,78 @@ export function EmployeesPage() {
       <div className="anim-up flex items-center gap-2">
         <button onClick={() => setTab('staff')} className={tabCls('staff')}><UserRound size={14} className="inline -mt-0.5 me-1" /> الموظفون ({employees.length})</button>
         <button onClick={() => setTab('payroll')} className={tabCls('payroll')}><Wallet size={14} className="inline -mt-0.5 me-1" /> مسيرات الرواتب ({payrollRuns.length})</button>
+        <button onClick={() => setTab('advances')} className={tabCls('advances')}><Landmark size={14} className="inline -mt-0.5 me-1" /> السلف ({employeeAdvances.length})</button>
       </div>
+
+      {tab === 'advances' && (
+        <>
+          <div className="anim-up flex items-center justify-between flex-wrap gap-2">
+            <p className="text-[12px] text-slate-400 max-w-lg leading-relaxed">
+              💡 السلفة تُصرف من الخزينة وتُقيَّد على الموظف (حساب «سلف وعهد الموظفين») —
+              وتُسترد تلقائياً حين تكتبها في خانة «سلف» بمسير الرواتب. رصيد كل موظف في
+              <b> التقارير ← كشوف الحساب</b>.
+            </p>
+            <Btn onClick={() => { setAdvEmployeeId(employees[0]?.id ?? 0); setAdvAmount(''); setAdvTreasury('1101'); setAdvNotes(''); setAdvOpen(true) }} disabled={employees.length === 0}>
+              <Plus size={15} /> صرف سلفة
+            </Btn>
+          </div>
+          {employeeAdvances.length === 0 ? (
+            <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
+              <EmptyState icon="💸" title="لا سلف بعد" sub="صرف سلفة لموظف يولّد قيداً فورياً ويظهر في كشف حسابه" />
+            </div>
+          ) : (
+            <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-4 py-3 font-bold">السلفة</th>
+                    <th className="px-4 py-3 font-bold">الموظف</th>
+                    <th className="px-4 py-3 font-bold">المبلغ</th>
+                    <th className="px-4 py-3 font-bold">من خزينة</th>
+                    <th className="px-4 py-3 font-bold">القيد</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...employeeAdvances].reverse().map((a, i) => (
+                    <tr key={a.id} style={{ animationDelay: `${i * 25}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-slate-800 dark:text-white">{a.advanceNumber}</div>
+                        <div className="text-[11px] text-slate-400">{a.date.slice(0, 10)}{a.notes && ` · ${a.notes}`}</div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{employees.find((e) => e.id === a.employeeId)?.nameAr ?? '—'}</td>
+                      <td className="px-4 py-3 font-black text-rose-500">{fmt(a.amountMinor)}</td>
+                      <td className="px-4 py-3 text-[12px] text-slate-500">{ACCOUNT_NAMES[a.treasury] ?? a.treasury}</td>
+                      <td className="px-4 py-3"><span className="text-[11px] px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 font-bold">#{a.journalEntryId}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <Modal open={advOpen} onClose={() => setAdvOpen(false)} title="💸 صرف سلفة لموظف">
+            <div className="space-y-4">
+              <Field label="الموظف *">
+                <select value={advEmployeeId} onChange={(e) => setAdvEmployeeId(Number(e.target.value))} className={inputCls}>
+                  {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+                </select>
+              </Field>
+              <Field label={`المبلغ (${cur.symbol}) *`}>
+                <input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus />
+              </Field>
+              <Field label="من أي خزينة/بنك؟">
+                <TreasuryPicker value={advTreasury} onChange={setAdvTreasury} />
+              </Field>
+              <Field label="ملاحظات">
+                <input value={advNotes} onChange={(e) => setAdvNotes(e.target.value)} className={inputCls} placeholder="سلفة عيد، ظرف طارئ…" />
+              </Field>
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => setAdvOpen(false)}>إلغاء</Btn>
+                <Btn onClick={saveAdvance} disabled={!advEmployeeId || !advAmount.trim()}>💾 صرف السلفة</Btn>
+              </div>
+            </div>
+          </Modal>
+        </>
+      )}
 
       {tab === 'staff' && (
         <>
@@ -363,13 +454,7 @@ export function EmployeesPage() {
             </Field>
             {payMode === 'cash' ? (
               <Field label="الصرف من">
-                <div className="grid grid-cols-2 gap-1.5">
-                  {(['1101', '1102'] as TreasuryAccount[]).map((t) => (
-                    <button key={t} onClick={() => setTreasury(t)} className={`p-2 rounded-lg border-2 text-[11px] font-bold transition-all ${treasury === t ? 'border-brand-500/60 bg-brand-500/10 text-brand-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
-                      <Landmark size={12} className="inline -mt-0.5 me-1" />{ACCOUNT_NAMES[t]}
-                    </button>
-                  ))}
-                </div>
+                <TreasuryPicker value={treasury} onChange={setTreasury} compact />
               </Field>
             ) : (
               <div className="text-[11px] text-amber-600 bg-amber-500/10 rounded-xl p-3 self-end">

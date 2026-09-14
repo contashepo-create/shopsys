@@ -41,22 +41,22 @@ export function validateCar(c: CarInput, existingPlates: readonly string[]): str
 }
 
 /** قيد شراء سيارة كبضاعة: 1103 ← 1101|2101 */
-export function buildCarPurchaseEntry(costMinor: Minor, payment: 'cash' | 'credit', label: string): JournalLine[] {
+export function buildCarPurchaseEntry(costMinor: Minor, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
   if (!Number.isInteger(costMinor) || costMinor <= 0) throw new Error('تكلفة الشراء يجب أن تكون موجبة')
   const lines: JournalLine[] = [
     { accountCode: '1103', debit: costMinor, credit: 0, note: `شراء ${label}` },
-    { accountCode: payment === 'cash' ? '1101' : '2101', debit: 0, credit: costMinor, note: payment === 'cash' ? 'سداد نقدي' : 'مستحق للمورد' },
+    { accountCode: payment === 'cash' ? treasury : '2101', debit: 0, credit: costMinor, note: payment === 'cash' ? 'سداد نقدي' : 'مستحق للمورد' },
   ]
   assertBalanced(lines)
   return lines
 }
 
 /** قيد تجهيز يُرسمل على السيارة (سمكرة/دهان/قطع): 1103 ← 1101|2101 */
-export function buildCarPrepEntry(costMinor: Minor, payment: 'cash' | 'credit', label: string): JournalLine[] {
+export function buildCarPrepEntry(costMinor: Minor, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
   if (!Number.isInteger(costMinor) || costMinor <= 0) throw new Error('تكلفة التجهيز يجب أن تكون موجبة')
   const lines: JournalLine[] = [
     { accountCode: '1103', debit: costMinor, credit: 0, note: `تجهيز ${label} (يرسمل على التكلفة)` },
-    { accountCode: payment === 'cash' ? '1101' : '2101', debit: 0, credit: costMinor, note: payment === 'cash' ? 'سداد نقدي' : 'آجل' },
+    { accountCode: payment === 'cash' ? treasury : '2101', debit: 0, credit: costMinor, note: payment === 'cash' ? 'سداد نقدي' : 'آجل' },
   ]
   assertBalanced(lines)
   return lines
@@ -83,9 +83,9 @@ export function computeCarSale(priceMinor: Minor, fullCostMinor: Minor, vatPerce
  * قيدا البيع معاً (سطور قيد واحد متوازن):
  * 1101|1104 بالإجمالي ← 4101 + 2102، ثم 5101 التكلفة ← 1103 إخراج من المخزون
  */
-export function buildCarSaleEntry(t: CarSaleTotals, payment: 'cash' | 'credit', label: string): JournalLine[] {
+export function buildCarSaleEntry(t: CarSaleTotals, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
   const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? '1101' : '1104', debit: t.totalMinor, credit: 0, note: `بيع ${label}` },
+    { accountCode: payment === 'cash' ? treasury : '1104', debit: t.totalMinor, credit: 0, note: `بيع ${label}` },
     { accountCode: '4101', debit: 0, credit: t.priceMinor, note: 'إيراد بيع سيارة' },
   ]
   if (t.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: t.vatMinor, note: 'ض.ق.م' })
