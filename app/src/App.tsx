@@ -32,6 +32,7 @@ import { TripsPage } from './ui/pages/TripsPage.tsx'
 import { FleetPage } from './ui/pages/FleetPage.tsx'
 import { EquipmentPage } from './ui/pages/EquipmentPage.tsx'
 import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
+import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
 import { ComingSoon } from './ui/pages/ComingSoon.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
@@ -68,7 +69,7 @@ function Shell() {
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
         <Route path="/parties/employees" element={<EmployeesPage />} />
         <Route path="/parties/installments" element={<InstallmentsPage />} />
-        <Route path="/maintenance/tickets" element={<ComingSoon title="أوامر الصيانة" phase="المرحلة 6" />} />
+        <Route path="/maintenance/tickets" element={<MaintenancePage />} />
         <Route path="/rental/fleet" element={<EquipmentPage />} />
         <Route path="/rental/contracts" element={<RentalContractsPage />} />
         <Route path="/logistics/trips" element={<TripsPage />} />

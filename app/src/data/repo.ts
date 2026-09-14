@@ -22,6 +22,7 @@ import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayr
 import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from '../core/installments.ts'
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals } from '../core/logistics.ts'
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
+import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals } from '../core/maintenance.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -154,6 +155,28 @@ export interface RentalContract {
   notes: string
 }
 
+/** أمر صيانة (تذكرة) — جهاز وعطل بحالات، وقيد التسليم عند القبض (المرحلة 6) */
+export interface MaintenanceTicket {
+  id: number
+  ticketNumber: string // MT-0001
+  date: string // ISO (تاريخ الاستلام)
+  customerId: number | null // null = عميل نقدي
+  customerName: string // اسم حر عند عدم التسجيل
+  customerPhone: string
+  deviceName: string
+  issue: string
+  estimateMinor: number // تقدير مبدئي يُتفق عليه عند الاستلام (0 = بلا)
+  status: TicketStatus
+  statusHistory: { status: TicketStatus; at: string }[]
+  // تُملأ عند التسليم فقط:
+  parts: { itemId: number; nameAr: string; qty: number; unitPriceMinor: number; unitCostMinor: number }[]
+  totals: TicketTotals | null
+  payment: 'cash' | 'credit' | null
+  journalEntryId: number | null
+  deliveredAt: string | null
+  notes: string
+}
+
 /** مسير رواتب مرحّل لشهر — مربوط بقيده المحاسبي */
 export interface PayrollRun {
   id: number
@@ -278,6 +301,7 @@ interface DataState {
   trips: Trip[]
   equipment: Equipment[]
   rentalContracts: RentalContract[]
+  tickets: MaintenanceTicket[]
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
@@ -434,6 +458,26 @@ interface DataState {
   }) => RentalContract
   /** إقفال عقد: ردّ التأمين نقداً مع خصم اختياري يُعترف به إيراداً (4104) */
   closeRental: (contractId: number, deductMinor: number) => RentalContract
+  /** فتح تذكرة صيانة — لا قيد عند الاستلام (لا التزام مالي بعد) */
+  openTicket: (args: {
+    customerId: number | null
+    customerName: string
+    customerPhone: string
+    deviceName: string
+    issue: string
+    estimateMinor: number
+    notes: string
+  }) => MaintenanceTicket
+  /** نقل حالة التذكرة وفق الانتقالات المسموحة (مع سجل الحالات) */
+  setTicketStatus: (ticketId: number, status: TicketStatus) => MaintenanceTicket
+  /**
+   * تسليم التذكرة (المرحلة 6): تحقق ← إجماليات ← قيد متوازن
+   * (تحصيل مقابل 4103 إيراد صيانة + 2102 ضريبة، وقطع الغيار 5101/1103
+   * بمتوسط التكلفة المرجح — القرار 14) + إنقاص مخزون القطع
+   */
+  deliverTicket: (ticketId: number, input: Omit<TicketDeliveryInput, 'parts'> & {
+    parts: { itemId: number; qty: number; unitPriceMinor: number }[]
+  }) => MaintenanceTicket
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
@@ -454,6 +498,7 @@ export const useDataStore = create<DataState>()(
       trips: [],
       equipment: [],
       rentalContracts: [],
+      tickets: [],
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
@@ -1236,6 +1281,119 @@ export const useDataStore = create<DataState>()(
         })
         return updated
       },
+      openTicket: (args) => {
+        const state = get()
+        const errors = validateTicket({ deviceName: args.deviceName, issue: args.issue })
+        if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) errors.push('العميل غير موجود')
+        if (!Number.isInteger(args.estimateMinor) || args.estimateMinor < 0) errors.push('التقدير المبدئي لا يكون سالباً')
+        if (errors.length) throw new Error(errors.join(' — '))
+
+        const id = nextId(state.tickets)
+        const now = new Date().toISOString()
+        const ticket: MaintenanceTicket = {
+          id,
+          ticketNumber: `MT-${String(id).padStart(4, '0')}`,
+          date: now,
+          customerId: args.customerId,
+          customerName: args.customerName.trim(),
+          customerPhone: args.customerPhone.trim(),
+          deviceName: args.deviceName.trim(),
+          issue: args.issue.trim(),
+          estimateMinor: args.estimateMinor,
+          status: 'received',
+          statusHistory: [{ status: 'received', at: now }],
+          parts: [],
+          totals: null,
+          payment: null,
+          journalEntryId: null,
+          deliveredAt: null,
+          notes: args.notes.trim(),
+        }
+        set({ tickets: [...state.tickets, ticket] })
+        return ticket
+      },
+      setTicketStatus: (ticketId, status) => {
+        const state = get()
+        const ticket = state.tickets.find((t) => t.id === ticketId)
+        if (!ticket) throw new Error('التذكرة غير موجودة')
+        if (status === 'delivered') throw new Error('التسليم يتم من شاشة التسليم (بقيد محاسبي)')
+        if (!TICKET_TRANSITIONS[ticket.status].includes(status)) {
+          throw new Error(`لا يمكن الانتقال من «${ticket.status}» إلى «${status}»`)
+        }
+        const updated: MaintenanceTicket = {
+          ...ticket,
+          status,
+          statusHistory: [...ticket.statusHistory, { status, at: new Date().toISOString() }],
+        }
+        set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)) })
+        return updated
+      },
+      deliverTicket: (ticketId, input) => {
+        const state = get()
+        const ticket = state.tickets.find((t) => t.id === ticketId)
+        if (!ticket) throw new Error('التذكرة غير موجودة')
+        if (!TICKET_TRANSITIONS[ticket.status].includes('delivered')) {
+          throw new Error('التسليم متاح للتذاكر الجاهزة فقط — انقلها إلى «جاهزة للتسليم» أولاً')
+        }
+        if (input.payment === 'credit' && ticket.customerId == null) {
+          throw new Error('التسليم الآجل يتطلب عميلاً مسجلاً')
+        }
+
+        // 1) إثراء القطع بأسمائها ومتوسط تكلفتها المرجح وقت التسليم (القرار 14)
+        const parts = input.parts.map((p) => {
+          const item = state.items.find((it) => it.id === p.itemId)
+          if (!item) throw new Error('قطعة غيار غير موجودة بالمخزون')
+          if ((item.stockQty ?? 0) < p.qty) throw new Error(`المخزون لا يكفي من «${item.nameAr}» (المتاح ${item.stockQty ?? 0})`)
+          return { itemId: p.itemId, nameAr: item.nameAr, qty: p.qty, unitPriceMinor: p.unitPriceMinor, unitCostMinor: item.costMinor }
+        })
+
+        // 2) تحقق وإجماليات وقيد بالنواة الخالصة
+        const delivery: TicketDeliveryInput = { laborMinor: input.laborMinor, parts, payment: input.payment, vatPercent: input.vatPercent }
+        const errors = validateDelivery(delivery)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const totals = computeTicketTotals(delivery)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entryLines = buildTicketDeliveryEntry(totals, input.payment, ticket.ticketNumber)
+
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `تسليم صيانة ${ticket.ticketNumber} — ${ticket.deviceName}`,
+          sourceType: 'maintenance_ticket',
+          sourceId: ticket.id,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+
+        // 3) إنقاص مخزون القطع المستهلكة
+        const qtyByItem = new Map<number, number>()
+        for (const p of parts) qtyByItem.set(p.itemId, (qtyByItem.get(p.itemId) ?? 0) + p.qty)
+        const items = state.items.map((it) =>
+          qtyByItem.has(it.id) ? { ...it, stockQty: (it.stockQty ?? 0) - qtyByItem.get(it.id)! } : it,
+        )
+
+        const updated: MaintenanceTicket = {
+          ...ticket,
+          status: 'delivered',
+          statusHistory: [...ticket.statusHistory, { status: 'delivered', at: now }],
+          parts,
+          totals,
+          payment: input.payment,
+          journalEntryId: entryId,
+          deliveredAt: now,
+        }
+        set({
+          tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)),
+          journal: [...state.journal, entry],
+          items,
+        })
+        return updated
+      },
     }),
     {
       name: 'shopsys-data',
@@ -1256,6 +1414,7 @@ export const useDataStore = create<DataState>()(
           trips: s.trips ?? [],
           equipment: s.equipment ?? [],
           rentalContracts: s.rentalContracts ?? [],
+          tickets: s.tickets ?? [],
           purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
           purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],

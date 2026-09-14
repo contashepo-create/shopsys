@@ -33,7 +33,7 @@ export interface JournalLine {
 export type SourceType =
   | 'sale' | 'sale_return' | 'purchase' | 'purchase_return'
   | 'receipt_voucher' | 'payment_voucher' | 'adjustment'
-  | 'payroll' | 'rental_contract' | 'logistics_trip'
+  | 'payroll' | 'rental_contract' | 'logistics_trip' | 'maintenance_ticket'
   | 'opening' | 'manual' | 'reversal'
 
 export interface JournalEntry {
