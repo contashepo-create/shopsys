@@ -11,6 +11,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeRentalTotals, rentalReport } from '../../core/rental.ts'
+import { RATE_TYPE_LABELS, type RateType } from '../../core/rentalMeter.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -39,18 +40,36 @@ export function RentalContractsPage() {
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [withVat, setWithVat] = useState(false)
   const [notes, setNotes] = useState('')
+  // ترقية القرار 25: نوع العقد الزمني + قراءة عدّاد التسليم للساعي
+  const [rateType, setRateType] = useState<RateType>('daily')
+  const [startReading, setStartReading] = useState('')
 
   const openNew = () => {
     setCustomerId(''); setEquipmentId(''); setEquipmentName(''); setDays('1')
-    setDailyRate(''); setDeposit(''); setPayment('cash'); setWithVat(false); setNotes(''); setOpen(true)
+    setDailyRate(''); setDeposit(''); setPayment('cash'); setWithVat(false); setNotes('')
+    setRateType('daily'); setStartReading(''); setOpen(true)
+  }
+  /** سعر الوحدة من سجل المعدة حسب نوع العقد */
+  const rateFor = (eq: (typeof equipment)[number] | undefined, rt: RateType) => {
+    if (!eq) return 0
+    return rt === 'hourly' ? eq.hourlyRateMinor : rt === 'monthly' ? eq.monthlyRateMinor : eq.dailyRateMinor
   }
   const pickEquipment = (v: string) => {
     setEquipmentId(v)
     const eq = equipment.find((x) => x.id === Number(v))
     if (eq) {
       setEquipmentName(eq.nameAr)
-      if (eq.dailyRateMinor > 0) setDailyRate(formatMinor(eq.dailyRateMinor, cur, false).replace(/,/g, ''))
+      const r = rateFor(eq, rateType)
+      if (r > 0) setDailyRate(formatMinor(r, cur, false).replace(/,/g, ''))
+      if (rateType === 'hourly') setStartReading(String(eq.meterReading || ''))
     }
+  }
+  const pickRateType = (rt: RateType) => {
+    setRateType(rt)
+    const eq = equipment.find((x) => x.id === Number(equipmentId))
+    const r = rateFor(eq, rt)
+    if (r > 0) setDailyRate(formatMinor(r, cur, false).replace(/,/g, ''))
+    if (rt === 'hourly' && eq) setStartReading(String(eq.meterReading || ''))
   }
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
   const draftInput = useMemo(() => ({
@@ -73,6 +92,8 @@ export function RentalContractsPage() {
         equipmentId: equipmentId ? Number(equipmentId) : null,
         input: draftInput,
         notes: notes.trim(),
+        rateType,
+        startReading: rateType === 'hourly' && startReading.trim() !== '' ? Number(startReading) : null,
       })
       toast.show(`فُتح العقد ${c.contractNumber} — يُقبض الآن ${fmt(c.totals.collectCashMinor)} ${cur.symbol} ✅`)
       setOpen(false)
@@ -82,20 +103,29 @@ export function RentalContractsPage() {
   /* ─── إقفال عقد ─── */
   const [closing, setClosing] = useState<RentalContract | null>(null)
   const [deduct, setDeduct] = useState('')
+  const [endReading, setEndReading] = useState('')
+  const [endDate, setEndDate] = useState('')
   const doClose = () => {
     if (!closing) return
     try {
-      const c = closeRental(closing.id, toM(deduct))
+      const usage =
+        closing.rateType === 'hourly'
+          ? { endReading: Number(endReading) }
+          : endDate
+            ? { endDate }
+            : undefined
+      const c = closeRental(closing.id, toM(deduct), usage)
       const refund = c.totals.depositMinor - c.deductMinor
-      toast.show(`أُقفل العقد ${c.contractNumber}${c.totals.depositMinor > 0 ? ` — يُرَدّ للعميل ${fmt(refund)} ${cur.symbol}` : ''} ✅`)
-      setClosing(null); setDeduct('')
+      const extraMsg = c.extraMinor > 0 ? ` — تجاوز استخدام ${fmt(c.extraMinor)} ${cur.symbol} بقيد منفصل` : ''
+      toast.show(`أُقفل العقد ${c.contractNumber}${c.totals.depositMinor > 0 ? ` — يُرَدّ للعميل ${fmt(refund)} ${cur.symbol}` : ''}${extraMsg} ✅`)
+      setClosing(null); setDeduct(''); setEndReading(''); setEndDate('')
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
 
   /* ─── عرض عقد ─── */
   const [viewing, setViewing] = useState<RentalContract | null>(null)
   const viewEntries = viewing
-    ? journal.filter((e) => e.id === viewing.openEntryId || e.id === viewing.closeEntryId)
+    ? journal.filter((e) => e.id === viewing.openEntryId || e.id === viewing.closeEntryId || e.id === viewing.extraEntryId)
     : []
 
   /* ─── تقرير ─── */
@@ -147,7 +177,10 @@ export function RentalContractsPage() {
                     </td>
                     <td className="px-4 py-3 font-bold text-slate-700 dark:text-slate-200">{c.equipmentName}</td>
                     <td className="px-4 py-3 text-slate-500">{custName(c.customerId)}</td>
-                    <td className="px-4 py-3 text-slate-500">{c.days} يوم</td>
+                    <td className="px-4 py-3 text-slate-500">
+                      {c.days} {RATE_TYPE_LABELS[c.rateType ?? 'daily'].unitAr}
+                      {c.extraMinor > 0 && <span className="block text-[10px] text-amber-600 font-bold">+ تجاوز {fmt(c.extraMinor)}</span>}
+                    </td>
                     <td className="px-4 py-3 font-bold">{fmt(c.totals.rentMinor)}</td>
                     <td className="px-4 py-3 text-slate-500">{c.totals.depositMinor > 0 ? fmt(c.totals.depositMinor) : '—'}</td>
                     <td className="px-4 py-3">
@@ -244,14 +277,33 @@ export function RentalContractsPage() {
             <Field label="اسم المعدة *">
               <input value={equipmentName} onChange={(e) => setEquipmentName(e.target.value)} className={inputCls} placeholder="حفار كاتربيلر 320" />
             </Field>
+            {/* نوع العقد الزمني — ترقية القرار 25 */}
+            <Field label="نوع العقد">
+              <div className="grid grid-cols-3 gap-1.5">
+                {(Object.keys(RATE_TYPE_LABELS) as RateType[]).map((rt) => (
+                  <button
+                    key={rt}
+                    onClick={() => pickRateType(rt)}
+                    className={`p-2 rounded-lg border-2 text-[11.5px] font-bold transition-all ${rateType === rt ? 'border-teal-500/60 bg-teal-500/10 text-teal-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
+                  >
+                    {rt === 'hourly' ? '⏱️ ساعي' : rt === 'daily' ? '📅 يومي' : '🗓️ شهري'}
+                  </button>
+                ))}
+              </div>
+            </Field>
             <div className="grid grid-cols-2 gap-2">
-              <Field label="الأيام">
+              <Field label={`المدة (${RATE_TYPE_LABELS[rateType].unitAr})`}>
                 <input value={days} onChange={(e) => setDays(e.target.value)} className={inputCls} dir="ltr" />
               </Field>
-              <Field label={`السعر اليومي (${cur.symbol})`}>
+              <Field label={`سعر ال${RATE_TYPE_LABELS[rateType].unitAr} (${cur.symbol})`}>
                 <input value={dailyRate} onChange={(e) => setDailyRate(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
               </Field>
             </div>
+            {rateType === 'hourly' && (
+              <Field label="قراءة العدّاد عند التسليم (Hour Meter) *" hint="ستُحاسب الساعات الفعلية من فرق القراءتين عند الإرجاع">
+                <input value={startReading} onChange={(e) => setStartReading(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} placeholder="0" />
+              </Field>
+            )}
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يُقبض نقداً ويُردّ عند الإقفال — لا يدخل الإيراد">
               <input value={deposit} onChange={(e) => setDeposit(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
             </Field>
@@ -296,6 +348,17 @@ export function RentalContractsPage() {
               <span className="text-slate-500">التأمين المحصَّل</span>
               <b className="text-amber-600">{fmt(closing.totals.depositMinor)} {cur.symbol}</b>
             </div>
+
+            {/* تسوية الاستخدام الفعلي — ترقية القرار 25 */}
+            {closing.rateType === 'hourly' ? (
+              <Field label="قراءة العدّاد عند الإرجاع *" hint={`التسليم كان عند ${closing.startReading ?? 0} — المحجوز ${closing.days} ساعة، والتجاوز يُحاسب بقيد منفصل`}>
+                <input value={endReading} onChange={(e) => setEndReading(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} autoFocus />
+              </Field>
+            ) : (
+              <Field label="تاريخ الإرجاع الفعلي (اختياري)" hint={`المحجوز ${closing.days} ${closing.rateType === 'monthly' ? 'شهر' : 'يوم'} من ${closing.date.slice(0, 10)} — لو تأخر الإرجاع يُحاسَب التجاوز تلقائياً`}>
+                <input value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputCls} dir="ltr" type="date" />
+              </Field>
+            )}
             {closing.totals.depositMinor > 0 ? (
               <>
                 <Field label={`الخصم من التأمين (${cur.symbol})`} hint="أضرار أو غرامة — يُعترف به إيراد إيجار، والباقي يُردّ نقداً">
@@ -324,7 +387,7 @@ export function RentalContractsPage() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[12px]">
               <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">المعدة</div><b>{viewing.equipmentName}</b></div>
               <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">العميل</div><b>{custName(viewing.customerId)}</b></div>
-              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">المدة × اليومي</div><b>{viewing.days} × {fmt(viewing.dailyRateMinor)}</b></div>
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">المدة × سعر ال{RATE_TYPE_LABELS[viewing.rateType ?? 'daily'].unitAr}</div><b>{viewing.days} × {fmt(viewing.dailyRateMinor)}</b></div>
               <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">الحالة</div><b>{viewing.status === 'active' ? 'نشط' : `مُقفل${viewing.deductMinor > 0 ? ` (خصم ${fmt(viewing.deductMinor)})` : ''}`}</b></div>
             </div>
 

@@ -27,6 +27,7 @@ import { validateTransfer, computeWarehouseStock, transferTotalQty, type Transfe
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
+import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, type RateType, type OperatorShift } from '../core/rentalMeter.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -130,12 +131,21 @@ export interface Trip {
   notes: string
 }
 
-/** معدة ثقيلة قابلة للإيجار (المرحلة 6 — القرار 13) */
+/** معدة ثقيلة قابلة للإيجار (المرحلة 6 — القرار 13 + ترقية القرار 25) */
 export interface Equipment {
   id: number
   nameAr: string // حفار، لودر، ونش…
   code: string // كود/لوحة اختياري
   dailyRateMinor: number // السعر اليومي الافتراضي
+  /** ترقية القرار 25: أسعار الساعة والشهر (0 = غير متاح بهذا النظام) */
+  hourlyRateMinor: number
+  monthlyRateMinor: number
+  /** قراءة عدّاد الساعات الحالية (Hour Meter) — تتقدم مع الوردانيات والعقود */
+  meterReading: number
+  /** صيانة وقائية كل N ساعة تشغيل (0 = بلا خطة) */
+  serviceEveryHours: number
+  /** قراءة العدّاد عند آخر خدمة */
+  lastServiceReading: number
   notes: string
 }
 
@@ -147,8 +157,17 @@ export interface RentalContract {
   customerId: number | null // null = عميل نقدي
   equipmentId: number | null
   equipmentName: string
-  days: number
-  dailyRateMinor: number
+  days: number // الوحدات المحجوزة (ساعات/أيام/أشهر حسب rateType)
+  dailyRateMinor: number // سعر الوحدة المحجوزة
+  /** ترقية القرار 25: نوع العقد الزمني — العقود القديمة يومية */
+  rateType: RateType
+  /** قراءة العدّاد عند التسليم (العقود الساعية) */
+  startReading: number | null
+  /** قراءة العدّاد/تاريخ الإرجاع عند الإقفال */
+  endReading: number | null
+  /** تسوية التجاوز عند الإقفال (0 = لا تجاوز) */
+  extraMinor: number
+  extraEntryId: number | null
   payment: 'cash' | 'credit'
   vatPercent: number
   totals: RentalTotals
@@ -332,6 +351,7 @@ interface DataState {
   trips: Trip[]
   equipment: Equipment[]
   rentalContracts: RentalContract[]
+  operatorShifts: OperatorShift[] // وردانيات المشغلين (ترقية القرار 25)
   tickets: MaintenanceTicket[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
@@ -490,9 +510,20 @@ interface DataState {
     equipmentId: number | null
     input: RentalInput
     notes: string
+    /** ترقية القرار 25: نوع العقد (الافتراضي يومي) وقراءة العدّاد عند التسليم للساعي */
+    rateType?: RateType
+    startReading?: number | null
   }) => RentalContract
-  /** إقفال عقد: ردّ التأمين نقداً مع خصم اختياري يُعترف به إيراداً (4104) */
-  closeRental: (contractId: number, deductMinor: number) => RentalContract
+  /**
+   * إقفال عقد: ردّ التأمين نقداً مع خصم اختياري يُعترف به إيراداً (4104).
+   * ترقية القرار 25: قراءة عدّاد الإرجاع (ساعي) أو تاريخ الإرجاع (يومي/شهري)
+   * ⇒ تسوية تجاوز الاستخدام بقيد منفصل، وتقدُّم عدّاد المعدة.
+   */
+  closeRental: (contractId: number, deductMinor: number, usage?: { endReading?: number; endDate?: string }) => RentalContract
+  /** وردية مشغل على معدة — تتحقق من القراءات وتقدّم عدّاد المعدة */
+  addOperatorShift: (s: Omit<OperatorShift, 'id'>) => OperatorShift
+  /** تسجيل خدمة صيانة للمعدة عند قراءتها الحالية (يصفّر عدّاد الفترة الوقائية) */
+  recordEquipmentService: (equipmentId: number) => void
   /** فتح تذكرة صيانة — لا قيد عند الاستلام (لا التزام مالي بعد) */
   openTicket: (args: {
     customerId: number | null
@@ -539,6 +570,7 @@ export const useDataStore = create<DataState>()(
       trips: [],
       equipment: [],
       rentalContracts: [],
+      operatorShifts: [],
       tickets: [],
       transfers: [],
       batches: [],
@@ -1349,10 +1381,22 @@ export const useDataStore = create<DataState>()(
       },
       openRental: (args) => {
         const state = get()
+        const rateType: RateType = args.rateType ?? 'daily'
         // 1) تحقق شامل قبل أي كتابة
         const errors = validateRental(args.input)
         if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) errors.push('العميل غير موجود')
         if (args.input.payment === 'credit' && args.customerId == null) errors.push('الإيجار الآجل يتطلب عميلاً مسجلاً')
+        // ترقية القرار 25: العقد الساعي يتطلب قراءة عدّاد التسليم
+        if (rateType === 'hourly') {
+          if (args.startReading == null || !isValidMeterReading(args.startReading)) {
+            errors.push('العقد الساعي يتطلب قراءة عدّاد صحيحة عند التسليم')
+          } else if (args.equipmentId != null) {
+            const eq = state.equipment.find((e) => e.id === args.equipmentId)
+            if (eq && args.startReading < eq.meterReading) {
+              errors.push(`قراءة التسليم (${args.startReading}) أقل من عدّاد المعدة الحالي (${eq.meterReading})`)
+            }
+          }
+        }
         if (errors.length) throw new Error(errors.join(' — '))
 
         // 2) الإجماليات وقيد الفتح بالنواة الخالصة
@@ -1386,6 +1430,11 @@ export const useDataStore = create<DataState>()(
           equipmentName: args.input.equipmentName.trim(),
           days: args.input.days,
           dailyRateMinor: args.input.dailyRateMinor,
+          rateType,
+          startReading: rateType === 'hourly' ? (args.startReading ?? null) : null,
+          endReading: null,
+          extraMinor: 0,
+          extraEntryId: null,
           payment: args.input.payment,
           vatPercent: args.input.vatPercent,
           totals,
@@ -1399,19 +1448,64 @@ export const useDataStore = create<DataState>()(
         set({ rentalContracts: [...state.rentalContracts, contract], journal: [...state.journal, entry] })
         return contract
       },
-      closeRental: (contractId, deductMinor) => {
+      closeRental: (contractId, deductMinor, usage) => {
         const state = get()
         const contract = state.rentalContracts.find((c) => c.id === contractId)
         if (!contract) throw new Error('العقد غير موجود')
         if (contract.status === 'closed') throw new Error('العقد مُقفل بالفعل')
 
+        const now = new Date().toISOString()
+        let journal = state.journal
+
+        // ترقية القرار 25: تسوية الاستخدام الفعلي (عدّاد للساعي، تاريخ إرجاع لليومي/الشهري)
+        let extraMinor = 0
+        let extraEntryId: number | null = null
+        let endReading: number | null = null
+        if (contract.rateType === 'hourly') {
+          if (usage?.endReading == null) throw new Error('العقد الساعي يتطلب قراءة العدّاد عند الإرجاع')
+          const billing = computeUsageBilling({
+            rateType: 'hourly',
+            rateMinor: contract.dailyRateMinor,
+            bookedUnits: contract.days,
+            startReading: contract.startReading ?? 0,
+            endReading: usage.endReading,
+          })
+          endReading = usage.endReading
+          extraMinor = billing.extraMinor
+        } else if (usage?.endDate) {
+          const billing = computeUsageBilling({
+            rateType: contract.rateType,
+            rateMinor: contract.dailyRateMinor,
+            bookedUnits: contract.days,
+            startDate: contract.date.slice(0, 10),
+            endDate: usage.endDate,
+          })
+          extraMinor = billing.extraMinor
+        }
+        // قيد التجاوز — بنفس طريقة سداد العقد
+        if (extraMinor > 0) {
+          extraEntryId = nextId(journal)
+          const extraLines = buildExtraUsageEntry(extraMinor, contract.vatPercent, contract.payment, contract.contractNumber)
+          journal = [...journal, {
+            id: extraEntryId,
+            entryNumber: extraEntryId,
+            date: now.slice(0, 10),
+            description: `تسوية تجاوز استخدام عقد ${contract.contractNumber}`,
+            sourceType: 'rental_contract',
+            sourceId: contract.id,
+            lines: extraLines,
+            createdBy: 'المالك',
+            createdAt: now,
+            reversedByEntryId: null,
+            reversesEntryId: null,
+          }]
+        }
+
         // قيد الإقفال (null لو لا تأمين — يبقى العقد يُقفل بلا قيد)
         const closeLines = buildRentalCloseEntry(contract.totals.depositMinor, deductMinor, contract.contractNumber)
-        const now = new Date().toISOString()
         let closeEntryId: number | null = null
-        let journal = state.journal
         if (closeLines) {
-          closeEntryId = nextId(state.journal)
+          closeEntryId = nextId(journal)
           const entry: JournalEntry = {
             id: closeEntryId,
             entryNumber: closeEntryId,
@@ -1425,15 +1519,53 @@ export const useDataStore = create<DataState>()(
             reversedByEntryId: null,
             reversesEntryId: null,
           }
-          journal = [...state.journal, entry]
+          journal = [...journal, entry]
         }
 
-        const updated: RentalContract = { ...contract, status: 'closed', closeEntryId, deductMinor }
+        // تقدُّم عدّاد المعدة لقراءة الإرجاع (لا يرجع للخلف أبداً)
+        const equipment =
+          endReading != null && contract.equipmentId != null
+            ? state.equipment.map((e) =>
+                e.id === contract.equipmentId && endReading! > e.meterReading ? { ...e, meterReading: endReading! } : e,
+              )
+            : state.equipment
+
+        const updated: RentalContract = { ...contract, status: 'closed', closeEntryId, deductMinor, endReading, extraMinor, extraEntryId }
         set({
           rentalContracts: state.rentalContracts.map((c) => (c.id === contractId ? updated : c)),
           journal,
+          equipment,
         })
         return updated
+      },
+      addOperatorShift: (s) => {
+        const state = get()
+        const errors = validateOperatorShift(s)
+        const eq = state.equipment.find((e) => e.id === s.equipmentId)
+        if (!eq) errors.push('المعدة غير موجودة')
+        else if (s.startReading < eq.meterReading) {
+          errors.push(`قراءة بداية الوردية (${s.startReading}) أقل من عدّاد المعدة (${eq.meterReading}) — العدّاد لا يرجع للخلف`)
+        }
+        if (errors.length) throw new Error(errors.join(' — '))
+        const shift: OperatorShift = { ...s, id: nextId(state.operatorShifts) }
+        set({
+          operatorShifts: [...state.operatorShifts, shift],
+          // عدّاد المعدة يتقدم لقراءة نهاية الوردية
+          equipment: state.equipment.map((e) =>
+            e.id === s.equipmentId && s.endReading > e.meterReading ? { ...e, meterReading: s.endReading } : e,
+          ),
+        })
+        return shift
+      },
+      recordEquipmentService: (equipmentId) => {
+        const state = get()
+        const eq = state.equipment.find((e) => e.id === equipmentId)
+        if (!eq) throw new Error('المعدة غير موجودة')
+        set({
+          equipment: state.equipment.map((e) =>
+            e.id === equipmentId ? { ...e, lastServiceReading: e.meterReading } : e,
+          ),
+        })
       },
       openTicket: (args) => {
         const state = get()
@@ -1678,8 +1810,25 @@ export const useDataStore = create<DataState>()(
           installmentPlans: s.installmentPlans ?? [],
           vehicles: s.vehicles ?? [],
           trips: s.trips ?? [],
-          equipment: s.equipment ?? [],
-          rentalContracts: s.rentalContracts ?? [],
+          // ترقية القرار 25: معدات قديمة تحصل على حقول العدّاد والأسعار الجديدة
+          equipment: (s.equipment ?? []).map((e) => ({
+            ...e,
+            hourlyRateMinor: e.hourlyRateMinor ?? 0,
+            monthlyRateMinor: e.monthlyRateMinor ?? 0,
+            meterReading: e.meterReading ?? 0,
+            serviceEveryHours: e.serviceEveryHours ?? 0,
+            lastServiceReading: e.lastServiceReading ?? 0,
+          })),
+          // عقود قديمة = يومية بلا عدّاد
+          rentalContracts: (s.rentalContracts ?? []).map((c) => ({
+            ...c,
+            rateType: c.rateType ?? 'daily',
+            startReading: c.startReading ?? null,
+            endReading: c.endReading ?? null,
+            extraMinor: c.extraMinor ?? 0,
+            extraEntryId: c.extraEntryId ?? null,
+          })),
+          operatorShifts: s.operatorShifts ?? [],
           tickets: s.tickets ?? [],
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],
