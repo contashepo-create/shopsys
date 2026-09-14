@@ -9,7 +9,7 @@ import {
   UserRound, Building2, UserCog, Landmark, FileSpreadsheet, Scale,
   PenLine, ListTree, PiggyBank, CalendarClock, Store, Percent,
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown,
-  Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car,
+  Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule } from '../core/activities.ts'
@@ -145,6 +145,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'coa', nameAr: 'شجرة الحسابات', icon: ListTree, path: '/accounting/coa' },
       { id: 'trial', nameAr: 'ميزان المراجعة', icon: Scale, path: '/accounting/trial-balance' },
       { id: 'vouchers', nameAr: 'سندات قبض وصرف', icon: Landmark, path: '/accounting/vouchers' },
+      { id: 'cheques', nameAr: 'الشيكات', icon: Banknote, path: '/accounting/cheques' },
       { id: 'treasury', nameAr: 'الخزائن والبنوك', icon: PiggyBank, path: '/accounting/treasury' },
       { id: 'assets', nameAr: 'الأصول والإهلاك', icon: TrendingDown, path: '/accounting/assets' },
     ],

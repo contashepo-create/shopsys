@@ -33,6 +33,7 @@ import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry
 import { validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, type Project, type CostKind, type ExtractTotals, type ProjectProfit } from '../core/contracting.ts'
 import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, type VisitKind, type VisitTotals } from '../core/clinic.ts'
 import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
+import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -546,6 +547,7 @@ interface DataState {
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
   assets: FixedAsset[]
   serials: SerialUnit[] // وحدات السيريال/IMEI والضمان (نمط موبايل شوب)
+  cheques: Cheque[] // أوراق القبض والدفع (الشيكات)
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
@@ -796,6 +798,13 @@ interface DataState {
   addAsset: (args: AssetInput & { notes: string }) => FixedAsset
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
+  /* ─── الشيكات (أوراق القبض والدفع) ─── */
+  /** استلام شيك وارد من عميل: قيد 1106 ← 1104 */
+  receiveCheque: (args: { chequeNumber: string; partyId: number; bankName: string; amountMinor: number; dueDate: string; notes: string }) => Cheque
+  /** تحرير شيك صادر لمورد: قيد 2101 ← 2106 */
+  issueCheque: (args: { chequeNumber: string; partyId: number; bankName: string; amountMinor: number; dueDate: string; notes: string }) => Cheque
+  /** نقل حالة الشيك وفق آلة الحالات — يولّد قيد التحصيل/الارتداد/الصرف/الإلغاء تلقائياً */
+  setChequeStatus: (chequeId: number, status: ChequeStatus) => Cheque
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
@@ -836,6 +845,7 @@ export const useDataStore = create<DataState>()(
       batches: [],
       assets: [],
       serials: [],
+      cheques: [],
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
@@ -2499,6 +2509,108 @@ export const useDataStore = create<DataState>()(
         })
         return { entry, totalMinor, assetCount: due.length }
       },
+
+      /* ─── الشيكات (أوراق القبض والدفع) ─── */
+      receiveCheque: (args) => {
+        const state = get()
+        validateCheque(args)
+        const customer = state.customers.find((c) => c.id === args.partyId)
+        if (!customer) throw new Error('العميل غير موجود')
+        if (state.cheques.some((c) => c.direction === 'incoming' && c.chequeNumber === args.chequeNumber.trim() && c.bankName === args.bankName.trim())) {
+          throw new Error('شيك بنفس الرقم والبنك مسجل من قبل')
+        }
+        const id = nextId(state.cheques)
+        const now = new Date().toISOString()
+        const note = `شيك وارد ${args.chequeNumber} — ${customer.nameAr}`
+        const lines = buildChequeReceiveEntry(args.amountMinor, note)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `استلام ${note} (استحقاق ${args.dueDate})`,
+          sourceType: 'cheque_receive', sourceId: id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const cheque: Cheque = {
+          id, chequeNumber: args.chequeNumber.trim(), direction: 'incoming',
+          partyId: customer.id, partyName: customer.nameAr, bankName: args.bankName.trim(),
+          amountMinor: args.amountMinor, dueDate: args.dueDate, status: 'held', notes: args.notes,
+          createdAt: now, receiveEntryId: entryId, settleEntryId: null, reverseEntryId: null,
+          depositedAt: null, settledAt: null,
+        }
+        set({ cheques: [...state.cheques, cheque], journal: [...state.journal, entry] })
+        return cheque
+      },
+
+      issueCheque: (args) => {
+        const state = get()
+        validateCheque(args)
+        const supplier = state.suppliers.find((s) => s.id === args.partyId)
+        if (!supplier) throw new Error('المورد غير موجود')
+        if (state.cheques.some((c) => c.direction === 'outgoing' && c.chequeNumber === args.chequeNumber.trim())) {
+          throw new Error('رقم شيك صادر مكرر — كل ورقة من دفترك برقم فريد')
+        }
+        const id = nextId(state.cheques)
+        const now = new Date().toISOString()
+        const note = `شيك صادر ${args.chequeNumber} — ${supplier.nameAr}`
+        const lines = buildChequeIssueEntry(args.amountMinor, note)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تحرير ${note} (استحقاق ${args.dueDate})`,
+          sourceType: 'cheque_issue', sourceId: id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const cheque: Cheque = {
+          id, chequeNumber: args.chequeNumber.trim(), direction: 'outgoing',
+          partyId: supplier.id, partyName: supplier.nameAr, bankName: args.bankName.trim(),
+          amountMinor: args.amountMinor, dueDate: args.dueDate, status: 'issued', notes: args.notes,
+          createdAt: now, receiveEntryId: entryId, settleEntryId: null, reverseEntryId: null,
+          depositedAt: null, settledAt: null,
+        }
+        set({ cheques: [...state.cheques, cheque], journal: [...state.journal, entry] })
+        return cheque
+      },
+
+      setChequeStatus: (chequeId, status) => {
+        const state = get()
+        const cheque = state.cheques.find((c) => c.id === chequeId)
+        if (!cheque) throw new Error('الشيك غير موجود')
+        assertTransition(cheque.status, status)
+        const now = new Date().toISOString()
+        const note = `شيك ${cheque.chequeNumber} — ${cheque.partyName}`
+        // الإيداع تحول حالة فقط — لا قيد (الورقة ما زالت أصلاً بنفس القيمة)
+        if (status === 'deposited') {
+          const updated: Cheque = { ...cheque, status, depositedAt: now }
+          set({ cheques: state.cheques.map((c) => (c.id === chequeId ? updated : c)) })
+          return updated
+        }
+        const built =
+          status === 'collected' ? { lines: buildChequeCollectEntry(cheque.amountMinor, note), src: 'cheque_collect' as const, desc: `تحصيل ${note}`, reversal: false }
+          : status === 'bounced' ? { lines: buildChequeBounceEntry(cheque.amountMinor, note), src: 'cheque_bounce' as const, desc: `ارتداد ${note} — عاد الدين على العميل`, reversal: true }
+          : status === 'cleared' ? { lines: buildChequeClearEntry(cheque.amountMinor, note), src: 'cheque_clear' as const, desc: `صرف ${note} من البنك`, reversal: false }
+          : { lines: buildChequeCancelEntry(cheque.amountMinor, note), src: 'cheque_cancel' as const, desc: `إلغاء ${note} — عاد الدين للمورد`, reversal: true }
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: built.desc,
+          sourceType: built.src, sourceId: cheque.id, lines: built.lines,
+          createdBy: 'المالك', createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: built.reversal ? cheque.receiveEntryId : null,
+        }
+        const updated: Cheque = {
+          ...cheque, status, settledAt: now,
+          settleEntryId: built.reversal ? cheque.settleEntryId : entryId,
+          reverseEntryId: built.reversal ? entryId : cheque.reverseEntryId,
+        }
+        set({
+          cheques: state.cheques.map((c) => (c.id === chequeId ? updated : c)),
+          journal: built.reversal
+            ? [...state.journal.map((e) => (e.id === cheque.receiveEntryId ? { ...e, reversedByEntryId: entryId } : e)), entry]
+            : [...state.journal, entry],
+        })
+        return updated
+      },
     }),
     {
       name: 'shopsys-data',
@@ -2557,6 +2669,7 @@ export const useDataStore = create<DataState>()(
           batches: s.batches ?? [],
           assets: s.assets ?? [],
           serials: s.serials ?? [],
+          cheques: s.cheques ?? [],
           purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
           purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],
