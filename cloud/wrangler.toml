@@ -1,0 +1,9 @@
+# ShopSys Control Worker — النشر: npx wrangler deploy (من داخل مجلد cloud/)
+name = "shopsys-control"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+# اربط مساحة KV من لوحة Cloudflare ثم ضع المعرف هنا:
+# [[kv_namespaces]]
+# binding = "SHOPSYS_KV"
+# id = "ضع-المعرف-هنا"

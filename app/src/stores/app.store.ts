@@ -1,0 +1,236 @@
+/**
+ * مخزن حالة التطبيق — الإعدادات العامة والثيم ومعالج أول تشغيل
+ * (اليوم: localStorage — غداً: جدول settings في SQLite عبر نفس الواجهة)
+ */
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+import type { Country } from '../core/countries.ts'
+import { toggleModuleList, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
+import type { FiscalYear } from '../core/fiscal.ts'
+import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
+import { generateDeviceId, type LicensePayload } from '../core/license.ts'
+import { DEFAULT_APPEARANCE, sanitizeAppearance, type AppearanceSettings } from '../core/appearance.ts'
+import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
+import type { AboutContent } from '../core/cloud.ts'
+
+export type ThemeMode = 'light' | 'dark'
+
+interface SetupState {
+  completed: boolean
+  countryCode: string | null
+  activityId: string | null
+  shopName: string
+  ownerName: string
+  features: ItemFeature[]
+  modules: BusinessModule[]
+  taxInclusive: boolean
+  vatPercent: number
+  accountingMode: 'simple' | 'full'
+}
+
+interface AppState {
+  theme: ThemeMode
+  toggleTheme: () => void
+  setup: SetupState
+  fiscalYears: FiscalYear[]
+  completeSetup: (data: {
+    country: Country
+    activity: ActivityTemplate
+    shopName: string
+    ownerName: string
+    fiscalYear: Omit<FiscalYear, 'id' | 'status'>
+  }) => void
+  addFiscalYear: (fy: Omit<FiscalYear, 'id' | 'status'>) => void
+  setAccountingMode: (m: 'simple' | 'full') => void
+  /** تفعيل/إلغاء وحدة عمل من الإعدادات (طلب المالك: الوحدات حسب النشاط وقابلة للتبديل) */
+  toggleModule: (m: BusinessModule) => void
+  resetSetup: () => void
+  receipt: ReceiptSettings
+  autoPrintAfterSale: boolean
+  updateReceipt: (patch: Partial<ReceiptSettings>) => void
+  setAutoPrint: (v: boolean) => void
+  appearance: AppearanceSettings
+  updateAppearance: (patch: Partial<AppearanceSettings>) => void
+  telegram: TelegramSettings
+  updateTelegram: (patch: Partial<TelegramSettings>) => void
+  // ─── الترخيص (القرار 4) ───
+  deviceId: string // معرف الجهاز — يتولد مرة واحدة
+  trialStartedAt: string // مرساة بداية التجربة
+  lastSeenAt: string // مرساة ضد إرجاع الساعة
+  activatedKey: string | null // مفتاح التفعيل النصي كما أدخل
+  activatedPayload: LicensePayload | null // حمولته الموثقة بعد التحقق
+  setActivated: (key: string, payload: LicensePayload) => void
+  clearActivation: () => void
+  touchLastSeen: () => void
+  // ─── السحابة (القرار 28): آخر ما جُلب من Cloudflare — يعمل أوفلاين بآخر نسخة ───
+  cloudAbout: AboutContent | null
+  revokedKeys: string[] // بصمات المفاتيح المحروقة
+  cloudSyncedAt: string | null
+  setCloudData: (patch: { about?: AboutContent | null; revoked?: string[] }) => void
+  // ─── النسخ الاحتياطي التلقائي كل ساعة (القرار 28) ───
+  lastHourlyBackupAt: string | null
+  setLastHourlyBackupAt: (iso: string) => void
+}
+
+/**
+ * توليد معرف جهاز + مراسي زمنية عند أول تشغيل.
+ * مرساة ثانية مستقلة (shopsys-i) تنجو من مسح بيانات التطبيق:
+ * لو مسح المستخدم قاعدة البيانات لإعادة عدّاد التجربة، تُستعاد بداية التجربة
+ * الأصلية ومعرف الجهاز الأصلي من هذه المرساة — فلا تتجدد التجربة أبداً.
+ */
+const IDENTITY_ANCHOR_KEY = 'shopsys-i'
+const bootIdentity = (): { deviceId: string; now: string; firstTrialAt: string } => {
+  const nowIso = new Date().toISOString()
+  try {
+    const raw = localStorage.getItem(IDENTITY_ANCHOR_KEY)
+    if (raw) {
+      const a = JSON.parse(atob(raw)) as { d?: string; t?: string }
+      if (typeof a.d === 'string' && a.d && typeof a.t === 'string' && a.t) {
+        return { deviceId: a.d, now: nowIso, firstTrialAt: a.t }
+      }
+    }
+  } catch { /* مرساة تالفة — تُعاد كتابتها أدناه */ }
+  const rnd = new Uint8Array(12)
+  crypto.getRandomValues(rnd)
+  const deviceId = generateDeviceId(rnd)
+  try {
+    localStorage.setItem(IDENTITY_ANCHOR_KEY, btoa(JSON.stringify({ d: deviceId, t: nowIso })))
+  } catch { /* تخزين ممتلئ — نكمل بالقيم الجديدة */ }
+  return { deviceId, now: nowIso, firstTrialAt: nowIso }
+}
+const BOOT = bootIdentity()
+
+export const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
+      theme: 'light',
+      toggleTheme: () => set((s) => ({ theme: s.theme === 'light' ? 'dark' : 'light' })),
+      setup: {
+        completed: false,
+        countryCode: null,
+        activityId: null,
+        shopName: '',
+        ownerName: '',
+        features: [],
+        modules: [],
+        taxInclusive: true,
+        vatPercent: 14,
+        accountingMode: 'simple',
+      },
+      fiscalYears: [],
+      completeSetup: ({ country, activity, shopName, ownerName, fiscalYear }) =>
+        set((s) => ({
+          fiscalYears: [{ ...fiscalYear, id: 1, status: 'open' }],
+          // اسم المحل على الإيصال + قالب الفاتورة الافتراضي من النشاط
+          // (بقالة = حراري سريع، خدمات وعقود = A4 احترافية)
+          receipt: { ...s.receipt, shopName, defaultTemplate: activity.defaultInvoiceTemplate },
+          setup: {
+            completed: true,
+            countryCode: country.code,
+            activityId: activity.id,
+            shopName,
+            ownerName,
+            features: activity.features,
+            modules: activity.modules,
+            taxInclusive: activity.taxInclusiveDefault,
+            vatPercent: country.vatPercent,
+            accountingMode: 'simple',
+          },
+        })),
+      addFiscalYear: (fy) =>
+        set((s) => ({
+          fiscalYears: [...s.fiscalYears, { ...fy, id: s.fiscalYears.reduce((m, y) => Math.max(m, y.id), 0) + 1, status: 'open' }],
+        })),
+      setAccountingMode: (m) => set((s) => ({ setup: { ...s.setup, accountingMode: m } })),
+      toggleModule: (m) =>
+        set((s) => ({ setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } })),
+      resetSetup: () =>
+        set((s) => ({
+          setup: { ...s.setup, completed: false, countryCode: null, activityId: null },
+        })),
+      receipt: DEFAULT_RECEIPT_SETTINGS,
+      autoPrintAfterSale: false,
+      updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
+      setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
+      appearance: DEFAULT_APPEARANCE,
+      updateAppearance: (patch) => set((s) => ({ appearance: sanitizeAppearance({ ...s.appearance, ...patch }) })),
+      telegram: DEFAULT_TELEGRAM_SETTINGS,
+      updateTelegram: (patch) => set((s) => ({ telegram: { ...s.telegram, ...patch } })),
+      deviceId: BOOT.deviceId,
+      trialStartedAt: BOOT.firstTrialAt,
+      lastSeenAt: BOOT.now,
+      activatedKey: null,
+      activatedPayload: null,
+      setActivated: (key, payload) => set({ activatedKey: key, activatedPayload: payload }),
+      clearActivation: () => set({ activatedKey: null, activatedPayload: null }),
+      touchLastSeen: () =>
+        set((s) => {
+          const now = new Date().toISOString()
+          // لا نرجع المرساة للخلف أبداً — هي خط دفاع ضد إرجاع الساعة
+          return now > s.lastSeenAt ? { lastSeenAt: now } : {}
+        }),
+      cloudAbout: null,
+      revokedKeys: [],
+      cloudSyncedAt: null,
+      setCloudData: (patch) =>
+        set((s) => ({
+          cloudAbout: patch.about !== undefined ? patch.about : s.cloudAbout,
+          revokedKeys: patch.revoked !== undefined ? patch.revoked : s.revokedKeys,
+          cloudSyncedAt: new Date().toISOString(),
+        })),
+      lastHourlyBackupAt: null,
+      setLastHourlyBackupAt: (iso) => set({ lastHourlyBackupAt: iso }),
+    }),
+    {
+      name: 'shopsys-app',
+      onRehydrateStorage: () => (state) => {
+        // ترحيل: حسابات أُنشئت قبل خطوة السنة المالية تحصل على سنة ميلادية حالية تلقائياً
+        if (state && state.setup.completed && state.fiscalYears.length === 0) {
+          const y = new Date().getFullYear()
+          state.fiscalYears = [{
+            id: 1,
+            nameAr: `السنة المالية ${y}`,
+            startDate: `${y}-01-01`,
+            endDate: `${y}-12-31`,
+            status: 'open',
+          }]
+        }
+        // ترحيل: حسابات أُنشئت قبل فصل وحدتي «المخزون» و«المشتريات» كانت تراهما دائماً —
+        // نضيفهما لها تلقائياً كي لا يختفي شيء بعد التحديث (إلا وجيستيكس/إيجار المعدات:
+        // مخازنهم غير مستخدمة أصلاً فتبقى مطفأة كما يريد المالك، وتُفعَّل من الإعدادات عند الحاجة)
+        if (state && state.setup.completed) {
+          const mods = new Set(state.setup.modules)
+          const knowsSplit = mods.has('inventory') || mods.has('purchases')
+          const stockless = state.setup.activityId === 'logistics' || state.setup.activityId === 'equipment_rental'
+          if (!knowsSplit && !stockless) {
+            state.setup = { ...state.setup, modules: [...state.setup.modules, 'inventory', 'purchases'] }
+          }
+        }
+        // ترحيل: إعدادات إيصال لحسابات قديمة (قبل ميزة الطباعة / قبل قالب A4 / قبل مفاتيح الإظهار)
+        if (state && !state.receipt) {
+          state.receipt = { ...DEFAULT_RECEIPT_SETTINGS, shopName: state.setup.shopName }
+        } else if (state) {
+          // أي مفتاح جديد أُضيف لاحقاً يأخذ قيمته الافتراضية دون المساس بما اختاره المستخدم
+          state.receipt = { ...DEFAULT_RECEIPT_SETTINGS, ...state.receipt }
+        }
+        // ترحيل: حسابات قبل ميزة المظهر تحصل على الافتراضيات (مع تنقية القيم)
+        if (state) state.appearance = sanitizeAppearance(state.appearance)
+        // ترحيل: حسابات قبل ميزة التليجرام تحصل على الافتراضيات
+        if (state) state.telegram = { ...DEFAULT_TELEGRAM_SETTINGS, ...state.telegram }
+        // ترحيل: حسابات قبل ميزة الترخيص تحصل على هوية جهاز ومراسي زمنية
+        if (state && !state.deviceId) {
+          state.deviceId = BOOT.deviceId
+          state.trialStartedAt = BOOT.firstTrialAt
+          state.lastSeenAt = BOOT.now
+          state.activatedKey = null
+          state.activatedPayload = null
+        }
+        // حماية: مرساة الجهاز (shopsys-i) هي المرجع — لو بداية التجربة المخزنة
+        // أحدث من المرساة (مسح بيانات/تلاعب لإعادة العدّاد) نرجع للأقدم دائماً
+        if (state && state.trialStartedAt > BOOT.firstTrialAt) {
+          state.trialStartedAt = BOOT.firstTrialAt
+        }
+      },
+    },
+  ),
+)

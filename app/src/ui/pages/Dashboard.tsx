@@ -1,0 +1,167 @@
+/**
+ * لوحة اليوم — بلغة التاجر (وثيقة التصميم 9.1)
+ * الأرقام الآن حقيقية 100%: مشتقة من دفتر الأستاذ (نفس مصدر ميزان المراجعة)
+ */
+import { useMemo } from 'react'
+import { TrendingUp, Wallet, Coins, AlertTriangle, ArrowUpLeft, ArrowDownLeft, ReceiptText, BookOpenText } from 'lucide-react'
+import { useAppStore } from '../../stores/app.store.ts'
+import { useDataStore } from '../../data/repo.ts'
+import { getCountry } from '../../core/countries.ts'
+import { formatMinor } from '../../core/money.ts'
+import { accountBalance, STANDARD_COA } from '../../core/ledger.ts'
+
+export function Dashboard() {
+  const { setup } = useAppStore()
+  const { journal, sales, saleReturns, items, purchases, purchaseReturns } = useDataStore()
+  const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
+  const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const fmt = (minor: number) => formatMinor(minor, cur)
+
+  /** الأرصدة الحية من دفتر الأستاذ — المصدر الواحد للحقيقة */
+  const ledger = useMemo(() => {
+    const totals = new Map<string, { d: number; c: number }>()
+    for (const e of journal) {
+      for (const l of e.lines) {
+        const t = totals.get(l.accountCode) ?? { d: 0, c: 0 }
+        t.d += l.debit; t.c += l.credit
+        totals.set(l.accountCode, t)
+      }
+    }
+    const bal = (code: string) => {
+      const acc = STANDARD_COA.find((a) => a.code === code)
+      const t = totals.get(code) ?? { d: 0, c: 0 }
+      return acc ? accountBalance(acc.rootType, t.d, t.c) : 0
+    }
+    return {
+      cash: bal('1101'),
+      customers: bal('1104'),
+      salesTotal: bal('4101'),
+      cogs: bal('5101'),
+      vat: bal('2102'),
+    }
+  }, [journal])
+
+  const today = new Date().toISOString().slice(0, 10)
+  const todaySales = useMemo(() => sales.filter((s) => s.date.startsWith(today)), [sales, today])
+  const todayReturns = useMemo(() => saleReturns.filter((r) => r.date.startsWith(today)), [saleReturns, today])
+  // صافي اليوم = مبيعات − مرتجعات (وكذلك الربح: يُخصم منه أساس المرتجع وتُعاد تكلفته)
+  const todayRevenue =
+    todaySales.reduce((a, s) => a + s.totals.totalMinor, 0) -
+    todayReturns.reduce((a, r) => a + r.totals.totalMinor, 0)
+  const todayProfit =
+    todaySales.reduce((a, s) => a + (s.totals.taxBaseMinor - s.totals.cogsMinor), 0) -
+    todayReturns.reduce((a, r) => a + (r.totals.taxBaseMinor - r.totals.cogsMinor), 0)
+
+  const lowStock = items.filter((it) => (it.stockQty ?? 0) <= it.minQty && it.minQty > 0)
+  // دين الموردين = فواتير غير مسددة − مرتجعات الشراء المخفِّضة للدين
+  const suppliersDebt = Math.max(
+    0,
+    purchases.reduce((a, p) => a + Math.max(0, p.grandTotalMinor - p.paidMinor), 0) -
+      purchaseReturns.filter((r) => r.refund === 'debt').reduce((a, r) => a + r.totalMinor, 0),
+  )
+
+  const cards = [
+    { title: 'مبيعات اليوم', value: fmt(todayRevenue), icon: TrendingUp, color: 'from-emerald-500 to-teal-500', glow: 'shadow-emerald-500/30', delta: `${todaySales.length} فاتورة` },
+    { title: 'ربح اليوم', value: fmt(todayProfit), icon: Coins, color: 'from-violet-500 to-fuchsia-500', glow: 'shadow-violet-500/30', delta: 'إيراد − تكلفة البضاعة' },
+    { title: 'في الخزينة', value: fmt(ledger.cash), icon: Wallet, color: 'from-sky-500 to-cyan-500', glow: 'shadow-sky-500/30', delta: 'من دفتر الأستاذ مباشرة' },
+    { title: 'تنبيهات', value: String(lowStock.length), icon: AlertTriangle, color: 'from-amber-500 to-orange-500', glow: 'shadow-amber-500/30', delta: lowStock.length ? 'نواقص تحتاج شراء' : 'كله تمام ✓' },
+  ]
+
+  return (
+    <div className="space-y-6">
+      {/* البطاقات */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {cards.map((c, i) => (
+          <div
+            key={c.title}
+            style={{ animationDelay: `${i * 80}ms` }}
+            className={`anim-up group relative overflow-hidden rounded-2xl p-5 bg-gradient-to-br ${c.color} text-white shadow-xl ${c.glow} transition-all duration-300 hover:scale-[1.03] hover:shadow-2xl cursor-default`}
+          >
+            <div className="absolute -left-6 -bottom-6 opacity-15 transition-transform duration-500 group-hover:scale-125 group-hover:rotate-12">
+              <c.icon size={110} />
+            </div>
+            <div className="relative">
+              <div className="text-sm opacity-85 font-semibold">{c.title}</div>
+              <div className="text-2xl font-black mt-1.5">{c.value}</div>
+              <div className="text-[11px] opacity-75 mt-2">{c.delta}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* لك وعليك */}
+        <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '320ms' }}>
+          <h3 className="font-extrabold text-slate-800 dark:text-white mb-4">لك وعليك</h3>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-3.5 rounded-xl bg-emerald-500/5 border border-emerald-500/15">
+              <div className="flex items-center gap-2.5">
+                <ArrowUpLeft size={18} className="text-emerald-500" />
+                <span className="text-sm text-slate-600 dark:text-slate-300">لك عند العملاء (آجل)</span>
+              </div>
+              <span className="font-black text-emerald-600 dark:text-emerald-400">{fmt(ledger.customers)}</span>
+            </div>
+            <div className="flex items-center justify-between p-3.5 rounded-xl bg-rose-500/5 border border-rose-500/15">
+              <div className="flex items-center gap-2.5">
+                <ArrowDownLeft size={18} className="text-rose-500" />
+                <span className="text-sm text-slate-600 dark:text-slate-300">عليك للموردين</span>
+              </div>
+              <span className="font-black text-rose-600 dark:text-rose-400">{fmt(suppliersDebt)}</span>
+            </div>
+            {ledger.vat > 0 && (
+              <div className="flex items-center justify-between p-3.5 rounded-xl bg-amber-500/5 border border-amber-500/15">
+                <div className="flex items-center gap-2.5">
+                  <ReceiptText size={18} className="text-amber-500" />
+                  <span className="text-sm text-slate-600 dark:text-slate-300">ضريبة مستحقة للدولة</span>
+                </div>
+                <span className="font-black text-amber-600 dark:text-amber-400">{fmt(ledger.vat)}</span>
+              </div>
+            )}
+          </div>
+          <p className="text-[11px] text-slate-400 mt-4 leading-relaxed">
+            💡 هذه الأرقام مشتقة من دفتر الأستاذ الموحّد — نفس مصدر ميزان المراجعة، فلا تتناقض أبداً.
+          </p>
+        </div>
+
+        {/* نواقص المخزون */}
+        <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '400ms' }}>
+          <h3 className="font-extrabold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+            <AlertTriangle size={17} className="text-amber-500" /> نواقص المخزون
+          </h3>
+          {lowStock.length === 0 ? (
+            <div className="text-center py-8 text-slate-300 dark:text-slate-600 text-sm">
+              ✓ لا نواقص — كل الأصناف فوق حد الطلب
+              <div className="text-[11px] mt-1">(حدد "حد إعادة الطلب" في الأصناف ليعمل التنبيه)</div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {lowStock.slice(0, 6).map((it) => (
+                <div key={it.id} className="flex items-center justify-between p-2.5 rounded-xl bg-rose-500/5 border border-rose-500/10">
+                  <span className="text-[13px] font-bold text-slate-700 dark:text-slate-200">{it.nameAr}</span>
+                  <span className="text-[11px] font-black text-rose-500">{it.stockQty ?? 0} / حد {it.minQty}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* إحصاءات المحرك */}
+        <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '480ms' }}>
+          <h3 className="font-extrabold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+            <BookOpenText size={17} className="text-rose-500" /> المحرك المحاسبي
+          </h3>
+          <div className="space-y-2.5 text-[13px]">
+            <div className="flex justify-between"><span className="text-slate-500">قيود اليومية</span><b className="text-slate-700 dark:text-slate-200">{journal.length}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">فواتير بيع</span><b className="text-slate-700 dark:text-slate-200">{sales.length}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">فواتير شراء</span><b className="text-slate-700 dark:text-slate-200">{purchases.length}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">إجمالي المبيعات (صافي)</span><b className="text-emerald-600">{fmt(ledger.salesTotal)}</b></div>
+            <div className="flex justify-between"><span className="text-slate-500">تكلفة المبيعات</span><b className="text-slate-700 dark:text-slate-200">{fmt(ledger.cogs)}</b></div>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-4 leading-relaxed">
+            كل فاتورة تولّد قيداً متوازناً تلقائياً — راجعها في الحسابات العامة ← اليومية (فعّل الوضع المحاسبي الكامل من الأعلى).
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
