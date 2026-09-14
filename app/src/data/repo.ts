@@ -969,6 +969,13 @@ export const useDataStore = create<DataState>()(
 
       postPurchase: (inv) => {
         const state = get()
+        // تحقق صارم قبل أي كتابة: سطور موجودة وكميات وأسعار سليمة (حماية من إفساد المخزون)
+        if (!inv.lines.length) throw new Error('الفاتورة بلا أصناف')
+        for (const l of inv.lines) {
+          if (!Number.isFinite(l.qty) || l.qty <= 0) throw new Error('كل كمية يجب أن تكون رقماً موجباً')
+          if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
+        }
+        if (!Number.isInteger(inv.paidMinor) || inv.paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
         // تحقق تواريخ الصلاحية للأصناف المتتبَّعة (القرار 5) قبل أي كتابة
         for (const l of inv.lines) {
           const item = state.items.find((it) => it.id === l.itemId)

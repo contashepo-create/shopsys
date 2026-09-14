@@ -31,6 +31,14 @@ export function normalizeDigits(s: string): string {
 export function toMinor(value: string | number, decimals: number): Minor {
   const s = normalizeDigits(String(value).trim())
   if (s === '' || s === '-') return 0
+  // ترميز علمي (1e5 تُكتب في خانات type=number): نحوله بدقة بدل قراءته خطأً كـ«1»
+  if (!/^-?\d*(\.\d*)?$/.test(s)) {
+    const n = Number(s)
+    if (!Number.isFinite(n)) throw new RangeError('money: مدخل غير رقمي')
+    const minor = Math.round(n * 10 ** decimals)
+    if (!Number.isSafeInteger(minor)) throw new RangeError('money: مبلغ خارج النطاق الآمن')
+    return minor
+  }
   const neg = s.startsWith('-')
   const [intPart, fracRaw = ''] = s.replace('-', '').split('.')
   const frac = (fracRaw + '0'.repeat(decimals)).slice(0, decimals)

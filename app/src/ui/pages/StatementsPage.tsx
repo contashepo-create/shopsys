@@ -58,16 +58,18 @@ export function StatementsPage() {
   const print = () => {
     const w = window.open('', '_blank', 'width=800,height=600')
     if (!w) return
+    // تهريب HTML — أسماء الأطراف والبيانات نصوص من المستخدم فلا يجوز حقنها خاماً (حماية XSS)
+    const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
     const rowsHtml = rows.map((r) => `<tr>
-      <td>${r.date.slice(0, 10)}</td><td>${r.docLabel}</td>
+      <td>${r.date.slice(0, 10)}</td><td>${esc(r.docLabel)}</td>
       <td style="text-align:left">${r.debitMinor ? fmt(r.debitMinor) : ''}</td>
       <td style="text-align:left">${r.creditMinor ? fmt(r.creditMinor) : ''}</td>
       <td style="text-align:left;font-weight:bold">${fmt(r.balanceMinor)}</td></tr>`).join('')
-    w.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>${meta.nameAr} — ${partyName}</title>
+    w.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>${meta.nameAr} — ${esc(partyName)}</title>
       <style>body{font-family:system-ui;padding:24px}h2{margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:16px;font-size:13px}
       th,td{border:1px solid #ddd;padding:6px 10px;text-align:right}th{background:#f5f5f5}</style></head><body>
-      <h2>${setup.shopName || 'تَحَكَّم'}</h2>
-      <div>${meta.nameAr}: <b>${partyName}</b> — حتى ${new Date().toISOString().slice(0, 10)}</div>
+      <h2>${esc(setup.shopName || 'تَحَكَّم')}</h2>
+      <div>${meta.nameAr}: <b>${esc(partyName)}</b> — حتى ${new Date().toISOString().slice(0, 10)}</div>
       <table><thead><tr><th>التاريخ</th><th>المستند</th><th>${meta.debitLabel}</th><th>${meta.creditLabel}</th><th>الرصيد</th></tr></thead>
       <tbody>${rowsHtml}</tbody></table>
       <h3 style="margin-top:16px">الرصيد النهائي: ${fmt(Math.abs(balance))} ${cur.symbol} ${balance >= 0 ? `(${meta.positive})` : `(${meta.negative})`}</h3>
