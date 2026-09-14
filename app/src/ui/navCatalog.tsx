@@ -9,6 +9,7 @@ import {
   UserRound, Building2, UserCog, Landmark, FileSpreadsheet, Scale,
   PenLine, ListTree, PiggyBank, CalendarClock, Store, Percent,
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown,
+  Microscope, FlaskConical, HeartPulse, Stethoscope,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule } from '../core/activities.ts'
@@ -107,6 +108,15 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'trips', nameAr: 'النقلات', icon: Route, path: '/logistics/trips' },
       { id: 'fleet', nameAr: 'الأسطول والسائقون', icon: Truck, path: '/logistics/fleet' },
+    ],
+  },
+  {
+    id: 'lab', nameAr: 'معمل التحاليل', icon: Microscope, color: 'violet', module: 'lab',
+    children: [
+      { id: 'orders', nameAr: 'الطلبات والنتائج', icon: FlaskConical, path: '/lab/orders' },
+      { id: 'tests', nameAr: 'كتالوج الفحوصات', icon: Microscope, path: '/lab/tests' },
+      { id: 'patients', nameAr: 'المرضى', icon: HeartPulse, path: '/lab/patients' },
+      { id: 'referrers', nameAr: 'الأطباء المحيلون', icon: Stethoscope, path: '/lab/referrers' },
     ],
   },
   {

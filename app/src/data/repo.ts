@@ -28,6 +28,7 @@ import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBa
 import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, type RateType, type OperatorShift } from '../core/rentalMeter.ts'
+import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -175,6 +176,55 @@ export interface RentalContract {
   openEntryId: number
   closeEntryId: number | null // null = لم يُقفل أو لا تأمين
   deductMinor: number // المخصوم من التأمين عند الإقفال
+  notes: string
+}
+
+/* ─── معامل التحاليل (القرار 26) ─── */
+
+/** مريض المعمل — سجل مستقل عن عملاء البيع (بياناته طبية) */
+export interface LabPatient {
+  id: number
+  nameAr: string
+  phone: string
+  gender: Gender
+  birthDate: string // YYYY-MM-DD ('' = غير معروف)
+  notes: string
+}
+
+/** فحص داخل طلب — لقطة السعر والنطاق وقت الطلب + النتيجة ودورتها */
+export interface LabOrderTest {
+  testId: number
+  code: string
+  nameAr: string
+  unit: string
+  priceMinor: number
+  status: TestStatus
+  resultValue: string // '' = لم تُدخل
+  resultFlag: 'low' | 'high' | 'normal' | 'none'
+  refLow: number | null // النطاق المطبق لهذا المريض (لقطة)
+  refHigh: number | null
+  collectedAt: string | null
+  resultedAt: string | null
+  approvedAt: string | null
+}
+
+/** طلب تحاليل LAB-#### — مربوط بقيده وقيد عمولة مُحيله */
+export interface LabOrder {
+  id: number
+  orderNumber: string
+  date: string // ISO
+  patientId: number
+  patientName: string
+  referrerId: number | null
+  payment: 'cash' | 'credit'
+  discountPercent: number
+  tests: LabOrderTest[]
+  totals: LabOrderTotals
+  journalEntryId: number
+  commissionMinor: number
+  commissionEntryId: number | null
+  commissionPaid: boolean
+  commissionPayoutEntryId: number | null
   notes: string
 }
 
@@ -352,6 +402,10 @@ interface DataState {
   equipment: Equipment[]
   rentalContracts: RentalContract[]
   operatorShifts: OperatorShift[] // وردانيات المشغلين (ترقية القرار 25)
+  labTests: LabTest[] // كتالوج فحوصات المعمل (القرار 26)
+  labReferrers: Referrer[] // الأطباء المُحيلون
+  labPatients: LabPatient[]
+  labOrders: LabOrder[]
   tickets: MaintenanceTicket[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
@@ -524,6 +578,30 @@ interface DataState {
   addOperatorShift: (s: Omit<OperatorShift, 'id'>) => OperatorShift
   /** تسجيل خدمة صيانة للمعدة عند قراءتها الحالية (يصفّر عدّاد الفترة الوقائية) */
   recordEquipmentService: (equipmentId: number) => void
+  /* ─── معامل التحاليل (القرار 26) ─── */
+  addLabTest: (t: Omit<LabTest, 'id' | 'isActive'>) => LabTest
+  updateLabTest: (id: number, patch: Partial<Omit<LabTest, 'id'>>) => void
+  /** تحميل كتالوج البدء (10 فحوصات شائعة) بأسعار افتراضية — مرة واحدة */
+  seedStarterTests: (defaultPriceMinor: number) => number
+  addLabReferrer: (r: Omit<Referrer, 'id'>) => Referrer
+  addLabPatient: (p: Omit<LabPatient, 'id'>) => LabPatient
+  /**
+   * تسجيل طلب تحاليل: لقطة أسعار ونطاقات وقت الطلب ← قيد تحصيل متوازن
+   * (1101/1104 ← 4106+2102) + قيد استحقاق عمولة المُحيل (5109 ← 2105) إن وجد
+   */
+  registerLabOrder: (args: {
+    patientId: number
+    referrerId: number | null
+    testIds: number[]
+    payment: 'cash' | 'credit'
+    discountPercent: number
+    vatPercent: number
+    notes: string
+  }) => LabOrder
+  /** تقدُّم فحص في دورته: سحب العينة ← نتيجة (بقيمة) ← اعتماد. انتقالات مشروعة فقط */
+  advanceLabTest: (orderId: number, testId: number, to: TestStatus, resultValue?: string) => LabOrder
+  /** صرف كل عمولات مُحيل غير المدفوعة بقيد واحد (2105 ← 1101) */
+  payReferrerCommissions: (referrerId: number) => { total: number; orderCount: number }
   /** فتح تذكرة صيانة — لا قيد عند الاستلام (لا التزام مالي بعد) */
   openTicket: (args: {
     customerId: number | null
@@ -571,6 +649,10 @@ export const useDataStore = create<DataState>()(
       equipment: [],
       rentalContracts: [],
       operatorShifts: [],
+      labTests: [],
+      labReferrers: [],
+      labPatients: [],
+      labOrders: [],
       tickets: [],
       transfers: [],
       batches: [],
@@ -1567,6 +1649,172 @@ export const useDataStore = create<DataState>()(
           ),
         })
       },
+
+      /* ─── معامل التحاليل (القرار 26) ─── */
+      addLabTest: (t) => {
+        const state = get()
+        const errors = validateLabTest(t, state.labTests)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const test: LabTest = { ...t, id: nextId(state.labTests), isActive: true }
+        set({ labTests: [...state.labTests, test] })
+        return test
+      },
+      updateLabTest: (id, patch) => {
+        const state = get()
+        const existing = state.labTests.find((t) => t.id === id)
+        if (!existing) throw new Error('الفحص غير موجود')
+        const merged = { ...existing, ...patch }
+        const errors = validateLabTest(merged, state.labTests, id)
+        if (errors.length) throw new Error(errors.join(' — '))
+        set({ labTests: state.labTests.map((t) => (t.id === id ? merged : t)) })
+      },
+      seedStarterTests: (defaultPriceMinor) => {
+        const state = get()
+        const existingCodes = new Set(state.labTests.map((t) => t.code.toUpperCase()))
+        let id = nextId(state.labTests)
+        const added: LabTest[] = []
+        for (const st of STARTER_TESTS) {
+          if (existingCodes.has(st.code.toUpperCase())) continue
+          added.push({ ...st, id: id++, priceMinor: defaultPriceMinor, costMinor: 0, isActive: true })
+        }
+        if (added.length) set({ labTests: [...state.labTests, ...added] })
+        return added.length
+      },
+      addLabReferrer: (r) => {
+        const state = get()
+        const errors = validateReferrer(r)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const ref: Referrer = { ...r, id: nextId(state.labReferrers) }
+        set({ labReferrers: [...state.labReferrers, ref] })
+        return ref
+      },
+      addLabPatient: (p) => {
+        const state = get()
+        if (!p.nameAr.trim()) throw new Error('اسم المريض مطلوب')
+        const patient: LabPatient = { ...p, id: nextId(state.labPatients) }
+        set({ labPatients: [...state.labPatients, patient] })
+        return patient
+      },
+      registerLabOrder: (args) => {
+        const state = get()
+        const patient = state.labPatients.find((p) => p.id === args.patientId)
+        if (!patient) throw new Error('المريض غير مسجل')
+        const referrer = args.referrerId != null ? state.labReferrers.find((r) => r.id === args.referrerId) : null
+        if (args.referrerId != null && !referrer) throw new Error('الطبيب المُحيل غير موجود')
+        if (!args.testIds.length) throw new Error('اختر فحصاً واحداً على الأقل')
+        const chosen = args.testIds.map((tid) => {
+          const t = state.labTests.find((x) => x.id === tid && x.isActive)
+          if (!t) throw new Error(`فحص غير موجود (#${tid})`)
+          return t
+        })
+
+        // الإجماليات وقيد التحصيل (كلاهما يرمي قبل أي كتابة)
+        const totals = computeLabTotals(chosen.map((t) => t.priceMinor), args.discountPercent, args.vatPercent)
+        const now = new Date().toISOString()
+        const orderId = nextId(state.labOrders)
+        const orderNumber = `LAB-${String(orderId).padStart(4, '0')}`
+        const entryLines = buildLabOrderEntry(totals, args.payment, orderNumber)
+
+        let journal = state.journal
+        const entryId = nextId(journal)
+        journal = [...journal, {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `طلب تحاليل ${orderNumber} — ${patient.nameAr}`,
+          sourceType: 'lab_order', sourceId: orderId, lines: entryLines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }]
+
+        // عمولة المُحيل — استحقاق فوري بقيد منفصل (من صافي الطلب)
+        const commissionMinor = referrer ? commissionFor(totals.netMinor, referrer.commissionPercent) : 0
+        let commissionEntryId: number | null = null
+        if (commissionMinor > 0) {
+          commissionEntryId = nextId(journal)
+          journal = [...journal, {
+            id: commissionEntryId, entryNumber: commissionEntryId, date: now.slice(0, 10),
+            description: `استحقاق عمولة د. ${referrer!.nameAr} عن ${orderNumber}`,
+            sourceType: 'lab_commission', sourceId: orderId,
+            lines: buildCommissionAccrualEntry(commissionMinor, orderNumber),
+            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+        }
+
+        // لقطة الفحوصات بنطاقات هذا المريض تحديداً
+        const age = patient.birthDate ? ageYearsFn(patient.birthDate, now) : 30
+        const orderTests: LabOrderTest[] = chosen.map((t) => {
+          const range = matchRefRangeFn(t, patient.gender, age)
+          return {
+            testId: t.id, code: t.code, nameAr: t.nameAr, unit: t.unit, priceMinor: t.priceMinor,
+            status: 'pending', resultValue: '', resultFlag: 'none',
+            refLow: range?.low ?? null, refHigh: range?.high ?? null,
+            collectedAt: null, resultedAt: null, approvedAt: null,
+          }
+        })
+
+        const order: LabOrder = {
+          id: orderId, orderNumber, date: now,
+          patientId: patient.id, patientName: patient.nameAr,
+          referrerId: referrer?.id ?? null,
+          payment: args.payment, discountPercent: args.discountPercent,
+          tests: orderTests, totals,
+          journalEntryId: entryId,
+          commissionMinor, commissionEntryId, commissionPaid: false, commissionPayoutEntryId: null,
+          notes: args.notes,
+        }
+        set({ labOrders: [...state.labOrders, order], journal })
+        return order
+      },
+      advanceLabTest: (orderId, testId, to, resultValue) => {
+        const state = get()
+        const order = state.labOrders.find((o) => o.id === orderId)
+        if (!order) throw new Error('الطلب غير موجود')
+        const test = order.tests.find((t) => t.testId === testId)
+        if (!test) throw new Error('الفحص ليس في هذا الطلب')
+        if (!canTransition(test.status, to)) {
+          throw new Error(`انتقال غير مشروع: لا يمكن من «${test.status}» إلى «${to}» — الدورة: تسجيل ← سحب عينة ← نتيجة ← اعتماد`)
+        }
+        if (to === 'resulted' && !resultValue?.trim()) throw new Error('أدخل قيمة النتيجة أولاً')
+        const now = new Date().toISOString()
+        const updatedTest: LabOrderTest = {
+          ...test,
+          status: to,
+          ...(to === 'collected' ? { collectedAt: now } : {}),
+          ...(to === 'resulted'
+            ? {
+                resultedAt: now,
+                resultValue: resultValue!.trim(),
+                resultFlag: evaluateResultFn(resultValue!, test.refLow == null && test.refHigh == null ? null : { gender: 'any', ageMinYears: 0, ageMaxYears: 999, low: test.refLow, high: test.refHigh }),
+              }
+            : {}),
+          ...(to === 'approved' ? { approvedAt: now } : {}),
+        }
+        const updated: LabOrder = { ...order, tests: order.tests.map((t) => (t.testId === testId ? updatedTest : t)) }
+        set({ labOrders: state.labOrders.map((o) => (o.id === orderId ? updated : o)) })
+        return updated
+      },
+      payReferrerCommissions: (referrerId) => {
+        const state = get()
+        const referrer = state.labReferrers.find((r) => r.id === referrerId)
+        if (!referrer) throw new Error('الطبيب غير موجود')
+        const unpaid = state.labOrders.filter((o) => o.referrerId === referrerId && !o.commissionPaid && o.commissionMinor > 0)
+        const total = unpaid.reduce((a, o) => a + o.commissionMinor, 0)
+        const lines = buildCommissionPayoutEntry(total, referrer.nameAr) // يرمي لو صفر
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `صرف عمولات د. ${referrer.nameAr} (${unpaid.length} طلب)`,
+          sourceType: 'lab_commission_payout', sourceId: referrerId, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const paidIds = new Set(unpaid.map((o) => o.id))
+        set({
+          journal: [...state.journal, entry],
+          labOrders: state.labOrders.map((o) =>
+            paidIds.has(o.id) ? { ...o, commissionPaid: true, commissionPayoutEntryId: entryId } : o,
+          ),
+        })
+        return { total, orderCount: unpaid.length }
+      },
       openTicket: (args) => {
         const state = get()
         const errors = validateTicket({ deviceName: args.deviceName, issue: args.issue })
@@ -1829,6 +2077,10 @@ export const useDataStore = create<DataState>()(
             extraEntryId: c.extraEntryId ?? null,
           })),
           operatorShifts: s.operatorShifts ?? [],
+          labTests: s.labTests ?? [],
+          labReferrers: s.labReferrers ?? [],
+          labPatients: s.labPatients ?? [],
+          labOrders: s.labOrders ?? [],
           tickets: s.tickets ?? [],
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],

@@ -33,6 +33,7 @@ import { TripsPage } from './ui/pages/TripsPage.tsx'
 import { FleetPage } from './ui/pages/FleetPage.tsx'
 import { EquipmentPage } from './ui/pages/EquipmentPage.tsx'
 import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
+import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from './ui/pages/LabPages.tsx'
 import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
 import { TransfersPage } from './ui/pages/TransfersPage.tsx'
 import { AppearancePage } from './ui/pages/AppearancePage.tsx'
@@ -76,6 +77,10 @@ function Shell() {
         <Route path="/maintenance/tickets" element={<MaintenancePage />} />
         <Route path="/rental/fleet" element={<EquipmentPage />} />
         <Route path="/rental/contracts" element={<RentalContractsPage />} />
+        <Route path="/lab/orders" element={<LabOrdersPage />} />
+        <Route path="/lab/tests" element={<LabTestsPage />} />
+        <Route path="/lab/patients" element={<LabPatientsPage />} />
+        <Route path="/lab/referrers" element={<LabReferrersPage />} />
         <Route path="/logistics/trips" element={<TripsPage />} />
         <Route path="/logistics/fleet" element={<FleetPage />} />
         <Route path="/accounting/journal" element={<JournalPage />} />

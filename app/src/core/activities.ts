@@ -20,6 +20,7 @@ export type BusinessModule =
   | 'maintenance' // الصيانة
   | 'equipment_rental' // إيجار المعدات
   | 'logistics' // الخدمات اللوجستية
+  | 'lab' // معامل التحاليل الطبية (القرار 26)
   | 'installments' // الأقساط
 
 export interface ActivityTemplate {
@@ -93,6 +94,13 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
+    id: 'lab', nameAr: 'معمل تحاليل طبية', icon: '🔬',
+    description: 'مرضى وفحوصات ونطاقات مرجعية، عمولات أطباء محيلين (بلا مخازن ولا كاشير)',
+    features: [],
+    modules: ['lab'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
+  },
+  {
     id: 'general', nameAr: 'نشاط عام / آخر', icon: '🏪',
     description: 'قالب مرن — فعّل ما تحتاجه لاحقاً',
     features: ['multi_unit'],
@@ -139,8 +147,9 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   maintenance: { nameAr: 'الصيانة', icon: '🔧', desc: 'أوامر صيانة الأجهزة، قطع الغيار، التسليم' },
   equipment_rental: { nameAr: 'إيجار المعدات', icon: '🚜', desc: 'المعدات، عقود الإيجار، التأمينات المستردة' },
   logistics: { nameAr: 'اللوجستيات', icon: '🛣️', desc: 'النقلات، الأسطول والسائقون، ربحية كل نقلة' },
+  lab: { nameAr: 'معمل التحاليل', icon: '🔬', desc: 'المرضى، الطلبات والنتائج، عمولات الأطباء المحيلين' },
   installments: { nameAr: 'الأقساط', icon: '💳', desc: 'بيع بالتقسيط، جدولة الأقساط، تنبيهات الاستحقاق' },
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'maintenance', 'equipment_rental', 'logistics']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'maintenance', 'equipment_rental', 'logistics', 'lab']
