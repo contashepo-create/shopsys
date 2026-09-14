@@ -25,6 +25,7 @@ import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalC
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals } from '../core/maintenance.ts'
 import { validateTransfer, computeWarehouseStock, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
+import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -154,6 +155,21 @@ export interface RentalContract {
   openEntryId: number
   closeEntryId: number | null // null = لم يُقفل أو لا تأمين
   deductMinor: number // المخصوم من التأمين عند الإقفال
+  notes: string
+}
+
+/** أصل ثابت — اقتناء بقيد، وإهلاك شهري بالقسط الثابت (مواصفة Easy Store) */
+export interface FixedAsset {
+  id: number
+  assetNumber: string // FA-0001
+  nameAr: string
+  purchaseDate: string // ISO
+  purchaseMonth: string // YYYY-MM (بداية جدول الإهلاك)
+  costMinor: number
+  salvageMinor: number
+  lifeMonths: number
+  monthsDepreciated: number // كم شهراً رُحّل إهلاكه
+  purchaseEntryId: number
   notes: string
 }
 
@@ -318,6 +334,7 @@ interface DataState {
   tickets: MaintenanceTicket[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
+  assets: FixedAsset[]
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
@@ -496,6 +513,10 @@ interface DataState {
   }) => MaintenanceTicket
   /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
   postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string }) => StockTransfer
+  /** اقتناء أصل ثابت: قيد 1201 / 1101 + 2101 وترقيم FA-#### */
+  addAsset: (args: AssetInput & { notes: string }) => FixedAsset
+  /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
+  postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
@@ -519,6 +540,7 @@ export const useDataStore = create<DataState>()(
       tickets: [],
       transfers: [],
       batches: [],
+      assets: [],
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
@@ -1496,6 +1518,82 @@ export const useDataStore = create<DataState>()(
         set({ transfers: [...state.transfers, transfer] })
         return transfer
       },
+      addAsset: (args) => {
+        const state = get()
+        const errors = validateAsset(args)
+        if (errors.length) throw new Error(errors.join(' — '))
+
+        const id = nextId(state.assets)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const assetNumber = `FA-${String(id).padStart(4, '0')}`
+        const entryLines = buildAssetPurchaseEntry(args.costMinor, args.paidMinor, assetNumber)
+
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `اقتناء أصل ${assetNumber} — ${args.nameAr.trim()}`,
+          sourceType: 'manual',
+          sourceId: id,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+
+        const asset: FixedAsset = {
+          id,
+          assetNumber,
+          nameAr: args.nameAr.trim(),
+          purchaseDate: now,
+          purchaseMonth: now.slice(0, 7),
+          costMinor: args.costMinor,
+          salvageMinor: args.salvageMinor,
+          lifeMonths: args.lifeMonths,
+          monthsDepreciated: 0,
+          purchaseEntryId: entryId,
+          notes: args.notes.trim(),
+        }
+        set({ assets: [...state.assets, asset], journal: [...state.journal, entry] })
+        return asset
+      },
+      postMonthlyDepreciation: () => {
+        const state = get()
+        const nowMonth = new Date().toISOString().slice(0, 7)
+        // الأصول المستحقة: لم يكتمل عمرها، وشهرها التالي ≤ الشهر الحالي (لا إهلاك مستقبلي)
+        const due = state.assets.filter(
+          (a) => a.monthsDepreciated < a.lifeMonths && nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated) <= nowMonth,
+        )
+        if (due.length === 0) throw new Error('لا إهلاك مستحقاً — كل الأصول مُهلَكة حتى هذا الشهر')
+
+        let totalMinor = 0
+        for (const a of due) totalMinor += monthlyDepreciation(a.costMinor, a.salvageMinor, a.lifeMonths, a.monthsDepreciated)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        // تسمية الشهر المرحّل: شهر أقدم استحقاق (كلها تتقدم شهراً واحداً)
+        const monthLabel = due.map((a) => nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated)).sort()[0]
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `إهلاك شهري (${due.length} أصل) — ${monthLabel}`,
+          sourceType: 'manual',
+          sourceId: null,
+          lines: buildDepreciationEntry(totalMinor, monthLabel),
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        const dueIds = new Set(due.map((a) => a.id))
+        set({
+          assets: state.assets.map((a) => (dueIds.has(a.id) ? { ...a, monthsDepreciated: a.monthsDepreciated + 1 } : a)),
+          journal: [...state.journal, entry],
+        })
+        return { entry, totalMinor, assetCount: due.length }
+      },
     }),
     {
       name: 'shopsys-data',
@@ -1519,6 +1617,7 @@ export const useDataStore = create<DataState>()(
           tickets: s.tickets ?? [],
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],
+          assets: s.assets ?? [],
           purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
           purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],

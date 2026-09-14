@@ -37,6 +37,7 @@ import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
 import { TransfersPage } from './ui/pages/TransfersPage.tsx'
 import { AppearancePage } from './ui/pages/AppearancePage.tsx'
 import { TelegramPage } from './ui/pages/TelegramPage.tsx'
+import { AssetsPage } from './ui/pages/AssetsPage.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
 
@@ -82,6 +83,7 @@ function Shell() {
         <Route path="/accounting/trial-balance" element={<TrialBalancePage />} />
         <Route path="/accounting/vouchers" element={<VouchersPage />} />
         <Route path="/accounting/treasury" element={<TreasuryPage />} />
+        <Route path="/accounting/assets" element={<AssetsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings/printing" element={<PrintSettingsPage />} />
         <Route path="/settings/backup" element={<BackupPage />} />

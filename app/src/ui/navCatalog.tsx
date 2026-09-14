@@ -8,7 +8,7 @@ import {
   Receipt, RotateCcw, Boxes, ArrowLeftRight, ClipboardList, Warehouse,
   UserRound, Building2, UserCog, Landmark, FileSpreadsheet, Scale,
   PenLine, ListTree, PiggyBank, CalendarClock, Store, Percent,
-  Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot,
+  Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule } from '../core/activities.ts'
@@ -115,6 +115,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'trial', nameAr: 'ميزان المراجعة', icon: Scale, path: '/accounting/trial-balance' },
       { id: 'vouchers', nameAr: 'سندات قبض وصرف', icon: Landmark, path: '/accounting/vouchers' },
       { id: 'treasury', nameAr: 'الخزائن والبنوك', icon: PiggyBank, path: '/accounting/treasury' },
+      { id: 'assets', nameAr: 'الأصول والإهلاك', icon: TrendingDown, path: '/accounting/assets' },
     ],
   },
   {
