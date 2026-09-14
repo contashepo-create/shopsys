@@ -95,7 +95,7 @@ ok('اسم العميل الآجل يظهر', () => {
 console.log('🔍 قالب HTML الحراري')
 
 ok('HTML عربي RTL بمقاس 72مم للورق 80', () => {
-  const html = renderReceiptHtml(model, cur, '80')
+  const html = renderReceiptHtml(model, cur, settings)
   assert.ok(html.includes('dir="rtl"'))
   assert.ok(html.includes('size: 72mm auto'))
   assert.ok(html.includes('بقالة النور'))
@@ -103,15 +103,34 @@ ok('HTML عربي RTL بمقاس 72مم للورق 80', () => {
 })
 
 ok('مقاس 48مم للورق 58', () => {
-  assert.ok(renderReceiptHtml(model, cur, '58').includes('size: 48mm auto'))
+  assert.ok(renderReceiptHtml(model, cur, { ...settings, paperWidth: '58' }).includes('size: 48mm auto'))
 })
 
 ok('كل الأصناف وسطور الترويسة والتذييل موجودة', () => {
-  const html = renderReceiptHtml(model, cur, '80')
+  const html = renderReceiptHtml(model, cur, settings)
   assert.ok(html.includes('لبن'))
   assert.ok(html.includes('جبنة رومي'))
   assert.ok(html.includes('المنصورة'))
   assert.ok(html.includes('شكراً لزيارتكم'))
+})
+
+ok('مفاتيح الإخفاء تعمل على الحراري: عميل/تاريخ/عدّادات/تذييل', () => {
+  const hidden = renderReceiptHtml(model, cur, {
+    ...settings, showCustomer: false, showDate: false, showItemCounts: false, showFooter: false,
+  })
+  assert.ok(!hidden.includes('العميل:'))
+  assert.ok(!hidden.includes('2026-09-14'))
+  assert.ok(!hidden.includes('عدد الأصناف'))
+  assert.ok(!hidden.includes('شكراً لزيارتكم'))
+  assert.ok(hidden.includes('S-0042')) // رقم الفاتورة لا يُخفى أبداً
+})
+
+ok('الشعار يظهر على الحراري عند تفعيله فقط', () => {
+  const logo = 'data:image/png;base64,AAA'
+  const withLogo = renderReceiptHtml(model, cur, { ...settings, logoDataUrl: logo, showLogo: true })
+  assert.ok(withLogo.includes(logo))
+  const noLogo = renderReceiptHtml(model, cur, { ...settings, logoDataUrl: logo, showLogo: false })
+  assert.ok(!noLogo.includes(logo))
 })
 
 ok('تهريب HTML: اسم خبيث لا يُحقن', () => {
@@ -165,7 +184,7 @@ ok('نموذج الإيصال يحمل الوعاء الضريبي taxBaseMinor'
 })
 
 ok('HTML للـ A4: مقاس A4 واتجاه RTL ورقم الفاتورة', () => {
-  const html = renderInvoiceA4Html(model, cur)
+  const html = renderInvoiceA4Html(model, cur, settings)
   assert.ok(html.includes('size: A4'))
   assert.ok(html.includes('dir="rtl"'))
   assert.ok(html.includes('S-0042'))
@@ -174,10 +193,47 @@ ok('HTML للـ A4: مقاس A4 واتجاه RTL ورقم الفاتورة', () 
 })
 
 ok('A4 يتضمن التفقيط والأصناف والتذييل', () => {
-  const html = renderInvoiceA4Html(model, cur)
+  const html = renderInvoiceA4Html(model, cur, settings)
   assert.ok(html.includes('فقط لا غير'))
   assert.ok(html.includes('جبنة رومي'))
   assert.ok(html.includes('شكراً لزيارتكم'))
+})
+
+ok('الأنماط الأربعة تُنتج قوالب مختلفة صحيحة', () => {
+  for (const style of ['modern', 'classic', 'compact', 'elegant']) {
+    const html = renderInvoiceA4Html(model, cur, { ...settings, a4Style: style })
+    assert.ok(html.includes(`class="sheet ${style}"`), `النمط ${style} غائب`)
+    assert.ok(html.includes('S-0042'))
+  }
+})
+
+ok('العلامة المائية: تظهر مفعّلة وتختفي معطّلة وتُهرَّب', () => {
+  const on = renderInvoiceA4Html(model, cur, { ...settings, watermarkEnabled: true, watermarkText: 'بقالة <النور>' })
+  assert.ok(on.includes('class="wm"'))
+  assert.ok(on.includes('بقالة &lt;النور&gt;'))
+  const off = renderInvoiceA4Html(model, cur, { ...settings, watermarkEnabled: false, watermarkText: 'بقالة النور' })
+  assert.ok(!off.includes('class="wm"'))
+  const empty = renderInvoiceA4Html(model, cur, { ...settings, watermarkEnabled: true, watermarkText: '  ' })
+  assert.ok(!empty.includes('class="wm"'))
+})
+
+ok('الشعار على A4 عند التفعيل فقط', () => {
+  const logo = 'data:image/png;base64,BBB'
+  assert.ok(renderInvoiceA4Html(model, cur, { ...settings, logoDataUrl: logo, showLogo: true }).includes(logo))
+  assert.ok(!renderInvoiceA4Html(model, cur, { ...settings, logoDataUrl: logo, showLogo: false }).includes(logo))
+})
+
+ok('إخفاء التفقيط والتوقيعات من A4 يعمل', () => {
+  const html = renderInvoiceA4Html(model, cur, { ...settings, showWords: false, showSignatures: false })
+  assert.ok(!html.includes('فقط لا غير'))
+  assert.ok(!html.includes('توقيع البائع'))
+})
+
+ok('اللون الرئيسي يُطبَّق والقيم الخبيثة تُرفض', () => {
+  const html = renderInvoiceA4Html(model, cur, { ...settings, accentColor: '#e11d48' })
+  assert.ok(html.includes('#e11d48'))
+  const bad = renderInvoiceA4Html(model, cur, { ...settings, accentColor: 'red;}</style><script>' })
+  assert.ok(!bad.includes('<script>'))
 })
 
 ok('تهريب HTML في قالب A4 أيضاً', () => {
@@ -187,7 +243,7 @@ ok('تهريب HTML في قالب A4 أيضاً', () => {
     totals: computeTotals([{ itemId: 1, nameAr: 'x', qty: 1, unitPriceMinor: 100, unitCostMinor: 50, discountPercent: 0, soldByWeight: false }], 0, 0, true),
     payment: 'cash', customerName: null, taxPercent: 0, taxInclusive: true, settings,
   })
-  const html = renderInvoiceA4Html(evil, cur)
+  const html = renderInvoiceA4Html(evil, cur, settings)
   assert.ok(!html.includes('<img src=x'))
   assert.ok(html.includes('&lt;img'))
 })

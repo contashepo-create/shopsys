@@ -31,7 +31,7 @@ export function SalesInvoicesPage() {
       taxInclusive: setup.taxInclusive,
       settings: receipt,
     })
-    printHtml(template === 'a4' ? renderInvoiceA4Html(model, cur) : renderReceiptHtml(model, cur, receipt.paperWidth))
+    printHtml(template === 'a4' ? renderInvoiceA4Html(model, cur, receipt) : renderReceiptHtml(model, cur, receipt))
     toast.show(template === 'a4' ? `أُرسلت فاتورة A4 ${s.invoiceNumber} للطباعة 📄` : `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️`)
   }
 

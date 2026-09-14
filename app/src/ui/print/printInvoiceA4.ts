@@ -1,11 +1,11 @@
 /**
  * فاتورة A4 احترافية — ShopSys (المرحلة 5)
  * ─────────────────────────────────────────
- * قالب عربي RTL أنيق للطباعة على A4: شريط ترويسة ملون باسم المحل،
- * صندوقا بيانات الفاتورة والعميل، جدول أصناف مخطط، بطاقة إجماليات،
- * المبلغ كتابةً (تفقيط)، وسطر توقيعات — نفس نموذج ReceiptModel الخالص.
+ * أربعة أنماط منقولة ومكيّفة من قوالب logistics-web (عصري/كلاسيكي/مدمج/فاخر)
+ * مع تحكم كامل من الإعدادات: شعار، علامة مائية، لون رئيسي، وإظهار/إخفاء كل عنصر.
+ * دوال خالصة بالكامل — تُفحص في verify_receipt.
  */
-import type { ReceiptModel } from '../../core/receipt.ts'
+import type { ReceiptModel, ReceiptSettings, A4Style } from '../../core/receipt.ts'
 import type { CurrencyConfig } from '../../core/money.ts'
 import { formatMinor } from '../../core/money.ts'
 
@@ -59,7 +59,7 @@ export function numberToArabicWords(n: number): string {
   return parts.join(' و')
 }
 
-/** «مائة وثلاثون جنيهاً وخمسون قرشاً فقط لا غير» */
+/** «مائة وثلاثون جنيهاً وخمسون من المائة فقط لا غير» */
 export function amountInWords(minor: number, cur: CurrencyConfig): string {
   const major = Math.floor(Math.abs(minor) / 10 ** cur.decimals)
   const frac = Math.abs(minor) % 10 ** cur.decimals
@@ -68,117 +68,266 @@ export function amountInWords(minor: number, cur: CurrencyConfig): string {
   return `${s} فقط لا غير`
 }
 
-/* ─── القالب ─── */
+/* ─── لبنات مشتركة بين الأنماط ─── */
 
-/** HTML فاتورة A4 كاملة — دالة خالصة (تُفحص في verify) */
-export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig): string {
-  const fmt = (m: number) => formatMinor(m, cur, false)
-  const rows = model.rows
+const safeColor = (c: string, fallback: string) => (/^#[0-9a-f]{6}$/i.test(c) ? c : fallback)
+
+function logoImg(s: ReceiptSettings, size: number, radius: number): string {
+  if (!s.showLogo || !s.logoDataUrl) return ''
+  return `<img class="logo" src="${esc(s.logoDataUrl)}" alt="شعار" style="width:${size}px;height:${size}px;object-fit:contain;border-radius:${radius}px;background:#fff;"/>`
+}
+
+function watermark(s: ReceiptSettings): string {
+  if (!s.watermarkEnabled || !s.watermarkText.trim()) return ''
+  return `<div class="wm">${esc(s.watermarkText)}</div>`
+}
+
+function headerLinesHtml(m: ReceiptModel, s: ReceiptSettings, cls = 'hl'): string {
+  if (!s.showHeaderLines) return ''
+  return m.headerLines.map((l) => `<div class="${cls}">${esc(l)}</div>`).join('')
+}
+
+function metaRows(m: ReceiptModel, s: ReceiptSettings): string {
+  const rows: string[] = [`<tr><td class="k">رقم الفاتورة</td><td class="v">${esc(m.invoiceNumber)}</td></tr>`]
+  if (s.showDate) rows.push(`<tr><td class="k">التاريخ</td><td class="v">${esc(m.dateLabel)}</td></tr>`)
+  if (s.showCustomer) rows.push(`<tr><td class="k">العميل</td><td class="v">${esc(m.customerName)}</td></tr>`)
+  if (s.showPayment) rows.push(`<tr><td class="k">طريقة الدفع</td><td class="v">${esc(m.paymentLabel)}</td></tr>`)
+  return `<table class="meta">${rows.join('')}</table>`
+}
+
+function itemsTable(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, opts: { dense?: boolean; classic?: boolean; elegant?: boolean }): string {
+  const fmt = (v: number) => formatMinor(v, cur, false)
+  const showDisc = s.showDiscount && m.rows.some((r) => r.discountPercent > 0)
+  const cols = showDisc ? 6 : 5
+  const rows = m.rows
     .map(
-      (r, i) => `
-      <tr>
-        <td class="c">${i + 1}</td>
-        <td class="name">${esc(r.nameAr)}</td>
-        <td class="c">${esc(r.qtyLabel)}</td>
-        <td class="c">${fmt(r.unitPriceMinor)}</td>
-        <td class="c">${r.discountPercent ? `${r.discountPercent}٪` : '—'}</td>
-        <td class="c amt">${fmt(r.totalMinor)}</td>
-      </tr>`,
+      (r, i) => `<tr class="${i % 2 && !opts.elegant ? 'alt' : ''}">
+      <td class="c mut">${i + 1}</td>
+      <td class="name">${esc(r.nameAr)}</td>
+      <td class="c">${esc(r.qtyLabel)}</td>
+      <td class="c">${fmt(r.unitPriceMinor)}</td>
+      ${showDisc ? `<td class="c">${r.discountPercent ? `${r.discountPercent}٪` : '—'}</td>` : ''}
+      <td class="c b">${fmt(r.totalMinor)}</td>
+    </tr>`,
     )
     .join('')
+  return `<table class="items" data-cols="${cols}">
+    <thead><tr>
+      <th style="width:28px">#</th><th class="r">الصنف</th><th>الكمية</th><th>سعر الوحدة</th>
+      ${showDisc ? '<th>الخصم</th>' : ''}<th>الإجمالي</th>
+    </tr></thead><tbody>${rows}</tbody>
+  </table>`
+}
+
+function totalsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, dark = false): string {
+  const fmt = (v: number) => formatMinor(v, cur, false)
+  const rows: string[] = []
+  if (s.showItemCounts) rows.push(`<div class="tr"><span>عدد الأصناف / القطع</span><b>${m.itemCount} / ${m.totalQty}</b></div>`)
+  if (s.showDiscount && m.discountMinor > 0) {
+    rows.push(`<div class="tr"><span>الإجمالي قبل الخصم</span><b>${fmt(m.grossMinor)}</b></div>`)
+    rows.push(`<div class="tr"><span>إجمالي الخصم</span><b>-${fmt(m.discountMinor)}</b></div>`)
+  }
+  if (m.taxLabel) {
+    rows.push(`<div class="tr"><span>الوعاء الضريبي</span><b>${fmt(m.taxBaseMinor)}</b></div>`)
+    rows.push(`<div class="tr"><span>${esc(m.taxLabel)}</span><b>${fmt(m.taxMinor)}</b></div>`)
+  }
+  return `<div class="totals ${dark ? 'dark' : ''}">
+    ${rows.join('')}
+    <div class="grand"><span>الإجمالي المستحق</span><span class="g">${fmt(m.totalMinor)} ${esc(cur.symbol)}</span></div>
+  </div>`
+}
+
+function wordsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings): string {
+  if (!s.showWords) return ''
+  return `<div class="words"><div class="wt">المبلغ كتابةً</div><div class="wv">${esc(amountInWords(m.totalMinor, cur))}</div></div>`
+}
+
+function signatures(s: ReceiptSettings): string {
+  if (!s.showSignatures) return ''
+  return `<div class="sig"><div>توقيع البائع</div><div>توقيع المستلم</div></div>`
+}
+
+function footer(m: ReceiptModel, s: ReceiptSettings): string {
+  if (!s.showFooter || !m.footerText.trim()) return ''
+  return `<div class="foot">${esc(m.footerText)}</div>`
+}
+
+/* ─── الأنماط الأربعة ─── */
+
+function renderModern(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, accent: string): string {
+  return `
+  <div class="sheet modern">
+    <div class="topbar"></div>
+    <div class="head">
+      <div class="who">${logoImg(s, 64, 12)}<div>
+        <div class="shop" style="color:${accent}">${esc(m.shopName)}</div>${headerLinesHtml(m, s)}
+      </div></div>
+      <div class="title-box">
+        <div class="tb" style="background:${accent}">فاتورة مبيعات</div>
+        ${metaRows(m, s)}
+      </div>
+    </div>
+    ${itemsTable(m, cur, s, {})}
+    <div class="bottom">
+      ${wordsBlock(m, cur, s)}
+      ${totalsBlock(m, cur, s)}
+    </div>
+    ${signatures(s)}${footer(m, s)}
+  </div>`
+}
+
+function renderClassic(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, accent: string): string {
+  return `
+  <div class="sheet classic">
+    <div class="head" style="border:1.5pt solid ${accent};padding:12px 16px;">
+      <div class="who">${logoImg(s, 58, 6)}<div>
+        <div class="shop" style="color:${accent}">${esc(m.shopName)}</div>${headerLinesHtml(m, s)}
+      </div></div>
+      <div class="title-box">
+        <div class="tb outlined" style="border:2px solid ${accent};color:${accent}">فاتورة مبيعات</div>
+        ${metaRows(m, s)}
+      </div>
+    </div>
+    ${itemsTable(m, cur, s, { classic: true })}
+    <div class="bottom" style="border:1pt solid ${accent};padding:12px;">
+      ${wordsBlock(m, cur, s)}
+      ${totalsBlock(m, cur, s)}
+    </div>
+    ${signatures(s)}${footer(m, s)}
+  </div>`
+}
+
+function renderCompact(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, accent: string): string {
+  return `
+  <div class="sheet compact">
+    <div class="head slim">
+      <div class="who">${logoImg(s, 40, 7)}<div>
+        <span class="shop sm" style="color:${accent}">${esc(m.shopName)}</span>
+        ${s.showHeaderLines && m.headerLines.length ? `<span class="hl inline">${m.headerLines.map(esc).join(' — ')}</span>` : ''}
+      </div></div>
+      <div class="mini"><b style="color:${accent}">فاتورة مبيعات</b>
+        <span>${esc(m.invoiceNumber)}${s.showDate ? ` | ${esc(m.dateLabel)}` : ''}</span>
+      </div>
+    </div>
+    ${s.showCustomer || s.showPayment ? `<div class="strip">${s.showCustomer ? `العميل: <b>${esc(m.customerName)}</b>` : ''}${s.showCustomer && s.showPayment ? ' — ' : ''}${s.showPayment ? `الدفع: <b>${esc(m.paymentLabel)}</b>` : ''}</div>` : ''}
+    ${itemsTable(m, cur, s, { dense: true })}
+    <div class="bottom">
+      ${wordsBlock(m, cur, s)}
+      ${totalsBlock(m, cur, s)}
+    </div>
+    ${signatures(s)}${footer(m, s)}
+  </div>`
+}
+
+function renderElegant(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, accent: string): string {
+  return `
+  <div class="sheet elegant" style="border:1px solid ${accent}26;">
+    <div class="head center" style="border-bottom:1px solid ${accent}26;">
+      ${logoImg(s, 62, 16)}
+      <div class="shop" style="color:${accent}">${esc(m.shopName)}</div>
+      ${headerLinesHtml(m, s)}
+      <div class="pill" style="background:${accent}12;color:${accent}">فاتورة مبيعات ${esc(m.invoiceNumber)}${s.showDate ? ` • ${esc(m.dateLabel)}` : ''}</div>
+    </div>
+    ${s.showCustomer || s.showPayment ? `<div class="cards">
+      ${s.showCustomer ? `<div class="card" style="background:${accent}0a;border:1px solid ${accent}20"><div class="ct" style="color:${accent}">العميل</div><b>${esc(m.customerName)}</b></div>` : ''}
+      ${s.showPayment ? `<div class="card" style="background:${accent}0a;border:1px solid ${accent}20"><div class="ct" style="color:${accent}">طريقة الدفع</div><b>${esc(m.paymentLabel)}</b></div>` : ''}
+    </div>` : ''}
+    <div class="tbl-wrap" style="border:1px solid ${accent}26;">${itemsTable(m, cur, s, { elegant: true })}</div>
+    <div class="bottom dark" style="background:${accent};">
+      ${s.showWords ? `<div class="words dark"><div class="wt">المبلغ كتابةً</div><div class="wv">${esc(amountInWords(m.totalMinor, cur))}</div></div>` : '<div></div>'}
+      ${totalsBlock(m, cur, s, true)}
+    </div>
+    ${signatures(s)}${footer(m, s)}
+  </div>`
+}
+
+/* ─── التجميع النهائي ─── */
+
+const STYLE_ACCENTS: Record<A4Style, string> = {
+  modern: '#2563eb', classic: '#1e293b', compact: '#0d9488', elegant: '#7c3aed',
+}
+
+/** HTML فاتورة A4 كاملة — دالة خالصة (تُفحص في verify) */
+export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, settings: ReceiptSettings): string {
+  const style: A4Style = settings.a4Style ?? 'modern'
+  const accent = safeColor(settings.accentColor, STYLE_ACCENTS[style] ?? '#6366f1')
+  const body =
+    style === 'classic' ? renderClassic(model, cur, settings, accent)
+    : style === 'compact' ? renderCompact(model, cur, settings, accent)
+    : style === 'elegant' ? renderElegant(model, cur, settings, accent)
+    : renderModern(model, cur, settings, accent)
 
   return `<!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <style>
   @page { size: A4; margin: 12mm; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; color: #1e293b; font-size: 12px; }
-  /* شريط الترويسة */
-  .band { background: linear-gradient(90deg, #6366f1, #8b5cf6); color: #fff; border-radius: 12px; padding: 6mm 7mm; display: flex; justify-content: space-between; align-items: center; }
-  .band .shop { font-size: 21px; font-weight: 900; }
-  .band .hdr { font-size: 10px; opacity: .92; margin-top: 1mm; }
-  .band .doc { text-align: left; }
-  .band .doc .t { font-size: 15px; font-weight: 900; letter-spacing: .5px; }
-  .band .doc .n { font-size: 12px; background: rgba(255,255,255,.18); border-radius: 6px; padding: 1mm 3mm; margin-top: 1.5mm; display: inline-block; font-weight: 700; }
-  /* صندوقا البيانات */
-  .boxes { display: flex; gap: 5mm; margin-top: 5mm; }
-  .box { flex: 1; border: 1px solid #e2e8f0; border-radius: 10px; padding: 3.5mm 4.5mm; }
-  .box .ttl { font-size: 9px; font-weight: 900; color: #6366f1; margin-bottom: 1.5mm; }
-  .box .row { display: flex; justify-content: space-between; padding: .8mm 0; }
-  .box .row .k { color: #64748b; }
-  .box .row .v { font-weight: 700; }
-  /* جدول الأصناف */
-  table.items { width: 100%; border-collapse: collapse; margin-top: 5mm; }
-  table.items thead th { background: #6366f1; color: #fff; font-size: 10.5px; font-weight: 900; padding: 2.6mm 2mm; }
-  table.items thead th:first-child { border-radius: 0 8px 8px 0; }
-  table.items thead th:last-child { border-radius: 8px 0 0 8px; }
-  table.items tbody td { padding: 2.4mm 2mm; border-bottom: 1px solid #eef1f6; }
-  table.items tbody tr:nth-child(even) td { background: #f8fafc; }
-  .c { text-align: center; }
-  .name { font-weight: 700; }
-  .amt { font-weight: 900; }
-  /* الإجماليات */
-  .bottom { display: flex; gap: 5mm; margin-top: 5mm; align-items: flex-start; }
-  .words { flex: 1; border: 1px dashed #c7d2fe; border-radius: 10px; padding: 3.5mm 4.5mm; background: #f5f7ff; }
-  .words .ttl { font-size: 9px; font-weight: 900; color: #6366f1; margin-bottom: 1mm; }
-  .words .txt { font-weight: 700; line-height: 1.7; }
-  .totals { width: 66mm; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
-  .totals .row { display: flex; justify-content: space-between; padding: 2.2mm 4mm; border-bottom: 1px solid #eef1f6; }
-  .totals .row .k { color: #64748b; }
-  .totals .row .v { font-weight: 800; }
-  .totals .grand { background: #6366f1; color: #fff; font-weight: 900; font-size: 14px; padding: 3mm 4mm; display: flex; justify-content: space-between; }
-  /* التذييل */
-  .sig { display: flex; justify-content: space-between; margin-top: 14mm; padding: 0 8mm; }
-  .sig div { text-align: center; color: #64748b; font-size: 10.5px; width: 44mm; border-top: 1px solid #cbd5e1; padding-top: 2mm; }
-  .foot { text-align: center; color: #94a3b8; font-size: 10px; margin-top: 8mm; }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; color: #0f172a; font-size: 12px; background: #fff; }
+  .sheet { position: relative; overflow: hidden; }
+  .wm { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        font-size: 64pt; font-weight: 800; color: rgba(15,23,42,.07); transform: rotate(-30deg);
+        pointer-events: none; z-index: 0; white-space: nowrap; }
+  .sheet > * { position: relative; z-index: 1; }
+  .topbar { height: 8px; border-radius: 99px; background: linear-gradient(90deg, ${accent}, #4f46e5, ${accent}); margin-bottom: 14px; }
+  .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding-bottom: 14px; margin-bottom: 14px; }
+  .modern .head { border-bottom: 1px solid #e2e8f0; }
+  .head.center { display: block; text-align: center; }
+  .head.slim { align-items: center; border-bottom: 1px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 8px; }
+  .who { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
+  .logo { border: 1px solid #e2e8f0; padding: 4px; }
+  .head.center .logo { margin-bottom: 6px; }
+  .shop { font-size: 20px; font-weight: 900; line-height: 1.3; }
+  .shop.sm { font-size: 15px; }
+  .hl { font-size: 10.5px; color: #64748b; line-height: 1.7; }
+  .hl.inline { display: inline; margin-inline-start: 8px; }
+  .pill { display: inline-block; margin-top: 8px; padding: 5px 16px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+  .title-box { min-width: 230px; text-align: center; }
+  .tb { color: #fff; border-radius: 10px; padding: 8px 14px; font-size: 16px; font-weight: 900; }
+  .tb.outlined { background: transparent; }
+  .mini { text-align: left; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+  .meta { width: 100%; margin-top: 7px; font-size: 11px; border-collapse: collapse; }
+  .meta .k { padding: 2px; color: #64748b; text-align: right; }
+  .meta .v { padding: 2px; text-align: left; font-weight: 800; }
+  .strip { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 7px; padding: 6px 10px; margin-bottom: 8px; font-size: 11px; }
+  .cards { display: flex; gap: 12px; margin: 14px 0; }
+  .card { flex: 1; border-radius: 14px; padding: 10px 13px; font-size: 12px; }
+  .card .ct { font-size: 10px; font-weight: 800; margin-bottom: 2px; }
+  .tbl-wrap { border-radius: 13px; overflow: hidden; }
+  table.items { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  .compact table.items { font-size: 10.5px; }
+  .items thead th { background: ${accent}; color: #fff; padding: 8px 7px; font-weight: 800; }
+  .classic .items thead th { border: 1px solid #475569; }
+  .items td { padding: 7px; border-bottom: 1px solid #eef1f6; }
+  .classic .items td { border: 1px solid #94a3b8; }
+  .elegant .items td { border-bottom: 1px solid #e9e4f5; }
+  .compact .items td { padding: 4px 6px; }
+  .items .alt td { background: #f8fafc; }
+  .items .c { text-align: center; }
+  .items .r { text-align: right; }
+  .items .b { font-weight: 900; }
+  .items .mut { color: #94a3b8; }
+  .items .name { font-weight: 800; text-align: right; }
+  .bottom { display: flex; gap: 14px; align-items: stretch; margin-top: 14px; }
+  .modern .bottom { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
+  .bottom.dark { border-radius: 16px; padding: 14px; color: #fff; }
+  .words { flex: 1; border: 1px dashed #c7d2fe; background: #f5f7ff; border-radius: 10px; padding: 9px 12px; min-width: 0; }
+  .words.dark { border-color: rgba(255,255,255,.35); background: transparent; color: #fff; }
+  .words .wt { font-size: 10px; font-weight: 800; color: ${accent}; margin-bottom: 3px; }
+  .words.dark .wt { color: rgba(255,255,255,.8); }
+  .words .wv { font-size: 11.5px; font-weight: 700; line-height: 1.8; overflow-wrap: anywhere; }
+  .totals { min-width: 290px; font-size: 12px; }
+  .totals .tr { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; color: #64748b; }
+  .totals.dark .tr { color: rgba(255,255,255,.8); }
+  .totals .grand { display: flex; justify-content: space-between; gap: 12px; margin-top: 6px; padding-top: 8px;
+                   border-top: 2px solid ${accent}; font-size: 15px; font-weight: 900; }
+  .totals.dark .grand { border-top-color: rgba(255,255,255,.4); }
+  .totals .g { color: ${accent}; white-space: nowrap; }
+  .totals.dark .g { color: #fde047; }
+  .sig { display: grid; grid-template-columns: 1fr 1fr; gap: 70px; margin-top: 30px; text-align: center; color: #475569; font-size: 11px; }
+  .sig div { border-top: 1px dashed #94a3b8; padding-top: 6px; }
+  .foot { margin-top: 16px; border-top: 1px solid #e2e8f0; padding-top: 8px; text-align: center; font-size: 10px; color: #64748b; }
 </style></head><body>
-  <div class="band">
-    <div>
-      <div class="shop">${esc(model.shopName)}</div>
-      ${model.headerLines.map((l) => `<div class="hdr">${esc(l)}</div>`).join('')}
-    </div>
-    <div class="doc">
-      <div class="t">فاتورة مبيعات</div>
-      <div class="n">${esc(model.invoiceNumber)}</div>
-    </div>
-  </div>
-
-  <div class="boxes">
-    <div class="box">
-      <div class="ttl">بيانات الفاتورة</div>
-      <div class="row"><span class="k">التاريخ</span><span class="v">${esc(model.dateLabel)}</span></div>
-      <div class="row"><span class="k">طريقة الدفع</span><span class="v">${esc(model.paymentLabel)}</span></div>
-      <div class="row"><span class="k">عدد الأصناف / القطع</span><span class="v">${model.itemCount} / ${model.totalQty}</span></div>
-    </div>
-    <div class="box">
-      <div class="ttl">بيانات العميل</div>
-      <div class="row"><span class="k">الاسم</span><span class="v">${esc(model.customerName)}</span></div>
-    </div>
-  </div>
-
-  <table class="items">
-    <thead><tr>
-      <th style="width:8mm">#</th><th>الصنف</th><th style="width:20mm">الكمية</th>
-      <th style="width:26mm">سعر الوحدة</th><th style="width:16mm">خصم</th><th style="width:28mm">الإجمالي</th>
-    </tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
-
-  <div class="bottom">
-    <div class="words">
-      <div class="ttl">المبلغ كتابةً</div>
-      <div class="txt">${esc(amountInWords(model.totalMinor, cur))}</div>
-    </div>
-    <div class="totals">
-      <div class="row"><span class="k">الإجمالي قبل الخصم</span><span class="v">${fmt(model.grossMinor)}</span></div>
-      ${model.discountMinor > 0 ? `<div class="row"><span class="k">الخصم</span><span class="v">-${fmt(model.discountMinor)}</span></div>` : ''}
-      ${model.taxLabel ? `<div class="row"><span class="k">الأساس الضريبي</span><span class="v">${fmt(model.taxBaseMinor)}</span></div>
-      <div class="row"><span class="k">${esc(model.taxLabel)}</span><span class="v">${fmt(model.taxMinor)}</span></div>` : ''}
-      <div class="grand"><span>الإجمالي المستحق</span><span>${fmt(model.totalMinor)} ${esc(cur.symbol)}</span></div>
-    </div>
-  </div>
-
-  <div class="sig"><div>البائع</div><div>المستلم</div></div>
-  <div class="foot">${esc(model.footerText)}</div>
+${watermark(settings)}
+${body}
 </body></html>`
 }

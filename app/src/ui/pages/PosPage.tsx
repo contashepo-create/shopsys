@@ -145,8 +145,8 @@ export function PosPage() {
     // القالب الافتراضي من الإعدادات: حراري أو فاتورة A4 احترافية
     printHtml(
       receipt.defaultTemplate === 'a4'
-        ? renderInvoiceA4Html(model, cur)
-        : renderReceiptHtml(model, cur, receipt.paperWidth),
+        ? renderInvoiceA4Html(model, cur, receipt)
+        : renderReceiptHtml(model, cur, receipt),
     )
   }
 

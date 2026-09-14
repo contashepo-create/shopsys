@@ -12,22 +12,68 @@ export type PaperWidth = '80' | '58'
 /** قالب الطباعة الافتراضي بعد البيع: إيصال حراري أو فاتورة A4 */
 export type InvoiceTemplate = 'thermal' | 'a4'
 
+/** أنماط فاتورة A4 الاحترافية — منقولة ومكيّفة من قوالب logistics-web */
+export type A4Style = 'modern' | 'classic' | 'compact' | 'elegant'
+
+export const A4_STYLES: { id: A4Style; nameAr: string; desc: string; accent: string }[] = [
+  { id: 'modern', nameAr: 'عصري', desc: 'شريط متدرج وبطاقات معلومات أنيقة', accent: '#2563eb' },
+  { id: 'classic', nameAr: 'كلاسيكي', desc: 'قالب محاسبي رسمي بإطارات واضحة', accent: '#1e293b' },
+  { id: 'compact', nameAr: 'مدمج', desc: 'اقتصادي يضغط كل شيء في ورقة واحدة', accent: '#0d9488' },
+  { id: 'elegant', nameAr: 'فاخر', desc: 'زوايا ناعمة وهوية بصرية قوية', accent: '#7c3aed' },
+]
+
 export interface ReceiptSettings {
   paperWidth: PaperWidth
   defaultTemplate: InvoiceTemplate
+  a4Style: A4Style
+  /** اللون الرئيسي للقالب (سداسي مثل #6366f1) */
+  accentColor: string
   shopName: string
   headerLines: string[] // عنوان، هاتف، رقم ضريبي…
   footerText: string // «شكراً لزيارتكم…»
+  /** شعار المحل (Data URL بعد الرفع من الإعدادات) — '' يعني بدون شعار */
+  logoDataUrl: string
+  /** علامة مائية اختيارية على فاتورة A4 */
+  watermarkEnabled: boolean
+  watermarkText: string
+  // ─── تحكم كامل في إظهار/إخفاء عناصر الفاتورة ───
+  showLogo: boolean
+  showHeaderLines: boolean
+  showDate: boolean
+  showCustomer: boolean
+  showPayment: boolean
+  showItemCounts: boolean
+  showDiscount: boolean
   showTaxSummary: boolean
+  /** المبلغ كتابةً (تفقيط) — فاتورة A4 */
+  showWords: boolean
+  /** خانتا التوقيع — فاتورة A4 */
+  showSignatures: boolean
+  showFooter: boolean
 }
 
 export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   paperWidth: '80',
   defaultTemplate: 'thermal',
+  a4Style: 'modern',
+  accentColor: '#6366f1',
   shopName: '',
   headerLines: [],
   footerText: 'شكراً لزيارتكم 🌹',
+  logoDataUrl: '',
+  watermarkEnabled: false,
+  watermarkText: '',
+  showLogo: true,
+  showHeaderLines: true,
+  showDate: true,
+  showCustomer: true,
+  showPayment: true,
+  showItemCounts: true,
+  showDiscount: true,
   showTaxSummary: true,
+  showWords: true,
+  showSignatures: true,
+  showFooter: true,
 }
 
 export interface ReceiptRow {

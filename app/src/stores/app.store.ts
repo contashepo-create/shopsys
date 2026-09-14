@@ -108,10 +108,11 @@ export const useAppStore = create<AppState>()(
             status: 'open',
           }]
         }
-        // ترحيل: إعدادات إيصال لحسابات قديمة (قبل ميزة الطباعة / قبل قالب A4)
+        // ترحيل: إعدادات إيصال لحسابات قديمة (قبل ميزة الطباعة / قبل قالب A4 / قبل مفاتيح الإظهار)
         if (state && !state.receipt) {
           state.receipt = { ...DEFAULT_RECEIPT_SETTINGS, shopName: state.setup.shopName }
-        } else if (state && !state.receipt.defaultTemplate) {
+        } else if (state) {
+          // أي مفتاح جديد أُضيف لاحقاً يأخذ قيمته الافتراضية دون المساس بما اختاره المستخدم
           state.receipt = { ...DEFAULT_RECEIPT_SETTINGS, ...state.receipt }
         }
       },

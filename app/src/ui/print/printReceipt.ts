@@ -1,8 +1,9 @@
 /**
  * طباعة الإيصال الحراري — يبني HTML عربياً RTL بمقاس 80/58مم
  * ويطبعه عبر iframe مخفي (يعمل في المتصفح واليوم نفسه في قشرة Electron).
+ * يحترم كل مفاتيح الإظهار/الإخفاء من إعدادات الطباعة + شعار المحل.
  */
-import type { ReceiptModel, PaperWidth } from '../../core/receipt.ts'
+import type { ReceiptModel, ReceiptSettings } from '../../core/receipt.ts'
 import type { CurrencyConfig } from '../../core/money.ts'
 import { formatMinor } from '../../core/money.ts'
 
@@ -10,20 +11,32 @@ const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /** HTML كامل للإيصال — دالة خالصة (تُفحص في verify) */
-export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, paper: PaperWidth): string {
+export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, settings: ReceiptSettings): string {
+  const paper = settings.paperWidth
   const w = paper === '80' ? '72mm' : '48mm'
   const fmt = (m: number) => formatMinor(m, cur, false)
+  const showDisc = settings.showDiscount
   const rows = model.rows
     .map(
       (r) => `
       <tr>
-        <td class="name">${esc(r.nameAr)}${r.discountPercent ? `<span class="disc"> خصم ${r.discountPercent}٪</span>` : ''}
+        <td class="name">${esc(r.nameAr)}${showDisc && r.discountPercent ? `<span class="disc"> خصم ${r.discountPercent}٪</span>` : ''}
           <div class="sub">${esc(r.qtyLabel)} × ${fmt(r.unitPriceMinor)}</div>
         </td>
         <td class="amt">${fmt(r.totalMinor)}</td>
       </tr>`,
     )
     .join('')
+
+  const logo = settings.showLogo && settings.logoDataUrl
+    ? `<div class="center"><img src="${esc(settings.logoDataUrl)}" alt="شعار" style="max-width:${paper === '80' ? '30mm' : '22mm'};max-height:16mm;object-fit:contain;"/></div>`
+    : ''
+  const metaTop: string[] = []
+  metaTop.push(`<span>فاتورة: <b>${esc(model.invoiceNumber)}</b></span>`)
+  if (settings.showDate) metaTop.push(`<span>${esc(model.dateLabel)}</span>`)
+  const metaBottom: string[] = []
+  if (settings.showCustomer) metaBottom.push(`<span>العميل: ${esc(model.customerName)}</span>`)
+  if (settings.showPayment) metaBottom.push(`<span>الدفع: ${esc(model.paymentLabel)}</span>`)
 
   return `<!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8">
@@ -46,20 +59,20 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, pape
   .grand { font-size: ${paper === '80' ? '15px' : '13px'}; font-weight: 900; display: flex; justify-content: space-between; margin-top: 1mm; }
   .foot { text-align: center; font-size: ${paper === '80' ? '10px' : '9px'}; margin-top: 2mm; }
 </style></head><body>
+  ${logo}
   <div class="center shop">${esc(model.shopName)}</div>
-  ${model.headerLines.map((l) => `<div class="center hdr">${esc(l)}</div>`).join('')}
+  ${settings.showHeaderLines ? model.headerLines.map((l) => `<div class="center hdr">${esc(l)}</div>`).join('') : ''}
   <hr>
-  <div class="meta"><span>فاتورة: <b>${esc(model.invoiceNumber)}</b></span><span>${esc(model.dateLabel)}</span></div>
-  <div class="meta"><span>العميل: ${esc(model.customerName)}</span><span>الدفع: ${esc(model.paymentLabel)}</span></div>
+  <div class="meta">${metaTop.join('')}</div>
+  ${metaBottom.length ? `<div class="meta">${metaBottom.join('')}</div>` : ''}
   <hr>
   <table>${rows}</table>
   <hr>
-  <div class="tot"><span>عدد الأصناف / القطع</span><span>${model.itemCount} / ${model.totalQty}</span></div>
-  ${model.discountMinor > 0 ? `<div class="tot"><span>إجمالي الخصم</span><span>-${fmt(model.discountMinor)}</span></div>` : ''}
+  ${settings.showItemCounts ? `<div class="tot"><span>عدد الأصناف / القطع</span><span>${model.itemCount} / ${model.totalQty}</span></div>` : ''}
+  ${settings.showDiscount && model.discountMinor > 0 ? `<div class="tot"><span>إجمالي الخصم</span><span>-${fmt(model.discountMinor)}</span></div>` : ''}
   ${model.taxLabel ? `<div class="tot"><span>${esc(model.taxLabel)}</span><span>${fmt(model.taxMinor)}</span></div>` : ''}
   <div class="grand"><span>الإجمالي</span><span>${fmt(model.totalMinor)} ${esc(cur.symbol)}</span></div>
-  <hr>
-  <div class="foot">${esc(model.footerText)}</div>
+  ${settings.showFooter && model.footerText.trim() ? `<hr><div class="foot">${esc(model.footerText)}</div>` : ''}
 </body></html>`
 }
 
