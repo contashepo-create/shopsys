@@ -21,6 +21,7 @@ import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from '../core/installments.ts'
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals } from '../core/logistics.ts'
+import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -121,6 +122,35 @@ export interface Trip {
   expenses: { nameAr: string; qty: number; unitAmountMinor: number; source: 'cash' | 'customer' | 'credit'; amountMinor: number }[]
   totals: TripTotals
   journalEntryId: number
+  notes: string
+}
+
+/** معدة ثقيلة قابلة للإيجار (المرحلة 6 — القرار 13) */
+export interface Equipment {
+  id: number
+  nameAr: string // حفار، لودر، ونش…
+  code: string // كود/لوحة اختياري
+  dailyRateMinor: number // السعر اليومي الافتراضي
+  notes: string
+}
+
+/** عقد إيجار معدة — مربوط بقيد الفتح، وقيد الإقفال عند ردّ التأمين */
+export interface RentalContract {
+  id: number
+  contractNumber: string // RC-0001
+  date: string // ISO
+  customerId: number | null // null = عميل نقدي
+  equipmentId: number | null
+  equipmentName: string
+  days: number
+  dailyRateMinor: number
+  payment: 'cash' | 'credit'
+  vatPercent: number
+  totals: RentalTotals
+  status: 'active' | 'closed'
+  openEntryId: number
+  closeEntryId: number | null // null = لم يُقفل أو لا تأمين
+  deductMinor: number // المخصوم من التأمين عند الإقفال
   notes: string
 }
 
@@ -246,6 +276,8 @@ interface DataState {
   installmentPlans: InstallmentPlan[]
   vehicles: Vehicle[]
   trips: Trip[]
+  equipment: Equipment[]
+  rentalContracts: RentalContract[]
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
@@ -387,6 +419,21 @@ interface DataState {
     input: TripInput
     notes: string
   }) => Trip
+  addEquipment: (e: Omit<Equipment, 'id'>) => void
+  updateEquipment: (id: number, patch: Partial<Equipment>) => void
+  removeEquipment: (id: number) => void
+  /**
+   * فتح عقد إيجار (المرحلة 6): تحقق ← إجماليات ← قيد فتح متوازن
+   * (تحصيل مقابل 4104 إيراد + 2102 ضريبة + 2103 تأمين كالتزام)
+   */
+  openRental: (args: {
+    customerId: number | null
+    equipmentId: number | null
+    input: RentalInput
+    notes: string
+  }) => RentalContract
+  /** إقفال عقد: ردّ التأمين نقداً مع خصم اختياري يُعترف به إيراداً (4104) */
+  closeRental: (contractId: number, deductMinor: number) => RentalContract
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
@@ -405,6 +452,8 @@ export const useDataStore = create<DataState>()(
       installmentPlans: [],
       vehicles: [],
       trips: [],
+      equipment: [],
+      rentalContracts: [],
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
@@ -1091,6 +1140,102 @@ export const useDataStore = create<DataState>()(
         set({ trips: [...state.trips, trip], journal: [...state.journal, entry] })
         return trip
       },
+      addEquipment: (e) => set((s) => ({ equipment: [...s.equipment, { ...e, id: nextId(s.equipment) }] })),
+      updateEquipment: (id, patch) =>
+        set((s) => ({ equipment: s.equipment.map((x) => (x.id === id ? { ...x, ...patch } : x)) })),
+      removeEquipment: (id) => {
+        const used = get().rentalContracts.some((c) => c.equipmentId === id)
+        if (used) throw new Error('لا يمكن حذف معدة مرتبطة بعقود — احتفظ بها للسجل')
+        set((s) => ({ equipment: s.equipment.filter((x) => x.id !== id) }))
+      },
+      openRental: (args) => {
+        const state = get()
+        // 1) تحقق شامل قبل أي كتابة
+        const errors = validateRental(args.input)
+        if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) errors.push('العميل غير موجود')
+        if (args.input.payment === 'credit' && args.customerId == null) errors.push('الإيجار الآجل يتطلب عميلاً مسجلاً')
+        if (errors.length) throw new Error(errors.join(' — '))
+
+        // 2) الإجماليات وقيد الفتح بالنواة الخالصة
+        const totals = computeRentalTotals(args.input)
+        const contractId = nextId(state.rentalContracts)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const contractNumber = `RC-${String(contractId).padStart(4, '0')}`
+        const entryLines = buildRentalOpenEntry(totals, contractNumber)
+
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `عقد إيجار ${contractNumber} — ${args.input.equipmentName} × ${args.input.days} يوم${args.notes ? ` — ${args.notes}` : ''}`,
+          sourceType: 'rental_contract',
+          sourceId: contractId,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+
+        const contract: RentalContract = {
+          id: contractId,
+          contractNumber,
+          date: now,
+          customerId: args.customerId,
+          equipmentId: args.equipmentId,
+          equipmentName: args.input.equipmentName.trim(),
+          days: args.input.days,
+          dailyRateMinor: args.input.dailyRateMinor,
+          payment: args.input.payment,
+          vatPercent: args.input.vatPercent,
+          totals,
+          status: 'active',
+          openEntryId: entryId,
+          closeEntryId: null,
+          deductMinor: 0,
+          notes: args.notes,
+        }
+
+        set({ rentalContracts: [...state.rentalContracts, contract], journal: [...state.journal, entry] })
+        return contract
+      },
+      closeRental: (contractId, deductMinor) => {
+        const state = get()
+        const contract = state.rentalContracts.find((c) => c.id === contractId)
+        if (!contract) throw new Error('العقد غير موجود')
+        if (contract.status === 'closed') throw new Error('العقد مُقفل بالفعل')
+
+        // قيد الإقفال (null لو لا تأمين — يبقى العقد يُقفل بلا قيد)
+        const closeLines = buildRentalCloseEntry(contract.totals.depositMinor, deductMinor, contract.contractNumber)
+        const now = new Date().toISOString()
+        let closeEntryId: number | null = null
+        let journal = state.journal
+        if (closeLines) {
+          closeEntryId = nextId(state.journal)
+          const entry: JournalEntry = {
+            id: closeEntryId,
+            entryNumber: closeEntryId,
+            date: now.slice(0, 10),
+            description: `إقفال عقد ${contract.contractNumber} — ردّ التأمين${deductMinor > 0 ? ' بعد خصم أضرار' : ''}`,
+            sourceType: 'rental_contract',
+            sourceId: contract.id,
+            lines: closeLines,
+            createdBy: 'المالك',
+            createdAt: now,
+            reversedByEntryId: null,
+            reversesEntryId: null,
+          }
+          journal = [...state.journal, entry]
+        }
+
+        const updated: RentalContract = { ...contract, status: 'closed', closeEntryId, deductMinor }
+        set({
+          rentalContracts: state.rentalContracts.map((c) => (c.id === contractId ? updated : c)),
+          journal,
+        })
+        return updated
+      },
     }),
     {
       name: 'shopsys-data',
@@ -1109,6 +1254,8 @@ export const useDataStore = create<DataState>()(
           installmentPlans: s.installmentPlans ?? [],
           vehicles: s.vehicles ?? [],
           trips: s.trips ?? [],
+          equipment: s.equipment ?? [],
+          rentalContracts: s.rentalContracts ?? [],
           purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
           purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],
