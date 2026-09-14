@@ -18,6 +18,8 @@ export interface CartLine {
   unitCostMinor: Minor // تكلفة الوحدة (متوسط مرجح) لقيد COGS
   discountPercent: number // خصم السطر
   soldByWeight: boolean
+  /** سيريالات القطع المعيّنة (أصناف الموبايلات/الأجهزة) — طولها = qty عند الاستخدام */
+  serials?: string[]
 }
 
 export type PaymentMethod = 'cash' | 'credit'

@@ -82,6 +82,8 @@ export interface ReceiptRow {
   unitPriceMinor: Minor
   totalMinor: Minor // بعد خصم السطر
   discountPercent: number
+  /** سيريالات/IMEI القطع المعيّنة — تُطبع تحت اسم الصنف (نمط موبايل شوب) */
+  serials: string[]
 }
 
 export interface ReceiptModel {
@@ -125,6 +127,7 @@ export function buildReceiptModel(args: {
       unitPriceMinor: l.unitPriceMinor,
       totalMinor: net,
       discountPercent: l.discountPercent,
+      serials: l.serials ?? [],
     }
   })
   const totalQty = Math.round(lines.reduce((a, l) => a + l.qty, 0) * 1000) / 1000

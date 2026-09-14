@@ -15,6 +15,8 @@ export type ItemFeature =
 
 export type BusinessModule =
   | 'pos' // الكاشير
+  | 'inventory' // المخزون والمخازن (وجيستيكس/إيجار معدات لا يحتاجونه غالباً)
+  | 'purchases' // المشتريات والموردون
   | 'maintenance' // الصيانة
   | 'equipment_rental' // إيجار المعدات
   | 'logistics' // الخدمات اللوجستية
@@ -29,6 +31,8 @@ export interface ActivityTemplate {
   modules: BusinessModule[]
   /** الافتراضي لطريقة الضريبة: شامل أم مضاف (القرار 6) */
   taxInclusiveDefault: boolean
+  /** قالب الفاتورة الافتراضي: حراري للبيع السريع، A4 للخدمات والعقود */
+  defaultInvoiceTemplate: 'thermal' | 'a4'
 }
 
 export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
@@ -36,57 +40,88 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     id: 'grocery', nameAr: 'أغذية / سوبر ماركت', icon: '🛒',
     description: 'صلاحيات ودفعات، بيع بالوزن، وحدات متعددة',
     features: ['expiry_batches', 'weight_scale', 'multi_unit', 'price_lists'],
-    modules: ['pos', 'installments'], taxInclusiveDefault: true,
+    modules: ['pos', 'inventory', 'purchases', 'installments'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
     id: 'mobile', nameAr: 'موبايلات وصيانة', icon: '📱',
     description: 'سيريال/IMEI وضمان، وحدة صيانة كاملة',
     features: ['serial_warranty', 'variants'],
-    modules: ['pos', 'maintenance', 'installments'], taxInclusiveDefault: true,
+    modules: ['pos', 'inventory', 'purchases', 'maintenance', 'installments'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
     id: 'clothing', nameAr: 'ملابس وأحذية', icon: '👕',
     description: 'ألوان ومقاسات، مخازن موسمية',
     features: ['variants', 'multi_unit', 'price_lists'],
-    modules: ['pos', 'installments'], taxInclusiveDefault: true,
+    modules: ['pos', 'inventory', 'purchases', 'installments'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
     id: 'pharmacy', nameAr: 'صيدلية', icon: '💊',
     description: 'صلاحية إلزامية، شريط/علبة',
     features: ['expiry_batches', 'multi_unit'],
-    modules: ['pos'], taxInclusiveDefault: true,
+    modules: ['pos', 'inventory', 'purchases'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
     id: 'electronics', nameAr: 'أجهزة كهربائية', icon: '🔌',
     description: 'سيريال وضمان، أقساط',
     features: ['serial_warranty', 'multi_unit'],
-    modules: ['pos', 'maintenance', 'installments'], taxInclusiveDefault: false,
+    modules: ['pos', 'inventory', 'purchases', 'maintenance', 'installments'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
     id: 'spare_parts', nameAr: 'قطع غيار', icon: '🔧',
     description: 'سيريال اختياري، وحدات متعددة',
     features: ['serial_warranty', 'multi_unit', 'price_lists'],
-    modules: ['pos'], taxInclusiveDefault: false,
+    modules: ['pos', 'inventory', 'purchases'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'thermal',
   },
   {
     id: 'equipment_rental', nameAr: 'إيجار معدات ثقيلة', icon: '🚜',
-    description: 'حفارات ولوادر — عقود، عدّادات، ربحية كل معدة',
+    description: 'حفارات ولوادر — عقود، عدّادات، ربحية كل معدة (بلا مخازن افتراضياً)',
     features: ['multi_unit'],
-    modules: ['equipment_rental', 'installments'], taxInclusiveDefault: false,
+    modules: ['equipment_rental', 'installments'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
     id: 'logistics', nameAr: 'خدمات لوجستية ونقل', icon: '🚚',
-    description: 'نقلات، أسطول وسائقون، مستخلصات',
+    description: 'نقلات، أسطول وسائقون، مستخلصات (بلا مخازن ولا كاشير افتراضياً)',
     features: [],
-    modules: ['logistics'], taxInclusiveDefault: false,
+    modules: ['logistics'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
     id: 'general', nameAr: 'نشاط عام / آخر', icon: '🏪',
     description: 'قالب مرن — فعّل ما تحتاجه لاحقاً',
     features: ['multi_unit'],
-    modules: ['pos', 'installments'], taxInclusiveDefault: true,
+    modules: ['pos', 'inventory', 'purchases', 'installments'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
 ]
+
+/** قالب نشاط بالمعرف — أو undefined */
+export function getActivity(id: string | null): ActivityTemplate | undefined {
+  return ACTIVITY_TEMPLATES.find((a) => a.id === id)
+}
+
+/**
+ * تبديل وحدة عمل (تفعيل/إلغاء) — دالة خالصة:
+ * تعيد قائمة الوحدات الجديدة، وتمنع إلغاء آخر وحدة عمل (لا تطبيق بلا أي وحدة).
+ */
+export function toggleModuleList(current: BusinessModule[], m: BusinessModule): BusinessModule[] {
+  if (current.includes(m)) {
+    const next = current.filter((x) => x !== m)
+    // لا يجوز إطفاء كل شيء: يجب أن تبقى وحدة «عمل» واحدة على الأقل
+    const workModules: BusinessModule[] = ['pos', 'maintenance', 'equipment_rental', 'logistics']
+    if (!next.some((x) => workModules.includes(x))) {
+      throw new Error('لا يمكن إلغاء آخر وحدة عمل — يجب أن تبقى وحدة واحدة على الأقل (كاشير أو صيانة أو إيجار أو لوجستيات)')
+    }
+    return next
+  }
+  return [...current, m]
+}
 
 export const FEATURE_LABELS: Record<ItemFeature, { nameAr: string; icon: string; desc: string }> = {
   expiry_batches: { nameAr: 'صلاحية ودفعات', icon: '📅', desc: 'تاريخ صلاحية، صرف FEFO، تنبيهات قرب الانتهاء' },
@@ -97,10 +132,15 @@ export const FEATURE_LABELS: Record<ItemFeature, { nameAr: string; icon: string;
   price_lists: { nameAr: 'قوائم أسعار', icon: '🏷️', desc: 'جملة / قطاعي / VIP' },
 }
 
-export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: string }> = {
-  pos: { nameAr: 'الكاشير', icon: '🛒' },
-  maintenance: { nameAr: 'الصيانة', icon: '🔧' },
-  equipment_rental: { nameAr: 'إيجار المعدات', icon: '🚜' },
-  logistics: { nameAr: 'اللوجستيات', icon: '🚚' },
-  installments: { nameAr: 'الأقساط', icon: '💳' },
+export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: string; desc: string }> = {
+  pos: { nameAr: 'الكاشير والمبيعات', icon: '🛒', desc: 'شاشة البيع، فواتير المبيعات، المرتجعات، الورديات' },
+  inventory: { nameAr: 'المخزون والمخازن', icon: '📦', desc: 'الأصناف، المخازن، التحويلات، الجرد' },
+  purchases: { nameAr: 'المشتريات والموردون', icon: '🚚', desc: 'فواتير الشراء، مرتجعاتها، الموردون، مصاريف الشحنات' },
+  maintenance: { nameAr: 'الصيانة', icon: '🔧', desc: 'أوامر صيانة الأجهزة، قطع الغيار، التسليم' },
+  equipment_rental: { nameAr: 'إيجار المعدات', icon: '🚜', desc: 'المعدات، عقود الإيجار، التأمينات المستردة' },
+  logistics: { nameAr: 'اللوجستيات', icon: '🛣️', desc: 'النقلات، الأسطول والسائقون، ربحية كل نقلة' },
+  installments: { nameAr: 'الأقساط', icon: '💳', desc: 'بيع بالتقسيط، جدولة الأقساط، تنبيهات الاستحقاق' },
 }
+
+/** ترتيب عرض الوحدات في شاشة الإعدادات */
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'maintenance', 'equipment_rental', 'logistics']

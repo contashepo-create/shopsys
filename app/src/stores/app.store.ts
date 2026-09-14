@@ -5,7 +5,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
-import type { ActivityTemplate, ItemFeature, BusinessModule } from '../core/activities.ts'
+import { toggleModuleList, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { generateDeviceId, type LicensePayload } from '../core/license.ts'
@@ -41,6 +41,8 @@ interface AppState {
   }) => void
   addFiscalYear: (fy: Omit<FiscalYear, 'id' | 'status'>) => void
   setAccountingMode: (m: 'simple' | 'full') => void
+  /** تفعيل/إلغاء وحدة عمل من الإعدادات (طلب المالك: الوحدات حسب النشاط وقابلة للتبديل) */
+  toggleModule: (m: BusinessModule) => void
   resetSetup: () => void
   receipt: ReceiptSettings
   autoPrintAfterSale: boolean
@@ -90,7 +92,9 @@ export const useAppStore = create<AppState>()(
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear }) =>
         set((s) => ({
           fiscalYears: [{ ...fiscalYear, id: 1, status: 'open' }],
-          receipt: { ...s.receipt, shopName }, // اسم المحل يظهر على الإيصال تلقائياً
+          // اسم المحل على الإيصال + قالب الفاتورة الافتراضي من النشاط
+          // (بقالة = حراري سريع، خدمات وعقود = A4 احترافية)
+          receipt: { ...s.receipt, shopName, defaultTemplate: activity.defaultInvoiceTemplate },
           setup: {
             completed: true,
             countryCode: country.code,
@@ -109,6 +113,8 @@ export const useAppStore = create<AppState>()(
           fiscalYears: [...s.fiscalYears, { ...fy, id: s.fiscalYears.reduce((m, y) => Math.max(m, y.id), 0) + 1, status: 'open' }],
         })),
       setAccountingMode: (m) => set((s) => ({ setup: { ...s.setup, accountingMode: m } })),
+      toggleModule: (m) =>
+        set((s) => ({ setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } })),
       resetSetup: () =>
         set((s) => ({
           setup: { ...s.setup, completed: false, countryCode: null, activityId: null },
@@ -148,6 +154,17 @@ export const useAppStore = create<AppState>()(
             endDate: `${y}-12-31`,
             status: 'open',
           }]
+        }
+        // ترحيل: حسابات أُنشئت قبل فصل وحدتي «المخزون» و«المشتريات» كانت تراهما دائماً —
+        // نضيفهما لها تلقائياً كي لا يختفي شيء بعد التحديث (إلا وجيستيكس/إيجار المعدات:
+        // مخازنهم غير مستخدمة أصلاً فتبقى مطفأة كما يريد المالك، وتُفعَّل من الإعدادات عند الحاجة)
+        if (state && state.setup.completed) {
+          const mods = new Set(state.setup.modules)
+          const knowsSplit = mods.has('inventory') || mods.has('purchases')
+          const stockless = state.setup.activityId === 'logistics' || state.setup.activityId === 'equipment_rental'
+          if (!knowsSplit && !stockless) {
+            state.setup = { ...state.setup, modules: [...state.setup.modules, 'inventory', 'purchases'] }
+          }
         }
         // ترحيل: إعدادات إيصال لحسابات قديمة (قبل ميزة الطباعة / قبل قالب A4 / قبل مفاتيح الإظهار)
         if (state && !state.receipt) {

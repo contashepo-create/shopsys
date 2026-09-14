@@ -6,11 +6,11 @@ import { useState } from 'react'
 import { Percent, Globe2, RefreshCcw } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
-import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS } from '../../core/activities.ts'
+import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES } from '../../core/activities.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 
 export function GeneralSettingsPage() {
-  const { setup, resetSetup } = useAppStore()
+  const { setup, resetSetup, toggleModule } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const activity = ACTIVITY_TEMPLATES.find((a) => a.id === setup.activityId)
@@ -95,12 +95,43 @@ export function GeneralSettingsPage() {
             <div className="text-[11px] text-slate-400">{activity?.description}</div>
           </div>
         </div>
+        {/* مفاتيح تفعيل/إلغاء الوحدات — طلب المالك: الوحدات تتبع النشاط وتُبدَّل من هنا */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
+          {ALL_MODULES.map((m) => {
+            const on = setup.modules.includes(m)
+            const info = MODULE_LABELS[m]
+            return (
+              <button
+                key={m}
+                onClick={() => {
+                  try {
+                    toggleModule(m)
+                    toast.show(on ? `أُطفئت وحدة ${info.nameAr} — اختفت شاشاتها من القائمة` : `فُعِّلت وحدة ${info.nameAr} ✅`)
+                  } catch (e) {
+                    toast.show((e as Error).message, 'error')
+                  }
+                }}
+                className={`group flex items-center gap-3 p-3 rounded-xl border-2 text-right transition-all duration-200 ${
+                  on
+                    ? 'border-emerald-400/60 bg-emerald-500/5'
+                    : 'border-slate-200 dark:border-slate-700 opacity-70 hover:opacity-100'
+                }`}
+              >
+                <span className="text-xl transition-transform duration-200 group-hover:scale-125">{info.icon}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block font-bold text-[13px] text-slate-800 dark:text-white">{info.nameAr}</span>
+                  <span className="block text-[10.5px] text-slate-400 truncate">{info.desc}</span>
+                </span>
+                <span
+                  className={`shrink-0 w-9 h-5 rounded-full relative transition-colors duration-200 ${on ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                >
+                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-200 ${on ? 'right-0.5' : 'right-4'}`} />
+                </span>
+              </button>
+            )
+          })}
+        </div>
         <div className="flex flex-wrap gap-1.5">
-          {setup.modules.map((m) => (
-            <span key={m} className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold">
-              {MODULE_LABELS[m].icon} وحدة {MODULE_LABELS[m].nameAr}
-            </span>
-          ))}
           {setup.features.map((f) => (
             <span key={f} className="text-[11px] px-2.5 py-1 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400">
               {FEATURE_LABELS[f].icon} {FEATURE_LABELS[f].nameAr}
@@ -108,7 +139,8 @@ export function GeneralSettingsPage() {
           ))}
         </div>
         <p className="text-[11px] text-slate-400 mt-3">
-          💡 هذه افتراضيات النشاط فقط — كل خاصية تُفعَّل لأي قسم أو صنف من شاشة الأصناف (القرار 5).
+          💡 إطفاء الوحدة يخفي شاشاتها فوراً دون حذف بياناتها — أعد تفعيلها فتعود كما كانت.
+          الخصائص (البنفسجية) افتراضيات النشاط — كل خاصية تُفعَّل لأي قسم أو صنف من شاشة الأصناف (القرار 5).
         </p>
       </section>
 

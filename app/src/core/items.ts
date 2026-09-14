@@ -74,6 +74,8 @@ export interface Item {
   // تجاوزات الخصائص لكل صنف (تبدأ من افتراضي القسم)
   trackExpiry: boolean
   trackSerial: boolean
+  /** مدة الضمان الافتراضية بالأشهر (لأصناف السيريال — تُثبت على كل قطعة وقت بيعها) */
+  warrantyMonths: number
   soldByWeight: boolean
   variantColors: string[] // عند variants
   variantSizes: string[]
@@ -136,6 +138,7 @@ export function draftFromCategory(cat: Category | undefined, sku: string): ItemD
     minQty: 0,
     trackExpiry: f.has('expiry_batches'),
     trackSerial: f.has('serial_warranty'),
+    warrantyMonths: f.has('serial_warranty') ? 12 : 0,
     soldByWeight: f.has('weight_scale'),
     variantColors: [],
     variantSizes: [],

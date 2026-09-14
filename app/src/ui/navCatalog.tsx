@@ -18,6 +18,8 @@ export interface NavChild {
   nameAr: string
   icon: LucideIcon
   path: string
+  /** يظهر فقط إن كانت هذه الوحدة مفعلة (لعناصر داخل قسم عام) */
+  module?: BusinessModule
 }
 
 export interface NavSection {
@@ -63,7 +65,7 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    id: 'inventory', nameAr: 'المخزون', icon: Package, color: 'amber',
+    id: 'inventory', nameAr: 'المخزون', icon: Package, color: 'amber', module: 'inventory',
     children: [
       { id: 'items', nameAr: 'الأصناف', icon: Boxes, path: '/inventory/items' },
       { id: 'warehouses', nameAr: 'المخازن', icon: Warehouse, path: '/inventory/warehouses' },
@@ -72,7 +74,7 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    id: 'purchases', nameAr: 'المشتريات', icon: Truck, color: 'cyan',
+    id: 'purchases', nameAr: 'المشتريات', icon: Truck, color: 'cyan', module: 'purchases',
     children: [
       { id: 'invoices', nameAr: 'فواتير الشراء', icon: Receipt, path: '/purchases/invoices' },
       { id: 'returns', nameAr: 'مرتجعات الشراء', icon: RotateCcw, path: '/purchases/returns' },
@@ -84,7 +86,7 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'customers', nameAr: 'العملاء', icon: UserRound, path: '/parties/customers' },
       { id: 'employees', nameAr: 'الموظفون', icon: UserCog, path: '/parties/employees' },
-      { id: 'installments', nameAr: 'الأقساط', icon: CreditCard, path: '/parties/installments' },
+      { id: 'installments', nameAr: 'الأقساط', icon: CreditCard, path: '/parties/installments', module: 'installments' },
     ],
   },
   {

@@ -8,7 +8,7 @@ import { useMemo, useState } from 'react'
 import { ShieldCheck, KeyRound, Copy, Fingerprint, CalendarClock, Sparkles, AlertTriangle, XCircle } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import {
-  evaluateLicense, verifyLicenseKey, hasFeature, PLAN_LABELS, FEATURE_LABELS, TRIAL_DAYS,
+  evaluateLicense, verifyLicenseKey, hasFeature, effectiveLimits, PLAN_LABELS, FEATURE_LABELS, TRIAL_DAYS,
   type LicenseFeature,
 } from '../../core/license.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
@@ -89,6 +89,16 @@ export function LicensePage() {
               <div className="flex justify-between"><span className="text-slate-400">الخطة</span><b>{PLAN_LABELS[activatedPayload.plan]}</b></div>
               <div className="flex justify-between"><span className="text-slate-400">تاريخ الإصدار</span><b dir="ltr">{activatedPayload.issuedAt}</b></div>
               <div className="flex justify-between"><span className="text-slate-400">ينتهي في</span><b dir="ltr">{activatedPayload.expiresAt ?? 'مدى الحياة'}</b></div>
+              {(() => {
+                const lim = effectiveLimits(activatedPayload)
+                return (
+                  <>
+                    <div className="flex justify-between"><span className="text-slate-400">المستخدمون</span><b>{lim.maxUsers}{activatedPayload.extraUsers ? ` (منهم ${activatedPayload.extraUsers} إضافي من البوت)` : ''}</b></div>
+                    <div className="flex justify-between"><span className="text-slate-400">الفروع</span><b>{lim.maxBranches}{activatedPayload.extraBranches ? ` (منها ${activatedPayload.extraBranches} إضافي من البوت)` : ''}</b></div>
+                    <div className="flex justify-between"><span className="text-slate-400">نسخ متعددة على الشبكة (ERP)</span><b>{lim.multiInstance ? 'مسموح ✓' : 'غير متاح في هذه الباقة'}</b></div>
+                  </>
+                )
+              })()}
               <button onClick={() => { clearActivation(); toast.show('أُزيل التفعيل من هذا الجهاز') }} className="text-[11px] text-rose-500 hover:text-rose-600 font-bold pt-1">إزالة التفعيل</button>
             </div>
           ) : (

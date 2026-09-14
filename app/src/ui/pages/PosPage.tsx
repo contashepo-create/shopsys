@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { computeTotals, type CartLine } from '../../core/pos.ts'
 import { parseScaleBarcode, matchScaleItem } from '../../core/barcode.ts'
+import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift } from '../../core/shifts.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
@@ -22,7 +23,7 @@ import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
 
 export function PosPage() {
-  const { items, customers, shifts, postSale } = useDataStore()
+  const { items, customers, shifts, serials, postSale } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale } = useAppStore()
   const toast = useToast()
@@ -62,12 +63,47 @@ export function PosPage() {
     return sellable.filter((it) => it.nameAr.includes(q) || it.sku.includes(q) || it.barcodes.some((b) => b.includes(q))).slice(0, 24)
   }, [sellable, query])
 
+  // نافذة اختيار السيريال/IMEI (نمط موبايل شوب: البيع بالقطعة المعيّنة)
+  const [serialPickItem, setSerialPickItem] = useState<number | null>(null)
+
+  /** إضافة قطعة معيّنة بسيريالها — سطر السلة يحمل قائمة السيريالات وكميته = طولها */
+  const addSerialUnit = (itemId: number, serial: string) => {
+    const it = items.find((x) => x.id === itemId)
+    if (!it) return
+    if (it.priceMinor <= 0) {
+      toast.show(`«${it.nameAr}» بلا سعر بيع! حدّد سعره من المخزون ← الأصناف أولاً`, 'error')
+      return
+    }
+    const inCart = cart.some((l) => l.serials?.includes(serial))
+    if (inCart) { toast.show(`القطعة ${serial} في السلة بالفعل`, 'error'); return }
+    setCart((prev) => {
+      const idx = prev.findIndex((l) => l.itemId === itemId)
+      if (idx >= 0) {
+        return prev.map((l, i) =>
+          i === idx ? { ...l, qty: l.qty + 1, serials: [...(l.serials ?? []), serial] } : l,
+        )
+      }
+      return [...prev, {
+        itemId: it.id, nameAr: it.nameAr, qty: 1,
+        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor,
+        discountPercent: 0, soldByWeight: false, serials: [serial],
+      }]
+    })
+    setSerialPickItem(null)
+    toast.show(`🔢 ${it.nameAr} — ${serial}`)
+  }
+
   const addToCart = (itemId: number, weightQty?: number) => {
     const it = items.find((x) => x.id === itemId)
     if (!it) return
     // حماية من خطأ «السعر صفر»: لا صنف بلا سعر بيع يدخل السلة بصمت
     if (it.priceMinor <= 0) {
       toast.show(`«${it.nameAr}» بلا سعر بيع! حدّد سعره من المخزون ← الأصناف أولاً`, 'error')
+      return
+    }
+    // صنف يتتبع السيريال وله قطع مسيرلة متاحة ⇒ اختيار القطعة المعيّنة أولاً
+    if (it.trackSerial && availableSerials(serials, it.id).length > 0) {
+      setSerialPickItem(it.id)
       return
     }
     setCart((prev) => {
@@ -97,6 +133,26 @@ export function PosPage() {
   const onSearchEnter = () => {
     const q = query.trim()
     if (!q) return
+    // مسح IMEI/سيريال مباشرة؟ (نمط موبايل شوب): متاح ⇒ يضيف القطعة نفسها،
+    // مباع ⇒ يعرض حالة ضمانه بدل رسالة «غير موجود»
+    const su = findBySerial(serials, q)
+    if (su) {
+      if (su.status === 'in_stock') {
+        addSerialUnit(su.itemId, su.serial)
+        setQuery('')
+        return
+      }
+      const w = warrantyLookup(serials, q, new Date().toISOString())
+      const itName = items.find((it) => it.id === su.itemId)?.nameAr ?? 'صنف'
+      toast.show(
+        w?.active
+          ? `📱 ${itName} — مباع، الضمان سارٍ حتى ${w.warrantyUntil} (${w.daysLeft} يوماً)`
+          : `📱 ${itName} — مباع، الضمان منتهٍ${w ? ` منذ ${w.warrantyUntil}` : ''}`,
+        w?.active ? 'success' : 'error',
+      )
+      setQuery('')
+      return
+    }
     // باركود ميزان؟ (طلب المالك: بائع الأجبان يزن ويطبع، والكاشير يمسح)
     const scale = parseScaleBarcode(q)
     if (scale) {
@@ -336,8 +392,42 @@ export function PosPage() {
                     <div className="text-[11px] text-slate-400 mt-0.5">
                       {fmt(l.unitPriceMinor)} {cur.symbol} / {l.soldByWeight ? 'كجم' : 'وحدة'}
                     </div>
+                    {/* سيريالات القطع المعيّنة — حذف السيريال يحذف قطعته من السلة */}
+                    {l.serials && l.serials.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {l.serials.map((s) => (
+                          <span key={s} className="anim-pop flex items-center gap-1 text-[9.5px] px-1.5 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 font-mono font-bold">
+                            {s}
+                            <button
+                              onClick={() =>
+                                setCart((c) =>
+                                  c
+                                    .map((x, j) =>
+                                      j === i
+                                        ? { ...x, qty: x.qty - 1, serials: (x.serials ?? []).filter((y) => y !== s) }
+                                        : x,
+                                    )
+                                    .filter((x) => x.qty > 0),
+                                )
+                              }
+                              className="text-rose-400 hover:text-rose-600 font-bold"
+                            >×</button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {/* الكمية */}
+                  {/* الكمية — أصناف السيريال كميتها بعدد قطعها المعيّنة (زر + يفتح اختيار قطعة) */}
+                  {l.serials && l.serials.length > 0 ? (
+                    <div className="flex items-center justify-center gap-1 h-9">
+                      <span className="font-black text-[13px] text-slate-800 dark:text-white">{l.qty}</span>
+                      <button
+                        onClick={() => setSerialPickItem(l.itemId)}
+                        title="إضافة قطعة أخرى بسيريالها"
+                        className="w-7 h-7 rounded-lg border-2 border-sky-300 dark:border-sky-700 text-sky-500 font-bold hover:bg-sky-500/10 transition-colors"
+                      >+</button>
+                    </div>
+                  ) : (
                   <div className="flex items-center justify-center rounded-xl border-2 border-slate-200 dark:border-slate-700 overflow-hidden h-9">
                     <button
                       onClick={() => setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.max(l.soldByWeight ? 0.1 : 1, Math.round((x.qty - (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000) } : x)))}
@@ -356,6 +446,7 @@ export function PosPage() {
                       className="w-8 h-full text-slate-500 font-bold hover:bg-emerald-500/10 hover:text-emerald-600 transition-colors"
                     >+</button>
                   </div>
+                  )}
                   {/* خصم السطر */}
                   <input
                     value={l.discountPercent || ''}
@@ -493,6 +584,45 @@ export function PosPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* اختيار القطعة بسيريالها/IMEI — نمط موبايل شوب (البيع بالقطعة المعيّنة) */}
+      <Modal open={serialPickItem !== null} onClose={() => setSerialPickItem(null)} title="🔢 اختر القطعة (السيريال / IMEI)">
+        {serialPickItem !== null && (() => {
+          const it = items.find((x) => x.id === serialPickItem)
+          const inCartSerials = new Set(cart.flatMap((l) => l.serials ?? []))
+          const avail = availableSerials(serials, serialPickItem).filter((u) => !inCartSerials.has(u.serial))
+          return (
+            <div className="space-y-3">
+              <div className="text-[13px] font-bold text-slate-700 dark:text-slate-200">
+                {it?.nameAr} — <span className="text-slate-400 font-normal">{avail.length} قطعة متاحة</span>
+              </div>
+              {avail.length === 0 ? (
+                <p className="text-[12px] text-slate-400 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50">
+                  كل القطع المسيرلة في السلة أو مباعة — سجّل قطعاً جديدة من فاتورة شراء.
+                </p>
+              ) : (
+                <div className="max-h-72 overflow-y-auto space-y-1.5">
+                  {avail.map((u) => (
+                    <button
+                      key={u.id}
+                      onClick={() => addSerialUnit(u.itemId, u.serial)}
+                      className="w-full flex items-center justify-between p-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 hover:border-sky-400/70 hover:bg-sky-500/5 transition-all duration-150 text-right"
+                    >
+                      <span className="font-mono font-bold text-[13px] text-slate-800 dark:text-white">{u.serial}</span>
+                      <span className="text-[10.5px] text-slate-400">
+                        {u.warrantyMonths > 0 ? `ضمان ${u.warrantyMonths} شهراً` : 'بلا ضمان'} · دخلت {u.receivedAt.slice(0, 10)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-slate-400">
+                💡 يمكنك أيضاً مسح الـIMEI مباشرة في خانة البحث — يضيف القطعة فوراً، ولو كانت مباعة يعرض حالة ضمانها.
+              </p>
+            </div>
+          )
+        })()}
       </Modal>
     </div>
   )

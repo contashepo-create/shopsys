@@ -651,6 +651,20 @@ function ItemForm({
           ))}
         </div>
 
+        {/* مدة الضمان الافتراضية — تظهر فقط لأصناف السيريال (نمط موبايل شوب) */}
+        {draft.trackSerial && (
+          <div className="mt-3 anim-pop">
+            <Field label="🛡️ مدة الضمان الافتراضية (بالأشهر)" hint="تُثبت على كل قطعة يوم بيعها — 0 = بلا ضمان">
+              <input
+                type="number" min={0} max={120}
+                value={draft.warrantyMonths}
+                onChange={(e) => p({ warrantyMonths: Math.max(0, Math.min(120, Number(e.target.value) || 0)) })}
+                className={inputCls}
+              />
+            </Field>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3 mt-3">
           <Field label="🎨 ألوان (اكتب ثم Enter)">
             <input

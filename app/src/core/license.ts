@@ -19,7 +19,12 @@ export const DEVELOPER_PUBLIC_KEY_B64U = 'fBHN_qnQPMzYrgYRTYndwwsZUEWfXCASFQHl4G
 export type LicensePlan = 'trial' | 'basic' | 'pro' | 'lifetime'
 
 /** ميزات تُفعَّل بمفتاح الترخيص فقط (قرار 21: الفاتورة الإلكترونية بيد المطوّر) */
-export type LicenseFeature = 'einvoice_eg' | 'einvoice_sa' | 'multi_branch' | 'telegram_bot'
+export type LicenseFeature =
+  | 'einvoice_eg'
+  | 'einvoice_sa'
+  | 'multi_branch'
+  | 'telegram_bot'
+  | 'cloud_sync' // مزامنة سحابية (Supabase) للفروع المتعددة — تمهيد ERP
 
 export interface LicensePayload {
   v: 1 // إصدار الصيغة
@@ -29,6 +34,40 @@ export interface LicensePayload {
   features: LicenseFeature[]
   issuedAt: string // YYYY-MM-DD
   expiresAt: string | null // null = مدى الحياة
+  /** مستخدمون إضافيون فوق حد الباقة — يبيعها المطوّر من البوت (اختياري) */
+  extraUsers?: number
+  /** فروع إضافية فوق حد الباقة — من البوت أيضاً (اختياري) */
+  extraBranches?: number
+}
+
+/**
+ * حدود الباقات (قرار المالك): الباقات شهرية وسنوية (تُضبط بـ expiresAt)،
+ * والفرق بينها عدد المستخدمين وعدد الفروع، وتشغيل أكثر من نسخة على نفس
+ * الشبكة/قاعدة البيانات ميزة الباقات العالية فقط.
+ * الزيادات فوق الحد تصدر من بوت المطوّر بمفتاح جديد (extraUsers/extraBranches).
+ */
+export interface PlanLimits {
+  maxUsers: number
+  maxBranches: number
+  /** أكثر من نسخة على نفس الشبكة وقاعدة البيانات (ERP) */
+  multiInstance: boolean
+}
+
+export const PLAN_LIMITS: Record<LicensePlan, PlanLimits> = {
+  trial: { maxUsers: 2, maxBranches: 1, multiInstance: false },
+  basic: { maxUsers: 2, maxBranches: 1, multiInstance: false },
+  pro: { maxUsers: 5, maxBranches: 2, multiInstance: true },
+  lifetime: { maxUsers: 10, maxBranches: 3, multiInstance: true },
+}
+
+/** الحدود الفعلية = حدود الباقة + الزيادات المشتراة من البوت */
+export function effectiveLimits(payload: LicensePayload | null): PlanLimits {
+  const base = PLAN_LIMITS[payload?.plan ?? 'trial']
+  return {
+    maxUsers: base.maxUsers + Math.max(0, payload?.extraUsers ?? 0),
+    maxBranches: base.maxBranches + Math.max(0, payload?.extraBranches ?? 0),
+    multiInstance: base.multiInstance,
+  }
 }
 
 export type LicenseState =
@@ -56,12 +95,19 @@ export function b64uDecode(s: string): Uint8Array {
   return out
 }
 
-/** ترتيب حتمي للحقول قبل التوقيع — نفس الترتيب دائماً في الإصدار والتحقق */
+/**
+ * ترتيب حتمي للحقول قبل التوقيع — نفس الترتيب دائماً في الإصدار والتحقق.
+ * الحقلان الاختياريان (extraUsers/extraBranches) يدخلان الصيغة فقط عند وجودهما،
+ * كي تبقى توقيعات المفاتيح القديمة (بلا زيادات) صحيحة كما هي.
+ */
 export function canonicalPayload(p: LicensePayload): string {
-  return JSON.stringify({
+  const base: Record<string, unknown> = {
     v: p.v, deviceId: p.deviceId, customer: p.customer, plan: p.plan,
     features: [...p.features].sort(), issuedAt: p.issuedAt, expiresAt: p.expiresAt,
-  })
+  }
+  if (p.extraUsers != null) base.extraUsers = p.extraUsers
+  if (p.extraBranches != null) base.extraBranches = p.extraBranches
+  return JSON.stringify(base)
 }
 
 /** توليد معرّف جهاز ثابت المظهر: SHOP-XXXX-XXXX-XXXX */
@@ -171,4 +217,5 @@ export const FEATURE_LABELS: Record<LicenseFeature, string> = {
   einvoice_sa: 'الفاتورة الإلكترونية — السعودية (زاتكا)',
   multi_branch: 'فروع متعددة',
   telegram_bot: 'بوت التليجرام',
+  cloud_sync: 'مزامنة سحابية للفروع (Supabase)',
 }

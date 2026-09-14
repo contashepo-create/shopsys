@@ -49,7 +49,12 @@ if (cmd === 'issue') {
     ? new Date(Date.now() + Number(days) * 86_400_000).toISOString().slice(0, 10)
     : null
 
+  // زيادات فوق حد الباقة (تُباع من بوت المطوّر): --extra-users N --extra-branches N
+  const extraUsers = Number(arg('extra-users', '0')) || 0
+  const extraBranches = Number(arg('extra-branches', '0')) || 0
   const payload = { v: 1, deviceId, customer, plan, features, issuedAt: today, expiresAt }
+  if (extraUsers > 0) payload.extraUsers = extraUsers
+  if (extraBranches > 0) payload.extraBranches = extraBranches
   const priv = await crypto.subtle.importKey('pkcs8', b64uDecode(privB64u), 'Ed25519', false, ['sign'])
   const sig = new Uint8Array(await crypto.subtle.sign('Ed25519', priv, new TextEncoder().encode(canonicalPayload(payload))))
   console.log('── مفتاح التفعيل (أرسله للعميل) ──')
@@ -57,4 +62,4 @@ if (cmd === 'issue') {
   process.exit(0)
 }
 
-console.log('الاستخدام: genkeys | issue --device ... --customer ... --plan basic|pro|lifetime [--days N] [--features a,b]')
+console.log('الاستخدام: genkeys | issue --device ... --customer ... --plan basic|pro|lifetime [--days N] [--features a,b] [--extra-users N] [--extra-branches N]')

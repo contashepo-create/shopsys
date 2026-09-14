@@ -20,11 +20,19 @@ export function Sidebar() {
     return s
   })
 
-  const visibleSections = NAV_SECTIONS.filter((sec) => {
-    if (sec.module && !setup.modules.includes(sec.module)) return false
-    if (sec.accountingOnly && setup.accountingMode !== 'full') return false
-    return true
-  })
+  // إخفاء الأقسام والفروع حسب الوحدات المفعلة للنشاط (طلب المالك):
+  // القسم كله يختفي لو وحدته مطفأة، والفرع المرتبط بوحدة يختفي وحده داخل قسم عام
+  const visibleSections = NAV_SECTIONS
+    .filter((sec) => {
+      if (sec.module && !setup.modules.includes(sec.module)) return false
+      if (sec.accountingOnly && setup.accountingMode !== 'full') return false
+      return true
+    })
+    .map((sec) => ({
+      ...sec,
+      children: sec.children.filter((c) => !c.module || setup.modules.includes(c.module)),
+    }))
+    .filter((sec) => sec.children.length > 0)
 
   const toggle = (id: string) =>
     setOpenSections((prev) => {

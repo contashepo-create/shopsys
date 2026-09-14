@@ -103,7 +103,7 @@ function itemsTable(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, op
     .map(
       (r, i) => `<tr class="${i % 2 && !opts.elegant ? 'alt' : ''}">
       <td class="c mut">${i + 1}</td>
-      <td class="name">${esc(r.nameAr)}</td>
+      <td class="name">${esc(r.nameAr)}${r.serials.length ? `<div style="font-size:9px;color:#64748b;direction:ltr;text-align:right">${r.serials.map(esc).join(' · ')}</div>` : ''}</td>
       <td class="c">${esc(r.qtyLabel)}</td>
       <td class="c">${fmt(r.unitPriceMinor)}</td>
       ${showDisc ? `<td class="c">${r.discountPercent ? `${r.discountPercent}٪` : '—'}</td>` : ''}

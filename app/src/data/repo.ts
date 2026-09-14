@@ -26,6 +26,7 @@ import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliv
 import { validateTransfer, computeWarehouseStock, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
+import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -335,6 +336,7 @@ interface DataState {
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
   assets: FixedAsset[]
+  serials: SerialUnit[] // وحدات السيريال/IMEI والضمان (نمط موبايل شوب)
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
@@ -360,7 +362,7 @@ interface DataState {
   postPurchase: (inv: {
     supplierId: number
     date: string
-    lines: { itemId: number; qty: number; unitPriceMinor: number; expiryDate?: string | null }[]
+    lines: { itemId: number; qty: number; unitPriceMinor: number; expiryDate?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
     paidMinor: number
     notes: string
@@ -541,6 +543,7 @@ export const useDataStore = create<DataState>()(
       transfers: [],
       batches: [],
       assets: [],
+      serials: [],
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
@@ -586,6 +589,21 @@ export const useDataStore = create<DataState>()(
             throw new Error(`تاريخ صلاحية غير صحيح لـ«${item.nameAr}» — الصيغة YYYY-MM-DD`)
           }
         }
+        // سيريالات أصناف الموبايلات/الأجهزة (نمط موبايل شوب): تُفرز قبل أي كتابة
+        // — لو أُدخلت يجب أن يطابق عددها الكمية وألا تتكرر أو تكون مسجلة من قبل
+        const existingSerialSet = new Set(state.serials.map((u) => u.serial))
+        const parsedByLine = new Map<number, string[]>()
+        inv.lines.forEach((l, li) => {
+          const item = state.items.find((it) => it.id === l.itemId)
+          if (!item?.trackSerial || !l.serialsRaw?.trim()) return
+          const { accepted, errors } = parseSerialsInput(l.serialsRaw, existingSerialSet)
+          if (errors.length) throw new Error(`سيريالات «${item.nameAr}»: ${errors.join('، ')}`)
+          if (accepted.length !== l.qty) {
+            throw new Error(`«${item.nameAr}»: عدد السيريالات (${accepted.length}) لا يطابق الكمية (${l.qty})`)
+          }
+          for (const s of accepted) existingSerialSet.add(s) // منع التكرار بين سطور نفس الفاتورة
+          parsedByLine.set(li, accepted)
+        })
         const costLines: CostLine[] = inv.lines.map((l) => ({
           itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
         }))
@@ -659,11 +677,34 @@ export const useDataStore = create<DataState>()(
           })
         }
 
+        // تسجيل وحدات السيريال الداخلة مع هذه الفاتورة
+        let serialId = nextId(state.serials)
+        const newSerials: SerialUnit[] = []
+        inv.lines.forEach((l, li) => {
+          const accepted = parsedByLine.get(li)
+          if (!accepted) return
+          const item = state.items.find((it) => it.id === l.itemId)
+          for (const s of accepted) {
+            newSerials.push({
+              id: serialId++,
+              itemId: l.itemId,
+              serial: s,
+              status: 'in_stock',
+              purchaseId,
+              saleId: null,
+              soldAt: null,
+              warrantyMonths: item?.warrantyMonths ?? 0,
+              receivedAt: nowIso,
+            })
+          }
+        })
+
         set({
           purchases: [...state.purchases, invoice],
           journal: [...state.journal, entry],
           items: updatedItems,
           batches: newBatches.length ? [...state.batches, ...newBatches] : state.batches,
+          serials: newSerials.length ? [...state.serials, ...newSerials] : state.serials,
         })
         return invoice
       },
@@ -692,6 +733,22 @@ export const useDataStore = create<DataState>()(
           workingBatches = applyFefo(workingBatches, plan)
         }
         if (expiredNames.length) throw new ExpiredStockError(expiredNames)
+
+        // 2.5) سيريالات القطع المعيّنة (نمط موبايل شوب — استشاري مثل الدفعات):
+        // صنف يتتبع السيريال وله سيريالات متاحة ⇒ يجب تعيين سيريال لكل قطعة؛
+        // لا سيريالات مسجلة أصلاً ⇒ يُباع عادياً (مخزون افتتاحي بلا سيريالات)
+        const assignments: { itemId: number; serial: string }[] = []
+        for (const l of args.lines) {
+          const item = state.items.find((it) => it.id === l.itemId)
+          if (!item?.trackSerial) continue
+          const availCount = state.serials.filter((u) => u.itemId === l.itemId && u.status === 'in_stock').length
+          const given = l.serials ?? []
+          if (given.length === 0 && availCount === 0) continue // نظام استشاري
+          if (given.length !== l.qty) {
+            throw new Error(`«${item.nameAr}»: عيّن سيريالاً لكل قطعة (${given.length} من ${l.qty})`)
+          }
+          for (const s of given) assignments.push({ itemId: l.itemId, serial: s })
+        }
 
         // 3) الإجماليات والقيد (يرمي UnbalancedEntryError لو اختل — مستحيل بنيوياً)
         const totals = computeTotals(args.lines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
@@ -729,14 +786,16 @@ export const useDataStore = create<DataState>()(
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
         }
 
-        // 4) خصم المخزون (والدفعات المحدثة بعد صرف FEFO)
+        // 4) خصم المخزون (والدفعات المحدثة بعد صرف FEFO) + تعليم السيريالات مباعة
         const qtyByItem = new Map<number, number>()
         for (const l of args.lines) qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + l.qty)
         const updatedItems = state.items.map((it) =>
           qtyByItem.has(it.id) ? { ...it, stockQty: (it.stockQty ?? 0) - qtyByItem.get(it.id)! } : it,
         )
+        // markSold يتحقق (موجود/متاح/يخص الصنف/غير مكرر) ويرمي خطأ عربياً قبل أي كتابة
+        const updatedSerials = assignments.length ? markSold(state.serials, assignments, saleId, now) : state.serials
 
-        set({ sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches })
+        set({ sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials })
         return sale
       },
 
@@ -787,14 +846,21 @@ export const useDataStore = create<DataState>()(
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
         }
 
-        // 4) عودة البضاعة للمخزون
+        // 4) عودة البضاعة للمخزون + عودة السيريالات المرتبطة بهذه الفاتورة
         const qtyBack = new Map<number, number>()
         for (const l of lines) qtyBack.set(l.itemId, (qtyBack.get(l.itemId) ?? 0) + l.qty)
         const updatedItems = state.items.map((it) =>
           qtyBack.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) + qtyBack.get(it.id)!) * 1000) / 1000 } : it,
         )
+        // سيريالات هذه الفاتورة تعود متاحة بعدد الكمية المرتجعة (الأقدم بيعاً أولاً)
+        const serialsToReturn: string[] = []
+        for (const [itemId, qty] of qtyBack) {
+          const soldUnits = state.serials.filter((u) => u.saleId === sale.id && u.itemId === itemId && u.status === 'sold')
+          for (const u of soldUnits.slice(0, Math.floor(qty))) serialsToReturn.push(u.serial)
+        }
+        const updatedSerials = serialsToReturn.length ? markReturned(state.serials, sale.id, serialsToReturn) : state.serials
 
-        set({ saleReturns: [...state.saleReturns, ret], journal: [...state.journal, entry], items: updatedItems })
+        set({ saleReturns: [...state.saleReturns, ret], journal: [...state.journal, entry], items: updatedItems, serials: updatedSerials })
         return ret
       },
 
@@ -1604,7 +1670,7 @@ export const useDataStore = create<DataState>()(
         return {
           ...s,
           categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),
-          items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0 })),
+          items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0, warrantyMonths: it.warrantyMonths ?? 0 })),
           customers: (s.customers ?? []).map((c) => ({ ...EMPTY_EXTENDED, ...c })),
           suppliers: (s.suppliers ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           employees: (s.employees ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
@@ -1618,6 +1684,7 @@ export const useDataStore = create<DataState>()(
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],
           assets: s.assets ?? [],
+          serials: s.serials ?? [],
           purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
           purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],
