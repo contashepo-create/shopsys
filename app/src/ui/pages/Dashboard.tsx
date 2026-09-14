@@ -12,7 +12,7 @@ import { accountBalance, STANDARD_COA } from '../../core/ledger.ts'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, saleReturns, items, purchases, purchaseReturns } = useDataStore()
+  const { journal, sales, items, purchases, purchaseReturns } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur)
@@ -43,14 +43,33 @@ export function Dashboard() {
 
   const today = new Date().toISOString().slice(0, 10)
   const todaySales = useMemo(() => sales.filter((s) => s.date.startsWith(today)), [sales, today])
-  const todayReturns = useMemo(() => saleReturns.filter((r) => r.date.startsWith(today)), [saleReturns, today])
-  // صافي اليوم = مبيعات − مرتجعات (وكذلك الربح: يُخصم منه أساس المرتجع وتُعاد تكلفته)
-  const todayRevenue =
-    todaySales.reduce((a, s) => a + s.totals.totalMinor, 0) -
-    todayReturns.reduce((a, r) => a + r.totals.totalMinor, 0)
-  const todayProfit =
-    todaySales.reduce((a, s) => a + (s.totals.taxBaseMinor - s.totals.cogsMinor), 0) -
-    todayReturns.reduce((a, r) => a + (r.totals.taxBaseMinor - r.totals.cogsMinor), 0)
+  // أرقام اليوم من دفتر الأستاذ نفسه — تشمل كل العمليات (بيع، صيانة، تحاليل، عيادة، إيجار، نقلات، مقاولات…)
+  // وليس فواتير الكاشير فقط — هذا ما يمنع «الأصفار» رغم وجود عمليات من وحدات أخرى
+  const todayLedger = useMemo(() => {
+    let rev = 0, exp = 0
+    for (const e of journal) {
+      if (!e.date.startsWith(today)) continue
+      for (const l of e.lines) {
+        if (l.accountCode.startsWith('4')) rev += l.credit - l.debit
+        else if (l.accountCode.startsWith('5')) exp += l.debit - l.credit
+      }
+    }
+    return { revenue: rev, profit: rev - exp }
+  }, [journal, today])
+  const todayRevenue = todayLedger.revenue
+  const todayProfit = todayLedger.profit
+
+  // إجماليات كل الفترات — كل العمليات منذ البداية (من دفتر الأستاذ)
+  const allTime = useMemo(() => {
+    let rev = 0, exp = 0
+    for (const e of journal) {
+      for (const l of e.lines) {
+        if (l.accountCode.startsWith('4')) rev += l.credit - l.debit
+        else if (l.accountCode.startsWith('5')) exp += l.debit - l.credit
+      }
+    }
+    return { revenue: rev, expenses: exp, net: rev - exp, entries: journal.length }
+  }, [journal])
 
   const lowStock = items.filter((it) => (it.stockQty ?? 0) <= it.minQty && it.minQty > 0)
   // دين الموردين = فواتير غير مسددة − مرتجعات الشراء المخفِّضة للدين
@@ -61,8 +80,8 @@ export function Dashboard() {
   )
 
   const cards = [
-    { title: 'مبيعات اليوم', value: fmt(todayRevenue), icon: TrendingUp, color: 'from-emerald-500 to-teal-500', glow: 'shadow-emerald-500/30', delta: `${todaySales.length} فاتورة` },
-    { title: 'ربح اليوم', value: fmt(todayProfit), icon: Coins, color: 'from-violet-500 to-fuchsia-500', glow: 'shadow-violet-500/30', delta: 'إيراد − تكلفة البضاعة' },
+    { title: 'إيراد اليوم', value: fmt(todayRevenue), icon: TrendingUp, color: 'from-emerald-500 to-teal-500', glow: 'shadow-emerald-500/30', delta: `${todaySales.length} فاتورة كاشير + كل الوحدات` },
+    { title: 'ربح اليوم', value: fmt(todayProfit), icon: Coins, color: 'from-violet-500 to-fuchsia-500', glow: 'shadow-violet-500/30', delta: 'إيراد − كل المصروفات' },
     { title: 'في الخزينة', value: fmt(ledger.cash), icon: Wallet, color: 'from-sky-500 to-cyan-500', glow: 'shadow-sky-500/30', delta: 'من دفتر الأستاذ مباشرة' },
     { title: 'تنبيهات', value: String(lowStock.length), icon: AlertTriangle, color: 'from-amber-500 to-orange-500', glow: 'shadow-amber-500/30', delta: lowStock.length ? 'نواقص تحتاج شراء' : 'كله تمام ✓' },
   ]
@@ -87,6 +106,15 @@ export function Dashboard() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* إجمالي كل العمليات منذ البداية — من دفتر الأستاذ الموحّد */}
+      <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 flex flex-wrap items-center gap-x-8 gap-y-2" style={{ animationDelay: '280ms' }}>
+        <div className="text-[12px] font-black text-slate-500 dark:text-slate-400">📊 إجمالي كل العمليات:</div>
+        <div className="text-[13px]"><span className="text-slate-400 text-[11px]">الإيرادات</span> <b className="text-emerald-600 dark:text-emerald-400 me-1">{fmt(allTime.revenue)}</b></div>
+        <div className="text-[13px]"><span className="text-slate-400 text-[11px]">المصروفات</span> <b className="text-rose-500 me-1">{fmt(allTime.expenses)}</b></div>
+        <div className="text-[13px]"><span className="text-slate-400 text-[11px]">صافي الربح</span> <b className={`me-1 ${allTime.net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>{fmt(allTime.net)}</b></div>
+        <div className="text-[13px]"><span className="text-slate-400 text-[11px]">قيود اليومية</span> <b className="text-slate-700 dark:text-slate-200 me-1">{allTime.entries}</b></div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

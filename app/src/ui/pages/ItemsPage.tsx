@@ -281,12 +281,12 @@ export function ItemsPage() {
                   </button>
                   <button
                     onClick={() => openEditCategory(cat)}
-                    className={`px-2 py-1.5 rounded-l-full border-2 border-r-0 text-slate-300 hover:text-brand-600 transition-colors duration-200 ${
+                    className={`px-2.5 py-1.5 rounded-l-full border-2 border-r-0 text-brand-500 hover:text-white hover:bg-brand-500 transition-colors duration-200 ${
                       catFilter === cat.id ? 'border-brand-500/50 bg-brand-500/10' : 'border-slate-200 dark:border-slate-700'
                     }`}
                     title="تعديل القسم"
                   >
-                    <Pencil size={11} />
+                    <Pencil size={14} />
                   </button>
                 </span>
               )

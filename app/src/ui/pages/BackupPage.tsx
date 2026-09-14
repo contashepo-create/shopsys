@@ -77,7 +77,11 @@ export function BackupPage() {
     }
   }
 
-  const counts = useDataStore((s) => ({ items: s.items.length, sales: s.sales.length, journal: s.journal.length }))
+  // ملاحظة: selectors منفصلة — إرجاع كائن جديد كل تصيير يسبب حلقة لانهائية في zustand v5 (صفحة بيضاء)
+  const itemsCount = useDataStore((s) => s.items.length)
+  const salesCount = useDataStore((s) => s.sales.length)
+  const journalCount = useDataStore((s) => s.journal.length)
+  const counts = { items: itemsCount, sales: salesCount, journal: journalCount }
   const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5'
 
   return (
