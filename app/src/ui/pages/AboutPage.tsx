@@ -29,7 +29,7 @@ export function AboutPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-4">
       <div className={`${card} text-center space-y-3`}>
-        <div className="text-5xl">🧭</div>
+        <img src="/app-icon.png" alt="حسبان" className="w-20 h-20 rounded-2xl mx-auto shadow-lg" />
         <h1 className="text-2xl font-black">{about.title}</h1>
         <p className="text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{about.body}</p>
         <div className="flex items-center justify-center gap-4 flex-wrap text-sm font-bold">
@@ -58,6 +58,12 @@ export function AboutPage() {
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">النشاط</div><div className="font-black">{setup.activityId ?? '—'}</div></div>
           <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">آخر مزامنة سحابية</div><div className="font-bold">{cloudSyncedAt ? cloudSyncedAt.slice(0, 16).replace('T', ' ') : 'لم تتم بعد'}</div></div>
         </div>
+      </div>
+
+      {/* شعار المطوّر — علامة حصرية للمالك */}
+      <div className={`${card} text-center space-y-2 !bg-black !border-slate-800`}>
+        <img src="/dev-logo.png" alt="شعار المطوّر" className="max-h-40 mx-auto object-contain" />
+        <div className="text-[12px] text-slate-400 font-bold">تطوير وملكية حصرية — جميع الحقوق محفوظة</div>
       </div>
     </div>
   )

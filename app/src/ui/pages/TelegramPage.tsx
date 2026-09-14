@@ -80,7 +80,7 @@ export function TelegramPage() {
   }
 
   const testConnection = () => run('وصلت رسالة الاختبار', async () => {
-    await callBot('sendMessage', { chat_id: telegram.chatId, text: `✅ ${setup.shopName || 'كونتاشو'} متصل بالبوت بنجاح` })
+    await callBot('sendMessage', { chat_id: telegram.chatId, text: `✅ ${setup.shopName || 'حسبان'} متصل بالبوت بنجاح` })
   })
 
   const sendDaily = () => run('أُرسل تقرير اليوم', async () => {
@@ -91,7 +91,7 @@ export function TelegramPage() {
     await callBot('sendMessage', {
       chat_id: telegram.chatId,
       text: buildDailyReportText({
-        shopName: setup.shopName || 'كونتاشو',
+        shopName: setup.shopName || 'حسبان',
         dateLabel: today,
         invoiceCount: s.invoiceCount,
         netSalesMinor: s.totalMinor,
@@ -109,7 +109,7 @@ export function TelegramPage() {
   const sendLowStock = () => run('أُرسل تنبيه النواقص', async () => {
     const alerts = stockAlerts(items)
     if (alerts.length === 0) throw new Error('لا نواقص حالياً — كل الأصناف فوق حد الطلب 🎉')
-    await callBot('sendMessage', { chat_id: telegram.chatId, text: buildLowStockText(setup.shopName || 'كونتاشو', alerts) })
+    await callBot('sendMessage', { chat_id: telegram.chatId, text: buildLowStockText(setup.shopName || 'حسبان', alerts) })
   })
 
   const sendBackup = () => run('أُرسلت النسخة الاحتياطية', async () => {
@@ -126,7 +126,7 @@ export function TelegramPage() {
     })
     const fd = new FormData()
     fd.set('chat_id', telegram.chatId)
-    fd.set('caption', buildBackupCaption(setup.shopName || 'كونتاشو', backup.createdAt))
+    fd.set('caption', buildBackupCaption(setup.shopName || 'حسبان', backup.createdAt))
     fd.set('document', new Blob([JSON.stringify(backup, null, 1)], { type: 'application/json' }), backupFileName(setup.shopName, backup.createdAt))
     await callBot('sendDocument', fd)
   })

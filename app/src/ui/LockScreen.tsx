@@ -102,6 +102,7 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
     <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-950 p-4" dir="rtl">
       <div className="w-full max-w-2xl space-y-4">
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 text-center space-y-3 shadow-xl">
+          <img src="/dev-logo.png" alt="شعار المطوّر" className="max-h-24 mx-auto object-contain rounded-xl bg-black px-4 py-2" />
           <div className="text-6xl">{info.icon}</div>
           <h1 className="text-2xl font-black text-slate-800 dark:text-slate-100">{info.title}</h1>
           <p className="text-slate-500 dark:text-slate-400 max-w-lg mx-auto">{info.desc}</p>

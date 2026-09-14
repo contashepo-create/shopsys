@@ -56,7 +56,7 @@ export function FirstRunWizard() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/15 backdrop-blur text-white mb-3 shadow-2xl">
             <Store size={32} />
           </div>
-          <h1 className="text-3xl font-black text-white">أهلاً بك في «كونتاشو»</h1>
+          <h1 className="text-3xl font-black text-white">أهلاً بك في «حسبان»</h1>
           <p className="text-white/70 mt-1">نظام إدارة المحلات والمحاسبة — يكبر معك</p>
         </div>
 

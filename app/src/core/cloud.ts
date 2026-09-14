@@ -23,7 +23,7 @@ export interface AboutContent {
 }
 
 export const FALLBACK_ABOUT: AboutContent = {
-  title: 'نظام المحاسبة والكاشير',
+  title: 'حسبان — نظام المحاسبة والكاشير',
   body: 'نظام عربي متكامل للمبيعات والمخازن والحسابات العامة — يدعم أنشطة متعددة ويعمل بلا إنترنت.',
   supportPhone: '',
   supportTelegram: '',
