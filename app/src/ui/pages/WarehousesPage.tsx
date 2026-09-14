@@ -58,7 +58,10 @@ export function WarehousesPage() {
             </div>
             {!w.isMain && (
               <button
-                onClick={() => { removeWarehouse(w.id); toast.show('تم حذف المخزن') }}
+                onClick={() => {
+                  try { removeWarehouse(w.id); toast.show('تم حذف المخزن') }
+                  catch (err) { toast.show((err as Error).message, 'error') }
+                }}
                 className="p-2 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-all duration-200 opacity-0 group-hover:opacity-100"
               >
                 <Trash2 size={16} />

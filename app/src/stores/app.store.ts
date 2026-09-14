@@ -9,6 +9,8 @@ import type { ActivityTemplate, ItemFeature, BusinessModule } from '../core/acti
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { generateDeviceId, type LicensePayload } from '../core/license.ts'
+import { DEFAULT_APPEARANCE, sanitizeAppearance, type AppearanceSettings } from '../core/appearance.ts'
+import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
 
 export type ThemeMode = 'light' | 'dark'
 
@@ -44,6 +46,10 @@ interface AppState {
   autoPrintAfterSale: boolean
   updateReceipt: (patch: Partial<ReceiptSettings>) => void
   setAutoPrint: (v: boolean) => void
+  appearance: AppearanceSettings
+  updateAppearance: (patch: Partial<AppearanceSettings>) => void
+  telegram: TelegramSettings
+  updateTelegram: (patch: Partial<TelegramSettings>) => void
   // ─── الترخيص (القرار 4) ───
   deviceId: string // معرف الجهاز — يتولد مرة واحدة
   trialStartedAt: string // مرساة بداية التجربة
@@ -111,6 +117,10 @@ export const useAppStore = create<AppState>()(
       autoPrintAfterSale: false,
       updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
       setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
+      appearance: DEFAULT_APPEARANCE,
+      updateAppearance: (patch) => set((s) => ({ appearance: sanitizeAppearance({ ...s.appearance, ...patch }) })),
+      telegram: DEFAULT_TELEGRAM_SETTINGS,
+      updateTelegram: (patch) => set((s) => ({ telegram: { ...s.telegram, ...patch } })),
       deviceId: BOOT.deviceId,
       trialStartedAt: BOOT.now,
       lastSeenAt: BOOT.now,
@@ -146,6 +156,10 @@ export const useAppStore = create<AppState>()(
           // أي مفتاح جديد أُضيف لاحقاً يأخذ قيمته الافتراضية دون المساس بما اختاره المستخدم
           state.receipt = { ...DEFAULT_RECEIPT_SETTINGS, ...state.receipt }
         }
+        // ترحيل: حسابات قبل ميزة المظهر تحصل على الافتراضيات (مع تنقية القيم)
+        if (state) state.appearance = sanitizeAppearance(state.appearance)
+        // ترحيل: حسابات قبل ميزة التليجرام تحصل على الافتراضيات
+        if (state) state.telegram = { ...DEFAULT_TELEGRAM_SETTINGS, ...state.telegram }
         // ترحيل: حسابات قبل ميزة الترخيص تحصل على هوية جهاز ومراسي زمنية
         if (state && !state.deviceId) {
           state.deviceId = BOOT.deviceId

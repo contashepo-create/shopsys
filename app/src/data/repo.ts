@@ -23,6 +23,7 @@ import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from 
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals } from '../core/logistics.ts'
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals } from '../core/maintenance.ts'
+import { validateTransfer, computeWarehouseStock, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -152,6 +153,18 @@ export interface RentalContract {
   openEntryId: number
   closeEntryId: number | null // null = لم يُقفل أو لا تأمين
   deductMinor: number // المخصوم من التأمين عند الإقفال
+  notes: string
+}
+
+/** تحويل مخزني مرحّل — حركة داخلية بلا قيد (لا تغيّر قيمة 1103) */
+export interface StockTransfer {
+  id: number
+  transferNumber: string // TRF-0001
+  date: string // ISO
+  fromWarehouseId: number
+  toWarehouseId: number
+  lines: { itemId: number; nameAr: string; qty: number }[]
+  totalQty: number
   notes: string
 }
 
@@ -302,6 +315,7 @@ interface DataState {
   equipment: Equipment[]
   rentalContracts: RentalContract[]
   tickets: MaintenanceTicket[]
+  transfers: StockTransfer[]
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
@@ -478,6 +492,8 @@ interface DataState {
   deliverTicket: (ticketId: number, input: Omit<TicketDeliveryInput, 'parts'> & {
     parts: { itemId: number; qty: number; unitPriceMinor: number }[]
   }) => MaintenanceTicket
+  /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
+  postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string }) => StockTransfer
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
@@ -499,6 +515,7 @@ export const useDataStore = create<DataState>()(
       equipment: [],
       rentalContracts: [],
       tickets: [],
+      transfers: [],
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
@@ -957,8 +974,11 @@ export const useDataStore = create<DataState>()(
 
       addWarehouse: (nameAr) =>
         set((s) => ({ warehouses: [...s.warehouses, { id: nextId(s.warehouses), nameAr, isMain: false }] })),
-      removeWarehouse: (id) =>
-        set((s) => ({ warehouses: s.warehouses.filter((w) => w.id !== id || w.isMain) })),
+      removeWarehouse: (id) => {
+        const used = get().transfers.some((t) => t.fromWarehouseId === id || t.toWarehouseId === id)
+        if (used) throw new Error('لا يمكن حذف مخزن له تحويلات مسجلة — احتفظ به للسجل')
+        set((s) => ({ warehouses: s.warehouses.filter((w) => w.id !== id || w.isMain) }))
+      },
 
       addCustomer: (c) => set((s) => ({ customers: [...s.customers, { ...c, id: nextId(s.customers) }] })),
       updateCustomer: (id, patch) =>
@@ -1394,6 +1414,42 @@ export const useDataStore = create<DataState>()(
         })
         return updated
       },
+      postTransfer: (args) => {
+        const state = get()
+        if (!state.warehouses.some((w) => w.id === args.fromWarehouseId)) throw new Error('المخزن المصدر غير موجود')
+        if (!state.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود')
+
+        // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
+        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers)
+        const sourceMap = stock.get(args.fromWarehouseId)
+        const errors = validateTransfer(
+          { fromWarehouseId: args.fromWarehouseId, toWarehouseId: args.toWarehouseId, lines: args.lines },
+          (itemId) => sourceMap?.get(itemId) ?? 0,
+        )
+        for (const l of args.lines) {
+          if (!state.items.some((it) => it.id === l.itemId)) errors.push('صنف غير موجود بالمخزون')
+        }
+        if (errors.length) throw new Error(errors.join(' — '))
+
+        // 2) مستند مرقّم — بلا قيد (حركة داخلية لا تغيّر قيمة 1103)
+        const id = nextId(state.transfers)
+        const transfer: StockTransfer = {
+          id,
+          transferNumber: `TRF-${String(id).padStart(4, '0')}`,
+          date: new Date().toISOString(),
+          fromWarehouseId: args.fromWarehouseId,
+          toWarehouseId: args.toWarehouseId,
+          lines: args.lines.map((l) => ({
+            itemId: l.itemId,
+            nameAr: state.items.find((it) => it.id === l.itemId)?.nameAr ?? '',
+            qty: l.qty,
+          })),
+          totalQty: transferTotalQty(args.lines),
+          notes: args.notes.trim(),
+        }
+        set({ transfers: [...state.transfers, transfer] })
+        return transfer
+      },
     }),
     {
       name: 'shopsys-data',
@@ -1415,6 +1471,7 @@ export const useDataStore = create<DataState>()(
           equipment: s.equipment ?? [],
           rentalContracts: s.rentalContracts ?? [],
           tickets: s.tickets ?? [],
+          transfers: s.transfers ?? [],
           purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
           purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],

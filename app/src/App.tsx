@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { HashRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { useAppStore } from './stores/app.store.ts'
 import { useDataStore } from './data/repo.ts'
+import { buildAccentCssVars } from './core/appearance.ts'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
 import { Dashboard } from './ui/pages/Dashboard.tsx'
@@ -33,7 +34,9 @@ import { FleetPage } from './ui/pages/FleetPage.tsx'
 import { EquipmentPage } from './ui/pages/EquipmentPage.tsx'
 import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
 import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
-import { ComingSoon } from './ui/pages/ComingSoon.tsx'
+import { TransfersPage } from './ui/pages/TransfersPage.tsx'
+import { AppearancePage } from './ui/pages/AppearancePage.tsx'
+import { TelegramPage } from './ui/pages/TelegramPage.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
 
@@ -63,7 +66,7 @@ function Shell() {
         <Route path="/sales/invoices" element={<SalesInvoicesPage />} />
         <Route path="/sales/returns" element={<SaleReturnsPage />} />
         <Route path="/sales/shifts" element={<ShiftsPage />} />
-        <Route path="/inventory/transfers" element={<ComingSoon title="التحويلات المخزنية" phase="المرحلة 3" />} />
+        <Route path="/inventory/transfers" element={<TransfersPage />} />
         <Route path="/inventory/counting" element={<StocktakePage />} />
         <Route path="/purchases/invoices" element={<PurchasesPage />} />
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
@@ -82,8 +85,8 @@ function Shell() {
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/settings/printing" element={<PrintSettingsPage />} />
         <Route path="/settings/backup" element={<BackupPage />} />
-        <Route path="/settings/telegram" element={<ComingSoon title="بوت التليجرام" phase="المرحلة 5" />} />
-        <Route path="/settings/appearance" element={<ComingSoon title="المظهر" phase="المرحلة 1" />} />
+        <Route path="/settings/telegram" element={<TelegramPage />} />
+        <Route path="/settings/appearance" element={<AppearancePage />} />
         <Route path="/settings/license" element={<LicensePage />} />
         <Route path="*" element={<Dashboard />} />
       </Routes>
@@ -92,12 +95,20 @@ function Shell() {
 }
 
 export default function App() {
-  const { theme, setup, touchLastSeen } = useAppStore()
+  const { theme, setup, touchLastSeen, appearance } = useAppStore()
   const seed = useDataStore((s) => s.seed)
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
   }, [theme])
+
+  // تطبيق المظهر: اللون الرئيسي كمتغيرات CSS + التكبير + تقليل الحركة
+  useEffect(() => {
+    const root = document.documentElement
+    for (const [k, v] of Object.entries(buildAccentCssVars(appearance.accentId))) root.style.setProperty(k, v)
+    ;(root.style as CSSStyleDeclaration & { zoom?: string }).zoom = appearance.zoom === 1 ? '' : String(appearance.zoom)
+    root.classList.toggle('reduce-motion', appearance.reduceMotion)
+  }, [appearance])
 
   // مرساة «آخر ظهور» ضد إرجاع ساعة الجهاز (نظام الترخيص) — عند الإقلاع وكل ساعة
   useEffect(() => {

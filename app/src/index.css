@@ -64,6 +64,13 @@ body {
 .anim-in { animation: fadeIn 0.4s ease both; }
 .anim-pop { animation: popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
 
+/* تقليل الحركة (إعداد المظهر) — يوقف كل الحركات والانتقالات */
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
 /* تدرج زجاجي للبطاقات */
 .glass {
   backdrop-filter: blur(12px);
