@@ -103,6 +103,8 @@ export interface ReceiptModel {
   taxMinor: Minor
   totalMinor: Minor // المستحق النهائي
   footerText: string
+  /** رمز QR زاتكا (Data URL) — يُطبع أسفل الفاتورة عند تفعيل الميزة (القرار 30) */
+  qrDataUrl?: string
 }
 
 /** بناء نموذج الإيصال من الفاتورة — كل الأرقام من totals المحفوظة (لا إعادة حساب) */

@@ -18,6 +18,8 @@ import { currentOpenShift } from '../../core/shifts.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
+import { maybeZatcaQr } from '../print/zatcaQr.ts'
+import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
@@ -25,7 +27,7 @@ interface HeldCart { id: number; label: string; lines: CartLine[]; discount: num
 export function PosPage() {
   const { items, customers, shifts, serials, postSale } = useDataStore()
   const openShift = currentOpenShift(shifts)
-  const { setup, receipt, autoPrintAfterSale } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -186,8 +188,19 @@ export function PosPage() {
     } catch { return null }
   }, [cart, invoiceDiscount, setup.vatPercent, setup.taxInclusive])
 
-  /** طباعة إيصال فاتورة (المرحلة 5) */
-  const printSale = (sale: { invoiceNumber: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null }) => {
+  /** طباعة إيصال فاتورة (المرحلة 5) — مع رمز QR زاتكا عند تفعيل الميزة (القرار 30) */
+  const printSale = async (sale: { invoiceNumber: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null }) => {
+    const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
+    const qrDataUrl = await maybeZatcaQr({
+      featureActive: hasFeature(licState, 'einvoice_sa'),
+      printEnabled: einvoice.printZatcaQr,
+      sellerName: setup.shopName,
+      vatNumber: einvoice.taxNumber,
+      dateIso: sale.date,
+      totalMinor: sale.totals.totalMinor,
+      taxMinor: sale.totals.taxMinor,
+      decimals: cur.decimals,
+    })
     const model = buildReceiptModel({
       invoiceNumber: sale.invoiceNumber,
       dateIso: sale.date,
@@ -199,6 +212,7 @@ export function PosPage() {
       taxInclusive: setup.taxInclusive,
       settings: receipt,
     })
+    if (qrDataUrl) model.qrDataUrl = qrDataUrl
     // القالب الافتراضي من الإعدادات: حراري أو فاتورة A4 احترافية
     printHtml(
       receipt.defaultTemplate === 'a4'

@@ -165,6 +165,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'backup', nameAr: 'النسخ الاحتياطي', icon: DatabaseBackup, path: '/settings/backup' },
       { id: 'telegram', nameAr: 'بوت التليجرام', icon: Bot, path: '/settings/telegram' },
       { id: 'appearance', nameAr: 'المظهر', icon: Palette, path: '/settings/appearance' },
+      { id: 'einvoice', nameAr: 'الفاتورة الإلكترونية', icon: FileSpreadsheet, path: '/settings/einvoice' },
       { id: 'license', nameAr: 'الترخيص', icon: KeyRound, path: '/settings/license' },
       { id: 'about', nameAr: 'حول التطبيق', icon: BookOpenText, path: '/settings/about' },
     ],

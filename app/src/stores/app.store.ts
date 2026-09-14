@@ -11,6 +11,7 @@ import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.
 import { generateDeviceId, type LicensePayload } from '../core/license.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
+import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
 import type { AboutContent } from '../core/cloud.ts'
 
 export type ThemeMode = 'light' | 'dark'
@@ -53,6 +54,9 @@ interface AppState {
   updateAppearance: (patch: Partial<AppearanceSettings>) => void
   telegram: TelegramSettings
   updateTelegram: (patch: Partial<TelegramSettings>) => void
+  // ─── الفاتورة الإلكترونية (القرار 30 — ميزة بمفتاح ترخيص فقط) ───
+  einvoice: EinvoiceSettings
+  updateEinvoice: (patch: Partial<EinvoiceSettings>) => void
   // ─── الترخيص (القرار 4) ───
   deviceId: string // معرف الجهاز — يتولد مرة واحدة
   trialStartedAt: string // مرساة بداية التجربة
@@ -156,6 +160,8 @@ export const useAppStore = create<AppState>()(
       updateAppearance: (patch) => set((s) => ({ appearance: sanitizeAppearance({ ...s.appearance, ...patch }) })),
       telegram: DEFAULT_TELEGRAM_SETTINGS,
       updateTelegram: (patch) => set((s) => ({ telegram: { ...s.telegram, ...patch } })),
+      einvoice: DEFAULT_EINVOICE_SETTINGS,
+      updateEinvoice: (patch) => set((s) => ({ einvoice: { ...s.einvoice, ...patch } })),
       deviceId: BOOT.deviceId,
       trialStartedAt: BOOT.firstTrialAt,
       lastSeenAt: BOOT.now,
@@ -217,6 +223,8 @@ export const useAppStore = create<AppState>()(
         if (state) state.appearance = sanitizeAppearance(state.appearance)
         // ترحيل: حسابات قبل ميزة التليجرام تحصل على الافتراضيات
         if (state) state.telegram = { ...DEFAULT_TELEGRAM_SETTINGS, ...state.telegram }
+        // ترحيل: حسابات قبل ميزة الفاتورة الإلكترونية تحصل على الافتراضيات
+        if (state) state.einvoice = { ...DEFAULT_EINVOICE_SETTINGS, ...state.einvoice }
         // ترحيل: حسابات قبل ميزة الترخيص تحصل على هوية جهاز ومراسي زمنية
         if (state && !state.deviceId) {
           state.deviceId = BOOT.deviceId

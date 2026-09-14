@@ -148,8 +148,11 @@ function signatures(s: ReceiptSettings): string {
 }
 
 function footer(m: ReceiptModel, s: ReceiptSettings): string {
-  if (!s.showFooter || !m.footerText.trim()) return ''
-  return `<div class="foot">${esc(m.footerText)}</div>`
+  const qr = m.qrDataUrl
+    ? `<div style="text-align:center;margin-top:4mm"><img src="${esc(m.qrDataUrl)}" alt="ZATCA QR" style="width:28mm;height:auto"/><div style="font-size:9px;color:#64748b">رمز الفاتورة الضريبية (زاتكا)</div></div>`
+    : ''
+  if (!s.showFooter || !m.footerText.trim()) return qr
+  return `${qr}<div class="foot">${esc(m.footerText)}</div>`
 }
 
 /* ─── الأنماط الأربعة ─── */

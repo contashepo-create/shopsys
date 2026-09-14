@@ -73,6 +73,7 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
   ${settings.showDiscount && model.discountMinor > 0 ? `<div class="tot"><span>إجمالي الخصم</span><span>-${fmt(model.discountMinor)}</span></div>` : ''}
   ${model.taxLabel ? `<div class="tot"><span>${esc(model.taxLabel)}</span><span>${fmt(model.taxMinor)}</span></div>` : ''}
   <div class="grand"><span>الإجمالي</span><span>${fmt(model.totalMinor)} ${esc(cur.symbol)}</span></div>
+  ${model.qrDataUrl ? `<div class="center" style="margin-top:2mm"><img src="${esc(model.qrDataUrl)}" alt="ZATCA QR" style="width:${paper === '80' ? '26mm' : '20mm'};height:auto"/></div>` : ''}
   ${settings.showFooter && model.footerText.trim() ? `<hr><div class="foot">${esc(model.footerText)}</div>` : ''}
 </body></html>`
 }

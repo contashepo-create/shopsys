@@ -28,6 +28,7 @@ import { TrialBalancePage } from './ui/pages/TrialBalancePage.tsx'
 import { VouchersPage } from './ui/pages/VouchersPage.tsx'
 import { TreasuryPage } from './ui/pages/TreasuryPage.tsx'
 import { ChequesPage } from './ui/pages/ChequesPage.tsx'
+import { EinvoicePage } from './ui/pages/EinvoicePage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
 import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
@@ -109,6 +110,7 @@ function Shell() {
         <Route path="/settings/backup" element={<BackupPage />} />
         <Route path="/settings/telegram" element={<TelegramPage />} />
         <Route path="/settings/appearance" element={<AppearancePage />} />
+        <Route path="/settings/einvoice" element={<EinvoicePage />} />
         <Route path="/settings/license" element={<LicensePage />} />
         <Route path="/settings/about" element={<AboutPage />} />
         <Route path="*" element={<Dashboard />} />

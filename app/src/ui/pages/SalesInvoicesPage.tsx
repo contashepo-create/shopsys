@@ -8,18 +8,31 @@ import { formatMinor } from '../../core/money.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
+import { maybeZatcaQr } from '../print/zatcaQr.ts'
+import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Modal, EmptyState, useToast } from '../components/ui.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function SalesInvoicesPage() {
   const { sales, customers, journal } = useDataStore()
-  const { setup, receipt } = useAppStore()
+  const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [viewing, setViewing] = useState<SaleInvoice | null>(null)
 
-  const printInvoice = (s: SaleInvoice, template: 'thermal' | 'a4') => {
+  const printInvoice = async (s: SaleInvoice, template: 'thermal' | 'a4') => {
+    const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
+    const qrDataUrl = await maybeZatcaQr({
+      featureActive: hasFeature(licState, 'einvoice_sa'),
+      printEnabled: einvoice.printZatcaQr,
+      sellerName: setup.shopName,
+      vatNumber: einvoice.taxNumber,
+      dateIso: s.date,
+      totalMinor: s.totals.totalMinor,
+      taxMinor: s.totals.taxMinor,
+      decimals: cur.decimals,
+    })
     const model = buildReceiptModel({
       invoiceNumber: s.invoiceNumber,
       dateIso: s.date,
@@ -31,6 +44,7 @@ export function SalesInvoicesPage() {
       taxInclusive: setup.taxInclusive,
       settings: receipt,
     })
+    if (qrDataUrl) model.qrDataUrl = qrDataUrl
     printHtml(template === 'a4' ? renderInvoiceA4Html(model, cur, receipt) : renderReceiptHtml(model, cur, receipt))
     toast.show(template === 'a4' ? `أُرسلت فاتورة A4 ${s.invoiceNumber} للطباعة 📄` : `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️`)
   }
