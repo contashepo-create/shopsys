@@ -11,7 +11,7 @@ import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupS
 import { decryptForDevice, encryptForDevice } from '../../data/secureStorage.ts'
 import { Btn, useToast } from '../components/ui.tsx'
 
-const DATA_VERSION = 6 // إصدار persist لمخزن shopsys-data
+const DATA_VERSION = 7 // إصدار persist لمخزن shopsys-data
 
 export function BackupPage() {
   const { setup } = useAppStore()

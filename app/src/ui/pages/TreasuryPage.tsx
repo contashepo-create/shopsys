@@ -1,49 +1,54 @@
 /**
- * الخزائن والبنوك (المرحلة 4) —
- * أرصدة حية من دفتر الأستاذ + تحويل بين الخزينة والبنك (إيداع/سحب)
- * + كشف حركة لكل خزينة.
+ * الخزائن والبنوك — متعددة بلا حدود (طلب المالك):
+ * أرصدة حية من دفتر الأستاذ + إضافة/تعديل/حذف خزائن وبنوك +
+ * تحويل بين أي خزينتين + كشف حركة لكل خزينة.
  */
 import { useMemo, useState } from 'react'
-import { Landmark, PiggyBank, ArrowLeftRight, BookOpenText } from 'lucide-react'
+import { Landmark, PiggyBank, ArrowLeftRight, BookOpenText, Plus, Pencil, Trash2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import type { TreasuryAccount } from '../../core/accounting.ts'
+import type { TreasuryDef } from '../../core/treasury.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
-import { ACCOUNT_NAMES } from './accountNames.ts'
+
+interface Move { date: string; description: string; inMinor: number; outMinor: number; balance: number; entryId: number }
 
 export function TreasuryPage() {
-  const { journal, postVoucher } = useDataStore()
+  const { journal, treasuries, postVoucher, addTreasury, renameTreasury, removeTreasury } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [transferOpen, setTransferOpen] = useState(false)
-  const [from, setFrom] = useState<TreasuryAccount>('1101')
+  const [from, setFrom] = useState('1101')
+  const [to, setTo] = useState('1102')
   const [amount, setAmount] = useState('')
   const [desc, setDesc] = useState('')
-  const [statement, setStatement] = useState<TreasuryAccount | null>(null)
+  const [statement, setStatement] = useState<string | null>(null)
+  // إضافة/تعديل خزينة
+  const [editOpen, setEditOpen] = useState(false)
+  const [editCode, setEditCode] = useState<string | null>(null)
+  const [tName, setTName] = useState('')
+  const [tKind, setTKind] = useState<'cash' | 'bank'>('cash')
 
   /** رصيد وحركة كل خزينة من دفتر الأستاذ مباشرة */
-  const treasuries = useMemo(() => {
-    const calc = (code: TreasuryAccount) => {
-      let bal = 0
-      const moves: { date: string; description: string; inMinor: number; outMinor: number; balance: number; entryId: number }[] = []
-      for (const e of journal) {
-        for (const l of e.lines) {
-          if (l.accountCode !== code) continue
-          bal += l.debit - l.credit
-          moves.push({ date: e.date, description: e.description, inMinor: l.debit, outMinor: l.credit, balance: bal, entryId: e.id })
-        }
+  const balances = useMemo(() => {
+    const map = new Map<string, { balance: number; moves: Move[] }>()
+    for (const t of treasuries) map.set(t.code, { balance: 0, moves: [] })
+    for (const e of journal) {
+      for (const l of e.lines) {
+        const acc = map.get(l.accountCode)
+        if (!acc) continue
+        acc.balance += l.debit - l.credit
+        acc.moves.push({ date: e.date, description: e.description, inMinor: l.debit, outMinor: l.credit, balance: acc.balance, entryId: e.id })
       }
-      return { balance: bal, moves }
     }
-    return { '1101': calc('1101'), '1102': calc('1102') }
-  }, [journal])
+    return map
+  }, [journal, treasuries])
 
-  const to: TreasuryAccount = from === '1101' ? '1102' : '1101'
+  const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? code
 
   const doTransfer = () => {
     try {
@@ -52,9 +57,9 @@ export function TreasuryPage() {
         treasury: from,
         counterAccountCode: to,
         amountMinor: toMinor(amount || '0', cur.decimals),
-        description: desc.trim() || (from === '1101' ? 'إيداع بنكي' : 'سحب من البنك'),
+        description: desc.trim() || `تحويل من ${nameOf(from)} إلى ${nameOf(to)}`,
       })
-      toast.show(`تم التحويل ${v.voucherNumber} — ${fmt(v.amountMinor)} من ${ACCOUNT_NAMES[from]} إلى ${ACCOUNT_NAMES[to]} ✓`)
+      toast.show(`تم التحويل ${v.voucherNumber} — ${fmt(v.amountMinor)} من ${nameOf(from)} إلى ${nameOf(to)} ✓`)
       setTransferOpen(false)
       setAmount('')
       setDesc('')
@@ -63,59 +68,113 @@ export function TreasuryPage() {
     }
   }
 
-  const cards: { code: TreasuryAccount; icon: typeof Landmark; color: string; glow: string }[] = [
-    { code: '1101', icon: PiggyBank, color: 'from-emerald-500 to-teal-500', glow: 'shadow-emerald-500/30' },
-    { code: '1102', icon: Landmark, color: 'from-sky-500 to-cyan-500', glow: 'shadow-sky-500/30' },
-  ]
+  const openAdd = () => { setEditCode(null); setTName(''); setTKind('cash'); setEditOpen(true) }
+  const openEdit = (t: TreasuryDef) => { setEditCode(t.code); setTName(t.nameAr); setTKind(t.kind); setEditOpen(true) }
+  const saveTreasury = () => {
+    try {
+      if (editCode) { renameTreasury(editCode, tName); toast.show('تم تعديل الاسم ✓') }
+      else { const t = addTreasury(tName, tKind); toast.show(`أُضيفت «${t.nameAr}» وفُتح لها حساب ${t.code} ✓`) }
+      setEditOpen(false)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+  const remove = (t: TreasuryDef) => {
+    try { removeTreasury(t.code); toast.show(`حُذفت «${t.nameAr}»`) }
+    catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const stmt = statement ? balances.get(statement) : null
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between anim-up flex-wrap gap-2">
         <div className="text-sm text-slate-500">الأرصدة حية من دفتر الأستاذ — اضغط خزينة لكشف حركتها</div>
-        <Btn onClick={() => { setAmount(''); setDesc(''); setTransferOpen(true) }}>
-          <ArrowLeftRight size={15} /> تحويل خزينة ↔ بنك
-        </Btn>
+        <div className="flex gap-2">
+          <Btn variant="ghost" onClick={openAdd}><Plus size={15} /> خزينة / بنك جديد</Btn>
+          <Btn onClick={() => { setAmount(''); setDesc(''); setTransferOpen(true) }} disabled={treasuries.length < 2}>
+            <ArrowLeftRight size={15} /> تحويل بين الخزائن
+          </Btn>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {cards.map(({ code, icon: Icon, color, glow }, i) => (
-          <button
-            key={code}
-            onClick={() => setStatement(code)}
-            style={{ animationDelay: `${i * 60}ms` }}
-            className="anim-up text-right rounded-3xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 hover:scale-[1.02] hover:shadow-xl transition-all duration-200"
-          >
-            <div className="flex items-center gap-3">
-              <span className={`w-12 h-12 rounded-2xl bg-gradient-to-l ${color} flex items-center justify-center text-white shadow-lg ${glow}`}>
-                <Icon size={22} />
-              </span>
-              <div>
-                <div className="text-[12px] font-bold text-slate-400">{ACCOUNT_NAMES[code]}</div>
-                <div className={`font-black text-2xl ${treasuries[code].balance < 0 ? 'text-rose-500' : 'text-slate-800 dark:text-white'}`}>
-                  {fmt(treasuries[code].balance)} <span className="text-xs">{cur.symbol}</span>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        {treasuries.map((t, i) => {
+          const acc = balances.get(t.code) ?? { balance: 0, moves: [] }
+          const Icon = t.kind === 'cash' ? PiggyBank : Landmark
+          const color = t.kind === 'cash' ? 'from-emerald-500 to-teal-500' : 'from-sky-500 to-cyan-500'
+          const glow = t.kind === 'cash' ? 'shadow-emerald-500/30' : 'shadow-sky-500/30'
+          return (
+            <div
+              key={t.code}
+              style={{ animationDelay: `${i * 60}ms` }}
+              className="anim-up rounded-3xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 hover:shadow-xl transition-all duration-200"
+            >
+              <button onClick={() => setStatement(t.code)} className="w-full text-right">
+                <div className="flex items-center gap-3">
+                  <span className={`w-12 h-12 rounded-2xl bg-gradient-to-l ${color} flex items-center justify-center text-white shadow-lg ${glow}`}>
+                    <Icon size={22} />
+                  </span>
+                  <div>
+                    <div className="text-[12px] font-bold text-slate-400">{t.nameAr} <span className="text-[9px] opacity-60">#{t.code}</span></div>
+                    <div className={`font-black text-2xl ${acc.balance < 0 ? 'text-rose-500' : 'text-slate-800 dark:text-white'}`}>
+                      {fmt(acc.balance)} <span className="text-xs">{cur.symbol}</span>
+                    </div>
+                  </div>
                 </div>
+              </button>
+              <div className="flex items-center justify-between mt-3">
+                <span className="text-[11px] text-slate-400">{acc.moves.length} حركة — اضغط لكشف الحساب</span>
+                <span className="flex gap-1">
+                  <button onClick={() => openEdit(t)} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all"><Pencil size={13} /></button>
+                  {t.code !== '1101' && t.code !== '1102' && (
+                    <button onClick={() => remove(t)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all"><Trash2 size={13} /></button>
+                  )}
+                </span>
               </div>
             </div>
-            <div className="text-[11px] text-slate-400 mt-3">{treasuries[code].moves.length} حركة — اضغط لكشف الحساب</div>
-          </button>
-        ))}
+          )
+        })}
       </div>
 
-      {/* تحويل */}
-      <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="تحويل بين الخزينة والبنك">
+      {/* إضافة / تعديل خزينة */}
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={editCode ? 'تعديل خزينة / بنك' : 'خزينة / بنك جديد'}>
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => setFrom('1101')}
-              className={`p-3 rounded-2xl border-2 font-bold text-sm transition-all ${from === '1101' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
-            >🏦 إيداع: خزينة ← بنك</button>
-            <button
-              onClick={() => setFrom('1102')}
-              className={`p-3 rounded-2xl border-2 font-bold text-sm transition-all ${from === '1102' ? 'border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
-            >💵 سحب: بنك ← خزينة</button>
+          <Field label="الاسم" hint="مثال: خزينة الفرع الثاني، بنك مصر، محفظة فودافون كاش…">
+            <input value={tName} onChange={(e) => setTName(e.target.value)} className={inputCls} autoFocus />
+          </Field>
+          {!editCode && (
+            <Field label="النوع">
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => setTKind('cash')} className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${tKind === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>💰 خزينة نقدية</button>
+                <button onClick={() => setTKind('bank')} className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${tKind === 'bank' ? 'border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>🏦 حساب بنكي / محفظة</button>
+              </div>
+            </Field>
+          )}
+          {!editCode && (
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              📒 سيُفتح لها حساب دفتري تلقائياً تحت «الأصول المتداولة» وتظهر فوراً في كل شاشات الدفع والتحصيل.
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setEditOpen(false)}>إلغاء</Btn>
+            <Btn onClick={saveTreasury} disabled={tName.trim().length < 2}>💾 حفظ</Btn>
           </div>
-          <div className="text-center text-[12px] text-slate-400 font-bold">
-            من <b className="text-slate-600 dark:text-slate-200">{ACCOUNT_NAMES[from]}</b> إلى <b className="text-slate-600 dark:text-slate-200">{ACCOUNT_NAMES[to]}</b>
+        </div>
+      </Modal>
+
+      {/* تحويل بين أي خزينتين */}
+      <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="تحويل بين الخزائن والبنوك">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="من">
+              <select value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls}>
+                {treasuries.map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
+              </select>
+            </Field>
+            <Field label="إلى">
+              <select value={to} onChange={(e) => setTo(e.target.value)} className={inputCls}>
+                {treasuries.filter((t) => t.code !== from).map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
+              </select>
+            </Field>
           </div>
           <Field label={`المبلغ (${cur.symbol})`}>
             <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputCls} dir="ltr" autoFocus />
@@ -125,16 +184,16 @@ export function TreasuryPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setTransferOpen(false)}>إلغاء</Btn>
-            <Btn onClick={doTransfer} disabled={!amount.trim()}>↔️ تنفيذ التحويل</Btn>
+            <Btn onClick={doTransfer} disabled={!amount.trim() || from === to}>↔️ تنفيذ التحويل</Btn>
           </div>
         </div>
       </Modal>
 
       {/* كشف حساب خزينة */}
-      <Modal open={!!statement} onClose={() => setStatement(null)} title={statement ? `كشف حركة — ${ACCOUNT_NAMES[statement]}` : ''} wide>
-        {statement && (
+      <Modal open={!!statement} onClose={() => setStatement(null)} title={statement ? `كشف حركة — ${nameOf(statement)}` : ''} wide>
+        {stmt && (
           <div className="space-y-3">
-            {treasuries[statement].moves.length === 0 ? (
+            {stmt.moves.length === 0 ? (
               <div className="text-center text-sm text-slate-400 py-8">لا حركات بعد</div>
             ) : (
               <table className="w-full text-[13px]">
@@ -148,7 +207,7 @@ export function TreasuryPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {[...treasuries[statement].moves].reverse().map((m, i) => (
+                  {[...stmt.moves].reverse().map((m, i) => (
                     <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                       <td className="px-3 py-2 text-slate-400 text-[11px]">{m.date}</td>
                       <td className="px-3 py-2 font-bold text-slate-700 dark:text-slate-200">

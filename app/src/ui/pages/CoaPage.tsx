@@ -9,6 +9,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { STANDARD_COA, accountBalance, type Account } from '../../core/ledger.ts'
+import { fullCoa } from '../../core/treasury.ts'
 
 const ROOT_LABELS: Record<string, { nameAr: string; tone: string }> = {
   assets: { nameAr: 'الأصول', tone: 'text-sky-600 bg-sky-500/10' },
@@ -19,7 +20,9 @@ const ROOT_LABELS: Record<string, { nameAr: string; tone: string }> = {
 }
 
 export function CoaPage() {
-  const { journal } = useDataStore()
+  const { journal, treasuries } = useDataStore()
+  // الشجرة الكاملة تشمل الخزائن والبنوك المخصصة
+  const COA = useMemo(() => fullCoa(STANDARD_COA, treasuries), [treasuries])
   const { setup } = useAppStore()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -40,7 +43,7 @@ export function CoaPage() {
       if (map.has(acc.code)) return map.get(acc.code)!
       let d = totals.get(acc.code)?.d ?? 0
       let c = totals.get(acc.code)?.c ?? 0
-      for (const child of STANDARD_COA.filter((a) => a.parentCode === acc.code)) {
+      for (const child of COA.filter((a) => a.parentCode === acc.code)) {
         compute(child)
         // نجمع الحركة الخام للأبناء لنحسب رصيد الأب بطبيعته
         d += childTotals.get(child.code)?.d ?? 0
@@ -52,9 +55,9 @@ export function CoaPage() {
       return bal
     }
     const childTotals = new Map<string, { d: number; c: number }>()
-    for (const acc of STANDARD_COA.filter((a) => a.parentCode === null)) compute(acc)
+    for (const acc of COA.filter((a) => a.parentCode === null)) compute(acc)
     return map
-  }, [journal])
+  }, [journal, COA])
 
   const toggle = (code: string) =>
     setCollapsed((s) => {
@@ -69,14 +72,14 @@ export function CoaPage() {
     let p = acc.parentCode
     while (p) {
       if (collapsed.has(p)) return true
-      p = STANDARD_COA.find((a) => a.code === p)?.parentCode ?? null
+      p = COA.find((a) => a.code === p)?.parentCode ?? null
     }
     return false
   }
 
   const depth = (acc: Account): number => {
     let d = 0, p = acc.parentCode
-    while (p) { d++; p = STANDARD_COA.find((a) => a.code === p)?.parentCode ?? null }
+    while (p) { d++; p = COA.find((a) => a.code === p)?.parentCode ?? null }
     return d
   }
 
@@ -88,9 +91,9 @@ export function CoaPage() {
       </div>
 
       <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
-        {STANDARD_COA.map((acc) => {
+        {COA.map((acc) => {
           if (isHidden(acc)) return null
-          const hasChildren = STANDARD_COA.some((a) => a.parentCode === acc.code)
+          const hasChildren = COA.some((a) => a.parentCode === acc.code)
           const bal = balances.get(acc.code) ?? 0
           const d = depth(acc)
           const root = ROOT_LABELS[acc.rootType]

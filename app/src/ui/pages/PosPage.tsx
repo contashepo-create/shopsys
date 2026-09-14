@@ -21,6 +21,8 @@ import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { toMinor } from '../../core/money.ts'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
 
@@ -39,6 +41,10 @@ export function PosPage() {
   const [payOpen, setPayOpen] = useState(false)
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [customerId, setCustomerId] = useState<number | null>(null)
+  // الدفع المجزأ (طلب المالك): المبلغ النقدي يتعبأ تلقائياً بالإجمالي ويقبل التعديل —
+  // أقل من الإجمالي = الباقي آجل على العميل؛ 0 = آجل بالكامل
+  const [paidCash, setPaidCash] = useState('')
+  const [treasury, setTreasury] = useState('1101')
   const [lastInvoice, setLastInvoice] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -188,6 +194,22 @@ export function PosPage() {
     } catch { return null }
   }, [cart, invoiceDiscount, setup.vatPercent, setup.taxInclusive])
 
+  // عند فتح شاشة الدفع: المبلغ النقدي يتعبأ تلقائياً بالإجمالي (قابل للتعديل — طلب المالك)
+  useEffect(() => {
+    if (payOpen && totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payOpen])
+
+  /** المدفوع نقداً بالوحدة الصغرى — مضبوط بين 0 والإجمالي */
+  const paidCashMinor = useMemo(() => {
+    if (!totals) return 0
+    try {
+      const m = toMinor(paidCash || '0', cur.decimals)
+      return Math.max(0, Math.min(m, totals.totalMinor))
+    } catch { return 0 }
+  }, [paidCash, totals, cur.decimals])
+  const creditRemainder = totals ? totals.totalMinor - paidCashMinor : 0
+
   /** طباعة إيصال فاتورة (المرحلة 5) — مع رمز QR زاتكا عند تفعيل الميزة (القرار 30) */
   const printSale = async (sale: { invoiceNumber: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null }) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
@@ -230,13 +252,17 @@ export function PosPage() {
   const finishSale = (expiryOverrideBy?: string) => {
     if (!cart.length) return
     try {
+      // مجزأ فعلاً (جزء نقدي + جزء آجل) أو آجل بالكامل ⇒ عميل إلزامي
+      const isSplitOrCredit = payment === 'credit' || creditRemainder > 0
       const sale = postSale({
         lines: cart,
-        customerId: payment === 'credit' ? customerId : null,
-        payment,
+        customerId: isSplitOrCredit ? customerId : null,
+        payment: payment === 'cash' && creditRemainder > 0 ? 'credit' : payment,
         invoiceDiscountPercent: invoiceDiscount,
         taxPercent: setup.vatPercent,
         taxInclusive: setup.taxInclusive,
+        treasury,
+        paidMinor: payment === 'credit' ? 0 : paidCashMinor,
         expiryOverrideBy: expiryOverrideBy ?? null,
       })
       setLastInvoice(sale.invoiceNumber)
@@ -246,6 +272,7 @@ export function PosPage() {
       setPayOpen(false)
       setPayment('cash')
       setCustomerId(null)
+      setPaidCash('')
       setExpiredBlock(null)
       setOverrideName('')
       toast.show(`تمت الفاتورة ${sale.invoiceNumber} — القيد المحاسبي تولّد تلقائياً ✓`)
@@ -538,31 +565,62 @@ export function PosPage() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => setPayment('cash')}
+                onClick={() => { setPayment('cash'); if (totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals)) }}
                 className={`p-4 rounded-2xl border-2 font-bold transition-all duration-200 hover:scale-[1.02] ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
               >
-                <Banknote size={22} className="mx-auto mb-1" /> كاش
+                <Banknote size={22} className="mx-auto mb-1" /> نقدي / مجزأ
               </button>
               <button
-                onClick={() => setPayment('credit')}
+                onClick={() => { setPayment('credit'); setPaidCash('0') }}
                 disabled={customers.length === 0}
                 className={`p-4 rounded-2xl border-2 font-bold transition-all duration-200 hover:scale-[1.02] disabled:opacity-40 ${payment === 'credit' ? 'border-violet-500/60 bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
               >
-                <UserRound size={22} className="mx-auto mb-1" /> آجل {customers.length === 0 && '(أضف عملاء)'}
+                <UserRound size={22} className="mx-auto mb-1" /> آجل بالكامل {customers.length === 0 && '(أضف عملاء)'}
               </button>
             </div>
-            {payment === 'credit' && (
+
+            {payment === 'cash' && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5">المدفوع نقداً الآن</div>
+                    <input
+                      value={paidCash}
+                      onChange={(e) => setPaidCash(e.target.value)}
+                      type="number" min={0} dir="ltr"
+                      className={`${inputCls} text-center font-black text-lg`}
+                    />
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5">الباقي آجل على العميل</div>
+                    <div className={`px-3.5 py-2.5 rounded-xl border-2 text-center font-black text-lg ${creditRemainder > 0 ? 'border-violet-500/40 bg-violet-500/5 text-violet-600 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-300'}`}>
+                      {fmt(creditRemainder)}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5">إلى أي خزينة/بنك؟</div>
+                  <TreasuryPicker value={treasury} onChange={setTreasury} />
+                </div>
+              </>
+            )}
+
+            {(payment === 'credit' || creditRemainder > 0) && (
               <select value={customerId ?? 0} onChange={(e) => setCustomerId(Number(e.target.value) || null)} className={inputCls}>
-                <option value={0}>اختر العميل…</option>
+                <option value={0}>اختر العميل (إلزامي للجزء الآجل)…</option>
                 {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
               </select>
             )}
+
             <div className="text-[11px] text-slate-400 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 leading-relaxed">
-              📒 سيتولد القيد تلقائياً: <b>{payment === 'cash' ? 'الخزينة' : 'العملاء'}</b> {fmt(totals.totalMinor)} / المبيعات {fmt(totals.taxBaseMinor)}
+              📒 سيتولد القيد تلقائياً:
+              {payment !== 'credit' && paidCashMinor > 0 && <> <b>الخزينة</b> {fmt(paidCashMinor)}</>}
+              {(payment === 'credit' || creditRemainder > 0) && <> {payment !== 'credit' && paidCashMinor > 0 ? '+' : ''} <b>العملاء</b> {fmt(payment === 'credit' ? totals.totalMinor : creditRemainder)}</>}
+              {' '}/ المبيعات {fmt(totals.taxBaseMinor)}
               {totals.taxMinor > 0 && <> / ض.ق.م {fmt(totals.taxMinor)}</>}
               {totals.cogsMinor > 0 && <> + تكلفة مبيعات {fmt(totals.cogsMinor)} / المخزون</>}
             </div>
-            <Btn onClick={() => finishSale()} disabled={payment === 'credit' && !customerId} className="w-full py-3.5">
+            <Btn onClick={() => finishSale()} disabled={(payment === 'credit' || creditRemainder > 0) && !customerId} className="w-full py-3.5">
               ✅ تأكيد وطباعة
             </Btn>
           </div>

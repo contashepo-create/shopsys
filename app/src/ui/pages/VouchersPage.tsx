@@ -5,13 +5,14 @@
  * كل سند يولّد قيده المتوازن فوراً ويظهر في اليومية.
  */
 import { useMemo, useState } from 'react'
-import { ArrowDownCircle, ArrowUpCircle, BookOpenText, Landmark } from 'lucide-react'
+import { ArrowDownCircle, ArrowUpCircle, BookOpenText } from 'lucide-react'
 import { useDataStore, type Voucher } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import type { TreasuryAccount } from '../../core/accounting.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 /** الحسابات المقابلة المتاحة لكل نوع سند — بلغة التاجر */
@@ -31,7 +32,8 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, postVoucher } = useDataStore()
+  const { vouchers, journal, treasuries, postVoucher } = useDataStore()
+  const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -120,8 +122,8 @@ export function VouchersPage() {
                       {v.kind === 'receipt' ? '⬇️ قبض' : '⬆️ صرف'}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-slate-500 text-[12px]">{ACCOUNT_NAMES[v.treasury]}</td>
-                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300 text-[12px]">{ACCOUNT_NAMES[v.counterAccountCode] ?? v.counterAccountCode}</td>
+                  <td className="px-4 py-3 text-slate-500 text-[12px]">{nameOf(v.treasury)}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300 text-[12px]">{nameOf(v.counterAccountCode)}</td>
                   <td className={`px-4 py-3 font-black ${v.kind === 'receipt' ? 'text-emerald-600' : 'text-rose-500'}`}>
                     {v.kind === 'receipt' ? '+' : '-'}{fmt(v.amountMinor)}
                   </td>
@@ -140,18 +142,8 @@ export function VouchersPage() {
       {/* سند جديد */}
       <Modal open={open} onClose={() => setOpen(false)} title={kind === 'receipt' ? '⬇️ سند قبض — نقدية داخلة' : '⬆️ سند صرف — نقدية خارجة'}>
         <div className="space-y-4">
-          <Field label="إلى/من الخزينة">
-            <div className="grid grid-cols-2 gap-2">
-              {(['1101', '1102'] as TreasuryAccount[]).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTreasury(t)}
-                  className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${treasury === t ? 'border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
-                >
-                  <Landmark size={15} className="mx-auto mb-1" /> {ACCOUNT_NAMES[t]}
-                </button>
-              ))}
-            </div>
+          <Field label="إلى/من الخزينة أو البنك" hint="كل الخزائن والبنوك المسجلة — أضف المزيد من شاشة الخزائن">
+            <TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} />
           </Field>
           <Field label={kind === 'receipt' ? 'مصدر النقدية (الحساب المقابل)' : 'وجهة النقدية (الحساب المقابل)'}>
             <select value={counter} onChange={(e) => setCounter(e.target.value)} className={inputCls}>
@@ -191,7 +183,7 @@ export function VouchersPage() {
                   {entry.lines.map((l, i) => (
                     <tr key={i} className="border-t border-rose-500/5">
                       <td className="px-4 py-1.5 text-slate-600 dark:text-slate-300">
-                        {l.debit > 0 ? '' : '\u00A0\u00A0\u00A0\u00A0إلى '} {ACCOUNT_NAMES[l.accountCode] ?? l.accountCode}
+                        {l.debit > 0 ? '' : '\u00A0\u00A0\u00A0\u00A0إلى '} {nameOf(l.accountCode)}
                       </td>
                       <td className="px-4 py-1.5 w-28 font-bold">{l.debit > 0 ? fmt(l.debit) : ''}</td>
                       <td className="px-4 py-1.5 w-28 font-bold text-slate-400">{l.credit > 0 ? fmt(l.credit) : ''}</td>

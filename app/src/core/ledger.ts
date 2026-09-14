@@ -103,6 +103,7 @@ export const STANDARD_COA: Account[] = [
   { code: '1104', nameAr: 'العملاء (المدينون)', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'customers' },
   { code: '1105', nameAr: 'محتجزات ضمان أعمال', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'retention_receivable' },
   { code: '1106', nameAr: 'أوراق قبض (شيكات واردة)', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'notes_receivable' },
+  { code: '1107', nameAr: 'سلف وعهد الموظفين', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'employee_advances' },
   { code: '12', nameAr: 'الأصول الثابتة', rootType: 'assets', parentCode: '1', isPostable: false },
   { code: '1201', nameAr: 'أصول ومعدات', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'fixed_assets' },
   { code: '1202', nameAr: 'مجمع الإهلاك', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'acc_depreciation' },

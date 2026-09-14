@@ -17,14 +17,15 @@ import { assertBalanced } from './ledger.ts'
  *   دائن: الموردون (2101) بالمتبقي
  * يرمي خطأ لو المدفوع أكبر من الإجمالي.
  */
-export function buildPurchaseEntry(grandTotalMinor: Minor, paidMinor: Minor): JournalLine[] {
+export function buildPurchaseEntry(grandTotalMinor: Minor, paidMinor: Minor, treasury = '1101'): JournalLine[] {
   if (paidMinor < 0) throw new RangeError('المدفوع لا يكون سالباً')
   if (paidMinor > grandTotalMinor) throw new RangeError('المدفوع أكبر من إجمالي الفاتورة')
   const remaining = grandTotalMinor - paidMinor
   const lines: JournalLine[] = [
     { accountCode: '1103', debit: grandTotalMinor, credit: 0, note: 'بضاعة واردة بتكلفتها الكاملة' },
   ]
-  if (paidMinor > 0) lines.push({ accountCode: '1101', debit: 0, credit: paidMinor, note: 'مدفوع نقداً' })
+  // المدفوع يخرج من الخزينة/البنك الذي اختاره المستخدم (طلب المالك)
+  if (paidMinor > 0) lines.push({ accountCode: treasury, debit: 0, credit: paidMinor, note: 'مدفوع من الخزينة/البنك' })
   if (remaining > 0) lines.push({ accountCode: '2101', debit: 0, credit: remaining, note: 'دين للمورد' })
   assertBalanced(lines)
   return lines

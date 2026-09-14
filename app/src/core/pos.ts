@@ -117,11 +117,22 @@ export function checkStock(
  *   دائن: المخزون (بالتكلفة)
  * يتحقق التوازن بنيوياً قبل الإرجاع — UnbalancedEntryError إن اختل.
  */
-export function buildSaleEntry(totals: CartTotals, payment: PaymentMethod): JournalLine[] {
-  const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? '1101' : '1104', debit: totals.totalMinor, credit: 0, note: payment === 'cash' ? 'نقدية' : 'ذمم عملاء' },
-    { accountCode: '4101', debit: 0, credit: totals.taxBaseMinor, note: 'مبيعات' },
-  ]
+export function buildSaleEntry(
+  totals: CartTotals,
+  payment: PaymentMethod,
+  treasury = '1101',
+  paidMinorArg?: number,
+): JournalLine[] {
+  // الدفع المجزأ (طلب المالك): جزء نقدي في الخزينة المختارة والباقي آجل على العميل —
+  // كاش كامل (المدفوع = الإجمالي) أو آجل كامل (المدفوع = 0) حالتان خاصتان من نفس القاعدة
+  const paid = paidMinorArg ?? (payment === 'cash' ? totals.totalMinor : 0)
+  if (!Number.isInteger(paid) || paid < 0) throw new RangeError('المدفوع نقداً لا يكون سالباً')
+  if (paid > totals.totalMinor) throw new RangeError('المدفوع نقداً أكبر من إجمالي الفاتورة')
+  const remainder = totals.totalMinor - paid
+  const lines: JournalLine[] = []
+  if (paid > 0) lines.push({ accountCode: treasury, debit: paid, credit: 0, note: 'نقدية' })
+  if (remainder > 0) lines.push({ accountCode: '1104', debit: remainder, credit: 0, note: 'ذمم عملاء' })
+  lines.push({ accountCode: '4101', debit: 0, credit: totals.taxBaseMinor, note: 'مبيعات' })
   if (totals.taxMinor > 0) {
     lines.push({ accountCode: '2102', debit: 0, credit: totals.taxMinor, note: 'ض.ق.م مستحقة' })
   }

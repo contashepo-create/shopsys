@@ -14,7 +14,7 @@ import { salesSummary, stockAlerts, type Period } from '../core/reports.ts'
 import { buildBackup, backupFileName } from '../core/backup.ts'
 import { decryptForDevice } from '../data/secureStorage.ts'
 
-const DATA_VERSION = 6 // إصدار persist لمخزن shopsys-data
+const DATA_VERSION = 7 // إصدار persist لمخزن shopsys-data
 
 /** استدعاء Bot API برسائل خطأ عربية */
 export async function callBot(token: string, method: string, body: FormData | Record<string, unknown>): Promise<void> {

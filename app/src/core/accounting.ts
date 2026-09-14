@@ -109,7 +109,11 @@ export function computeIncomeStatement(
 /* ─── السندات: قبض / صرف / تحويل بين الخزائن ─── */
 
 export type VoucherKind = 'receipt' | 'payment' | 'transfer'
-export type TreasuryAccount = '1101' | '1102' // الخزينة الرئيسية | البنوك
+/**
+ * كود حساب خزينة/بنك — كان '1101'|'1102' فقط، والآن يدعم خزائن وبنوكاً متعددة
+ * بلا حدود (1101، 1102، 1121، 1122…) — كلها حسابات نقدية ورقية تحت «11»
+ */
+export type TreasuryAccount = string
 
 /**
  * سند قبض: نقدية داخلة —

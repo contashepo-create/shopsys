@@ -34,6 +34,7 @@ import { validateProject, computeExtractTotals, buildExtractEntry, buildProjectC
 import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, type VisitKind, type VisitTotals } from '../core/clinic.ts'
 import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
 import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
+import { DEFAULT_TREASURIES, nextTreasuryCode, validateTreasury, type TreasuryDef } from '../core/treasury.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
 export interface Warehouse {
@@ -443,6 +444,7 @@ export interface PurchaseInvoice {
   expensesTotalMinor: number
   grandTotalMinor: number
   paidMinor: number
+  treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه
   notes: string
   journalEntryId: number | null // القيد المتولد (فواتير قديمة قبل الترحيل = null)
 }
@@ -491,6 +493,8 @@ export interface SaleInvoice {
   date: string // ISO datetime
   customerId: number | null // null = عميل نقدي
   payment: PaymentMethod
+  paidMinor?: number // المدفوع نقداً (الدفع المجزأ) — undefined للفواتير القديمة = حسب payment
+  treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
   lines: CartLine[]
   invoiceDiscountPercent: number
   totals: CartTotals
@@ -518,6 +522,7 @@ interface DataState {
   items: Item[]
   categories: Category[]
   warehouses: Warehouse[]
+  treasuries: TreasuryDef[] // الخزائن والبنوك المتعددة (طلب المالك)
   customers: Customer[]
   suppliers: Supplier[]
   employees: Employee[]
@@ -576,6 +581,7 @@ interface DataState {
     lines: { itemId: number; qty: number; unitPriceMinor: number; expiryDate?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
     paidMinor: number
+    treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه (افتراضياً الرئيسية)
     notes: string
   }) => PurchaseInvoice
   /**
@@ -590,6 +596,8 @@ interface DataState {
     invoiceDiscountPercent: number
     taxPercent: number
     taxInclusive: boolean
+    treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
+    paidMinor?: number // الدفع المجزأ: المدفوع نقداً الآن والباقي آجل (طلب المالك)
     expiryOverrideBy?: string | null
     allowNegativeStock?: boolean
   }) => SaleInvoice
@@ -636,6 +644,11 @@ interface DataState {
   /** إقفال الوردية بالنقدية المعدودة — يظهر العجز/الزيادة في الملخص */
   closeShift: (countedCashMinor: number) => Shift
   addWarehouse: (nameAr: string) => void
+  /** إضافة خزينة/بنك جديد — يفتح له حساب دفتري تلقائياً (1121+) */
+  addTreasury: (nameAr: string, kind: 'cash' | 'bank') => TreasuryDef
+  renameTreasury: (code: string, nameAr: string) => void
+  /** حذف خزينة مخصصة — يُرفض لو عليها حركة في اليومية أو كانت أساسية */
+  removeTreasury: (code: string) => void
   removeWarehouse: (id: number) => void
   addCustomer: (c: Omit<Customer, 'id'>) => void
   updateCustomer: (id: number, patch: Partial<Customer>) => void
@@ -816,6 +829,7 @@ export const useDataStore = create<DataState>()(
       items: [],
       categories: [],
       warehouses: [],
+      treasuries: DEFAULT_TREASURIES,
       customers: [],
       suppliers: [],
       employees: [],
@@ -914,8 +928,8 @@ export const useDataStore = create<DataState>()(
         const expensesTotal = inv.expenses.reduce((a, e) => a + e.amountMinor, 0)
         const grandTotal = goodsTotal + expensesTotal
 
-        // القيد المحاسبي: مخزون مدين / خزينة + موردون دائن (يرمي لو المدفوع > الإجمالي)
-        const entryLines = buildPurchaseEntry(grandTotal, inv.paidMinor)
+        // القيد المحاسبي: مخزون مدين / خزينة مختارة + موردون دائن (يرمي لو المدفوع > الإجمالي)
+        const entryLines = buildPurchaseEntry(grandTotal, inv.paidMinor, inv.treasury ?? '1101')
         const purchaseId = nextId(state.purchases)
         const entryId = nextId(state.journal)
         const invoiceNumber = `P-${String(purchaseId).padStart(4, '0')}`
@@ -951,6 +965,7 @@ export const useDataStore = create<DataState>()(
           expensesTotalMinor: expensesTotal,
           grandTotalMinor: grandTotal,
           paidMinor: inv.paidMinor,
+          treasury: inv.treasury ?? '1101',
           notes: inv.notes,
           journalEntryId: entryId,
         }
@@ -1054,7 +1069,12 @@ export const useDataStore = create<DataState>()(
 
         // 3) الإجماليات والقيد (يرمي UnbalancedEntryError لو اختل — مستحيل بنيوياً)
         const totals = computeTotals(args.lines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
-        const entryLines = buildSaleEntry(totals, args.payment)
+        // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
+        const paidM = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
+        if (paidM < totals.totalMinor && args.customerId == null) {
+          throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
+        }
+        const entryLines = buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM)
         const saleId = nextId(state.sales)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -1080,6 +1100,8 @@ export const useDataStore = create<DataState>()(
           date: now,
           customerId: args.customerId,
           payment: args.payment,
+          paidMinor: paidM,
+          treasury: args.treasury ?? '1101',
           lines: args.lines,
           invoiceDiscountPercent: args.invoiceDiscountPercent,
           totals,
@@ -1410,6 +1432,32 @@ export const useDataStore = create<DataState>()(
 
       addWarehouse: (nameAr) =>
         set((s) => ({ warehouses: [...s.warehouses, { id: nextId(s.warehouses), nameAr, isMain: false }] })),
+
+      addTreasury: (nameAr, kind) => {
+        const state = get()
+        const errors = validateTreasury(nameAr, state.treasuries)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const t: TreasuryDef = { code: nextTreasuryCode(state.treasuries), nameAr: nameAr.trim(), kind }
+        set({ treasuries: [...state.treasuries, t] })
+        return t
+      },
+
+      renameTreasury: (code, nameAr) => {
+        const state = get()
+        const errors = validateTreasury(nameAr, state.treasuries, code)
+        if (errors.length) throw new Error(errors.join(' — '))
+        set({ treasuries: state.treasuries.map((t) => (t.code === code ? { ...t, nameAr: nameAr.trim() } : t)) })
+      },
+
+      removeTreasury: (code) => {
+        const state = get()
+        const t = state.treasuries.find((x) => x.code === code)
+        if (!t) throw new Error('الخزينة غير موجودة')
+        if (t.code === '1101' || t.code === '1102') throw new Error('الخزينة الرئيسية والبنك الرئيسي لا يُحذفان')
+        const hasMoves = state.journal.some((e) => e.lines.some((l) => l.accountCode === code))
+        if (hasMoves) throw new Error(`«${t.nameAr}» عليها حركة في اليومية — لا تُحذف حفاظاً على التوازن`)
+        set({ treasuries: state.treasuries.filter((x) => x.code !== code) })
+      },
       removeWarehouse: (id) => {
         const used = get().transfers.some((t) => t.fromWarehouseId === id || t.toWarehouseId === id)
         if (used) throw new Error('لا يمكن حذف مخزن له تحويلات مسجلة — احتفظ به للسجل')
@@ -2614,7 +2662,7 @@ export const useDataStore = create<DataState>()(
     }),
     {
       name: 'shopsys-data',
-      version: 6,
+      version: 7, // 7 = خزائن متعددة + دفع مجزأ
       // القرار 28: قاعدة البيانات مشفرة AES-256-GCM بمفتاح مشتق لهذا الجهاز
       storage: createJSONStorage(() => secureStorage),
       // ترحيل البيانات المحفوظة بالأشكال القديمة (أقسام هرمية، stockQty، مرتجعات وورديات وجرد)
@@ -2622,6 +2670,8 @@ export const useDataStore = create<DataState>()(
         const s = persisted as Partial<DataState>
         return {
           ...s,
+          // ترحيل الخزائن المتعددة: الحسابات القديمة تحصل على الافتراضيتين
+          treasuries: s.treasuries && s.treasuries.length > 0 ? s.treasuries : DEFAULT_TREASURIES,
           categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),
           items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0, warrantyMonths: it.warrantyMonths ?? 0 })),
           customers: (s.customers ?? []).map((c) => ({ ...EMPTY_EXTENDED, ...c })),

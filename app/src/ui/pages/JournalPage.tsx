@@ -9,11 +9,10 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { STANDARD_COA } from '../../core/ledger.ts'
+import { fullCoa } from '../../core/treasury.ts'
 import { validateManualEntry } from '../../core/accounting.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
-
-const POSTABLE = STANDARD_COA.filter((a) => a.isPostable)
 
 interface DraftLine { accountCode: string; debit: string; credit: string }
 
@@ -35,7 +34,10 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export function JournalPage() {
-  const { journal, postManualEntry, reverseEntry } = useDataStore()
+  const { journal, treasuries, postManualEntry, reverseEntry } = useDataStore()
+  // الشجرة الكاملة تشمل الخزائن المخصصة — القيد اليدوي يستطيع استخدامها
+  const COA = useMemo(() => fullCoa(STANDARD_COA, treasuries), [treasuries])
+  const POSTABLE = useMemo(() => COA.filter((a) => a.isPostable), [COA])
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -67,7 +69,7 @@ export function JournalPage() {
       })),
     [mLines, cur.decimals],
   )
-  const manualErrors = useMemo(() => validateManualEntry(parsedLines, STANDARD_COA), [parsedLines])
+  const manualErrors = useMemo(() => validateManualEntry(parsedLines, COA), [parsedLines, COA])
 
   const openManual = () => {
     setMDesc('')
@@ -111,7 +113,7 @@ export function JournalPage() {
           open={manualOpen} onClose={() => setManualOpen(false)}
           mDesc={mDesc} setMDesc={setMDesc} mDate={mDate} setMDate={setMDate}
           mLines={mLines} setMLines={setMLines} errors={manualErrors} onSave={saveManual} fmt={fmt}
-          parsed={parsedLines}
+          parsed={parsedLines} postable={POSTABLE}
         />
       </div>
     )
@@ -171,7 +173,7 @@ export function JournalPage() {
                 {e.lines.map((l, j) => (
                   <tr key={j}>
                     <td className={`px-4 py-1 ${l.credit > 0 ? 'pr-10 text-slate-500' : 'font-bold text-slate-700 dark:text-slate-200'}`}>
-                      {l.credit > 0 && 'إلى '} {ACCOUNT_NAMES[l.accountCode] ?? l.accountCode}
+                      {l.credit > 0 && 'إلى '} {treasuries.find((t) => t.code === l.accountCode)?.nameAr ?? ACCOUNT_NAMES[l.accountCode] ?? l.accountCode}
                       {l.note && <span className="text-[10px] text-slate-300 dark:text-slate-600 mr-2">({l.note})</span>}
                     </td>
                     <td className="px-4 py-1 font-bold">{l.debit > 0 ? fmt(l.debit) : ''}</td>
@@ -206,7 +208,7 @@ export function JournalPage() {
         open={manualOpen} onClose={() => setManualOpen(false)}
         mDesc={mDesc} setMDesc={setMDesc} mDate={mDate} setMDate={setMDate}
         mLines={mLines} setMLines={setMLines} errors={manualErrors} onSave={saveManual} fmt={fmt}
-        parsed={parsedLines}
+        parsed={parsedLines} postable={POSTABLE}
       />
     </div>
   )
@@ -214,8 +216,9 @@ export function JournalPage() {
 
 /** مودال القيد اليدوي — زر الحفظ معطل حتى يتوازن القيد (القرار 9) */
 function ManualEntryModal({
-  open, onClose, mDesc, setMDesc, mDate, setMDate, mLines, setMLines, errors, onSave, fmt, parsed,
+  open, onClose, mDesc, setMDesc, mDate, setMDate, mLines, setMLines, errors, onSave, fmt, parsed, postable,
 }: {
+  postable: { code: string; nameAr: string }[]
   open: boolean
   onClose: () => void
   mDesc: string
@@ -250,7 +253,7 @@ function ManualEntryModal({
             <div key={i} className="grid grid-cols-[1fr_7rem_7rem_2rem] gap-2 items-center px-3 py-2 border-t border-slate-100 dark:border-slate-800">
               <select value={l.accountCode} onChange={(e) => setLine(i, { accountCode: e.target.value })} className={`${inputCls} py-1.5 text-[13px]`}>
                 <option value="">اختر الحساب…</option>
-                {POSTABLE.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.nameAr}</option>)}
+                {postable.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.nameAr}</option>)}
               </select>
               <input value={l.debit} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value.trim() ? '' : l.credit })} placeholder="0" className={`${inputCls} py-1.5 text-center`} dir="ltr" />
               <input value={l.credit} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value.trim() ? '' : l.debit })} placeholder="0" className={`${inputCls} py-1.5 text-center`} dir="ltr" />

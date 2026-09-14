@@ -21,7 +21,7 @@ import { buildBackup, backupFileName } from '../../core/backup.ts'
 import { decryptForDevice } from '../../data/secureStorage.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 
-const DATA_VERSION = 6 // إصدار persist لمخزن shopsys-data
+const DATA_VERSION = 7 // إصدار persist لمخزن shopsys-data
 
 export function TelegramPage() {
   const { setup, telegram, updateTelegram, schedule, updateSchedule, lastDailySentDay, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()

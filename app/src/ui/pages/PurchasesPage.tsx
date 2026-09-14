@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string }
@@ -32,6 +33,7 @@ export function PurchasesPage() {
   const [lines, setLines] = useState<DraftLine[]>([])
   const [expenses, setExpenses] = useState<DraftExpense[]>([])
   const [paid, setPaid] = useState('')
+  const [treasury, setTreasury] = useState('1101')
   const [notes, setNotes] = useState('')
 
   const openNew = () => {
@@ -39,6 +41,7 @@ export function PurchasesPage() {
     setLines([{ itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '' }])
     setExpenses([])
     setPaid('')
+    setTreasury('1101')
     setNotes('')
     setOpen(true)
   }
@@ -87,6 +90,7 @@ export function PurchasesPage() {
         .filter((e) => Number(e.amount) > 0)
         .map((e) => ({ nameAr: e.nameAr, amountMinor: toMinor(e.amount, cur.decimals), method: e.method })),
       paidMinor: paid ? toMinor(paid, cur.decimals) : 0,
+      treasury,
       notes,
     })
     toast.show(`رُحّلت الفاتورة ${inv.invoiceNumber} — تحدثت تكلفة الأصناف بالمتوسط المرجح ✓`)
@@ -168,7 +172,7 @@ export function PurchasesPage() {
       {/* مودال فاتورة جديدة */}
       <Modal open={open} onClose={() => setOpen(false)} title="فاتورة شراء جديدة" wide>
         <div className="space-y-5">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Field label="المورد *">
               <select value={supplierId} onChange={(e) => setSupplierId(Number(e.target.value))} className={inputCls}>
                 {suppliers.map((s) => <option key={s.id} value={s.id}>{s.nameAr}</option>)}
@@ -176,6 +180,9 @@ export function PurchasesPage() {
             </Field>
             <Field label={`المدفوع الآن (${cur.symbol})`} hint="الباقي يُسجَّل ديناً على حسابك عند المورد">
               <input value={paid} onChange={(e) => setPaid(e.target.value)} type="number" min={0} className={inputCls} placeholder="0" />
+            </Field>
+            <Field label="الدفع من أي خزينة/بنك؟" hint="المصاريف والمدفوع يخرجان منها">
+              <TreasuryPicker value={treasury} onChange={setTreasury} compact />
             </Field>
           </div>
 
@@ -185,35 +192,39 @@ export function PurchasesPage() {
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5"><Receipt size={14} /> أصناف الفاتورة</span>
               <Btn variant="soft" onClick={() => setLines((l) => [...l, { itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '' }])}>+ سطر</Btn>
             </div>
+            {/* رؤوس أعمدة واضحة — حقل الصنف يأخذ نصف العرض (ملاحظة المالك) */}
+            <div className="hidden sm:grid grid-cols-[1fr_90px_120px_140px_36px] gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400">
+              <span>الصنف</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>الصلاحية (إن وجدت)</span><span />
+            </div>
             <div className="space-y-2">
               {lines.map((l, i) => (
                 <div key={i} className="anim-in">
-                <div className="flex gap-2 items-center">
+                <div className="grid grid-cols-2 sm:grid-cols-[1fr_90px_120px_140px_36px] gap-2 items-center">
                   <select
                     value={l.itemId}
                     onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: Number(e.target.value) } : x)))}
-                    className={`${inputCls} flex-1`}
+                    className={`${inputCls} col-span-2 sm:col-span-1`}
                   >
-                    {items.map((it) => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
+                    {items.map((it) => <option key={it.id} value={it.id}>{it.nameAr}{it.baseUnit ? ` (${it.baseUnit})` : ''}</option>)}
                   </select>
                   <input
                     value={l.qty}
                     onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))}
-                    type="number" min={0} placeholder="الكمية" className={`${inputCls} w-24`}
+                    type="number" min={0} placeholder="الكمية" className={inputCls}
                   />
                   <input
                     value={l.unitPrice}
                     onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))}
-                    type="number" min={0} placeholder={`سعر الوحدة`} className={`${inputCls} w-32`}
+                    type="number" min={0} placeholder="سعر الوحدة" className={inputCls}
                   />
-                  {items.find((it) => it.id === l.itemId)?.trackExpiry && (
+                  {items.find((it) => it.id === l.itemId)?.trackExpiry ? (
                     <input
                       value={l.expiryDate}
                       onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, expiryDate: e.target.value } : x)))}
-                      type="date" title="تاريخ الصلاحية (FEFO)" className={`${inputCls} w-36`} dir="ltr"
+                      type="date" title="تاريخ الصلاحية (FEFO)" className={inputCls} dir="ltr"
                     />
-                  )}
-                  <button onClick={() => setLines((arr) => arr.filter((_, j) => j !== i))} className="p-2 text-slate-300 hover:text-rose-500 transition-colors">
+                  ) : <span className="hidden sm:block text-center text-slate-200 dark:text-slate-700 text-[11px]">—</span>}
+                  <button onClick={() => setLines((arr) => arr.filter((_, j) => j !== i))} className="p-2 text-slate-300 hover:text-rose-500 transition-colors justify-self-center">
                     <Trash2 size={15} />
                   </button>
                 </div>
