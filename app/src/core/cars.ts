@@ -117,3 +117,45 @@ export function showroomSummary(
   }
   return { inStock, sold, renting, stockValueMinor: stockValue, totalProfitMinor: profit }
 }
+
+
+/* ─── البيع بالأمانة (Consignment) — سد فجوة معارض الوساطة ─── */
+
+/**
+ * سيارة أمانة: ليست ملك المعرض — لا تدخل المخزون ولا يُقيد شيء عند الاستلام.
+ * المالك يحدد صافياً يستلمه؛ كل ما زاد عنه عمولة المعرض.
+ * قيد البيع: خزينة|عملاء مدين بسعر البيع /
+ *            2110 دائن بصافي المالك + 4109 دائن بالعمولة (+2102 ضريبة على العمولة إن وجدت)
+ * قيد السداد للمالك: 2110 مدين / خزينة دائن
+ */
+export function buildConsignmentSaleEntry(
+  salePriceMinor: Minor,
+  ownerNetMinor: Minor,
+  vatOnCommissionMinor: Minor,
+  payment: 'cash' | 'credit',
+  label: string,
+  treasury = '1101',
+): JournalLine[] {
+  if (!Number.isInteger(salePriceMinor) || salePriceMinor <= 0) throw new Error('سعر البيع يجب أن يكون موجباً')
+  if (!Number.isInteger(ownerNetMinor) || ownerNetMinor <= 0) throw new Error('صافي المالك يجب أن يكون موجباً')
+  const commission = salePriceMinor - ownerNetMinor - vatOnCommissionMinor
+  if (commission < 0) throw new Error('سعر البيع أقل من صافي المالك — لا تبع بخسارة على حساب المعرض دون تعديل الاتفاق')
+  const lines: JournalLine[] = [
+    { accountCode: payment === 'cash' ? treasury : '1104', debit: salePriceMinor, credit: 0, note: `بيع أمانة ${label}` },
+    { accountCode: '2110', debit: 0, credit: ownerNetMinor, note: 'صافي مستحق للمالك' },
+  ]
+  if (commission > 0) lines.push({ accountCode: '4109', debit: 0, credit: commission, note: 'عمولة المعرض' })
+  if (vatOnCommissionMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: vatOnCommissionMinor, note: 'ض.ق.م على العمولة' })
+  assertBalanced(lines)
+  return lines
+}
+
+export function buildConsignmentPayoutEntry(ownerNetMinor: Minor, label: string, treasury = '1101'): JournalLine[] {
+  if (!Number.isInteger(ownerNetMinor) || ownerNetMinor <= 0) throw new Error('المستحق للمالك يجب أن يكون موجباً')
+  const lines: JournalLine[] = [
+    { accountCode: '2110', debit: ownerNetMinor, credit: 0, note: `سداد مالك ${label}` },
+    { accountCode: treasury, debit: 0, credit: ownerNetMinor, note: 'دفع نقدي للمالك' },
+  ]
+  assertBalanced(lines)
+  return lines
+}

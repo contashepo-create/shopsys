@@ -5,7 +5,7 @@
  * يومية/شهرية بعدّاد الكيلومترات) — تكامل بلا تكرار منطق.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Car as CarIcon, Eye, BookOpenText, Wrench, HandCoins, KeySquare } from 'lucide-react'
+import { Plus, Car as CarIcon, Eye, BookOpenText, Wrench, HandCoins, KeySquare, Handshake, Undo2, Banknote } from 'lucide-react'
 import { useDataStore, type Car } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -22,7 +22,7 @@ const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
 }
 
 export function CarsPage() {
-  const { cars, journal, addCar, addCarPrep, sellCar, moveCarToRental } = useDataStore()
+  const { cars, journal, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -112,11 +112,50 @@ export function CarsPage() {
   const viewEntryIds = viewingLive ? new Set([viewingLive.purchaseEntryId, ...viewingLive.prepEntryIds, ...(viewingLive.saleEntryId != null ? [viewingLive.saleEntryId] : [])]) : new Set<number>()
   const viewEntries = journal.filter((e) => viewEntryIds.has(e.id))
 
+  /* سيارات الأمانة (بيع بالعمولة) */
+  const [cgOpen, setCgOpen] = useState(false)
+  const [cgMake, setCgMake] = useState('')
+  const [cgModel, setCgModel] = useState('')
+  const [cgYear, setCgYear] = useState(String(new Date().getFullYear()))
+  const [cgPlate, setCgPlate] = useState('')
+  const [cgOwner, setCgOwner] = useState('')
+  const [cgPhone, setCgPhone] = useState('')
+  const [cgNet, setCgNet] = useState('')
+  const [cgAsk, setCgAsk] = useState('')
+  const saveConsignment = () => {
+    try {
+      addConsignmentCar({
+        make: cgMake, model: cgModel, year: Number(cgYear), plateOrVin: cgPlate,
+        ownerName: cgOwner, ownerPhone: cgPhone.trim(),
+        ownerNetMinor: toMinor(cgNet, cur.decimals), askingPriceMinor: toMinor(cgAsk, cur.decimals),
+      })
+      toast.show('سُجلت الأمانة — لا قيد حتى البيع (ملك الغير لا يدخل مخزونك) ✅')
+      setCgOpen(false); setCgMake(''); setCgModel(''); setCgPlate(''); setCgOwner(''); setCgPhone(''); setCgNet(''); setCgAsk('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+  const [cgSellFor, setCgSellFor] = useState<number | null>(null)
+  const cgSellCar = consignmentCars.find((c) => c.id === cgSellFor)
+  const [cgSalePrice, setCgSalePrice] = useState('')
+  const [cgBuyer, setCgBuyer] = useState('')
+  const [cgPayment, setCgPayment] = useState<'cash' | 'credit'>('cash')
+  const [cgTreasury, setCgTreasury] = useState('1101')
+  const doSellConsignment = () => {
+    if (!cgSellCar) return
+    try {
+      const sold = sellConsignmentCar({ id: cgSellCar.id, salePriceMinor: toMinor(cgSalePrice, cur.decimals), payment: cgPayment, buyerName: cgBuyer.trim(), treasury: cgTreasury })
+      toast.show(`بيعت الأمانة — عمولتك ${fmt(sold.commissionMinor ?? 0)} والمستحق للمالك ${fmt(sold.ownerNetMinor)} ✅`)
+      setCgSellFor(null); setCgSalePrice(''); setCgBuyer('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-black flex items-center gap-2"><CarIcon className="w-6 h-6 text-indigo-500" /> معرض السيارات</h1>
-        <Btn onClick={() => setOpen(true)}><Plus className="w-4 h-4" /> شراء سيارة</Btn>
+        <div className="flex gap-2">
+          <Btn variant="soft" onClick={() => setCgOpen(true)}><Handshake className="w-4 h-4" /> سيارة أمانة</Btn>
+          <Btn onClick={() => setOpen(true)}><Plus className="w-4 h-4" /> شراء سيارة</Btn>
+        </div>
       </div>
 
       <div className="grid grid-cols-4 gap-2 text-center text-sm">
@@ -304,6 +343,109 @@ export function CarsPage() {
                 </tbody></table>
               </div>
             ))}
+          </div>
+        )}
+      </Modal>
+
+      {/* ═══ سيارات الأمانة ═══ */}
+      {consignmentCars.length > 0 && (
+        <div className="rounded-2xl border border-violet-200 dark:border-violet-900/50 overflow-hidden">
+          <div className="px-4 py-2.5 bg-violet-500/10 text-violet-700 dark:text-violet-300 font-black text-sm flex items-center gap-2">
+            <Handshake className="w-4 h-4" /> سيارات الأمانة (بيع بالعمولة — ملك الغير)
+          </div>
+          <table className="w-full text-sm">
+            <tbody>
+              {consignmentCars.map((c) => (
+                <tr key={c.id} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="px-4 py-2.5 font-bold">{c.make} {c.model} {c.year}</td>
+                  <td className="px-4 py-2.5 font-mono text-[11px]" dir="ltr">{c.plateOrVin}</td>
+                  <td className="px-4 py-2.5 text-[12px]">المالك: {c.ownerName}</td>
+                  <td className="px-4 py-2.5 tabular-nums text-[12px]">صافيه {fmt(c.ownerNetMinor)} — عرض {fmt(c.askingPriceMinor)}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={`px-2 py-1 rounded-lg text-[11px] font-bold ${
+                      c.status === 'available' ? 'bg-sky-500/10 text-sky-600'
+                      : c.status === 'sold' ? 'bg-amber-500/10 text-amber-600'
+                      : c.status === 'paid' ? 'bg-emerald-500/10 text-emerald-600'
+                      : 'bg-slate-400/10 text-slate-400'
+                    }`}>
+                      {c.status === 'available' ? 'معروضة' : c.status === 'sold' ? `بيعت — عمولة ${fmt(c.commissionMinor ?? 0)}` : c.status === 'paid' ? 'سُدد المالك ✓' : 'رُدت للمالك'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex gap-1 justify-end">
+                      {c.status === 'available' && (
+                        <>
+                          <button onClick={() => { setCgSellFor(c.id); setCgSalePrice(String(c.askingPriceMinor / 10 ** cur.decimals)) }} title="بيع" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><HandCoins className="w-4 h-4" /></button>
+                          <button onClick={() => { returnConsignmentCar(c.id); toast.show('رُدت للمالك') }} title="رد للمالك" className="p-2 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all hover:scale-110"><Undo2 className="w-4 h-4" /></button>
+                        </>
+                      )}
+                      {c.status === 'sold' && (
+                        <button onClick={() => { try { payConsignmentOwner(c.id); toast.show(`سُدد ${c.ownerName} — أُطفئ التزام 2110 ✅`) } catch (e) { toast.show((e as Error).message, 'error') } }} title={`سداد المالك ${fmt(c.ownerNetMinor)}`} className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* نافذة استلام أمانة */}
+      <Modal open={cgOpen} onClose={() => setCgOpen(false)} title="استلام سيارة أمانة (بيع بالعمولة)">
+        <div className="space-y-3">
+          <div className="text-[12px] text-slate-500 bg-violet-500/5 rounded-xl p-3">
+            السيارة ملك الغير — لا تدخل مخزونك ولا قيد عند الاستلام. عند بيعها: صافي المالك التزام (2110) وما زاد عمولتك (4109).
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="الماركة *"><input value={cgMake} onChange={(e) => setCgMake(e.target.value)} className={inputCls} /></Field>
+            <Field label="الموديل *"><input value={cgModel} onChange={(e) => setCgModel(e.target.value)} className={inputCls} /></Field>
+            <Field label="السنة"><input value={cgYear} onChange={(e) => setCgYear(e.target.value)} inputMode="numeric" className={inputCls} dir="ltr" /></Field>
+          </div>
+          <Field label="اللوحة / الشاسيه *"><input value={cgPlate} onChange={(e) => setCgPlate(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="اسم المالك *"><input value={cgOwner} onChange={(e) => setCgOwner(e.target.value)} className={inputCls} /></Field>
+            <Field label="هاتف المالك"><input value={cgPhone} onChange={(e) => setCgPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={`صافي المالك (${cur.symbol}) *`} hint="ما اتفقت أن يقبضه المالك"><input value={cgNet} onChange={(e) => setCgNet(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label={`سعر العرض (${cur.symbol}) *`} hint="الفرق عمولتك"><input value={cgAsk} onChange={(e) => setCgAsk(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+          </div>
+          {cgNet && cgAsk && toMinor(cgAsk, cur.decimals) >= toMinor(cgNet, cur.decimals) && (
+            <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3 text-[12px] font-bold text-emerald-700 dark:text-emerald-300">
+              عمولتك المتوقعة: {fmt(toMinor(cgAsk, cur.decimals) - toMinor(cgNet, cur.decimals))}
+            </div>
+          )}
+          <Btn onClick={saveConsignment} className="w-full" disabled={!cgMake.trim() || !cgModel.trim() || !cgPlate.trim() || !cgOwner.trim() || !cgNet || !cgAsk}>تسجيل الأمانة</Btn>
+        </div>
+      </Modal>
+
+      {/* نافذة بيع الأمانة */}
+      <Modal open={!!cgSellCar} onClose={() => setCgSellFor(null)} title={cgSellCar ? `بيع الأمانة — ${cgSellCar.make} ${cgSellCar.model}` : ''}>
+        {cgSellCar && (
+          <div className="space-y-3">
+            <Field label={`سعر البيع (${cur.symbol}) *`} hint={`صافي المالك ${fmt(cgSellCar.ownerNetMinor)} — ما زاد عمولتك`}>
+              <input value={cgSalePrice} onChange={(e) => setCgSalePrice(e.target.value)} inputMode="decimal" className={inputCls} />
+            </Field>
+            <Field label="اسم المشتري"><input value={cgBuyer} onChange={(e) => setCgBuyer(e.target.value)} className={inputCls} /></Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="التحصيل">
+                <div className="flex gap-2">
+                  {(['cash', 'credit'] as const).map((pm) => (
+                    <button key={pm} onClick={() => setCgPayment(pm)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${cgPayment === pm ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
+                      {pm === 'cash' ? 'نقدي' : 'آجل'}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              {cgPayment === 'cash' && <Field label="إلى"><TreasuryPicker value={cgTreasury} onChange={setCgTreasury} compact /></Field>}
+            </div>
+            {cgSalePrice && toMinor(cgSalePrice, cur.decimals) >= cgSellCar.ownerNetMinor && (
+              <div className="rounded-xl bg-violet-500/10 border border-violet-500/30 p-3 text-[12px] font-bold text-violet-700 dark:text-violet-300">
+                📒 القيد: {cgPayment === 'cash' ? 'الخزينة' : 'العملاء'} {fmt(toMinor(cgSalePrice, cur.decimals))} / مستحق المالك {fmt(cgSellCar.ownerNetMinor)} + عمولتك {fmt(toMinor(cgSalePrice, cur.decimals) - cgSellCar.ownerNetMinor)}
+              </div>
+            )}
+            <Btn onClick={doSellConsignment} className="w-full" disabled={!cgSalePrice}>بيع وقيد العمولة</Btn>
           </div>
         )}
       </Modal>

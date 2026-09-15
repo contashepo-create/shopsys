@@ -46,7 +46,7 @@ import { validateProject, computeExtractTotals, buildProjectPurchaseEntry, build
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip,
   type BoqItem, type ChangeOrder, type SubContract, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult } from '../core/contracting.ts'
 import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, type VisitKind, type VisitTotals } from '../core/clinic.ts'
-import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
+import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, buildConsignmentSaleEntry, buildConsignmentPayoutEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
 import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
 import { DEFAULT_TREASURIES, nextTreasuryCode, validateTreasury, type TreasuryDef } from '../core/treasury.ts'
 import type { JournalEntry } from '../core/ledger.ts'
@@ -383,6 +383,35 @@ export interface Car {
   notes: string
 }
 
+/**
+ * سيارة أمانة (Consignment): ملك الغير تُعرض للبيع بعمولة —
+ * لا تدخل المخزون ولا قيد عند الاستلام؛ عند البيع: صافي للمالك (2110)
+ * والباقي عمولة معرض (4109). ثم سداد المالك يطفئ 2110.
+ */
+export interface ConsignmentCar {
+  id: number
+  make: string
+  model: string
+  year: number
+  plateOrVin: string
+  ownerName: string
+  ownerPhone: string
+  /** الصافي المتفق أن يقبضه المالك */
+  ownerNetMinor: number
+  askingPriceMinor: number // سعر العرض المبدئي
+  status: 'available' | 'sold' | 'paid' | 'returned'
+  receivedAt: string
+  // بيانات البيع
+  salePriceMinor: number | null
+  commissionMinor: number | null
+  vatOnCommissionMinor: number
+  buyerName: string
+  saleEntryId: number | null
+  soldAt: string | null
+  payoutEntryId: number | null
+  notes: string
+}
+
 /** أصل ثابت — اقتناء بقيد، وإهلاك شهري بالقسط الثابت (مواصفة Easy Store) */
 export interface FixedAsset {
   id: number
@@ -627,6 +656,7 @@ interface DataState {
   clinicCollections: ClinicCollection[]
   clinicAppointments: ClinicAppointment[]
   cars: Car[] // معرض السيارات (القرار 27)
+  consignmentCars: ConsignmentCar[] // سيارات أمانة (بيع بالعمولة)
   tickets: MaintenanceTicket[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
@@ -966,6 +996,15 @@ interface DataState {
   sellCar: (args: { carId: number; priceMinor: number; vatPercent: number; payment: 'cash' | 'credit'; buyerName: string; treasury?: string }) => Car
   /** تحويل سيارة للتأجير: تُنشأ كمعدة في وحدة الإيجار وتُربط بها */
   moveCarToRental: (carId: number, dailyRateMinor: number, monthlyRateMinor: number) => void
+  // ————— سيارات الأمانة (بيع بالعمولة) —————
+  /** استلام سيارة أمانة: لا قيد — تسجيل فقط */
+  addConsignmentCar: (args: { make: string; model: string; year: number; plateOrVin: string; ownerName: string; ownerPhone?: string; ownerNetMinor: number; askingPriceMinor: number; notes?: string }) => ConsignmentCar
+  /** بيع الأمانة: خزينة|عملاء / 2110 صافي المالك + 4109 عمولة (+2102 على العمولة) */
+  sellConsignmentCar: (args: { id: number; salePriceMinor: number; vatPercentOnCommission?: number; payment: 'cash' | 'credit'; buyerName?: string; treasury?: string }) => ConsignmentCar
+  /** سداد صافي المالك: 2110 / خزينة — يقفل الملف */
+  payConsignmentOwner: (id: number, treasury?: string) => void
+  /** رد سيارة الأمانة لمالكها دون بيع */
+  returnConsignmentCar: (id: number) => void
   /** فتح تذكرة صيانة — لا قيد عند الاستلام (لا التزام مالي بعد) */
   openTicket: (args: {
     customerId: number | null
@@ -1071,6 +1110,7 @@ export const useDataStore = create<DataState>()(
       clinicCollections: [],
       clinicAppointments: [],
       cars: [],
+      consignmentCars: [],
       tickets: [],
       transfers: [],
       batches: [],
@@ -3574,6 +3614,82 @@ export const useDataStore = create<DataState>()(
           cars: state.cars.map((c) => (c.id === carId ? { ...c, status: 'renting' as const, purpose: 'rent' as const, rentalEquipmentId: eqId } : c)),
         })
       },
+
+      /* ─── سيارات الأمانة (بيع بالعمولة — لا مخزون ولا قيد استلام) ─── */
+      addConsignmentCar: (args) => {
+        const state = get()
+        if (!args.make.trim() || !args.model.trim()) throw new Error('الماركة والموديل مطلوبان')
+        if (!args.plateOrVin.trim()) throw new Error('رقم اللوحة أو الشاسيه مطلوب')
+        const taken = [...state.cars.map((c) => c.plateOrVin), ...state.consignmentCars.filter((c) => c.status === 'available' || c.status === 'sold').map((c) => c.plateOrVin)]
+        if (taken.some((pv) => pv.trim().toLowerCase() === args.plateOrVin.trim().toLowerCase())) throw new Error(`السيارة ${args.plateOrVin} مسجلة بالفعل`)
+        if (!args.ownerName.trim()) throw new Error('اسم المالك مطلوب — السيارة ملك الغير')
+        if (!(args.ownerNetMinor > 0)) throw new Error('صافي المالك يجب أن يكون موجباً')
+        if (!(args.askingPriceMinor >= args.ownerNetMinor)) throw new Error('سعر العرض لا يقل عن صافي المالك — وإلا فلا عمولة')
+        const car: ConsignmentCar = {
+          id: nextId(state.consignmentCars), make: args.make.trim(), model: args.model.trim(), year: args.year,
+          plateOrVin: args.plateOrVin.trim(), ownerName: args.ownerName.trim(), ownerPhone: args.ownerPhone ?? '',
+          ownerNetMinor: args.ownerNetMinor, askingPriceMinor: args.askingPriceMinor, status: 'available',
+          receivedAt: new Date().toISOString(), salePriceMinor: null, commissionMinor: null, vatOnCommissionMinor: 0,
+          buyerName: '', saleEntryId: null, soldAt: null, payoutEntryId: null, notes: args.notes ?? '',
+        }
+        set({ consignmentCars: [...state.consignmentCars, car] })
+        return car
+      },
+      sellConsignmentCar: (args) => {
+        const state = get()
+        const car = state.consignmentCars.find((c) => c.id === args.id)
+        if (!car) throw new Error('سيارة الأمانة غير موجودة')
+        if (car.status !== 'available') throw new Error('السيارة ليست معروضة — بيعت أو رُدت')
+        const label = `${car.make} ${car.model} ${car.year} (${car.plateOrVin})`
+        const grossCommission = args.salePriceMinor - car.ownerNetMinor
+        if (grossCommission < 0) throw new Error('سعر البيع أقل من صافي المالك المتفق عليه')
+        // الضريبة على العمولة فقط (خدمة الوساطة) — تُفصل من العمولة الإجمالية
+        const vatPct = args.vatPercentOnCommission ?? 0
+        const vatOnCommission = vatPct > 0 ? Math.round(grossCommission - grossCommission / (1 + vatPct / 100)) : 0
+        const lines = buildConsignmentSaleEntry(args.salePriceMinor, car.ownerNetMinor, vatOnCommission, args.payment, label, args.treasury ?? '1101')
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `بيع أمانة ${label} — عمولة المعرض`,
+          sourceType: 'consignment_sale', sourceId: car.id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: ConsignmentCar = {
+          ...car, status: 'sold', salePriceMinor: args.salePriceMinor,
+          commissionMinor: grossCommission - vatOnCommission, vatOnCommissionMinor: vatOnCommission,
+          buyerName: args.buyerName ?? '', saleEntryId: entryId, soldAt: now,
+        }
+        set({ consignmentCars: state.consignmentCars.map((c) => (c.id === car.id ? updated : c)), journal: [...state.journal, entry] })
+        return updated
+      },
+      payConsignmentOwner: (id, treasury = '1101') => {
+        const state = get()
+        const car = state.consignmentCars.find((c) => c.id === id)
+        if (!car) throw new Error('سيارة الأمانة غير موجودة')
+        if (car.status !== 'sold') throw new Error('لا مستحق للمالك — السيارة لم تُبع بعد أو سُدد بالفعل')
+        const label = `${car.make} ${car.model} (${car.plateOrVin})`
+        const lines = buildConsignmentPayoutEntry(car.ownerNetMinor, label, treasury)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `سداد مالك الأمانة ${car.ownerName} — ${label}`,
+          sourceType: 'consignment_payout', sourceId: car.id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({
+          consignmentCars: state.consignmentCars.map((c) => (c.id === id ? { ...c, status: 'paid' as const, payoutEntryId: entryId } : c)),
+          journal: [...state.journal, entry],
+        })
+      },
+      returnConsignmentCar: (id) => {
+        const state = get()
+        const car = state.consignmentCars.find((c) => c.id === id)
+        if (!car) throw new Error('سيارة الأمانة غير موجودة')
+        if (car.status !== 'available') throw new Error('لا تُرد إلا سيارة معروضة لم تُبع')
+        set({ consignmentCars: state.consignmentCars.map((c) => (c.id === id ? { ...c, status: 'returned' as const } : c)) })
+      },
       openTicket: (args) => {
         const state = get()
         const errors = validateTicket({ deviceName: args.deviceName, issue: args.issue })
@@ -3997,6 +4113,7 @@ export const useDataStore = create<DataState>()(
           scrapLots: s.scrapLots ?? [],
           scrapSales: s.scrapSales ?? [],
           equipmentCosts: s.equipmentCosts ?? [],
+          consignmentCars: s.consignmentCars ?? [],
           priceLists: s.priceLists ?? [],
           priceListEntries: s.priceListEntries ?? [],
           custodyFiles: s.custodyFiles ?? [],

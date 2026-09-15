@@ -38,6 +38,7 @@ export type SourceType =
   | 'clinic_visit' | 'project_extract' | 'project_cost' | 'retention_release'
   | 'sub_certificate' | 'sub_payment' | 'bond_issue' | 'bond_settle' | 'client_advance' | 'daily_wages'
   | 'production' | 'scrap_purchase' | 'scrap_sale' | 'equipment_cost'
+  | 'consignment_sale' | 'consignment_payout'
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
@@ -121,6 +122,7 @@ export const STANDARD_COA: Account[] = [
   { code: '2107', nameAr: 'مستحق للموظفين (فائض عهد)', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'employee_payable' },
   { code: '2108', nameAr: 'محتجزات مقاولي الباطن', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'sub_retention_payable' },
   { code: '2109', nameAr: 'دفعات مقدمة من العملاء', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'client_advances' },
+  { code: '2110', nameAr: 'مستحق لملاك سيارات الأمانة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'consignment_payable' },
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },
   { code: '3102', nameAr: 'أرباح مرحّلة', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'retained_earnings' },
@@ -133,6 +135,7 @@ export const STANDARD_COA: Account[] = [
   { code: '4106', nameAr: 'إيرادات تحاليل طبية', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'lab_revenue' },
   { code: '4107', nameAr: 'إيرادات مقاولات', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'contracting_revenue' },
   { code: '4108', nameAr: 'إيرادات كشف وعلاج', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'clinic_revenue' },
+  { code: '4109', nameAr: 'عمولات بيع بالأمانة', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'consignment_commission' },
   { code: '5', nameAr: 'المصروفات', rootType: 'expenses', parentCode: null, isPostable: false },
   { code: '5101', nameAr: 'تكلفة البضاعة المباعة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'cogs' },
   { code: '5102', nameAr: 'رواتب وأجور', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'salaries' },
