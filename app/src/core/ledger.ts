@@ -39,6 +39,7 @@ export type SourceType =
   | 'sub_certificate' | 'sub_payment' | 'bond_issue' | 'bond_settle' | 'client_advance' | 'daily_wages'
   | 'production' | 'scrap_purchase' | 'scrap_sale' | 'equipment_cost'
   | 'consignment_sale' | 'consignment_payout' | 'driver_settlement'
+  | 'insured_sale' | 'claim_settlement'
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
@@ -109,6 +110,7 @@ export const STANDARD_COA: Account[] = [
   { code: '1107', nameAr: 'سلف الموظفين', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'employee_advances' },
   { code: '1108', nameAr: 'عهد الموظفين', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'employee_custodies' },
   { code: '1109', nameAr: 'هوامش خطابات الضمان', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'bond_margins' },
+  { code: '1110', nameAr: 'مطالبات جهات تأمين وتعاقد', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'insurance_claims' },
   { code: '12', nameAr: 'الأصول الثابتة', rootType: 'assets', parentCode: '1', isPostable: false },
   { code: '1201', nameAr: 'أصول ومعدات', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'fixed_assets' },
   { code: '1202', nameAr: 'مجمع الإهلاك', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'acc_depreciation' },

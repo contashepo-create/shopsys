@@ -44,7 +44,7 @@ const TEST_STEP: Record<TestStatus, { label: string; next: TestStatus | null; ne
 /* ═══════════════ 1) الطلبات والنتائج ═══════════════ */
 
 export function LabOrdersPage() {
-  const { labOrders, labPatients, labReferrers, labTests, journal, registerLabOrder, advanceLabTest } = useDataStore()
+  const { labOrders, labPatients, labReferrers, labTests, journal, registerLabOrder, advanceLabTest, insuranceProviders, registerInsuredLabOrder } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useCur()
   const toast = useToast()
@@ -56,6 +56,7 @@ export function LabOrdersPage() {
   const [referrerId, setReferrerId] = useState('')
   const [selected, setSelected] = useState<number[]>([])
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [insuranceId, setInsuranceId] = useState('') // '' = بلا تغطية
   const [treasury, setTreasury] = useState('1101')
   const [discount, setDiscount] = useState('0')
   const [withVat, setWithVat] = useState(false)
@@ -74,16 +75,26 @@ export function LabOrdersPage() {
 
   const save = () => {
     try {
-      const o = registerLabOrder({
-        patientId: Number(patientId),
-        referrerId: referrerId ? Number(referrerId) : null,
-        testIds: selected,
-        payment,
-        discountPercent: Number(discount) || 0,
-        vatPercent: withVat ? setup.vatPercent : 0,
-        notes: notes.trim(),
-        treasury,
-      })
+      const o = insuranceId
+        ? registerInsuredLabOrder({
+            patientId: Number(patientId),
+            referrerId: referrerId ? Number(referrerId) : null,
+            testIds: selected,
+            providerId: Number(insuranceId),
+            vatPercent: withVat ? setup.vatPercent : 0,
+            notes: notes.trim(),
+            treasury,
+          })
+        : registerLabOrder({
+            patientId: Number(patientId),
+            referrerId: referrerId ? Number(referrerId) : null,
+            testIds: selected,
+            payment,
+            discountPercent: Number(discount) || 0,
+            vatPercent: withVat ? setup.vatPercent : 0,
+            notes: notes.trim(),
+            treasury,
+          })
       toast.show(`سُجل الطلب ${o.orderNumber} بقيد متوازن${o.commissionMinor > 0 ? ` + استحقاق عمولة ${fmt(o.commissionMinor)}` : ''} ✅`)
       setOpen(false); resetForm()
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -200,6 +211,14 @@ export function LabOrdersPage() {
             </div>
           </Field>
 
+          {insuranceProviders.some((pv) => pv.isActive) && (
+            <Field label="تغطية تأمين / جهة تعاقد" hint="الجهة تتحمل نسبتها كمطالبة (1110) والمريض يدفع الباقي نقداً">
+              <select value={insuranceId} onChange={(e) => setInsuranceId(e.target.value)} className={inputCls}>
+                <option value="">بلا تغطية (المريض يدفع كاملاً)</option>
+                {insuranceProviders.filter((pv) => pv.isActive).map((pv) => <option key={pv.id} value={pv.id}>{pv.nameAr} — تتحمل {pv.coveragePercent}٪</option>)}
+              </select>
+            </Field>
+          )}
           <div className="grid grid-cols-3 gap-3">
             <Field label="طريقة السداد">
               <div className="flex gap-2">
@@ -539,7 +558,7 @@ export function LabPatientsPage() {
 /* ═══════════════ 4) الأطباء المُحيلون ═══════════════ */
 
 export function LabReferrersPage() {
-  const { labReferrers, labOrders, addLabReferrer, payReferrerCommissions } = useDataStore()
+  const { labReferrers, labOrders, addLabReferrer, payReferrerCommissions, insuranceProviders, insuranceClaims, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -571,6 +590,26 @@ export function LabReferrersPage() {
 
   const [payoutFor, setPayoutFor] = useState<{ id: number; name: string } | null>(null)
   const [payoutTreasury, setPayoutTreasury] = useState('1101')
+
+  /* جهات التأمين والتعاقد */
+  const [insOpen, setInsOpen] = useState(false)
+  const [insName, setInsName] = useState('')
+  const [insPercent, setInsPercent] = useState('80')
+  const [insPhone, setInsPhone] = useState('')
+  const saveIns = () => {
+    try {
+      addInsuranceProvider({ nameAr: insName, coveragePercent: Number(insPercent) || 0, phone: insPhone.trim() })
+      toast.show('أُضيفت الجهة — ستظهر في نموذج الطلب كخيار تغطية ✅')
+      setInsOpen(false); setInsName(''); setInsPercent('80'); setInsPhone('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+  const [claimTreasury, setClaimTreasury] = useState('1101')
+  const doSettleClaims = (id: number, name: string) => {
+    try {
+      const r = settleInsuranceClaims(id, claimTreasury)
+      toast.show(`حُصلت مطالبات ${name}: ${fmt(r.total)} عن ${r.count} مطالبة ✅`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
   const doPayout = () => {
     if (!payoutFor) return
     try {
@@ -690,6 +729,56 @@ export function LabReferrersPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* ═══ جهات التأمين والتعاقد ═══ */}
+      <div className="flex items-center justify-between pt-2">
+        <h2 className="font-black flex items-center gap-2">🏥 جهات التأمين والتعاقد</h2>
+        <div className="flex items-center gap-2">
+          {insuranceProviders.length > 0 && <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1">التحصيل إلى: <TreasuryPicker value={claimTreasury} onChange={setClaimTreasury} compact /></span>}
+          <Btn variant="soft" onClick={() => setInsOpen(true)}><Plus className="w-4 h-4" /> جهة جديدة</Btn>
+        </div>
+      </div>
+      {insuranceProviders.length === 0 ? (
+        <div className="text-[12px] text-slate-400 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 p-4 text-center">
+          أضف شركة تأمين أو جهة تعاقد بنسبة تحملها — المريض يدفع نصيبه فقط، ونصيب الجهة يتجمع كمطالبات تُحصَّل دفعة واحدة
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <table className="w-full text-sm">
+            <tbody>
+              {insuranceProviders.map((pv) => {
+                const balance = getClaimBalance(pv.id)
+                const count = insuranceClaims.filter((c) => c.providerId === pv.id && !c.settled).length
+                return (
+                  <tr key={pv.id} className={`border-t border-slate-100 dark:border-slate-800 ${!pv.isActive ? 'opacity-50' : ''}`}>
+                    <td className="px-4 py-2.5 font-bold">{pv.nameAr}</td>
+                    <td className="px-4 py-2.5 text-[12px]">تتحمل {pv.coveragePercent}٪</td>
+                    <td className="px-4 py-2.5 font-black text-violet-600 tabular-nums">{balance > 0 ? `${fmt(balance)} (${count} مطالبة)` : 'لا مطالبات'}</td>
+                    <td className="px-4 py-2.5 text-left">
+                      <div className="flex gap-1 justify-end">
+                        {balance > 0 && <Btn variant="soft" onClick={() => doSettleClaims(pv.id, pv.nameAr)}>تحصيل الكل</Btn>}
+                        <button onClick={() => toggleInsuranceProvider(pv.id)} className="text-[11px] font-bold text-slate-400 hover:text-amber-600 px-2">{pv.isActive ? 'تعطيل' : 'تفعيل'}</button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* نافذة جهة جديدة */}
+      <Modal open={insOpen} onClose={() => setInsOpen(false)} title="جهة تأمين / تعاقد جديدة">
+        <div className="space-y-3">
+          <Field label="اسم الجهة *"><input value={insName} onChange={(e) => setInsName(e.target.value)} placeholder="شركة مصر للتأمين…" className={inputCls} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="نسبة التحمل ٪ *" hint="ما تتحمله الجهة من الفاتورة"><input value={insPercent} onChange={(e) => setInsPercent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label="هاتف"><input value={insPhone} onChange={(e) => setInsPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          </div>
+          <Btn onClick={saveIns} className="w-full" disabled={!insName.trim() || !insPercent}>إضافة الجهة</Btn>
+        </div>
       </Modal>
     </div>
   )

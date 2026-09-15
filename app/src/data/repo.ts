@@ -19,6 +19,7 @@ import { computeStocktake, buildAdjustmentEntry, type CountInput, type Stocktake
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { validatePriceList, resolvePrice, type PriceList, type PriceListEntry } from '../core/priceLists.ts'
+import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
@@ -670,6 +671,8 @@ interface DataState {
   cars: Car[] // معرض السيارات (القرار 27)
   consignmentCars: ConsignmentCar[] // سيارات أمانة (بيع بالعمولة)
   driverDues: DriverDue[] // مستحقات سائقين تتجمع وتسوى دفعة واحدة
+  insuranceProviders: InsuranceProvider[] // جهات تأمين وتعاقد بنسب تحمل
+  insuranceClaims: InsuranceClaim[] // مطالبات تتجمع حتى التحصيل
   tickets: MaintenanceTicket[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
@@ -848,6 +851,19 @@ interface DataState {
   getDriverDueBalance: (driverId: number) => number
   /** تسوية كل مستحقات سائق دفعة واحدة من خزينة/بنك */
   settleDriverDues: (driverId: number, treasury?: string) => { total: number; count: number }
+
+  // ————— جهات التأمين والتعاقد (صيدلية/معمل) —————
+  addInsuranceProvider: (args: { nameAr: string; coveragePercent: number; phone?: string; notes?: string }) => InsuranceProvider
+  updateInsuranceProvider: (id: number, args: { nameAr: string; coveragePercent: number; phone?: string; notes?: string }) => void
+  toggleInsuranceProvider: (id: number) => void
+  /** بيع كاشير بتغطية: نصيب المريض نقداً + نصيب الجهة مطالبة 1110 (مع التكلفة) */
+  postInsuredSale: (args: { lines: CartLine[]; providerId: number; taxPercent: number; taxInclusive: boolean; treasury?: string }) => { patientShareMinor: number; providerShareMinor: number }
+  /** طلب معمل بتغطية: نفس المنطق على إيراد 4106 بلا تكلفة بضاعة */
+  registerInsuredLabOrder: (args: { patientId: number; referrerId: number | null; testIds: number[]; providerId: number; vatPercent: number; notes?: string; treasury?: string }) => LabOrder
+  /** رصيد مطالبات جهة غير محصلة */
+  getClaimBalance: (providerId: number) => number
+  /** تحصيل كل مطالبات جهة دفعة واحدة */
+  settleInsuranceClaims: (providerId: number, treasury?: string) => { total: number; count: number }
   addEquipment: (e: Omit<Equipment, 'id'>) => void
   updateEquipment: (id: number, patch: Partial<Equipment>) => void
   removeEquipment: (id: number) => void
@@ -1131,6 +1147,8 @@ export const useDataStore = create<DataState>()(
       cars: [],
       consignmentCars: [],
       driverDues: [],
+      insuranceProviders: [],
+      insuranceClaims: [],
       tickets: [],
       transfers: [],
       batches: [],
@@ -2243,6 +2261,163 @@ export const useDataStore = create<DataState>()(
         }
         set({
           driverDues: state.driverDues.map((d) => (d.driverId === driverId && !d.settled ? { ...d, settled: true, settlementEntryId: entryId } : d)),
+          journal: [...state.journal, entry],
+        })
+        return { total, count: unsettled.length }
+      },
+
+      /* ─── جهات التأمين والتعاقد (صيدلية/معمل) ─── */
+      addInsuranceProvider: (args) => {
+        const state = get()
+        const errors = validateProvider(args.nameAr, args.coveragePercent, state.insuranceProviders)
+        if (errors.length) throw new Error(errors.join('، '))
+        const provider: InsuranceProvider = {
+          id: nextId(state.insuranceProviders), nameAr: args.nameAr.trim(),
+          coveragePercent: args.coveragePercent, phone: args.phone ?? '', notes: args.notes ?? '', isActive: true,
+        }
+        set({ insuranceProviders: [...state.insuranceProviders, provider] })
+        return provider
+      },
+      updateInsuranceProvider: (id, args) => {
+        const state = get()
+        if (!state.insuranceProviders.some((p) => p.id === id)) throw new Error('الجهة غير موجودة')
+        const errors = validateProvider(args.nameAr, args.coveragePercent, state.insuranceProviders, id)
+        if (errors.length) throw new Error(errors.join('، '))
+        set({ insuranceProviders: state.insuranceProviders.map((p) => (p.id === id ? { ...p, nameAr: args.nameAr.trim(), coveragePercent: args.coveragePercent, phone: args.phone ?? p.phone, notes: args.notes ?? p.notes } : p)) })
+      },
+      toggleInsuranceProvider: (id) => set((s) => ({ insuranceProviders: s.insuranceProviders.map((p) => (p.id === id ? { ...p, isActive: !p.isActive } : p)) })),
+      postInsuredSale: (args) => {
+        const state = get()
+        const provider = state.insuranceProviders.find((p) => p.id === args.providerId && p.isActive)
+        if (!provider) throw new Error('جهة التأمين غير موجودة أو معطلة')
+        if (!args.lines.length) throw new Error('لا أصناف')
+        // فحص المخزون
+        const qtyByItem = new Map<number, number>()
+        for (const l of args.lines) qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + l.qty)
+        for (const [itemId, qty] of qtyByItem) {
+          const it = state.items.find((x) => x.id === itemId)
+          if (!it) throw new Error('صنف غير موجود')
+          if ((it.stockQty ?? 0) < qty) throw new Error(`مخزون غير كافٍ — «${it.nameAr}»`)
+        }
+        const totals = computeTotals(args.lines, 0, args.taxPercent, args.taxInclusive)
+        const { providerShareMinor, patientShareMinor } = splitCoverage(totals.totalMinor, provider.coveragePercent)
+        const lines = buildInsuredEntry({
+          patientShareMinor, providerShareMinor, revenueMinor: totals.taxBaseMinor,
+          revenueAccount: '4101', vatMinor: totals.taxMinor, cogsMinor: totals.cogsMinor,
+          treasury: args.treasury ?? '1101', providerName: provider.nameAr,
+        })
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const claimId = nextId(state.insuranceClaims)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `بيع بتغطية ${provider.nameAr} (${provider.coveragePercent}٪)`,
+          sourceType: 'insured_sale', sourceId: claimId, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const claim: InsuranceClaim = {
+          id: claimId, providerId: provider.id, source: 'sale', sourceId: entryId,
+          date: now.slice(0, 10), totalMinor: totals.totalMinor, claimMinor: providerShareMinor,
+          settled: false, settlementEntryId: null,
+        }
+        const updatedItems = state.items.map((it) =>
+          qtyByItem.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyByItem.get(it.id)!) * 1000) / 1000 } : it,
+        )
+        set({ items: updatedItems, insuranceClaims: [...state.insuranceClaims, claim], journal: [...state.journal, entry] })
+        return { patientShareMinor, providerShareMinor }
+      },
+      registerInsuredLabOrder: (args) => {
+        const state = get()
+        const provider = state.insuranceProviders.find((p) => p.id === args.providerId && p.isActive)
+        if (!provider) throw new Error('جهة التأمين غير موجودة أو معطلة')
+        const patient = state.labPatients.find((p) => p.id === args.patientId)
+        if (!patient) throw new Error('المريض غير مسجل')
+        const referrer = args.referrerId != null ? state.labReferrers.find((r) => r.id === args.referrerId) : null
+        if (args.referrerId != null && !referrer) throw new Error('الطبيب المُحيل غير موجود')
+        if (!args.testIds.length) throw new Error('اختر فحصاً واحداً على الأقل')
+        const chosen = args.testIds.map((tid) => {
+          const t = state.labTests.find((x) => x.id === tid && x.isActive)
+          if (!t) throw new Error(`فحص غير موجود (#${tid})`)
+          return t
+        })
+        const totals = computeLabTotals(chosen.map((t) => t.priceMinor), 0, args.vatPercent)
+        const { providerShareMinor, patientShareMinor } = splitCoverage(totals.totalMinor, provider.coveragePercent)
+        const now = new Date().toISOString()
+        const orderId = nextId(state.labOrders)
+        const orderNumber = `LAB-${String(orderId).padStart(4, '0')}`
+        const entryLines = buildInsuredEntry({
+          patientShareMinor, providerShareMinor, revenueMinor: totals.netMinor,
+          revenueAccount: '4106', vatMinor: totals.vatMinor, cogsMinor: 0,
+          treasury: args.treasury ?? '1101', providerName: provider.nameAr,
+        })
+        let journal = state.journal
+        const entryId = nextId(journal)
+        journal = [...journal, {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `طلب تحاليل ${orderNumber} — ${patient.nameAr} بتغطية ${provider.nameAr}`,
+          sourceType: 'insured_sale', sourceId: orderId, lines: entryLines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }]
+        const commissionMinor = referrer ? commissionFor(totals.netMinor, referrer.commissionPercent) : 0
+        let commissionEntryId: number | null = null
+        if (commissionMinor > 0) {
+          commissionEntryId = nextId(journal)
+          journal = [...journal, {
+            id: commissionEntryId, entryNumber: commissionEntryId, date: now.slice(0, 10),
+            description: `استحقاق عمولة د. ${referrer!.nameAr} عن ${orderNumber}`,
+            sourceType: 'lab_commission', sourceId: orderId,
+            lines: buildCommissionAccrualEntry(commissionMinor, orderNumber),
+            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+        }
+        const age = patient.birthDate ? ageYearsFn(patient.birthDate, now) : 30
+        const orderTests: LabOrderTest[] = chosen.map((t) => {
+          const range = matchRefRangeFn(t, patient.gender, age)
+          return {
+            testId: t.id, code: t.code, nameAr: t.nameAr, unit: t.unit, priceMinor: t.priceMinor,
+            status: 'pending', resultValue: '', resultFlag: 'none',
+            refLow: range?.low ?? null, refHigh: range?.high ?? null,
+            collectedAt: null, resultedAt: null, approvedAt: null,
+          }
+        })
+        const order: LabOrder = {
+          id: orderId, orderNumber, date: now,
+          patientId: patient.id, patientName: patient.nameAr,
+          referrerId: referrer?.id ?? null,
+          payment: 'credit', discountPercent: 0,
+          tests: orderTests, totals,
+          journalEntryId: entryId,
+          commissionMinor, commissionEntryId, commissionPaid: false, commissionPayoutEntryId: null,
+          notes: `${args.notes ?? ''} [تغطية ${provider.nameAr} ${provider.coveragePercent}٪]`.trim(),
+        }
+        const claim: InsuranceClaim = {
+          id: nextId(state.insuranceClaims), providerId: provider.id, source: 'lab_order', sourceId: orderId,
+          date: now.slice(0, 10), totalMinor: totals.totalMinor, claimMinor: providerShareMinor,
+          settled: false, settlementEntryId: null,
+        }
+        set({ labOrders: [...state.labOrders, order], insuranceClaims: [...state.insuranceClaims, claim], journal })
+        return order
+      },
+      getClaimBalance: (providerId) => {
+        return get().insuranceClaims.filter((c) => c.providerId === providerId && !c.settled).reduce((s2, c) => s2 + c.claimMinor, 0)
+      },
+      settleInsuranceClaims: (providerId, treasury = '1101') => {
+        const state = get()
+        const provider = state.insuranceProviders.find((p) => p.id === providerId)
+        if (!provider) throw new Error('الجهة غير موجودة')
+        const unsettled = state.insuranceClaims.filter((c) => c.providerId === providerId && !c.settled)
+        const total = unsettled.reduce((s2, c) => s2 + c.claimMinor, 0)
+        const lines = buildClaimSettlementEntry(total, provider.nameAr, treasury) // يرمي لو صفر
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تحصيل مطالبات ${provider.nameAr} (${unsettled.length} مطالبة)`,
+          sourceType: 'claim_settlement', sourceId: providerId, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({
+          insuranceClaims: state.insuranceClaims.map((c) => (c.providerId === providerId && !c.settled ? { ...c, settled: true, settlementEntryId: entryId } : c)),
           journal: [...state.journal, entry],
         })
         return { total, count: unsettled.length }
@@ -4180,6 +4355,8 @@ export const useDataStore = create<DataState>()(
           equipmentCosts: s.equipmentCosts ?? [],
           consignmentCars: s.consignmentCars ?? [],
           driverDues: s.driverDues ?? [],
+          insuranceProviders: s.insuranceProviders ?? [],
+          insuranceClaims: s.insuranceClaims ?? [],
           priceLists: s.priceLists ?? [],
           priceListEntries: s.priceListEntries ?? [],
           custodyFiles: s.custodyFiles ?? [],
