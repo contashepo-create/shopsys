@@ -2951,6 +2951,7 @@ export const useDataStore = create<DataState>()(
         if (errors.length) throw new Error(errors.join(' — '))
         // الربط بالعميل إداري بحت (أمر التعديل): يُتحقق من وجوده فقط — لا قيد ولا ذمة
         if (p.clientId != null && !state.customers.find((c) => c.id === p.clientId)) throw new Error('العميل المربوط غير موجود')
+        if (p.managerEmployeeId != null && !state.employees.find((e) => e.id === p.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في سجل الموظفين')
         const id = nextId(state.projects)
         const project: Project = { ...p, clientId: p.clientId ?? null, id, code: `PRJ-${String(id).padStart(4, '0')}`, status: 'active' }
         set({ projects: [...state.projects, project] })

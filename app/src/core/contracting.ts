@@ -32,6 +32,12 @@ export interface Project {
   startDate: string // YYYY-MM-DD
   status: ProjectStatus
   notes: string
+  /* بيانات تشغيلية موسعة (أمر التعديل: نماذج احترافية) — كلها اختيارية */
+  contractNumber?: string // رقم العقد الرسمي مع الجهة
+  location?: string // موقع التنفيذ
+  expectedEndDate?: string // تاريخ التسليم المتوقع
+  managerEmployeeId?: number | null // مدير المشروع من سجل الموظفين
+  tags?: string[] // وسوم حرة للتصنيف والفلترة
 }
 
 export function validateProject(p: Pick<Project, 'nameAr' | 'contractValueMinor' | 'retentionPercent'>): string[] {

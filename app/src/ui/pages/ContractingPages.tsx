@@ -18,7 +18,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function ProjectsPage() {
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees,
     addProject, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus,
   } = useDataStore()
@@ -39,6 +39,12 @@ export function ProjectsPage() {
   const [retention, setRetention] = useState('5')
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10))
   const [notes, setNotes] = useState('')
+  /* بيانات تشغيلية موسعة (أمر التعديل: نماذج احترافية) — اختيارية */
+  const [contractNumber, setContractNumber] = useState('')
+  const [location, setLocation] = useState('')
+  const [expectedEnd, setExpectedEnd] = useState('')
+  const [managerId, setManagerId] = useState('')
+  const [tags, setTags] = useState('')
 
   const saveProject = () => {
     try {
@@ -47,9 +53,13 @@ export function ProjectsPage() {
         clientId: clientId ? Number(clientId) : null,
         contractValueMinor: toMinor(contractValue, cur.decimals),
         retentionPercent: Number(retention) || 0, startDate, notes: notes.trim(),
+        contractNumber: contractNumber.trim(), location: location.trim(),
+        expectedEndDate: expectedEnd, managerEmployeeId: managerId ? Number(managerId) : null,
+        tags: tags.split('،').map((t) => t.trim()).filter(Boolean),
       })
       toast.show(`أُنشئ المشروع ${p.code} ✅`)
       setOpen(false); setNameAr(''); setClientName(''); setClientId(''); setContractValue(''); setRetention('5'); setNotes('')
+      setContractNumber(''); setLocation(''); setExpectedEnd(''); setManagerId(''); setTags('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -211,23 +221,49 @@ export function ProjectsPage() {
         </div>
       )}
 
-      {/* مشروع جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="مشروع مقاولات جديد">
-        <div className="space-y-3">
-          <Field label="اسم المشروع *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="فيلا الشيخ زايد…" /></Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="العميل / الجهة"><input value={clientName} onChange={(e) => setClientName(e.target.value)} className={inputCls} /></Field>
-            <Field label="ربط بسجل عميل (إداري)" hint="للمتابعة والتحصيل فقط — لا يؤثر على رصيده؛ الذمة من المستخلص/الفاتورة">
-              <select value={clientId} onChange={(e) => { setClientId(e.target.value); const c = customers.find((x) => x.id === Number(e.target.value)); if (c && !clientName.trim()) setClientName(c.nameAr) }} className={inputCls}>
-                <option value="">— بلا ربط —</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
-            </Field>
-            <Field label={`قيمة العقد (${cur.symbol}) *`}><input value={contractValue} onChange={(e) => setContractValue(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            <Field label="محتجز ضمان الأعمال ٪" hint="يُخصم من كل مستخلص ويُفرج عنه عند التسليم"><input value={retention} onChange={(e) => setRetention(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            <Field label="تاريخ البدء"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} /></Field>
+      {/* مشروع جديد — نموذج مقسّم أقساماً (أمر التعديل: نماذج احترافية) */}
+      <Modal open={open} onClose={() => setOpen(false)} title="مشروع مقاولات جديد" wide>
+        <div className="space-y-4">
+          {/* القسم 1: أساسيات العقد */}
+          <div className="rounded-2xl border border-orange-500/20 p-4 space-y-3">
+            <div className="text-[11.5px] font-black text-orange-600 dark:text-orange-400">📋 بيانات العقد الأساسية</div>
+            <Field label="اسم المشروع *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="فيلا الشيخ زايد…" /></Field>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Field label={`قيمة العقد (${cur.symbol}) *`}><input value={contractValue} onChange={(e) => setContractValue(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+              <Field label="رقم العقد الرسمي"><input value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} className={inputCls} dir="ltr" placeholder="CT-2026-014" /></Field>
+              <Field label="محتجز ضمان الأعمال ٪" hint="يُخصم من كل مستخلص ويُفرج عنه عند التسليم"><input value={retention} onChange={(e) => setRetention(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            </div>
           </div>
-          <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
+          {/* القسم 2: العميل */}
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
+            <div className="text-[11.5px] font-black text-slate-500">👤 العميل / الجهة المالكة</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="اسم العميل / الجهة"><input value={clientName} onChange={(e) => setClientName(e.target.value)} className={inputCls} /></Field>
+              <Field label="ربط بسجل عميل (إداري)" hint="للمتابعة والتحصيل فقط — لا يؤثر على رصيده؛ الذمة من المستخلص/الفاتورة">
+                <select value={clientId} onChange={(e) => { setClientId(e.target.value); const c = customers.find((x) => x.id === Number(e.target.value)); if (c && !clientName.trim()) setClientName(c.nameAr) }} className={inputCls}>
+                  <option value="">— بلا ربط —</option>
+                  {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+                </select>
+              </Field>
+            </div>
+          </div>
+          {/* القسم 3: التنفيذ والجدولة */}
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
+            <div className="text-[11.5px] font-black text-slate-500">🗓️ التنفيذ والجدولة والفريق</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Field label="تاريخ البدء"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} /></Field>
+              <Field label="التسليم المتوقع"><input type="date" value={expectedEnd} onChange={(e) => setExpectedEnd(e.target.value)} className={inputCls} /></Field>
+              <Field label="مدير المشروع" hint="من سجل الموظفين">
+                <select value={managerId} onChange={(e) => setManagerId(e.target.value)} className={inputCls}>
+                  <option value="">— لاحقاً —</option>
+                  {employees.filter((em) => em.active).map((em) => <option key={em.id} value={em.id}>{em.nameAr}</option>)}
+                </select>
+              </Field>
+              <Field label="موقع التنفيذ"><input value={location} onChange={(e) => setLocation(e.target.value)} className={inputCls} placeholder="المنصورة — حي الجامعة" /></Field>
+              <Field label="وسوم (افصل بـ ،)"><input value={tags} onChange={(e) => setTags(e.target.value)} className={inputCls} placeholder="حكومي، تشطيبات" /></Field>
+              <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
+            </div>
+          </div>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveProject} disabled={!nameAr.trim() || !contractValue}>إنشاء المشروع</Btn>
