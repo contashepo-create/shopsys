@@ -21,6 +21,12 @@ export interface Project {
   code: string // PRJ-0001
   nameAr: string
   clientName: string
+  /**
+   * ربط إداري بحت بسجل العميل (طلب المالك — أمر التعديل):
+   * لا يؤثر إطلاقاً على رصيد العميل المحاسبي؛ الذمة تنشأ فقط
+   * من مستخلص/فاتورة رسمية. null = بلا ربط.
+   */
+  clientId: number | null
   contractValueMinor: Minor // قيمة العقد (استرشادية للتقدم)
   retentionPercent: number // نسبة محتجز ضمان الأعمال من كل مستخلص
   startDate: string // YYYY-MM-DD
@@ -174,10 +180,23 @@ export const QUOTATION_STATUS_LABELS: Record<QuotationStatus, { nameAr: string; 
 }
 
 export interface QuotationLine {
-  descriptionAr: string // بند الأعمال
+  nameAr: string // اسم البند المختصر
+  descriptionAr: string // وصف تفصيلي للأعمال
   qty: number
   unitAr: string // م2، م.ط، مقطوعية…
   unitPriceMinor: Minor
+  /** التكلفة التقديرية للوحدة — أساس موازنة البند وتحليل EVM */
+  estCostMinor: Minor
+}
+
+/** إجمالي بند = كمية × سعر وحدة (مقرَّب) */
+export function quotationLineTotal(l: Pick<QuotationLine, 'qty' | 'unitPriceMinor'>): Minor {
+  return Math.round(l.qty * l.unitPriceMinor)
+}
+
+/** إجمالي التكلفة التقديرية لبنود عرض */
+export function quotationEstCost(lines: readonly QuotationLine[]): Minor {
+  return lines.reduce((s, l) => s + Math.round(l.qty * l.estCostMinor), 0)
 }
 
 export interface Quotation {
@@ -185,6 +204,8 @@ export interface Quotation {
   quoteNumber: string // QT-0001
   kind: 'quotation' | 'tender' // عرض سعر | مناقصة
   clientName: string
+  /** ربط إداري بسجل العميل — لا أثر محاسبياً (الذمة من الفاتورة فقط) */
+  clientId: number | null
   titleAr: string
   date: string
   validUntil: string
@@ -237,6 +258,8 @@ export interface BoqItem {
   unit: string // م2، م3، طن، مقطوعية…
   qty: number
   unitPriceMinor: Minor
+  /** التكلفة التقديرية للوحدة — موازنة البند (مركز تكلفة) لتحليل EVM والتنبيهات */
+  estCostMinor: Minor
   /** نسبة الإنجاز 0–100 — تُحدَّث مع المستخلصات لمتابعة التقدم البندي */
   progressPercent: number
 }
@@ -328,11 +351,38 @@ export interface SubContract {
   projectId: number
   contractNumber: string // SC-0001
   contractorName: string
+  /** ربط اختياري بسجل مورد — يوحّد كشوف الحساب (أمر التعديل: تكامل الموردين) */
+  supplierId: number | null
   scopeAr: string // نطاق الأعمال: حفر، حدادة، تشطيبات…
   contractValueMinor: Minor
   retentionPercent: number // محتجز يُخصم من كل شهادة
+  /** نسبة ضريبة الاستقطاع من كل شهادة (0 = بلا) → 2112 */
+  taxWithholdPercent: number
+  /** بنود BOQ المسندة لهذا المقاول (إسناد إداري لمتابعة النطاق) */
+  boqItemIds: number[]
   status: SubContractStatus
   startDate: string
+}
+
+/** دفعة مقدمة لمقاول باطن — أصل (1111) يُسترد من الشهادات */
+export interface SubAdvance {
+  id: number
+  contractId: number
+  date: string
+  amountMinor: Minor
+  recoveredMinor: Minor
+  journalEntryId: number
+}
+
+/** قيد صرف دفعة مقدمة لمقاول باطن: 1111 مدين ← خزينة دائن */
+export function buildSubAdvanceEntry(amountMinor: Minor, treasury: string, label: string): JournalLine[] {
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة الدفعة المقدمة يجب أن تكون موجبة')
+  const lines: JournalLine[] = [
+    { accountCode: '1111', debit: amountMinor, credit: 0, note: `دفعة مقدمة ${label}` },
+    { accountCode: treasury, debit: 0, credit: amountMinor, note: 'المنصرف' },
+  ]
+  assertBalanced(lines)
+  return lines
 }
 
 /** شهادة أعمال مقاول باطن (مستخلص باطن) */
@@ -344,7 +394,11 @@ export interface SubCertificate {
   descriptionAr: string
   amountMinor: Minor // قيمة الأعمال المعتمدة
   retentionMinor: Minor // المحتجز منها
-  netMinor: Minor // الصافي المستحق للمقاول
+  /** ضريبة الاستقطاع المخصومة → التزام 2112 حتى توريدها */
+  taxWithholdMinor: Minor
+  /** المسترد من الدفعات المقدمة (يطفئ 1111) */
+  advanceRecoveryMinor: Minor
+  netMinor: Minor // الصافي المستحق للمقاول بعد كل الاستقطاعات
   journalEntryId: number
 }
 
@@ -373,15 +427,22 @@ export function validateSubContract(c: Pick<SubContract, 'contractorName' | 'sco
  *     إلى ح/ 2101 الموردون (الصافي) + 2108 محتجزات الباطن (المحتجز)
  * التكلفة تُعترف كاملة فور اعتماد الأعمال — والمحتجز التزام مؤجل لا خصم من التكلفة.
  */
-export function buildSubCertificateEntry(amountMinor: Minor, retentionMinor: Minor, label: string): JournalLine[] {
+export function buildSubCertificateEntry(
+  amountMinor: Minor, retentionMinor: Minor, taxWithholdMinor: Minor, advanceRecoveryMinor: Minor, label: string,
+): JournalLine[] {
   if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة الشهادة يجب أن تكون موجبة')
-  if (!Number.isInteger(retentionMinor) || retentionMinor < 0 || retentionMinor >= amountMinor) throw new Error('المحتجز غير صحيح')
-  const net = amountMinor - retentionMinor
+  if (!Number.isInteger(retentionMinor) || retentionMinor < 0) throw new Error('المحتجز غير صحيح')
+  if (!Number.isInteger(taxWithholdMinor) || taxWithholdMinor < 0) throw new Error('ضريبة الاستقطاع غير صحيحة')
+  if (!Number.isInteger(advanceRecoveryMinor) || advanceRecoveryMinor < 0) throw new Error('استرداد الدفعة المقدمة غير صحيح')
+  const net = amountMinor - retentionMinor - taxWithholdMinor - advanceRecoveryMinor
+  if (net < 0) throw new Error('الاستقطاعات تتجاوز قيمة الشهادة')
   const lines: JournalLine[] = [
     { accountCode: '5110', debit: amountMinor, credit: 0, note: `شهادة أعمال ${label}` },
-    { accountCode: '2101', debit: 0, credit: net, note: 'صافي مستحق مقاول الباطن' },
   ]
+  if (net > 0) lines.push({ accountCode: '2101', debit: 0, credit: net, note: 'صافي مستحق مقاول الباطن' })
   if (retentionMinor > 0) lines.push({ accountCode: '2108', debit: 0, credit: retentionMinor, note: 'محتجز ضمان أعمال الباطن' })
+  if (taxWithholdMinor > 0) lines.push({ accountCode: '2112', debit: 0, credit: taxWithholdMinor, note: 'ضريبة استقطاع مستحقة' })
+  if (advanceRecoveryMinor > 0) lines.push({ accountCode: '1111', debit: 0, credit: advanceRecoveryMinor, note: 'استرداد دفعة مقدمة' })
   assertBalanced(lines)
   return lines
 }
@@ -498,7 +559,7 @@ export interface DailyWorker {
 export interface DailyWorkRecord {
   id: number
   workerId: number
-  projectId: number
+  projectId: number | null // null = عمالة تشغيل عام (لا مشروع) — تُرحَّل مصروفاً عمومياً 5108
   date: string
   days: number // يوم أو نصف يوم (0.5)
   wageMinor: Minor // أجر هذا السجل = days × اليومية (قابل للتعديل)
@@ -507,12 +568,16 @@ export interface DailyWorkRecord {
 }
 
 /** قيد تسوية أجور يومية على مشروع: 5110 مدين ← نقدية دائن */
-export function buildDailyWorkSettlementEntry(totalMinor: Minor, treasury: string, label: string): JournalLine[] {
-  if (!Number.isInteger(totalMinor) || totalMinor <= 0) throw new Error('لا أجور غير مسددة')
-  const lines: JournalLine[] = [
-    { accountCode: '5110', debit: totalMinor, credit: 0, note: `أجور يومية ${label}` },
-    { accountCode: treasury, debit: 0, credit: totalMinor, note: 'المنصرف' },
-  ]
+export function buildDailyWorkSettlementEntry(projectTotalMinor: Minor, overheadTotalMinor: Minor, treasury: string, label: string): JournalLine[] {
+  if (!Number.isInteger(projectTotalMinor) || projectTotalMinor < 0) throw new Error('أجور المشاريع غير صحيحة')
+  if (!Number.isInteger(overheadTotalMinor) || overheadTotalMinor < 0) throw new Error('أجور التشغيل العام غير صحيحة')
+  const total = projectTotalMinor + overheadTotalMinor
+  if (total <= 0) throw new Error('لا أجور غير مسددة')
+  const lines: JournalLine[] = []
+  // سجلات مربوطة بمشروع → تكاليف مشروعات؛ بدون مشروع → مصروف تشغيل عام (أمر التعديل)
+  if (projectTotalMinor > 0) lines.push({ accountCode: '5110', debit: projectTotalMinor, credit: 0, note: `أجور يومية مشاريع ${label}` })
+  if (overheadTotalMinor > 0) lines.push({ accountCode: '5108', debit: overheadTotalMinor, credit: 0, note: `أجور يومية تشغيل عام ${label}` })
+  lines.push({ accountCode: treasury, debit: 0, credit: total, note: 'المنصرف' })
   assertBalanced(lines)
   return lines
 }

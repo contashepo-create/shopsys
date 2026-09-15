@@ -44,9 +44,16 @@ import {
 } from '../core/custody.ts'
 import { validateProject, computeExtractTotals, buildProjectPurchaseEntry, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
-  validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry,
+  validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip,
-  type BoqItem, type ChangeOrder, type SubContract, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult } from '../core/contracting.ts'
+  type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult } from '../core/contracting.ts'
+import {
+  buildIssueLine, buildMaterialIssueEntry, allocateClientPayment, buildClientReceiptEntry, computeProjectEvm,
+  validateApprovalFlow, applyApprovalDecision, APPROVAL_ACTION_LABELS,
+  type MaterialRequisition, type MaterialIssueLine, type IssueLineInput, type StockMove,
+  type OpenInvoice, type FifoAllocation, type EvmProjectResult,
+  type ApprovalAction, type ApprovalFlow, type ApprovalRequest,
+} from '../core/projectOps.ts'
 import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, type VisitKind, type VisitTotals } from '../core/clinic.ts'
 import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, buildConsignmentSaleEntry, buildConsignmentPayoutEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
 import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
@@ -93,6 +100,13 @@ export interface Supplier extends PartyExtended {
   nameAr: string
   phone: string
   notes: string
+  /* مركز الموردين (أمر التعديل) — كلها اختيارية التزاماً بقاعدة المالك */
+  contactPerson?: string // مسؤول التواصل
+  category?: string // تصنيف: مواد بناء، خدمات، مقاول باطن…
+  paymentTermsDays?: number // شروط السداد بالأيام (0 = نقدي)
+  bankName?: string
+  iban?: string
+  active?: boolean
 }
 
 /** موظف — نفس البيانات الموسعة الاختيارية للأطراف + بيانات التوظيف */
@@ -652,7 +666,14 @@ interface DataState {
   subPayments: SubPayment[] // دفعات الباطن وإفراجات محتجزاته
   bonds: Bond[] // خطابات الضمان البنكية
   dailyWorkers: DailyWorker[] // عمال اليومية
-  dailyWorkRecords: DailyWorkRecord[] // سجلات أيام العمل على المشاريع
+  dailyWorkRecords: DailyWorkRecord[] // سجلات أيام العمل (مشروع أو تشغيل عام)
+  /* أوامر التعديل: أذون صرف مواد، تدقيق حركة مخزون، تحصيلات FIFO، دفعات باطن مقدمة، موافقات */
+  materialRequisitions: MaterialRequisition[] // أذون صرف مواد للمشاريع
+  stockMoves: StockMove[] // سجل تدقيق حركات المخزون
+  clientSettlements: { id: number; settlementNumber: string; customerId: number; date: string; amountMinor: number; treasury: string; allocations: FifoAllocation[]; unallocatedMinor: number; notes: string; journalEntryId: number }[]
+  subAdvances: SubAdvance[] // دفعات مقدمة لمقاولي الباطن (1111)
+  approvalFlows: ApprovalFlow[] // مسارات الموافقات المعرفة
+  approvalRequests: ApprovalRequest[] // طلبات الاعتماد الجارية والمحسومة
   recipes: Recipe[] // وصفات الأطباق والتصنيع (مطاعم)
   productionOrders: ProductionOrder[] // أوامر الإنتاج المسبق
   gramPrices: GramPrices // أسعار الجرام اليومية بالعيار (صاغة)
@@ -929,9 +950,9 @@ interface DataState {
   /** صرف كل عمولات مُحيل غير المدفوعة بقيد واحد (2105 ← 1101) */
   payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
-  addProject: (p: Omit<Project, 'id' | 'code' | 'status'>) => Project
+  addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
-  addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; titleAr: string; validUntil: string; lines: QuotationLine[]; notes: string }) => Quotation
+  addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string }) => Quotation
   setQuotationStatus: (id: number, status: QuotationStatus) => void
   /** تحويل عرض فائز لمشروع (يرث الاسم والعميل وقيمة العرض) */
   convertQuotationToProject: (id: number, retentionPercent: number) => Project
@@ -955,7 +976,7 @@ interface DataState {
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
   getProjectProfit: (projectId: number) => ProjectProfit
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
-  addBoqItem: (args: Omit<BoqItem, 'id' | 'progressPercent'>) => BoqItem
+  addBoqItem: (args: Omit<BoqItem, 'id' | 'progressPercent' | 'estCostMinor'> & { estCostMinor?: number }) => BoqItem
   updateBoqProgress: (id: number, progressPercent: number) => void
   removeBoqItem: (id: number) => void
   addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number }) => ChangeOrder
@@ -964,9 +985,9 @@ interface DataState {
   receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string }) => void
   /** رصيد الدفعات المقدمة غير المستردة لمشروع */
   getAdvanceBalance: (projectId: number) => number
-  addSubContract: (args: Omit<SubContract, 'id' | 'contractNumber' | 'status'>) => SubContract
+  addSubContract: (args: Omit<SubContract, 'id' | 'contractNumber' | 'status' | 'supplierId' | 'taxWithholdPercent' | 'boqItemIds'> & { supplierId?: number | null; taxWithholdPercent?: number; boqItemIds?: number[] }) => SubContract
   /** شهادة أعمال باطن: 5110 ← 2101 صافي + 2108 محتجز */
-  addSubCertificate: (args: { contractId: number; amountMinor: number; description: string }) => SubCertificate
+  addSubCertificate: (args: { contractId: number; amountMinor: number; description: string; advanceRecoveryMinor?: number }) => SubCertificate
   /** دفعة لمقاول الباطن من مستحقاته */
   paySubContractor: (args: { contractId: number; amountMinor: number; treasury: string }) => void
   /** إفراج محتجزات الباطن وإقفال عقده */
@@ -976,9 +997,32 @@ interface DataState {
   /** رد الخطاب (release) أو مصادرته (forfeit) */
   settleBond: (bondId: number, outcome: 'released' | 'forfeited') => Bond
   addDailyWorker: (args: { nameAr: string; phone: string; dailyWageMinor: number }) => DailyWorker
-  addDailyWorkRecord: (args: { workerId: number; projectId: number; date: string; days: number; wageMinor?: number }) => DailyWorkRecord
-  /** تسوية كل يوميات عامل غير المسددة: 5110 ← خزينة + تعليمها settled */
+  addDailyWorkRecord: (args: { workerId: number; projectId: number | null; date: string; days: number; wageMinor?: number }) => DailyWorkRecord
+  /** تسوية كل يوميات عامل غير المسددة: مشاريع→5110 وتشغيل عام→5108 ← خزينة */
   settleDailyWorker: (workerId: number, treasury: string) => { total: number; recordCount: number }
+  /* ─── أوامر التعديل: أذون صرف مواد + تحصيلات FIFO + دفعات باطن + EVM + موافقات ─── */
+  /** إذن صرف مواد لمشروع: خصم مخزون بالمتوسط المرجح → 5110/1103 بصارف ومستلم إلزاميين */
+  issueMaterials: (args: { projectId: number; issuedByEmployeeId: number; receivedByEmployeeId: number; lines: IssueLineInput[]; notes: string }) => MaterialRequisition
+  /** الفواتير المفتوحة لعميل (بيع آجل + مستخلصات مشاريعه الآجلة) بعد التحصيلات والمرتجعات */
+  getOpenClientInvoices: (customerId: number) => OpenInvoice[]
+  /** تحصيل من عميل على مستوى الحساب: FIFO افتراضياً أو مطابقة فاتورة محددة اختيارياً */
+  receiveClientPayment: (args: { customerId: number; amountMinor: number; treasury: string; specificDocKey?: string | null; notes?: string }) => { settlementNumber: string; allocations: FifoAllocation[]; unallocatedMinor: number }
+  /** دفعة مقدمة لمقاول باطن: 1111 ← خزينة (تُسترد من شهاداته) */
+  addSubAdvance: (args: { contractId: number; amountMinor: number; treasury: string }) => SubAdvance
+  /** رصيد الدفعات المقدمة غير المستردة لعقد باطن */
+  getSubAdvanceBalance: (contractId: number) => number
+  /** توريد ضريبة الاستقطاع المحتجزة للمصلحة: 2112 ← خزينة */
+  remitWithholdingTax: (treasury: string) => { amount: number }
+  /** لوحة القيمة المكتسبة EVM لمشروع من بنود BOQ وتكاليفه الفعلية */
+  getProjectEvm: (projectId: number) => EvmProjectResult
+  /** تعريف/تحديث مسار موافقات لإجراء حرج (تسلسل أدوار حتى 6 مستويات) */
+  setApprovalFlow: (action: ApprovalAction, steps: { roleAr: string; employeeId: number | null }[], active: boolean) => ApprovalFlow
+  /** طلب اعتماد لإجراء خاضع لمسار موافقات */
+  requestApproval: (action: ApprovalAction, subject: string, refId: number) => ApprovalRequest
+  /** قرار على المستوى الحالي: موافقة تنقل للمستوى التالي، ورفضٌ يقفل الطلب */
+  decideApproval: (requestId: number, decision: 'approved' | 'rejected', decidedBy: string, note?: string) => ApprovalRequest
+  /** حارس داخلي: إجراء له مسار نشط ⇒ لا بد من طلب معتمد غير مستهلك (يُستهلك عند التنفيذ) */
+  assertApproved: (action: ApprovalAction, refId: number, subject: string) => void
 
   // ————— الوصفات والتصنيع (مطاعم) —————
   addRecipe: (input: RecipeInput) => Recipe
@@ -1098,7 +1142,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 9
+export const DATA_VERSION = 10
 
 export const useDataStore = create<DataState>()(
   persist(
@@ -1136,6 +1180,12 @@ export const useDataStore = create<DataState>()(
       bonds: [],
       dailyWorkers: [],
       dailyWorkRecords: [],
+      materialRequisitions: [],
+      stockMoves: [],
+      clientSettlements: [],
+      subAdvances: [],
+      approvalFlows: [],
+      approvalRequests: [],
       recipes: [],
       productionOrders: [],
       gramPrices: EMPTY_GRAM_PRICES,
@@ -2899,26 +2949,40 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const errors = validateProject(p)
         if (errors.length) throw new Error(errors.join(' — '))
+        // الربط بالعميل إداري بحت (أمر التعديل): يُتحقق من وجوده فقط — لا قيد ولا ذمة
+        if (p.clientId != null && !state.customers.find((c) => c.id === p.clientId)) throw new Error('العميل المربوط غير موجود')
         const id = nextId(state.projects)
-        const project: Project = { ...p, id, code: `PRJ-${String(id).padStart(4, '0')}`, status: 'active' }
+        const project: Project = { ...p, clientId: p.clientId ?? null, id, code: `PRJ-${String(id).padStart(4, '0')}`, status: 'active' }
         set({ projects: [...state.projects, project] })
         return project
       },
 
       addQuotation: (q) => {
         const state = get()
-        const errors = validateQuotation(q)
+        // بنود كاملة: اسم + وصف + كمية + وحدة + سعر + تكلفة تقديرية (أمر التعديل)
+        const fullLines: QuotationLine[] = q.lines.map((l) => ({
+          nameAr: (l.nameAr ?? '').trim() || l.descriptionAr.trim().slice(0, 40),
+          descriptionAr: l.descriptionAr,
+          qty: l.qty,
+          unitAr: l.unitAr,
+          unitPriceMinor: l.unitPriceMinor,
+          estCostMinor: Number.isInteger(l.estCostMinor) && (l.estCostMinor ?? 0) >= 0 ? (l.estCostMinor as number) : 0,
+        }))
+        const errors = validateQuotation({ ...q, lines: fullLines })
         if (errors.length) throw new Error(errors.join(' — '))
+        // ربط العميل إداري — لا أثر على رصيده المحاسبي إطلاقاً
+        if (q.clientId != null && !state.customers.find((c) => c.id === q.clientId)) throw new Error('العميل المربوط غير موجود')
         const id = nextId(state.quotations)
         const quote: Quotation = {
           id,
           quoteNumber: `${q.kind === 'tender' ? 'TN' : 'QT'}-${String(id).padStart(4, '0')}`,
           kind: q.kind,
           clientName: q.clientName.trim(),
+          clientId: q.clientId ?? null,
           titleAr: q.titleAr.trim(),
           date: new Date().toISOString().slice(0, 10),
           validUntil: q.validUntil,
-          lines: q.lines.filter((l) => l.descriptionAr.trim() && l.qty > 0),
+          lines: fullLines.filter((l) => l.descriptionAr.trim() && l.qty > 0),
           status: 'draft',
           notes: q.notes,
           projectId: null,
@@ -2943,15 +3007,34 @@ export const useDataStore = create<DataState>()(
         if (!q) throw new Error('العرض غير موجود')
         if (q.status !== 'won') throw new Error('يتحول للمشروع العرضُ الفائز فقط — علّمه «فائز» أولاً')
         if (q.projectId != null) throw new Error('تحوّل هذا العرض لمشروع بالفعل')
+        // بوابة الموافقات (أمر التعديل): مسار نشط ⇒ يتطلب اعتماداً مكتملاً غير مستهلك
+        get().assertApproved('quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`)
         const project = get().addProject({
           nameAr: q.titleAr,
           clientName: q.clientName,
+          clientId: q.clientId ?? null, // الربط الإداري ينتقل مع التحويل — بلا أي أثر مالي
           contractValueMinor: quotationTotal(q.lines),
           retentionPercent,
           startDate: new Date().toISOString().slice(0, 10),
           notes: `متولد من ${q.quoteNumber}`,
         })
-        set((s) => ({ quotations: s.quotations.map((x) => (x.id === id ? { ...x, projectId: project.id } : x)) }))
+        // تحويل بضغطة: كل بنود العرض تنتقل جدولَ كميات للمشروع بأكوادها وتكاليفها التقديرية
+        const startBoqId = nextId(get().boqItems)
+        const boq: BoqItem[] = q.lines.map((l, i) => ({
+          id: startBoqId + i,
+          projectId: project.id,
+          code: String(i + 1),
+          descriptionAr: l.nameAr && l.nameAr !== l.descriptionAr ? `${l.nameAr} — ${l.descriptionAr}` : l.descriptionAr,
+          unit: l.unitAr,
+          qty: l.qty,
+          unitPriceMinor: l.unitPriceMinor,
+          estCostMinor: l.estCostMinor,
+          progressPercent: 0,
+        }))
+        set((s) => ({
+          quotations: s.quotations.map((x) => (x.id === id ? { ...x, projectId: project.id } : x)),
+          boqItems: [...s.boqItems, ...boq],
+        }))
         return project
       },
 
@@ -3110,6 +3193,8 @@ export const useDataStore = create<DataState>()(
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
+        // بوابة الموافقات: إصدار مستخلص العميل إجراء حرج (أمر التعديل)
+        get().assertApproved('project_extract', project.id, `مستخلص جديد — ${project.nameAr}`)
         const totals = computeExtractTotals(args.grossMinor, project.retentionPercent, args.vatPercent)
         const id = nextId(state.projectExtracts)
         const extractNumber = `PRX-${String(id).padStart(4, '0')}`
@@ -3229,8 +3314,10 @@ export const useDataStore = create<DataState>()(
         const state = get()
         if (!state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
         const errors = validateBoqItem(args)
+        const estCost = args.estCostMinor ?? 0
+        if (!Number.isInteger(estCost) || estCost < 0) errors.push('التكلفة التقديرية غير صحيحة')
         if (errors.length) throw new Error(errors.join(' — '))
-        const item: BoqItem = { ...args, id: nextId(state.boqItems), progressPercent: 0 }
+        const item: BoqItem = { ...args, estCostMinor: estCost, id: nextId(state.boqItems), progressPercent: 0 }
         set({ boqItems: [...state.boqItems, item] })
         return item
       },
@@ -3300,9 +3387,21 @@ export const useDataStore = create<DataState>()(
         const state = get()
         if (!state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
         const errors = validateSubContract(args)
+        const withhold = args.taxWithholdPercent ?? 0
+        if (withhold < 0 || withhold > 20) errors.push('نسبة ضريبة الاستقطاع بين 0 و20٪')
+        // ربط اختياري بسجل مورد — يوحّد المستحقات في كشف حسابه (تكامل الموردين)
+        if (args.supplierId != null && !state.suppliers.find((x) => x.id === args.supplierId)) errors.push('المورد المربوط غير موجود')
+        const boqIds = args.boqItemIds ?? []
+        for (const bid of boqIds) {
+          const b = state.boqItems.find((x) => x.id === bid)
+          if (!b || b.projectId !== args.projectId) errors.push(`بند BOQ رقم ${bid} ليس من بنود هذا المشروع`)
+        }
         if (errors.length) throw new Error(errors.join(' — '))
         const id = nextId(state.subContracts)
-        const contract: SubContract = { ...args, id, contractNumber: `SC-${String(id).padStart(4, '0')}`, status: 'active' }
+        const contract: SubContract = {
+          ...args, supplierId: args.supplierId ?? null, taxWithholdPercent: withhold, boqItemIds: boqIds,
+          id, contractNumber: `SC-${String(id).padStart(4, '0')}`, status: 'active',
+        }
         set({ subContracts: [...state.subContracts, contract] })
         return contract
       },
@@ -3311,14 +3410,24 @@ export const useDataStore = create<DataState>()(
         const contract = state.subContracts.find((c) => c.id === args.contractId)
         if (!contract) throw new Error('عقد الباطن غير موجود')
         if (contract.status !== 'active') throw new Error('العقد غير نشط')
+        // بوابة الموافقات: اعتماد مستخلص الباطن إجراء حرج
+        get().assertApproved('sub_certificate', contract.id, `اعتماد شهادة أعمال ${contract.contractNumber}`)
         // حماية تجاوز قيمة العقد
         const certified = state.subCertificates.filter((c) => c.contractId === contract.id).reduce((s, c) => s + c.amountMinor, 0)
         if (certified + args.amountMinor > contract.contractValueMinor) {
           throw new Error(`الشهادات تتجاوز قيمة العقد (متبقٍ ${contract.contractValueMinor - certified})`)
         }
         const retention = Math.round(args.amountMinor * contract.retentionPercent / 100)
+        // ضريبة الاستقطاع من نسبة العقد → التزام 2112 حتى توريدها للمصلحة
+        const withhold = Math.round(args.amountMinor * contract.taxWithholdPercent / 100)
+        // استرداد الدفعة المقدمة (اختياري) — لا يتجاوز رصيدها غير المسترد
+        const recovery = args.advanceRecoveryMinor ?? 0
+        if (recovery > 0) {
+          const advBalance = get().getSubAdvanceBalance(contract.id)
+          if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
+        }
         const label = `${contract.contractNumber} — ${contract.contractorName}`
-        const lines = buildSubCertificateEntry(args.amountMinor, retention, label)
+        const lines = buildSubCertificateEntry(args.amountMinor, retention, withhold, recovery, label)
         const now = new Date().toISOString()
         const id = nextId(state.subCertificates)
         const entryId = nextId(state.journal)
@@ -3332,15 +3441,25 @@ export const useDataStore = create<DataState>()(
         const cert: SubCertificate = {
           id, contractId: contract.id, number, date: now.slice(0, 10),
           descriptionAr: args.description, amountMinor: args.amountMinor,
-          retentionMinor: retention, netMinor: args.amountMinor - retention, journalEntryId: entryId,
+          retentionMinor: retention, taxWithholdMinor: withhold, advanceRecoveryMinor: recovery,
+          netMinor: args.amountMinor - retention - withhold - recovery, journalEntryId: entryId,
         }
+        // إطفاء الدفعات المقدمة FIFO (الأقدم أولاً)
+        let toRecover = recovery
+        const updatedSubAdvances = state.subAdvances.map((a) => {
+          if (toRecover <= 0 || a.contractId !== contract.id) return a
+          const room = a.amountMinor - a.recoveredMinor
+          const take = Math.min(room, toRecover)
+          toRecover -= take
+          return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
+        })
         // شهادة الباطن تكلفة مشروع أيضاً — تدخل ربحية المشروع تلقائياً
         const cost = {
           id: nextId(state.projectCosts), projectId: contract.projectId, date: now.slice(0, 10),
           kind: 'subcontract' as CostKind, description: `شهادة ${label}: ${args.description}`,
           amountMinor: args.amountMinor, payment: 'credit' as const, journalEntryId: entryId,
         }
-        set({ subCertificates: [...state.subCertificates, cert], projectCosts: [...state.projectCosts, cost], journal: [...state.journal, entry] })
+        set({ subCertificates: [...state.subCertificates, cert], projectCosts: [...state.projectCosts, cost], subAdvances: updatedSubAdvances, journal: [...state.journal, entry] })
         return cert
       },
       paySubContractor: (args) => {
@@ -3444,13 +3563,16 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const worker = state.dailyWorkers.find((w) => w.id === args.workerId)
         if (!worker) throw new Error('العامل غير مسجل')
-        const project = state.projects.find((p) => p.id === args.projectId)
-        if (!project) throw new Error('المشروع غير موجود')
-        if (project.status === 'completed') throw new Error('المشروع مقفل')
+        // الربط بالمشروع اختياري (أمر التعديل): null = عمالة تشغيل عام → مصروف عمومي 5108
+        if (args.projectId != null) {
+          const project = state.projects.find((p) => p.id === args.projectId)
+          if (!project) throw new Error('المشروع غير موجود')
+          if (project.status === 'completed') throw new Error('المشروع مقفل')
+        }
         if (!(args.days > 0) || args.days > 31) throw new Error('عدد الأيام بين نصف يوم و31')
         const wage = args.wageMinor ?? Math.round(worker.dailyWageMinor * args.days)
         if (!Number.isInteger(wage) || wage <= 0) throw new Error('الأجر يجب أن يكون موجباً')
-        const rec: DailyWorkRecord = { id: nextId(state.dailyWorkRecords), workerId: worker.id, projectId: project.id, date: args.date, days: args.days, wageMinor: wage, settled: false, settlementId: null }
+        const rec: DailyWorkRecord = { id: nextId(state.dailyWorkRecords), workerId: worker.id, projectId: args.projectId ?? null, date: args.date, days: args.days, wageMinor: wage, settled: false, settlementId: null }
         set({ dailyWorkRecords: [...state.dailyWorkRecords, rec] })
         return rec
       },
@@ -3460,7 +3582,10 @@ export const useDataStore = create<DataState>()(
         if (!worker) throw new Error('العامل غير مسجل')
         const unsettled = state.dailyWorkRecords.filter((r) => r.workerId === workerId && !r.settled)
         const total = unsettled.reduce((s, r) => s + r.wageMinor, 0)
-        const lines = buildDailyWorkSettlementEntry(total, treasury, worker.nameAr) // يرمي لو صفر
+        // فرز تلقائي (أمر التعديل): سجل بمشروع → 5110 تكاليف مشاريع؛ بلا مشروع → 5108 تشغيل عام
+        const projectTotal = unsettled.filter((r) => r.projectId != null).reduce((s, r) => s + r.wageMinor, 0)
+        const overheadTotal = total - projectTotal
+        const lines = buildDailyWorkSettlementEntry(projectTotal, overheadTotal, treasury, worker.nameAr) // يرمي لو صفر
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
@@ -3469,10 +3594,10 @@ export const useDataStore = create<DataState>()(
           sourceType: 'daily_wages', sourceId: workerId, lines,
           createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
-        // كل سجل يخص مشروعاً — يظهر في تكاليفه (لدقة الربحية البندية)
+        // السجلات المشروعية فقط تدخل تكاليف مشاريعها (لدقة الربحية) — التشغيل العام مصروف عمومي
         let costId = nextId(state.projectCosts)
         const byProject = new Map<number, number>()
-        for (const r of unsettled) byProject.set(r.projectId, (byProject.get(r.projectId) ?? 0) + r.wageMinor)
+        for (const r of unsettled) if (r.projectId != null) byProject.set(r.projectId, (byProject.get(r.projectId) ?? 0) + r.wageMinor)
         const newCosts = [...byProject].map(([projectId, amountMinor]) => ({
           id: costId++, projectId, date: now.slice(0, 10), kind: 'labor' as CostKind,
           description: `أجور يومية ${worker.nameAr}`, amountMinor, payment: 'cash' as const, journalEntryId: entryId,
@@ -3483,6 +3608,245 @@ export const useDataStore = create<DataState>()(
           journal: [...state.journal, entry],
         })
         return { total, recordCount: unsettled.length }
+      },
+
+      /* ─── أوامر التعديل: أذون صرف مواد + تحصيلات FIFO + دفعات باطن + EVM + موافقات ─── */
+      issueMaterials: (args) => {
+        const state = get()
+        const project = state.projects.find((p) => p.id === args.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        if (project.status === 'completed') throw new Error('المشروع مقفل — لا صرف مواد عليه')
+        // الصارف والمستلم إلزاميان من قاعدة الموظفين (أمر التعديل)
+        const issuer = state.employees.find((e) => e.id === args.issuedByEmployeeId)
+        if (!issuer) throw new Error('حدد أمين المخزن (الصارف) من سجل الموظفين')
+        const receiver = state.employees.find((e) => e.id === args.receivedByEmployeeId)
+        if (!receiver) throw new Error('حدد مهندس الموقع/المشرف (المستلم) من سجل الموظفين')
+        if (issuer.id === receiver.id) throw new Error('الصارف والمستلم لا يكونان نفس الموظف')
+        if (args.lines.length === 0) throw new Error('أضف صنفاً واحداً على الأقل')
+        // بوابة الموافقات: إذن الصرف إجراء حرج
+        get().assertApproved('material_requisition', project.id, `إذن صرف مواد — ${project.nameAr}`)
+        // بناء السطور بالتحويل للوحدة الأساسية وفحص التوافر الصارم (لا سالب إطلاقاً)
+        const planned = new Map<number, number>()
+        const lines: MaterialIssueLine[] = args.lines.map((input) => {
+          const item = state.items.find((it) => it.id === input.itemId)
+          if (!item) throw new Error('صنف غير موجود في إذن الصرف')
+          const line = buildIssueLine(input, item, planned.get(item.id) ?? 0)
+          planned.set(item.id, (planned.get(item.id) ?? 0) + line.baseQty)
+          return line
+        })
+        const totalCost = lines.reduce((sum, l) => sum + l.costMinor, 0)
+        const id = nextId(state.materialRequisitions)
+        const reqNumber = `MRQ-${String(id).padStart(4, '0')}`
+        const entryLines = buildMaterialIssueEntry(totalCost, `${reqNumber} — ${project.nameAr}`)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `إذن صرف مواد ${reqNumber} — ${project.nameAr}`,
+          sourceType: 'material_issue', sourceId: id, lines: entryLines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const req: MaterialRequisition = {
+          id, reqNumber, projectId: project.id, date: now,
+          issuedByEmployeeId: issuer.id, issuedByName: issuer.nameAr,
+          receivedByEmployeeId: receiver.id, receivedByName: receiver.nameAr,
+          lines, totalCostMinor: totalCost, notes: args.notes, status: 'issued', journalEntryId: entryId,
+        }
+        // خصم المخزون بالوحدة الأساسية + سجل تدقيق كامل للحركة (Audit Trail)
+        const updatedItems = state.items.map((it) => {
+          const issued = planned.get(it.id)
+          return issued ? { ...it, stockQty: Math.round((it.stockQty - issued) * 1000) / 1000 } : it
+        })
+        let moveId = nextId(state.stockMoves)
+        const moves: StockMove[] = lines.map((l) => ({
+          id: moveId++, date: now, itemId: l.itemId, qtyDelta: -l.baseQty,
+          balanceAfter: updatedItems.find((it) => it.id === l.itemId)?.stockQty ?? 0,
+          reason: `إذن صرف ${reqNumber} — ${project.nameAr}`, docType: 'material_issue', docId: id, byUser: issuer.nameAr,
+        }))
+        // التكلفة تدخل تكاليف المشروع المباشرة فوراً (بند مواد) — لدقة الربحية وEVM
+        const cost = {
+          id: nextId(state.projectCosts), projectId: project.id, date: now.slice(0, 10),
+          kind: 'materials' as CostKind, description: `مواد منصرفة ${reqNumber}`,
+          amountMinor: totalCost, payment: 'cash' as const, journalEntryId: entryId,
+        }
+        set({
+          materialRequisitions: [...state.materialRequisitions, req],
+          stockMoves: [...state.stockMoves, ...moves],
+          projectCosts: [...state.projectCosts, cost],
+          items: updatedItems, journal: [...state.journal, entry],
+        })
+        return req
+      },
+
+      getOpenClientInvoices: (customerId) => {
+        const state = get()
+        // المُحصَّل سابقاً لكل مستند من سجلات التحصيل
+        const settled = new Map<string, number>()
+        for (const st of state.clientSettlements) {
+          if (st.customerId !== customerId) continue
+          for (const a of st.allocations) settled.set(a.docKey, (settled.get(a.docKey) ?? 0) + a.appliedMinor)
+        }
+        const open: OpenInvoice[] = []
+        // فواتير البيع: الجزء الآجل فقط ينشئ ذمة — مخصوماً منه مرتجعات «على الحساب»
+        for (const sale of state.sales) {
+          if (sale.customerId !== customerId) continue
+          const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
+          const creditPart = sale.totals.totalMinor - paid
+          if (creditPart <= 0) continue
+          const creditReturns = state.saleReturns
+            .filter((r) => r.saleId === sale.id && r.refund === 'credit')
+            .reduce((sum, r) => sum + r.totals.totalMinor, 0)
+          const due = creditPart - creditReturns
+          if (due <= 0) continue
+          const key = `sale:${sale.id}`
+          open.push({ docKey: key, docLabel: `فاتورة ${sale.invoiceNumber}`, date: sale.date, dueMinor: due, settledMinor: settled.get(key) ?? 0 })
+        }
+        // مستخلصات المشاريع المربوطة إدارياً بالعميل: الآجلة فقط (المستحق بعد المحتجز)
+        for (const ex of state.projectExtracts) {
+          if (ex.payment !== 'credit') continue
+          const project = state.projects.find((pr) => pr.id === ex.projectId)
+          if (!project || project.clientId !== customerId) continue
+          const key = `extract:${ex.id}`
+          open.push({ docKey: key, docLabel: `مستخلص ${ex.extractNumber}`, date: ex.date, dueMinor: ex.totals.dueMinor, settledMinor: settled.get(key) ?? 0 })
+        }
+        return open.filter((inv) => inv.dueMinor - inv.settledMinor > 0).sort((a, b) => a.date.localeCompare(b.date))
+      },
+
+      receiveClientPayment: (args) => {
+        const state = get()
+        const customer = state.customers.find((c) => c.id === args.customerId)
+        if (!customer) throw new Error('العميل غير موجود')
+        // التحصيل على مستوى الحساب الإجمالي: FIFO افتراضياً، ومطابقة محددة عند الطلب (أمر الإصلاح)
+        const openInvoices = get().getOpenClientInvoices(customer.id)
+        const { allocations, unallocatedMinor } = allocateClientPayment(args.amountMinor, openInvoices, args.specificDocKey ?? null)
+        const id = nextId(state.clientSettlements)
+        const settlementNumber = `CLR-${String(id).padStart(4, '0')}`
+        const entryLines = buildClientReceiptEntry(args.amountMinor, args.treasury, `${settlementNumber} — ${customer.nameAr}`)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تحصيل ${settlementNumber} من ${customer.nameAr}${unallocatedMinor > 0 ? ' (يشمل دفعة تحت الحساب)' : ''}`,
+          sourceType: 'client_payment', sourceId: id, lines: entryLines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const settlement = {
+          id, settlementNumber, customerId: customer.id, date: now,
+          amountMinor: args.amountMinor, treasury: args.treasury,
+          allocations, unallocatedMinor, notes: args.notes ?? '', journalEntryId: entryId,
+        }
+        set({ clientSettlements: [...state.clientSettlements, settlement], journal: [...state.journal, entry] })
+        return { settlementNumber, allocations, unallocatedMinor }
+      },
+
+      addSubAdvance: (args) => {
+        const state = get()
+        const contract = state.subContracts.find((c) => c.id === args.contractId)
+        if (!contract) throw new Error('عقد الباطن غير موجود')
+        if (contract.status !== 'active') throw new Error('العقد غير نشط')
+        const lines = buildSubAdvanceEntry(args.amountMinor, args.treasury, `${contract.contractNumber} — ${contract.contractorName}`)
+        const now = new Date().toISOString()
+        const id = nextId(state.subAdvances)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `دفعة مقدمة لمقاول باطن ${contract.contractorName} (${contract.contractNumber})`,
+          sourceType: 'sub_advance', sourceId: id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const adv: SubAdvance = { id, contractId: contract.id, date: now.slice(0, 10), amountMinor: args.amountMinor, recoveredMinor: 0, journalEntryId: entryId }
+        set({ subAdvances: [...state.subAdvances, adv], journal: [...state.journal, entry] })
+        return adv
+      },
+
+      getSubAdvanceBalance: (contractId) => {
+        return get().subAdvances.filter((a) => a.contractId === contractId).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
+      },
+
+      remitWithholdingTax: (treasury) => {
+        const state = get()
+        // رصيد 2112 الدائن من القيود = المستحق توريده
+        let balance = 0
+        for (const e of state.journal) for (const l of e.lines) if (l.accountCode === '2112') balance += l.credit - l.debit
+        if (balance <= 0) throw new Error('لا ضريبة استقطاع مستحقة للتوريد')
+        const lines: JournalLine[] = [
+          { accountCode: '2112', debit: balance, credit: 0, note: 'توريد ضريبة الاستقطاع' },
+          { accountCode: treasury, debit: 0, credit: balance, note: 'المسدد للمصلحة' },
+        ]
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `توريد ضريبة استقطاع مقاولي الباطن`,
+          sourceType: 'payment_voucher', sourceId: entryId, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({ journal: [...state.journal, entry] })
+        return { amount: balance }
+      },
+
+      getProjectEvm: (projectId) => {
+        const state = get()
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        const evmLines = state.boqItems
+          .filter((b) => b.projectId === projectId)
+          .map((b) => ({ boqItemId: b.id, code: b.code, descriptionAr: b.descriptionAr, qty: b.qty, unitPriceMinor: b.unitPriceMinor, estCostMinor: b.estCostMinor, progressPercent: b.progressPercent }))
+        const actual = state.projectCosts.filter((c) => c.projectId === projectId).reduce((sum, c) => sum + c.amountMinor, 0)
+        return computeProjectEvm(evmLines, actual)
+      },
+
+      setApprovalFlow: (action, steps, active) => {
+        const state = get()
+        const errors = validateApprovalFlow(steps)
+        if (errors.length) throw new Error(errors.join(' — '))
+        for (const st of steps) {
+          if (st.employeeId != null && !state.employees.find((e) => e.id === st.employeeId)) throw new Error(`موظف المستوى «${st.roleAr}» غير موجود`)
+        }
+        const existing = state.approvalFlows.find((f) => f.action === action)
+        const flow: ApprovalFlow = {
+          id: existing?.id ?? nextId(state.approvalFlows),
+          action,
+          steps: steps.map((st, i) => ({ order: i + 1, roleAr: st.roleAr.trim(), employeeId: st.employeeId })),
+          active,
+        }
+        set({ approvalFlows: existing ? state.approvalFlows.map((f) => (f.id === existing.id ? flow : f)) : [...state.approvalFlows, flow] })
+        return flow
+      },
+
+      requestApproval: (action, subject, refId) => {
+        const state = get()
+        const flow = state.approvalFlows.find((f) => f.action === action && f.active)
+        if (!flow) throw new Error(`لا مسار موافقات نشطاً للإجراء «${APPROVAL_ACTION_LABELS[action]}»`)
+        const duplicate = state.approvalRequests.find((r) => r.action === action && r.refId === refId && r.status === 'pending')
+        if (duplicate) throw new Error('يوجد طلب اعتماد معلق لنفس المستند')
+        const req: ApprovalRequest = {
+          id: nextId(state.approvalRequests), action, subject, refId,
+          createdAt: new Date().toISOString(), status: 'pending', currentStep: 0, consumedAt: null, decisions: [],
+        }
+        set({ approvalRequests: [...state.approvalRequests, req] })
+        return req
+      },
+
+      decideApproval: (requestId, decision, decidedBy, note) => {
+        const state = get()
+        const req = state.approvalRequests.find((r) => r.id === requestId)
+        if (!req) throw new Error('طلب الاعتماد غير موجود')
+        const flow = state.approvalFlows.find((f) => f.action === req.action)
+        if (!flow) throw new Error('مسار الموافقات غير معرف')
+        const updated = applyApprovalDecision(req, flow, decision, decidedBy, note ?? '')
+        set({ approvalRequests: state.approvalRequests.map((r) => (r.id === requestId ? updated : r)) })
+        return updated
+      },
+
+      assertApproved: (action, refId, subject) => {
+        const state = get()
+        const flow = state.approvalFlows.find((f) => f.action === action && f.active)
+        if (!flow) return // لا مسار نشطاً = الإجراء حر (المحرك اختياري قابل للتخصيص)
+        const approved = state.approvalRequests.find((r) => r.action === action && r.refId === refId && r.status === 'approved' && r.consumedAt == null)
+        if (!approved) throw new Error(`«${APPROVAL_ACTION_LABELS[action]}» يتطلب اعتماداً مكتملاً عبر مسار الموافقات — ${subject}`)
+        // استهلاك الاعتماد: كل تنفيذ يحتاج اعتماداً جديداً
+        set({ approvalRequests: state.approvalRequests.map((r) => (r.id === approved.id ? { ...r, consumedAt: new Date().toISOString() } : r)) })
       },
 
       /* ─── الوصفات والتصنيع (مطاعم — سد فجوة Foodics) ─── */
@@ -4397,17 +4761,28 @@ export const useDataStore = create<DataState>()(
             extraEntryId: c.extraEntryId ?? null,
           })),
           operatorShifts: s.operatorShifts ?? [],
+          // الإصدار 10 (أوامر التعديل): ربط إداري بالعملاء وبنود موسعة ومستندات جديدة
+          projects: (s.projects ?? []).map((x) => ({ ...x, clientId: x.clientId ?? null })),
+          quotations: (s.quotations ?? []).map((q) => ({
+            ...q,
+            clientId: q.clientId ?? null,
+            lines: (q.lines ?? []).map((l) => ({ ...l, nameAr: l.nameAr ?? l.descriptionAr.slice(0, 40), estCostMinor: l.estCostMinor ?? 0 })),
+          })),
+          boqItems: (s.boqItems ?? []).map((b) => ({ ...b, estCostMinor: b.estCostMinor ?? 0 })),
+          subContracts: (s.subContracts ?? []).map((c) => ({ ...c, supplierId: c.supplierId ?? null, taxWithholdPercent: c.taxWithholdPercent ?? 0, boqItemIds: c.boqItemIds ?? [] })),
+          subCertificates: (s.subCertificates ?? []).map((c) => ({ ...c, taxWithholdMinor: c.taxWithholdMinor ?? 0, advanceRecoveryMinor: c.advanceRecoveryMinor ?? 0 })),
+          materialRequisitions: s.materialRequisitions ?? [],
+          stockMoves: s.stockMoves ?? [],
+          clientSettlements: s.clientSettlements ?? [],
+          subAdvances: s.subAdvances ?? [],
+          approvalFlows: s.approvalFlows ?? [],
+          approvalRequests: s.approvalRequests ?? [],
           labTests: s.labTests ?? [],
           labReferrers: s.labReferrers ?? [],
           labPatients: s.labPatients ?? [],
           labOrders: s.labOrders ?? [],
-          projects: s.projects ?? [],
-          quotations: s.quotations ?? [],
-          boqItems: s.boqItems ?? [],
           changeOrders: s.changeOrders ?? [],
           clientAdvances: s.clientAdvances ?? [],
-          subContracts: s.subContracts ?? [],
-          subCertificates: s.subCertificates ?? [],
           subPayments: s.subPayments ?? [],
           bonds: s.bonds ?? [],
           dailyWorkers: s.dailyWorkers ?? [],

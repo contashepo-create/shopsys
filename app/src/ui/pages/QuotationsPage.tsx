@@ -12,12 +12,12 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { quotationTotal, QUOTATION_STATUS_LABELS, type Quotation, type QuotationLine } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
-interface DraftLine { descriptionAr: string; qty: string; unitAr: string; unitPrice: string }
+interface DraftLine { nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string }
 
 const UNITS = ['مقطوعية', 'م2', 'م3', 'م.ط', 'طن', 'عدد', 'يوم عمل']
 
 export function QuotationsPage() {
-  const { quotations, projects, addQuotation, setQuotationStatus, convertQuotationToProject } = useDataStore()
+  const { quotations, projects, customers, addQuotation, setQuotationStatus, convertQuotationToProject } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -32,31 +32,36 @@ export function QuotationsPage() {
   const [kind, setKind] = useState<'quotation' | 'tender'>('quotation')
   const [titleAr, setTitleAr] = useState('')
   const [clientName, setClientName] = useState('')
+  const [clientId, setClientId] = useState('') // ربط إداري بسجل العميل — لا أثر محاسبياً
   const [validUntil, setValidUntil] = useState('')
   const [qLines, setQLines] = useState<DraftLine[]>([])
   const [notes, setNotes] = useState('')
 
   const openNew = () => {
-    setKind('quotation'); setTitleAr(''); setClientName('')
+    setKind('quotation'); setTitleAr(''); setClientName(''); setClientId('')
     const d = new Date(); d.setMonth(d.getMonth() + 1)
     setValidUntil(d.toISOString().slice(0, 10))
-    setQLines([{ descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '' }])
+    setQLines([{ nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '' }])
     setNotes(''); setOpen(true)
   }
 
+  const safeMinor = (v: string) => { try { return toMinor(v || '0', cur.decimals) } catch { return 0 } }
   const parsedLines: QuotationLine[] = qLines
     .filter((l) => l.descriptionAr.trim() && Number(l.qty) > 0)
     .map((l) => ({
+      nameAr: l.nameAr.trim() || l.descriptionAr.trim().slice(0, 40),
       descriptionAr: l.descriptionAr.trim(),
       qty: Number(l.qty),
       unitAr: l.unitAr,
-      unitPriceMinor: (() => { try { return toMinor(l.unitPrice || '0', cur.decimals) } catch { return 0 } })(),
+      unitPriceMinor: safeMinor(l.unitPrice),
+      estCostMinor: safeMinor(l.estCost),
     }))
   const draftTotal = quotationTotal(parsedLines)
+  const draftEstCost = parsedLines.reduce((sum, l) => sum + Math.round(l.qty * l.estCostMinor), 0)
 
   const save = () => {
     try {
-      const q = addQuotation({ kind, clientName, titleAr, validUntil, lines: parsedLines, notes: notes.trim() })
+      const q = addQuotation({ kind, clientName, clientId: clientId ? Number(clientId) : null, titleAr, validUntil, lines: parsedLines, notes: notes.trim() })
       toast.show(`سُجل ${q.kind === 'tender' ? 'ملف المناقصة' : 'عرض السعر'} ${q.quoteNumber} — الإجمالي ${fmt(quotationTotal(q.lines))} ✅`)
       setOpen(false)
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -157,38 +162,52 @@ export function QuotationsPage() {
             <button onClick={() => setKind('quotation')} className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${kind === 'quotation' ? 'border-orange-500/60 bg-orange-500/10 text-orange-700 dark:text-orange-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>📄 عرض سعر</button>
             <button onClick={() => setKind('tender')} className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${kind === 'tender' ? 'border-orange-500/60 bg-orange-500/10 text-orange-700 dark:text-orange-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>🏛️ مناقصة</button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="عنوان الأعمال *"><input value={titleAr} onChange={(e) => setTitleAr(e.target.value)} className={inputCls} placeholder="تشطيب فيلا…" autoFocus /></Field>
             <Field label="العميل / الجهة *"><input value={clientName} onChange={(e) => setClientName(e.target.value)} className={inputCls} /></Field>
+            <Field label="ربط بسجل عميل (إداري)" hint="للمتابعة فقط — لا يؤثر على رصيد العميل إطلاقاً؛ الذمة تنشأ من الفاتورة/المستخلص">
+              <select value={clientId} onChange={(e) => { setClientId(e.target.value); const c = customers.find((x) => x.id === Number(e.target.value)); if (c && !clientName.trim()) setClientName(c.nameAr) }} className={inputCls}>
+                <option value="">— بلا ربط —</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+              </select>
+            </Field>
             <Field label="ساري حتى"><input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className={inputCls} dir="ltr" /></Field>
           </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">بنود الأعمال</span>
-              <Btn variant="soft" onClick={() => setQLines((l) => [...l, { descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '' }])}>+ بند</Btn>
+              <Btn variant="soft" onClick={() => setQLines((l) => [...l, { nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '' }])}>+ بند</Btn>
             </div>
-            <div className="hidden sm:grid grid-cols-[1fr_80px_110px_130px_36px] gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400">
-              <span>وصف البند</span><span>الكمية</span><span>الوحدة</span><span>سعر الوحدة ({cur.symbol})</span><span />
+            <div className="hidden lg:grid grid-cols-[130px_1fr_70px_100px_110px_110px_90px_36px] gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400">
+              <span>اسم البند</span><span>الوصف التفصيلي</span><span>الكمية</span><span>الوحدة</span><span>سعر الوحدة ({cur.symbol})</span><span>تكلفة تقديرية/وحدة</span><span>الإجمالي</span><span />
             </div>
             <div className="space-y-2">
-              {qLines.map((l, i) => (
-                <div key={i} className="anim-in grid grid-cols-2 sm:grid-cols-[1fr_80px_110px_130px_36px] gap-2 items-center">
-                  <input value={l.descriptionAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, descriptionAr: e.target.value } : x)))} placeholder="أعمال حفر وأساسات…" className={`${inputCls} col-span-2 sm:col-span-1`} />
-                  <input value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" min={0} className={inputCls} />
-                  <select value={l.unitAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls}>
-                    {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                  <input value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))} type="number" min={0} className={inputCls} />
-                  <button onClick={() => setQLines((arr) => arr.filter((_, j) => j !== i))} className="p-2 text-slate-300 hover:text-rose-500 transition-colors justify-self-center"><Trash2 size={15} /></button>
-                </div>
-              ))}
+              {qLines.map((l, i) => {
+                const lineTotal = Math.round((Number(l.qty) || 0) * safeMinor(l.unitPrice))
+                return (
+                  <div key={i} className="anim-in grid grid-cols-2 lg:grid-cols-[130px_1fr_70px_100px_110px_110px_90px_36px] gap-2 items-center">
+                    <input value={l.nameAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, nameAr: e.target.value } : x)))} placeholder="حفر وأساسات" className={inputCls} />
+                    <input value={l.descriptionAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, descriptionAr: e.target.value } : x)))} placeholder="حفر حتى منسوب التأسيس مع نقل المخلفات…" className={inputCls} />
+                    <input value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" min={0} className={inputCls} />
+                    <select value={l.unitAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls}>
+                      {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                    <input value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))} type="number" min={0} className={inputCls} />
+                    <input value={l.estCost} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, estCost: e.target.value } : x)))} type="number" min={0} placeholder="للموازنة" className={inputCls} />
+                    <span className="text-[12px] font-black text-slate-600 dark:text-slate-300 text-center">{lineTotal > 0 ? fmt(lineTotal) : '—'}</span>
+                    <button onClick={() => setQLines((arr) => arr.filter((_, j) => j !== i))} className="p-2 text-slate-300 hover:text-rose-500 transition-colors justify-self-center"><Trash2 size={15} /></button>
+                  </div>
+                )
+              })}
             </div>
           </div>
 
           {draftTotal > 0 && (
-            <div className="anim-pop p-3 rounded-xl bg-orange-500/5 border border-orange-500/20 text-[13px] font-bold text-orange-700 dark:text-orange-300 flex justify-between">
-              <span>إجمالي العرض</span><span className="font-black">{fmt(draftTotal)} {cur.symbol}</span>
+            <div className="anim-pop p-3 rounded-xl bg-orange-500/5 border border-orange-500/20 text-[13px] font-bold text-orange-700 dark:text-orange-300 grid grid-cols-3 gap-2 text-center">
+              <span>الإجمالي: <b className="font-black">{fmt(draftTotal)}</b></span>
+              <span>التكلفة التقديرية: <b className="font-black">{fmt(draftEstCost)}</b></span>
+              <span className={draftTotal - draftEstCost >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}>هامش متوقع: <b className="font-black">{fmt(draftTotal - draftEstCost)}</b></span>
             </div>
           )}
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
@@ -205,7 +224,8 @@ export function QuotationsPage() {
           <div className="space-y-4">
             <div className="p-3.5 rounded-2xl bg-orange-500/5 border border-orange-500/20 text-[13px] leading-relaxed">
               سيُنشأ مشروع باسم «<b>{convertFor.titleAr}</b>» للعميل «<b>{convertFor.clientName}</b>»
-              بقيمة عقد <b>{fmt(quotationTotal(convertFor.lines))} {cur.symbol}</b> — تسجل عليه المستخلصات والتكاليف والعُهد.
+              بقيمة عقد <b>{fmt(quotationTotal(convertFor.lines))} {cur.symbol}</b> — وتنتقل بنوده الـ{convertFor.lines.length}
+              كاملةً إلى جدول كميات المشروع (بأسعارها وتكاليفها التقديرية) تمهيداً للمستخلصات ولوحة القيمة المكتسبة.
             </div>
             <Field label="نسبة محتجز ضمان الأعمال ٪" hint="تُخصم من كل مستخلص ويُفرج عنها عند التسليم">
               <input value={convRetention} onChange={(e) => setConvRetention(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" />
