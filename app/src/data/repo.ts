@@ -12,7 +12,7 @@ import { secureStorage } from './secureStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
-import { computeTotals, buildSaleEntry, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
+import { computeTotals, buildSaleEntry, baseQty, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnEntry, deriveTaxConfig } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
@@ -1916,7 +1916,8 @@ export const useDataStore = create<DataState>()(
         // تُفكَّك سطوره إلى احتياجات خامات تُفحص وتُخصم بدلاً منه
         const recipeOf = (itemId: number) => state.recipes.find((r) => r.productItemId === itemId && r.mode === 'made_to_order' && r.isActive)
         const saleQty = new Map<number, number>()
-        for (const l of args.lines) saleQty.set(l.itemId, (saleQty.get(l.itemId) ?? 0) + l.qty)
+        // البيع بوحدة أكبر (صيدلية: شريط/علبة) — المخزون يُخصم بالوحدة الأساسية qty×factor
+        for (const l of args.lines) saleQty.set(l.itemId, (saleQty.get(l.itemId) ?? 0) + baseQty(l))
         const stockNeeds = explodeIngredientNeeds(saleQty, recipeOf)
         // 1) فحص المخزون (على الخامات للأطباق، وعلى الصنف نفسه لغيرها)
         if (!args.allowNegativeStock) {
@@ -1985,7 +1986,10 @@ export const useDataStore = create<DataState>()(
           }
           const current = state.items.find((it) => it.id === l.itemId)?.costMinor
           // لقطة المتوسط تؤخذ فقط لو كانت قيمة سليمة — أصناف قديمة قد تحمل تكلفة تالفة
-          return Number.isInteger(current) && current !== l.unitCostMinor ? { ...l, unitCostMinor: current as number } : l
+          // سطر بوحدة أكبر: تكلفة الوحدة المختارة = متوسط الأساسية × المعامل
+          if (!Number.isInteger(current)) return l
+          const expected = Math.round((current as number) * (l.unitFactor ?? 1))
+          return expected !== l.unitCostMinor ? { ...l, unitCostMinor: expected } : l
         })
         const totals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
         // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
@@ -2112,7 +2116,8 @@ export const useDataStore = create<DataState>()(
         const valueBack = new Map<number, number>()
         for (const l of lines) {
           if (isDish(l.itemId)) continue // الطبق بلا مخزون — لا عودة
-          qtyBack.set(l.itemId, (qtyBack.get(l.itemId) ?? 0) + l.qty)
+          // سطر بوحدة أكبر: يعود للمخزون بالوحدة الأساسية qty×factor وبقيمته الكاملة
+          qtyBack.set(l.itemId, (qtyBack.get(l.itemId) ?? 0) + baseQty(l))
           valueBack.set(l.itemId, (valueBack.get(l.itemId) ?? 0) + Math.round(l.qty * l.unitCostMinor))
         }
         const updatedItems = state.items.map((it) => {

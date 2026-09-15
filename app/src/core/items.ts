@@ -51,6 +51,8 @@ export interface ItemUnit {
   nameAr: string // كرتونة
   factor: number // = كم وحدة أساسية
   barcode?: string
+  /** سعر بيع هذه الوحدة (جولة الصيدلية) — غيابه = سعر الأساسية × المعامل */
+  priceMinor?: number
 }
 
 export interface Item {

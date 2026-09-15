@@ -1059,15 +1059,26 @@ function VariantsFields({
 }
 
 function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>) => void }) {
+  const { setup } = useAppStore()
+  const unitCur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const [name, setName] = useState('')
   const [factor, setFactor] = useState('')
+  const [unitPrice, setUnitPrice] = useState('') // سعر بيع الوحدة الأكبر (اختياري — جولة الصيدلية)
+  const [unitBarcode, setUnitBarcode] = useState('') // باركود الوحدة (مسح الشريط/العلبة بالكاشير)
   const f = Number(factor)
   const valid = name.trim() !== '' && f > 1
   const add = () => {
     if (!valid) return
-    p({ extraUnits: [...draft.extraUnits, { nameAr: name.trim(), factor: f }] })
+    const priceNum = Number(unitPrice)
+    p({ extraUnits: [...draft.extraUnits, {
+      nameAr: name.trim(), factor: f,
+      ...(priceNum > 0 ? { priceMinor: toMinor(unitPrice, unitCur.decimals) } : {}),
+      ...(unitBarcode.trim() ? { barcode: unitBarcode.trim() } : {}),
+    }] })
     setName('')
     setFactor('')
+    setUnitPrice('')
+    setUnitBarcode('')
   }
   return (
     <Field label="📦 وحدات أكبر لنفس الصنف (اختياري)" hint={`تشتري بالكرتونة وتبيع بالـ${draft.baseUnit || 'قطعة'}؟ عرّف الوحدة الكبرى وكم ${draft.baseUnit || 'قطعة'} بداخلها`}>
@@ -1095,6 +1106,17 @@ function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>)
         </div>
         <Btn variant="soft" onClick={add} disabled={!valid}>+ إضافة</Btn>
       </div>
+      {/* سعر وباركود الوحدة الأكبر (جولة الصيدلية): سعر العلبة قد لا يساوي المعامل × سعر القطعة */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+        <div>
+          <div className="text-[10.5px] font-bold text-slate-400 mb-1">سعر بيع الـ{name.trim() || 'وحدة الأكبر'} (اختياري)</div>
+          <input value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} type="number" min={0} placeholder={`فارغ = ${f > 1 ? f : 'المعامل'} × سعر الـ${draft.baseUnit || 'وحدة'}`} className={inputCls} dir="ltr" />
+        </div>
+        <div>
+          <div className="text-[10.5px] font-bold text-slate-400 mb-1">باركود الـ{name.trim() || 'وحدة الأكبر'} (اختياري)</div>
+          <input value={unitBarcode} onChange={(e) => setUnitBarcode(e.target.value)} placeholder="امسح باركود العلبة/الشريط…" className={inputCls} dir="ltr" />
+        </div>
+      </div>
       {/* معاينة حية تشرح المعادلة قبل الإضافة */}
       {name.trim() && (
         <div className={`mt-2 text-[11.5px] font-bold px-3 py-2 rounded-xl ${valid ? 'bg-teal-500/10 text-teal-700 dark:text-teal-400' : 'bg-amber-500/10 text-amber-600'}`}>
@@ -1107,7 +1129,7 @@ function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>)
         <div className="flex flex-wrap gap-1.5 mt-2">
           {draft.extraUnits.map((u, i) => (
             <span key={i} className="anim-pop text-[11px] px-2.5 py-1 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold">
-              1 {u.nameAr} = {u.factor} {draft.baseUnit}
+              1 {u.nameAr} = {u.factor} {draft.baseUnit}{u.priceMinor ? ` — بيع ${formatMinor(u.priceMinor, unitCur, false)}` : ''}
               <button onClick={() => p({ extraUnits: draft.extraUnits.filter((_, j) => j !== i) })} className="mr-1 text-rose-400">×</button>
             </span>
           ))}

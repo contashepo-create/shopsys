@@ -23,6 +23,18 @@ export interface CartLine {
   /** تركيبة المتغير (ملابس): لون/مقاس — إلزامية لو للصنف مصفوفة برصيد */
   variantColor?: string
   variantSize?: string
+  /**
+   * البيع بوحدة أكبر (صيدلية: شريط/علبة — جولة الصيدلية):
+   * qty بالوحدة المختارة، unitPriceMinor/unitCostMinor سعر وتكلفة الوحدة المختارة،
+   * وunitFactor = كم وحدة أساسية فيها — خصم المخزون = qty × unitFactor.
+   */
+  unitFactor?: number
+  unitLabel?: string
+}
+
+/** كمية السطر بالوحدة الأساسية (للمخزون/الدفعات) — qty × unitFactor */
+export function baseQty(l: { qty: number; unitFactor?: number }): number {
+  return Math.round(l.qty * (l.unitFactor ?? 1) * 1000) / 1000
 }
 
 export type PaymentMethod = 'cash' | 'credit'

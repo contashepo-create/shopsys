@@ -169,6 +169,48 @@ export function PosPage() {
     })
   }
 
+  /** تبديل وحدة سطر (صيدلية: قطعة/شريط/علبة) — يعيد التسعير والتكلفة بمعامل الوحدة */
+  const setLineUnit = (lineIdx: number, unitName: string) => {
+    setCart((prev) => prev.map((l, i) => {
+      if (i !== lineIdx) return l
+      const it = items.find((x) => x.id === l.itemId)
+      if (!it) return l
+      const basePrice = getEffectivePrice(it.id, activePriceListId)
+      if (unitName === it.baseUnit) {
+        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, unitFactor: undefined, unitLabel: undefined }
+      }
+      const u = it.extraUnits.find((x) => x.nameAr === unitName)
+      if (!u) return l
+      return {
+        ...l,
+        nameAr: `${it.nameAr} (${u.nameAr})`,
+        unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
+        unitCostMinor: Math.round(it.costMinor * u.factor),
+        unitFactor: u.factor,
+        unitLabel: u.nameAr,
+      }
+    }))
+  }
+
+  /** إضافة صنف بوحدة أكبر مباشرة (مسح باركود الشريط/العلبة) */
+  const addUnitToCart = (itemId: number, unitName: string) => {
+    const it = items.find((x) => x.id === itemId)
+    const u = it?.extraUnits.find((x) => x.nameAr === unitName)
+    if (!it || !u) return
+    const basePrice = getEffectivePrice(it.id, activePriceListId)
+    setCart((prev) => {
+      const idx = prev.findIndex((l) => l.itemId === itemId && l.unitLabel === unitName)
+      if (idx >= 0) return prev.map((l, i) => (i === idx ? { ...l, qty: l.qty + 1 } : l))
+      return [...prev, {
+        itemId: it.id, nameAr: `${it.nameAr} (${u.nameAr})`, qty: 1,
+        unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
+        unitCostMinor: Math.round(it.costMinor * u.factor),
+        discountPercent: 0, soldByWeight: false, unitFactor: u.factor, unitLabel: u.nameAr,
+      }]
+    })
+    toast.show(`📦 ${it.nameAr} — ${u.nameAr} (${u.factor} ${it.baseUnit})`)
+  }
+
   /**
    * مسح باركود (Enter):
    * 1) باركود ميزان (22XXXXXWWWWW) → يضيف الصنف بوزنه من الملصق مباشرة
@@ -211,6 +253,15 @@ export function PosPage() {
       toast.show(`باركود ميزان لصنف غير معروف (كود ${scale.itemCode})`, 'error')
       setQuery('')
       return
+    }
+    // باركود وحدة أكبر (شريط/علبة — جولة الصيدلية)؟ يضيف السطر بوحدته وسعره
+    for (const it of sellable) {
+      const u = it.extraUnits.find((x) => x.barcode === q)
+      if (u) {
+        addUnitToCart(it.id, u.nameAr)
+        setQuery('')
+        return
+      }
     }
     const exact = sellable.find((it) => it.barcodes.includes(q) || it.sku === q)
     if (exact) {
@@ -499,8 +550,23 @@ export function PosPage() {
                     <div className="font-bold text-[13px] text-slate-800 dark:text-white truncate leading-snug">
                       {l.soldByWeight && <span className="ml-1">⚖️</span>}{l.nameAr}
                     </div>
-                    <div className="text-[11px] text-slate-400 mt-0.5">
-                      {fmt(l.unitPriceMinor)} {cur.symbol} / {l.soldByWeight ? 'كجم' : 'وحدة'}
+                    <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-1.5">
+                      <span>{fmt(l.unitPriceMinor)} {cur.symbol} / {l.soldByWeight ? 'كجم' : (l.unitLabel ?? 'وحدة')}</span>
+                      {/* منتقي الوحدة (صيدلية: قطعة/شريط/علبة) — يظهر فقط لصنف متعدد الوحدات بلا سيريالات */}
+                      {(() => {
+                        const it = items.find((x) => x.id === l.itemId)
+                        if (!it || it.extraUnits.length === 0 || (l.serials && l.serials.length > 0)) return null
+                        return (
+                          <select
+                            value={l.unitLabel ?? it.baseUnit}
+                            onChange={(e) => setLineUnit(i, e.target.value)}
+                            className="text-[10px] font-bold rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-1 py-0.5 text-fuchsia-600 outline-none"
+                          >
+                            <option value={it.baseUnit}>{it.baseUnit}</option>
+                            {it.extraUnits.map((u) => <option key={u.nameAr} value={u.nameAr}>{u.nameAr} ×{u.factor}</option>)}
+                          </select>
+                        )
+                      })()}
                     </div>
                     {/* سيريالات القطع المعيّنة — حذف السيريال يحذف قطعته من السلة */}
                     {l.serials && l.serials.length > 0 && (
