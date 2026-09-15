@@ -67,6 +67,7 @@ import { OpeningBalancesPage } from './ui/pages/OpeningBalancesPage.tsx'
 import { SerialsPage } from './ui/pages/SerialsPage.tsx'
 import { SettlementsPage } from './ui/pages/SettlementsPage.tsx'
 import { ExchangePage } from './ui/pages/ExchangePage.tsx'
+import { RestaurantOrdersPage } from './ui/pages/RestaurantOrdersPage.tsx'
 import { installErrorHooks, logEvent } from './core/applog.ts'
 import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
 import { TransfersPage } from './ui/pages/TransfersPage.tsx'
@@ -160,6 +161,7 @@ function Shell() {
         <Route path="/inventory/serials" element={<SerialsPage />} />
         <Route path="/accounting/settlements" element={<SettlementsPage />} />
         <Route path="/sales/exchange" element={<ExchangePage />} />
+        <Route path="/sales/restaurant-orders" element={<RestaurantOrdersPage />} />
         <Route path="*" element={<Dashboard />} />
       </Routes>
     </MainLayout>

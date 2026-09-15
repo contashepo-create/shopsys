@@ -40,6 +40,7 @@ import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABEL
 import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
 import { customerStatement, supplierStatement, statementBalance } from '../core/statements.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
+import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
@@ -825,6 +826,8 @@ interface DataState {
   settlements: SettlementDoc[]
   /** الاستبدالات (ملابس): مرتجع + بيع مربوطان بمستند EXC واحد */
   exchanges: ExchangeDoc[]
+  /** أوامر المطعم المفتوحة (صالة/تيك أواي/دليفري) — لا تلمس الدفاتر حتى القفل بفاتورة */
+  restaurantOrders: RestaurantOrder[]
   vouchers: Voucher[]
   employeeAdvances: EmployeeAdvance[] // سلف الموظفين (طلب المالك)
   sales: SaleInvoice[]
@@ -960,6 +963,27 @@ interface DataState {
     treasury?: TreasuryAccount
     notes: string
   }) => ExchangeDoc
+  /** فتح أمر مطعم (صالة/تيك أواي/دليفري) — لا قيود حتى القفل؛ طاولة الصالة لا تُفتح مرتين */
+  openRestaurantOrder: (args: { type: RestaurantOrderType; tableName?: string; deliveryInfo?: string; notes?: string }) => RestaurantOrder
+  /** استبدال سطور الأمر المفتوح بالكامل (الشاشة ترسل السلة الحالية) */
+  setRestaurantOrderLines: (orderId: number, lines: CartLine[]) => void
+  /** إلغاء أمر مفتوح (لم يلمس الدفاتر أصلاً — توثيق حالة فقط) */
+  cancelRestaurantOrder: (orderId: number, reason: string) => void
+  /**
+   * قفل الأمر بفاتورة: رسوم الخدمة/التوصيل تُحقن سطوراً صناعية (itemId=-1)
+   * ثم postSale واحد يتولى المخزون/الوصفات/الضريبة/القيد — المحاسبة تبدأ هنا فقط.
+   */
+  settleRestaurantOrder: (args: {
+    orderId: number
+    payment: PaymentMethod
+    customerId?: number | null
+    treasury?: TreasuryAccount
+    paidMinor?: number
+    serviceChargePercent?: number
+    deliveryFeeMinor?: number
+    taxPercent: number
+    taxInclusive: boolean
+  }) => SaleInvoice
   /** سند قبض/صرف/تحويل — يولّد قيده المتوازن فوراً */
   postVoucher: (args: {
     kind: VoucherKind
@@ -1362,7 +1386,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 14 // 13: أرصدة افتتاحية + تسويات SET (موبايلات) — 14: استبدال EXC (ملابس)
+export const DATA_VERSION = 15 // 13: أرصدة/تسويات — 14: استبدال EXC — 15: أوامر مطعم ORD (مطعم)
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -1502,6 +1526,7 @@ export const useDataStore = create<DataState>()(
       openingBalances: {},
       settlements: [],
       exchanges: [],
+      restaurantOrders: [],
       vouchers: [],
       employeeAdvances: [],
       sales: [],
@@ -2544,6 +2569,88 @@ export const useDataStore = create<DataState>()(
           useDataStore.setState(snapshot, true)
           throw e
         }
+      },
+
+      openRestaurantOrder: (args) => {
+        const state = get()
+        const errors = validateRestaurantOrder({ type: args.type, tableName: args.tableName ?? '', deliveryInfo: args.deliveryInfo ?? '' })
+        if (errors.length) throw new Error(errors.join(' — '))
+        // طاولة مشغولة بأمر مفتوح لا تُفتح ثانية — الأصناف تُضاف للأمر القائم
+        if (args.type === 'dine_in' && occupiedTables(state.restaurantOrders).has((args.tableName ?? '').trim())) {
+          throw new Error(`الطاولة «${args.tableName}» عليها أمر مفتوح بالفعل — أضف الأصناف إليه`)
+        }
+        const id = nextId(state.restaurantOrders)
+        const order: RestaurantOrder = {
+          id,
+          orderNumber: `ORD-${String(id).padStart(4, '0')}`,
+          type: args.type,
+          tableName: (args.tableName ?? '').trim(),
+          deliveryInfo: (args.deliveryInfo ?? '').trim(),
+          lines: [],
+          notes: (args.notes ?? '').trim(),
+          status: 'open',
+          openedAt: new Date().toISOString(),
+          settledAt: null,
+          saleId: null,
+        }
+        set({ restaurantOrders: [...state.restaurantOrders, order] })
+        return order
+      },
+
+      setRestaurantOrderLines: (orderId, lines) => {
+        const state = get()
+        const order = state.restaurantOrders.find((o) => o.id === orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        if (order.status !== 'open') throw new Error('الأمر مقفول — لا تعديل بعد الفوترة')
+        set({ restaurantOrders: state.restaurantOrders.map((o) => (o.id === orderId ? { ...o, lines } : o)) })
+      },
+
+      cancelRestaurantOrder: (orderId, reason) => {
+        const state = get()
+        const order = state.restaurantOrders.find((o) => o.id === orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        if (order.status !== 'open') throw new Error('لا يُلغى إلا أمر مفتوح')
+        if (!reason.trim()) throw new Error('سبب الإلغاء مطلوب — يُعرض في سجل الأوامر')
+        set({
+          restaurantOrders: state.restaurantOrders.map((o) =>
+            o.id === orderId ? { ...o, status: 'cancelled' as const, notes: [o.notes, `أُلغي: ${reason.trim()}`].filter(Boolean).join(' — ') } : o,
+          ),
+        })
+      },
+
+      settleRestaurantOrder: (args) => {
+        const state = get()
+        const order = state.restaurantOrders.find((o) => o.id === args.orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        if (order.status !== 'open') throw new Error('الأمر مقفول أو ملغى بالفعل')
+        if (order.lines.length === 0) throw new Error('الأمر بلا أصناف — أضف الطلبات أولاً أو ألغِ الأمر')
+        // رسوم الخدمة (٪ من الأصناف) والتوصيل تُحقن سطوراً صناعية بلا مخزون
+        const lines: CartLine[] = [...order.lines]
+        const pct = args.serviceChargePercent ?? 0
+        if (pct > 0) {
+          const charge = serviceChargeMinor(orderSubtotalMinor(order.lines), pct)
+          if (charge > 0) lines.push(feeLine(`رسوم خدمة ${pct}٪`, charge))
+        }
+        if (order.type === 'delivery' && (args.deliveryFeeMinor ?? 0) > 0) {
+          lines.push(feeLine('رسوم توصيل', args.deliveryFeeMinor!))
+        }
+        // فاتورة واحدة تتولى الوصفات/المخزون/الضريبة/القيد — المحاسبة تبدأ هنا فقط
+        const sale = get().postSale({
+          lines,
+          customerId: args.customerId ?? null,
+          payment: args.payment,
+          invoiceDiscountPercent: 0,
+          taxPercent: args.taxPercent,
+          taxInclusive: args.taxInclusive,
+          treasury: args.treasury,
+          paidMinor: args.paidMinor,
+        })
+        set({
+          restaurantOrders: get().restaurantOrders.map((o) =>
+            o.id === order.id ? { ...o, status: 'settled' as const, settledAt: new Date().toISOString(), saleId: sale.id } : o,
+          ),
+        })
+        return sale
       },
 
       postVoucher: (args) => {
@@ -6106,6 +6213,7 @@ export const useDataStore = create<DataState>()(
           openingBalances: s.openingBalances ?? {},
           settlements: s.settlements ?? [],
           exchanges: s.exchanges ?? [],
+          restaurantOrders: s.restaurantOrders ?? [],
           vouchers: s.vouchers ?? [],
           shifts: s.shifts ?? [],
           journal: s.journal ?? [],
