@@ -26,6 +26,7 @@ export type BusinessModule =
   | 'cars' // معارض بيع وإيجار السيارات (القرار 27)
   | 'installments' // الأقساط
   | 'recipes' // الوصفات والتصنيع (مطاعم/مخابز)
+  | 'jewelry' // الصاغة: سعر الجرام اليومي والمصنعية والكسر
 
 export interface ActivityTemplate {
   id: string
@@ -134,9 +135,9 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
   },
   {
     id: 'jewelry', nameAr: 'ذهب ومجوهرات', icon: '💍',
-    description: 'بيع بالوزن (جرام)، أسعار متغيرة يومياً، فواتير موثقة',
+    description: 'سعر جرام يومي بالعيار، مصنعية منفصلة، كسر، فواتير موثقة',
     features: ['weight_scale', 'price_lists', 'variants'],
-    modules: ['pos', 'inventory', 'purchases'],
+    modules: ['pos', 'inventory', 'purchases', 'jewelry'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
@@ -199,7 +200,8 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   cars: { nameAr: 'معرض السيارات', icon: '🚗', desc: 'سيارات بتكلفة وربحية لكل واحدة، تجهيزات ترسمل، بيع وإيجار' },
   installments: { nameAr: 'الأقساط', icon: '💳', desc: 'بيع بالتقسيط، جدولة الأقساط، تنبيهات الاستحقاق' },
   recipes: { nameAr: 'الوصفات والإنتاج', icon: '👨‍🍳', desc: 'وصفات الأطباق تخصم خاماتها عند البيع، وأوامر إنتاج للصوصات والعجائن' },
+  jewelry: { nameAr: 'الصاغة', icon: '💍', desc: 'سعر الجرام اليومي بالعيار، مصنعية منفصلة، وشراء وبيع الكسر FIFO' },
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'jewelry', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']

@@ -17,6 +17,7 @@ import { buildReturnLines, buildReturnEntry, deriveTaxConfig } from '../core/ret
 import { buildPurchaseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
+import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
@@ -596,6 +597,10 @@ interface DataState {
   dailyWorkRecords: DailyWorkRecord[] // سجلات أيام العمل على المشاريع
   recipes: Recipe[] // وصفات الأطباق والتصنيع (مطاعم)
   productionOrders: ProductionOrder[] // أوامر الإنتاج المسبق
+  gramPrices: GramPrices // أسعار الجرام اليومية بالعيار (صاغة)
+  jewelryProfiles: JewelryProfile[] // الوصف الذهبي للأصناف: عيار/وزن/مصنعية
+  scrapLots: ScrapLot[] // دفعات الكسر المشتراة (FIFO)
+  scrapSales: ScrapSale[] // مبيعات الكسر
   custodyFiles: CustodyFile[] // ملفات عهد الموظفين (طلب المالك — نظام متكامل بنمط pro-acc)
   custodyTxs: CustodyTx[] // حركات ملفات العهد (تعزيز/مصروف/فاتورة/مرتجع/عجز)
   clinicPatients: ClinicPatient[] // العيادة (القرار 27)
@@ -889,6 +894,19 @@ interface DataState {
   getRecipeUnitCost: (recipeId: number) => number
   /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
   postProduction: (args: { recipeId: number; batches: number; treasury?: string; notes?: string }) => ProductionOrder
+
+  // ————— الذهب والمجوهرات (صاغة) —————
+  /** تحديث أسعار الجرام اليومية — لا يعيد التسعير تلقائياً */
+  setGramPrices: (prices: { k18: number; k21: number; k24: number }) => void
+  /** إعادة تسعير كل الأصناف الموصوفة: السعر = الوزن×جرام العيار + المصنعية. ترجع عدد المحدَّث */
+  repriceJewelry: () => number
+  /** ربط/تعديل الوصف الذهبي لصنف (عيار/وزن/مصنعية) — ويسعّره فوراً لو الأسعار محدثة */
+  setJewelryProfile: (profile: JewelryProfile) => void
+  removeJewelryProfile: (itemId: number) => void
+  /** شراء كسر من عميل: يدخل دفعة FIFO ويقيد 1103/خزينة */
+  buyScrap: (args: { karat: Karat; weightGrams: number; pricePerGramMinor: number; sellerName?: string; treasury?: string }) => ScrapLot
+  /** بيع كسر للتاجر/المصنع: يستهلك FIFO ويظهر الربح/الخسارة في القيد */
+  sellScrap: (args: { karat: Karat; weightGrams: number; pricePerGramMinor: number; buyerName?: string; treasury?: string }) => ScrapSale
   /** تقرير WIP لمشروع: نسبة الإنجاز والفوترة الزائدة/الناقصة */
   getProjectWip: (projectId: number) => WipResult & { contractMinor: number; billedMinor: number; costsMinor: number }
   /* ─── العيادة (القرار 27) ─── */
@@ -1004,6 +1022,10 @@ export const useDataStore = create<DataState>()(
       dailyWorkRecords: [],
       recipes: [],
       productionOrders: [],
+      gramPrices: EMPTY_GRAM_PRICES,
+      jewelryProfiles: [],
+      scrapLots: [],
+      scrapSales: [],
       custodyFiles: [],
       custodyTxs: [],
       clinicPatients: [],
@@ -3136,6 +3158,99 @@ export const useDataStore = create<DataState>()(
         return order
       },
 
+      /* ─── الذهب والمجوهرات (صاغة) ─── */
+      setGramPrices: (prices) => {
+        if (!(prices.k18 > 0) || !(prices.k21 > 0) || !(prices.k24 > 0)) throw new Error('أدخل سعراً موجباً لكل عيار')
+        if (!(prices.k18 < prices.k21 && prices.k21 < prices.k24)) throw new Error('ترتيب الأسعار غير منطقي — عيار 24 أغلى من 21 أغلى من 18')
+        set({ gramPrices: { ...prices, updatedAt: new Date().toISOString() } })
+      },
+      repriceJewelry: () => {
+        const state = get()
+        if (!state.gramPrices.updatedAt) throw new Error('حدّث أسعار الجرام أولاً')
+        let count = 0
+        const updated = state.items.map((it) => {
+          const prof = state.jewelryProfiles.find((p) => p.itemId === it.id)
+          if (!prof) return it
+          const newPrice = jewelryPriceMinor(prof, state.gramPrices)
+          if (newPrice === it.priceMinor) return it
+          count++
+          return { ...it, priceMinor: newPrice }
+        })
+        if (count > 0) set({ items: updated })
+        return count
+      },
+      setJewelryProfile: (profile) => {
+        const state = get()
+        const item = state.items.find((it) => it.id === profile.itemId)
+        if (!item) throw new Error('الصنف غير موجود')
+        const errors = validateProfile(profile)
+        if (errors.length) throw new Error(errors.join('، '))
+        const exists = state.jewelryProfiles.some((p) => p.itemId === profile.itemId)
+        const profiles = exists
+          ? state.jewelryProfiles.map((p) => (p.itemId === profile.itemId ? profile : p))
+          : [...state.jewelryProfiles, profile]
+        // تسعير فوري لو الأسعار محدثة يوماً ما
+        const items = state.gramPrices.updatedAt
+          ? state.items.map((it) => (it.id === profile.itemId ? { ...it, priceMinor: jewelryPriceMinor(profile, state.gramPrices) } : it))
+          : state.items
+        set({ jewelryProfiles: profiles, items })
+      },
+      removeJewelryProfile: (itemId) => set((s) => ({ jewelryProfiles: s.jewelryProfiles.filter((p) => p.itemId !== itemId) })),
+      buyScrap: (args) => {
+        const state = get()
+        if (!(args.weightGrams > 0)) throw new Error('الوزن يجب أن يكون أكبر من صفر')
+        if (!(args.pricePerGramMinor > 0)) throw new Error('سعر الجرام يجب أن يكون أكبر من صفر')
+        const totalMinor = Math.round(args.weightGrams * args.pricePerGramMinor)
+        const treasury = args.treasury ?? '1101'
+        const lines = buildScrapPurchaseEntry(totalMinor, treasury, KARAT_LABELS[args.karat])
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const lotId = nextId(state.scrapLots)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `شراء كسر ${KARAT_LABELS[args.karat]} — ${args.weightGrams} جم${args.sellerName ? ` من ${args.sellerName}` : ''}`,
+          sourceType: 'scrap_purchase', sourceId: lotId, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const lot: ScrapLot = {
+          id: lotId, refCode: makeUniqueRefCode('SCR', now, usedRefCodes(state)), date: now,
+          karat: args.karat, weightGrams: args.weightGrams, remainingGrams: args.weightGrams,
+          pricePerGramMinor: args.pricePerGramMinor, totalMinor, sellerName: args.sellerName ?? '', journalEntryId: entryId,
+        }
+        set({ scrapLots: [...state.scrapLots, lot], journal: [...state.journal, entry] })
+        return lot
+      },
+      sellScrap: (args) => {
+        const state = get()
+        if (!(args.pricePerGramMinor > 0)) throw new Error('سعر الجرام يجب أن يكون أكبر من صفر')
+        const plan = planScrapConsumption(state.scrapLots, args.karat, args.weightGrams) // يرمي لو الوزن غير متاح
+        const costMinor = plan.reduce((s, p) => s + p.costMinor, 0)
+        const saleMinor = Math.round(args.weightGrams * args.pricePerGramMinor)
+        const treasury = args.treasury ?? '1101'
+        const lines = buildScrapSaleEntry(saleMinor, costMinor, treasury, KARAT_LABELS[args.karat])
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const saleId = nextId(state.scrapSales)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `بيع كسر ${KARAT_LABELS[args.karat]} — ${args.weightGrams} جم${args.buyerName ? ` إلى ${args.buyerName}` : ''}`,
+          sourceType: 'scrap_sale', sourceId: saleId, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const consumed = new Map(plan.map((p) => [p.lotId, p.grams]))
+        const sale: ScrapSale = {
+          id: saleId, refCode: makeUniqueRefCode('SCR', now, usedRefCodes(state)), date: now,
+          karat: args.karat, weightGrams: args.weightGrams, pricePerGramMinor: args.pricePerGramMinor,
+          saleMinor, costMinor, profitMinor: saleMinor - costMinor, buyerName: args.buyerName ?? '', journalEntryId: entryId,
+        }
+        set({
+          scrapLots: state.scrapLots.map((l) => (consumed.has(l.id) ? { ...l, remainingGrams: Math.round((l.remainingGrams - consumed.get(l.id)!) * 1000) / 1000 } : l)),
+          scrapSales: [...state.scrapSales, sale],
+          journal: [...state.journal, entry],
+        })
+        return sale
+      },
+
       getProjectWip: (projectId) => {
         const state = get()
         const project = state.projects.find((p) => p.id === projectId)
@@ -3754,6 +3869,10 @@ export const useDataStore = create<DataState>()(
           dailyWorkRecords: s.dailyWorkRecords ?? [],
           recipes: s.recipes ?? [],
           productionOrders: s.productionOrders ?? [],
+          gramPrices: s.gramPrices ?? EMPTY_GRAM_PRICES,
+          jewelryProfiles: s.jewelryProfiles ?? [],
+          scrapLots: s.scrapLots ?? [],
+          scrapSales: s.scrapSales ?? [],
           custodyFiles: s.custodyFiles ?? [],
           custodyTxs: s.custodyTxs ?? [],
           employeeAdvances: (s.employeeAdvances ?? []).map((a: EmployeeAdvance) => ({

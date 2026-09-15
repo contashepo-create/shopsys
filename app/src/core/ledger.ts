@@ -37,7 +37,7 @@ export type SourceType =
   | 'lab_order' | 'lab_commission' | 'lab_commission_payout'
   | 'clinic_visit' | 'project_extract' | 'project_cost' | 'retention_release'
   | 'sub_certificate' | 'sub_payment' | 'bond_issue' | 'bond_settle' | 'client_advance' | 'daily_wages'
-  | 'production'
+  | 'production' | 'scrap_purchase' | 'scrap_sale'
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
