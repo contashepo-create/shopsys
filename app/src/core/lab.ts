@@ -274,3 +274,53 @@ export const STARTER_TESTS: Omit<LabTest, 'id' | 'isActive' | 'priceMinor' | 'co
   { code: 'CRP', nameAr: 'دلالات التهاب — CRP', category: 'مناعة', sampleType: 'دم وريدي', unit: 'mg/L', refRanges: [{ gender: 'any', ageMinYears: 0, ageMaxYears: 999, low: null, high: 5 }] },
   { code: 'VITD', nameAr: 'فيتامين د', category: 'هرمونات', sampleType: 'دم وريدي', unit: 'ng/mL', refRanges: [{ gender: 'any', ageMinYears: 0, ageMaxYears: 999, low: 30, high: 100 }] },
 ]
+
+/* ─── جولة مراجعة المعمل (الطلبات 6–9): السجل التراكمي للنتائج ─── */
+
+/** صف بسجل نتائج المريض التراكمي لفحص واحد عبر الطلبات */
+export interface ResultHistoryRow {
+  orderNumber: string
+  date: string
+  resultValue: string
+  resultFlag: ResultFlag
+  refLow: number | null
+  refHigh: number | null
+}
+
+/**
+ * السجل التراكمي لنتائج مريض في فحص محدد (Delta Check كما بأنظمة المعامل):
+ * كل النتائج المُدخلة (resulted/approved) عبر الطلبات مرتبة من الأحدث للأقدم.
+ */
+export function patientResultHistory(
+  orders: readonly {
+    orderNumber: string
+    date: string
+    patientId: number
+    tests: readonly { testId: number; status: TestStatus; resultValue: string; resultFlag: ResultFlag; refLow: number | null; refHigh: number | null }[]
+  }[],
+  patientId: number,
+  testId: number,
+): ResultHistoryRow[] {
+  const rows: ResultHistoryRow[] = []
+  for (const o of orders) {
+    if (o.patientId !== patientId) continue
+    for (const t of o.tests) {
+      if (t.testId !== testId) continue
+      if (t.status !== 'resulted' && t.status !== 'approved') continue
+      if (!t.resultValue.trim()) continue
+      rows.push({ orderNumber: o.orderNumber, date: o.date, resultValue: t.resultValue, resultFlag: t.resultFlag, refLow: t.refLow, refHigh: t.refHigh })
+    }
+  }
+  return rows.sort((a, b) => (a.date < b.date ? 1 : -1))
+}
+
+/**
+ * فرق النتيجة عن السابقة (Delta): نسبة التغير المئوية إن كانت القيمتان رقميتين —
+ * null إذا تعذر (نص، أو لا سابقة، أو السابقة صفر).
+ */
+export function resultDeltaPercent(current: string, previous: string): number | null {
+  const c = Number(current)
+  const p = Number(previous)
+  if (!Number.isFinite(c) || !Number.isFinite(p) || p === 0) return null
+  return Math.round(((c - p) / Math.abs(p)) * 1000) / 10
+}

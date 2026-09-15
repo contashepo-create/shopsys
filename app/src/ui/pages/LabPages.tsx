@@ -12,7 +12,7 @@ import { useDataStore, type LabOrder, type LabPatient } from '../../data/repo.ts
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { computeLabTotals, deriveOrderStatus, ORDER_STATUS_LABELS, referrerStatement, type RefRange, type Gender, type TestStatus } from '../../core/lab.ts'
+import { computeLabTotals, deriveOrderStatus, ORDER_STATUS_LABELS, referrerStatement, patientResultHistory, resultDeltaPercent, type RefRange, type Gender, type TestStatus } from '../../core/lab.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderLabReportHtml } from '../print/printLabReport.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -281,6 +281,24 @@ export function LabOrdersPage() {
                       </span>
                     )}
                   </div>
+                  {/* جولة المعمل: السجل التراكمي — النتائج السابقة لنفس الفحص مع نسبة التغير (Delta Check) */}
+                  {(() => {
+                    const hist = patientResultHistory(labOrders, workingLive.patientId, t.testId)
+                      .filter((h) => h.orderNumber !== workingLive.orderNumber).slice(0, 3)
+                    if (!hist.length) return null
+                    const delta = t.resultValue ? resultDeltaPercent(t.resultValue, hist[0].resultValue) : null
+                    return (
+                      <div className="rounded-lg bg-violet-500/5 border border-violet-500/20 px-2.5 py-1.5 text-[10.5px] text-slate-500">
+                        <span className="font-bold text-violet-600">سوابق:</span>
+                        {hist.map((h) => (
+                          <span key={h.orderNumber} className="ms-2">{h.date.slice(0, 10)}: <b className={h.resultFlag === 'high' ? 'text-rose-500' : h.resultFlag === 'low' ? 'text-sky-500' : ''}>{h.resultValue}</b></span>
+                        ))}
+                        {delta !== null && Math.abs(delta) >= 20 && (
+                          <span className="ms-2 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 font-bold">Δ {delta > 0 ? '+' : ''}{delta}% عن السابقة — راجِع</span>
+                        )}
+                      </div>
+                    )
+                  })()}
                   {step.next && (
                     <div className="flex items-center gap-2">
                       {step.next === 'resulted' && (
