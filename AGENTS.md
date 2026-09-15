@@ -384,6 +384,13 @@ const S = () => useDataStore.getState()
 - عمق المقاولات السابق (pro-acc) كان مكتملاً بالفعل: BOQ، أوامر تغيير، دفعات مقدمة وخصمها، مقاولون باطن بمستخلصاتهم ومحتجزاتهم، عهد، تكاليف ببنود، ربحية — الفجوة الوحيدة كانت الوثيقة المطبوعة.
 - الفحص: `scripts/verify_contracting_review.mjs` (12 فحصاً). لا تغيير DATA_VERSION.
 
+## 8.22) الجولة الختامية — النشاط العام + مركز التنبيهات (الطلبات 6–9 — الجولة 15، مطبقة)
+
+- **مركز التنبيهات الموحد** (`core/alerts.ts`: collectBusinessAlerts — نواة قراءة خالصة؛ معروض بلوحة اليوم Dashboard كشبكة بطاقات قابلة للنقر lg:col-span-2): يجمع 5 عائلات: نواقص مخزون (minQty>0 و active فقط)، صلاحية منتهية 🔴/تقارب ≤30 يوماً 🟠 (دفعات qty>0 وبتاريخ فقط)، أقساط متأخرة 🔴/تستحق قريباً 🟠 (من collectAlerts في installments)، شيكات قائمة (held/deposited/issued) تستحق ≤7 أيام (متجاوزة = خطر)، عملاء تجاوزوا حد الائتمان (limit>0 فقط؛ الرصيد من statementBalance). ترتيب: danger قبل warn. كل تنبيه route حقيقي: /inventory/items، /parties/installments، /accounting/cheques، /parties/customers.
+- بطاقة «تنبيهات» بالداشبورد صارت تعد كل التنبيهات لا النواقص فقط، وتعرض عنوان أهمها.
+- **بهذا اكتملت جولات المراجعة للأنشطة الـ16** (الطلبات 6–9): grocery/mobile/clothing/pharmacy/restaurant/parts+electronics/jewelry/clinic/rental/logistics/laundry/lab/cars/contracting/general — كل جولة بنواتها وواجهتها وسكربت فحصها.
+- الفحص: `scripts/verify_general_review.mjs` (13 فحصاً). البوابة الكاملة: 74 سكربت تمر جميعها.
+
 ## 9) حالة العمل الجارية والتالي
 
 - ✅ منجز: **كل الفجوات المعيارية السبع** (وصفات، صاغة، قوائم أسعار، تكاليف معدات، أمانة، سائقون، تأمين، **مصفوفة لون×مقاس**) + عمق المقاولات الكامل.

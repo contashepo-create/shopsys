@@ -9,10 +9,14 @@ import { useDataStore } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { accountBalance, STANDARD_COA } from '../../core/ledger.ts'
+import { Link } from 'react-router-dom'
+import { collectBusinessAlerts } from '../../core/alerts.ts'
+import { collectAlerts as collectInstallmentAlerts } from '../../core/installments.ts'
+import { customerStatement, statementBalance } from '../../core/statements.ts'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, items, purchases, purchaseReturns, treasuries } = useDataStore()
+  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur)
@@ -77,6 +81,24 @@ export function Dashboard() {
   }, [journal])
 
   const lowStock = items.filter((it) => (it.stockQty ?? 0) <= it.minQty && it.minQty > 0)
+
+  /* مركز التنبيهات الموحد (جولة المراجعة الختامية): صلاحية/أقساط/شيكات/حد ائتمان + نواقص */
+  const businessAlerts = useMemo(() => {
+    const allVouchers = [
+      ...vouchers,
+      ...clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt' as const, date: st.date, partyKind: 'customer' as const, partyId: st.customerId, amountMinor: st.amountMinor })),
+    ]
+    return collectBusinessAlerts({
+      todayIso: new Date().toISOString(),
+      items: items.map((it) => ({ id: it.id, nameAr: it.nameAr, stockQty: it.stockQty ?? 0, minQty: it.minQty, isActive: it.isActive })),
+      batches,
+      installmentAlerts: collectInstallmentAlerts(installmentPlans, new Date().toISOString().slice(0, 10)),
+      cheques,
+      customers,
+      customerBalances: (id) => statementBalance(customerStatement({ customerId: id, sales, saleReturns, allSales: sales, vouchers: allVouchers, cheques })),
+      fmt,
+    })
+  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements])
   // دين الموردين = فواتير غير مسددة − مرتجعات الشراء المخفِّضة للدين
   const suppliersDebt = Math.max(
     0,
@@ -88,7 +110,7 @@ export function Dashboard() {
     { title: 'إيراد اليوم', value: fmt(todayRevenue), icon: TrendingUp, color: 'from-emerald-500 to-teal-500', glow: 'shadow-emerald-500/30', delta: `${todaySales.length} فاتورة كاشير + كل الوحدات` },
     { title: 'ربح اليوم', value: fmt(todayProfit), icon: Coins, color: 'from-violet-500 to-fuchsia-500', glow: 'shadow-violet-500/30', delta: 'إيراد − كل المصروفات' },
     { title: 'في الخزينة', value: fmt(ledger.cash), icon: Wallet, color: 'from-sky-500 to-cyan-500', glow: 'shadow-sky-500/30', delta: 'من دفتر الأستاذ مباشرة' },
-    { title: 'تنبيهات', value: String(lowStock.length), icon: AlertTriangle, color: 'from-amber-500 to-orange-500', glow: 'shadow-amber-500/30', delta: lowStock.length ? 'نواقص تحتاج شراء' : 'كله تمام ✓' },
+    { title: 'تنبيهات', value: String(businessAlerts.length), icon: AlertTriangle, color: 'from-amber-500 to-orange-500', glow: 'shadow-amber-500/30', delta: businessAlerts.length ? businessAlerts[0].titleAr : 'كله تمام ✓' },
   ]
 
   return (
@@ -155,6 +177,23 @@ export function Dashboard() {
             💡 هذه الأرقام مشتقة من دفتر الأستاذ الموحّد — نفس مصدر ميزان المراجعة، فلا تتناقض أبداً.
           </p>
         </div>
+
+        {/* مركز التنبيهات الموحد */}
+        {businessAlerts.length > 0 && (
+          <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 lg:col-span-2" style={{ animationDelay: '350ms' }}>
+            <h3 className="font-extrabold text-slate-800 dark:text-white mb-3 flex items-center gap-2">
+              <AlertTriangle size={17} className="text-rose-500" /> مركز التنبيهات
+            </h3>
+            <div className="grid sm:grid-cols-2 gap-2">
+              {businessAlerts.map((a) => (
+                <Link key={a.kind} to={a.route} className={`block p-3 rounded-xl border transition-all hover:scale-[1.01] ${a.severity === 'danger' ? 'bg-rose-500/5 border-rose-500/20 hover:bg-rose-500/10' : 'bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/10'}`}>
+                  <div className={`text-[12.5px] font-black ${a.severity === 'danger' ? 'text-rose-600' : 'text-amber-600'}`}>{a.severity === 'danger' ? '🔴' : '🟠'} {a.titleAr}</div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">{a.detailAr}</div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* نواقص المخزون */}
         <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '400ms' }}>
