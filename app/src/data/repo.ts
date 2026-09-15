@@ -36,6 +36,9 @@ import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliv
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
+import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
+import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
+import { customerStatement, supplierStatement, statementBalance } from '../core/statements.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
@@ -539,6 +542,21 @@ export interface WastageDoc {
   notes: string
 }
 
+/** مستند تسوية شاملة (نمط mobileshop): جرد خزينة/مطابقة عميل أو مورد — الفرق يضرب 5112 إجبارياً */
+export interface SettlementDoc {
+  id: number
+  settlementNumber: string // SET-0001
+  date: string // ISO
+  section: 'treasury' | 'customer' | 'supplier'
+  refId: string | number // كود الخزينة أو رقم الطرف
+  refNameAr: string
+  bookMinor: number
+  actualMinor: number
+  varianceMinor: number // الفعلي − الدفتري
+  reason: string
+  journalEntryId: number | null // null لو الفرق صفر (توثيق مطابقة فقط)
+}
+
 /** مسير رواتب مرحّل لشهر — مربوط بقيده المحاسبي */
 export interface PayrollRun {
   id: number
@@ -786,6 +804,10 @@ interface DataState {
   stocktakes: Stocktake[]
   /** مستندات الإتلاف (هالك وتوالف) — 5111/1103 */
   wastages: WastageDoc[]
+  /** الأرصدة الافتتاحية المثبتة: key = kind:refId → آخر رصيد مرحّل (Minor) — التعديل يرحّل الفرق فقط */
+  openingBalances: Record<string, number>
+  /** التسويات الشاملة (خزينة/عميل/مورد) — كل فرق مربوط بقيد 5112 */
+  settlements: SettlementDoc[]
   vouchers: Voucher[]
   employeeAdvances: EmployeeAdvance[] // سلف الموظفين (طلب المالك)
   sales: SaleInvoice[]
@@ -899,6 +921,16 @@ interface DataState {
   postStocktake: (counts: CountInput[], notes: string) => Stocktake
   /** إتلاف مخزون موثق بسبب: يخصم الكميات + يستهلك دفعات FEFO + قيد 5111/1103 */
   postWastage: (args: { reason: string; lines: { itemId: number; qty: number }[]; notes: string }) => WastageDoc
+  /**
+   * ضبط رصيد افتتاحي (نمط mobileshop): عميل/مورد/خزينة/سلفة موظف —
+   * يرحّل قيد الفرق فقط مقابل رأس المال 3101، فيبقى المركز المالي متزناً.
+   */
+  setOpeningBalance: (args: { kind: OpeningKind; refId: string | number; amountMinor: number; label: string }) => void
+  /**
+   * تسوية شاملة (نمط mobileshop): مطابقة رصيد خزينة/عميل/مورد بالواقع —
+   * الفرق يضرب 5112 إجبارياً (درس عجز الـ5,000 المتبخر) ويُوثق بمستند SET-####.
+   */
+  applySettlement: (args: { section: 'treasury' | 'customer' | 'supplier'; refId: string | number; actualMinor: number; reason: string }) => SettlementDoc
   /** سند قبض/صرف/تحويل — يولّد قيده المتوازن فوراً */
   postVoucher: (args: {
     kind: VoucherKind
@@ -1301,7 +1333,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 12 // 12: خدمات المحافظ + كتالوج خدمات الصيانة + مخزن الفاتورة + هامش التقسيط (batch25 ج2)
+export const DATA_VERSION = 13 // 13: الأرصدة الافتتاحية + التسويات الشاملة SET (جولة مراجعة الموبايلات)
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -1438,6 +1470,8 @@ export const useDataStore = create<DataState>()(
       purchaseReturns: [],
       stocktakes: [],
       wastages: [],
+      openingBalances: {},
+      settlements: [],
       vouchers: [],
       employeeAdvances: [],
       sales: [],
@@ -2274,6 +2308,146 @@ export const useDataStore = create<DataState>()(
           notes: args.notes,
         }
         set({ wastages: [...state.wastages, doc], journal: [...state.journal, entry], items: updatedItems, batches })
+        return doc
+      },
+
+      setOpeningBalance: (args) => {
+        const state = get()
+        const errors = validateOpening(args.kind, args.amountMinor)
+        // تحقق وجود المرجع قبل أي كتابة (فخ mobileshop: نجاح صامت لمعرّف شبح)
+        if (args.kind === 'customer' && !state.customers.some((c) => c.id === Number(args.refId))) errors.push('العميل غير موجود')
+        if (args.kind === 'supplier' && !state.suppliers.some((x) => x.id === Number(args.refId))) errors.push('المورد غير موجود')
+        if (args.kind === 'treasury' && !state.treasuries.some((t) => t.code === String(args.refId))) errors.push('الخزينة/البنك غير موجود')
+        if (args.kind === 'employee_advance' && !state.employees.some((e) => e.id === Number(args.refId))) errors.push('الموظف غير موجود')
+        if (errors.length) throw new Error(errors.join(' — '))
+
+        const key = openingKey(args.kind, args.refId)
+        const previous = state.openingBalances[key] ?? 0
+        const delta = args.amountMinor - previous
+        if (delta === 0) return // لا تغيير — لا قيد بلا أثر
+
+        const entryLines = buildOpeningDeltaEntry(
+          args.kind,
+          delta,
+          `${OPENING_KIND_LABELS[args.kind]} — ${args.label}`,
+          args.kind === 'treasury' ? String(args.refId) : undefined,
+        )
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `رصيد افتتاحي: ${args.label} (${previous === 0 ? 'إثبات' : 'تعديل بفرق'})`,
+          sourceType: 'adjustment',
+          sourceId: null,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        set({
+          openingBalances: { ...state.openingBalances, [key]: args.amountMinor },
+          journal: [...state.journal, entry],
+        })
+      },
+
+      applySettlement: (args) => {
+        const state = get()
+        // 1) الرصيد الدفتري الحالي للقسم من نفس مصادر الشاشات (لا حساب موازٍ)
+        let bookMinor = 0
+        let refNameAr = ''
+        if (args.section === 'treasury') {
+          const t = state.treasuries.find((x) => x.code === String(args.refId))
+          if (!t) throw new Error('الخزينة/البنك غير موجود')
+          refNameAr = t.nameAr
+          for (const e of state.journal) for (const l of e.lines) if (l.accountCode === t.code) bookMinor += l.debit - l.credit
+        } else if (args.section === 'customer') {
+          const c = state.customers.find((x) => x.id === Number(args.refId))
+          if (!c) throw new Error('العميل غير موجود')
+          refNameAr = c.nameAr
+          bookMinor = statementBalance(customerStatement({
+            customerId: c.id,
+            openingMinor: state.openingBalances[`customer:${c.id}`] ?? 0,
+            sales: state.sales, saleReturns: state.saleReturns, allSales: state.sales,
+            vouchers: [
+              ...state.vouchers,
+              ...state.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
+            ],
+            cheques: state.cheques,
+            adjustments: state.settlements.filter((st) => st.section === 'customer' && Number(st.refId) === c.id).map((st) => ({
+              docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
+              debitMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
+              creditMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
+            })),
+          }))
+        } else {
+          const sup = state.suppliers.find((x) => x.id === Number(args.refId))
+          if (!sup) throw new Error('المورد غير موجود')
+          refNameAr = sup.nameAr
+          bookMinor = statementBalance(supplierStatement({
+            supplierId: sup.id,
+            openingMinor: state.openingBalances[`supplier:${sup.id}`] ?? 0,
+            purchases: state.purchases, purchaseReturns: state.purchaseReturns, allPurchases: state.purchases,
+            vouchers: state.vouchers, cheques: state.cheques,
+            adjustments: state.settlements.filter((st) => st.section === 'supplier' && Number(st.refId) === sup.id).map((st) => ({
+              docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
+              // كشف المورد: creditMinor = له علينا — زيادة الفرق تزيد الدائن
+              debitMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
+              creditMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
+            })),
+          }))
+        }
+
+        // 2) تحقق النواة: السالب مرفوض للخزائن فقط + السبب إلزامي
+        const input: SettlementInput = {
+          section: args.section,
+          bookMinor,
+          actualMinor: args.actualMinor,
+          treasuryCode: args.section === 'treasury' ? String(args.refId) : undefined,
+          reason: args.reason,
+        }
+        const errors = validateSettlement(input)
+        if (errors.length) throw new Error(errors.join(' — '))
+
+        // 3) قيد الفرق (يضرب 5112 إجبارياً — درس عجز الـ5,000 المتبخر في mobileshop)
+        const variance = settlementVariance(input)
+        const entryLines = buildSettlementEntry(input)
+        const now = new Date().toISOString()
+        const id = nextId(state.settlements)
+        const doc: SettlementDoc = {
+          id,
+          settlementNumber: `SET-${String(id).padStart(4, '0')}`,
+          date: now,
+          section: args.section,
+          refId: args.refId,
+          refNameAr,
+          bookMinor,
+          actualMinor: args.actualMinor,
+          varianceMinor: variance,
+          reason: args.reason.trim(),
+          journalEntryId: null,
+        }
+        const journal = [...state.journal]
+        if (entryLines.length) {
+          const entryId = nextId(journal)
+          doc.journalEntryId = entryId
+          journal.push({
+            id: entryId,
+            entryNumber: entryId,
+            date: now.slice(0, 10),
+            description: `${SETTLEMENT_LABELS[args.section]} ${doc.settlementNumber}: ${refNameAr} — ${args.reason.trim()}`,
+            sourceType: 'adjustment',
+            sourceId: id,
+            lines: entryLines,
+            createdBy: 'المالك',
+            createdAt: now,
+            reversedByEntryId: null,
+            reversesEntryId: null,
+          })
+        }
+        set({ settlements: [...state.settlements, doc], journal })
         return doc
       },
 
@@ -5834,6 +6008,8 @@ export const useDataStore = create<DataState>()(
           cheques: s.cheques ?? [],
           stocktakes: s.stocktakes ?? [],
           wastages: s.wastages ?? [],
+          openingBalances: s.openingBalances ?? {},
+          settlements: s.settlements ?? [],
           vouchers: s.vouchers ?? [],
           shifts: s.shifts ?? [],
           journal: s.journal ?? [],

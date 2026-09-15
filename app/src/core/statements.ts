@@ -33,12 +33,16 @@ function runBalance(rows: Omit<StatementRow, 'balanceMinor'>[]): StatementRow[] 
 
 export interface CustomerStatementInput {
   customerId: number
+  /** رصيد افتتاحي مثبت بقيد 1104/3101 (اختياري) — يظهر أول الكشف ويدخل الرصيد الجاري */
+  openingMinor?: Minor
   sales: { invoiceNumber: string; date: string; customerId: number | null; payment: 'cash' | 'credit'; paidMinor?: number; totals: { totalMinor: Minor } }[]
   saleReturns: { returnNumber: string; date: string; saleId: number; refund: 'cash' | 'credit'; totals: { totalMinor: Minor } }[]
   /** فواتير البيع كاملة لربط المرتجع بعميله */
   allSales: { id: number; customerId: number | null }[]
   vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor }[]
   cheques: ChequeLike[]
+  /** صفوف تسويات شاملة (SET-####) — فروق مطابقة موثقة تدخل الرصيد الجاري */
+  adjustments?: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[]
 }
 
 /** ما يحتاجه الكشف من الشيك (متوافق مع core/cheques.Cheque) */
@@ -54,6 +58,12 @@ export interface ChequeLike {
 
 export function customerStatement(input: CustomerStatementInput): StatementRow[] {
   const rows: Omit<StatementRow, 'balanceMinor'>[] = []
+  if (input.openingMinor && input.openingMinor > 0) {
+    rows.push({ date: '0000-00-00', docLabel: 'رصيد افتتاحي', debitMinor: input.openingMinor, creditMinor: 0 })
+  }
+  for (const adj of input.adjustments ?? []) {
+    rows.push({ date: adj.date, docLabel: adj.docLabel, debitMinor: adj.debitMinor, creditMinor: adj.creditMinor })
+  }
   for (const s of input.sales) {
     if (s.customerId !== input.customerId) continue
     // الجزء الآجل فقط يدخل ذمة العميل (الدفع المجزأ)
@@ -85,6 +95,8 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
 
 export interface SupplierStatementInput {
   supplierId: number
+  /** رصيد افتتاحي مثبت بقيد 3101/2101 (اختياري) — دائن له علينا */
+  openingMinor?: Minor
   // supplierDueMinor = مستحق المورد فقط (بضاعة + مصاريف على حسابه) — المصاريف
   // المدفوعة من خزينتي/عهدتي لا تدخل دينه أبداً (طلب المالك). القديمة: grandTotal
   purchases: { invoiceNumber: string; date: string; supplierId: number; grandTotalMinor: Minor; supplierDueMinor?: Minor; paidMinor: Minor }[]
@@ -92,11 +104,19 @@ export interface SupplierStatementInput {
   allPurchases: { id: number; supplierId: number }[]
   vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor }[]
   cheques: ChequeLike[]
+  /** صفوف تسويات شاملة (SET-####) — فروق مطابقة موثقة تدخل الرصيد الجاري */
+  adjustments?: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[]
 }
 
 export function supplierStatement(input: SupplierStatementInput): StatementRow[] {
   // هنا «دائن» يعني له علينا — نعرضه creditMinor والرصيد الموجب = مستحق له
   const rows: Omit<StatementRow, 'balanceMinor'>[] = []
+  if (input.openingMinor && input.openingMinor > 0) {
+    rows.push({ date: '0000-00-00', docLabel: 'رصيد افتتاحي', debitMinor: 0, creditMinor: input.openingMinor })
+  }
+  for (const adj of input.adjustments ?? []) {
+    rows.push({ date: adj.date, docLabel: adj.docLabel, debitMinor: adj.debitMinor, creditMinor: adj.creditMinor })
+  }
   for (const p of input.purchases) {
     if (p.supplierId !== input.supplierId) continue
     const remaining = (p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor

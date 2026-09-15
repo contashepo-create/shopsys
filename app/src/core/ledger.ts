@@ -157,4 +157,5 @@ export const STANDARD_COA: Account[] = [
   { code: '5109', nameAr: 'عمولات أطباء محيلين', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'referral_commission' },
   { code: '5110', nameAr: 'تكاليف مشروعات مقاولات', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'project_costs' },
   { code: '5111', nameAr: 'هالك وتوالف مخزون', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'wastage' },
+  { code: '5112', nameAr: 'فروق تسويات وجرد نقدية', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'settlement_variance' },
 ]

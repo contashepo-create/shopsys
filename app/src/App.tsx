@@ -63,6 +63,9 @@ import { IssuesPage } from './ui/pages/IssuesPage.tsx'
 import { SupportPage } from './ui/pages/SupportPage.tsx'
 import { WalletServicesPage } from './ui/pages/WalletServicesPage.tsx'
 import { WastagePage } from './ui/pages/WastagePage.tsx'
+import { OpeningBalancesPage } from './ui/pages/OpeningBalancesPage.tsx'
+import { SerialsPage } from './ui/pages/SerialsPage.tsx'
+import { SettlementsPage } from './ui/pages/SettlementsPage.tsx'
 import { installErrorHooks, logEvent } from './core/applog.ts'
 import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
 import { TransfersPage } from './ui/pages/TransfersPage.tsx'
@@ -152,6 +155,9 @@ function Shell() {
         <Route path="/settings/support" element={<SupportPage />} />
         <Route path="/wallets/ops" element={<WalletServicesPage />} />
         <Route path="/inventory/wastage" element={<WastagePage />} />
+        <Route path="/accounting/opening-balances" element={<OpeningBalancesPage />} />
+        <Route path="/inventory/serials" element={<SerialsPage />} />
+        <Route path="/accounting/settlements" element={<SettlementsPage />} />
         <Route path="*" element={<Dashboard />} />
       </Routes>
     </MainLayout>

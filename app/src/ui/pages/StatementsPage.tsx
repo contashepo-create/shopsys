@@ -23,7 +23,7 @@ const KINDS: { id: Kind; nameAr: string; icon: typeof UserRound; debitLabel: str
 ]
 
 export function StatementsPage() {
-  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements } = useDataStore()
+  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -44,6 +44,12 @@ export function StatementsPage() {
     if (kind === 'customer') {
       return customerStatement({
         customerId: partyId,
+        openingMinor: openingBalances[`customer:${partyId}`] ?? 0,
+        adjustments: settlements.filter((st) => st.section === 'customer' && Number(st.refId) === partyId).map((st) => ({
+          docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
+          debitMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
+          creditMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
+        })),
         sales, saleReturns,
         allSales: sales,
         // تسويات التحصيل FIFO تدخل الكشف كسندات قبض — كانت غائبة (إصلاح تقرير المديونيات)
@@ -57,13 +63,19 @@ export function StatementsPage() {
     if (kind === 'supplier') {
       return supplierStatement({
         supplierId: partyId,
+        openingMinor: openingBalances[`supplier:${partyId}`] ?? 0,
+        adjustments: settlements.filter((st) => st.section === 'supplier' && Number(st.refId) === partyId).map((st) => ({
+          docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
+          debitMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
+          creditMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
+        })),
         purchases, purchaseReturns,
         allPurchases: purchases,
         vouchers, cheques,
       })
     }
     return employeeStatement({ employeeId: partyId, advances: employeeAdvances, payrollRuns })
-  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements])
+  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements])
 
   const balance = statementBalance(rows)
   const partyName = parties.find((p) => p.id === partyId)?.nameAr ?? ''
