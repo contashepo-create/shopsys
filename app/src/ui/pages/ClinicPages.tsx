@@ -15,6 +15,8 @@ import type { Gender } from '../../core/lab.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { renderPrescriptionHtml, parsePrescriptionText } from '../print/printPrescription.ts'
+import { printHtml } from '../print/printReceipt.ts'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -86,6 +88,24 @@ export function ClinicPatientsPage() {
         setVKind('procedure')
       }
     }
+  }
+
+  /** طباعة روشتة الزيارة (جولة العيادة): العلاج الحر يتحول لسطور ℞ — «دواء | جرعة» لكل سطر */
+  const printPrescription = (v: { visitNumber: string; date: string; diagnosis: string; treatment: string }) => {
+    if (!file) return
+    const age = file.birthDate ? `${Math.max(0, Math.floor((Date.now() - Date.parse(file.birthDate)) / 31_557_600_000))} سنة` : ''
+    printHtml(renderPrescriptionHtml({
+      clinicName: setup.shopName || 'العيادة',
+      doctorName: setup.ownerName ? `د/ ${setup.ownerName}` : '',
+      clinicPhone: '',
+      patientName: file.nameAr,
+      patientAge: age,
+      dateIso: v.date,
+      visitNumber: v.visitNumber,
+      diagnosis: v.diagnosis,
+      lines: parsePrescriptionText(v.treatment),
+      notes: file.medicalHistory ? `تنبيه ملف: ${file.medicalHistory}` : '',
+    }))
   }
 
   const saveVisit = () => {
@@ -258,6 +278,7 @@ export function ClinicPatientsPage() {
                         <span className="font-bold text-cyan-600">{fmt(v.totals.totalMinor)} {cur.symbol}</span>
                         {v.totals.dueMinor > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600">متبقٍ {fmt(v.totals.dueMinor)}</span>}
                         <button onClick={() => setViewEntryId(v.journalEntryId)} title="عرض القيد" className="p-1 rounded text-slate-400 hover:text-rose-500"><BookOpenText className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => printPrescription(v)} title="طباعة روشتة" className="p-1 rounded text-slate-400 hover:text-cyan-600">℞</button>
                       </div>
                     </div>
                     {(v.complaint || v.diagnosis || v.treatment) && (
@@ -310,7 +331,9 @@ export function ClinicPatientsPage() {
           </div>
           <Field label="الشكوى"><input value={vComplaint} onChange={(e) => setVComplaint(e.target.value)} className={inputCls} /></Field>
           <Field label="التشخيص"><input value={vDiagnosis} onChange={(e) => setVDiagnosis(e.target.value)} className={inputCls} /></Field>
-          <Field label="العلاج / الإجراء"><input value={vTreatment} onChange={(e) => setVTreatment(e.target.value)} className={inputCls} placeholder="حشو عصب، وصفة دواء…" /></Field>
+          <Field label="العلاج / الروشتة" hint="سطر لكل دواء بصيغة: اسم الدواء | الجرعة — والروشتة تُطبع من ملف المريض ℞">
+            <textarea value={vTreatment} onChange={(e) => setVTreatment(e.target.value)} className={`${inputCls} min-h-20`} placeholder={'أموكسيسيللين 500 | كبسولة كل 8 ساعات — 5 أيام\nباراسيتامول | عند اللزوم'} />
+          </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setVisitOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveVisit} disabled={!vFee}>تسجيل الزيارة وقيدها</Btn>
