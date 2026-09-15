@@ -4,7 +4,7 @@
  * كل قيد يظهر ويربط بالمشروع؛ الإفراج عن المحتجز يقفل المشروع.
  */
 import { useMemo, useState } from 'react'
-import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2 } from 'lucide-react'
+import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import type { Project } from '../../core/contracting.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -15,6 +15,8 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { renderExtractHtml } from '../print/printExtract.ts'
+import { printHtml } from '../print/printReceipt.ts'
 
 export function ProjectsPage() {
   const {
@@ -112,6 +114,35 @@ export function ProjectsPage() {
   const viewingLive = viewing ? projects.find((p) => p.id === viewing.id) ?? null : null
   const profit = viewingLive ? getProjectProfit(viewingLive.id) : null
   const viewExtracts = viewingLive ? projectExtracts.filter((e) => e.projectId === viewingLive.id) : []
+
+  /** المستخلص المطبوع (جولة المقاولات): تراكمي سابق + حالي + نسبة إنجاز + محتجز خصماً */
+  const printExtract = (ex: (typeof projectExtracts)[number]) => {
+    const prj = projects.find((p) => p.id === ex.projectId)
+    if (!prj) return
+    const previous = projectExtracts
+      .filter((e) => e.projectId === ex.projectId && e.id < ex.id)
+      .reduce((a, e) => a + e.totals.grossMinor, 0)
+    const cumulative = previous + ex.totals.grossMinor
+    printHtml(renderExtractHtml({
+      shopName: setup.shopName || 'مقاولات',
+      extractNumber: ex.extractNumber,
+      dateIso: ex.date,
+      projectName: prj.nameAr,
+      projectCode: prj.code,
+      clientName: prj.clientName,
+      contractValue: prj.contractValueMinor > 0 ? `${fmt(prj.contractValueMinor)} ${cur.symbol}` : '',
+      description: ex.description,
+      previousGross: `${fmt(previous)} ${cur.symbol}`,
+      currentGross: `${fmt(ex.totals.grossMinor)} ${cur.symbol}`,
+      cumulativeGross: `${fmt(cumulative)} ${cur.symbol}`,
+      progressPercent: prj.contractValueMinor > 0 ? Math.round((cumulative / prj.contractValueMinor) * 100) : null,
+      vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
+      retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
+      retentionPercent: prj.retentionPercent,
+      due: `${fmt(ex.totals.dueMinor)} ${cur.symbol}`,
+      payment: ex.payment,
+    }))
+  }
   const viewCosts = viewingLive ? projectCosts.filter((c) => c.projectId === viewingLive.id) : []
   const viewEntryIds = new Set([
     ...viewExtracts.map((e) => e.journalEntryId),
@@ -374,7 +405,7 @@ export function ProjectsPage() {
               <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
                 <table className="w-full text-[12px]">
                   <thead className="bg-orange-500/10 text-orange-700 dark:text-orange-300">
-                    <tr>{['المستخلص', 'التاريخ', 'الأعمال', 'المحتجز', 'المستحق'].map((h) => <th key={h} className="px-3 py-2 text-right font-bold">{h}</th>)}</tr>
+                    <tr>{['المستخلص', 'التاريخ', 'الأعمال', 'المحتجز', 'المستحق', ''].map((h, i) => <th key={i} className="px-3 py-2 text-right font-bold">{h}</th>)}</tr>
                   </thead>
                   <tbody>
                     {viewExtracts.map((e) => (
@@ -384,6 +415,7 @@ export function ProjectsPage() {
                         <td className="px-3 py-2">{fmt(e.totals.grossMinor)}</td>
                         <td className="px-3 py-2 text-amber-600">{fmt(e.totals.retentionMinor)}</td>
                         <td className="px-3 py-2 font-bold">{fmt(e.totals.dueMinor)}</td>
+                        <td className="px-3 py-2"><button onClick={() => printExtract(e)} title="طباعة المستخلص للجهة المالكة" className="p-1.5 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all"><Printer size={13} /></button></td>
                       </tr>
                     ))}
                   </tbody>
