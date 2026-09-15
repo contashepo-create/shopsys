@@ -1,5 +1,5 @@
 /** فواتير المبيعات — كل فاتورة مربوطة بقيدها (اضغط لعرض القيد) + طباعة الإيصال */
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Eye, BookOpenText, Printer, FileText } from 'lucide-react'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -10,8 +10,9 @@ import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { Modal, EmptyState, useToast } from '../components/ui.tsx'
+import { Modal, EmptyState, useToast, inputCls } from '../components/ui.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { normalizeRefQuery } from '../../core/refcode.ts'
 
 export function SalesInvoicesPage() {
   const { sales, customers, journal } = useDataStore()
@@ -20,6 +21,15 @@ export function SalesInvoicesPage() {
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [viewing, setViewing] = useState<SaleInvoice | null>(null)
+  // البحث بالمرجع/رقم الفاتورة — المرجعي يُطبع على الإيصال فيقرأه العميل بالهاتف
+  const [query, setQuery] = useState('')
+  const filtered = useMemo(() => {
+    const q = query.trim()
+    if (!q) return [...sales].reverse()
+    const ref = normalizeRefQuery(q)
+    return [...sales].reverse().filter((s) =>
+      s.invoiceNumber.includes(q) || (s.refCode ?? '').includes(ref))
+  }, [sales, query])
 
   const printInvoice = async (s: SaleInvoice, template: 'thermal' | 'a4') => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
@@ -35,6 +45,7 @@ export function SalesInvoicesPage() {
     })
     const model = buildReceiptModel({
       invoiceNumber: s.invoiceNumber,
+      refCode: s.refCode,
       dateIso: s.date,
       lines: s.lines,
       totals: s.totals,
@@ -61,6 +72,15 @@ export function SalesInvoicesPage() {
 
   return (
     <div className="space-y-4">
+      <div className="anim-up flex items-center gap-2">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="🔎 ابحث برقم الفاتورة أو مرجع التتبع (مثل SAL-260915-…)"
+          className={inputCls + ' max-w-md'}
+        />
+        {query && <span className="text-[12px] text-slate-400">{filtered.length} نتيجة</span>}
+      </div>
       <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -75,10 +95,11 @@ export function SalesInvoicesPage() {
             </tr>
           </thead>
           <tbody>
-            {[...sales].reverse().map((s, i) => (
+            {filtered.map((s, i) => (
               <tr key={s.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/[0.04] transition-colors duration-150">
                 <td className="px-4 py-3">
                   <div className="font-bold text-slate-800 dark:text-white">{s.invoiceNumber}</div>
+                  {s.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{s.refCode}</div>}
                   <div className="text-[11px] text-slate-400">{s.date.slice(0, 16).replace('T', ' ')}</div>
                 </td>
                 <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
@@ -113,7 +134,7 @@ export function SalesInvoicesPage() {
         </table>
       </div>
 
-      <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `فاتورة ${viewing.invoiceNumber}` : ''} wide>
+      <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `فاتورة ${viewing.invoiceNumber}${viewing.refCode ? ` — ${viewing.refCode}` : ''}` : ''} wide>
         {viewing && (
           <div className="space-y-4">
             <table className="w-full text-[13px]">

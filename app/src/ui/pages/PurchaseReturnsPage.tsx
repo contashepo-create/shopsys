@@ -42,7 +42,7 @@ export function PurchaseReturnsPage() {
 
   const pickable = useMemo(() => {
     const q = pickQuery.trim()
-    return [...purchases].reverse().filter((p) => !q || p.invoiceNumber.includes(q)).slice(0, 20)
+    return [...purchases].reverse().filter((p) => !q || p.invoiceNumber.includes(q) || (p.refCode ?? '').includes(q.toUpperCase())).slice(0, 20)
   }, [purchases, pickQuery])
 
   /** الدين المتبقي غير المدفوع على الفاتورة المختارة (بعد مرتجعات الدين السابقة) */
@@ -155,6 +155,7 @@ export function PurchaseReturnsPage() {
               <button key={p.id} onClick={() => startReturn(p)} className="w-full text-right px-3 py-2.5 hover:bg-cyan-500/5 transition-colors flex items-center justify-between gap-2">
                 <span>
                   <b className="text-slate-800 dark:text-white">{p.invoiceNumber}</b>
+                  {p.refCode && <span className="text-[10px] font-mono text-sky-600 dark:text-sky-400 mr-2" dir="ltr">{p.refCode}</span>}
                   <span className="text-[11px] text-slate-400 mr-2">{p.date.slice(0, 10)} · {supplierName(p.supplierId)}</span>
                 </span>
                 <b className="text-cyan-600">{fmt(p.grandTotalMinor)}</b>

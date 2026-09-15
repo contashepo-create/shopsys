@@ -90,6 +90,8 @@ export interface ReceiptModel {
   shopName: string
   headerLines: string[]
   invoiceNumber: string
+  /** الرقم المرجعي للتتبع — يُطبع تحت رقم الفاتورة ويبحث به العميل لاحقاً */
+  refCode: string
   dateLabel: string // 2026-09-14 22:10
   customerName: string // «عميل نقدي» أو الاسم
   paymentLabel: string // كاش / آجل
@@ -110,6 +112,7 @@ export interface ReceiptModel {
 /** بناء نموذج الإيصال من الفاتورة — كل الأرقام من totals المحفوظة (لا إعادة حساب) */
 export function buildReceiptModel(args: {
   invoiceNumber: string
+  refCode?: string
   dateIso: string
   lines: CartLine[]
   totals: CartTotals
@@ -141,6 +144,7 @@ export function buildReceiptModel(args: {
     shopName: settings.shopName || 'تَحَكَّم',
     headerLines: settings.headerLines.filter((l) => l.trim()),
     invoiceNumber: args.invoiceNumber,
+    refCode: args.refCode ?? '',
     dateLabel: args.dateIso.slice(0, 16).replace('T', ' '),
     customerName: args.customerName ?? 'عميل نقدي',
     paymentLabel: args.payment === 'cash' ? 'نقدي' : 'آجل',

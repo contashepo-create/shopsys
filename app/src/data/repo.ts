@@ -23,6 +23,7 @@ import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayr
 import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from '../core/installments.ts'
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals } from '../core/logistics.ts'
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
+import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals } from '../core/maintenance.ts'
 import { validateTransfer, computeWarehouseStock, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
@@ -442,6 +443,8 @@ export interface PurchaseExpense {
 export interface PurchaseInvoice {
   id: number
   invoiceNumber: string
+  /** الرقم المرجعي الفريد للتتبع — PUR-YYMMDD-XXXXXC (يُطبع ويُبحث به) */
+  refCode: string
   supplierId: number
   date: string
   lines: PurchaseLine[]
@@ -461,6 +464,8 @@ export interface PurchaseInvoice {
 export interface PurchaseReturn {
   id: number
   returnNumber: string // PR-0001
+  /** الرقم المرجعي الفريد — PRT-YYMMDD-XXXXXC */
+  refCode: string
   date: string
   purchaseId: number
   refund: 'cash' | 'debt' // استرداد نقدي أو تخفيض دين المورد
@@ -518,6 +523,8 @@ export interface EmployeeAdvance {
 export interface SaleInvoice {
   id: number
   invoiceNumber: string
+  /** الرقم المرجعي الفريد للتتبع — SAL-YYMMDD-XXXXXC (يُطبع على الإيصال ويُبحث به) */
+  refCode: string
   date: string // ISO datetime
   customerId: number | null // null = عميل نقدي
   payment: PaymentMethod
@@ -535,6 +542,8 @@ export interface SaleInvoice {
 export interface SaleReturn {
   id: number
   returnNumber: string // R-0001
+  /** الرقم المرجعي الفريد — SRT-YYMMDD-XXXXXC */
+  refCode: string
   date: string
   saleId: number // الفاتورة الأصلية
   refund: PaymentMethod // رد نقدي أو تخفيض ذمم العميل
@@ -889,9 +898,19 @@ interface DataState {
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
 
+/** كل الأكواد المرجعية المستخدمة حالياً — لضمان تفرد الكود الجديد */
+function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturns' | 'purchaseReturns'>): Set<string> {
+  const set = new Set<string>()
+  for (const x of state.sales) if (x.refCode) set.add(x.refCode)
+  for (const x of state.purchases) if (x.refCode) set.add(x.refCode)
+  for (const x of state.saleReturns) if (x.refCode) set.add(x.refCode)
+  for (const x of state.purchaseReturns) if (x.refCode) set.add(x.refCode)
+  return set
+}
+
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
- *  (8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 8
+ *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
+export const DATA_VERSION = 9
 
 export const useDataStore = create<DataState>()(
   persist(
@@ -1036,6 +1055,7 @@ export const useDataStore = create<DataState>()(
         const purchaseId = nextId(state.purchases)
         const entryId = nextId(state.journal)
         const invoiceNumber = `P-${String(purchaseId).padStart(4, '0')}`
+        const refCode = makeUniqueRefCode('PUR', inv.date, usedRefCodes(state))
         const nowIso = new Date().toISOString()
         const entry: JournalEntry = {
           id: entryId,
@@ -1054,6 +1074,7 @@ export const useDataStore = create<DataState>()(
         const invoice: PurchaseInvoice = {
           id: purchaseId,
           invoiceNumber,
+          refCode,
           supplierId: inv.supplierId,
           date: inv.date,
           lines: landed.map((l) => ({
@@ -1199,7 +1220,15 @@ export const useDataStore = create<DataState>()(
         }
 
         // 3) الإجماليات والقيد (يرمي UnbalancedEntryError لو اختل — مستحيل بنيوياً)
-        const totals = computeTotals(args.lines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
+        // 2.7) تثبيت تكلفة السطر على المتوسط المرجح لحظة الترحيل (لا لحظة الإضافة للسلة):
+        // لو رُحّلت فاتورة شراء أثناء وجود الصنف في السلة تغيّر المتوسط —
+        // فيجب أن يخرج قيد التكلفة (5101/1103) بنفس متوسط لحظة البيع وإلا انفصل الدفتر عن المخزون
+        const costedLines = args.lines.map((l) => {
+          const current = state.items.find((it) => it.id === l.itemId)?.costMinor
+          // لقطة المتوسط تؤخذ فقط لو كانت قيمة سليمة — أصناف قديمة قد تحمل تكلفة تالفة
+          return Number.isInteger(current) && current !== l.unitCostMinor ? { ...l, unitCostMinor: current as number } : l
+        })
+        const totals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
         // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
         const paidM = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
         if (paidM < totals.totalMinor && args.customerId == null) {
@@ -1210,6 +1239,7 @@ export const useDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const invoiceNumber = `S-${String(saleId).padStart(4, '0')}`
+        const refCode = makeUniqueRefCode('SAL', now, usedRefCodes(state))
 
         const entry: JournalEntry = {
           id: entryId,
@@ -1228,12 +1258,13 @@ export const useDataStore = create<DataState>()(
         const sale: SaleInvoice = {
           id: saleId,
           invoiceNumber,
+          refCode,
           date: now,
           customerId: args.customerId,
           payment: args.payment,
           paidMinor: paidM,
           treasury: args.treasury ?? '1101',
-          lines: args.lines,
+          lines: costedLines,
           invoiceDiscountPercent: args.invoiceDiscountPercent,
           totals,
           journalEntryId: entryId,
@@ -1274,6 +1305,7 @@ export const useDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const returnNumber = `R-${String(returnId).padStart(4, '0')}`
+        const refCode = makeUniqueRefCode('SRT', now, usedRefCodes(state))
 
         const entry: JournalEntry = {
           id: entryId,
@@ -1292,6 +1324,7 @@ export const useDataStore = create<DataState>()(
         const ret: SaleReturn = {
           id: returnId,
           returnNumber,
+          refCode,
           date: now,
           saleId: sale.id,
           refund: args.refund,
@@ -1302,12 +1335,21 @@ export const useDataStore = create<DataState>()(
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
         }
 
-        // 4) عودة البضاعة للمخزون + عودة السيريالات المرتبطة بهذه الفاتورة
+        // 4) عودة البضاعة للمخزون بتكلفة بيعها التاريخية (نفس قيمة القيد 1103 مدين)
+        //    مع إعادة حساب المتوسط المرجح بالقيمة — وإلا انفصل رصيد المخزون الدفتري
+        //    عن قيمته الفعلية (كمية × متوسط) وتراكم الانحراف مع كل مرتجع
         const qtyBack = new Map<number, number>()
-        for (const l of lines) qtyBack.set(l.itemId, (qtyBack.get(l.itemId) ?? 0) + l.qty)
-        const updatedItems = state.items.map((it) =>
-          qtyBack.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) + qtyBack.get(it.id)!) * 1000) / 1000 } : it,
-        )
+        const valueBack = new Map<number, number>()
+        for (const l of lines) {
+          qtyBack.set(l.itemId, (qtyBack.get(l.itemId) ?? 0) + l.qty)
+          valueBack.set(l.itemId, (valueBack.get(l.itemId) ?? 0) + Math.round(l.qty * l.unitCostMinor))
+        }
+        const updatedItems = state.items.map((it) => {
+          if (!qtyBack.has(it.id)) return it
+          const newQty = Math.round(((it.stockQty ?? 0) + qtyBack.get(it.id)!) * 1000) / 1000
+          const newValue = Math.round((it.stockQty ?? 0) * it.costMinor) + valueBack.get(it.id)!
+          return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor }
+        })
         // سيريالات هذه الفاتورة تعود متاحة بعدد الكمية المرتجعة (الأقدم بيعاً أولاً)
         const serialsToReturn: string[] = []
         for (const [itemId, qty] of qtyBack) {
@@ -1355,6 +1397,7 @@ export const useDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const returnNumber = `PR-${String(returnId).padStart(4, '0')}`
+        const refCode = makeUniqueRefCode('PRT', now, usedRefCodes(state))
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
@@ -1371,6 +1414,7 @@ export const useDataStore = create<DataState>()(
         const ret: PurchaseReturn = {
           id: returnId,
           returnNumber,
+          refCode,
           date: now,
           purchaseId: purchase.id,
           refund: args.refund,
@@ -1379,12 +1423,20 @@ export const useDataStore = create<DataState>()(
           journalEntryId: entryId,
           reason: args.reason,
         }
-        // 3) خصم الكميات من المخزون (التكلفة المتوسطة تبقى كما هي — الإخراج بالمتوسط)
+        // 3) خصم الكميات من المخزون بتكلفة الشراء الأصلية (نفس قيمة القيد 1103 دائن)
+        //    مع إعادة حساب المتوسط المرجح بالقيمة — يبقي دفتر الأستاذ = كمية × متوسط
         const qtyOut = new Map<number, number>()
-        for (const l of lines) qtyOut.set(l.itemId, (qtyOut.get(l.itemId) ?? 0) + l.qty)
-        const updatedItems = state.items.map((it) =>
-          qtyOut.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyOut.get(it.id)!) * 1000) / 1000 } : it,
-        )
+        const valueOut = new Map<number, number>()
+        for (const l of lines) {
+          qtyOut.set(l.itemId, (qtyOut.get(l.itemId) ?? 0) + l.qty)
+          valueOut.set(l.itemId, (valueOut.get(l.itemId) ?? 0) + Math.round(l.qty * l.landedUnitCostMinor))
+        }
+        const updatedItems = state.items.map((it) => {
+          if (!qtyOut.has(it.id)) return it
+          const newQty = Math.round(((it.stockQty ?? 0) - qtyOut.get(it.id)!) * 1000) / 1000
+          const newValue = Math.round((it.stockQty ?? 0) * it.costMinor) - valueOut.get(it.id)!
+          return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(Math.max(0, newValue) / newQty) : it.costMinor }
+        })
         set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems })
         return ret
       },
@@ -3155,6 +3207,39 @@ export const useDataStore = create<DataState>()(
           // ترحيل الخزائن المتعددة: الحسابات القديمة تحصل على الافتراضيتين
           treasuries: s.treasuries && s.treasuries.length > 0 ? s.treasuries : DEFAULT_TREASURIES,
           categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),
+          // الأكواد المرجعية (الإصدار 9): فواتير قديمة بلا refCode تحصل على كود فريد فوراً
+          sales: (() => {
+            const used = new Set<string>()
+            return (s.sales ?? []).map((x) => {
+              if (x.refCode) { used.add(x.refCode); return { ...x, shiftId: x.shiftId ?? null } }
+              const code = makeUniqueRefCode('SAL', x.date, used); used.add(code)
+              return { ...x, shiftId: x.shiftId ?? null, refCode: code }
+            })
+          })(),
+          purchases: (() => {
+            const used = new Set<string>()
+            return (s.purchases ?? []).map((x) => {
+              if (x.refCode) { used.add(x.refCode); return { ...x, journalEntryId: x.journalEntryId ?? null } }
+              const code = makeUniqueRefCode('PUR', x.date, used); used.add(code)
+              return { ...x, journalEntryId: x.journalEntryId ?? null, refCode: code }
+            })
+          })(),
+          saleReturns: (() => {
+            const used = new Set<string>()
+            return (s.saleReturns ?? []).map((x) => {
+              if (x.refCode) { used.add(x.refCode); return x }
+              const code = makeUniqueRefCode('SRT', x.date, used); used.add(code)
+              return { ...x, refCode: code }
+            })
+          })(),
+          purchaseReturns: (() => {
+            const used = new Set<string>()
+            return (s.purchaseReturns ?? []).map((x) => {
+              if (x.refCode) { used.add(x.refCode); return x }
+              const code = makeUniqueRefCode('PRT', x.date, used); used.add(code)
+              return { ...x, refCode: code }
+            })
+          })(),
           items: (s.items ?? []).map((it) => ({ ...it, stockQty: it.stockQty ?? 0, warrantyMonths: it.warrantyMonths ?? 0 })),
           customers: (s.customers ?? []).map((c) => ({ ...EMPTY_EXTENDED, ...c })),
           suppliers: (s.suppliers ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
@@ -3211,12 +3296,8 @@ export const useDataStore = create<DataState>()(
           assets: s.assets ?? [],
           serials: s.serials ?? [],
           cheques: s.cheques ?? [],
-          purchases: (s.purchases ?? []).map((p) => ({ ...p, journalEntryId: p.journalEntryId ?? null })),
-          purchaseReturns: s.purchaseReturns ?? [],
           stocktakes: s.stocktakes ?? [],
           vouchers: s.vouchers ?? [],
-          sales: (s.sales ?? []).map((x) => ({ ...x, shiftId: x.shiftId ?? null })),
-          saleReturns: s.saleReturns ?? [],
           shifts: s.shifts ?? [],
           journal: s.journal ?? [],
         } as DataState

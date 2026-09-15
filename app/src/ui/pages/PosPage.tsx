@@ -211,7 +211,7 @@ export function PosPage() {
   const creditRemainder = totals ? totals.totalMinor - paidCashMinor : 0
 
   /** طباعة إيصال فاتورة (المرحلة 5) — مع رمز QR زاتكا عند تفعيل الميزة (القرار 30) */
-  const printSale = async (sale: { invoiceNumber: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null }) => {
+  const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null }) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
     const qrDataUrl = await maybeZatcaQr({
       featureActive: hasFeature(licState, 'einvoice_sa'),
@@ -225,6 +225,7 @@ export function PosPage() {
     })
     const model = buildReceiptModel({
       invoiceNumber: sale.invoiceNumber,
+      refCode: sale.refCode,
       dateIso: sale.date,
       lines: sale.lines,
       totals: sale.totals,

@@ -34,6 +34,7 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
     : ''
   const metaTop: string[] = []
   metaTop.push(`<span>فاتورة: <b>${esc(model.invoiceNumber)}</b></span>`)
+  if (model.refCode) metaTop.push(`<span>مرجع التتبع: <b dir="ltr">${esc(model.refCode)}</b></span>`)
   if (settings.showDate) metaTop.push(`<span>${esc(model.dateLabel)}</span>`)
   const metaBottom: string[] = []
   if (settings.showCustomer) metaBottom.push(`<span>العميل: ${esc(model.customerName)}</span>`)

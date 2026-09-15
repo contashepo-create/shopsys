@@ -39,7 +39,7 @@ export function SaleReturnsPage() {
 
   const pickable = useMemo(() => {
     const q = pickQuery.trim()
-    return [...sales].reverse().filter((s) => !q || s.invoiceNumber.includes(q)).slice(0, 20)
+    return [...sales].reverse().filter((s) => !q || s.invoiceNumber.includes(q) || (s.refCode ?? '').includes(q.toUpperCase())).slice(0, 20)
   }, [sales, pickQuery])
 
   const startReturn = (s: SaleInvoice) => {
@@ -142,6 +142,7 @@ export function SaleReturnsPage() {
               <button key={s.id} onClick={() => startReturn(s)} className="w-full text-right px-3 py-2.5 hover:bg-emerald-500/5 transition-colors flex items-center justify-between gap-2">
                 <span>
                   <b className="text-slate-800 dark:text-white">{s.invoiceNumber}</b>
+                  {s.refCode && <span className="text-[10px] font-mono text-sky-600 dark:text-sky-400 mr-2" dir="ltr">{s.refCode}</span>}
                   <span className="text-[11px] text-slate-400 mr-2">{s.date.slice(0, 10)} · {s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr : 'عميل نقدي'}</span>
                 </span>
                 <b className="text-emerald-600">{fmt(s.totals.totalMinor)}</b>

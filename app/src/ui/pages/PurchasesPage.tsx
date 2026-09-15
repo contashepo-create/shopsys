@@ -146,6 +146,7 @@ export function PurchasesPage() {
                 <tr key={p.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.04] transition-colors duration-150">
                   <td className="px-4 py-3">
                     <div className="font-bold text-slate-800 dark:text-white">{p.invoiceNumber}</div>
+                    {p.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{p.refCode}</div>}
                     <div className="text-[11px] text-slate-400">{p.date}</div>
                   </td>
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{suppliers.find((s) => s.id === p.supplierId)?.nameAr ?? '—'}</td>
@@ -347,7 +348,7 @@ export function PurchasesPage() {
       </Modal>
 
       {/* عرض فاتورة */}
-      <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `فاتورة ${viewing.invoiceNumber}` : ''} wide>
+      <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `فاتورة ${viewing.invoiceNumber}${viewing.refCode ? ` — ${viewing.refCode}` : ''}` : ''} wide>
         {viewing && (
           <div className="space-y-4 text-sm">
             <div className="flex gap-4 text-[12px] text-slate-500">

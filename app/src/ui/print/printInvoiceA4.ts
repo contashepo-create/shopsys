@@ -89,6 +89,7 @@ function headerLinesHtml(m: ReceiptModel, s: ReceiptSettings, cls = 'hl'): strin
 
 function metaRows(m: ReceiptModel, s: ReceiptSettings): string {
   const rows: string[] = [`<tr><td class="k">رقم الفاتورة</td><td class="v">${esc(m.invoiceNumber)}</td></tr>`]
+  if (m.refCode) rows.push(`<tr><td class="k">مرجع التتبع</td><td class="v" dir="ltr">${esc(m.refCode)}</td></tr>`)
   if (s.showDate) rows.push(`<tr><td class="k">التاريخ</td><td class="v">${esc(m.dateLabel)}</td></tr>`)
   if (s.showCustomer) rows.push(`<tr><td class="k">العميل</td><td class="v">${esc(m.customerName)}</td></tr>`)
   if (s.showPayment) rows.push(`<tr><td class="k">طريقة الدفع</td><td class="v">${esc(m.paymentLabel)}</td></tr>`)
@@ -209,7 +210,7 @@ function renderCompact(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings,
         ${s.showHeaderLines && m.headerLines.length ? `<span class="hl inline">${m.headerLines.map(esc).join(' — ')}</span>` : ''}
       </div></div>
       <div class="mini"><b style="color:${accent}">فاتورة مبيعات</b>
-        <span>${esc(m.invoiceNumber)}${s.showDate ? ` | ${esc(m.dateLabel)}` : ''}</span>
+        <span>${esc(m.invoiceNumber)}${m.refCode ? ` | <span dir="ltr">${esc(m.refCode)}</span>` : ''}${s.showDate ? ` | ${esc(m.dateLabel)}` : ''}</span>
       </div>
     </div>
     ${s.showCustomer || s.showPayment ? `<div class="strip">${s.showCustomer ? `العميل: <b>${esc(m.customerName)}</b>` : ''}${s.showCustomer && s.showPayment ? ' — ' : ''}${s.showPayment ? `الدفع: <b>${esc(m.paymentLabel)}</b>` : ''}</div>` : ''}
@@ -229,7 +230,7 @@ function renderElegant(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings,
       ${logoImg(s, 62, 16)}
       <div class="shop" style="color:${accent}">${esc(m.shopName)}</div>
       ${headerLinesHtml(m, s)}
-      <div class="pill" style="background:${accent}12;color:${accent}">فاتورة مبيعات ${esc(m.invoiceNumber)}${s.showDate ? ` • ${esc(m.dateLabel)}` : ''}</div>
+      <div class="pill" style="background:${accent}12;color:${accent}">فاتورة مبيعات ${esc(m.invoiceNumber)}${m.refCode ? ` • <span dir="ltr">${esc(m.refCode)}</span>` : ''}${s.showDate ? ` • ${esc(m.dateLabel)}` : ''}</div>
     </div>
     ${s.showCustomer || s.showPayment ? `<div class="cards">
       ${s.showCustomer ? `<div class="card" style="background:${accent}0a;border:1px solid ${accent}20"><div class="ct" style="color:${accent}">العميل</div><b>${esc(m.customerName)}</b></div>` : ''}
