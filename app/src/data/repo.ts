@@ -20,6 +20,7 @@ import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildP
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { validatePriceList, resolvePrice, type PriceList, type PriceListEntry } from '../core/priceLists.ts'
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
+import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
@@ -673,6 +674,7 @@ interface DataState {
   driverDues: DriverDue[] // مستحقات سائقين تتجمع وتسوى دفعة واحدة
   insuranceProviders: InsuranceProvider[] // جهات تأمين وتعاقد بنسب تحمل
   insuranceClaims: InsuranceClaim[] // مطالبات تتجمع حتى التحصيل
+  variantStocks: VariantStock[] // مصفوفة مخزون لون×مقاس (دفتر فرعي لرصيد الصنف)
   tickets: MaintenanceTicket[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
@@ -864,6 +866,12 @@ interface DataState {
   getClaimBalance: (providerId: number) => number
   /** تحصيل كل مطالبات جهة دفعة واحدة */
   settleInsuranceClaims: (providerId: number, treasury?: string) => { total: number; count: number }
+
+  // ————— مصفوفة المتغيرات لون×مقاس (ملابس) —————
+  /** تعيين رصيد تركيبة — التحقق: من ألوان/مقاسات الصنف، والمجموع ≤ رصيد الصنف */
+  setVariantStock: (itemId: number, color: string, size: string, qty: number) => void
+  /** الكمية غير الموزعة على تركيبات لصنف */
+  getUndistributedQty: (itemId: number) => number
   addEquipment: (e: Omit<Equipment, 'id'>) => void
   updateEquipment: (id: number, patch: Partial<Equipment>) => void
   removeEquipment: (id: number) => void
@@ -1149,6 +1157,7 @@ export const useDataStore = create<DataState>()(
       driverDues: [],
       insuranceProviders: [],
       insuranceClaims: [],
+      variantStocks: [],
       tickets: [],
       transfers: [],
       batches: [],
@@ -1412,6 +1421,20 @@ export const useDataStore = create<DataState>()(
         }
         if (expiredNames.length) throw new ExpiredStockError(expiredNames)
 
+        // 2.4) مصفوفة المتغيرات (ملابس — استشارية كنمط السيريالات):
+        // صنف له تركيبات برصيد ⇒ يجب تحديد لون/مقاس لكل سطر ويُخصم من رصيد التركيبة
+        const variantWanted: { itemId: number; color: string; size: string; qty: number; itemName: string }[] = []
+        for (const l of args.lines) {
+          const item = state.items.find((it) => it.id === l.itemId)
+          if (!item) continue
+          if (!hasVariantStock(state.variantStocks, l.itemId)) continue
+          if (!l.variantColor && !l.variantSize) {
+            throw new Error(`«${item.nameAr}»: حدد اللون/المقاس — الصنف موزع على تركيبات`)
+          }
+          variantWanted.push({ itemId: l.itemId, color: l.variantColor ?? '', size: l.variantSize ?? '', qty: l.qty, itemName: item.nameAr })
+        }
+        const variantPlan = variantWanted.length ? planVariantDeduction(state.variantStocks, variantWanted) : null
+
         // 2.5) سيريالات القطع المعيّنة (نمط موبايل شوب — استشاري مثل الدفعات):
         // صنف يتتبع السيريال وله سيريالات متاحة ⇒ يجب تعيين سيريال لكل قطعة؛
         // لا سيريالات مسجلة أصلاً ⇒ يُباع عادياً (مخزون افتتاحي بلا سيريالات)
@@ -1493,8 +1516,16 @@ export const useDataStore = create<DataState>()(
         )
         // markSold يتحقق (موجود/متاح/يخص الصنف/غير مكرر) ويرمي خطأ عربياً قبل أي كتابة
         const updatedSerials = assignments.length ? markSold(state.serials, assignments, saleId, now) : state.serials
+        // خصم مصفوفة المتغيرات (الرصيد الإجمالي خُصم أعلاه — هذا الدفتر الفرعي)
+        const updatedVariants = variantPlan
+          ? state.variantStocks.map((v) => {
+              const k = `${v.itemId}⁞${variantKey(v.color, v.size)}`
+              const dec = variantPlan.get(k)
+              return dec ? { ...v, qty: Math.round((v.qty - dec) * 1000) / 1000 } : v
+            })
+          : state.variantStocks
 
-        set({ sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials })
+        set({ sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials, variantStocks: updatedVariants })
         return sale
       },
 
@@ -1576,7 +1607,19 @@ export const useDataStore = create<DataState>()(
         }
         const updatedSerials = serialsToReturn.length ? markReturned(state.serials, sale.id, serialsToReturn) : state.serials
 
-        set({ saleReturns: [...state.saleReturns, ret], journal: [...state.journal, entry], items: updatedItems, serials: updatedSerials })
+        // إعادة أرصدة التركيبات (سطور البيع تحمل اللون/المقاس)
+        let updatedVariantStocks = state.variantStocks
+        for (const l of lines) {
+          if (!l.variantColor && !l.variantSize) continue
+          const key = variantKey(l.variantColor ?? '', l.variantSize ?? '')
+          const idx = updatedVariantStocks.findIndex((v) => v.itemId === l.itemId && variantKey(v.color, v.size) === key)
+          if (idx >= 0) {
+            updatedVariantStocks = updatedVariantStocks.map((v, i2) => (i2 === idx ? { ...v, qty: Math.round((v.qty + l.qty) * 1000) / 1000 } : v))
+          } else {
+            updatedVariantStocks = [...updatedVariantStocks, { itemId: l.itemId, color: (l.variantColor ?? '').trim(), size: (l.variantSize ?? '').trim(), qty: l.qty }]
+          }
+        }
+        set({ saleReturns: [...state.saleReturns, ret], journal: [...state.journal, entry], items: updatedItems, serials: updatedSerials, variantStocks: updatedVariantStocks })
         return ret
       },
 
@@ -2421,6 +2464,29 @@ export const useDataStore = create<DataState>()(
           journal: [...state.journal, entry],
         })
         return { total, count: unsettled.length }
+      },
+
+      /* ─── مصفوفة المتغيرات لون×مقاس (ملابس) ─── */
+      setVariantStock: (itemId, color, size, qty) => {
+        const state = get()
+        const item = state.items.find((it) => it.id === itemId)
+        if (!item) throw new Error('الصنف غير موجود')
+        const errors = validateVariantAssignment({
+          color, size, qty,
+          itemColors: item.variantColors, itemSizes: item.variantSizes,
+          itemStockQty: item.stockQty ?? 0, currentStocks: state.variantStocks, itemId,
+        })
+        if (errors.length) throw new Error(errors.join('، '))
+        const key = variantKey(color, size)
+        const rest = state.variantStocks.filter((v) => !(v.itemId === itemId && variantKey(v.color, v.size) === key))
+        const next = qty > 0 ? [...rest, { itemId, color: color.trim(), size: size.trim(), qty }] : rest
+        set({ variantStocks: next })
+      },
+      getUndistributedQty: (itemId) => {
+        const state = get()
+        const item = state.items.find((it) => it.id === itemId)
+        if (!item) throw new Error('الصنف غير موجود')
+        return undistributedQty(item.stockQty ?? 0, state.variantStocks, itemId)
       },
       addEquipment: (e) => set((s) => ({ equipment: [...s.equipment, { ...e, id: nextId(s.equipment) }] })),
       updateEquipment: (id, patch) =>
@@ -4357,6 +4423,7 @@ export const useDataStore = create<DataState>()(
           driverDues: s.driverDues ?? [],
           insuranceProviders: s.insuranceProviders ?? [],
           insuranceClaims: s.insuranceClaims ?? [],
+          variantStocks: s.variantStocks ?? [],
           priceLists: s.priceLists ?? [],
           priceListEntries: s.priceListEntries ?? [],
           custodyFiles: s.custodyFiles ?? [],

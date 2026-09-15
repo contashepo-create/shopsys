@@ -20,6 +20,9 @@ export interface CartLine {
   soldByWeight: boolean
   /** سيريالات القطع المعيّنة (أصناف الموبايلات/الأجهزة) — طولها = qty عند الاستخدام */
   serials?: string[]
+  /** تركيبة المتغير (ملابس): لون/مقاس — إلزامية لو للصنف مصفوفة برصيد */
+  variantColor?: string
+  variantSize?: string
 }
 
 export type PaymentMethod = 'cash' | 'credit'

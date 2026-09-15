@@ -6,7 +6,7 @@
  */
 import { useMemo, useState } from 'react'
 import { useRef } from 'react'
-import { Plus, Search, Pencil, Trash2, Barcode, FolderPlus, Package, Lock, CornerDownLeft, FileDown, FileUp } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Barcode, FolderPlus, Package, Lock, CornerDownLeft, FileDown, FileUp, Grid3x3 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -23,7 +23,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
 export function ItemsPage() {
-  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases } = useDataStore()
+  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, variantStocks, setVariantStock, getUndistributedQty } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -74,6 +74,10 @@ export function ItemsPage() {
     setErrors([])
     setModal('item')
   }
+
+  /* مصفوفة لون×مقاس */
+  const [matrixFor, setMatrixFor] = useState<Item | null>(null)
+  const matrixItem = matrixFor ? items.find((x) => x.id === matrixFor.id) ?? null : null
 
   const openEditItem = (it: Item) => {
     const { id: _id, ...rest } = it
@@ -366,6 +370,11 @@ export function ItemsPage() {
                     <td className="px-4 py-3 font-black text-emerald-600 dark:text-emerald-400">{formatMinor(it.priceMinor, cur, false)}</td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
+                        {(it.variantColors.length > 0 || it.variantSizes.length > 0) && (
+                          <button onClick={() => setMatrixFor(it)} title="مصفوفة لون×مقاس" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all duration-200 hover:scale-110">
+                            <Grid3x3 size={15} />
+                          </button>
+                        )}
                         <button onClick={() => openEditItem(it)} className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
                           <Pencil size={15} />
                         </button>
@@ -470,6 +479,65 @@ export function ItemsPage() {
             </div>
           </div>
         </div>
+      </Modal>
+
+      {/* مصفوفة مخزون لون×مقاس */}
+      <Modal open={!!matrixItem} onClose={() => setMatrixFor(null)} title={matrixItem ? `مصفوفة المقاسات — ${matrixItem.nameAr}` : ''} wide>
+        {matrixItem && (() => {
+          const colors = matrixItem.variantColors.length ? matrixItem.variantColors : ['']
+          const sizes = matrixItem.variantSizes.length ? matrixItem.variantSizes : ['']
+          const qtyOf = (c: string, sz: string) => variantStocks.find((v) => v.itemId === matrixItem.id && v.color === c && v.size === sz)?.qty ?? 0
+          const undistributed = getUndistributedQty(matrixItem.id)
+          return (
+            <div className="space-y-3">
+              <div className={`rounded-xl p-3 text-[12px] font-bold ${undistributed > 0 ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>
+                رصيد الصنف الإجمالي: {matrixItem.stockQty} — {undistributed > 0 ? `غير موزع على التركيبات: ${undistributed}` : 'موزع بالكامل ✓'}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="p-2 text-right text-[11px] font-bold text-slate-400">اللون \ المقاس</th>
+                      {sizes.map((sz) => <th key={sz} className="p-2 text-center text-[12px] font-black">{sz || '—'}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {colors.map((c) => (
+                      <tr key={c} className="border-t border-slate-100 dark:border-slate-800">
+                        <td className="p-2 font-bold text-[13px]">{c || '—'}</td>
+                        {sizes.map((sz) => (
+                          <td key={sz} className="p-1.5 text-center">
+                            <input
+                              key={`${c}-${sz}-${qtyOf(c, sz)}`}
+                              defaultValue={qtyOf(c, sz) || ''}
+                              placeholder="0"
+                              inputMode="decimal"
+                              onBlur={(e) => {
+                                const v = Number(e.target.value) || 0
+                                if (v === qtyOf(c, sz)) return
+                                try {
+                                  setVariantStock(matrixItem.id, c, sz, v)
+                                  toast.show(`«${c || sz}»: الرصيد ${v} ✓`)
+                                } catch (err) {
+                                  toast.show((err as Error).message, 'error')
+                                  e.target.value = String(qtyOf(c, sz) || '')
+                                }
+                              }}
+                              className="w-20 text-center rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent py-1.5 text-[13px] font-bold focus:border-violet-400 outline-none"
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                مجموع التركيبات لا يتجاوز رصيد الصنف — بعد كل فاتورة شراء وزّع الكمية الجديدة هنا. البيع في الكاشير سيطلب اختيار التركيبة ويخصم منها.
+              </p>
+            </div>
+          )
+        })()}
       </Modal>
     </div>
   )

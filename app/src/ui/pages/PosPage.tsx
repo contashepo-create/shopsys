@@ -13,6 +13,7 @@ import { formatMinor } from '../../core/money.ts'
 import { computeTotals, type CartLine } from '../../core/pos.ts'
 import { parseScaleBarcode, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
+import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift } from '../../core/shifts.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
@@ -27,7 +28,7 @@ import { toMinor } from '../../core/money.ts'
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, priceLists, getEffectivePrice } = useDataStore()
+  const { items, customers, shifts, serials, postSale, priceLists, getEffectivePrice, variantStocks } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
@@ -88,6 +89,22 @@ export function PosPage() {
 
   // نافذة اختيار السيريال/IMEI (نمط موبايل شوب: البيع بالقطعة المعيّنة)
   const [serialPickItem, setSerialPickItem] = useState<number | null>(null)
+  const [variantPickItem, setVariantPickItem] = useState<number | null>(null)
+  const addVariantToCart = (itemId: number, color: string, size: string) => {
+    const it = items.find((x) => x.id === itemId)
+    if (!it) return
+    setCart((prev) => {
+      const idx = prev.findIndex((l) => l.itemId === itemId && (l.variantColor ?? '') === color && (l.variantSize ?? '') === size)
+      if (idx >= 0) return prev.map((l, i) => (i === idx ? { ...l, qty: l.qty + 1 } : l))
+      return [...prev, {
+        itemId: it.id, nameAr: `${it.nameAr} (${variantLabel(color, size)})`, qty: 1,
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor,
+        discountPercent: 0, soldByWeight: false, variantColor: color, variantSize: size,
+      }]
+    })
+    setVariantPickItem(null)
+    toast.show(`🎨 ${it.nameAr} — ${variantLabel(color, size)}`)
+  }
 
   /** إضافة قطعة معيّنة بسيريالها — سطر السلة يحمل قائمة السيريالات وكميته = طولها */
   const addSerialUnit = (itemId: number, serial: string) => {
@@ -127,6 +144,11 @@ export function PosPage() {
     // صنف يتتبع السيريال وله قطع مسيرلة متاحة ⇒ اختيار القطعة المعيّنة أولاً
     if (it.trackSerial && availableSerials(serials, it.id).length > 0) {
       setSerialPickItem(it.id)
+      return
+    }
+    // صنف موزع على تركيبات لون×مقاس ⇒ اختيار التركيبة أولاً (نمط استشاري)
+    if (hasVariantStock(variantStocks, it.id)) {
+      setVariantPickItem(it.id)
       return
     }
     setCart((prev) => {
@@ -692,6 +714,43 @@ export function PosPage() {
       </Modal>
 
       {/* اختيار القطعة بسيريالها/IMEI — نمط موبايل شوب (البيع بالقطعة المعيّنة) */}
+      {/* اختيار تركيبة لون×مقاس (ملابس) */}
+      <Modal open={variantPickItem !== null} onClose={() => setVariantPickItem(null)} title="🎨 اختر اللون والمقاس">
+        {variantPickItem !== null && (() => {
+          const it = items.find((x) => x.id === variantPickItem)
+          // المتاح لكل تركيبة بعد خصم ما في السلة
+          const inCart = new Map<string, number>()
+          for (const l of cart) {
+            if (l.itemId !== variantPickItem) continue
+            const k = variantKey(l.variantColor ?? '', l.variantSize ?? '')
+            inCart.set(k, (inCart.get(k) ?? 0) + l.qty)
+          }
+          const combos = variantStocks
+            .filter((v) => v.itemId === variantPickItem)
+            .map((v) => ({ ...v, avail: Math.round((v.qty - (inCart.get(variantKey(v.color, v.size)) ?? 0)) * 1000) / 1000 }))
+            .sort((a, b) => (a.color + a.size).localeCompare(b.color + b.size, 'ar'))
+          return (
+            <div className="space-y-3">
+              <div className="text-[13px] font-bold text-slate-700 dark:text-slate-200">{it?.nameAr}</div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-72 overflow-y-auto">
+                {combos.map((v) => (
+                  <button
+                    key={variantKey(v.color, v.size)}
+                    onClick={() => v.avail > 0 && addVariantToCart(variantPickItem, v.color, v.size)}
+                    disabled={v.avail <= 0}
+                    className={`p-3 rounded-xl border-2 text-center transition-all duration-150 ${v.avail > 0 ? 'border-slate-200 dark:border-slate-700 hover:border-violet-400/70 hover:bg-violet-500/5' : 'border-dashed border-slate-200 dark:border-slate-700 opacity-40 cursor-not-allowed'}`}
+                  >
+                    <div className="font-black text-[13px]">{variantLabel(v.color, v.size)}</div>
+                    <div className={`text-[11px] font-bold ${v.avail > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{v.avail > 0 ? `متاح ${v.avail}` : 'نفد'}</div>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-400">تُخصم الكمية من رصيد التركيبة ومن إجمالي الصنف معاً — والمرتجع يعيدها للتركيبة نفسها.</p>
+            </div>
+          )
+        })()}
+      </Modal>
+
       <Modal open={serialPickItem !== null} onClose={() => setSerialPickItem(null)} title="🔢 اختر القطعة (السيريال / IMEI)">
         {serialPickItem !== null && (() => {
           const it = items.find((x) => x.id === serialPickItem)
