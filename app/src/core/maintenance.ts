@@ -37,6 +37,36 @@ export interface TicketPartInput {
   unitCostMinor: Minor // متوسط التكلفة المرجح وقت التسليم
 }
 
+/**
+ * كتالوج خدمات الصيانة (الأمر 23 — بمستوى موبايل شوب):
+ * كل خدمة لها تكلفة داخلية (أجر فني/مواد استهلاكية) وسعر بيع —
+ * الربح يُحسب تلقائياً ولا يظهر أبداً في مطبوعات العميل.
+ */
+export interface MaintenanceService {
+  id: number
+  nameAr: string
+  costMinor: Minor // التكلفة الداخلية — سرية (لا تُطبع للعميل)
+  priceMinor: Minor // سعر البيع للعميل
+  isActive: boolean
+}
+
+export function validateService(input: { nameAr: string; costMinor: number; priceMinor: number }): string[] {
+  const errors: string[] = []
+  if (!input.nameAr.trim()) errors.push('اسم الخدمة مطلوب')
+  if (!isPosInt(input.costMinor)) errors.push('التكلفة لا تكون سالبة')
+  if (!isPosInt(input.priceMinor)) errors.push('سعر البيع لا يكون سالباً')
+  return errors
+}
+
+/** سطر خدمة داخل تسليم التذكرة — السعر والتكلفة يُسحبان من الكتالوج ويقبلان التعديل */
+export interface TicketServiceInput {
+  serviceId: number | null // null = خدمة حرة (كتبت يدوياً)
+  nameAr: string
+  qty: number
+  unitPriceMinor: Minor
+  unitCostMinor: Minor // تكلفة داخلية — لا تظهر للعميل
+}
+
 export interface TicketInput {
   deviceName: string // آيفون 13 برو
   issue: string // وصف العطل
@@ -45,7 +75,14 @@ export interface TicketInput {
 export interface TicketDeliveryInput {
   laborMinor: Minor // أجرة الصيانة (المصنعية)
   parts: TicketPartInput[]
+  /** خدمات من الكتالوج بتكلفة وسعر بيع (الأمر 23) */
+  services?: TicketServiceInput[]
   payment: 'cash' | 'credit'
+  /**
+   * التحصيل المجزأ (الأمر 23): المدفوع نقداً الآن — الباقي دين على العميل.
+   * undefined = حسب payment القديم (cash = الكل نقداً، credit = الكل آجل).
+   */
+  paidMinor?: Minor
   vatPercent: number // تُضاف فوق الإجمالي
 }
 
@@ -53,9 +90,14 @@ export interface TicketTotals {
   laborMinor: Minor
   partsPriceMinor: Minor // Σ qty×unitPrice
   partsCostMinor: Minor // Σ qty×unitCost
-  revenueMinor: Minor // labor + partsPrice (وعاء الضريبة)
+  servicesPriceMinor: Minor // Σ qty×unitPrice للخدمات (الأمر 23)
+  servicesCostMinor: Minor // Σ qty×unitCost للخدمات — سري
+  revenueMinor: Minor // labor + partsPrice + servicesPrice (وعاء الضريبة)
   vatMinor: Minor
   grandMinor: Minor // revenue + vat (المستحق من العميل)
+  paidMinor: Minor // المحصَّل نقداً عند التسليم (التحصيل المجزأ)
+  creditMinor: Minor // الباقي ديناً على العميل = grand − paid
+  profitMinor: Minor // revenue − partsCost − servicesCost (لا يُطبع للعميل أبداً)
 }
 
 const isPosInt = (n: number) => Number.isInteger(n) && n >= 0
@@ -79,24 +121,47 @@ export function validateDelivery(input: TicketDeliveryInput): string[] {
     if (!isPosInt(p.unitPriceMinor)) errors.push(`قطعة ${i + 1}: السعر لا يكون سالباً`)
     if (!isPosInt(p.unitCostMinor)) errors.push(`قطعة ${i + 1}: التكلفة لا تكون سالبة`)
   })
+  ;(input.services ?? []).forEach((sv, i) => {
+    if (!sv.nameAr.trim()) errors.push(`خدمة ${i + 1}: حدد الاسم`)
+    if (!Number.isInteger(sv.qty) || sv.qty < 1) errors.push(`خدمة ${i + 1}: الكمية عدد صحيح موجب`)
+    if (!isPosInt(sv.unitPriceMinor)) errors.push(`خدمة ${i + 1}: السعر لا يكون سالباً`)
+    if (!isPosInt(sv.unitCostMinor)) errors.push(`خدمة ${i + 1}: التكلفة لا تكون سالبة`)
+  })
   const totals = computeTicketTotals(input)
-  if (totals.revenueMinor <= 0) errors.push('إجمالي التذكرة يجب أن يكون موجباً (أجرة أو قطع)')
+  if (totals.revenueMinor <= 0) errors.push('إجمالي التذكرة يجب أن يكون موجباً (أجرة أو قطع أو خدمات)')
+  if (input.paidMinor != null) {
+    if (!isPosInt(input.paidMinor)) errors.push('المدفوع لا يكون سالباً')
+    else if (input.paidMinor > totals.grandMinor) errors.push('المدفوع يتجاوز إجمالي التذكرة')
+  }
   return errors
 }
 
-/** إجماليات التسليم */
+/** إجماليات التسليم — تشمل الخدمات والتحصيل المجزأ والربح (الأمر 23) */
 export function computeTicketTotals(input: TicketDeliveryInput): TicketTotals {
   const partsPriceMinor = input.parts.reduce((a, p) => a + Math.round(p.unitPriceMinor * p.qty), 0)
   const partsCostMinor = input.parts.reduce((a, p) => a + Math.round(p.unitCostMinor * p.qty), 0)
-  const revenueMinor = input.laborMinor + partsPriceMinor
+  const services = input.services ?? []
+  const servicesPriceMinor = services.reduce((a, sv) => a + Math.round(sv.unitPriceMinor * sv.qty), 0)
+  const servicesCostMinor = services.reduce((a, sv) => a + Math.round(sv.unitCostMinor * sv.qty), 0)
+  const revenueMinor = input.laborMinor + partsPriceMinor + servicesPriceMinor
   const vatMinor = Math.round((revenueMinor * input.vatPercent) / 100)
+  const grandMinor = revenueMinor + vatMinor
+  // التحصيل المجزأ: paidMinor صريح ⇒ يعتمد؛ وإلا حسب طريقة الدفع القديمة
+  const paidMinor = input.paidMinor != null
+    ? Math.min(input.paidMinor, grandMinor)
+    : input.payment === 'cash' ? grandMinor : 0
   return {
     laborMinor: input.laborMinor,
     partsPriceMinor,
     partsCostMinor,
+    servicesPriceMinor,
+    servicesCostMinor,
     revenueMinor,
     vatMinor,
-    grandMinor: revenueMinor + vatMinor,
+    grandMinor,
+    paidMinor,
+    creditMinor: grandMinor - paidMinor,
+    profitMinor: revenueMinor - partsCostMinor - servicesCostMinor,
   }
 }
 
@@ -110,10 +175,15 @@ export function computeTicketTotals(input: TicketDeliveryInput): TicketTotals {
  */
 export function buildTicketDeliveryEntry(totals: TicketTotals, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
   if (totals.revenueMinor <= 0) throw new Error('إيراد التذكرة يجب أن يكون موجباً')
-  const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? treasury : '1104', debit: totals.grandMinor, credit: 0, note: `تحصيل ${label}` },
-    { accountCode: '4103', debit: 0, credit: totals.revenueMinor, note: 'إيراد صيانة' },
-  ]
+  const lines: JournalLine[] = []
+  // التحصيل المجزأ (الأمر 23): نقدي محصَّل الآن + الباقي ذمم عميل
+  if (totals.paidMinor > 0) lines.push({ accountCode: treasury, debit: totals.paidMinor, credit: 0, note: `تحصيل نقدي ${label}` })
+  if (totals.creditMinor > 0) lines.push({ accountCode: '1104', debit: totals.creditMinor, credit: 0, note: `آجل على العميل ${label}` })
+  if (totals.paidMinor === 0 && totals.creditMinor === 0 && totals.grandMinor > 0) {
+    // fallback نظري — لا يحدث عملياً لأن grand = paid + credit
+    lines.push({ accountCode: payment === 'cash' ? treasury : '1104', debit: totals.grandMinor, credit: 0, note: `تحصيل ${label}` })
+  }
+  lines.push({ accountCode: '4103', debit: 0, credit: totals.revenueMinor, note: 'إيراد صيانة' })
   if (totals.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: totals.vatMinor, note: 'ض.ق.م' })
   if (totals.partsCostMinor > 0) {
     lines.push({ accountCode: '5101', debit: totals.partsCostMinor, credit: 0, note: 'تكلفة قطع الغيار' })

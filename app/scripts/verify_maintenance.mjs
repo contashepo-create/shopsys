@@ -65,7 +65,7 @@ check('دائن 1103 = تكلفة القطع (صرف مخزون)', find(e1, '110
 check('القيد متوازن', sum(e1, 'debit') === sum(e1, 'credit'))
 check('عدد السطور 5', e1.length === 5)
 
-const t2 = computeTicketTotals(base) // أجرة فقط بلا قطع ولا ضريبة
+const t2 = computeTicketTotals({ ...base, payment: 'credit' }) // أجرة فقط بلا قطع ولا ضريبة — آجل بالكامل (الأمر 23: القيد يتبع paid/credit)
 const e2 = buildTicketDeliveryEntry(t2, 'credit', 'MT-0002')
 check('آجل: المدين 1104', find(e2, '1104')[0].debit === t2.grandMinor)
 check('بلا قطع: لا سطر 5101/1103', find(e2, '5101').length === 0 && find(e2, '1103').length === 0)

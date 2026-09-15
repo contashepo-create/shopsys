@@ -45,6 +45,7 @@ export function InstallmentsPage() {
   const [customerId, setCustomerId] = useState('')
   const [total, setTotal] = useState('')
   const [down, setDown] = useState('')
+  const [interest, setInterest] = useState('') // هامش التقسيط (الأمر 22) — يُثبت إيراداً 4111
   const [count, setCount] = useState('6')
   const [interval, setInterval_] = useState('1')
   const [firstDue, setFirstDue] = useState('')
@@ -53,7 +54,7 @@ export function InstallmentsPage() {
 
   const openNew = () => {
     if (customers.length === 0) return toast.show('أضف عميلاً أولاً من شاشة العملاء', 'error')
-    setCustomerId(''); setTotal(''); setDown(''); setCount('6'); setInterval_('1')
+    setCustomerId(''); setTotal(''); setDown(''); setInterest(''); setCount('6'); setInterval_('1')
     const d = new Date(); d.setMonth(d.getMonth() + 1)
     setFirstDue(d.toISOString().slice(0, 10))
     setTreasury('1101'); setNotes(''); setOpen(true)
@@ -80,6 +81,7 @@ export function InstallmentsPage() {
         saleId: null,
         totalMinor: toMinor(total, cur.decimals),
         downPaymentMinor: down.trim() ? toMinor(down, cur.decimals) : 0,
+        interestMinor: interest.trim() ? toMinor(interest, cur.decimals) : 0,
         count: Number(count),
         intervalMonths: Number(interval),
         firstDueDate: firstDue,
@@ -223,6 +225,9 @@ export function InstallmentsPage() {
             </Field>
             <Field label={`المقدم (${cur.symbol})`} hint="يُحصَّل فوراً بقيد: خزينة ← عملاء">
               <input value={down} onChange={(e) => setDown(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+            </Field>
+            <Field label={`هامش التقسيط (${cur.symbol})`} hint="جزء من الإجمالي يُثبت إيراداً 4111 «أرباح تقسيط» بقيد: عملاء ← أرباح تقسيط">
+              <input value={interest} onChange={(e) => setInterest(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
             </Field>
             <Field label="عدد الأقساط *">
               <input value={count} onChange={(e) => setCount(e.target.value)} className={inputCls} dir="ltr" />

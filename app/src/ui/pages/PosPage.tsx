@@ -28,7 +28,7 @@ import { toMinor } from '../../core/money.ts'
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, priceLists, getEffectivePrice, variantStocks } = useDataStore()
+  const { items, customers, shifts, serials, postSale, priceLists, getEffectivePrice, variantStocks, warehouses } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
@@ -285,6 +285,8 @@ export function PosPage() {
   const [lastSale, setLastSale] = useState<Parameters<typeof printSale>[0] | null>(null)
 
   // تجاوز بيع منتهي الصلاحية بموافقة المدير (القرار 8) — يُسجَّل اسمه على الفاتورة
+  /* الأمر 8: مخزن البيع أعلى الفاتورة — الافتراضي من الإعدادات، و«غير محدد» يعامل كالرئيسي */
+  const [saleWarehouseId, setSaleWarehouseId] = useState<number | null>(setup.defaultWarehouseId ?? null)
   const [expiredBlock, setExpiredBlock] = useState<string[] | null>(null)
   const [overrideName, setOverrideName] = useState('')
 
@@ -304,6 +306,7 @@ export function PosPage() {
         paidMinor: payment === 'credit' ? 0 : paidCashMinor,
         expiryOverrideBy: expiryOverrideBy ?? null,
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
+        warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
       })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
@@ -423,6 +426,17 @@ export function PosPage() {
             )}
           </span>
           <div className="flex gap-1.5 items-center">
+            {warehouses.length > 1 && (
+              <select
+                value={saleWarehouseId ?? ''}
+                onChange={(e) => setSaleWarehouseId(e.target.value === '' ? null : Number(e.target.value))}
+                title="المخزن الذي تُصرف منه هذه الفاتورة (الأمر 8)"
+                className="text-[11px] font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1.5 max-w-[8.5rem]"
+              >
+                <option value="">🏬 مخزن غير محدد</option>
+                {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}</option>)}
+              </select>
+            )}
             {customers.some((c) => c.priceListId != null) && (
               <select
                 value={customerId ?? 0}

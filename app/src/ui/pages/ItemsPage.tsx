@@ -6,7 +6,7 @@
  */
 import { useMemo, useState } from 'react'
 import { useRef } from 'react'
-import { Plus, Search, Pencil, Trash2, Barcode, FolderPlus, Package, Lock, CornerDownLeft, FileDown, FileUp, Grid3x3 } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Barcode, FolderPlus, Package, Lock, CornerDownLeft, FileDown, FileUp, Grid3x3, BookOpen, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -19,11 +19,14 @@ import { FEATURE_LABELS, getActivity, type ItemFeature } from '../../core/activi
 import { buildItemsCsv, parseItemsCsv } from '../../core/itemsCsv.ts'
 import { UNIT_GROUPS } from '../../core/units.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { buildItemLedger } from '../../core/itemLedger.ts'
+import { renderItemLedgerHtml } from '../print/printItemLedger.ts'
+import { printHtml } from '../print/printReceipt.ts'
 
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
 export function ItemsPage() {
-  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, variantStocks, setVariantStock, getUndistributedQty } = useDataStore()
+  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -77,6 +80,61 @@ export function ItemsPage() {
 
   /* مصفوفة لون×مقاس */
   const [matrixFor, setMatrixFor] = useState<Item | null>(null)
+  /* ─── كارت الصنف: دفتر الحركة بفلتر فترة + طباعة (الأمر 13) ─── */
+  const [cardFor, setCardFor] = useState<Item | null>(null)
+  const [ledgerFrom, setLedgerFrom] = useState('')
+  const [ledgerTo, setLedgerTo] = useState('')
+
+  const ledgerInput = useMemo(() => {
+    if (!cardFor) return null
+    return {
+      itemId: cardFor.id,
+      openingQty: 0, // يُحسب عكسياً بالأسفل من الرصيد الحالي
+      purchases: purchases.map((p) => ({ invoiceNumber: p.invoiceNumber, date: p.date, lines: p.lines })),
+      purchaseReturns: purchaseReturns.map((r) => ({ returnNumber: r.returnNumber, date: r.date, lines: r.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitCostMinor: l.landedUnitCostMinor })) })),
+      sales: sales.map((sl) => ({ invoiceNumber: sl.invoiceNumber, date: sl.date, lines: sl.lines })),
+      saleReturns: saleReturns.map((r) => ({ returnNumber: r.returnNumber, date: r.date, lines: r.lines })),
+      stocktakes: stocktakes.map((st) => ({ stocktakeNumber: st.stocktakeNumber, date: st.date, rows: st.result.variances.map((v) => ({ itemId: v.itemId, systemQty: v.expectedQty, countedQty: v.countedQty })) })),
+      productionOrders: productionOrders.map((po) => {
+        const recipe = recipes.find((rc) => rc.id === po.recipeId)
+        return {
+          orderNumber: po.orderNumber, date: po.date, productItemId: po.productItemId, qty: po.producedQty,
+          ingredients: (recipe?.ingredients ?? []).map((ing) => ({ itemId: ing.itemId, qty: ing.qty * po.batches })),
+        }
+      }),
+      materialRequisitions: materialRequisitions.map((mr) => ({ reqNumber: mr.reqNumber, date: mr.date, lines: mr.lines.map((l) => ({ itemId: l.itemId, qty: l.qty })) })),
+    }
+  }, [cardFor, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, recipes, materialRequisitions])
+
+  const itemLedger = useMemo(() => {
+    if (!cardFor || !ledgerInput) return null
+    // الرصيد الافتتاحي يُشتق عكسياً: الرصيد الحالي − صافي كل الحركات المسجلة
+    const all = buildItemLedger(ledgerInput)
+    const opening = Math.round(((cardFor.stockQty ?? 0) - (all.totalIn - all.totalOut)) * 1000) / 1000
+    return buildItemLedger({ ...ledgerInput, openingQty: opening }, ledgerFrom || undefined, ledgerTo || undefined)
+  }, [cardFor, ledgerInput, ledgerFrom, ledgerTo])
+
+  const printItemCard = () => {
+    if (!cardFor || !itemLedger) return
+    const cat = categories.find((c) => c.id === cardFor.categoryId)
+    const details = [
+      cardFor.sku ? `SKU: ${cardFor.sku}` : '',
+      cat ? `القسم: ${cat.nameAr}` : '',
+      `الوحدة: ${cardFor.baseUnit}`,
+      `التكلفة: ${formatMinor(cardFor.costMinor, cur, false)}`,
+      `سعر البيع: ${formatMinor(cardFor.priceMinor, cur, false)}`,
+      cardFor.minQty > 0 ? `حد الطلب: ${cardFor.minQty}` : '',
+    ].filter(Boolean)
+    printHtml(renderItemLedgerHtml({
+      shopName: setup.shopName || 'تَحَكَّم',
+      headerLines: [],
+      itemName: cardFor.nameAr,
+      itemDetails: details,
+      ledger: itemLedger,
+      period: ledgerFrom || ledgerTo ? `من ${ledgerFrom || 'البداية'} إلى ${ledgerTo || 'اليوم'}` : undefined,
+      cur,
+    }))
+  }
   const matrixItem = matrixFor ? items.find((x) => x.id === matrixFor.id) ?? null : null
 
   const openEditItem = (it: Item) => {
@@ -375,7 +433,10 @@ export function ItemsPage() {
                             <Grid3x3 size={15} />
                           </button>
                         )}
-                        <button onClick={() => openEditItem(it)} className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
+                        <button onClick={() => { setCardFor(it); setLedgerFrom(''); setLedgerTo('') }} title="كارت الصنف — دفتر الحركة الكامل مع فلتر وطباعة" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all duration-200 hover:scale-110">
+                          <BookOpen size={15} />
+                        </button>
+                        <button onClick={() => openEditItem(it)} title="تعديل بيانات الصنف" className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
                           <Pencil size={15} />
                         </button>
                         <button
@@ -535,6 +596,82 @@ export function ItemsPage() {
               <p className="text-[11px] text-slate-400">
                 مجموع التركيبات لا يتجاوز رصيد الصنف — بعد كل فاتورة شراء وزّع الكمية الجديدة هنا. البيع في الكاشير سيطلب اختيار التركيبة ويخصم منها.
               </p>
+            </div>
+          )
+        })()}
+      </Modal>
+
+      {/* 📖 كارت الصنف — بيانات إضافية + دفتر الحركة بفلتر وطباعة (الأمر 13) */}
+      <Modal open={!!cardFor} onClose={() => setCardFor(null)} title={cardFor ? `📖 كارت الصنف — ${cardFor.nameAr}` : ''} wide>
+        {cardFor && itemLedger && (() => {
+          const cat = categories.find((c) => c.id === cardFor.categoryId)
+          const itemBatches = batches.filter((b) => b.itemId === cardFor.id && b.qty > 0)
+          const itemSerials = serials.filter((u) => u.itemId === cardFor.id && u.status === 'in_stock')
+          const qtyFmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/\.?0+$/, ''))
+          return (
+            <div className="space-y-4">
+              {/* البيانات الإضافية */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50"><div className="text-[10px] text-slate-400">الرصيد الحالي</div><div className="font-black text-lg">{qtyFmt(cardFor.stockQty ?? 0)} {cardFor.baseUnit}</div></div>
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50"><div className="text-[10px] text-slate-400">التكلفة (متوسط مرجح)</div><div className="font-black text-lg">{formatMinor(cardFor.costMinor, cur, false)}</div></div>
+                <div className="p-2.5 rounded-xl bg-emerald-500/5"><div className="text-[10px] text-slate-400">سعر البيع</div><div className="font-black text-lg text-emerald-600">{formatMinor(cardFor.priceMinor, cur, false)}</div></div>
+                <div className="p-2.5 rounded-xl bg-violet-500/5"><div className="text-[10px] text-slate-400">قيمة المخزون</div><div className="font-black text-lg text-violet-600">{formatMinor(Math.round((cardFor.stockQty ?? 0) * cardFor.costMinor), cur, false)}</div></div>
+              </div>
+              <div className="flex flex-wrap gap-2 text-[11px] text-slate-500">
+                {cardFor.sku && <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 font-mono" dir="ltr">{cardFor.sku}</span>}
+                {cat && <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">📁 {cat.nameAr}</span>}
+                {cardFor.barcodes.filter(Boolean).map((b, i) => <span key={i} className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 font-mono" dir="ltr">|||| {b}</span>)}
+                {cardFor.minQty > 0 && <span className={`px-2 py-1 rounded-lg font-bold ${(cardFor.stockQty ?? 0) <= cardFor.minQty ? 'bg-rose-500/10 text-rose-500' : 'bg-slate-100 dark:bg-slate-800'}`}>حد الطلب: {cardFor.minQty}</span>}
+                {itemBatches.length > 0 && <span className="px-2 py-1 rounded-lg bg-amber-500/10 text-amber-600 font-bold">⏳ {itemBatches.length} دفعة صلاحية</span>}
+                {itemSerials.length > 0 && <span className="px-2 py-1 rounded-lg bg-sky-500/10 text-sky-600 font-bold">🔢 {itemSerials.length} سيريال بالمخزون</span>}
+              </div>
+
+              {/* فلتر الفترة + طباعة */}
+              <div className="flex flex-wrap items-end gap-2">
+                <Field label="من تاريخ"><input type="date" value={ledgerFrom} onChange={(e) => setLedgerFrom(e.target.value)} className={inputCls} /></Field>
+                <Field label="إلى تاريخ"><input type="date" value={ledgerTo} onChange={(e) => setLedgerTo(e.target.value)} className={inputCls} /></Field>
+                <Btn variant="ghost" className="border border-slate-200 dark:border-slate-700" onClick={printItemCard}>
+                  <Printer size={14} /> طباعة كارت الصنف
+                </Btn>
+              </div>
+
+              {/* دفتر الحركة برصيد جارٍ */}
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden overflow-x-auto">
+                <div className="px-4 py-2 flex flex-wrap gap-4 text-[11.5px] font-bold bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
+                  <span>أول الفترة: {qtyFmt(itemLedger.openingQty)}</span>
+                  <span className="text-emerald-600">وارد: {qtyFmt(itemLedger.totalIn)}</span>
+                  <span className="text-rose-500">منصرف: {qtyFmt(itemLedger.totalOut)}</span>
+                  <span>آخر الفترة: {qtyFmt(itemLedger.closingQty)}</span>
+                </div>
+                {itemLedger.rows.length === 0 ? (
+                  <div className="p-6 text-center text-slate-400 text-[12px]">لا حركات في الفترة المحددة</div>
+                ) : (
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                        <th className="px-3 py-2">التاريخ</th>
+                        <th className="px-3 py-2">المستند</th>
+                        <th className="px-3 py-2">وارد</th>
+                        <th className="px-3 py-2">منصرف</th>
+                        <th className="px-3 py-2">الرصيد</th>
+                        <th className="px-3 py-2">القيمة</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {itemLedger.rows.map((r, i) => (
+                        <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                          <td className="px-3 py-1.5 text-slate-400 font-mono text-[10.5px]" dir="ltr">{r.date}</td>
+                          <td className="px-3 py-1.5 font-bold text-slate-700 dark:text-slate-200">{r.docLabel}<div className="text-[9.5px] text-slate-400 font-normal">{r.note}</div></td>
+                          <td className="px-3 py-1.5 font-bold text-emerald-600">{r.inQty ? qtyFmt(r.inQty) : '—'}</td>
+                          <td className="px-3 py-1.5 font-bold text-rose-500">{r.outQty ? qtyFmt(r.outQty) : '—'}</td>
+                          <td className="px-3 py-1.5 font-black">{qtyFmt(r.balance)}</td>
+                          <td className="px-3 py-1.5 text-slate-500">{r.valueMinor ? formatMinor(r.valueMinor, cur, false) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           )
         })()}

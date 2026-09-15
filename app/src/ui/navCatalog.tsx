@@ -11,7 +11,7 @@ import {
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
   FileText, ListChecks, Users2, ChefHat, Gem, Tags, PackageMinus, HandCoins, Gauge,
-  ScrollText, MessageSquareWarning, Headset } from 'lucide-react'
+  ScrollText, MessageSquareWarning, Headset, Smartphone } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule } from '../core/activities.ts'
 
@@ -99,6 +99,12 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'maintenance', nameAr: 'الصيانة', icon: Wrench, color: 'orange', module: 'maintenance',
     children: [
       { id: 'tickets', nameAr: 'أوامر الصيانة', icon: Wrench, path: '/maintenance/tickets' },
+    ],
+  },
+  {
+    id: 'wallets', nameAr: 'خدمات المحافظ', icon: Smartphone, color: 'fuchsia', module: 'wallet_services',
+    children: [
+      { id: 'wallet-ops', nameAr: 'عمليات المحافظ والدفع', icon: Smartphone, path: '/wallets/ops' },
     ],
   },
   {

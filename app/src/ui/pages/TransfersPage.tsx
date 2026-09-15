@@ -7,17 +7,17 @@
 import { useMemo, useState } from 'react'
 import { Plus, ArrowLeftRight, Eye, Warehouse, Trash2 } from 'lucide-react'
 import { useDataStore, type StockTransfer } from '../../data/repo.ts'
-import { computeWarehouseStock } from '../../core/transfers.ts'
+import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
 interface DraftLine { itemId: string; qty: string }
 
 export function TransfersPage() {
-  const { transfers, warehouses, items, postTransfer } = useDataStore()
+  const { transfers, warehouses, items, postTransfer, purchases, sales } = useDataStore()
   const toast = useToast()
   const whName = (id: number) => warehouses.find((w) => w.id === id)?.nameAr ?? '—'
 
-  const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers), [items, warehouses, transfers])
+  const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales)), [items, warehouses, transfers, purchases, sales])
 
   const [tab, setTab] = useState<'list' | 'balances'>('list')
 

@@ -3,14 +3,16 @@
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
 import { useState } from 'react'
-import { Percent, Globe2, RefreshCcw, ShieldAlert } from 'lucide-react'
+import { Percent, Globe2, RefreshCcw, ShieldAlert, Warehouse } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
+import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES } from '../../core/activities.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 
 export function GeneralSettingsPage() {
   const { setup, resetSetup, toggleModule } = useAppStore()
+  const { warehouses } = useDataStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const activity = ACTIVITY_TEMPLATES.find((a) => a.id === setup.activityId)
@@ -121,6 +123,31 @@ export function GeneralSettingsPage() {
               </button>
             )
           })}
+        </div>
+      </section>
+
+      {/* المخزن الافتراضي للفواتير (الأمر 8) */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '140ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          <Warehouse size={17} className="text-cyan-500" /> المخزن الافتراضي للفواتير
+        </h3>
+        <p className="text-[11.5px] text-slate-400 mb-4">
+          يظهر مُختاراً تلقائياً أعلى فاتورة البيع (الكاشير) وفاتورة الشراء — ويمكن تغييره لكل فاتورة.
+          «مخزن غير محدد» يعامل حركته على المخزن الرئيسي.
+        </p>
+        <div className="max-w-sm">
+          <select
+            value={setup.defaultWarehouseId ?? ''}
+            onChange={(e) => {
+              const v = e.target.value === '' ? null : Number(e.target.value)
+              useAppStore.setState((s) => ({ setup: { ...s.setup, defaultWarehouseId: v } }))
+              toast.show('حُفظ المخزن الافتراضي ✓')
+            }}
+            className={inputCls}
+          >
+            <option value="">🏬 مخزن غير محدد</option>
+            {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
+          </select>
         </div>
       </section>
 

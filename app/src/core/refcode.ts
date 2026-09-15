@@ -15,7 +15,7 @@
 const ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ'
 const BASE = ALPHABET.length
 
-export type RefPrefix = 'SAL' | 'PUR' | 'SRT' | 'PRT' | 'PRD' | 'SCR'
+export type RefPrefix = 'SAL' | 'PUR' | 'SRT' | 'PRT' | 'PRD' | 'SCR' | 'WLT'
 
 /** حرف التحقق: مجموع مرجّح بمواضع الأحرف (يلتقط الحذف والقلب المجاور) mod 31 */
 function checksumChar(body: string): string {

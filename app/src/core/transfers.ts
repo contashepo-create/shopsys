@@ -25,13 +25,26 @@ export interface TransferInput {
 export type WarehouseStock = Map<number, Map<number, number>> // warehouseId -> itemId -> qty
 
 /**
- * حساب أرصدة المخازن من الرصيد الكلي + سجل التحويلات.
+ * مستند مؤثر على مخزن بعينه (الأمر 8 — اختيار المخزن أعلى الفاتورة):
+ * فاتورة شراء وارد مخزنها X ⇒ qtyDelta موجب في X؛ بيع من X ⇒ سالب.
+ * warehouseId=null («مخزن غير محدد») أو الرئيسي ⇒ لا إزاحة (الرئيسي هو المتبقي).
+ */
+export interface WarehouseDoc {
+  warehouseId: number | null
+  lines: { itemId: number; qtyDelta: number }[]
+}
+
+/**
+ * حساب أرصدة المخازن من الرصيد الكلي + سجل التحويلات + مستندات المخازن.
  * items: الرصيد الكلي لكل صنف (stockQty). transfers: بالترتيب الزمني.
+ * docs (اختياري): فواتير بيع/شراء اختير لها مخزن غير الرئيسي — تُزاح كمياتها
+ * من الرئيسي إليه، فيبقى الرئيسي = الإجمالي − أرصدة بقية المخازن (متسق دائماً).
  */
 export function computeWarehouseStock(
   items: { id: number; stockQty: number }[],
   warehouses: { id: number; isMain: boolean }[],
   transfers: TransferInput[],
+  docs: WarehouseDoc[] = [],
 ): WarehouseStock {
   const main = warehouses.find((w) => w.isMain)
   const stock: WarehouseStock = new Map()
@@ -46,6 +59,15 @@ export function computeWarehouseStock(
     for (const l of t.lines) {
       from.set(l.itemId, (from.get(l.itemId) ?? 0) - l.qty)
       to.set(l.itemId, (to.get(l.itemId) ?? 0) + l.qty)
+    }
+  }
+  for (const d of docs) {
+    if (d.warehouseId == null || d.warehouseId === main.id) continue // غير محدد/رئيسي = لا إزاحة
+    const w = stock.get(d.warehouseId)
+    if (!w) continue
+    for (const l of d.lines) {
+      w.set(l.itemId, (w.get(l.itemId) ?? 0) + l.qtyDelta)
+      mainMap.set(l.itemId, (mainMap.get(l.itemId) ?? 0) - l.qtyDelta)
     }
   }
   return stock
@@ -80,4 +102,25 @@ export function validateTransfer(
 /** إجمالي القطع المنقولة في المستند */
 export function transferTotalQty(lines: TransferLine[]): number {
   return round3(lines.reduce((a, l) => a + l.qty, 0))
+}
+
+/**
+ * تحويل فواتير البيع/الشراء إلى مستندات مخازن (الأمر 8):
+ * شراء وارد لمخزن X ⇒ كميات موجبة في X؛ بيع من X ⇒ سالبة.
+ * الفواتير بلا مخزن محدد تُهمل هنا (تُحمَّل ضمنياً على الرئيسي).
+ */
+export function buildWarehouseDocs(
+  purchases: { warehouseId?: number | null; lines: { itemId: number; qty: number }[] }[],
+  sales: { warehouseId?: number | null; lines: { itemId: number; qty: number }[] }[],
+): WarehouseDoc[] {
+  const docs: WarehouseDoc[] = []
+  for (const p of purchases) {
+    if (p.warehouseId == null) continue
+    docs.push({ warehouseId: p.warehouseId, lines: p.lines.map((l) => ({ itemId: l.itemId, qtyDelta: l.qty })) })
+  }
+  for (const s of sales) {
+    if (s.warehouseId == null) continue
+    docs.push({ warehouseId: s.warehouseId, lines: s.lines.map((l) => ({ itemId: l.itemId, qtyDelta: -l.qty })) })
+  }
+  return docs
 }

@@ -61,6 +61,7 @@ import { AboutPage } from './ui/pages/AboutPage.tsx'
 import { AuditLogPage } from './ui/pages/AuditLogPage.tsx'
 import { IssuesPage } from './ui/pages/IssuesPage.tsx'
 import { SupportPage } from './ui/pages/SupportPage.tsx'
+import { WalletServicesPage } from './ui/pages/WalletServicesPage.tsx'
 import { installErrorHooks, logEvent } from './core/applog.ts'
 import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
 import { TransfersPage } from './ui/pages/TransfersPage.tsx'
@@ -148,6 +149,7 @@ function Shell() {
         <Route path="/settings/audit" element={<AuditLogPage />} />
         <Route path="/settings/issues" element={<IssuesPage />} />
         <Route path="/settings/support" element={<SupportPage />} />
+        <Route path="/wallets/ops" element={<WalletServicesPage />} />
         <Route path="*" element={<Dashboard />} />
       </Routes>
     </MainLayout>

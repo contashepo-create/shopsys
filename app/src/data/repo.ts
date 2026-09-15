@@ -16,6 +16,7 @@ import { computeTotals, buildSaleEntry, type CartLine, type PaymentMethod, type 
 import { buildReturnLines, buildReturnEntry, deriveTaxConfig } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
+import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, type WalletServiceInput, type WalletServiceType, type WalletProvider, type WalletServiceTotals } from '../core/walletServices.ts'
 import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
@@ -31,8 +32,8 @@ import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from 
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
 import { makeUniqueRefCode } from '../core/refcode.ts'
-import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals } from '../core/maintenance.ts'
-import { validateTransfer, computeWarehouseStock, transferTotalQty, type TransferLine } from '../core/transfers.ts'
+import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
+import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
@@ -135,8 +136,15 @@ export interface InstallmentPlan {
   customerId: number
   saleId: number | null // الفاتورة الآجلة المرتبطة (اختياري)
   createdAt: string
-  totalMinor: number // إجمالي المديونية المجدولة
+  totalMinor: number // إجمالي المديونية المجدولة (شامل هامش التقسيط)
   downPaymentMinor: number
+  /**
+   * هامش التمويل (الأمر 22 — مراجعة برامج التقسيط): إجمالي الخطة = أصل الدين + الهامش.
+   * الهامش يُثبت إيراداً (4111 أرباح تقسيط) بقيد: من ح/ العملاء إلى ح/ 4111 —
+   * فترتفع ذمة العميل للإجمالي الجديد ويظهر ربح التقسيط في قائمة الدخل.
+   */
+  interestMinor?: number
+  interestEntryId?: number | null // قيد إثبات الهامش إن وُجد
   items: InstallmentItem[]
   downPaymentEntryId: number | null // قيد المقدم إن وُجد
   notes: string
@@ -470,6 +478,31 @@ export interface StockTransfer {
 }
 
 /** أمر صيانة (تذكرة) — جهاز وعطل بحالات، وقيد التسليم عند القبض (المرحلة 6) */
+/**
+ * عملية خدمة محافظ/دفع إلكتروني (طلب المالك — نمط mobileshop):
+ * الربح = المحصَّل من العميل − المدفوع للمزوّد، مشتق آلياً.
+ */
+export interface WalletServiceOp {
+  id: number
+  opNumber: string // WS-0001
+  refCode: string // WLT-YYMMDD-XXXXXC
+  date: string
+  type: WalletServiceType
+  provider: WalletProvider
+  targetPhone: string
+  customerId: number | null
+  paidToProviderMinor: number
+  chargeMinor: number
+  paidMinor: number
+  fundingTreasury: string
+  receiveTreasury: string
+  totals: WalletServiceTotals
+  status: 'done' | 'returned'
+  journalEntryId: number
+  returnEntryId: number | null
+  notes: string
+}
+
 export interface MaintenanceTicket {
   id: number
   ticketNumber: string // MT-0001
@@ -484,6 +517,8 @@ export interface MaintenanceTicket {
   statusHistory: { status: TicketStatus; at: string }[]
   // تُملأ عند التسليم فقط:
   parts: { itemId: number; nameAr: string; qty: number; unitPriceMinor: number; unitCostMinor: number }[]
+  /** خدمات مقدمة من الكتالوج بتكلفة وسعر (الأمر 23) — التكلفة لا تُطبع للعميل */
+  services?: TicketServiceInput[]
   totals: TicketTotals | null
   payment: 'cash' | 'credit' | null
   journalEntryId: number | null
@@ -558,6 +593,8 @@ export interface PurchaseInvoice {
   journalEntryId: number | null // القيد المتولد (فواتير قديمة قبل الترحيل = null)
   /** سجل تدقيق التعديلات (طلب المالك) */
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
+  /** المخزن الذي وردت إليه البضاعة (الأمر 8) — null/undefined = «مخزن غير محدد» (يعامل كالرئيسي) */
+  warehouseId?: number | null
 }
 
 /** مرتجع شراء — مربوط بفاتورة الشراء الأصلية، مُقيَّم بتكلفتها النهائية */
@@ -638,6 +675,8 @@ export interface SaleInvoice {
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
   /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
+  /** المخزن الذي بيعت منه (الأمر 8) — null/undefined = «مخزن غير محدد» (يعامل كالرئيسي) */
+  warehouseId?: number | null
 }
 
 /** مرتجع مبيعات — دائماً مربوط بفاتورته الأصلية وبقيده العاكس */
@@ -721,6 +760,9 @@ interface DataState {
   insuranceClaims: InsuranceClaim[] // مطالبات تتجمع حتى التحصيل
   variantStocks: VariantStock[] // مصفوفة مخزون لون×مقاس (دفتر فرعي لرصيد الصنف)
   tickets: MaintenanceTicket[]
+  /** كتالوج خدمات الصيانة بتكلفة وسعر بيع (الأمر 23) */
+  maintenanceServices: MaintenanceService[]
+  walletOps: WalletServiceOp[] // خدمات المحافظ والدفع الإلكتروني (نمط mobileshop)
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
   assets: FixedAsset[]
@@ -772,6 +814,8 @@ interface DataState {
     custodyFileId?: number | null
     /** ربط الفاتورة بمشروع مقاولات → تدخل تكاليفه وربحيته */
     projectId?: number | null
+    /** المخزن المستلم للبضاعة (الأمر 8) — null = غير محدد */
+    warehouseId?: number | null
     notes: string
   }) => PurchaseInvoice
   /**
@@ -790,6 +834,8 @@ interface DataState {
     paidMinor?: number // الدفع المجزأ: المدفوع نقداً الآن والباقي آجل (طلب المالك)
     expiryOverrideBy?: string | null
     allowNegativeStock?: boolean
+    /** المخزن المختار أعلى الفاتورة (الأمر 8) — null = غير محدد */
+    warehouseId?: number | null
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -932,6 +978,8 @@ interface DataState {
     saleId: number | null
     totalMinor: number
     downPaymentMinor: number
+    /** هامش تمويل مُضمَّن في الإجمالي (الأمر 22) — يُثبت إيراداً 4111 بقيد 1104/4111 */
+    interestMinor?: number
     count: number
     intervalMonths: number
     firstDueDate: string
@@ -1200,6 +1248,13 @@ interface DataState {
     parts: { itemId: number; qty: number; unitPriceMinor: number }[]
     treasury?: string
   }) => MaintenanceTicket
+  /** كتالوج خدمات الصيانة (الأمر 23): إضافة/تعديل/تعطيل — التكلفة سرية لا تُطبع للعميل */
+  addMaintenanceService: (input: { nameAr: string; costMinor: number; priceMinor: number }) => MaintenanceService
+  updateMaintenanceService: (id: number, patch: Partial<Omit<MaintenanceService, 'id'>>) => void
+  /** خدمة محافظ/دفع إلكتروني (نمط mobileshop): الربح = المحصَّل − المدفوع للمزوّد، قيد متوازن فوري */
+  postWalletService: (input: WalletServiceInput & { date?: string }) => WalletServiceOp
+  /** مرتجع خدمة محافظ: قيد عاكس كامل + وسم العملية returned */
+  returnWalletService: (opId: number, reason: string) => WalletServiceOp
   /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
   postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string }) => StockTransfer
   /** اقتناء أصل ثابت: قيد 1201 / 1101 + 2101 وترقيم FA-#### */
@@ -1229,7 +1284,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 11
+export const DATA_VERSION = 12 // 12: خدمات المحافظ + كتالوج خدمات الصيانة + مخزن الفاتورة + هامش التقسيط (batch25 ج2)
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -1355,6 +1410,8 @@ export const useDataStore = create<DataState>()(
       insuranceClaims: [],
       variantStocks: [],
       tickets: [],
+      maintenanceServices: [],
+      walletOps: [],
       transfers: [],
       batches: [],
       assets: [],
@@ -1541,6 +1598,7 @@ export const useDataStore = create<DataState>()(
           treasury: custodyFile ? undefined : (inv.treasury ?? '1101'),
           custodyFileId: custodyFile?.id ?? null,
           projectId: inv.projectId ?? null,
+          warehouseId: inv.warehouseId ?? null,
           notes: inv.notes,
           journalEntryId: entryId,
         }
@@ -1889,6 +1947,7 @@ export const useDataStore = create<DataState>()(
           journalEntryId: entryId,
           expiryOverrideBy: args.expiryOverrideBy ?? null,
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
+          warehouseId: args.warehouseId ?? null,
         }
 
         // 4) خصم المخزون (خامات الأطباق بدل الطبق نفسه) + تعليم السيريالات مباعة
@@ -2912,11 +2971,36 @@ export const useDataStore = create<DataState>()(
         const planNumber = `INS-${String(planId).padStart(4, '0')}`
         const customerName = state.customers.find((c) => c.id === args.customerId)?.nameAr ?? ''
 
-        // 2) قيد المقدم إن وُجد: تحصيل فوري من الذمة (خزينة ← عملاء)
+        // 2) قيد إثبات هامش التقسيط إن وُجد (الأمر 22): من ح/ العملاء إلى ح/ 4111 —
+        // ذمة العميل ترتفع بالهامش (الأصل أثبتته فاتورة البيع الآجلة) وربح التقسيط يدخل قائمة الدخل
+        const interestMinor = args.interestMinor ?? 0
+        if (!Number.isInteger(interestMinor) || interestMinor < 0) throw new Error('هامش التقسيط لا يكون سالباً')
+        if (interestMinor >= args.totalMinor) throw new Error('هامش التقسيط يجب أن يكون أقل من إجمالي الخطة')
+        let interestEntryId: number | null = null
         let downPaymentEntryId: number | null = null
         const journal = [...state.journal]
+        if (interestMinor > 0) {
+          const entryId = nextId(journal)
+          journal.push({
+            id: entryId,
+            entryNumber: entryId,
+            date: now.slice(0, 10),
+            description: `إثبات هامش تقسيط ${planNumber} — ${customerName}`,
+            sourceType: 'receipt_voucher',
+            sourceId: planId,
+            lines: [
+              { accountCode: '1104', debit: interestMinor, credit: 0, note: `هامش تقسيط ${planNumber} على العميل` },
+              { accountCode: '4111', debit: 0, credit: interestMinor, note: 'أرباح تقسيط (هامش تمويل)' },
+            ],
+            createdBy: 'المالك',
+            createdAt: now,
+            reversedByEntryId: null,
+            reversesEntryId: null,
+          })
+          interestEntryId = entryId
+        }
         if (args.downPaymentMinor > 0) {
-          const entryId = nextId(state.journal)
+          const entryId = nextId(journal)
           const entryLines = buildReceiptVoucherEntry(args.treasury, '1104', args.downPaymentMinor, `مقدم خطة أقساط ${planNumber}`)
           journal.push({
             id: entryId,
@@ -2942,6 +3026,8 @@ export const useDataStore = create<DataState>()(
           createdAt: now,
           totalMinor: args.totalMinor,
           downPaymentMinor: args.downPaymentMinor,
+          interestMinor,
+          interestEntryId,
           items,
           downPaymentEntryId,
           notes: args.notes,
@@ -5151,6 +5237,7 @@ export const useDataStore = create<DataState>()(
         if (!TICKET_TRANSITIONS[ticket.status].includes('delivered')) {
           throw new Error('التسليم متاح للتذاكر الجاهزة فقط — انقلها إلى «جاهزة للتسليم» أولاً')
         }
+        // الآجل كلياً (والجزئي يُفحص بعد حساب الإجماليات بالأسفل) يتطلب عميلاً مسجلاً
         if (input.payment === 'credit' && ticket.customerId == null) {
           throw new Error('التسليم الآجل يتطلب عميلاً مسجلاً')
         }
@@ -5163,11 +5250,14 @@ export const useDataStore = create<DataState>()(
           return { itemId: p.itemId, nameAr: item.nameAr, qty: p.qty, unitPriceMinor: p.unitPriceMinor, unitCostMinor: item.costMinor }
         })
 
-        // 2) تحقق وإجماليات وقيد بالنواة الخالصة
-        const delivery: TicketDeliveryInput = { laborMinor: input.laborMinor, parts, payment: input.payment, vatPercent: input.vatPercent }
+        // 2) تحقق وإجماليات وقيد بالنواة الخالصة (خدمات + تحصيل مجزأ — الأمر 23)
+        const delivery: TicketDeliveryInput = { laborMinor: input.laborMinor, parts, services: input.services, payment: input.payment, paidMinor: input.paidMinor, vatPercent: input.vatPercent }
         const errors = validateDelivery(delivery)
         if (errors.length) throw new Error(errors.join(' — '))
         const totals = computeTicketTotals(delivery)
+        if (totals.creditMinor > 0 && ticket.customerId == null) {
+          throw new Error('يوجد مبلغ آجل غير محصَّل — التحصيل الجزئي يتطلب عميلاً مسجلاً على التذكرة')
+        }
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const entryLines = buildTicketDeliveryEntry(totals, input.payment, ticket.ticketNumber, input.treasury ?? '1101')
@@ -5198,8 +5288,9 @@ export const useDataStore = create<DataState>()(
           status: 'delivered',
           statusHistory: [...ticket.statusHistory, { status: 'delivered', at: now }],
           parts,
+          services: input.services ?? [],
           totals,
-          payment: input.payment,
+          payment: totals.creditMinor > 0 ? 'credit' : 'cash',
           journalEntryId: entryId,
           deliveredAt: now,
         }
@@ -5210,13 +5301,86 @@ export const useDataStore = create<DataState>()(
         })
         return updated
       },
+      addMaintenanceService: (input) => {
+        const errors = validateService(input)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const state = get()
+        const svc: MaintenanceService = { id: nextId(state.maintenanceServices), nameAr: input.nameAr.trim(), costMinor: input.costMinor, priceMinor: input.priceMinor, isActive: true }
+        set({ maintenanceServices: [...state.maintenanceServices, svc] })
+        return svc
+      },
+      updateMaintenanceService: (id, patch) => {
+        set((s) => ({ maintenanceServices: s.maintenanceServices.map((sv) => (sv.id === id ? { ...sv, ...patch } : sv)) }))
+      },
+      postWalletService: (input) => {
+        const state = get()
+        const errors = validateWalletService(input)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (input.customerId != null && !state.customers.some((c) => c.id === input.customerId)) throw new Error('العميل غير موجود')
+        if (!state.treasuries.some((t) => t.code === input.fundingTreasury)) throw new Error('خزينة التمويل غير موجودة')
+        if (input.paidMinor > 0 && !state.treasuries.some((t) => t.code === input.receiveTreasury)) throw new Error('خزينة الاستلام غير موجودة')
+        const totals = computeWalletTotals(input)
+        const opId = nextId(state.walletOps)
+        const opNumber = `WS-${String(opId).padStart(4, '0')}`
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const date = input.date ?? now.slice(0, 10)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date,
+          description: `خدمة محافظ ${opNumber} — ${input.provider}`,
+          sourceType: 'wallet_service', sourceId: opId,
+          lines: buildWalletServiceEntry(input, totals, opNumber),
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const op: WalletServiceOp = {
+          id: opId, opNumber,
+          refCode: makeUniqueRefCode('WLT', date, usedRefCodes(state)),
+          date, type: input.type, provider: input.provider,
+          targetPhone: sanitizeText(input.targetPhone, 30),
+          customerId: input.customerId,
+          paidToProviderMinor: input.paidToProviderMinor,
+          chargeMinor: input.chargeMinor,
+          paidMinor: input.paidMinor,
+          fundingTreasury: input.fundingTreasury,
+          receiveTreasury: input.receiveTreasury,
+          totals, status: 'done', journalEntryId: entryId, returnEntryId: null,
+          notes: sanitizeText(input.notes, 300),
+        }
+        set({ walletOps: [...state.walletOps, op], journal: [...state.journal, entry] })
+        return op
+      },
+
+      returnWalletService: (opId, reason) => {
+        const state = get()
+        const op = state.walletOps.find((o) => o.id === opId)
+        if (!op) throw new Error('العملية غير موجودة')
+        if (op.status === 'returned') throw new Error('العملية مرتجعة بالفعل')
+        const orig = state.journal.find((e) => e.id === op.journalEntryId)
+        if (!orig) throw new Error('قيد العملية الأصلي غير موجود')
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مرتجع خدمة محافظ ${op.opNumber}${reason ? ` — ${sanitizeText(reason, 120)}` : ''}`,
+          sourceType: 'reversal', sourceId: orig.id,
+          lines: buildReversalLines(orig.lines),
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: orig.id,
+        }
+        const updated: WalletServiceOp = { ...op, status: 'returned', returnEntryId: entryId }
+        set({
+          walletOps: state.walletOps.map((o) => (o.id === opId ? updated : o)),
+          journal: [...state.journal.map((e) => (e.id === orig.id ? { ...e, reversedByEntryId: entryId } : e)), entry],
+        })
+        return updated
+      },
+
       postTransfer: (args) => {
         const state = get()
         if (!state.warehouses.some((w) => w.id === args.fromWarehouseId)) throw new Error('المخزن المصدر غير موجود')
         if (!state.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود')
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
-        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers)
+        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales))
         const sourceMap = stock.get(args.fromWarehouseId)
         const errors = validateTransfer(
           { fromWarehouseId: args.fromWarehouseId, toWarehouseId: args.toWarehouseId, lines: args.lines },
@@ -5560,7 +5724,25 @@ export const useDataStore = create<DataState>()(
           clinicCollections: s.clinicCollections ?? [],
           clinicAppointments: s.clinicAppointments ?? [],
           cars: s.cars ?? [],
-          tickets: s.tickets ?? [],
+          // الأمر 23: تذاكر قديمة إجمالياتها بلا حقول الخدمات/التحصيل المجزأ/الربح — تُستكمل بأمان
+          tickets: (s.tickets ?? []).map((t: MaintenanceTicket) => {
+            if (!t.totals || t.totals.paidMinor != null) return t
+            const tot = t.totals
+            const paid = t.payment === 'cash' ? tot.grandMinor : 0
+            return {
+              ...t,
+              totals: {
+                ...tot,
+                servicesPriceMinor: tot.servicesPriceMinor ?? 0,
+                servicesCostMinor: tot.servicesCostMinor ?? 0,
+                paidMinor: paid,
+                creditMinor: tot.grandMinor - paid,
+                profitMinor: tot.revenueMinor - tot.partsCostMinor - (tot.servicesCostMinor ?? 0),
+              },
+            }
+          }),
+          maintenanceServices: s.maintenanceServices ?? [],
+          walletOps: s.walletOps ?? [],
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],
           assets: s.assets ?? [],

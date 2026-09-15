@@ -34,7 +34,7 @@ const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'ش�
 const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', method: 'qty', paidBy: 'supplier', payAccount: '1101', custodyFileId: null }
 
 export function PurchasesPage() {
-  const { items, suppliers, purchases, journal, projects, treasuries, custodyFiles, employees, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
+  const { items, suppliers, purchases, journal, projects, treasuries, custodyFiles, employees, warehouses, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const navigate = useNavigate()
 
@@ -58,6 +58,8 @@ export function PurchasesPage() {
   const [paid, setPaid] = useState('')
   const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [projectId, setProjectId] = useState('')
+  /* الأمر 8: المخزن المستلم للبضاعة — الافتراضي من الإعدادات */
+  const [warehouseId, setWarehouseId] = useState<number | null>(setup.defaultWarehouseId ?? null)
   const [notes, setNotes] = useState('')
   // مصروف لاحق على فاتورة مرحّلة (طلب المالك — «يمكن لاحقاً تسجيل مصروفات أخرى»)
   const [lateName, setLateName] = useState('')
@@ -196,6 +198,7 @@ export function PurchasesPage() {
       treasury: paySource.kind === 'treasury' ? paySource.treasury : undefined,
       custodyFileId: paySource.kind === 'custody' ? paySource.custodyFileId : null,
       projectId: projectId ? Number(projectId) : null,
+      warehouseId, // الأمر 8: المخزن المستلم
       notes,
     })
     toast.show(`رُحّلت الفاتورة ${inv.invoiceNumber} — تحدثت تكلفة الأصناف بالمتوسط المرجح ✓`)
@@ -305,6 +308,14 @@ export function PurchasesPage() {
               <PaySourcePicker value={paySource} onChange={setPaySource} />
             </Field>
           </div>
+          {warehouses.length > 1 && (
+            <Field label="المخزن المستلم للبضاعة" hint="«غير محدد» يعامل كالمخزن الرئيسي — الافتراضي من الإعدادات العامة">
+              <select value={warehouseId ?? ''} onChange={(e) => setWarehouseId(e.target.value === '' ? null : Number(e.target.value))} className={inputCls}>
+                <option value="">🏬 مخزن غير محدد</option>
+                {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
+              </select>
+            </Field>
+          )}
           {projects.some((p) => p.status === 'active') && (
             <Field label="ربط بمشروع مقاولات (اختياري)" hint="الفاتورة تدخل تكاليف المشروع وربحيته">
               <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>

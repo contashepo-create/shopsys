@@ -5,12 +5,14 @@
  * (4103 إيراد صيانة + 2102 ضريبة، وقطع الغيار 5101/1103 بمتوسط التكلفة).
  */
 import { useMemo, useState } from 'react'
-import { Plus, Wrench, Eye, BookOpenText, PackageCheck, Trash2, TrendingUp } from 'lucide-react'
+import { Plus, Wrench, Eye, BookOpenText, PackageCheck, Trash2, TrendingUp, Printer, Settings2 } from 'lucide-react'
 import { useDataStore, type MaintenanceTicket } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeTicketTotals, maintenanceReport, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
+import { renderTicketReceiptHtml, renderTicketInvoiceHtml } from '../print/printMaintenanceTicket.ts'
+import { printHtml } from '../print/printReceipt.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -25,10 +27,11 @@ const STATUS_COLORS: Record<TicketStatus, string> = {
 }
 
 interface DraftPart { itemId: string; qty: string; unitPrice: string }
+interface DraftService { serviceId: string; nameAr: string; qty: string; unitPrice: string; unitCost: string }
 
 export function MaintenancePage() {
-  const { tickets, customers, items, journal, openTicket, setTicketStatus, deliverTicket } = useDataStore()
-  const { setup } = useAppStore()
+  const { tickets, customers, items, journal, openTicket, setTicketStatus, deliverTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService } = useDataStore()
+  const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -37,6 +40,31 @@ export function MaintenancePage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const custLabel = (t: MaintenanceTicket) =>
     t.customerId != null ? customers.find((c) => c.id === t.customerId)?.nameAr ?? '—' : t.customerName || 'عميل نقدي'
+
+  /* الأمر 23: طباعة احترافية — إيصال استلام + فاتورة تسليم (بلا تكلفة/ربح للعميل) */
+  const ticketPrintBase = (t: MaintenanceTicket) => ({
+    shopName: receipt.shopName || setup.shopName || 'تَحَكَّم',
+    headerLines: receipt.headerLines.filter((l) => l.trim()),
+    ticketNumber: t.ticketNumber,
+    date: t.deliveredAt ?? t.date,
+    customerName: custLabel(t),
+    customerPhone: t.customerPhone,
+    deviceName: t.deviceName,
+    issue: t.issue,
+    estimateMinor: t.estimateMinor,
+    notes: t.notes,
+  })
+  const printTicketReceipt = (t: MaintenanceTicket) => printHtml(renderTicketReceiptHtml(ticketPrintBase(t), cur))
+  const printTicketInvoice = (t: MaintenanceTicket) => {
+    if (!t.totals) { printTicketReceipt(t); return }
+    printHtml(renderTicketInvoiceHtml({
+      ...ticketPrintBase(t),
+      laborMinor: t.totals.laborMinor,
+      parts: t.parts.map((p) => ({ nameAr: p.nameAr, qty: p.qty, unitPriceMinor: p.unitPriceMinor })),
+      services: (t.services ?? []).map((sv) => ({ nameAr: sv.nameAr, qty: sv.qty, unitPriceMinor: sv.unitPriceMinor })),
+      totals: t.totals,
+    }, cur))
+  }
 
   const [tab, setTab] = useState<'list' | 'report'>('list')
 
@@ -82,11 +110,29 @@ export function MaintenancePage() {
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [treasury, setTreasury] = useState('1101')
   const [withVat, setWithVat] = useState(false)
+  /* الأمر 23: خدمات من الكتالوج (تكلفة + سعر) + تحصيل مجزأ نقدي/آجل */
+  const [svcLines, setSvcLines] = useState<DraftService[]>([])
+  const [paidNow, setPaidNow] = useState('') // فارغ = الكل نقداً (حسب طريقة الدفع)
   const startDeliver = (t: MaintenanceTicket) => {
     setDelivering(t)
     setLabor(t.estimateMinor > 0 ? formatMinor(t.estimateMinor, cur, false).replace(/,/g, '') : '')
-    setParts([]); setPayment('cash'); setWithVat(false)
+    setParts([]); setSvcLines([]); setPayment('cash'); setWithVat(false); setPaidNow('')
   }
+  const addSvc = () => setSvcLines((p) => [...p, { serviceId: '', nameAr: '', qty: '1', unitPrice: '', unitCost: '' }])
+  const patchSvc = (i: number, patch: Partial<DraftService>) => setSvcLines((p) => p.map((x, j) => (j === i ? { ...x, ...patch } : x)))
+  const dropSvc = (i: number) => setSvcLines((p) => p.filter((_, j) => j !== i))
+  const pickSvc = (i: number, serviceId: string) => {
+    const sv = maintenanceServices.find((x) => x.id === Number(serviceId))
+    patchSvc(i, {
+      serviceId,
+      nameAr: sv?.nameAr ?? '',
+      unitPrice: sv && sv.priceMinor > 0 ? formatMinor(sv.priceMinor, cur, false).replace(/,/g, '') : '',
+      unitCost: sv && sv.costMinor > 0 ? formatMinor(sv.costMinor, cur, false).replace(/,/g, '') : '0',
+    })
+  }
+  const draftServices = () => svcLines
+    .filter((sv) => sv.nameAr.trim())
+    .map((sv) => ({ serviceId: sv.serviceId ? Number(sv.serviceId) : null, nameAr: sv.nameAr.trim(), qty: Number(sv.qty) || 1, unitPriceMinor: toM(sv.unitPrice), unitCostMinor: toM(sv.unitCost) }))
   const addPart = () => setParts((p) => [...p, { itemId: '', qty: '1', unitPrice: '' }])
   const patchPart = (i: number, patch: Partial<DraftPart>) => setParts((p) => p.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   const dropPart = (i: number) => setParts((p) => p.filter((_, j) => j !== i))
@@ -104,12 +150,14 @@ export function MaintenancePage() {
           const item = items.find((x) => x.id === Number(p.itemId))
           return { itemId: Number(p.itemId), nameAr: item?.nameAr ?? '', qty: Number(p.qty) || 0, unitPriceMinor: toM(p.unitPrice), unitCostMinor: item?.costMinor ?? 0 }
         }),
+        services: draftServices(),
         payment,
+        paidMinor: paidNow !== '' ? toM(paidNow) : undefined,
         vatPercent: withVat ? setup.vatPercent : 0,
       })
     } catch { return null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [delivering, labor, parts, payment, withVat, items, setup.vatPercent, cur.decimals])
+  }, [delivering, labor, parts, svcLines, paidNow, payment, withVat, items, setup.vatPercent, cur.decimals])
 
   const doDeliver = () => {
     if (!delivering) return
@@ -117,12 +165,28 @@ export function MaintenancePage() {
       const t = deliverTicket(delivering.id, {
         laborMinor: toM(labor),
         parts: parts.filter((p) => p.itemId).map((p) => ({ itemId: Number(p.itemId), qty: Number(p.qty) || 0, unitPriceMinor: toM(p.unitPrice) })),
+        services: draftServices(),
         payment,
+        paidMinor: paidNow !== '' ? toM(paidNow) : undefined,
         vatPercent: withVat ? setup.vatPercent : 0,
         treasury,
       })
-      toast.show(`سُلِّمت ${t.ticketNumber} — المحصَّل ${fmt(t.totals!.grandMinor)} ${cur.symbol} ✅`)
+      toast.show(`سُلِّمت ${t.ticketNumber} — المحصَّل ${fmt(t.totals!.paidMinor)} والباقي آجل ${fmt(t.totals!.creditMinor)} ${cur.symbol} ✅`)
       setDelivering(null)
+      printTicketInvoice(t)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
+  /* ─── كتالوج الخدمات (الأمر 23) ─── */
+  const [catalogOpen, setCatalogOpen] = useState(false)
+  const [svcName, setSvcName] = useState('')
+  const [svcCost, setSvcCost] = useState('')
+  const [svcPrice, setSvcPrice] = useState('')
+  const saveService = () => {
+    try {
+      addMaintenanceService({ nameAr: svcName, costMinor: toM(svcCost || '0'), priceMinor: toM(svcPrice || '0') })
+      setSvcName(''); setSvcCost(''); setSvcPrice('')
+      toast.show('أُضيفت الخدمة للكتالوج ✓')
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
 
@@ -147,7 +211,10 @@ export function MaintenancePage() {
           <button onClick={() => setTab('list')} className={tabCls('list')}><Wrench size={14} className="inline -mt-0.5 me-1" /> التذاكر ({tickets.length})</button>
           <button onClick={() => setTab('report')} className={tabCls('report')}><TrendingUp size={14} className="inline -mt-0.5 me-1" /> تقرير الصيانة</button>
         </div>
-        <Btn onClick={openNew}><span className="flex items-center gap-1.5"><Plus size={15} /> تذكرة جديدة</span></Btn>
+        <div className="flex gap-2">
+          <Btn variant="ghost" onClick={() => setCatalogOpen(true)}><span className="flex items-center gap-1.5"><Settings2 size={15} /> كتالوج الخدمات</span></Btn>
+          <Btn onClick={openNew}><span className="flex items-center gap-1.5"><Plus size={15} /> تذكرة جديدة</span></Btn>
+        </div>
       </div>
 
       {tab === 'list' && (
@@ -194,6 +261,7 @@ export function MaintenancePage() {
                       {TICKET_TRANSITIONS[t.status].includes('cancelled') && (
                         <button onClick={() => moveStatus(t, 'cancelled')} className="me-1 px-2 py-1 rounded-lg text-[10.5px] font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all">إلغاء</button>
                       )}
+                      <button onClick={() => (t.status === 'delivered' ? printTicketInvoice(t) : printTicketReceipt(t))} title={t.status === 'delivered' ? 'طباعة فاتورة الصيانة (بلا تكلفة/ربح)' : 'طباعة إيصال استلام الجهاز'} className="p-1.5 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all"><Printer size={14} /></button>
                       <button onClick={() => setViewing(t)} className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Eye size={14} /></button>
                     </td>
                   </tr>
@@ -322,6 +390,30 @@ export function MaintenancePage() {
               ))}
             </div>
 
+            {/* الأمر 23: خدمات من الكتالوج — تكلفة داخلية + سعر بيع، الربح محسوب ولا يُطبع للعميل */}
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[12px] font-bold text-slate-500">خدمات مقدَّمة (من كتالوج الخدمات — التكلفة سرية لا تُطبع للعميل)</span>
+                <button onClick={addSvc} className="text-[11px] font-bold text-orange-600 hover:underline">+ إضافة خدمة</button>
+              </div>
+              {svcLines.map((sv, i) => (
+                <div key={i} className="grid grid-cols-[1fr_60px_90px_90px_28px] gap-1.5 items-center">
+                  {maintenanceServices.filter((x) => x.isActive).length > 0 && !sv.nameAr && !sv.serviceId ? (
+                    <select value={sv.serviceId} onChange={(e) => pickSvc(i, e.target.value)} className={`${inputCls} !py-1.5 !text-[12px]`}>
+                      <option value="">— اختر الخدمة —</option>
+                      {maintenanceServices.filter((x) => x.isActive).map((x) => <option key={x.id} value={x.id}>{x.nameAr}</option>)}
+                    </select>
+                  ) : (
+                    <input value={sv.nameAr} onChange={(e) => patchSvc(i, { nameAr: e.target.value, serviceId: '' })} className={`${inputCls} !py-1.5 !text-[12px]`} placeholder="اسم الخدمة (حر)" list={`svc-names-${i}`} />
+                  )}
+                  <input value={sv.qty} onChange={(e) => patchSvc(i, { qty: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" />
+                  <input value={sv.unitPrice} onChange={(e) => patchSvc(i, { unitPrice: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" placeholder="السعر" />
+                  <input value={sv.unitCost} onChange={(e) => patchSvc(i, { unitCost: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" placeholder="التكلفة 🔒" title="التكلفة الداخلية — لا تظهر في مطبوعات العميل" />
+                  <button onClick={() => dropSvc(i)} className="p-1.5 rounded text-slate-300 hover:text-rose-500"><Trash2 size={13} /></button>
+                </div>
+              ))}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <Field label="التحصيل">
                 <div className="grid grid-cols-2 gap-1.5">
@@ -329,6 +421,16 @@ export function MaintenancePage() {
                   <button onClick={() => setPayment('credit')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'credit' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>آجل</button>
                 </div>
                 {payment === 'cash' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
+                {payment === 'cash' && (
+                  <input
+                    value={paidNow}
+                    onChange={(e) => setPaidNow(e.target.value)}
+                    className={`${inputCls} mt-2 !py-1.5 !text-[12px]`}
+                    dir="ltr"
+                    placeholder={deliverPreview ? `المدفوع الآن (فارغ = ${fmt(deliverPreview.grandMinor)} كاملاً)` : 'المدفوع الآن'}
+                    title="التحصيل المجزأ (الأمر 23): ادفع جزءاً نقداً والباقي دين على العميل — يتطلب عميلاً مسجلاً"
+                  />
+                )}
               </Field>
               <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer self-end">
                 <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">ض.ق.م {setup.vatPercent}٪</span>
@@ -338,10 +440,13 @@ export function MaintenancePage() {
 
             {deliverPreview && (
               <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[12px]">
-                <div><div className="text-slate-400">الأجرة + القطع</div><b>{fmt(deliverPreview.revenueMinor)}</b></div>
+                <div><div className="text-slate-400">الإيراد (أجرة+قطع+خدمات)</div><b>{fmt(deliverPreview.revenueMinor)}</b></div>
                 <div><div className="text-slate-400">الضريبة</div><b>{fmt(deliverPreview.vatMinor)}</b></div>
                 <div><div className="text-slate-400">المستحق من العميل</div><b className="text-emerald-600">{fmt(deliverPreview.grandMinor)}</b></div>
-                <div><div className="text-slate-400">تكلفة القطع</div><b className="text-rose-500">{fmt(deliverPreview.partsCostMinor)}</b></div>
+                <div><div className="text-slate-400">التكلفة (قطع+خدمات)</div><b className="text-rose-500">{fmt(deliverPreview.partsCostMinor + deliverPreview.servicesCostMinor)}</b></div>
+                <div><div className="text-slate-400">محصَّل نقداً</div><b className="text-emerald-600">{fmt(deliverPreview.paidMinor)}</b></div>
+                <div><div className="text-slate-400">الباقي آجل</div><b className={deliverPreview.creditMinor > 0 ? 'text-amber-600' : ''}>{fmt(deliverPreview.creditMinor)}</b></div>
+                <div className="col-span-2"><div className="text-slate-400">🔒 الربح المتوقع (سري — لا يُطبع للعميل)</div><b className="text-violet-600">{fmt(deliverPreview.profitMinor)}</b></div>
               </div>
             )}
 
@@ -351,6 +456,47 @@ export function MaintenancePage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* كتالوج خدمات الصيانة (الأمر 23): تكلفة داخلية + سعر بيع — الربح محسوب تلقائياً */}
+      <Modal open={catalogOpen} onClose={() => setCatalogOpen(false)} title="🛠️ كتالوج خدمات الصيانة" wide>
+        <div className="space-y-4">
+          <p className="text-[11.5px] text-slate-400">
+            كل خدمة لها تكلفة داخلية (أجر فني/مواد) وسعر بيع — الربح يُحسب تلقائياً، والتكلفة لا تظهر أبداً في مطبوعات العميل.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px_120px_auto] gap-2 items-end">
+            <Field label="اسم الخدمة"><input value={svcName} onChange={(e) => setSvcName(e.target.value)} className={inputCls} placeholder="مثال: تغيير شاشة، سوفتوير، فحص شامل…" /></Field>
+            <Field label={`التكلفة 🔒 (${cur.symbol})`}><input value={svcCost} onChange={(e) => setSvcCost(e.target.value)} className={inputCls} dir="ltr" placeholder="0" /></Field>
+            <Field label={`سعر البيع (${cur.symbol})`}><input value={svcPrice} onChange={(e) => setSvcPrice(e.target.value)} className={inputCls} dir="ltr" placeholder="0" /></Field>
+            <Btn onClick={saveService}>إضافة</Btn>
+          </div>
+          {maintenanceServices.length === 0 ? (
+            <EmptyState icon="🛠️" title="لا خدمات بعد" sub="أضف خدماتك المتكررة لتختارها بنقرة عند التسليم" />
+          ) : (
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <table className="w-full text-[12.5px]">
+                <thead><tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-2">الخدمة</th><th className="px-4 py-2">التكلفة 🔒</th><th className="px-4 py-2">سعر البيع</th><th className="px-4 py-2">الربح</th><th className="px-4 py-2">الحالة</th>
+                </tr></thead>
+                <tbody>
+                  {maintenanceServices.map((sv) => (
+                    <tr key={sv.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-2 font-bold">{sv.nameAr}</td>
+                      <td className="px-4 py-2 text-rose-500">{fmt(sv.costMinor)}</td>
+                      <td className="px-4 py-2 text-emerald-600 font-bold">{fmt(sv.priceMinor)}</td>
+                      <td className="px-4 py-2 text-violet-600 font-bold">{fmt(sv.priceMinor - sv.costMinor)}</td>
+                      <td className="px-4 py-2">
+                        <button onClick={() => updateMaintenanceService(sv.id, { isActive: !sv.isActive })} className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${sv.isActive ? 'bg-emerald-500/10 text-emerald-600' : 'bg-slate-400/10 text-slate-400'}`}>
+                          {sv.isActive ? 'مفعّلة' : 'موقوفة'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </Modal>
 
       {/* عرض */}
@@ -376,6 +522,32 @@ export function MaintenancePage() {
                 </span>
               ))}
             </div>
+
+            {(viewing.services ?? []).length > 0 && (
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                <div className="px-4 py-2 text-[11px] font-bold text-slate-400 border-b border-slate-100 dark:border-slate-800">الخدمات المقدَّمة</div>
+                <table className="w-full text-[12px]">
+                  <tbody>
+                    {(viewing.services ?? []).map((sv, i) => (
+                      <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-1.5 font-bold">{sv.nameAr}</td>
+                        <td className="px-4 py-1.5 text-slate-400">{sv.qty} × {fmt(sv.unitPriceMinor)}</td>
+                        <td className="px-4 py-1.5 text-slate-500 text-[11px]">تكلفة 🔒 {fmt(sv.unitCostMinor * sv.qty)}</td>
+                        <td className="px-4 py-1.5 font-bold text-left">{fmt(sv.unitPriceMinor * sv.qty)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {viewing.totals && (
+              <div className="grid grid-cols-3 gap-2 text-center text-[12px]">
+                <div className="rounded-xl bg-emerald-500/5 p-2.5"><div className="text-slate-400 text-[10px]">محصَّل نقداً</div><b className="text-emerald-600">{fmt(viewing.totals.paidMinor)}</b></div>
+                <div className="rounded-xl bg-amber-500/5 p-2.5"><div className="text-slate-400 text-[10px]">آجل على العميل</div><b className="text-amber-600">{fmt(viewing.totals.creditMinor)}</b></div>
+                <div className="rounded-xl bg-violet-500/5 p-2.5"><div className="text-slate-400 text-[10px]">🔒 الربح (سري)</div><b className="text-violet-600">{fmt(viewing.totals.profitMinor)}</b></div>
+              </div>
+            )}
 
             {viewing.parts.length > 0 && (
               <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">

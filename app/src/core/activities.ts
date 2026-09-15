@@ -27,6 +27,7 @@ export type BusinessModule =
   | 'installments' // الأقساط
   | 'recipes' // الوصفات والتصنيع (مطاعم/مخابز)
   | 'jewelry' // الصاغة: سعر الجرام اليومي والمصنعية والكسر
+  | 'wallet_services' // خدمات المحافظ والدفع الإلكتروني (نمط mobileshop): ربح = المحصَّل − المدفوع للمزوّد
 
 export interface ActivityTemplate {
   id: string
@@ -53,7 +54,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     id: 'mobile', nameAr: 'موبايلات وصيانة', icon: '📱',
     description: 'سيريال/IMEI وضمان، وحدة صيانة كاملة',
     features: ['serial_warranty', 'variants'],
-    modules: ['pos', 'inventory', 'purchases', 'maintenance', 'installments'],
+    modules: ['pos', 'inventory', 'purchases', 'maintenance', 'installments', 'wallet_services'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
@@ -74,7 +75,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     id: 'electronics', nameAr: 'أجهزة كهربائية', icon: '🔌',
     description: 'سيريال وضمان، أقساط',
     features: ['serial_warranty', 'multi_unit'],
-    modules: ['pos', 'inventory', 'purchases', 'maintenance', 'installments'],
+    modules: ['pos', 'inventory', 'purchases', 'maintenance', 'installments', 'wallet_services'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
@@ -169,7 +170,7 @@ export function toggleModuleList(current: BusinessModule[], m: BusinessModule): 
   if (current.includes(m)) {
     const next = current.filter((x) => x !== m)
     // لا يجوز إطفاء كل شيء: يجب أن تبقى وحدة «عمل» واحدة على الأقل
-    const workModules: BusinessModule[] = ['pos', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
+    const workModules: BusinessModule[] = ['pos', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services']
     if (!next.some((x) => workModules.includes(x))) {
       throw new Error('لا يمكن إلغاء آخر وحدة عمل — يجب أن تبقى وحدة عمل واحدة على الأقل')
     }
@@ -201,7 +202,8 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   installments: { nameAr: 'الأقساط', icon: '💳', desc: 'بيع بالتقسيط، جدولة الأقساط، تنبيهات الاستحقاق' },
   recipes: { nameAr: 'الوصفات والإنتاج', icon: '👨‍🍳', desc: 'وصفات الأطباق تخصم خاماتها عند البيع، وأوامر إنتاج للصوصات والعجائن' },
   jewelry: { nameAr: 'الصاغة', icon: '💍', desc: 'سعر الجرام اليومي بالعيار، مصنعية منفصلة، وشراء وبيع الكسر FIFO' },
+  wallet_services: { nameAr: 'خدمات المحافظ', icon: '📲', desc: 'تحويل رصيد ودفع إلكتروني وفواتير — الربح آلياً: المحصَّل − المدفوع للمزوّد' },
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'jewelry', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'jewelry', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services']

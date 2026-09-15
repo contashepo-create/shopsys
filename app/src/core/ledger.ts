@@ -32,6 +32,7 @@ export interface JournalLine {
 
 export type SourceType =
   | 'sale' | 'sale_return' | 'purchase' | 'purchase_return'
+  | 'wallet_service'
   | 'receipt_voucher' | 'payment_voucher' | 'adjustment'
   | 'payroll' | 'rental_contract' | 'logistics_trip' | 'maintenance_ticket'
   | 'lab_order' | 'lab_commission' | 'lab_commission_payout'
@@ -143,6 +144,7 @@ export const STANDARD_COA: Account[] = [
   { code: '4108', nameAr: 'إيرادات كشف وعلاج', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'clinic_revenue' },
   { code: '4109', nameAr: 'عمولات بيع بالأمانة', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'consignment_commission' },
   { code: '4110', nameAr: 'إيرادات أخرى (فوائض عدّ)', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'other_income' },
+  { code: '4111', nameAr: 'أرباح تقسيط (هامش تمويل)', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'installment_interest' },
   { code: '5', nameAr: 'المصروفات', rootType: 'expenses', parentCode: null, isPostable: false },
   { code: '5101', nameAr: 'تكلفة البضاعة المباعة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'cogs' },
   { code: '5102', nameAr: 'رواتب وأجور', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'salaries' },
