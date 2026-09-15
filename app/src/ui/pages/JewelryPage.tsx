@@ -8,14 +8,14 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { KARAT_LABELS, ALL_KARATS, jewelryBreakdown, pricesAreStale, type Karat } from '../../core/jewelry.ts'
+import { KARAT_LABELS, ALL_KARATS, jewelryBreakdown, pricesAreStale, computeTradeInNet, type Karat } from '../../core/jewelry.ts'
 import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 
 export function JewelryPage() {
   const {
-    items, gramPrices, jewelryProfiles, scrapLots, scrapSales,
-    setGramPrices, setJewelryProfile, buyScrap, sellScrap,
+    items, gramPrices, jewelryProfiles, scrapLots, scrapSales, goldTradeIns, customers,
+    setGramPrices, setJewelryProfile, buyScrap, sellScrap, postGoldTradeIn,
   } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
@@ -75,6 +75,43 @@ export function JewelryPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
+  /* مقايضة: بيع مشغول جديد + كسر العميل جزء من الثمن (جولة الصاغة) */
+  const [tradeOpen, setTradeOpen] = useState(false)
+  const [trItem, setTrItem] = useState('')
+  const [trCustomer, setTrCustomer] = useState('')
+  const [trKarat, setTrKarat] = useState<Karat>('k21')
+  const [trWeight, setTrWeight] = useState('')
+  const [trGramPrice, setTrGramPrice] = useState('')
+  const [trTreasury, setTrTreasury] = useState('1101')
+  const tradeItem = items.find((it) => it.id === Number(trItem))
+  const tradePreview = (() => {
+    if (!tradeItem || !(Number(trWeight) > 0) || !trGramPrice.trim()) return null
+    try { return computeTradeInNet(tradeItem.priceMinor, Number(trWeight), toMinor(trGramPrice, cur.decimals)) } catch { return null }
+  })()
+  const saveTrade = () => {
+    if (!tradeItem) return
+    try {
+      const doc = postGoldTradeIn({
+        lines: [{ itemId: tradeItem.id, nameAr: tradeItem.nameAr, qty: 1, unitPriceMinor: tradeItem.priceMinor, unitCostMinor: tradeItem.costMinor, discountPercent: 0, soldByWeight: false }],
+        customerId: trCustomer ? Number(trCustomer) : null,
+        scrapKarat: trKarat,
+        scrapWeightGrams: Number(trWeight),
+        scrapPricePerGramMinor: toMinor(trGramPrice, cur.decimals),
+        treasury: trTreasury as never,
+        taxPercent: setup.vatPercent,
+        taxInclusive: setup.taxInclusive,
+      })
+      toast.show(
+        doc.netMinor === 0
+          ? `مقايضة متكافئة ${doc.tradeNumber} — لا فرق نقدي ✅`
+          : doc.netMinor > 0
+            ? `${doc.tradeNumber}: العميل دفع فرقاً ${fmt(doc.netMinor)} ✅`
+            : `${doc.tradeNumber}: رُدّ للعميل ${fmt(-doc.netMinor)} ✅`,
+      )
+      setTradeOpen(false); setTrItem(''); setTrWeight(''); setTrGramPrice(''); setTrCustomer('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
   const scrapByKarat = useMemo(() => {
     const m = new Map<Karat, { grams: number; valueMinor: number }>()
     for (const k of ALL_KARATS) m.set(k, { grams: 0, valueMinor: 0 })
@@ -98,6 +135,7 @@ export function JewelryPage() {
           <p className="text-[12px] text-slate-500 mt-1">سعر القطعة = الوزن × جرام العيار + المصنعية — ويعاد تسعير المحل كله بضغطة</p>
         </div>
         <div className="flex gap-2">
+          <Btn variant="soft" onClick={() => setTradeOpen(true)}>♻️ بيع بمقايضة كسر</Btn>
           <Btn variant="soft" onClick={() => setProfileOpen(true)}><Scale className="w-4 h-4" /> وصف صنف ذهبياً</Btn>
           <Btn onClick={() => { setP18(gramPrices.k18 ? String(gramPrices.k18 / 10 ** cur.decimals) : ''); setP21(gramPrices.k21 ? String(gramPrices.k21 / 10 ** cur.decimals) : ''); setP24(gramPrices.k24 ? String(gramPrices.k24 / 10 ** cur.decimals) : ''); setPriceOpen(true) }}>
             <RefreshCcw className="w-4 h-4" /> أسعار اليوم
@@ -241,6 +279,67 @@ export function JewelryPage() {
           <Btn onClick={saveScrap} className="w-full" disabled={!scWeight || !scPrice}>{scrapMode === 'buy' ? 'شراء وقيد' : 'بيع وقيد'}</Btn>
         </div>
       </Modal>
+
+      {/* مقايضة: بيع مشغول جديد بجزء من ثمنه كسر العميل (جولة الصاغة) */}
+      <Modal open={tradeOpen} onClose={() => setTradeOpen(false)} title="♻️ بيع بمقايضة كسر">
+        <div className="space-y-3">
+          <p className="text-[11.5px] text-slate-400 leading-relaxed">
+            العميل يأخذ مشغولاً جديداً ويدفع جزءاً من ثمنه بذهبه القديم — النظام يولّد
+            <b> فاتورة بيع كاملة + لوط كسر FIFO</b> بمستند GTI واحد، والفرق النقدي فقط يتحرك بالخزينة.
+          </p>
+          <Field label="المشغول الجديد">
+            <select value={trItem} onChange={(e) => setTrItem(e.target.value)} className={inputCls}>
+              <option value="">— اختر —</option>
+              {profiled.map(({ item }) => <option key={item!.id} value={item!.id}>{item!.nameAr} — {fmt(item!.priceMinor)}</option>)}
+            </select>
+          </Field>
+          <Field label="العميل (اختياري — لتوثيق اسم بائع الكسر)">
+            <select value={trCustomer} onChange={(e) => setTrCustomer(e.target.value)} className={inputCls}>
+              <option value="">عميل نقدي</option>
+              {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+            </select>
+          </Field>
+          <div className="grid grid-cols-3 gap-2">
+            <Field label="عيار الكسر">
+              <select value={trKarat} onChange={(e) => setTrKarat(e.target.value as Karat)} className={inputCls}>
+                {ALL_KARATS.map((k) => <option key={k} value={k}>{KARAT_LABELS[k]}</option>)}
+              </select>
+            </Field>
+            <Field label="وزن الكسر (جم)"><input value={trWeight} onChange={(e) => setTrWeight(e.target.value)} className={inputCls} dir="ltr" /></Field>
+            <Field label={`سعر جرام الكسر (${cur.symbol})`}><input value={trGramPrice} onChange={(e) => setTrGramPrice(e.target.value)} className={inputCls} dir="ltr" /></Field>
+          </div>
+          <Field label="الخزينة (تستلم الفرق أو تدفعه)"><TreasuryPicker value={trTreasury} onChange={setTrTreasury} /></Field>
+          {tradePreview && (
+            <div className={`rounded-xl p-3 text-[12.5px] font-bold ${tradePreview.netMinor === 0 ? 'bg-slate-100 dark:bg-slate-800 text-slate-500' : tradePreview.netMinor > 0 ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-rose-500/10 text-rose-600'}`}>
+              المشغول {fmt(tradePreview.saleMinor)} − كسر العميل {fmt(tradePreview.scrapValueMinor)} =
+              {tradePreview.netMinor === 0 ? ' مقايضة متكافئة' : tradePreview.netMinor > 0 ? ` العميل يدفع ${fmt(tradePreview.netMinor)}` : ` نرد للعميل ${fmt(-tradePreview.netMinor)}`}
+            </div>
+          )}
+          <Btn onClick={saveTrade} className="w-full" disabled={!tradeItem || !(Number(trWeight) > 0) || !trGramPrice.trim()}>ترحيل المقايضة</Btn>
+        </div>
+      </Modal>
+
+      {/* سجل المقايضات */}
+      {goldTradeIns.length > 0 && (
+        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 text-[12px] font-black text-slate-500">سجل المقايضات (GTI)</div>
+          <table className="w-full text-[11.5px]">
+            <thead><tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+              <th className="px-3 py-2">المستند</th><th className="px-3 py-2">المشغول</th><th className="px-3 py-2">كسر العميل</th><th className="px-3 py-2">الصافي</th>
+            </tr></thead>
+            <tbody>
+              {[...goldTradeIns].reverse().slice(0, 20).map((t) => (
+                <tr key={t.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                  <td className="px-3 py-2"><div className="font-bold">{t.tradeNumber}</div><div className="text-[9.5px] text-slate-400">{t.date.slice(0, 10)}</div></td>
+                  <td className="px-3 py-2 font-mono" dir="ltr">{fmt(t.saleMinor)}</td>
+                  <td className="px-3 py-2 font-mono text-amber-600" dir="ltr">{fmt(t.scrapValueMinor)}</td>
+                  <td className={`px-3 py-2 font-mono font-bold ${t.netMinor === 0 ? 'text-slate-400' : t.netMinor > 0 ? 'text-emerald-600' : 'text-rose-500'}`} dir="ltr">{t.netMinor > 0 ? '+' : ''}{fmt(t.netMinor)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

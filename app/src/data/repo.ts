@@ -20,7 +20,7 @@ import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, ty
 import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
-import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
+import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { validatePriceList, resolvePrice, type PriceList, type PriceListEntry } from '../core/priceLists.ts'
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
@@ -728,6 +728,19 @@ export interface SaleReturn {
   shiftId: number | null
 }
 
+/** مستند مقايضة ذهب (الصاغة): بيع مشغول جديد + شراء كسر العميل بعملية واحدة — الفرق النقدي فقط بالخزينة */
+export interface GoldTradeInDoc {
+  id: number
+  tradeNumber: string // GTI-0001
+  date: string // ISO
+  saleId: number // فاتورة المشغول الجديد
+  scrapLotId: number // لوط كسر العميل
+  saleMinor: number
+  scrapValueMinor: number
+  netMinor: number // موجب = دفع العميل، سالب = رُدّ له
+  notes: string
+}
+
 /** مستند استبدال (نشاط الملابس): مرتجع + بيع جديد بعملية واحدة — يربط المستندين والصافي */
 export interface ExchangeDoc {
   id: number
@@ -828,6 +841,8 @@ interface DataState {
   exchanges: ExchangeDoc[]
   /** أوامر المطعم المفتوحة (صالة/تيك أواي/دليفري) — لا تلمس الدفاتر حتى القفل بفاتورة */
   restaurantOrders: RestaurantOrder[]
+  /** مقايضات الذهب (بيع مشغول + شراء كسر العميل بمستند GTI واحد) */
+  goldTradeIns: GoldTradeInDoc[]
   vouchers: Voucher[]
   employeeAdvances: EmployeeAdvance[] // سلف الموظفين (طلب المالك)
   sales: SaleInvoice[]
@@ -1283,6 +1298,21 @@ interface DataState {
   buyScrap: (args: { karat: Karat; weightGrams: number; pricePerGramMinor: number; sellerName?: string; treasury?: string }) => ScrapLot
   /** بيع كسر للتاجر/المصنع: يستهلك FIFO ويظهر الربح/الخسارة في القيد */
   sellScrap: (args: { karat: Karat; weightGrams: number; pricePerGramMinor: number; buyerName?: string; treasury?: string }) => ScrapSale
+  /**
+   * مقايضة ذهب (جولة الصاغة): بيع مشغول جديد يُدفع جزء من ثمنه بكسر العميل —
+   * فاتورة بيع كاملة + لوط كسر FIFO بمستند GTI واحد؛ ذرية بلقطة استرجاع.
+   */
+  postGoldTradeIn: (args: {
+    lines: CartLine[]
+    customerId?: number | null
+    scrapKarat: Karat
+    scrapWeightGrams: number
+    scrapPricePerGramMinor: number
+    treasury?: TreasuryAccount
+    taxPercent: number
+    taxInclusive: boolean
+    notes?: string
+  }) => GoldTradeInDoc
 
   // ————— قوائم الأسعار —————
   addPriceList: (nameAr: string, defaultDiscountPercent: number) => PriceList
@@ -1386,7 +1416,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 15 // 13: أرصدة/تسويات — 14: استبدال EXC — 15: أوامر مطعم ORD (مطعم)
+export const DATA_VERSION = 16 // 13: أرصدة/تسويات — 14: EXC — 15: أوامر مطعم — 16: مقايضة ذهب GTI
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -1527,6 +1557,7 @@ export const useDataStore = create<DataState>()(
       settlements: [],
       exchanges: [],
       restaurantOrders: [],
+      goldTradeIns: [],
       vouchers: [],
       employeeAdvances: [],
       sales: [],
@@ -5323,6 +5354,56 @@ export const useDataStore = create<DataState>()(
         })
         return sale
       },
+      postGoldTradeIn: (args) => {
+        const coreErrors = validateTradeIn({ scrapWeightGrams: args.scrapWeightGrams, scrapPricePerGramMinor: args.scrapPricePerGramMinor })
+        if (coreErrors.length) throw new Error(coreErrors.join(' — '))
+        if (args.lines.length === 0) throw new Error('لا مشغولات بالفاتورة — شراء الكسر وحده من شاشة الصاغة')
+        // ذرية العملية المركبة: لقطة قبل البيع — فشل شراء الكسر يسترجعها
+        // (نفس درس الاستبدال: لا بيع «يتيم» نصف مقايضة)
+        const snapshot = get()
+        try {
+          const treasury = args.treasury ?? '1101'
+          // 1) بيع المشغول الجديد نقداً كاملاً في الخزينة (قيد بيع كامل: 4101/2102/5101)
+          const sale = get().postSale({
+            lines: args.lines,
+            customerId: args.customerId ?? null,
+            payment: 'cash',
+            invoiceDiscountPercent: 0,
+            taxPercent: args.taxPercent,
+            taxInclusive: args.taxInclusive,
+            treasury: treasury as TreasuryAccount,
+          })
+          // 2) شراء كسر العميل من نفس الخزينة (لوط FIFO بقيده الكامل) —
+          //    النقدية الداخلة والخارجة بنفس الخزينة فصافي حركتها = الفرق فقط
+          const lot = get().buyScrap({
+            karat: args.scrapKarat,
+            weightGrams: args.scrapWeightGrams,
+            pricePerGramMinor: args.scrapPricePerGramMinor,
+            sellerName: args.customerId != null ? get().customers.find((c) => c.id === args.customerId)?.nameAr : 'عميل مقايضة',
+            treasury,
+          })
+          // 3) مستند الربط والصافي
+          const afterState = get()
+          const preview = computeTradeInNet(sale.totals.totalMinor, args.scrapWeightGrams, args.scrapPricePerGramMinor)
+          const id = nextId(afterState.goldTradeIns)
+          const doc: GoldTradeInDoc = {
+            id,
+            tradeNumber: `GTI-${String(id).padStart(4, '0')}`,
+            date: new Date().toISOString(),
+            saleId: sale.id,
+            scrapLotId: lot.id,
+            saleMinor: preview.saleMinor,
+            scrapValueMinor: preview.scrapValueMinor,
+            netMinor: preview.netMinor,
+            notes: (args.notes ?? '').trim(),
+          }
+          set({ goldTradeIns: [...afterState.goldTradeIns, doc] })
+          return doc
+        } catch (e) {
+          useDataStore.setState(snapshot, true)
+          throw e
+        }
+      },
 
       /* ─── قوائم الأسعار (جملة/نصف جملة/VIP) ─── */
       addPriceList: (nameAr, defaultDiscountPercent) => {
@@ -6214,6 +6295,7 @@ export const useDataStore = create<DataState>()(
           settlements: s.settlements ?? [],
           exchanges: s.exchanges ?? [],
           restaurantOrders: s.restaurantOrders ?? [],
+          goldTradeIns: s.goldTradeIns ?? [],
           vouchers: s.vouchers ?? [],
           shifts: s.shifts ?? [],
           journal: s.journal ?? [],

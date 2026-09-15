@@ -151,3 +151,28 @@ export function planScrapConsumption(
   }
   return plan
 }
+
+/* ─────────── البيع بمقايضة كسر (جولة مراجعة الذهب) ───────────
+ * أشهر عملية بمحل الصاغة: العميل يشتري مشغولاً جديداً ويدفع جزءاً من
+ * ثمنه بذهبه القديم (كسر يُوزن ويُقيّم بسعر لحظي) — عمليتان بمستند واحد:
+ *   بيع المشغول (فاتورة كاشير كاملة بقيدها) + شراء الكسر (لوط FIFO بقيده)
+ * والفرق النقدي فقط هو ما يتحرك بالخزينة فعلياً.
+ */
+
+export interface TradeInPreview {
+  saleMinor: Minor // ثمن المشغول الجديد
+  scrapValueMinor: Minor // قيمة كسر العميل (وزن × سعر لحظي)
+  netMinor: Minor // موجب = يدفع العميل الفرق، سالب = نرد له
+}
+
+export function computeTradeInNet(saleMinor: Minor, scrapWeightGrams: number, scrapPricePerGramMinor: Minor): TradeInPreview {
+  const scrapValueMinor = Math.round(scrapWeightGrams * scrapPricePerGramMinor)
+  return { saleMinor, scrapValueMinor, netMinor: saleMinor - scrapValueMinor }
+}
+
+export function validateTradeIn(args: { scrapWeightGrams: number; scrapPricePerGramMinor: number }): string[] {
+  const errors: string[] = []
+  if (!(args.scrapWeightGrams > 0)) errors.push('وزن كسر العميل يجب أن يكون أكبر من صفر — وإلا فهي فاتورة بيع عادية')
+  if (!(args.scrapPricePerGramMinor > 0)) errors.push('سعر جرام الكسر يجب أن يكون أكبر من صفر')
+  return errors
+}
