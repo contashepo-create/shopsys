@@ -32,7 +32,7 @@ import { validateTransfer, computeWarehouseStock, transferTotalQty, type Transfe
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
-import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, type RateType, type OperatorShift } from '../core/rentalMeter.ts'
+import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
 import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
 import {
   custodyFileNumber, validateCustodyFile, summarizeCustody, buildCustodyFundEntry,
@@ -170,6 +170,18 @@ export interface Equipment {
   /** قراءة العدّاد عند آخر خدمة */
   lastServiceReading: number
   notes: string
+}
+
+/** مصروف تشغيل معدة (وقود/صيانة/إصلاح/مشغل) — يقيد 5105/خزينة ويغذي ربحية المعدة */
+export interface EquipmentCost {
+  id: number
+  equipmentId: number
+  date: string
+  kind: EquipmentCostKind
+  amountMinor: number
+  description: string
+  treasury: string
+  journalEntryId: number
 }
 
 /** عقد إيجار معدة — مربوط بقيد الفتح، وقيد الإقفال عند ردّ التأمين */
@@ -604,6 +616,7 @@ interface DataState {
   jewelryProfiles: JewelryProfile[] // الوصف الذهبي للأصناف: عيار/وزن/مصنعية
   scrapLots: ScrapLot[] // دفعات الكسر المشتراة (FIFO)
   scrapSales: ScrapSale[] // مبيعات الكسر
+  equipmentCosts: EquipmentCost[] // مصاريف تشغيل المعدات (وقود/صيانة/إصلاح)
   priceLists: PriceList[] // قوائم الأسعار (جملة/نصف جملة/VIP)
   priceListEntries: PriceListEntry[] // أسعار خاصة لكل صنف داخل قائمة
   custodyFiles: CustodyFile[] // ملفات عهد الموظفين (طلب المالك — نظام متكامل بنمط pro-acc)
@@ -813,6 +826,10 @@ interface DataState {
   addOperatorShift: (s: Omit<OperatorShift, 'id'>) => OperatorShift
   /** تسجيل خدمة صيانة للمعدة عند قراءتها الحالية (يصفّر عدّاد الفترة الوقائية) */
   recordEquipmentService: (equipmentId: number) => void
+  /** مصروف تشغيل معدة بقيده (5105/خزينة) — وقود/صيانة/إصلاح/مشغل */
+  addEquipmentCost: (args: { equipmentId: number; kind: EquipmentCostKind; amountMinor: number; description?: string; treasury?: string }) => EquipmentCost
+  /** ربحية معدة: إيراد عقودها − تكاليفها، وربح الساعة من الساعات الموثقة */
+  getEquipmentProfit: (equipmentId: number) => { revenueMinor: number; costsMinor: number; profitMinor: number; hours: number; profitPerHourMinor: number | null }
   /* ─── معامل التحاليل (القرار 26) ─── */
   addLabTest: (t: Omit<LabTest, 'id' | 'isActive'>) => LabTest
   updateLabTest: (id: number, patch: Partial<Omit<LabTest, 'id'>>) => void
@@ -1043,6 +1060,7 @@ export const useDataStore = create<DataState>()(
       jewelryProfiles: [],
       scrapLots: [],
       scrapSales: [],
+      equipmentCosts: [],
       priceLists: [],
       priceListEntries: [],
       custodyFiles: [],
@@ -2319,6 +2337,49 @@ export const useDataStore = create<DataState>()(
             e.id === equipmentId ? { ...e, lastServiceReading: e.meterReading } : e,
           ),
         })
+      },
+      addEquipmentCost: (args) => {
+        const state = get()
+        const eq = state.equipment.find((e) => e.id === args.equipmentId)
+        if (!eq) throw new Error('المعدة غير موجودة')
+        if (!(args.amountMinor > 0)) throw new Error('المبلغ يجب أن يكون أكبر من صفر')
+        const treasury = args.treasury ?? '1101'
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const costId = nextId(state.equipmentCosts)
+        const label = EQUIPMENT_COST_LABELS[args.kind]
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `${label} — ${eq.nameAr}${args.description ? ` (${args.description})` : ''}`,
+          sourceType: 'equipment_cost', sourceId: costId,
+          lines: [
+            { accountCode: '5105', debit: args.amountMinor, credit: 0, note: `${label} ${eq.nameAr}` },
+            { accountCode: treasury, debit: 0, credit: args.amountMinor, note: 'دفع مصروف تشغيل' },
+          ],
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const cost: EquipmentCost = {
+          id: costId, equipmentId: args.equipmentId, date: now.slice(0, 10), kind: args.kind,
+          amountMinor: args.amountMinor, description: args.description ?? '', treasury, journalEntryId: entryId,
+        }
+        set({ equipmentCosts: [...state.equipmentCosts, cost], journal: [...state.journal, entry] })
+        return cost
+      },
+      getEquipmentProfit: (equipmentId) => {
+        const state = get()
+        if (!state.equipment.some((e) => e.id === equipmentId)) throw new Error('المعدة غير موجودة')
+        let rent = 0, extra = 0, contractHours = 0
+        for (const c of state.rentalContracts) {
+          if (c.equipmentId !== equipmentId) continue
+          rent += c.totals.rentMinor
+          extra += c.extraMinor
+          if (c.rateType === 'hourly' && c.startReading != null && c.endReading != null && c.endReading > c.startReading) {
+            contractHours += usageHours(c.startReading, c.endReading)
+          }
+        }
+        const costs = state.equipmentCosts.filter((c) => c.equipmentId === equipmentId).reduce((s2, c) => s2 + c.amountMinor, 0)
+        const sh = shiftsSummary(state.operatorShifts, equipmentId)
+        return equipmentProfitability({ rentMinor: rent, extraMinor: extra, costsMinor: costs, contractHours, shiftHours: sh.totalHours })
       },
 
       /* ─── معامل التحاليل (القرار 26) ─── */
@@ -3935,6 +3996,7 @@ export const useDataStore = create<DataState>()(
           jewelryProfiles: s.jewelryProfiles ?? [],
           scrapLots: s.scrapLots ?? [],
           scrapSales: s.scrapSales ?? [],
+          equipmentCosts: s.equipmentCosts ?? [],
           priceLists: s.priceLists ?? [],
           priceListEntries: s.priceListEntries ?? [],
           custodyFiles: s.custodyFiles ?? [],

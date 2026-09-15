@@ -201,3 +201,39 @@ export function serviceStatus(
     progress: Math.min(1, Math.max(0, used / everyHours)),
   }
 }
+
+
+/* ─── تكاليف تشغيل المعدة وربحيتها (سد فجوة Point of Rental/HCSS) ─── */
+
+export type EquipmentCostKind = 'fuel' | 'maintenance' | 'repair' | 'operator' | 'other'
+
+export const EQUIPMENT_COST_LABELS: Record<EquipmentCostKind, string> = {
+  fuel: 'وقود',
+  maintenance: 'صيانة دورية',
+  repair: 'إصلاح عطل',
+  operator: 'أجر مشغّل',
+  other: 'أخرى',
+}
+
+/**
+ * ربحية معدة: الإيراد من عقودها − تكاليف تشغيلها، والساعات الموثقة
+ * (عقود ساعية بقراءات + وردانيات مشغلين) لاشتقاق ربح الساعة.
+ */
+export function equipmentProfitability(args: {
+  rentMinor: number
+  extraMinor: number
+  costsMinor: number
+  contractHours: number
+  shiftHours: number
+}): { revenueMinor: number; costsMinor: number; profitMinor: number; hours: number; profitPerHourMinor: number | null } {
+  const revenue = args.rentMinor + args.extraMinor
+  const profit = revenue - args.costsMinor
+  const hours = Math.round((args.contractHours + args.shiftHours) * 10) / 10
+  return {
+    revenueMinor: revenue,
+    costsMinor: args.costsMinor,
+    profitMinor: profit,
+    hours,
+    profitPerHourMinor: hours > 0 ? Math.round(profit / hours) : null,
+  }
+}

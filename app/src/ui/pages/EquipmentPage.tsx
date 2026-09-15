@@ -4,18 +4,19 @@
  * كل N ساعة + وردانيات المشغلين. حذف المعدة ممنوع إن ارتبطت بعقود.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Tractor, Pencil, Trash2, FileSpreadsheet, Gauge, Wrench, Users } from 'lucide-react'
+import { Plus, Tractor, Pencil, Trash2, FileSpreadsheet, Gauge, Wrench, Users, Fuel } from 'lucide-react'
 import { useDataStore, type Equipment } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { serviceStatus, shiftsSummary } from '../../core/rentalMeter.ts'
+import { serviceStatus, shiftsSummary, EQUIPMENT_COST_LABELS, type EquipmentCostKind } from '../../core/rentalMeter.ts'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
 const EQUIPMENT_KINDS = ['حفار', 'لودر', 'بلدوزر', 'ونش', 'رافعة شوكية', 'مولد', 'ضاغط هواء', 'أخرى']
 
 export function EquipmentPage() {
-  const { equipment, rentalContracts, operatorShifts, addEquipment, updateEquipment, removeEquipment, addOperatorShift, recordEquipmentService } = useDataStore()
+  const { equipment, rentalContracts, operatorShifts, equipmentCosts, addEquipment, updateEquipment, removeEquipment, addOperatorShift, recordEquipmentService, addEquipmentCost, getEquipmentProfit } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -107,6 +108,21 @@ export function EquipmentPage() {
     toast.show(`سُجلت خدمة صيانة «${e.nameAr}» عند قراءة ${e.meterReading} — بدأت فترة وقائية جديدة 🔧`)
   }
 
+  /* مصروف تشغيل معدة (وقود/صيانة/إصلاح/مشغل) */
+  const [costFor, setCostFor] = useState<Equipment | null>(null)
+  const [costKind, setCostKind] = useState<EquipmentCostKind>('fuel')
+  const [costAmount, setCostAmount] = useState('')
+  const [costDesc, setCostDesc] = useState('')
+  const [costTreasury, setCostTreasury] = useState('1101')
+  const saveCost = () => {
+    if (!costFor) return
+    try {
+      addEquipmentCost({ equipmentId: costFor.id, kind: costKind, amountMinor: toMinor(costAmount, cur.decimals), description: costDesc.trim(), treasury: costTreasury })
+      toast.show('قُيد المصروف على 5105 ودخل ربحية المعدة ✅')
+      setCostFor(null); setCostAmount(''); setCostDesc('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
   return (
     <div className="space-y-4">
       <div className="anim-up flex items-center justify-between">
@@ -186,12 +202,36 @@ export function EquipmentPage() {
                   </div>
                 )}
 
-                <button
-                  onClick={() => openShift(e)}
-                  className="mt-3 w-full py-1.5 rounded-xl border-2 border-dashed border-teal-300/50 dark:border-teal-700/50 text-[11.5px] font-bold text-teal-600 hover:bg-teal-500/5 transition-colors"
-                >
-                  + تسجيل وردية مشغل
-                </button>
+                {/* ربحية المعدة: إيراد − تكاليف تشغيل، وربح الساعة */}
+                {(() => {
+                  const pr = getEquipmentProfit(e.id)
+                  if (pr.revenueMinor === 0 && pr.costsMinor === 0) return null
+                  return (
+                    <div className="mt-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 p-2 text-[11px] space-y-0.5">
+                      <div className="flex justify-between"><span className="text-slate-400">إيراد</span><b className="text-emerald-600">{fmtRate(pr.revenueMinor)}</b></div>
+                      <div className="flex justify-between"><span className="text-slate-400">تكاليف تشغيل</span><b className="text-rose-500">{fmtRate(pr.costsMinor)}</b></div>
+                      <div className="flex justify-between border-t border-slate-200 dark:border-slate-700 pt-0.5">
+                        <span className="text-slate-400">الربح{pr.profitPerHourMinor != null && ` (${fmtRate(pr.profitPerHourMinor)}/ساعة)`}</span>
+                        <b className={pr.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmtRate(pr.profitMinor)}</b>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                <div className="mt-3 grid grid-cols-2 gap-1.5">
+                  <button
+                    onClick={() => openShift(e)}
+                    className="py-1.5 rounded-xl border-2 border-dashed border-teal-300/50 dark:border-teal-700/50 text-[11.5px] font-bold text-teal-600 hover:bg-teal-500/5 transition-colors"
+                  >
+                    + وردية مشغل
+                  </button>
+                  <button
+                    onClick={() => { setCostFor(e); setCostKind('fuel'); setCostAmount(''); setCostDesc('') }}
+                    className="py-1.5 rounded-xl border-2 border-dashed border-rose-300/50 dark:border-rose-700/50 text-[11.5px] font-bold text-rose-500 hover:bg-rose-500/5 transition-colors"
+                  >
+                    <Fuel size={11} className="inline ml-1" />مصروف تشغيل
+                  </button>
+                </div>
               </div>
             )
           })}
@@ -269,6 +309,33 @@ export function EquipmentPage() {
             <Btn onClick={saveShift} disabled={!opName.trim() || !shiftEnd}>💾 تسجيل الوردية</Btn>
           </div>
         </div>
+      </Modal>
+
+      {/* مصروف تشغيل معدة */}
+      <Modal open={!!costFor} onClose={() => setCostFor(null)} title={costFor ? `مصروف تشغيل — ${costFor.nameAr}` : ''}>
+        {costFor && (
+          <div className="space-y-3">
+            <Field label="نوع المصروف">
+              <div className="grid grid-cols-5 gap-1.5">
+                {(Object.keys(EQUIPMENT_COST_LABELS) as EquipmentCostKind[]).map((k) => (
+                  <button key={k} onClick={() => setCostKind(k)} className={`py-2 rounded-xl text-[11px] font-bold border transition-all ${costKind === k ? 'bg-rose-600 text-white border-rose-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
+                    {EQUIPMENT_COST_LABELS[k]}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={`المبلغ (${cur.symbol}) *`}><input value={costAmount} onChange={(e) => setCostAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+              <Field label="بيان (اختياري)"><input value={costDesc} onChange={(e) => setCostDesc(e.target.value)} className={inputCls} placeholder="سولار 100 لتر…" /></Field>
+            </div>
+            <Field label="الدفع من"><TreasuryPicker value={costTreasury} onChange={setCostTreasury} /></Field>
+            <div className="text-[11px] text-slate-400 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2.5">
+              📒 القيد: مصروفات تشغيل معدات 5105 مدين / الخزينة دائن — ويُخصم من ربحية «{costFor.nameAr}»
+              {equipmentCosts.filter((c) => c.equipmentId === costFor.id).length > 0 && ` (مصاريف سابقة: ${equipmentCosts.filter((c) => c.equipmentId === costFor.id).length})`}
+            </div>
+            <Btn onClick={saveCost} className="w-full" disabled={!costAmount}>قيد المصروف</Btn>
+          </div>
+        )}
       </Modal>
     </div>
   )
