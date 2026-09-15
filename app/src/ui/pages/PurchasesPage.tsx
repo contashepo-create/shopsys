@@ -5,14 +5,18 @@
  * - الترحيل يحدّث تكلفة الأصناف بالمتوسط المرجح ويزيد المخزون
  */
 import { useMemo, useState } from 'react'
-import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText } from 'lucide-react'
+import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useDataStore, type PurchaseInvoice } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
+import { evaluateLicense, hasFeature } from '../../core/license.ts'
+import { invoiceEditPolicy } from '../../core/invoiceEdit.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string }
@@ -30,8 +34,17 @@ const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'ش�
 const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', method: 'qty', paidBy: 'supplier', payAccount: '1101', custodyFileId: null }
 
 export function PurchasesPage() {
-  const { items, suppliers, purchases, journal, projects, treasuries, custodyFiles, employees, postPurchase, addLatePurchaseExpense } = useDataStore()
-  const { setup } = useAppStore()
+  const { items, suppliers, purchases, journal, projects, treasuries, custodyFiles, employees, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
+  const { setup, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
+  const navigate = useNavigate()
+
+  // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة ⇒ لا تعديل — إشعار مدين على المورد
+  const lic = useMemo(
+    () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
+    [activatedPayload, trialStartedAt, lastSeenAt],
+  )
+  const einvoiceActive = hasFeature(lic, 'einvoice_sa') || hasFeature(lic, 'einvoice_eg')
+  const editPolicy = invoiceEditPolicy({ einvoiceActive })
   const openCustodyFiles = custodyFiles.filter((f) => f.status === 'open')
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -53,6 +66,47 @@ export function PurchasesPage() {
   const [latePaidBy, setLatePaidBy] = useState<'supplier' | 'treasury' | 'custody'>('supplier')
   const [latePayAccount, setLatePayAccount] = useState('1101')
   const [lateCustodyId, setLateCustodyId] = useState<number | null>(null)
+
+  /* ─── تعديل فاتورة شراء (عكس القيد + إعادة الترحيل — لا يفسد الدفتر) ─── */
+  const [editing, setEditing] = useState<PurchaseInvoice | null>(null)
+  const [editLines, setEditLines] = useState<{ itemId: number; qty: string; unitPrice: string }[]>([])
+  const [editPaid, setEditPaid] = useState('')
+  const [editTreasury, setEditTreasury] = useState('1101')
+  const [editReason, setEditReason] = useState('')
+  const [editAddItemId, setEditAddItemId] = useState(0)
+
+  const openEdit = (p: PurchaseInvoice) => {
+    setEditing(p)
+    setEditLines(p.lines.map((l) => ({ itemId: l.itemId, qty: String(l.qty), unitPrice: String(l.unitPriceMinor / 10 ** cur.decimals) })))
+    setEditPaid(String(p.paidMinor / 10 ** cur.decimals))
+    setEditTreasury(p.treasury ?? '1101')
+    setEditReason('')
+    setEditAddItemId(0)
+  }
+
+  const editGoodsTotal = useMemo(
+    () => editLines.reduce((sum, l) => sum + Math.round((Number(l.qty) || 0) * toMinor(l.unitPrice || '0', cur.decimals)), 0),
+    [editLines, cur.decimals],
+  )
+
+  const saveInvoiceEdit = () => {
+    if (!editing) return
+    try {
+      const updated = editPurchase({
+        purchaseId: editing.id,
+        lines: editLines.map((l) => ({ itemId: l.itemId, qty: Number(l.qty) || 0, unitPriceMinor: toMinor(l.unitPrice || '0', cur.decimals) })),
+        expenses: editing.expenses, // المصاريف (على حساب المورد) تبقى وتُعاد توزيعها على السطور الجديدة
+        paidMinor: toMinor(editPaid || '0', cur.decimals),
+        treasury: editTreasury,
+        reason: editReason.trim(),
+        einvoiceActive,
+      })
+      toast.show(`عُدلت ${updated.invoiceNumber} — عُكس قيدها القديم وأُعيد الترحيل بتكلفة صحيحة ✓`)
+      setEditing(null)
+    } catch (e) {
+      toast.show((e as Error).message, 'error')
+    }
+  }
 
   const saveLateExpense = () => {
     if (!viewing) return
@@ -213,8 +267,18 @@ export function PurchasesPage() {
                       {fmt(p.paidMinor)}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-left">
-                    <button onClick={() => setViewing(p)} className="p-2 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-all duration-200 hover:scale-110">
+                  <td className="px-4 py-3 text-left whitespace-nowrap">
+                    {editPolicy.canEdit ? (
+                      /* تعديل متاح — الفاتورة الإلكترونية غير مفعلة (سياسة المالك) */
+                      <button onClick={() => openEdit(p)} title={editPolicy.reasonAr} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all duration-200 hover:scale-110">
+                        <Pencil size={15} />
+                      </button>
+                    ) : (
+                      <button onClick={() => navigate('/purchases/returns')} title="إشعار مدين على المورد — الفاتورة الإلكترونية مفعلة فلا تعديل؛ التصحيح بمرتجع شراء رسمي" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110">
+                        <Receipt size={15} />
+                      </button>
+                    )}
+                    <button onClick={() => setViewing(p)} title="عرض الفاتورة وقيدها" className="p-2 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-all duration-200 hover:scale-110">
                       <Eye size={15} />
                     </button>
                   </td>
@@ -578,6 +642,114 @@ export function PurchasesPage() {
                 </div>
               ) : null
             })()}
+
+            {/* سجل تدقيق التعديلات — كل تعديل موثق بقيده العاكس */}
+            {viewing.editHistory?.length ? (
+              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-4 space-y-1.5">
+                <div className="text-[12px] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                  <History size={13} /> سجل التعديلات ({viewing.editHistory.length})
+                </div>
+                {viewing.editHistory.map((h, i) => (
+                  <div key={i} className="text-[11px] text-slate-500">
+                    {h.at.slice(0, 16).replace('T', ' ')} — {h.reason || 'بلا سبب مذكور'} · عُكس القيد #{h.previousEntryId} بالقيد #{h.reversalEntryId}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </Modal>
+
+      {/* ✏️ تعديل فاتورة شراء (سياسة المالك: فقط عندما تكون الفاتورة الإلكترونية غير مفعلة) */}
+      <Modal open={!!editing} onClose={() => setEditing(null)} title={editing ? `✏️ تعديل ${editing.invoiceNumber}` : ''} wide>
+        {editing && (
+          <div className="space-y-4">
+            <p className="text-[11.5px] text-slate-400 leading-relaxed p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+              💡 {editPolicy.reasonAr} يُعكس القيد القديم ويُعاد الترحيل: يسترد المخزون تكلفته الصحيحة وتُعاد قيمة توزيع المصاريف على السطور الجديدة.
+            </p>
+
+            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+                    <th className="px-3 py-2">الصنف</th>
+                    <th className="px-3 py-2 w-24">الكمية</th>
+                    <th className="px-3 py-2 w-28">سعر الشراء ({cur.symbol})</th>
+                    <th className="px-3 py-2 w-24">الإجمالي</th>
+                    <th className="px-3 py-2 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {editLines.map((l, i) => (
+                    <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-3 py-2 font-bold">{items.find((it) => it.id === l.itemId)?.nameAr ?? '—'}</td>
+                      <td className="px-3 py-2">
+                        <input value={l.qty} onChange={(e) => setEditLines(editLines.map((x, xi) => (xi === i ? { ...x, qty: e.target.value } : x)))} className={inputCls + ' !py-1.5 !text-[12px]'} dir="ltr" />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input value={l.unitPrice} onChange={(e) => setEditLines(editLines.map((x, xi) => (xi === i ? { ...x, unitPrice: e.target.value } : x)))} className={inputCls + ' !py-1.5 !text-[12px]'} dir="ltr" />
+                      </td>
+                      <td className="px-3 py-2 font-bold text-emerald-600">{fmt(Math.round((Number(l.qty) || 0) * toMinor(l.unitPrice || '0', cur.decimals)))}</td>
+                      <td className="px-3 py-2">
+                        <button title="حذف السطر" onClick={() => setEditLines(editLines.filter((_, xi) => xi !== i))} className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {/* إضافة صنف للفاتورة المعدلة */}
+              <div className="flex gap-2 p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
+                <select value={editAddItemId} onChange={(e) => setEditAddItemId(Number(e.target.value))} className={inputCls + ' !py-1.5 !text-[12px] flex-1'}>
+                  <option value={0}>— أضف صنفاً —</option>
+                  {items.filter((it) => it.isActive && !editLines.some((l) => l.itemId === it.id)).map((it) => (
+                    <option key={it.id} value={it.id}>{it.nameAr}</option>
+                  ))}
+                </select>
+                <Btn
+                  variant="ghost" className="border border-slate-200 dark:border-slate-700 !py-1.5"
+                  disabled={!editAddItemId}
+                  onClick={() => {
+                    setEditLines([...editLines, { itemId: editAddItemId, qty: '1', unitPrice: '' }])
+                    setEditAddItemId(0)
+                  }}
+                >
+                  + إضافة
+                </Btn>
+              </div>
+            </div>
+
+            {editing.expenses.length > 0 && (
+              <div className="text-[11px] text-slate-400 p-2.5 rounded-xl bg-slate-500/5 border border-slate-200 dark:border-slate-700">
+                🚛 مصاريف الفاتورة ({fmt(editing.expensesTotalMinor)}) تبقى كما هي وتُعاد قسمتها على السطور الجديدة بنفس طريقة التوزيع.
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label={`المدفوع للمورد (${cur.symbol})`} hint="الباقي يبقى ديناً على حساب المورد">
+                <input value={editPaid} onChange={(e) => setEditPaid(e.target.value)} className={inputCls} dir="ltr" />
+              </Field>
+              <Field label="خزينة الدفع">
+                <TreasuryPicker value={editTreasury} onChange={setEditTreasury} compact />
+              </Field>
+            </div>
+
+            <Field label="سبب التعديل" hint="يُحفظ في سجل التدقيق ووصف القيد العاكس">
+              <input value={editReason} onChange={(e) => setEditReason(e.target.value)} className={inputCls} placeholder="كمية خاطئة، سعر مورد مصحح…" />
+            </Field>
+
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
+              <div className="text-[12px] text-slate-500">
+                بضاعة جديدة {fmt(editGoodsTotal)} + مصاريف {fmt(editing.expensesTotalMinor)} — كان الإجمالي {fmt(editing.grandTotalMinor)}
+              </div>
+              <div className="font-black text-xl text-emerald-600">{fmt(editGoodsTotal + editing.expensesTotalMinor)} {cur.symbol}</div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setEditing(null)}>إلغاء</Btn>
+              <Btn onClick={saveInvoiceEdit} disabled={!editLines.length || editLines.some((l) => !(Number(l.qty) > 0))}>💾 حفظ التعديل</Btn>
+            </div>
           </div>
         )}
       </Modal>

@@ -14,6 +14,7 @@ import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnEntry, deriveTaxConfig } from '../core/returns.ts'
+import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
@@ -554,6 +555,8 @@ export interface PurchaseInvoice {
   projectId?: number | null // مربوطة بمشروع مقاولات
   notes: string
   journalEntryId: number | null // القيد المتولد (فواتير قديمة قبل الترحيل = null)
+  /** سجل تدقيق التعديلات (طلب المالك) */
+  editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
 }
 
 /** مرتجع شراء — مربوط بفاتورة الشراء الأصلية، مُقيَّم بتكلفتها النهائية */
@@ -632,6 +635,8 @@ export interface SaleInvoice {
   journalEntryId: number // القيد المتولد — كل مستند مربوط بقيده (القرار 9)
   expiryOverrideBy: string | null // من وافق على تجاوز الصلاحية (القرار 8)
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
+  /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
+  editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
 }
 
 /** مرتجع مبيعات — دائماً مربوط بفاتورته الأصلية وبقيده العاكس */
@@ -842,6 +847,35 @@ interface DataState {
   closeShift: (countedCashMinor: number) => Shift
   /** تسوية عجز/زيادة وردية مقفلة (طلب المالك): مصروف/إيراد أو سلفة على الموظف تُخصم من رواتبه */
   settleShiftVariance: (args: { shiftId: number; mode: 'expense' | 'advance'; employeeId?: number | null }) => Shift
+  /**
+   * تعديل فاتورة بيع (طلب المالك) — يعمل فقط عندما تكون الفاتورة الإلكترونية غير مفعلة:
+   * ① يُعكس القيد القديم (سجل تدقيق كامل) ② يعاد المخزون القديم ③ يُخصم الجديد
+   * ④ يتولد قيد جديد متوازن — رقم الفاتورة والمرجع يبقيان كما هما.
+   * ملاحظة: الحارس saleEditBlocks يمنع تعديل فواتير عليها مستندات لاحقة.
+   */
+  editSale: (args: {
+    saleId: number
+    lines: CartLine[]
+    customerId: number | null
+    payment: PaymentMethod
+    paidMinor: number
+    treasury: TreasuryAccount
+    invoiceDiscountPercent: number
+    reason: string
+    /** الفاتورة الإلكترونية مفعلة بمفتاح الترخيص؟ — تُمرر من الواجهة وتُرفض العملية لو true */
+    einvoiceActive: boolean
+    allowNegativeStock?: boolean
+  }) => SaleInvoice
+  /** تعديل فاتورة شراء — نفس منهج editSale (عكس + إعادة ترحيل). يُرفض لو الفاتورة الإلكترونية مفعلة */
+  editPurchase: (args: {
+    purchaseId: number
+    lines: { itemId: number; qty: number; unitPriceMinor: number }[]
+    expenses: PurchaseExpense[]
+    paidMinor: number
+    treasury: TreasuryAccount
+    reason: string
+    einvoiceActive: boolean
+  }) => PurchaseInvoice
   addWarehouse: (nameAr: string) => void
   /** إضافة خزينة/بنك جديد — يفتح له حساب دفتري تلقائياً (1121+) + بيانات احترافية اختيارية */
   addTreasury: (nameAr: string, kind: 'cash' | 'bank', extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => TreasuryDef
@@ -2301,6 +2335,274 @@ export const useDataStore = create<DataState>()(
         const updated: Shift = { ...shift, varianceSettledMode: 'expense', varianceEntryId: entryId, varianceAdvanceId: null }
         set({ journal: [...state.journal, entry], shifts: state.shifts.map((s) => (s.id === shift.id ? updated : s)) })
         return updated
+      },
+
+      editSale: (args) => {
+        const state = get()
+        // ⛔ سياسة المالك: الفاتورة الضريبية الإلكترونية مفعلة ⇒ لا تعديل — إشعار دائن/مدين فقط
+        if (args.einvoiceActive) {
+          throw new Error('الفاتورة الضريبية الإلكترونية مفعلة — الفواتير الصادرة مرتبطة بمنظومة الضرائب ولا تُعدَّل. استخدم إشعار دائن (مرتجع) أو إشعار مدين (فاتورة إضافية)')
+        }
+        const sale = state.sales.find((s) => s.id === args.saleId)
+        if (!sale) throw new Error('الفاتورة غير موجودة')
+        if (!args.lines.length) throw new Error('الفاتورة المعدلة بلا أصناف')
+        // موانع السلامة المحاسبية: مستندات لاحقة بُنيت على الفاتورة
+        const blocks = saleEditBlocks({
+          hasReturns: state.saleReturns.some((r) => r.saleId === sale.id),
+          hasSoldSerials: state.serials.some((u) => u.saleId === sale.id && u.status === 'sold'),
+          hasInstallmentPlan: state.installmentPlans.some((p) => p.saleId === sale.id),
+          hasSettlementAllocation: state.clientSettlements.some((st) => st.allocations.some((a) => a.docKey === `sale:${sale.id}`)),
+          shiftClosed: sale.shiftId != null && state.shifts.some((sh) => sh.id === sale.shiftId && sh.status === 'closed'),
+        })
+        if (blocks.length) throw new Error(`لا يمكن تعديل هذه الفاتورة: ${blocks.join('؛ ')}`)
+        // أصناف الوصفات والمتغيرات تعديلها له تشعبات (خامات مطبوخة/تركيبات) — الأسلم مرتجع + فاتورة جديدة
+        const usesRecipes = sale.lines.some((l) => state.recipes.some((r) => r.productItemId === l.itemId && r.mode === 'made_to_order'))
+        const usesVariants = sale.lines.some((l) => l.variantColor || l.variantSize) || args.lines.some((l) => l.variantColor || l.variantSize)
+        if (usesRecipes) throw new Error('فاتورة أطباق بوصفات — الخامات صُرفت فعلاً؛ صحّح بمرتجع وفاتورة جديدة')
+        if (usesVariants) throw new Error('فاتورة بتركيبات لون/مقاس — صحّح بمرتجع وفاتورة جديدة للحفاظ على أرصدة التركيبات')
+
+        // ① إعادة مخزون السطور القديمة (بتكلفتها التاريخية — نفس منطق المرتجع)
+        const stockAfterRestore = new Map<number, { qty: number; costMinor: number }>()
+        for (const it of state.items) stockAfterRestore.set(it.id, { qty: it.stockQty ?? 0, costMinor: it.costMinor })
+        for (const l of sale.lines) {
+          const cur = stockAfterRestore.get(l.itemId)
+          if (!cur) continue
+          const newQty = Math.round((cur.qty + l.qty) * 1000) / 1000
+          const newValue = Math.round(cur.qty * cur.costMinor) + Math.round(l.qty * l.unitCostMinor)
+          stockAfterRestore.set(l.itemId, { qty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : cur.costMinor })
+        }
+        // ② فحص كفاية المخزون للسطور الجديدة (بعد الإعادة)
+        if (!args.allowNegativeStock) {
+          const need = new Map<number, number>()
+          for (const l of args.lines) need.set(l.itemId, (need.get(l.itemId) ?? 0) + l.qty)
+          const shortages: string[] = []
+          for (const [itemId, qty] of need) {
+            const cur = stockAfterRestore.get(itemId)
+            const item = state.items.find((it) => it.id === itemId)
+            if (!cur || !item) { shortages.push(`صنف #${itemId} غير موجود`); continue }
+            if (cur.qty < qty) shortages.push(`«${item.nameAr}»: متاح ${cur.qty} ومطلوب ${qty}`)
+          }
+          if (shortages.length) throw new Error(`مخزون غير كافٍ للتعديل — ${shortages.join('، ')}`)
+        }
+        // ③ تثبيت تكلفة السطور الجديدة على المتوسط بعد الإعادة (لا متوسط لحظة الإدخال)
+        const costedLines = args.lines.map((l) => {
+          const cur = stockAfterRestore.get(l.itemId)
+          return cur && Number.isInteger(cur.costMinor) ? { ...l, unitCostMinor: cur.costMinor } : l
+        })
+        // ④ الإجماليات والقيد الجديد بنفس المعاملة الضريبية الأصلية
+        const { taxPercent, taxInclusive } = deriveTaxConfig(sale.totals)
+        const totals = computeTotals(costedLines, args.invoiceDiscountPercent, taxPercent, taxInclusive)
+        const paidM = args.paidMinor
+        if (!Number.isInteger(paidM) || paidM < 0) throw new Error('المدفوع لا يكون سالباً')
+        if (paidM > totals.totalMinor) throw new Error('المدفوع أكبر من إجمالي الفاتورة المعدلة')
+        if (paidM < totals.totalMinor && args.customerId == null) {
+          throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
+        }
+        const newEntryLines = buildSaleEntry(totals, args.payment, args.treasury, paidM)
+        const now = new Date().toISOString()
+
+        // ⑤ قيد عكس القيد القديم + القيد الجديد (سجل تدقيق كامل — لا حذف أبداً)
+        const oldEntry = state.journal.find((e) => e.id === sale.journalEntryId)
+        if (!oldEntry) throw new Error('قيد الفاتورة الأصلي غير موجود — الدفتر تالف')
+        if (oldEntry.reversedByEntryId) throw new Error('قيد الفاتورة معكوس بالفعل')
+        const reversalId = nextId(state.journal)
+        const reversal: JournalEntry = {
+          id: reversalId, entryNumber: reversalId, date: now.slice(0, 10),
+          description: `عكس قيد ${sale.invoiceNumber} — تعديل الفاتورة${args.reason ? `: ${args.reason}` : ''}`,
+          sourceType: 'reversal', sourceId: oldEntry.id,
+          lines: buildReversalLines(oldEntry.lines),
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: oldEntry.id,
+        }
+        const newEntryId = reversalId + 1
+        const newEntry: JournalEntry = {
+          id: newEntryId, entryNumber: newEntryId, date: now.slice(0, 10),
+          description: `فاتورة بيع ${sale.invoiceNumber} (معدلة)`,
+          sourceType: 'sale', sourceId: sale.id,
+          lines: newEntryLines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+
+        // ⑥ المخزون النهائي = بعد الإعادة − السطور الجديدة (متوسط التكلفة لا يتغير بالبيع)
+        const finalStock = new Map(stockAfterRestore)
+        for (const l of costedLines) {
+          const cur = finalStock.get(l.itemId)
+          if (!cur) continue
+          finalStock.set(l.itemId, { ...cur, qty: Math.round((cur.qty - l.qty) * 1000) / 1000 })
+        }
+        const updatedItems = state.items.map((it) => {
+          const f = finalStock.get(it.id)
+          if (!f) return it
+          if (f.qty === (it.stockQty ?? 0) && f.costMinor === it.costMinor) return it
+          return { ...it, stockQty: f.qty, costMinor: f.costMinor }
+        })
+
+        const updatedSale: SaleInvoice = {
+          ...sale,
+          customerId: args.customerId,
+          payment: args.payment,
+          paidMinor: paidM,
+          treasury: args.treasury,
+          lines: costedLines,
+          invoiceDiscountPercent: args.invoiceDiscountPercent,
+          totals,
+          journalEntryId: newEntryId,
+          editHistory: [
+            ...(sale.editHistory ?? []),
+            { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId },
+          ],
+        }
+        set({
+          sales: state.sales.map((s) => (s.id === sale.id ? updatedSale : s)),
+          journal: [
+            ...state.journal.map((e) => (e.id === oldEntry.id ? { ...e, reversedByEntryId: reversalId } : e)),
+            reversal,
+            newEntry,
+          ],
+          items: updatedItems,
+        })
+        return updatedSale
+      },
+
+      editPurchase: (args) => {
+        const state = get()
+        // ⛔ نفس سياسة المالك: منظومة إلكترونية مفعلة ⇒ لا تعديل
+        if (args.einvoiceActive) {
+          throw new Error('الفاتورة الضريبية الإلكترونية مفعلة — لا تُعدَّل الفواتير المسجلة. استخدم مرتجع شراء (إشعار مدين على المورد) أو فاتورة إضافية')
+        }
+        const inv = state.purchases.find((p) => p.id === args.purchaseId)
+        if (!inv) throw new Error('فاتورة الشراء غير موجودة')
+        if (!args.lines.length) throw new Error('الفاتورة المعدلة بلا أصناف')
+        if (inv.journalEntryId == null) throw new Error('فاتورة قديمة بلا قيد — لا تُعدَّل')
+        for (const l of args.lines) {
+          if (!Number.isFinite(l.qty) || l.qty <= 0) throw new Error('كل كمية يجب أن تكون رقماً موجباً')
+          if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
+        }
+        // موانع السلامة: مستندات لاحقة بُنيت على الفاتورة
+        if (state.purchaseReturns.some((r) => r.purchaseId === inv.id)) {
+          throw new Error('عليها مرتجعات شراء — صحّح بمرتجع إضافي أو فاتورة جديدة')
+        }
+        if (state.serials.some((u) => u.purchaseId === inv.id)) {
+          throw new Error('سُجلت سيريالات من هذه الفاتورة — صحّح بمرتجع شراء ثم فاتورة جديدة')
+        }
+        if (state.batches.some((b) => b.purchaseId === inv.id && b.qty !== inv.lines.find((l) => l.itemId === b.itemId)?.qty)) {
+          throw new Error('صُرف من دفعات صلاحية هذه الفاتورة — صحّح بمرتجع لا بتعديل')
+        }
+        if (inv.custodyFileId != null) throw new Error('فاتورة مدفوعة من عهدة — عدّلها بمرتجع وفاتورة جديدة حفاظاً على ملف العهدة')
+        if (inv.projectId != null) throw new Error('فاتورة مشروع — تكاليف المشاريع تُصحح بمستند تكلفة عاكس لا بتعديل')
+        if (inv.expenses.some((e) => (e.paidBy ?? 'supplier') !== 'supplier')) {
+          throw new Error('فيها مصاريف مدفوعة من خزائن/عهد — عدّلها بمرتجع وفاتورة جديدة')
+        }
+
+        // ① التراجع عن أثر المخزون القديم (كمية وقيمة بالتكلفة المحملة القديمة)
+        const stockAfterUndo = new Map<number, { qty: number; costMinor: number }>()
+        for (const it of state.items) stockAfterUndo.set(it.id, { qty: it.stockQty ?? 0, costMinor: it.costMinor })
+        const soldFrom: string[] = []
+        for (const l of inv.lines) {
+          const cur = stockAfterUndo.get(l.itemId)
+          const item = state.items.find((it) => it.id === l.itemId)
+          if (!cur || !item) continue
+          if (cur.qty < l.qty) { soldFrom.push(item.nameAr); continue }
+          const newQty = Math.round((cur.qty - l.qty) * 1000) / 1000
+          const newValue = Math.round(cur.qty * cur.costMinor) - (Math.round(l.qty * l.unitPriceMinor) + (l.expenseShareMinor ?? 0))
+          stockAfterUndo.set(l.itemId, { qty: newQty, costMinor: newQty > 0 ? Math.max(0, Math.round(newValue / newQty)) : cur.costMinor })
+        }
+        if (soldFrom.length) {
+          throw new Error(`بيع من بضاعة هذه الفاتورة (${soldFrom.join('، ')}) — التعديل يفسد التكلفة؛ استخدم مرتجع شراء جزئياً`)
+        }
+
+        // ② الفاتورة الجديدة: تكاليف محملة + قيد V2 (مصاريف على المورد فقط هنا)
+        const costLines: CostLine[] = args.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor }))
+        const landed = computeLandedCosts(costLines, args.expenses as ExpenseInput[])
+        const goodsTotal = landed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
+        const expensesTotal = args.expenses.reduce((a, e) => a + e.amountMinor, 0)
+        const grandTotal = goodsTotal + expensesTotal
+        if (!Number.isInteger(args.paidMinor) || args.paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
+        const newEntryLines = buildPurchaseEntryV2({
+          inventoryAccount: '1103',
+          inventoryNote: 'بضاعة واردة بتكلفتها الكاملة (فاتورة معدلة)',
+          grandTotalMinor: grandTotal,
+          paidMinor: args.paidMinor,
+          payAccount: args.treasury,
+          expensePayments: [],
+        })
+        const now = new Date().toISOString()
+
+        // ③ عكس القيد القديم + قيد جديد
+        const oldEntry = state.journal.find((e) => e.id === inv.journalEntryId)
+        if (!oldEntry) throw new Error('قيد الفاتورة الأصلي غير موجود')
+        if (oldEntry.reversedByEntryId) throw new Error('قيد الفاتورة معكوس بالفعل')
+        const reversalId = nextId(state.journal)
+        const reversal: JournalEntry = {
+          id: reversalId, entryNumber: reversalId, date: now.slice(0, 10),
+          description: `عكس قيد ${inv.invoiceNumber} — تعديل الفاتورة${args.reason ? `: ${args.reason}` : ''}`,
+          sourceType: 'reversal', sourceId: oldEntry.id,
+          lines: buildReversalLines(oldEntry.lines),
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: oldEntry.id,
+        }
+        const newEntryId = reversalId + 1
+        const newEntry: JournalEntry = {
+          id: newEntryId, entryNumber: newEntryId, date: now.slice(0, 10),
+          description: `فاتورة شراء ${inv.invoiceNumber} (معدلة)`,
+          sourceType: 'purchase', sourceId: inv.id,
+          lines: newEntryLines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+
+        // ④ المخزون النهائي: إضافة السطور الجديدة بمتوسط مرجح على أساس ما بعد التراجع
+        const finalStock = new Map(stockAfterUndo)
+        for (const l of landed) {
+          const cur = finalStock.get(l.itemId)
+          if (!cur) continue
+          const newCost = weightedAverage(cur.qty, cur.costMinor, l.qty, l.landedTotalMinor)
+          finalStock.set(l.itemId, { qty: Math.round((cur.qty + l.qty) * 1000) / 1000, costMinor: newCost })
+        }
+        const updatedItems = state.items.map((it) => {
+          const f = finalStock.get(it.id)
+          if (!f) return it
+          if (f.qty === (it.stockQty ?? 0) && f.costMinor === it.costMinor) return it
+          return { ...it, stockQty: f.qty, costMinor: f.costMinor }
+        })
+        // دفعات الصلاحية المفتوحة بهذه الفاتورة تُستبدل بكميات السطور الجديدة
+        let nextBatchId = nextId(state.batches)
+        const keptBatches = state.batches.filter((b) => b.purchaseId !== inv.id)
+        const newBatches: StockBatch[] = []
+        for (const l of args.lines) {
+          const item = state.items.find((it) => it.id === l.itemId)
+          const oldBatch = state.batches.find((b) => b.purchaseId === inv.id && b.itemId === l.itemId)
+          if (!item?.trackExpiry) continue
+          newBatches.push({ id: nextBatchId++, itemId: l.itemId, expiryDate: oldBatch?.expiryDate ?? null, qty: l.qty, purchaseId: inv.id, receivedAt: now })
+        }
+
+        const updatedInv: PurchaseInvoice = {
+          ...inv,
+          lines: landed.map((l) => ({
+            itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
+            expenseShareMinor: l.expenseShareMinor, landedUnitCostMinor: l.landedUnitCostMinor,
+          })),
+          expenses: args.expenses,
+          goodsTotalMinor: goodsTotal,
+          expensesTotalMinor: expensesTotal,
+          grandTotalMinor: grandTotal,
+          supplierDueMinor: grandTotal,
+          paidMinor: args.paidMinor,
+          treasury: args.treasury,
+          journalEntryId: newEntryId,
+          editHistory: [
+            ...(inv.editHistory ?? []),
+            { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId },
+          ],
+        }
+        set({
+          purchases: state.purchases.map((p) => (p.id === inv.id ? updatedInv : p)),
+          journal: [
+            ...state.journal.map((e) => (e.id === oldEntry.id ? { ...e, reversedByEntryId: reversalId } : e)),
+            reversal,
+            newEntry,
+          ],
+          items: updatedItems,
+          batches: [...keptBatches, ...newBatches],
+        })
+        return updatedInv
       },
 
       addWarehouse: (nameAr) =>

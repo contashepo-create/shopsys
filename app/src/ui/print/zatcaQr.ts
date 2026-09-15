@@ -4,6 +4,7 @@
  */
 import QRCode from 'qrcode'
 import { buildZatcaQr, isValidSaVatNumber, type ZatcaFields } from '../../core/einvoice.ts'
+import { zatcaQrPolicy } from '../../core/invoiceEdit.ts'
 
 /** يعيد Data URL للرمز أو null لو البيانات غير مكتملة (لا يرمي — الطباعة تكمل بلا رمز) */
 export async function zatcaQrDataUrl(fields: ZatcaFields): Promise<string | null> {
@@ -17,8 +18,11 @@ export async function zatcaQrDataUrl(fields: ZatcaFields): Promise<string | null
 }
 
 /**
- * رمز الفاتورة إن كانت الميزة مستحقة — يجمع شروط القرار 30 في مكان واحد:
- * ميزة einvoice_sa مفعلة بالمفتاح + خيار الطباعة مفعل + رقم ضريبي سعودي صالح.
+ * رمز الفاتورة إن كانت الميزة مستحقة — يجمع شروط القرار 30 + سياسة المالك في مكان واحد:
+ * ① ميزة einvoice_sa مفعلة بمفتاح الترخيص من بوت المطور
+ * ② متصل بالإنترنت الآن (المرحلة الثانية من زاتكا تتطلب ربط الفاتورة بالمنظومة —
+ *    بلا اتصال تُطبع الفاتورة بلا باركود ضريبي، والمبلغ الضريبي يظهر طبيعياً دائماً)
+ * ③ خيار الطباعة مفعل + رقم ضريبي سعودي صالح.
  */
 export async function maybeZatcaQr(args: {
   featureActive: boolean
@@ -29,8 +33,12 @@ export async function maybeZatcaQr(args: {
   totalMinor: number
   taxMinor: number
   decimals: number
+  /** حالة الاتصال — الافتراضي قراءة المتصفح؛ قابلة للتمرير للفحص */
+  online?: boolean
 }): Promise<string | undefined> {
-  if (!args.featureActive || !args.printEnabled) return undefined
+  const online = args.online ?? (typeof navigator !== 'undefined' ? navigator.onLine : true)
+  const policy = zatcaQrPolicy({ featureActive: args.featureActive, online, printEnabled: args.printEnabled })
+  if (!policy.printQr) return undefined
   const url = await zatcaQrDataUrl({
     sellerName: args.sellerName,
     vatNumber: args.vatNumber,

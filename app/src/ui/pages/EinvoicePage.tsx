@@ -46,6 +46,11 @@ export function EinvoicePage() {
             رمز QR زاتكا (السعودية) وتصدير مستندات بوابة الضرائب (مصر) يفعّلهما المطوّر
             بمفتاح الترخيص حسب بلدك. تواصل معه من صفحة «حول التطبيق» لتفعيل الميزة.
           </p>
+          {/* سياسة المالك: عدم التفعيل لا يوقف الضريبة إطلاقاً — فقط الرمز الضريبي */}
+          <div className="text-right max-w-md mx-auto text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed rounded-xl bg-slate-500/5 border border-slate-200 dark:border-slate-700 p-4 space-y-1.5">
+            <div>✅ حساب الضريبة وقيودها يعملان طبيعياً حسب بلدك — التعطيل يمنع <b>الرمز الضريبي فقط</b>.</div>
+            <div>✅ تعديل الفواتير <b>متاح</b> الآن: يُعكس القيد القديم ويتولد قيد جديد صحيح مع سجل تدقيق.</div>
+          </div>
         </div>
       </div>
     )
@@ -133,7 +138,19 @@ export function EinvoicePage() {
             <CheckCircle2 size={12} /> البوابة المصرية مفعلة
           </span>
         )}
+        <span className="text-[11px] px-2.5 py-1 rounded-full font-bold bg-rose-500/10 text-rose-500">
+          🔒 تعديل الفواتير موقوف — التصحيح بإشعار دائن/مدين فقط
+        </span>
       </div>
+
+      {/* سياسة المرحلة الثانية (زاتكا): الربط يتطلب إنترنت — بلا اتصال لا يُطبع الرمز الضريبي */}
+      {saActive && (
+        <div className="anim-up rounded-2xl border border-sky-500/20 bg-sky-500/[0.04] p-4 text-[12.5px] text-slate-600 dark:text-slate-300 leading-relaxed space-y-1">
+          <div className="font-bold text-sky-700 dark:text-sky-400">📡 المرحلة الثانية — الربط والتكامل:</div>
+          <div>• الفاتورة الضريبية تتطلب اتصالاً بالإنترنت وقت الطباعة. بلا اتصال: تُطبع فاتورة عادية <b>بدون رمز QR الضريبي</b> — ومبلغ الضريبة يُحسب ويُرحّل في القيود طبيعياً.</div>
+          <div>• لأن الفواتير مرتبطة بالمنظومة، لا تُعدَّل بعد الإصدار: التخفيض بإشعار دائن (مرتجع مبيعات) والزيادة بإشعار مدين (فاتورة إضافية).</div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* إعدادات الممول */}
