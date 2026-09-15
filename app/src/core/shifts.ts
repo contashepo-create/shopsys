@@ -15,6 +15,10 @@ export interface Shift {
   closedAt: string | null
   countedCashMinor: Minor | null // النقدية المعدودة عند الإقفال
   status: 'open' | 'closed'
+  /** تسوية العجز/الزيادة (طلب المالك): مصروف، أو سلفة على الموظف تُخصم من رواتبه */
+  varianceSettledMode?: 'expense' | 'advance' | null
+  varianceEntryId?: number | null // قيد التسوية
+  varianceAdvanceId?: number | null // السلفة المنشأة (لو عجز على الموظف)
 }
 
 /** مستند يُحتسب داخل الوردية (فاتورة أو مرتجع) */
@@ -22,32 +26,49 @@ export interface ShiftDoc {
   shiftId: number | null
   payment: 'cash' | 'credit'
   totalMinor: Minor
+  /** المحصل فعلاً وقت البيع (الدفع المجزأ) — undefined = حسب payment */
+  paidMinor?: Minor
+  /** وجهة التحصيل: درج نقدي أم بنك؟ (التحصيل البنكي لا يدخل عدّ الدرج) */
+  treasuryKind?: 'cash' | 'bank'
 }
 
 export interface ShiftSummary {
   invoiceCount: number
   returnCount: number
-  cashSalesMinor: Minor
-  creditSalesMinor: Minor
+  cashSalesMinor: Minor // المحصل نقداً في الدرج
+  bankSalesMinor: Minor // المحصل على بنوك/محافظ (لا يدخل عدّ الدرج)
+  creditSalesMinor: Minor // الجزء الآجل فقط (الدفع المجزأ يقسم الفاتورة)
   cashRefundsMinor: Minor
-  /** المتوقع في الدرج = الافتتاحي + مبيعات كاش − مرتجعات كاش */
+  /** المتوقع في الدرج = الافتتاحي + محصل نقدي − مرتجعات نقدية */
   expectedCashMinor: Minor
   /** المعدود − المتوقع (null قبل العد): سالب = عجز، موجب = زيادة */
   varianceMinor: Minor | null
+}
+
+/** المحصل فعلاً من مستند (الدفع المجزأ) — التوافق الخلفي: cash=كامل، credit=صفر */
+function paidOf(d: ShiftDoc): Minor {
+  return d.paidMinor ?? (d.payment === 'cash' ? d.totalMinor : 0)
 }
 
 /** تلخيص وردية من مستنداتها — منطق خالص قابل للفحص */
 export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDoc[]): ShiftSummary {
   const mySales = sales.filter((s) => s.shiftId === shift.id)
   const myReturns = returns.filter((r) => r.shiftId === shift.id)
-  const cashSales = mySales.filter((s) => s.payment === 'cash').reduce((a, s) => a + s.totalMinor, 0)
-  const creditSales = mySales.filter((s) => s.payment === 'credit').reduce((a, s) => a + s.totalMinor, 0)
-  const cashRefunds = myReturns.filter((r) => r.payment === 'cash').reduce((a, r) => a + r.totalMinor, 0)
+  let cashSales = 0, bankSales = 0, creditSales = 0
+  for (const s of mySales) {
+    const paid = paidOf(s)
+    // المحصل يذهب للدرج أو للبنك حسب الخزينة المختارة وقت البيع
+    if (s.treasuryKind === 'bank') bankSales += paid
+    else cashSales += paid
+    creditSales += s.totalMinor - paid // الجزء الآجل فقط — لا الفاتورة كلها
+  }
+  const cashRefunds = myReturns.filter((r) => r.payment === 'cash' && r.treasuryKind !== 'bank').reduce((a, r) => a + r.totalMinor, 0)
   const expected = shift.openingCashMinor + cashSales - cashRefunds
   return {
     invoiceCount: mySales.length,
     returnCount: myReturns.length,
     cashSalesMinor: cashSales,
+    bankSalesMinor: bankSales,
     creditSalesMinor: creditSales,
     cashRefundsMinor: cashRefunds,
     expectedCashMinor: expected,
@@ -65,4 +86,50 @@ export function validateOpenShift(openingCashMinor: Minor, shifts: Shift[]): str
 
 export function currentOpenShift(shifts: Shift[]): Shift | null {
   return shifts.find((s) => s.status === 'open') ?? null
+}
+
+/* ─── تسوية عجز/زيادة الوردية (طلب المالك) ─── */
+
+export interface VarianceEntryLine {
+  accountCode: string
+  debit: Minor
+  credit: Minor
+  note: string
+}
+
+/**
+ * قيد تسوية فرق الوردية «كمصروف/إيراد» — دالة خالصة:
+ * عجز (variance سالب): مدين 5108 مصروفات عمومية / دائن الخزينة (النقص خرج من الدرج فعلاً)
+ * زيادة (variance موجب): مدين الخزينة / دائن 4110 إيرادات أخرى (فائض عدّ)
+ */
+export function buildVarianceExpenseEntry(varianceMinor: Minor, treasury: string, label: string): VarianceEntryLine[] {
+  if (!Number.isInteger(varianceMinor) || varianceMinor === 0) throw new RangeError('لا فرق للتسوية')
+  const amount = Math.abs(varianceMinor)
+  const lines: VarianceEntryLine[] =
+    varianceMinor < 0
+      ? [
+          { accountCode: '5108', debit: amount, credit: 0, note: `عجز وردية ${label}` },
+          { accountCode: treasury, debit: 0, credit: amount, note: 'تسوية درج الوردية' },
+        ]
+      : [
+          { accountCode: treasury, debit: amount, credit: 0, note: 'فائض عدّ الوردية' },
+          { accountCode: '4110', debit: 0, credit: amount, note: `زيادة وردية ${label}` },
+        ]
+  const dr = lines.reduce((a, l) => a + l.debit, 0)
+  const cr = lines.reduce((a, l) => a + l.credit, 0)
+  if (dr !== cr) throw new RangeError('قيد التسوية غير متوازن')
+  return lines
+}
+
+/**
+ * قيد تحميل العجز «سلفة على الموظف» (تُخصم من رواتبه لاحقاً):
+ * مدين 1107 سلف موظفين / دائن الخزينة — العجز خرج من الدرج ويتحمله الموظف
+ */
+export function buildVarianceAdvanceEntry(varianceMinor: Minor, treasury: string, employeeName: string): VarianceEntryLine[] {
+  if (!Number.isInteger(varianceMinor) || varianceMinor >= 0) throw new RangeError('السلفة تكون عن عجز فقط (فرق سالب)')
+  const amount = Math.abs(varianceMinor)
+  return [
+    { accountCode: '1107', debit: amount, credit: 0, note: `عجز وردية على ${employeeName}` },
+    { accountCode: treasury, debit: 0, credit: amount, note: 'تسوية درج الوردية' },
+  ]
 }

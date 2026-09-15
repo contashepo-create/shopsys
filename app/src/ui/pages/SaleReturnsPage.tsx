@@ -4,18 +4,21 @@
  * ← يتولد القيد العاكس تلقائياً وتعود البضاعة للمخزون.
  */
 import { useMemo, useState } from 'react'
-import { RotateCcw, Search, BookOpenText, Eye } from 'lucide-react'
+import { RotateCcw, Search, BookOpenText, Eye, Printer } from 'lucide-react'
 import { useDataStore, type SaleInvoice, type SaleReturn } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { remainingReturnable } from '../../core/returns.ts'
+import { buildReceiptModel } from '../../core/receipt.ts'
+import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
+import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function SaleReturnsPage() {
   const { sales, saleReturns, customers, journal, treasuries, postSaleReturn } = useDataStore()
-  const { setup } = useAppStore()
+  const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -68,6 +71,31 @@ export function SaleReturnsPage() {
 
   const anyQty = Object.values(qtys).some((v) => Number(v) > 0)
 
+  /** طباعة إشعار المرتجع للعميل (بلاغ المالك: كانت الطباعة غير ممكنة أصلاً) */
+  const printReturn = (r: SaleReturn) => {
+    const orig = sales.find((s) => s.id === r.saleId)
+    const model = buildReceiptModel({
+      invoiceNumber: r.returnNumber,
+      refCode: r.refCode,
+      dateIso: r.date,
+      lines: r.lines,
+      totals: r.totals,
+      payment: r.refund, // نقدي = رُدّ فوراً؛ آجل = خُصم من حساب العميل
+      paidMinor: r.refund === 'cash' ? r.totals.totalMinor : 0,
+      customerName: orig?.customerId ? customers.find((c) => c.id === orig.customerId)?.nameAr ?? null : null,
+      taxPercent: setup.vatPercent,
+      taxInclusive: setup.taxInclusive,
+      settings: receipt,
+    })
+    model.docTitle = 'مرتجع مبيعات'
+    // المرتجع مبالغه مردودة — «المتبقي» لا معنى له هنا
+    model.paidMinor = r.totals.totalMinor
+    model.remainingMinor = 0
+    model.paymentLabel = r.refund === 'cash' ? 'رد نقدي' : 'خصم من حساب العميل'
+    printHtml(receipt.defaultTemplate === 'a4' ? renderInvoiceA4Html(model, cur, receipt) : renderReceiptHtml(model, cur, receipt))
+    toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between anim-up">
@@ -118,9 +146,15 @@ export function SaleReturnsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-left">
-                      <button onClick={() => setViewing(r)} className="p-2 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110">
-                        <Eye size={15} />
-                      </button>
+                      <span className="flex items-center gap-1 justify-end">
+                        {/* طباعة إشعار مرتجع للعميل (طلب المالك) */}
+                        <button title="طباعة إشعار المرتجع للعميل" onClick={() => printReturn(r)} className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
+                          <Printer size={15} />
+                        </button>
+                        <button title="تفاصيل المرتجع وقيده" onClick={() => setViewing(r)} className="p-2 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110">
+                          <Eye size={15} />
+                        </button>
+                      </span>
                     </td>
                   </tr>
                 )

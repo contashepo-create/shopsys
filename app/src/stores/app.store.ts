@@ -28,6 +28,12 @@ interface SetupState {
   taxInclusive: boolean
   vatPercent: number
   accountingMode: 'simple' | 'full'
+  /** السماح بالرصيد السالب في الخزائن والبنوك (طلب المالك — الافتراضي: ممنوع) */
+  allowNegativeTreasury: boolean
+  /** السماح بالبيع/الصرف برصيد مخزون سالب (الافتراضي: ممنوع) */
+  allowNegativeStock: boolean
+  /** المخزن الافتراضي للفواتير (إعدادات الفواتير) — null = المخزن الرئيسي */
+  defaultWarehouseId: number | null
 }
 
 interface AppState {
@@ -146,6 +152,9 @@ export const useAppStore = create<AppState>()(
         taxInclusive: true,
         vatPercent: 14,
         accountingMode: 'simple',
+        allowNegativeTreasury: false,
+        allowNegativeStock: false,
+        defaultWarehouseId: null,
       },
       fiscalYears: [],
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear }) =>
@@ -165,6 +174,9 @@ export const useAppStore = create<AppState>()(
             taxInclusive: activity.taxInclusiveDefault,
             vatPercent: country.vatPercent,
             accountingMode: 'simple',
+            allowNegativeTreasury: false,
+            allowNegativeStock: false,
+            defaultWarehouseId: null,
           },
         })),
       addFiscalYear: (fy) =>
@@ -243,6 +255,12 @@ export const useAppStore = create<AppState>()(
           if (!knowsSplit && !stockless) {
             state.setup = { ...state.setup, modules: [...state.setup.modules, 'inventory', 'purchases'] }
           }
+        }
+        // ترحيل: مفاتيح الرصيد السالب والمخزن الافتراضي (طلب المالك) — الافتراضي: ممنوع
+        if (state?.setup) {
+          state.setup.allowNegativeTreasury = state.setup.allowNegativeTreasury ?? false
+          state.setup.allowNegativeStock = state.setup.allowNegativeStock ?? false
+          state.setup.defaultWarehouseId = state.setup.defaultWarehouseId ?? null
         }
         // ترحيل: إعدادات إيصال لحسابات قديمة (قبل ميزة الطباعة / قبل قالب A4 / قبل مفاتيح الإظهار)
         if (state && !state.receipt) {

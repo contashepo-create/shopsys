@@ -33,9 +33,23 @@ export interface ReceiptSettings {
   footerText: string // «شكراً لزيارتكم…»
   /** شعار المحل (Data URL بعد الرفع من الإعدادات) — '' يعني بدون شعار */
   logoDataUrl: string
-  /** علامة مائية اختيارية على فاتورة A4 */
+  /** موضع الشعار في رأس فاتورة A4 (طلب المالك): بجانب الاسم / فوق الاسم في المنتصف / منتصف الرأس */
+  logoPosition: 'side' | 'above' | 'center'
+  /** حجم الشعار بالمليمتر (ارتفاع أقصى) 10–60 */
+  logoSizeMm: number
+  /** شفافية الشعار 10–100٪ */
+  logoOpacity: number
+  /** علامة مائية اختيارية على فاتورة A4 — بتحكم كامل (طلب المالك) */
   watermarkEnabled: boolean
   watermarkText: string
+  /** زاوية الميل بالدرجات: -90 إلى 90 (سالب = مائل يميناً) */
+  watermarkRotation: number
+  /** حجم الخط بالنقاط 24–140 */
+  watermarkSizePt: number
+  /** الشفافية 3–30٪ — فوق ذلك تطغى على المحتوى */
+  watermarkOpacity: number
+  /** لون العلامة المائية */
+  watermarkColor: string
   // ─── تحكم كامل في إظهار/إخفاء عناصر الفاتورة ───
   showLogo: boolean
   showHeaderLines: boolean
@@ -61,8 +75,15 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   headerLines: [],
   footerText: 'شكراً لزيارتكم 🌹',
   logoDataUrl: '',
+  logoPosition: 'side',
+  logoSizeMm: 22,
+  logoOpacity: 100,
   watermarkEnabled: false,
   watermarkText: '',
+  watermarkRotation: -30,
+  watermarkSizePt: 72,
+  watermarkOpacity: 8,
+  watermarkColor: '#64748b',
   showLogo: true,
   showHeaderLines: true,
   showDate: true,
@@ -89,6 +110,8 @@ export interface ReceiptRow {
 export interface ReceiptModel {
   shopName: string
   headerLines: string[]
+  /** عنوان المستند المطبوع — الافتراضي «فاتورة مبيعات»؛ للمرتجع: «مرتجع مبيعات» */
+  docTitle?: string
   invoiceNumber: string
   /** الرقم المرجعي للتتبع — يُطبع تحت رقم الفاتورة ويبحث به العميل لاحقاً */
   refCode: string
@@ -104,6 +127,9 @@ export interface ReceiptModel {
   taxLabel: string | null // «ض.ق.م 14٪ (مشمولة)» أو null
   taxMinor: Minor
   totalMinor: Minor // المستحق النهائي
+  /** المحصل وقت البيع (الدفع المجزأ) — يُطبع «المدفوع/المتبقي» عندما لا يساوي الإجمالي */
+  paidMinor: Minor
+  remainingMinor: Minor
   footerText: string
   /** رمز QR زاتكا (Data URL) — يُطبع أسفل الفاتورة عند تفعيل الميزة (القرار 30) */
   qrDataUrl?: string
@@ -117,6 +143,8 @@ export function buildReceiptModel(args: {
   lines: CartLine[]
   totals: CartTotals
   payment: PaymentMethod
+  /** المحصل وقت البيع (الدفع المجزأ) — undefined = حسب payment */
+  paidMinor?: Minor
   customerName: string | null
   taxPercent: number
   taxInclusive: boolean
@@ -136,6 +164,9 @@ export function buildReceiptModel(args: {
     }
   })
   const totalQty = Math.round(lines.reduce((a, l) => a + l.qty, 0) * 1000) / 1000
+  // الدفع المجزأ (بلاغ المالك): المدفوع والمتبقي يُطبعان — لا قيمة الفاتورة وحدها
+  const paid = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
+  const remaining = totals.totalMinor - paid
   const taxLabel =
     settings.showTaxSummary && args.taxPercent > 0 && totals.taxMinor > 0
       ? `ض.ق.م ${args.taxPercent}٪ ${args.taxInclusive ? '(مشمولة في الإجمالي)' : '(مضافة)'}`
@@ -147,7 +178,7 @@ export function buildReceiptModel(args: {
     refCode: args.refCode ?? '',
     dateLabel: args.dateIso.slice(0, 16).replace('T', ' '),
     customerName: args.customerName ?? 'عميل نقدي',
-    paymentLabel: args.payment === 'cash' ? 'نقدي' : 'آجل',
+    paymentLabel: remaining <= 0 ? 'نقدي' : paid > 0 ? 'مجزأ — جزء محصل والباقي آجل' : 'آجل',
     rows,
     itemCount: rows.length,
     totalQty,
@@ -157,6 +188,8 @@ export function buildReceiptModel(args: {
     taxLabel,
     taxMinor: totals.taxMinor,
     totalMinor: totals.totalMinor,
+    paidMinor: paid,
+    remainingMinor: remaining,
     footerText: settings.footerText,
   }
 }

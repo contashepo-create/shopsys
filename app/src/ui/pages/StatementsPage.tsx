@@ -3,13 +3,16 @@
  * كل صف بتاريخه ومستنده والرصيد التراكمي، مع رصيد نهائي واضح وطباعة.
  */
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { FileSpreadsheet, UserRound, Building2, UserCog, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { customerStatement, supplierStatement, employeeStatement, statementBalance, type StatementRow } from '../../core/statements.ts'
-import { inputCls, EmptyState, Btn } from '../components/ui.tsx'
+import { renderStatementHtml } from '../print/printStatement.ts'
+import { printHtml } from '../print/printReceipt.ts'
+import { inputCls, EmptyState, Btn, useToast } from '../components/ui.tsx'
 
 type Kind = 'customer' | 'supplier' | 'employee'
 
@@ -20,13 +23,18 @@ const KINDS: { id: Kind; nameAr: string; icon: typeof UserRound; debitLabel: str
 ]
 
 export function StatementsPage() {
-  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns } = useDataStore()
-  const { setup } = useAppStore()
+  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements } = useDataStore()
+  const { setup, receipt } = useAppStore()
+  const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
-  const [kind, setKind] = useState<Kind>('customer')
-  const [partyId, setPartyId] = useState(0)
+  // زر «كشف حساب» بجانب كل طرف (طلب المالك): يصل هنا بباراميترات ?kind=&id= فيفتح الكشف فوراً
+  const [params] = useSearchParams()
+  const urlKind = params.get('kind') as Kind | null
+  const urlId = Number(params.get('id') || 0)
+  const [kind, setKind] = useState<Kind>(urlKind && ['customer', 'supplier', 'employee'].includes(urlKind) ? urlKind : 'customer')
+  const [partyId, setPartyId] = useState(urlId > 0 ? urlId : 0)
 
   const parties = kind === 'customer' ? customers : kind === 'supplier' ? suppliers : employees
   const meta = KINDS.find((k) => k.id === kind)!
@@ -38,7 +46,12 @@ export function StatementsPage() {
         customerId: partyId,
         sales, saleReturns,
         allSales: sales,
-        vouchers, cheques,
+        // تسويات التحصيل FIFO تدخل الكشف كسندات قبض — كانت غائبة (إصلاح تقرير المديونيات)
+        vouchers: [
+          ...vouchers,
+          ...clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
+        ],
+        cheques,
       })
     }
     if (kind === 'supplier') {
@@ -50,31 +63,26 @@ export function StatementsPage() {
       })
     }
     return employeeStatement({ employeeId: partyId, advances: employeeAdvances, payrollRuns })
-  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns])
+  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements])
 
   const balance = statementBalance(rows)
   const partyName = parties.find((p) => p.id === partyId)?.nameAr ?? ''
 
+  // إصلاح بلاغ المالك: كانت الطباعة عبر window.open فتحجبها المتصفحات —
+  // الآن iframe مخفي (نفس آلية إيصال الكاشير) + قالب احترافي على نمط pro-acc
   const print = () => {
-    const w = window.open('', '_blank', 'width=800,height=600')
-    if (!w) return
-    // تهريب HTML — أسماء الأطراف والبيانات نصوص من المستخدم فلا يجوز حقنها خاماً (حماية XSS)
-    const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-    const rowsHtml = rows.map((r) => `<tr>
-      <td>${r.date.slice(0, 10)}</td><td>${esc(r.docLabel)}</td>
-      <td style="text-align:left">${r.debitMinor ? fmt(r.debitMinor) : ''}</td>
-      <td style="text-align:left">${r.creditMinor ? fmt(r.creditMinor) : ''}</td>
-      <td style="text-align:left;font-weight:bold">${fmt(r.balanceMinor)}</td></tr>`).join('')
-    w.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>${meta.nameAr} — ${esc(partyName)}</title>
-      <style>body{font-family:system-ui;padding:24px}h2{margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:16px;font-size:13px}
-      th,td{border:1px solid #ddd;padding:6px 10px;text-align:right}th{background:#f5f5f5}</style></head><body>
-      <h2>${esc(setup.shopName || 'تَحَكَّم')}</h2>
-      <div>${meta.nameAr}: <b>${esc(partyName)}</b> — حتى ${new Date().toISOString().slice(0, 10)}</div>
-      <table><thead><tr><th>التاريخ</th><th>المستند</th><th>${meta.debitLabel}</th><th>${meta.creditLabel}</th><th>الرصيد</th></tr></thead>
-      <tbody>${rowsHtml}</tbody></table>
-      <h3 style="margin-top:16px">الرصيد النهائي: ${fmt(Math.abs(balance))} ${cur.symbol} ${balance >= 0 ? `(${meta.positive})` : `(${meta.negative})`}</h3>
-      <script>window.print()</script></body></html>`)
-    w.document.close()
+    printHtml(renderStatementHtml({
+      shopName: setup.shopName || 'تَحَكَّم',
+      headerLines: receipt.headerLines,
+      title: meta.nameAr,
+      partyName,
+      rows,
+      debitLabel: meta.debitLabel,
+      creditLabel: meta.creditLabel,
+      balanceMeaning: [meta.positive, meta.negative],
+      cur,
+    }))
+    toast.show('أُرسل كشف الحساب للطباعة 🖨️')
   }
 
   return (

@@ -226,6 +226,36 @@ export function PrintSettingsPage() {
             </div>
           </Field>
 
+          {/* تحكم كامل بالشعار على فاتورة A4 (طلب المالك): الموضع + الحجم + الشفافية */}
+          {receipt.logoDataUrl && (
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-3">
+              <div className="text-[11.5px] font-bold text-slate-500">تحكم الشعار على فاتورة A4</div>
+              <Field label="موضع الشعار">
+                <div className="grid grid-cols-3 gap-2">
+                  {([['side', '⬅️ بجانب الاسم'], ['above', '⬆️ فوق الاسم'], ['center', '🎯 منتصف الرأس']] as const).map(([val, label]) => (
+                    <button
+                      key={val}
+                      onClick={() => updateReceipt({ logoPosition: val })}
+                      className={`px-2 py-2 rounded-xl text-[12px] font-bold border-2 transition-all ${
+                        (receipt.logoPosition || 'side') === val ? 'border-brand-500/60 bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={`الحجم: ${receipt.logoSizeMm || 22} مم`}>
+                  <input type="range" min={10} max={60} value={receipt.logoSizeMm || 22} onChange={(e) => updateReceipt({ logoSizeMm: Number(e.target.value) })} className="w-full accent-brand-600" />
+                </Field>
+                <Field label={`الشفافية: ${receipt.logoOpacity || 100}٪`}>
+                  <input type="range" min={10} max={100} value={receipt.logoOpacity || 100} onChange={(e) => updateReceipt({ logoOpacity: Number(e.target.value) })} className="w-full accent-brand-600" />
+                </Field>
+              </div>
+            </div>
+          )}
+
           <Field label="اسم المحل على الفاتورة">
             <input value={receipt.shopName} onChange={(e) => updateReceipt({ shopName: e.target.value })} className={inputCls} />
           </Field>
@@ -252,13 +282,31 @@ export function PrintSettingsPage() {
             <input type="checkbox" checked={receipt.watermarkEnabled} onChange={(e) => updateReceipt({ watermarkEnabled: e.target.checked })} className="w-4 h-4 accent-brand-600" />
           </label>
           {receipt.watermarkEnabled && (
-            <input
-              value={receipt.watermarkText}
-              onChange={(e) => updateReceipt({ watermarkText: e.target.value })}
-              className={inputCls}
-              placeholder="مثال: اسم المحل، أصل، مدفوعة…"
-              maxLength={40}
-            />
+            <div className="space-y-3">
+              <input
+                value={receipt.watermarkText}
+                onChange={(e) => updateReceipt({ watermarkText: e.target.value })}
+                className={inputCls}
+                placeholder="مثال: اسم المحل، أصل، مدفوعة…"
+                maxLength={40}
+              />
+              {/* تحكم كامل بالعلامة المائية (طلب المالك): الميل + الحجم + الشفافية + اللون
+                  — أُصلحت أيضاً مشكلة اختفائها خلف جدول الأصناف */}
+              <div className="grid grid-cols-2 gap-3">
+                <Field label={`الميل: ${receipt.watermarkRotation ?? -30}°`} hint="سالب = مائل يميناً">
+                  <input type="range" min={-90} max={90} step={5} value={receipt.watermarkRotation ?? -30} onChange={(e) => updateReceipt({ watermarkRotation: Number(e.target.value) })} className="w-full accent-brand-600" />
+                </Field>
+                <Field label={`حجم الخط: ${receipt.watermarkSizePt || 72}pt`}>
+                  <input type="range" min={24} max={140} step={4} value={receipt.watermarkSizePt || 72} onChange={(e) => updateReceipt({ watermarkSizePt: Number(e.target.value) })} className="w-full accent-brand-600" />
+                </Field>
+                <Field label={`الشفافية: ${receipt.watermarkOpacity || 8}٪`} hint="فوق 30٪ تطغى على المحتوى">
+                  <input type="range" min={3} max={30} value={receipt.watermarkOpacity || 8} onChange={(e) => updateReceipt({ watermarkOpacity: Number(e.target.value) })} className="w-full accent-brand-600" />
+                </Field>
+                <Field label="اللون">
+                  <input type="color" value={receipt.watermarkColor || '#64748b'} onChange={(e) => updateReceipt({ watermarkColor: e.target.value })} className="w-full h-9 rounded-lg border border-slate-200 dark:border-slate-700 cursor-pointer" />
+                </Field>
+              </div>
+            </div>
           )}
         </div>
 

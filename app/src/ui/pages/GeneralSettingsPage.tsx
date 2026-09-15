@@ -3,7 +3,7 @@
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
 import { useState } from 'react'
-import { Percent, Globe2, RefreshCcw } from 'lucide-react'
+import { Percent, Globe2, RefreshCcw, ShieldAlert } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES } from '../../core/activities.ts'
@@ -83,6 +83,45 @@ export function GeneralSettingsPage() {
           </Field>
         </div>
         <div className="flex justify-end mt-4"><Btn onClick={saveTax}>حفظ إعدادات الضريبة</Btn></div>
+      </section>
+
+      {/* الأرصدة السالبة (طلب المالك) — النظام كله يحترم هذين المفتاحين */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '120ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          <ShieldAlert size={17} className="text-rose-500" /> الأرصدة السالبة
+        </h3>
+        <p className="text-[11.5px] text-slate-400 mb-4">
+          الافتراضي: ممنوع — أي عملية ستجعل رصيد خزينة/بنك أو صنفٍ سالباً تُرفض برسالة واضحة قبل أي كتابة.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {([
+            ['allowNegativeTreasury', '🏦 السماح بالرصيد السالب في الخزائن والبنوك', 'صرف/تحويل/شراء أكبر من رصيد الخزينة — مفيد لو تسجل متأخراً وتضبط لاحقاً'],
+            ['allowNegativeStock', '📦 السماح بالبيع برصيد مخزون سالب', 'بيع صنف كميته صفر — الجرد القادم يصحح الفارق'],
+          ] as const).map(([key, label, hint]) => {
+            const on = setup[key]
+            return (
+              <button
+                key={key}
+                onClick={() => {
+                  useAppStore.setState((s) => ({ setup: { ...s.setup, [key]: !s.setup[key] } }))
+                  toast.show(!on ? '⚠️ سُمح بالرصيد السالب — استخدمه بوعي' : 'مُنع الرصيد السالب — النظام يرفض أي عملية تكسره ✓')
+                }}
+                className={`text-right p-4 rounded-2xl border-2 transition-all duration-200 hover:scale-[1.01] ${
+                  on ? 'border-amber-500/50 bg-amber-500/10' : 'border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className={`font-bold text-[13px] ${on ? 'text-amber-700 dark:text-amber-400' : 'text-slate-600 dark:text-slate-300'}`}>{label}</span>
+                  <span className={`w-10 h-5.5 rounded-full p-0.5 transition-colors ${on ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                    <span className={`block w-4.5 h-4.5 rounded-full bg-white shadow transition-transform ${on ? '-translate-x-4.5' : ''}`} />
+                  </span>
+                </div>
+                <div className="text-[11px] text-slate-400 mt-1.5">{hint}</div>
+                <div className={`text-[10.5px] font-bold mt-1 ${on ? 'text-amber-600' : 'text-emerald-600'}`}>{on ? 'مسموح حالياً' : 'ممنوع (مُوصى به)'}</div>
+              </button>
+            )
+          })}
+        </div>
       </section>
 
       {/* النشاط والوحدات */}

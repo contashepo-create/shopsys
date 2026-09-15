@@ -13,6 +13,25 @@ export interface TreasuryDef {
   nameAr: string
   kind: 'cash' | 'bank'
   isDefault?: boolean // الخزينة الرئيسية — لا تُحذف
+  // ─── بيانات احترافية (طلب المالك — بمستوى البرامج العالمية) ───
+  /** اسم إضافي/فرعي: «درج الكاشير 2» أو الاسم الإنجليزي للبنك */
+  aliasAr?: string
+  /** رقم الحساب البنكي */
+  accountNumber?: string
+  /** الآيبان IBAN */
+  iban?: string
+  /** اسم الفرع */
+  branch?: string
+  /** اسم صاحب الحساب كما في البنك */
+  holderName?: string
+  /** سويفت SWIFT/BIC */
+  swift?: string
+  /** عملة الحساب (عرض فقط — الدفاتر بعملة واحدة) */
+  currencyNote?: string
+  /** ملاحظات حرة */
+  notes?: string
+  /** حد أدنى للرصيد للتنبيه (اختياري) */
+  minBalanceMinor?: number
 }
 
 /** الافتراضيات — تُزرع مع أول تشغيل وتُرحَّل للحسابات القديمة */

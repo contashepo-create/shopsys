@@ -161,13 +161,17 @@ export function buildTransferEntry(
   toTreasury: TreasuryAccount,
   amountMinor: Minor,
   note: string,
+  /** مصروف التحويل (رسوم بنكية/عمولة) — يخرج من المصدر إضافةً للمبلغ ويقيد 5108 (طلب المالك) */
+  feeMinor: Minor = 0,
 ): JournalLine[] {
   if (fromTreasury === toTreasury) throw new RangeError('التحويل يكون بين خزينتين مختلفتين')
   if (amountMinor <= 0) throw new RangeError('مبلغ التحويل يجب أن يكون موجباً')
+  if (!Number.isInteger(feeMinor) || feeMinor < 0) throw new RangeError('مصروف التحويل لا يكون سالباً')
   const lines: JournalLine[] = [
     { accountCode: toTreasury, debit: amountMinor, credit: 0, note },
-    { accountCode: fromTreasury, debit: 0, credit: amountMinor, note },
   ]
+  if (feeMinor > 0) lines.push({ accountCode: '5108', debit: feeMinor, credit: 0, note: 'مصروف تحويل (رسوم/عمولة)' })
+  lines.push({ accountCode: fromTreasury, debit: 0, credit: amountMinor + feeMinor, note })
   assertBalanced(lines)
   return lines
 }

@@ -33,7 +33,7 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
     ? `<div class="center"><img src="${esc(settings.logoDataUrl)}" alt="شعار" style="max-width:${paper === '80' ? '30mm' : '22mm'};max-height:16mm;object-fit:contain;"/></div>`
     : ''
   const metaTop: string[] = []
-  metaTop.push(`<span>فاتورة: <b>${esc(model.invoiceNumber)}</b></span>`)
+  metaTop.push(`<span>${esc(model.docTitle ?? 'فاتورة')}: <b>${esc(model.invoiceNumber)}</b></span>`)
   if (model.refCode) metaTop.push(`<span>مرجع التتبع: <b dir="ltr">${esc(model.refCode)}</b></span>`)
   if (settings.showDate) metaTop.push(`<span>${esc(model.dateLabel)}</span>`)
   const metaBottom: string[] = []
@@ -74,6 +74,7 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
   ${settings.showDiscount && model.discountMinor > 0 ? `<div class="tot"><span>إجمالي الخصم</span><span>-${fmt(model.discountMinor)}</span></div>` : ''}
   ${model.taxLabel ? `<div class="tot"><span>${esc(model.taxLabel)}</span><span>${fmt(model.taxMinor)}</span></div>` : ''}
   <div class="grand"><span>الإجمالي</span><span>${fmt(model.totalMinor)} ${esc(cur.symbol)}</span></div>
+  ${model.remainingMinor > 0 ? `<div class="tot" style="font-weight:800"><span>المدفوع</span><span>${fmt(model.paidMinor)}</span></div><div class="tot" style="font-weight:800"><span>المتبقي (آجل)</span><span>${fmt(model.remainingMinor)} ${esc(cur.symbol)}</span></div>` : ''}
   ${model.qrDataUrl ? `<div class="center" style="margin-top:2mm"><img src="${esc(model.qrDataUrl)}" alt="ZATCA QR" style="width:${paper === '80' ? '26mm' : '20mm'};height:auto"/></div>` : ''}
   ${settings.showFooter && model.footerText.trim() ? `<hr><div class="foot">${esc(model.footerText)}</div>` : ''}
 </body></html>`

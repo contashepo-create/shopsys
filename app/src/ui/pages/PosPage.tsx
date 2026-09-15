@@ -248,7 +248,7 @@ export function PosPage() {
   const creditRemainder = totals ? totals.totalMinor - paidCashMinor : 0
 
   /** طباعة إيصال فاتورة (المرحلة 5) — مع رمز QR زاتكا عند تفعيل الميزة (القرار 30) */
-  const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null }) => {
+  const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number }) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
     const qrDataUrl = await maybeZatcaQr({
       featureActive: hasFeature(licState, 'einvoice_sa'),
@@ -267,6 +267,7 @@ export function PosPage() {
       lines: sale.lines,
       totals: sale.totals,
       payment: sale.payment,
+      paidMinor: sale.paidMinor, // الدفع المجزأ: يطبع المدفوع/المتبقي (بلاغ المالك)
       customerName: sale.customerId ? customers.find((c) => c.id === sale.customerId)?.nameAr ?? null : null,
       taxPercent: setup.vatPercent,
       taxInclusive: setup.taxInclusive,
@@ -302,6 +303,7 @@ export function PosPage() {
         treasury,
         paidMinor: payment === 'credit' ? 0 : paidCashMinor,
         expiryOverrideBy: expiryOverrideBy ?? null,
+        allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
       })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
@@ -444,7 +446,8 @@ export function PosPage() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto min-h-[16rem]">
+        {/* min-h-0 (لا 16rem): القيمة الإجبارية كانت تدفع شريط الدفع خارج الإطار المقصوص فيختفي الزر (بلاغ المالك) */}
+        <div className="flex-1 overflow-y-auto min-h-0">
           {cart.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-300 dark:text-slate-600 p-6">
               <ShoppingCart size={44} className="mb-3 opacity-40" />

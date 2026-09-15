@@ -5,7 +5,8 @@
  *    يترحّل بقيد متوازن بنيوياً: 5102 → خزينة (نقدي) أو 2104 (استحقاق)
  */
 import { useMemo, useState } from 'react'
-import { Plus, Search, Pencil, Trash2, Phone, UserRound, ChevronDown, FileBadge, Wallet, BookOpenText, Eye, BadgeCheck, BadgeX, Landmark } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Plus, Search, Pencil, Trash2, Phone, UserRound, ChevronDown, FileBadge, Wallet, BookOpenText, Eye, BadgeCheck, BadgeX, Landmark, FileSpreadsheet } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
 import type { PartyExtended } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -77,6 +78,7 @@ export function EmployeesPage() {
   const { employees, payrollRuns, journal, employeeAdvances, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeExcessDue } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
+  const navigate = useNavigate()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -354,8 +356,10 @@ export function EmployeesPage() {
                           : <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-400 bg-slate-500/10 px-2 py-0.5 rounded-full"><BadgeX size={11} /> موقوف</span>}
                       </td>
                       <td className="px-4 py-3 text-left whitespace-nowrap">
-                        <button onClick={() => openEdit(e)} className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110"><Pencil size={14} /></button>
-                        <button onClick={() => remove(e)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110"><Trash2 size={14} /></button>
+                        {/* كشف حساب فوري بجانب كل موظف (طلب المالك) */}
+                        <button title="كشف حساب الموظف (سلف واستقطاعات)" onClick={() => navigate(`/reports/statements?kind=employee&id=${e.id}`)} className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all duration-200 hover:scale-110"><FileSpreadsheet size={14} /></button>
+                        <button title="تعديل بيانات الموظف" onClick={() => openEdit(e)} className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110"><Pencil size={14} /></button>
+                        <button title="حذف الموظف" onClick={() => remove(e)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110"><Trash2 size={14} /></button>
                       </td>
                     </tr>
                   ))}

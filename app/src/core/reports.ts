@@ -16,8 +16,15 @@ export interface SaleDoc {
   date: string
   customerId: number | null
   payment: PaymentMethod
+  /** المحصل فعلاً وقت البيع (الدفع المجزأ) — undefined للفواتير القديمة = حسب payment */
+  paidMinor?: Minor
   lines: CartLine[]
   totals: CartTotals
+}
+
+/** المحصل وقت البيع (الدفع المجزأ) — التوافق الخلفي: cash=كامل، credit=صفر */
+export function salePaidMinor(s: Pick<SaleDoc, 'payment' | 'paidMinor'> & { totals: { totalMinor: Minor } }): Minor {
+  return s.paidMinor ?? (s.payment === 'cash' ? s.totals.totalMinor : 0)
 }
 
 export interface SaleReturnDoc {
@@ -76,8 +83,10 @@ export function salesSummary(sales: SaleDoc[], returns: SaleReturnDoc[], p: Peri
     tax += s.totals.taxMinor
     total += s.totals.totalMinor
     cogs += s.totals.cogsMinor
-    if (s.payment === 'cash') cash += s.totals.totalMinor
-    else credit += s.totals.totalMinor
+    // الدفع المجزأ: المحصل وقت البيع «نقدي» والباقي فقط «آجل» — لا الفاتورة كلها
+    const paid = salePaidMinor(s)
+    cash += paid
+    credit += s.totals.totalMinor - paid
   }
   let returnsMinor = 0, returnsCogs = 0, returnsTax = 0
   for (const r of returns) {
@@ -184,7 +193,9 @@ export function customerBalances(
   const saleCustomer = new Map<number, number | null>()
   for (const s of sales) {
     saleCustomer.set(s.id, s.customerId)
-    if (s.payment === 'credit' && s.customerId != null) row(s.customerId).invoicedMinor += s.totals.totalMinor
+    // الدفع المجزأ: الجزء الآجل فقط يدخل ذمة العميل — المحصل وقت البيع ليس ديناً
+    const creditPart = s.totals.totalMinor - salePaidMinor(s)
+    if (creditPart > 0 && s.customerId != null) row(s.customerId).invoicedMinor += creditPart
   }
   for (const r of returns) {
     // مرتجع بتخفيض الذمة (وليس رداً نقدياً) عن فاتورة لعميل معروف

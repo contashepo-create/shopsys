@@ -74,17 +74,42 @@ const safeColor = (c: string, fallback: string) => (/^#[0-9a-f]{6}$/i.test(c) ? 
 
 function logoImg(s: ReceiptSettings, size: number, radius: number): string {
   if (!s.showLogo || !s.logoDataUrl) return ''
-  return `<img class="logo" src="${esc(s.logoDataUrl)}" alt="شعار" style="width:${size}px;height:${size}px;object-fit:contain;border-radius:${radius}px;background:#fff;"/>`
+  // تحكم كامل بالحجم والشفافية (طلب المالك) — الحجم بالمليمتر أدق للطباعة من البكسل
+  const h = Math.min(60, Math.max(10, s.logoSizeMm || Math.round(size / 3.78)))
+  const op = Math.min(100, Math.max(10, s.logoOpacity || 100)) / 100
+  return `<img class="logo" src="${esc(s.logoDataUrl)}" alt="شعار" style="height:${h}mm;width:auto;max-width:70mm;object-fit:contain;border-radius:${radius}px;background:#fff;opacity:${op};"/>`
 }
 
 function watermark(s: ReceiptSettings): string {
   if (!s.watermarkEnabled || !s.watermarkText.trim()) return ''
-  return `<div class="wm">${esc(s.watermarkText)}</div>`
+  // إصلاح بلاغ المالك: كانت تُرسم تحت جدول الأصناف فتختفي خلف خلفياته —
+  // الآن فوق كل المحتوى (z-index أعلى) بشفافية منخفضة + تحكم كامل بالميل/الحجم/اللون
+  const rot = Math.min(90, Math.max(-90, s.watermarkRotation ?? -30))
+  const size = Math.min(140, Math.max(24, s.watermarkSizePt || 72))
+  const op = Math.min(30, Math.max(3, s.watermarkOpacity || 8)) / 100
+  const color = safeColor(s.watermarkColor, '#64748b')
+  return `<div class="wm" style="font-size:${size}pt;color:${color};opacity:${op};transform:rotate(${rot}deg);">${esc(s.watermarkText)}</div>`
 }
 
 function headerLinesHtml(m: ReceiptModel, s: ReceiptSettings, cls = 'hl'): string {
   if (!s.showHeaderLines) return ''
   return m.headerLines.map((l) => `<div class="${cls}">${esc(l)}</div>`).join('')
+}
+
+/**
+ * كتلة «الشعار + اسم المحل» بموضع شعار قابل للتحكم (طلب المالك):
+ * side = بجانب الاسم · above = فوق الاسم في المنتصف · center = منتصف عرض الرأس كاملاً
+ */
+function whoBlock(m: ReceiptModel, s: ReceiptSettings, accent: string, size: number, radius: number): string {
+  const name = `<div class="shop" style="color:${accent}">${esc(m.shopName)}</div>${headerLinesHtml(m, s)}`
+  const pos = s.logoPosition || 'side'
+  if (pos === 'above') {
+    return `<div class="who" style="display:block;text-align:center;">${logoImg(s, size, radius)}${name}</div>`
+  }
+  if (pos === 'center') {
+    return `<div class="who" style="display:block;text-align:center;flex:1;">${logoImg(s, size, radius)}${name}</div>`
+  }
+  return `<div class="who">${logoImg(s, size, radius)}<div>${name}</div></div>`
 }
 
 function metaRows(m: ReceiptModel, s: ReceiptSettings): string {
@@ -132,9 +157,15 @@ function totalsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, d
     rows.push(`<div class="tr"><span>الوعاء الضريبي</span><b>${fmt(m.taxBaseMinor)}</b></div>`)
     rows.push(`<div class="tr"><span>${esc(m.taxLabel)}</span><b>${fmt(m.taxMinor)}</b></div>`)
   }
+  // الدفع المجزأ (بلاغ المالك): المدفوع والمتبقي يظهران على المطبوعة
+  const paidRows = m.remainingMinor > 0
+    ? `<div class="tr"><span>المدفوع</span><b>${fmt(m.paidMinor)}</b></div>
+       <div class="tr" style="color:#b45309"><span>المتبقي (آجل)</span><b>${fmt(m.remainingMinor)} ${esc(cur.symbol)}</b></div>`
+    : ''
   return `<div class="totals ${dark ? 'dark' : ''}">
     ${rows.join('')}
     <div class="grand"><span>الإجمالي المستحق</span><span class="g">${fmt(m.totalMinor)} ${esc(cur.symbol)}</span></div>
+    ${paidRows}
   </div>`
 }
 
@@ -163,11 +194,9 @@ function renderModern(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, 
   <div class="sheet modern">
     <div class="topbar"></div>
     <div class="head">
-      <div class="who">${logoImg(s, 64, 12)}<div>
-        <div class="shop" style="color:${accent}">${esc(m.shopName)}</div>${headerLinesHtml(m, s)}
-      </div></div>
+      ${whoBlock(m, s, accent, 64, 12)}
       <div class="title-box">
-        <div class="tb" style="background:${accent}">فاتورة مبيعات</div>
+        <div class="tb" style="background:${accent}">${esc(m.docTitle ?? 'فاتورة مبيعات')}</div>
         ${metaRows(m, s)}
       </div>
     </div>
@@ -184,11 +213,9 @@ function renderClassic(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings,
   return `
   <div class="sheet classic">
     <div class="head" style="border:1.5pt solid ${accent};padding:12px 16px;">
-      <div class="who">${logoImg(s, 58, 6)}<div>
-        <div class="shop" style="color:${accent}">${esc(m.shopName)}</div>${headerLinesHtml(m, s)}
-      </div></div>
+      ${whoBlock(m, s, accent, 58, 6)}
       <div class="title-box">
-        <div class="tb outlined" style="border:2px solid ${accent};color:${accent}">فاتورة مبيعات</div>
+        <div class="tb outlined" style="border:2px solid ${accent};color:${accent}">${esc(m.docTitle ?? 'فاتورة مبيعات')}</div>
         ${metaRows(m, s)}
       </div>
     </div>
@@ -209,7 +236,7 @@ function renderCompact(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings,
         <span class="shop sm" style="color:${accent}">${esc(m.shopName)}</span>
         ${s.showHeaderLines && m.headerLines.length ? `<span class="hl inline">${m.headerLines.map(esc).join(' — ')}</span>` : ''}
       </div></div>
-      <div class="mini"><b style="color:${accent}">فاتورة مبيعات</b>
+      <div class="mini"><b style="color:${accent}">${esc(m.docTitle ?? 'فاتورة مبيعات')}</b>
         <span>${esc(m.invoiceNumber)}${m.refCode ? ` | <span dir="ltr">${esc(m.refCode)}</span>` : ''}${s.showDate ? ` | ${esc(m.dateLabel)}` : ''}</span>
       </div>
     </div>
@@ -230,7 +257,7 @@ function renderElegant(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings,
       ${logoImg(s, 62, 16)}
       <div class="shop" style="color:${accent}">${esc(m.shopName)}</div>
       ${headerLinesHtml(m, s)}
-      <div class="pill" style="background:${accent}12;color:${accent}">فاتورة مبيعات ${esc(m.invoiceNumber)}${m.refCode ? ` • <span dir="ltr">${esc(m.refCode)}</span>` : ''}${s.showDate ? ` • ${esc(m.dateLabel)}` : ''}</div>
+      <div class="pill" style="background:${accent}12;color:${accent}">${esc(m.docTitle ?? 'فاتورة مبيعات')} ${esc(m.invoiceNumber)}${m.refCode ? ` • <span dir="ltr">${esc(m.refCode)}</span>` : ''}${s.showDate ? ` • ${esc(m.dateLabel)}` : ''}</div>
     </div>
     ${s.showCustomer || s.showPayment ? `<div class="cards">
       ${s.showCustomer ? `<div class="card" style="background:${accent}0a;border:1px solid ${accent}20"><div class="ct" style="color:${accent}">العميل</div><b>${esc(m.customerName)}</b></div>` : ''}
@@ -268,9 +295,10 @@ export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, se
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; color: #0f172a; font-size: 12px; background: #fff; }
   .sheet { position: relative; overflow: hidden; }
+  /* العلامة المائية فوق كل المحتوى (z-index:5) — الشفافية المنخفضة تمنعها من إعاقة القراءة
+     (إصلاح: كانت z-index:0 فتختفي خلف خلفيات جدول الأصناف) */
   .wm { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-        font-size: 64pt; font-weight: 800; color: rgba(15,23,42,.07); transform: rotate(-30deg);
-        pointer-events: none; z-index: 0; white-space: nowrap; }
+        font-weight: 800; pointer-events: none; z-index: 5; white-space: nowrap; }
   .sheet > * { position: relative; z-index: 1; }
   .topbar { height: 8px; border-radius: 99px; background: linear-gradient(90deg, ${accent}, #4f46e5, ${accent}); margin-bottom: 14px; }
   .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding-bottom: 14px; margin-bottom: 14px; }

@@ -19,7 +19,7 @@ import { inputCls } from '../components/ui.tsx'
 type TabId = 'sales' | 'items' | 'parties' | 'inventory'
 
 export function ReportsPage() {
-  const { sales, saleReturns, purchases, items, customers, suppliers, installmentPlans, batches } = useDataStore()
+  const { sales, saleReturns, purchases, items, customers, suppliers, installmentPlans, batches, vouchers, clientSettlements } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -44,13 +44,19 @@ export function ReportsPage() {
   const daily = useMemo(() => dailySales(sales, period), [sales, period])
   const top = useMemo(() => topItems(sales, saleReturns, period, 10), [sales, saleReturns, period])
   const custRows = useMemo(() => {
-    // التحصيلات: أقساط محصلة (مقدم + مدفوعات الجدول) لكل عميل
-    const collections = installmentPlans.map((p) => ({
-      customerId: p.customerId,
-      amountMinor: p.downPaymentMinor + p.items.reduce((a, i) => a + i.paidMinor, 0),
-    }))
+    // التحصيلات: أقساط محصلة + سندات قبض مربوطة بعميل + تسويات تحصيل FIFO
+    const collections = [
+      ...installmentPlans.map((p) => ({
+        customerId: p.customerId,
+        amountMinor: p.downPaymentMinor + p.items.reduce((a, i) => a + i.paidMinor, 0),
+      })),
+      ...vouchers
+        .filter((v) => v.kind === 'receipt' && v.partyKind === 'customer' && v.partyId != null)
+        .map((v) => ({ customerId: v.partyId as number, amountMinor: v.amountMinor })),
+      ...clientSettlements.map((st) => ({ customerId: st.customerId, amountMinor: st.amountMinor })),
+    ]
     return customerBalances(sales, saleReturns, collections)
-  }, [sales, saleReturns, installmentPlans])
+  }, [sales, saleReturns, installmentPlans, vouchers, clientSettlements])
   const suppRows = useMemo(() => supplierBalances(purchases, []), [purchases])
   const alerts = useMemo(() => stockAlerts(items), [items])
   const invValue = useMemo(() => inventoryValue(items), [items])

@@ -23,7 +23,7 @@ import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlemen
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
-import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
+import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from '../core/installments.ts'
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
@@ -827,6 +827,8 @@ interface DataState {
     description: string
     partyKind?: 'customer' | 'supplier' | null
     partyId?: number | null
+    /** مصروف التحويل بين الخزائن (رسوم بنكية) — يخرج من المصدر ويقيد 5108 (طلب المالك) */
+    feeMinor?: number
   }) => Voucher
   /** صرف سلفة لموظف: قيد 1107 ← خزينة، وتُسترد من مسيرات الرواتب */
   grantEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; notes: string }) => EmployeeAdvance
@@ -838,10 +840,12 @@ interface DataState {
   openShift: (openedBy: string, openingCashMinor: number) => Shift
   /** إقفال الوردية بالنقدية المعدودة — يظهر العجز/الزيادة في الملخص */
   closeShift: (countedCashMinor: number) => Shift
+  /** تسوية عجز/زيادة وردية مقفلة (طلب المالك): مصروف/إيراد أو سلفة على الموظف تُخصم من رواتبه */
+  settleShiftVariance: (args: { shiftId: number; mode: 'expense' | 'advance'; employeeId?: number | null }) => Shift
   addWarehouse: (nameAr: string) => void
-  /** إضافة خزينة/بنك جديد — يفتح له حساب دفتري تلقائياً (1121+) */
-  addTreasury: (nameAr: string, kind: 'cash' | 'bank') => TreasuryDef
-  renameTreasury: (code: string, nameAr: string) => void
+  /** إضافة خزينة/بنك جديد — يفتح له حساب دفتري تلقائياً (1121+) + بيانات احترافية اختيارية */
+  addTreasury: (nameAr: string, kind: 'cash' | 'bank', extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => TreasuryDef
+  renameTreasury: (code: string, nameAr: string, extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => void
   /** حذف خزينة مخصصة — يُرفض لو عليها حركة في اليومية أو كانت أساسية */
   removeTreasury: (code: string) => void
   removeWarehouse: (id: number) => void
@@ -1180,9 +1184,55 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
 export const DATA_VERSION = 10
 
+/**
+ * الحارس المركزي للرصيد السالب (طلب المالك):
+ * أي كتابة تضيف قيوداً لليومية تُفحص قبل التنفيذ — لو نتج عنها رصيد سالب
+ * في خزينة/بنك والإعداد يمنع ذلك، تُرفض العملية كلها برسالة واضحة.
+ * (فحص المخزون السالب يتم في مواضع الخصم نفسها لأنه لكل عملية سياقها)
+ */
+function assertTreasuryNotNegative(
+  prevJournal: JournalEntry[],
+  nextJournal: JournalEntry[],
+  treasuries: TreasuryDef[],
+): void {
+  if (nextJournal === prevJournal || nextJournal.length <= prevJournal.length) return
+  // الإعداد من مخزن التطبيق — قراءة مباشرة لتفادي دورة استيراد
+  let allow = false
+  try {
+    const raw = localStorage.getItem('shopsys-app')
+    if (raw) allow = JSON.parse(raw)?.state?.setup?.allowNegativeTreasury === true
+  } catch { /* الافتراضي: ممنوع */ }
+  if (allow) return
+  const codes = new Set(treasuries.map((t) => t.code))
+  const balances = new Map<string, number>()
+  for (const e of nextJournal) {
+    for (const l of e.lines) {
+      if (!codes.has(l.accountCode)) continue
+      balances.set(l.accountCode, (balances.get(l.accountCode) ?? 0) + l.debit - l.credit)
+    }
+  }
+  for (const [code, bal] of balances) {
+    if (bal < 0) {
+      const name = treasuries.find((t) => t.code === code)?.nameAr ?? code
+      throw new Error(`رصيد «${name}» سيصبح سالباً — العملية مرفوضة. فعّل السماح بالرصيد السالب من الإعدادات العامة لو كنت تقصد ذلك`)
+    }
+  }
+}
+
 export const useDataStore = create<DataState>()(
   persist(
-    (set, get) => ({
+    (rawSet, get) => {
+      // كل كتابة تمر عبر الحارس أولاً — تُرفض بأكملها لو خالفت شرط الرصيد السالب
+      const set = ((partial: unknown, replace?: boolean) => {
+        const state = get()
+        const patch = typeof partial === 'function' ? (partial as (s: DataState) => Partial<DataState>)(state) : partial as Partial<DataState>
+        if (patch && (patch as Partial<DataState>).journal) {
+          assertTreasuryNotNegative(state.journal, (patch as Partial<DataState>).journal!, (patch as Partial<DataState>).treasuries ?? state.treasuries)
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(rawSet as any)(patch, replace)
+      }) as typeof rawSet
+      return {
       seeded: false,
       items: [],
       categories: [],
@@ -2028,7 +2078,7 @@ export const useDataStore = create<DataState>()(
             ? buildReceiptVoucherEntry(args.treasury, args.counterAccountCode, args.amountMinor, args.description)
             : args.kind === 'payment'
               ? buildPaymentVoucherEntry(args.treasury, args.counterAccountCode, args.amountMinor, args.description)
-              : buildTransferEntry(args.treasury, args.counterAccountCode as TreasuryAccount, args.amountMinor, args.description)
+              : buildTransferEntry(args.treasury, args.counterAccountCode as TreasuryAccount, args.amountMinor, args.description, args.feeMinor ?? 0)
 
         const voucherId = nextId(state.vouchers)
         const entryId = nextId(state.journal)
@@ -2194,23 +2244,82 @@ export const useDataStore = create<DataState>()(
         return closed
       },
 
+      settleShiftVariance: (args) => {
+        const state = get()
+        const shift = state.shifts.find((s) => s.id === args.shiftId)
+        if (!shift) throw new Error('الوردية غير موجودة')
+        if (shift.status !== 'closed' || shift.countedCashMinor === null) throw new Error('تسوية الفرق بعد إقفال الوردية وعدّ الدرج')
+        if (shift.varianceSettledMode) throw new Error('فرق هذه الوردية سُوّي بالفعل')
+        // فرق الوردية بنفس نواة الملخص — لا حسابين مختلفين
+        const kindOf = (code?: string) => state.treasuries.find((t) => t.code === (code ?? '1101'))?.kind ?? 'cash'
+        const saleDocs = state.sales.map((s) => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.paidMinor, treasuryKind: kindOf(s.treasury) }))
+        const returnDocs = state.saleReturns.map((r) => ({ shiftId: r.shiftId, payment: r.refund, totalMinor: r.totals.totalMinor, treasuryKind: kindOf(state.sales.find((s) => s.id === r.saleId)?.treasury) }))
+        const variance = summarizeShift(shift, saleDocs, returnDocs).varianceMinor
+        if (variance === null || variance === 0) throw new Error('لا فرق في هذه الوردية للتسوية')
+        const now = new Date().toISOString()
+        const label = `وردية #${shift.id}`
+
+        if (args.mode === 'advance') {
+          // سلفة على الموظف تُخصم من رواتبه (تظهر في مسير الرواتب تلقائياً)
+          if (variance > 0) throw new Error('السلفة تكون عن عجز فقط — الزيادة تُسوى كإيراد')
+          const emp = state.employees.find((e) => e.id === args.employeeId)
+          if (!emp) throw new Error('اختر الموظف الذي يتحمل العجز')
+          const advId = nextId(state.employeeAdvances)
+          const entryId = nextId(state.journal)
+          const advanceNumber = `ADV-${String(advId).padStart(4, '0')}`
+          const entry: JournalEntry = {
+            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+            description: `عجز ${label} محمَّل سلفة على ${emp.nameAr} — ${advanceNumber}`,
+            sourceType: 'payment_voucher', sourceId: advId,
+            lines: buildVarianceAdvanceEntry(variance, '1101', emp.nameAr),
+            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }
+          const advance: EmployeeAdvance = {
+            id: advId, advanceNumber, employeeId: emp.id, date: now,
+            amountMinor: Math.abs(variance), recoveredMinor: 0,
+            source: 'cash', custodyFileId: null, treasury: '1101',
+            notes: `عجز ${label} — يُخصم من الرواتب`, journalEntryId: entryId,
+          }
+          const updated: Shift = { ...shift, varianceSettledMode: 'advance', varianceEntryId: entryId, varianceAdvanceId: advId }
+          set({
+            employeeAdvances: [...state.employeeAdvances, advance],
+            journal: [...state.journal, entry],
+            shifts: state.shifts.map((s) => (s.id === shift.id ? updated : s)),
+          })
+          return updated
+        }
+
+        // مصروف (عجز) أو إيراد آخر (زيادة)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: variance < 0 ? `تسوية عجز ${label} كمصروف` : `تسوية زيادة ${label} كإيراد آخر`,
+          sourceType: 'adjustment', sourceId: shift.id,
+          lines: buildVarianceExpenseEntry(variance, '1101', label),
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: Shift = { ...shift, varianceSettledMode: 'expense', varianceEntryId: entryId, varianceAdvanceId: null }
+        set({ journal: [...state.journal, entry], shifts: state.shifts.map((s) => (s.id === shift.id ? updated : s)) })
+        return updated
+      },
+
       addWarehouse: (nameAr) =>
         set((s) => ({ warehouses: [...s.warehouses, { id: nextId(s.warehouses), nameAr, isMain: false }] })),
 
-      addTreasury: (nameAr, kind) => {
+      addTreasury: (nameAr, kind, extra) => {
         const state = get()
         const errors = validateTreasury(nameAr, state.treasuries)
         if (errors.length) throw new Error(errors.join(' — '))
-        const t: TreasuryDef = { code: nextTreasuryCode(state.treasuries), nameAr: nameAr.trim(), kind }
+        const t: TreasuryDef = { code: nextTreasuryCode(state.treasuries), nameAr: nameAr.trim(), kind, ...extra }
         set({ treasuries: [...state.treasuries, t] })
         return t
       },
 
-      renameTreasury: (code, nameAr) => {
+      renameTreasury: (code, nameAr, extra) => {
         const state = get()
         const errors = validateTreasury(nameAr, state.treasuries, code)
         if (errors.length) throw new Error(errors.join(' — '))
-        set({ treasuries: state.treasuries.map((t) => (t.code === code ? { ...t, nameAr: nameAr.trim() } : t)) })
+        set({ treasuries: state.treasuries.map((t) => (t.code === code ? { ...t, ...extra, nameAr: nameAr.trim() } : t)) })
       },
 
       removeTreasury: (code) => {
@@ -4906,7 +5015,7 @@ export const useDataStore = create<DataState>()(
         })
         return updated
       },
-    }),
+    }},
     {
       name: 'shopsys-data',
       version: DATA_VERSION,

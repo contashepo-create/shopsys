@@ -50,6 +50,7 @@ export function SalesInvoicesPage() {
       lines: s.lines,
       totals: s.totals,
       payment: s.payment,
+      paidMinor: s.paidMinor, // الدفع المجزأ: المدفوع/المتبقي على المطبوعة (بلاغ المالك)
       customerName: s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : null,
       taxPercent: setup.vatPercent,
       taxInclusive: setup.taxInclusive,

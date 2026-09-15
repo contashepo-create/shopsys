@@ -25,13 +25,21 @@ export function TreasuryPage() {
   const [from, setFrom] = useState('1101')
   const [to, setTo] = useState('1102')
   const [amount, setAmount] = useState('')
+  const [fee, setFee] = useState('') // مصروف التحويل — رسوم بنكية/عمولة (طلب المالك)
   const [desc, setDesc] = useState('')
   const [statement, setStatement] = useState<string | null>(null)
-  // إضافة/تعديل خزينة
+  // إضافة/تعديل خزينة — نموذج احترافي كامل (طلب المالك)
   const [editOpen, setEditOpen] = useState(false)
   const [editCode, setEditCode] = useState<string | null>(null)
   const [tName, setTName] = useState('')
   const [tKind, setTKind] = useState<'cash' | 'bank'>('cash')
+  const [tAlias, setTAlias] = useState('')
+  const [tAccountNumber, setTAccountNumber] = useState('')
+  const [tIban, setTIban] = useState('')
+  const [tBranch, setTBranch] = useState('')
+  const [tHolder, setTHolder] = useState('')
+  const [tSwift, setTSwift] = useState('')
+  const [tNotes, setTNotes] = useState('')
 
   /** رصيد وحركة كل خزينة من دفتر الأستاذ مباشرة */
   const balances = useMemo(() => {
@@ -52,28 +60,41 @@ export function TreasuryPage() {
 
   const doTransfer = () => {
     try {
+      const feeMinor = fee ? toMinor(fee, cur.decimals) : 0
       const v = postVoucher({
         kind: 'transfer',
         treasury: from,
         counterAccountCode: to,
         amountMinor: toMinor(amount || '0', cur.decimals),
         description: desc.trim() || `تحويل من ${nameOf(from)} إلى ${nameOf(to)}`,
+        feeMinor,
       })
-      toast.show(`تم التحويل ${v.voucherNumber} — ${fmt(v.amountMinor)} من ${nameOf(from)} إلى ${nameOf(to)} ✓`)
+      toast.show(`تم التحويل ${v.voucherNumber} — ${fmt(v.amountMinor)}${feeMinor ? ` + رسوم ${fmt(feeMinor)}` : ''} من ${nameOf(from)} إلى ${nameOf(to)} ✓`)
       setTransferOpen(false)
       setAmount('')
+      setFee('')
       setDesc('')
     } catch (e) {
       toast.show((e as Error).message, 'error')
     }
   }
 
-  const openAdd = () => { setEditCode(null); setTName(''); setTKind('cash'); setEditOpen(true) }
-  const openEdit = (t: TreasuryDef) => { setEditCode(t.code); setTName(t.nameAr); setTKind(t.kind); setEditOpen(true) }
+  const fillForm = (t?: TreasuryDef) => {
+    setTName(t?.nameAr ?? ''); setTKind(t?.kind ?? 'cash')
+    setTAlias(t?.aliasAr ?? ''); setTAccountNumber(t?.accountNumber ?? '')
+    setTIban(t?.iban ?? ''); setTBranch(t?.branch ?? '')
+    setTHolder(t?.holderName ?? ''); setTSwift(t?.swift ?? ''); setTNotes(t?.notes ?? '')
+  }
+  const openAdd = () => { setEditCode(null); fillForm(); setEditOpen(true) }
+  const openEdit = (t: TreasuryDef) => { setEditCode(t.code); fillForm(t); setEditOpen(true) }
   const saveTreasury = () => {
     try {
-      if (editCode) { renameTreasury(editCode, tName); toast.show('تم تعديل الاسم ✓') }
-      else { const t = addTreasury(tName, tKind); toast.show(`أُضيفت «${t.nameAr}» وفُتح لها حساب ${t.code} ✓`) }
+      const extra = {
+        aliasAr: tAlias.trim(), accountNumber: tAccountNumber.trim(), iban: tIban.trim(),
+        branch: tBranch.trim(), holderName: tHolder.trim(), swift: tSwift.trim(), notes: tNotes.trim(),
+      }
+      if (editCode) { renameTreasury(editCode, tName, extra); toast.show('حُفظت بيانات الخزينة/البنك ✓') }
+      else { const t = addTreasury(tName, tKind, extra); toast.show(`أُضيفت «${t.nameAr}» وفُتح لها حساب ${t.code} ✓`) }
       setEditOpen(false)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
@@ -89,8 +110,9 @@ export function TreasuryPage() {
       <div className="flex items-center justify-between anim-up flex-wrap gap-2">
         <div className="text-sm text-slate-500">الأرصدة حية من دفتر الأستاذ — اضغط خزينة لكشف حركتها</div>
         <div className="flex gap-2">
-          <Btn variant="ghost" onClick={openAdd}><Plus size={15} /> خزينة / بنك جديد</Btn>
-          <Btn onClick={() => { setAmount(''); setDesc(''); setTransferOpen(true) }} disabled={treasuries.length < 2}>
+          {/* زر الإضافة بنفس بروز زر التحويل (ملاحظة المالك: كان باهتاً وغير عملي) */}
+          <Btn onClick={openAdd}><Plus size={15} /> خزينة / بنك جديد</Btn>
+          <Btn onClick={() => { setAmount(''); setFee(''); setDesc(''); setTransferOpen(true) }} disabled={treasuries.length < 2}>
             <ArrowLeftRight size={15} /> تحويل بين الخزائن
           </Btn>
         </div>
@@ -114,7 +136,11 @@ export function TreasuryPage() {
                     <Icon size={22} />
                   </span>
                   <div>
-                    <div className="text-[12px] font-bold text-slate-400">{t.nameAr} <span className="text-[9px] opacity-60">#{t.code}</span></div>
+                    <div className="text-[12px] font-bold text-slate-400">
+                      {t.nameAr} <span className="text-[9px] opacity-60">#{t.code}</span>
+                      {t.aliasAr && <span className="mr-1 text-[10px] text-slate-300 dark:text-slate-500">· {t.aliasAr}</span>}
+                    </div>
+                    {t.accountNumber && <div className="text-[9.5px] text-slate-300 dark:text-slate-500 font-mono" dir="ltr">{t.accountNumber}</div>}
                     <div className={`font-black text-2xl ${acc.balance < 0 ? 'text-rose-500' : 'text-slate-800 dark:text-white'}`}>
                       {fmt(acc.balance)} <span className="text-xs">{cur.symbol}</span>
                     </div>
@@ -135,20 +161,58 @@ export function TreasuryPage() {
         })}
       </div>
 
-      {/* إضافة / تعديل خزينة */}
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={editCode ? 'تعديل خزينة / بنك' : 'خزينة / بنك جديد'}>
-        <div className="space-y-4">
-          <Field label="الاسم" hint="مثال: خزينة الفرع الثاني، بنك مصر، محفظة فودافون كاش…">
-            <input value={tName} onChange={(e) => setTName(e.target.value)} className={inputCls} autoFocus />
-          </Field>
-          {!editCode && (
-            <Field label="النوع">
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => setTKind('cash')} className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${tKind === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>💰 خزينة نقدية</button>
-                <button onClick={() => setTKind('bank')} className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${tKind === 'bank' ? 'border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>🏦 حساب بنكي / محفظة</button>
+      {/* إضافة / تعديل خزينة — نموذج احترافي بمستوى البرامج العالمية (طلب المالك) */}
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={editCode ? '✏️ تعديل خزينة / بنك' : '🏦 خزينة / بنك جديد'} wide>
+        <div className="space-y-5">
+          {/* القسم 1: الهوية */}
+          <div className="p-4 rounded-2xl bg-sky-500/5 border border-sky-500/20 space-y-3">
+            <div className="text-[12px] font-bold text-sky-700 dark:text-sky-400">🪪 الهوية</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="الاسم *" hint="مثال: خزينة الفرع الثاني، بنك مصر، محفظة فودافون كاش…">
+                <input value={tName} onChange={(e) => setTName(e.target.value)} className={inputCls} autoFocus />
+              </Field>
+              <Field label="اسم إضافي / رقم مختصر" hint="اسم فرعي أو رقم داخلي يظهر بجانب الاسم">
+                <input value={tAlias} onChange={(e) => setTAlias(e.target.value)} className={inputCls} placeholder="درج الكاشير 2 · NBE-Main…" />
+              </Field>
+            </div>
+            {!editCode && (
+              <Field label="النوع">
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setTKind('cash')} className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${tKind === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>💰 خزينة نقدية</button>
+                  <button onClick={() => setTKind('bank')} className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${tKind === 'bank' ? 'border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>🏦 حساب بنكي / محفظة</button>
+                </div>
+              </Field>
+            )}
+          </div>
+
+          {/* القسم 2: البيانات البنكية — تظهر للبنوك والمحافظ */}
+          {tKind === 'bank' && (
+            <div className="p-4 rounded-2xl bg-cyan-500/5 border border-cyan-500/20 space-y-3">
+              <div className="text-[12px] font-bold text-cyan-700 dark:text-cyan-400">🏛️ البيانات البنكية <span className="font-normal text-slate-400">(كلها اختيارية — تُطبع في المستندات وتفيد المطابقات)</span></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="رقم الحساب">
+                  <input value={tAccountNumber} onChange={(e) => setTAccountNumber(e.target.value)} className={inputCls} dir="ltr" placeholder="1234567890" />
+                </Field>
+                <Field label="IBAN">
+                  <input value={tIban} onChange={(e) => setTIban(e.target.value)} className={inputCls} dir="ltr" placeholder="EG38 0019 …" />
+                </Field>
+                <Field label="اسم صاحب الحساب">
+                  <input value={tHolder} onChange={(e) => setTHolder(e.target.value)} className={inputCls} />
+                </Field>
+                <Field label="الفرع">
+                  <input value={tBranch} onChange={(e) => setTBranch(e.target.value)} className={inputCls} placeholder="فرع المنصورة" />
+                </Field>
+                <Field label="SWIFT / BIC">
+                  <input value={tSwift} onChange={(e) => setTSwift(e.target.value)} className={inputCls} dir="ltr" placeholder="NBEGEGCX" />
+                </Field>
               </div>
-            </Field>
+            </div>
           )}
+
+          <Field label="ملاحظات">
+            <input value={tNotes} onChange={(e) => setTNotes(e.target.value)} className={inputCls} placeholder="حساب المرتبات، لا يُسحب منه إلا بموافقة…" />
+          </Field>
+
           {!editCode && (
             <p className="text-[11px] text-slate-400 leading-relaxed">
               📒 سيُفتح لها حساب دفتري تلقائياً تحت «الأصول المتداولة» وتظهر فوراً في كل شاشات الدفع والتحصيل.
@@ -176,9 +240,19 @@ export function TreasuryPage() {
               </select>
             </Field>
           </div>
-          <Field label={`المبلغ (${cur.symbol})`}>
-            <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputCls} dir="ltr" autoFocus />
-          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={`المبلغ (${cur.symbol})`}>
+              <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputCls} dir="ltr" autoFocus />
+            </Field>
+            <Field label={`مصروف التحويل (${cur.symbol})`} hint="رسوم بنكية/عمولة — يخرج من المصدر ويقيد مصروفاً عمومياً">
+              <input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="0" className={inputCls} dir="ltr" />
+            </Field>
+          </div>
+          {Number(fee) > 0 && Number(amount) > 0 && (
+            <p className="text-[11px] font-bold text-amber-600">
+              ⚠️ سيخرج من {nameOf(from)}: {fmt(toMinor(amount || '0', cur.decimals) + toMinor(fee, cur.decimals))} — يصل {fmt(toMinor(amount || '0', cur.decimals))} والرسوم {fmt(toMinor(fee, cur.decimals))} مصروف
+            </p>
+          )}
           <Field label="البيان (اختياري)">
             <input value={desc} onChange={(e) => setDesc(e.target.value)} className={inputCls} />
           </Field>
