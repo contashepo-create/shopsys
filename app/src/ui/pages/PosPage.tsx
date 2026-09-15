@@ -27,7 +27,7 @@ import { toMinor } from '../../core/money.ts'
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale } = useDataStore()
+  const { items, customers, shifts, serials, postSale, priceLists, getEffectivePrice } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
@@ -41,6 +41,21 @@ export function PosPage() {
   const [payOpen, setPayOpen] = useState(false)
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [customerId, setCustomerId] = useState<number | null>(null)
+  // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
+  const activePriceListId = useMemo(() => {
+    if (customerId == null) return null
+    const c = customers.find((x) => x.id === customerId)
+    const listId = c?.priceListId ?? null
+    if (listId == null) return null
+    return priceLists.some((l) => l.id === listId && l.isActive) ? listId : null
+  }, [customerId, customers, priceLists])
+  const pickCustomer = (id: number | null) => {
+    setCustomerId(id)
+    // إعادة تسعير السطور غير المخصومة يدوياً حسب قائمة العميل الجديد
+    const c = id == null ? null : customers.find((x) => x.id === id)
+    const listId = c?.priceListId ?? null
+    setCart((prev) => prev.map((l) => ({ ...l, unitPriceMinor: getEffectivePrice(l.itemId, listId) })))
+  }
   // الدفع المجزأ (طلب المالك): المبلغ النقدي يتعبأ تلقائياً بالإجمالي ويقبل التعديل —
   // أقل من الإجمالي = الباقي آجل على العميل؛ 0 = آجل بالكامل
   const [paidCash, setPaidCash] = useState('')
@@ -126,7 +141,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr,
         qty: weightQty ?? (it.soldByWeight ? 0.5 : 1),
-        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor,
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor,
         discountPercent: 0, soldByWeight: it.soldByWeight,
       }]
     })
@@ -383,7 +398,21 @@ export function PosPage() {
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-400/10 text-slate-400 font-bold" title="الفواتير ستُسجل خارج وردية — افتحها من المبيعات ← الورديات">بلا وردية</span>
             )}
           </span>
-          <div className="flex gap-1.5">
+          <div className="flex gap-1.5 items-center">
+            {customers.some((c) => c.priceListId != null) && (
+              <select
+                value={customerId ?? 0}
+                onChange={(e) => pickCustomer(Number(e.target.value) || null)}
+                title="اختيار العميل يسعّر السلة بقائمته (جملة/نصف جملة)"
+                className="text-[11px] font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1.5 max-w-[9rem]"
+              >
+                <option value={0}>تجزئة (بلا عميل)</option>
+                {customers.map((c) => {
+                  const ln = c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null
+                  return <option key={c.id} value={c.id}>{c.nameAr}{ln ? ` — ${ln}` : ''}</option>
+                })}
+              </select>
+            )}
             <button onClick={holdCart} disabled={!cart.length} title="تعليق الفاتورة" className="p-2 rounded-lg text-amber-500 hover:bg-amber-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
               <PauseCircle size={17} />
             </button>
@@ -607,9 +636,12 @@ export function PosPage() {
             )}
 
             {(payment === 'credit' || creditRemainder > 0) && (
-              <select value={customerId ?? 0} onChange={(e) => setCustomerId(Number(e.target.value) || null)} className={inputCls}>
+              <select value={customerId ?? 0} onChange={(e) => pickCustomer(Number(e.target.value) || null)} className={inputCls}>
                 <option value={0}>اختر العميل (إلزامي للجزء الآجل)…</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+                {customers.map((c) => {
+                  const ln = c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null
+                  return <option key={c.id} value={c.id}>{c.nameAr}{ln ? ` — ${ln}` : ''}</option>
+                })}
               </select>
             )}
 

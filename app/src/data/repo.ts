@@ -18,6 +18,7 @@ import { buildPurchaseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buil
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
+import { validatePriceList, resolvePrice, type PriceList, type PriceListEntry } from '../core/priceLists.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
@@ -81,6 +82,8 @@ export interface Customer extends PartyExtended {
   phone: string
   creditLimitMinor: number
   notes: string
+  /** قائمة الأسعار المربوطة (جملة/نصف جملة…) — null = تجزئة */
+  priceListId?: number | null
 }
 
 export interface Supplier extends PartyExtended {
@@ -601,6 +604,8 @@ interface DataState {
   jewelryProfiles: JewelryProfile[] // الوصف الذهبي للأصناف: عيار/وزن/مصنعية
   scrapLots: ScrapLot[] // دفعات الكسر المشتراة (FIFO)
   scrapSales: ScrapSale[] // مبيعات الكسر
+  priceLists: PriceList[] // قوائم الأسعار (جملة/نصف جملة/VIP)
+  priceListEntries: PriceListEntry[] // أسعار خاصة لكل صنف داخل قائمة
   custodyFiles: CustodyFile[] // ملفات عهد الموظفين (طلب المالك — نظام متكامل بنمط pro-acc)
   custodyTxs: CustodyTx[] // حركات ملفات العهد (تعزيز/مصروف/فاتورة/مرتجع/عجز)
   clinicPatients: ClinicPatient[] // العيادة (القرار 27)
@@ -907,6 +912,18 @@ interface DataState {
   buyScrap: (args: { karat: Karat; weightGrams: number; pricePerGramMinor: number; sellerName?: string; treasury?: string }) => ScrapLot
   /** بيع كسر للتاجر/المصنع: يستهلك FIFO ويظهر الربح/الخسارة في القيد */
   sellScrap: (args: { karat: Karat; weightGrams: number; pricePerGramMinor: number; buyerName?: string; treasury?: string }) => ScrapSale
+
+  // ————— قوائم الأسعار —————
+  addPriceList: (nameAr: string, defaultDiscountPercent: number) => PriceList
+  updatePriceList: (id: number, nameAr: string, defaultDiscountPercent: number) => void
+  togglePriceList: (id: number) => void
+  removePriceList: (id: number) => void
+  /** سعر خاص لصنف في قائمة — priceMinor = null يحذف السعر الخاص */
+  setPriceListEntry: (listId: number, itemId: number, priceMinor: number | null) => void
+  /** السعر الفعلي لصنف حسب قائمة عميل (null = تجزئة) */
+  getEffectivePrice: (itemId: number, listId: number | null) => number
+  /** ربط عميل بقائمة أسعار */
+  setCustomerPriceList: (customerId: number, listId: number | null) => void
   /** تقرير WIP لمشروع: نسبة الإنجاز والفوترة الزائدة/الناقصة */
   getProjectWip: (projectId: number) => WipResult & { contractMinor: number; billedMinor: number; costsMinor: number }
   /* ─── العيادة (القرار 27) ─── */
@@ -1026,6 +1043,8 @@ export const useDataStore = create<DataState>()(
       jewelryProfiles: [],
       scrapLots: [],
       scrapSales: [],
+      priceLists: [],
+      priceListEntries: [],
       custodyFiles: [],
       custodyTxs: [],
       clinicPatients: [],
@@ -3251,6 +3270,49 @@ export const useDataStore = create<DataState>()(
         return sale
       },
 
+      /* ─── قوائم الأسعار (جملة/نصف جملة/VIP) ─── */
+      addPriceList: (nameAr, defaultDiscountPercent) => {
+        const state = get()
+        const errors = validatePriceList(nameAr, defaultDiscountPercent, state.priceLists)
+        if (errors.length) throw new Error(errors.join('، '))
+        const list: PriceList = { id: nextId(state.priceLists), nameAr: nameAr.trim(), defaultDiscountPercent, isActive: true }
+        set({ priceLists: [...state.priceLists, list] })
+        return list
+      },
+      updatePriceList: (id, nameAr, defaultDiscountPercent) => {
+        const state = get()
+        if (!state.priceLists.some((l) => l.id === id)) throw new Error('القائمة غير موجودة')
+        const errors = validatePriceList(nameAr, defaultDiscountPercent, state.priceLists, id)
+        if (errors.length) throw new Error(errors.join('، '))
+        set({ priceLists: state.priceLists.map((l) => (l.id === id ? { ...l, nameAr: nameAr.trim(), defaultDiscountPercent } : l)) })
+      },
+      togglePriceList: (id) => set((s) => ({ priceLists: s.priceLists.map((l) => (l.id === id ? { ...l, isActive: !l.isActive } : l)) })),
+      removePriceList: (id) => {
+        const state = get()
+        if (state.customers.some((c) => c.priceListId === id)) throw new Error('عملاء مربوطون بهذه القائمة — انقلهم أولاً أو عطّلها')
+        set({ priceLists: state.priceLists.filter((l) => l.id !== id), priceListEntries: state.priceListEntries.filter((e) => e.listId !== id) })
+      },
+      setPriceListEntry: (listId, itemId, priceMinor) => {
+        const state = get()
+        if (!state.priceLists.some((l) => l.id === listId)) throw new Error('القائمة غير موجودة')
+        if (!state.items.some((it) => it.id === itemId)) throw new Error('الصنف غير موجود')
+        const rest = state.priceListEntries.filter((e) => !(e.listId === listId && e.itemId === itemId))
+        if (priceMinor == null) { set({ priceListEntries: rest }); return }
+        if (!(priceMinor > 0)) throw new Error('السعر يجب أن يكون أكبر من صفر')
+        set({ priceListEntries: [...rest, { listId, itemId, priceMinor }] })
+      },
+      getEffectivePrice: (itemId, listId) => {
+        const state = get()
+        const retail = state.items.find((it) => it.id === itemId)?.priceMinor ?? 0
+        return resolvePrice(itemId, retail, listId, state.priceLists, state.priceListEntries)
+      },
+      setCustomerPriceList: (customerId, listId) => {
+        const state = get()
+        if (!state.customers.some((c) => c.id === customerId)) throw new Error('العميل غير موجود')
+        if (listId != null && !state.priceLists.some((l) => l.id === listId && l.isActive)) throw new Error('القائمة غير موجودة أو معطلة')
+        set({ customers: state.customers.map((c) => (c.id === customerId ? { ...c, priceListId: listId } : c)) })
+      },
+
       getProjectWip: (projectId) => {
         const state = get()
         const project = state.projects.find((p) => p.id === projectId)
@@ -3873,6 +3935,8 @@ export const useDataStore = create<DataState>()(
           jewelryProfiles: s.jewelryProfiles ?? [],
           scrapLots: s.scrapLots ?? [],
           scrapSales: s.scrapSales ?? [],
+          priceLists: s.priceLists ?? [],
+          priceListEntries: s.priceListEntries ?? [],
           custodyFiles: s.custodyFiles ?? [],
           custodyTxs: s.custodyTxs ?? [],
           employeeAdvances: (s.employeeAdvances ?? []).map((a: EmployeeAdvance) => ({
