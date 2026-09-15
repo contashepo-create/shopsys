@@ -12,7 +12,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import {
-  validateItem, nextSku, draftFromCategory, categoryPath, categoryDescendants,
+  validateItem, nextSku, draftFromCategory, categoryPath, categoryDescendants, GRADE_LABELS,
   type ItemDraft, type Item, type Category,
 } from '../../core/items.ts'
 import { FEATURE_LABELS, getActivity, type ItemFeature } from '../../core/activities.ts'
@@ -277,6 +277,8 @@ export function ItemsPage() {
     const badges: { icon: string; label: string; cls: string }[] = []
     if (it.trackExpiry) badges.push({ icon: '📅', label: 'صلاحية', cls: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' })
     if (it.trackSerial) badges.push({ icon: '🔢', label: 'سيريال', cls: 'bg-sky-500/10 text-sky-600 dark:text-sky-400' })
+    if (it.grade) badges.push({ icon: GRADE_LABELS[it.grade].icon, label: GRADE_LABELS[it.grade].nameAr, cls: 'bg-slate-500/10 text-slate-500 dark:text-slate-400' })
+    if (it.oemNumbers?.length) badges.push({ icon: '🔧', label: `${it.oemNumbers.length} OEM`, cls: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400' })
     if (it.soldByWeight) badges.push({ icon: '⚖️', label: 'وزن', cls: 'bg-teal-500/10 text-teal-600 dark:text-teal-400' })
     if (it.variantColors.length || it.variantSizes.length) badges.push({ icon: '🎨', label: 'متغيرات', cls: 'bg-violet-500/10 text-violet-600 dark:text-violet-400' })
     if (it.extraUnits.length) badges.push({ icon: '📦', label: `${it.extraUnits.length + 1} وحدات`, cls: 'bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400' })
@@ -934,6 +936,33 @@ function ItemForm({
                 className={inputCls}
               />
             </Field>
+          </div>
+        )}
+
+        {/* أرقام OEM والتوافق (جولة قطع الغيار) — أساسية لنشاطي قطع الغيار والأجهزة */}
+        {(setup.activityId === 'spare_parts' || setup.activityId === 'electronics' || (draft.oemNumbers?.length ?? 0) > 0 || (draft.fitment ?? '') !== '') && (
+          <div className="mt-3 anim-pop space-y-3">
+            <Field label="🔧 أرقام OEM / بدائل (مفصولة بفواصل)" hint="القطعة تُعرف بأرقام كثيرة — الكاشير يبحث بأي منها (تجاهل الشرطات والمسافات تلقائي)">
+              <input
+                value={(draft.oemNumbers ?? []).join(', ')}
+                onChange={(e) => p({ oemNumbers: e.target.value.split(/[,،]/).map((x) => x.trim()).filter(Boolean) })}
+                placeholder="مثال: 0986AB1234, MD-360935"
+                className={inputCls} dir="ltr"
+              />
+            </Field>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="🚗 التوافق (يناسب موديلات)" hint="نص حر يبحث فيه الكاشير: «لانسر 2016» يظهر القطعة">
+                <input value={draft.fitment ?? ''} onChange={(e) => p({ fitment: e.target.value })} placeholder="مثال: لانسر 2013-2017، إلنترا CN7" className={inputCls} />
+              </Field>
+              <Field label="⭐ درجة القطعة">
+                <select value={draft.grade ?? ''} onChange={(e) => p({ grade: (e.target.value || undefined) as never })} className={inputCls}>
+                  <option value="">— غير محدد —</option>
+                  <option value="original">🟢 أصلي</option>
+                  <option value="aftermarket">🔵 بديل تجاري</option>
+                  <option value="used">🟠 مستعمل (استيراد)</option>
+                </select>
+              </Field>
+            </div>
           </div>
         )}
 

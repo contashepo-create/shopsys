@@ -8,6 +8,10 @@ import { ScanBarcode, Smartphone, ShieldCheck, ShieldX, PackageCheck, RotateCcw 
 import { useDataStore } from '../../data/repo.ts'
 import { normalizeSerial, warrantyEndDate } from '../../core/serials.ts'
 import { inputCls, EmptyState } from '../components/ui.tsx'
+import { useAppStore } from '../../stores/app.store.ts'
+import { renderWarrantyCardHtml } from '../print/printWarranty.ts'
+import { printHtml } from '../print/printReceipt.ts'
+import { Printer } from 'lucide-react'
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   in_stock: { label: 'بالمخزون', cls: 'bg-emerald-500/10 text-emerald-600' },
@@ -16,6 +20,7 @@ const STATUS_META: Record<string, { label: string; cls: string }> = {
 
 export function SerialsPage() {
   const { serials, items, sales, customers } = useDataStore()
+  const { setup } = useAppStore()
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'sold'>('all')
   const today = new Date().toISOString().slice(0, 10)
@@ -52,6 +57,22 @@ export function SerialsPage() {
     sold: serials.filter((u) => u.status === 'sold').length,
     activeWarranty: serials.filter((u) => u.status === 'sold' && u.soldAt && today <= warrantyEndDate(u.soldAt, u.warrantyMonths)).length,
   }), [serials, today])
+
+  /** طباعة شهادة ضمان لقطعة مباعة (جولة الأجهزة الكهربائية) */
+  const printWarranty = (u: (typeof rows)[number]) => {
+    if (!u.warrantyUntil || !u.soldAt) return
+    printHtml(renderWarrantyCardHtml({
+      shopName: setup.shopName || 'تَحَكَّم',
+      shopPhone: '',
+      itemName: itemName(u.itemId),
+      serial: u.serial,
+      soldAt: u.soldAt,
+      invoiceNumber: u.sale?.invoiceNumber ?? '—',
+      customerName: u.sale?.customer ?? 'عميل نقدي',
+      warrantyMonths: u.warrantyMonths,
+      warrantyUntil: u.warrantyUntil,
+    }))
+  }
 
   return (
     <div className="space-y-4">
@@ -141,11 +162,14 @@ export function SerialsPage() {
                   </td>
                   <td className="px-4 py-2">
                     {u.warrantyUntil ? (
-                      u.warrantyActive ? (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600"><ShieldCheck size={12} /> حتى {u.warrantyUntil}</span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-500"><ShieldX size={12} /> انتهى {u.warrantyUntil}</span>
-                      )
+                      <span className="inline-flex items-center gap-1.5">
+                        {u.warrantyActive ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600"><ShieldCheck size={12} /> حتى {u.warrantyUntil}</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-500"><ShieldX size={12} /> انتهى {u.warrantyUntil}</span>
+                        )}
+                        <button onClick={() => printWarranty(u)} title="طباعة شهادة ضمان" className="text-slate-300 hover:text-brand-500 transition-colors"><Printer size={13} /></button>
+                      </span>
                     ) : u.status === 'in_stock' && u.warrantyMonths > 0 ? (
                       <span className="text-[10.5px] text-slate-400">{u.warrantyMonths} شهراً عند البيع</span>
                     ) : '—'}

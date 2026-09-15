@@ -81,7 +81,40 @@ export interface Item {
   soldByWeight: boolean
   variantColors: string[] // عند variants
   variantSizes: string[]
+  /**
+   * أرقام مرجعية OEM/بديلة (جولة قطع الغيار): القطعة الواحدة تعرف بأرقام
+   * كثيرة (رقم المصنع الأصلي + أرقام بدائل) — الكاشير يبحث بأي منها.
+   */
+  oemNumbers?: string[]
+  /** التوافق (Fitment): الموديلات/الأجهزة التي تناسبها القطعة — نص حر يبحث فيه الكاشير */
+  fitment?: string
+  /** درجة القطعة: أصلي / بديل تجاري / مستعمل (قطع الغيار) */
+  grade?: 'original' | 'aftermarket' | 'used'
   isActive: boolean
+}
+
+export const GRADE_LABELS: Record<NonNullable<Item['grade']>, { nameAr: string; icon: string }> = {
+  original: { nameAr: 'أصلي', icon: '🟢' },
+  aftermarket: { nameAr: 'بديل تجاري', icon: '🔵' },
+  used: { nameAr: 'مستعمل (استيراد)', icon: '🟠' },
+}
+
+/**
+ * بحث موحّد للكاشير (قطع الغيار): اسم / باركود / SKU / رقم OEM / توافق.
+ * أرقام OEM تطابق بلا حساسية للشرطات والمسافات (BOSCH-0986 = bosch 0986).
+ */
+export function normalizePartNumber(raw: string): string {
+  return raw.replace(/[\s\-_./]/g, '').toUpperCase()
+}
+
+export function itemMatchesPartQuery(it: Item, rawQuery: string): boolean {
+  const q = rawQuery.trim()
+  if (!q) return false
+  if (it.nameAr.includes(q) || it.sku === q || it.barcodes.includes(q)) return true
+  if (it.fitment && it.fitment.includes(q)) return true
+  const nq = normalizePartNumber(q)
+  if (nq.length < 3) return false
+  return (it.oemNumbers ?? []).some((n) => normalizePartNumber(n).includes(nq))
 }
 
 export interface ItemDraft extends Omit<Item, 'id'> {}

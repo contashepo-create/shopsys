@@ -13,6 +13,7 @@ import { formatMinor } from '../../core/money.ts'
 import { computeTotals, type CartLine } from '../../core/pos.ts'
 import { parseScaleBarcode, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
+import { itemMatchesPartQuery } from '../../core/items.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift } from '../../core/shifts.ts'
@@ -84,7 +85,8 @@ export function PosPage() {
   const filtered = useMemo(() => {
     const q = query.trim()
     if (!q) return sellable.slice(0, 24)
-    return sellable.filter((it) => it.nameAr.includes(q) || it.sku.includes(q) || it.barcodes.some((b) => b.includes(q))).slice(0, 24)
+    // بحث موحد: اسم/SKU/باركود + أرقام OEM والتوافق (جولة قطع الغيار)
+    return sellable.filter((it) => it.nameAr.includes(q) || it.sku.includes(q) || it.barcodes.some((b) => b.includes(q)) || itemMatchesPartQuery(it, q)).slice(0, 24)
   }, [sellable, query])
 
   // نافذة اختيار السيريال/IMEI (نمط موبايل شوب: البيع بالقطعة المعيّنة)
