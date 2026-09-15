@@ -147,3 +147,23 @@ export function rentalReport(
     heldDepositsMinor: rows.filter((r) => r.status === 'active').reduce((a, r) => a + r.depositMinor, 0),
   }
 }
+
+/* ─── جولة مراجعة إيجار المعدات (الطلبات 6–9): تجاوز المدة ─── */
+
+/** نهاية العقد المتوقعة حسب نوع التسعير: ساعات تُحوَّل زمنياً، أيام وأشهر تقويمياً */
+export function rentalExpectedEnd(dateIso: string, units: number, rateType: 'hourly' | 'daily' | 'monthly'): string {
+  const d = new Date(dateIso)
+  if (rateType === 'hourly') d.setTime(d.getTime() + units * 3_600_000)
+  else if (rateType === 'daily') d.setDate(d.getDate() + units)
+  else d.setMonth(d.getMonth() + units)
+  return d.toISOString()
+}
+
+/** عقد نشط تجاوزت الساعةُ الحالية نهايتَه المتوقعة = متأخر عن الإرجاع */
+export function isRentalOverdue(
+  contract: { status: string; date: string; days: number; rateType?: 'hourly' | 'daily' | 'monthly' },
+  nowIso: string,
+): boolean {
+  if (contract.status !== 'active') return false
+  return nowIso > rentalExpectedEnd(contract.date, contract.days, contract.rateType ?? 'daily')
+}

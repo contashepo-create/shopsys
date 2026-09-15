@@ -5,12 +5,14 @@
  * يُعترف به إيراداً. تقرير بالفترات + التأمينات المحتجزة.
  */
 import { useMemo, useState } from 'react'
-import { Plus, FileSpreadsheet, Eye, BookOpenText, LockKeyhole, TrendingUp } from 'lucide-react'
+import { Plus, FileSpreadsheet, Eye, BookOpenText, LockKeyhole, TrendingUp, Printer } from 'lucide-react'
 import { useDataStore, type RentalContract } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { computeRentalTotals, rentalReport } from '../../core/rental.ts'
+import { computeRentalTotals, rentalReport, isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
+import { renderRentalContractHtml } from '../print/printRentalContract.ts'
+import { printHtml } from '../print/printReceipt.ts'
 import { RATE_TYPE_LABELS, type RateType } from '../../core/rentalMeter.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -27,6 +29,32 @@ export function RentalContractsPage() {
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
   const custName = (id: number | null) => (id == null ? 'عميل نقدي' : customers.find((c) => c.id === id)?.nameAr ?? '—')
+
+  /** طباعة عقد الإيجار (جولة إيجار المعدات): ورقة A4 بطرفين وبنود وتوقيعين */
+  const printContract = (c: RentalContract) => {
+    const cust = customers.find((x) => x.id === c.customerId)
+    const eq = equipment.find((x) => x.id === c.equipmentId)
+    const rt = c.rateType ?? 'daily'
+    printHtml(renderRentalContractHtml({
+      shopName: setup.shopName || 'تأجير معدات',
+      shopPhone: '',
+      contractNumber: c.contractNumber,
+      dateIso: c.date,
+      customerName: cust?.nameAr ?? 'عميل نقدي',
+      customerPhone: cust?.phone ?? '',
+      equipmentName: c.equipmentName,
+      equipmentCode: eq?.code ?? '',
+      units: c.days,
+      unitLabel: RATE_TYPE_LABELS[rt].unitAr,
+      unitRate: `${fmt(c.dailyRateMinor)} ${cur.symbol}`,
+      rentTotal: `${fmt(c.totals.rentMinor)} ${cur.symbol}`,
+      vat: c.totals.vatMinor > 0 ? `${fmt(c.totals.vatMinor)} ${cur.symbol}` : '',
+      deposit: c.totals.depositMinor > 0 ? `${fmt(c.totals.depositMinor)} ${cur.symbol}` : '',
+      startReading: c.startReading,
+      expectedEnd: rentalExpectedEnd(c.date, c.days, rt),
+      notes: c.notes,
+    }))
+  }
 
   const [tab, setTab] = useState<'list' | 'report'>('list')
 
@@ -189,11 +217,14 @@ export function RentalContractsPage() {
                     <td className="px-4 py-3 text-slate-500">{c.totals.depositMinor > 0 ? fmt(c.totals.depositMinor) : '—'}</td>
                     <td className="px-4 py-3">
                       {c.status === 'active'
-                        ? <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 text-[11px] font-bold">نشط</span>
+                        ? isRentalOverdue(c, new Date().toISOString())
+                          ? <span className="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-600 text-[11px] font-bold animate-pulse">⏰ متأخر عن الإرجاع</span>
+                          : <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 text-[11px] font-bold">نشط</span>
                         : <span className="px-2 py-0.5 rounded-md bg-slate-500/10 text-slate-500 text-[11px] font-bold">مُقفل</span>}
                     </td>
                     <td className="px-4 py-3 text-left whitespace-nowrap">
                       <button onClick={() => setViewing(c)} className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all duration-200 hover:scale-110"><Eye size={15} /></button>
+                      <button onClick={() => printContract(c)} title="طباعة العقد" className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all duration-200 hover:scale-110"><Printer size={15} /></button>
                       {c.status === 'active' && (
                         <button onClick={() => { setClosing(c); setDeduct('') }} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all duration-200 hover:scale-110" title="إقفال وردّ التأمين"><LockKeyhole size={15} /></button>
                       )}
