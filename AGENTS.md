@@ -210,6 +210,11 @@ const S = () => useDataStore.getState()
 - `setVariantStock` يتحقق: التركيبة من ألوان/مقاسات الصنف المعرفة، ولا سالب، والمجموع لا يتجاوز الإجمالي؛ التصفير يحذف السطر.
 - سكربت التحقق: `verify_variants_matrix.mjs` (23 اختباراً).
 
+### 6.17.1 اختبارات E2E بمحاكاة مستخدم (app/tests/ — vitest + jsdom + testing-library)
+- `npx vitest run` (أو `npm run test:e2e`) — ملفان: `e2e_registration.test.tsx` (7 اختبارات: تسجيل كامل من المعالج لكل عائلة نشاط بالنقر الفعلي، عزل الأقسام الصارم في Sidebar، لا تلوث بين المستأجرين، سلامة القوالب الـ16) و`e2e_cross_screen.test.tsx` (4: المنسدلات تجلب أسماء/مفاتيح حية — عملاء في المشاريع، موظفون وأصناف برصيد حي في أذون الصرف مع تنفيذ كامل، فواتير مفتوحة حقيقية في التحصيلات، موردون في عقود الباطن).
+- **أفخاخ**: يجب `vi.stubGlobal('fetch', reject)` قبل استيراد App (مزامنة السحابة)؛ إعادة الضبط بين الاختبارات تتطلب `seeded: false` وإلا لا يُعاد البذر؛ App يستخدم HashRouter فتُختبر الصفحات المفردة بـMemoryRouter.
+- Playwright مثبت لكن تنزيل المتصفح محجوب في بيئة التطوير (ECONNRESET من cdn.playwright.dev) — اختبارات Electron الفعلية مؤجلة مع المثبت بقرار المالك.
+
 ### 6.18 أوامر التعديل — عمليات المشاريع المتقدمة (core/projectOps.ts + repo)
 - **يوميات مرنة**: `DailyWorkRecord.projectId` أصبح `number | null` — بلا مشروع = تشغيل عام؛ `settleDailyWorker` يقسم القيد آلياً: مشروعي → 5110 (ويدخل projectCosts) وعام → 5108.
 - **بنود كاملة (BOQ) للعروض والمناقصات**: QuotationLine = {nameAr, descriptionAr, qty, unitAr, unitPriceMinor, estCostMinor}; BoqItem += estCostMinor (موازنة البند). `convertQuotationToProject` ينقل كل البنود جدولَ كميات للمشروع بضغطة.
