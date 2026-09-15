@@ -88,7 +88,7 @@ check('آجل: المدين 1104 (العملاء)', find(e2, '1104')[0]?.debit =
 check('سطر ضريبة 2102 دائن', find(e2, '2102')[0]?.credit === t2.vatMinor)
 check('مدين 5106 = التكلفة', find(e2, '5106')[0]?.debit === t2.costMinor)
 check('دائن 1101 = المصاريف النقدية', find(e2, '1101')[0]?.credit === t2.directCashMinor)
-check('دائن 2101 = المصاريف الآجلة', find(e2, '2101')[0]?.credit === t2.creditMinor)
+check('دائن 2113 = المصاريف الآجلة (إصلاح: لا تلمس ذمم الموردين 2101)', find(e2, '2113')[0]?.credit === t2.creditMinor && !find(e2, '2101').length)
 check('القيد المركب متوازن', sum(e2, 'debit') === sum(e2, 'credit'))
 check('عدد السطور 6', e2.length === 6)
 

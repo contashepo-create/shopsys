@@ -11,6 +11,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeTripTotals, tripProfitReport, EXPENSE_SOURCE_LABELS, type TripExpenseSource } from '../../core/logistics.ts'
+import { summarizeCustody } from '../../core/custody.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -26,7 +27,7 @@ interface DraftExpense {
 }
 
 export function TripsPage() {
-  const { trips, vehicles, employees, customers, journal, postTrip, driverDues, getDriverDueBalance, settleDriverDues } = useDataStore()
+  const { trips, vehicles, employees, customers, journal, postTrip, driverDues, getDriverDueBalance, settleDriverDues, custodyFiles, custodyTxs } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -76,6 +77,8 @@ export function TripsPage() {
   const [qty, setQty] = useState('1')
   const [unitPrice, setUnitPrice] = useState('')
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [paidNow, setPaidNow] = useState('') // التحصيل الجزئي: فارغ = حسب طريقة الدفع
+  const [custodyFileId, setCustodyFileId] = useState('') // ملف عهدة مصاريف source='custody'
   const [treasury, setTreasury] = useState('1101')
   const [withVat, setWithVat] = useState(false)
   const [containers, setContainers] = useState('')
@@ -84,7 +87,7 @@ export function TripsPage() {
 
   const openNew = () => {
     setCustomerId(''); setVehicleId(''); setDriverId(''); setFromLoc(''); setToLoc('')
-    setQty('1'); setUnitPrice(''); setPayment('cash'); setWithVat(false)
+    setQty('1'); setUnitPrice(''); setPayment('cash'); setPaidNow(''); setCustodyFileId(''); setWithVat(false)
     setContainers(''); setExpenses([]); setNotes(''); setOpen(true)
   }
   const pickVehicle = (v: string) => {
@@ -121,9 +124,12 @@ export function TripsPage() {
         input: draftInput,
         notes: notes.trim(),
         treasury,
+        paidMinor: paidNow.trim() ? toMinor(paidNow, cur.decimals) : undefined,
+        custodyFileId: custodyFileId ? Number(custodyFileId) : null,
         driverCommissionMinor: driverCommission && driverId ? toMinor(driverCommission, cur.decimals) : 0,
       })
-      toast.show(`رُحّلت النقلة ${trip.tripNumber} — ربحها ${fmt(trip.totals.profitMinor)} ${cur.symbol} ✅`)
+      const due = trip.totals.grandMinor - (trip.paidMinor ?? (trip.payment === 'cash' ? trip.totals.grandMinor : 0))
+      toast.show(`رُحّلت النقلة ${trip.tripNumber} — ربحها ${fmt(trip.totals.profitMinor)}${due > 0 ? ` — متبقٍ على العميل ${fmt(due)}` : ''} ${cur.symbol} ✅`)
       setOpen(false)
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
@@ -342,6 +348,21 @@ export function TripsPage() {
             </Field>
             {payment === 'cash' && (
               <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>
+            )}
+            <Field label={`المحصَّل الآن (${cur.symbol}) — اختياري`} hint="اتركه فارغاً = حسب طريقة التحصيل. مبلغ جزئي = الباقي ديناً على العميل">
+              <input value={paidNow} onChange={(e) => setPaidNow(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={payment === 'cash' ? 'الكل' : '0'} />
+            </Field>
+            {expenses.some((e) => e.source === 'custody') && (
+              <Field label="ملف العهدة (لمصاريف «من عهدة موظف»)">
+                <select value={custodyFileId} onChange={(e) => setCustodyFileId(e.target.value)} className={inputCls}>
+                  <option value="">— اختر الملف —</option>
+                  {custodyFiles.filter((f) => f.status === 'open').map((f) => {
+                    const emp = employees.find((x) => x.id === f.employeeId)?.nameAr ?? '—'
+                    const remaining = summarizeCustody(custodyTxs.filter((t) => t.fileId === f.id)).remainingMinor
+                    return <option key={f.id} value={f.id}>{f.fileNumber} — {emp} (متبقٍ {fmt(remaining)})</option>
+                  })}
+                </select>
+              </Field>
             )}
             <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer self-end">
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">ض.ق.م {setup.vatPercent}٪ (تضاف فوق السعر)</span>

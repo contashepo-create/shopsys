@@ -14,7 +14,7 @@ import type { JournalLine } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
 
 /** مصدر تمويل مصروف النقلة (نمط logistics-web) */
-export type TripExpenseSource = 'cash' | 'customer' | 'credit'
+export type TripExpenseSource = 'cash' | 'customer' | 'credit' | 'custody'
 
 export interface TripExpenseInput {
   nameAr: string // سولار، كارت طريق، تفويج…
@@ -45,8 +45,9 @@ export interface TripTotals {
   vatMinor: Minor
   grandMinor: Minor // ما يُحصَّل من العميل = revenue + vat
   directCashMinor: Minor // مصاريف نقدية من الخزينة
-  creditMinor: Minor // مصاريف آجلة (ذمم موردين)
-  costMinor: Minor // direct + credit (تكلفة النقلة)
+  creditMinor: Minor // مصاريف آجلة — تستحق على 2113 (لا تلمس ذمم الموردين)
+  custodyMinor: Minor // مصاريف مدفوعة من عهدة موظف (1108)
+  costMinor: Minor // direct + credit + custody (تكلفة النقلة)
   profitMinor: Minor // revenue − cost (صافي ربح النقلة قبل غير المباشر)
 }
 
@@ -81,9 +82,10 @@ export function computeTripTotals(input: TripInput): TripTotals {
   const billableMinor = expenses.filter((e) => e.source === 'customer').reduce((a, e) => a + e.amountMinor, 0)
   const directCashMinor = expenses.filter((e) => e.source === 'cash').reduce((a, e) => a + e.amountMinor, 0)
   const creditMinor = expenses.filter((e) => e.source === 'credit').reduce((a, e) => a + e.amountMinor, 0)
+  const custodyMinor = expenses.filter((e) => e.source === 'custody').reduce((a, e) => a + e.amountMinor, 0)
   const revenueMinor = baseMinor + billableMinor
   const vatMinor = Math.round((revenueMinor * input.vatPercent) / 100)
-  const costMinor = directCashMinor + creditMinor
+  const costMinor = directCashMinor + creditMinor + custodyMinor
   return {
     baseMinor,
     billableMinor,
@@ -92,6 +94,7 @@ export function computeTripTotals(input: TripInput): TripTotals {
     grandMinor: revenueMinor + vatMinor,
     directCashMinor,
     creditMinor,
+    custodyMinor,
     costMinor,
     profitMinor: revenueMinor - costMinor,
   }
@@ -106,17 +109,23 @@ export function computeTripTotals(input: TripInput): TripTotals {
  *     إلى ح/ 1101 الخزينة (المصاريف النقدية)
  *     إلى ح/ 2101 الموردون (المصاريف الآجلة)
  */
-export function buildTripEntry(totals: TripTotals, payment: 'cash' | 'credit', tripLabel: string, treasury = '1101'): JournalLine[] {
+export function buildTripEntry(totals: TripTotals, payment: 'cash' | 'credit', tripLabel: string, treasury = '1101', paidMinor?: Minor): JournalLine[] {
   if (totals.revenueMinor <= 0) throw new Error('إيراد النقلة يجب أن يكون موجباً')
-  const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? treasury : '1104', debit: totals.grandMinor, credit: 0, note: `تحصيل ${tripLabel}` },
-    { accountCode: '4105', debit: 0, credit: totals.revenueMinor, note: 'إيراد نقلات' },
-  ]
+  // التحصيل الجزئي (إصلاح المالك): نقدي = الكل الآن، آجل = صفر افتراضاً — أو مبلغ صريح بينهما
+  const paid = paidMinor ?? (payment === 'cash' ? totals.grandMinor : 0)
+  if (!Number.isInteger(paid) || paid < 0 || paid > totals.grandMinor) throw new Error('المحصَّل الآن بين صفر وإجمالي النقلة')
+  const remainder = totals.grandMinor - paid
+  const lines: JournalLine[] = []
+  if (paid > 0) lines.push({ accountCode: treasury, debit: paid, credit: 0, note: `تحصيل نقدي ${tripLabel}` })
+  if (remainder > 0) lines.push({ accountCode: '1104', debit: remainder, credit: 0, note: `مستحق على العميل ${tripLabel}` })
+  lines.push({ accountCode: '4105', debit: 0, credit: totals.revenueMinor, note: 'إيراد نقلات' })
   if (totals.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: totals.vatMinor, note: 'ض.ق.م' })
   if (totals.costMinor > 0) {
     lines.push({ accountCode: '5106', debit: totals.costMinor, credit: 0, note: 'مصاريف النقلة' })
     if (totals.directCashMinor > 0) lines.push({ accountCode: treasury, debit: 0, credit: totals.directCashMinor, note: 'مصاريف نقدية' })
-    if (totals.creditMinor > 0) lines.push({ accountCode: '2101', debit: 0, credit: totals.creditMinor, note: 'مصاريف آجلة (محطات/موردون)' })
+    // إصلاح المالك: الآجل يستحق على 2113 «مصروفات نقلات مستحقة» — لا يلمس 2101 الموردين
+    if (totals.creditMinor > 0) lines.push({ accountCode: '2113', debit: 0, credit: totals.creditMinor, note: 'مصاريف مستحقة تُدفع لاحقاً' })
+    if (totals.custodyMinor > 0) lines.push({ accountCode: '1108', debit: 0, credit: totals.custodyMinor, note: 'مصاريف من عهدة موظف' })
   }
   assertBalanced(lines)
   return lines
@@ -179,7 +188,8 @@ export function tripProfitReport(
 export const EXPENSE_SOURCE_LABELS: Record<TripExpenseSource, string> = {
   cash: 'نقدي من الخزينة',
   customer: 'على العميل (يُضاف لفاتورته)',
-  credit: 'آجل (محطة/مورد)',
+  credit: 'آجل (أدفعه لاحقاً)',
+  custody: 'من عهدة موظف',
 }
 
 

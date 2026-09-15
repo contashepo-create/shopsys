@@ -10,7 +10,7 @@ import { useDataStore, EMPTY_EXTENDED, type Customer, type Supplier, type PartyE
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { customerStatement, supplierStatement, statementBalance } from '../../core/statements.ts'
+import { customerStatement, customerUnitDocs, supplierStatement, statementBalance } from '../../core/statements.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
 /** مبدّل عرض بطاقات/قائمة (طلب المالك) — مشترك بين العملاء والموردين */
@@ -89,7 +89,7 @@ function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: Party
 }
 
 export function CustomersPage() {
-  const { customers, addCustomer, updateCustomer, removeCustomer, sales, saleReturns, vouchers, cheques, clientSettlements } = useDataStore()
+  const { customers, addCustomer, updateCustomer, removeCustomer, sales, saleReturns, vouchers, cheques, clientSettlements, trips, tickets, rentalContracts } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -107,7 +107,7 @@ export function CustomersPage() {
       ...clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
     ]
     for (const c of customers) {
-      map.set(c.id, statementBalance(customerStatement({ customerId: c.id, sales, saleReturns, allSales: sales, vouchers: allVouchers, cheques })))
+      map.set(c.id, statementBalance(customerStatement({ customerId: c.id, sales, saleReturns, allSales: sales, vouchers: allVouchers, cheques, extraDocs: customerUnitDocs({ customerId: c.id, trips, tickets, rentals: rentalContracts }) })))
     }
     return map
   }, [customers, sales, saleReturns, vouchers, cheques, clientSettlements])

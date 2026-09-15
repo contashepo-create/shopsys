@@ -12,11 +12,11 @@ import { accountBalance, STANDARD_COA } from '../../core/ledger.ts'
 import { Link } from 'react-router-dom'
 import { collectBusinessAlerts } from '../../core/alerts.ts'
 import { collectAlerts as collectInstallmentAlerts } from '../../core/installments.ts'
-import { customerStatement, statementBalance } from '../../core/statements.ts'
+import { customerStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements } = useDataStore()
+  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements, trips, tickets, rentalContracts } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur)
@@ -95,10 +95,10 @@ export function Dashboard() {
       installmentAlerts: collectInstallmentAlerts(installmentPlans, new Date().toISOString().slice(0, 10)),
       cheques,
       customers,
-      customerBalances: (id) => statementBalance(customerStatement({ customerId: id, sales, saleReturns, allSales: sales, vouchers: allVouchers, cheques })),
+      customerBalances: (id) => statementBalance(customerStatement({ customerId: id, sales, saleReturns, allSales: sales, vouchers: allVouchers, cheques, extraDocs: customerUnitDocs({ customerId: id, trips, tickets, rentals: rentalContracts }) })),
       fmt,
     })
-  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements])
+  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements, trips, tickets, rentalContracts])
   // دين الموردين = فواتير غير مسددة − مرتجعات الشراء المخفِّضة للدين
   const suppliersDebt = Math.max(
     0,

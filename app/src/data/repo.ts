@@ -178,9 +178,13 @@ export interface Trip {
   qty: number
   unitPriceMinor: number
   payment: 'cash' | 'credit'
+  /** التحصيل الجزئي (إصلاح المالك): المحصَّل نقداً الآن — الباقي دين 1104. غيابه = حسب payment */
+  paidMinor?: number
   vatPercent: number
   containerNumbers: string[]
-  expenses: { nameAr: string; qty: number; unitAmountMinor: number; source: 'cash' | 'customer' | 'credit'; amountMinor: number }[]
+  expenses: { nameAr: string; qty: number; unitAmountMinor: number; source: 'cash' | 'customer' | 'credit' | 'custody'; amountMinor: number }[]
+  /** ملف العهدة الذي صُرفت منه مصاريف source='custody' (إن وجدت) */
+  custodyFileId?: number | null
   totals: TripTotals
   journalEntryId: number
   notes: string
@@ -1121,6 +1125,10 @@ interface DataState {
     input: TripInput
     notes: string
     treasury?: string
+    /** التحصيل الجزئي: المحصَّل نقداً الآن (0..grand) — غيابه = حسب payment */
+    paidMinor?: number
+    /** ملف عهدة مفتوح تُخصم منه مصاريف source='custody' */
+    custodyFileId?: number | null
     /** عمولة السائق عن الرحلة — تُستحق (2111) ولا تُدفع الآن؛ تسوى مجمعة */
     driverCommissionMinor?: number
   }) => Trip
@@ -3582,15 +3590,35 @@ export const useDataStore = create<DataState>()(
         const errors = validateTrip(args.input)
         if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) errors.push('العميل غير موجود')
         if (args.input.payment === 'credit' && args.customerId == null) errors.push('النقلة الآجلة تتطلب عميلاً مسجلاً')
+        // مصاريف العهدة (إصلاح المالك): تتطلب ملف عهدة مفتوحاً برصيد كافٍ
+        const custodyTotal = args.input.expenses
+          .filter((e) => e.source === 'custody')
+          .reduce((a, e) => a + Math.round(e.unitAmountMinor * e.qty), 0)
+        let custodyFile: CustodyFile | undefined
+        if (custodyTotal > 0) {
+          custodyFile = state.custodyFiles.find((f) => f.id === args.custodyFileId)
+          if (!custodyFile) errors.push('اختر ملف العهدة الذي تُصرف منه مصاريف النقلة')
+          else if (custodyFile.status !== 'open') errors.push('ملف العهدة مغلق')
+          else {
+            const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
+            if (custodyTotal > remaining) errors.push(`مصاريف العهدة (${custodyTotal}) تتجاوز متبقي الملف (${remaining})`)
+          }
+        }
+        // التحصيل الجزئي: يتطلب عميلاً مسجلاً إن بقي دين
+        const totalsProbe = computeTripTotals(args.input)
+        if (args.paidMinor != null) {
+          if (!Number.isInteger(args.paidMinor) || args.paidMinor < 0 || args.paidMinor > totalsProbe.grandMinor) errors.push('المحصَّل الآن بين صفر وإجمالي النقلة')
+          else if (args.paidMinor < totalsProbe.grandMinor && args.customerId == null) errors.push('التحصيل الجزئي يترك ديناً — يتطلب عميلاً مسجلاً')
+        }
         if (errors.length) throw new Error(errors.join(' — '))
 
         // 2) الإجماليات والقيد بالنواة الخالصة
-        const totals = computeTripTotals(args.input)
+        const totals = totalsProbe
         const tripId = nextId(state.trips)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const tripNumber = `TR-${String(tripId).padStart(4, '0')}`
-        const entryLines = buildTripEntry(totals, args.input.payment, tripNumber, args.treasury ?? '1101')
+        const entryLines = buildTripEntry(totals, args.input.payment, tripNumber, args.treasury ?? '1101', args.paidMinor)
 
         const entry: JournalEntry = {
           id: entryId,
@@ -3621,6 +3649,8 @@ export const useDataStore = create<DataState>()(
           vatPercent: args.input.vatPercent,
           containerNumbers: args.input.containerNumbers.filter((c) => c.trim()),
           expenses: args.input.expenses.map((e) => ({ ...e, amountMinor: Math.round(e.unitAmountMinor * e.qty) })),
+          paidMinor: args.paidMinor,
+          custodyFileId: custodyTotal > 0 ? (custodyFile?.id ?? null) : null,
           totals,
           journalEntryId: entryId,
           notes: args.notes,
@@ -3647,7 +3677,17 @@ export const useDataStore = create<DataState>()(
             date: now.slice(0, 10), amountMinor: commission, settled: false, settlementEntryId: null, entryId: commEntryId,
           }]
         }
-        set({ trips: [...state.trips, trip], journal: newJournal, driverDues: newDues })
+        // مصاريف العهدة تدخل ملف العهدة كحركة مصروف (تظهر بملف الموظف وتخصم من متبقيه)
+        let newCustodyTxs = state.custodyTxs
+        if (custodyTotal > 0 && custodyFile) {
+          newCustodyTxs = [...newCustodyTxs, {
+            id: nextId(state.custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
+            date: now.slice(0, 10), amountMinor: custodyTotal, excessMinor: 0,
+            description: `مصاريف نقلة ${tripNumber}`, treasury: null, projectId: null, purchaseId: null,
+            journalEntryId: entryId,
+          }]
+        }
+        set({ trips: [...state.trips, trip], journal: newJournal, driverDues: newDues, custodyTxs: newCustodyTxs })
         return trip
       },
       getDriverDueBalance: (driverId) => {

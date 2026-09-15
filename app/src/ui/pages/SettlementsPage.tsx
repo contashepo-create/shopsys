@@ -9,7 +9,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { customerStatement, supplierStatement, statementBalance } from '../../core/statements.ts'
+import { customerStatement, customerUnitDocs, supplierStatement, statementBalance } from '../../core/statements.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 
 type Section = 'treasury' | 'customer' | 'supplier'
@@ -54,6 +54,7 @@ export function SettlementsPage() {
         customerId: pid,
         openingMinor: store.openingBalances[`customer:${pid}`] ?? 0,
         sales: store.sales, saleReturns: store.saleReturns, allSales: store.sales,
+        extraDocs: customerUnitDocs({ customerId: pid, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts }),
         vouchers: [
           ...store.vouchers,
           ...store.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),

@@ -43,6 +43,11 @@ export interface CustomerStatementInput {
   cheques: ChequeLike[]
   /** صفوف تسويات شاملة (SET-####) — فروق مطابقة موثقة تدخل الرصيد الجاري */
   adjustments?: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[]
+  /**
+   * مستندات الوحدات الأخرى المدينة للعميل (إصلاح المالك: «كشف الحساب لا يظهر النقلات»):
+   * نقلات آجلة/جزئية، أوامر صيانة على الحساب، عقود إيجار آجلة… تُبنى بـ customerUnitDocs.
+   */
+  extraDocs?: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[]
 }
 
 /** ما يحتاجه الكشف من الشيك (متوافق مع core/cheques.Cheque) */
@@ -63,6 +68,9 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
   }
   for (const adj of input.adjustments ?? []) {
     rows.push({ date: adj.date, docLabel: adj.docLabel, debitMinor: adj.debitMinor, creditMinor: adj.creditMinor })
+  }
+  for (const d of input.extraDocs ?? []) {
+    rows.push({ date: d.date, docLabel: d.docLabel, debitMinor: d.debitMinor, creditMinor: d.creditMinor })
   }
   for (const s of input.sales) {
     if (s.customerId !== input.customerId) continue
@@ -106,6 +114,11 @@ export interface SupplierStatementInput {
   cheques: ChequeLike[]
   /** صفوف تسويات شاملة (SET-####) — فروق مطابقة موثقة تدخل الرصيد الجاري */
   adjustments?: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[]
+  /**
+   * مستندات الوحدات الأخرى المدينة للعميل (إصلاح المالك: «كشف الحساب لا يظهر النقلات»):
+   * نقلات آجلة/جزئية، أوامر صيانة على الحساب، عقود إيجار آجلة… تُبنى بـ customerUnitDocs.
+   */
+  extraDocs?: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[]
 }
 
 export function supplierStatement(input: SupplierStatementInput): StatementRow[] {
@@ -116,6 +129,9 @@ export function supplierStatement(input: SupplierStatementInput): StatementRow[]
   }
   for (const adj of input.adjustments ?? []) {
     rows.push({ date: adj.date, docLabel: adj.docLabel, debitMinor: adj.debitMinor, creditMinor: adj.creditMinor })
+  }
+  for (const d of input.extraDocs ?? []) {
+    rows.push({ date: d.date, docLabel: d.docLabel, debitMinor: d.debitMinor, creditMinor: d.creditMinor })
   }
   for (const p of input.purchases) {
     if (p.supplierId !== input.supplierId) continue
@@ -173,4 +189,33 @@ export function employeeStatement(input: EmployeeStatementInput): StatementRow[]
 /** رصيد نهائي مختصر */
 export function statementBalance(rows: StatementRow[]): Minor {
   return rows.length ? rows[rows.length - 1].balanceMinor : 0
+}
+
+/**
+ * مستندات الوحدات غير الكاشير المدينة لعميل (إصلاح المالك):
+ * الجزء غير المحصَّل فقط من كل مستند يدخل ذمة العميل —
+ * نقلات (grand − paid)، صيانة مسلَّمة (creditMinor)، عقود إيجار (collectCreditMinor).
+ */
+export function customerUnitDocs(args: {
+  customerId: number
+  trips?: readonly { tripNumber: string; date: string; customerId: number | null; payment: string; paidMinor?: number; totals: { grandMinor: Minor } }[]
+  tickets?: readonly { ticketNumber: string; customerId: number | null; deliveredAt: string | null; totals: { creditMinor: Minor } | null }[]
+  rentals?: readonly { contractNumber: string; date: string; customerId: number | null; totals: { collectCreditMinor: Minor } }[]
+}): { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[] {
+  const rows: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[] = []
+  for (const t of args.trips ?? []) {
+    if (t.customerId !== args.customerId) continue
+    const paid = t.paidMinor ?? (t.payment === 'cash' ? t.totals.grandMinor : 0)
+    const due = t.totals.grandMinor - paid
+    if (due > 0) rows.push({ docLabel: `نقلة ${t.tripNumber} (آجل)`, date: t.date, debitMinor: due, creditMinor: 0 })
+  }
+  for (const tk of args.tickets ?? []) {
+    if (tk.customerId !== args.customerId || !tk.deliveredAt || !tk.totals) continue
+    if (tk.totals.creditMinor > 0) rows.push({ docLabel: `صيانة ${tk.ticketNumber} (على الحساب)`, date: tk.deliveredAt, debitMinor: tk.totals.creditMinor, creditMinor: 0 })
+  }
+  for (const rc of args.rentals ?? []) {
+    if (rc.customerId !== args.customerId) continue
+    if (rc.totals.collectCreditMinor > 0) rows.push({ docLabel: `إيجار ${rc.contractNumber} (آجل)`, date: rc.date, debitMinor: rc.totals.collectCreditMinor, creditMinor: 0 })
+  }
+  return rows
 }

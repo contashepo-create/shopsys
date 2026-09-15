@@ -9,7 +9,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { customerStatement, supplierStatement, employeeStatement, statementBalance, type StatementRow } from '../../core/statements.ts'
+import { customerStatement, customerUnitDocs, supplierStatement, employeeStatement, statementBalance, type StatementRow } from '../../core/statements.ts'
 import { renderStatementHtml } from '../print/printStatement.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { inputCls, EmptyState, Btn, useToast } from '../components/ui.tsx'
@@ -23,7 +23,7 @@ const KINDS: { id: Kind; nameAr: string; icon: typeof UserRound; debitLabel: str
 ]
 
 export function StatementsPage() {
-  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements } = useDataStore()
+  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements, trips, tickets, rentalContracts } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -52,6 +52,8 @@ export function StatementsPage() {
         })),
         sales, saleReturns,
         allSales: sales,
+        // إصلاح المالك: مستندات الوحدات الأخرى (نقلات/صيانة/إيجار) كانت غائبة عن الكشف
+        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts }),
         // تسويات التحصيل FIFO تدخل الكشف كسندات قبض — كانت غائبة (إصلاح تقرير المديونيات)
         vouchers: [
           ...vouchers,

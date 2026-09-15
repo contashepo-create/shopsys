@@ -130,6 +130,7 @@ export const STANDARD_COA: Account[] = [
   { code: '2110', nameAr: 'مستحق لملاك سيارات الأمانة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'consignment_payable' },
   { code: '2111', nameAr: 'مستحقات سائقين', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'driver_dues' },
   { code: '2112', nameAr: 'ضريبة استقطاع مستحقة (مقاولو باطن)', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'withholding_tax_payable' },
+  { code: '2113', nameAr: 'مصروفات نقلات مستحقة (كروت/محطات)', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'trip_expenses_payable' },
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },
   { code: '3102', nameAr: 'أرباح مرحّلة', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'retained_earnings' },
