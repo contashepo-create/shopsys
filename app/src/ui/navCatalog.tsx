@@ -10,7 +10,7 @@ import {
   PenLine, ListTree, PiggyBank, CalendarClock, Store, Percent,
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
-  FileText, ListChecks, Users2,
+  FileText, ListChecks, Users2, ChefHat,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule } from '../core/activities.ts'
@@ -73,6 +73,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'warehouses', nameAr: 'المخازن', icon: Warehouse, path: '/inventory/warehouses' },
       { id: 'transfers', nameAr: 'التحويلات', icon: ArrowLeftRight, path: '/inventory/transfers' },
       { id: 'counting', nameAr: 'الجرد', icon: ClipboardList, path: '/inventory/counting' },
+      { id: 'recipes', nameAr: 'الوصفات والإنتاج', icon: ChefHat, path: '/inventory/recipes', module: 'recipes' },
     ],
   },
   {

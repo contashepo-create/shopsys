@@ -22,6 +22,7 @@ import { CustomersPage, SuppliersPage } from './ui/pages/PartiesPages.tsx'
 import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
 import { PurchaseReturnsPage } from './ui/pages/PurchaseReturnsPage.tsx'
 import { StocktakePage } from './ui/pages/StocktakePage.tsx'
+import { RecipesPage } from './ui/pages/RecipesPage.tsx'
 import { PosPage } from './ui/pages/PosPage.tsx'
 import { SalesInvoicesPage } from './ui/pages/SalesInvoicesPage.tsx'
 import { SaleReturnsPage } from './ui/pages/SaleReturnsPage.tsx'
@@ -90,6 +91,7 @@ function Shell() {
         <Route path="/sales/shifts" element={<ShiftsPage />} />
         <Route path="/inventory/transfers" element={<TransfersPage />} />
         <Route path="/inventory/counting" element={<StocktakePage />} />
+        <Route path="/inventory/recipes" element={<RecipesPage />} />
         <Route path="/purchases/invoices" element={<PurchasesPage />} />
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
         <Route path="/parties/employees" element={<EmployeesPage />} />

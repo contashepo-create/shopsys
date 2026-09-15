@@ -25,6 +25,7 @@ export type BusinessModule =
   | 'clinic' // عيادات الأطباء وملفات المرضى (القرار 27)
   | 'cars' // معارض بيع وإيجار السيارات (القرار 27)
   | 'installments' // الأقساط
+  | 'recipes' // الوصفات والتصنيع (مطاعم/مخابز)
 
 export interface ActivityTemplate {
   id: string
@@ -126,9 +127,9 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
   },
   {
     id: 'restaurant', nameAr: 'مطعم / كافيه', icon: '🍽️',
-    description: 'بيع سريع بالكاشير، خامات بصلاحية ووحدات، مشتريات يومية',
+    description: 'بيع سريع بالكاشير، وصفات أطباق تخصم الخامات آلياً، مشتريات يومية',
     features: ['expiry_batches', 'multi_unit', 'weight_scale'],
-    modules: ['pos', 'inventory', 'purchases'],
+    modules: ['pos', 'inventory', 'purchases', 'recipes'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
@@ -197,7 +198,8 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   clinic: { nameAr: 'العيادة', icon: '🦷', desc: 'ملفات المرضى، الزيارات والكشوفات، خطط العلاج والمواعيد' },
   cars: { nameAr: 'معرض السيارات', icon: '🚗', desc: 'سيارات بتكلفة وربحية لكل واحدة، تجهيزات ترسمل، بيع وإيجار' },
   installments: { nameAr: 'الأقساط', icon: '💳', desc: 'بيع بالتقسيط، جدولة الأقساط، تنبيهات الاستحقاق' },
+  recipes: { nameAr: 'الوصفات والإنتاج', icon: '👨‍🍳', desc: 'وصفات الأطباق تخصم خاماتها عند البيع، وأوامر إنتاج للصوصات والعجائن' },
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']

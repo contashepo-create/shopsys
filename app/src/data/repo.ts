@@ -12,10 +12,11 @@ import { secureStorage } from './secureStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, type ExpenseInput, type CostLine } from '../core/costing.ts'
-import { computeTotals, buildSaleEntry, checkStock, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
+import { computeTotals, buildSaleEntry, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnEntry, deriveTaxConfig } from '../core/returns.ts'
 import { buildPurchaseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
+import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
@@ -593,6 +594,8 @@ interface DataState {
   bonds: Bond[] // خطابات الضمان البنكية
   dailyWorkers: DailyWorker[] // عمال اليومية
   dailyWorkRecords: DailyWorkRecord[] // سجلات أيام العمل على المشاريع
+  recipes: Recipe[] // وصفات الأطباق والتصنيع (مطاعم)
+  productionOrders: ProductionOrder[] // أوامر الإنتاج المسبق
   custodyFiles: CustodyFile[] // ملفات عهد الموظفين (طلب المالك — نظام متكامل بنمط pro-acc)
   custodyTxs: CustodyTx[] // حركات ملفات العهد (تعزيز/مصروف/فاتورة/مرتجع/عجز)
   clinicPatients: ClinicPatient[] // العيادة (القرار 27)
@@ -876,6 +879,16 @@ interface DataState {
   addDailyWorkRecord: (args: { workerId: number; projectId: number; date: string; days: number; wageMinor?: number }) => DailyWorkRecord
   /** تسوية كل يوميات عامل غير المسددة: 5110 ← خزينة + تعليمها settled */
   settleDailyWorker: (workerId: number, treasury: string) => { total: number; recordCount: number }
+
+  // ————— الوصفات والتصنيع (مطاعم) —————
+  addRecipe: (input: RecipeInput) => Recipe
+  updateRecipe: (id: number, input: RecipeInput) => void
+  toggleRecipe: (id: number) => void
+  removeRecipe: (id: number) => void
+  /** تكلفة وحدة الناتج بالمتوسط المرجح الحالي للخامات */
+  getRecipeUnitCost: (recipeId: number) => number
+  /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
+  postProduction: (args: { recipeId: number; batches: number; treasury?: string; notes?: string }) => ProductionOrder
   /** تقرير WIP لمشروع: نسبة الإنجاز والفوترة الزائدة/الناقصة */
   getProjectWip: (projectId: number) => WipResult & { contractMinor: number; billedMinor: number; costsMinor: number }
   /* ─── العيادة (القرار 27) ─── */
@@ -989,6 +1002,8 @@ export const useDataStore = create<DataState>()(
       bonds: [],
       dailyWorkers: [],
       dailyWorkRecords: [],
+      recipes: [],
+      productionOrders: [],
       custodyFiles: [],
       custodyTxs: [],
       clinicPatients: [],
@@ -1230,18 +1245,25 @@ export const useDataStore = create<DataState>()(
 
       postSale: (args) => {
         const state = get()
-        // 1) فحص المخزون
+        // 0) وصفات «يُجهَّز عند الطلب» (مطاعم): الطبق بلا مخزون —
+        // تُفكَّك سطوره إلى احتياجات خامات تُفحص وتُخصم بدلاً منه
+        const recipeOf = (itemId: number) => state.recipes.find((r) => r.productItemId === itemId && r.mode === 'made_to_order' && r.isActive)
+        const saleQty = new Map<number, number>()
+        for (const l of args.lines) saleQty.set(l.itemId, (saleQty.get(l.itemId) ?? 0) + l.qty)
+        const stockNeeds = explodeIngredientNeeds(saleQty, recipeOf)
+        // 1) فحص المخزون (على الخامات للأطباق، وعلى الصنف نفسه لغيرها)
         if (!args.allowNegativeStock) {
-          const shortages = checkStock(args.lines, (id) => state.items.find((it) => it.id === id)?.stockQty ?? 0)
-          if (shortages.length) {
-            const msg = shortages.map((s) => `«${s.nameAr}»: متاح ${s.available} ومطلوب ${s.requested}`).join('، ')
-            throw new Error(`مخزون غير كافٍ — ${msg}`)
+          const shortages: string[] = []
+          for (const [itemId, needed] of stockNeeds) {
+            const item = state.items.find((it) => it.id === itemId)
+            if (!item) continue
+            if ((item.stockQty ?? 0) < needed) shortages.push(`«${item.nameAr}»: متاح ${item.stockQty ?? 0} ومطلوب ${needed}`)
           }
+          if (shortages.length) throw new Error(`مخزون غير كافٍ — ${shortages.join('، ')}`)
         }
         // 2) دفعات الصلاحية FEFO (القراران 5 و8): تخطيط الصرف وحظر المنتهي بلا تجاوز مدير
         const now0 = new Date().toISOString()
-        const qtyPlanned = new Map<number, number>()
-        for (const l of args.lines) qtyPlanned.set(l.itemId, (qtyPlanned.get(l.itemId) ?? 0) + l.qty)
+        const qtyPlanned = stockNeeds
         let workingBatches = state.batches
         const expiredNames: string[] = []
         for (const [itemId, qty] of qtyPlanned) {
@@ -1274,6 +1296,12 @@ export const useDataStore = create<DataState>()(
         // لو رُحّلت فاتورة شراء أثناء وجود الصنف في السلة تغيّر المتوسط —
         // فيجب أن يخرج قيد التكلفة (5101/1103) بنفس متوسط لحظة البيع وإلا انفصل الدفتر عن المخزون
         const costedLines = args.lines.map((l) => {
+          // طبق بوصفة «عند الطلب»: تكلفته = تكلفة خاماته بالمتوسط المرجح لحظة البيع
+          const recipe = recipeOf(l.itemId)
+          if (recipe) {
+            const dishCost = recipeIngredientsCostMinor(recipe, (id) => state.items.find((it) => it.id === id)?.costMinor ?? 0)
+            return { ...l, unitCostMinor: dishCost }
+          }
           const current = state.items.find((it) => it.id === l.itemId)?.costMinor
           // لقطة المتوسط تؤخذ فقط لو كانت قيمة سليمة — أصناف قديمة قد تحمل تكلفة تالفة
           return Number.isInteger(current) && current !== l.unitCostMinor ? { ...l, unitCostMinor: current as number } : l
@@ -1322,11 +1350,9 @@ export const useDataStore = create<DataState>()(
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
         }
 
-        // 4) خصم المخزون (والدفعات المحدثة بعد صرف FEFO) + تعليم السيريالات مباعة
-        const qtyByItem = new Map<number, number>()
-        for (const l of args.lines) qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + l.qty)
+        // 4) خصم المخزون (خامات الأطباق بدل الطبق نفسه) + تعليم السيريالات مباعة
         const updatedItems = state.items.map((it) =>
-          qtyByItem.has(it.id) ? { ...it, stockQty: (it.stockQty ?? 0) - qtyByItem.get(it.id)! } : it,
+          stockNeeds.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - stockNeeds.get(it.id)!) * 1000) / 1000 } : it,
         )
         // markSold يتحقق (موجود/متاح/يخص الصنف/غير مكرر) ويرمي خطأ عربياً قبل أي كتابة
         const updatedSerials = assignments.length ? markSold(state.serials, assignments, saleId, now) : state.serials
@@ -1344,7 +1370,11 @@ export const useDataStore = create<DataState>()(
         }
         // 1) بناء سطور المرتجع بنفس أسعار وخصومات الأصل، مع منع تجاوز المتبقي
         const priorLines = state.saleReturns.filter((r) => r.saleId === sale.id).flatMap((r) => r.lines)
-        const lines = buildReturnLines(sale.lines, priorLines, args.qtyByItem)
+        const rawLines = buildReturnLines(sale.lines, priorLines, args.qtyByItem)
+        // أطباق الوصفات «عند الطلب»: الخامات طُهيت ولا تعود للمخزون —
+        // تبقى تكلفتها في 5101 (هالك اقتصادياً) ويُرد للعميل السعر فقط
+        const isDish = (itemId: number) => state.recipes.some((r) => r.productItemId === itemId && r.mode === 'made_to_order')
+        const lines = rawLines.map((l) => (isDish(l.itemId) ? { ...l, unitCostMinor: 0 } : l))
         // 2) نفس المعاملة الضريبية وقت البيع (حتى لو تغيرت الإعدادات لاحقاً)
         const { taxPercent, taxInclusive } = deriveTaxConfig(sale.totals)
         const totals = computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
@@ -1391,6 +1421,7 @@ export const useDataStore = create<DataState>()(
         const qtyBack = new Map<number, number>()
         const valueBack = new Map<number, number>()
         for (const l of lines) {
+          if (isDish(l.itemId)) continue // الطبق بلا مخزون — لا عودة
           qtyBack.set(l.itemId, (qtyBack.get(l.itemId) ?? 0) + l.qty)
           valueBack.set(l.itemId, (valueBack.get(l.itemId) ?? 0) + Math.round(l.qty * l.unitCostMinor))
         }
@@ -3006,6 +3037,105 @@ export const useDataStore = create<DataState>()(
         return { total, recordCount: unsettled.length }
       },
 
+      /* ─── الوصفات والتصنيع (مطاعم — سد فجوة Foodics) ─── */
+      addRecipe: (input) => {
+        const state = get()
+        const errors = validateRecipe(
+          input,
+          (id) => state.items.some((it) => it.id === id),
+          (pid) => state.recipes.some((r) => r.productItemId === pid),
+          (id) => state.recipes.some((r) => r.productItemId === id && r.mode === 'made_to_order'),
+        )
+        if (errors.length) throw new Error(errors.join('، '))
+        const recipe: Recipe = { ...input, id: nextId(state.recipes) }
+        set({ recipes: [...state.recipes, recipe] })
+        return recipe
+      },
+      updateRecipe: (id, input) => {
+        const state = get()
+        const existing = state.recipes.find((r) => r.id === id)
+        if (!existing) throw new Error('الوصفة غير موجودة')
+        const errors = validateRecipe(
+          input,
+          (iid) => state.items.some((it) => it.id === iid),
+          (pid) => state.recipes.some((r) => r.productItemId === pid && r.id !== id),
+          (iid) => state.recipes.some((r) => r.productItemId === iid && r.mode === 'made_to_order' && r.id !== id),
+        )
+        if (errors.length) throw new Error(errors.join('، '))
+        set({ recipes: state.recipes.map((r) => (r.id === id ? { ...input, id } : r)) })
+      },
+      toggleRecipe: (id) => set((s) => ({ recipes: s.recipes.map((r) => (r.id === id ? { ...r, isActive: !r.isActive } : r)) })),
+      removeRecipe: (id) => {
+        const state = get()
+        if (state.productionOrders.some((o) => o.recipeId === id)) throw new Error('لهذه الوصفة أوامر إنتاج مرحلة — عطّلها بدل حذفها')
+        set({ recipes: state.recipes.filter((r) => r.id !== id) })
+      },
+      getRecipeUnitCost: (recipeId) => {
+        const state = get()
+        const r = state.recipes.find((x) => x.id === recipeId)
+        if (!r) throw new Error('الوصفة غير موجودة')
+        return recipeUnitCostMinor(r, (id) => state.items.find((it) => it.id === id)?.costMinor ?? 0)
+      },
+      postProduction: (args) => {
+        const state = get()
+        const recipe = state.recipes.find((r) => r.id === args.recipeId)
+        if (!recipe) throw new Error('الوصفة غير موجودة')
+        if (recipe.mode !== 'prepped') throw new Error('أوامر الإنتاج للوصفات «إنتاج مسبق» فقط — أطباق الطلب تُخصم خاماتها عند البيع تلقائياً')
+        if (!recipe.isActive) throw new Error('الوصفة معطلة')
+        if (!Number.isInteger(args.batches) || args.batches <= 0) throw new Error('عدد التشغيلات يجب أن يكون عدداً صحيحاً موجباً')
+        // فحص توافر الخامات (كميات التشغيلة × عدد التشغيلات)
+        const shortages: string[] = []
+        for (const ing of recipe.ingredients) {
+          const item = state.items.find((it) => it.id === ing.itemId)
+          const needed = ing.qty * args.batches
+          if (!item) throw new Error('مكوّن غير موجود')
+          if ((item.stockQty ?? 0) < needed) shortages.push(`«${item.nameAr}»: متاح ${item.stockQty ?? 0} ومطلوب ${needed}`)
+        }
+        if (shortages.length) throw new Error(`خامات غير كافية — ${shortages.join('، ')}`)
+        const costOf = (id: number) => state.items.find((it) => it.id === id)?.costMinor ?? 0
+        const ingredientsCost = recipeIngredientsCostMinor(recipe, costOf) * args.batches
+        const overhead = recipe.overheadMinor * args.batches
+        const producedQty = recipe.yieldQty * args.batches
+        const treasury = args.treasury ?? '1101'
+        const lines = buildProductionEntry(ingredientsCost, overhead, treasury)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const orderId = nextId(state.productionOrders)
+        const orderNumber = `PRD-${String(orderId).padStart(4, '0')}`
+        const product = state.items.find((it) => it.id === recipe.productItemId)
+        if (!product) throw new Error('الصنف الناتج غير موجود')
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `أمر إنتاج ${orderNumber} — ${product.nameAr} (${producedQty})`,
+          sourceType: 'production', sourceId: orderId, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const order: ProductionOrder = {
+          id: orderId, orderNumber, refCode: makeUniqueRefCode('PRD', now, usedRefCodes(state)),
+          date: now, recipeId: recipe.id, productItemId: recipe.productItemId,
+          batches: args.batches, producedQty, ingredientsCostMinor: ingredientsCost,
+          overheadMinor: overhead, totalCostMinor: ingredientsCost + overhead,
+          treasury: overhead > 0 ? treasury : null, journalEntryId: entryId, notes: args.notes ?? '',
+        }
+        // خصم الخامات + إدخال الناتج بمتوسط مرجح جديد (قيمة قديمة + تكلفة الإنتاج)
+        const consumed = new Map<number, number>()
+        for (const ing of recipe.ingredients) consumed.set(ing.itemId, ing.qty * args.batches)
+        const updatedItems = state.items.map((it) => {
+          if (consumed.has(it.id)) {
+            return { ...it, stockQty: Math.round(((it.stockQty ?? 0) - consumed.get(it.id)!) * 1000) / 1000 }
+          }
+          if (it.id === recipe.productItemId) {
+            const oldQty = it.stockQty ?? 0
+            const newQty = oldQty + producedQty
+            const newValue = Math.round(oldQty * it.costMinor) + ingredientsCost + overhead
+            return { ...it, stockQty: newQty, costMinor: Math.round(newValue / newQty) }
+          }
+          return it
+        })
+        set({ items: updatedItems, productionOrders: [...state.productionOrders, order], journal: [...state.journal, entry] })
+        return order
+      },
+
       getProjectWip: (projectId) => {
         const state = get()
         const project = state.projects.find((p) => p.id === projectId)
@@ -3622,6 +3752,8 @@ export const useDataStore = create<DataState>()(
           bonds: s.bonds ?? [],
           dailyWorkers: s.dailyWorkers ?? [],
           dailyWorkRecords: s.dailyWorkRecords ?? [],
+          recipes: s.recipes ?? [],
+          productionOrders: s.productionOrders ?? [],
           custodyFiles: s.custodyFiles ?? [],
           custodyTxs: s.custodyTxs ?? [],
           employeeAdvances: (s.employeeAdvances ?? []).map((a: EmployeeAdvance) => ({
