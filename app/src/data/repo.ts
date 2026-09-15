@@ -39,6 +39,7 @@ import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/w
 import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
 import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
 import { customerStatement, supplierStatement, statementBalance } from '../core/statements.ts'
+import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
@@ -726,6 +727,20 @@ export interface SaleReturn {
   shiftId: number | null
 }
 
+/** مستند استبدال (نشاط الملابس): مرتجع + بيع جديد بعملية واحدة — يربط المستندين والصافي */
+export interface ExchangeDoc {
+  id: number
+  exchangeNumber: string // EXC-0001
+  date: string // ISO
+  originalSaleId: number
+  returnId: number // مستند المرتجع المولد
+  newSaleId: number // فاتورة البيع الجديدة
+  returnValueMinor: number
+  newValueMinor: number
+  netMinor: number // موجب = دفع العميل الفرق، سالب = رُدّ له
+  notes: string
+}
+
 interface DataState {
   seeded: boolean
   items: Item[]
@@ -808,6 +823,8 @@ interface DataState {
   openingBalances: Record<string, number>
   /** التسويات الشاملة (خزينة/عميل/مورد) — كل فرق مربوط بقيد 5112 */
   settlements: SettlementDoc[]
+  /** الاستبدالات (ملابس): مرتجع + بيع مربوطان بمستند EXC واحد */
+  exchanges: ExchangeDoc[]
   vouchers: Voucher[]
   employeeAdvances: EmployeeAdvance[] // سلف الموظفين (طلب المالك)
   sales: SaleInvoice[]
@@ -931,6 +948,18 @@ interface DataState {
    * الفرق يضرب 5112 إجبارياً (درس عجز الـ5,000 المتبخر) ويُوثق بمستند SET-####.
    */
   applySettlement: (args: { section: 'treasury' | 'customer' | 'supplier'; refId: string | number; actualMinor: number; reason: string }) => SettlementDoc
+  /**
+   * استبدال (ملابس): مرتجع عن فاتورة أصلية + بيع جديد فوري بمستند EXC واحد —
+   * قيدا العمليتين يبقيان كاملين (4102 و4101 بلا تشويه) وحركة الخزينة الصافية = الفرق فقط.
+   * ذري: أي فشل في البيع الجديد يسترجع الحالة قبل المرتجع.
+   */
+  postExchange: (args: {
+    originalSaleId: number
+    returnQtyByItem: Map<number, number>
+    newLines: CartLine[]
+    treasury?: TreasuryAccount
+    notes: string
+  }) => ExchangeDoc
   /** سند قبض/صرف/تحويل — يولّد قيده المتوازن فوراً */
   postVoucher: (args: {
     kind: VoucherKind
@@ -1333,7 +1362,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 13 // 13: الأرصدة الافتتاحية + التسويات الشاملة SET (جولة مراجعة الموبايلات)
+export const DATA_VERSION = 14 // 13: أرصدة افتتاحية + تسويات SET (موبايلات) — 14: استبدال EXC (ملابس)
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -1472,6 +1501,7 @@ export const useDataStore = create<DataState>()(
       wastages: [],
       openingBalances: {},
       settlements: [],
+      exchanges: [],
       vouchers: [],
       employeeAdvances: [],
       sales: [],
@@ -2449,6 +2479,66 @@ export const useDataStore = create<DataState>()(
         }
         set({ settlements: [...state.settlements, doc], journal })
         return doc
+      },
+
+      postExchange: (args) => {
+        const state = get()
+        const sale = state.sales.find((x) => x.id === args.originalSaleId)
+        if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        const coreErrors = validateExchange({
+          returnLines: [...args.returnQtyByItem].map(([itemId, qty]) => ({ itemId, qty })),
+          newLines: args.newLines.map((l) => ({ itemId: l.itemId, qty: l.qty, variantColor: l.variantColor, variantSize: l.variantSize })),
+        })
+        if (coreErrors.length) throw new Error(coreErrors.join(' — '))
+
+        // ذرية العملية المركبة: لقطة كاملة قبل المرتجع — فشل البيع الجديد يسترجعها
+        // (وإلا بقي مرتجع «يتيم» نصف استبدال — نفس درس فاتورة الكاشير)
+        const snapshot = get()
+        try {
+          // 1) المرتجع نقدي من خزينة الاستبدال: النقدية الخارجة والداخلة في نفس
+          //    الخزينة فحركتها الصافية = الفرق فقط (ما يراه الكاشير في الدرج)
+          const treasury = args.treasury ?? sale.treasury ?? '1101'
+          const ret = get().postSaleReturn({
+            saleId: sale.id,
+            qtyByItem: args.returnQtyByItem,
+            refund: 'cash',
+            reason: `استبدال${args.notes.trim() ? ` — ${args.notes.trim()}` : ''}`,
+          })
+          // 2) البيع الجديد بنفس المعاملة الضريبية للفاتورة الأصلية (اتساق المستندين)
+          const { taxPercent, taxInclusive } = deriveTaxConfig(sale.totals)
+          const newSale = get().postSale({
+            lines: args.newLines,
+            customerId: sale.customerId,
+            payment: 'cash',
+            invoiceDiscountPercent: 0,
+            taxPercent,
+            taxInclusive,
+            treasury: treasury as TreasuryAccount,
+            warehouseId: sale.warehouseId ?? null,
+          })
+          // 3) مستند الربط والصافي
+          const afterState = get()
+          const preview = computeExchangeNet(ret.totals.totalMinor, newSale.totals.totalMinor)
+          const id = nextId(afterState.exchanges)
+          const doc: ExchangeDoc = {
+            id,
+            exchangeNumber: `EXC-${String(id).padStart(4, '0')}`,
+            date: new Date().toISOString(),
+            originalSaleId: sale.id,
+            returnId: ret.id,
+            newSaleId: newSale.id,
+            returnValueMinor: preview.returnValueMinor,
+            newValueMinor: preview.newValueMinor,
+            netMinor: preview.netMinor,
+            notes: args.notes.trim(),
+          }
+          set({ exchanges: [...afterState.exchanges, doc] })
+          return doc
+        } catch (e) {
+          // استرجاع كامل — لا مرتجع يتيم بلا بيعه المقابل
+          useDataStore.setState(snapshot, true)
+          throw e
+        }
       },
 
       postVoucher: (args) => {
@@ -6010,6 +6100,7 @@ export const useDataStore = create<DataState>()(
           wastages: s.wastages ?? [],
           openingBalances: s.openingBalances ?? {},
           settlements: s.settlements ?? [],
+          exchanges: s.exchanges ?? [],
           vouchers: s.vouchers ?? [],
           shifts: s.shifts ?? [],
           journal: s.journal ?? [],
