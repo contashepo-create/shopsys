@@ -519,6 +519,8 @@ export interface MaintenanceTicket {
   deviceName: string
   issue: string
   estimateMinor: number // تقدير مبدئي يُتفق عليه عند الاستلام (0 = بلا)
+  /** موعد التسليم الموعود (جولة المغسلة) — '' أو غياب = بلا موعد */
+  promisedAt?: string
   status: TicketStatus
   statusHistory: { status: TicketStatus; at: string }[]
   // تُملأ عند التسليم فقط:
@@ -1367,6 +1369,7 @@ interface DataState {
     deviceName: string
     issue: string
     estimateMinor: number
+    promisedAt?: string
     notes: string
   }) => MaintenanceTicket
   /** نقل حالة التذكرة وفق الانتقالات المسموحة (مع سجل الحالات) */
@@ -5743,6 +5746,7 @@ export const useDataStore = create<DataState>()(
           deviceName: args.deviceName.trim(),
           issue: args.issue.trim(),
           estimateMinor: args.estimateMinor,
+          promisedAt: args.promisedAt || undefined,
           status: 'received',
           statusHistory: [{ status: 'received', at: now }],
           parts: [],

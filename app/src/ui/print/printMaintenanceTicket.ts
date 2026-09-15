@@ -19,6 +19,8 @@ export interface TicketPrintModel {
   deviceName: string
   issue: string
   estimateMinor?: number
+  /** موعد التسليم الموعود (جولة المغسلة) — يُطبع بإيصال الاستلام */
+  promisedAt?: string
   notes?: string
 }
 
@@ -70,6 +72,7 @@ export function renderTicketReceiptHtml(m: TicketPrintModel, cur: CurrencyConfig
     <div class="row"><span class="lbl">الجهاز</span><b>${esc(m.deviceName)}</b></div>
     <div class="row"><span class="lbl">العطل المبلَّغ</span><b>${esc(m.issue)}</b></div>
     ${m.estimateMinor && m.estimateMinor > 0 ? `<div class="row"><span class="lbl">التقدير المبدئي المتفق عليه</span><b>${formatMinor(m.estimateMinor, cur)}</b></div>` : ''}
+    ${m.promisedAt ? `<div class="row"><span class="lbl">موعد التسليم الموعود</span><b dir="ltr">${esc(m.promisedAt.slice(0, 16).replace('T', ' '))}</b></div>` : ''}
     ${m.notes ? `<div class="row"><span class="lbl">ملاحظات</span><span>${esc(m.notes)}</span></div>` : ''}
   </div>
   <div class="box" style="background:#fffbeb;border-color:#fcd34d">

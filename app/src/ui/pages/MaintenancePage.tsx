@@ -10,7 +10,7 @@ import { useDataStore, type MaintenanceTicket } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { computeTicketTotals, maintenanceReport, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
+import { computeTicketTotals, maintenanceReport, isTicketOverdue, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
 import { renderTicketReceiptHtml, renderTicketInvoiceHtml } from '../print/printMaintenanceTicket.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
@@ -52,6 +52,7 @@ export function MaintenancePage() {
     deviceName: t.deviceName,
     issue: t.issue,
     estimateMinor: t.estimateMinor,
+    promisedAt: t.promisedAt,
     notes: t.notes,
   })
   const printTicketReceipt = (t: MaintenanceTicket) => printHtml(renderTicketReceiptHtml(ticketPrintBase(t), cur))
@@ -76,12 +77,13 @@ export function MaintenancePage() {
   const [deviceName, setDeviceName] = useState('')
   const [issue, setIssue] = useState('')
   const [estimate, setEstimate] = useState('')
+  const [promisedAt, setPromisedAt] = useState('') // موعد التسليم الموعود (جولة المغسلة)
   const [notes, setNotes] = useState('')
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
 
   const openNew = () => {
     setCustomerId(''); setCustomerName(''); setCustomerPhone(''); setDeviceName('')
-    setIssue(''); setEstimate(''); setNotes(''); setOpen(true)
+    setIssue(''); setEstimate(''); setPromisedAt(''); setNotes(''); setOpen(true)
   }
   const saveTicket = () => {
     try {
@@ -90,6 +92,7 @@ export function MaintenancePage() {
         customerName, customerPhone,
         deviceName, issue,
         estimateMinor: toM(estimate),
+        promisedAt: promisedAt ? new Date(promisedAt).toISOString() : undefined,
         notes,
       })
       toast.show(`فُتحت التذكرة ${t.ticketNumber} ✅`)
@@ -249,6 +252,10 @@ export function MaintenancePage() {
                     <td className="px-4 py-3 text-slate-500">{custLabel(t)}</td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${STATUS_COLORS[t.status]}`}>{TICKET_STATUS_LABELS[t.status]}</span>
+                      {isTicketOverdue(t, new Date().toISOString()) && <span className="ms-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-600 text-[10px] font-bold animate-pulse">⏰ متأخرة</span>}
+                      {t.promisedAt && !isTicketOverdue(t, new Date().toISOString()) && t.status !== 'delivered' && t.status !== 'cancelled' && (
+                        <div className="text-[9.5px] text-slate-400 mt-0.5" dir="ltr">موعدها {t.promisedAt.slice(0, 16).replace('T', ' ')}</div>
+                      )}
                     </td>
                     <td className="px-4 py-3 font-bold">{t.totals ? fmt(t.totals.grandMinor) : t.estimateMinor > 0 ? <span className="text-slate-400 font-normal">تقدير {fmt(t.estimateMinor)}</span> : '—'}</td>
                     <td className="px-4 py-3 text-left whitespace-nowrap">
@@ -353,6 +360,9 @@ export function MaintenancePage() {
           </div>
           <Field label="وصف العطل *">
             <textarea value={issue} onChange={(e) => setIssue(e.target.value)} className={`${inputCls} min-h-[70px]`} placeholder="الشاشة مكسورة، البطارية تفرغ سريعاً…" />
+          </Field>
+          <Field label="موعد التسليم الموعود (اختياري)" hint="التذاكر المتجاوزة موعدها تظهر «⏰ متأخرة» — أهم ميزة للمغاسل">
+            <input type="datetime-local" value={promisedAt} onChange={(e) => setPromisedAt(e.target.value)} className={inputCls} dir="ltr" />
           </Field>
           <Field label="ملاحظات">
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />

@@ -245,3 +245,18 @@ export function maintenanceReport(
     openCount: rows.filter((r) => r.status !== 'delivered' && r.status !== 'cancelled').length,
   }
 }
+
+/* ─── جولة مراجعة المغسلة (الطلبات 6–9): موعد التسليم الموعود ─── */
+
+/**
+ * تذكرة متأخرة = لها موعد تسليم موعود، لم تُسلَّم ولم تُلغَ، والوقت تجاوز الموعد.
+ * (المغاسل تعِد بموعد استلام القطع — والصيانة تستفيد بنفس الميزة)
+ */
+export function isTicketOverdue(
+  ticket: { status: TicketStatus; promisedAt?: string | null },
+  nowIso: string,
+): boolean {
+  if (!ticket.promisedAt) return false
+  if (ticket.status === 'delivered' || ticket.status === 'cancelled') return false
+  return nowIso > ticket.promisedAt
+}
