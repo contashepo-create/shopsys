@@ -5,7 +5,7 @@
  * وقيد واحد متوازن (4105/5106/2102) + تقرير ربحية بفترات.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Route, Eye, BookOpenText, Trash2, TrendingUp, Container } from 'lucide-react'
+import { Plus, Route, Eye, BookOpenText, Trash2, TrendingUp, Container, Printer } from 'lucide-react'
 import { useDataStore, type Trip } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -15,6 +15,8 @@ import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { renderWaybillHtml } from '../print/printWaybill.ts'
+import { printHtml } from '../print/printReceipt.ts'
 
 interface DraftExpense {
   nameAr: string
@@ -33,6 +35,31 @@ export function TripsPage() {
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
   const custName = (id: number | null) => (id == null ? 'عميل نقدي' : customers.find((c) => c.id === id)?.nameAr ?? '—')
+
+  /** طباعة بوليصة النقل (جولة اللوجستيات): تسافر مع السائق — بلا تكلفة ولا ربح */
+  const printWaybill = (t: Trip) => {
+    const veh = vehicles.find((v) => v.id === t.vehicleId)
+    const drv = employees.find((e) => e.id === t.driverId)
+    printHtml(renderWaybillHtml({
+      shopName: setup.shopName || 'نقل ولوجستيات',
+      tripNumber: t.tripNumber,
+      dateIso: t.date,
+      customerName: custName(t.customerId),
+      fromLoc: t.fromLoc,
+      toLoc: t.toLoc,
+      vehiclePlate: veh?.plateNumber ?? '',
+      vehicleType: veh?.vehicleType ?? '',
+      driverName: drv?.nameAr ?? '',
+      containerNumbers: t.containerNumbers,
+      qty: t.qty,
+      unitPrice: `${fmt(t.unitPriceMinor)} ${cur.symbol}`,
+      freightTotal: `${fmt(t.totals.baseMinor)} ${cur.symbol}`,
+      customerExpenses: t.expenses.filter((e) => e.source === 'customer').map((e) => ({ nameAr: e.nameAr, amount: `${fmt(e.amountMinor)} ${cur.symbol}` })),
+      grandTotal: `${fmt(t.totals.grandMinor)} ${cur.symbol}`,
+      payment: t.payment,
+      notes: t.notes,
+    }))
+  }
   const vehName = (id: number | null) => (id == null ? '—' : vehicles.find((v) => v.id === id)?.plateNumber ?? '—')
   const drvName = (id: number | null) => (id == null ? '—' : employees.find((e) => e.id === id)?.nameAr ?? '—')
 
@@ -176,6 +203,7 @@ export function TripsPage() {
                     <td className={`px-4 py-3 font-black ${t.totals.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(t.totals.profitMinor)}</td>
                     <td className="px-4 py-3 text-left">
                       <button onClick={() => setViewing(t)} className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all duration-200 hover:scale-110"><Eye size={15} /></button>
+                      <button onClick={() => printWaybill(t)} title="طباعة بوليصة النقل" className="p-2 rounded-lg text-slate-400 hover:text-fuchsia-600 hover:bg-fuchsia-500/10 transition-all duration-200 hover:scale-110"><Printer size={15} /></button>
                     </td>
                   </tr>
                 ))}
