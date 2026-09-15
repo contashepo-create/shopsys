@@ -165,6 +165,8 @@ export function CustomersPage() {
   )
 }
 
+const SUPPLIER_CATEGORIES = ['مواد بناء', 'بضاعة تجارية', 'قطع غيار', 'مقاول باطن', 'خدمات ونقل', 'أخرى']
+
 export function SuppliersPage() {
   const { suppliers, addSupplier, updateSupplier, removeSupplier } = useDataStore()
   const toast = useToast()
@@ -175,15 +177,25 @@ export function SuppliersPage() {
   const [phone, setPhone] = useState('')
   const [notes, setNotes] = useState('')
   const [ext, setExt] = useState<PartyExtended>(EMPTY_EXTENDED)
+  /* مركز الموردين (أمر التعديل) — كلها اختيارية */
+  const [contactPerson, setContactPerson] = useState('')
+  const [category, setCategory] = useState('')
+  const [paymentTerms, setPaymentTerms] = useState('')
+  const [bankName, setBankName] = useState('')
+  const [iban, setIban] = useState('')
 
   const filtered = useMemo(
-    () => suppliers.filter((s) => !query.trim() || s.nameAr.includes(query) || s.phone.includes(query)),
+    () => suppliers.filter((s) => !query.trim() || s.nameAr.includes(query) || s.phone.includes(query) || (s.category ?? '').includes(query)),
     [suppliers, query],
   )
 
   const save = () => {
     if (!name.trim()) return
-    const data = { nameAr: name.trim(), phone: phone.trim(), notes: notes.trim(), ...ext }
+    const data = {
+      nameAr: name.trim(), phone: phone.trim(), notes: notes.trim(), ...ext,
+      contactPerson: contactPerson.trim(), category, paymentTermsDays: Number(paymentTerms) || 0,
+      bankName: bankName.trim(), iban: iban.trim(), active: true,
+    }
     if (editing) { updateSupplier(editing.id, data); toast.show('تم تعديل المورد') }
     else { addSupplier(data); toast.show(`تم إضافة المورد «${data.nameAr}»`) }
     setOpen(false)
@@ -196,7 +208,7 @@ export function SuppliersPage() {
           <Search size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ابحث…" className={`${inputCls} pr-10`} />
         </div>
-        <Btn onClick={() => { setEditing(null); setName(''); setPhone(''); setNotes(''); setExt(EMPTY_EXTENDED); setOpen(true) }}>
+        <Btn onClick={() => { setEditing(null); setName(''); setPhone(''); setNotes(''); setExt(EMPTY_EXTENDED); setContactPerson(''); setCategory(''); setPaymentTerms(''); setBankName(''); setIban(''); setOpen(true) }}>
           <span className="flex items-center gap-1.5"><Plus size={15} /> مورد جديد</span>
         </Btn>
       </div>
@@ -215,10 +227,14 @@ export function SuppliersPage() {
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-slate-800 dark:text-white truncate">{s.nameAr}</div>
-                  {s.phone && <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5"><Phone size={10} /> {s.phone}</div>}
+                  {s.phone && <div className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5"><Phone size={10} /> {s.phone}{s.contactPerson && ` · ${s.contactPerson}`}</div>}
+                  <div className="flex gap-1 mt-1.5 flex-wrap">
+                    {s.category && <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 font-bold">{s.category}</span>}
+                    {(s.paymentTermsDays ?? 0) > 0 && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold">سداد {s.paymentTermsDays} يوماً</span>}
+                  </div>
                 </div>
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                  <button onClick={() => { setEditing(s); setName(s.nameAr); setPhone(s.phone); setNotes(s.notes); setExt({ taxNumber: s.taxNumber, commercialReg: s.commercialReg, email: s.email, address: s.address, city: s.city, postalCode: s.postalCode, buildingNo: s.buildingNo, nationalId: s.nationalId }); setOpen(true) }} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
+                  <button onClick={() => { setEditing(s); setName(s.nameAr); setPhone(s.phone); setNotes(s.notes); setExt({ taxNumber: s.taxNumber, commercialReg: s.commercialReg, email: s.email, address: s.address, city: s.city, postalCode: s.postalCode, buildingNo: s.buildingNo, nationalId: s.nationalId }); setContactPerson(s.contactPerson ?? ''); setCategory(s.category ?? ''); setPaymentTerms(s.paymentTermsDays ? String(s.paymentTermsDays) : ''); setBankName(s.bankName ?? ''); setIban(s.iban ?? ''); setOpen(true) }} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
                   <button onClick={() => { removeSupplier(s.id); toast.show('تم حذف المورد') }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
                 </div>
               </div>
@@ -232,7 +248,19 @@ export function SuppliersPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="اسم المورد *"><input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} autoFocus /></Field>
             <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
+            <Field label="مسؤول التواصل"><input value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} className={inputCls} placeholder="أ. محمود — مدير المبيعات" /></Field>
+            <Field label="تصنيف المورد">
+              <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
+                <option value="">— بلا تصنيف —</option>
+                {SUPPLIER_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </Field>
+            <Field label="شروط السداد (أيام)" hint="0 أو فارغ = نقدي؛ 30 = فاتورة تستحق بعد شهر">
+              <input value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} inputMode="numeric" className={inputCls} dir="ltr" />
+            </Field>
             <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
+            <Field label="اسم البنك"><input value={bankName} onChange={(e) => setBankName(e.target.value)} className={inputCls} /></Field>
+            <Field label="IBAN / رقم الحساب"><input value={iban} onChange={(e) => setIban(e.target.value)} className={inputCls} dir="ltr" placeholder="EG…" /></Field>
           </div>
           <ExtendedFields ext={ext} setExt={setExt} />
           <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn><Btn onClick={save} disabled={!name.trim()}>حفظ</Btn></div>

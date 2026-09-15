@@ -18,7 +18,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function ProjectsPage() {
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers,
     addProject, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus,
   } = useDataStore()
@@ -34,6 +34,7 @@ export function ProjectsPage() {
   const [open, setOpen] = useState(false)
   const [nameAr, setNameAr] = useState('')
   const [clientName, setClientName] = useState('')
+  const [clientId, setClientId] = useState('') // ربط إداري — لا يمس رصيد العميل
   const [contractValue, setContractValue] = useState('')
   const [retention, setRetention] = useState('5')
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10))
@@ -43,11 +44,12 @@ export function ProjectsPage() {
     try {
       const p = addProject({
         nameAr: nameAr.trim(), clientName: clientName.trim(),
+        clientId: clientId ? Number(clientId) : null,
         contractValueMinor: toMinor(contractValue, cur.decimals),
         retentionPercent: Number(retention) || 0, startDate, notes: notes.trim(),
       })
       toast.show(`أُنشئ المشروع ${p.code} ✅`)
-      setOpen(false); setNameAr(''); setClientName(''); setContractValue(''); setRetention('5'); setNotes('')
+      setOpen(false); setNameAr(''); setClientName(''); setClientId(''); setContractValue(''); setRetention('5'); setNotes('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -215,6 +217,12 @@ export function ProjectsPage() {
           <Field label="اسم المشروع *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="فيلا الشيخ زايد…" /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="العميل / الجهة"><input value={clientName} onChange={(e) => setClientName(e.target.value)} className={inputCls} /></Field>
+            <Field label="ربط بسجل عميل (إداري)" hint="للمتابعة والتحصيل فقط — لا يؤثر على رصيده؛ الذمة من المستخلص/الفاتورة">
+              <select value={clientId} onChange={(e) => { setClientId(e.target.value); const c = customers.find((x) => x.id === Number(e.target.value)); if (c && !clientName.trim()) setClientName(c.nameAr) }} className={inputCls}>
+                <option value="">— بلا ربط —</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+              </select>
+            </Field>
             <Field label={`قيمة العقد (${cur.symbol}) *`}><input value={contractValue} onChange={(e) => setContractValue(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="محتجز ضمان الأعمال ٪" hint="يُخصم من كل مستخلص ويُفرج عنه عند التسليم"><input value={retention} onChange={(e) => setRetention(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="تاريخ البدء"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} /></Field>

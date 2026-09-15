@@ -24,7 +24,7 @@
 │   └── تقرير_مراجعة_الأنشطة_والمقارنة_المعيارية.md
 ├── cloud/worker.js + wrangler.toml     ← Cloudflare Worker (shopsys-control.contashepo.workers.dev)
 └── app/                         ← تطبيق Vite + React 19 + TypeScript + Tailwind v4 + zustand v5
-    ├── scripts/                 ← 53 سكربت تحقق verify_*.mjs + license_tool.mjs
+    ├── scripts/                 ← 54 سكربت تحقق verify_*.mjs + license_tool.mjs
     ├── public/                  ← أيقونات وشعارات
     └── src/
         ├── core/                ← 51 وحدة منطق نقي (بلا React) — كل القيود والحسابات هنا
@@ -49,11 +49,11 @@ cd /home/user/shopsys/app
 npx tsc -b                                             # يجب أن يمر صفر أخطاء (شغّله من app/ حصراً)
 npx oxlint src                                         # صفر errors (warnings مقبولة)
 node --experimental-strip-types scripts/verify_<x>.mjs # سكربت الميزة الجديدة
-# الحزمة الكاملة (53 سكربت — يجب 0 فشل):
+# الحزمة الكاملة (54 سكربتاً — يجب 0 فشل):
 for f in scripts/verify_*.mjs; do node --experimental-strip-types "$f" >/dev/null 2>&1 || echo "FAILED: $f"; done
 ```
 
-**الوضع الحالي: 1758 اختباراً ناجحاً عبر 53 سكربت، صفر فشل.** أي ميزة جديدة = سكربت تحقق جديد يغطي القيود والرفض والتوازن.
+**الوضع الحالي: 1822 اختباراً ناجحاً عبر 54 سكربتاً، صفر فشل.** أي ميزة جديدة = سكربت تحقق جديد يغطي القيود والرفض والتوازن.
 
 ### قالب سكربت التحقق (Node بلا متصفح)
 ```js
@@ -79,7 +79,9 @@ const S = () => useDataStore.getState()
 | 1108 | عهد الموظفين | 2108 | محتجزات مقاولي الباطن |
 | 1109 | هوامش خطابات الضمان | 2109 | دفعات مقدمة من العملاء |
 | 1110 | مطالبات جهات تأمين وتعاقد | 2110 | مستحق لملاك سيارات الأمانة |
+| 1111 | دفعات مقدمة لمقاولي الباطن | 2110 | مستحق لملاك سيارات الأمانة |
 | 1201/1202 | أصول ثابتة / مجمع إهلاك | 2111 | مستحقات سائقين |
+| 2112 | ضريبة استقطاع مستحقة (مقاولو باطن) |
 | 3101/3102 | رأس المال / أرباح مرحلة | | |
 | 4101–4109 | مبيعات/مرتجعات/صيانة/إيجار/نقلات/تحاليل/مقاولات/كشف/عمولات أمانة | 5101–5110 | COGS/رواتب/إيجار/مرافق/تشغيل معدات/نقلات/إهلاك/عمومية/عمولات محيلين/تكاليف مشاريع |
 
@@ -208,6 +210,19 @@ const S = () => useDataStore.getState()
 - `setVariantStock` يتحقق: التركيبة من ألوان/مقاسات الصنف المعرفة، ولا سالب، والمجموع لا يتجاوز الإجمالي؛ التصفير يحذف السطر.
 - سكربت التحقق: `verify_variants_matrix.mjs` (23 اختباراً).
 
+### 6.18 أوامر التعديل — عمليات المشاريع المتقدمة (core/projectOps.ts + repo)
+- **يوميات مرنة**: `DailyWorkRecord.projectId` أصبح `number | null` — بلا مشروع = تشغيل عام؛ `settleDailyWorker` يقسم القيد آلياً: مشروعي → 5110 (ويدخل projectCosts) وعام → 5108.
+- **بنود كاملة (BOQ) للعروض والمناقصات**: QuotationLine = {nameAr, descriptionAr, qty, unitAr, unitPriceMinor, estCostMinor}; BoqItem += estCostMinor (موازنة البند). `convertQuotationToProject` ينقل كل البنود جدولَ كميات للمشروع بضغطة.
+- **ربط العملاء إداري بحت**: Quotation.clientId وProject.clientId — لا يمس رصيد العميل إطلاقاً؛ الذمة تنشأ فقط من فاتورة بيع آجلة أو مستخلص آجل.
+- **تحصيلات FIFO**: `getOpenClientInvoices(customerId)` (مفاتيح sale:id/extract:id، يخصم مرتجعات credit والتحصيلات السابقة) + `receiveClientPayment({customerId, amountMinor, treasury, specificDocKey?})` — FIFO افتراضياً، مطابقة محددة اختيارية، الفائض «تحت الحساب»؛ قيد خزينة/1104؛ سجل clientSettlements (CLR-xxxx)؛ sourceType='client_payment'. صفحة /contracting/collections.
+- **أذون صرف مواد MRQ**: `issueMaterials({projectId, issuedByEmployeeId, receivedByEmployeeId, lines:[{itemId,qty,unitAr}], notes})` — صارف ومستلم إلزاميان ومختلفان من employees؛ تحويل وحدات (extraUnits.factor)؛ منع سالب صارم؛ قيد 5110/1103 بالمتوسط المرجح؛ تكلفة materials على المشروع؛ سجل stockMoves (تدقيق كامل). صفحة /contracting/material-issues.
+- **باطن موسع**: SubContract += supplierId (ربط مورد اختياري) + taxWithholdPercent + boqItemIds؛ `addSubAdvance` (1111/خزينة) + `getSubAdvanceBalance`؛ `addSubCertificate` يستقطع آلياً: محتجز (2108) + ضريبة استقطاع (2112) + استرداد دفعة (1111 دائن) والصافي 2101؛ `remitWithholdingTax(treasury)` يورد 2112.
+- **EVM**: `getProjectEvm(projectId)` من BOQ (estCost×progress) مقابل projectCosts الفعلية — BAC/EV/الموازنة المكتسبة/CPI/costOverrun. صفحة /contracting/evm.
+- **محرك موافقات**: approvalFlows (حتى 6 مستويات تسلسلية) + approvalRequests؛ الإجراءات: quotation_to_project, material_requisition, sub_certificate, project_extract؛ `assertApproved` داخلي — مسار نشط ⇒ يتطلب طلباً approved غير مستهلك ويستهلكه؛ لا مسار = حر. صفحة /contracting/approvals.
+- **الموردون مركز كامل**: Supplier += contactPerson?/category?/paymentTermsDays?/bankName?/iban?/active? (اختيارية كلها) — نموذج SuppliersPage موسع.
+- **فخ**: buildDailyWorkSettlementEntry الآن (projectTotal, overheadTotal, treasury, label)؛ buildSubCertificateEntry الآن (amount, retention, withhold, advanceRecovery, label).
+- DATA_VERSION=10 (ترحيل كل الحقول الجديدة). سكربت التحقق: verify_project_ops.mjs (60 اختباراً).
+
 ## 7) قرارات المالك الملزمة (لا تخالفها أبداً)
 
 1. المثبّت/Electron **آخر شيء** — فقط عند طلب صريح.
@@ -235,5 +250,6 @@ const S = () => useDataStore.getState()
 ## 9) حالة العمل الجارية والتالي
 
 - ✅ منجز: **كل الفجوات المعيارية السبع** (وصفات، صاغة، قوائم أسعار، تكاليف معدات، أمانة، سائقون، تأمين، **مصفوفة لون×مقاس**) + عمق المقاولات الكامل.
-- ⏳ التالي المحتمل (لم يُطلب بعد): توسيع إدارة جهات التأمين لواجهة الصيدلية POS؛ صفحة WIP مستقلة؛ بوت المطور التفاعلي.
+- ✅ منجز أيضاً (أوامر التعديل الجديدة): يوميات مرنة، BOQ كامل بموازنات، تحويل عرض→مشروع ناقل للبنود، ربط عملاء إداري، تحصيلات FIFO بمطابقة اختيارية، أذون صرف مواد، باطن باستقطاعات ودفعات مقدمة، EVM، محرك موافقات، مركز موردين.
+- ⏳ أوامر متبقية من نفس الرسالة: نماذج إدخال موسعة بتبويبات عبر كل الأقسام (تدرّج)؛ عزل الأنشطة/القوائم (مُنفذ فعلاً عبر modules — يحتاج تدقيقاً)؛ اختبارات E2E داخل Electron (مؤجلة لأن المثبت/Electron مؤجل بطلب المالك الصريح)؛ مقارنة Odoo/ERPNext شاملة.
 - مؤجل بقرار: مثبّت Electron/NSIS؛ بوت المطور التفاعلي الكامل؛ صفحة WIP مستقلة (الشريط موجود في صفحة BOQ).

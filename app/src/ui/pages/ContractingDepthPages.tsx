@@ -39,6 +39,7 @@ export function BoqPage() {
   const [unit, setUnit] = useState('م2')
   const [qty, setQty] = useState('')
   const [price, setPrice] = useState('')
+  const [estCost, setEstCost] = useState('') // التكلفة التقديرية للوحدة — موازنة البند لتحليل EVM
 
   const items = boqItems.filter((b) => projectId !== '' && b.projectId === projectId)
   const total = items.reduce((s, b) => s + boqItemTotal(b), 0)
@@ -47,9 +48,9 @@ export function BoqPage() {
   const save = () => {
     try {
       if (projectId === '') throw new Error('اختر المشروع أولاً')
-      addBoqItem({ projectId: projectId as number, code: code.trim(), descriptionAr: desc.trim(), unit: unit.trim(), qty: Number(qty) || 0, unitPriceMinor: toMinor(price, cur.decimals) })
+      addBoqItem({ projectId: projectId as number, code: code.trim(), descriptionAr: desc.trim(), unit: unit.trim(), qty: Number(qty) || 0, unitPriceMinor: toMinor(price, cur.decimals), estCostMinor: toMinor(estCost || '0', cur.decimals) })
       toast.show('أُضيف البند لجدول الكميات ✅')
-      setOpen(false); setCode(''); setDesc(''); setQty(''); setPrice('')
+      setOpen(false); setCode(''); setDesc(''); setQty(''); setPrice(''); setEstCost('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -122,7 +123,12 @@ export function BoqPage() {
             <Field label="الكمية"><input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
           <Field label="وصف البند"><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="توريد وصب خرسانة مسلحة…" className={inputCls} /></Field>
-          <Field label={`سعر الوحدة (${cur.symbol})`}><input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={`سعر الوحدة (${cur.symbol})`}><input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label={`تكلفة تقديرية/وحدة (${cur.symbol})`} hint="موازنة البند — تغذي لوحة القيمة المكتسبة EVM وتنبيهات التجاوز">
+              <input value={estCost} onChange={(e) => setEstCost(e.target.value)} inputMode="decimal" className={inputCls} />
+            </Field>
+          </div>
           <Btn onClick={save} className="w-full">حفظ البند</Btn>
         </div>
       </Modal>
@@ -132,7 +138,7 @@ export function BoqPage() {
 
 /* ═══════════ مقاولو الباطن ═══════════ */
 export function SubcontractorsPage() {
-  const { projects, subContracts, subCertificates, subPayments, journal, addSubContract, addSubCertificate, paySubContractor, releaseSubRetention } = useDataStore()
+  const { projects, subContracts, subCertificates, subPayments, journal, suppliers, boqItems, addSubContract, addSubCertificate, paySubContractor, releaseSubRetention, addSubAdvance, getSubAdvanceBalance } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -143,10 +149,18 @@ export function SubcontractorsPage() {
   const [scope, setScope] = useState('')
   const [value, setValue] = useState('')
   const [retention, setRetention] = useState('5')
+  const [supplierId, setSupplierId] = useState('') // ربط اختياري بسجل مورد
+  const [withhold, setWithhold] = useState('0') // ضريبة استقطاع ٪
+  const [assignedBoq, setAssignedBoq] = useState<number[]>([]) // بنود BOQ المسندة
 
   const [certFor, setCertFor] = useState<SubContract | null>(null)
   const [certAmount, setCertAmount] = useState('')
   const [certDesc, setCertDesc] = useState('')
+  const [certRecovery, setCertRecovery] = useState('') // استرداد من الدفعة المقدمة
+
+  const [advFor, setAdvFor] = useState<SubContract | null>(null)
+  const [advAmount, setAdvAmount] = useState('')
+  const [advTreasury, setAdvTreasury] = useState('1101')
 
   const [payFor, setPayFor] = useState<SubContract | null>(null)
   const [payAmount, setPayAmount] = useState('')
@@ -169,20 +183,22 @@ export function SubcontractorsPage() {
       if (projectId === '') throw new Error('اختر المشروع')
       const c = addSubContract({
         projectId: projectId as number, contractorName: name.trim(), scopeAr: scope.trim(),
+        supplierId: supplierId ? Number(supplierId) : null,
         contractValueMinor: toMinor(value, cur.decimals), retentionPercent: Number(retention) || 0,
+        taxWithholdPercent: Number(withhold) || 0, boqItemIds: assignedBoq,
         startDate: new Date().toISOString().slice(0, 10),
       })
       toast.show(`أُنشئ عقد الباطن ${c.contractNumber} ✅`)
-      setOpen(false); setName(''); setScope(''); setValue('')
+      setOpen(false); setName(''); setScope(''); setValue(''); setSupplierId(''); setWithhold('0'); setAssignedBoq([])
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
   const saveCert = () => {
     if (!certFor) return
     try {
-      const cert = addSubCertificate({ contractId: certFor.id, amountMinor: toMinor(certAmount, cur.decimals), description: certDesc.trim() })
-      toast.show(`اعتُمدت الشهادة #${cert.number} — صافي ${fmt(cert.netMinor)} ومحتجز ${fmt(cert.retentionMinor)} ✅`)
-      setCertFor(null); setCertAmount(''); setCertDesc('')
+      const cert = addSubCertificate({ contractId: certFor.id, amountMinor: toMinor(certAmount, cur.decimals), description: certDesc.trim(), advanceRecoveryMinor: certRecovery ? toMinor(certRecovery, cur.decimals) : 0 })
+      toast.show(`اعتُمدت الشهادة #${cert.number} — صافي ${fmt(cert.netMinor)} (محتجز ${fmt(cert.retentionMinor)}${cert.taxWithholdMinor > 0 ? ` + استقطاع ${fmt(cert.taxWithholdMinor)}` : ''}${cert.advanceRecoveryMinor > 0 ? ` + استرداد ${fmt(cert.advanceRecoveryMinor)}` : ''}) ✅`)
+      setCertFor(null); setCertAmount(''); setCertDesc(''); setCertRecovery('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -192,6 +208,15 @@ export function SubcontractorsPage() {
       paySubContractor({ contractId: payFor.id, amountMinor: toMinor(payAmount, cur.decimals), treasury: payTreasury })
       toast.show('سُجلت الدفعة بقيد متوازن ✅')
       setPayFor(null); setPayAmount('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const saveAdvance = () => {
+    if (!advFor) return
+    try {
+      addSubAdvance({ contractId: advFor.id, amountMinor: toMinor(advAmount, cur.decimals), treasury: advTreasury })
+      toast.show('صُرفت الدفعة المقدمة (أصل 1111) — تُسترد من الشهادات ✅')
+      setAdvFor(null); setAdvAmount('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -232,8 +257,8 @@ export function SubcontractorsPage() {
                 return (
                   <tr key={c.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-orange-500/[0.03]">
                     <td className="px-4 py-3">
-                      <div className="font-bold">{c.contractorName}</div>
-                      <div className="text-[11px] text-slate-400">{c.contractNumber} — {c.scopeAr} {c.status === 'completed' && '✅ مقفل'}</div>
+                      <div className="font-bold">{c.contractorName} {c.supplierId != null && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500/10 text-sky-600 font-bold">مورد مربوط</span>}</div>
+                      <div className="text-[11px] text-slate-400">{c.contractNumber} — {c.scopeAr}{c.taxWithholdPercent > 0 && ` · استقطاع ${c.taxWithholdPercent}٪`} {c.status === 'completed' && '✅ مقفل'}</div>
                     </td>
                     <td className="px-4 py-3 text-[12px]">{proj?.nameAr ?? '—'}</td>
                     <td className="px-4 py-3">{fmt(c.contractValueMinor)}</td>
@@ -244,6 +269,7 @@ export function SubcontractorsPage() {
                       <div className="flex gap-1.5 justify-end flex-wrap">
                         <button onClick={() => setViewing(c)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800" title="عرض"><Eye size={15} /></button>
                         {c.status === 'active' && <>
+                          <Btn variant="soft" onClick={() => setAdvFor(c)} className="!px-2 !py-1 !text-[11px]">دفعة مقدمة</Btn>
                           <Btn variant="soft" onClick={() => setCertFor(c)} className="!px-2 !py-1 !text-[11px]">شهادة</Btn>
                           <Btn variant="soft" onClick={() => setPayFor(c)} className="!px-2 !py-1 !text-[11px]" disabled={st.dueNow <= 0}>دفعة</Btn>
                           <Btn variant="ghost" onClick={() => doRelease(c)} className="!px-2 !py-1 !text-[11px]" disabled={st.heldNow <= 0}>إفراج + إقفال</Btn>
@@ -275,7 +301,29 @@ export function SubcontractorsPage() {
             <Field label="نسبة المحتجز ٪" hint="يُخصم من كل شهادة ويُفرج عنه عند الاستلام">
               <input value={retention} onChange={(e) => setRetention(e.target.value)} inputMode="numeric" className={inputCls} />
             </Field>
+            <Field label="ضريبة استقطاع ٪" hint="تُخصم من كل شهادة التزاماً (2112) حتى توريدها للمصلحة">
+              <input value={withhold} onChange={(e) => setWithhold(e.target.value)} inputMode="numeric" className={inputCls} />
+            </Field>
+            <Field label="ربط بسجل مورد (اختياري)" hint="يوحّد مستحقاته في كشف حساب المورد">
+              <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={inputCls}>
+                <option value="">— بلا ربط —</option>
+                {suppliers.map((su) => <option key={su.id} value={su.id}>{su.nameAr}</option>)}
+              </select>
+            </Field>
           </div>
+          {projectId !== '' && boqItems.filter((b) => b.projectId === projectId).length > 0 && (
+            <Field label="بنود BOQ المسندة لهذا المقاول" hint="إسناد إداري لمتابعة نطاق الأعمال">
+              <div className="flex flex-wrap gap-1.5">
+                {boqItems.filter((b) => b.projectId === projectId).map((b) => (
+                  <button key={b.id} type="button"
+                    onClick={() => setAssignedBoq((arr) => arr.includes(b.id) ? arr.filter((x) => x !== b.id) : [...arr, b.id])}
+                    className={`px-2.5 py-1 rounded-lg text-[11.5px] font-bold border transition-all ${assignedBoq.includes(b.id) ? 'border-orange-500/60 bg-orange-500/10 text-orange-700 dark:text-orange-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
+                    {b.code || b.id} — {b.descriptionAr.slice(0, 24)}
+                  </button>
+                ))}
+              </div>
+            </Field>
+          )}
           <Btn onClick={saveContract} className="w-full">إنشاء العقد</Btn>
         </div>
       </Modal>
@@ -284,10 +332,15 @@ export function SubcontractorsPage() {
         {certFor && (
           <div className="space-y-3">
             <div className="text-[12px] text-slate-500 bg-orange-500/5 rounded-xl p-3">
-              القيد: تكاليف مشروعات 5110 مدين ← صافي للمقاول 2101 + محتجز {certFor.retentionPercent}٪ في 2108 — التكلفة تُعترف فور الاعتماد لا عند الدفع
+              الاستقطاعات آلية: محتجز {certFor.retentionPercent}٪ (2108){certFor.taxWithholdPercent > 0 && <> + ضريبة استقطاع {certFor.taxWithholdPercent}٪ (2112)</>} + استرداد اختياري من الدفعة المقدمة (1111) — والتكلفة تُعترف فور الاعتماد
             </div>
             <Field label={`قيمة الأعمال المعتمدة (${cur.symbol})`}><input value={certAmount} onChange={(e) => setCertAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="وصف الأعمال"><input value={certDesc} onChange={(e) => setCertDesc(e.target.value)} placeholder="أعمال الأسبوع الثالث…" className={inputCls} /></Field>
+            {getSubAdvanceBalance(certFor.id) > 0 && (
+              <Field label={`استرداد من الدفعة المقدمة (رصيدها ${fmt(getSubAdvanceBalance(certFor.id))})`} hint="يخصم من صافي الشهادة ويطفئ 1111">
+                <input value={certRecovery} onChange={(e) => setCertRecovery(e.target.value)} inputMode="decimal" className={inputCls} />
+              </Field>
+            )}
             <Btn onClick={saveCert} className="w-full">اعتماد الشهادة</Btn>
           </div>
         )}
@@ -300,6 +353,20 @@ export function SubcontractorsPage() {
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={payTreasury} onChange={setPayTreasury} /></Field>
             <Btn onClick={savePay} className="w-full">صرف الدفعة</Btn>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={!!advFor} onClose={() => setAdvFor(null)} title={advFor ? `دفعة مقدمة — ${advFor.contractorName}` : ''}>
+        {advFor && (
+          <div className="space-y-3">
+            <div className="text-[12px] text-slate-500 bg-orange-500/5 rounded-xl p-3">
+              تُصرف قبل بدء الأعمال وتُقيّد أصلاً (1111) — ثم تُسترد تلقائياً من شهادات أعماله.
+              {getSubAdvanceBalance(advFor.id) > 0 && <> الرصيد القائم: <b>{fmt(getSubAdvanceBalance(advFor.id))}</b></>}
+            </div>
+            <Field label={`قيمة الدفعة المقدمة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={advTreasury} onChange={setAdvTreasury} /></Field>
+            <Btn onClick={saveAdvance} className="w-full">صرف الدفعة المقدمة</Btn>
           </div>
         )}
       </Modal>
@@ -512,9 +579,9 @@ export function DailyWorkersPage() {
   const saveRecord = () => {
     if (recFor == null) return
     try {
-      if (recProject === '') throw new Error('اختر المشروع')
-      const r = addDailyWorkRecord({ workerId: recFor, projectId: recProject as number, date: recDate, days: Number(recDays) || 0 })
-      toast.show(`سُجل ${r.days} يوم عمل بأجر ${fmt(r.wageMinor)} ✅`)
+      // المشروع اختياري (أمر التعديل): بلا مشروع = عمالة تشغيل عام → مصروف عمومي 5108
+      const r = addDailyWorkRecord({ workerId: recFor, projectId: recProject === '' ? null : (recProject as number), date: recDate, days: Number(recDays) || 0 })
+      toast.show(`سُجل ${r.days} يوم عمل بأجر ${fmt(r.wageMinor)}${r.projectId == null ? ' — تشغيل عام' : ''} ✅`)
       setRecFor(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
@@ -535,7 +602,7 @@ export function DailyWorkersPage() {
           <Btn onClick={() => setOpen(true)}><Plus className="w-4 h-4" /> عامل جديد</Btn>
         </div>
       </div>
-      <div className="text-sm text-slate-500">سجّل أيام العمل على كل مشروع أولاً بأول — والتسوية الدورية تدفع المتجمع وتحمّله على تكاليف مشاريعه تلقائياً (5110)</div>
+      <div className="text-sm text-slate-500">سجّل أيام العمل أولاً بأول — المربوط بمشروع يدخل تكاليفه (5110)، وبلا مشروع يُرحَّل مصروف تشغيل عام (5108) تلقائياً</div>
 
       {dailyWorkers.length === 0 ? (
         <EmptyState icon="⛏️" title="لا عمال يومية" sub="عمال المواقع بأجر يومي خارج المسير الشهري: سجّل أيامهم على المشاريع وسوِّ مستحقاتهم أسبوعياً" />
@@ -559,7 +626,7 @@ export function DailyWorkersPage() {
                 {unsettled.length > 0 && (
                   <div className="text-[11px] text-slate-500 bg-slate-50 dark:bg-slate-800/50 rounded-lg p-2">
                     {unsettled.slice(-3).map((r) => (
-                      <div key={r.id}>• {r.date}: {r.days} يوم على {projects.find((p) => p.id === r.projectId)?.nameAr ?? '—'} = {fmt(r.wageMinor)}</div>
+                      <div key={r.id}>• {r.date}: {r.days} يوم على {r.projectId == null ? 'تشغيل عام' : projects.find((p) => p.id === r.projectId)?.nameAr ?? '—'} = {fmt(r.wageMinor)}</div>
                     ))}
                     {unsettled.length > 3 && <div>… و{unsettled.length - 3} سجلات أخرى</div>}
                   </div>
@@ -587,9 +654,9 @@ export function DailyWorkersPage() {
 
       <Modal open={recFor != null} onClose={() => setRecFor(null)} title="تسجيل يوم عمل">
         <div className="space-y-3">
-          <Field label="المشروع">
+          <Field label="المشروع (اختياري)" hint="بلا مشروع = عمالة تشغيل عام — تُرحَّل مصروفاً عمومياً (5108) لا تكلفة مشروع">
             <select value={recProject} onChange={(e) => setRecProject(e.target.value ? Number(e.target.value) : '')} className={inputCls}>
-              <option value="">— اختر —</option>
+              <option value="">🏢 تشغيل عام (بلا مشروع)</option>
               {projects.filter((p) => p.status !== 'completed').map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
             </select>
           </Field>
