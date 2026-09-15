@@ -10,7 +10,7 @@ import {
   PenLine, ListTree, PiggyBank, CalendarClock, Store, Percent,
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
-  FileText,
+  FileText, ListChecks, Users2,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule } from '../core/activities.ts'
@@ -126,6 +126,10 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'projects', nameAr: 'المشروعات والمستخلصات', icon: HardHat, path: '/contracting/projects' },
       { id: 'quotations', nameAr: 'عروض الأسعار والمناقصات', icon: FileText, path: '/contracting/quotations' },
+      { id: 'boq', nameAr: 'جداول الكميات BOQ', icon: ListChecks, path: '/contracting/boq' },
+      { id: 'subcontractors', nameAr: 'مقاولو الباطن', icon: Users2, path: '/contracting/subcontractors' },
+      { id: 'bonds', nameAr: 'خطابات الضمان', icon: ShieldCheck, path: '/contracting/bonds' },
+      { id: 'daily-workers', nameAr: 'عمال اليومية', icon: CalendarClock, path: '/contracting/daily-workers' },
     ],
   },
   {

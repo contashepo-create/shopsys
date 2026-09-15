@@ -221,3 +221,336 @@ export const QUOTATION_TRANSITIONS: Record<QuotationStatus, QuotationStatus[]> =
 /* ─── العُهد ─── */
 // نُقلت العهد البسيطة القديمة إلى نظام «ملفات العهد» المتكامل في core/custody.ts
 // (ملف لكل موظف، تعزيزات، صرف فواتير من العهدة، تسوية بعجز/فائض) — طلب المالك.
+
+/* ═══════════════════════════════════════════════════════════════
+   عمق المقاولات (مقارنة pro-acc والبرامج العالمية — طلب المالك):
+   BOQ، أوامر التغيير، دفعات مقدمة، مقاولو الباطن بشهادات ومحتجزات،
+   خطابات الضمان بهوامشها، عمال اليومية، وتقرير WIP.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── بنود الأعمال BOQ (جدول الكميات) — مستند تخطيطي بلا قيود ─── */
+export interface BoqItem {
+  id: number
+  projectId: number
+  code: string // ترقيم البند: 1-1، 2-3…
+  descriptionAr: string
+  unit: string // م2، م3، طن، مقطوعية…
+  qty: number
+  unitPriceMinor: Minor
+  /** نسبة الإنجاز 0–100 — تُحدَّث مع المستخلصات لمتابعة التقدم البندي */
+  progressPercent: number
+}
+
+export function boqItemTotal(item: Pick<BoqItem, 'qty' | 'unitPriceMinor'>): Minor {
+  return Math.round(item.qty * item.unitPriceMinor)
+}
+
+export function validateBoqItem(item: Pick<BoqItem, 'descriptionAr' | 'unit' | 'qty' | 'unitPriceMinor'>): string[] {
+  const errors: string[] = []
+  if (!item.descriptionAr.trim()) errors.push('وصف البند مطلوب')
+  if (!item.unit.trim()) errors.push('وحدة القياس مطلوبة')
+  if (!(item.qty > 0)) errors.push('الكمية يجب أن تكون موجبة')
+  if (!Number.isInteger(item.unitPriceMinor) || item.unitPriceMinor < 0) errors.push('سعر الوحدة غير صحيح')
+  return errors
+}
+
+/* ─── أوامر التغيير — تعديل معتمد على قيمة العقد (لا قيد؛ يغيّر WIP والربحية المتوقعة) ─── */
+export type ChangeOrderStatus = 'draft' | 'approved' | 'rejected'
+
+export interface ChangeOrder {
+  id: number
+  projectId: number
+  number: string // CO-0001
+  titleAr: string
+  /** موجب = أعمال إضافية، سالب = تخفيض نطاق */
+  amountMinor: Minor
+  status: ChangeOrderStatus
+  date: string
+  approvedAt: string | null
+}
+
+export const CHANGE_ORDER_STATUS_LABELS: Record<ChangeOrderStatus, { nameAr: string; icon: string }> = {
+  draft: { nameAr: 'مسودة', icon: '📝' },
+  approved: { nameAr: 'معتمد', icon: '✅' },
+  rejected: { nameAr: 'مرفوض', icon: '❌' },
+}
+
+/** قيمة العقد الفعلية = الأصلية + أوامر التغيير المعتمدة فقط */
+export function effectiveContractValue(baseMinor: Minor, orders: readonly ChangeOrder[]): Minor {
+  return baseMinor + orders.filter((o) => o.status === 'approved').reduce((a, o) => a + o.amountMinor, 0)
+}
+
+/* ─── الدفعات المقدمة من العملاء — التزام 2109 يُسترد تدريجياً من المستخلصات ─── */
+
+/**
+ * قيد استلام دفعة مقدمة: نقدية مدين ← 2109 دائن.
+ * لماذا التزام لا إيراد؟ لأن الأعمال لم تُنفَّذ بعد — الاعتراف بالإيراد
+ * يكون بالمستخلصات فقط، والدفعة تُستهلك منها (المعيار الدولي IFRS 15).
+ */
+export function buildClientAdvanceEntry(amountMinor: Minor, treasury: string, projectLabel: string): JournalLine[] {
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة الدفعة المقدمة يجب أن تكون موجبة')
+  const lines: JournalLine[] = [
+    { accountCode: treasury, debit: amountMinor, credit: 0, note: `دفعة مقدمة — ${projectLabel}` },
+    { accountCode: '2109', debit: 0, credit: amountMinor, note: 'التزام حتى تنفيذ الأعمال' },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+
+/**
+ * قيد مستخلص باسترداد دفعة مقدمة (يوسّع buildExtractEntry):
+ *   مدين: نقدية|عملاء (المستحق بعد الاسترداد) + 1105 محتجز + 2109 استرداد الدفعة
+ *   دائن: 4107 إجمالي الأعمال + 2102 الضريبة
+ */
+export function buildExtractEntryWithAdvance(
+  totals: ExtractTotals, payment: 'cash' | 'credit', extractNumber: string,
+  treasury: string, advanceRecoveryMinor: Minor,
+): JournalLine[] {
+  if (!Number.isInteger(advanceRecoveryMinor) || advanceRecoveryMinor < 0) throw new Error('استرداد الدفعة لا يكون سالباً')
+  if (advanceRecoveryMinor === 0) return buildExtractEntry(totals, payment, extractNumber, treasury)
+  if (advanceRecoveryMinor > totals.dueMinor) throw new Error('استرداد الدفعة أكبر من مستحق المستخلص')
+  const netDue = totals.dueMinor - advanceRecoveryMinor
+  const lines: JournalLine[] = []
+  if (netDue > 0) lines.push({ accountCode: payment === 'cash' ? treasury : '1104', debit: netDue, credit: 0, note: `مستخلص ${extractNumber} بعد استرداد الدفعة` })
+  if (totals.retentionMinor > 0) lines.push({ accountCode: '1105', debit: totals.retentionMinor, credit: 0, note: 'محتجز ضمان' })
+  lines.push({ accountCode: '2109', debit: advanceRecoveryMinor, credit: 0, note: 'استرداد من الدفعة المقدمة' })
+  lines.push({ accountCode: '4107', debit: 0, credit: totals.grossMinor, note: 'إيراد أعمال المستخلص' })
+  if (totals.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: totals.vatMinor, note: 'ض.ق.م' })
+  assertBalanced(lines)
+  return lines
+}
+
+/* ─── مقاولو الباطن: عقد ← شهادات (مستخلصات باطن) بمحتجز ← دفعات ← إفراج ─── */
+export type SubContractStatus = 'active' | 'completed' | 'cancelled'
+
+export interface SubContract {
+  id: number
+  projectId: number
+  contractNumber: string // SC-0001
+  contractorName: string
+  scopeAr: string // نطاق الأعمال: حفر، حدادة، تشطيبات…
+  contractValueMinor: Minor
+  retentionPercent: number // محتجز يُخصم من كل شهادة
+  status: SubContractStatus
+  startDate: string
+}
+
+/** شهادة أعمال مقاول باطن (مستخلص باطن) */
+export interface SubCertificate {
+  id: number
+  contractId: number
+  number: number // متسلسل داخل العقد
+  date: string
+  descriptionAr: string
+  amountMinor: Minor // قيمة الأعمال المعتمدة
+  retentionMinor: Minor // المحتجز منها
+  netMinor: Minor // الصافي المستحق للمقاول
+  journalEntryId: number
+}
+
+/** دفعة لمقاول باطن (سداد من مستحقاته 2101) */
+export interface SubPayment {
+  id: number
+  contractId: number
+  date: string
+  amountMinor: Minor
+  kind: 'payment' | 'retention_release'
+  journalEntryId: number
+}
+
+export function validateSubContract(c: Pick<SubContract, 'contractorName' | 'scopeAr' | 'contractValueMinor' | 'retentionPercent'>): string[] {
+  const errors: string[] = []
+  if (!c.contractorName.trim()) errors.push('اسم مقاول الباطن مطلوب')
+  if (!c.scopeAr.trim()) errors.push('نطاق الأعمال مطلوب')
+  if (!Number.isInteger(c.contractValueMinor) || c.contractValueMinor <= 0) errors.push('قيمة العقد يجب أن تكون موجبة')
+  if (c.retentionPercent < 0 || c.retentionPercent > 20) errors.push('نسبة المحتجز بين 0 و20٪')
+  return errors
+}
+
+/**
+ * قيد شهادة مقاول باطن:
+ *   من ح/ 5110 تكاليف مشروعات (كامل قيمة الأعمال)
+ *     إلى ح/ 2101 الموردون (الصافي) + 2108 محتجزات الباطن (المحتجز)
+ * التكلفة تُعترف كاملة فور اعتماد الأعمال — والمحتجز التزام مؤجل لا خصم من التكلفة.
+ */
+export function buildSubCertificateEntry(amountMinor: Minor, retentionMinor: Minor, label: string): JournalLine[] {
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة الشهادة يجب أن تكون موجبة')
+  if (!Number.isInteger(retentionMinor) || retentionMinor < 0 || retentionMinor >= amountMinor) throw new Error('المحتجز غير صحيح')
+  const net = amountMinor - retentionMinor
+  const lines: JournalLine[] = [
+    { accountCode: '5110', debit: amountMinor, credit: 0, note: `شهادة أعمال ${label}` },
+    { accountCode: '2101', debit: 0, credit: net, note: 'صافي مستحق مقاول الباطن' },
+  ]
+  if (retentionMinor > 0) lines.push({ accountCode: '2108', debit: 0, credit: retentionMinor, note: 'محتجز ضمان أعمال الباطن' })
+  assertBalanced(lines)
+  return lines
+}
+
+/** قيد دفعة لمقاول باطن: 2101 مدين ← نقدية دائن */
+export function buildSubPaymentEntry(amountMinor: Minor, treasury: string, label: string): JournalLine[] {
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة الدفعة يجب أن تكون موجبة')
+  const lines: JournalLine[] = [
+    { accountCode: '2101', debit: amountMinor, credit: 0, note: `دفعة ${label}` },
+    { accountCode: treasury, debit: 0, credit: amountMinor, note: 'المنصرف' },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+
+/** قيد إفراج محتجزات الباطن بعد استلام أعماله نهائياً: 2108 مدين ← نقدية دائن */
+export function buildSubRetentionReleaseEntry(amountMinor: Minor, treasury: string, label: string): JournalLine[] {
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('لا محتجزات للإفراج عنها')
+  const lines: JournalLine[] = [
+    { accountCode: '2108', debit: amountMinor, credit: 0, note: `إفراج محتجزات ${label}` },
+    { accountCode: treasury, debit: 0, credit: amountMinor, note: 'المنصرف' },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+
+/* ─── خطابات الضمان البنكية — أصل مجمّد (الهامش) + مصاريف إصدار ─── */
+export type BondType = 'bid' | 'performance' | 'advance_payment' | 'retention_release' | 'other'
+export type BondStatus = 'active' | 'released' | 'forfeited'
+
+export const BOND_TYPE_LABELS: Record<BondType, string> = {
+  bid: 'ابتدائي (دخول عطاء)',
+  performance: 'نهائي (حسن تنفيذ)',
+  advance_payment: 'دفعة مقدمة',
+  retention_release: 'بديل محتجزات',
+  other: 'أخرى',
+}
+
+export interface Bond {
+  id: number
+  projectId: number | null
+  bondNumber: string
+  type: BondType
+  beneficiary: string // الجهة المستفيدة
+  amountMinor: Minor // قيمة الخطاب
+  marginMinor: Minor // الهامش المحجوز بالبنك (غطاء نقدي)
+  feesMinor: Minor // مصاريف ورسوم الإصدار
+  bank: string // حساب البنك المحجوز منه
+  issueDate: string
+  expiryDate: string
+  status: BondStatus
+  issueEntryId: number
+  settleEntryId: number | null
+}
+
+export function validateBond(b: Pick<Bond, 'bondNumber' | 'beneficiary' | 'amountMinor' | 'marginMinor' | 'feesMinor' | 'expiryDate'>): string[] {
+  const errors: string[] = []
+  if (!b.bondNumber.trim()) errors.push('رقم الخطاب مطلوب')
+  if (!b.beneficiary.trim()) errors.push('الجهة المستفيدة مطلوبة')
+  if (!Number.isInteger(b.amountMinor) || b.amountMinor <= 0) errors.push('قيمة الخطاب يجب أن تكون موجبة')
+  if (!Number.isInteger(b.marginMinor) || b.marginMinor < 0) errors.push('الهامش لا يكون سالباً')
+  if (b.marginMinor > b.amountMinor) errors.push('الهامش لا يتجاوز قيمة الخطاب')
+  if (!Number.isInteger(b.feesMinor) || b.feesMinor < 0) errors.push('المصاريف لا تكون سالبة')
+  if (!b.expiryDate) errors.push('تاريخ الانتهاء مطلوب')
+  return errors
+}
+
+/**
+ * قيد إصدار خطاب ضمان: الهامش نقدية مجمدة (أصل 1109) والمصاريف مصروف فوري:
+ *   من ح/ 1109 هوامش الخطابات + 5108 مصروفات ← إلى ح/ البنك
+ * قيمة الخطاب نفسها التزام محتمل (contingent) — لا تُقيَّد إلا عند المصادرة.
+ */
+export function buildBondIssueEntry(marginMinor: Minor, feesMinor: Minor, bank: string, label: string): JournalLine[] {
+  if (marginMinor + feesMinor <= 0) throw new Error('لا هامش ولا مصاريف — لا حاجة لقيد')
+  const lines: JournalLine[] = []
+  if (marginMinor > 0) lines.push({ accountCode: '1109', debit: marginMinor, credit: 0, note: `هامش خطاب ${label}` })
+  if (feesMinor > 0) lines.push({ accountCode: '5108', debit: feesMinor, credit: 0, note: 'مصاريف إصدار الخطاب' })
+  lines.push({ accountCode: bank, debit: 0, credit: marginMinor + feesMinor, note: 'المحجوز من البنك' })
+  assertBalanced(lines)
+  return lines
+}
+
+/** قيد رد الخطاب (انتهى الغرض): البنك مدين ← 1109 دائن — الهامش يعود حراً */
+export function buildBondReleaseEntry(marginMinor: Minor, bank: string, label: string): JournalLine[] {
+  if (!Number.isInteger(marginMinor) || marginMinor <= 0) throw new Error('لا هامش لهذا الخطاب')
+  const lines: JournalLine[] = [
+    { accountCode: bank, debit: marginMinor, credit: 0, note: `رد هامش خطاب ${label}` },
+    { accountCode: '1109', debit: 0, credit: marginMinor, note: 'تحرير الهامش' },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+
+/** قيد مصادرة الخطاب (سال الضمان): الهامش يتحول خسارة 5108 */
+export function buildBondForfeitEntry(marginMinor: Minor, label: string): JournalLine[] {
+  if (!Number.isInteger(marginMinor) || marginMinor <= 0) throw new Error('لا هامش لهذا الخطاب')
+  const lines: JournalLine[] = [
+    { accountCode: '5108', debit: marginMinor, credit: 0, note: `مصادرة خطاب ${label}` },
+    { accountCode: '1109', debit: 0, credit: marginMinor, note: 'الهامش المصادر' },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+
+/* ─── عمال اليومية — سجل يومي على المشروع وتسوية دورية من الخزينة ─── */
+export interface DailyWorker {
+  id: number
+  nameAr: string
+  phone: string
+  dailyWageMinor: Minor
+  active: boolean
+}
+
+export interface DailyWorkRecord {
+  id: number
+  workerId: number
+  projectId: number
+  date: string
+  days: number // يوم أو نصف يوم (0.5)
+  wageMinor: Minor // أجر هذا السجل = days × اليومية (قابل للتعديل)
+  settled: boolean
+  settlementId: number | null
+}
+
+/** قيد تسوية أجور يومية على مشروع: 5110 مدين ← نقدية دائن */
+export function buildDailyWorkSettlementEntry(totalMinor: Minor, treasury: string, label: string): JournalLine[] {
+  if (!Number.isInteger(totalMinor) || totalMinor <= 0) throw new Error('لا أجور غير مسددة')
+  const lines: JournalLine[] = [
+    { accountCode: '5110', debit: totalMinor, credit: 0, note: `أجور يومية ${label}` },
+    { accountCode: treasury, debit: 0, credit: totalMinor, note: 'المنصرف' },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+
+/* ─── WIP: الأعمال تحت التنفيذ — نسبة الإنجاز والفوترة الزائدة/الناقصة ─── */
+export interface WipInput {
+  /** قيمة العقد الفعلية (بعد أوامر التغيير المعتمدة) */
+  contractMinor: Minor
+  /** الموازنة التقديرية للتكاليف (0 = استخدم قيمة العقد كأساس للنسبة) */
+  budgetCostMinor: Minor
+  /** التكاليف الفعلية حتى الآن */
+  costsIncurredMinor: Minor
+  /** إجمالي المستخلصات (المفوتر) حتى الآن */
+  billedMinor: Minor
+}
+
+export interface WipResult {
+  /** نسبة الإنجاز 0–1 بطريقة التكلفة إلى التكلفة (cost-to-cost) */
+  percentComplete: number
+  /** الإيراد المكتسب = العقد × نسبة الإنجاز */
+  earnedRevenueMinor: Minor
+  /** موجب = فوترة ناقصة (لك أعمال لم تفوترها)، سالب = فوترة زائدة */
+  underBillingMinor: Minor
+  /** التكلفة المتبقية المتوقعة للإكمال */
+  costToCompleteMinor: Minor
+  status: 'on_track' | 'over_billed' | 'under_billed'
+}
+
+export function computeWip(input: WipInput): WipResult {
+  const base = input.budgetCostMinor > 0 ? input.budgetCostMinor : input.contractMinor
+  const percent = base > 0 ? Math.min(1, Math.max(0, input.costsIncurredMinor / base)) : 0
+  const earned = Math.round(input.contractMinor * percent)
+  const underBilling = earned - input.billedMinor
+  return {
+    percentComplete: percent,
+    earnedRevenueMinor: earned,
+    underBillingMinor: underBilling,
+    costToCompleteMinor: Math.max(0, base - input.costsIncurredMinor),
+    status: underBilling > 0 ? 'under_billed' : underBilling < 0 ? 'over_billed' : 'on_track',
+  }
+}

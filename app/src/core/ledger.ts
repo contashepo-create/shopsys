@@ -36,6 +36,7 @@ export type SourceType =
   | 'payroll' | 'rental_contract' | 'logistics_trip' | 'maintenance_ticket'
   | 'lab_order' | 'lab_commission' | 'lab_commission_payout'
   | 'clinic_visit' | 'project_extract' | 'project_cost' | 'retention_release'
+  | 'sub_certificate' | 'sub_payment' | 'bond_issue' | 'bond_settle' | 'client_advance' | 'daily_wages'
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
@@ -105,6 +106,7 @@ export const STANDARD_COA: Account[] = [
   { code: '1106', nameAr: 'أوراق قبض (شيكات واردة)', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'notes_receivable' },
   { code: '1107', nameAr: 'سلف الموظفين', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'employee_advances' },
   { code: '1108', nameAr: 'عهد الموظفين', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'employee_custodies' },
+  { code: '1109', nameAr: 'هوامش خطابات الضمان', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'bond_margins' },
   { code: '12', nameAr: 'الأصول الثابتة', rootType: 'assets', parentCode: '1', isPostable: false },
   { code: '1201', nameAr: 'أصول ومعدات', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'fixed_assets' },
   { code: '1202', nameAr: 'مجمع الإهلاك', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'acc_depreciation' },
@@ -116,6 +118,8 @@ export const STANDARD_COA: Account[] = [
   { code: '2105', nameAr: 'عمولات أطباء مستحقة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'commissions_payable' },
   { code: '2106', nameAr: 'أوراق دفع (شيكات صادرة)', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'notes_payable' },
   { code: '2107', nameAr: 'مستحق للموظفين (فائض عهد)', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'employee_payable' },
+  { code: '2108', nameAr: 'محتجزات مقاولي الباطن', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'sub_retention_payable' },
+  { code: '2109', nameAr: 'دفعات مقدمة من العملاء', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'client_advances' },
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },
   { code: '3102', nameAr: 'أرباح مرحّلة', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'retained_earnings' },

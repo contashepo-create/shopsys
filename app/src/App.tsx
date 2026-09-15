@@ -48,6 +48,7 @@ import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
 import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from './ui/pages/LabPages.tsx'
 import { ProjectsPage } from './ui/pages/ContractingPages.tsx'
 import { QuotationsPage } from './ui/pages/QuotationsPage.tsx'
+import { BoqPage, SubcontractorsPage, BondsPage, DailyWorkersPage } from './ui/pages/ContractingDepthPages.tsx'
 import { CustodyPage } from './ui/pages/CustodyPage.tsx'
 import { SyncPage } from './ui/pages/SyncPage.tsx'
 import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
@@ -102,6 +103,10 @@ function Shell() {
         <Route path="/lab/referrers" element={<LabReferrersPage />} />
         <Route path="/contracting/projects" element={<ProjectsPage />} />
         <Route path="/contracting/quotations" element={<QuotationsPage />} />
+        <Route path="/contracting/boq" element={<BoqPage />} />
+        <Route path="/contracting/subcontractors" element={<SubcontractorsPage />} />
+        <Route path="/contracting/bonds" element={<BondsPage />} />
+        <Route path="/contracting/daily-workers" element={<DailyWorkersPage />} />
         <Route path="/parties/custody" element={<CustodyPage />} />
         <Route path="/clinic/patients" element={<ClinicPatientsPage />} />
         <Route path="/clinic/appointments" element={<ClinicAppointmentsPage />} />

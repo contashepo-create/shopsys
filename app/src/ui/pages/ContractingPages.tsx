@@ -4,7 +4,7 @@
  * كل قيد يظهر ويربط بالمشروع؛ الإفراج عن المحتجز يقفل المشروع.
  */
 import { useMemo, useState } from 'react'
-import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer } from 'lucide-react'
+import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import type { Project } from '../../core/contracting.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -18,8 +18,9 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function ProjectsPage() {
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders,
     addProject, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
+    receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -57,6 +58,7 @@ export function ProjectsPage() {
   const [exPayment, setExPayment] = useState<'cash' | 'credit'>('credit')
   const [exTreasury, setExTreasury] = useState('1101')
   const [exVat, setExVat] = useState(true)
+  const [exRecovery, setExRecovery] = useState('')
 
   const saveExtract = () => {
     if (!extractFor) return
@@ -64,9 +66,10 @@ export function ProjectsPage() {
       const ex = addProjectExtract({
         projectId: extractFor.id, grossMinor: toMinor(exGross, cur.decimals),
         vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
+        advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
       })
       toast.show(`سُجل المستخلص ${ex.extractNumber} — المستحق ${fmt(ex.totals.dueMinor)} والمحتجز ${fmt(ex.totals.retentionMinor)} ✅`)
-      setExtractFor(null); setExGross(''); setExDesc('')
+      setExtractFor(null); setExGross(''); setExDesc(''); setExRecovery('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -107,6 +110,34 @@ export function ProjectsPage() {
 
   const [releaseFor, setReleaseFor] = useState<Project | null>(null)
   const [releaseTreasury, setReleaseTreasury] = useState('1101')
+
+  /* دفعة مقدمة من العميل */
+  const [advanceFor, setAdvanceFor] = useState<Project | null>(null)
+  const [advAmount, setAdvAmount] = useState('')
+  const [advTreasury, setAdvTreasury] = useState('1101')
+  const saveAdvance = () => {
+    if (!advanceFor) return
+    try {
+      receiveClientAdvance({ projectId: advanceFor.id, amountMinor: toMinor(advAmount, cur.decimals), treasury: advTreasury })
+      toast.show('سُجلت الدفعة المقدمة كالتزام 2109 — تُسترد من المستخلصات ✅')
+      setAdvanceFor(null); setAdvAmount('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  /* أمر تغيير */
+  const [coFor, setCoFor] = useState<Project | null>(null)
+  const [coTitle, setCoTitle] = useState('')
+  const [coAmount, setCoAmount] = useState('')
+  const [coDeduct, setCoDeduct] = useState(false)
+  const saveChangeOrder = () => {
+    if (!coFor) return
+    try {
+      const raw = toMinor(coAmount, cur.decimals)
+      const co = addChangeOrder({ projectId: coFor.id, titleAr: coTitle.trim(), amountMinor: coDeduct ? -raw : raw })
+      toast.show(`أُنشئ أمر التغيير ${co.number} (مسودة) — اعتمده ليدخل قيمة العقد ✅`)
+      setCoFor(null); setCoTitle(''); setCoAmount(''); setCoDeduct(false)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
   const doRelease = () => {
     if (!releaseFor) return
     try {
@@ -160,6 +191,8 @@ export function ProjectsPage() {
                           <>
                             <button onClick={() => { setExtractFor(p); setExGross(''); setExDesc('') }} title="مستخلص جديد" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Receipt className="w-4 h-4" /></button>
                             <button onClick={() => { setCostFor(p); setCostAmount(''); setCostDesc('') }} title="تسجيل تكلفة" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Hammer className="w-4 h-4" /></button>
+                            <button onClick={() => setAdvanceFor(p)} title="دفعة مقدمة من العميل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Wallet2 className="w-4 h-4" /></button>
+                            <button onClick={() => setCoFor(p)} title="أمر تغيير على العقد" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><FilePlus2 className="w-4 h-4" /></button>
                             {pr.retentionHeldMinor > 0 && (
                               <button onClick={() => setReleaseFor(p)} title={`الإفراج عن المحتجز (${fmt(pr.retentionHeldMinor)}) وإقفال المشروع`} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
                             )}
@@ -218,6 +251,11 @@ export function ProjectsPage() {
                 </label>
               </Field>
             </div>
+            {getAdvanceBalance(extractFor.id) > 0 && (
+              <Field label={`استرداد من الدفعة المقدمة (رصيدها ${fmt(getAdvanceBalance(extractFor.id))})`} hint="يخصم من مستحق هذا المستخلص ويطفئ التزام 2109">
+                <input value={exRecovery} onChange={(e) => setExRecovery(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0 = لا استرداد" />
+              </Field>
+            )}
             <div className="rounded-xl bg-orange-500/10 border border-orange-500/30 p-3 text-[12px] font-bold text-orange-700 dark:text-orange-300">
               يُخصم محتجز {extractFor.retentionPercent}٪ تلقائياً ويقيد على 1105 حتى التسليم النهائي
             </div>
@@ -330,6 +368,61 @@ export function ProjectsPage() {
       </Modal>
 
       {/* الإفراج عن المحتجزات — باختيار الخزينة (طلب المالك) */}
+      {/* دفعة مقدمة من العميل */}
+      <Modal open={!!advanceFor} onClose={() => setAdvanceFor(null)} title={advanceFor ? `دفعة مقدمة — ${advanceFor.nameAr}` : ''}>
+        {advanceFor && (
+          <div className="space-y-3">
+            <div className="text-[12px] text-slate-500 bg-sky-500/5 rounded-xl p-3">
+              الدفعة المقدمة التزام (2109) لا إيراد — لأن الأعمال لم تُنفَّذ بعد. تُسترد تدريجياً من المستخلصات القادمة.
+              {getAdvanceBalance(advanceFor.id) > 0 && <> الرصيد الحالي: <b>{fmt(getAdvanceBalance(advanceFor.id))}</b></>}
+            </div>
+            <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={advTreasury} onChange={setAdvTreasury} /></Field>
+            <Btn onClick={saveAdvance} className="w-full" disabled={!advAmount}>استلام الدفعة</Btn>
+          </div>
+        )}
+      </Modal>
+
+      {/* أمر تغيير */}
+      <Modal open={!!coFor} onClose={() => setCoFor(null)} title={coFor ? `أمر تغيير — ${coFor.nameAr}` : ''}>
+        {coFor && (
+          <div className="space-y-3">
+            <div className="text-[12px] text-slate-500 bg-violet-500/5 rounded-xl p-3">
+              أمر التغيير يعدل قيمة العقد الفعلية بعد اعتماده (زيادة أعمال أو تخفيض نطاق) — بلا قيد محاسبي؛ أثره في تقرير WIP والربحية المتوقعة.
+            </div>
+            <Field label="عنوان أمر التغيير"><input value={coTitle} onChange={(e) => setCoTitle(e.target.value)} placeholder="أعمال إضافية للواجهة…" className={inputCls} /></Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={`القيمة (${cur.symbol})`}><input value={coAmount} onChange={(e) => setCoAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+              <Field label="الاتجاه">
+                <div className="flex gap-2">
+                  <button onClick={() => setCoDeduct(false)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${!coDeduct ? 'bg-emerald-600 text-white border-emerald-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>زيادة</button>
+                  <button onClick={() => setCoDeduct(true)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${coDeduct ? 'bg-rose-600 text-white border-rose-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>تخفيض</button>
+                </div>
+              </Field>
+            </div>
+            {changeOrders.filter((o) => o.projectId === coFor.id).length > 0 && (
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-bold text-slate-400">أوامر التغيير السابقة</div>
+                {changeOrders.filter((o) => o.projectId === coFor.id).map((o) => (
+                  <div key={o.id} className="flex items-center justify-between text-[12px] bg-slate-50 dark:bg-slate-800/50 rounded-lg px-3 py-2">
+                    <span><b>{o.number}</b> — {o.titleAr} ({o.amountMinor >= 0 ? '+' : '−'}{fmt(Math.abs(o.amountMinor))})</span>
+                    {o.status === 'draft' ? (
+                      <span className="flex gap-1">
+                        <button onClick={() => { try { setChangeOrderStatus(o.id, 'approved'); toast.show('اعتُمد ✅') } catch (e) { toast.show((e as Error).message, 'error') } }} className="text-emerald-600 font-bold hover:underline">اعتماد</button>
+                        <button onClick={() => { setChangeOrderStatus(o.id, 'rejected'); toast.show('رُفض') }} className="text-rose-500 font-bold hover:underline mr-2">رفض</button>
+                      </span>
+                    ) : (
+                      <span className={`font-bold ${o.status === 'approved' ? 'text-emerald-600' : 'text-rose-500'}`}>{o.status === 'approved' ? '✅ معتمد' : '❌ مرفوض'}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <Btn onClick={saveChangeOrder} className="w-full" disabled={!coTitle.trim() || !coAmount}>إنشاء أمر التغيير (مسودة)</Btn>
+          </div>
+        )}
+      </Modal>
+
       <Modal open={!!releaseFor} onClose={() => setReleaseFor(null)} title={releaseFor ? `الإفراج عن محتجزات ${releaseFor.nameAr}` : ''}>
         {releaseFor && (
           <div className="space-y-4">
