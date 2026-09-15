@@ -5,6 +5,7 @@ import { useDataStore } from './data/repo.ts'
 import { evaluateLicense, activityMatches, isRevoked } from './core/license.ts'
 import { lockReasonFor, isBackupDue } from './core/security.ts'
 import { isDailySendDue, localNowIso } from './core/schedule.ts'
+import { runSyncCycle, watchLocalChanges } from './data/syncRunner.ts'
 import { hasFeature } from './core/license.ts'
 import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSender.ts'
 import { fetchAbout, fetchRevocationList, DEFAULT_CLOUD_BASE_URL } from './core/cloud.ts'
@@ -48,6 +49,7 @@ import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from '
 import { ProjectsPage } from './ui/pages/ContractingPages.tsx'
 import { QuotationsPage } from './ui/pages/QuotationsPage.tsx'
 import { CustodyPage } from './ui/pages/CustodyPage.tsx'
+import { SyncPage } from './ui/pages/SyncPage.tsx'
 import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
 import { CarsPage } from './ui/pages/CarsPage.tsx'
 import { AboutPage } from './ui/pages/AboutPage.tsx'
@@ -117,6 +119,7 @@ function Shell() {
         <Route path="/reports/statements" element={<StatementsPage />} />
         <Route path="/settings/printing" element={<PrintSettingsPage />} />
         <Route path="/settings/backup" element={<BackupPage />} />
+        <Route path="/settings/sync" element={<SyncPage />} />
         <Route path="/settings/telegram" element={<TelegramPage />} />
         <Route path="/settings/appearance" element={<AppearancePage />} />
         <Route path="/settings/einvoice" element={<EinvoicePage />} />
@@ -213,6 +216,25 @@ export default function App() {
     const t = setInterval(takeSnapshot, 5 * 60 * 1000) // فحص كل 5 دقائق، لقطة كل ساعة
     return () => clearInterval(t)
   }, [setup.completed, lastHourlyBackupAt, setLastHourlyBackupAt])
+
+  // ─── المزامنة السحابية متعددة الأجهزة (Supabase — ميزة cloud_sync): دورة كل دقيقة ───
+  useEffect(() => {
+    if (!setup.completed) return
+    watchLocalChanges() // يرفع علم dirty عند أي تغيير محلي
+    const tick = async () => {
+      const app = useAppStore.getState()
+      if (!app.sync.enabled) return
+      const lic = evaluateLicense({
+        activatedPayload: app.activatedPayload, trialStartedAt: app.trialStartedAt,
+        lastSeenAt: app.lastSeenAt, today: new Date().toISOString(),
+      })
+      if (!hasFeature(lic, 'cloud_sync')) return
+      await runSyncCycle() // أخطاؤها تُسجل في sync.lastResult ولا ترمي أبداً
+    }
+    tick()
+    const t = setInterval(tick, 60 * 1000)
+    return () => clearInterval(t)
+  }, [setup.completed])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')

@@ -80,6 +80,26 @@ interface AppState {
   // ─── النسخ الاحتياطي التلقائي كل ساعة (القرار 28) ───
   lastHourlyBackupAt: string | null
   setLastHourlyBackupAt: (iso: string) => void
+  // ─── المزامنة السحابية متعددة الأجهزة (Supabase — ميزة cloud_sync المدفوعة) ───
+  sync: SyncSettings
+  updateSync: (patch: Partial<SyncSettings>) => void
+}
+
+export interface SyncSettings {
+  enabled: boolean
+  url: string
+  anonKey: string
+  storeId: string
+  secret: string
+  lastKnownRev: number // آخر مراجعة سحابية طبقها هذا الجهاز
+  lastSyncedAt: string | null
+  lastResult: string | null // آخر رسالة نتيجة للعرض
+  dirty: boolean // توجد تغييرات محلية لم تُدفع بعد
+}
+
+export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
+  enabled: false, url: '', anonKey: '', storeId: '', secret: '',
+  lastKnownRev: 0, lastSyncedAt: null, lastResult: null, dirty: false,
 }
 
 /**
@@ -196,6 +216,8 @@ export const useAppStore = create<AppState>()(
         })),
       lastHourlyBackupAt: null,
       setLastHourlyBackupAt: (iso) => set({ lastHourlyBackupAt: iso }),
+      sync: DEFAULT_SYNC_SETTINGS,
+      updateSync: (patch) => set((s) => ({ sync: { ...s.sync, ...patch } })),
     }),
     {
       name: 'shopsys-app',
@@ -233,6 +255,8 @@ export const useAppStore = create<AppState>()(
         if (state) state.appearance = sanitizeAppearance(state.appearance)
         // ترحيل: حسابات قبل ميزة التليجرام تحصل على الافتراضيات
         if (state) state.telegram = { ...DEFAULT_TELEGRAM_SETTINGS, ...state.telegram }
+        // ترحيل: حسابات قبل ميزة المزامنة السحابية تحصل على الافتراضيات
+        if (state) state.sync = { ...DEFAULT_SYNC_SETTINGS, ...state.sync }
         // ترحيل: حسابات قبل ميزة الفاتورة الإلكترونية تحصل على الافتراضيات
         if (state) state.einvoice = { ...DEFAULT_EINVOICE_SETTINGS, ...state.einvoice }
         // ترحيل: حسابات قبل الإرسال المجدول تحصل على الافتراضيات

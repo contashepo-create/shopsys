@@ -889,6 +889,10 @@ interface DataState {
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
 
+/** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
+ *  (8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
+export const DATA_VERSION = 8
+
 export const useDataStore = create<DataState>()(
   persist(
     (set, get) => ({
@@ -3122,7 +3126,7 @@ export const useDataStore = create<DataState>()(
     }),
     {
       name: 'shopsys-data',
-      version: 8, // 8 = ملفات العهد المتكاملة + استرداد السلف على شهور (7 = خزائن متعددة + دفع مجزأ)
+      version: DATA_VERSION,
       // القرار 28: قاعدة البيانات مشفرة AES-256-GCM بمفتاح مشتق لهذا الجهاز
       storage: createJSONStorage(() => secureStorage),
       // ترحيل البيانات المحفوظة بالأشكال القديمة (أقسام هرمية، stockQty، مرتجعات وورديات وجرد)

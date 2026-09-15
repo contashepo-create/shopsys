@@ -6,12 +6,11 @@
 import { useRef, useState } from 'react'
 import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupSummary } from '../../core/backup.ts'
 import { decryptForDevice, encryptForDevice } from '../../data/secureStorage.ts'
 import { Btn, useToast } from '../components/ui.tsx'
 
-const DATA_VERSION = 7 // إصدار persist لمخزن shopsys-data
 
 export function BackupPage() {
   const { setup } = useAppStore()

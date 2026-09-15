@@ -8,7 +8,7 @@ import {
   Receipt, RotateCcw, Boxes, ArrowLeftRight, ClipboardList, Warehouse,
   UserRound, Building2, UserCog, Landmark, FileSpreadsheet, Scale,
   PenLine, ListTree, PiggyBank, CalendarClock, Store, Percent,
-  Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown,
+  Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
   FileText,
 } from 'lucide-react'
@@ -167,6 +167,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'permissions', nameAr: 'المستخدمون والصلاحيات', icon: ShieldCheck, path: '/settings/permissions' },
       { id: 'printing', nameAr: 'الطباعة', icon: Printer, path: '/settings/printing' },
       { id: 'backup', nameAr: 'النسخ الاحتياطي', icon: DatabaseBackup, path: '/settings/backup' },
+      { id: 'sync', nameAr: 'المزامنة السحابية', icon: CloudUpload, path: '/settings/sync' },
       { id: 'telegram', nameAr: 'بوت التليجرام', icon: Bot, path: '/settings/telegram' },
       { id: 'appearance', nameAr: 'المظهر', icon: Palette, path: '/settings/appearance' },
       { id: 'einvoice', nameAr: 'الفاتورة الإلكترونية', icon: FileSpreadsheet, path: '/settings/einvoice' },

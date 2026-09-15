@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react'
 import { Bot, Send, KeyRound, MessageSquareText, PackageSearch, DatabaseBackup, Lock, CheckCircle2, CalendarClock } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
-import { useDataStore } from '../../data/repo.ts'
+import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
 import {
   isValidBotToken, isValidChatId, maskToken, apiUrl,
@@ -21,7 +21,6 @@ import { buildBackup, backupFileName } from '../../core/backup.ts'
 import { decryptForDevice } from '../../data/secureStorage.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 
-const DATA_VERSION = 7 // إصدار persist لمخزن shopsys-data
 
 export function TelegramPage() {
   const { setup, telegram, updateTelegram, schedule, updateSchedule, lastDailySentDay, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
