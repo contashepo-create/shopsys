@@ -21,6 +21,7 @@ import { UNIT_GROUPS } from '../../core/units.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { buildItemLedger } from '../../core/itemLedger.ts'
 import { renderItemLedgerHtml } from '../print/printItemLedger.ts'
+import { renderLabelsHtml, type LabelItem } from '../print/printLabels.ts'
 import { printHtml } from '../print/printReceipt.ts'
 
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
@@ -82,6 +83,21 @@ export function ItemsPage() {
   const [matrixFor, setMatrixFor] = useState<Item | null>(null)
   /* ─── كارت الصنف: دفتر الحركة بفلتر فترة + طباعة (الأمر 13) ─── */
   const [cardFor, setCardFor] = useState<Item | null>(null)
+  /* ─── طباعة ملصقات الباركود (مراجعة السوبرماركت) ─── */
+  const [labelsOpen, setLabelsOpen] = useState(false)
+  const [labelCounts, setLabelCounts] = useState<Record<number, string>>({})
+  const printLabels = () => {
+    const list: LabelItem[] = []
+    for (const [idStr, cntStr] of Object.entries(labelCounts)) {
+      const cnt = Number(cntStr) || 0
+      if (cnt <= 0) continue
+      const it = items.find((x) => x.id === Number(idStr))
+      if (!it) continue
+      list.push({ nameAr: it.nameAr, barcode: it.barcodes.find(Boolean) || it.sku || String(it.id), priceMinor: it.priceMinor, count: Math.min(cnt, 500) })
+    }
+    if (!list.length) { toast.show('حدد عدد الملصقات لصنف واحد على الأقل', 'error'); return }
+    printHtml(renderLabelsHtml(setup.shopName || 'تَحَكَّم', list, cur))
+  }
   const [ledgerFrom, setLedgerFrom] = useState('')
   const [ledgerTo, setLedgerTo] = useState('')
 
@@ -288,6 +304,9 @@ export function ItemsPage() {
         </select>
         <Btn variant="soft" onClick={openNewCategory}>
           <span className="flex items-center gap-1.5"><FolderPlus size={15} /> قسم جديد</span>
+        </Btn>
+        <Btn variant="ghost" onClick={() => { setLabelCounts({}); setLabelsOpen(true) }} disabled={items.length === 0}>
+          <span className="flex items-center gap-1.5"><Barcode size={15} /> ملصقات باركود</span>
         </Btn>
         <Btn variant="ghost" onClick={exportCsv} disabled={items.length === 0}>
           <span className="flex items-center gap-1.5"><FileDown size={15} /> تصدير Excel</span>
@@ -599,6 +618,38 @@ export function ItemsPage() {
             </div>
           )
         })()}
+      </Modal>
+
+      {/* 🏷️ ملصقات الباركود — شبكة A4 (اسم + سعر + Code128) */}
+      <Modal open={labelsOpen} onClose={() => setLabelsOpen(false)} title="🏷️ طباعة ملصقات باركود" wide>
+        <div className="space-y-3">
+          <p className="text-[11.5px] text-slate-400">حدد عدد الملصقات لكل صنف — تُطبع شبكة A4 (4 أعمدة) باسم الصنف وسعره وباركود Code128 قابل للمسح.</p>
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden max-h-[50vh] overflow-y-auto">
+            <table className="w-full text-[12.5px]">
+              <thead>
+                <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white dark:bg-card-dark">
+                  <th className="px-4 py-2">الصنف</th><th className="px-4 py-2">الباركود</th><th className="px-4 py-2">السعر</th><th className="px-4 py-2 w-24">عدد الملصقات</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.filter((it) => it.isActive).map((it) => (
+                  <tr key={it.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <td className="px-4 py-1.5 font-bold">{it.nameAr}</td>
+                    <td className="px-4 py-1.5 font-mono text-[11px] text-slate-400" dir="ltr">{it.barcodes.find(Boolean) || it.sku || it.id}</td>
+                    <td className="px-4 py-1.5 text-emerald-600 font-bold">{formatMinor(it.priceMinor, cur, false)}</td>
+                    <td className="px-4 py-1.5">
+                      <input value={labelCounts[it.id] ?? ''} onChange={(e) => setLabelCounts((c) => ({ ...c, [it.id]: e.target.value }))} className={`${inputCls} !py-1 !text-[12px] text-center`} dir="ltr" placeholder="0" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setLabelsOpen(false)}>إغلاق</Btn>
+            <Btn onClick={printLabels}>🖨️ طباعة الملصقات</Btn>
+          </div>
+        </div>
       </Modal>
 
       {/* 📖 كارت الصنف — بيانات إضافية + دفتر الحركة بفلتر وطباعة (الأمر 13) */}

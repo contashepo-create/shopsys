@@ -34,7 +34,7 @@ const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'ش�
 const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', method: 'qty', paidBy: 'supplier', payAccount: '1101', custodyFileId: null }
 
 export function PurchasesPage() {
-  const { items, suppliers, purchases, journal, projects, treasuries, custodyFiles, employees, warehouses, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
+  const { items, suppliers, purchases, journal, projects, treasuries, custodyFiles, employees, warehouses, categories, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const navigate = useNavigate()
 
@@ -54,6 +54,28 @@ export function PurchasesPage() {
   const [viewing, setViewing] = useState<PurchaseInvoice | null>(null)
   const [supplierId, setSupplierId] = useState(0)
   const [lines, setLines] = useState<DraftLine[]>([])
+  /* الأمر 6: إضافة صنف سريعة داخل فاتورة الشراء — بضاعة جديدة تصل مع المورد */
+  const [quickOpen, setQuickOpen] = useState(false)
+  const [qName, setQName] = useState('')
+  const [qBarcode, setQBarcode] = useState('')
+  const [qPrice, setQPrice] = useState('')
+  const [qCat, setQCat] = useState('')
+  const quickAdd = () => {
+    if (!qName.trim()) { toast.show('اكتب اسم الصنف', 'error'); return }
+    const catId = qCat ? Number(qCat) : categories[0]?.id
+    if (catId == null) { toast.show('أضف قسماً أولاً من شاشة الأصناف', 'error'); return }
+    addItem({
+      nameAr: qName.trim(), sku: '', barcodes: qBarcode.trim() ? [qBarcode.trim()] : [], categoryId: catId,
+      baseUnit: 'قطعة', extraUnits: [], costMinor: 0, stockQty: 0,
+      priceMinor: qPrice.trim() ? toMinor(qPrice, cur.decimals) : 0, minQty: 0,
+      trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false,
+      variantColors: [], variantSizes: [], isActive: true,
+    })
+    const created = useDataStore.getState().items.at(-1)!
+    setLines((l) => [...l, { itemId: created.id, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '' }])
+    setQuickOpen(false); setQName(''); setQBarcode(''); setQPrice(''); setQCat('')
+    toast.show(`أُضيف «${created.nameAr}» وسطر له في الفاتورة — التكلفة ستتحدد من هذه الفاتورة ✓`)
+  }
   const [expenses, setExpenses] = useState<DraftExpense[]>([])
   const [paid, setPaid] = useState('')
   const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
@@ -329,7 +351,10 @@ export function PurchasesPage() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5"><Receipt size={14} /> أصناف الفاتورة</span>
-              <Btn variant="soft" onClick={() => setLines((l) => [...l, { itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '' }])}>+ سطر</Btn>
+              <div className="flex gap-1.5">
+                <Btn variant="ghost" onClick={() => setQuickOpen(true)}>⚡ صنف جديد سريع</Btn>
+                <Btn variant="soft" onClick={() => setLines((l) => [...l, { itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '' }])}>+ سطر</Btn>
+              </div>
             </div>
             {/* رؤوس أعمدة واضحة — حقل الصنف يأخذ نصف العرض (ملاحظة المالك) */}
             <div className="hidden sm:grid grid-cols-[1fr_90px_120px_140px_36px] gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400">
@@ -526,6 +551,26 @@ export function PurchasesPage() {
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} disabled={!preview || !supplierId}>🚀 ترحيل الفاتورة</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ⚡ إضافة صنف سريعة داخل الفاتورة (الأمر 6) — التكلفة تتحدد من الفاتورة نفسها */}
+      <Modal open={quickOpen} onClose={() => setQuickOpen(false)} title="⚡ صنف جديد سريع">
+        <div className="space-y-3">
+          <Field label="اسم الصنف *"><input value={qName} onChange={(e) => setQName(e.target.value)} className={inputCls} autoFocus /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="الباركود (اختياري)"><input value={qBarcode} onChange={(e) => setQBarcode(e.target.value)} className={inputCls} dir="ltr" /></Field>
+            <Field label={`سعر البيع (${cur.symbol})`}><input value={qPrice} onChange={(e) => setQPrice(e.target.value)} className={inputCls} dir="ltr" placeholder="0" /></Field>
+          </div>
+          <Field label="القسم" hint="بقية البيانات (وحدات/صلاحية/سيريال) تُستكمل لاحقاً من شاشة الأصناف">
+            <select value={qCat} onChange={(e) => setQCat(e.target.value)} className={inputCls}>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+            </select>
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setQuickOpen(false)}>إلغاء</Btn>
+            <Btn onClick={quickAdd}>إضافة وإدراج سطر بالفاتورة</Btn>
           </div>
         </div>
       </Modal>

@@ -40,7 +40,7 @@ export type SourceType =
   | 'sub_certificate' | 'sub_payment' | 'bond_issue' | 'bond_settle' | 'client_advance' | 'daily_wages'
   | 'production' | 'scrap_purchase' | 'scrap_sale' | 'equipment_cost'
   | 'consignment_sale' | 'consignment_payout' | 'driver_settlement'
-  | 'sub_advance' | 'material_issue' | 'client_payment'
+  | 'sub_advance' | 'material_issue' | 'client_payment' | 'wastage'
   | 'insured_sale' | 'claim_settlement'
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
@@ -156,4 +156,5 @@ export const STANDARD_COA: Account[] = [
   { code: '5108', nameAr: 'مصروفات عمومية', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'general_expense' },
   { code: '5109', nameAr: 'عمولات أطباء محيلين', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'referral_commission' },
   { code: '5110', nameAr: 'تكاليف مشروعات مقاولات', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'project_costs' },
+  { code: '5111', nameAr: 'هالك وتوالف مخزون', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'wastage' },
 ]

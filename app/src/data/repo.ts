@@ -35,6 +35,7 @@ import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
+import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
@@ -526,6 +527,18 @@ export interface MaintenanceTicket {
   notes: string
 }
 
+/** مستند إتلاف مخزون (هالك وتوالف) — موثق بسبب ومربوط بقيده (مراجعة نشاط الأغذية) */
+export interface WastageDoc {
+  id: number
+  wastageNumber: string // WST-0001
+  date: string // ISO
+  reason: string
+  lines: { itemId: number; nameAr: string; qty: number; unitCostMinor: number }[]
+  totalCostMinor: number
+  journalEntryId: number
+  notes: string
+}
+
 /** مسير رواتب مرحّل لشهر — مربوط بقيده المحاسبي */
 export interface PayrollRun {
   id: number
@@ -771,6 +784,8 @@ interface DataState {
   purchases: PurchaseInvoice[]
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
+  /** مستندات الإتلاف (هالك وتوالف) — 5111/1103 */
+  wastages: WastageDoc[]
   vouchers: Voucher[]
   employeeAdvances: EmployeeAdvance[] // سلف الموظفين (طلب المالك)
   sales: SaleInvoice[]
@@ -882,6 +897,8 @@ interface DataState {
    * ويولّد قيد تسوية متوازناً (عجز = مصروف، زيادة = تخفيض مصروف)
    */
   postStocktake: (counts: CountInput[], notes: string) => Stocktake
+  /** إتلاف مخزون موثق بسبب: يخصم الكميات + يستهلك دفعات FEFO + قيد 5111/1103 */
+  postWastage: (args: { reason: string; lines: { itemId: number; qty: number }[]; notes: string }) => WastageDoc
   /** سند قبض/صرف/تحويل — يولّد قيده المتوازن فوراً */
   postVoucher: (args: {
     kind: VoucherKind
@@ -1420,6 +1437,7 @@ export const useDataStore = create<DataState>()(
       purchases: [],
       purchaseReturns: [],
       stocktakes: [],
+      wastages: [],
       vouchers: [],
       employeeAdvances: [],
       sales: [],
@@ -2191,6 +2209,72 @@ export const useDataStore = create<DataState>()(
 
         set({ stocktakes: [...state.stocktakes, st], journal, items: updatedItems })
         return st
+      },
+
+      postWastage: (args) => {
+        const state = get()
+        // 1) إثراء السطور بالتكلفة المرجحة ثم تحقق النواة الخالصة قبل أي كتابة
+        const lines = args.lines.map((l) => {
+          const item = state.items.find((it) => it.id === l.itemId)
+          if (!item) throw new Error('صنف غير موجود بالمخزون')
+          return { itemId: l.itemId, nameAr: item.nameAr, qty: l.qty, unitCostMinor: item.costMinor }
+        })
+        const errors = validateWastage(
+          { reason: args.reason, lines },
+          (itemId) => state.items.find((it) => it.id === itemId)?.stockQty ?? 0,
+        )
+        if (errors.length) throw new Error(errors.join(' — '))
+
+        const wastageId = nextId(state.wastages)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const wastageNumber = `WST-${String(wastageId).padStart(4, '0')}`
+        const entryLines = buildWastageEntry(lines, wastageNumber)
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `إتلاف مخزون ${wastageNumber} — ${args.reason}`,
+          sourceType: 'wastage',
+          sourceId: wastageId,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+
+        // 2) خصم الكميات + استهلاك دفعات الصلاحية الأقدم أولاً (يشمل المنتهية — هذا هو الإعدام)
+        const qtyBy = new Map(lines.map((l) => [l.itemId, l.qty]))
+        const updatedItems = state.items.map((it) =>
+          qtyBy.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyBy.get(it.id)!) * 1000) / 1000 } : it,
+        )
+        let batches = state.batches
+        for (const l of lines) {
+          let rest = l.qty
+          batches = batches
+            .slice()
+            .sort((a, b) => ((a.expiryDate ?? '9999') < (b.expiryDate ?? '9999') ? -1 : 1))
+            .map((b) => {
+              if (b.itemId !== l.itemId || rest <= 0 || b.qty <= 0) return b
+              const take = Math.min(b.qty, rest)
+              rest -= take
+              return { ...b, qty: Math.round((b.qty - take) * 1000) / 1000 }
+            })
+        }
+
+        const doc: WastageDoc = {
+          id: wastageId,
+          wastageNumber,
+          date: now,
+          reason: args.reason,
+          lines,
+          totalCostMinor: wastageTotalMinor(lines),
+          journalEntryId: entryId,
+          notes: args.notes,
+        }
+        set({ wastages: [...state.wastages, doc], journal: [...state.journal, entry], items: updatedItems, batches })
+        return doc
       },
 
       postVoucher: (args) => {
@@ -5749,6 +5833,7 @@ export const useDataStore = create<DataState>()(
           serials: s.serials ?? [],
           cheques: s.cheques ?? [],
           stocktakes: s.stocktakes ?? [],
+          wastages: s.wastages ?? [],
           vouchers: s.vouchers ?? [],
           shifts: s.shifts ?? [],
           journal: s.journal ?? [],
