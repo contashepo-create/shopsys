@@ -46,7 +46,8 @@ const NEXT_ACTIONS: Record<ChequeStatus, { to: ChequeStatus; label: string; dang
 }
 
 export function ChequesPage() {
-  const { cheques, journal, customers, suppliers, receiveCheque, issueCheque, setChequeStatus } = useDataStore()
+  const { cheques, journal, customers, suppliers, treasuries, receiveCheque, issueCheque, setChequeStatus } = useDataStore()
+  const banks = treasuries.filter((t) => t.kind === 'bank')
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -92,9 +93,11 @@ export function ChequesPage() {
     }
   }
 
+  // البنك المستلم/الصارف — يظهر عند التحصيل والصرف فقط (يدعم البنوك المتعددة)
+  const [bankAccount, setBankAccount] = useState('1102')
   const transition = (c: Cheque, to: ChequeStatus) => {
     try {
-      const updated = setChequeStatus(c.id, to)
+      const updated = setChequeStatus(c.id, to, to === 'collected' || to === 'cleared' ? bankAccount : undefined)
       toast.show(`الشيك ${updated.chequeNumber} أصبح: ${CHEQUE_STATUS_LABELS[updated.status]}`)
       setViewing(updated)
     } catch (e) {
@@ -250,6 +253,13 @@ export function ChequesPage() {
             {!isFinalStatus(viewing.status) && (
               <div className="space-y-2">
                 <div className="text-[12px] font-bold text-slate-500 flex items-center gap-1.5"><Banknote size={13} /> ماذا حدث للشيك؟</div>
+                {NEXT_ACTIONS[viewing.status].some((a) => a.to === 'collected' || a.to === 'cleared') && banks.length > 1 && (
+                  <Field label="أي بنك؟" hint="التحصيل يدخل فيه والصرف يخرج منه">
+                    <select value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} className={inputCls}>
+                      {banks.map((b) => <option key={b.code} value={b.code}>{b.nameAr}</option>)}
+                    </select>
+                  </Field>
+                )}
                 {NEXT_ACTIONS[viewing.status].map((a) => (
                   <button
                     key={a.to}

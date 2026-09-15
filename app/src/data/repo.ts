@@ -36,7 +36,7 @@ import {
   assertFileOpen, CUSTODY_ACCOUNT,
   type CustodyFile, type CustodyTx, type CustodySummary,
 } from '../core/custody.ts'
-import { validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus } from '../core/contracting.ts'
+import { validateProject, computeExtractTotals, buildProjectPurchaseEntry, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus } from '../core/contracting.ts'
 import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, type VisitKind, type VisitTotals } from '../core/clinic.ts'
 import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
 import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
@@ -884,7 +884,7 @@ interface DataState {
   /** تحرير شيك صادر لمورد: قيد 2101 ← 2106 */
   issueCheque: (args: { chequeNumber: string; partyId: number; bankName: string; amountMinor: number; dueDate: string; notes: string }) => Cheque
   /** نقل حالة الشيك وفق آلة الحالات — يولّد قيد التحصيل/الارتداد/الصرف/الإلغاء تلقائياً */
-  setChequeStatus: (chequeId: number, status: ChequeStatus) => Cheque
+  setChequeStatus: (chequeId: number, status: ChequeStatus, bank?: string) => Cheque
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
@@ -1021,10 +1021,18 @@ export const useDataStore = create<DataState>()(
             throw new Error(`المدفوع أكبر من المتبقي في ملف العهدة (${remaining}) — عزّز العهدة أو سجّل الباقي آجلاً`)
           }
         }
-        if (inv.projectId != null && !state.projects.find((p) => p.id === inv.projectId)) throw new Error('المشروع غير موجود')
-        // القيد المحاسبي: مخزون مدين / (خزينة أو 1108 عهد) + موردون دائن (يرمي لو المدفوع > الإجمالي)
+        const linkedProject = inv.projectId != null ? state.projects.find((p) => p.id === inv.projectId) : undefined
+        if (inv.projectId != null && !linkedProject) throw new Error('المشروع غير موجود')
+        if (linkedProject?.status === 'completed') throw new Error('المشروع مقفل — لا تكاليف جديدة عليه')
+        // القيد المحاسبي (يرمي لو المدفوع > الإجمالي):
+        // - فاتورة عادية: مخزون 1103 مدين / (خزينة أو 1108 عهد) + موردون دائن
+        // - فاتورة مشروع مقاولات: 5110 تكاليف مشروعات مدين بدل المخزون —
+        //   البضاعة تذهب للموقع مباشرة فلا ترفع مخزون المتجر ولا تغيّر متوسط التكلفة
+        //   (يمنع ازدواج التكلفة: مخزون + بند تكلفة مشروع معاً)
         const payAccount = custodyFile ? CUSTODY_ACCOUNT : (inv.treasury ?? '1101')
-        const entryLines = buildPurchaseEntry(grandTotal, inv.paidMinor, payAccount)
+        const entryLines = linkedProject
+          ? buildProjectPurchaseEntry(grandTotal, inv.paidMinor, payAccount, linkedProject.nameAr)
+          : buildPurchaseEntry(grandTotal, inv.paidMinor, payAccount)
         const purchaseId = nextId(state.purchases)
         const entryId = nextId(state.journal)
         const invoiceNumber = `P-${String(purchaseId).padStart(4, '0')}`
@@ -1068,7 +1076,8 @@ export const useDataStore = create<DataState>()(
         }
 
         // تحديث تكلفة الأصناف بالمتوسط المرجح + زيادة المخزون
-        const updatedItems = state.items.map((it) => {
+        // (فاتورة المشروع لا تمس المخزون: بضاعتها تكلفة موقع مباشرة 5110)
+        const updatedItems = linkedProject ? state.items : state.items.map((it) => {
           const line = landed.find((l) => l.itemId === it.id)
           if (!line) return it
           const newCost = weightedAverage(it.stockQty ?? 0, it.costMinor, line.qty, line.landedTotalMinor)
@@ -1076,9 +1085,10 @@ export const useDataStore = create<DataState>()(
         })
 
         // فتح دفعات صلاحية للأصناف المتتبَّعة (FEFO — القرار 5)
+        // (لا دفعات ولا سيريالات لفاتورة المشروع — بضاعتها ليست مخزوناً)
         let batchId = nextId(state.batches)
         const newBatches: StockBatch[] = []
-        for (const l of inv.lines) {
+        for (const l of linkedProject ? [] : inv.lines) {
           const item = state.items.find((it) => it.id === l.itemId)
           if (!item?.trackExpiry) continue
           newBatches.push({
@@ -1095,6 +1105,7 @@ export const useDataStore = create<DataState>()(
         let serialId = nextId(state.serials)
         const newSerials: SerialUnit[] = []
         inv.lines.forEach((l, li) => {
+          if (linkedProject) return
           const accepted = parsedByLine.get(li)
           if (!accepted) return
           const item = state.items.find((it) => it.id === l.itemId)
@@ -1257,7 +1268,8 @@ export const useDataStore = create<DataState>()(
         const { taxPercent, taxInclusive } = deriveTaxConfig(sale.totals)
         const totals = computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
         // 3) القيد العاكس المتوازن
-        const entryLines = buildReturnEntry(totals, args.refund)
+        // الرد النقدي من نفس خزينة البيع الأصلية (فواتير قديمة بلا خزينة → الرئيسية)
+        const entryLines = buildReturnEntry(totals, args.refund, sale.treasury ?? '1101')
         const returnId = nextId(state.saleReturns)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -1312,6 +1324,11 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const purchase = state.purchases.find((p) => p.id === args.purchaseId)
         if (!purchase) throw new Error('فاتورة الشراء الأصلية غير موجودة')
+        // فاتورة مشروع: بضاعتها حُمّلت تكلفة موقع 5110 لا مخزوناً — مرتجعها يُسوَّى
+        // بسند قبض من المورد أو تسوية تكلفة على المشروع، لا بمرتجع مخزني يفسد 1103
+        if (purchase.projectId != null) {
+          throw new Error('فاتورة مشروع مقاولات — لا مرتجع مخزنياً لها: سجّل التسوية بسند قبض من المورد')
+        }
         // 1) سطور المرتجع بتكلفة الوحدة النهائية — بلا تجاوز للمتبقي ولا للمخزون
         const prior = state.purchaseReturns.filter((r) => r.purchaseId === purchase.id).flatMap((r) => r.lines)
         const lines = buildPurchaseReturnLines(
@@ -2535,6 +2552,7 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
+        if (project.status === 'completed') throw new Error('المشروع مقفل — لا تكاليف جديدة عليه')
         // الدفع من عهدة موظف (طلب المالك): تُفحص وتُخصم من ملفه بدل الخزينة
         let custodyFile: CustodyFile | null = null
         if (args.payment === 'cash' && args.custodyFileId != null) {
@@ -3083,7 +3101,7 @@ export const useDataStore = create<DataState>()(
         return cheque
       },
 
-      setChequeStatus: (chequeId, status) => {
+      setChequeStatus: (chequeId, status, bank) => {
         const state = get()
         const cheque = state.cheques.find((c) => c.id === chequeId)
         if (!cheque) throw new Error('الشيك غير موجود')
@@ -3097,9 +3115,9 @@ export const useDataStore = create<DataState>()(
           return updated
         }
         const built =
-          status === 'collected' ? { lines: buildChequeCollectEntry(cheque.amountMinor, note), src: 'cheque_collect' as const, desc: `تحصيل ${note}`, reversal: false }
+          status === 'collected' ? { lines: buildChequeCollectEntry(cheque.amountMinor, note, bank ?? '1102'), src: 'cheque_collect' as const, desc: `تحصيل ${note}`, reversal: false }
           : status === 'bounced' ? { lines: buildChequeBounceEntry(cheque.amountMinor, note), src: 'cheque_bounce' as const, desc: `ارتداد ${note} — عاد الدين على العميل`, reversal: true }
-          : status === 'cleared' ? { lines: buildChequeClearEntry(cheque.amountMinor, note), src: 'cheque_clear' as const, desc: `صرف ${note} من البنك`, reversal: false }
+          : status === 'cleared' ? { lines: buildChequeClearEntry(cheque.amountMinor, note, bank ?? '1102'), src: 'cheque_clear' as const, desc: `صرف ${note} من البنك`, reversal: false }
           : { lines: buildChequeCancelEntry(cheque.amountMinor, note), src: 'cheque_cancel' as const, desc: `إلغاء ${note} — عاد الدين للمورد`, reversal: true }
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {

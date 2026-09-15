@@ -92,6 +92,26 @@ export function buildProjectCostEntry(amountMinor: Minor, payment: 'cash' | 'cre
   return lines
 }
 
+/**
+ * قيد فاتورة شراء مربوطة بمشروع (طلب المالك):
+ * البضاعة تذهب للموقع مباشرة فتُحمَّل تكلفةً على المشروع لا مخزوناً:
+ *   من ح/ 5110 تكاليف مشروعات (الإجمالي بمصاريفه)
+ *     إلى ح/ الخزينة|1108 عهدة (المدفوع) + 2101 الموردون (المتبقي)
+ */
+export function buildProjectPurchaseEntry(grandTotalMinor: Minor, paidMinor: Minor, payAccount: string, projectLabel: string): JournalLine[] {
+  if (!Number.isInteger(grandTotalMinor) || grandTotalMinor <= 0) throw new Error('إجمالي الفاتورة يجب أن يكون موجباً')
+  if (!Number.isInteger(paidMinor) || paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
+  if (paidMinor > grandTotalMinor) throw new Error('المدفوع أكبر من إجمالي الفاتورة')
+  const remaining = grandTotalMinor - paidMinor
+  const lines: JournalLine[] = [
+    { accountCode: '5110', debit: grandTotalMinor, credit: 0, note: `مشتريات لمشروع ${projectLabel}` },
+  ]
+  if (paidMinor > 0) lines.push({ accountCode: payAccount, debit: 0, credit: paidMinor, note: 'المدفوع' })
+  if (remaining > 0) lines.push({ accountCode: '2101', debit: 0, credit: remaining, note: 'مستحق للمورد' })
+  assertBalanced(lines)
+  return lines
+}
+
 /** قيد الإفراج عن المحتجز بعد التسليم النهائي: 1101 ← 1105 */
 export function buildRetentionReleaseEntry(amountMinor: Minor, label: string, treasury = '1101'): JournalLine[] {
   if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('لا محتجزات للإفراج عنها')

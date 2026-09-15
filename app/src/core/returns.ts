@@ -72,11 +72,12 @@ export function deriveTaxConfig(totals: CartTotals): { taxPercent: number; taxIn
  *   دائن: الخزينة (1101) أو العملاء (1104) بالمبلغ المسترد
  *   مدين: المخزون (1103) / دائن: تكلفة المبيعات (5101) — عودة البضاعة بتكلفتها
  */
-export function buildReturnEntry(totals: CartTotals, refund: PaymentMethod): JournalLine[] {
+export function buildReturnEntry(totals: CartTotals, refund: PaymentMethod, treasury = '1101'): JournalLine[] {
   const lines: JournalLine[] = [
     { accountCode: '4102', debit: totals.taxBaseMinor, credit: 0, note: 'مرتجعات مبيعات' },
     {
-      accountCode: refund === 'cash' ? '1101' : '1104',
+      // الرد النقدي يخرج من الخزينة التي استلمت البيع أصلاً (توحيد مصدر النقدية)
+      accountCode: refund === 'cash' ? treasury : '1104',
       debit: 0,
       credit: totals.totalMinor,
       note: refund === 'cash' ? 'رد نقدية' : 'تخفيض ذمم عملاء',

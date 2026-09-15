@@ -14,7 +14,7 @@ import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, journal, postSaleReturn } = useDataStore()
+  const { sales, saleReturns, customers, journal, treasuries, postSaleReturn } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -193,7 +193,7 @@ export function SaleReturnsPage() {
               <button
                 onClick={() => setRefund('cash')}
                 className={`p-3 rounded-2xl border-2 font-bold text-sm transition-all ${refund === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
-              >💵 رد نقدي من الخزينة</button>
+              >💵 رد نقدي من {treasuries.find((t) => t.code === (sale.treasury ?? '1101'))?.nameAr ?? 'الخزينة'} (خزينة البيع الأصلية)</button>
               <button
                 onClick={() => setRefund('credit')}
                 disabled={!sale.customerId}

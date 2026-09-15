@@ -95,10 +95,10 @@ export function buildChequeReceiveEntry(amountMinor: Minor, note: string): Journ
   return lines
 }
 
-/** تحصيل شيك وارد: 1102 ← 1106 */
-export function buildChequeCollectEntry(amountMinor: Minor, note: string): JournalLine[] {
+/** تحصيل شيك وارد: البنك المختار (افتراضياً 1102) ← 1106 — يدعم البنوك المتعددة */
+export function buildChequeCollectEntry(amountMinor: Minor, note: string, bank: string = BANK): JournalLine[] {
   const lines: JournalLine[] = [
-    { accountCode: BANK, debit: amountMinor, credit: 0, note },
+    { accountCode: bank, debit: amountMinor, credit: 0, note },
     { accountCode: NOTES_RECEIVABLE, debit: 0, credit: amountMinor, note },
   ]
   assertBalanced(lines)
@@ -125,11 +125,11 @@ export function buildChequeIssueEntry(amountMinor: Minor, note: string): Journal
   return lines
 }
 
-/** صرف شيك صادر من البنك: 2106 ← 1102 */
-export function buildChequeClearEntry(amountMinor: Minor, note: string): JournalLine[] {
+/** صرف شيك صادر من البنك المختار (افتراضياً 1102) — يدعم البنوك المتعددة */
+export function buildChequeClearEntry(amountMinor: Minor, note: string, bank: string = BANK): JournalLine[] {
   const lines: JournalLine[] = [
     { accountCode: NOTES_PAYABLE, debit: amountMinor, credit: 0, note },
-    { accountCode: BANK, debit: 0, credit: amountMinor, note },
+    { accountCode: bank, debit: 0, credit: amountMinor, note },
   ]
   assertBalanced(lines)
   return lines
