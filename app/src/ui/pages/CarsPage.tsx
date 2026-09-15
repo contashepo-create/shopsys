@@ -5,7 +5,7 @@
  * يومية/شهرية بعدّاد الكيلومترات) — تكامل بلا تكرار منطق.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Car as CarIcon, Eye, BookOpenText, Wrench, HandCoins, KeySquare, Handshake, Undo2, Banknote } from 'lucide-react'
+import { Plus, Car as CarIcon, Eye, BookOpenText, Wrench, HandCoins, KeySquare, Handshake, Undo2, Banknote, Printer } from 'lucide-react'
 import { useDataStore, type Car } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -14,6 +14,8 @@ import { showroomSummary } from '../../core/cars.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { renderCarSaleContractHtml } from '../print/printCarSale.ts'
+import { printHtml } from '../print/printReceipt.ts'
 
 const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
   in_stock: { nameAr: 'بالمعرض', cls: 'bg-sky-500/10 text-sky-600' },
@@ -30,6 +32,45 @@ export function CarsPage() {
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
+
+  /** عقد بيع السيارة (جولة المعرض): طريقة السداد تُستدل من قيد البيع (1104 مدين = آجل) */
+  const paymentOf = (entryId: number | null): 'cash' | 'credit' => {
+    const e = journal.find((x) => x.id === entryId)
+    return e?.lines.some((l) => l.accountCode === '1104' && l.debit > 0) ? 'credit' : 'cash'
+  }
+  const vatOf = (entryId: number | null) => {
+    const e = journal.find((x) => x.id === entryId)
+    return e?.lines.reduce((a, l) => a + (l.accountCode === '2102' ? l.credit - l.debit : 0), 0) ?? 0
+  }
+  const printSaleContract = (c: Car) => {
+    if (c.salePriceMinor == null) return
+    const vat = vatOf(c.saleEntryId)
+    printHtml(renderCarSaleContractHtml({
+      shopName: setup.shopName || 'معرض سيارات',
+      dateIso: c.soldAt ?? new Date().toISOString(),
+      buyerName: c.buyerName,
+      make: c.make, model: c.model, year: c.year, plateOrVin: c.plateOrVin, odometerKm: c.odometerKm,
+      price: `${fmt(c.salePriceMinor)} ${cur.symbol}`,
+      vat: vat > 0 ? `${fmt(vat)} ${cur.symbol}` : '',
+      payment: paymentOf(c.saleEntryId),
+      consignment: false,
+      notes: '',
+    }))
+  }
+  const printConsignmentContract = (c: (typeof consignmentCars)[number]) => {
+    if (c.salePriceMinor == null) return
+    printHtml(renderCarSaleContractHtml({
+      shopName: setup.shopName || 'معرض سيارات',
+      dateIso: c.soldAt ?? new Date().toISOString(),
+      buyerName: c.buyerName,
+      make: c.make, model: c.model, year: c.year, plateOrVin: c.plateOrVin, odometerKm: 0,
+      price: `${fmt(c.salePriceMinor)} ${cur.symbol}`,
+      vat: '',
+      payment: paymentOf(c.saleEntryId),
+      consignment: true,
+      notes: c.notes,
+    }))
+  }
   const summary = useMemo(() => showroomSummary(cars.map((c) => ({ status: c.status, fullCostMinor: c.purchaseCostMinor + c.prepCostMinor, profitMinor: c.saleProfitMinor }))), [cars])
 
   /* شراء سيارة */
@@ -194,6 +235,9 @@ export function CarsPage() {
                             <button onClick={() => { setSellFor(c); setPrice(''); setBuyer('') }} title="بيع" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><HandCoins className="w-4 h-4" /></button>
                             <button onClick={() => { setRentFor(c); setDailyRate(''); setMonthlyRate('') }} title="تحويل للتأجير" className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><KeySquare className="w-4 h-4" /></button>
                           </>
+                        )}
+                        {c.status === 'sold' && (
+                          <button onClick={() => printSaleContract(c)} title="طباعة عقد البيع" className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Printer className="w-4 h-4" /></button>
                         )}
                         <button onClick={() => setViewing(c)} title="التفاصيل والقيود" className="p-2 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-500/10 transition-all hover:scale-110"><Eye className="w-4 h-4" /></button>
                       </div>
@@ -381,6 +425,9 @@ export function CarsPage() {
                       )}
                       {c.status === 'sold' && (
                         <button onClick={() => { try { payConsignmentOwner(c.id); toast.show(`سُدد ${c.ownerName} — أُطفئ التزام 2110 ✅`) } catch (e) { toast.show((e as Error).message, 'error') } }} title={`سداد المالك ${fmt(c.ownerNetMinor)}`} className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Banknote className="w-4 h-4" /></button>
+                      )}
+                      {(c.status === 'sold' || c.status === 'paid') && (
+                        <button onClick={() => printConsignmentContract(c)} title="طباعة عقد البيع (وكالة بالعمولة)" className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Printer className="w-4 h-4" /></button>
                       )}
                     </div>
                   </td>
