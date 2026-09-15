@@ -51,13 +51,13 @@ export function PurchaseReturnsPage() {
     const priorDebt = purchaseReturns
       .filter((r) => r.purchaseId === purchase.id && r.refund === 'debt')
       .reduce((a, r) => a + r.totalMinor, 0)
-    return Math.max(0, purchase.grandTotalMinor - purchase.paidMinor - priorDebt)
+    return Math.max(0, (purchase.supplierDueMinor ?? purchase.grandTotalMinor) - purchase.paidMinor - priorDebt)
   }, [purchase, purchaseReturns])
 
   const startReturn = (p: PurchaseInvoice) => {
     setPurchase(p)
     setQtys({})
-    setRefund(p.grandTotalMinor - p.paidMinor > 0 ? 'debt' : 'cash')
+    setRefund((p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor > 0 ? 'debt' : 'cash')
     setReason('')
     setPickOpen(false)
   }

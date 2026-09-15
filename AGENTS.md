@@ -228,6 +228,13 @@ const S = () => useDataStore.getState()
 - **فخ**: buildDailyWorkSettlementEntry الآن (projectTotal, overheadTotal, treasury, label)؛ buildSubCertificateEntry الآن (amount, retention, withhold, advanceRecovery, label).
 - DATA_VERSION=10 (ترحيل كل الحقول الجديدة). سكربت التحقق: verify_project_ops.mjs (60 اختباراً).
 
+### 6.19 مصادر دفع مصاريف الشراء + المصروف اللاحق (طلب المالك)
+- `PurchaseExpense` صار يحمل `paidBy: 'supplier'|'treasury'|'custody'` (+`payAccount`/`custodyFileId`/`late`). الافتراضي `supplier` = توافق خلفي كامل، بلا ترقية DATA_VERSION.
+- `PurchaseInvoice.supplierDueMinor` = بضاعة + مصاريف على حساب المورد فقط؛ كل مستهلكي رصيد المورد (Dashboard/reports.supplierBalances/statements.supplierStatement/PurchaseReturnsPage/repo مرتجعات debt) يستخدمون `p.supplierDueMinor ?? p.grandTotalMinor`.
+- `buildPurchaseEntryV2` في core/purchases.ts: مدين 1103 أو 5110 بالإجمالي، دائن (مصدر دفع البضاعة + كل مصروف مدفوع مباشرة على حسابه + 2101 بالباقي). سقف `paidMinor` هو مستحق المورد لا الإجمالي.
+- `addLatePurchaseExpense` في repo: مصروف بعد الترحيل → يوزَّع على سطور الفاتورة، نصيب المتبقي بالمخزون → 1103 + رفع متوسط التكلفة، نصيب المَبيع → 5101، فاتورة مشروع → 5110 كلها؛ الدائن مورد/خزينة/عهدة. يُستدعى من عرض الفاتورة (PurchasesPage) ومن سند الصرف (VouchersPage عبر خيار `__purchase_expense__`).
+- الفحص: `scripts/verify_purchase_expense_sources.mjs` (32 اختباراً).
+
 ## 7) قرارات المالك الملزمة (لا تخالفها أبداً)
 
 1. المثبّت/Electron **آخر شيء** — فقط عند طلب صريح.

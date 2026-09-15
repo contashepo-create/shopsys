@@ -31,6 +31,77 @@ export function buildPurchaseEntry(grandTotalMinor: Minor, paidMinor: Minor, tre
   return lines
 }
 
+/* ─── قيد الشراء بمصادر دفع منفصلة للمصاريف (طلب المالك) ───
+ * مصاريف الشحن/الجمارك قد لا تكون ديناً للمورد: قد يدفعها المشتري بنفسه
+ * من خزينة أو بنك أو عهدة موظف. كل مصروف يحدد «من دفعه» بشكل مستقل. */
+
+/** مصروف مدفوع مباشرة (ليس على حساب المورد): يُقيَّد دائناً على حسابه */
+export interface ExpensePaymentCredit {
+  account: string // كود خزينة/بنك أو 1108 (عهد الموظفين)
+  amountMinor: Minor
+  note: string
+}
+
+/**
+ * قيد فاتورة الشراء الموسع:
+ *   مدين: حساب البضاعة (1103 مخزون أو 5110 تكاليف مشروع) بالتكلفة الكاملة
+ *   دائن: مصدر دفع البضاعة بالمدفوع
+ *   دائن: كل مصروف مدفوع مباشرة على حسابه (خزينة/بنك/عهدة)
+ *   دائن: الموردون (2101) بالمتبقي المستحق له فقط
+ * المدفوع هنا مقابل مستحق المورد (البضاعة + مصاريفه) — لا يتجاوزه.
+ */
+export function buildPurchaseEntryV2(args: {
+  inventoryAccount: string // 1103 عادية أو 5110 لمشروع مقاولات
+  inventoryNote: string
+  grandTotalMinor: Minor // بضاعة + كل المصاريف (تدخل التكلفة دائماً)
+  paidMinor: Minor // المدفوع من مستحق المورد
+  payAccount: string // خزينة/بنك أو 1108 عهدة
+  expensePayments: ExpensePaymentCredit[] // المصاريف المدفوعة مباشرة
+}): JournalLine[] {
+  const { grandTotalMinor, paidMinor, expensePayments } = args
+  if (!Number.isInteger(grandTotalMinor) || grandTotalMinor <= 0) throw new RangeError('إجمالي الفاتورة يجب أن يكون موجباً')
+  if (!Number.isInteger(paidMinor) || paidMinor < 0) throw new RangeError('المدفوع لا يكون سالباً')
+  for (const e of expensePayments) {
+    if (!Number.isInteger(e.amountMinor) || e.amountMinor <= 0) throw new RangeError('مبلغ مصروف مدفوع غير صالح')
+  }
+  const expensesPaidDirect = expensePayments.reduce((a, e) => a + e.amountMinor, 0)
+  const supplierDue = grandTotalMinor - expensesPaidDirect // بضاعة + مصاريف على حسابه
+  if (supplierDue < 0) throw new RangeError('المصاريف المدفوعة مباشرة أكبر من إجمالي الفاتورة')
+  if (paidMinor > supplierDue) throw new RangeError('المدفوع أكبر من مستحق المورد (البضاعة + المصاريف المحملة على حسابه)')
+  const remaining = supplierDue - paidMinor
+  const lines: JournalLine[] = [
+    { accountCode: args.inventoryAccount, debit: grandTotalMinor, credit: 0, note: args.inventoryNote },
+  ]
+  if (paidMinor > 0) lines.push({ accountCode: args.payAccount, debit: 0, credit: paidMinor, note: 'مدفوع للمورد' })
+  for (const e of expensePayments) lines.push({ accountCode: e.account, debit: 0, credit: e.amountMinor, note: e.note })
+  if (remaining > 0) lines.push({ accountCode: '2101', debit: 0, credit: remaining, note: 'دين للمورد' })
+  assertBalanced(lines)
+  return lines
+}
+
+/**
+ * قيد مصروف لاحق على فاتورة مرحّلة (Landed Cost Voucher):
+ *   مدين: المخزون (1103) لنصيب البضاعة الباقية، و/أو تكلفة البضاعة المباعة (5101)
+ *          لنصيب ما بيع بالفعل، أو تكاليف المشروع (5110) لفواتير المشاريع
+ *   دائن: المورد (2101) أو الخزينة/البنك أو العهدة (1108) حسب من دفع
+ */
+export function buildLateExpenseEntry(args: {
+  debits: { account: string; amountMinor: Minor; note: string }[]
+  creditAccount: string
+  creditNote: string
+}): JournalLine[] {
+  const total = args.debits.reduce((a, d) => a + d.amountMinor, 0)
+  if (!Number.isInteger(total) || total <= 0) throw new RangeError('مبلغ المصروف يجب أن يكون موجباً')
+  const lines: JournalLine[] = []
+  for (const d of args.debits) {
+    if (!Number.isInteger(d.amountMinor) || d.amountMinor < 0) throw new RangeError('نصيب توزيع غير صالح')
+    if (d.amountMinor > 0) lines.push({ accountCode: d.account, debit: d.amountMinor, credit: 0, note: d.note })
+  }
+  lines.push({ accountCode: args.creditAccount, debit: 0, credit: total, note: args.creditNote })
+  assertBalanced(lines)
+  return lines
+}
+
 /* ─── مرتجع الشراء ─── */
 
 export interface PurchaseReturnLine {

@@ -11,10 +11,10 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { secureStorage } from './secureStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
-import { computeLandedCosts, weightedAverage, type ExpenseInput, type CostLine } from '../core/costing.ts'
+import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnEntry, deriveTaxConfig } from '../core/returns.ts'
-import { buildPurchaseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine } from '../core/purchases.ts'
+import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
@@ -42,7 +42,7 @@ import {
   assertFileOpen, CUSTODY_ACCOUNT,
   type CustodyFile, type CustodyTx, type CustodySummary,
 } from '../core/custody.ts'
-import { validateProject, computeExtractTotals, buildProjectPurchaseEntry, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
+import { validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip,
@@ -513,9 +513,21 @@ export interface PurchaseLine {
 }
 
 export interface PurchaseExpense {
-  nameAr: string // نولون، جمارك، تأمين...
+  nameAr: string // نولون، جمارك، تأمين... (نص حر + اقتراحات)
   amountMinor: number
   method: 'value' | 'qty'
+  /**
+   * من دفع هذا المصروف؟ (طلب المالك — ليس إجبارياً على حساب المورد):
+   * supplier = على حساب المورد (يزيد ديننا له) — الافتراضي للتوافق الخلفي
+   * treasury = دفعته أنا من خزينة/بنك (payAccount)
+   * custody  = دفعه موظف من عهدته (custodyFileId)
+   */
+  paidBy?: 'supplier' | 'treasury' | 'custody'
+  payAccount?: string | null // كود الخزينة/البنك عند paidBy=treasury
+  custodyFileId?: number | null // ملف العهدة عند paidBy=custody
+  /** مصروف لاحق أُضيف بعد ترحيل الفاتورة (Landed Cost Voucher) */
+  late?: boolean
+  date?: string
 }
 
 export interface PurchaseInvoice {
@@ -530,6 +542,12 @@ export interface PurchaseInvoice {
   goodsTotalMinor: number
   expensesTotalMinor: number
   grandTotalMinor: number
+  /**
+   * مستحق المورد فقط = البضاعة + المصاريف المحملة على حسابه (طلب المالك):
+   * المصاريف التي دفعتُها بنفسي (خزينة/بنك/عهدة) لا تدخل دين المورد أبداً.
+   * للفواتير القديمة = grandTotalMinor (كل المصاريف كانت على المورد).
+   */
+  supplierDueMinor?: number
   paidMinor: number
   treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه
   custodyFileId?: number | null // دُفعت من ملف عهدة موظف (طلب المالك)
@@ -766,6 +784,24 @@ interface DataState {
     refund: PaymentMethod
     reason: string
   }) => SaleReturn
+  /**
+   * مصروف لاحق على فاتورة شراء مرحّلة (Landed Cost Voucher — طلب المالك):
+   * وصلت فاتورة الشحن/الجمارك بعد الترحيل؟ سجّلها هنا:
+   * 1) توزَّع على أصناف الفاتورة (قيمة/كمية) وترفع تكلفتها بالمتوسط المرجح
+   * 2) نصيب الكمية المتبقية بالمخزون → 1103، ونصيب ما بيع بالفعل → 5101
+   *    (فاتورة المشروع: كله → 5110 تكاليف المشروع)
+   * 3) الدائن حسب من دفع: مورد (2101) أو خزينة/بنك أو عهدة موظف (1108)
+   */
+  addLatePurchaseExpense: (args: {
+    purchaseId: number
+    nameAr: string
+    amountMinor: number
+    method: 'value' | 'qty'
+    paidBy: 'supplier' | 'treasury' | 'custody'
+    payAccount?: string | null
+    custodyFileId?: number | null
+    date: string
+  }) => PurchaseInvoice
   /**
    * ترحيل مرتجع شراء مربوط بفاتورة أصلية:
    * يُقيَّم بالتكلفة النهائية للوحدة (Landed) — ولا يتجاوز المتبقي ولا المخزون الحالي
@@ -1290,29 +1326,66 @@ export const useDataStore = create<DataState>()(
         const expensesTotal = inv.expenses.reduce((a, e) => a + e.amountMinor, 0)
         const grandTotal = goodsTotal + expensesTotal
 
-        // مصدر الدفع: خزينة/بنك أو ملف عهدة موظف (طلب المالك) — العهدة تُفحص قبل أي كتابة
+        // مصادر دفع المصاريف (طلب المالك): كل مصروف يحدد من دفعه —
+        // على حساب المورد (الافتراضي) أو من خزينة/بنك أو من عهدة موظف.
+        // ما دفعتُه بنفسي لا يدخل دين المورد أبداً.
+        const expensePayments: ExpensePaymentCredit[] = []
+        const expenseCustodyNeeds = new Map<number, number>() // fileId → إجمالي المطلوب من عهدته
+        for (const e of inv.expenses) {
+          const paidBy = e.paidBy ?? 'supplier'
+          if (e.amountMinor <= 0) continue
+          if (paidBy === 'treasury') {
+            const acc = e.payAccount || '1101'
+            if (!state.treasuries.some((t) => t.code === acc)) throw new Error(`خزينة مصروف «${e.nameAr}» غير موجودة`)
+            expensePayments.push({ account: acc, amountMinor: e.amountMinor, note: `${e.nameAr} — مدفوع من ${state.treasuries.find((t) => t.code === acc)?.nameAr ?? acc}` })
+          } else if (paidBy === 'custody') {
+            if (e.custodyFileId == null) throw new Error(`حدد ملف العهدة الذي دفع مصروف «${e.nameAr}»`)
+            expenseCustodyNeeds.set(e.custodyFileId, (expenseCustodyNeeds.get(e.custodyFileId) ?? 0) + e.amountMinor)
+            expensePayments.push({ account: CUSTODY_ACCOUNT, amountMinor: e.amountMinor, note: `${e.nameAr} — مدفوع من عهدة موظف` })
+          }
+        }
+        const expensesPaidDirect = expensePayments.reduce((a, e) => a + e.amountMinor, 0)
+        // مستحق المورد = البضاعة + المصاريف المحملة على حسابه فقط
+        const supplierDue = grandTotal - expensesPaidDirect
+
+        // مصدر دفع البضاعة: خزينة/بنك أو ملف عهدة موظف (طلب المالك) — العهدة تُفحص قبل أي كتابة
         let custodyFile: CustodyFile | null = null
         if (inv.custodyFileId != null && inv.paidMinor > 0) {
           custodyFile = state.custodyFiles.find((f) => f.id === inv.custodyFileId) ?? null
           if (!custodyFile) throw new Error('ملف العهدة غير موجود')
           assertFileOpen(custodyFile)
-          const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
-          if (inv.paidMinor > remaining) {
-            throw new Error(`المدفوع أكبر من المتبقي في ملف العهدة (${remaining}) — عزّز العهدة أو سجّل الباقي آجلاً`)
+        }
+        // فحص أرصدة كل ملفات العهد المستخدمة (بضاعة + مصاريف) مجمعةً قبل أي كتابة
+        {
+          const totalNeeds = new Map<number, number>(expenseCustodyNeeds)
+          if (custodyFile) totalNeeds.set(custodyFile.id, (totalNeeds.get(custodyFile.id) ?? 0) + inv.paidMinor)
+          for (const [fileId, need] of totalNeeds) {
+            const f = state.custodyFiles.find((x) => x.id === fileId)
+            if (!f) throw new Error('ملف العهدة غير موجود')
+            assertFileOpen(f)
+            const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === fileId)).remainingMinor
+            if (need > remaining) {
+              throw new Error(`المطلوب من عهدة ${f.fileNumber} (${need}) أكبر من متبقيها (${remaining}) — عزّز العهدة أو غيّر مصدر الدفع`)
+            }
           }
         }
         const linkedProject = inv.projectId != null ? state.projects.find((p) => p.id === inv.projectId) : undefined
         if (inv.projectId != null && !linkedProject) throw new Error('المشروع غير موجود')
         if (linkedProject?.status === 'completed') throw new Error('المشروع مقفل — لا تكاليف جديدة عليه')
-        // القيد المحاسبي (يرمي لو المدفوع > الإجمالي):
-        // - فاتورة عادية: مخزون 1103 مدين / (خزينة أو 1108 عهد) + موردون دائن
+        // القيد المحاسبي (يرمي لو المدفوع > مستحق المورد):
+        // - فاتورة عادية: مخزون 1103 مدين / (خزينة أو 1108 عهد) + مصاريف مدفوعة مباشرة + موردون دائن
         // - فاتورة مشروع مقاولات: 5110 تكاليف مشروعات مدين بدل المخزون —
         //   البضاعة تذهب للموقع مباشرة فلا ترفع مخزون المتجر ولا تغيّر متوسط التكلفة
         //   (يمنع ازدواج التكلفة: مخزون + بند تكلفة مشروع معاً)
         const payAccount = custodyFile ? CUSTODY_ACCOUNT : (inv.treasury ?? '1101')
-        const entryLines = linkedProject
-          ? buildProjectPurchaseEntry(grandTotal, inv.paidMinor, payAccount, linkedProject.nameAr)
-          : buildPurchaseEntry(grandTotal, inv.paidMinor, payAccount)
+        const entryLines = buildPurchaseEntryV2({
+          inventoryAccount: linkedProject ? '5110' : '1103',
+          inventoryNote: linkedProject ? `مشتريات لمشروع ${linkedProject.nameAr}` : 'بضاعة واردة بتكلفتها الكاملة',
+          grandTotalMinor: grandTotal,
+          paidMinor: inv.paidMinor,
+          payAccount,
+          expensePayments,
+        })
         const purchaseId = nextId(state.purchases)
         const entryId = nextId(state.journal)
         const invoiceNumber = `P-${String(purchaseId).padStart(4, '0')}`
@@ -1349,6 +1422,7 @@ export const useDataStore = create<DataState>()(
           goodsTotalMinor: goodsTotal,
           expensesTotalMinor: expensesTotal,
           grandTotalMinor: grandTotal,
+          supplierDueMinor: supplierDue,
           paidMinor: inv.paidMinor,
           treasury: custodyFile ? undefined : (inv.treasury ?? '1101'),
           custodyFileId: custodyFile?.id ?? null,
@@ -1416,6 +1490,16 @@ export const useDataStore = create<DataState>()(
             treasury: null, projectId: inv.projectId ?? null, purchaseId, journalEntryId: entryId,
           }]
         }
+        // مصاريف مدفوعة من عهد موظفين → حركة لكل مصروف في ملف عهدته (طلب المالك)
+        for (const e of inv.expenses) {
+          if ((e.paidBy ?? 'supplier') !== 'custody' || e.custodyFileId == null || e.amountMinor <= 0) continue
+          custodyTxs = [...custodyTxs, {
+            id: nextId(custodyTxs), fileId: e.custodyFileId, type: 'expense' as const,
+            date: inv.date, amountMinor: e.amountMinor, excessMinor: 0,
+            description: `${e.nameAr} — فاتورة شراء ${invoiceNumber}`,
+            treasury: null, projectId: inv.projectId ?? null, purchaseId, journalEntryId: entryId,
+          }]
+        }
         // فاتورة مربوطة بمشروع → بند تكلفة «مواد» يدخل ربحيته (طلب المالك)
         let projectCosts = state.projectCosts
         if (inv.projectId != null) {
@@ -1437,6 +1521,139 @@ export const useDataStore = create<DataState>()(
           projectCosts,
         })
         return invoice
+      },
+
+      addLatePurchaseExpense: (args) => {
+        const state = get()
+        const purchase = state.purchases.find((p) => p.id === args.purchaseId)
+        if (!purchase) throw new Error('فاتورة الشراء غير موجودة')
+        if (!args.nameAr.trim()) throw new Error('اكتب بيان المصروف (نولون، جمارك…)')
+        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ المصروف يجب أن يكون موجباً')
+
+        // 1) توزيع المصروف على سطور الفاتورة الأصلية (قيمة أو كمية)
+        const costLines: CostLine[] = purchase.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor }))
+        const shares = allocateExpense(costLines, { nameAr: args.nameAr, amountMinor: args.amountMinor, method: args.method })
+
+        // 2) الدائن حسب من دفع (طلب المالك): مورد / خزينة / عهدة — مع فحوصها قبل أي كتابة
+        let creditAccount: string
+        let creditNote: string
+        let custodyFile: CustodyFile | null = null
+        if (args.paidBy === 'supplier') {
+          creditAccount = '2101'
+          creditNote = `${args.nameAr} على حساب المورد — فاتورة ${purchase.invoiceNumber}`
+        } else if (args.paidBy === 'treasury') {
+          const acc = args.payAccount || '1101'
+          if (!state.treasuries.some((t) => t.code === acc)) throw new Error('الخزينة/البنك غير موجود')
+          creditAccount = acc
+          creditNote = `${args.nameAr} مدفوع من ${state.treasuries.find((t) => t.code === acc)?.nameAr ?? acc}`
+        } else {
+          if (args.custodyFileId == null) throw new Error('حدد ملف العهدة الذي دفع المصروف')
+          custodyFile = state.custodyFiles.find((f) => f.id === args.custodyFileId) ?? null
+          if (!custodyFile) throw new Error('ملف العهدة غير موجود')
+          assertFileOpen(custodyFile)
+          const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
+          if (args.amountMinor > remaining) throw new Error(`المبلغ أكبر من متبقي العهدة (${remaining})`)
+          creditAccount = CUSTODY_ACCOUNT
+          creditNote = `${args.nameAr} مدفوع من عهدة ${custodyFile.fileNumber}`
+        }
+
+        // 3) المدين: فاتورة مشروع → 5110 كلها؛ فاتورة عادية → نصيب المتبقي بالمخزون 1103
+        //    ونصيب ما بيع بالفعل 5101 (لا يمكن رفع تكلفة بضاعة خرجت من المخزون)
+        const debits: { account: string; amountMinor: number; note: string }[] = []
+        let itemsAfter = state.items
+        if (purchase.projectId != null) {
+          debits.push({ account: '5110', amountMinor: args.amountMinor, note: `${args.nameAr} — تكلفة مشروع (فاتورة ${purchase.invoiceNumber})` })
+        } else {
+          let toInventory = 0
+          let toCogs = 0
+          const invPortionByItem = new Map<number, number>()
+          purchase.lines.forEach((l, i) => {
+            const share = shares[i]
+            const item = state.items.find((it) => it.id === l.itemId)
+            const stockQty = item?.stockQty ?? 0
+            // من كمية هذا السطر: ما زال بالمخزون على الأكثر رصيده الحالي
+            const stillInStock = Math.max(0, Math.min(stockQty, l.qty))
+            const invPortion = l.qty > 0 ? Math.round((share * stillInStock) / l.qty) : 0
+            toInventory += invPortion
+            toCogs += share - invPortion
+            if (invPortion > 0) invPortionByItem.set(l.itemId, (invPortionByItem.get(l.itemId) ?? 0) + invPortion)
+          })
+          if (toInventory > 0) debits.push({ account: '1103', amountMinor: toInventory, note: `${args.nameAr} — رفع تكلفة المخزون المتبقي` })
+          if (toCogs > 0) debits.push({ account: '5101', amountMinor: toCogs, note: `${args.nameAr} — نصيب بضاعة بيعت بالفعل` })
+          // رفع متوسط تكلفة الأصناف بقيمة نصيبها (بلا تغيير كمية)
+          itemsAfter = state.items.map((it) => {
+            const inv = invPortionByItem.get(it.id)
+            if (!inv || (it.stockQty ?? 0) <= 0) return it
+            const q = it.stockQty ?? 0
+            return { ...it, costMinor: Math.round((q * it.costMinor + inv) / q) }
+          })
+        }
+
+        const entryLines = buildLateExpenseEntry({ debits, creditAccount, creditNote })
+        const entryId = nextId(state.journal)
+        const nowIso = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: args.date,
+          description: `مصروف لاحق «${args.nameAr}» على فاتورة الشراء ${purchase.invoiceNumber}`,
+          sourceType: 'purchase',
+          sourceId: purchase.id,
+          lines: entryLines,
+          createdBy: 'المالك',
+          createdAt: nowIso,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+
+        // 4) تحديث الفاتورة: المصروف يُلحق بها، وأنصبة السطور وتكاليفها النهائية تُحدَّث
+        const updatedInvoice: PurchaseInvoice = {
+          ...purchase,
+          lines: purchase.lines.map((l, i) => {
+            const newShare = l.expenseShareMinor + shares[i]
+            const landedTotal = Math.round(l.qty * l.unitPriceMinor) + newShare
+            return { ...l, expenseShareMinor: newShare, landedUnitCostMinor: l.qty > 0 ? Math.round(landedTotal / l.qty) : l.landedUnitCostMinor }
+          }),
+          expenses: [...purchase.expenses, {
+            nameAr: args.nameAr, amountMinor: args.amountMinor, method: args.method,
+            paidBy: args.paidBy, payAccount: args.paidBy === 'treasury' ? (args.payAccount || '1101') : null,
+            custodyFileId: args.paidBy === 'custody' ? (args.custodyFileId ?? null) : null,
+            late: true, date: args.date,
+          }],
+          expensesTotalMinor: purchase.expensesTotalMinor + args.amountMinor,
+          grandTotalMinor: purchase.grandTotalMinor + args.amountMinor,
+          supplierDueMinor: (purchase.supplierDueMinor ?? purchase.grandTotalMinor) + (args.paidBy === 'supplier' ? args.amountMinor : 0),
+        }
+
+        // حركة عهدة إن دُفع منها + بند تكلفة مشروع إن كانت فاتورة مشروع
+        let custodyTxs = state.custodyTxs
+        if (custodyFile) {
+          custodyTxs = [...custodyTxs, {
+            id: nextId(custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
+            date: args.date, amountMinor: args.amountMinor, excessMinor: 0,
+            description: `${args.nameAr} — مصروف لاحق على فاتورة ${purchase.invoiceNumber}`,
+            treasury: null, projectId: purchase.projectId ?? null, purchaseId: purchase.id, journalEntryId: entryId,
+          }]
+        }
+        let projectCosts = state.projectCosts
+        if (purchase.projectId != null) {
+          projectCosts = [...projectCosts, {
+            id: nextId(projectCosts), projectId: purchase.projectId, kind: 'materials' as CostKind,
+            amountMinor: args.amountMinor, date: args.date,
+            description: `${args.nameAr} — مصروف لاحق على فاتورة ${purchase.invoiceNumber}`,
+            payment: args.paidBy === 'supplier' ? 'credit' as const : 'cash' as const,
+            journalEntryId: entryId,
+          }]
+        }
+
+        set({
+          purchases: state.purchases.map((p) => (p.id === purchase.id ? updatedInvoice : p)),
+          journal: [...state.journal, entry],
+          items: itemsAfter,
+          custodyTxs,
+          projectCosts,
+        })
+        return updatedInvoice
       },
 
       postSale: (args) => {
@@ -1697,7 +1914,8 @@ export const useDataStore = create<DataState>()(
           const priorDebtReturns = state.purchaseReturns
             .filter((r) => r.purchaseId === purchase.id && r.refund === 'debt')
             .reduce((a, r) => a + r.totalMinor, 0)
-          const unpaid = purchase.grandTotalMinor - purchase.paidMinor - priorDebtReturns
+          // دين المورد = مستحقه فقط (البضاعة + مصاريفه) — لا المصاريف التي دفعتُها بنفسي
+          const unpaid = (purchase.supplierDueMinor ?? purchase.grandTotalMinor) - purchase.paidMinor - priorDebtReturns
           if (total > unpaid) {
             throw new Error(`قيمة المرتجع أكبر من دين الفاتورة المتبقي (${unpaid}) — اختر الاسترداد النقدي`)
           }

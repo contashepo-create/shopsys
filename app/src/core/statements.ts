@@ -85,7 +85,9 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
 
 export interface SupplierStatementInput {
   supplierId: number
-  purchases: { invoiceNumber: string; date: string; supplierId: number; grandTotalMinor: Minor; paidMinor: Minor }[]
+  // supplierDueMinor = مستحق المورد فقط (بضاعة + مصاريف على حسابه) — المصاريف
+  // المدفوعة من خزينتي/عهدتي لا تدخل دينه أبداً (طلب المالك). القديمة: grandTotal
+  purchases: { invoiceNumber: string; date: string; supplierId: number; grandTotalMinor: Minor; supplierDueMinor?: Minor; paidMinor: Minor }[]
   purchaseReturns: { returnNumber: string; date: string; purchaseId: number; refund: 'cash' | 'debt'; totalMinor: Minor }[]
   allPurchases: { id: number; supplierId: number }[]
   vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor }[]
@@ -97,7 +99,7 @@ export function supplierStatement(input: SupplierStatementInput): StatementRow[]
   const rows: Omit<StatementRow, 'balanceMinor'>[] = []
   for (const p of input.purchases) {
     if (p.supplierId !== input.supplierId) continue
-    const remaining = p.grandTotalMinor - p.paidMinor
+    const remaining = (p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor
     if (remaining > 0) rows.push({ date: p.date, docLabel: `فاتورة شراء ${p.invoiceNumber} (آجل)`, debitMinor: 0, creditMinor: remaining })
   }
   const purchaseOwner = new Map(input.allPurchases.map((p) => [p.id, p.supplierId]))

@@ -22,8 +22,11 @@ const RECEIPT_COUNTERS = [
   { code: '3101', label: 'زيادة رأس المال' },
   { code: '4101', label: 'إيراد مبيعات (بدون فاتورة)' },
 ]
+/** كود خاص: مصروف على فاتورة شراء — يوزَّع على أصنافها ويرفع تكلفتها (طلب المالك) */
+const PURCHASE_EXPENSE_CODE = '__purchase_expense__'
 const PAYMENT_COUNTERS = [
   { code: '2101', label: 'سداد لمورد (تخفيض ديننا له)' },
+  { code: PURCHASE_EXPENSE_CODE, label: 'مصروف على فاتورة شراء (نولون/جمارك… يرفع تكلفة أصنافها)' },
   { code: '5103', label: 'إيجار المحل' },
   { code: '5104', label: 'كهرباء ومياه' },
   // سداد مسير مرحّل «استحقاقاً» يصفّي 2104 — أما 5102 فلأجور يومية عارضة لم تدخل مسيراً
@@ -34,7 +37,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, customers, suppliers, postVoucher } = useDataStore()
+  const { vouchers, journal, treasuries, customers, suppliers, purchases, postVoucher, addLatePurchaseExpense } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -48,6 +51,8 @@ export function VouchersPage() {
   const [amount, setAmount] = useState('')
   const [desc, setDesc] = useState('')
   const [partyId, setPartyId] = useState(0) // العميل (قبض 1104) أو المورد (صرف 2101) — يغذي كشف الحساب
+  const [purchaseId, setPurchaseId] = useState(0) // فاتورة الشراء عند «مصروف على فاتورة شراء»
+  const [expMethod, setExpMethod] = useState<'value' | 'qty'>('qty') // توزيع مصروف الفاتورة
   const [viewing, setViewing] = useState<Voucher | null>(null)
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
@@ -61,15 +66,36 @@ export function VouchersPage() {
     setAmount('')
     setDesc('')
     setPartyId(0)
+    setPurchaseId(0)
+    setExpMethod('qty')
     setOpen(true)
   }
 
   // سداد عميل (1104) في القبض أو سداد مورد (2101) في الصرف ⇒ نطلب تحديد الطرف
   const needsParty = (kind === 'receipt' && counter === '1104') || (kind === 'payment' && counter === '2101')
+  const isPurchaseExpense = kind === 'payment' && counter === PURCHASE_EXPENSE_CODE
 
   const save = () => {
     try {
       if (needsParty && !partyId) throw new Error(kind === 'receipt' ? 'اختر العميل الذي سدد' : 'اختر المورد المسدد له')
+      // مصروف على فاتورة شراء: يذهب لمحرك Landed Cost لا لسند عادي —
+      // يوزَّع على أصنافها ويرفع تكلفتها ويتولد قيده (دائن الخزينة المختارة)
+      if (isPurchaseExpense) {
+        if (!purchaseId) throw new Error('اختر فاتورة الشراء')
+        if (!desc.trim()) throw new Error('اكتب بيان المصروف (نولون، جمارك…)')
+        const updated = addLatePurchaseExpense({
+          purchaseId,
+          nameAr: desc.trim(),
+          amountMinor: toMinor(amount || '0', cur.decimals),
+          method: expMethod,
+          paidBy: 'treasury',
+          payAccount: treasury,
+          date: new Date().toISOString().slice(0, 10),
+        })
+        toast.show(`سُجّل المصروف على الفاتورة ${updated.invoiceNumber} — توزع على أصنافها وتحدثت تكلفتها ✓`)
+        setOpen(false)
+        return
+      }
       const v = postVoucher({
         kind,
         treasury,
@@ -169,6 +195,30 @@ export function VouchersPage() {
               </select>
             </Field>
           )}
+          {isPurchaseExpense && (
+            <>
+              <Field label="أي فاتورة شراء؟ *" hint="المصروف يوزَّع على أصنافها ويرفع تكلفتها بالمتوسط المرجح — لن يُضاف لدين المورد">
+                <select value={purchaseId} onChange={(e) => setPurchaseId(Number(e.target.value))} className={inputCls}>
+                  <option value={0}>اختر…</option>
+                  {[...purchases].reverse().slice(0, 50).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.invoiceNumber} — {suppliers.find((s) => s.id === p.supplierId)?.nameAr ?? '—'} ({p.date})
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="توزيع المصروف على الأصناف">
+                <div className="flex rounded-xl overflow-hidden border-2 border-slate-200 dark:border-slate-700 w-fit">
+                  {([['qty', 'بالكمية'], ['value', 'بالقيمة']] as const).map(([m, label]) => (
+                    <button key={m} type="button" onClick={() => setExpMethod(m)}
+                      className={`px-4 py-2 text-[11px] font-bold transition-colors ${expMethod === m ? 'bg-amber-500 text-white' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            </>
+          )}
           <Field label={`المبلغ (${cur.symbol})`}>
             <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputCls} dir="ltr" autoFocus />
           </Field>
@@ -177,7 +227,7 @@ export function VouchersPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!counter || !amount.trim() || (needsParty && !partyId)}>💾 حفظ السند</Btn>
+            <Btn onClick={save} disabled={!counter || !amount.trim() || (needsParty && !partyId) || (isPurchaseExpense && (!purchaseId || !desc.trim()))}>💾 حفظ السند</Btn>
           </div>
         </div>
       </Modal>

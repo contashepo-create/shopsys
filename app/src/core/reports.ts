@@ -33,6 +33,8 @@ export interface PurchaseDoc {
   date: string
   supplierId: number
   grandTotalMinor: Minor
+  /** مستحق المورد فقط (بضاعة + مصاريفه) — المصاريف المدفوعة مني لا تدخل دينه */
+  supplierDueMinor?: Minor
   paidMinor: Minor
 }
 
@@ -216,7 +218,8 @@ export function supplierBalances(
   }
   for (const pu of purchases) {
     const r = row(pu.supplierId)
-    r.purchasedMinor += pu.grandTotalMinor
+    // رصيد المورد من مستحقه فقط — لا يشمل مصاريف دفعها المشتري بنفسه (طلب المالك)
+    r.purchasedMinor += pu.supplierDueMinor ?? pu.grandTotalMinor
     r.paidMinor += pu.paidMinor
   }
   for (const x of extraPayments) row(x.supplierId).paidMinor += x.amountMinor
