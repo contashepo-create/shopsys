@@ -24,7 +24,7 @@ import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledg
 import { validateOpenShift, currentOpenShift, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from '../core/installments.ts'
-import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals } from '../core/logistics.ts'
+import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
 import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals } from '../core/maintenance.ts'
@@ -152,6 +152,18 @@ export interface Trip {
   totals: TripTotals
   journalEntryId: number
   notes: string
+}
+
+/** استحقاق عمولة سائق عن رحلة — يتجمع حتى التسوية */
+export interface DriverDue {
+  id: number
+  driverId: number
+  tripId: number
+  date: string
+  amountMinor: number
+  settled: boolean
+  settlementEntryId: number | null
+  entryId: number
 }
 
 /** معدة ثقيلة قابلة للإيجار (المرحلة 6 — القرار 13 + ترقية القرار 25) */
@@ -657,6 +669,7 @@ interface DataState {
   clinicAppointments: ClinicAppointment[]
   cars: Car[] // معرض السيارات (القرار 27)
   consignmentCars: ConsignmentCar[] // سيارات أمانة (بيع بالعمولة)
+  driverDues: DriverDue[] // مستحقات سائقين تتجمع وتسوى دفعة واحدة
   tickets: MaintenanceTicket[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
@@ -828,7 +841,13 @@ interface DataState {
     input: TripInput
     notes: string
     treasury?: string
+    /** عمولة السائق عن الرحلة — تُستحق (2111) ولا تُدفع الآن؛ تسوى مجمعة */
+    driverCommissionMinor?: number
   }) => Trip
+  /** إجمالي غير المسوى لسائق */
+  getDriverDueBalance: (driverId: number) => number
+  /** تسوية كل مستحقات سائق دفعة واحدة من خزينة/بنك */
+  settleDriverDues: (driverId: number, treasury?: string) => { total: number; count: number }
   addEquipment: (e: Omit<Equipment, 'id'>) => void
   updateEquipment: (id: number, patch: Partial<Equipment>) => void
   removeEquipment: (id: number) => void
@@ -1111,6 +1130,7 @@ export const useDataStore = create<DataState>()(
       clinicAppointments: [],
       cars: [],
       consignmentCars: [],
+      driverDues: [],
       tickets: [],
       transfers: [],
       batches: [],
@@ -2179,8 +2199,53 @@ export const useDataStore = create<DataState>()(
           notes: args.notes,
         }
 
-        set({ trips: [...state.trips, trip], journal: [...state.journal, entry] })
+        // عمولة السائق: استحقاق (2111) يتجمع حتى التسوية — لا نقدية الآن
+        let newJournal = [...state.journal, entry]
+        let newDues = state.driverDues
+        const commission = args.driverCommissionMinor ?? 0
+        if (commission > 0) {
+          if (args.driverId == null) throw new Error('عمولة السائق تتطلب اختيار سائق')
+          const driver = state.employees.find((e) => e.id === args.driverId)
+          const commEntryId = entryId + 1
+          const commLines = buildDriverCommissionEntry(commission, driver?.nameAr ?? 'سائق', trip.tripNumber)
+          const commEntry: JournalEntry = {
+            id: commEntryId, entryNumber: commEntryId, date: now.slice(0, 10),
+            description: `استحقاق عمولة سائق ${driver?.nameAr ?? ''} — ${trip.tripNumber}`,
+            sourceType: 'driver_settlement', sourceId: trip.id, lines: commLines,
+            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }
+          newJournal = [...newJournal, commEntry]
+          newDues = [...newDues, {
+            id: nextId(state.driverDues), driverId: args.driverId, tripId: trip.id,
+            date: now.slice(0, 10), amountMinor: commission, settled: false, settlementEntryId: null, entryId: commEntryId,
+          }]
+        }
+        set({ trips: [...state.trips, trip], journal: newJournal, driverDues: newDues })
         return trip
+      },
+      getDriverDueBalance: (driverId) => {
+        return get().driverDues.filter((d) => d.driverId === driverId && !d.settled).reduce((s2, d) => s2 + d.amountMinor, 0)
+      },
+      settleDriverDues: (driverId, treasury = '1101') => {
+        const state = get()
+        const driver = state.employees.find((e) => e.id === driverId)
+        if (!driver) throw new Error('السائق غير مسجل')
+        const unsettled = state.driverDues.filter((d) => d.driverId === driverId && !d.settled)
+        const total = unsettled.reduce((s2, d) => s2 + d.amountMinor, 0)
+        const lines = buildDriverSettlementEntry(total, driver.nameAr, treasury) // يرمي لو صفر
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تسوية مستحقات السائق ${driver.nameAr} (${unsettled.length} رحلة)`,
+          sourceType: 'driver_settlement', sourceId: driverId, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({
+          driverDues: state.driverDues.map((d) => (d.driverId === driverId && !d.settled ? { ...d, settled: true, settlementEntryId: entryId } : d)),
+          journal: [...state.journal, entry],
+        })
+        return { total, count: unsettled.length }
       },
       addEquipment: (e) => set((s) => ({ equipment: [...s.equipment, { ...e, id: nextId(s.equipment) }] })),
       updateEquipment: (id, patch) =>
@@ -4114,6 +4179,7 @@ export const useDataStore = create<DataState>()(
           scrapSales: s.scrapSales ?? [],
           equipmentCosts: s.equipmentCosts ?? [],
           consignmentCars: s.consignmentCars ?? [],
+          driverDues: s.driverDues ?? [],
           priceLists: s.priceLists ?? [],
           priceListEntries: s.priceListEntries ?? [],
           custodyFiles: s.custodyFiles ?? [],

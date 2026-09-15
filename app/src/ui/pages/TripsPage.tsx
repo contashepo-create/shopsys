@@ -24,7 +24,7 @@ interface DraftExpense {
 }
 
 export function TripsPage() {
-  const { trips, vehicles, employees, customers, journal, postTrip } = useDataStore()
+  const { trips, vehicles, employees, customers, journal, postTrip, driverDues, getDriverDueBalance, settleDriverDues } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -43,6 +43,7 @@ export function TripsPage() {
   const [customerId, setCustomerId] = useState('')
   const [vehicleId, setVehicleId] = useState('')
   const [driverId, setDriverId] = useState('')
+  const [driverCommission, setDriverCommission] = useState('')
   const [fromLoc, setFromLoc] = useState('')
   const [toLoc, setToLoc] = useState('')
   const [qty, setQty] = useState('1')
@@ -93,6 +94,7 @@ export function TripsPage() {
         input: draftInput,
         notes: notes.trim(),
         treasury,
+        driverCommissionMinor: driverCommission && driverId ? toMinor(driverCommission, cur.decimals) : 0,
       })
       toast.show(`رُحّلت النقلة ${trip.tripNumber} — ربحها ${fmt(trip.totals.profitMinor)} ${cur.symbol} ✅`)
       setOpen(false)
@@ -102,6 +104,24 @@ export function TripsPage() {
   /* ─── عرض نقلة ─── */
   const [viewing, setViewing] = useState<Trip | null>(null)
   const viewEntry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
+
+  /* ─── مستحقات السائقين ─── */
+  const [settleTreasury, setSettleTreasury] = useState('1101')
+  const driversWithDues = useMemo(() => {
+    const ids = [...new Set(driverDues.filter((d) => !d.settled).map((d) => d.driverId))]
+    return ids.map((id) => ({
+      id,
+      name: employees.find((e) => e.id === id)?.nameAr ?? 'سائق',
+      balance: getDriverDueBalance(id),
+      trips: driverDues.filter((d) => d.driverId === id && !d.settled).length,
+    })).filter((d) => d.balance > 0)
+  }, [driverDues, employees, getDriverDueBalance])
+  const doSettleDriver = (id: number, name: string) => {
+    try {
+      const r = settleDriverDues(id, settleTreasury)
+      toast.show(`سُويت مستحقات ${name}: ${fmt(r.total)} عن ${r.count} رحلة ✅`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   /* ─── تقرير الربحية ─── */
   const presets = useMemo(() => periodPresets(new Date().toISOString()), [])
@@ -243,6 +263,9 @@ export function TripsPage() {
                 {employees.filter((e) => e.active).map((d) => <option key={d.id} value={d.id}>{d.nameAr}</option>)}
               </select>
             </Field>
+            <Field label={`عمولة السائق (${cur.symbol})`} hint="تُستحق ولا تُدفع الآن — تسوى مجمعة">
+              <input value={driverCommission} onChange={(e) => setDriverCommission(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0" disabled={!driverId} />
+            </Field>
             <Field label="من *">
               <input value={fromLoc} onChange={(e) => setFromLoc(e.target.value)} className={inputCls} placeholder="ميناء الدمام" />
             </Field>
@@ -379,6 +402,32 @@ export function TripsPage() {
           </div>
         )}
       </Modal>
+
+      {/* مستحقات السائقين غير المسواة */}
+      {driversWithDues.length > 0 && (
+        <div className="rounded-2xl border border-amber-200 dark:border-amber-900/50 overflow-hidden">
+          <div className="px-4 py-2.5 bg-amber-500/10 text-amber-700 dark:text-amber-300 font-black text-sm flex items-center justify-between">
+            <span>💰 مستحقات سائقين غير مسواة</span>
+            <span className="flex items-center gap-2 text-[11px] font-bold">
+              التسوية من: <TreasuryPicker value={settleTreasury} onChange={setSettleTreasury} compact />
+            </span>
+          </div>
+          <table className="w-full text-sm">
+            <tbody>
+              {driversWithDues.map((d) => (
+                <tr key={d.id} className="border-t border-slate-100 dark:border-slate-800">
+                  <td className="px-4 py-2.5 font-bold">{d.name}</td>
+                  <td className="px-4 py-2.5 text-[12px] text-slate-500">{d.trips} رحلة</td>
+                  <td className="px-4 py-2.5 font-black text-amber-600 tabular-nums">{fmt(d.balance)}</td>
+                  <td className="px-4 py-2.5 text-left">
+                    <Btn variant="soft" onClick={() => doSettleDriver(d.id, d.name)}>تسوية الكل</Btn>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }

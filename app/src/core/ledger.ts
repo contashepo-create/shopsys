@@ -38,7 +38,7 @@ export type SourceType =
   | 'clinic_visit' | 'project_extract' | 'project_cost' | 'retention_release'
   | 'sub_certificate' | 'sub_payment' | 'bond_issue' | 'bond_settle' | 'client_advance' | 'daily_wages'
   | 'production' | 'scrap_purchase' | 'scrap_sale' | 'equipment_cost'
-  | 'consignment_sale' | 'consignment_payout'
+  | 'consignment_sale' | 'consignment_payout' | 'driver_settlement'
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
@@ -123,6 +123,7 @@ export const STANDARD_COA: Account[] = [
   { code: '2108', nameAr: 'محتجزات مقاولي الباطن', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'sub_retention_payable' },
   { code: '2109', nameAr: 'دفعات مقدمة من العملاء', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'client_advances' },
   { code: '2110', nameAr: 'مستحق لملاك سيارات الأمانة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'consignment_payable' },
+  { code: '2111', nameAr: 'مستحقات سائقين', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'driver_dues' },
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },
   { code: '3102', nameAr: 'أرباح مرحّلة', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'retained_earnings' },

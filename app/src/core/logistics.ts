@@ -181,3 +181,31 @@ export const EXPENSE_SOURCE_LABELS: Record<TripExpenseSource, string> = {
   customer: 'على العميل (يُضاف لفاتورته)',
   credit: 'آجل (محطة/مورد)',
 }
+
+
+/* ─── مستحقات السائقين (سد فجوة أنظمة النقل): عمولة تُستحق بالرحلة وتُسوى مجمعة ─── */
+
+/**
+ * قيد استحقاق عمولة سائق عن رحلة: 5106 مصاريف نقلات مدين / 2111 مستحقات سائقين دائن.
+ * لا نقدية تخرج الآن — تتجمع مستحقات السائق ثم تُسوى دفعة واحدة (أسبوعياً/شهرياً).
+ */
+export function buildDriverCommissionEntry(amountMinor: Minor, driverName: string, tripLabel: string): JournalLine[] {
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('عمولة السائق يجب أن تكون موجبة')
+  const lines: JournalLine[] = [
+    { accountCode: '5106', debit: amountMinor, credit: 0, note: `عمولة سائق ${driverName} — ${tripLabel}` },
+    { accountCode: '2111', debit: 0, credit: amountMinor, note: 'استحقاق للسائق' },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+
+/** قيد تسوية مستحقات سائق مجمعة: 2111 مدين / خزينة دائن */
+export function buildDriverSettlementEntry(totalMinor: Minor, driverName: string, treasury = '1101'): JournalLine[] {
+  if (!Number.isInteger(totalMinor) || totalMinor <= 0) throw new Error('لا مستحقات غير مسواة لهذا السائق')
+  const lines: JournalLine[] = [
+    { accountCode: '2111', debit: totalMinor, credit: 0, note: `تسوية مستحقات ${driverName}` },
+    { accountCode: treasury, debit: 0, credit: totalMinor, note: 'صرف نقدي للسائق' },
+  ]
+  assertBalanced(lines)
+  return lines
+}
