@@ -58,6 +58,10 @@ import { SyncPage } from './ui/pages/SyncPage.tsx'
 import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
 import { CarsPage } from './ui/pages/CarsPage.tsx'
 import { AboutPage } from './ui/pages/AboutPage.tsx'
+import { AuditLogPage } from './ui/pages/AuditLogPage.tsx'
+import { IssuesPage } from './ui/pages/IssuesPage.tsx'
+import { SupportPage } from './ui/pages/SupportPage.tsx'
+import { installErrorHooks, logEvent } from './core/applog.ts'
 import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
 import { TransfersPage } from './ui/pages/TransfersPage.tsx'
 import { AppearancePage } from './ui/pages/AppearancePage.tsx'
@@ -141,6 +145,9 @@ function Shell() {
         <Route path="/settings/einvoice" element={<EinvoicePage />} />
         <Route path="/settings/license" element={<LicensePage />} />
         <Route path="/settings/about" element={<AboutPage />} />
+        <Route path="/settings/audit" element={<AuditLogPage />} />
+        <Route path="/settings/issues" element={<IssuesPage />} />
+        <Route path="/settings/support" element={<SupportPage />} />
         <Route path="*" element={<Dashboard />} />
       </Routes>
     </MainLayout>
@@ -270,6 +277,13 @@ export default function App() {
     const t = setInterval(touchLastSeen, 60 * 60 * 1000)
     return () => clearInterval(t)
   }, [touchLastSeen])
+
+  // سجل التطبيق التقني (طلب المالك): مصائد الأخطاء العامة + حدث الإقلاع —
+  // حلقة محلية على الجهاز، تُرسل للمطوّر فقط بموافقة صريحة من شاشة الدعم
+  useEffect(() => {
+    installErrorHooks()
+    logEvent('info', 'app: إقلاع التطبيق')
+  }, [])
 
   // بذر البيانات الأولية (قسم عام + مخزن رئيسي) فور اكتمال المعالج
   useEffect(() => {

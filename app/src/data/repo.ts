@@ -15,6 +15,7 @@ import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput
 import { computeTotals, buildSaleEntry, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnEntry, deriveTaxConfig } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
+import { auditFromPatch, appendAudit, sanitizeText, validateIssue, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
 import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
@@ -734,6 +735,18 @@ interface DataState {
   saleReturns: SaleReturn[]
   shifts: Shift[]
   journal: JournalEntry[] // دفتر اليومية — Append-Only (القرار 9)
+  /* ─── سجل النشاطات والمستخدمون والبلاغات (طلب المالك) ─── */
+  auditLog: AuditEvent[] // «من فعل ماذا ومتى» — يُبنى تلقائياً من كل كتابة، يظهر للمالك فقط
+  appUsers: AppUser[] // مستخدمو التطبيق (المالك + الفرعيون) برقم سري ودور
+  currentUserId: number | null // المستخدم النشط حالياً (null = المالك الافتراضي)
+  issues: IssueReport[] // بلاغات المشاكل الداخلية (مستخدم → مدير/محاسب)
+  addAppUser: (u: { nameAr: string; roleId: string; pinHash: string }) => AppUser
+  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active'>>) => void
+  removeAppUser: (id: number) => void
+  setCurrentUser: (id: number | null) => void
+  /** بلاغ داخلي عن مشكلة في عملية — يظهر للمدير/المحاسب مع إشعار بالجرس */
+  reportIssue: (input: { title: string; details: string; refKey: string }) => IssueReport
+  setIssueStatus: (id: number, status: IssueStatus, resolution?: string) => void
   // بذر البيانات الأولية حسب النشاط المختار
   seed: (activityFeatures: ItemFeature[]) => void
   addItem: (item: Omit<Item, 'id'>) => void
@@ -1216,7 +1229,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 10
+export const DATA_VERSION = 11
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -1263,8 +1276,21 @@ export const useDataStore = create<DataState>()(
         if (patch && (patch as Partial<DataState>).journal) {
           assertTreasuryNotNegative(state.journal, (patch as Partial<DataState>).journal!, (patch as Partial<DataState>).treasuries ?? state.treasuries)
         }
+        // سجل النشاطات (طلب المالك): كل كتابة تولد أحداث تدقيق تلقائياً —
+        // «من فعل ماذا ومتى» بلا اعتماد على تسجيل يدوي في كل إجراء
+        let finalPatch = patch as Partial<DataState>
+        if (patch && !(patch as Partial<DataState>).auditLog) {
+          const activeUser = state.appUsers.find((u) => u.id === state.currentUserId)
+          const events = auditFromPatch(
+            state as unknown as Record<string, unknown>,
+            patch as Record<string, unknown>,
+            activeUser?.nameAr ?? 'المالك',
+            new Date().toISOString(),
+          )
+          if (events.length) finalPatch = { ...(patch as Partial<DataState>), auditLog: appendAudit(state.auditLog ?? [], events) }
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        ;(rawSet as any)(patch, replace)
+        ;(rawSet as any)(finalPatch, replace)
       }) as typeof rawSet
       return {
       seeded: false,
@@ -1343,6 +1369,10 @@ export const useDataStore = create<DataState>()(
       saleReturns: [],
       shifts: [],
       journal: [],
+      auditLog: [],
+      appUsers: [],
+      currentUserId: null,
+      issues: [],
 
       seed: (activityFeatures) => {
         if (get().seeded) return
@@ -2603,6 +2633,83 @@ export const useDataStore = create<DataState>()(
           batches: [...keptBatches, ...newBatches],
         })
         return updatedInv
+      },
+
+      /* ─── المستخدمون وسجل النشاطات والبلاغات (طلب المالك) ─── */
+      addAppUser: (u) => {
+        const state = get()
+        const nameAr = sanitizeText(u.nameAr, 60)
+        if (!nameAr) throw new Error('اسم المستخدم مطلوب')
+        if (state.appUsers.some((x) => x.nameAr === nameAr && x.active)) throw new Error('يوجد مستخدم نشط بنفس الاسم')
+        if (!u.pinHash) throw new Error('الرقم السري مطلوب')
+        if (u.roleId === 'owner' && state.appUsers.some((x) => x.roleId === 'owner' && x.active)) {
+          throw new Error('يوجد حساب مالك بالفعل — دور المالك لحساب واحد فقط')
+        }
+        const user: AppUser = { id: nextId(state.appUsers), nameAr, roleId: u.roleId, pinHash: u.pinHash, active: true }
+        set({ appUsers: [...state.appUsers, user] })
+        return user
+      },
+      updateAppUser: (id, patch) => {
+        const state = get()
+        const user = state.appUsers.find((u) => u.id === id)
+        if (!user) throw new Error('المستخدم غير موجود')
+        if (user.roleId === 'owner' && patch.roleId && patch.roleId !== 'owner') {
+          throw new Error('حساب المالك لا يُخفَّض دوره — محمي بنيوياً')
+        }
+        set({
+          appUsers: state.appUsers.map((u) => (u.id === id
+            ? { ...u, ...patch, ...(patch.nameAr !== undefined ? { nameAr: sanitizeText(patch.nameAr, 60) || u.nameAr } : {}) }
+            : u)),
+        })
+      },
+      removeAppUser: (id) => {
+        const state = get()
+        const user = state.appUsers.find((u) => u.id === id)
+        if (!user) return
+        if (user.roleId === 'owner') throw new Error('حساب المالك لا يُحذف')
+        // لا حذف فعلياً — تعطيل فقط ليبقى اسمه في سجل النشاطات القديم صحيحاً
+        set({
+          appUsers: state.appUsers.map((u) => (u.id === id ? { ...u, active: false } : u)),
+          ...(state.currentUserId === id ? { currentUserId: null } : {}),
+        })
+      },
+      setCurrentUser: (id) => {
+        const state = get()
+        if (id != null && !state.appUsers.some((u) => u.id === id && u.active)) throw new Error('مستخدم غير موجود أو معطل')
+        set({ currentUserId: id })
+      },
+      reportIssue: (input) => {
+        const state = get()
+        const errors = validateIssue(input)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const activeUser = state.appUsers.find((u) => u.id === state.currentUserId)
+        const issue: IssueReport = {
+          id: nextId(state.issues),
+          title: sanitizeText(input.title, 120),
+          details: sanitizeText(input.details, 2000),
+          refKey: sanitizeText(input.refKey, 60),
+          status: 'open',
+          reportedBy: activeUser?.nameAr ?? 'المالك',
+          reportedAt: new Date().toISOString(),
+        }
+        set({ issues: [...state.issues, issue] })
+        return issue
+      },
+      setIssueStatus: (id, status, resolution) => {
+        const state = get()
+        const issue = state.issues.find((i) => i.id === id)
+        if (!issue) throw new Error('البلاغ غير موجود')
+        const activeUser = state.appUsers.find((u) => u.id === state.currentUserId)
+        set({
+          issues: state.issues.map((i) => (i.id === id
+            ? {
+                ...i, status,
+                ...(status === 'resolved'
+                  ? { resolvedBy: activeUser?.nameAr ?? 'المالك', resolvedAt: new Date().toISOString(), resolution: sanitizeText(resolution ?? '', 500) }
+                  : {}),
+              }
+            : i)),
+        })
       },
 
       addWarehouse: (nameAr) =>
@@ -5328,6 +5435,11 @@ export const useDataStore = create<DataState>()(
         const s = persisted as Partial<DataState>
         return {
           ...s,
+          // سجل النشاطات والمستخدمون والبلاغات (الإصدار 11) — قواعد قديمة بلا هذه الحقول
+          auditLog: s.auditLog ?? [],
+          appUsers: s.appUsers ?? [],
+          currentUserId: s.currentUserId ?? null,
+          issues: s.issues ?? [],
           // ترحيل الخزائن المتعددة: الحسابات القديمة تحصل على الافتراضيتين
           treasuries: s.treasuries && s.treasuries.length > 0 ? s.treasuries : DEFAULT_TREASURIES,
           categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),

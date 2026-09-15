@@ -22,6 +22,8 @@ export interface NotificationsInput {
   installmentPlans: { id: number; planNumber: string; customerId: number; items: InstallmentItem[] }[]
   customerName: (id: number) => string
   cheques: { chequeNumber: string; direction: string; partyName: string; amountMinor: number; dueDate: string; status: string }[]
+  /** بلاغات المشاكل الداخلية المفتوحة (مستخدم → مدير/محاسب) — طلب المالك */
+  openIssues?: { id: number; title: string; reportedBy: string }[]
   fmt: (minor: number) => string
   todayIso: string // ISO كامل أو YYYY-MM-DD
 }
@@ -60,6 +62,18 @@ export function collectNotifications(input: NotificationsInput): AppNotification
         route: '/parties/installments',
       })
     }
+  }
+
+  // 2.5) بلاغات مشاكل داخلية مفتوحة — تظهر للمدير/المحاسب حتى تُحل
+  for (const iss of input.openIssues ?? []) {
+    out.push({
+      id: `issue:${iss.id}`,
+      icon: '📮',
+      title: `بلاغ مشكلة: ${iss.title}`,
+      body: `أبلغ عنها ${iss.reportedBy} — افتح البلاغات لمعالجتها وتوثيق الحل`,
+      severity: 'warn',
+      route: '/settings/issues',
+    })
   }
 
   // 3) شيكات قائمة تستحق خلال 7 أيام أو تجاوزت الاستحقاق

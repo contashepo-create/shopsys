@@ -1,15 +1,35 @@
 /**
  * شاشة الصلاحيات — تشيك بوكس بجانب كل صلاحية (القرار 12)
  * أقسام قابلة للطي + "تحديد الكل" + دور المالك محمي (القرار 11)
+ * + إدارة المستخدمين الفرعيين (طلب المالك): اسم + دور + رقم سري —
+ *   كل ما يفعله كل مستخدم يُسجل باسمه في سجل النشاطات (يراه المالك فقط).
  */
 import { useMemo, useState } from 'react'
-import { ChevronDown, Crown, Lock, ShieldCheck, Plus } from 'lucide-react'
+import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX } from 'lucide-react'
 import { PERMISSIONS, PERMISSION_SECTIONS, DEFAULT_ROLES, type Role } from '../../core/permissions.ts'
+import { useDataStore } from '../../data/repo.ts'
+import { hashPin } from '../../core/audit.ts'
+import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 
 export function PermissionsPage() {
   const [roles, setRoles] = useState<Role[]>(DEFAULT_ROLES)
   const [activeRoleId, setActiveRoleId] = useState('cashier')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
+  const { appUsers, currentUserId, addAppUser, removeAppUser, setCurrentUser } = useDataStore()
+  const toast = useToast()
+  const [userModal, setUserModal] = useState(false)
+  const [uName, setUName] = useState('')
+  const [uRole, setURole] = useState('cashier')
+  const [uPin, setUPin] = useState('')
+
+  const saveUser = async () => {
+    try {
+      const pinHash = await hashPin(uPin)
+      addAppUser({ nameAr: uName, roleId: uRole, pinHash })
+      toast.show(`أُضيف المستخدم «${uName}» — كل ما يفعله سيُسجل باسمه في سجل النشاطات ✓`)
+      setUserModal(false); setUName(''); setUPin(''); setURole('cashier')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   const activeRole = roles.find((r) => r.id === activeRoleId)!
   const isOwner = !!activeRole.isOwner
@@ -175,7 +195,68 @@ export function PermissionsPage() {
         <p className="text-[11px] text-slate-400 px-2">
           📝 كل تغيير في الصلاحيات يُسجَّل في سجل التدقيق (من غيّر، ماذا، متى) — وثيقة التصميم، القرار 12.
         </p>
+
+        {/* ─── المستخدمون الفرعيون (طلب المالك): كل ما يفعله كل مستخدم يُسجل باسمه ─── */}
+        <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-extrabold text-slate-800 dark:text-white text-sm flex items-center gap-2">
+              <Users size={16} className="text-brand-500" /> المستخدمون
+            </h3>
+            <Btn variant="ghost" className="border border-slate-200 dark:border-slate-700 !text-[12px] !py-1.5" onClick={() => setUserModal(true)}>
+              <Plus size={13} /> مستخدم جديد
+            </Btn>
+          </div>
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            💡 اختر «المستخدم النشط» عند تبديل الشخص الذي يعمل على الجهاز — كل عملية بعدها تُسجل باسمه
+            في <b>سجل النشاطات</b> (يظهر للمالك فقط). حذف المستخدم = تعطيله فقط، ليبقى تاريخه في السجل صحيحاً.
+          </p>
+          <div className="space-y-1.5">
+            <label className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer transition-all ${currentUserId == null ? 'border-amber-500/40 bg-amber-500/8' : 'border-slate-100 dark:border-slate-800'}`}>
+              <input type="radio" checked={currentUserId == null} onChange={() => setCurrentUser(null)} className="w-4 h-4 accent-amber-500" />
+              <Crown size={14} className="text-amber-500" />
+              <span className="text-[13px] font-bold flex-1">المالك (الافتراضي)</span>
+              {currentUserId == null && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-bold">نشط الآن</span>}
+            </label>
+            {appUsers.filter((u) => u.active).map((u) => (
+              <label key={u.id} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer transition-all ${currentUserId === u.id ? 'border-brand-500/40 bg-brand-500/8' : 'border-slate-100 dark:border-slate-800'}`}>
+                <input type="radio" checked={currentUserId === u.id} onChange={() => setCurrentUser(u.id)} className="w-4 h-4 accent-brand-600" />
+                <ShieldCheck size={14} className="text-slate-400" />
+                <span className="text-[13px] font-bold flex-1">{u.nameAr}</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">{roles.find((r) => r.id === u.roleId)?.nameAr ?? u.roleId}</span>
+                {currentUserId === u.id && <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-600 font-bold">نشط الآن</span>}
+                <button
+                  onClick={(e) => { e.preventDefault(); try { removeAppUser(u.id); toast.show(`عُطل «${u.nameAr}» — تاريخه محفوظ في السجل`) } catch (err) { toast.show((err as Error).message, 'error') } }}
+                  title="تعطيل المستخدم (تاريخه يبقى في سجل النشاطات)"
+                  className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                >
+                  <UserX size={13} />
+                </button>
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
+
+      {/* مستخدم جديد */}
+      <Modal open={userModal} onClose={() => setUserModal(false)} title="👤 مستخدم جديد">
+        <div className="space-y-4">
+          <Field label="الاسم">
+            <input value={uName} onChange={(e) => setUName(e.target.value)} className={inputCls} placeholder="أحمد الكاشير" />
+          </Field>
+          <Field label="الدور" hint="يحدد صلاحياته من جدول الصلاحيات أعلاه">
+            <select value={uRole} onChange={(e) => setURole(e.target.value)} className={inputCls}>
+              {roles.filter((r) => !r.isOwner).map((r) => <option key={r.id} value={r.id}>{r.nameAr}</option>)}
+            </select>
+          </Field>
+          <Field label="الرقم السري (4–8 أرقام)" hint="يُخزن مشفراً — لا يمكن استرجاعه، فقط تغييره">
+            <input value={uPin} onChange={(e) => setUPin(e.target.value.replace(/\D/g, '').slice(0, 8))} className={inputCls} dir="ltr" type="password" placeholder="••••" />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setUserModal(false)}>إلغاء</Btn>
+            <Btn onClick={saveUser} disabled={!uName.trim() || uPin.length < 4}>حفظ المستخدم</Btn>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }

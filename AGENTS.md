@@ -270,6 +270,15 @@ const S = () => useDataStore.getState()
 - UI: أزرار قلم/إشعارات في SalesInvoicesPage وPurchasesPage مع tooltip شارح لكل زر (قاعدة المالك)؛ الشروح في EinvoicePage.
 - الفحص: `scripts/verify_invoice_edit.mjs` (38 فحصاً).
 
+## 8.6) سجل النشاطات + المستخدمون + البلاغات + الدعم (طلب المالك — مطبقة)
+
+- **`core/audit.ts`**: `sanitizeText` (التعقيم المركزي ضد الحقن — يُستدعى على كل نص وارد من مستخدم/بوت/ووركر)، `auditFromPatch` (توليد أحداث تدقيق تلقائياً من فروقات الحالة: قيود جديدة + إضافة/حذف بالسجلات المراقبة + نمو editHistory)، `appendAudit` (حلقة AUDIT_MAX=3000)، `hashPin/verifyPin` (SHA-256، لا يُخزن PIN نصاً)، `validateIssue`، أنواع AppUser/IssueReport.
+- **repo.ts**: `auditLog/appUsers/currentUserId/issues` في الحالة (DATA_VERSION=11 مع migrate) + actions: addAppUser (مالك واحد فقط)، updateAppUser (لا تخفيض دور المالك)، removeAppUser (**تعطيل لا حذف** — يحفظ التاريخ)، setCurrentUser، reportIssue، setIssueStatus. **السجل يُبنى في الـset-wrapper المركزي** — كل كتابة تولد أحداثها تلقائياً باسم المستخدم النشط، لا تسجيل يدوي.
+- **`core/applog.ts`**: لوج تقني محلي (حلقة LOG_MAX=800 في shopsys-log) + installErrorHooks (window.error/unhandledrejection) — يُرسل للمطور **فقط بموافقة صريحة** من شاشة الدعم.
+- **`core/support.ts` + `cloud/worker.js`**: قناة دعم نصية عميل↔مطوّر عبر الووركر: POST/GET `/support/:deviceId` + ويبهوك تليجرام `/tg-webhook` محمي بـsecret_token؛ رد المطوّر (Reply في البوت) يظهر داخل التطبيق كمحادثة. حماية: نصوص فقط (لا ملفات)، تعقيم بالطرفين، rate limit 10/ساعة/جهاز، حد حجم 200KB، tgmap لربط الرد بالجهاز. أسرار الووركر: DEV_BOT_TOKEN/DEV_CHAT_ID/TG_WEBHOOK_SECRET.
+- UI: `AuditLogPage` (للمالك فقط — قفل لغيره)، `IssuesPage` (بلاغ داخلي → جرس المدير → حل موثق)، `SupportPage` (محادثة + checkbox موافقة اللوج)، إدارة المستخدمين داخل PermissionsPage (اسم+دور+PIN، مبدّل «المستخدم النشط»).
+- الفحص: `scripts/verify_audit_support.mjs` (44 فحصاً).
+
 ## 9) حالة العمل الجارية والتالي
 
 - ✅ منجز: **كل الفجوات المعيارية السبع** (وصفات، صاغة، قوائم أسعار، تكاليف معدات، أمانة، سائقون، تأمين، **مصفوفة لون×مقاس**) + عمق المقاولات الكامل.

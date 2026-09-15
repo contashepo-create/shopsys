@@ -14,7 +14,7 @@ import { collectNotifications } from '../../core/notifications.ts'
 
 export function Header({ title }: { title: string }) {
   const { theme, toggleTheme, setup, setAccountingMode } = useAppStore()
-  const { batches, items, installmentPlans, customers, cheques } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues } = useDataStore()
   const navigate = useNavigate()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -37,10 +37,11 @@ export function Header({ title }: { title: string }) {
       installmentPlans,
       customerName: (id) => customers.find((c) => c.id === id)?.nameAr ?? `عميل #${id}`,
       cheques,
+      openIssues: issues.filter((i) => i.status !== 'resolved').map((i) => ({ id: i.id, title: i.title, reportedBy: i.reportedBy })),
       fmt: (m) => formatMinor(m, cur, false),
       todayIso: new Date().toISOString(),
     }),
-    [batches, items, installmentPlans, customers, cheques, cur],
+    [batches, items, installmentPlans, customers, cheques, issues, cur],
   )
 
   return (

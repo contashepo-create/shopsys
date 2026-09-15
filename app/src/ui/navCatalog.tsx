@@ -10,7 +10,8 @@ import {
   PenLine, ListTree, PiggyBank, CalendarClock, Store, Percent,
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
-  FileText, ListChecks, Users2, ChefHat, Gem, Tags, PackageMinus, HandCoins, Gauge } from 'lucide-react'
+  FileText, ListChecks, Users2, ChefHat, Gem, Tags, PackageMinus, HandCoins, Gauge,
+  ScrollText, MessageSquareWarning, Headset } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule } from '../core/activities.ts'
 
@@ -175,6 +176,9 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'general', nameAr: 'عامة (بلد/عملة/ضريبة)', icon: Percent, path: '/settings/general' },
       { id: 'permissions', nameAr: 'المستخدمون والصلاحيات', icon: ShieldCheck, path: '/settings/permissions' },
+      { id: 'audit', nameAr: 'سجل النشاطات (للمالك)', icon: ScrollText, path: '/settings/audit' },
+      { id: 'issues', nameAr: 'بلاغات المشاكل الداخلية', icon: MessageSquareWarning, path: '/settings/issues' },
+      { id: 'support', nameAr: 'الدعم الفني (المطوّر)', icon: Headset, path: '/settings/support' },
       { id: 'printing', nameAr: 'الطباعة', icon: Printer, path: '/settings/printing' },
       { id: 'backup', nameAr: 'النسخ الاحتياطي', icon: DatabaseBackup, path: '/settings/backup' },
       { id: 'sync', nameAr: 'المزامنة السحابية', icon: CloudUpload, path: '/settings/sync' },
