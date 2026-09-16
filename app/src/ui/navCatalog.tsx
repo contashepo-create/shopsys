@@ -79,6 +79,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'transfers', nameAr: 'التحويلات', icon: ArrowLeftRight, path: '/inventory/transfers' },
       { id: 'counting', nameAr: 'الجرد', icon: ClipboardList, path: '/inventory/counting' },
       { id: 'wastage', nameAr: 'الإتلاف والهالك', icon: Trash2, path: '/inventory/wastage' },
+      { id: 'consumption', nameAr: 'الصرف الداخلي', icon: PackageMinus, path: '/inventory/consumption' },
+      { id: 'barcode-center', nameAr: 'الباركود والملصقات', icon: Tags, path: '/inventory/barcode-center' },
       { id: 'serials', nameAr: 'سجل السيريالات', icon: ScanBarcode, path: '/inventory/serials', feature: 'serial_warranty' },
       { id: 'recipes', nameAr: 'الوصفات والإنتاج', icon: ChefHat, path: '/inventory/recipes', module: 'recipes' },
       { id: 'jewelry', nameAr: 'الصاغة والكسر', icon: Gem, path: '/inventory/jewelry', module: 'jewelry' },

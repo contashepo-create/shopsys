@@ -67,6 +67,7 @@ ok(S().roleOverrides.cashier.length === 2, 'setRolePermissions يحفظ في ا�
 let threw = false
 try { S().setRolePermissions('owner', []) } catch { threw = true }
 ok(threw, 'setRolePermissions(owner) يرمي — صفر تجاوز')
+S().setOwnerPin('y'.repeat(64)) // الدفعة الجديدة: PIN المالك شرط قبل إضافة مستخدمين
 S().addAppUser({ nameAr: 'كاشير تجربة', roleId: 'cashier', pinHash: 'x'.repeat(64) })
 const u = S().appUsers.at(-1)
 S().setUserPermExceptions(u.id, ['rep.sales'], ['inv.view'])

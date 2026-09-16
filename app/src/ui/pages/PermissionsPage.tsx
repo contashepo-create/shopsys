@@ -5,7 +5,7 @@
  *   كل ما يفعله كل مستخدم يُسجل باسمه في سجل النشاطات (يراه المالك فقط).
  */
 import { useMemo, useState } from 'react'
-import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal } from 'lucide-react'
+import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound } from 'lucide-react'
 import { PERMISSIONS, PERMISSION_SECTIONS, rolesWithOverrides } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { hashPin } from '../../core/audit.ts'
@@ -14,7 +14,7 @@ import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('cashier')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
-  const { appUsers, currentUserId, addAppUser, removeAppUser, setCurrentUser, roleOverrides, setRolePermissions, setUserPermExceptions } = useDataStore()
+  const { appUsers, currentUserId, addAppUser, removeAppUser, updateAppUser, roleOverrides, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
   const roles = rolesWithOverrides(roleOverrides)
   const toast = useToast()
@@ -24,6 +24,37 @@ export function PermissionsPage() {
   const [uName, setUName] = useState('')
   const [uRole, setURole] = useState('cashier')
   const [uPin, setUPin] = useState('')
+  // 🔐 رقم المالك + إعادة تعيين أرقام الموظفين (استعادة كلمة السر)
+  const [ownerPinModal, setOwnerPinModal] = useState(false)
+  const [oPin, setOPin] = useState('')
+  const [oPin2, setOPin2] = useState('')
+  const [pinFor, setPinFor] = useState<number | null>(null)
+  const [ePin, setEPin] = useState('')
+  const [ePin2, setEPin2] = useState('')
+  const openResets = pinResetRequests.filter((r) => r.status === 'open')
+
+  const saveOwnerPin = async () => {
+    try {
+      if (oPin !== oPin2) throw new Error('الرقمان غير متطابقين')
+      setOwnerPin(await hashPin(oPin))
+      setOwnerPinModal(false); setOPin(''); setOPin2('')
+      toast.show('حُفظ رقم المالك — شاشة الدخول مفعلة من الآن ✅')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const saveEmployeePin = async () => {
+    if (pinFor == null) return
+    try {
+      if (ePin !== ePin2) throw new Error('الرقمان غير متطابقين')
+      const pinHash = await hashPin(ePin)
+      const openReq = openResets.find((r) => r.userId === pinFor)
+      if (openReq) resolvePinReset(openReq.id, 'done', pinHash)
+      else updateAppUser(pinFor, { pinHash })
+      const name = appUsers.find((x) => x.id === pinFor)?.nameAr ?? ''
+      setPinFor(null); setEPin(''); setEPin2('')
+      toast.show(`عُيّن رقم جديد لـ«${name}» — أبلغه به بنفسك ✅`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   const saveUser = async () => {
     try {
@@ -197,39 +228,108 @@ export function PermissionsPage() {
             💡 اختر «المستخدم النشط» عند تبديل الشخص الذي يعمل على الجهاز — كل عملية بعدها تُسجل باسمه
             في <b>سجل النشاطات</b> (يظهر للمالك فقط). حذف المستخدم = تعطيله فقط، ليبقى تاريخه في السجل صحيحاً.
           </p>
+          {/* 🔐 رقم المالك السري — شرط تفعيل شاشة الدخول وإضافة المستخدمين */}
+          <div className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${ownerPinHash ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-amber-500/40 bg-amber-500/8'}`}>
+            <Crown size={14} className="text-amber-500 shrink-0" />
+            <div className="flex-1">
+              <div className="text-[13px] font-bold">المالك</div>
+              <div className="text-[10.5px] text-slate-400">
+                {ownerPinHash ? 'محمي برقم سري — شاشة الدخول مفعلة ✓' : '⚠️ بلا رقم سري — عيّنه لتفعيل شاشة الدخول قبل إضافة موظفين'}
+              </div>
+            </div>
+            <Btn variant="ghost" className="border border-slate-200 dark:border-slate-700 !text-[11px] !py-1" onClick={() => setOwnerPinModal(true)}>
+              <KeyRound size={12} /> {ownerPinHash ? 'تغيير الرقم' : 'تعيين رقم سري'}
+            </Btn>
+          </div>
+
+          {/* 🔑 طلبات استعادة كلمة السر المفتوحة — من شاشة الدخول */}
+          {currentUserId == null && openResets.length > 0 && (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/8 p-3 space-y-2">
+              <div className="text-[12px] font-extrabold text-amber-600 dark:text-amber-400">🔑 طلبات استعادة رقم سري ({openResets.length})</div>
+              {openResets.map((r) => (
+                <div key={r.id} className="flex items-center gap-2 text-[12px]">
+                  <span className="flex-1 font-bold">{r.nameAr}</span>
+                  <span className="text-[10px] text-slate-400">{r.requestedAt.slice(0, 16).replace('T', ' ')}</span>
+                  <Btn className="!text-[11px] !py-1" onClick={() => setPinFor(r.userId)}>تعيين رقم جديد</Btn>
+                  <Btn variant="ghost" className="!text-[11px] !py-1 border border-slate-200 dark:border-slate-700" onClick={() => { try { resolvePinReset(r.id, 'cancelled'); toast.show('أُلغي الطلب') } catch (err) { toast.show((err as Error).message, 'error') } }}>رفض</Btn>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="space-y-1.5">
-            <label className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer transition-all ${currentUserId == null ? 'border-amber-500/40 bg-amber-500/8' : 'border-slate-100 dark:border-slate-800'}`}>
-              <input type="radio" checked={currentUserId == null} onChange={() => setCurrentUser(null)} className="w-4 h-4 accent-amber-500" />
-              <Crown size={14} className="text-amber-500" />
-              <span className="text-[13px] font-bold flex-1">المالك (الافتراضي)</span>
-              {currentUserId == null && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-bold">نشط الآن</span>}
-            </label>
             {appUsers.filter((u) => u.active).map((u) => (
-              <label key={u.id} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer transition-all ${currentUserId === u.id ? 'border-brand-500/40 bg-brand-500/8' : 'border-slate-100 dark:border-slate-800'}`}>
-                <input type="radio" checked={currentUserId === u.id} onChange={() => setCurrentUser(u.id)} className="w-4 h-4 accent-brand-600" />
+              <div key={u.id} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all ${currentUserId === u.id ? 'border-brand-500/40 bg-brand-500/8' : 'border-slate-100 dark:border-slate-800'}`}>
                 <ShieldCheck size={14} className="text-slate-400" />
                 <span className="text-[13px] font-bold flex-1">{u.nameAr}</span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">{roles.find((r) => r.id === u.roleId)?.nameAr ?? u.roleId}</span>
                 {currentUserId === u.id && <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-600 font-bold">نشط الآن</span>}
                 <button
-                  onClick={(e) => { e.preventDefault(); setExcFor(u.id) }}
+                  onClick={() => setPinFor(u.id)}
+                  title="إعادة تعيين الرقم السري لهذا المستخدم"
+                  className="p-1.5 rounded-lg text-slate-300 hover:text-amber-500 hover:bg-amber-500/10 transition-colors"
+                >
+                  <KeyRound size={13} />
+                </button>
+                <button
+                  onClick={() => setExcFor(u.id)}
                   title="استثناءات فردية — منح أو حجب صلاحيات لهذا المستخدم تحديداً فوق دوره"
                   className="p-1.5 rounded-lg text-slate-300 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
                 >
                   <SlidersHorizontal size={13} />
                 </button>
                 <button
-                  onClick={(e) => { e.preventDefault(); try { removeAppUser(u.id); toast.show(`عُطل «${u.nameAr}» — تاريخه محفوظ في السجل`) } catch (err) { toast.show((err as Error).message, 'error') } }}
+                  onClick={() => { try { removeAppUser(u.id); toast.show(`عُطل «${u.nameAr}» — تاريخه محفوظ في السجل`) } catch (err) { toast.show((err as Error).message, 'error') } }}
                   title="تعطيل المستخدم (تاريخه يبقى في سجل النشاطات)"
                   className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
                 >
                   <UserX size={13} />
                 </button>
-              </label>
+              </div>
             ))}
           </div>
+          <p className="text-[10.5px] text-slate-400 leading-relaxed">
+            🔐 تبديل المستخدم لا يتم من هنا — من زر «تسجيل خروج» أعلى الشاشة ثم الدخول بالحساب الآخر برقمه السري.
+          </p>
         </div>
       </div>
+
+      {/* 🔐 تعيين/تغيير رقم المالك السري */}
+      <Modal open={ownerPinModal} onClose={() => { setOwnerPinModal(false); setOPin(''); setOPin2('') }} title="🔐 الرقم السري للمالك">
+        <div className="space-y-3">
+          <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
+            من أول تعيين تُفعَّل شاشة الدخول: لا أحد يفتح التطبيق بلا رقمه السري، وكل دخول وخروج يُسجل.
+            إن نسيت رقمك لاحقاً يصلك رقم مؤقت على تليجرامك (اربط البوت من الإعدادات).
+          </p>
+          <Field label="الرقم السري (4-8 أرقام)">
+            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={oPin} onChange={(e) => setOPin(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          </Field>
+          <Field label="تأكيد الرقم">
+            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={oPin2} onChange={(e) => setOPin2(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          </Field>
+          <Btn className="w-full" disabled={oPin.length < 4} onClick={() => void saveOwnerPin()}>
+            <KeyRound size={15} /> حفظ
+          </Btn>
+        </div>
+      </Modal>
+
+      {/* 🔑 إعادة تعيين رقم سري لموظف (يغلق طلب الاستعادة إن وُجد) */}
+      <Modal open={pinFor != null} onClose={() => { setPinFor(null); setEPin(''); setEPin2('') }} title={`🔑 رقم سري جديد — ${appUsers.find((x) => x.id === pinFor)?.nameAr ?? ''}`}>
+        <div className="space-y-3">
+          <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
+            عيّن الرقم الجديد ثم أبلغه للموظف بنفسك (هاتفياً أو واتساب) — النظام لا يخزن الرقم، فقط بصمته المشفرة.
+          </p>
+          <Field label="الرقم الجديد (4-8 أرقام)">
+            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={ePin} onChange={(e) => setEPin(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          </Field>
+          <Field label="تأكيد الرقم">
+            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={ePin2} onChange={(e) => setEPin2(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          </Field>
+          <Btn className="w-full" disabled={ePin.length < 4} onClick={() => void saveEmployeePin()}>
+            <KeyRound size={15} /> حفظ وإغلاق الطلب
+          </Btn>
+        </div>
+      </Modal>
 
       {/* ⚖️ استثناءات فردية لمستخدم (البند 4): الفعال = صلاحيات الدور ∪ الممنوح − المحجوب */}
       <Modal open={excFor != null} onClose={() => setExcFor(null)} title={(() => {

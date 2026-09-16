@@ -73,10 +73,16 @@ ok('PIN يُخزن hex-64 لا نصاً', /^[0-9a-f]{64}$/.test(pinHash))
 ok('التحقق الصحيح يمر', await verifyPin('1234', pinHash))
 ok('التحقق الخاطئ يفشل', !(await verifyPin('9999', pinHash)))
 await (async () => { try { await hashPin('12'); fail++; console.log('  ❌ PIN قصير (لم يرمِ)') } catch { pass++; console.log('  ✅ PIN قصير يُرفض') } })()
+// أمان الدفعة الجديدة: لا مستخدمين قبل تحصين المالك برقم سري
+throws('إضافة مستخدم قبل PIN المالك تُرفض', () => S().addAppUser({ nameAr: 'مبكر', roleId: 'cashier', pinHash }), 'المالك أولاً')
+S().setOwnerPin(pinHash)
 const u1 = S().addAppUser({ nameAr: 'كاشير أحمد', roleId: 'cashier', pinHash })
 ok('أُضيف المستخدم', S().appUsers.some((u) => u.id === u1.id && u.active))
 throws('اسم مكرر يُرفض', () => S().addAppUser({ nameAr: 'كاشير أحمد', roleId: 'cashier', pinHash }), 'نفس الاسم')
-S().setCurrentUser(u1.id)
+// التبديل المباشر مقفول بعد تفعيل المصادقة — الدخول بفحص PIN فقط
+throws('setCurrentUser المباشر مرفوض بعد تفعيل المصادقة', () => S().setCurrentUser(u1.id), 'شاشة الدخول')
+await S().login(u1.id, '1234')
+ok('الدخول بالرقم الصحيح يفعّل المستخدم', S().currentUserId === u1.id)
 S().addCustomer({ ...party('عميل من الكاشير'), creditLimitMinor: 0 })
 ok('الحدث باسم المستخدم النشط', S().auditLog.at(-1).user === 'كاشير أحمد')
 const uOwner = S().addAppUser({ nameAr: 'المالك الحقيقي', roleId: 'owner', pinHash })
@@ -86,6 +92,7 @@ throws('حذف المالك يُرفض', () => S().removeAppUser(uOwner.id), 'ل
 S().removeAppUser(u1.id)
 ok('حذف مستخدم = تعطيل (يبقى بالسجل)', S().appUsers.some((u) => u.id === u1.id && !u.active))
 ok('المستخدم النشط رجع للمالك بعد تعطيله', S().currentUserId === null)
+await S().login(null, '1234') // رجوع للمالك بالدخول الشرعي قبل بقية الفحوص
 
 console.log('\n5️⃣ البلاغات الداخلية: إنشاء → معالجة → حل موثق + جرس')
 ok('تحقق البلاغ: عنوان مطلوب', validateIssue({ title: '', details: 'تفاصيل كافية' }).length === 1)

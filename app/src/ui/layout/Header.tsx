@@ -5,7 +5,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Moon, Sun, BookOpenText, Calculator, Bell, UserCircle2, BellOff } from 'lucide-react'
+import { Moon, Sun, BookOpenText, Calculator, Bell, UserCircle2, BellOff, LogOut } from 'lucide-react'
+import { authRequired } from '../../core/auth.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -27,7 +28,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests } = useDataStore()
   const navigate = useNavigate()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -43,6 +44,9 @@ export function Header({ title }: { title: string }) {
     return () => document.removeEventListener('mousedown', close)
   }, [bellOpen])
 
+  const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
+  const authOn = authRequired(ownerPinHash, appUsers.filter((u) => u.active).length)
+
   const notifications = useMemo(
     () => collectNotifications({
       batches,
@@ -51,10 +55,14 @@ export function Header({ title }: { title: string }) {
       customerName: (id) => customers.find((c) => c.id === id)?.nameAr ?? `عميل #${id}`,
       cheques,
       openIssues: issues.filter((i) => i.status !== 'resolved').map((i) => ({ id: i.id, title: i.title, reportedBy: i.reportedBy })),
+      // طلبات استعادة كلمة السر — تظهر للمالك فقط (الموظف لا يرى الجرس المالي أصلاً بحكم الصلاحيات)
+      openPinResets: currentUserId == null
+        ? pinResetRequests.filter((r) => r.status === 'open').map((r) => ({ id: r.id, nameAr: r.nameAr }))
+        : [],
       fmt: (m) => formatMinor(m, cur, false),
       todayIso: new Date().toISOString(),
     }),
-    [batches, items, installmentPlans, customers, cheques, issues, cur],
+    [batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur],
   )
 
   return (
@@ -148,10 +156,21 @@ export function Header({ title }: { title: string }) {
 
       <div className="flex items-center gap-2 pr-2 border-r border-slate-200 dark:border-slate-700">
         <div className="text-left hidden sm:block">
-          <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{setup.ownerName || 'المالك'}</div>
-          <div className="text-[10px] text-emerald-500 font-bold">👑 كل الصلاحيات</div>
+          <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{activeUser?.nameAr ?? (setup.ownerName || 'المالك')}</div>
+          <div className={`text-[10px] font-bold ${activeUser ? 'text-brand-500' : 'text-emerald-500'}`}>
+            {activeUser ? `🛡️ ${activeUser.roleId}` : '👑 كل الصلاحيات'}
+          </div>
         </div>
         <UserCircle2 size={30} className="text-brand-500" />
+        {authOn && (
+          <button
+            onClick={logout}
+            title="تسجيل خروج — العودة لشاشة الدخول"
+            className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-rose-500/10 hover:text-rose-500 transition-all duration-200 hover:scale-110"
+          >
+            <LogOut size={17} />
+          </button>
+        )}
       </div>
     </header>
   )

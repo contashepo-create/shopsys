@@ -24,6 +24,8 @@ export interface NotificationsInput {
   cheques: { chequeNumber: string; direction: string; partyName: string; amountMinor: number; dueDate: string; status: string }[]
   /** بلاغات المشاكل الداخلية المفتوحة (مستخدم → مدير/محاسب) — طلب المالك */
   openIssues?: { id: number; title: string; reportedBy: string }[]
+  /** طلبات استعادة كلمة السر المفتوحة — تظهر للمالك ليعيّن رقماً جديداً */
+  openPinResets?: { id: number; nameAr: string }[]
   fmt: (minor: number) => string
   todayIso: string // ISO كامل أو YYYY-MM-DD
 }
@@ -73,6 +75,18 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       body: `أبلغ عنها ${iss.reportedBy} — افتح البلاغات لمعالجتها وتوثيق الحل`,
       severity: 'warn',
       route: '/settings/issues',
+    })
+  }
+
+  // 2.7) طلبات استعادة كلمة السر — للمالك: موظف نسي رقمه وينتظر التعيين
+  for (const r of input.openPinResets ?? []) {
+    out.push({
+      id: `pinreset:${r.id}`,
+      icon: '🔑',
+      title: `طلب استعادة رقم سري: ${r.nameAr}`,
+      body: 'افتح شاشة الصلاحيات ← المستخدمون لتعيين رقم جديد له وإبلاغه به',
+      severity: 'warn',
+      route: '/settings/permissions',
     })
   }
 

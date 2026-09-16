@@ -13,7 +13,11 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury:
 const { useDataStore } = await import('../src/data/repo.ts')
 const { validateWastage, buildWastageEntry, wastageTotalMinor, WASTAGE_REASONS } = await import('../src/core/wastage.ts')
 const { encode128, barcodeSvg } = await import('../src/core/code128.ts')
-const { renderLabelsHtml } = await import('../src/ui/print/printLabels.ts')
+const { renderItemLabelsHtml } = await import('../src/ui/print/printProLabels.ts')
+const { DEFAULT_LABEL_SETTINGS } = await import('../src/core/labels.ts')
+// توافق مع بقية الفحوص القديمة: نفس التوقيع القديم عبر القالب المركزي الجديد
+const renderLabelsHtml = (shop, items, cur) =>
+  renderItemLabelsHtml(shop, items.map((i) => ({ ...i, sku: i.sku ?? '' })), DEFAULT_LABEL_SETTINGS, cur)
 const { STANDARD_COA } = await import('../src/core/ledger.ts')
 const S = () => useDataStore.getState()
 

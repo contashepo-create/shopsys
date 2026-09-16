@@ -22,14 +22,15 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { buildItemLedger } from '../../core/itemLedger.ts'
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { renderItemLedgerHtml } from '../print/printItemLedger.ts'
-import { renderLabelsHtml, type LabelItem } from '../print/printLabels.ts'
+import { renderItemLabelsHtml } from '../print/printProLabels.ts'
+import type { ItemLabelData } from '../../core/labels.ts'
 import { printHtml } from '../print/printReceipt.ts'
 
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
 export function ItemsPage() {
   const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers } = useDataStore()
-  const { setup } = useAppStore()
+  const { setup, labelSettings } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -88,16 +89,17 @@ export function ItemsPage() {
   const [labelsOpen, setLabelsOpen] = useState(false)
   const [labelCounts, setLabelCounts] = useState<Record<number, string>>({})
   const printLabels = () => {
-    const list: LabelItem[] = []
+    const list: ItemLabelData[] = []
     for (const [idStr, cntStr] of Object.entries(labelCounts)) {
       const cnt = Number(cntStr) || 0
       if (cnt <= 0) continue
       const it = items.find((x) => x.id === Number(idStr))
       if (!it) continue
-      list.push({ nameAr: it.nameAr, barcode: it.barcodes.find(Boolean) || it.sku || String(it.id), priceMinor: it.priceMinor, count: Math.min(cnt, 500) })
+      list.push({ nameAr: it.nameAr, barcode: it.barcodes.find(Boolean) || it.sku || String(it.id), sku: it.sku, priceMinor: it.priceMinor, count: Math.min(cnt, 500) })
     }
     if (!list.length) { toast.show('حدد عدد الملصقات لصنف واحد على الأقل', 'error'); return }
-    printHtml(renderLabelsHtml(setup.shopName || 'تَحَكَّم', list, cur))
+    // القالب المركزي (مركز الباركود) — يُضبط مرة ويسري على كل الطباعات
+    printHtml(renderItemLabelsHtml(setup.shopName || 'تَحَكَّم', list, labelSettings, cur))
   }
   const [ledgerFrom, setLedgerFrom] = useState('')
   const [ledgerTo, setLedgerTo] = useState('')

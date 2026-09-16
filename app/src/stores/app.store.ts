@@ -14,6 +14,7 @@ import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegr
 import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
 import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
 import { DEFAULT_REPORT_PRINT, type ReportPrintSettings } from '../core/reportPrint.ts'
+import { DEFAULT_LABEL_SETTINGS, type LabelSettings } from '../core/labels.ts'
 import type { AboutContent } from '../core/cloud.ts'
 import type { DeviceFlags } from '../core/featureFlags.ts'
 
@@ -70,6 +71,9 @@ interface AppState {
   /** إعدادات طباعة التقارير المعممة (طلب المالك): كل تقارير النظام لا الفواتير فقط */
   reportPrint: ReportPrintSettings
   updateReportPrint: (patch: Partial<ReportPrintSettings>) => void
+  /** قالب ملصقات الباركود/السيريال — يُضبط مرة ويسري على كل الطباعات (طلب المالك) */
+  labelSettings: LabelSettings
+  updateLabelSettings: (patch: Partial<LabelSettings>) => void
   autoPrintAfterSale: boolean
   updateReceipt: (patch: Partial<ReceiptSettings>) => void
   setAutoPrint: (v: boolean) => void
@@ -219,6 +223,8 @@ export const useAppStore = create<AppState>()(
       receipt: DEFAULT_RECEIPT_SETTINGS,
       reportPrint: DEFAULT_REPORT_PRINT,
       updateReportPrint: (patch) => set((s) => ({ reportPrint: { ...s.reportPrint, ...patch } })),
+      labelSettings: DEFAULT_LABEL_SETTINGS,
+      updateLabelSettings: (patch) => set((s) => ({ labelSettings: { ...s.labelSettings, ...patch } })),
       autoPrintAfterSale: false,
       updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
       setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
@@ -319,6 +325,8 @@ export const useAppStore = create<AppState>()(
         }
         // ترحيل: إعدادات طباعة التقارير المعممة (طلب المالك)
         if (state) state.reportPrint = { ...DEFAULT_REPORT_PRINT, ...state.reportPrint }
+        // ترحيل: قالب الملصقات (قسم الباركود والسيريال)
+        if (state) state.labelSettings = { ...DEFAULT_LABEL_SETTINGS, ...state.labelSettings }
         // ترحيل: حسابات قبل ميزة المظهر تحصل على الافتراضيات (مع تنقية القيم)
         if (state) state.appearance = sanitizeAppearance(state.appearance)
         // ترحيل: حسابات قبل ميزة التليجرام تحصل على الافتراضيات

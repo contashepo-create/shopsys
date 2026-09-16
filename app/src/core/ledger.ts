@@ -40,7 +40,7 @@ export type SourceType =
   | 'sub_certificate' | 'sub_payment' | 'bond_issue' | 'bond_settle' | 'client_advance' | 'daily_wages'
   | 'production' | 'scrap_purchase' | 'scrap_sale' | 'equipment_cost'
   | 'consignment_sale' | 'consignment_payout' | 'driver_settlement'
-  | 'sub_advance' | 'material_issue' | 'client_payment' | 'wastage'
+  | 'sub_advance' | 'material_issue' | 'client_payment' | 'wastage' | 'internal_use'
   | 'insured_sale' | 'claim_settlement'
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
@@ -164,4 +164,5 @@ export const STANDARD_COA: Account[] = [
   { code: '5111', nameAr: 'هالك وتوالف مخزون', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'wastage' },
   { code: '5112', nameAr: 'فروق تسويات وجرد نقدية', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'settlement_variance' },
   { code: '5113', nameAr: 'مصروف عمولات للغير', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'commission_expense_others' },
+  { code: '5114', nameAr: 'مستهلكات تشغيل داخلي', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'internal_use' },
 ]

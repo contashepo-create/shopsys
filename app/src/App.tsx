@@ -12,6 +12,8 @@ import { fetchAbout, fetchRevocationList, DEFAULT_CLOUD_BASE_URL } from './core/
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
+import { LoginScreen } from './ui/LoginScreen.tsx'
+import { authRequired } from './core/auth.ts'
 import { buildAccentCssVars } from './core/appearance.ts'
 import { decideTabLock, parseTabLock, TAB_HEARTBEAT_MS } from './core/concurrency.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath, permissionForPath, PERMISSIONS } from './core/permissions.ts'
@@ -67,6 +69,8 @@ import { IssuesPage } from './ui/pages/IssuesPage.tsx'
 import { SupportPage } from './ui/pages/SupportPage.tsx'
 import { WalletServicesPage } from './ui/pages/WalletServicesPage.tsx'
 import { WastagePage } from './ui/pages/WastagePage.tsx'
+import { ConsumptionPage } from './ui/pages/ConsumptionPage.tsx'
+import { BarcodeCenterPage } from './ui/pages/BarcodeCenterPage.tsx'
 import { OpeningBalancesPage } from './ui/pages/OpeningBalancesPage.tsx'
 import { SerialsPage } from './ui/pages/SerialsPage.tsx'
 import { SettlementsPage } from './ui/pages/SettlementsPage.tsx'
@@ -96,8 +100,11 @@ function Shell() {
   const title = usePageTitle()
   const location = useLocation()
 
-  // ─── حارس المسارات (البند 4 — صفر تجاوز): حتى الرابط المباشر لا يفتح شاشة بلا صلاحية ───
-  const { appUsers, currentUserId, roleOverrides } = useDataStore()
+  // ─── بوابة تسجيل الدخول (سد ثغرة انتحال الصلاحيات): PIN إجباري متى فُعّلت المصادقة ───
+  const { appUsers, currentUserId, roleOverrides, ownerPinHash, loggedOut } = useDataStore()
+  if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && loggedOut) {
+    return <LoginScreen />
+  }
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides))
   if (!canAccessPath(location.pathname, perms)) {
@@ -188,6 +195,8 @@ function Shell() {
         <Route path="/settings/support" element={<SupportPage />} />
         <Route path="/wallets/ops" element={<WalletServicesPage />} />
         <Route path="/inventory/wastage" element={<WastagePage />} />
+        <Route path="/inventory/consumption" element={<ConsumptionPage />} />
+        <Route path="/inventory/barcode-center" element={<BarcodeCenterPage />} />
         <Route path="/accounting/opening-balances" element={<OpeningBalancesPage />} />
         <Route path="/inventory/serials" element={<SerialsPage />} />
         <Route path="/accounting/settlements" element={<SettlementsPage />} />

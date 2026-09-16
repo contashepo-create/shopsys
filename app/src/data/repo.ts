@@ -15,7 +15,12 @@ import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput
 import { computeTotals, buildSaleEntry, baseQty, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnEntry, deriveTaxConfig } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
-import { auditFromPatch, appendAudit, sanitizeText, validateIssue, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
+import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
+import {
+  EMPTY_GUARD, registerFailure, lockoutMinutesLeft, tempPinExpired, validateResetRequest,
+  type LoginGuard, type OwnerTempPin, type PinResetRequest,
+} from '../core/auth.ts'
+import { validateConsumption, buildConsumptionEntry, consumptionTotalMinor, INTERNAL_USE_ACCOUNT } from '../core/consumption.ts'
 import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, type WalletServiceInput, type WalletServiceType, type WalletProvider, type WalletServiceTotals } from '../core/walletServices.ts'
 import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
@@ -638,6 +643,19 @@ export interface WastageDoc {
   notes: string
 }
 
+/** مستند صرف داخلي (استهلاك مخزون للتشغيل) — موثق بغرض ومربوط بقيده: مصروف / 1103 */
+export interface ConsumptionDoc {
+  id: number
+  consumptionNumber: string // CNS-0001
+  date: string // ISO
+  purpose: string
+  expenseAccount: string // 5114 افتراضياً أو حساب مصروف آخر
+  lines: { itemId: number; nameAr: string; qty: number; unitCostMinor: number }[]
+  totalCostMinor: number
+  journalEntryId: number
+  notes: string
+}
+
 /** مستند تسوية شاملة (نمط mobileshop): جرد خزينة/مطابقة عميل أو مورد — الفرق يضرب 5112 إجبارياً */
 export interface SettlementDoc {
   id: number
@@ -959,6 +977,7 @@ interface DataState {
   stocktakes: Stocktake[]
   /** مستندات الإتلاف (هالك وتوالف) — 5111/1103 */
   wastages: WastageDoc[]
+  consumptions: ConsumptionDoc[] // مستندات الصرف الداخلي (استهلاك تشغيل) — مصروف/1103
   /** الأرصدة الافتتاحية المثبتة: key = kind:refId → آخر رصيد مرحّل (Minor) — التعديل يرحّل الفرق فقط */
   openingBalances: Record<string, number>
   /** التسويات الشاملة (خزينة/عميل/مورد) — كل فرق مربوط بقيد 5112 */
@@ -987,6 +1006,29 @@ interface DataState {
   setUserPermExceptions: (id: number, extraPerms: string[], deniedPerms: string[]) => void
   currentUserId: number | null // المستخدم النشط حالياً (null = المالك الافتراضي)
   issues: IssueReport[] // بلاغات المشاكل الداخلية (مستخدم → مدير/محاسب)
+  /* ─── تسجيل الدخول الفعلي (سد ثغرة انتحال الصلاحيات) ─── */
+  /** تجزئة الرقم السري للمالك — null = لم يعيّن بعد فلا تُفرض شاشة الدخول */
+  ownerPinHash: string | null
+  /** true = لا أحد داخل — شاشة الدخول تحجب التطبيق كله (متى كانت المصادقة مطلوبة) */
+  loggedOut: boolean
+  /** حارس المحاولات الفاشلة (يبقى بعد تحديث الصفحة — لا تحايل) */
+  loginGuard: LoginGuard
+  /** رقم مؤقت للمالك أُرسل عبر تليجرام (تجزئة + انتهاء) — يُمحى فور استخدامه */
+  ownerTempPin: OwnerTempPin | null
+  /** طلبات استعادة كلمة سر الموظفين — تظهر إشعاراً للمالك */
+  pinResetRequests: PinResetRequest[]
+  /** تعيين/تغيير الرقم السري للمالك (يفعّل شاشة الدخول من أول تعيين) */
+  setOwnerPin: (pinHash: string) => void
+  /** دخول بفحص PIN فعلي: id=null للمالك — يرمي خطأً عربياً عند الرفض؛ usedTempPin=true ⇒ ألزم المالك بتعيين رقم جديد */
+  login: (id: number | null, pin: string) => Promise<{ usedTempPin: boolean }>
+  /** خروج — يعيد شاشة الدخول */
+  logout: () => void
+  /** موظف نسي رقمه: يسجل طلباً من شاشة الدخول ← إشعار للمالك */
+  requestPinReset: (userId: number) => void
+  /** المالك ينفذ/يرفض طلب الاستعادة (مع تعيين pinHash جديد عند التنفيذ) */
+  resolvePinReset: (requestId: number, action: 'done' | 'cancelled', newPinHash?: string) => void
+  /** حفظ الرقم المؤقت للمالك (تجزئة) بعد إرساله عبر البوت */
+  setOwnerTempPin: (t: OwnerTempPin | null) => void
   addAppUser: (u: { nameAr: string; roleId: string; pinHash: string }) => AppUser
   updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms'>>) => void
   removeAppUser: (id: number) => void
@@ -1089,6 +1131,8 @@ interface DataState {
   postStocktake: (counts: CountInput[], notes: string) => Stocktake
   /** إتلاف مخزون موثق بسبب: يخصم الكميات + يستهلك دفعات FEFO + قيد 5111/1103 */
   postWastage: (args: { reason: string; lines: { itemId: number; qty: number }[]; notes: string }) => WastageDoc
+  /** صرف داخلي (استهلاك مخزون للتشغيل): يخصم الرصيد + FEFO + قيد مصروف/1103 بالمتوسط المرجح */
+  postConsumption: (args: { purpose: string; expenseAccount?: string; lines: { itemId: number; qty: number }[]; notes: string }) => ConsumptionDoc
   /**
    * ضبط رصيد افتتاحي (نمط mobileshop): عميل/مورد/خزينة/سلفة موظف —
    * يرحّل قيد الفرق فقط مقابل رأس المال 3101، فيبقى المركز المالي متزناً.
@@ -1617,7 +1661,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 17 // 15: أوامر مطعم — 16: مقايضة ذهب GTI — 17: تمويل الأصول+أقساطها وعمولات لدى الغير وحسابات مخصصة
+export const DATA_VERSION = 18 // 16: مقايضة ذهب GTI — 17: تمويل الأصول والحسابات المخصصة — 18: تسجيل الدخول الفعلي + الصرف الداخلي
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -1759,6 +1803,7 @@ export const useDataStore = create<DataState>()(
       purchaseReturns: [],
       stocktakes: [],
       wastages: [],
+      consumptions: [],
       openingBalances: {},
       settlements: [],
       exchanges: [],
@@ -1777,6 +1822,11 @@ export const useDataStore = create<DataState>()(
       roleOverrides: {},
       currentUserId: null,
       issues: [],
+      ownerPinHash: null,
+      loggedOut: false,
+      loginGuard: EMPTY_GUARD,
+      ownerTempPin: null,
+      pinResetRequests: [],
 
       seed: (activityFeatures) => {
         if (get().seeded) return
@@ -2611,6 +2661,81 @@ export const useDataStore = create<DataState>()(
         return doc
       },
 
+      postConsumption: (args) => {
+        const state = get()
+        const expenseAccount = (args.expenseAccount ?? INTERNAL_USE_ACCOUNT).trim()
+        // 1) إثراء السطور بالتكلفة المرجحة ثم تحقق النواة الخالصة قبل أي كتابة
+        const lines = args.lines.map((l) => {
+          const item = state.items.find((it) => it.id === l.itemId)
+          if (!item) throw new Error('صنف غير موجود بالمخزون')
+          return { itemId: l.itemId, nameAr: item.nameAr, qty: l.qty, unitCostMinor: item.costMinor }
+        })
+        const isExpense = (code: string) => {
+          const std = STANDARD_COA.find((a) => a.code === code)
+          if (std) return std.rootType === 'expenses' && std.isPostable
+          const custom = state.customAccounts.find((a) => a.code === code)
+          return !!custom && custom.rootType === 'expenses'
+        }
+        const errors = validateConsumption(
+          { purpose: args.purpose, expenseAccount, lines },
+          (itemId) => state.items.find((it) => it.id === itemId)?.stockQty ?? 0,
+          isExpense,
+        )
+        if (errors.length) throw new Error(errors.join(' — '))
+
+        const consumptionId = nextId(state.consumptions)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const consumptionNumber = `CNS-${String(consumptionId).padStart(4, '0')}`
+        const entryLines = buildConsumptionEntry(lines, expenseAccount, consumptionNumber)
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `صرف داخلي ${consumptionNumber} — ${args.purpose}`,
+          sourceType: 'internal_use',
+          sourceId: consumptionId,
+          lines: entryLines,
+          createdBy: state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك',
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+
+        // 2) خصم الكميات + استهلاك دفعات الصلاحية الأقدم أولاً (FEFO — نفس نمط الإتلاف)
+        const qtyBy = new Map(lines.map((l) => [l.itemId, l.qty]))
+        const updatedItems = state.items.map((it) =>
+          qtyBy.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyBy.get(it.id)!) * 1000) / 1000 } : it,
+        )
+        let batches = state.batches
+        for (const l of lines) {
+          let rest = l.qty
+          batches = batches
+            .slice()
+            .sort((a, b) => ((a.expiryDate ?? '9999') < (b.expiryDate ?? '9999') ? -1 : 1))
+            .map((b) => {
+              if (b.itemId !== l.itemId || rest <= 0 || b.qty <= 0) return b
+              const take = Math.min(b.qty, rest)
+              rest -= take
+              return { ...b, qty: Math.round((b.qty - take) * 1000) / 1000 }
+            })
+        }
+
+        const doc: ConsumptionDoc = {
+          id: consumptionId,
+          consumptionNumber,
+          date: now,
+          purpose: args.purpose,
+          expenseAccount,
+          lines,
+          totalCostMinor: consumptionTotalMinor(lines),
+          journalEntryId: entryId,
+          notes: sanitizeText(args.notes, 500),
+        }
+        set({ consumptions: [...state.consumptions, doc], journal: [...state.journal, entry], items: updatedItems, batches })
+        return doc
+      },
+
       setOpeningBalance: (args) => {
         const state = get()
         const errors = validateOpening(args.kind, args.amountMinor)
@@ -3404,6 +3529,8 @@ export const useDataStore = create<DataState>()(
       /* ─── المستخدمون وسجل النشاطات والبلاغات (طلب المالك) ─── */
       addAppUser: (u) => {
         const state = get()
+        // أمان: لا مستخدمين فرعيين قبل تحصين حساب المالك برقم سري — وإلا صار «المالك» باباً مفتوحاً بشاشة الدخول
+        if (state.ownerPinHash == null) throw new Error('عيّن رقماً سرياً لحساب المالك أولاً (من نفس الشاشة) ثم أضف المستخدمين')
         const nameAr = sanitizeText(u.nameAr, 60)
         if (!nameAr) throw new Error('اسم المستخدم مطلوب')
         if (state.appUsers.some((x) => x.nameAr === nameAr && x.active)) throw new Error('يوجد مستخدم نشط بنفس الاسم')
@@ -3459,8 +3586,98 @@ export const useDataStore = create<DataState>()(
       setCurrentUser: (id) => {
         const state = get()
         if (id != null && !state.appUsers.some((u) => u.id === id && u.active)) throw new Error('مستخدم غير موجود أو معطل')
+        // سد ثغرة انتحال الصلاحيات: متى فُعّلت المصادقة، التبديل يمر عبر login() بفحص PIN فقط
+        if (state.ownerPinHash != null || state.appUsers.some((u) => u.active)) {
+          throw new Error('تبديل المستخدم يتم من شاشة الدخول بالرقم السري — سجّل خروجاً ثم ادخل بالحساب الآخر')
+        }
         set({ currentUserId: id })
       },
+      setOwnerPin: (pinHash) => {
+        if (!pinHash) throw new Error('الرقم السري مطلوب')
+        set({ ownerPinHash: pinHash, ownerTempPin: null })
+      },
+      login: async (id, pin) => {
+        const state = get()
+        const nowIso = new Date().toISOString()
+        const lockLeft = lockoutMinutesLeft(state.loginGuard, nowIso)
+        if (lockLeft > 0) throw new Error(`محاولات كثيرة خاطئة — الدخول مقفول ${lockLeft} دقيقة`)
+        let ok = false
+        let usedTempPin = false
+        if (id == null) {
+          // المالك: الرقم الأساسي أو الرقم المؤقت (تليجرام) غير المنتهي
+          if (state.ownerPinHash && (await verifyPin(pin, state.ownerPinHash))) ok = true
+          else if (state.ownerTempPin && !tempPinExpired(state.ownerTempPin, nowIso) && (await verifyPin(pin, state.ownerTempPin.pinHash))) {
+            ok = true
+            usedTempPin = true
+          }
+        } else {
+          const user = state.appUsers.find((u) => u.id === id && u.active)
+          if (!user) throw new Error('مستخدم غير موجود أو معطل')
+          if (await verifyPin(pin, user.pinHash)) ok = true
+        }
+        if (!ok) {
+          const guard = registerFailure(state.loginGuard, nowIso)
+          set({ loginGuard: guard })
+          throw new Error(guard.lockedUntil
+            ? `رقم سري خاطئ — قُفل الدخول ${lockoutMinutesLeft(guard, nowIso)} دقائق`
+            : 'رقم سري خاطئ')
+        }
+        const userName = id == null ? 'المالك' : (state.appUsers.find((u) => u.id === id)?.nameAr ?? '؟')
+        set({
+          currentUserId: id,
+          loggedOut: false,
+          loginGuard: EMPTY_GUARD,
+          // الرقم المؤقت يُحرق فور استخدامه (استخدام واحد)
+          ...(usedTempPin ? { ownerTempPin: null } : {}),
+          auditLog: appendAudit(state.auditLog, [{ at: nowIso, user: userName, kind: 'auth', title: usedTempPin ? 'دخول المالك برقم مؤقت (استعادة تليجرام)' : `تسجيل دخول «${userName}»` }]),
+        })
+        return { usedTempPin }
+      },
+      logout: () => {
+        const state = get()
+        const activeUser = state.appUsers.find((u) => u.id === state.currentUserId)
+        set({
+          loggedOut: true,
+          auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: activeUser?.nameAr ?? 'المالك', kind: 'auth', title: `تسجيل خروج «${activeUser?.nameAr ?? 'المالك'}»` }]),
+        })
+      },
+      requestPinReset: (userId) => {
+        const state = get()
+        const user = state.appUsers.find((u) => u.id === userId && u.active)
+        const errors = validateResetRequest(state.pinResetRequests, userId, !!user)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const req: PinResetRequest = {
+          id: nextId(state.pinResetRequests),
+          userId,
+          nameAr: user!.nameAr,
+          requestedAt: new Date().toISOString(),
+          status: 'open',
+          resolvedAt: null,
+        }
+        set({
+          pinResetRequests: [...state.pinResetRequests, req],
+          auditLog: appendAudit(state.auditLog, [{ at: req.requestedAt, user: user!.nameAr, kind: 'auth', title: `طلب استعادة رقم سري من «${user!.nameAr}»` }]),
+        })
+      },
+      resolvePinReset: (requestId, action, newPinHash) => {
+        const state = get()
+        const req = state.pinResetRequests.find((r) => r.id === requestId)
+        if (!req) throw new Error('الطلب غير موجود')
+        if (req.status !== 'open') throw new Error('الطلب محسوم بالفعل')
+        if (action === 'done') {
+          if (!newPinHash) throw new Error('عيّن الرقم السري الجديد أولاً')
+          const user = state.appUsers.find((u) => u.id === req.userId)
+          if (!user) throw new Error('المستخدم غير موجود')
+          set({
+            appUsers: state.appUsers.map((u) => (u.id === req.userId ? { ...u, pinHash: newPinHash } : u)),
+            pinResetRequests: state.pinResetRequests.map((r) => (r.id === requestId ? { ...r, status: 'done' as const, resolvedAt: new Date().toISOString() } : r)),
+            auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: 'المالك', kind: 'auth', title: `أعاد المالك تعيين الرقم السري لـ«${req.nameAr}»` }]),
+          })
+        } else {
+          set({ pinResetRequests: state.pinResetRequests.map((r) => (r.id === requestId ? { ...r, status: 'cancelled' as const, resolvedAt: new Date().toISOString() } : r)) })
+        }
+      },
+      setOwnerTempPin: (t) => set({ ownerTempPin: t }),
       reportIssue: (input) => {
         const state = get()
         const errors = validateIssue(input)
@@ -6919,6 +7136,13 @@ export const useDataStore = create<DataState>()(
           roleOverrides: s.roleOverrides ?? {},
           currentUserId: s.currentUserId ?? null,
           issues: s.issues ?? [],
+          // الإصدار 18: تسجيل الدخول الفعلي + الصرف الداخلي
+          ownerPinHash: s.ownerPinHash ?? null,
+          loggedOut: s.loggedOut ?? false,
+          loginGuard: s.loginGuard ?? EMPTY_GUARD,
+          ownerTempPin: s.ownerTempPin ?? null,
+          pinResetRequests: s.pinResetRequests ?? [],
+          consumptions: s.consumptions ?? [],
           // ترحيل الخزائن المتعددة: الحسابات القديمة تحصل على الافتراضيتين
           treasuries: s.treasuries && s.treasuries.length > 0 ? s.treasuries : DEFAULT_TREASURIES,
           categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),
