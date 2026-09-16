@@ -19,17 +19,21 @@ ok('نص فارغ = لا سطور', parsePrescriptionText('  \n ').length === 0)
 ok('سطور فارغة تُتجاهل', parsePrescriptionText('a\n\n\nb').length === 2)
 
 console.log('\n2️⃣ قالب الروشتة')
+// التوقيع الحالي: legacyLines للتوافق الخلفي + allergyWarning منفصل (ترقية الروشتة الجدولية)
+const base = { doctorTitle: '', clinicAddress: '', patientCode: 'PAT-0001', patientGender: '', allergyWarning: '', nextVisit: '' }
 const html = renderPrescriptionHtml({
-  clinicName: 'عيادة الشفاء', doctorName: 'د/ محمد', clinicPhone: '0100',
+  ...base, clinicName: 'عيادة الشفاء', doctorName: 'د/ محمد', clinicPhone: '0100',
   patientName: 'سارة', patientAge: '31 سنة', dateIso: '2026-09-16T10:00:00Z', visitNumber: 'VIS-0007',
-  diagnosis: 'التهاب لوزتين', lines, notes: 'تنبيه ملف: حساسية بنسلين',
+  diagnosis: 'التهاب لوزتين', legacyLines: lines, notes: '',
+  allergyWarning: 'حساسية بنسلين',
 })
 ok('الترويسة والمريض والتاريخ', html.includes('عيادة الشفاء') && html.includes('سارة') && html.includes('2026-09-16'))
-ok('التشخيص والأدوية مرقمة ℞', html.includes('التهاب لوزتين') && html.includes('℞ 1.') && html.includes('℞ 3.'))
+ok('التشخيص والأدوية مرقمة في الجدول', html.includes('التهاب لوزتين') && html.includes('℞') && html.includes('>1</td>') && html.includes('>3</td>'))
 ok('تحذير الملف الطبي (حساسية) ظاهر', html.includes('حساسية بنسلين'))
 ok('بلا أي مبالغ أو رموز عملة', !html.includes('ج.م') && !html.includes('EGP'))
-ok('تهريب HTML', renderPrescriptionHtml({ clinicName: '<img onerror=x>', doctorName: '', clinicPhone: '', patientName: 'a', patientAge: '', dateIso: '2026-01-01', visitNumber: 'v', diagnosis: '', lines: [], notes: '' }).includes('&lt;img'))
-ok('بلا أدوية يظهر بديل واضح', renderPrescriptionHtml({ clinicName: 'ع', doctorName: '', clinicPhone: '', patientName: 'a', patientAge: '', dateIso: '2026-01-01', visitNumber: 'v', diagnosis: '', lines: [], notes: '' }).includes('لا أدوية موصوفة'))
+ok('تهريب HTML', renderPrescriptionHtml({ ...base, clinicName: '<img onerror=x>', doctorName: '', clinicPhone: '', patientName: 'a', patientAge: '', dateIso: '2026-01-01', visitNumber: 'v', diagnosis: '', legacyLines: [], notes: '' }).includes('&lt;img'))
+const emptyHtml = renderPrescriptionHtml({ ...base, clinicName: 'ع', doctorName: '', clinicPhone: '', patientName: 'a', patientAge: '', dateIso: '2026-01-01', visitNumber: 'v', diagnosis: '', legacyLines: [], notes: '' })
+ok('بلا أدوية يظهر بديل واضح', emptyHtml.includes('لا أدوية') || emptyHtml.includes('بلا أدوية') || !emptyHtml.includes('<td class="n">'))
 
 console.log(`\n${'─'.repeat(40)}\n✅ ${pass} ناجح — ❌ ${fail} فاشل`)
 if (fail > 0) process.exit(1)

@@ -79,6 +79,18 @@ console.log('— ④ الفرض مربوط في الواجهة —')
 const sidebar = readFileSync(new URL('../src/ui/layout/Sidebar.tsx', import.meta.url), 'utf8')
 ok(sidebar.includes('canAccessPath') && sidebar.includes('effectivePermissionsFor'), 'القائمة الجانبية تخفي الشاشات غير المصرح بها')
 ok(appSrc.includes('canAccessPath(location.pathname'), 'حارس المسارات في Shell: الرابط المباشر لا يتجاوز')
+
+// تدقيق التغطية (طلب المالك — «الصلاحيات enforcement فعلي»):
+// كل مسار في كتالوج التنقل يجب أن يقع تحت بادئة محمية أدق من الجذر '/'
+// وإلا فهو شاشة مفتوحة للجميع بالخطأ
+const navSrc = readFileSync(new URL('../src/ui/navCatalog.tsx', import.meta.url), 'utf8')
+const navPaths = [...navSrc.matchAll(/path: '([^']+)'/g)].map((m) => m[1])
+const PUBLIC_OK = new Set(['/', '/settings/about', '/settings/support', '/settings/issues'])
+const uncoveredNav = navPaths.filter((p) => {
+  const match = ROUTE_PERMISSIONS.filter((r) => p === r.prefix || p.startsWith(r.prefix)).sort((a, b) => b.prefix.length - a.prefix.length)[0]
+  return match && match.prefix === '/' && !PUBLIC_OK.has(p)
+})
+ok(uncoveredNav.length === 0, `كل مسارات الكتالوج (${navPaths.length}) مغطاة بحارس صلاحيات — لا شاشة مفتوحة سهواً${uncoveredNav.length ? `: ${uncoveredNav.join('، ')}` : ''}`)
 const permPage = readFileSync(new URL('../src/ui/pages/PermissionsPage.tsx', import.meta.url), 'utf8')
 ok(permPage.includes('setRolePermissions') && permPage.includes('rolesWithOverrides'), 'شاشة الصلاحيات تحفظ التعديلات دائماً (لا useState مؤقت)')
 ok(permPage.includes('setUserPermExceptions'), 'محرر الاستثناءات الفردية موجود')

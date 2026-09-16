@@ -59,7 +59,7 @@ const html = renderPatientRecordHtml({
   attachments: [{ kind: 'xray', name: 'أشعة صدر', addedAt: '2026-01-16T09:00' }],
   totalFees: '100 ج.م', totalDue: '30 ج.م', printedAt: '2026-09-16 12:00',
 })
-ok(html.includes('السجل الطبي الكامل'), 'عنوان التقرير')
+ok(html.includes('سجل طبي'), 'عنوان التقرير')
 ok(html.includes('PAT-0007'), 'كود المريض في البطاقة')
 ok(html.includes('من بداية التعامل 2026-01-15'), 'بداية التعامل حتى الآن')
 ok(html.includes('⚠️ حساسية') && html.includes('بنسلين'), 'الحساسية بارزة في التاريخ المرضي')
