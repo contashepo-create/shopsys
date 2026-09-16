@@ -60,6 +60,30 @@ body {
   100% { background-position: 400px 0; }
 }
 
+/* حركات معالج أول التشغيل — انتقالات «خيالية» بين الخطوات (أمر المالك) */
+@keyframes wizardSlideIn {
+  0% { opacity: 0; transform: translateX(-48px) scale(0.96); filter: blur(6px); }
+  60% { filter: blur(0); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+@keyframes wizardGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(139 92 246 / 0); }
+  50% { box-shadow: 0 0 42px 6px rgb(139 92 246 / 0.35); }
+}
+@keyframes floatY {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+@keyframes orbDrift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(40px, -30px) scale(1.15); }
+  66% { transform: translate(-30px, 25px) scale(0.9); }
+}
+.anim-wizard-step { animation: wizardSlideIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-glow { animation: wizardGlow 3s ease-in-out infinite; }
+.anim-float { animation: floatY 4s ease-in-out infinite; }
+.anim-orb { animation: orbDrift 14s ease-in-out infinite; }
+
 .anim-up { animation: fadeSlideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .anim-in { animation: fadeIn 0.4s ease both; }
 .anim-pop { animation: popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both; }

@@ -34,6 +34,11 @@ interface SetupState {
   allowNegativeStock: boolean
   /** المخزن الافتراضي للفواتير (إعدادات الفواتير) — null = المخزن الرئيسي */
   defaultWarehouseId: number | null
+  // ─── بيانات المنشأة (معالج أول التشغيل — إلزامية بطلب المالك) ───
+  phone: string
+  email: string
+  city: string
+  street: string
 }
 
 interface AppState {
@@ -47,6 +52,7 @@ interface AppState {
     shopName: string
     ownerName: string
     fiscalYear: Omit<FiscalYear, 'id' | 'status'>
+    contact?: { phone: string; email: string; city: string; street: string }
   }) => void
   addFiscalYear: (fy: Omit<FiscalYear, 'id' | 'status'>) => void
   setAccountingMode: (m: 'simple' | 'full') => void
@@ -155,9 +161,10 @@ export const useAppStore = create<AppState>()(
         allowNegativeTreasury: false,
         allowNegativeStock: false,
         defaultWarehouseId: null,
+        phone: '', email: '', city: '', street: '',
       },
       fiscalYears: [],
-      completeSetup: ({ country, activity, shopName, ownerName, fiscalYear }) =>
+      completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact }) =>
         set((s) => ({
           fiscalYears: [{ ...fiscalYear, id: 1, status: 'open' }],
           // اسم المحل على الإيصال + قالب الفاتورة الافتراضي من النشاط
@@ -177,6 +184,7 @@ export const useAppStore = create<AppState>()(
             allowNegativeTreasury: false,
             allowNegativeStock: false,
             defaultWarehouseId: null,
+            phone: contact?.phone ?? '', email: contact?.email ?? '', city: contact?.city ?? '', street: contact?.street ?? '',
           },
         })),
       addFiscalYear: (fy) =>

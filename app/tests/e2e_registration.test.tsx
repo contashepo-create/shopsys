@@ -20,20 +20,28 @@ const { useAppStore } = await import('../src/stores/app.store.ts')
 const { useDataStore } = await import('../src/data/repo.ts')
 const { ACTIVITY_TEMPLATES } = await import('../src/core/activities.ts')
 
-/** ينفّذ معالج التسجيل الأربع خطوات كما يفعل المستخدم بالنقر والكتابة */
+/** ينفّذ معالج التسجيل الأربع خطوات كما يفعل المستخدم (التصميم الجديد: قوائم منسدلة + بيانات إلزامية) */
 async function completeWizard(activityNameAr: string, shopName: string) {
-  // الخطوة 1: البلد
-  expect(await screen.findByText('اختر بلدك 🌍')).toBeTruthy()
-  fireEvent.click(screen.getByText('مصر'))
+  // الخطوة 1: البلد — قائمة منسدلة
+  expect(await screen.findByText('اختر بلدك')).toBeTruthy()
+  const selects1 = document.querySelectorAll('select')
+  fireEvent.change(selects1[0], { target: { value: 'EG' } })
   fireEvent.click(screen.getByText('التالي'))
-  // الخطوة 2: النشاط
-  fireEvent.click(screen.getByText(activityNameAr))
+  // الخطوة 2: النشاط — قائمة منسدلة (بالاسم العربي → id)
+  const act = ACTIVITY_TEMPLATES.find((a) => a.nameAr === activityNameAr)!
+  const selects2 = document.querySelectorAll('select')
+  fireEvent.change(selects2[0], { target: { value: act.id } })
   fireEvent.click(screen.getByText('التالي'))
   // الخطوة 3: السنة المالية (الافتراضية سليمة)
   fireEvent.click(screen.getByText('التالي'))
-  // الخطوة 4: بيانات المحل والمالك
+  // الخطوة 4: بيانات المنشأة الإلزامية
   fireEvent.change(screen.getByPlaceholderText('مثال: أسواق البركة'), { target: { value: shopName } })
   fireEvent.change(screen.getByPlaceholderText('مثال: محمد عبده'), { target: { value: 'م. محمد عبدة' } })
+  fireEvent.change(screen.getByPlaceholderText('01xxxxxxxxx'), { target: { value: '01000000000' } })
+  fireEvent.change(screen.getByPlaceholderText('name@example.com'), { target: { value: 'owner@tahakam.app' } })
+  const citySelect = [...document.querySelectorAll('select')].at(-1)!
+  fireEvent.change(citySelect, { target: { value: 'القاهرة' } })
+  fireEvent.change(screen.getByPlaceholderText('مثال: شارع الجمهورية — حي السلام'), { target: { value: 'شارع التحرير' } })
   fireEvent.click(screen.getByText('🚀 ابدأ العمل'))
 }
 
