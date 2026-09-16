@@ -14,6 +14,7 @@ import { computeTotals, type CartLine } from '../../core/pos.ts'
 import { parseScaleBarcode, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { itemMatchesPartQuery } from '../../core/items.ts'
+import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift } from '../../core/shifts.ts'
@@ -30,6 +31,8 @@ interface HeldCart { id: number; label: string; lines: CartLine[]; discount: num
 
 export function PosPage() {
   const { items, customers, shifts, serials, postSale, priceLists, getEffectivePrice, variantStocks, warehouses } = useDataStore()
+  // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
+  const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
@@ -438,7 +441,55 @@ export function PosPage() {
               <div className="text-xs text-slate-400 mt-1">أضف أصنافك من المخزون ← الأصناف، واشترِ بضاعة من المشتريات ليعمل الكاشير بتكلفة حقيقية</div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2">
+            posLayout === 'fast_list' ? (
+            /* ⚡ قائمة سريعة كثيفة (بقالة/صيدلية/مغسلة): صفوف رفيعة — أسرع مسح بصري مع الباركود */
+            <div className="space-y-1">
+              {filtered.map((it, i) => {
+                const out = (it.stockQty ?? 0) <= 0
+                return (
+                  <button
+                    key={it.id}
+                    onClick={() => addToCart(it.id)}
+                    style={{ animationDelay: `${i * 12}ms` }}
+                    className={`anim-in w-full flex items-center gap-3 text-right px-3 py-2 rounded-lg border transition-all duration-150 active:scale-[0.99] ${
+                      out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-emerald-400/60 hover:bg-emerald-500/[0.04]'
+                    }`}
+                  >
+                    <span className="flex-1 font-bold text-[13px] text-slate-800 dark:text-white truncate">{it.nameAr}</span>
+                    {it.sku && <span className="text-[10px] text-slate-400 font-mono shrink-0" dir="ltr">{it.sku}</span>}
+                    <span className={`text-[10px] font-bold shrink-0 w-16 text-center ${out ? 'text-rose-500' : 'text-slate-400'}`}>{out ? 'نفد' : `${it.stockQty ?? 0} ${it.baseUnit}`}</span>
+                    <span className="font-black text-emerald-600 dark:text-emerald-400 text-[13px] shrink-0 w-20 text-left" dir="ltr">{fmt(it.priceMinor)}</span>
+                  </button>
+                )
+              })}
+            </div>
+            ) : posLayout === 'visual_grid' ? (
+            /* 🍽️ شبكة بصرية كبيرة (مطعم/كافيه/ملابس): بطاقات ضخمة سهلة اللمس */
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {filtered.map((it, i) => {
+                const out = (it.stockQty ?? 0) <= 0
+                return (
+                  <button
+                    key={it.id}
+                    onClick={() => addToCart(it.id)}
+                    style={{ animationDelay: `${i * 25}ms` }}
+                    className={`anim-in group relative text-right p-4 pt-5 rounded-2xl border-2 min-h-[7rem] flex flex-col justify-between transition-all duration-200 hover:scale-[1.04] hover:shadow-xl active:scale-95 overflow-hidden ${
+                      out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-orange-400/60 bg-gradient-to-br from-transparent to-orange-500/[0.04]'
+                    }`}
+                  >
+                    <div className="absolute -left-2 -top-2 text-4xl opacity-15 transition-transform duration-300 group-hover:scale-125 group-hover:rotate-6 select-none">🍽️</div>
+                    <div className="font-black text-[14px] text-slate-800 dark:text-white leading-snug line-clamp-2 relative">{it.nameAr}</div>
+                    <div className="flex items-center justify-between mt-3 relative">
+                      <span className="font-black text-orange-600 dark:text-orange-400 text-base">{fmt(it.priceMinor)}</span>
+                      {out && <span className="text-[10px] font-bold text-rose-500">نفد</span>}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+            ) : (
+            /* 📱 بطاقات تفصيلية (موبايل/إلكترونيات/قطع غيار/مجوهرات/سيارات): SKU وضمان وسيريال ظاهرة */
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
               {filtered.map((it, i) => {
                 const out = (it.stockQty ?? 0) <= 0
                 return (
@@ -446,23 +497,25 @@ export function PosPage() {
                     key={it.id}
                     onClick={() => addToCart(it.id)}
                     style={{ animationDelay: `${i * 20}ms` }}
-                    className={`anim-in group text-right p-3 rounded-xl border-2 transition-all duration-200 hover:scale-[1.03] hover:shadow-lg active:scale-95 ${
-                      out
-                        ? 'border-rose-200 dark:border-rose-900/40 opacity-70'
-                        : 'border-slate-100 dark:border-slate-800 hover:border-emerald-400/60'
+                    className={`anim-in text-right p-3.5 rounded-xl border-2 transition-all duration-200 hover:scale-[1.02] hover:shadow-lg active:scale-95 ${
+                      out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-sky-400/60'
                     }`}
                   >
                     <div className="font-bold text-[13px] text-slate-800 dark:text-white leading-tight line-clamp-2">{it.nameAr}</div>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">{fmt(it.priceMinor)}</span>
-                      <span className={`text-[10px] font-bold ${out ? 'text-rose-500' : 'text-slate-400'}`}>
-                        {out ? 'نفد' : `${it.stockQty ?? 0} ${it.baseUnit}`}
-                      </span>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      {it.sku && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono" dir="ltr">{it.sku}</span>}
+                      {it.trackSerial && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 font-bold">سيريال</span>}
+                      {it.warrantyMonths > 0 && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-bold">ضمان {it.warrantyMonths} شهر</span>}
+                    </div>
+                    <div className="flex items-center justify-between mt-2.5">
+                      <span className="font-black text-sky-600 dark:text-sky-400 text-sm">{fmt(it.priceMinor)}</span>
+                      <span className={`text-[10px] font-bold ${out ? 'text-rose-500' : 'text-slate-400'}`}>{out ? 'نفد' : `متاح ${it.stockQty ?? 0}`}</span>
                     </div>
                   </button>
                 )
               })}
             </div>
+            )
           )}
         </div>
       </div>

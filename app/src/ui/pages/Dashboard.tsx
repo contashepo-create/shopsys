@@ -13,6 +13,9 @@ import { Link } from 'react-router-dom'
 import { collectBusinessAlerts } from '../../core/alerts.ts'
 import { collectAlerts as collectInstallmentAlerts } from '../../core/installments.ts'
 import { customerStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
+import { themeForActivity, PERSONA_STYLES } from '../../core/activityTheme.ts'
+import { ActivityWidgets } from '../components/ActivityWidgets.tsx'
+import { getActivity } from '../../core/activities.ts'
 
 export function Dashboard() {
   const { setup } = useAppStore()
@@ -113,8 +116,29 @@ export function Dashboard() {
     { title: 'تنبيهات', value: String(businessAlerts.length), icon: AlertTriangle, color: 'from-amber-500 to-orange-500', glow: 'shadow-amber-500/30', delta: businessAlerts.length ? businessAlerts[0].titleAr : 'كله تمام ✓' },
   ]
 
+  // هوية النشاط (بند 11): رأس ترحيب بشخصية النشاط نفسه
+  const theme = themeForActivity(setup.activityId)
+  const persona = PERSONA_STYLES[theme.persona]
+  const activityName = (setup.activityId && getActivity(setup.activityId)?.nameAr) || 'نشاط عام'
+
   return (
     <div className="space-y-6">
+      {/* رأس الترحيب — هوية النشاط */}
+      <div className={`anim-up relative overflow-hidden rounded-3xl border bg-gradient-to-l ${persona.hero} px-6 py-5`}>
+        <div className="absolute -left-4 -bottom-8 text-[7rem] opacity-10 select-none">{theme.heroEmoji}</div>
+        <div className="relative flex items-center gap-4">
+          <div className="text-4xl">{theme.heroEmoji}</div>
+          <div>
+            <h2 className="text-lg font-black text-slate-800 dark:text-white">
+              {setup.shopName ? `أهلاً — ${setup.shopName}` : 'أهلاً بك'}
+            </h2>
+            <p className="text-[12.5px] text-slate-500 dark:text-slate-400 mt-0.5">
+              {theme.heroLineAr} · <span className="font-bold">{activityName}</span>
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* البطاقات */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {cards.map((c, i) => (
@@ -134,6 +158,9 @@ export function Dashboard() {
           </div>
         ))}
       </div>
+
+      {/* ويدجات النشاط التخصصية (بند 11): كل نشاط يرى ما يهمه فعلاً */}
+      <ActivityWidgets />
 
       {/* إجمالي كل العمليات منذ البداية — من دفتر الأستاذ الموحّد */}
       <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 flex flex-wrap items-center gap-x-8 gap-y-2" style={{ animationDelay: '280ms' }}>
