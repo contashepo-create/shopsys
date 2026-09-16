@@ -16,6 +16,9 @@ import {
 import { expiryAlerts } from '../../core/batches.ts'
 import { inputCls } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
+import { renderReportShell } from '../../core/reportPrint.ts'
+import { printHtml } from '../print/printReceipt.ts'
+import { Printer } from 'lucide-react'
 import { Landmark } from 'lucide-react'
 
 type TabId = 'sales' | 'items' | 'parties' | 'inventory' | 'financial'
@@ -207,7 +210,35 @@ export function ReportsPage() {
       )}
 
       {tab === 'parties' && (
-        <div className="anim-up grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="anim-up space-y-3">
+        <div className="flex justify-end">
+          <button
+            onClick={() => {
+              // مطبوعة رسمية موحّدة المصدر مع كشوف الحساب (طلب المالك: طباعة مفلترة احترافية)
+              const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              const table = (title: string, rows: { name: string; bal: number }[], meaning: [string, string]) =>
+                `<h3 style="margin:14px 0 6px;font-size:1.05em">${title}</h3>
+                 <table><thead><tr><th>الاسم</th><th>الحالة</th><th>الرصيد</th></tr></thead><tbody>
+                 ${rows.length === 0 ? '<tr><td colspan="3">لا أرصدة</td></tr>' : rows.map((r) => `<tr><td>${esc(r.name)}</td><td>${r.bal > 0 ? meaning[0] : meaning[1]}</td><td class="num">${fmt(Math.abs(r.bal))}</td></tr>`).join('')}
+                 <tr class="total"><td colspan="2">الصافي</td><td class="num">${fmt(rows.reduce((a2, r) => a2 + r.bal, 0))}</td></tr></tbody></table>`
+              const { reportPrint, receipt } = useAppStore.getState()
+              printHtml(renderReportShell({
+                title: 'تقرير أرصدة العملاء والموردين',
+                subtitle: `${setup.shopName || ''} — الأرصدة الحية الموحّدة مع كشوف الحساب · ${new Date().toISOString().slice(0, 10)}`,
+                companyName: setup.shopName || '',
+                logoDataUrl: receipt.logoDataUrl,
+                settings: reportPrint,
+                bodyHtml:
+                  table('أرصدة العملاء', custRows.map((r) => ({ name: custName(r.customerId), bal: r.balanceMinor })), ['مدين — عليه', 'دائن — له']) +
+                  table('أرصدة الموردين', suppRows.map((r) => ({ name: suppName(r.supplierId), bal: r.balanceMinor })), ['له علينا', 'لنا عنده']),
+              }))
+            }}
+            className="px-3 py-1.5 rounded-lg text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-sky-600 transition-all flex items-center gap-1.5"
+          >
+            <Printer size={13} /> طباعة تقرير الأرصدة
+          </button>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className={`${card} overflow-hidden`}>
             <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
               <Users size={14} className="text-violet-500" /> أرصدة العملاء (موحّدة مع كشوف الحساب)
@@ -248,6 +279,7 @@ export function ReportsPage() {
               </table>
             )}
           </div>
+        </div>
         </div>
       )}
 
