@@ -110,7 +110,7 @@ export interface SupplierStatementInput {
   // supplierDueMinor = مستحق المورد فقط (بضاعة + مصاريف على حسابه) — المصاريف
   // المدفوعة من خزينتي/عهدتي لا تدخل دينه أبداً (طلب المالك). القديمة: grandTotal
   purchases: { invoiceNumber: string; date: string; supplierId: number; grandTotalMinor: Minor; supplierDueMinor?: Minor; paidMinor: Minor }[]
-  purchaseReturns: { returnNumber: string; date: string; purchaseId: number; refund: 'cash' | 'debt'; totalMinor: Minor }[]
+  purchaseReturns: { returnNumber: string; date: string; purchaseId: number; refund: 'cash' | 'debt'; totalMinor: Minor; inputVatShareMinor?: Minor }[]
   allPurchases: { id: number; supplierId: number }[]
   vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor }[]
   cheques: ChequeLike[]
@@ -144,7 +144,8 @@ export function supplierStatement(input: SupplierStatementInput): StatementRow[]
   for (const r of input.purchaseReturns) {
     if (r.refund !== 'debt') continue // «debt» = على الحساب
     if (purchaseOwner.get(r.purchaseId) !== input.supplierId) continue
-    rows.push({ date: r.date, docLabel: `مرتجع شراء ${r.returnNumber}`, debitMinor: r.totalMinor, creditMinor: 0 })
+    // N2: تخفيض دين المورد يشمل حصة ض.ق.م المدخلات المعكوسة — تطابق قيد 2101 مدين
+    rows.push({ date: r.date, docLabel: `مرتجع شراء ${r.returnNumber}`, debitMinor: r.totalMinor + (r.inputVatShareMinor ?? 0), creditMinor: 0 })
   }
   for (const v of input.vouchers) {
     if (v.partyKind !== 'supplier' || v.partyId !== input.supplierId || v.kind !== 'payment') continue

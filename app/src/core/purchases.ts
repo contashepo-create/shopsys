@@ -187,17 +187,29 @@ export function buildPurchaseReturnEntry(
   totalMinor: Minor,
   refund: 'cash' | 'debt',
   treasury = '1101',
+  /**
+   * N2 (المراجعة الثانية): حصة ضريبة المدخلات المعكوسة عن البضاعة المرتجعة —
+   * فاتورة سُجلت بضريبة مدخلات (2102 مدين) ورُدّ جزء من بضاعتها ⇒ يجب عكس
+   * نصيب ذلك الجزء من الضريبة (2102 دائن) وإلا خصم الإقرار مدخلات عن بضاعة رُدَّت.
+   * المسترد من المورد = قيمة البضاعة + حصتها الضريبية.
+   */
+  inputVatShareMinor: Minor = 0,
 ): JournalLine[] {
   if (totalMinor <= 0) throw new RangeError('قيمة المرتجع يجب أن تكون موجبة')
+  if (!Number.isInteger(inputVatShareMinor) || inputVatShareMinor < 0) throw new RangeError('حصة ضريبة المرتجع لا تكون سالبة')
+  const refundTotal = totalMinor + inputVatShareMinor
   const lines: JournalLine[] = [
     {
       accountCode: refund === 'cash' ? treasury : '2101',
-      debit: totalMinor,
+      debit: refundTotal,
       credit: 0,
       note: refund === 'cash' ? 'استرداد نقدي من المورد' : 'تخفيض دين المورد',
     },
     { accountCode: '1103', debit: 0, credit: totalMinor, note: 'بضاعة خارجة للمورد' },
   ]
+  if (inputVatShareMinor > 0) {
+    lines.push({ accountCode: '2102', debit: 0, credit: inputVatShareMinor, note: 'عكس ض.ق.م مدخلات عن بضاعة مرتجعة' })
+  }
   assertBalanced(lines)
   return lines
 }

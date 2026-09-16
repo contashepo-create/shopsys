@@ -757,6 +757,8 @@ export interface PurchaseReturn {
   totalMinor: number
   journalEntryId: number
   reason: string
+  /** N2: حصة ض.ق.م المدخلات المعكوسة عن هذا المرتجع (2102 دائن) — undefined = سجل قديم/فاتورة بلا ضريبة */
+  inputVatShareMinor?: number
 }
 
 /** جلسة جرد مرحّلة — الفوارق وقيد التسوية */
@@ -2518,19 +2520,32 @@ export const useDataStore = create<DataState>()(
           },
         )
         const total = purchaseReturnTotal(lines)
+        // N2 (المراجعة الثانية): فاتورة بضريبة مدخلات ⇒ نصيب البضاعة المرتجعة من الضريبة
+        // يُعكس (2102 دائن) ويدخل المسترد من المورد — نسبةً وتناسباً بسقف غير المعكوس سابقاً
+        const invoiceInputVat = purchase.inputVatMinor ?? 0
+        let inputVatShare = 0
+        if (invoiceInputVat > 0 && purchase.grandTotalMinor > 0) {
+          const priorVatReversed = state.purchaseReturns
+            .filter((r) => r.purchaseId === purchase.id)
+            .reduce((a, r) => a + (r.inputVatShareMinor ?? 0), 0)
+          inputVatShare = Math.min(
+            Math.round((invoiceInputVat * total) / purchase.grandTotalMinor),
+            Math.max(0, invoiceInputVat - priorVatReversed),
+          )
+        }
         // منطق الاسترداد: لا نخفض ديناً أكبر من المتبقي غير المدفوع على الفاتورة
         if (args.refund === 'debt') {
           const priorDebtReturns = state.purchaseReturns
             .filter((r) => r.purchaseId === purchase.id && r.refund === 'debt')
-            .reduce((a, r) => a + r.totalMinor, 0)
-          // دين المورد = مستحقه فقط (البضاعة + مصاريفه) — لا المصاريف التي دفعتُها بنفسي
+            .reduce((a, r) => a + r.totalMinor + (r.inputVatShareMinor ?? 0), 0)
+          // دين المورد = مستحقه فقط (البضاعة + ضريبتها + مصاريفه) — لا المصاريف التي دفعتُها بنفسي
           const unpaid = (purchase.supplierDueMinor ?? purchase.grandTotalMinor) - purchase.paidMinor - priorDebtReturns
-          if (total > unpaid) {
+          if (total + inputVatShare > unpaid) {
             throw new Error(`قيمة المرتجع أكبر من دين الفاتورة المتبقي (${unpaid}) — اختر الاسترداد النقدي`)
           }
         }
         // 2) القيد المتوازن
-        const entryLines = buildPurchaseReturnEntry(total, args.refund, args.treasury ?? '1101')
+        const entryLines = buildPurchaseReturnEntry(total, args.refund, args.treasury ?? '1101', inputVatShare)
         const returnId = nextId(state.purchaseReturns)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -2560,6 +2575,7 @@ export const useDataStore = create<DataState>()(
           totalMinor: total,
           journalEntryId: entryId,
           reason: args.reason,
+          inputVatShareMinor: inputVatShare,
         }
         // 3) خصم الكميات من المخزون بتكلفة الشراء الأصلية (نفس قيمة القيد 1103 دائن)
         //    مع إعادة حساب المتوسط المرجح بالقيمة — يبقي دفتر الأستاذ = كمية × متوسط
@@ -3474,6 +3490,9 @@ export const useDataStore = create<DataState>()(
         const expensesTotal = args.expenses.reduce((a, e) => a + e.amountMinor, 0)
         const grandTotal = goodsTotal + expensesTotal
         if (!Number.isInteger(args.paidMinor) || args.paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
+        // N1 (المراجعة الثانية): ض.ق.م المدخلات المسجلة على الفاتورة تُحفظ في القيد المعاد بناؤه —
+        // وإلا اختفى مدين 2102 بصمت واختل مستحق المورد
+        const keptInputVat = inv.inputVatMinor ?? 0
         const newEntryLines = buildPurchaseEntryV2({
           inventoryAccount: '1103',
           inventoryNote: 'بضاعة واردة بتكلفتها الكاملة (فاتورة معدلة)',
@@ -3481,6 +3500,7 @@ export const useDataStore = create<DataState>()(
           paidMinor: args.paidMinor,
           payAccount: args.treasury,
           expensePayments: [],
+          inputVatMinor: keptInputVat,
         })
         const now = new Date().toISOString()
 
@@ -3540,7 +3560,7 @@ export const useDataStore = create<DataState>()(
           goodsTotalMinor: goodsTotal,
           expensesTotalMinor: expensesTotal,
           grandTotalMinor: grandTotal,
-          supplierDueMinor: grandTotal,
+          supplierDueMinor: grandTotal + keptInputVat, // N1: مستحق المورد يشمل ضريبة المدخلات المحفوظة
           paidMinor: args.paidMinor,
           treasury: args.treasury,
           journalEntryId: newEntryId,

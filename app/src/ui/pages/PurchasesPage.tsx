@@ -627,6 +627,9 @@ export function PurchasesPage() {
               <span>البضاعة: {fmt(viewing.goodsTotalMinor)}</span>
               <span className="text-amber-600">المصاريف: {fmt(viewing.expensesTotalMinor)}</span>
               <span className="text-emerald-600">الإجمالي: {fmt(viewing.grandTotalMinor)}</span>
+              {(viewing.inputVatMinor ?? 0) > 0 && (
+                <span className="text-violet-600">ض.ق.م مدخلات: {fmt(viewing.inputVatMinor!)}</span>
+              )}
               {(viewing.supplierDueMinor ?? viewing.grandTotalMinor) !== viewing.grandTotalMinor && (
                 <span className="text-sky-600">مستحق المورد: {fmt(viewing.supplierDueMinor ?? viewing.grandTotalMinor)}</span>
               )}
