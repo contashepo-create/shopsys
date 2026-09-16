@@ -319,30 +319,25 @@ export function GeneralSettingsPage() {
         </div>
       </Modal>
 
-      {/* اختيار بلد آخر يدوياً */}
+      {/* البلد مقفول بعد أول تسجيل (أمر المالك) — كل الدفاتر والقيود والضرائب مبنية عليه،
+          وتغييره بعد بدء العمل يفسد العملة والتقارير. التغيير للمطوّر فقط عبر البوت. */}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '240ms' }}>
-        <h3 className="font-extrabold text-slate-800 dark:text-white mb-3 text-sm">تبديل سريع للبلد (يضبط العملة والضريبة)</h3>
-        <div className="flex flex-wrap gap-1.5">
-          {ARAB_COUNTRIES.map((c) => (
-            <button
-              key={c.code}
-              onClick={() => {
-                useAppStore.setState((s) => ({
-                  setup: { ...s.setup, countryCode: c.code, vatPercent: c.vatPercent },
-                }))
-                setVat(String(c.vatPercent))
-                toast.show(`تم التبديل إلى ${c.nameAr} — ${c.currency.name}`)
-              }}
-              className={`px-2.5 py-1.5 rounded-xl text-[12px] font-bold border-2 transition-all duration-200 hover:scale-105 ${
-                setup.countryCode === c.code
-                  ? 'border-brand-500/50 bg-brand-500/10 text-brand-700 dark:text-brand-300'
-                  : 'border-slate-200 dark:border-slate-700 text-slate-500'
-              }`}
-            >
-              {c.flag} {c.nameAr}
-            </button>
-          ))}
-        </div>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-3 text-sm">🔒 بلد المنشأة (مقفول)</h3>
+        {(() => {
+          const c = ARAB_COUNTRIES.find((x) => x.code === setup.countryCode)
+          return (
+            <div className="flex items-center gap-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3">
+              <span className="text-2xl">{c?.flag ?? '🌍'}</span>
+              <div className="flex-1">
+                <div className="font-black text-slate-700 dark:text-slate-200 text-[13px]">{c?.nameAr ?? 'غير محدد'} — {c?.currency.name ?? ''}</div>
+                <div className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                  البلد يُثبَّت عند أول تسجيل لأن كل الدفاتر والعملة والضرائب مبنية عليه.
+                  لو حدث خطأ في الاختيار تواصل مع الدعم الفني — التغيير يتم من المطوّر حصراً.
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       </section>
     </div>
   )

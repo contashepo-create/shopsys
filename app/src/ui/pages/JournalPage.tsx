@@ -363,11 +363,19 @@ function ManualEntryModal({
         </div>
 
         <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <div className="grid grid-cols-[1fr_7rem_7rem_2rem] gap-2 px-3 py-2 text-[10px] font-bold text-slate-400 bg-slate-50 dark:bg-slate-900/40">
-            <span>الحساب</span><span className="text-center">مدين</span><span className="text-center">دائن</span><span></span>
+          <div className="grid grid-cols-[4.5rem_1fr_7rem_7rem_2rem] gap-2 px-3 py-2 text-[10px] font-bold text-slate-400 bg-slate-50 dark:bg-slate-900/40">
+            <span className="text-center">الكود</span><span>الحساب</span><span className="text-center">مدين</span><span className="text-center">دائن</span><span></span>
           </div>
           {mLines.map((l, i) => (
-            <div key={i} className="grid grid-cols-[1fr_7rem_7rem_2rem] gap-2 items-center px-3 py-2 border-t border-slate-100 dark:border-slate-800">
+            <div key={i} className="grid grid-cols-[4.5rem_1fr_7rem_7rem_2rem] gap-2 items-center px-3 py-2 border-t border-slate-100 dark:border-slate-800">
+              {/* إدخال سريع بكود الحساب (طلب المالك) — اكتب 1101 وسيُختار فوراً */}
+              <input
+                value={l.accountCode}
+                onChange={(e) => setLine(i, { accountCode: e.target.value.trim() })}
+                placeholder="كود"
+                className={`${inputCls} py-1.5 text-center text-[12px] font-mono ${l.accountCode && !postable.some((a) => a.code === l.accountCode) ? '!border-rose-400' : ''}`}
+                dir="ltr"
+              />
               <select value={l.accountCode} onChange={(e) => setLine(i, { accountCode: e.target.value })} className={`${inputCls} py-1.5 text-[13px]`}>
                 <option value="">اختر الحساب…</option>
                 {postable.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.nameAr}</option>)}

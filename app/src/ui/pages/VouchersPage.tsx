@@ -38,7 +38,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, customers, suppliers, purchases, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, assets, getAssetDue } = useDataStore()
+  const { vouchers, journal, treasuries, customers, suppliers, purchases, customAccounts, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, assets, getAssetDue } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -57,7 +57,20 @@ export function VouchersPage() {
   const [viewing, setViewing] = useState<Voucher | null>(null)
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
-  const counters = kind === 'receipt' ? RECEIPT_COUNTERS : PAYMENT_COUNTERS
+  // ربط الشجرة المفتوحة بالسندات (طلب المالك): حساب إيراد مخصص يظهر في القبض،
+  // وحساب مصروف مخصص يظهر في الصرف — ويُعالج بقيد سليم فور اختياره
+  const counters = useMemo(() => {
+    if (kind === 'receipt') {
+      return [
+        ...RECEIPT_COUNTERS,
+        ...customAccounts.filter((a) => a.rootType === 'revenue').map((a) => ({ code: a.code, label: `${a.nameAr} (حساب مخصص)` })),
+      ]
+    }
+    return [
+      ...PAYMENT_COUNTERS,
+      ...customAccounts.filter((a) => a.rootType === 'expenses').map((a) => ({ code: a.code, label: `${a.nameAr} (حساب مخصص)` })),
+    ]
+  }, [kind, customAccounts])
   const listed = useMemo(() => [...vouchers].filter((v) => v.kind !== 'transfer').reverse(), [vouchers])
 
   /** الرصيد الحي للطرف المختار (أمر التعديل: يظهر تحت العميل/المورد قبل الحفظ) */

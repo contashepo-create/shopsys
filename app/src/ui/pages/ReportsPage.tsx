@@ -14,6 +14,8 @@ import {
   stockAlerts, inventoryValue, periodPresets, type Period,
 } from '../../core/reports.ts'
 import { expiryAlerts } from '../../core/batches.ts'
+import { expensesSummary, expenseDetails } from '../../core/expenseReports.ts'
+import { accountName } from './accountNames.ts'
 import { inputCls } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
 import { renderReportShell } from '../../core/reportPrint.ts'
@@ -21,10 +23,18 @@ import { printHtml } from '../print/printReceipt.ts'
 import { Printer } from 'lucide-react'
 import { Landmark } from 'lucide-react'
 
-type TabId = 'sales' | 'items' | 'parties' | 'inventory' | 'financial'
+type TabId = 'sales' | 'items' | 'parties' | 'inventory' | 'expenses' | 'financial'
+
+/** تسميات مصادر العمليات لتقرير المصروفات */
+const EXP_SOURCE_LABELS: Record<string, string> = {
+  sale: 'فاتورة بيع', purchase: 'فاتورة شراء', payment_voucher: 'سند صرف', payroll: 'رواتب',
+  manual: 'قيد يدوي', depreciation: 'إهلاك', wastage: 'هالك', logistics_trip: 'نقلة',
+  reversal: 'قيد عاكس', adjustment: 'تسوية', asset_payment: 'سداد أصل', external_commission: 'عمولات',
+  contracting: 'مقاولات', lab: 'معمل', sale_return: 'مرتجع بيع', purchase_return: 'مرتجع شراء',
+}
 
 export function ReportsPage() {
-  const { sales, saleReturns, items, customers, suppliers, batches } = useDataStore()
+  const { sales, saleReturns, items, customers, suppliers, batches, journal, customAccounts } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -74,6 +84,37 @@ export function ReportsPage() {
     () => expiryAlerts(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`, new Date().toISOString()),
     [batches, items],
   )
+
+  /* ─── تقارير المصروفات (طلب المالك): مجمّع + تفصيلي بفلترة محترفة ─── */
+  const customExpenseCodes = useMemo(() => new Set(customAccounts.filter((a) => a.rootType === 'expenses').map((a) => a.code)), [customAccounts])
+  const [expAccount, setExpAccount] = useState('') // '' = التقرير المجمّع لكل البنود
+  const [expSource, setExpSource] = useState('')
+  const expFilter = useMemo(() => ({ from: period.from, to: period.to, sourceType: expSource || undefined }), [period, expSource])
+  const expSummary = useMemo(() => expensesSummary(journal, expFilter, accountName, customExpenseCodes), [journal, expFilter, customExpenseCodes])
+  const expDetail = useMemo(
+    () => expenseDetails(journal, { ...expFilter, accountCode: expAccount || undefined }, customExpenseCodes),
+    [journal, expFilter, expAccount, customExpenseCodes],
+  )
+  const expSources = useMemo(() => [...new Set(journal.flatMap((e) => e.lines.some((l) => l.accountCode.startsWith('5') || customExpenseCodes.has(l.accountCode)) ? [e.sourceType] : []))], [journal, customExpenseCodes])
+  const printExpenses = () => {
+    const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const { reportPrint, receipt } = useAppStore.getState()
+    const body = expAccount
+      ? `<table><thead><tr><th>القيد</th><th>التاريخ</th><th>البيان</th><th>المصدر</th><th>المبلغ</th></tr></thead><tbody>
+          ${expDetail.rows.map((r) => `<tr><td class="num">#${r.entryNumber}</td><td class="num">${r.date}</td><td>${esc(r.description)}</td><td>${esc(EXP_SOURCE_LABELS[r.sourceType] ?? r.sourceType)}</td><td class="num">${fmt(r.amountMinor)}</td></tr>`).join('')}
+          <tr class="total"><td colspan="4">إجمالي «${esc(accountName(expAccount))}»</td><td class="num">${fmt(expDetail.totalMinor)}</td></tr></tbody></table>`
+      : `<table><thead><tr><th>الكود</th><th>البند</th><th>عدد الحركات</th><th>النسبة</th><th>الإجمالي</th></tr></thead><tbody>
+          ${expSummary.rows.map((r) => `<tr><td class="num">${r.accountCode}</td><td>${esc(r.accountName)}</td><td class="num">${r.txCount}</td><td class="num">${r.sharePercent}%</td><td class="num">${fmt(r.totalMinor)}</td></tr>`).join('')}
+          <tr class="total"><td colspan="4">إجمالي مصروفات الفترة</td><td class="num">${fmt(expSummary.grandTotalMinor)}</td></tr></tbody></table>`
+    printHtml(renderReportShell({
+      title: expAccount ? `تقرير مصروفات تفصيلي — ${accountName(expAccount)}` : 'تقرير المصروفات المجمّع',
+      subtitle: `الفترة ${period.from} → ${period.to}${expSource ? ` · المصدر: ${EXP_SOURCE_LABELS[expSource] ?? expSource}` : ''}`,
+      companyName: setup.shopName || '',
+      logoDataUrl: receipt.logoDataUrl,
+      settings: reportPrint,
+      bodyHtml: body,
+    }))
+  }
 
   const custName = (id: number) => customers.find((c) => c.id === id)?.nameAr ?? `عميل #${id}`
   const suppName = (id: number) => suppliers.find((s) => s.id === id)?.nameAr ?? `مورد #${id}`
@@ -144,6 +185,7 @@ export function ReportsPage() {
         <button onClick={() => setTab('items')} className={tabCls('items')}><Boxes size={14} className="inline -mt-0.5 me-1" /> أفضل الأصناف</button>
         <button onClick={() => setTab('parties')} className={tabCls('parties')}><Users size={14} className="inline -mt-0.5 me-1" /> الذمم</button>
         <button onClick={() => setTab('inventory')} className={tabCls('inventory')}><PackageSearch size={14} className="inline -mt-0.5 me-1" /> المخزون</button>
+        <button onClick={() => setTab('expenses')} className={tabCls('expenses')}><ReceiptText size={14} className="inline -mt-0.5 me-1" /> المصروفات</button>
         <button onClick={() => setTab('financial')} className={tabCls('financial')}><Landmark size={14} className="inline -mt-0.5 me-1" /> القوائم المالية</button>
       </div>
 
@@ -360,6 +402,115 @@ export function ReportsPage() {
           </div>
         </div>
       )}
+      {tab === 'expenses' && (
+        <div className="anim-up space-y-3">
+          {/* فلترة محترفة: بند + مصدر + الفترة أعلى الصفحة */}
+          <div className={`${card} p-4 flex flex-wrap items-end gap-3`}>
+            <div className="min-w-52">
+              <div className="text-[10px] font-bold text-slate-400 mb-1">بند المصروف</div>
+              <select value={expAccount} onChange={(e) => setExpAccount(e.target.value)} className={inputCls}>
+                <option value="">— كل البنود (تقرير مجمّع) —</option>
+                {expSummary.rows.map((r) => <option key={r.accountCode} value={r.accountCode}>{r.accountCode} — {r.accountName}</option>)}
+              </select>
+            </div>
+            <div className="min-w-44">
+              <div className="text-[10px] font-bold text-slate-400 mb-1">مصدر العملية</div>
+              <select value={expSource} onChange={(e) => setExpSource(e.target.value)} className={inputCls}>
+                <option value="">الكل</option>
+                {expSources.map((st) => <option key={st} value={st}>{EXP_SOURCE_LABELS[st] ?? st}</option>)}
+              </select>
+            </div>
+            <div className="ms-auto flex items-center gap-3">
+              <div className="text-left">
+                <div className="text-[10px] font-bold text-slate-400">إجمالي مصروفات الفترة</div>
+                <div className="font-black text-lg text-rose-500">{fmt(expSummary.grandTotalMinor)} {cur.symbol}</div>
+              </div>
+              <button onClick={printExpenses} className="px-3 py-2 rounded-xl text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-sky-600 transition-all flex items-center gap-1.5">
+                <Printer size={13} /> طباعة التقرير
+              </button>
+            </div>
+          </div>
+
+          {!expAccount ? (
+            /* المجمّع: بند بند بنسبته وشريطه */
+            <div className={`${card} overflow-hidden`}>
+              {expSummary.rows.length === 0 ? (
+                <div className="text-center text-slate-400 text-[12px] py-10">لا مصروفات في هذه الفترة</div>
+              ) : (
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-3 font-bold">البند</th>
+                      <th className="px-4 py-3 font-bold">الحركات</th>
+                      <th className="px-4 py-3 font-bold w-1/3">النسبة</th>
+                      <th className="px-4 py-3 font-bold">الإجمالي</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {expSummary.rows.map((r) => (
+                      <tr key={r.accountCode} onClick={() => setExpAccount(r.accountCode)} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-rose-500/[0.03] transition-colors cursor-pointer">
+                        <td className="px-4 py-3">
+                          <span className="font-bold text-slate-700 dark:text-slate-200">{r.accountName}</span>
+                          <span className="text-[10px] text-slate-400 font-mono ms-2" dir="ltr">{r.accountCode}</span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-500">{r.txCount}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                              <div className="h-full rounded-full bg-rose-400" style={{ width: `${Math.min(100, r.sharePercent)}%` }} />
+                            </div>
+                            <span className="text-[11px] font-bold text-slate-400 w-12" dir="ltr">{r.sharePercent}%</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 font-black text-rose-500">{fmt(r.totalMinor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ) : (
+            /* التفصيلي: حركة حركة للبند المختار */
+            <div className={`${card} overflow-hidden`}>
+              <div className="px-4 py-3 flex items-center justify-between border-b border-slate-100 dark:border-slate-800">
+                <div className="text-[12px] font-extrabold text-slate-600 dark:text-slate-300">تفصيلي «{accountName(expAccount)}» — {expDetail.rows.length} حركة</div>
+                <button onClick={() => setExpAccount('')} className="text-[11px] font-bold text-sky-600 hover:underline">→ عودة للمجمّع</button>
+              </div>
+              {expDetail.rows.length === 0 ? (
+                <div className="text-center text-slate-400 text-[12px] py-10">لا حركات على هذا البند في الفترة</div>
+              ) : (
+                <table className="w-full text-[12.5px]">
+                  <thead>
+                    <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-4 py-2.5 font-bold">القيد</th>
+                      <th className="px-4 py-2.5 font-bold">التاريخ</th>
+                      <th className="px-4 py-2.5 font-bold">البيان</th>
+                      <th className="px-4 py-2.5 font-bold">المصدر</th>
+                      <th className="px-4 py-2.5 font-bold">المبلغ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {expDetail.rows.map((r, i) => (
+                      <tr key={`${r.entryId}-${i}`} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-4 py-2.5 text-slate-400 font-mono text-[11px]" dir="ltr">#{r.entryNumber}</td>
+                        <td className="px-4 py-2.5 text-slate-500" dir="ltr">{r.date}</td>
+                        <td className="px-4 py-2.5 text-slate-600 dark:text-slate-300">{r.description}</td>
+                        <td className="px-4 py-2.5"><span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 font-bold">{EXP_SOURCE_LABELS[r.sourceType] ?? r.sourceType}</span></td>
+                        <td className={`px-4 py-2.5 font-black ${r.amountMinor >= 0 ? 'text-rose-500' : 'text-emerald-600'}`}>{fmt(r.amountMinor)}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-slate-50 dark:bg-slate-900/40">
+                      <td colSpan={4} className="px-4 py-2.5 font-black">إجمالي البند في الفترة</td>
+                      <td className="px-4 py-2.5 font-black text-rose-500">{fmt(expDetail.totalMinor)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {tab === 'financial' && (
         <FinancialReportsTab period={period} cur={cur} companyName={setup.shopName || 'المنشأة'} />
       )}

@@ -196,6 +196,15 @@ export function validateManualEntry(
     if (l.debit < 0 || l.credit < 0) errors.push('المبالغ السالبة مرفوضة — استخدم الطرف المقابل')
     if (l.debit > 0 && l.credit > 0) errors.push(`سطر «${acc.nameAr}» لا يكون مديناً ودائناً معاً`)
   }
+  // نفس الحساب لا يظهر مديناً في سطر ودائناً في آخر (طلب المالك — قيد لا معنى له ويشوه كشف الحساب)
+  const debitAccounts = new Set(meaningful.filter((l) => l.debit > 0).map((l) => l.accountCode))
+  const creditAccounts = new Set(meaningful.filter((l) => l.credit > 0).map((l) => l.accountCode))
+  for (const code of debitAccounts) {
+    if (creditAccounts.has(code)) {
+      const acc = coa.find((a) => a.code === code)
+      errors.push(`«${acc?.nameAr ?? code}» يظهر مديناً ودائناً في نفس القيد — قسّمه لقيدين أو صحح الأطراف`)
+    }
+  }
   const d = meaningful.reduce((a, l) => a + l.debit, 0)
   const c = meaningful.reduce((a, l) => a + l.credit, 0)
   if (d !== c) errors.push(`غير متوازن: مدين ${d} ≠ دائن ${c}`)
