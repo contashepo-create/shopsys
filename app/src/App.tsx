@@ -12,6 +12,8 @@ import { fetchAbout, fetchRevocationList, DEFAULT_CLOUD_BASE_URL } from './core/
 import { encryptForDevice } from './data/secureStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
 import { buildAccentCssVars } from './core/appearance.ts'
+import { decideTabLock, parseTabLock, TAB_HEARTBEAT_MS } from './core/concurrency.ts'
+import { useState } from 'react'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
 import { Dashboard } from './ui/pages/Dashboard.tsx'
@@ -168,6 +170,10 @@ function Shell() {
   )
 }
 
+/** معرف هذا التبويب — ثابت طوال حياته */
+const TAB_ID = `tab-${Math.random().toString(36).slice(2, 10)}`
+const TAB_LOCK_KEY = 'shopsys-tab-lock'
+
 export default function App() {
   const {
     theme, setup, touchLastSeen, appearance,
@@ -188,6 +194,27 @@ export default function App() {
     }),
     [licenseState, activatedKey, revokedKeys, activatedPayload, setup.completed, setup.activityId],
   )
+
+  // ─── قفل الكاتب الواحد (البند 4): تبويب ثانٍ على نفس القاعدة = قراءة فقط ───
+  const [readOnlyTab, setReadOnlyTab] = useState(false)
+  useEffect(() => {
+    const beat = () => {
+      const existing = parseTabLock(localStorage.getItem(TAB_LOCK_KEY))
+      const d = decideTabLock(existing, TAB_ID, Date.now())
+      if (d.kind === 'read_only') { setReadOnlyTab(true); return }
+      // acquired أو takeover: نكتب نبضتنا ونستمر كاتباً وحيداً
+      localStorage.setItem(TAB_LOCK_KEY, JSON.stringify({ tabId: TAB_ID, heartbeatAt: Date.now() }))
+      setReadOnlyTab(false)
+    }
+    beat()
+    const t = setInterval(beat, TAB_HEARTBEAT_MS)
+    const release = () => {
+      const existing = parseTabLock(localStorage.getItem(TAB_LOCK_KEY))
+      if (existing?.tabId === TAB_ID) localStorage.removeItem(TAB_LOCK_KEY)
+    }
+    window.addEventListener('beforeunload', release)
+    return () => { clearInterval(t); release(); window.removeEventListener('beforeunload', release) }
+  }, [])
 
   // ─── مزامنة السحابة (Cloudflare): صفحة «حول» + قائمة الحرق — عند الإقلاع وكل 6 ساعات ───
   useEffect(() => {
@@ -311,6 +338,28 @@ export default function App() {
         <LockScreen reason={lockReason} state={licenseState} />
         <ToastHost />
       </>
+    )
+  }
+
+  // تبويب ثانٍ مفتوح = حماية التسلسلات: لا كتابة من هنا (البند 4 — لا أرقام مستندات مكررة)
+  if (readOnlyTab) {
+    return (
+      <div dir="rtl" className="min-h-screen flex items-center justify-center p-6 bg-slate-100 dark:bg-slate-950">
+        <div className="max-w-md text-center space-y-4 p-8 rounded-3xl bg-white dark:bg-card-dark border border-amber-500/30 shadow-2xl anim-pop">
+          <div className="text-5xl">🔒</div>
+          <h1 className="text-xl font-black text-slate-800 dark:text-white">التطبيق مفتوح في نافذة أخرى</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+            لحماية أرقام الفواتير والسندات من التكرار، الكتابة مسموحة من نافذة واحدة فقط.
+            أغلق هذه النافذة وواصل عملك من النافذة الأصلية — أو أغلق الأصلية وحدّث هذه الصفحة.
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-6 py-2.5 rounded-xl text-sm font-bold text-white bg-brand-600 hover:bg-brand-700 transition-colors"
+          >
+            🔄 تحديث — هل أُغلقت النافذة الأخرى؟
+          </button>
+        </div>
+      </div>
     )
   }
 
