@@ -21,6 +21,7 @@ import {
 } from '../../core/prescription.ts'
 import type { Gender } from '../../core/lab.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderPrescriptionHtml, parsePrescriptionText } from '../print/printPrescription.ts'
@@ -213,7 +214,7 @@ export function ClinicPatientsPage() {
   const {
     clinicPatients, clinicVisits, treatmentPlans, journal, customers, patientAttachments,
     addClinicPatient, updateClinicPatient, addClinicVisit, addTreatmentPlan, collectFromPatient, getPatientBalance,
-    addPatientAttachment, removePatientAttachment, addCustomer,
+    addPatientAttachment, removePatientAttachment, addCustomer, refundClinicVisit,
   } = useDataStore()
   const { setup } = useAppStore()
   const cur = useCur()
@@ -425,6 +426,7 @@ export function ClinicPatientsPage() {
 
   /* عرض قيد */
   const [viewEntryId, setViewEntryId] = useState<number | null>(null)
+  const [refundingVisit, setRefundingVisit] = useState<ClinicVisit | null>(null)
   const viewEntry = viewEntryId != null ? journal.find((e) => e.id === viewEntryId) : null
 
   // البحث بالكود (طلب المالك): PAT-0042 أو 42 أو pat42 — أسرع وأدق من الاسم
@@ -615,6 +617,7 @@ export function ClinicPatientsPage() {
                           <span className="font-bold text-cyan-600">{fmt(v.totals.totalMinor)} {cur.symbol}</span>
                           {v.totals.dueMinor > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600">متبقٍ {fmt(v.totals.dueMinor)}</span>}
                           <button onClick={() => setViewEntryId(v.journalEntryId)} title="عرض القيد" className="p-1 rounded text-slate-400 hover:text-rose-500"><BookOpenText className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => setRefundingVisit(v)} title="مرتجع زيارة (استرداد)" className="p-1 rounded text-slate-400 hover:text-amber-500 font-black text-[11px]">↩️</button>
                           <button onClick={() => printPrescription(v)} title="طباعة الروشتة" className="p-1 rounded text-slate-400 hover:text-cyan-600 flex items-center gap-0.5"><Printer className="w-3.5 h-3.5" /><span className="font-black text-[12px]">℞</span></button>
                         </div>
                       </div>
@@ -648,6 +651,28 @@ export function ClinicPatientsPage() {
               </div>
             )}
           </div>
+        )}
+      </Modal>
+
+      {/* مرتجع زيارة (مراجعة المرتجعات) */}
+      <Modal open={!!refundingVisit} onClose={() => setRefundingVisit(null)} title={refundingVisit ? `مرتجع زيارة ${refundingVisit.visitNumber}` : ''}>
+        {refundingVisit && (
+          <ServiceRefundBox
+            grandMinor={refundingVisit.totals.totalMinor}
+            refundedMinor={refundingVisit.refundedMinor ?? 0}
+            currencySymbol={cur.symbol}
+            fmt={fmt}
+            allowCredit={true}
+            creditLabel="حساب المريض"
+            hint="كشف ملغي أو تنازل عن أتعاب: يعكس الإيراد وحصة الضريبة — «على حساب المريض» يخفض مديونيته إن وُجدت."
+            onSubmit={(a) => {
+              try {
+                const u = refundClinicVisit({ visitId: refundingVisit.id, amountMinor: a.amountMinor, mode: a.mode === 'cash' ? 'cash' : 'patient_credit', treasury: a.treasury, reason: a.reason })
+                setRefundingVisit(null)
+                toast.show(`سُجل مرتجع الزيارة ${u.visitNumber} وتولد القيد العاكس ✅`)
+              } catch (err) { toast.show((err as Error).message, 'error') }
+            }}
+          />
         )}
       </Modal>
 

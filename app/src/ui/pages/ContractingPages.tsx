@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -22,7 +23,7 @@ export function ProjectsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees,
     addProject, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
-    receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus,
+    receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -111,6 +112,7 @@ export function ProjectsPage() {
 
   /* عرض */
   const [viewing, setViewing] = useState<Project | null>(null)
+  const [refundingExtract, setRefundingExtract] = useState<(typeof projectExtracts)[number] | null>(null)
   const viewingLive = viewing ? projects.find((p) => p.id === viewing.id) ?? null : null
   const profit = viewingLive ? getProjectProfit(viewingLive.id) : null
   const viewExtracts = viewingLive ? projectExtracts.filter((e) => e.projectId === viewingLive.id) : []
@@ -415,7 +417,10 @@ export function ProjectsPage() {
                         <td className="px-3 py-2">{fmt(e.totals.grossMinor)}</td>
                         <td className="px-3 py-2 text-amber-600">{fmt(e.totals.retentionMinor)}</td>
                         <td className="px-3 py-2 font-bold">{fmt(e.totals.dueMinor)}</td>
-                        <td className="px-3 py-2"><button onClick={() => printExtract(e)} title="طباعة المستخلص للجهة المالكة" className="p-1.5 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all"><Printer size={13} /></button></td>
+                        <td className="px-3 py-2 flex items-center gap-1">
+                          <button onClick={() => printExtract(e)} title="طباعة المستخلص للجهة المالكة" className="p-1.5 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all"><Printer size={13} /></button>
+                          <button onClick={() => setRefundingExtract(e)} title="إشعار دائن (رفض جزء من الأعمال بعد الاعتماد)" className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all text-[12px] font-black">↩️</button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -511,6 +516,27 @@ export function ProjectsPage() {
               <Btn onClick={doRelease}>🏁 تحصيل وإقفال</Btn>
             </div>
           </div>
+        )}
+      </Modal>
+
+      {/* إشعار دائن على مستخلص (مراجعة المرتجعات) */}
+      <Modal open={!!refundingExtract} onClose={() => setRefundingExtract(null)} title={refundingExtract ? `إشعار دائن — ${refundingExtract.extractNumber}` : ''}>
+        {refundingExtract && (
+          <ServiceRefundBox
+            grandMinor={refundingExtract.totals.dueMinor}
+            refundedMinor={refundingExtract.refundedMinor ?? 0}
+            currencySymbol={cur.symbol}
+            fmt={fmt}
+            allowCredit={true}
+            hint="رفض المالك/الاستشاري جزءاً من الأعمال بعد اعتماد المستخلص: يعكس الإيراد وحصة الضريبة — «على الحساب» يخفض ذمة الجهة المالكة."
+            onSubmit={(a) => {
+              try {
+                const u = refundProjectExtract({ extractId: refundingExtract.id, ...a })
+                setRefundingExtract(null)
+                toast.show(`سُجل إشعار دائن على ${u.extractNumber} وتولد القيد العاكس ✅`)
+              } catch (err) { toast.show((err as Error).message, 'error') }
+            }}
+          />
         )}
       </Modal>
     </div>

@@ -32,7 +32,8 @@ import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignmen
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
-import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, buildServiceRefundEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
+import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
+import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { fullCoa } from '../core/treasury.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
@@ -199,6 +200,10 @@ export interface Trip {
   custodyFileId?: number | null
   totals: TripTotals
   journalEntryId: number
+  /** مرتجع خدمة (نقلة): تراكمي بسقف totals.grandMinor */
+  refundedMinor?: number
+  refundedTaxMinor?: number
+  refunds?: ServiceRefundRecord[]
   notes: string
 }
 
@@ -271,6 +276,10 @@ export interface RentalContract {
   closeEntryId: number | null // null = لم يُقفل أو لا تأمين
   deductMinor: number // المخصوم من التأمين عند الإقفال
   notes: string
+  /** مرتجع خدمة (إيجار): تراكمي بسقف grandMinor + extraMinor (لا يشمل التأمين — له مساره) */
+  refundedMinor?: number
+  refundedTaxMinor?: number
+  refunds?: ServiceRefundRecord[]
 }
 
 /* ─── معامل التحاليل (القرار 26) ─── */
@@ -322,6 +331,11 @@ export interface LabOrder {
   commissionPaid: boolean
   commissionPayoutEntryId: number | null
   notes: string
+  /** مرتجع خدمة (تحاليل): تراكمي بسقف totals.totalMinor + عكس نسبي للعمولة غير المدفوعة */
+  refundedMinor?: number
+  refundedTaxMinor?: number
+  commissionReversedMinor?: number
+  refunds?: ServiceRefundRecord[]
 }
 
 /* ─── المقاولات (القرار 27) ─── */
@@ -336,6 +350,10 @@ export interface ProjectExtract {
   payment: 'cash' | 'credit'
   totals: ExtractTotals
   journalEntryId: number
+  /** مرتجع خدمة (مستخلص معتمد رُفض جزء من أعماله): تراكمي بسقف dueMinor */
+  refundedMinor?: number
+  refundedTaxMinor?: number
+  refunds?: ServiceRefundRecord[]
 }
 
 /** تكلفة مسجلة على مشروع ببند */
@@ -411,6 +429,10 @@ export interface ClinicVisit {
   totals: VisitTotals
   planId: number | null // إن كانت جلسة ضمن خطة علاج
   journalEntryId: number
+  /** مرتجع خدمة (كشف/علاج): تراكمي بسقف totals.totalMinor */
+  refundedMinor?: number
+  refundedTaxMinor?: number
+  refunds?: ServiceRefundRecord[]
 }
 
 /** خطة علاج متعددة الجلسات (أسنان/جلدية/علاج طبيعي) */
@@ -633,6 +655,10 @@ export interface MaintenanceTicket {
   journalEntryId: number | null
   deliveredAt: string | null
   notes: string
+  /** مرتجع خدمة بعد التسليم (النواة الموحدة) — تراكمي بسقف grandMinor */
+  refundedMinor?: number
+  refundedTaxMinor?: number
+  refunds?: ServiceRefundRecord[]
 }
 
 /** مستند إتلاف مخزون (هالك وتوالف) — موثق بسبب ومربوط بقيده (مراجعة نشاط الأغذية) */
@@ -1663,6 +1689,18 @@ interface DataState {
    * لا مخزون يتحرك (خدمة). تراكمي بسقف إجمالي الأمر المُسلَّم.
    */
   refundLaundryOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => LaundryOrder
+  /** مرتجع خدمة صيانة بعد التسليم: يعكس 4102+2102 نسبياً — القطع المركبة لها مرتجع بيع مستقل إن أعيدت */
+  refundMaintenanceTicket: (args: { ticketId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => MaintenanceTicket
+  /** مرتجع نقلة (خصم/تعويض للعميل بعد الترحيل): يعكس 4102+2102 نسبياً — مصاريف النقلة تبقى (تكبدناها فعلاً) */
+  refundTrip: (args: { tripId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => Trip
+  /** مرتجع طلب تحاليل: يعكس 4102+2102 نسبياً + يعكس عمولة المُحيل غير المدفوعة بنفس النسبة */
+  refundLabOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => LabOrder
+  /** مرتجع زيارة عيادة (كشف ملغي/مبلغ تنازل عنه): يعكس 4102+2102 نسبياً — الآجل يخصم من ذمة المريض أولاً */
+  refundClinicVisit: (args: { visitId: number; amountMinor: number; mode: 'cash' | 'patient_credit'; treasury?: string; reason: string }) => ClinicVisit
+  /** مرتجع عقد إيجار (خصم تعويضي): يعكس 4102+2102 نسبياً — التأمين له مساره في إقفال العقد */
+  refundRental: (args: { contractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => RentalContract
+  /** إشعار دائن على مستخلص (رفض المالك/الاستشاري جزءاً من الأعمال بعد الاعتماد): يعكس 4102+2102 نسبياً */
+  refundProjectExtract: (args: { extractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => ProjectExtract
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
   /** إهلاك تلقائي (طلب المالك): يرحّل كل الأشهر المتأخرة دفعة واحدة بلا تدخل — يُستدعى عند فتح البرنامج. يعيد عدد القيود المرحّلة */
@@ -6285,9 +6323,15 @@ export const useDataStore = create<DataState>()(
       },
       getPatientBalance: (patientId) => {
         const state = get()
+        // مرتجعات الزيارات «على حساب المريض» تخفض ذمته مثل التحصيلات (مراجعة المرتجعات)
+        const creditRefunds = state.clinicVisits
+          .filter((v) => v.patientId === patientId)
+          .flatMap((v) => v.refunds ?? [])
+          .filter((r) => r.mode === 'customer_credit')
+          .map((r) => ({ amountMinor: r.amountMinor }))
         return patientBalance(
           state.clinicVisits.filter((v) => v.patientId === patientId).map((v) => ({ dueMinor: v.totals.dueMinor })),
-          state.clinicCollections.filter((c) => c.patientId === patientId).map((c) => ({ amountMinor: c.amountMinor })),
+          [...state.clinicCollections.filter((c) => c.patientId === patientId).map((c) => ({ amountMinor: c.amountMinor })), ...creditRefunds],
         )
       },
       addAppointment: (a) => {
@@ -7059,6 +7103,232 @@ export const useDataStore = create<DataState>()(
           refunds: [...(order.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
         }
         set({ laundryOrders: state.laundryOrders.map((o) => (o.id === order.id ? updated : o)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+
+      refundMaintenanceTicket: (args) => {
+        const state = get()
+        const ticket = state.tickets.find((t) => t.id === args.ticketId)
+        if (!ticket) throw new Error('التذكرة غير موجودة')
+        if (ticket.status !== 'delivered' || !ticket.totals) throw new Error('مرتجع الخدمة متاح فقط بعد التسليم')
+        if (args.mode === 'customer_credit' && ticket.customerId == null) {
+          throw new Error('عميل نقدي — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
+        }
+        const built = buildServiceRefundEntry({
+          refundValueMinor: args.amountMinor,
+          deliveredGrandMinor: ticket.totals.grandMinor,
+          deliveredTaxMinor: ticket.totals.vatMinor,
+          priorRefundedMinor: ticket.refundedMinor ?? 0,
+          priorRefundedTaxMinor: ticket.refundedTaxMinor ?? 0,
+          mode: args.mode, treasury: args.treasury,
+          note: `مرتجع خدمة صيانة ${ticket.ticketNumber}`,
+        })
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مرتجع خدمة صيانة ${ticket.ticketNumber} — ${ticket.deviceName}${args.reason ? ` (${args.reason})` : ''}`,
+          sourceType: 'maintenance_ticket', sourceId: ticket.id, lines: built.lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: MaintenanceTicket = {
+          ...ticket,
+          refundedMinor: (ticket.refundedMinor ?? 0) + args.amountMinor,
+          refundedTaxMinor: (ticket.refundedTaxMinor ?? 0) + built.taxShareMinor,
+          refunds: [...(ticket.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+        }
+        set({ tickets: state.tickets.map((t) => (t.id === ticket.id ? updated : t)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+      refundTrip: (args) => {
+        const state = get()
+        const trip = state.trips.find((t) => t.id === args.tripId)
+        if (!trip) throw new Error('النقلة غير موجودة')
+        if (args.mode === 'customer_credit' && trip.customerId == null) {
+          throw new Error('عميل نقدي — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
+        }
+        const built = buildServiceRefundEntry({
+          refundValueMinor: args.amountMinor,
+          deliveredGrandMinor: trip.totals.grandMinor,
+          deliveredTaxMinor: trip.totals.vatMinor,
+          priorRefundedMinor: trip.refundedMinor ?? 0,
+          priorRefundedTaxMinor: trip.refundedTaxMinor ?? 0,
+          mode: args.mode, treasury: args.treasury,
+          note: `مرتجع نقلة ${trip.tripNumber}`,
+        })
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مرتجع نقلة ${trip.tripNumber} — ${trip.fromLoc} ← ${trip.toLoc}${args.reason ? ` (${args.reason})` : ''}`,
+          sourceType: 'logistics_trip', sourceId: trip.id, lines: built.lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: Trip = {
+          ...trip,
+          refundedMinor: (trip.refundedMinor ?? 0) + args.amountMinor,
+          refundedTaxMinor: (trip.refundedTaxMinor ?? 0) + built.taxShareMinor,
+          refunds: [...(trip.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+        }
+        set({ trips: state.trips.map((t) => (t.id === trip.id ? updated : t)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+      refundLabOrder: (args) => {
+        const state = get()
+        const order = state.labOrders.find((o) => o.id === args.orderId)
+        if (!order) throw new Error('الطلب غير موجود')
+        const patient = state.labPatients.find((pt) => pt.id === order.patientId)
+        if (args.mode === 'customer_credit' && order.payment !== 'cash' && patient?.linkedCustomerId == null && order.payment !== 'credit') {
+          throw new Error('لا حساب عميل مرتبط — الاسترداد نقدي فقط')
+        }
+        if (args.mode === 'customer_credit' && order.payment === 'cash' && patient?.linkedCustomerId == null) {
+          throw new Error('طلب نقدي لمريض غير مرتبط بعميل — الاسترداد نقدي فقط')
+        }
+        const built = buildServiceRefundEntry({
+          refundValueMinor: args.amountMinor,
+          deliveredGrandMinor: order.totals.totalMinor,
+          deliveredTaxMinor: order.totals.vatMinor,
+          priorRefundedMinor: order.refundedMinor ?? 0,
+          priorRefundedTaxMinor: order.refundedTaxMinor ?? 0,
+          mode: args.mode, treasury: args.treasury,
+          note: `مرتجع تحاليل ${order.orderNumber}`,
+        })
+        const lines = [...built.lines]
+        // عكس عمولة المُحيل النسبي — للعمولات غير المصروفة فقط (المصروفة شأن تسوية منفصل)
+        let commissionShare = 0
+        if (order.commissionMinor > 0 && !order.commissionPaid) {
+          const reversedSoFar = order.commissionReversedMinor ?? 0
+          commissionShare = Math.min(
+            Math.round((order.commissionMinor * args.amountMinor) / order.totals.totalMinor),
+            order.commissionMinor - reversedSoFar,
+          )
+          if (commissionShare > 0) {
+            lines.push({ accountCode: '2105', debit: commissionShare, credit: 0, note: 'عكس عمولة إحالة (مرتجع)' })
+            lines.push({ accountCode: '5109', debit: 0, credit: commissionShare, note: 'تخفيض مصروف عمولات' })
+          }
+        }
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مرتجع تحاليل ${order.orderNumber} — ${order.patientName}${args.reason ? ` (${args.reason})` : ''}`,
+          sourceType: 'lab_order', sourceId: order.id, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: LabOrder = {
+          ...order,
+          refundedMinor: (order.refundedMinor ?? 0) + args.amountMinor,
+          refundedTaxMinor: (order.refundedTaxMinor ?? 0) + built.taxShareMinor,
+          commissionMinor: order.commissionMinor - commissionShare,
+          commissionReversedMinor: (order.commissionReversedMinor ?? 0) + commissionShare,
+          refunds: [...(order.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+        }
+        set({ labOrders: state.labOrders.map((o) => (o.id === order.id ? updated : o)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+      refundClinicVisit: (args) => {
+        const state = get()
+        const visit = state.clinicVisits.find((v) => v.id === args.visitId)
+        if (!visit) throw new Error('الزيارة غير موجودة')
+        const built = buildServiceRefundEntry({
+          refundValueMinor: args.amountMinor,
+          deliveredGrandMinor: visit.totals.totalMinor,
+          deliveredTaxMinor: visit.totals.vatMinor,
+          priorRefundedMinor: visit.refundedMinor ?? 0,
+          priorRefundedTaxMinor: visit.refundedTaxMinor ?? 0,
+          mode: args.mode === 'cash' ? 'cash' : 'customer_credit',
+          treasury: args.treasury,
+          note: `مرتجع زيارة ${visit.visitNumber}`,
+        })
+        const patient = state.clinicPatients.find((pt) => pt.id === visit.patientId)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مرتجع زيارة ${visit.visitNumber} — ${patient?.nameAr ?? ''}${args.reason ? ` (${args.reason})` : ''}`,
+          sourceType: 'clinic_visit', sourceId: visit.id, lines: built.lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: ClinicVisit = {
+          ...visit,
+          refundedMinor: (visit.refundedMinor ?? 0) + args.amountMinor,
+          refundedTaxMinor: (visit.refundedTaxMinor ?? 0) + built.taxShareMinor,
+          refunds: [...(visit.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode === 'cash' ? 'cash' : 'customer_credit', reason: args.reason, journalEntryId: entryId }],
+        }
+        set({ clinicVisits: state.clinicVisits.map((v) => (v.id === visit.id ? updated : v)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+      refundRental: (args) => {
+        const state = get()
+        const contract = state.rentalContracts.find((c) => c.id === args.contractId)
+        if (!contract) throw new Error('العقد غير موجود')
+        if (args.mode === 'customer_credit' && contract.customerId == null) {
+          throw new Error('عميل نقدي — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
+        }
+        const built = buildServiceRefundEntry({
+          refundValueMinor: args.amountMinor,
+          deliveredGrandMinor: contract.totals.grandMinor + contract.extraMinor,
+          deliveredTaxMinor: contract.totals.vatMinor,
+          priorRefundedMinor: contract.refundedMinor ?? 0,
+          priorRefundedTaxMinor: contract.refundedTaxMinor ?? 0,
+          mode: args.mode, treasury: args.treasury,
+          note: `مرتجع إيجار ${contract.contractNumber}`,
+        })
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مرتجع إيجار ${contract.contractNumber} — ${contract.equipmentName}${args.reason ? ` (${args.reason})` : ''}`,
+          sourceType: 'rental_contract', sourceId: contract.id, lines: built.lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: RentalContract = {
+          ...contract,
+          refundedMinor: (contract.refundedMinor ?? 0) + args.amountMinor,
+          refundedTaxMinor: (contract.refundedTaxMinor ?? 0) + built.taxShareMinor,
+          refunds: [...(contract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+        }
+        set({ rentalContracts: state.rentalContracts.map((c) => (c.id === contract.id ? updated : c)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+      refundProjectExtract: (args) => {
+        const state = get()
+        const extract = state.projectExtracts.find((e) => e.id === args.extractId)
+        if (!extract) throw new Error('المستخلص غير موجود')
+        const project = state.projects.find((pr) => pr.id === extract.projectId)
+        if (args.mode === 'customer_credit' && extract.payment !== 'credit' && project?.clientId == null) {
+          throw new Error('مستخلص نقدي لمشروع بلا عميل مرتبط — الاسترداد نقدي فقط')
+        }
+        const built = buildServiceRefundEntry({
+          refundValueMinor: args.amountMinor,
+          deliveredGrandMinor: extract.totals.dueMinor,
+          deliveredTaxMinor: extract.totals.vatMinor,
+          priorRefundedMinor: extract.refundedMinor ?? 0,
+          priorRefundedTaxMinor: extract.refundedTaxMinor ?? 0,
+          mode: args.mode, treasury: args.treasury,
+          note: `إشعار دائن على مستخلص ${extract.extractNumber}`,
+        })
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `إشعار دائن على مستخلص ${extract.extractNumber}${args.reason ? ` (${args.reason})` : ''}`,
+          sourceType: 'project_extract', sourceId: extract.id, lines: built.lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: ProjectExtract = {
+          ...extract,
+          refundedMinor: (extract.refundedMinor ?? 0) + args.amountMinor,
+          refundedTaxMinor: (extract.refundedTaxMinor ?? 0) + built.taxShareMinor,
+          refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+        }
+        set({ projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? updated : e)), journal: [...state.journal, entry] })
         return updated
       },
 

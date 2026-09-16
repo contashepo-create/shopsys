@@ -13,6 +13,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeTicketTotals, maintenanceReport, isTicketOverdue, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
 import { renderTicketReceiptHtml, renderTicketInvoiceHtml } from '../print/printMaintenanceTicket.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -30,7 +31,7 @@ interface DraftPart { itemId: string; qty: string; unitPrice: string }
 interface DraftService { serviceId: string; nameAr: string; qty: string; unitPrice: string; unitCost: string }
 
 export function MaintenancePage() {
-  const { tickets, customers, items, journal, openTicket, setTicketStatus, deliverTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService } = useDataStore()
+  const { tickets, customers, items, journal, openTicket, setTicketStatus, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -575,6 +576,24 @@ export function MaintenancePage() {
                   </tbody>
                 </table>
               </div>
+            )}
+
+            {viewing.status === 'delivered' && viewing.totals && (
+              <ServiceRefundBox
+                grandMinor={viewing.totals.grandMinor}
+                refundedMinor={viewing.refundedMinor ?? 0}
+                currencySymbol={cur.symbol}
+                fmt={fmt}
+                allowCredit={viewing.customerId != null}
+                hint="عميل غير راضٍ عن الإصلاح؟ الاسترداد يعكس الإيراد وحصة الضريبة — القطع المستبدلة إن أُعيدت فلها مرتجع بيع مستقل."
+                onSubmit={(a) => {
+                  try {
+                    const u = refundMaintenanceTicket({ ticketId: viewing.id, ...a })
+                    setViewing(u)
+                    toast.show(`سُجل مرتجع خدمة ${u.ticketNumber} وتولد القيد العاكس ✅`)
+                  } catch (err) { toast.show((err as Error).message, 'error') }
+                }}
+              />
             )}
 
             {viewEntry && (

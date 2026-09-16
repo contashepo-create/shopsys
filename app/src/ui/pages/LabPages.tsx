@@ -17,6 +17,7 @@ import { computeLabTotals, deriveOrderStatus, ORDER_STATUS_LABELS, referrerState
 import { printHtml } from '../print/printReceipt.ts'
 import { renderLabReportHtml } from '../print/printLabReport.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
@@ -45,7 +46,7 @@ const TEST_STEP: Record<TestStatus, { label: string; next: TestStatus | null; ne
 /* ═══════════════ 1) الطلبات والنتائج ═══════════════ */
 
 export function LabOrdersPage() {
-  const { labOrders, labPatients, labReferrers, labTests, journal, registerLabOrder, advanceLabTest, insuranceProviders, registerInsuredLabOrder } = useDataStore()
+  const { labOrders, labPatients, labReferrers, labTests, journal, registerLabOrder, advanceLabTest, refundLabOrder, insuranceProviders, registerInsuredLabOrder } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useCur()
   const toast = useToast()
@@ -116,7 +117,7 @@ export function LabOrdersPage() {
   /* عرض القيود */
   const [viewing, setViewing] = useState<LabOrder | null>(null)
   const viewEntries = viewing
-    ? journal.filter((e) => e.id === viewing.journalEntryId || e.id === viewing.commissionEntryId || e.id === viewing.commissionPayoutEntryId)
+    ? journal.filter((e) => e.id === viewing.journalEntryId || e.id === viewing.commissionEntryId || e.id === viewing.commissionPayoutEntryId || (viewing.refunds ?? []).some((r) => r.journalEntryId === e.id))
     : []
 
   const doPrint = (o: LabOrder) => {
@@ -336,6 +337,21 @@ export function LabOrdersPage() {
                 عمولة المُحيل: {fmt(viewing.commissionMinor)} {cur.symbol} — {viewing.commissionPaid ? 'مدفوعة ✔' : 'مستحقة (تُصرف من صفحة الأطباء)'}
               </div>
             )}
+            <ServiceRefundBox
+              grandMinor={viewing.totals.totalMinor}
+              refundedMinor={viewing.refundedMinor ?? 0}
+              currencySymbol={cur.symbol}
+              fmt={fmt}
+              allowCredit={viewing.payment === 'credit' || labPatients.find((pt) => pt.id === viewing.patientId)?.linkedCustomerId != null}
+              hint="فحص أُلغي أو أُعيدت العينة؟ يعكس الإيراد وحصة الضريبة — وعمولة المُحيل غير المصروفة تُعكس بنفس النسبة تلقائياً."
+              onSubmit={(a) => {
+                try {
+                  const u = refundLabOrder({ orderId: viewing.id, ...a })
+                  setViewing(u)
+                  toast.show(`سُجل مرتجع التحاليل ${u.orderNumber} وتولد القيد العاكس ✅`)
+                } catch (err) { toast.show((err as Error).message, 'error') }
+              }}
+            />
             {viewEntries.map((e) => (
               <div key={e.id} className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
                 <div className="bg-rose-500/10 px-3 py-2 flex items-center gap-2 text-rose-700 dark:text-rose-300 font-bold text-[12px]">

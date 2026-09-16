@@ -7,6 +7,7 @@
 import { useMemo, useState } from 'react'
 import { Plus, Route, Eye, BookOpenText, Trash2, TrendingUp, Container, Printer } from 'lucide-react'
 import { useDataStore, type Trip } from '../../data/repo.ts'
+import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -27,7 +28,7 @@ interface DraftExpense {
 }
 
 export function TripsPage() {
-  const { trips, vehicles, employees, customers, journal, postTrip, driverDues, getDriverDueBalance, settleDriverDues, custodyFiles, custodyTxs } = useDataStore()
+  const { trips, vehicles, employees, customers, journal, postTrip, refundTrip, driverDues, getDriverDueBalance, settleDriverDues, custodyFiles, custodyTxs } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -427,6 +428,22 @@ export function TripsPage() {
                 </table>
               </div>
             )}
+
+            <ServiceRefundBox
+              grandMinor={viewing.totals.grandMinor}
+              refundedMinor={viewing.refundedMinor ?? 0}
+              currencySymbol={cur.symbol}
+              fmt={fmt}
+              allowCredit={viewing.customerId != null}
+              hint="خصم/تعويض للعميل عن النقلة (تأخير/تلفيات): يعكس الإيراد وحصة الضريبة — مصاريف النقلة تبقى لأنها تُكبدت فعلاً."
+              onSubmit={(a) => {
+                try {
+                  const u = refundTrip({ tripId: viewing.id, ...a })
+                  setViewing(u)
+                  toast.show(`سُجل مرتجع النقلة ${u.tripNumber} وتولد القيد العاكس ✅`)
+                } catch (err) { toast.show((err as Error).message, 'error') }
+              }}
+            />
 
             {viewEntry && (
               <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] overflow-hidden">

@@ -16,11 +16,12 @@ import { printHtml } from '../print/printReceipt.ts'
 import { RATE_TYPE_LABELS, type RateType } from '../../core/rentalMeter.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function RentalContractsPage() {
-  const { rentalContracts, equipment, customers, journal, openRental, closeRental } = useDataStore()
+  const { rentalContracts, equipment, customers, journal, openRental, closeRental, refundRental } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -157,7 +158,7 @@ export function RentalContractsPage() {
   /* ─── عرض عقد ─── */
   const [viewing, setViewing] = useState<RentalContract | null>(null)
   const viewEntries = viewing
-    ? journal.filter((e) => e.id === viewing.openEntryId || e.id === viewing.closeEntryId || e.id === viewing.extraEntryId)
+    ? journal.filter((e) => e.id === viewing.openEntryId || e.id === viewing.closeEntryId || e.id === viewing.extraEntryId || (viewing.refunds ?? []).some((r) => r.journalEntryId === e.id))
     : []
 
   /* ─── تقرير ─── */
@@ -427,6 +428,22 @@ export function RentalContractsPage() {
               <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">المدة × سعر ال{RATE_TYPE_LABELS[viewing.rateType ?? 'daily'].unitAr}</div><b>{viewing.days} × {fmt(viewing.dailyRateMinor)}</b></div>
               <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">الحالة</div><b>{viewing.status === 'active' ? 'نشط' : `مُقفل${viewing.deductMinor > 0 ? ` (خصم ${fmt(viewing.deductMinor)})` : ''}`}</b></div>
             </div>
+
+            <ServiceRefundBox
+              grandMinor={viewing.totals.grandMinor + viewing.extraMinor}
+              refundedMinor={viewing.refundedMinor ?? 0}
+              currencySymbol={cur.symbol}
+              fmt={fmt}
+              allowCredit={viewing.customerId != null}
+              hint="خصم تعويضي على الإيجار (عطل المعدة/إنهاء مبكر): يعكس الإيراد وحصة الضريبة — التأمين له مساره عند إقفال العقد."
+              onSubmit={(a) => {
+                try {
+                  const u = refundRental({ contractId: viewing.id, ...a })
+                  setViewing(u)
+                  toast.show(`سُجل مرتجع الإيجار ${u.contractNumber} وتولد القيد العاكس ✅`)
+                } catch (err) { toast.show((err as Error).message, 'error') }
+              }}
+            />
 
             {viewEntries.map((entry) => (
               <div key={entry.id} className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] overflow-hidden">

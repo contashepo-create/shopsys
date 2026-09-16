@@ -207,21 +207,21 @@ export function statementBalance(rows: StatementRow[]): Minor {
  */
 export function customerUnitDocs(args: {
   customerId: number
-  trips?: readonly { tripNumber: string; date: string; customerId: number | null; payment: string; paidMinor?: number; totals: { grandMinor: Minor } }[]
-  tickets?: readonly { ticketNumber: string; customerId: number | null; deliveredAt: string | null; totals: { creditMinor: Minor } | null }[]
-  rentals?: readonly { contractNumber: string; date: string; customerId: number | null; totals: { collectCreditMinor: Minor } }[]
+  trips?: readonly { tripNumber: string; date: string; customerId: number | null; payment: string; paidMinor?: number; totals: { grandMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
+  tickets?: readonly { ticketNumber: string; customerId: number | null; deliveredAt: string | null; totals: { creditMinor: Minor } | null; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
+  rentals?: readonly { contractNumber: string; date: string; customerId: number | null; totals: { collectCreditMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
   /** زيارات العيادة الآجلة لمريض مرتبط بهذا العميل (ترقية العيادة) + تحصيلاته */
   clinicVisits?: readonly { visitNumber: string; date: string; patientId: number; totals: { dueMinor: Minor } }[]
   clinicCollections?: readonly { date: string; patientId: number; amountMinor: Minor; viaVoucherId?: number | null }[]
   /** معرفات المرضى المرتبطين بهذا العميل */
   linkedPatientIds?: readonly number[]
   /** طلبات معمل آجلة لمرضى معمل مرتبطين بهذا العميل (إصلاح الترابط الشامل) */
-  labOrders?: readonly { orderNumber: string; date: string; patientId: number; payment: string; totals: { totalMinor: Minor } }[]
+  labOrders?: readonly { orderNumber: string; date: string; patientId: number; payment: string; totals: { totalMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
   linkedLabPatientIds?: readonly number[]
   /** خدمات محافظ بجزء آجل على العميل */
   walletOps?: readonly { opNumber: string; date: string; customerId: number | null; status: string; totals: { remainingMinor: Minor } }[]
   /** مستخلصات مقاولات آجلة لمشروعات مربوطة بالعميل + دفعات مقدمة وتحصيلات المشروع */
-  projectExtracts?: readonly { extractNumber: string; date: string; projectId: number; payment: string; totals: { dueMinor: Minor } }[]
+  projectExtracts?: readonly { extractNumber: string; date: string; projectId: number; payment: string; totals: { dueMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
   linkedProjectIds?: readonly number[]
   /**
    * خطط أقساط العميل — قيودها (هامش تمويل مدين، مقدم وسدادات دائنة) لا سندات لها
@@ -255,8 +255,11 @@ export function customerUnitDocs(args: {
   }
   const labSet = new Set(args.linkedLabPatientIds ?? [])
   for (const o of args.labOrders ?? []) {
-    if (o.payment !== 'credit' || !labSet.has(o.patientId)) continue
-    rows.push({ docLabel: `طلب معمل ${o.orderNumber} (آجل)`, date: o.date, debitMinor: o.totals.totalMinor, creditMinor: 0 })
+    if (!labSet.has(o.patientId)) continue
+    if (o.payment === 'credit') rows.push({ docLabel: `طلب معمل ${o.orderNumber} (آجل)`, date: o.date, debitMinor: o.totals.totalMinor, creditMinor: 0 })
+    for (const r of o.refunds ?? []) {
+      if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع تحاليل ${o.orderNumber} (على الحساب)`, date: r.date, debitMinor: 0, creditMinor: r.amountMinor })
+    }
   }
   for (const w of args.walletOps ?? []) {
     if (w.customerId !== args.customerId || w.status === 'returned') continue
@@ -264,8 +267,11 @@ export function customerUnitDocs(args: {
   }
   const projSet = new Set(args.linkedProjectIds ?? [])
   for (const ex of args.projectExtracts ?? []) {
-    if (ex.payment !== 'credit' || !projSet.has(ex.projectId)) continue
-    if (ex.totals.dueMinor > 0) rows.push({ docLabel: `مستخلص ${ex.extractNumber} (آجل)`, date: ex.date, debitMinor: ex.totals.dueMinor, creditMinor: 0 })
+    if (!projSet.has(ex.projectId)) continue
+    if (ex.payment === 'credit' && ex.totals.dueMinor > 0) rows.push({ docLabel: `مستخلص ${ex.extractNumber} (آجل)`, date: ex.date, debitMinor: ex.totals.dueMinor, creditMinor: 0 })
+    for (const r of ex.refunds ?? []) {
+      if (r.mode === 'customer_credit') rows.push({ docLabel: `إشعار دائن مستخلص ${ex.extractNumber}`, date: r.date, debitMinor: 0, creditMinor: r.amountMinor })
+    }
   }
   for (const pl of args.installmentPlans ?? []) {
     if (pl.customerId !== args.customerId) continue
@@ -281,14 +287,23 @@ export function customerUnitDocs(args: {
     const paid = t.paidMinor ?? (t.payment === 'cash' ? t.totals.grandMinor : 0)
     const due = t.totals.grandMinor - paid
     if (due > 0) rows.push({ docLabel: `نقلة ${t.tripNumber} (آجل)`, date: t.date, debitMinor: due, creditMinor: 0 })
+    for (const r of t.refunds ?? []) {
+      if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع نقلة ${t.tripNumber} (على الحساب)`, date: r.date, debitMinor: 0, creditMinor: r.amountMinor })
+    }
   }
   for (const tk of args.tickets ?? []) {
     if (tk.customerId !== args.customerId || !tk.deliveredAt || !tk.totals) continue
     if (tk.totals.creditMinor > 0) rows.push({ docLabel: `صيانة ${tk.ticketNumber} (على الحساب)`, date: tk.deliveredAt, debitMinor: tk.totals.creditMinor, creditMinor: 0 })
+    for (const r of tk.refunds ?? []) {
+      if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع صيانة ${tk.ticketNumber} (على الحساب)`, date: r.date, debitMinor: 0, creditMinor: r.amountMinor })
+    }
   }
   for (const rc of args.rentals ?? []) {
     if (rc.customerId !== args.customerId) continue
     if (rc.totals.collectCreditMinor > 0) rows.push({ docLabel: `إيجار ${rc.contractNumber} (آجل)`, date: rc.date, debitMinor: rc.totals.collectCreditMinor, creditMinor: 0 })
+    for (const r of rc.refunds ?? []) {
+      if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع إيجار ${rc.contractNumber} (على الحساب)`, date: r.date, debitMinor: 0, creditMinor: r.amountMinor })
+    }
   }
   return rows
 }
