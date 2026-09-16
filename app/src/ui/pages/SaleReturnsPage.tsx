@@ -27,7 +27,7 @@ export function SaleReturnsPage() {
   const [pickQuery, setPickQuery] = useState('')
   const [sale, setSale] = useState<SaleInvoice | null>(null)
   const [qtys, setQtys] = useState<Record<number, string>>({})
-  const [refund, setRefund] = useState<'cash' | 'credit'>('cash')
+  const [refund, setRefund] = useState<'cash' | 'credit' | 'store_credit'>('cash')
   const [reason, setReason] = useState('')
   const [viewing, setViewing] = useState<SaleReturn | null>(null)
 
@@ -80,7 +80,7 @@ export function SaleReturnsPage() {
       dateIso: r.date,
       lines: r.lines,
       totals: r.totals,
-      payment: r.refund, // نقدي = رُدّ فوراً؛ آجل = خُصم من حساب العميل
+      payment: r.refund === 'cash' ? 'cash' : 'credit', // نقدي = رُدّ فوراً؛ غيره = على الحساب/رصيد
       paidMinor: r.refund === 'cash' ? r.totals.totalMinor : 0,
       customerName: orig?.customerId ? customers.find((c) => c.id === orig.customerId)?.nameAr ?? null : null,
       taxPercent: setup.vatPercent,
@@ -97,7 +97,7 @@ export function SaleReturnsPage() {
     model.paymentLabel =
       cashPart > 0 && creditPart > 0
         ? `رد نقدي ${fmt(cashPart)} + خصم من الحساب ${fmt(creditPart)}`
-        : cashPart > 0 ? 'رد نقدي' : 'خصم من حساب العميل'
+        : cashPart > 0 ? 'رد نقدي' : r.refund === 'store_credit' ? 'إيداع رصيداً في حساب العميل' : 'خصم من حساب العميل'
     printHtml(receipt.defaultTemplate === 'a4' ? renderInvoiceA4Html(model, cur, receipt) : renderReceiptHtml(model, cur, receipt))
     toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
   }
@@ -145,7 +145,7 @@ export function SaleReturnsPage() {
                         // الرد الهجين (R1): بيان توزيع الرد الفعلي بين الدرج وحساب العميل
                         const cash = returnCashRefundMinor(r)
                         const credit = r.totals.totalMinor - cash
-                        const label = cash > 0 && credit > 0 ? `💵 ${fmt(cash)} + 👥 ${fmt(credit)}` : cash > 0 ? '💵 نقدي' : '👥 خصم من حساب العميل'
+                        const label = cash > 0 && credit > 0 ? `💵 ${fmt(cash)} + 👥 ${fmt(credit)}` : cash > 0 ? '💵 نقدي' : r.refund === 'store_credit' ? '🏦 رصيد في حسابه' : '👥 خصم من حساب العميل'
                         return (
                           <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${credit === 0 ? 'bg-emerald-500/10 text-emerald-600' : cash === 0 ? 'bg-violet-500/10 text-violet-600' : 'bg-amber-500/10 text-amber-600'}`}>
                             {label}
@@ -238,17 +238,29 @@ export function SaleReturnsPage() {
               </tbody>
             </table>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 onClick={() => setRefund('cash')}
-                className={`p-3 rounded-2xl border-2 font-bold text-sm transition-all ${refund === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
-              >💵 رد نقدي من {treasuries.find((t) => t.code === (sale.treasury ?? '1101'))?.nameAr ?? 'الخزينة'} (خزينة البيع الأصلية)</button>
+                className={`p-3 rounded-2xl border-2 font-bold text-[12.5px] transition-all ${refund === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
+              >💵 رد نقدي من {treasuries.find((t) => t.code === (sale.treasury ?? '1101'))?.nameAr ?? 'الخزينة'}</button>
               <button
                 onClick={() => setRefund('credit')}
                 disabled={!sale.customerId}
-                className={`p-3 rounded-2xl border-2 font-bold text-sm transition-all disabled:opacity-40 ${refund === 'credit' ? 'border-violet-500/60 bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
+                title="يطفئ دين الفاتورة المفتوح أولاً — لو تجاوز المرتجع الدين يُرد الفائض نقداً تلقائياً"
+                className={`p-3 rounded-2xl border-2 font-bold text-[12.5px] transition-all disabled:opacity-40 ${refund === 'credit' ? 'border-violet-500/60 bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
               >👥 خصم من حساب العميل {!sale.customerId && '(عميل نقدي)'}</button>
+              <button
+                onClick={() => setRefund('store_credit')}
+                disabled={!sale.customerId}
+                title="لا نقدية تخرج: كامل القيمة تودع رصيداً دائناً في حساب العميل يُخصم من فواتيره القادمة (Store Credit)"
+                className={`p-3 rounded-2xl border-2 font-bold text-[12.5px] transition-all disabled:opacity-40 ${refund === 'store_credit' ? 'border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
+              >🏦 إيداع رصيداً في حسابه {!sale.customerId && '(عميل نقدي)'}</button>
             </div>
+            {refund === 'store_credit' && (
+              <p className="text-[11.5px] text-sky-600 dark:text-sky-400 p-2.5 rounded-xl bg-sky-500/5 border border-sky-500/20 leading-relaxed">
+                🏦 لا يخرج مال من الخزينة: قيمة المرتجع كلها تُقيَّد دائنة في حساب العميل — تطفئ دينه إن وُجد، وما زاد يبقى رصيداً له يُخصم تلقائياً من مشترياته القادمة.
+              </p>
+            )}
 
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="سبب الإرجاع (اختياري): تالف، غير مطابق…" className={inputCls} />
 

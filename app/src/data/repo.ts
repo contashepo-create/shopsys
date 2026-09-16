@@ -13,7 +13,7 @@ import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, baseQty, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
-import { buildReturnLines, buildReturnEntry, deriveTaxConfig, splitRefund, returnCashRefundMinor } from '../core/returns.ts'
+import { buildReturnLines, buildReturnEntry, deriveTaxConfig, splitRefund, returnCashRefundMinor, type RefundMode } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
 import {
@@ -32,7 +32,7 @@ import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignmen
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
-import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
+import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, buildServiceRefundEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { fullCoa } from '../core/treasury.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
@@ -550,6 +550,10 @@ export interface LaundryOrder {
   taxMinor: number
   notes: string
   statusHistory: { status: LaundryStatus; at: string }[]
+  /** G3: استردادات ما بعد التسليم (مرتجع خدمة) — تراكمي بسقف grandMinor */
+  refundedMinor?: number
+  refundedTaxMinor?: number
+  refunds?: { date: string; amountMinor: number; taxShareMinor: number; mode: 'cash' | 'customer_credit'; reason: string; journalEntryId: number }[]
 }
 
 /** عمولة خارجية مستحقة للمنشأة لدى الغير (طلب المالك — طبيب له عمولة عند مركز أشعة مثلاً) */
@@ -853,6 +857,13 @@ export interface SaleInvoice {
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
   /** المخزن الذي بيعت منه (الأمر 8) — null/undefined = «مخزن غير محدد» (يعامل كالرئيسي) */
   warehouseId?: number | null
+  /**
+   * G1 (مراجعة المرتجعات): نسبة الضريبة ونمطها الفعليان وقت البيع — يستخدمهما المرتجع
+   * والتعديل مباشرة بدل الاستنتاج من الإجماليات (الاستنتاج يخطئ في الفواتير المختلطة:
+   * أصناف خاضعة وأخرى معفاة تعطي نسبة مخلوطة). undefined = فاتورة قديمة (استنتاج).
+   */
+  taxPercent?: number
+  taxInclusive?: boolean
 }
 
 /** مرتجع مبيعات — دائماً مربوط بفاتورته الأصلية وبقيده العاكس */
@@ -863,7 +874,7 @@ export interface SaleReturn {
   refCode: string
   date: string
   saleId: number // الفاتورة الأصلية
-  refund: PaymentMethod // رد نقدي أو تخفيض ذمم العميل
+  refund: RefundMode // نقدي / تخفيض ذمم / إيداع رصيداً في حساب العميل (G2)
   lines: CartLine[]
   totals: CartTotals
   journalEntryId: number
@@ -1107,7 +1118,7 @@ interface DataState {
   postSaleReturn: (args: {
     saleId: number
     qtyByItem: Map<number, number>
-    refund: PaymentMethod
+    refund: RefundMode
     reason: string
   }) => SaleReturn
   /**
@@ -1646,6 +1657,12 @@ interface DataState {
   deliverLaundryOrder: (args: { orderId: number; treasury?: TreasuryAccount }) => LaundryOrder
   /** إلغاء الأمر: لو عليه عربون يُرد بقيد 2109 ← خزينة */
   cancelLaundryOrder: (orderId: number) => LaundryOrder
+  /**
+   * G3: استرداد خدمة بعد التسليم (عميل غير راضٍ عن الغسيل) — مرتجع خدمة:
+   * يعكس الإيراد 4102 وحصة الضريبة 2102 النسبية، ويرد نقداً أو يودِع في حساب العميل.
+   * لا مخزون يتحرك (خدمة). تراكمي بسقف إجمالي الأمر المُسلَّم.
+   */
+  refundLaundryOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => LaundryOrder
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
   /** إهلاك تلقائي (طلب المالك): يرحّل كل الأشهر المتأخرة دفعة واحدة بلا تدخل — يُستدعى عند فتح البرنامج. يعيد عدد القيود المرحّلة */
@@ -2369,6 +2386,8 @@ export const useDataStore = create<DataState>()(
           expiryOverrideBy: args.expiryOverrideBy ?? null,
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
           warehouseId: args.warehouseId ?? null,
+          taxPercent: args.taxPercent, // G1: تثبيت المعاملة الضريبية على المستند
+          taxInclusive: args.taxInclusive,
         }
 
         // 4) خصم المخزون (خامات الأطباق بدل الطبق نفسه) + تعليم السيريالات مباعة
@@ -2394,8 +2413,8 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
-        if (args.refund === 'credit' && sale.customerId === null) {
-          throw new Error('فاتورة عميل نقدي — الاسترداد نقدي فقط')
+        if ((args.refund === 'credit' || args.refund === 'store_credit') && sale.customerId === null) {
+          throw new Error('فاتورة عميل نقدي — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
         }
         // 1) بناء سطور المرتجع بنفس أسعار وخصومات الأصل، مع منع تجاوز المتبقي
         const priorLines = state.saleReturns.filter((r) => r.saleId === sale.id).flatMap((r) => r.lines)
@@ -2404,8 +2423,12 @@ export const useDataStore = create<DataState>()(
         // تبقى تكلفتها في 5101 (هالك اقتصادياً) ويُرد للعميل السعر فقط
         const isDish = (itemId: number) => state.recipes.some((r) => r.productItemId === itemId && r.mode === 'made_to_order')
         const lines = rawLines.map((l) => (isDish(l.itemId) ? { ...l, unitCostMinor: 0 } : l))
-        // 2) نفس المعاملة الضريبية وقت البيع (حتى لو تغيرت الإعدادات لاحقاً)
-        const { taxPercent, taxInclusive } = deriveTaxConfig(sale.totals)
+        // 2) نفس المعاملة الضريبية وقت البيع (حتى لو تغيرت الإعدادات لاحقاً) —
+        // G1: النسبة المخزنة على الفاتورة أولاً (دقيقة حتى مع أصناف معفاة مختلطة)،
+        // والاستنتاج من الإجماليات للفواتير القديمة فقط
+        const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
+          ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
+          : deriveTaxConfig(sale.totals)
         const totals = computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
         // 3) الرد الهجين للدفع المجزأ (إصلاح R1): لا نرد نقداً أكثر مما حُصِّل فعلاً،
         //    ولا نخفض ذمم العميل أكثر من المتبقي المفتوح على الفاتورة
@@ -4070,6 +4093,7 @@ export const useDataStore = create<DataState>()(
             walletOps: state.walletOps,
             projectExtracts: state.projectExtracts, linkedProjectIds: state.projects.filter((p) => p.clientId === customerId).map((p) => p.id),
             installmentPlans: state.installmentPlans,
+            laundryOrders: state.laundryOrders,
           }),
         }))
       },
@@ -5712,7 +5736,7 @@ export const useDataStore = create<DataState>()(
           const key = `extract:${ex.id}`
           open.push({ docKey: key, docLabel: `مستخلص ${ex.extractNumber}`, date: ex.date, dueMinor: ex.totals.dueMinor, settledMinor: settled.get(key) ?? 0 })
         }
-        return open.filter((inv) => inv.dueMinor - inv.settledMinor > 0).sort((a, b) => a.date.localeCompare(b.date))
+        return open.filter((inv) => inv.dueMinor - inv.settledMinor > 0).sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
       },
 
       receiveClientPayment: (args) => {
@@ -7002,6 +7026,42 @@ export const useDataStore = create<DataState>()(
         set({ laundryOrders: state.laundryOrders.map((o) => (o.id === orderId ? updated : o)), journal })
         return updated
       },
+
+      refundLaundryOrder: (args) => {
+        const state = get()
+        const order = state.laundryOrders.find((o) => o.id === args.orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        if (order.status !== 'delivered') throw new Error('استرداد الخدمة متاح فقط بعد التسليم — قبل التسليم استخدم الإلغاء')
+        if (args.mode === 'customer_credit' && order.customerId == null) {
+          throw new Error('عميل نقدي عابر — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
+        }
+        const built = buildServiceRefundEntry({
+          refundValueMinor: args.amountMinor,
+          deliveredGrandMinor: order.grandMinor,
+          deliveredTaxMinor: order.taxMinor,
+          priorRefundedMinor: order.refundedMinor ?? 0,
+          priorRefundedTaxMinor: order.refundedTaxMinor ?? 0,
+          mode: args.mode, treasury: args.treasury,
+          note: `مرتجع خدمة ${order.orderNumber}`,
+        })
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مرتجع خدمة ${order.orderNumber} — ${order.customerName}${args.reason ? ` (${args.reason})` : ''}`,
+          sourceType: 'laundry', sourceId: order.id, lines: built.lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: LaundryOrder = {
+          ...order,
+          refundedMinor: (order.refundedMinor ?? 0) + args.amountMinor,
+          refundedTaxMinor: (order.refundedTaxMinor ?? 0) + built.taxShareMinor,
+          refunds: [...(order.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+        }
+        set({ laundryOrders: state.laundryOrders.map((o) => (o.id === order.id ? updated : o)), journal: [...state.journal, entry] })
+        return updated
+      },
+
       postMonthlyDepreciation: () => {
         const state = get()
         const nowMonth = new Date().toISOString().slice(0, 7)

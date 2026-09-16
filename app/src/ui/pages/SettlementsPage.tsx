@@ -54,7 +54,7 @@ export function SettlementsPage() {
         customerId: pid,
         openingMinor: store.openingBalances[`customer:${pid}`] ?? 0,
         sales: store.sales, saleReturns: store.saleReturns, allSales: store.sales,
-        extraDocs: customerUnitDocs({ customerId: pid, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts, clinicVisits: store.clinicVisits, clinicCollections: store.clinicCollections, linkedPatientIds: store.clinicPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id), labOrders: store.labOrders, linkedLabPatientIds: store.labPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id), walletOps: store.walletOps, projectExtracts: store.projectExtracts, linkedProjectIds: store.projects.filter((p) => p.clientId === pid).map((p) => p.id), installmentPlans: store.installmentPlans }),
+        extraDocs: customerUnitDocs({ customerId: pid, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts, clinicVisits: store.clinicVisits, clinicCollections: store.clinicCollections, linkedPatientIds: store.clinicPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id), labOrders: store.labOrders, linkedLabPatientIds: store.labPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id), walletOps: store.walletOps, projectExtracts: store.projectExtracts, linkedProjectIds: store.projects.filter((p) => p.clientId === pid).map((p) => p.id), installmentPlans: store.installmentPlans, laundryOrders: store.laundryOrders }),
         vouchers: [
           ...store.vouchers,
           ...store.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),

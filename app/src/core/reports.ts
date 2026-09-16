@@ -181,7 +181,7 @@ export interface CustomerBalanceRow {
 
 export function customerBalances(
   sales: SaleDoc[],
-  returns: (SaleReturnDoc & { refund: PaymentMethod })[],
+  returns: (SaleReturnDoc & { refund: PaymentMethod | 'store_credit'; creditRefundMinor?: Minor })[],
   collections: { customerId: number; amountMinor: Minor }[],
 ): CustomerBalanceRow[] {
   const map = new Map<number, CustomerBalanceRow>()
@@ -198,9 +198,11 @@ export function customerBalances(
     if (creditPart > 0 && s.customerId != null) row(s.customerId).invoicedMinor += creditPart
   }
   for (const r of returns) {
-    // مرتجع بتخفيض الذمة (وليس رداً نقدياً) عن فاتورة لعميل معروف
+    // الجزء المخفِّض للذمة فقط (الرد الهجين R1 وإيداع الرصيد G2) — سجلات قديمة: كامل مرتجع «على الحساب»
     const cid = saleCustomer.get(r.saleId)
-    if (r.refund === 'credit' && cid != null) row(cid).returnedMinor += r.totals.totalMinor
+    if (cid == null) continue
+    const creditPart = r.creditRefundMinor ?? (r.refund === 'credit' || r.refund === 'store_credit' ? r.totals.totalMinor : 0)
+    if (creditPart > 0) row(cid).returnedMinor += creditPart
   }
   for (const c of collections) row(c.customerId).collectedMinor += c.amountMinor
   for (const r of map.values()) r.balanceMinor = r.invoicedMinor - r.returnedMinor - r.collectedMinor

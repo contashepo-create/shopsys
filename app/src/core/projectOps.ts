@@ -145,7 +145,8 @@ export function allocateClientPayment(
   const open = openInvoices
     .map((inv) => ({ ...inv, remaining: inv.dueMinor - inv.settledMinor }))
     .filter((inv) => inv.remaining > 0)
-    .sort((a, b) => a.date.localeCompare(b.date))
+    // كاسر تعادل حتمي: مستندات بنفس اللحظة تُرتب بالمفتاح — يمنع تذبذب FIFO
+    .sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
   if (specificDocKey != null) {
     const idx = open.findIndex((inv) => inv.docKey === specificDocKey)
     if (idx < 0) throw new Error('الفاتورة المحددة غير مفتوحة أو مسددة بالكامل')

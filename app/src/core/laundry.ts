@@ -130,6 +130,41 @@ export function buildLaundryDeliverEntry(args: {
   return { lines, taxMinor: tax, baseMinor: base, grandMinor: grand }
 }
 
+/**
+ * G3 (مراجعة المرتجعات): استرداد خدمة بعد التسليم — «مرتجع خدمة» (Service Credit Note).
+ * عميل غير راضٍ عن الغسيل بعد استلامه: الخدمة لا تعود للمخزون (لا بضاعة)،
+ * فالقيد عكس الإيراد وحصة الضريبة فقط — بنفس معاملة الضريبة المسجلة وقت التسليم:
+ *   مدين 4102 مرتجعات المبيعات (الأساس) + مدين 2102 (حصة الضريبة النسبية)
+ *   دائن الخزينة (رد نقدي) و/أو 1104 (خصم من حساب العميل)
+ * refundValueMinor = المبلغ الإجمالي المردود (شامل الضريبة) بسقف grandMinor المتبقي.
+ */
+export function buildServiceRefundEntry(args: {
+  refundValueMinor: Minor // المردود الإجمالي (شامل حصته الضريبية)
+  deliveredGrandMinor: Minor // إجمالي الأمر المُسلَّم شامل الضريبة
+  deliveredTaxMinor: Minor // الضريبة المسجلة وقت التسليم
+  priorRefundedMinor: Minor // مردود سابق على نفس الأمر (تراكمي)
+  priorRefundedTaxMinor: Minor // ضريبة عُكست سابقاً
+  mode: 'cash' | 'customer_credit'
+  treasury?: string
+  note: string
+}): { lines: JournalLine[]; taxShareMinor: Minor; baseMinor: Minor } {
+  const { refundValueMinor: v, deliveredGrandMinor: grand, deliveredTaxMinor: tax } = args
+  if (!Number.isInteger(v) || v <= 0) throw new Error('قيمة الاسترداد يجب أن تكون موجبة')
+  const remaining = grand - args.priorRefundedMinor
+  if (v > remaining) throw new Error(`قيمة الاسترداد تتجاوز المتبقي القابل للرد (${remaining})`)
+  // حصة الضريبة النسبية بسقف ما لم يُعكس بعد (نفس منطق N2 في مرتجع الشراء)
+  const taxShare = tax > 0 ? Math.min(Math.round((tax * v) / grand), tax - args.priorRefundedTaxMinor) : 0
+  const base = v - taxShare
+  const lines: JournalLine[] = [
+    { accountCode: '4102', debit: base, credit: 0, note: args.note },
+  ]
+  if (taxShare > 0) lines.push({ accountCode: '2102', debit: taxShare, credit: 0, note: 'تخفيض ض.ق.م' })
+  if (args.mode === 'cash') lines.push({ accountCode: args.treasury ?? '1101', debit: 0, credit: v, note: 'رد نقدية' })
+  else lines.push({ accountCode: '1104', debit: 0, credit: v, note: 'إيداع في حساب العميل' })
+  assertBalanced(lines)
+  return { lines, taxShareMinor: taxShare, baseMinor: base }
+}
+
 /** إلغاء أمر عليه عربون: رد العربون — 2109 ← الخزينة */
 export function buildLaundryCancelEntry(prepaidMinor: Minor, note: string, treasury = '1101'): JournalLine[] {
   if (prepaidMinor <= 0) throw new Error('لا عربون لرده')

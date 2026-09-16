@@ -29,7 +29,7 @@ const STATUS_STYLE: Record<LaundryStatus, string> = {
 interface DraftLine { desc: string; service: LaundryService; qty: string; price: string }
 
 export function LaundryPage() {
-  const { laundryOrders, customers, journal, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder } = useDataStore()
+  const { laundryOrders, customers, journal, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder } = useDataStore()
   const { setup, reportPrint, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -87,8 +87,22 @@ export function LaundryPage() {
   const viewing = viewingId != null ? laundryOrders.find((o) => o.id === viewingId) : null
   const [deliverTreasury, setDeliverTreasury] = useState('1101')
   const viewingEntries = viewing
-    ? journal.filter((e) => [viewing.prepaidEntryId, viewing.deliverEntryId, viewing.cancelEntryId].includes(e.id))
+    ? journal.filter((e) => [viewing.prepaidEntryId, viewing.deliverEntryId, viewing.cancelEntryId, ...(viewing.refunds ?? []).map((r) => r.journalEntryId)].includes(e.id))
     : []
+
+  /* ─── G3: مرتجع خدمة بعد التسليم (عميل غير راضٍ عن الغسيل) ─── */
+  const [refundAmount, setRefundAmount] = useState('')
+  const [refundMode, setRefundMode] = useState<'cash' | 'customer_credit'>('cash')
+  const [refundTreasury, setRefundTreasury] = useState('1101')
+  const [refundReason, setRefundReason] = useState('')
+  const doServiceRefund = (o: LaundryOrder) => {
+    try {
+      const amountMinor = Math.round(Number(refundAmount) * 100)
+      const u = refundLaundryOrder({ orderId: o.id, amountMinor, mode: refundMode, treasury: refundTreasury, reason: refundReason.trim() })
+      toast.show(`سُجل مرتجع خدمة ${u.orderNumber} بقيمة ${fmt(amountMinor)} ${cur.symbol} وتولد القيد العاكس ✅`)
+      setRefundAmount(''); setRefundReason('')
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
 
   const move = (o: LaundryOrder, to: LaundryStatus) => {
     try {
@@ -329,6 +343,33 @@ export function LaundryPage() {
                       {to === 'delivered' ? '💰 تسليم وتحصيل (يولد قيد الإيراد)' : to === 'cancelled' ? `🚫 إلغاء${viewing.prepaidMinor > 0 ? ' ورد العربون' : ''}` : `${LAUNDRY_STATUS_LABELS[to]} ←`}
                     </button>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {viewing.status === 'delivered' && (
+              <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.04] p-4 space-y-3">
+                <div className="text-[13px] font-black text-amber-700 dark:text-amber-400">↩️ مرتجع خدمة (بعد التسليم)</div>
+                <p className="text-[11.5px] text-slate-500 leading-relaxed">
+                  عميل غير راضٍ عن الخدمة؟ الاسترداد يعكس الإيراد وحصة الضريبة بقيد تلقائي — لا مخزون يتحرك.
+                  المتبقي القابل للرد: <b className="text-amber-600">{fmt(viewing.grandMinor - (viewing.refundedMinor ?? 0))} {cur.symbol}</b>
+                  {(viewing.refundedMinor ?? 0) > 0 && <> (رُد سابقاً {fmt(viewing.refundedMinor ?? 0)})</>}
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} placeholder="المبلغ المردود (شامل الضريبة)" className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-[13px]" />
+                  <input value={refundReason} onChange={(e) => setRefundReason(e.target.value)} placeholder="السبب: بقع لم تُزل، قطعة تالفة…" className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-[13px]" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setRefundMode('cash')} className={`p-2.5 rounded-xl border-2 font-bold text-[12px] transition-all ${refundMode === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>💵 رد نقدي</button>
+                  <button onClick={() => setRefundMode('customer_credit')} disabled={viewing.customerId == null} className={`p-2.5 rounded-xl border-2 font-bold text-[12px] transition-all disabled:opacity-40 ${refundMode === 'customer_credit' ? 'border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>🏦 إيداع في حساب العميل {viewing.customerId == null && '(عميل عابر)'}</button>
+                </div>
+                {refundMode === 'cash' && (
+                  <Field label="الرد من">
+                    <TreasuryPicker value={refundTreasury} onChange={setRefundTreasury} compact />
+                  </Field>
+                )}
+                <div className="flex justify-end">
+                  <Btn onClick={() => doServiceRefund(viewing)} disabled={!refundAmount || Number(refundAmount) <= 0}>↩️ تنفيذ مرتجع الخدمة</Btn>
                 </div>
               </div>
             )}

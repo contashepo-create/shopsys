@@ -77,15 +77,26 @@ export function deriveTaxConfig(totals: CartTotals): { taxPercent: number; taxIn
  * openCreditMinor = المتبقي الآجل المفتوح على الفاتورة (الجزء الآجل − مرتجعات آجلة سابقة − تحصيلات مخصصة لها)
  * receivedMinor  = المُحصَّل فعلاً القابل للرد نقداً (المدفوع وقت البيع + التحصيلات المخصصة − ردود نقدية سابقة)
  */
+/**
+ * G2: «إيداع في حساب العميل» (Store Credit — نمط QuickBooks/Zoho «Retain as credit»):
+ * كامل قيمة المرتجع تُقيَّد دائنة على 1104 بلا سقف المفتوح — لو تجاوزت دينه
+ * انقلب رصيده دائناً (له عندنا) ويُخصم من فواتيره القادمة. لا نقدية تخرج إطلاقاً.
+ */
+export type RefundMode = PaymentMethod | 'store_credit'
+
 export function splitRefund(
   refundValueMinor: number,
-  refund: PaymentMethod,
+  refund: RefundMode,
   openCreditMinor: number,
   receivedMinor: number,
 ): { cashMinor: number; creditMinor: number } {
   if (!Number.isInteger(refundValueMinor) || refundValueMinor <= 0) throw new RangeError('قيمة المرتجع يجب أن تكون موجبة')
   const openCredit = Math.max(0, openCreditMinor)
   const received = Math.max(0, receivedMinor)
+  if (refund === 'store_credit') {
+    // كل القيمة رصيداً للعميل — لا نقدية تخرج ولا سقف (الرصيد الدائن مقصود)
+    return { creditMinor: refundValueMinor, cashMinor: 0 }
+  }
   if (refund === 'credit') {
     const credit = Math.min(refundValueMinor, openCredit)
     return { creditMinor: credit, cashMinor: refundValueMinor - credit }
@@ -95,7 +106,7 @@ export function splitRefund(
 }
 
 /** النقدية الخارجة فعلاً من مرتجع (للورديات/الطباعة) — التوافق الخلفي: سجلات قديمة بلا تقسيم */
-export function returnCashRefundMinor(r: { refund: PaymentMethod; totals: { totalMinor: number }; cashRefundMinor?: number }): number {
+export function returnCashRefundMinor(r: { refund: RefundMode; totals: { totalMinor: number }; cashRefundMinor?: number }): number {
   return r.cashRefundMinor ?? (r.refund === 'cash' ? r.totals.totalMinor : 0)
 }
 
@@ -108,7 +119,7 @@ export function returnCashRefundMinor(r: { refund: PaymentMethod; totals: { tota
  */
 export function buildReturnEntry(
   totals: CartTotals,
-  refund: PaymentMethod,
+  refund: RefundMode,
   treasury = '1101',
   split?: { cashMinor: number; creditMinor: number },
 ): JournalLine[] {
