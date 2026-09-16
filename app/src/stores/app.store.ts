@@ -5,7 +5,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
-import { toggleModuleList, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
+import { toggleModuleList, effectiveModules, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { generateDeviceId, type LicensePayload } from '../core/license.ts'
@@ -209,7 +209,15 @@ export const useAppStore = create<AppState>()(
       lastSeenAt: BOOT.now,
       activatedKey: null,
       activatedPayload: null,
-      setActivated: (key, payload) => set({ activatedKey: key, activatedPayload: payload }),
+      setActivated: (key, payload) =>
+        set((s) => ({
+          activatedKey: key,
+          activatedPayload: payload,
+          // سياسة الأقسام: الوحدات = افتراضيات النشاط + ما فعّله المطوّر في المفتاح فقط
+          setup: s.setup.completed
+            ? { ...s.setup, modules: effectiveModules(s.setup.activityId, payload.extraModules) }
+            : s.setup,
+        })),
       clearActivation: () => set({ activatedKey: null, activatedPayload: null }),
       touchLastSeen: () =>
         set((s) => {

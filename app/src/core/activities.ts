@@ -166,6 +166,20 @@ export function getActivity(id: string | null): ActivityTemplate | undefined {
  * تبديل وحدة عمل (تفعيل/إلغاء) — دالة خالصة:
  * تعيد قائمة الوحدات الجديدة، وتمنع إلغاء آخر وحدة عمل (لا تطبيق بلا أي وحدة).
  */
+/**
+ * سياسة الأقسام (أمر المالك): الأقسام الظاهرة = افتراضيات النشاط فقط،
+ * والقسم الإضافي لا يفعّله إلا المطوّر عبر مفتاح موقَّع (extraModules في الرخصة).
+ * دالة خالصة: تتجاهل أي اسم وحدة غير معروف في المفتاح بأمان.
+ */
+export function effectiveModules(activityId: string | null, licensedExtra: readonly string[] | undefined): BusinessModule[] {
+  const tpl = ACTIVITY_TEMPLATES.find((a) => a.id === activityId)
+  const base: BusinessModule[] = tpl ? [...tpl.modules] : ['pos', 'inventory', 'purchases']
+  for (const m of licensedExtra ?? []) {
+    if ((ALL_MODULES as readonly string[]).includes(m) && !base.includes(m as BusinessModule)) base.push(m as BusinessModule)
+  }
+  return base
+}
+
 export function toggleModuleList(current: BusinessModule[], m: BusinessModule): BusinessModule[] {
   if (current.includes(m)) {
     const next = current.filter((x) => x !== m)

@@ -46,6 +46,12 @@ export interface LicensePayload {
    * غيابه (مفاتيح قديمة) = يعمل مع أي نشاط.
    */
   activityId?: string
+  /**
+   * سياسة الأقسام (أمر المالك): المستخدم لا يضيف/يحذف أقساماً بنفسه —
+   * الأقسام الافتراضية تتبع النشاط، وأي قسم إضافي يفعّله المطوّر فقط
+   * من البوت بمفتاح موقَّع يحمل أسماء الوحدات الإضافية هنا.
+   */
+  extraModules?: string[]
 }
 
 /**
@@ -117,6 +123,7 @@ export function canonicalPayload(p: LicensePayload): string {
   if (p.extraUsers != null) base.extraUsers = p.extraUsers
   if (p.extraBranches != null) base.extraBranches = p.extraBranches
   if (p.activityId != null) base.activityId = p.activityId
+  if (p.extraModules != null) base.extraModules = [...p.extraModules].sort()
   return JSON.stringify(base)
 }
 

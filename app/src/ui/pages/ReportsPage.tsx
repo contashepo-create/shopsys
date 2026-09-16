@@ -15,8 +15,10 @@ import {
 } from '../../core/reports.ts'
 import { expiryAlerts } from '../../core/batches.ts'
 import { inputCls } from '../components/ui.tsx'
+import { FinancialReportsTab } from './FinancialReportsTab.tsx'
+import { Landmark } from 'lucide-react'
 
-type TabId = 'sales' | 'items' | 'parties' | 'inventory'
+type TabId = 'sales' | 'items' | 'parties' | 'inventory' | 'financial'
 
 export function ReportsPage() {
   const { sales, saleReturns, purchases, items, customers, suppliers, installmentPlans, batches, vouchers, clientSettlements } = useDataStore()
@@ -134,6 +136,7 @@ export function ReportsPage() {
         <button onClick={() => setTab('items')} className={tabCls('items')}><Boxes size={14} className="inline -mt-0.5 me-1" /> أفضل الأصناف</button>
         <button onClick={() => setTab('parties')} className={tabCls('parties')}><Users size={14} className="inline -mt-0.5 me-1" /> الذمم</button>
         <button onClick={() => setTab('inventory')} className={tabCls('inventory')}><PackageSearch size={14} className="inline -mt-0.5 me-1" /> المخزون</button>
+        <button onClick={() => setTab('financial')} className={tabCls('financial')}><Landmark size={14} className="inline -mt-0.5 me-1" /> القوائم المالية</button>
       </div>
 
       {tab === 'sales' && (
@@ -320,6 +323,10 @@ export function ReportsPage() {
           </div>
         </div>
       )}
+      {tab === 'financial' && (
+        <FinancialReportsTab period={period} cur={cur} companyName={setup.shopName || 'المنشأة'} />
+      )}
+
     </div>
   )
 }

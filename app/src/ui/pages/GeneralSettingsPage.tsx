@@ -3,7 +3,7 @@
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
 import { useState } from 'react'
-import { Percent, Globe2, RefreshCcw, ShieldAlert, Warehouse } from 'lucide-react'
+import { Percent, Globe2, ShieldAlert, Warehouse } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
@@ -11,7 +11,7 @@ import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES } from '
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 
 export function GeneralSettingsPage() {
-  const { setup, resetSetup, toggleModule } = useAppStore()
+  const { setup } = useAppStore()
   const { warehouses } = useDataStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -47,13 +47,12 @@ export function GeneralSettingsPage() {
             <div className="font-bold text-slate-800 dark:text-white">{country?.currency.decimals} خانات</div>
           </div>
         </div>
-        <div className="mt-3 flex items-center justify-between">
-          <p className="text-[11px] text-slate-400">
-            تغيير البلد يعيد معالج أول التشغيل (البيانات محفوظة).
+        {/* أمر المالك: البلد يُقفل بعد أول إعداد — لا يغيّره المستخدم ولا المدير، المطوّر فقط عبر البوت */}
+        <div className="mt-3 flex items-center gap-2 p-3 rounded-xl bg-amber-500/5 border border-amber-500/15">
+          <span className="text-lg">🔒</span>
+          <p className="text-[11px] font-bold text-amber-600 dark:text-amber-400">
+            البلد والنشاط مقفولان بعد الإعداد الأول — تغييرهما يتم عبر الدعم الفني (المطوّر) فقط.
           </p>
-          <Btn variant="ghost" onClick={() => { resetSetup(); }}>
-            <span className="flex items-center gap-1.5 text-xs"><RefreshCcw size={13} /> تغيير البلد/النشاط</span>
-          </Btn>
         </div>
       </section>
 
@@ -161,41 +160,37 @@ export function GeneralSettingsPage() {
             <div className="text-[11px] text-slate-400">{activity?.description}</div>
           </div>
         </div>
-        {/* مفاتيح تفعيل/إلغاء الوحدات — طلب المالك: الوحدات تتبع النشاط وتُبدَّل من هنا */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
-          {ALL_MODULES.map((m) => {
+        {/* سياسة الأقسام (أمر المالك): المستخدم لا يضيف/يحذف أقساماً —
+            الافتراضية تتبع النشاط، والإضافي يفعّله المطوّر فقط عبر البوت بمفتاح موقَّع */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+          {ALL_MODULES.filter((m) => setup.modules.includes(m) || activity?.modules.includes(m)).map((m) => {
             const on = setup.modules.includes(m)
+            const isDefault = activity?.modules.includes(m)
             const info = MODULE_LABELS[m]
             return (
-              <button
+              <div
                 key={m}
-                onClick={() => {
-                  try {
-                    toggleModule(m)
-                    toast.show(on ? `أُطفئت وحدة ${info.nameAr} — اختفت شاشاتها من القائمة` : `فُعِّلت وحدة ${info.nameAr} ✅`)
-                  } catch (e) {
-                    toast.show((e as Error).message, 'error')
-                  }
-                }}
-                className={`group flex items-center gap-3 p-3 rounded-xl border-2 text-right transition-all duration-200 ${
-                  on
-                    ? 'border-emerald-400/60 bg-emerald-500/5'
-                    : 'border-slate-200 dark:border-slate-700 opacity-70 hover:opacity-100'
+                className={`flex items-center gap-3 p-3 rounded-xl border-2 text-right ${
+                  on ? 'border-emerald-400/60 bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700 opacity-60'
                 }`}
               >
-                <span className="text-xl transition-transform duration-200 group-hover:scale-125">{info.icon}</span>
+                <span className="text-xl">{info.icon}</span>
                 <span className="flex-1 min-w-0">
                   <span className="block font-bold text-[13px] text-slate-800 dark:text-white">{info.nameAr}</span>
                   <span className="block text-[10.5px] text-slate-400 truncate">{info.desc}</span>
                 </span>
-                <span
-                  className={`shrink-0 w-9 h-5 rounded-full relative transition-colors duration-200 ${on ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
-                >
-                  <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all duration-200 ${on ? 'right-0.5' : 'right-4'}`} />
+                <span className={`shrink-0 text-[10px] font-black px-2 py-1 rounded-lg ${on ? (isDefault ? 'bg-emerald-500/10 text-emerald-600' : 'bg-violet-500/10 text-violet-600') : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
+                  {on ? (isDefault ? 'أساسي للنشاط' : 'مفعّل من المطوّر') : 'غير مفعّل'}
                 </span>
-              </button>
+              </div>
             )
           })}
+        </div>
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-sky-500/5 border border-sky-500/15 mb-4">
+          <span className="text-lg">ℹ️</span>
+          <p className="text-[11px] font-bold text-sky-600 dark:text-sky-400">
+            الأقسام تتبع نشاطك تلقائياً — لإضافة قسم آخر تواصل مع الدعم الفني ليفعّله لك في رخصتك.
+          </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
           {setup.features.map((f) => (

@@ -54,10 +54,13 @@ if (cmd === 'issue') {
   const extraBranches = Number(arg('extra-branches', '0')) || 0
   // قرار 28: ربط المفتاح بالنشاط الذي ظهر في بوت المطوّر: --activity pharmacy
   const activityId = arg('activity')
+  // سياسة الأقسام: وحدات إضافية فوق افتراضيات النشاط — يفعّلها المطوّر فقط: --extra-modules logistics,maintenance
+  const extraModules = (arg('extra-modules', '') || '').split(',').filter(Boolean)
   const payload = { v: 1, deviceId, customer, plan, features, issuedAt: today, expiresAt }
   if (extraUsers > 0) payload.extraUsers = extraUsers
   if (extraBranches > 0) payload.extraBranches = extraBranches
   if (activityId) payload.activityId = activityId
+  if (extraModules.length > 0) payload.extraModules = extraModules
   const priv = await crypto.subtle.importKey('pkcs8', b64uDecode(privB64u), 'Ed25519', false, ['sign'])
   const sig = new Uint8Array(await crypto.subtle.sign('Ed25519', priv, new TextEncoder().encode(canonicalPayload(payload))))
   console.log('── مفتاح التفعيل (أرسله للعميل) ──')
@@ -65,4 +68,4 @@ if (cmd === 'issue') {
   process.exit(0)
 }
 
-console.log('الاستخدام: genkeys | issue --device ... --customer ... --plan basic|pro|lifetime [--days N] [--features a,b] [--extra-users N] [--extra-branches N] [--activity pharmacy]')
+console.log('الاستخدام: genkeys | issue --device ... --customer ... --plan basic|pro|lifetime [--days N] [--features a,b] [--extra-users N] [--extra-branches N] [--activity pharmacy] [--extra-modules logistics,maintenance]')

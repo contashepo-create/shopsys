@@ -14,6 +14,7 @@ import type { TreasuryAccount } from '../../core/accounting.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { customerStatement, supplierStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
 
 /** الحسابات المقابلة المتاحة لكل نوع سند — بلغة التاجر */
 const RECEIPT_COUNTERS = [
@@ -37,7 +38,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, customers, suppliers, purchases, postVoucher, addLatePurchaseExpense } = useDataStore()
+  const { vouchers, journal, treasuries, customers, suppliers, purchases, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -58,6 +59,29 @@ export function VouchersPage() {
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
   const counters = kind === 'receipt' ? RECEIPT_COUNTERS : PAYMENT_COUNTERS
   const listed = useMemo(() => [...vouchers].filter((v) => v.kind !== 'transfer').reverse(), [vouchers])
+
+  /** الرصيد الحي للطرف المختار (أمر التعديل: يظهر تحت العميل/المورد قبل الحفظ) */
+  const liveBalance = useMemo(() => {
+    if (!partyId) return null
+    if (kind === 'receipt') {
+      return statementBalance(customerStatement({
+        customerId: partyId,
+        openingMinor: openingBalances[`customer:${partyId}`] ?? 0,
+        sales, saleReturns, allSales: sales,
+        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts }),
+        vouchers: [
+          ...vouchers,
+          ...clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
+        ],
+        cheques,
+      }))
+    }
+    return statementBalance(supplierStatement({
+      supplierId: partyId,
+      openingMinor: openingBalances[`supplier:${partyId}`] ?? 0,
+      purchases, purchaseReturns, allPurchases: purchases, vouchers, cheques,
+    }))
+  }, [partyId, kind, sales, saleReturns, vouchers, cheques, purchases, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts])
 
   const openNew = (k: 'receipt' | 'payment') => {
     setKind(k)
@@ -194,6 +218,13 @@ export function VouchersPage() {
                 {(kind === 'receipt' ? customers : suppliers).map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
               </select>
             </Field>
+          )}
+          {needsParty && partyId > 0 && liveBalance !== null && (
+            <div className={`rounded-xl p-3 text-[12.5px] font-bold border ${liveBalance > 0 ? 'bg-rose-500/5 border-rose-500/20 text-rose-600' : liveBalance < 0 ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-600' : 'bg-slate-500/5 border-slate-500/20 text-slate-500'}`}>
+              {kind === 'receipt'
+                ? liveBalance > 0 ? `💳 الرصيد الحالي: عليه ${fmt(liveBalance)} ${cur.symbol}` : liveBalance < 0 ? `💳 الرصيد الحالي: له عندك ${fmt(-liveBalance)} ${cur.symbol}` : '💳 رصيده صفر — لا مديونية'
+                : liveBalance > 0 ? `💳 الرصيد الحالي: مستحق له ${fmt(liveBalance)} ${cur.symbol}` : liveBalance < 0 ? `💳 الرصيد الحالي: لك عنده ${fmt(-liveBalance)} ${cur.symbol}` : '💳 رصيده صفر'}
+            </div>
           )}
           {isPurchaseExpense && (
             <>

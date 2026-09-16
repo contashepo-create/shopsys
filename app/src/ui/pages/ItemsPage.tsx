@@ -20,6 +20,7 @@ import { buildItemsCsv, parseItemsCsv } from '../../core/itemsCsv.ts'
 import { UNIT_GROUPS } from '../../core/units.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { buildItemLedger } from '../../core/itemLedger.ts'
+import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { renderItemLedgerHtml } from '../print/printItemLedger.ts'
 import { renderLabelsHtml, type LabelItem } from '../print/printLabels.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -27,7 +28,7 @@ import { printHtml } from '../print/printReceipt.ts'
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
 export function ItemsPage() {
-  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty } = useDataStore()
+  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -670,6 +671,27 @@ export function ItemsPage() {
                 <div className="p-2.5 rounded-xl bg-emerald-500/5"><div className="text-[10px] text-slate-400">سعر البيع</div><div className="font-black text-lg text-emerald-600">{formatMinor(cardFor.priceMinor, cur, false)}</div></div>
                 <div className="p-2.5 rounded-xl bg-violet-500/5"><div className="text-[10px] text-slate-400">قيمة المخزون</div><div className="font-black text-lg text-violet-600">{formatMinor(Math.round((cardFor.stockQty ?? 0) * cardFor.costMinor), cur, false)}</div></div>
               </div>
+              {/* أمر التعديل: تفصيل الرصيد بكل مخزن داخل معاينة الصنف */}
+              {warehouses.length > 1 && (() => {
+                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales))
+                return (
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                    <div className="px-4 py-2 text-[11.5px] font-black text-slate-500 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">🏬 الرصيد بكل مخزن</div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3">
+                      {warehouses.map((w) => {
+                        const q = whStock.get(w.id)?.get(cardFor.id) ?? 0
+                        return (
+                          <div key={w.id} className={`p-2.5 rounded-xl text-center ${q > 0 ? 'bg-teal-500/5 border border-teal-500/20' : 'bg-slate-50 dark:bg-slate-800/50 opacity-60'}`}>
+                            <div className="text-[10.5px] text-slate-400">{w.nameAr}{w.isMain ? ' ⭐' : ''}</div>
+                            <div className={`font-black ${q > 0 ? 'text-teal-600' : 'text-slate-400'}`}>{qtyFmt(q)} {cardFor.baseUnit}</div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })()}
+
               <div className="flex flex-wrap gap-2 text-[11px] text-slate-500">
                 {cardFor.sku && <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 font-mono" dir="ltr">{cardFor.sku}</span>}
                 {cat && <span className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">📁 {cat.nameAr}</span>}
