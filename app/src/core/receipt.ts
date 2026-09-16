@@ -13,13 +13,14 @@ export type PaperWidth = '80' | '58'
 export type InvoiceTemplate = 'thermal' | 'a4'
 
 /** أنماط فاتورة A4 الاحترافية — منقولة ومكيّفة من قوالب logistics-web */
-export type A4Style = 'modern' | 'classic' | 'compact' | 'elegant'
+export type A4Style = 'modern' | 'classic' | 'compact' | 'elegant' | 'royal'
 
 export const A4_STYLES: { id: A4Style; nameAr: string; desc: string; accent: string }[] = [
   { id: 'modern', nameAr: 'عصري', desc: 'شريط متدرج وبطاقات معلومات أنيقة', accent: '#2563eb' },
   { id: 'classic', nameAr: 'كلاسيكي', desc: 'قالب محاسبي رسمي بإطارات واضحة', accent: '#1e293b' },
   { id: 'compact', nameAr: 'مدمج', desc: 'اقتصادي يضغط كل شيء في ورقة واحدة', accent: '#0d9488' },
   { id: 'elegant', nameAr: 'فاخر', desc: 'زوايا ناعمة وهوية بصرية قوية', accent: '#7c3aed' },
+  { id: 'royal', nameAr: 'ملكي', desc: 'تدرج ذهبي داكن وترويسة بارزة — الأجمل للمطبوعات الرسمية (طلب المالك)', accent: '#b45309' },
 ]
 
 export interface ReceiptSettings {

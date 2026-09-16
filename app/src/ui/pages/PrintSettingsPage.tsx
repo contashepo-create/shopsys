@@ -148,6 +148,23 @@ export function PrintSettingsPage() {
             <Field label="نص التذييل">
               <input value={reportPrint.footerText} onChange={(e) => updateReportPrint({ footerText: e.target.value })} className={inputCls} placeholder="اختياري" />
             </Field>
+            {/* خيارات الشعار والقالب الأوسع (طلب المالك) */}
+            <Field label="نمط الترويسة">
+              <select value={reportPrint.headerStyle ?? 'band'} onChange={(e) => updateReportPrint({ headerStyle: e.target.value as 'band' })} className={inputCls}>
+                <option value="band">شريط ملون متدرج (الأجمل)</option>
+                <option value="line">خط سفلي كلاسيكي</option>
+              </select>
+            </Field>
+            <Field label={`ارتفاع الشعار: ${reportPrint.logoHeightMm ?? 18} مم`}>
+              <input type="range" min={10} max={40} step={2} value={reportPrint.logoHeightMm ?? 18} onChange={(e) => updateReportPrint({ logoHeightMm: Number(e.target.value) })} className="w-full accent-violet-600" />
+            </Field>
+            <Field label="موضع الشعار">
+              <select value={reportPrint.logoPosition ?? 'end'} onChange={(e) => updateReportPrint({ logoPosition: e.target.value as 'end' })} className={inputCls}>
+                <option value="end">يسار الترويسة</option>
+                <option value="start">يمين الترويسة</option>
+                <option value="center">في المنتصف</option>
+              </select>
+            </Field>
           </div>
           <div className="grid grid-cols-2 gap-2">
             {([
@@ -156,12 +173,39 @@ export function PrintSettingsPage() {
               ['showPrintedAt', 'تاريخ ووقت الطباعة'],
               ['showPrintedBy', 'اسم المستخدم الطابع'],
               ['showSignatures', 'خانات توقيع رسمية (إعداد/مراجعة/اعتماد)'],
+              ['zebra', 'تظليل الصفوف بالتناوب (قراءة أسهل)'],
             ] as const).map(([k, label]) => (
               <label key={k} className={toggleCls}>
                 <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">{label}</span>
                 <input type="checkbox" checked={reportPrint[k]} onChange={(e) => updateReportPrint({ [k]: e.target.checked })} className="accent-violet-600 w-4 h-4" />
               </label>
             ))}
+          </div>
+          {/* علامة مائية مستقلة للتقارير — منفصلة عن علامة الفاتورة (طلب المالك) */}
+          <div className="rounded-xl border border-dashed border-violet-300 dark:border-violet-800 p-3 space-y-3">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">💧 علامة مائية على التقارير (مستقلة عن الفاتورة)</span>
+              <input type="checkbox" checked={reportPrint.watermarkEnabled ?? false} onChange={(e) => updateReportPrint({ watermarkEnabled: e.target.checked })} className="w-4 h-4 accent-violet-600" />
+            </label>
+            {reportPrint.watermarkEnabled && (
+              <>
+                <input value={reportPrint.watermarkText ?? ''} onChange={(e) => updateReportPrint({ watermarkText: e.target.value })} className={inputCls} placeholder="سري — نسخة داخلية — مسودة…" />
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <Field label={`الميل: ${reportPrint.watermarkRotation ?? -30}°`}>
+                    <input type="range" min={-90} max={90} step={5} value={reportPrint.watermarkRotation ?? -30} onChange={(e) => updateReportPrint({ watermarkRotation: Number(e.target.value) })} className="w-full accent-violet-600" />
+                  </Field>
+                  <Field label={`الحجم: ${reportPrint.watermarkSizePt ?? 72}pt`}>
+                    <input type="range" min={24} max={140} step={4} value={reportPrint.watermarkSizePt ?? 72} onChange={(e) => updateReportPrint({ watermarkSizePt: Number(e.target.value) })} className="w-full accent-violet-600" />
+                  </Field>
+                  <Field label={`الشفافية: ${reportPrint.watermarkOpacity ?? 8}٪`}>
+                    <input type="range" min={3} max={30} step={1} value={reportPrint.watermarkOpacity ?? 8} onChange={(e) => updateReportPrint({ watermarkOpacity: Number(e.target.value) })} className="w-full accent-violet-600" />
+                  </Field>
+                  <Field label="اللون">
+                    <input type="color" value={reportPrint.watermarkColor ?? '#64748b'} onChange={(e) => updateReportPrint({ watermarkColor: e.target.value })} className="w-full h-9 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer bg-transparent" />
+                  </Field>
+                </div>
+              </>
+            )}
           </div>
           <Btn variant="soft" onClick={() => {
             printHtml(renderReportShell({

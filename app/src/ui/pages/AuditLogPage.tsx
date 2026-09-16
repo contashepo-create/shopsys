@@ -14,7 +14,7 @@ const KIND_META: Record<string, { icon: string; label: string; cls: string }> = 
   remove: { icon: '🗑️', label: 'حذف', cls: 'bg-rose-500/10 text-rose-600' },
   edit: { icon: '✏️', label: 'تعديل', cls: 'bg-amber-500/10 text-amber-600' },
   auth: { icon: '🔑', label: 'دخول', cls: 'bg-violet-500/10 text-violet-600' },
-  system: { icon: '⚙️', label: 'نظام', cls: 'bg-slate-500/10 text-slate-600' },
+  system: { icon: '⚙️', label: 'نظام', cls: 'bg-slate-500/10 text-slate-600 dark:text-slate-300' },
 }
 
 export function AuditLogPage() {

@@ -272,10 +272,36 @@ function renderElegant(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings,
   </div>`
 }
 
+/** القالب الملكي (طلب المالك — «قالب احترافي بألوان أجمل»):
+ * ترويسة داكنة بتدرج ليلي وخط ذهبي، بطاقات معلومات فاتحة، جدول بإطار ذهبي رقيق */
+function renderRoyal(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, accent: string): string {
+  const night = '#1c1917'
+  return `
+  <div class="sheet royal">
+    <div class="head" style="background:linear-gradient(135deg, ${night}, #292524);border-radius:12px;padding:16px 18px;color:#fff;border-bottom:3px solid ${accent}">
+      ${whoBlock(m, s, '#fff', 60, 12)}
+      <div class="title-box">
+        <div class="tb" style="background:${accent};box-shadow:0 2px 8px ${accent}66">${esc(m.docTitle ?? 'فاتورة مبيعات')}</div>
+        <div style="color:#e7e5e4">${metaRows(m, s)}</div>
+      </div>
+    </div>
+    ${s.showCustomer || s.showPayment ? `<div class="cards" style="margin-top:10px">
+      ${s.showCustomer ? `<div class="card" style="background:${accent}0d;border:1px solid ${accent}33"><div class="ct" style="color:${accent}">العميل</div><b>${esc(m.customerName)}</b></div>` : ''}
+      ${s.showPayment ? `<div class="card" style="background:${accent}0d;border:1px solid ${accent}33"><div class="ct" style="color:${accent}">طريقة الدفع</div><b>${esc(m.paymentLabel)}</b></div>` : ''}
+    </div>` : ''}
+    <div class="tbl-wrap" style="border:1.5px solid ${accent}44;border-radius:10px;overflow:hidden;margin-top:10px">${itemsTable(m, cur, s, { elegant: true })}</div>
+    <div class="bottom dark" style="background:linear-gradient(135deg, ${night}, #292524);border-radius:10px;border-inline-start:4px solid ${accent}">
+      ${s.showWords ? `<div class="words dark"><div class="wt" style="color:${accent}">المبلغ كتابةً</div><div class="wv">${esc(amountInWords(m.totalMinor, cur))}</div></div>` : '<div></div>'}
+      ${totalsBlock(m, cur, s, true)}
+    </div>
+    ${signatures(s)}${footer(m, s)}
+  </div>`
+}
+
 /* ─── التجميع النهائي ─── */
 
 const STYLE_ACCENTS: Record<A4Style, string> = {
-  modern: '#2563eb', classic: '#1e293b', compact: '#0d9488', elegant: '#7c3aed',
+  modern: '#2563eb', classic: '#1e293b', compact: '#0d9488', elegant: '#7c3aed', royal: '#b45309',
 }
 
 /** HTML فاتورة A4 كاملة — دالة خالصة (تُفحص في verify) */
@@ -286,6 +312,7 @@ export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, se
     style === 'classic' ? renderClassic(model, cur, settings, accent)
     : style === 'compact' ? renderCompact(model, cur, settings, accent)
     : style === 'elegant' ? renderElegant(model, cur, settings, accent)
+    : style === 'royal' ? renderRoyal(model, cur, settings, accent)
     : renderModern(model, cur, settings, accent)
 
   return `<!doctype html>
