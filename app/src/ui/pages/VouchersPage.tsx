@@ -38,7 +38,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, customers, suppliers, purchases, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans } = useDataStore()
+  const { vouchers, journal, treasuries, customers, suppliers, purchases, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, assets, getAssetDue } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -226,6 +226,28 @@ export function VouchersPage() {
                 : liveBalance > 0 ? `💳 الرصيد الحالي: مستحق له ${fmt(liveBalance)} ${cur.symbol}` : liveBalance < 0 ? `💳 الرصيد الحالي: لك عنده ${fmt(-liveBalance)} ${cur.symbol}` : '💳 رصيده صفر'}
             </div>
           )}
+          {kind === 'payment' && counter === '2101' && partyId > 0 && (() => {
+            // أقساط الأصول المشتراة آجلاً من هذا المورد — تظهر عند سند الصرف (طلب المالك)
+            const supplierAssets = assets
+              .map((a) => ({ a, due: getAssetDue(a.id) }))
+              .filter((x) => x.a.supplierId === partyId && x.due.remainingMinor > 0)
+            if (supplierAssets.length === 0) return null
+            return (
+              <div className="rounded-xl p-3 border border-amber-500/25 bg-amber-500/5 space-y-1.5">
+                <div className="text-[11.5px] font-black text-amber-700 dark:text-amber-400">🏛️ أقساط أصول مستحقة لهذا المورد:</div>
+                {supplierAssets.map(({ a, due }) => (
+                  <div key={a.id} className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center justify-between gap-2">
+                    <span>{a.assetNumber} — {a.nameAr}</span>
+                    <span className="font-bold">
+                      متبقٍ {fmt(due.remainingMinor)} {cur.symbol}
+                      {due.nextInstallment ? ` · قسط ${fmt(due.nextInstallment.amountMinor - due.nextInstallment.paidMinor)} يستحق ${due.nextInstallment.dueDate}` : ''}
+                    </span>
+                  </div>
+                ))}
+                <div className="text-[10px] text-slate-400">السداد الموصى به من ملف الأصل (الحسابات ← الأصول والإهلاك ← 📂 الملف) ليُحدَّث جدول الأقساط تلقائياً</div>
+              </div>
+            )
+          })()}
           {isPurchaseExpense && (
             <>
               <Field label="أي فاتورة شراء؟ *" hint="المصروف يوزَّع على أصنافها ويرفع تكلفتها بالمتوسط المرجح — لن يُضاف لدين المورد">
