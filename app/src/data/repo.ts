@@ -26,6 +26,8 @@ import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlemen
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
+import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
+import { fullCoa } from '../core/treasury.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from '../core/installments.ts'
@@ -43,7 +45,7 @@ import { buildYearClosingLines, validateYearClose, dateInClosedYear, type Fiscal
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
-import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
+import { validateAsset, buildAssetPurchaseEntry, buildAssetPaymentEntry, buildAssetInstallments, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput, type AssetFunding, type AssetInstallment } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
 import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
@@ -510,6 +512,28 @@ export interface FixedAsset {
   monthsDepreciated: number // كم شهراً رُحّل إهلاكه
   purchaseEntryId: number
   notes: string
+  /** مصدر التمويل (طلب المالك): نقدي/آجل مورد/رأس مال/جاري شريك */
+  funding?: AssetFunding
+  /** المورد المرتبط بالجزء الآجل — إلزامي لو funding يترك ديناً (إصلاح «مورد غير موجود») */
+  supplierId?: number | null
+  paidMinor?: number // المدفوع عند الاقتناء
+  /** جدول أقساط الشراء الآجل (يظهر بملف الأصل مع المسدد والمتبقي وتواريخ الصرف) */
+  installments?: AssetInstallment[]
+  /** سدادات الأصل: كل دفعة بقيدها وتاريخها */
+  payments?: { id: number; date: string; amountMinor: number; treasury: string; journalEntryId: number; installmentSeq: number | null }[]
+}
+
+/** عمولة خارجية مستحقة للمنشأة لدى الغير (طلب المالك — طبيب له عمولة عند مركز أشعة مثلاً) */
+export interface ExternalCommission {
+  id: number
+  commissionNumber: string // EXC-0001
+  partyName: string // الجهة: مركز أشعة النور، معمل الشفا…
+  date: string
+  amountMinor: number
+  collectedMinor: number // المحصَّل حتى الآن
+  description: string
+  journalEntryId: number // قيد الاستحقاق: 1112 / 4112
+  collections: { id: number; date: string; amountMinor: number; treasury: string; journalEntryId: number }[]
 }
 
 /** تحويل مخزني مرحّل — حركة داخلية بلا قيد (لا تغيّر قيمة 1103) */
@@ -897,6 +921,8 @@ interface DataState {
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
   assets: FixedAsset[]
+  externalCommissions: ExternalCommission[] // عمولات مستحقة لدى الغير (طلب المالك)
+  customAccounts: CustomAccount[] // حسابات مخصصة يضيفها المالك للشجرة (بند شجرة الحسابات المفتوحة)
   serials: SerialUnit[] // وحدات السيريال/IMEI والضمان (نمط موبايل شوب)
   cheques: Cheque[] // أوراق القبض والدفع (الشيكات)
   purchases: PurchaseInvoice[]
@@ -1172,6 +1198,8 @@ interface DataState {
   closeFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { entryId: number; netProfitMinor: number }
   /** رصيد العميل الموحّد من كل الأنشطة — مصدر حقيقة واحد لكل الشاشات */
   getCustomerBalance: (customerId: number) => number
+  /** رصيد المورد الموحّد (افتتاحي + مشتريات − مرتجعات − سندات − شيكات + تسويات) — نفس مصدر كل الشاشات */
+  getSupplierBalance: (supplierId: number) => number
   /** مستحق الموظف من زيادات مصاريف العهد (2107) غير المصروف بعد */
   getEmployeeExcessDue: (employeeId: number) => number
   /**
@@ -1491,9 +1519,33 @@ interface DataState {
   /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
   postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string }) => StockTransfer
   /** اقتناء أصل ثابت: قيد 1201 / 1101 + 2101 وترقيم FA-#### */
-  addAsset: (args: AssetInput & { notes: string; treasury?: string }) => FixedAsset
+  addAsset: (args: AssetInput & {
+    notes: string; treasury?: string
+    /** مصدر التمويل: نقدي/آجل مورد/رأس مال/جاري شريك (طلب المالك) */
+    funding?: AssetFunding
+    /** المورد — إلزامي لو بقي دين آجل */
+    supplierId?: number | null
+    /** تقسيط الجزء الآجل: عدد + فاصل شهري + أول استحقاق */
+    installmentCount?: number
+    installmentIntervalMonths?: number
+    firstInstallmentDate?: string
+  }) => FixedAsset
+  /** سداد دفعة/قسط من أصل آجل: قيد 2101 ← خزينة + تحديث الجدول (الأقدم أولاً) */
+  payAssetInstallment: (args: { assetId: number; amountMinor: number; treasury: TreasuryAccount }) => FixedAsset
+  /** متبقي الدين على أصل (لسند الصرف وشاشة الملف) */
+  getAssetDue: (assetId: number) => { totalDueMinor: number; paidMinor: number; remainingMinor: number; nextInstallment: AssetInstallment | null }
+  /** استحقاق عمولة خارجية للمنشأة لدى الغير: 1112 / 4112 */
+  addExternalCommission: (args: { partyName: string; amountMinor: number; description: string }) => ExternalCommission
+  /** تحصيل من عمولة خارجية: خزينة / 1112 */
+  collectExternalCommission: (args: { commissionId: number; amountMinor: number; treasury: TreasuryAccount }) => ExternalCommission
+  /** إضافة حساب مخصص لشجرة الحسابات — يُستخدم فوراً في القيود والتقارير (الشجرة ليست مفروضة) */
+  addCustomAccount: (args: { code: string; nameAr: string; parentCode: string }) => CustomAccount
+  /** حذف حساب مخصص — يُرفض لو عليه حركة في اليومية */
+  deleteCustomAccount: (code: string) => void
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
+  /** إهلاك تلقائي (طلب المالك): يرحّل كل الأشهر المتأخرة دفعة واحدة بلا تدخل — يُستدعى عند فتح البرنامج. يعيد عدد القيود المرحّلة */
+  runAutoDepreciation: () => number
   /* ─── الشيكات (أوراق القبض والدفع) ─── */
   /** استلام شيك وارد من عميل: قيد 1106 ← 1104 */
   receiveCheque: (args: { chequeNumber: string; partyId: number; bankName: string; amountMinor: number; dueDate: string; notes: string }) => Cheque
@@ -1517,7 +1569,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 16 // 13: أرصدة/تسويات — 14: EXC — 15: أوامر مطعم — 16: مقايضة ذهب GTI
+export const DATA_VERSION = 17 // 15: أوامر مطعم — 16: مقايضة ذهب GTI — 17: تمويل الأصول+أقساطها وعمولات لدى الغير وحسابات مخصصة
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -1649,6 +1701,8 @@ export const useDataStore = create<DataState>()(
       transfers: [],
       batches: [],
       assets: [],
+      externalCommissions: [],
+      customAccounts: [],
       serials: [],
       cheques: [],
       purchases: [],
@@ -2569,18 +2623,8 @@ export const useDataStore = create<DataState>()(
           const sup = state.suppliers.find((x) => x.id === Number(args.refId))
           if (!sup) throw new Error('المورد غير موجود')
           refNameAr = sup.nameAr
-          bookMinor = statementBalance(supplierStatement({
-            supplierId: sup.id,
-            openingMinor: state.openingBalances[`supplier:${sup.id}`] ?? 0,
-            purchases: state.purchases, purchaseReturns: state.purchaseReturns, allPurchases: state.purchases,
-            vouchers: state.vouchers, cheques: state.cheques,
-            adjustments: state.settlements.filter((st) => st.section === 'supplier' && Number(st.refId) === sup.id).map((st) => ({
-              docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
-              // كشف المورد: creditMinor = له علينا — زيادة الفرق تزيد الدائن
-              debitMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
-              creditMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
-            })),
-          }))
+          // الرصيد الموحّد — نفس مصدر كل الشاشات (كشف المورد: الدائن = له علينا)
+          bookMinor = get().getSupplierBalance(sup.id)
         }
 
         // 2) تحقق النواة: السالب مرفوض للخزائن فقط + السبب إلزامي
@@ -2896,7 +2940,7 @@ export const useDataStore = create<DataState>()(
 
       postManualEntry: (args) => {
         const state = get()
-        const errors = validateManualEntry(args.lines, STANDARD_COA)
+        const errors = validateManualEntry(args.lines, [...fullCoa(STANDARD_COA, state.treasuries), ...customAsAccounts(state.customAccounts)])
         if (errors.length) throw new Error(errors.join('، '))
         // حارس الفترة المقفلة (منهجية Closing Date العالمية): لا قيود بأثر رجعي في سنة مقفلة
         if (args.date) {
@@ -3704,6 +3748,21 @@ export const useDataStore = create<DataState>()(
             projectExtracts: state.projectExtracts, linkedProjectIds: state.projects.filter((p) => p.clientId === customerId).map((p) => p.id),
             installmentPlans: state.installmentPlans,
           }),
+        }))
+      },
+
+      getSupplierBalance: (supplierId) => {
+        const state = get()
+        return statementBalance(supplierStatement({
+          supplierId,
+          openingMinor: state.openingBalances[`supplier:${supplierId}`] ?? 0,
+          purchases: state.purchases, purchaseReturns: state.purchaseReturns, allPurchases: state.purchases,
+          vouchers: state.vouchers, cheques: state.cheques,
+          adjustments: state.settlements.filter((st) => st.section === 'supplier' && Number(st.refId) === supplierId).map((st) => ({
+            docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
+            debitMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
+            creditMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
+          })),
         }))
       },
 
@@ -6292,21 +6351,38 @@ export const useDataStore = create<DataState>()(
       },
       addAsset: (args) => {
         const state = get()
-        const errors = validateAsset(args)
+        const funding: AssetFunding = args.funding ?? 'cash'
+        // رأس مال/جاري شريك: لا دفع نقدياً من خزائن المنشأة إطلاقاً
+        const paid = funding === 'capital' || funding === 'partner' ? 0 : funding === 'supplier_credit' ? 0 : args.paidMinor
+        const errors = validateAsset({ ...args, paidMinor: paid })
         if (errors.length) throw new Error(errors.join(' — '))
+        const remaining = funding === 'cash' ? args.costMinor - paid : funding === 'supplier_credit' ? args.costMinor : 0
+        // إصلاح بلاغ المالك «عالج الدين على مورد غير موجود»: أي دين آجل يتطلب مورداً مسجلاً
+        if (remaining > 0) {
+          if (!args.supplierId) throw new Error('الجزء الآجل يحتاج مورداً مسجلاً — اختر المورد أو سجّله أولاً من قسم الموردين')
+          if (!state.suppliers.some((x) => x.id === args.supplierId)) throw new Error('المورد غير موجود')
+        }
+        // جدول الأقساط الاختياري للجزء الآجل
+        let installments: AssetInstallment[] = []
+        if (remaining > 0 && (args.installmentCount ?? 0) > 1) {
+          installments = buildAssetInstallments(
+            remaining, args.installmentCount!, args.installmentIntervalMonths ?? 1,
+            args.firstInstallmentDate ?? new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+          )
+        }
 
         const id = nextId(state.assets)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const assetNumber = `FA-${String(id).padStart(4, '0')}`
-        const entryLines = buildAssetPurchaseEntry(args.costMinor, args.paidMinor, assetNumber, args.treasury ?? '1101')
+        const entryLines = buildAssetPurchaseEntry(args.costMinor, paid, assetNumber, args.treasury ?? '1101', funding)
 
         const entry: JournalEntry = {
           id: entryId,
           entryNumber: entryId,
           date: now.slice(0, 10),
-          description: `اقتناء أصل ${assetNumber} — ${args.nameAr.trim()}`,
-          sourceType: 'manual',
+          description: `اقتناء أصل ${assetNumber} — ${args.nameAr.trim()}${remaining > 0 ? ` (آجل على ${state.suppliers.find((x) => x.id === args.supplierId)?.nameAr ?? 'مورد'})` : funding === 'capital' ? ' (مقدَّم من المالك — رأس مال)' : funding === 'partner' ? ' (جاري الشريك)' : ''}`,
+          sourceType: 'asset_purchase',
           sourceId: id,
           lines: entryLines,
           createdBy: 'المالك',
@@ -6327,9 +6403,143 @@ export const useDataStore = create<DataState>()(
           monthsDepreciated: 0,
           purchaseEntryId: entryId,
           notes: args.notes.trim(),
+          funding,
+          supplierId: remaining > 0 ? args.supplierId : null,
+          paidMinor: paid,
+          installments,
+          payments: [],
         }
         set({ assets: [...state.assets, asset], journal: [...state.journal, entry] })
         return asset
+      },
+
+      payAssetInstallment: (args) => {
+        const state = get()
+        const asset = state.assets.find((a) => a.id === args.assetId)
+        if (!asset) throw new Error('الأصل غير موجود')
+        const due = get().getAssetDue(asset.id)
+        if (due.remainingMinor <= 0) throw new Error('الأصل مسدد بالكامل — لا دين عليه')
+        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ السداد يجب أن يكون موجباً')
+        if (args.amountMinor > due.remainingMinor) throw new Error(`المبلغ أكبر من متبقي دين الأصل (${due.remainingMinor})`)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const supName = state.suppliers.find((x) => x.id === asset.supplierId)?.nameAr ?? ''
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `سداد دفعة أصل ${asset.assetNumber} — ${asset.nameAr}${supName ? ` (${supName})` : ''}`,
+          sourceType: 'asset_payment', sourceId: asset.id,
+          lines: buildAssetPaymentEntry(args.amountMinor, `${asset.assetNumber}`, args.treasury),
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        // توزيع السداد على الأقساط الأقدم أولاً
+        let toApply = args.amountMinor
+        let firstSeq: number | null = null
+        const installments = (asset.installments ?? []).map((it) => {
+          if (toApply <= 0) return it
+          const open = it.amountMinor - it.paidMinor
+          if (open <= 0) return it
+          const take = Math.min(open, toApply)
+          toApply -= take
+          if (firstSeq == null) firstSeq = it.seq
+          return { ...it, paidMinor: it.paidMinor + take, paidAt: now }
+        })
+        const payment = { id: (asset.payments ?? []).length + 1, date: now, amountMinor: args.amountMinor, treasury: args.treasury, journalEntryId: entryId, installmentSeq: firstSeq }
+        const updated: FixedAsset = { ...asset, installments, payments: [...(asset.payments ?? []), payment] }
+        set({ assets: state.assets.map((a) => (a.id === asset.id ? updated : a)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+      getAssetDue: (assetId) => {
+        const asset = get().assets.find((a) => a.id === assetId)
+        if (!asset) return { totalDueMinor: 0, paidMinor: 0, remainingMinor: 0, nextInstallment: null }
+        const funding = asset.funding ?? 'cash'
+        const totalDue = funding === 'supplier_credit' ? asset.costMinor : funding === 'cash' ? asset.costMinor - (asset.paidMinor ?? 0) : 0
+        const paid = (asset.payments ?? []).reduce((a2, p) => a2 + p.amountMinor, 0)
+        const remaining = Math.max(0, totalDue - paid)
+        const nextInstallment = (asset.installments ?? []).find((it) => it.paidMinor < it.amountMinor) ?? null
+        return { totalDueMinor: totalDue, paidMinor: paid, remainingMinor: remaining, nextInstallment }
+      },
+
+      addExternalCommission: (args) => {
+        const state = get()
+        if (!args.partyName.trim()) throw new Error('اسم الجهة مطلوب — مركز أشعة، معمل، مستشفى…')
+        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ العمولة يجب أن يكون موجباً')
+        const id = nextId(state.externalCommissions)
+        const commissionNumber = `EXC-${String(id).padStart(4, '0')}`
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `استحقاق عمولة ${commissionNumber} لدى ${args.partyName.trim()}${args.description ? ` — ${args.description}` : ''}`,
+          sourceType: 'external_commission', sourceId: id,
+          lines: [
+            { accountCode: '1112', debit: args.amountMinor, credit: 0, note: `عمولة مستحقة لدى ${args.partyName.trim()}` },
+            { accountCode: '4112', debit: 0, credit: args.amountMinor, note: 'إيراد عمولات خارجية' },
+          ],
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const commission: ExternalCommission = {
+          id, commissionNumber, partyName: args.partyName.trim(), date: now,
+          amountMinor: args.amountMinor, collectedMinor: 0, description: args.description.trim(),
+          journalEntryId: entryId, collections: [],
+        }
+        set({ externalCommissions: [...state.externalCommissions, commission], journal: [...state.journal, entry] })
+        return commission
+      },
+
+      collectExternalCommission: (args) => {
+        const state = get()
+        const com = state.externalCommissions.find((c) => c.id === args.commissionId)
+        if (!com) throw new Error('العمولة غير موجودة')
+        const remaining = com.amountMinor - com.collectedMinor
+        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('المبلغ يجب أن يكون موجباً')
+        if (args.amountMinor > remaining) throw new Error(`المبلغ أكبر من المتبقي لدى الجهة (${remaining})`)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تحصيل عمولة ${com.commissionNumber} من ${com.partyName}`,
+          sourceType: 'external_commission', sourceId: com.id,
+          lines: [
+            { accountCode: args.treasury, debit: args.amountMinor, credit: 0, note: 'نقدية واردة' },
+            { accountCode: '1112', debit: 0, credit: args.amountMinor, note: `تحصيل من ${com.partyName}` },
+          ],
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: ExternalCommission = {
+          ...com, collectedMinor: com.collectedMinor + args.amountMinor,
+          collections: [...com.collections, { id: com.collections.length + 1, date: now, amountMinor: args.amountMinor, treasury: args.treasury, journalEntryId: entryId }],
+        }
+        set({ externalCommissions: state.externalCommissions.map((c) => (c.id === com.id ? updated : c)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+      addCustomAccount: (args) => {
+        const state = get()
+        const coa = fullCoa(STANDARD_COA, state.treasuries)
+        const errors = validateCustomAccount(args, coa, state.customAccounts)
+        if (errors.length) throw new Error(errors.join('، '))
+        const rootType = rootOfParent(args.parentCode, coa)!
+        const account: CustomAccount = {
+          code: args.code.trim(),
+          nameAr: args.nameAr.trim(),
+          parentCode: args.parentCode,
+          rootType,
+          createdAt: new Date().toISOString(),
+        }
+        set({ customAccounts: [...state.customAccounts, account] })
+        return account
+      },
+
+      deleteCustomAccount: (code) => {
+        const state = get()
+        const acc = state.customAccounts.find((a) => a.code === code)
+        if (!acc) throw new Error('الحساب غير موجود')
+        // حماية سلامة الدفاتر: لا حذف لحساب عليه حركة
+        if (state.journal.some((e) => e.lines.some((l) => l.accountCode === code))) {
+          throw new Error(`«${acc.nameAr}» عليه قيود في اليومية — لا يمكن حذفه حفاظاً على توازن الدفاتر`)
+        }
+        set({ customAccounts: state.customAccounts.filter((a) => a.code !== code) })
       },
       postMonthlyDepreciation: () => {
         const state = get()
@@ -6351,7 +6561,7 @@ export const useDataStore = create<DataState>()(
           entryNumber: entryId,
           date: now.slice(0, 10),
           description: `إهلاك شهري (${due.length} أصل) — ${monthLabel}`,
-          sourceType: 'manual',
+          sourceType: 'depreciation',
           sourceId: null,
           lines: buildDepreciationEntry(totalMinor, monthLabel),
           createdBy: 'المالك',
@@ -6365,6 +6575,24 @@ export const useDataStore = create<DataState>()(
           journal: [...state.journal, entry],
         })
         return { entry, totalMinor, assetCount: due.length }
+      },
+
+      runAutoDepreciation: () => {
+        // حماية المالك من النسيان: كل شهر متأخر يُرحَّل قيده فور فتح البرنامج
+        let posted = 0
+        for (let guard = 0; guard < 240; guard++) {
+          const state = get()
+          const nowMonth = new Date().toISOString().slice(0, 7)
+          const due = state.assets.some(
+            (a) => a.monthsDepreciated < a.lifeMonths && nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated) <= nowMonth,
+          )
+          if (!due) break
+          try {
+            get().postMonthlyDepreciation()
+            posted++
+          } catch { break } // مثلاً: منع الرصيد السالب لا يمس الإهلاك، لكن احتياط لأي رفض
+        }
+        return posted
       },
 
       /* ─── الشيكات (أوراق القبض والدفع) ─── */
@@ -6481,6 +6709,10 @@ export const useDataStore = create<DataState>()(
           ...s,
           // سجل النشاطات والمستخدمون والبلاغات (الإصدار 11) — قواعد قديمة بلا هذه الحقول
           auditLog: s.auditLog ?? [],
+          // الإصدار 17: عمولات لدى الغير + تمويل الأصول وأقساطها
+          externalCommissions: s.externalCommissions ?? [],
+          customAccounts: s.customAccounts ?? [],
+          assets: (s.assets ?? []).map((a) => ({ ...a, funding: a.funding ?? 'cash', supplierId: a.supplierId ?? null, paidMinor: a.paidMinor ?? a.costMinor, installments: a.installments ?? [], payments: a.payments ?? [] })),
           appUsers: s.appUsers ?? [],
           roleOverrides: s.roleOverrides ?? {},
           currentUserId: s.currentUserId ?? null,
@@ -6630,7 +6862,6 @@ export const useDataStore = create<DataState>()(
           walletOps: s.walletOps ?? [],
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],
-          assets: s.assets ?? [],
           serials: s.serials ?? [],
           cheques: s.cheques ?? [],
           stocktakes: s.stocktakes ?? [],

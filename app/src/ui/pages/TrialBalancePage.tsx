@@ -11,11 +11,12 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { STANDARD_COA } from '../../core/ledger.ts'
 import { fullCoa } from '../../core/treasury.ts'
+import { customAsAccounts } from '../../core/customAccounts.ts'
 import { computeTrialBalance, computeIncomeStatement } from '../../core/accounting.ts'
 import { inputCls, EmptyState } from '../components/ui.tsx'
 
 export function TrialBalancePage() {
-  const { journal, treasuries } = useDataStore()
+  const { journal, treasuries, customAccounts } = useDataStore()
   const { setup } = useAppStore()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -25,7 +26,7 @@ export function TrialBalancePage() {
   const [to, setTo] = useState('')
 
   // الشجرة الكاملة تشمل الخزائن والبنوك المخصصة — حتى لا تسقط أرصدتها من الميزان
-  const coa = useMemo(() => fullCoa(STANDARD_COA, treasuries), [treasuries])
+  const coa = useMemo(() => [...fullCoa(STANDARD_COA, treasuries), ...customAsAccounts(customAccounts)], [treasuries, customAccounts])
   const tb = useMemo(() => computeTrialBalance(journal, coa), [journal, coa])
   const is = useMemo(
     () => computeIncomeStatement(journal, coa, from || undefined, to || undefined),

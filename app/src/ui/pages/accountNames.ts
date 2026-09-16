@@ -8,6 +8,8 @@ export const ACCOUNT_NAMES: Record<string, string> = Object.fromEntries(
 
 /** اسم حساب شامل الخزائن المخصصة — استخدمه داخل المكوّنات */
 export function accountName(code: string): string {
-  const t = useDataStore.getState().treasuries.find((x) => x.code === code)
-  return t?.nameAr ?? ACCOUNT_NAMES[code] ?? code
+  const st = useDataStore.getState()
+  const t = st.treasuries.find((x) => x.code === code)
+  const c = st.customAccounts.find((x) => x.code === code)
+  return t?.nameAr ?? c?.nameAr ?? ACCOUNT_NAMES[code] ?? code
 }

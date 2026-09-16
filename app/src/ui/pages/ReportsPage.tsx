@@ -10,7 +10,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
-  salesSummary, topItems, dailySales, customerBalances, supplierBalances,
+  salesSummary, topItems, dailySales,
   stockAlerts, inventoryValue, periodPresets, type Period,
 } from '../../core/reports.ts'
 import { expiryAlerts } from '../../core/batches.ts'
@@ -21,7 +21,7 @@ import { Landmark } from 'lucide-react'
 type TabId = 'sales' | 'items' | 'parties' | 'inventory' | 'financial'
 
 export function ReportsPage() {
-  const { sales, saleReturns, purchases, items, customers, suppliers, installmentPlans, batches, vouchers, clientSettlements } = useDataStore()
+  const { sales, saleReturns, items, customers, suppliers, batches } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -45,21 +45,26 @@ export function ReportsPage() {
   const summary = useMemo(() => salesSummary(sales, saleReturns, period), [sales, saleReturns, period])
   const daily = useMemo(() => dailySales(sales, period), [sales, period])
   const top = useMemo(() => topItems(sales, saleReturns, period, 10), [sales, saleReturns, period])
-  const custRows = useMemo(() => {
-    // التحصيلات: أقساط محصلة + سندات قبض مربوطة بعميل + تسويات تحصيل FIFO
-    const collections = [
-      ...installmentPlans.map((p) => ({
-        customerId: p.customerId,
-        amountMinor: p.downPaymentMinor + p.items.reduce((a, i) => a + i.paidMinor, 0),
-      })),
-      ...vouchers
-        .filter((v) => v.kind === 'receipt' && v.partyKind === 'customer' && v.partyId != null)
-        .map((v) => ({ customerId: v.partyId as number, amountMinor: v.amountMinor })),
-      ...clientSettlements.map((st) => ({ customerId: st.customerId, amountMinor: st.amountMinor })),
-    ]
-    return customerBalances(sales, saleReturns, collections)
-  }, [sales, saleReturns, installmentPlans, vouchers, clientSettlements])
-  const suppRows = useMemo(() => supplierBalances(purchases, []), [purchases])
+  // الرصيد الموحّد من repo (إصلاح بلاغ المالك: سداد بسند قبض + رصيد افتتاحي لم يكونا محسوبين هنا)
+  // نفس مصدر كشف الحساب وشاشات الأطراف — فلا تتناقض الأرقام أبداً
+  const getCustomerBalance = useDataStore((s) => s.getCustomerBalance)
+  const getSupplierBalance = useDataStore((s) => s.getSupplierBalance)
+  const journalLen = useDataStore((s) => s.journal.length)
+  const custRows = useMemo(
+    () => customers
+      .map((c) => ({ customerId: c.id, balanceMinor: getCustomerBalance(c.id) }))
+      .filter((r) => r.balanceMinor !== 0)
+      .sort((a, b) => b.balanceMinor - a.balanceMinor),
+    // journalLen يحدّث القائمة بعد أي عملية مالية جديدة
+    [customers, getCustomerBalance, journalLen],
+  )
+  const suppRows = useMemo(
+    () => suppliers
+      .map((sp) => ({ supplierId: sp.id, balanceMinor: getSupplierBalance(sp.id) }))
+      .filter((r) => r.balanceMinor !== 0)
+      .sort((a, b) => b.balanceMinor - a.balanceMinor),
+    [suppliers, getSupplierBalance, journalLen],
+  )
   const alerts = useMemo(() => stockAlerts(items), [items])
   const invValue = useMemo(() => inventoryValue(items), [items])
   const expAlerts = useMemo(
@@ -205,7 +210,7 @@ export function ReportsPage() {
         <div className="anim-up grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className={`${card} overflow-hidden`}>
             <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
-              <Users size={14} className="text-violet-500" /> مديونيات العملاء (كل الوقت)
+              <Users size={14} className="text-violet-500" /> أرصدة العملاء (موحّدة مع كشوف الحساب)
             </div>
             {custRows.length === 0 ? (
               <div className="text-center text-slate-400 text-[12px] py-8">لا ذمم عملاء</div>
@@ -215,7 +220,7 @@ export function ReportsPage() {
                   {custRows.map((r) => (
                     <tr key={r.customerId} className="border-b border-slate-50 dark:border-slate-800/50">
                       <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{custName(r.customerId)}</td>
-                      <td className="px-4 py-2 text-[10px] text-slate-400">فواتير {fmt(r.invoicedMinor)} — حُصِّل {fmt(r.collectedMinor + r.returnedMinor)}</td>
+                      <td className="px-4 py-2 text-[10px] text-slate-400">{r.balanceMinor > 0 ? 'مدين — عليه' : 'دائن — له'}</td>
                       <td className={`px-4 py-2 font-black text-left ${r.balanceMinor > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{fmt(r.balanceMinor)}</td>
                     </tr>
                   ))}
@@ -225,7 +230,7 @@ export function ReportsPage() {
           </div>
           <div className={`${card} overflow-hidden`}>
             <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
-              <Truck size={14} className="text-cyan-500" /> مستحقات الموردين (كل الوقت)
+              <Truck size={14} className="text-cyan-500" /> أرصدة الموردين (موحّدة مع كشوف الحساب)
             </div>
             {suppRows.length === 0 ? (
               <div className="text-center text-slate-400 text-[12px] py-8">لا مستحقات موردين</div>
@@ -235,7 +240,7 @@ export function ReportsPage() {
                   {suppRows.map((r) => (
                     <tr key={r.supplierId} className="border-b border-slate-50 dark:border-slate-800/50">
                       <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{suppName(r.supplierId)}</td>
-                      <td className="px-4 py-2 text-[10px] text-slate-400">مشتريات {fmt(r.purchasedMinor)} — سُدد {fmt(r.paidMinor)}</td>
+                      <td className="px-4 py-2 text-[10px] text-slate-400">{r.balanceMinor > 0 ? 'له علينا' : 'لنا عنده'}</td>
                       <td className={`px-4 py-2 font-black text-left ${r.balanceMinor > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{fmt(r.balanceMinor)}</td>
                     </tr>
                   ))}

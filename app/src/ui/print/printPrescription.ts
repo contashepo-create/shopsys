@@ -128,6 +128,8 @@ export function renderPrescriptionHtml(args: {
       </div>
     </div>
 
+    <div style="text-align:center; font-size:15px; font-weight:900; color:#0e7490; letter-spacing:1px; margin:4px 0 6px">روشتة طبية</div>
+
     <div class="patient-bar">
       ${args.patientCode ? `<span style="background:#0e7490;color:#fff;border-radius:5px;padding:1px 8px;font-weight:900" dir="ltr">${esc(args.patientCode)}</span>` : ''}
       <span>المريض: <b>${esc(args.patientName)}</b></span>

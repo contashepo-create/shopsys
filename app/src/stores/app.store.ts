@@ -13,6 +13,7 @@ import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type Appearan
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
 import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
 import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
+import { DEFAULT_REPORT_PRINT, type ReportPrintSettings } from '../core/reportPrint.ts'
 import type { AboutContent } from '../core/cloud.ts'
 import type { DeviceFlags } from '../core/featureFlags.ts'
 
@@ -40,6 +41,8 @@ interface SetupState {
   email: string
   city: string
   street: string
+  /** تخصص الطبيب لنشاط العيادة (يختاره/يكتبه المالك في معالج أول تشغيل — لا يُفرض «أسنان») */
+  doctorSpecialty: string
 }
 
 interface AppState {
@@ -54,6 +57,7 @@ interface AppState {
     ownerName: string
     fiscalYear: Omit<FiscalYear, 'id' | 'status'>
     contact?: { phone: string; email: string; city: string; street: string }
+    doctorSpecialty?: string
   }) => void
   addFiscalYear: (fy: Omit<FiscalYear, 'id' | 'status'>) => void
   /** وسم سنة مالية مقفلة — يُستدعى بعد نجاح قيد الإقفال في repo (closeFiscalYear) */
@@ -63,6 +67,9 @@ interface AppState {
   toggleModule: (m: BusinessModule) => void
   resetSetup: () => void
   receipt: ReceiptSettings
+  /** إعدادات طباعة التقارير المعممة (طلب المالك): كل تقارير النظام لا الفواتير فقط */
+  reportPrint: ReportPrintSettings
+  updateReportPrint: (patch: Partial<ReportPrintSettings>) => void
   autoPrintAfterSale: boolean
   updateReceipt: (patch: Partial<ReceiptSettings>) => void
   setAutoPrint: (v: boolean) => void
@@ -167,9 +174,10 @@ export const useAppStore = create<AppState>()(
         allowNegativeStock: false,
         defaultWarehouseId: null,
         phone: '', email: '', city: '', street: '',
+        doctorSpecialty: '',
       },
       fiscalYears: [],
-      completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact }) =>
+      completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact, doctorSpecialty }) =>
         set((s) => ({
           fiscalYears: [{ ...fiscalYear, id: 1, status: 'open' }],
           // الهوية اللونية حسب النشاط (بعد نقاش المالك) — قابلة للتغيير لاحقاً من المظهر
@@ -192,6 +200,7 @@ export const useAppStore = create<AppState>()(
             allowNegativeStock: false,
             defaultWarehouseId: null,
             phone: contact?.phone ?? '', email: contact?.email ?? '', city: contact?.city ?? '', street: contact?.street ?? '',
+            doctorSpecialty: doctorSpecialty?.trim() ?? '',
           },
         })),
       addFiscalYear: (fy) =>
@@ -208,6 +217,8 @@ export const useAppStore = create<AppState>()(
           setup: { ...s.setup, completed: false, countryCode: null, activityId: null },
         })),
       receipt: DEFAULT_RECEIPT_SETTINGS,
+      reportPrint: DEFAULT_REPORT_PRINT,
+      updateReportPrint: (patch) => set((s) => ({ reportPrint: { ...s.reportPrint, ...patch } })),
       autoPrintAfterSale: false,
       updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
       setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
@@ -288,6 +299,8 @@ export const useAppStore = create<AppState>()(
           state.setup.allowNegativeTreasury = state.setup.allowNegativeTreasury ?? false
           state.setup.allowNegativeStock = state.setup.allowNegativeStock ?? false
           state.setup.defaultWarehouseId = state.setup.defaultWarehouseId ?? null
+          // ترحيل: تخصص الطبيب (طلب المالك — لا يُفرض «أسنان»)
+          state.setup.doctorSpecialty = state.setup.doctorSpecialty ?? ''
         }
         // ترحيل: إعدادات إيصال لحسابات قديمة (قبل ميزة الطباعة / قبل قالب A4 / قبل مفاتيح الإظهار)
         if (state && !state.receipt) {
@@ -296,6 +309,8 @@ export const useAppStore = create<AppState>()(
           // أي مفتاح جديد أُضيف لاحقاً يأخذ قيمته الافتراضية دون المساس بما اختاره المستخدم
           state.receipt = { ...DEFAULT_RECEIPT_SETTINGS, ...state.receipt }
         }
+        // ترحيل: إعدادات طباعة التقارير المعممة (طلب المالك)
+        if (state) state.reportPrint = { ...DEFAULT_REPORT_PRINT, ...state.reportPrint }
         // ترحيل: حسابات قبل ميزة المظهر تحصل على الافتراضيات (مع تنقية القيم)
         if (state) state.appearance = sanitizeAppearance(state.appearance)
         // ترحيل: حسابات قبل ميزة التليجرام تحصل على الافتراضيات

@@ -45,7 +45,7 @@ export type SourceType =
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
-  | 'opening' | 'manual' | 'year_closing' | 'reversal'
+  | 'opening' | 'manual' | 'year_closing' | 'asset_purchase' | 'asset_payment' | 'depreciation' | 'external_commission' | 'reversal'
 
 export interface JournalEntry {
   id: number
@@ -115,6 +115,7 @@ export const STANDARD_COA: Account[] = [
   { code: '1110', nameAr: 'مطالبات جهات تأمين وتعاقد', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'insurance_claims' },
   { code: '1111', nameAr: 'دفعات مقدمة لمقاولي الباطن', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'sub_advances' },
   { code: '12', nameAr: 'الأصول الثابتة', rootType: 'assets', parentCode: '1', isPostable: false },
+  { code: '1112', nameAr: 'عمولات مستحقة لدى الغير', rootType: 'assets', parentCode: '11', isPostable: true, systemKey: 'external_commissions_receivable' },
   { code: '1201', nameAr: 'أصول ومعدات', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'fixed_assets' },
   { code: '1202', nameAr: 'مجمع الإهلاك', rootType: 'assets', parentCode: '12', isPostable: true, systemKey: 'acc_depreciation' },
   { code: '2', nameAr: 'الخصوم', rootType: 'liabilities', parentCode: null, isPostable: false },
@@ -134,6 +135,7 @@ export const STANDARD_COA: Account[] = [
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },
   { code: '3102', nameAr: 'أرباح مرحّلة', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'retained_earnings' },
+  { code: '3103', nameAr: 'جاري الشريك', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'partner_current' },
   { code: '4', nameAr: 'الإيرادات', rootType: 'revenue', parentCode: null, isPostable: false },
   { code: '4101', nameAr: 'المبيعات', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'sales' },
   { code: '4102', nameAr: 'مرتجعات المبيعات', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'sales_returns' },
@@ -146,6 +148,7 @@ export const STANDARD_COA: Account[] = [
   { code: '4109', nameAr: 'عمولات بيع بالأمانة', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'consignment_commission' },
   { code: '4110', nameAr: 'إيرادات أخرى (فوائض عدّ)', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'other_income' },
   { code: '4111', nameAr: 'أرباح تقسيط (هامش تمويل)', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'installment_interest' },
+  { code: '4112', nameAr: 'إيرادات عمولات خارجية', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'external_commission_income' },
   { code: '5', nameAr: 'المصروفات', rootType: 'expenses', parentCode: null, isPostable: false },
   { code: '5101', nameAr: 'تكلفة البضاعة المباعة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'cogs' },
   { code: '5102', nameAr: 'رواتب وأجور', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'salaries' },

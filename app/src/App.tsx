@@ -78,6 +78,7 @@ import { TransfersPage } from './ui/pages/TransfersPage.tsx'
 import { AppearancePage } from './ui/pages/AppearancePage.tsx'
 import { TelegramPage } from './ui/pages/TelegramPage.tsx'
 import { AssetsPage } from './ui/pages/AssetsPage.tsx'
+import { ExternalCommissionsPage } from './ui/pages/ExternalCommissionsPage.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
 
@@ -169,6 +170,7 @@ function Shell() {
         <Route path="/accounting/treasury" element={<TreasuryPage />} />
         <Route path="/accounting/cheques" element={<ChequesPage />} />
         <Route path="/accounting/assets" element={<AssetsPage />} />
+        <Route path="/accounting/external-commissions" element={<ExternalCommissionsPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/reports/statements" element={<StatementsPage />} />
         <Route path="/settings/printing" element={<PrintSettingsPage />} />
@@ -363,6 +365,21 @@ export default function App() {
   useEffect(() => {
     if (setup.completed) seed(setup.features)
   }, [setup.completed, setup.features, seed])
+
+  // الإهلاك التلقائي (طلب المالك): لو نُسي الترحيل، تُرحَّل كل الأشهر المتأخرة عند فتح البرنامج
+  // ثم فحص يومي — لا يعتمد على تدخل المالك إطلاقاً
+  useEffect(() => {
+    if (!setup.completed) return
+    const run = () => {
+      try {
+        const n = useDataStore.getState().runAutoDepreciation()
+        if (n > 0) logEvent('info', `assets: رُحّل الإهلاك التلقائي (${n} قيد شهري)`)
+      } catch { /* لا يعطل الإقلاع */ }
+    }
+    run()
+    const t = setInterval(run, 24 * 60 * 60 * 1000)
+    return () => clearInterval(t)
+  }, [setup.completed])
 
   // القفل (القرار 28): بعد اكتمال الإعداد، أي حالة غير سارية ⇒ الشاشة المقفلة فقط
   if (setup.completed && lockReason) {

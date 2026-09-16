@@ -9,6 +9,22 @@
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
+/**
+ * مصدر تمويل الأصل (طلب المالك — سد فجوة المعالجة المحاسبية):
+ * cash: مدفوع من خزينة/بنك (كلياً أو جزئياً والباقي على مورد محدد)
+ * supplier_credit: آجل بالكامل على مورد مسجَّل (يُقسَّط ويُسدد بسندات صرف)
+ * capital: مقدَّم من المالك بلا دفع من خزائن المنشأة → رأس المال 3101
+ * partner: مقدَّم من شريك → جاري الشريك 3103 (التزام داخلي يُسوَّى لاحقاً)
+ */
+export type AssetFunding = 'cash' | 'supplier_credit' | 'capital' | 'partner'
+
+export const ASSET_FUNDING_LABELS: Record<AssetFunding, string> = {
+  cash: 'دفع من خزينة/بنك (والباقي آجل على مورد)',
+  supplier_credit: 'آجل بالكامل على مورد (يُقسَّط)',
+  capital: 'مقدَّم من المالك — يُثبت في رأس المال (بلا دفع)',
+  partner: 'مقدَّم من شريك — جاري الشريك (بلا دفع)',
+}
+
 export interface AssetInput {
   nameAr: string
   costMinor: Minor // تكلفة الاقتناء
@@ -33,17 +49,75 @@ export function validateAsset(input: AssetInput): string[] {
 }
 
 /**
- * قيد اقتناء الأصل:
- *   من ح/ 1201 أصول ومعدات (cost)
- *     إلى ح/ 1101 الخزينة (paid)
- *     إلى ح/ 2101 الموردون (cost − paid)
+ * قيد اقتناء الأصل حسب مصدر التمويل (طلب المالك):
+ *   cash:            1201 / خزينة (+ 2101 للباقي)
+ *   supplier_credit: 1201 / 2101 بالكامل
+ *   capital:         1201 / 3101 رأس المال (المالك قدّم الأصل عيناً أو دفع من جيبه)
+ *   partner:         1201 / 3103 جاري الشريك
  */
-export function buildAssetPurchaseEntry(costMinor: Minor, paidMinor: Minor, label: string, treasury = '1101'): JournalLine[] {
+export function buildAssetPurchaseEntry(
+  costMinor: Minor,
+  paidMinor: Minor,
+  label: string,
+  treasury = '1101',
+  funding: AssetFunding = 'cash',
+): JournalLine[] {
   if (costMinor <= 0) throw new Error('تكلفة الأصل يجب أن تكون موجبة')
   if (paidMinor > costMinor) throw new Error('المدفوع لا يتجاوز التكلفة')
   const lines: JournalLine[] = [{ accountCode: '1201', debit: costMinor, credit: 0, note: `اقتناء ${label}` }]
-  if (paidMinor > 0) lines.push({ accountCode: treasury, debit: 0, credit: paidMinor, note: 'مدفوع نقداً' })
-  if (costMinor - paidMinor > 0) lines.push({ accountCode: '2101', debit: 0, credit: costMinor - paidMinor, note: 'آجل على المورد' })
+  if (funding === 'capital') {
+    lines.push({ accountCode: '3101', debit: 0, credit: costMinor, note: 'أصل مقدَّم من المالك — زيادة رأس المال' })
+  } else if (funding === 'partner') {
+    lines.push({ accountCode: '3103', debit: 0, credit: costMinor, note: 'أصل مقدَّم من شريك — جاري الشريك' })
+  } else if (funding === 'supplier_credit') {
+    lines.push({ accountCode: '2101', debit: 0, credit: costMinor, note: 'آجل بالكامل على المورد' })
+  } else {
+    if (paidMinor > 0) lines.push({ accountCode: treasury, debit: 0, credit: paidMinor, note: 'مدفوع نقداً' })
+    if (costMinor - paidMinor > 0) lines.push({ accountCode: '2101', debit: 0, credit: costMinor - paidMinor, note: 'آجل على المورد' })
+  }
+  assertBalanced(lines)
+  return lines
+}
+
+/**
+ * جدول أقساط شراء الأصل (شراء آجل مقسَّط — طلب المالك):
+ * الباقي بعد الدفعة الأولى يوزَّع بالتساوي وأول قسط يلتقط الباقي — لا يضيع مليم.
+ */
+export interface AssetInstallment {
+  seq: number // 1..n
+  dueDate: string // YYYY-MM-DD
+  amountMinor: Minor
+  paidMinor: Minor
+  paidAt: string | null
+}
+
+export function buildAssetInstallments(
+  remainingMinor: Minor,
+  count: number,
+  intervalMonths: number,
+  firstDueDate: string,
+): AssetInstallment[] {
+  if (remainingMinor <= 0) return []
+  if (!Number.isInteger(count) || count < 1 || count > 120) throw new Error('عدد الأقساط بين 1 و120')
+  if (!Number.isInteger(intervalMonths) || intervalMonths < 1) throw new Error('الفاصل الشهري يبدأ من شهر')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(firstDueDate)) throw new Error('تاريخ أول قسط بصيغة YYYY-MM-DD')
+  const per = Math.floor(remainingMinor / count)
+  const first = remainingMinor - per * (count - 1)
+  const base = new Date(firstDueDate + 'T00:00:00Z')
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(base)
+    d.setUTCMonth(d.getUTCMonth() + i * intervalMonths)
+    return { seq: i + 1, dueDate: d.toISOString().slice(0, 10), amountMinor: i === 0 ? first : per, paidMinor: 0, paidAt: null }
+  })
+}
+
+/** قيد سداد قسط/دفعة أصل: 2101 مدين / خزينة دائن */
+export function buildAssetPaymentEntry(amountMinor: Minor, label: string, treasury = '1101'): JournalLine[] {
+  if (amountMinor <= 0) throw new Error('مبلغ السداد يجب أن يكون موجباً')
+  const lines: JournalLine[] = [
+    { accountCode: '2101', debit: amountMinor, credit: 0, note: `سداد ${label}` },
+    { accountCode: treasury, debit: 0, credit: amountMinor, note: 'صرف نقدي' },
+  ]
   assertBalanced(lines)
   return lines
 }

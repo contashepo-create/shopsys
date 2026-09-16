@@ -39,6 +39,8 @@ export function Sidebar() {
       ...sec,
       children: sec.children
         .filter((c) => !c.module || setup.modules.includes(c.module))
+        // فرع مربوط بخاصية أصناف (سيريالات مثلاً) يختفي لو النشاط لا يدعمها — إصلاح ظهوره للعيادة
+        .filter((c) => !c.feature || setup.features.includes(c.feature))
         // فرض الصلاحيات في الواجهة: الشاشة غير المصرح بها لا تظهر في القائمة
         .filter((c) => canAccessPath(c.path, perms)),
     }))

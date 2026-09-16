@@ -3,13 +3,16 @@
  * كل قيد مربوط بمستنده، وميزان تحقق حي أسفل الشاشة
  */
 import { useMemo, useState } from 'react'
-import { BookOpenText, Link2, Scale, PenLine, Undo2, Plus, Trash2 } from 'lucide-react'
+import { BookOpenText, Link2, Scale, PenLine, Undo2, Plus, Trash2, Printer, Filter, X } from 'lucide-react'
+import { printHtml } from '../print/printReceipt.ts'
+import { renderReportShell } from '../../core/reportPrint.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { STANDARD_COA } from '../../core/ledger.ts'
 import { fullCoa } from '../../core/treasury.ts'
+import { customAsAccounts } from '../../core/customAccounts.ts'
 import { validateManualEntry } from '../../core/accounting.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -32,12 +35,17 @@ const SOURCE_LABELS: Record<string, string> = {
   manual: 'قيد يدوي',
   year_closing: 'إقفال سنة مالية',
   reversal: 'قيد عاكس',
+  asset_purchase: 'اقتناء أصل',
+  asset_payment: 'سداد أصل',
+  depreciation: 'إهلاك شهري',
+  external_commission: 'عمولة لدى الغير',
 }
 
 export function JournalPage() {
-  const { journal, treasuries, postManualEntry, reverseEntry } = useDataStore()
+  const { journal, treasuries, customAccounts, postManualEntry, reverseEntry } = useDataStore()
   // الشجرة الكاملة تشمل الخزائن المخصصة — القيد اليدوي يستطيع استخدامها
-  const COA = useMemo(() => fullCoa(STANDARD_COA, treasuries), [treasuries])
+  // الشجرة الكاملة = القياسية + خزائن المالك + حساباته المخصصة (الشجرة ليست مفروضة)
+  const COA = useMemo(() => [...fullCoa(STANDARD_COA, treasuries), ...customAsAccounts(customAccounts)], [treasuries, customAccounts])
   const POSTABLE = useMemo(() => COA.filter((a) => a.isPostable), [COA])
   const { setup } = useAppStore()
   const toast = useToast()
@@ -59,6 +67,72 @@ export function JournalPage() {
     for (const e of journal) for (const l of e.lines) { d += l.debit; c += l.credit }
     return { totalDebit: d, totalCredit: c }
   }, [journal])
+
+  /* ─── الفلاتر (طلب المالك: تاريخ/نوع عملية/سنة/مستخدم/حساب) ─── */
+  const [showFilters, setShowFilters] = useState(false)
+  const [fFrom, setFFrom] = useState('')
+  const [fTo, setFTo] = useState('')
+  const [fSource, setFSource] = useState('')
+  const [fUser, setFUser] = useState('')
+  const [fAccount, setFAccount] = useState('')
+  const [fText, setFText] = useState('')
+  const users = useMemo(() => [...new Set(journal.map((e) => e.createdBy))], [journal])
+  const sourceTypes = useMemo(() => [...new Set(journal.map((e) => e.sourceType))], [journal])
+  const filtersActive = !!(fFrom || fTo || fSource || fUser || fAccount || fText.trim())
+  const clearFilters = () => { setFFrom(''); setFTo(''); setFSource(''); setFUser(''); setFAccount(''); setFText('') }
+
+  const filtered = useMemo(() => journal.filter((e) => {
+    if (fFrom && e.date < fFrom) return false
+    if (fTo && e.date > fTo) return false
+    if (fSource && e.sourceType !== fSource) return false
+    if (fUser && e.createdBy !== fUser) return false
+    if (fAccount && !e.lines.some((l) => l.accountCode === fAccount)) return false
+    if (fText.trim() && !e.description.includes(fText.trim()) && String(e.entryNumber) !== fText.trim()) return false
+    return true
+  }), [journal, fFrom, fTo, fSource, fUser, fAccount, fText])
+
+  const accName = (code: string) => treasuries.find((t) => t.code === code)?.nameAr
+    ?? customAccounts.find((a) => a.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
+
+  /** طباعة اليومية المفلترة — مطبوعة رسمية بعنوان احترافي (طلب المالك) */
+  const printJournal = () => {
+    const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    let d = 0, c = 0
+    const rows = filtered.map((e) => {
+      const lines = e.lines.map((l, i) => {
+        d += l.debit; c += l.credit
+        return `<tr>
+          ${i === 0 ? `<td rowspan="${e.lines.length}" class="num">#${e.entryNumber}</td><td rowspan="${e.lines.length}" class="num">${e.date}</td>` : ''}
+          <td class="${l.credit > 0 ? 'to' : 'from'}">${l.credit > 0 ? 'إلى ' : ''}${esc(accName(l.accountCode))}</td>
+          <td class="num">${l.debit > 0 ? fmt(l.debit) : ''}</td>
+          <td class="num">${l.credit > 0 ? fmt(l.credit) : ''}</td>
+          ${i === 0 ? `<td rowspan="${e.lines.length}" class="desc">${esc(e.description)}<div class="src">${esc(SOURCE_LABELS[e.sourceType] ?? e.sourceType)} — ${esc(e.createdBy)}</div></td>` : ''}
+        </tr>`
+      }).join('')
+      return lines
+    }).join('')
+    const filterLine = [
+      fFrom || fTo ? `الفترة: ${fFrom || 'البداية'} → ${fTo || 'اليوم'}` : 'كل الفترات',
+      fSource ? `النوع: ${SOURCE_LABELS[fSource] ?? fSource}` : '',
+      fUser ? `المستخدم: ${fUser}` : '',
+      fAccount ? `الحساب: ${accName(fAccount)}` : '',
+    ].filter(Boolean).join(' · ')
+    // الغلاف الموحّد بإعدادات طباعة التقارير — مطبوعة رسمية تصلح للمراجعة الخارجية
+    const { reportPrint, receipt } = useAppStore.getState()
+    printHtml(renderReportShell({
+      title: 'دفتر اليومية العامة',
+      subtitle: `${filterLine} · ${filtered.length} قيد`,
+      companyName: setup.shopName || '',
+      logoDataUrl: receipt.logoDataUrl,
+      settings: reportPrint,
+      bodyHtml: `<style>.to{padding-right:26px;color:#475569}.from{font-weight:700}.desc{font-size:.85em;color:#475569;max-width:150px}.src{font-size:.75em;color:#94a3b8;margin-top:2px}td,th{border:1px solid #e2e8f0;vertical-align:top}</style>
+      <table>
+        <thead><tr><th>القيد</th><th>التاريخ</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>البيان</th></tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td colspan="3">الإجمالي</td><td class="num">${fmt(d)}</td><td class="num">${fmt(c)}</td><td>${d === c ? '✓ متوازن' : '✗ غير متوازن'}</td></tr></tfoot>
+      </table>`,
+    }))
+  }
 
   /** سطور المسودة بالقيم الصغرى + أخطاؤها الحية (زر الحفظ معطل حتى تختفي) */
   const parsedLines = useMemo(
@@ -122,9 +196,51 @@ export function JournalPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end anim-up">
+      <div className="flex justify-end gap-2 anim-up">
+        <Btn variant="soft" onClick={() => setShowFilters((v) => !v)}>
+          <Filter size={15} /> فلاتر{filtersActive ? ' ●' : ''}
+        </Btn>
+        <Btn variant="soft" onClick={printJournal}><Printer size={15} /> طباعة اليومية{filtersActive ? ' (المفلترة)' : ''}</Btn>
         <Btn onClick={openManual}><PenLine size={15} /> قيد يدوي</Btn>
       </div>
+
+      {/* الفلاتر: تاريخ/نوع/مستخدم/حساب/بحث (طلب المالك) */}
+      {showFilters && (
+        <div className="anim-pop rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
+          <label className="text-[11px] font-bold text-slate-400">من تاريخ
+            <input type="date" value={fFrom} onChange={(e) => setFFrom(e.target.value)} className={`${inputCls} mt-1`} dir="ltr" />
+          </label>
+          <label className="text-[11px] font-bold text-slate-400">إلى تاريخ
+            <input type="date" value={fTo} onChange={(e) => setFTo(e.target.value)} className={`${inputCls} mt-1`} dir="ltr" />
+          </label>
+          <label className="text-[11px] font-bold text-slate-400">نوع العملية
+            <select value={fSource} onChange={(e) => setFSource(e.target.value)} className={`${inputCls} mt-1`}>
+              <option value="">الكل</option>
+              {sourceTypes.map((t) => <option key={t} value={t}>{SOURCE_LABELS[t] ?? t}</option>)}
+            </select>
+          </label>
+          <label className="text-[11px] font-bold text-slate-400">المستخدم
+            <select value={fUser} onChange={(e) => setFUser(e.target.value)} className={`${inputCls} mt-1`}>
+              <option value="">الكل</option>
+              {users.map((u) => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </label>
+          <label className="text-[11px] font-bold text-slate-400">الحساب
+            <select value={fAccount} onChange={(e) => setFAccount(e.target.value)} className={`${inputCls} mt-1`}>
+              <option value="">الكل</option>
+              {POSTABLE.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.nameAr}</option>)}
+            </select>
+          </label>
+          <div className="flex gap-2">
+            <input value={fText} onChange={(e) => setFText(e.target.value)} className={inputCls} placeholder="بحث بالبيان أو رقم القيد…" />
+            {filtersActive && (
+              <button onClick={clearFilters} className="p-2 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all" title="مسح الفلاتر"><X size={15} /></button>
+            )}
+          </div>
+          <div className="col-span-full text-[11px] text-slate-400">{filtered.length} من {journal.length} قيد</div>
+        </div>
+      )}
+
       {/* شريط التوازن الحي */}
       <div className={`anim-pop flex items-center gap-3 p-4 rounded-2xl border font-bold text-sm ${
         totalDebit === totalCredit
@@ -138,7 +254,7 @@ export function JournalPage() {
       </div>
 
       <div className="space-y-3">
-        {[...journal].reverse().map((e, i) => (
+        {[...filtered].reverse().map((e, i) => (
           <div key={e.id} style={{ animationDelay: `${i * 40}ms` }} className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden hover:border-rose-300/50 transition-colors duration-200">
             <div className="px-4 py-2.5 flex items-center gap-3 border-b border-slate-50 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-900/20">
               <span className="text-[11px] font-black px-2 py-0.5 rounded-lg bg-rose-500/10 text-rose-600">#{e.entryNumber}</span>
@@ -174,7 +290,7 @@ export function JournalPage() {
                 {e.lines.map((l, j) => (
                   <tr key={j}>
                     <td className={`px-4 py-1 ${l.credit > 0 ? 'pr-10 text-slate-500' : 'font-bold text-slate-700 dark:text-slate-200'}`}>
-                      {l.credit > 0 && 'إلى '} {treasuries.find((t) => t.code === l.accountCode)?.nameAr ?? ACCOUNT_NAMES[l.accountCode] ?? l.accountCode}
+                      {l.credit > 0 && 'إلى '} {accName(l.accountCode)}
                       {l.note && <span className="text-[10px] text-slate-300 dark:text-slate-600 mr-2">({l.note})</span>}
                     </td>
                     <td className="px-4 py-1 font-bold">{l.debit > 0 ? fmt(l.debit) : ''}</td>

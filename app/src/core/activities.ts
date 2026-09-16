@@ -114,7 +114,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
-    id: 'clinic', nameAr: 'عيادة طبيب / أسنان', icon: '🦷',
+    id: 'clinic', nameAr: 'عيادة طبية', icon: '🩺',
     description: 'ملف لكل مريض، زيارات بملاحظات وقيمة، خطط علاج بجلسات ومواعيد',
     features: [],
     modules: ['clinic'],
@@ -211,7 +211,7 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   logistics: { nameAr: 'اللوجستيات', icon: '🛣️', desc: 'النقلات، الأسطول والسائقون، ربحية كل نقلة' },
   lab: { nameAr: 'معمل التحاليل', icon: '🔬', desc: 'المرضى، الطلبات والنتائج، عمولات الأطباء المحيلين' },
   contracting: { nameAr: 'المقاولات', icon: '🏗️', desc: 'المشروعات، المستخلصات والمحتجزات، التكاليف والربحية' },
-  clinic: { nameAr: 'العيادة', icon: '🦷', desc: 'ملفات المرضى، الزيارات والكشوفات، خطط العلاج والمواعيد' },
+  clinic: { nameAr: 'العيادة', icon: '🩺', desc: 'ملفات المرضى، الزيارات والكشوفات، خطط العلاج والمواعيد' },
   cars: { nameAr: 'معرض السيارات', icon: '🚗', desc: 'سيارات بتكلفة وربحية لكل واحدة، تجهيزات ترسمل، بيع وإيجار' },
   installments: { nameAr: 'الأقساط', icon: '💳', desc: 'بيع بالتقسيط، جدولة الأقساط، تنبيهات الاستحقاق' },
   recipes: { nameAr: 'الوصفات والإنتاج', icon: '👨‍🍳', desc: 'وصفات الأطباق تخصم خاماتها عند البيع، وأوامر إنتاج للصوصات والعجائن' },

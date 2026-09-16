@@ -330,7 +330,7 @@ export function ClinicPatientsPage() {
     printHtml(renderPrescriptionHtml({
       clinicName: setup.shopName || 'العيادة',
       doctorName: setup.ownerName ? `د/ ${setup.ownerName}` : '',
-      doctorTitle: '',
+      doctorTitle: setup.doctorSpecialty ? `أخصائي ${setup.doctorSpecialty}` : '',
       clinicPhone: setup.phone ?? '',
       clinicAddress: [setup.city, setup.street].filter(Boolean).join(' — '),
       patientName: liveFile.nameAr,
@@ -761,7 +761,7 @@ export function ClinicPatientsPage() {
       {/* خطة علاج */}
       <Modal open={planOpen} onClose={() => setPlanOpen(false)} title={liveFile ? `خطة علاج — ${liveFile.nameAr}` : ''}>
         <div className="space-y-3">
-          <Field label="عنوان الخطة *"><input value={pTitle} onChange={(e) => setPTitle(e.target.value)} className={inputCls} placeholder="تقويم أسنان، زراعة ضرس…" /></Field>
+          <Field label="عنوان الخطة *"><input value={pTitle} onChange={(e) => setPTitle(e.target.value)} className={inputCls} placeholder="خطة علاج متعددة الجلسات — مثال: جلسات ليزر، تقويم، علاج طبيعي…" /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="عدد الجلسات *"><input value={pSessions} onChange={(e) => setPSessions(e.target.value)} inputMode="numeric" className={inputCls} /></Field>
             <Field label={`إجمالي الخطة (${cur.symbol}) *`} hint="يقسم على الجلسات تلقائياً بلا فقد قرش"><input value={pFee} onChange={(e) => setPFee(e.target.value)} inputMode="decimal" className={inputCls} /></Field>

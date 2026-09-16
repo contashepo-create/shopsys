@@ -171,7 +171,7 @@ export function renderPatientRecordHtml(args: {
       </div>
     </div>
 
-    <div class="report-title">📋 السجل الطبي الكامل للمريض</div>
+    <div class="report-title">سجل طبي</div>
     <div class="report-sub">من بداية التعامل ${esc(args.firstVisitDate || '—')} حتى تاريخ الطباعة</div>
 
     <div class="patient-card">

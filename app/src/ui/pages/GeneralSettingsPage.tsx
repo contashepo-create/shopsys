@@ -47,6 +47,12 @@ export function GeneralSettingsPage() {
     setNewYearOpen(false)
   }
 
+  const [specialty, setSpecialty] = useState(setup.doctorSpecialty ?? '')
+  const saveSpecialty = () => {
+    useAppStore.setState((s) => ({ setup: { ...s.setup, doctorSpecialty: specialty.trim() } }))
+    toast.show('تم حفظ تخصص العيادة ✅')
+  }
+
   const saveTax = () => {
     useAppStore.setState((s) => ({
       setup: { ...s.setup, vatPercent: Number(vat) || 0, taxInclusive },
@@ -56,6 +62,20 @@ export function GeneralSettingsPage() {
 
   return (
     <div className="max-w-3xl space-y-5">
+      {/* تخصص العيادة — نشاط العيادة فقط (طلب المالك: التخصص يختاره المالك لا يُفرض) */}
+      {setup.activityId === 'clinic' && (
+        <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5">
+          <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+            🩺 تخصص العيادة
+          </h3>
+          <p className="text-[11px] text-slate-400 mb-3">يظهر في الروشتة تحت اسم الطبيب وفي مطبوعات العيادة — اكتبه كما تحب (نفسي، جلدية، أسنان…)</p>
+          <div className="flex gap-2">
+            <input value={specialty} onChange={(e) => setSpecialty(e.target.value)} className={inputCls} placeholder="مثال: جلدية وتجميل" />
+            <Btn onClick={saveSpecialty}>حفظ</Btn>
+          </div>
+        </section>
+      )}
+
       {/* البلد والعملة */}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5">
         <h3 className="font-extrabold text-slate-800 dark:text-white mb-4 flex items-center gap-2">

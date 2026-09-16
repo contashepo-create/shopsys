@@ -13,7 +13,7 @@ import {
   FileText, ListChecks, Users2, ChefHat, Gem, Tags, PackageMinus, HandCoins, Gauge,
   ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { BusinessModule } from '../core/activities.ts'
+import type { BusinessModule, ItemFeature } from '../core/activities.ts'
 
 export interface NavChild {
   id: string
@@ -22,6 +22,8 @@ export interface NavChild {
   path: string
   /** يظهر فقط إن كانت هذه الوحدة مفعلة (لعناصر داخل قسم عام) */
   module?: BusinessModule
+  /** يظهر فقط إن كانت خاصية الأصناف هذه مفعلة للنشاط (مثل السيريالات) */
+  feature?: ItemFeature
 }
 
 export interface NavSection {
@@ -77,7 +79,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'transfers', nameAr: 'التحويلات', icon: ArrowLeftRight, path: '/inventory/transfers' },
       { id: 'counting', nameAr: 'الجرد', icon: ClipboardList, path: '/inventory/counting' },
       { id: 'wastage', nameAr: 'الإتلاف والهالك', icon: Trash2, path: '/inventory/wastage' },
-      { id: 'serials', nameAr: 'سجل السيريالات', icon: ScanBarcode, path: '/inventory/serials' },
+      { id: 'serials', nameAr: 'سجل السيريالات', icon: ScanBarcode, path: '/inventory/serials', feature: 'serial_warranty' },
       { id: 'recipes', nameAr: 'الوصفات والإنتاج', icon: ChefHat, path: '/inventory/recipes', module: 'recipes' },
       { id: 'jewelry', nameAr: 'الصاغة والكسر', icon: Gem, path: '/inventory/jewelry', module: 'jewelry' },
     ],
@@ -172,6 +174,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'cheques', nameAr: 'الشيكات', icon: Banknote, path: '/accounting/cheques' },
       { id: 'treasury', nameAr: 'الخزائن والبنوك', icon: PiggyBank, path: '/accounting/treasury' },
       { id: 'assets', nameAr: 'الأصول والإهلاك', icon: TrendingDown, path: '/accounting/assets' },
+      { id: 'ext-commissions', nameAr: 'عمولاتي لدى الغير', icon: HandCoins, path: '/accounting/external-commissions' },
       { id: 'opening', nameAr: 'الأرصدة الافتتاحية', icon: Scale, path: '/accounting/opening-balances' },
       { id: 'settlements', nameAr: 'التسويات الشاملة', icon: SlidersHorizontal, path: '/accounting/settlements' },
     ],

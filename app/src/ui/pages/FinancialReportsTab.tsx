@@ -14,6 +14,8 @@ import {
 } from '../../core/financialReports.ts'
 import { Btn, inputCls } from '../components/ui.tsx'
 import { printHtml } from '../print/printReceipt.ts'
+import { renderReportShell } from '../../core/reportPrint.ts'
+import { useAppStore } from '../../stores/app.store.ts'
 
 type FinReportId = 'trial_balance' | 'income' | 'balance_sheet' | 'gl' | 'cash_flow' | 'vat'
 
@@ -36,38 +38,25 @@ function downloadCsv(filename: string, csv: string) {
 }
 
 /** غلاف طباعة موحّد احترافي للقوائم المالية */
-function reportHtml(title: string, periodLabel: string, company: string, body: string): string {
-  return `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>${title}</title><style>
-    body{font-family:'Segoe UI',Tahoma,sans-serif;margin:24px;color:#0f172a}
-    h1{font-size:20px;margin:0}h2{font-size:13px;color:#475569;font-weight:600;margin:4px 0 16px}
-    table{width:100%;border-collapse:collapse;font-size:12.5px}
-    th{background:#f1f5f9;padding:8px 10px;text-align:right;border-bottom:2px solid #cbd5e1}
-    td{padding:7px 10px;border-bottom:1px solid #e2e8f0}
-    .num{direction:ltr;text-align:left;font-variant-numeric:tabular-nums}
-    .total td{font-weight:800;background:#f8fafc;border-top:2px solid #94a3b8}
-    .sec{font-weight:800;background:#f8fafc}
-    footer{margin-top:24px;font-size:10px;color:#94a3b8;text-align:center}
-  </style></head><body>
-    <h1>${title}</h1><h2>${company} — ${periodLabel}</h2>${body}
-    <footer>تَحَكَّم TAHAKAM ERP — طُبع ${new Date().toLocaleString('ar-EG')}</footer>
-  </body></html>`
-}
+
 
 export function FinancialReportsTab({ period, cur, companyName }: { period: { from: string; to: string }; cur: CurrencyConfig; companyName: string }) {
-  const { journal, treasuries } = useDataStore()
+  const { customAccounts, journal, treasuries } = useDataStore()
   const [reportId, setReportId] = useState<FinReportId>('trial_balance')
   const [glAccount, setGlAccount] = useState('1101')
 
   const fmt = (m: number) => formatMinor(m, cur, false)
   const p: FinPeriod = period
   const periodLabel = `من ${p.from} إلى ${p.to}`
-  const extraNames = useMemo(() => Object.fromEntries(treasuries.map((t) => [t.code, t.nameAr])), [treasuries])
+  const extraNames = useMemo(() => Object.fromEntries([...treasuries.map((t) => [t.code, t.nameAr] as const), ...customAccounts.map((a) => [a.code, a.nameAr] as const)]), [treasuries, customAccounts])
   const cashCodes = useMemo(() => treasuries.map((t) => t.code), [treasuries])
   const accountOptions = useMemo(() => {
     const std = STANDARD_COA.filter((a) => a.isPostable).map((a) => ({ code: a.code, nameAr: a.nameAr }))
     const extra = treasuries.filter((t) => !std.some((a) => a.code === t.code)).map((t) => ({ code: t.code, nameAr: t.nameAr }))
-    return [...std, ...extra].sort((a, b) => a.code.localeCompare(b.code))
-  }, [treasuries])
+    // الحسابات المخصصة التي أضافها المالك — تظهر في دفتر الأستاذ كأي حساب
+    const customs = customAccounts.map((a) => ({ code: a.code, nameAr: a.nameAr }))
+    return [...std, ...extra, ...customs].sort((a, b) => a.code.localeCompare(b.code))
+  }, [treasuries, customAccounts])
 
   const tb = useMemo(() => (reportId === 'trial_balance' ? trialBalance(journal, p, extraNames) : null), [reportId, journal, p, extraNames])
   const inc = useMemo(() => (reportId === 'income' ? incomeStatement(journal, p, extraNames) : null), [reportId, journal, p, extraNames])
@@ -132,7 +121,16 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
     if (gl) body = `<table><tr><th>التاريخ</th><th>قيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr><tr class="sec"><td colspan="5">رصيد أول الفترة — ${gl.accountName}</td>${num(gl.openingMinor)}</tr>${gl.rows.map((r) => `<tr><td dir="ltr">${r.date.slice(0, 10)}</td><td dir="ltr">#${r.entryNumber}</td><td>${r.description}</td>${num(r.debitMinor)}${num(r.creditMinor)}${num(r.balanceMinor)}</tr>`).join('')}<tr class="total"><td colspan="5">رصيد آخر الفترة</td>${num(gl.closingMinor)}</tr></table>`
     if (cf) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr><td>رصيد النقدية أول الفترة</td>${num(cf.openingCashMinor)}</tr><tr class="sec"><td colspan="2">المقبوضات</td></tr>${cf.inflows.map((r) => `<tr><td>${r.label}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المقبوضات</td>${num(cf.totalInMinor)}</tr><tr class="sec"><td colspan="2">المدفوعات</td></tr>${cf.outflows.map((r) => `<tr><td>${r.label}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المدفوعات</td>${num(cf.totalOutMinor)}</tr><tr class="total"><td>رصيد النقدية آخر الفترة</td>${num(cf.closingCashMinor)}</tr></table>`
     if (vat) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr><td>ضريبة المخرجات (مبيعات)</td>${num(vat.outputVatMinor)}</tr><tr><td>ضريبة المدخلات (مشتريات)</td>${num(vat.inputVatMinor)}</tr><tr class="total"><td>${vat.netDueMinor >= 0 ? 'صافي الضريبة المستحقة للمصلحة' : 'رصيد ضريبي دائن لك'}</td>${num(Math.abs(vat.netDueMinor))}</tr></table>`
-    printHtml(reportHtml(reportName, reportId === 'balance_sheet' ? `حتى ${p.to}` : periodLabel, companyName, body))
+    // الغلاف الموحّد بإعدادات طباعة التقارير (طلب المالك: إعدادات لكل مطبوعة لا الفواتير فقط)
+    const { reportPrint, receipt } = useAppStore.getState()
+    printHtml(renderReportShell({
+      title: reportName,
+      subtitle: `${companyName} — ${reportId === 'balance_sheet' ? `حتى ${p.to}` : periodLabel}`,
+      companyName,
+      logoDataUrl: receipt.logoDataUrl,
+      bodyHtml: body,
+      settings: reportPrint,
+    }))
   }
 
   const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'

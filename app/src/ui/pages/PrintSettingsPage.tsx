@@ -5,7 +5,8 @@
  * (iframe يعرض نفس HTML الذي سيُطبع حرفياً، فلا مفاجآت على الورق).
  */
 import { useMemo, useRef } from 'react'
-import { Printer, FileText, ImagePlus, Trash2, Stamp, Eye, Palette } from 'lucide-react'
+import { Printer, FileText, ImagePlus, Trash2, Stamp, Eye, Palette, ClipboardList } from 'lucide-react'
+import { renderReportShell } from '../../core/reportPrint.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { buildReceiptModel, A4_STYLES, type PaperWidth, type InvoiceTemplate, type ReceiptSettings } from '../../core/receipt.ts'
@@ -60,7 +61,7 @@ function readLogoFile(file: File, onDone: (dataUrl: string) => void, onError: ()
 }
 
 export function PrintSettingsPage() {
-  const { setup, receipt, autoPrintAfterSale, updateReceipt, setAutoPrint } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale, updateReceipt, setAutoPrint, reportPrint, updateReportPrint } = useAppStore()
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
   const cur = useMemo(
@@ -117,6 +118,61 @@ export function PrintSettingsPage() {
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
       {/* ─── عمود الإعدادات ─── */}
       <div className="anim-up space-y-4">
+        {/* إعدادات طباعة التقارير — معممة على كل مطبوعات النظام (طلب المالك) */}
+        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+          <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+            <ClipboardList size={17} className="text-violet-500" /> طباعة التقارير (كل الأقسام)
+          </div>
+          <p className="text-[11px] text-slate-400 -mt-2">تسري على كل مطبوعات التقارير: المالية، اليومية، كشوف الحساب، تقارير الأقسام — لا الفواتير فقط</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <Field label="الورق">
+              <select value={reportPrint.paper} onChange={(e) => updateReportPrint({ paper: e.target.value as 'A4' })} className={inputCls}>
+                <option value="A4">A4</option><option value="A5">A5</option><option value="letter">Letter</option>
+              </select>
+            </Field>
+            <Field label="الاتجاه">
+              <select value={reportPrint.orientation} onChange={(e) => updateReportPrint({ orientation: e.target.value as 'portrait' })} className={inputCls}>
+                <option value="portrait">طولي</option><option value="landscape">عرضي</option>
+              </select>
+            </Field>
+            <Field label="حجم الخط (نقطة)">
+              <input type="number" min={9} max={14} value={reportPrint.baseFontPt}
+                onChange={(e) => updateReportPrint({ baseFontPt: Math.min(14, Math.max(9, Number(e.target.value) || 12)) })} className={inputCls} dir="ltr" />
+            </Field>
+            <Field label="لون العناوين">
+              <input type="color" value={reportPrint.accentColor} onChange={(e) => updateReportPrint({ accentColor: e.target.value })} className="w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer bg-transparent" />
+            </Field>
+            <Field label="سطر ترويسة إضافي">
+              <input value={reportPrint.headerLine} onChange={(e) => updateReportPrint({ headerLine: e.target.value })} className={inputCls} placeholder="عنوان — هاتف — سجل تجاري" />
+            </Field>
+            <Field label="نص التذييل">
+              <input value={reportPrint.footerText} onChange={(e) => updateReportPrint({ footerText: e.target.value })} className={inputCls} placeholder="اختياري" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              ['showCompanyName', 'اسم المنشأة في الترويسة'],
+              ['showLogo', 'شعار المنشأة'],
+              ['showPrintedAt', 'تاريخ ووقت الطباعة'],
+              ['showPrintedBy', 'اسم المستخدم الطابع'],
+              ['showSignatures', 'خانات توقيع رسمية (إعداد/مراجعة/اعتماد)'],
+            ] as const).map(([k, label]) => (
+              <label key={k} className={toggleCls}>
+                <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">{label}</span>
+                <input type="checkbox" checked={reportPrint[k]} onChange={(e) => updateReportPrint({ [k]: e.target.checked })} className="accent-violet-600 w-4 h-4" />
+              </label>
+            ))}
+          </div>
+          <Btn variant="soft" onClick={() => {
+            printHtml(renderReportShell({
+              title: 'تقرير تجريبي', subtitle: `${setup.shopName || 'المنشأة'} — معاينة إعدادات طباعة التقارير`,
+              companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, settings: reportPrint,
+              bodyHtml: '<table><thead><tr><th>البند</th><th>القيمة</th></tr></thead><tbody><tr><td>سطر تجريبي أول</td><td class="num">1,000.00</td></tr><tr><td>سطر تجريبي ثانٍ</td><td class="num">2,500.00</td></tr></tbody><tfoot><tr><td>الإجمالي</td><td class="num">3,500.00</td></tr></tfoot></table>',
+            }))
+            toast.show('أُرسل تقرير تجريبي للطباعة 📄')
+          }}><Printer size={14} /> طباعة تقرير تجريبي</Btn>
+        </div>
+
         {/* القالب والنمط */}
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-4">
           <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">

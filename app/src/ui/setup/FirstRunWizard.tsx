@@ -16,6 +16,13 @@ import { citiesOf } from '../../core/cities.ts'
 import { suggestFiscalYear, validateFiscalYear } from '../../core/fiscal.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 
+/** تخصصات شائعة لنشاط العيادة — والمالك حر يكتب غيرها (طلب المالك) */
+const DOCTOR_SPECIALTIES = [
+  'أسنان', 'باطنة', 'أطفال', 'نفسي', 'جلدية', 'عظام', 'نساء وتوليد',
+  'أنف وأذن وحنجرة', 'عيون', 'قلب وأوعية', 'مخ وأعصاب', 'مسالك بولية',
+  'صدر وجهاز تنفسي', 'تغذية علاجية', 'علاج طبيعي', 'ممارسة عامة',
+]
+
 const STEPS = [
   { n: 1, label: 'البلد', icon: '🌍' },
   { n: 2, label: 'النشاط', icon: '🏪' },
@@ -34,6 +41,9 @@ export function FirstRunWizard() {
   const [step, setStep] = useState(1)
   const [countryCode, setCountryCode] = useState('')
   const [activityId, setActivityId] = useState('')
+  // تخصص الطبيب لنشاط العيادة (طلب المالك: لا تُفرض «أسنان» — اختيار أو كتابة حرة)
+  const [specialty, setSpecialty] = useState('')
+  const [specialtyOther, setSpecialtyOther] = useState('')
   const country: Country | null = countryCode ? (getCountry(countryCode) ?? null) : null
   const activity: ActivityTemplate | null = ACTIVITY_TEMPLATES.find((a) => a.id === activityId) ?? null
 
@@ -76,6 +86,7 @@ export function FirstRunWizard() {
         country, activity, shopName: shopName.trim(), ownerName: ownerName.trim(),
         fiscalYear: { nameAr: fyName.trim(), startDate: fyStart, endDate: fyEnd },
         contact: { phone: phone.trim(), email: email.trim(), city: effectiveCity, street: street.trim() },
+        doctorSpecialty: specialty === '__other__' ? specialtyOther.trim() : specialty,
       })
     }
   }
@@ -191,6 +202,20 @@ export function FirstRunWizard() {
                         </span>
                       ))}
                     </div>
+                  </div>
+                )}
+                {activity?.id === 'clinic' && (
+                  <div className="anim-pop p-4 rounded-2xl bg-sky-500/5 border border-sky-500/20 space-y-2">
+                    <div className="text-sm font-black text-slate-700 dark:text-white">🩺 تخصص العيادة</div>
+                    <div className="text-[11px] text-slate-400">اختر التخصص أو اكتبه — يظهر في الشاشات والمطبوعات</div>
+                    <select value={specialty} onChange={(e) => setSpecialty(e.target.value)} className={inputCls}>
+                      <option value="">— اختر التخصص —</option>
+                      {DOCTOR_SPECIALTIES.map((x) => <option key={x} value={x}>{x}</option>)}
+                      <option value="__other__">تخصص آخر (اكتبه بنفسك)…</option>
+                    </select>
+                    {specialty === '__other__' && (
+                      <input value={specialtyOther} onChange={(e) => setSpecialtyOther(e.target.value)} className={inputCls} placeholder="اكتب التخصص — مثال: نساء وتوليد" />
+                    )}
                   </div>
                 )}
               </div>

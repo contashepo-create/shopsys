@@ -9,12 +9,12 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { assetsReport, depreciationSchedule, nextDepreciationMonth } from '../../core/assets.ts'
+import { assetsReport, depreciationSchedule, nextDepreciationMonth, ASSET_FUNDING_LABELS, type AssetFunding } from '../../core/assets.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 
 export function AssetsPage() {
-  const { assets, journal, addAsset, postMonthlyDepreciation } = useDataStore()
+  const { assets, journal, suppliers, addAsset, postMonthlyDepreciation, payAssetInstallment, getAssetDue } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -38,9 +38,15 @@ export function AssetsPage() {
   const [paid, setPaid] = useState('')
   const [treasury, setTreasury] = useState('1101')
   const [notes, setNotes] = useState('')
+  // مصدر التمويل + المورد + الأقساط (طلب المالك: أصل بلا دفع = رأس مال/جاري شريك، والآجل على مورد حقيقي)
+  const [funding, setFunding] = useState<AssetFunding>('cash')
+  const [supplierId, setSupplierId] = useState('')
+  const [instCount, setInstCount] = useState('')
+  const [instInterval, setInstInterval] = useState('1')
+  const [instFirstDate, setInstFirstDate] = useState('')
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
 
-  const openNew = () => { setNameAr(''); setCost(''); setSalvage(''); setLifeYears('5'); setPaid(''); setNotes(''); setOpen(true) }
+  const openNew = () => { setNameAr(''); setCost(''); setSalvage(''); setLifeYears('5'); setPaid(''); setNotes(''); setFunding('cash'); setSupplierId(''); setInstCount(''); setInstInterval('1'); setInstFirstDate(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)); setOpen(true) }
 
   const preview = useMemo(() => {
     try {
@@ -61,9 +67,14 @@ export function AssetsPage() {
         costMinor: toM(cost),
         salvageMinor: toM(salvage),
         lifeMonths: Math.round(Number(lifeYears) * 12),
-        paidMinor: paid.trim() ? toM(paid) : toM(cost),
+        paidMinor: funding === 'cash' ? (paid.trim() ? toM(paid) : toM(cost)) : 0,
         notes,
         treasury,
+        funding,
+        supplierId: supplierId ? Number(supplierId) : null,
+        installmentCount: instCount.trim() ? Number(instCount) : undefined,
+        installmentIntervalMonths: Number(instInterval) || 1,
+        firstInstallmentDate: instFirstDate || undefined,
       })
       toast.show(`سُجّل الأصل ${a.assetNumber} وتولّد قيد الاقتناء ✅`)
       setOpen(false)
@@ -74,6 +85,32 @@ export function AssetsPage() {
     try {
       const r = postMonthlyDepreciation()
       toast.show(`رُحّل إهلاك ${r.assetCount} أصل بإجمالي ${fmt(r.totalMinor)} ${cur.symbol} ✅`)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
+  // الجزء الآجل المتوقع (لإظهار حقول المورد والأقساط)
+  const remainingPreview = useMemo(() => {
+    try {
+      const c = toM(cost)
+      if (funding === 'supplier_credit') return c
+      if (funding === 'cash') return Math.max(0, c - (paid.trim() ? toM(paid) : c))
+      return 0
+    } catch { return 0 }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cost, paid, funding, cur.decimals])
+
+  /* ─── ملف الأصل (التفاصيل + الأقساط + السداد) ─── */
+  const [fileAssetId, setFileAssetId] = useState<number | null>(null)
+  const fileAsset = fileAssetId != null ? assets.find((a) => a.id === fileAssetId) : null
+  const fileDue = fileAsset ? getAssetDue(fileAsset.id) : null
+  const [payAmount, setPayAmount] = useState('')
+  const [payTreasury, setPayTreasury] = useState('1101')
+  const doPay = () => {
+    if (!fileAsset) return
+    try {
+      payAssetInstallment({ assetId: fileAsset.id, amountMinor: toM(payAmount), treasury: payTreasury as '1101' })
+      toast.show('سُدّدت الدفعة وتولّد قيد الصرف ✅')
+      setPayAmount('')
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
 
@@ -145,7 +182,9 @@ export function AssetsPage() {
                       </div>
                       {r.fullyDepreciated && <div className="text-[10px] text-slate-400 mt-0.5">مُهلَك بالكامل — بقي بقيمة الخردة</div>}
                     </td>
-                    <td className="px-4 py-3 text-left">
+                    <td className="px-4 py-3 text-left whitespace-nowrap">
+                      {(() => { const d = getAssetDue(asset.id); return d.remainingMinor > 0 ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold ml-1">متبقٍ {fmt(d.remainingMinor)}</span> : null })()}
+                      <button onClick={() => setFileAssetId(asset.id)} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-sky-600 hover:bg-sky-500/10 transition-all" title="ملف الأصل">📂 الملف</button>
                       <button onClick={() => setViewingEntryId(asset.purchaseEntryId)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110" title="قيد الاقتناء"><BookOpenText size={15} /></button>
                     </td>
                   </tr>
@@ -172,11 +211,42 @@ export function AssetsPage() {
             <Field label="العمر الإنتاجي (سنوات)">
               <input value={lifeYears} onChange={(e) => setLifeYears(e.target.value)} className={inputCls} dir="ltr" />
             </Field>
-            <Field label={`المدفوع نقداً (${cur.symbol})`} hint="فارغ = كله نقداً؛ الباقي آجل على مورد">
+            <Field label="مصدر التمويل *" hint="أصل بلا دفع من الخزينة؟ اختر رأس المال أو جاري الشريك">
+              <select value={funding} onChange={(e) => setFunding(e.target.value as AssetFunding)} className={inputCls}>
+                {(Object.keys(ASSET_FUNDING_LABELS) as AssetFunding[]).map((f) => (
+                  <option key={f} value={f}>{ASSET_FUNDING_LABELS[f]}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          {funding === 'cash' && (
+            <Field label={`المدفوع نقداً (${cur.symbol})`} hint="فارغ = كله نقداً؛ الباقي آجل على المورد المحدد">
               <input value={paid} onChange={(e) => setPaid(e.target.value)} className={inputCls} dir="ltr" placeholder={cost || '0'} />
               <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>
             </Field>
-          </div>
+          )}
+          {remainingPreview > 0 && (
+            <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-3 space-y-3">
+              <div className="text-[12px] font-black text-amber-700 dark:text-amber-400">دين آجل {fmt(remainingPreview)} {cur.symbol} — يُربط بمورد حقيقي وتتم متابعته وسداده</div>
+              <Field label="المورد *" hint="غير موجود؟ سجّله أولاً من المشتريات ← الموردون">
+                <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={inputCls}>
+                  <option value="">— اختر المورد —</option>
+                  {suppliers.map((sp) => <option key={sp.id} value={sp.id}>{sp.nameAr}</option>)}
+                </select>
+              </Field>
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="عدد الأقساط" hint="فارغ أو 1 = دفعة واحدة">
+                  <input value={instCount} onChange={(e) => setInstCount(e.target.value)} className={inputCls} dir="ltr" placeholder="—" />
+                </Field>
+                <Field label="كل كم شهر؟">
+                  <input value={instInterval} onChange={(e) => setInstInterval(e.target.value)} className={inputCls} dir="ltr" />
+                </Field>
+                <Field label="أول استحقاق">
+                  <input type="date" value={instFirstDate} onChange={(e) => setInstFirstDate(e.target.value)} className={inputCls} dir="ltr" />
+                </Field>
+              </div>
+            </div>
+          )}
           {preview && (
             <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-[12px] flex items-center justify-between">
               <span className="text-slate-500">القسط الشهري ({preview.months} شهراً)</span>
@@ -191,6 +261,109 @@ export function AssetsPage() {
             <Btn onClick={save} disabled={!nameAr.trim() || !cost.trim()}>💾 تسجيل وتوليد القيد</Btn>
           </div>
         </div>
+      </Modal>
+
+      {/* ملف الأصل الكامل: تمويل + مورد + جدول أقساط + سداد (طلب المالك) */}
+      <Modal open={!!fileAsset} onClose={() => setFileAssetId(null)} title={fileAsset ? `📂 ملف الأصل ${fileAsset.assetNumber} — ${fileAsset.nameAr}` : ''} wide>
+        {fileAsset && fileDue && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[11.5px]">
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 px-3 py-2">
+                <div className="text-slate-400 text-[10px] font-bold">التكلفة</div>
+                <b>{fmt(fileAsset.costMinor)}</b>
+              </div>
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 px-3 py-2">
+                <div className="text-slate-400 text-[10px] font-bold">مصدر التمويل</div>
+                <b className="text-[10.5px]">{ASSET_FUNDING_LABELS[fileAsset.funding ?? 'cash'].split(' (')[0].split(' —')[0]}</b>
+              </div>
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 px-3 py-2">
+                <div className="text-slate-400 text-[10px] font-bold">المسدد من الدين</div>
+                <b className="text-emerald-600">{fmt(fileDue.paidMinor)}</b>
+              </div>
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 px-3 py-2">
+                <div className="text-slate-400 text-[10px] font-bold">المتبقي</div>
+                <b className={fileDue.remainingMinor > 0 ? 'text-amber-600' : 'text-emerald-600'}>{fmt(fileDue.remainingMinor)}</b>
+              </div>
+            </div>
+
+            {fileAsset.supplierId != null && (
+              <div className="text-[12px] text-slate-500">
+                المورد: <b className="text-slate-700 dark:text-slate-200">{suppliers.find((sp) => sp.id === fileAsset.supplierId)?.nameAr ?? `#${fileAsset.supplierId}`}</b>
+                {' '}— الدين يظهر ضمن حساب الموردين (2101) ويُسدد من هنا بقيد صرف موثق
+              </div>
+            )}
+
+            {(fileAsset.installments?.length ?? 0) > 0 && (
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                <div className="px-4 py-2 text-[11px] font-black text-slate-500 bg-slate-50 dark:bg-slate-900/40">جدول الأقساط</div>
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr className="text-slate-400 text-[10px] border-b border-slate-100 dark:border-slate-800">
+                      <th className="px-3 py-2 text-right font-bold">#</th>
+                      <th className="px-3 py-2 text-right font-bold">الاستحقاق</th>
+                      <th className="px-3 py-2 text-right font-bold">القسط</th>
+                      <th className="px-3 py-2 text-right font-bold">المسدد</th>
+                      <th className="px-3 py-2 text-right font-bold">الحالة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(fileAsset.installments ?? []).map((it) => {
+                      const done = it.paidMinor >= it.amountMinor
+                      const overdue = !done && it.dueDate < new Date().toISOString().slice(0, 10)
+                      return (
+                        <tr key={it.seq} className="border-b border-slate-50 dark:border-slate-800/50">
+                          <td className="px-3 py-1.5 font-bold">{it.seq}</td>
+                          <td className="px-3 py-1.5" dir="ltr">{it.dueDate}</td>
+                          <td className="px-3 py-1.5 font-bold">{fmt(it.amountMinor)}</td>
+                          <td className="px-3 py-1.5 text-emerald-600">{fmt(it.paidMinor)}</td>
+                          <td className="px-3 py-1.5">
+                            {done ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">مسدد ✓</span>
+                              : overdue ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-bold">متأخر!</span>
+                              : <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-400/10 text-slate-400 font-bold">قادم</span>}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {(fileAsset.payments?.length ?? 0) > 0 && (
+              <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                <div className="px-4 py-2 text-[11px] font-black text-slate-500 bg-slate-50 dark:bg-slate-900/40">سجل السدادات</div>
+                <table className="w-full text-[12px]">
+                  <tbody>
+                    {(fileAsset.payments ?? []).map((p) => (
+                      <tr key={p.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                        <td className="px-3 py-1.5" dir="ltr">{p.date.slice(0, 10)}</td>
+                        <td className="px-3 py-1.5 font-bold text-emerald-600">{fmt(p.amountMinor)}</td>
+                        <td className="px-3 py-1.5 text-[10px] text-slate-400">قيد #{p.journalEntryId}{p.installmentSeq ? ` — بدءاً من قسط ${p.installmentSeq}` : ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {fileDue.remainingMinor > 0 && (
+              <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-3 space-y-2">
+                <div className="text-[12px] font-black text-emerald-700 dark:text-emerald-400">
+                  سداد دفعة {fileDue.nextInstallment ? `— القسط القادم ${fmt(fileDue.nextInstallment.amountMinor - fileDue.nextInstallment.paidMinor)} بتاريخ ${fileDue.nextInstallment.dueDate}` : ''}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-[8rem_1fr_auto] gap-2 items-end">
+                  <Field label={`المبلغ (${cur.symbol})`}>
+                    <input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+                  </Field>
+                  <Field label="الصرف من">
+                    <TreasuryPicker value={payTreasury} onChange={setPayTreasury} compact />
+                  </Field>
+                  <Btn onClick={doPay} disabled={!payAmount.trim()}>💸 سداد وتوليد القيد</Btn>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
 
       {/* عرض قيد */}
