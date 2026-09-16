@@ -9,7 +9,7 @@ import { toggleModuleList, effectiveModules, type ActivityTemplate, type ItemFea
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { generateDeviceId, type LicensePayload } from '../core/license.ts'
-import { DEFAULT_APPEARANCE, sanitizeAppearance, type AppearanceSettings } from '../core/appearance.ts'
+import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
 import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
 import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
@@ -167,6 +167,8 @@ export const useAppStore = create<AppState>()(
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact }) =>
         set((s) => ({
           fiscalYears: [{ ...fiscalYear, id: 1, status: 'open' }],
+          // الهوية اللونية حسب النشاط (بعد نقاش المالك) — قابلة للتغيير لاحقاً من المظهر
+          appearance: { ...s.appearance, accentId: activityAccentId(activity.id) },
           // اسم المحل على الإيصال + قالب الفاتورة الافتراضي من النشاط
           // (بقالة = حراري سريع، خدمات وعقود = A4 احترافية)
           receipt: { ...s.receipt, shopName, defaultTemplate: activity.defaultInvoiceTemplate },

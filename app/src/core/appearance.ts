@@ -43,7 +43,48 @@ export const ACCENTS: AccentPalette[] = [
     id: 'fuchsia', nameAr: 'أرجواني',
     shades: { 50: '#fdf4ff', 100: '#fae8ff', 200: '#f5d0fe', 300: '#f0abfc', 400: '#e879f9', 500: '#d946ef', 600: '#c026d3', 700: '#a21caf', 800: '#86198f', 900: '#701a75' },
   },
+  {
+    id: 'orange', nameAr: 'برتقالي',
+    shades: { 50: '#fff7ed', 100: '#ffedd5', 200: '#fed7aa', 300: '#fdba74', 400: '#fb923c', 500: '#f97316', 600: '#ea580c', 700: '#c2410c', 800: '#9a3412', 900: '#7c2d12' },
+  },
+  {
+    id: 'cyan', nameAr: 'أزرق طبي',
+    shades: { 50: '#ecfeff', 100: '#cffafe', 200: '#a5f3fc', 300: '#67e8f9', 400: '#22d3ee', 500: '#06b6d4', 600: '#0891b2', 700: '#0e7490', 800: '#155e75', 900: '#164e63' },
+  },
+  {
+    id: 'gold', nameAr: 'ذهبي فاخر',
+    shades: { 50: '#fdfaf0', 100: '#faf0d7', 200: '#f3ddaa', 300: '#eac776', 400: '#dfae4a', 500: '#c9952c', 600: '#a97a1f', 700: '#875f1b', 800: '#6e4d1c', 900: '#5c401b' },
+  },
 ]
+
+/**
+ * الهوية اللونية حسب النشاط (قرار المالك بعد النقاش): كل نشاط يبدأ بلوحة
+ * تناسبه تلقائياً عند إتمام معالج التسجيل — صيدلية فيروزي طبي، مجوهرات ذهبي،
+ * نقليات برتقالي… — ويحتفظ المستخدم بحرية اختيار لون آخر من إعدادات المظهر.
+ */
+export const ACTIVITY_ACCENTS: Record<string, string> = {
+  grocery: 'emerald', // طزاجة الأغذية
+  mobile: 'sky', // تقني هادئ
+  clothing: 'fuchsia', // أزياء وحيوية
+  pharmacy: 'teal', // طبي مطمئن
+  electronics: 'indigo', // أجهزة واحترافية
+  spare_parts: 'orange', // ورش ومعدات
+  equipment_rental: 'amber', // معدات ثقيلة
+  logistics: 'orange', // شاحنات وطرق
+  lab: 'cyan', // معامل وتحاليل
+  contracting: 'amber', // بناء وخوذات
+  clinic: 'cyan', // عيادات
+  cars: 'rose', // معارض سيارات
+  restaurant: 'orange', // مطاعم دافئة
+  jewelry: 'gold', // ذهب فاخر
+  laundry: 'sky', // نظافة وانتعاش
+  general: 'indigo', // الافتراضي
+}
+
+/** لوحة النشاط الافتراضية — نشاط مجهول ⇒ الافتراضي العام */
+export function activityAccentId(activityId: string | null | undefined): string {
+  return (activityId && ACTIVITY_ACCENTS[activityId]) || DEFAULT_ACCENT_ID
+}
 
 export const DEFAULT_ACCENT_ID = 'indigo'
 
