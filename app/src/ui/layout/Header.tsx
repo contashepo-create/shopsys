@@ -11,9 +11,22 @@ import { useDataStore } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { collectNotifications } from '../../core/notifications.ts'
+import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 
 export function Header({ title }: { title: string }) {
-  const { theme, toggleTheme, setup, setAccountingMode } = useAppStore()
+  const { theme, toggleTheme, setup, setAccountingMode, sync } = useAppStore()
+
+  // مؤشر الاتصال المرئي (Offline-First — أمر المالك): يستمع لأحداث المتصفح
+  const [browserOnline, setBrowserOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true)
+  useEffect(() => {
+    const on = () => setBrowserOnline(true)
+    const off = () => setBrowserOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  }, [])
+  const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
+  const connInfo = CONNECTIVITY_LABELS[conn]
   const { batches, items, installmentPlans, customers, cheques, issues } = useDataStore()
   const navigate = useNavigate()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -47,6 +60,20 @@ export function Header({ title }: { title: string }) {
   return (
     <header className="sticky top-0 z-20 flex items-center gap-4 px-6 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-card-dark/70 glass">
       <h1 className="text-lg font-extrabold text-slate-800 dark:text-white flex-1">{title}</h1>
+
+      {/* مؤشر الاتصال/المزامنة — يظهر دائماً ليطمئن المستخدم أن العمل محفوظ محلياً */}
+      <span
+        title={connInfo.nameAr}
+        className={`flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-full transition-colors ${
+          connInfo.tone === 'ok' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+          : connInfo.tone === 'warn' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+          : connInfo.tone === 'danger' ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+          : 'bg-slate-100 dark:bg-slate-800/70 text-slate-500 dark:text-slate-400'
+        }`}
+      >
+        <span>{connInfo.icon}</span>
+        <span className="hidden lg:inline">{connInfo.nameAr}</span>
+      </span>
 
       {country && (
         <span className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/70 px-3 py-1.5 rounded-full">

@@ -195,6 +195,20 @@ export default {
       return new Response(raw ?? '[]', { headers: JSON_HEADERS })
     }
 
+    // GET /version — أحدث إصدار منشور (البند 6: زر «فحص التحديثات» في «حول»)
+    // المطوّر يحدّثه من بوت التليجرام أو مباشرة في KV بمفتاح 'version'
+    if (path === '/version') {
+      const raw = await env.SHOPSYS_KV.get('version')
+      return new Response(raw ?? JSON.stringify({
+        latestVersion: '1.0.0',
+        downloadUrl: '',
+        releaseNotesAr: '',
+        sha256: '',
+        mandatory: false,
+        publishedAt: new Date().toISOString(),
+      }), { headers: JSON_HEADERS })
+    }
+
     // GET /subscription/:deviceId — حالة اشتراك للعرض في التطبيق
     const m = path.match(/^\/subscription\/([A-Z0-9-]+)$/i)
     if (m) {

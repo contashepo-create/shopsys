@@ -11,6 +11,7 @@ import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { validateSyncConfig, fetchRemote } from '../../data/syncClient.ts'
 import { runSyncCycle } from '../../data/syncRunner.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { deriveArchitectureMode, MODE_LABELS } from '../../core/architecture.ts'
 
 const CREATE_TABLE_SQL = `create table if not exists stores (
   store_id text primary key,
@@ -32,6 +33,13 @@ export function SyncPage() {
     const state = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
     return hasFeature(state, 'cloud_sync')
   }, [activatedPayload, trialStartedAt, lastSeenAt])
+
+  // وضع التشغيل الحالي (البنية الهجينة — 4 أوضاع) مشتق من الرخصة الموقَّعة فقط
+  const archMode = useMemo(
+    () => deriveArchitectureMode(activatedPayload?.features ?? [], sync.enabled),
+    [activatedPayload, sync.enabled],
+  )
+  const archInfo = MODE_LABELS[archMode]
 
   const [url, setUrl] = useState(sync.url)
   const [anonKey, setAnonKey] = useState(sync.anonKey)
@@ -58,6 +66,7 @@ export function SyncPage() {
     )
   }
 
+  /* بطاقة وضع التشغيل تُعرض أعلى الصفحة (JSX أدناه) */
   const saveConfig = () => {
     const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim() }
     const errors = validateSyncConfig(cfg)
@@ -104,6 +113,16 @@ export function SyncPage() {
 
   return (
     <div className="max-w-3xl space-y-4">
+      {/* وضع التشغيل الحالي — البنية الهجينة (٤ أوضاع) */}
+      <div className={`anim-up ${card} flex items-center gap-4`}>
+        <span className="text-3xl">{archInfo.icon}</span>
+        <div className="flex-1 min-w-0">
+          <div className="font-black text-slate-800 dark:text-white">وضع التشغيل: {archInfo.nameAr}</div>
+          <div className="text-[11.5px] text-slate-400">{archInfo.desc}</div>
+        </div>
+        <span className="text-[10.5px] font-bold px-2.5 py-1 rounded-lg bg-brand-500/10 text-brand-600 dark:text-brand-400">يتحدد من رخصتك الموقَّعة</span>
+      </div>
+
       <div className="anim-up flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-black flex items-center gap-2"><CloudUpload className="w-6 h-6 text-sky-500" /> المزامنة السحابية للأجهزة والفروع</h1>
         {sync.enabled && (
