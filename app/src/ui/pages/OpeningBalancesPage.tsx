@@ -4,7 +4,7 @@
  * بقيود متوازنة مقابل رأس المال 3101 — والتعديل يرحّل قيد الفرق فقط.
  */
 import { useMemo, useState } from 'react'
-import { Scale, Users, Truck, PiggyBank, HandCoins, CheckCircle2 } from 'lucide-react'
+import { Scale, Users, Truck, PiggyBank, HandCoins, CheckCircle2, Package } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -17,10 +17,11 @@ const TABS: { id: OpeningKind; nameAr: string; icon: typeof Users; hint: string 
   { id: 'supplier', nameAr: 'الموردون', icon: Truck, hint: 'الديون القائمة عليك للموردين — قيد: رأس المال / موردون 2101' },
   { id: 'treasury', nameAr: 'الخزائن والبنوك', icon: PiggyBank, hint: 'النقدية الفعلية بالأدراج والحسابات يوم البدء — قيد: الخزينة / رأس المال' },
   { id: 'employee_advance', nameAr: 'سلف الموظفين', icon: HandCoins, hint: 'سلف قائمة لم تُخصم بعد — قيد: سلف 1107 / رأس المال' },
+  { id: 'item_stock', nameAr: 'المخزون الافتتاحي', icon: Package, hint: 'بضاعة أول المدة (سد فجوة T2): قيمة رصيد الصنف × تكلفته الافتتاحية — قيد: مخزون 1103 / رأس المال. بدونه دفتر 1103 لا يشمل بضاعتك القائمة قبل البرنامج' },
 ]
 
 export function OpeningBalancesPage() {
-  const { customers, suppliers, employees, treasuries, openingBalances, setOpeningBalance } = useDataStore()
+  const { customers, suppliers, employees, treasuries, items, openingBalances, setOpeningBalance } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -34,8 +35,18 @@ export function OpeningBalancesPage() {
     if (tab === 'customer') return customers.map((c) => ({ refId: c.id as string | number, nameAr: c.nameAr }))
     if (tab === 'supplier') return suppliers.map((s) => ({ refId: s.id as string | number, nameAr: s.nameAr }))
     if (tab === 'treasury') return treasuries.map((t) => ({ refId: t.code as string | number, nameAr: t.nameAr }))
+    if (tab === 'item_stock') {
+      // اقتراح القيمة تلقائياً = الرصيد الحالي × التكلفة — والمستخدم حر في تثبيت غيرها
+      return items
+        .filter((it) => it.isActive)
+        .map((it) => ({
+          refId: it.id as string | number,
+          nameAr: `${it.nameAr} (رصيد ${it.stockQty ?? 0} × ${formatMinor(it.costMinor, cur, false)})`,
+          suggestedMinor: Math.round((it.stockQty ?? 0) * it.costMinor),
+        }))
+    }
     return employees.map((e) => ({ refId: e.id as string | number, nameAr: e.nameAr }))
-  }, [tab, customers, suppliers, treasuries, employees])
+  }, [tab, customers, suppliers, treasuries, employees, items, cur])
 
   const totalPosted = useMemo(
     () => rows.reduce((a, r) => a + (openingBalances[openingKey(tab, r.refId)] ?? 0), 0),
@@ -104,6 +115,7 @@ export function OpeningBalancesPage() {
               {rows.map((r) => {
                 const key = openingKey(tab, r.refId)
                 const posted = openingBalances[key] ?? 0
+                const suggested = (r as { suggestedMinor?: number }).suggestedMinor
                 return (
                   <tr key={key} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                     <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
@@ -121,11 +133,25 @@ export function OpeningBalancesPage() {
                         onKeyDown={(e) => e.key === 'Enter' && save(r.refId, r.nameAr)}
                         className={`${inputCls} !py-1.5 !text-[12px]`}
                         dir="ltr"
-                        placeholder={posted > 0 ? fmt(posted) : '0'}
+                        placeholder={posted > 0 ? fmt(posted) : suggested != null && suggested > 0 ? fmt(suggested) : '0'}
                       />
                     </td>
-                    <td className="px-4 py-2">
+                    <td className="px-4 py-2 whitespace-nowrap">
                       <Btn variant="soft" onClick={() => save(r.refId, r.nameAr)} disabled={!drafts[key]?.trim()}>تثبيت</Btn>
+                      {suggested != null && suggested > 0 && suggested !== posted && !drafts[key]?.trim() && (
+                        <Btn
+                          variant="ghost"
+                          onClick={() => {
+                            // تثبيت القيمة المقترحة (رصيد×تكلفة) مباشرة بقيد 1103/3101
+                            try {
+                              setOpeningBalance({ kind: tab, refId: r.refId, amountMinor: suggested, label: r.nameAr })
+                              toast.show(`ثُبّت المخزون الافتتاحي بقيمة ${fmt(suggested)} بقيد 1103/3101 ✓`)
+                            } catch (e) { toast.show((e as Error).message, 'error') }
+                          }}
+                        >
+                          تثبيت المقترح
+                        </Btn>
+                      )}
                     </td>
                   </tr>
                 )

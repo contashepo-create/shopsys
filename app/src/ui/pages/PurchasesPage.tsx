@@ -78,6 +78,8 @@ export function PurchasesPage() {
   }
   const [expenses, setExpenses] = useState<DraftExpense[]>([])
   const [paid, setPaid] = useState('')
+  // T1: ض.ق.م مدخلات قابلة للخصم (اختياري — للمسجلين ضريبياً): تقيد 2102 مديناً ولا تدخل التكلفة
+  const [inputVat, setInputVat] = useState('')
   const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [projectId, setProjectId] = useState('')
   /* الأمر 8: المخزن المستلم للبضاعة — الافتراضي من الإعدادات */
@@ -158,6 +160,7 @@ export function PurchasesPage() {
     setLines([{ itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '' }])
     setExpenses([])
     setPaid('')
+    setInputVat('')
     setPaySource(DEFAULT_PAY_SOURCE)
     setProjectId('')
     setNotes('')
@@ -221,6 +224,7 @@ export function PurchasesPage() {
       custodyFileId: paySource.kind === 'custody' ? paySource.custodyFileId : null,
       projectId: projectId ? Number(projectId) : null,
       warehouseId, // الأمر 8: المخزن المستلم
+      inputVatMinor: inputVat ? toMinor(inputVat, cur.decimals) : 0,
       notes,
     })
     toast.show(`رُحّلت الفاتورة ${inv.invoiceNumber} — تحدثت تكلفة الأصناف بالمتوسط المرجح ✓`)
@@ -330,6 +334,12 @@ export function PurchasesPage() {
               <PaySourcePicker value={paySource} onChange={setPaySource} />
             </Field>
           </div>
+          <Field
+            label={`ض.ق.م مدخلات قابلة للخصم (${cur.symbol}) — اختياري`}
+            hint="للمنشآت المسجلة ضريبياً فقط: تُقيَّد على حساب الضريبة (2102 مديناً) فتُخصم من ضريبة مبيعاتك في الإقرار، ولا تدخل تكلفة المخزون. غير المسجل يتركها فارغة فتبقى الضريبة ضمن التكلفة"
+          >
+            <input value={inputVat} onChange={(e) => setInputVat(e.target.value)} type="number" min={0} className={inputCls} placeholder="0" />
+          </Field>
           {warehouses.length > 1 && (
             <Field label="المخزن المستلم للبضاعة" hint="«غير محدد» يعامل كالمخزن الرئيسي — الافتراضي من الإعدادات العامة">
               <select value={warehouseId ?? ''} onChange={(e) => setWarehouseId(e.target.value === '' ? null : Number(e.target.value))} className={inputCls}>

@@ -57,21 +57,32 @@ export function buildPurchaseEntryV2(args: {
   paidMinor: Minor // المدفوع من مستحق المورد
   payAccount: string // خزينة/بنك أو 1108 عهدة
   expensePayments: ExpensePaymentCredit[] // المصاريف المدفوعة مباشرة
+  /**
+   * ض.ق.م المدخلات القابلة للخصم (سد فجوة T1 — للمنشآت المسجلة ضريبياً):
+   * تُقيَّد مدينة على 2102 فتخصم من ضريبة المخرجات في الإقرار،
+   * ولا تدخل تكلفة المخزون إطلاقاً (لا تتضخم 1103 بضريبة قابلة للاسترداد).
+   * غير المسجل يتركها 0 فتبقى الضريبة ضمن التكلفة كما كان (سلوك افتراضي سليم).
+   */
+  inputVatMinor?: Minor
 }): JournalLine[] {
   const { grandTotalMinor, paidMinor, expensePayments } = args
+  const inputVat = args.inputVatMinor ?? 0
   if (!Number.isInteger(grandTotalMinor) || grandTotalMinor <= 0) throw new RangeError('إجمالي الفاتورة يجب أن يكون موجباً')
   if (!Number.isInteger(paidMinor) || paidMinor < 0) throw new RangeError('المدفوع لا يكون سالباً')
+  if (!Number.isInteger(inputVat) || inputVat < 0) throw new RangeError('ضريبة المدخلات لا تكون سالبة')
   for (const e of expensePayments) {
     if (!Number.isInteger(e.amountMinor) || e.amountMinor <= 0) throw new RangeError('مبلغ مصروف مدفوع غير صالح')
   }
   const expensesPaidDirect = expensePayments.reduce((a, e) => a + e.amountMinor, 0)
-  const supplierDue = grandTotalMinor - expensesPaidDirect // بضاعة + مصاريف على حسابه
+  // مستحق المورد = بضاعة + مصاريف على حسابه + ضريبة المدخلات (المورد يقبضها ليوردها)
+  const supplierDue = grandTotalMinor + inputVat - expensesPaidDirect
   if (supplierDue < 0) throw new RangeError('المصاريف المدفوعة مباشرة أكبر من إجمالي الفاتورة')
-  if (paidMinor > supplierDue) throw new RangeError('المدفوع أكبر من مستحق المورد (البضاعة + المصاريف المحملة على حسابه)')
+  if (paidMinor > supplierDue) throw new RangeError('المدفوع أكبر من مستحق المورد (البضاعة + الضريبة + المصاريف المحملة على حسابه)')
   const remaining = supplierDue - paidMinor
   const lines: JournalLine[] = [
     { accountCode: args.inventoryAccount, debit: grandTotalMinor, credit: 0, note: args.inventoryNote },
   ]
+  if (inputVat > 0) lines.push({ accountCode: '2102', debit: inputVat, credit: 0, note: 'ض.ق.م مدخلات قابلة للخصم' })
   if (paidMinor > 0) lines.push({ accountCode: args.payAccount, debit: 0, credit: paidMinor, note: 'مدفوع للمورد' })
   for (const e of expensePayments) lines.push({ accountCode: e.account, debit: 0, credit: e.amountMinor, note: e.note })
   if (remaining > 0) lines.push({ accountCode: '2101', debit: 0, credit: remaining, note: 'دين للمورد' })

@@ -734,6 +734,8 @@ export interface PurchaseInvoice {
   treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه
   custodyFileId?: number | null // دُفعت من ملف عهدة موظف (طلب المالك)
   projectId?: number | null // مربوطة بمشروع مقاولات
+  /** T1: ض.ق.م مدخلات قابلة للخصم قُيّدت 2102 مديناً (للمسجلين ضريبياً) — 0/غياب = ضمن التكلفة */
+  inputVatMinor?: number
   notes: string
   journalEntryId: number | null // القيد المتولد (فواتير قديمة قبل الترحيل = null)
   /** سجل تدقيق التعديلات (طلب المالك) */
@@ -1063,6 +1065,11 @@ interface DataState {
     projectId?: number | null
     /** المخزن المستلم للبضاعة (الأمر 8) — null = غير محدد */
     warehouseId?: number | null
+    /**
+     * ض.ق.م مدخلات قابلة للخصم (T1 — للمسجلين ضريبياً): تُقيَّد 2102 مديناً
+     * فتُخصم من ضريبة المخرجات، ولا تدخل تكلفة المخزون. 0/غياب = ضمن التكلفة.
+     */
+    inputVatMinor?: number
     notes: string
   }) => PurchaseInvoice
   /**
@@ -1913,8 +1920,11 @@ export const useDataStore = create<DataState>()(
           }
         }
         const expensesPaidDirect = expensePayments.reduce((a, e) => a + e.amountMinor, 0)
-        // مستحق المورد = البضاعة + المصاريف المحملة على حسابه فقط
-        const supplierDue = grandTotal - expensesPaidDirect
+        // T1: ضريبة مدخلات قابلة للخصم — تُفحص مبكراً وتدخل مستحق المورد (يقبضها ليوردها للدولة)
+        const inputVatMinor = inv.inputVatMinor ?? 0
+        if (!Number.isInteger(inputVatMinor) || inputVatMinor < 0) throw new Error('ضريبة المدخلات لا تكون سالبة')
+        // مستحق المورد = البضاعة + ضريبة المدخلات + المصاريف المحملة على حسابه فقط
+        const supplierDue = grandTotal + inputVatMinor - expensesPaidDirect
 
         // مصدر دفع البضاعة: خزينة/بنك أو ملف عهدة موظف (طلب المالك) — العهدة تُفحص قبل أي كتابة
         let custodyFile: CustodyFile | null = null
@@ -1953,6 +1963,7 @@ export const useDataStore = create<DataState>()(
           paidMinor: inv.paidMinor,
           payAccount,
           expensePayments,
+          inputVatMinor,
         })
         const purchaseId = nextId(state.purchases)
         const entryId = nextId(state.journal)
@@ -1996,6 +2007,7 @@ export const useDataStore = create<DataState>()(
           custodyFileId: custodyFile?.id ?? null,
           projectId: inv.projectId ?? null,
           warehouseId: inv.warehouseId ?? null,
+          inputVatMinor,
           notes: inv.notes,
           journalEntryId: entryId,
         }
@@ -2744,6 +2756,7 @@ export const useDataStore = create<DataState>()(
         if (args.kind === 'supplier' && !state.suppliers.some((x) => x.id === Number(args.refId))) errors.push('المورد غير موجود')
         if (args.kind === 'treasury' && !state.treasuries.some((t) => t.code === String(args.refId))) errors.push('الخزينة/البنك غير موجود')
         if (args.kind === 'employee_advance' && !state.employees.some((e) => e.id === Number(args.refId))) errors.push('الموظف غير موجود')
+        if (args.kind === 'item_stock' && !state.items.some((it) => it.id === Number(args.refId))) errors.push('الصنف غير موجود')
         if (errors.length) throw new Error(errors.join(' — '))
 
         const key = openingKey(args.kind, args.refId)

@@ -13,13 +13,14 @@
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
-export type OpeningKind = 'customer' | 'supplier' | 'treasury' | 'employee_advance'
+export type OpeningKind = 'customer' | 'supplier' | 'treasury' | 'employee_advance' | 'item_stock'
 
 export const OPENING_KIND_LABELS: Record<OpeningKind, string> = {
   customer: 'رصيد عميل افتتاحي (مدين لنا)',
   supplier: 'رصيد مورد افتتاحي (دائن لنا)',
   treasury: 'رصيد خزينة/بنك افتتاحي',
   employee_advance: 'سلفة موظف قائمة',
+  item_stock: 'مخزون افتتاحي (بضاعة أول المدة)',
 }
 
 /** مفتاح فريد للرصيد: نوع + مُعرّف (رقم الطرف أو كود الخزينة) */
@@ -68,6 +69,10 @@ export function buildOpeningDeltaEntry(
     case 'employee_advance': // زيادة = 1107 مدين / 3101 دائن
       debitAcc = up ? '1107' : '3101'
       creditAcc = up ? '3101' : '1107'
+      break
+    case 'item_stock': // سد فجوة T2: بضاعة أول المدة — زيادة = 1103 مدين / 3101 دائن
+      debitAcc = up ? '1103' : '3101'
+      creditAcc = up ? '3101' : '1103'
       break
   }
   const lines: JournalLine[] = [
