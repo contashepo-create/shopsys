@@ -18,7 +18,7 @@ const check = (name, cond) => {
 }
 
 console.log('— اللوحات —')
-check('ثماني لوحات', ACCENTS.length === 8)
+check('١١ لوحة (٨ أصلية + ٣ لهوية الأنشطة)', ACCENTS.length === 11)
 check('المعرفات فريدة', new Set(ACCENTS.map((a) => a.id)).size === ACCENTS.length)
 check('الافتراضي موجود', ACCENTS.some((a) => a.id === DEFAULT_ACCENT_ID))
 const SHADES = ['50', '100', '200', '300', '400', '500', '600', '700', '800', '900']
