@@ -90,7 +90,18 @@ export interface Item {
   fitment?: string
   /** درجة القطعة: أصلي / بديل تجاري / مستعمل (قطع الغيار) */
   grade?: 'original' | 'aftermarket' | 'used'
+  /**
+   * تجاوز الضريبة لهذا الصنف (طلب المالك):
+   * null/undefined = يتبع نسبة البلد العامة · 0 = معفى ضريبياً · رقم = نسبة خاصة به.
+   * تغيير النسبة العامة لاحقاً لا يمس الفواتير القديمة (كل فاتورة تحفظ نسبتها وقت الإصدار)
+   */
+  vatOverride?: number | null
   isActive: boolean
+}
+
+/** النسبة الفعلية للصنف: تجاوزه إن وُجد وإلا النسبة العامة */
+export function effectiveVatPercent(item: Pick<Item, 'vatOverride'>, defaultPercent: number): number {
+  return item.vatOverride === null || item.vatOverride === undefined ? defaultPercent : item.vatOverride
 }
 
 export const GRADE_LABELS: Record<NonNullable<Item['grade']>, { nameAr: string; icon: string }> = {

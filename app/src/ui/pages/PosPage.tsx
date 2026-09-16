@@ -103,7 +103,7 @@ export function PosPage() {
       if (idx >= 0) return prev.map((l, i) => (i === idx ? { ...l, qty: l.qty + 1 } : l))
       return [...prev, {
         itemId: it.id, nameAr: `${it.nameAr} (${variantLabel(color, size)})`, qty: 1,
-        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor,
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: it.vatOverride ?? undefined,
         discountPercent: 0, soldByWeight: false, variantColor: color, variantSize: size,
       }]
     })
@@ -130,7 +130,7 @@ export function PosPage() {
       }
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr, qty: 1,
-        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor,
+        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, vatPercentOverride: it.vatOverride ?? undefined,
         discountPercent: 0, soldByWeight: false, serials: [serial],
       }]
     })
@@ -168,7 +168,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr,
         qty: weightQty ?? (it.soldByWeight ? 0.5 : 1),
-        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor,
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: it.vatOverride ?? undefined,
         discountPercent: 0, soldByWeight: it.soldByWeight,
       }]
     })
@@ -182,7 +182,7 @@ export function PosPage() {
       if (!it) return l
       const basePrice = getEffectivePrice(it.id, activePriceListId)
       if (unitName === it.baseUnit) {
-        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, unitFactor: undefined, unitLabel: undefined }
+        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: it.vatOverride ?? undefined, unitFactor: undefined, unitLabel: undefined }
       }
       const u = it.extraUnits.find((x) => x.nameAr === unitName)
       if (!u) return l
@@ -190,7 +190,7 @@ export function PosPage() {
         ...l,
         nameAr: `${it.nameAr} (${u.nameAr})`,
         unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
-        unitCostMinor: Math.round(it.costMinor * u.factor),
+        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: it.vatOverride ?? undefined,
         unitFactor: u.factor,
         unitLabel: u.nameAr,
       }
@@ -209,7 +209,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: `${it.nameAr} (${u.nameAr})`, qty: 1,
         unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
-        unitCostMinor: Math.round(it.costMinor * u.factor),
+        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: it.vatOverride ?? undefined,
         discountPercent: 0, soldByWeight: false, unitFactor: u.factor, unitLabel: u.nameAr,
       }]
     })

@@ -27,6 +27,7 @@ import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignmen
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
+import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { fullCoa } from '../core/treasury.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
@@ -523,6 +524,28 @@ export interface FixedAsset {
   payments?: { id: number; date: string; amountMinor: number; treasury: string; journalEntryId: number; installmentSeq: number | null }[]
 }
 
+/** أمر غسيل (وحدة المغاسل المستقلة — طلب المالك) */
+export interface LaundryOrder {
+  id: number
+  orderNumber: string // LN-0001
+  customerId: number | null // null = عميل نقدي عابر
+  customerName: string
+  phone: string
+  receivedAt: string
+  promisedAt: string // موعد التسليم الموعود ('' = بلا)
+  status: LaundryStatus
+  lines: LaundryLine[]
+  prepaidMinor: number // العربون المقبوض عند الاستلام
+  prepaidEntryId: number | null
+  deliverEntryId: number | null
+  cancelEntryId: number | null
+  totalMinor: number // إجمالي قبل الضريبة (أسعار البنود)
+  grandMinor: number // النهائي بعد الضريبة (يتحدد عند التسليم)
+  taxMinor: number
+  notes: string
+  statusHistory: { status: LaundryStatus; at: string }[]
+}
+
 /** عمولة خارجية مستحقة للمنشأة لدى الغير (طلب المالك — طبيب له عمولة عند مركز أشعة مثلاً) */
 export interface ExternalCommission {
   id: number
@@ -923,6 +946,7 @@ interface DataState {
   assets: FixedAsset[]
   externalCommissions: ExternalCommission[] // عمولات مستحقة لدى الغير (طلب المالك)
   customAccounts: CustomAccount[] // حسابات مخصصة يضيفها المالك للشجرة (بند شجرة الحسابات المفتوحة)
+  laundryOrders: LaundryOrder[] // أوامر الغسيل (وحدة المغاسل)
   serials: SerialUnit[] // وحدات السيريال/IMEI والضمان (نمط موبايل شوب)
   cheques: Cheque[] // أوراق القبض والدفع (الشيكات)
   purchases: PurchaseInvoice[]
@@ -1542,6 +1566,15 @@ interface DataState {
   addCustomAccount: (args: { code: string; nameAr: string; parentCode: string }) => CustomAccount
   /** حذف حساب مخصص — يُرفض لو عليه حركة في اليومية */
   deleteCustomAccount: (code: string) => void
+  /* ─── المغاسل (وحدة مستقلة — طلب المالك) ─── */
+  /** فتح أمر غسيل: قطع + خدمات + عربون اختياري (قيده: خزينة/2109 دفعات مقدمة) */
+  openLaundryOrder: (args: { customerId: number | null; customerName: string; phone: string; promisedAt: string; lines: LaundryLine[]; prepaidMinor: number; treasury?: TreasuryAccount; notes: string }) => LaundryOrder
+  /** نقل حالة أمر الغسيل (بلا قيد — القيود عند التسليم/الإلغاء فقط) */
+  setLaundryStatus: (orderId: number, status: LaundryStatus) => LaundryOrder
+  /** تسليم الأمر: تحقق الإيراد — خزينة (المتبقي) + 2109 (العربون) ← 4103 + 2102 */
+  deliverLaundryOrder: (args: { orderId: number; treasury?: TreasuryAccount }) => LaundryOrder
+  /** إلغاء الأمر: لو عليه عربون يُرد بقيد 2109 ← خزينة */
+  cancelLaundryOrder: (orderId: number) => LaundryOrder
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
   /** إهلاك تلقائي (طلب المالك): يرحّل كل الأشهر المتأخرة دفعة واحدة بلا تدخل — يُستدعى عند فتح البرنامج. يعيد عدد القيود المرحّلة */
@@ -1703,6 +1736,7 @@ export const useDataStore = create<DataState>()(
       assets: [],
       externalCommissions: [],
       customAccounts: [],
+      laundryOrders: [],
       serials: [],
       cheques: [],
       purchases: [],
@@ -6541,6 +6575,107 @@ export const useDataStore = create<DataState>()(
         }
         set({ customAccounts: state.customAccounts.filter((a) => a.code !== code) })
       },
+
+      openLaundryOrder: (args) => {
+        const state = get()
+        const lines = args.lines.filter((l) => l.desc.trim() && l.qty > 0)
+        const errors = validateLaundryOrder({ lines, prepaidMinor: args.prepaidMinor })
+        if (errors.length) throw new Error(errors.join('، '))
+        if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) throw new Error('العميل غير موجود')
+        const id = nextId(state.laundryOrders)
+        const orderNumber = `LN-${String(id).padStart(4, '0')}`
+        const now = new Date().toISOString()
+        let prepaidEntryId: number | null = null
+        let journal = state.journal
+        if (args.prepaidMinor > 0) {
+          const entryId = nextId(journal)
+          prepaidEntryId = entryId
+          journal = [...journal, {
+            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+            description: `عربون أمر غسيل ${orderNumber} — ${args.customerName || 'عميل نقدي'}`,
+            sourceType: 'laundry', sourceId: id,
+            lines: buildLaundryPrepaidEntry(args.prepaidMinor, `عربون ${orderNumber}`, args.treasury ?? '1101'),
+            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+        }
+        const order: LaundryOrder = {
+          id, orderNumber,
+          customerId: args.customerId, customerName: args.customerName.trim() || 'عميل نقدي', phone: args.phone.trim(),
+          receivedAt: now, promisedAt: args.promisedAt, status: 'received',
+          lines, prepaidMinor: args.prepaidMinor,
+          prepaidEntryId, deliverEntryId: null, cancelEntryId: null,
+          totalMinor: laundryTotal(lines), grandMinor: 0, taxMinor: 0,
+          notes: args.notes.trim(),
+          statusHistory: [{ status: 'received', at: now }],
+        }
+        set({ laundryOrders: [...state.laundryOrders, order], journal })
+        return order
+      },
+
+      setLaundryStatus: (orderId, status) => {
+        const state = get()
+        const order = state.laundryOrders.find((o) => o.id === orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        assertLaundryTransition(order.status, status)
+        if (status === 'delivered') throw new Error('التسليم من زر «تسليم وتحصيل» — يولّد قيد الإيراد')
+        if (status === 'cancelled') throw new Error('الإلغاء من زر الإلغاء — يرد العربون إن وُجد')
+        const updated: LaundryOrder = { ...order, status, statusHistory: [...order.statusHistory, { status, at: new Date().toISOString() }] }
+        set({ laundryOrders: state.laundryOrders.map((o) => (o.id === orderId ? updated : o)) })
+        return updated
+      },
+
+      deliverLaundryOrder: (args) => {
+        const state = get()
+        const order = state.laundryOrders.find((o) => o.id === args.orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        assertLaundryTransition(order.status, 'delivered')
+        const { vatPercent, taxInclusive } = useAppStore.getState().setup
+        const now = new Date().toISOString()
+        const built = buildLaundryDeliverEntry({
+          totalMinor: order.totalMinor, prepaidMinor: order.prepaidMinor,
+          taxPercent: vatPercent, taxInclusive,
+          note: `إيراد ${order.orderNumber}`, treasury: args.treasury ?? '1101',
+        })
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تسليم أمر غسيل ${order.orderNumber} — ${order.customerName}`,
+          sourceType: 'laundry', sourceId: order.id,
+          lines: built.lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: LaundryOrder = {
+          ...order, status: 'delivered', deliverEntryId: entryId,
+          grandMinor: built.grandMinor, taxMinor: built.taxMinor,
+          statusHistory: [...order.statusHistory, { status: 'delivered', at: now }],
+        }
+        set({ laundryOrders: state.laundryOrders.map((o) => (o.id === order.id ? updated : o)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+      cancelLaundryOrder: (orderId) => {
+        const state = get()
+        const order = state.laundryOrders.find((o) => o.id === orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        assertLaundryTransition(order.status, 'cancelled')
+        const now = new Date().toISOString()
+        let journal = state.journal
+        let cancelEntryId: number | null = null
+        if (order.prepaidMinor > 0) {
+          const entryId = nextId(journal)
+          cancelEntryId = entryId
+          journal = [...journal, {
+            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+            description: `إلغاء أمر غسيل ${order.orderNumber} — رد العربون`,
+            sourceType: 'laundry', sourceId: order.id,
+            lines: buildLaundryCancelEntry(order.prepaidMinor, `رد عربون ${order.orderNumber}`),
+            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+        }
+        const updated: LaundryOrder = { ...order, status: 'cancelled', cancelEntryId, statusHistory: [...order.statusHistory, { status: 'cancelled', at: now }] }
+        set({ laundryOrders: state.laundryOrders.map((o) => (o.id === orderId ? updated : o)), journal })
+        return updated
+      },
       postMonthlyDepreciation: () => {
         const state = get()
         const nowMonth = new Date().toISOString().slice(0, 7)
@@ -6712,6 +6847,7 @@ export const useDataStore = create<DataState>()(
           // الإصدار 17: عمولات لدى الغير + تمويل الأصول وأقساطها
           externalCommissions: s.externalCommissions ?? [],
           customAccounts: s.customAccounts ?? [],
+          laundryOrders: s.laundryOrders ?? [],
           assets: (s.assets ?? []).map((a) => ({ ...a, funding: a.funding ?? 'cash', supplierId: a.supplierId ?? null, paidMinor: a.paidMinor ?? a.costMinor, installments: a.installments ?? [], payments: a.payments ?? [] })),
           appUsers: s.appUsers ?? [],
           roleOverrides: s.roleOverrides ?? {},

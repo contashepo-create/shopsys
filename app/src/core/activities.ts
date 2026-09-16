@@ -28,6 +28,7 @@ export type BusinessModule =
   | 'recipes' // الوصفات والتصنيع (مطاعم/مخابز)
   | 'jewelry' // الصاغة: سعر الجرام اليومي والمصنعية والكسر
   | 'wallet_services' // خدمات المحافظ والدفع الإلكتروني (نمط mobileshop): ربح = المحصَّل − المدفوع للمزوّد
+  | 'laundry' // المغاسل: أوامر غسيل بقطع وخدمات وعربون (وحدة مستقلة — ليست صيانة)
 
 export interface ActivityTemplate {
   id: string
@@ -143,9 +144,9 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
   },
   {
     id: 'laundry', nameAr: 'مغسلة ملابس', icon: '🧺',
-    description: 'استلام قطع بتذاكر ك أوامر الصيانة: استلام ← تجهيز ← تسليم وتحصيل',
+    description: 'أوامر غسيل بقطع وخدمات (غسيل/كي/دراي كلين) وعربون: استلام ← تجهيز ← تسليم وتحصيل',
     features: [],
-    modules: ['maintenance'],
+    modules: ['laundry'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
@@ -217,7 +218,8 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   recipes: { nameAr: 'الوصفات والإنتاج', icon: '👨‍🍳', desc: 'وصفات الأطباق تخصم خاماتها عند البيع، وأوامر إنتاج للصوصات والعجائن' },
   jewelry: { nameAr: 'الصاغة', icon: '💍', desc: 'سعر الجرام اليومي بالعيار، مصنعية منفصلة، وشراء وبيع الكسر FIFO' },
   wallet_services: { nameAr: 'خدمات المحافظ', icon: '📲', desc: 'تحويل رصيد ودفع إلكتروني وفواتير — الربح آلياً: المحصَّل − المدفوع للمزوّد' },
+  laundry: { nameAr: 'المغسلة', icon: '🧺', desc: 'أوامر غسيل بقطع وخدمات وعربون — استلام وتجهيز وتسليم بقيود سليمة' },
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'jewelry', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'jewelry', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services']

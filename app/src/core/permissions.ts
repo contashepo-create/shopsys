@@ -92,6 +92,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/parties', perm: 'party.customer.manage' },
   // شاشات النشاط التخصصي (صيانة/رحلات/معمل/عيادة/مقاولات/سيارات/محافظ/تأجير)
   { prefix: '/maintenance', perm: 'ops.activity.use' },
+  { prefix: '/laundry', perm: 'ops.activity.use' },
   { prefix: '/wallets', perm: 'ops.activity.use' },
   { prefix: '/rental', perm: 'ops.activity.use' },
   { prefix: '/logistics', perm: 'ops.activity.use' },

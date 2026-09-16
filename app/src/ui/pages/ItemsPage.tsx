@@ -961,6 +961,34 @@ function ItemForm({
           </div>
         )}
 
+        {/* ضريبة خاصة بالصنف أو إعفاء (طلب المالك) — الافتراضي يتبع نسبة البلد */}
+        <div className="mt-3">
+          <Field label="🧾 ضريبة الصنف" hint="افتراضي = نسبة البلد العامة · معفى = 0% · مخصصة = نسبة خاصة بهذا الصنف فقط">
+            <div className="flex gap-2 items-center">
+              <select
+                value={draft.vatOverride === null || draft.vatOverride === undefined ? 'default' : draft.vatOverride === 0 ? 'exempt' : 'custom'}
+                onChange={(e) => {
+                  const v = e.target.value
+                  p({ vatOverride: v === 'default' ? null : v === 'exempt' ? 0 : (draft.vatOverride || setup.vatPercent || 14) })
+                }}
+                className={inputCls}
+              >
+                <option value="default">يتبع النسبة العامة ({setup.vatPercent}%)</option>
+                <option value="exempt">معفى ضريبياً (0%)</option>
+                <option value="custom">نسبة مخصصة…</option>
+              </select>
+              {draft.vatOverride !== null && draft.vatOverride !== undefined && draft.vatOverride !== 0 && (
+                <input
+                  type="number" min={0.1} max={100} step={0.5}
+                  value={draft.vatOverride}
+                  onChange={(e) => p({ vatOverride: Math.max(0.1, Math.min(100, Number(e.target.value) || 1)) })}
+                  className={`${inputCls} !w-24`} dir="ltr"
+                />
+              )}
+            </div>
+          </Field>
+        </div>
+
         {/* أرقام OEM والتوافق (جولة قطع الغيار) — أساسية لنشاطي قطع الغيار والأجهزة */}
         {(setup.activityId === 'spare_parts' || setup.activityId === 'electronics' || (draft.oemNumbers?.length ?? 0) > 0 || (draft.fitment ?? '') !== '') && (
           <div className="mt-3 anim-pop space-y-3">

@@ -23,6 +23,8 @@ export interface CartLine {
   /** تركيبة المتغير (ملابس): لون/مقاس — إلزامية لو للصنف مصفوفة برصيد */
   variantColor?: string
   variantSize?: string
+  /** نسبة ضريبة السطر (تجاوز الصنف): undefined = نسبة الفاتورة العامة، 0 = معفى */
+  vatPercentOverride?: number
   /**
    * البيع بوحدة أكبر (صيدلية: شريط/علبة — جولة الصيدلية):
    * qty بالوحدة المختارة، unitPriceMinor/unitCostMinor سعر وتكلفة الوحدة المختارة،
@@ -83,8 +85,38 @@ export function computeTotals(
   const invoiceDiscount = percentOf(afterLineDiscounts, invoiceDiscountPercent)
   const net = afterLineDiscounts - invoiceDiscount
 
+  // ═══ ضريبة لكل سطر (طلب المالك: نسبة خاصة لصنف أو إعفاؤه) ═══
+  // لو أي سطر له تجاوز، نحسب الضريبة سطراً سطراً بنسبته الفعلية،
+  // مع توزيع خصم الفاتورة نسبياً على السطور حتى لا يختل الأساس الضريبي.
+  const hasOverrides = lines.some((l) => l.vatPercentOverride !== undefined)
   let taxBase: Minor, tax: Minor, total: Minor
-  if (taxPercent <= 0) {
+  if (hasOverrides) {
+    let taxSum = 0
+    let baseSum = 0
+    let netCheck = 0
+    for (const l of lines) {
+      const g = mulQty(l.unitPriceMinor, l.qty)
+      const lineNetBeforeInvDisc = g - percentOf(g, l.discountPercent)
+      // نصيب السطر من خصم الفاتورة (نسبي على صافي السطور)
+      const share = afterLineDiscounts > 0 ? Math.round((invoiceDiscount * lineNetBeforeInvDisc) / afterLineDiscounts) : 0
+      const lineNet = lineNetBeforeInvDisc - share
+      netCheck += lineNet
+      const p = l.vatPercentOverride !== undefined ? l.vatPercentOverride : taxPercent
+      if (p <= 0) { baseSum += lineNet; continue }
+      if (taxInclusive) {
+        const [b, t] = splitInclusiveTax(lineNet, p)
+        baseSum += b; taxSum += t
+      } else {
+        const [t] = addExclusiveTax(lineNet, p)
+        baseSum += lineNet; taxSum += t
+      }
+    }
+    // فرق تقريب توزيع الخصم يذهب لأساس آخر سطر — الصافي الكلي مضمون
+    baseSum += net - netCheck
+    taxBase = baseSum
+    tax = taxSum
+    total = taxInclusive ? net : net + taxSum
+  } else if (taxPercent <= 0) {
     taxBase = net; tax = 0; total = net
   } else if (taxInclusive) {
     ;[taxBase, tax] = splitInclusiveTax(net, taxPercent)
