@@ -113,7 +113,10 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     id: 'contracting', nameAr: 'مقاولات وإنشاءات', icon: '🏗️',
     description: 'مشروعات ومستخلصات ومحتجزات، تكاليف ببنود وربحية كل مشروع',
     features: [],
-    modules: ['contracting'],
+    // المخزون والمشتريات وحدتان أساسيتان للمقاولات (أمر المالك):
+    // شراء مواد للمخزن (1103) ← إذن صرف لمشروع (5110/1103) — بدونهما
+    // شاشة أذون الصرف تبقى بلا أصناف والدورة مقطوعة من أولها
+    modules: ['contracting', 'inventory', 'purchases'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {

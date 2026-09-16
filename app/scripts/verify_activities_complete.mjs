@@ -58,9 +58,16 @@ const lau = getActivity('laundry')
 ok(lau.modules.includes('laundry') && !lau.modules.includes('maintenance') && !lau.modules.includes('inventory'), 'المغسلة: وحدة غسيل مستقلة (لا صيانة) بلا مخازن')
 
 /* ─── الأنشطة الخدمية بلا مخازن افتراضياً (قرار 22) ─── */
-for (const id of ['logistics', 'lab', 'contracting', 'clinic', 'equipment_rental', 'laundry']) {
+for (const id of ['logistics', 'lab', 'clinic', 'equipment_rental', 'laundry']) {
   ok(!getActivity(id).modules.includes('inventory'), `${id}: بلا مخازن افتراضياً (تُفعَّل من الإعدادات)`)
 }
+
+/* ─── المقاولات: المخزون والمشتريات أساسيان (أمر المالك — دورة المواد) ───
+   شراء مواد للمخزن (1103) ← إذن صرف لمشروع (5110/1103). بدونهما شاشة
+   أذون الصرف تبقى بلا أصناف والدورة مقطوعة من أولها. */
+const con = getActivity('contracting')
+ok(con.modules.includes('inventory') && con.modules.includes('purchases'), 'المقاولات: المخزون والمشتريات وحدتان أساسيتان')
+ok(con.modules.includes('contracting'), 'المقاولات: وحدة العمل الرئيسية حاضرة')
 
 /* ─── تكامل المحاسبة: حساب إيراد لكل نشاط خدمي ─── */
 const codes = new Set(STANDARD_COA.map((x) => x.code))

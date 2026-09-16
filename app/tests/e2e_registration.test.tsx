@@ -71,8 +71,9 @@ afterEach(cleanup)
 const PROFILES: { activity: string; mustSee: string[]; mustNotSee: string[] }[] = [
   {
     activity: 'مقاولات وإنشاءات',
-    mustSee: ['المقاولات'],
-    mustNotSee: ['المبيعات', 'المخزون', 'المشتريات', 'إيجار المعدات', 'اللوجستيات', 'العيادة', 'معمل التحاليل', 'الصيانة'],
+    // المخزون والمشتريات أساسيان للمقاولات (أمر المالك): شراء مواد للمخزن ← إذن صرف لمشروع
+    mustSee: ['المقاولات', 'المخزون', 'المشتريات'],
+    mustNotSee: ['المبيعات', 'إيجار المعدات', 'اللوجستيات', 'العيادة', 'معمل التحاليل', 'الصيانة'],
   },
   {
     activity: 'أغذية / سوبر ماركت',
@@ -137,7 +138,7 @@ describe('تسجيل حقيقي لكل نشاط + عزل الأقسام (Feature
   it('تبديل النشاط لا يلوث الوحدات (لا تسرب بين المستأجرين)', async () => {
     render(<App />)
     await completeWizard('مقاولات وإنشاءات', 'مقاولات أ')
-    expect(useAppStore.getState().setup.modules).toEqual(['contracting'])
+    expect(useAppStore.getState().setup.modules).toEqual(['contracting', 'inventory', 'purchases'])
     // إعادة الضبط ثم تسجيل نشاط آخر — يجب ألا تبقى أي وحدة من النشاط السابق
     resetApp()
     render(<App />)
