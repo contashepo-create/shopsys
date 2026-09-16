@@ -1,19 +1,27 @@
 /**
- * عمولاتي لدى الغير (طلب المالك): الطبيب/المالك له عمولات مستحقة عند جهات
- * خارجية (مركز أشعة، معمل، مستشفى…) — تسجيل الاستحقاق بقيد 1112/4112،
- * والتحصيل بقيد خزينة/1112 — مع متابعة المتبقي لدى كل جهة.
+ * العمولات — قسمان بتبويبين لكل قسم (طلب المالك):
+ * «عمولات لدى الغير (لي)»: إيراد 4112 يُثبت عند الاستحقاق (1112) ويُحصَّل من الخزينة/البنك
+ * «عمولات للغير (عليّ)»: مصروف 5113 يُثبت عند الاستحقاق (2114) ويُدفع من الخزينة/البنك
+ * والأشخاص/الجهات مسجلون في سجل خاص — لا تُسجَّل عمولة لطرف غير مسجل.
+ * معمم على كل الأنشطة: سمسار، مندوب، طبيب محيل، وسيط شحن…
  */
 import { useMemo, useState } from 'react'
-import { HandCoins, Plus, Landmark } from 'lucide-react'
+import { Plus, HandCoins, Users2, Trash2, Pencil, BookOpenText } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
+import { COMMISSION_DIRECTION_LABELS, commissionsByParty, type CommissionDirection } from '../../core/commissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { accountName } from './accountNames.ts'
 
 export function ExternalCommissionsPage() {
-  const { externalCommissions, addExternalCommission, collectExternalCommission } = useDataStore()
+  const {
+    externalCommissions, commissionParties, journal, treasuries,
+    addCommissionParty, updateCommissionParty, deleteCommissionParty,
+    addExternalCommission, collectExternalCommission,
+  } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -21,155 +29,360 @@ export function ExternalCommissionsPage() {
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
-  const toM = (v: string) => (v.trim() ? toMinor(v, cur.decimals) : 0)
 
-  const totals = useMemo(() => {
-    let due = 0, collected = 0
-    for (const c of externalCommissions) { due += c.amountMinor; collected += c.collectedMinor }
-    return { due, collected, remaining: due - collected }
-  }, [externalCommissions])
+  /* القسم النشط + التبويب النشط داخله */
+  const [direction, setDirection] = useState<CommissionDirection>('earned')
+  const [tab, setTab] = useState<'commissions' | 'parties'>('commissions')
+  const rows = useMemo(
+    () => externalCommissions.filter((c) => (c.direction ?? 'earned') === direction).reverse(),
+    [externalCommissions, direction],
+  )
+  const byParty = useMemo(() => commissionsByParty(externalCommissions.map((c) => ({ ...c, direction: c.direction ?? 'earned' })), direction), [externalCommissions, direction])
 
-  /* إضافة استحقاق */
+  /* ─── تسجيل عمولة ─── */
   const [open, setOpen] = useState(false)
-  const [party, setParty] = useState('')
+  const [partyId, setPartyId] = useState('')
   const [amount, setAmount] = useState('')
   const [desc, setDesc] = useState('')
-  const parties = useMemo(() => [...new Set(externalCommissions.map((c) => c.partyName))], [externalCommissions])
-  const save = () => {
+  const saveCommission = () => {
     try {
-      const c = addExternalCommission({ partyName: party, amountMinor: toM(amount), description: desc })
-      toast.show(`سُجّلت العمولة ${c.commissionNumber} لدى «${c.partyName}» وتولّد قيد الاستحقاق ✅`)
+      const c = addExternalCommission({
+        direction, partyId: Number(partyId),
+        amountMinor: toMinor(amount || '0', cur.decimals), description: desc,
+      })
+      toast.show(`سُجلت العمولة ${c.commissionNumber} وتولد قيد الاستحقاق ✅`)
       setOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+    } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  /* تحصيل */
-  const [collectId, setCollectId] = useState<number | null>(null)
-  const collecting = collectId != null ? externalCommissions.find((c) => c.id === collectId) : null
-  const [colAmount, setColAmount] = useState('')
-  const [colTreasury, setColTreasury] = useState('1101')
-  const doCollect = () => {
-    if (!collecting) return
+  /* ─── تحصيل/دفع ─── */
+  const [settleId, setSettleId] = useState<number | null>(null)
+  const settling = settleId != null ? externalCommissions.find((c) => c.id === settleId) : null
+  const [settleAmount, setSettleAmount] = useState('')
+  const [treasury, setTreasury] = useState(treasuries[0]?.code ?? '1101')
+  const settle = () => {
+    if (!settling) return
     try {
-      collectExternalCommission({ commissionId: collecting.id, amountMinor: toM(colAmount), treasury: colTreasury as '1101' })
-      toast.show('حُصّلت الدفعة وتولّد قيدها ✅')
-      setCollectId(null)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+      const u = collectExternalCommission({
+        commissionId: settling.id,
+        amountMinor: toMinor(settleAmount || '0', cur.decimals),
+        treasury: treasury as '1101',
+      })
+      toast.show(direction === 'earned' ? `حُصِّل من ${u.partyName} ✓` : `سُدد لـ${u.partyName} ✓`)
+      setSettleId(null)
+    } catch (e) { toast.show((e as Error).message, 'error') }
   }
+
+  /* ─── سجل الأشخاص ─── */
+  const [partyModal, setPartyModal] = useState(false)
+  const [editingPartyId, setEditingPartyId] = useState<number | null>(null)
+  const [pName, setPName] = useState('')
+  const [pPhone, setPPhone] = useState('')
+  const [pKind, setPKind] = useState('')
+  const [pNotes, setPNotes] = useState('')
+  const openParty = (id?: number) => {
+    const p = id != null ? commissionParties.find((x) => x.id === id) : null
+    setEditingPartyId(p?.id ?? null)
+    setPName(p?.nameAr ?? ''); setPPhone(p?.phone ?? ''); setPKind(p?.kind ?? ''); setPNotes(p?.notes ?? '')
+    setPartyModal(true)
+  }
+  const saveParty = () => {
+    try {
+      if (editingPartyId != null) {
+        updateCommissionParty(editingPartyId, { nameAr: pName, phone: pPhone, kind: pKind, notes: pNotes })
+        toast.show('حُدّثت بيانات الطرف ✓')
+      } else {
+        const p = addCommissionParty({ nameAr: pName, phone: pPhone, kind: pKind, notes: pNotes })
+        toast.show(`سُجل ${p.nameAr} (${p.code}) ✅`)
+      }
+      setPartyModal(false)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+  const removeParty = (id: number) => {
+    try { deleteCommissionParty(id); toast.show('حُذف الطرف ✓') }
+    catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  /* ─── عرض عمولة وقيودها ─── */
+  const [viewingId, setViewingId] = useState<number | null>(null)
+  const viewing = viewingId != null ? externalCommissions.find((c) => c.id === viewingId) : null
+  const viewingEntries = viewing
+    ? journal.filter((e) => e.id === viewing.journalEntryId || viewing.collections.some((cl) => cl.journalEntryId === e.id))
+    : []
+
+  const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
+  const dirMeta = COMMISSION_DIRECTION_LABELS[direction]
+  const tabActive = direction === 'earned' ? 'bg-emerald-600 text-white shadow-md' : 'bg-rose-600 text-white shadow-md'
+  const totals = useMemo(() => {
+    let total = 0, settled = 0
+    for (const r of rows) { total += r.amountMinor; settled += r.collectedMinor }
+    return { total, settled, remaining: total - settled }
+  }, [rows])
 
   return (
     <div className="space-y-4">
-      <div className="anim-up flex items-center justify-between flex-wrap gap-2">
-        <div className="grid grid-cols-3 gap-2 text-center text-[11.5px]">
-          <div className="rounded-xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 px-4 py-2">
-            <div className="text-slate-400 text-[10px] font-bold">إجمالي المستحق</div>
-            <b>{fmt(totals.due)}</b>
-          </div>
-          <div className="rounded-xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 px-4 py-2">
-            <div className="text-slate-400 text-[10px] font-bold">المحصَّل</div>
-            <b className="text-emerald-600">{fmt(totals.collected)}</b>
-          </div>
-          <div className="rounded-xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 px-4 py-2">
-            <div className="text-slate-400 text-[10px] font-bold">المتبقي لدى الغير</div>
-            <b className="text-amber-600">{fmt(totals.remaining)}</b>
-          </div>
-        </div>
-        <Btn onClick={() => { setParty(''); setAmount(''); setDesc(''); setOpen(true) }}>
-          <Plus size={15} /> عمولة مستحقة جديدة
-        </Btn>
+      {/* القسمان */}
+      <div className="anim-up grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {(Object.keys(COMMISSION_DIRECTION_LABELS) as CommissionDirection[]).map((d) => {
+          const m = COMMISSION_DIRECTION_LABELS[d]
+          const active = direction === d
+          return (
+            <button
+              key={d}
+              onClick={() => { setDirection(d); setTab('commissions') }}
+              className={`text-right p-4 rounded-2xl border-2 transition-all ${
+                active
+                  ? d === 'earned' ? 'border-emerald-500/60 bg-emerald-500/5' : 'border-rose-500/50 bg-rose-500/5'
+                  : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+              }`}
+            >
+              <div className={`font-black text-[14px] ${active ? (d === 'earned' ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400') : 'text-slate-600 dark:text-slate-300'}`}>
+                {m.icon} {m.nameAr}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1 leading-relaxed">{m.desc}</div>
+            </button>
+          )
+        })}
       </div>
 
-      {externalCommissions.length === 0 ? (
-        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
-          <EmptyState icon="🤝" title="لا عمولات لدى الغير بعد" sub="سجّل عمولاتك المستحقة عند مراكز الأشعة والمعامل والمستشفيات — بقيد استحقاق موثق وتحصيل متابع" />
+      {/* التبويبان + زر */}
+      <div className="anim-up flex items-center justify-between flex-wrap gap-2">
+        <div className="flex gap-1">
+          <button onClick={() => setTab('commissions')} className={`px-4 py-2 rounded-xl text-[13px] font-bold transition-all ${tab === 'commissions' ? tabActive : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+            <HandCoins size={14} className="inline -mt-0.5 me-1" /> تسجيل العمولات ({rows.length})
+          </button>
+          <button onClick={() => setTab('parties')} className={`px-4 py-2 rounded-xl text-[13px] font-bold transition-all ${tab === 'parties' ? tabActive : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
+            <Users2 size={14} className="inline -mt-0.5 me-1" /> الأشخاص المتعامل معهم ({commissionParties.length})
+          </button>
         </div>
-      ) : (
-        <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
-                <th className="px-4 py-3 text-right font-bold">العمولة</th>
-                <th className="px-4 py-3 text-right font-bold">الجهة</th>
-                <th className="px-4 py-3 text-right font-bold">المستحق</th>
-                <th className="px-4 py-3 text-right font-bold">المحصَّل</th>
-                <th className="px-4 py-3 text-right font-bold">المتبقي</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {[...externalCommissions].reverse().map((c) => {
-                const remaining = c.amountMinor - c.collectedMinor
-                return (
-                  <tr key={c.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="font-bold text-slate-700 dark:text-slate-200">{c.commissionNumber}</div>
-                      <div className="text-[10px] text-slate-400"><span dir="ltr">{c.date.slice(0, 10)}</span>{c.description ? ` — ${c.description}` : ''}</div>
-                    </td>
-                    <td className="px-4 py-3 font-bold">{c.partyName}</td>
-                    <td className="px-4 py-3 font-bold">{fmt(c.amountMinor)}</td>
-                    <td className="px-4 py-3 text-emerald-600">{fmt(c.collectedMinor)}</td>
-                    <td className={`px-4 py-3 font-black ${remaining > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                      {remaining > 0 ? fmt(remaining) : 'مُحصَّلة ✓'}
-                    </td>
-                    <td className="px-4 py-3 text-left">
-                      {remaining > 0 && (
-                        <Btn variant="soft" onClick={() => { setCollectId(c.id); setColAmount('') }}>
-                          <HandCoins size={14} /> تحصيل
-                        </Btn>
-                      )}
-                    </td>
+        {tab === 'commissions'
+          ? <Btn onClick={() => { setPartyId(''); setAmount(''); setDesc(''); setOpen(true) }}><Plus size={15} /> عمولة جديدة</Btn>
+          : <Btn onClick={() => openParty()}><Plus size={15} /> شخص/جهة جديدة</Btn>}
+      </div>
+
+      {tab === 'commissions' && (
+        <>
+          {/* ملخص */}
+          <div className="anim-up grid grid-cols-3 gap-3">
+            <div className={`${card} p-4`}>
+              <div className="text-[11px] text-slate-400 font-bold">إجمالي المستحق</div>
+              <div className="font-black text-lg mt-1">{fmt(totals.total)} {cur.symbol}</div>
+            </div>
+            <div className={`${card} p-4`}>
+              <div className="text-[11px] text-slate-400 font-bold">{direction === 'earned' ? 'المحصَّل' : 'المدفوع'}</div>
+              <div className="font-black text-lg text-emerald-600 mt-1">{fmt(totals.settled)}</div>
+            </div>
+            <div className={`${card} p-4`}>
+              <div className="text-[11px] text-slate-400 font-bold">المتبقي</div>
+              <div className={`font-black text-lg mt-1 ${direction === 'earned' ? 'text-sky-600' : 'text-rose-500'}`}>{fmt(totals.remaining)}</div>
+            </div>
+          </div>
+
+          {rows.length === 0 ? (
+            <div className={card}>
+              <EmptyState icon={dirMeta.icon} title={`لا ${dirMeta.nameAr.split(' (')[0]} بعد`} sub="سجّل الطرف أولاً في تبويب «الأشخاص المتعامل معهم» ثم أضف عمولته" />
+            </div>
+          ) : (
+            <div className={`anim-up ${card} overflow-hidden`}>
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-4 py-3 font-bold">العمولة</th>
+                    <th className="px-4 py-3 font-bold">الشخص/الجهة</th>
+                    <th className="px-4 py-3 font-bold">البيان</th>
+                    <th className="px-4 py-3 font-bold">المبلغ</th>
+                    <th className="px-4 py-3 font-bold">{direction === 'earned' ? 'المحصَّل' : 'المدفوع'}</th>
+                    <th className="px-4 py-3 font-bold">المتبقي</th>
+                    <th className="px-4 py-3 font-bold"></th>
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {rows.map((c) => {
+                    const remaining = c.amountMinor - c.collectedMinor
+                    return (
+                      <tr key={c.id} onClick={() => setViewingId(c.id)} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-500/[0.03] transition-colors cursor-pointer">
+                        <td className="px-4 py-3 font-bold text-slate-700 dark:text-slate-200">{c.commissionNumber}<div className="text-[10px] text-slate-400 font-normal" dir="ltr">{c.date.slice(0, 10)}</div></td>
+                        <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{c.partyName}</td>
+                        <td className="px-4 py-3 text-slate-500 text-[12px]">{c.description || '—'}</td>
+                        <td className="px-4 py-3 font-black">{fmt(c.amountMinor)}</td>
+                        <td className="px-4 py-3 text-emerald-600 font-bold">{fmt(c.collectedMinor)}</td>
+                        <td className={`px-4 py-3 font-bold ${remaining > 0 ? (direction === 'earned' ? 'text-sky-600' : 'text-rose-500') : 'text-slate-300'}`}>{fmt(remaining)}</td>
+                        <td className="px-4 py-3">
+                          {remaining > 0 && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setSettleId(c.id); setSettleAmount(String(remaining / 10 ** cur.decimals)) }}
+                              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${direction === 'earned' ? 'bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20' : 'bg-rose-500/10 text-rose-600 hover:bg-rose-500/20'}`}
+                            >
+                              {direction === 'earned' ? '💰 تحصيل' : '📤 دفع'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* ملخص حسب الشخص */}
+          {byParty.length > 0 && (
+            <div className={`anim-up ${card} overflow-hidden`}>
+              <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">حسب الشخص/الجهة</div>
+              <table className="w-full text-[12.5px]">
+                <tbody>
+                  {byParty.map((p, i) => (
+                    <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-2.5 font-bold text-slate-700 dark:text-slate-200">{p.partyName} <span className="text-[10px] text-slate-400 font-normal">({p.count} عمولة)</span></td>
+                      <td className="px-4 py-2.5 text-slate-500">إجمالي {fmt(p.totalMinor)}</td>
+                      <td className="px-4 py-2.5 text-emerald-600 font-bold">{direction === 'earned' ? 'حُصِّل' : 'دُفع'} {fmt(p.settledMinor)}</td>
+                      <td className={`px-4 py-2.5 font-black text-left ${p.remainingMinor > 0 ? (direction === 'earned' ? 'text-sky-600' : 'text-rose-500') : 'text-slate-300'}`}>متبقٍ {fmt(p.remainingMinor)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
-      {/* استحقاق جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="عمولة مستحقة لدى جهة خارجية">
-        <div className="space-y-3">
-          <div className="text-[12px] text-slate-500 leading-relaxed flex items-start gap-2">
-            <Landmark size={26} className="text-violet-500 shrink-0" />
-            مثال: حوّلت مريضاً لمركز أشعة ولك 10% عمولة — سجّلها هنا لتتابع تحصيلها.
-            يتولد قيد: <b>عمولات مستحقة لدى الغير (1112) / إيرادات عمولات خارجية (4112)</b>
+      {tab === 'parties' && (
+        commissionParties.length === 0 ? (
+          <div className={card}>
+            <EmptyState icon="👥" title="لا أشخاص مسجلين بعد" sub="سجّل السماسرة والمندوبين والجهات هنا أولاً — لا تُسجَّل عمولة لطرف غير مسجل" />
           </div>
-          <Field label="اسم الجهة *">
-            <input value={party} onChange={(e) => setParty(e.target.value)} className={inputCls} placeholder="مركز أشعة النور، معمل الشفا…" list="exc-parties" />
-            <datalist id="exc-parties">{parties.map((p) => <option key={p} value={p} />)}</datalist>
+        ) : (
+          <div className={`anim-up ${card} overflow-hidden`}>
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                  <th className="px-4 py-3 font-bold">الكود</th>
+                  <th className="px-4 py-3 font-bold">الاسم</th>
+                  <th className="px-4 py-3 font-bold">الصفة</th>
+                  <th className="px-4 py-3 font-bold">الهاتف</th>
+                  <th className="px-4 py-3 font-bold">ملاحظات</th>
+                  <th className="px-4 py-3 font-bold"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {commissionParties.map((p) => (
+                  <tr key={p.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-500/[0.03] transition-colors">
+                    <td className="px-4 py-3 font-mono text-[11px] text-slate-400" dir="ltr">{p.code}</td>
+                    <td className="px-4 py-3 font-bold text-slate-700 dark:text-slate-200">{p.nameAr}</td>
+                    <td className="px-4 py-3 text-slate-500">{p.kind || '—'}</td>
+                    <td className="px-4 py-3 text-slate-500" dir="ltr">{p.phone || '—'}</td>
+                    <td className="px-4 py-3 text-slate-400 text-[12px]">{p.notes || '—'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1 justify-end">
+                        <button onClick={() => openParty(p.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Pencil size={14} /></button>
+                        <button onClick={() => removeParty(p.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all"><Trash2 size={14} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+
+      {/* عمولة جديدة */}
+      <Modal open={open} onClose={() => setOpen(false)} title={`${dirMeta.icon} عمولة جديدة — ${dirMeta.nameAr}`}>
+        <div className="space-y-3">
+          <Field label="الشخص/الجهة (من السجل)" hint="غير موجود؟ سجّله أولاً من تبويب «الأشخاص المتعامل معهم»">
+            <select value={partyId} onChange={(e) => setPartyId(e.target.value)} className={inputCls}>
+              <option value="">اختر…</option>
+              {commissionParties.map((p) => <option key={p.id} value={p.id}>{p.nameAr}{p.kind ? ` — ${p.kind}` : ''}</option>)}
+            </select>
           </Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label={`المبلغ (${cur.symbol}) *`}>
-              <input value={amount} onChange={(e) => setAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+            <Field label={`المبلغ (${cur.symbol})`}>
+              <input value={amount} onChange={(e) => setAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" autoFocus />
             </Field>
             <Field label="البيان">
-              <input value={desc} onChange={(e) => setDesc(e.target.value)} className={inputCls} placeholder="عمولة تحويلات شهر 9…" />
+              <input value={desc} onChange={(e) => setDesc(e.target.value)} className={inputCls} placeholder="عمولة بيع شقة، إحالة مريض…" />
             </Field>
+          </div>
+          <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-[11px] text-slate-500 leading-relaxed">
+            {direction === 'earned'
+              ? 'قيد الاستحقاق: عمولات مستحقة لدى الغير (1112) مدين ← إيراد عمولات (4112) دائن — والتحصيل لاحقاً يدخل الخزينة/البنك.'
+              : 'قيد الاستحقاق: مصروف عمولات للغير (5113) مدين ← عمولات مستحقة للغير (2114) دائن — والدفع لاحقاً يخرج من الخزينة/البنك.'}
           </div>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!party.trim() || !amount.trim()}>💾 تسجيل الاستحقاق</Btn>
+            <Btn onClick={saveCommission} disabled={!partyId || !amount.trim()}>💾 تسجيل واستحقاق</Btn>
           </div>
         </div>
       </Modal>
 
-      {/* تحصيل */}
-      <Modal open={!!collecting} onClose={() => setCollectId(null)} title={collecting ? `تحصيل من «${collecting.partyName}»` : ''}>
-        {collecting && (
+      {/* تحصيل/دفع */}
+      <Modal open={!!settling} onClose={() => setSettleId(null)} title={settling ? (direction === 'earned' ? `💰 تحصيل ${settling.commissionNumber} من ${settling.partyName}` : `📤 دفع ${settling.commissionNumber} لـ${settling.partyName}`) : ''}>
+        {settling && (
           <div className="space-y-3">
-            <div className="text-[12px] text-slate-500">
-              المتبقي لدى الجهة: <b className="text-amber-600">{fmt(collecting.amountMinor - collecting.collectedMinor)} {cur.symbol}</b>
-            </div>
-            <Field label={`المبلغ المحصَّل (${cur.symbol}) *`}>
-              <input value={colAmount} onChange={(e) => setColAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" autoFocus />
+            <Field label={`المبلغ (المتبقي ${fmt(settling.amountMinor - settling.collectedMinor)} ${cur.symbol})`}>
+              <input value={settleAmount} onChange={(e) => setSettleAmount(e.target.value)} className={inputCls} dir="ltr" autoFocus />
             </Field>
-            <Field label="الإيداع في">
-              <TreasuryPicker value={colTreasury} onChange={setColTreasury} compact />
+            <Field label={direction === 'earned' ? 'يدخل في' : 'يُدفع من'}>
+              <TreasuryPicker value={treasury} onChange={setTreasury} />
             </Field>
             <div className="flex justify-end gap-2">
-              <Btn variant="ghost" onClick={() => setCollectId(null)}>إلغاء</Btn>
-              <Btn onClick={doCollect} disabled={!colAmount.trim()}>💰 تحصيل وتوليد القيد</Btn>
+              <Btn variant="ghost" onClick={() => setSettleId(null)}>إلغاء</Btn>
+              <Btn onClick={settle} disabled={!settleAmount.trim()}>{direction === 'earned' ? '💰 تحصيل' : '📤 دفع'} وقيد</Btn>
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* شخص/جهة جديدة أو تعديل */}
+      <Modal open={partyModal} onClose={() => setPartyModal(false)} title={editingPartyId != null ? '✏️ تعديل بيانات الطرف' : '👥 شخص/جهة عمولات جديدة'}>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="الاسم (إلزامي)">
+              <input value={pName} onChange={(e) => setPName(e.target.value)} className={inputCls} placeholder="أحمد السمسار، مركز أشعة النور…" autoFocus />
+            </Field>
+            <Field label="الصفة">
+              <input value={pKind} onChange={(e) => setPKind(e.target.value)} className={inputCls} placeholder="سمسار، مندوب، مركز أشعة…" />
+            </Field>
+            <Field label="الهاتف">
+              <input value={pPhone} onChange={(e) => setPPhone(e.target.value)} className={inputCls} dir="ltr" />
+            </Field>
+            <Field label="ملاحظات">
+              <input value={pNotes} onChange={(e) => setPNotes(e.target.value)} className={inputCls} />
+            </Field>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setPartyModal(false)}>إلغاء</Btn>
+            <Btn onClick={saveParty} disabled={!pName.trim()}>💾 حفظ</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      {/* عرض عمولة وقيودها */}
+      <Modal open={!!viewing} onClose={() => setViewingId(null)} title={viewing ? `${viewing.commissionNumber} — ${viewing.partyName}` : ''} wide>
+        {viewing && (
+          <div className="space-y-3">
+            <div className="text-center p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50">
+              <div className="font-black text-2xl">{fmt(viewing.amountMinor)} {cur.symbol}</div>
+              <div className="text-[12px] text-slate-400 mt-1">{viewing.description || dirMeta.nameAr} · {(viewing.direction ?? 'earned') === 'earned' ? 'محصَّل' : 'مدفوع'} {fmt(viewing.collectedMinor)}</div>
+            </div>
+            {viewingEntries.map((entry) => (
+              <div key={entry.id} className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.03] overflow-hidden">
+                <div className="px-4 py-2.5 text-[12px] font-bold text-amber-600 dark:text-amber-400 border-b border-amber-500/10 flex items-center gap-1.5">
+                  <BookOpenText size={13} /> قيد #{entry.entryNumber} — {entry.description}
+                </div>
+                <table className="w-full text-[12px]">
+                  <tbody>
+                    {entry.lines.map((l, i) => (
+                      <tr key={i} className="border-t border-amber-500/5">
+                        <td className="px-4 py-1.5 text-slate-600 dark:text-slate-300">{l.debit > 0 ? '' : '\u00A0\u00A0\u00A0\u00A0إلى '} {accountName(l.accountCode)}</td>
+                        <td className="px-4 py-1.5 w-28 font-bold">{l.debit > 0 ? fmt(l.debit) : ''}</td>
+                        <td className="px-4 py-1.5 w-28 font-bold text-slate-400">{l.credit > 0 ? fmt(l.credit) : ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
           </div>
         )}
       </Modal>

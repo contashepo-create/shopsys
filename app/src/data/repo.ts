@@ -28,6 +28,7 @@ import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry,
 import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
 import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
+import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { fullCoa } from '../core/treasury.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
@@ -549,13 +550,16 @@ export interface LaundryOrder {
 /** عمولة خارجية مستحقة للمنشأة لدى الغير (طلب المالك — طبيب له عمولة عند مركز أشعة مثلاً) */
 export interface ExternalCommission {
   id: number
-  commissionNumber: string // EXC-0001
-  partyName: string // الجهة: مركز أشعة النور، معمل الشفا…
+  commissionNumber: string // EXC-0001 (لي) / CMO-0001 (عليّ)
+  /** القسمان (طلب المالك): earned = لي لدى الغير (إيراد) · owed = عليّ للغير (مصروف) */
+  direction: CommissionDirection
+  partyId: number | null // شخص/جهة مسجلة في سجل أطراف العمولات
+  partyName: string // الجهة: مركز أشعة النور، سمسار…
   date: string
   amountMinor: number
-  collectedMinor: number // المحصَّل حتى الآن
+  collectedMinor: number // المحصَّل (لي) أو المدفوع (عليّ) حتى الآن
   description: string
-  journalEntryId: number // قيد الاستحقاق: 1112 / 4112
+  journalEntryId: number // قيد الاستحقاق: 1112/4112 (لي) أو 5113/2114 (عليّ)
   collections: { id: number; date: string; amountMinor: number; treasury: string; journalEntryId: number }[]
 }
 
@@ -944,7 +948,8 @@ interface DataState {
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
   assets: FixedAsset[]
-  externalCommissions: ExternalCommission[] // عمولات مستحقة لدى الغير (طلب المالك)
+  externalCommissions: ExternalCommission[] // العمولات بقسميها: لي لدى الغير / عليّ للغير (طلب المالك)
+  commissionParties: CommissionParty[] // سجل أشخاص/جهات العمولات — التسجيل إلزامي قبل أي عمولة
   customAccounts: CustomAccount[] // حسابات مخصصة يضيفها المالك للشجرة (بند شجرة الحسابات المفتوحة)
   laundryOrders: LaundryOrder[] // أوامر الغسيل (وحدة المغاسل)
   serials: SerialUnit[] // وحدات السيريال/IMEI والضمان (نمط موبايل شوب)
@@ -1559,8 +1564,15 @@ interface DataState {
   /** متبقي الدين على أصل (لسند الصرف وشاشة الملف) */
   getAssetDue: (assetId: number) => { totalDueMinor: number; paidMinor: number; remainingMinor: number; nextInstallment: AssetInstallment | null }
   /** استحقاق عمولة خارجية للمنشأة لدى الغير: 1112 / 4112 */
-  addExternalCommission: (args: { partyName: string; amountMinor: number; description: string }) => ExternalCommission
+  /** تسجيل شخص/جهة عمولات — إلزامي قبل تسجيل أي عمولة (طلب المالك) */
+  addCommissionParty: (args: { nameAr: string; phone: string; kind: string; notes: string }) => CommissionParty
+  updateCommissionParty: (id: number, patch: Partial<Omit<CommissionParty, 'id' | 'code' | 'createdAt'>>) => void
+  /** حذف طرف عمولات — يُرفض لو عليه عمولات مسجلة */
+  deleteCommissionParty: (id: number) => void
+  /** استحقاق عمولة: لي (1112/4112) أو عليّ (5113/2114) — الطرف من السجل حصراً */
+  addExternalCommission: (args: { direction: CommissionDirection; partyId: number; amountMinor: number; description: string }) => ExternalCommission
   /** تحصيل من عمولة خارجية: خزينة / 1112 */
+  /** تسوية عمولة: تحصيل (لي) أو دفع (عليّ) من الخزينة/البنك المختار */
   collectExternalCommission: (args: { commissionId: number; amountMinor: number; treasury: TreasuryAccount }) => ExternalCommission
   /** إضافة حساب مخصص لشجرة الحسابات — يُستخدم فوراً في القيود والتقارير (الشجرة ليست مفروضة) */
   addCustomAccount: (args: { code: string; nameAr: string; parentCode: string }) => CustomAccount
@@ -1738,6 +1750,7 @@ export const useDataStore = create<DataState>()(
       batches: [],
       assets: [],
       externalCommissions: [],
+      commissionParties: [],
       customAccounts: [],
       laundryOrders: [],
       serials: [],
@@ -6497,26 +6510,62 @@ export const useDataStore = create<DataState>()(
         return { totalDueMinor: totalDue, paidMinor: paid, remainingMinor: remaining, nextInstallment }
       },
 
+      addCommissionParty: (args) => {
+        const state = get()
+        const errors = validateCommissionParty(args, state.commissionParties)
+        if (errors.length) throw new Error(errors.join('، '))
+        const id = nextId(state.commissionParties)
+        const party: CommissionParty = {
+          id, code: `CMP-${String(id).padStart(4, '0')}`,
+          nameAr: args.nameAr.trim(), phone: args.phone.trim(), kind: args.kind.trim(), notes: args.notes.trim(),
+          createdAt: new Date().toISOString(),
+        }
+        set({ commissionParties: [...state.commissionParties, party] })
+        return party
+      },
+
+      updateCommissionParty: (id, patch) => {
+        const state = get()
+        const party = state.commissionParties.find((p) => p.id === id)
+        if (!party) throw new Error('الطرف غير موجود')
+        if (patch.nameAr !== undefined) {
+          const errors = validateCommissionParty({ nameAr: patch.nameAr }, state.commissionParties, id)
+          if (errors.length) throw new Error(errors.join('، '))
+        }
+        set({ commissionParties: state.commissionParties.map((p) => (p.id === id ? { ...p, ...patch, nameAr: (patch.nameAr ?? p.nameAr).trim() } : p)) })
+      },
+
+      deleteCommissionParty: (id) => {
+        const state = get()
+        if (state.externalCommissions.some((c) => c.partyId === id)) {
+          throw new Error('لا يمكن حذف الطرف — عليه عمولات مسجلة (سلامة السجلات)')
+        }
+        set({ commissionParties: state.commissionParties.filter((p) => p.id !== id) })
+      },
+
       addExternalCommission: (args) => {
         const state = get()
-        if (!args.partyName.trim()) throw new Error('اسم الجهة مطلوب — مركز أشعة، معمل، مستشفى…')
+        // الطرف يجب أن يكون مسجلاً في السجل (طلب المالك — لا أسماء حرة)
+        const party = state.commissionParties.find((p) => p.id === args.partyId)
+        if (!party) throw new Error('سجّل الشخص/الجهة أولاً في تبويب «الأشخاص المتعامل معهم»')
         if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ العمولة يجب أن يكون موجباً')
         const id = nextId(state.externalCommissions)
-        const commissionNumber = `EXC-${String(id).padStart(4, '0')}`
+        const commissionNumber = `${args.direction === 'earned' ? 'EXC' : 'CMO'}-${String(id).padStart(4, '0')}`
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `استحقاق عمولة ${commissionNumber} لدى ${args.partyName.trim()}${args.description ? ` — ${args.description}` : ''}`,
+          description: args.direction === 'earned'
+            ? `استحقاق عمولة ${commissionNumber} لدى ${party.nameAr}${args.description ? ` — ${args.description}` : ''}`
+            : `استحقاق عمولة ${commissionNumber} لـ${party.nameAr}${args.description ? ` — ${args.description}` : ''}`,
           sourceType: 'external_commission', sourceId: id,
-          lines: [
-            { accountCode: '1112', debit: args.amountMinor, credit: 0, note: `عمولة مستحقة لدى ${args.partyName.trim()}` },
-            { accountCode: '4112', debit: 0, credit: args.amountMinor, note: 'إيراد عمولات خارجية' },
-          ],
+          lines: args.direction === 'earned'
+            ? buildEarnedAccrualEntry(args.amountMinor, party.nameAr)
+            : buildOwedAccrualEntry(args.amountMinor, party.nameAr),
           createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const commission: ExternalCommission = {
-          id, commissionNumber, partyName: args.partyName.trim(), date: now,
+          id, commissionNumber, direction: args.direction, partyId: party.id, partyName: party.nameAr, date: now,
           amountMinor: args.amountMinor, collectedMinor: 0, description: args.description.trim(),
           journalEntryId: entryId, collections: [],
         }
@@ -6530,17 +6579,17 @@ export const useDataStore = create<DataState>()(
         if (!com) throw new Error('العمولة غير موجودة')
         const remaining = com.amountMinor - com.collectedMinor
         if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('المبلغ يجب أن يكون موجباً')
-        if (args.amountMinor > remaining) throw new Error(`المبلغ أكبر من المتبقي لدى الجهة (${remaining})`)
+        if (args.amountMinor > remaining) throw new Error(`المبلغ أكبر من المتبقي (${remaining})`)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
+        const earned = (com.direction ?? 'earned') === 'earned'
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `تحصيل عمولة ${com.commissionNumber} من ${com.partyName}`,
+          description: earned ? `تحصيل عمولة ${com.commissionNumber} من ${com.partyName}` : `سداد عمولة ${com.commissionNumber} لـ${com.partyName}`,
           sourceType: 'external_commission', sourceId: com.id,
-          lines: [
-            { accountCode: args.treasury, debit: args.amountMinor, credit: 0, note: 'نقدية واردة' },
-            { accountCode: '1112', debit: 0, credit: args.amountMinor, note: `تحصيل من ${com.partyName}` },
-          ],
+          lines: earned
+            ? buildEarnedCollectEntry(args.amountMinor, com.partyName, args.treasury)
+            : buildOwedPayEntry(args.amountMinor, com.partyName, args.treasury),
           createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: ExternalCommission = {
@@ -6860,7 +6909,8 @@ export const useDataStore = create<DataState>()(
           // سجل النشاطات والمستخدمون والبلاغات (الإصدار 11) — قواعد قديمة بلا هذه الحقول
           auditLog: s.auditLog ?? [],
           // الإصدار 17: عمولات لدى الغير + تمويل الأصول وأقساطها
-          externalCommissions: s.externalCommissions ?? [],
+          externalCommissions: (s.externalCommissions ?? []).map((c) => ({ ...c, direction: c.direction ?? 'earned', partyId: c.partyId ?? null })),
+          commissionParties: s.commissionParties ?? [],
           customAccounts: s.customAccounts ?? [],
           laundryOrders: s.laundryOrders ?? [],
           cheques: (s.cheques ?? []).map((c) => ({ ...c, counterAccount: c.counterAccount ?? (c.direction === 'incoming' ? '1104' : '2101') })),

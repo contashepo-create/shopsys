@@ -132,6 +132,7 @@ export const STANDARD_COA: Account[] = [
   { code: '2111', nameAr: 'مستحقات سائقين', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'driver_dues' },
   { code: '2112', nameAr: 'ضريبة استقطاع مستحقة (مقاولو باطن)', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'withholding_tax_payable' },
   { code: '2113', nameAr: 'مصروفات نقلات مستحقة (كروت/محطات)', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'trip_expenses_payable' },
+  { code: '2114', nameAr: 'عمولات مستحقة للغير', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'commissions_payable_others' },
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },
   { code: '3102', nameAr: 'أرباح مرحّلة', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'retained_earnings' },
@@ -162,4 +163,5 @@ export const STANDARD_COA: Account[] = [
   { code: '5110', nameAr: 'تكاليف مشروعات مقاولات', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'project_costs' },
   { code: '5111', nameAr: 'هالك وتوالف مخزون', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'wastage' },
   { code: '5112', nameAr: 'فروق تسويات وجرد نقدية', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'settlement_variance' },
+  { code: '5113', nameAr: 'مصروف عمولات للغير', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'commission_expense_others' },
 ]
