@@ -24,6 +24,8 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderPrescriptionHtml, parsePrescriptionText } from '../print/printPrescription.ts'
+import { renderPatientRecordHtml } from '../print/printPatientRecord.ts'
+import { partyCode, partySearchFilter } from '../../core/partyCodes.ts'
 import { printHtml } from '../print/printReceipt.ts'
 
 function useCur() {
@@ -332,6 +334,7 @@ export function ClinicPatientsPage() {
       clinicPhone: setup.phone ?? '',
       clinicAddress: [setup.city, setup.street].filter(Boolean).join(' — '),
       patientName: liveFile.nameAr,
+      patientCode: partyCode('PAT', liveFile.id),
       patientAge: age,
       patientGender: liveFile.gender === 'male' ? 'ذكر' : 'أنثى',
       dateIso: v.date,
@@ -342,6 +345,37 @@ export function ClinicPatientsPage() {
       allergyWarning: h.allergies.length ? `حساسية: ${h.allergies.join('، ')}` : '',
       notes: '',
       nextVisit: v.nextVisit ?? '',
+    }))
+  }
+
+  /** تقرير سجل المريض الكامل (طلب المالك): من بداية التعامل حتى الآن — A4 احترافي */
+  const printFullRecord = () => {
+    if (!liveFile) return
+    const age = liveFile.birthDate ? `${Math.max(0, Math.floor((Date.now() - Date.parse(liveFile.birthDate)) / 31_557_600_000))} سنة` : ''
+    const ordered = [...fileVisits].sort((a, b) => a.date.localeCompare(b.date))
+    printHtml(renderPatientRecordHtml({
+      clinicName: setup.shopName || 'العيادة',
+      doctorName: setup.ownerName ? `د/ ${setup.ownerName}` : '',
+      clinicPhone: setup.phone ?? '',
+      clinicAddress: [setup.city, setup.street].filter(Boolean).join(' — '),
+      patientName: liveFile.nameAr,
+      patientCode: partyCode('PAT', liveFile.id),
+      patientPhone: liveFile.phone,
+      patientAge: age,
+      patientGender: liveFile.gender === 'male' ? 'ذكر' : 'أنثى',
+      firstVisitDate: ordered[0]?.date.slice(0, 10) ?? '',
+      history: liveFile.history ?? emptyMedicalHistory(),
+      visits: ordered.map((v) => ({
+        visitNumber: v.visitNumber, date: v.date, kindLabel: VISIT_KIND_LABELS[v.kind].nameAr,
+        complaint: v.complaint, diagnosis: v.diagnosis, treatment: v.treatment,
+        rxLines: v.rxLines ?? [], vitals: v.vitals ?? null, nextVisit: v.nextVisit ?? '',
+        totalMinor: v.totals.totalMinor, dueMinor: v.totals.dueMinor,
+      })),
+      plans: filePlans.map((p) => ({ title: p.title, doneSessions: p.doneSessions, totalSessions: p.totalSessions, totalFeeMinor: p.totalFeeMinor })),
+      attachments: fileAtts.map((a) => ({ kind: a.kind, name: a.name, addedAt: a.addedAt })),
+      totalFees: `${fmt(fileSummary.totalFeesMinor)} ${cur.symbol}`,
+      totalDue: `${fmt(fileBalance)} ${cur.symbol}`,
+      printedAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
     }))
   }
 
@@ -393,7 +427,8 @@ export function ClinicPatientsPage() {
   const [viewEntryId, setViewEntryId] = useState<number | null>(null)
   const viewEntry = viewEntryId != null ? journal.find((e) => e.id === viewEntryId) : null
 
-  const filtered = clinicPatients.filter((p) => !q.trim() || p.nameAr.includes(q.trim()) || p.phone.includes(q.trim()))
+  // البحث بالكود (طلب المالك): PAT-0042 أو 42 أو pat42 — أسرع وأدق من الاسم
+  const filtered = partySearchFilter(clinicPatients, q, 'PAT')
   const linkedName = (id: number | null | undefined) => (id != null ? customers.find((c) => c.id === id)?.nameAr ?? null : null)
 
   return (
@@ -406,7 +441,7 @@ export function ClinicPatientsPage() {
         💡 <b>الملف الطبي غير حساب العميل:</b> ملف المريض يحمل السرية الطبية (تاريخ/روشتات/أشعة) —
         وعند فتح الملف يُنشأ له <b>حساب عميل مالي</b> تلقائياً تظهر فيه الزيارات والمديونية في كشوف الحساب والتقارير كباقي العملاء.
       </div>
-      <input value={q} onChange={(e) => setQ(e.target.value)} className={inputCls} placeholder="بحث بالاسم أو الهاتف…" />
+      <input value={q} onChange={(e) => setQ(e.target.value)} className={inputCls} placeholder="بحث بالاسم أو الهاتف أو الكود (PAT-0001 أو 1)…" />
 
       {filtered.length === 0 ? (
         <EmptyState icon="🩺" title="لا مرضى بعد" sub="افتح ملفاً لكل مريض — تاريخ مرضي منظم وروشتات مطبوعة ومرفقات أشعة وتحاليل" />
@@ -414,7 +449,7 @@ export function ClinicPatientsPage() {
         <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
           <table className="w-full text-sm">
             <thead className="bg-cyan-500/10 text-cyan-700 dark:text-cyan-300">
-              <tr>{['المريض', 'الهاتف', 'تنبيهات الملف', 'الزيارات', 'آخر زيارة', 'المستحق عليه', ''].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
+              <tr>{['الكود', 'المريض', 'الهاتف', 'تنبيهات الملف', 'الزيارات', 'آخر زيارة', 'المستحق عليه', ''].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
             </thead>
             <tbody>
               {filtered.map((p) => {
@@ -424,6 +459,7 @@ export function ClinicPatientsPage() {
                 const warn = p.history ? historySummary(p.history) : ''
                 return (
                   <tr key={p.id} onClick={() => setFile(p)} className="border-t border-slate-100 dark:border-slate-800 hover:bg-cyan-500/5 cursor-pointer transition-colors">
+                    <td className="px-3 py-2.5"><span className="font-mono font-black text-[11px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-700 dark:text-cyan-300" dir="ltr">{partyCode('PAT', p.id)}</span></td>
                     <td className="px-3 py-2.5 font-bold">{p.nameAr}</td>
                     <td className="px-3 py-2.5" dir="ltr">{p.phone || '—'}</td>
                     <td className="px-3 py-2.5 text-[11px] max-w-48 truncate">{warn ? <span className={warn.startsWith('⚠️') ? 'text-rose-500 font-bold' : 'text-slate-400'}>{warn}</span> : <span className="text-slate-300">—</span>}</td>
@@ -472,7 +508,7 @@ export function ClinicPatientsPage() {
       </Modal>
 
       {/* ملف المريض */}
-      <Modal open={!!liveFile} onClose={() => setFile(null)} title={liveFile ? `ملف: ${liveFile.nameAr}` : ''} wide>
+      <Modal open={!!liveFile} onClose={() => setFile(null)} title={liveFile ? `ملف: ${liveFile.nameAr} — ${partyCode('PAT', liveFile.id)}` : ''} wide>
         {liveFile && (
           <div className="space-y-4 text-sm">
             <div className="grid grid-cols-4 gap-2 text-center">
@@ -500,6 +536,7 @@ export function ClinicPatientsPage() {
             <div className="flex gap-2 flex-wrap">
               <Btn onClick={openVisit}><Plus className="w-4 h-4" /> زيارة / كشف جديد</Btn>
               <Btn variant="ghost" onClick={() => setPlanOpen(true)}><ClipboardList className="w-4 h-4" /> خطة علاج بجلسات</Btn>
+              <Btn variant="ghost" onClick={printFullRecord} disabled={fileVisits.length === 0 && !fileHistoryLine}><Printer className="w-4 h-4" /> طباعة السجل الكامل</Btn>
               {fileBalance > 0 && (
                 <div className="flex gap-1 items-center">
                   <input value={collectAmount} onChange={(e) => setCollectAmount(e.target.value)} inputMode="decimal" className={`${inputCls} !w-40`} placeholder="المبلغ المحصل" />

@@ -33,6 +33,7 @@ export function renderPrescriptionHtml(args: {
   clinicPhone: string
   clinicAddress: string
   patientName: string
+  patientCode: string // PAT-0001 — البحث السريع (طلب المالك)
   patientAge: string
   patientGender: string
   dateIso: string
@@ -128,6 +129,7 @@ export function renderPrescriptionHtml(args: {
     </div>
 
     <div class="patient-bar">
+      ${args.patientCode ? `<span style="background:#0e7490;color:#fff;border-radius:5px;padding:1px 8px;font-weight:900" dir="ltr">${esc(args.patientCode)}</span>` : ''}
       <span>المريض: <b>${esc(args.patientName)}</b></span>
       ${args.patientAge ? `<span>السن: <b>${esc(args.patientAge)}</b></span>` : ''}
       ${args.patientGender ? `<span>${esc(args.patientGender)}</span>` : ''}

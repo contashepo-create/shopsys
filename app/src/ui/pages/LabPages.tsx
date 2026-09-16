@@ -11,6 +11,7 @@ import { Plus, Microscope, FlaskConical, Printer, Eye, BookOpenText, Stethoscope
 import { useDataStore, type LabOrder, type LabPatient } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { partyCode, partySearchFilter } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLabTotals, deriveOrderStatus, ORDER_STATUS_LABELS, referrerStatement, patientResultHistory, resultDeltaPercent, type RefRange, type Gender, type TestStatus } from '../../core/lab.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -511,7 +512,8 @@ export function LabPatientsPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  const filtered = labPatients.filter((p) => !q.trim() || p.nameAr.includes(q.trim()) || p.phone.includes(q.trim()))
+  // البحث بالكود: LPT-0001 أو 1
+  const filtered = partySearchFilter(labPatients, q, 'LPT')
   const orderCount = (p: LabPatient) => labOrders.filter((o) => o.patientId === p.id).length
 
   return (
@@ -520,7 +522,7 @@ export function LabPatientsPage() {
         <h1 className="text-xl font-black flex items-center gap-2"><HeartPulse className="w-6 h-6 text-violet-500" /> المرضى</h1>
         <Btn onClick={() => setOpen(true)}><Plus className="w-4 h-4" /> مريض جديد</Btn>
       </div>
-      <input value={q} onChange={(e) => setQ(e.target.value)} className={inputCls} placeholder="بحث بالاسم أو الهاتف…" />
+      <input value={q} onChange={(e) => setQ(e.target.value)} className={inputCls} placeholder="بحث بالاسم أو الهاتف أو الكود (LPT-0001 أو 1)…" />
 
       {filtered.length === 0 ? (
         <EmptyState icon="🫀" title="لا مرضى" sub="سجّل أول مريض لبدء استقبال الطلبات — كل البيانات اختيارية عدا الاسم" />
@@ -528,11 +530,12 @@ export function LabPatientsPage() {
         <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
           <table className="w-full text-sm">
             <thead className="bg-violet-500/10 text-violet-700 dark:text-violet-300">
-              <tr>{['الاسم', 'الهاتف', 'النوع', 'تاريخ الميلاد', 'الطلبات', 'ملاحظات'].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
+              <tr>{['الكود', 'الاسم', 'الهاتف', 'النوع', 'تاريخ الميلاد', 'الطلبات', 'ملاحظات'].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
             </thead>
             <tbody>
               {filtered.map((p) => (
                 <tr key={p.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-violet-500/5 transition-colors">
+                  <td className="px-3 py-2.5"><span className="font-mono font-black text-[11px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-300" dir="ltr">{partyCode('LPT', p.id)}</span></td>
                   <td className="px-3 py-2.5 font-bold">{p.nameAr}</td>
                   <td className="px-3 py-2.5" dir="ltr">{p.phone || '—'}</td>
                   <td className="px-3 py-2.5">{p.gender === 'female' ? 'أنثى' : 'ذكر'}</td>

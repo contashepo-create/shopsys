@@ -11,6 +11,7 @@ import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '..
 import type { PartyExtended } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { matchesPartyCode } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -122,7 +123,7 @@ export function EmployeesPage() {
   const [ext, setExt] = useState<PartyExtended>(EMPTY_EXTENDED)
 
   const filtered = useMemo(
-    () => employees.filter((e) => !query.trim() || e.nameAr.includes(query) || e.phone.includes(query) || e.jobTitle.includes(query)),
+    () => employees.filter((e) => !query.trim() || e.nameAr.includes(query) || e.phone.includes(query) || e.jobTitle.includes(query) || matchesPartyCode(query, 'EMP', e.id)),
     [employees, query],
   )
 
@@ -321,7 +322,7 @@ export function EmployeesPage() {
           <div className="anim-up flex gap-3">
             <div className="relative flex-1">
               <Search size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ابحث بالاسم أو الهاتف أو الوظيفة…" className={`${inputCls} pr-10`} />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ابحث بالاسم أو الهاتف أو الوظيفة أو الكود (EMP-0001)…" className={`${inputCls} pr-10`} />
             </div>
             <Btn onClick={openNew}><span className="flex items-center gap-1.5"><Plus size={15} /> موظف جديد</span></Btn>
           </div>
