@@ -13,7 +13,7 @@ import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, baseQty, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
-import { buildReturnLines, buildReturnEntry, deriveTaxConfig } from '../core/returns.ts'
+import { buildReturnLines, buildReturnEntry, deriveTaxConfig, splitRefund, returnCashRefundMinor } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
 import {
@@ -867,6 +867,12 @@ export interface SaleReturn {
   journalEntryId: number
   reason: string
   shiftId: number | null
+  /**
+   * الرد الهجين للدفع المجزأ (إصلاح R1): النقدية الخارجة فعلاً وتخفيض الذمم —
+   * مجموعهما = totalMinor دائماً. undefined = سجل قديم (كله حسب refund)
+   */
+  cashRefundMinor?: number
+  creditRefundMinor?: number
 }
 
 /** مستند مقايضة ذهب (الصاغة): بيع مشغول جديد + شراء كسر العميل بعملية واحدة — الفرق النقدي فقط بالخزينة */
@@ -2399,9 +2405,23 @@ export const useDataStore = create<DataState>()(
         // 2) نفس المعاملة الضريبية وقت البيع (حتى لو تغيرت الإعدادات لاحقاً)
         const { taxPercent, taxInclusive } = deriveTaxConfig(sale.totals)
         const totals = computeTotals(lines, sale.invoiceDiscountPercent, taxPercent, taxInclusive)
-        // 3) القيد العاكس المتوازن
+        // 3) الرد الهجين للدفع المجزأ (إصلاح R1): لا نرد نقداً أكثر مما حُصِّل فعلاً،
+        //    ولا نخفض ذمم العميل أكثر من المتبقي المفتوح على الفاتورة
+        const paidAtSale = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
+        const priorReturns = state.saleReturns.filter((r) => r.saleId === sale.id)
+        const priorCreditRefunds = priorReturns.reduce((a, r) => a + (r.creditRefundMinor ?? (r.refund === 'credit' ? r.totals.totalMinor : 0)), 0)
+        const priorCashRefunds = priorReturns.reduce((a, r) => a + returnCashRefundMinor(r), 0)
+        // تحصيلات العميل المخصصة لهذه الفاتورة تحديداً: حوّلت جزءاً من الآجل إلى نقدية محصلة
+        const settledToThisSale = state.clientSettlements.reduce(
+          (a, st) => a + st.allocations.filter((al) => al.docKey === `sale:${sale.id}`).reduce((b, al) => b + al.appliedMinor, 0),
+          0,
+        )
+        const openCredit = sale.totals.totalMinor - paidAtSale - priorCreditRefunds - settledToThisSale
+        const received = paidAtSale + settledToThisSale - priorCashRefunds
+        const split = splitRefund(totals.totalMinor, args.refund, openCredit, received)
+        // القيد العاكس المتوازن
         // الرد النقدي من نفس خزينة البيع الأصلية (فواتير قديمة بلا خزينة → الرئيسية)
-        const entryLines = buildReturnEntry(totals, args.refund, sale.treasury ?? '1101')
+        const entryLines = buildReturnEntry(totals, args.refund, sale.treasury ?? '1101', split)
         const returnId = nextId(state.saleReturns)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -2434,6 +2454,8 @@ export const useDataStore = create<DataState>()(
           journalEntryId: entryId,
           reason: args.reason,
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
+          cashRefundMinor: split.cashMinor,
+          creditRefundMinor: split.creditMinor,
         }
 
         // 4) عودة البضاعة للمخزون بتكلفة بيعها التاريخية (نفس قيمة القيد 1103 مدين)
@@ -3221,7 +3243,8 @@ export const useDataStore = create<DataState>()(
         // فرق الوردية بنفس نواة الملخص — لا حسابين مختلفين
         const kindOf = (code?: string) => state.treasuries.find((t) => t.code === (code ?? '1101'))?.kind ?? 'cash'
         const saleDocs = state.sales.map((s) => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.paidMinor, treasuryKind: kindOf(s.treasury) }))
-        const returnDocs = state.saleReturns.map((r) => ({ shiftId: r.shiftId, payment: r.refund, totalMinor: r.totals.totalMinor, treasuryKind: kindOf(state.sales.find((s) => s.id === r.saleId)?.treasury) }))
+        // الرد الهجين (R1): النقدية الخارجة من الدرج فعلاً — لا كامل قيمة المرتجع
+        const returnDocs = state.saleReturns.map((r) => ({ shiftId: r.shiftId, payment: 'cash' as const, totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(state.sales.find((s) => s.id === r.saleId)?.treasury) }))
         const variance = summarizeShift(shift, saleDocs, returnDocs).varianceMinor
         if (variance === null || variance === 0) throw new Error('لا فرق في هذه الوردية للتسوية')
         const now = new Date().toISOString()
@@ -5652,9 +5675,10 @@ export const useDataStore = create<DataState>()(
           const paid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
           const creditPart = sale.totals.totalMinor - paid
           if (creditPart <= 0) continue
+          // الرد الهجين (R1): الجزء المخفِّض للذمم فقط — سجلات قديمة: كامل مرتجع «على الحساب»
           const creditReturns = state.saleReturns
-            .filter((r) => r.saleId === sale.id && r.refund === 'credit')
-            .reduce((sum, r) => sum + r.totals.totalMinor, 0)
+            .filter((r) => r.saleId === sale.id)
+            .reduce((sum, r) => sum + (r.creditRefundMinor ?? (r.refund === 'credit' ? r.totals.totalMinor : 0)), 0)
           const due = creditPart - creditReturns
           if (due <= 0) continue
           const key = `sale:${sale.id}`
@@ -6599,7 +6623,7 @@ export const useDataStore = create<DataState>()(
         if (!state.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود')
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
-        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales))
+        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns))
         const sourceMap = stock.get(args.fromWarehouseId)
         const errors = validateTransfer(
           { fromWarehouseId: args.fromWarehouseId, toWarehouseId: args.toWarehouseId, lines: args.lines },

@@ -13,11 +13,11 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 interface DraftLine { itemId: string; qty: string }
 
 export function TransfersPage() {
-  const { transfers, warehouses, items, postTransfer, purchases, sales } = useDataStore()
+  const { transfers, warehouses, items, postTransfer, purchases, sales, saleReturns, purchaseReturns } = useDataStore()
   const toast = useToast()
   const whName = (id: number) => warehouses.find((w) => w.id === id)?.nameAr ?? '—'
 
-  const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales)), [items, warehouses, transfers, purchases, sales])
+  const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns])
 
   const [tab, setTab] = useState<'list' | 'balances'>('list')
 

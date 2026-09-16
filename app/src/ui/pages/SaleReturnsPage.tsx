@@ -9,7 +9,7 @@ import { useDataStore, type SaleInvoice, type SaleReturn } from '../../data/repo
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { remainingReturnable } from '../../core/returns.ts'
+import { remainingReturnable, returnCashRefundMinor } from '../../core/returns.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
@@ -91,7 +91,13 @@ export function SaleReturnsPage() {
     // المرتجع مبالغه مردودة — «المتبقي» لا معنى له هنا
     model.paidMinor = r.totals.totalMinor
     model.remainingMinor = 0
-    model.paymentLabel = r.refund === 'cash' ? 'رد نقدي' : 'خصم من حساب العميل'
+    // الرد الهجين (R1): توصيف دقيق لتوزيع الرد بين النقدية وحساب العميل
+    const cashPart = returnCashRefundMinor(r)
+    const creditPart = r.totals.totalMinor - cashPart
+    model.paymentLabel =
+      cashPart > 0 && creditPart > 0
+        ? `رد نقدي ${fmt(cashPart)} + خصم من الحساب ${fmt(creditPart)}`
+        : cashPart > 0 ? 'رد نقدي' : 'خصم من حساب العميل'
     printHtml(receipt.defaultTemplate === 'a4' ? renderInvoiceA4Html(model, cur, receipt) : renderReceiptHtml(model, cur, receipt))
     toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
   }
@@ -135,9 +141,17 @@ export function SaleReturnsPage() {
                     </td>
                     <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{orig?.invoiceNumber ?? '—'}</td>
                     <td className="px-4 py-3">
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${r.refund === 'cash' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-violet-500/10 text-violet-600'}`}>
-                        {r.refund === 'cash' ? '💵 نقدي' : '👥 خصم من حساب العميل'}
-                      </span>
+                      {(() => {
+                        // الرد الهجين (R1): بيان توزيع الرد الفعلي بين الدرج وحساب العميل
+                        const cash = returnCashRefundMinor(r)
+                        const credit = r.totals.totalMinor - cash
+                        const label = cash > 0 && credit > 0 ? `💵 ${fmt(cash)} + 👥 ${fmt(credit)}` : cash > 0 ? '💵 نقدي' : '👥 خصم من حساب العميل'
+                        return (
+                          <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${credit === 0 ? 'bg-emerald-500/10 text-emerald-600' : cash === 0 ? 'bg-violet-500/10 text-violet-600' : 'bg-amber-500/10 text-amber-600'}`}>
+                            {label}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="px-4 py-3 font-black text-rose-500">-{fmt(r.totals.totalMinor)}</td>
                     <td className="px-4 py-3">

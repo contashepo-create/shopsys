@@ -36,7 +36,7 @@ export interface CustomerStatementInput {
   /** رصيد افتتاحي مثبت بقيد 1104/3101 (اختياري) — يظهر أول الكشف ويدخل الرصيد الجاري */
   openingMinor?: Minor
   sales: { invoiceNumber: string; date: string; customerId: number | null; payment: 'cash' | 'credit'; paidMinor?: number; totals: { totalMinor: Minor } }[]
-  saleReturns: { returnNumber: string; date: string; saleId: number; refund: 'cash' | 'credit'; totals: { totalMinor: Minor } }[]
+  saleReturns: { returnNumber: string; date: string; saleId: number; refund: 'cash' | 'credit'; totals: { totalMinor: Minor }; creditRefundMinor?: Minor }[]
   /** فواتير البيع كاملة لربط المرتجع بعميله */
   allSales: { id: number; customerId: number | null }[]
   vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor }[]
@@ -81,9 +81,11 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
   }
   const saleOwner = new Map(input.allSales.map((s) => [s.id, s.customerId]))
   for (const r of input.saleReturns) {
-    if (r.refund !== 'credit') continue
     if (saleOwner.get(r.saleId) !== input.customerId) continue
-    rows.push({ date: r.date, docLabel: `مرتجع ${r.returnNumber} (على الحساب)`, debitMinor: 0, creditMinor: r.totals.totalMinor })
+    // الرد الهجين (R1): الجزء المخفِّض للذمم فقط يدخل الكشف — سجلات قديمة: كامل مرتجع «على الحساب»
+    const creditPart = r.creditRefundMinor ?? (r.refund === 'credit' ? r.totals.totalMinor : 0)
+    if (creditPart <= 0) continue
+    rows.push({ date: r.date, docLabel: `مرتجع ${r.returnNumber} (على الحساب)`, debitMinor: 0, creditMinor: creditPart })
   }
   for (const v of input.vouchers) {
     if (v.partyKind !== 'customer' || v.partyId !== input.customerId || v.kind !== 'receipt') continue

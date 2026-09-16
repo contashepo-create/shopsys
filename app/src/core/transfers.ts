@@ -108,10 +108,16 @@ export function transferTotalQty(lines: TransferLine[]): number {
  * تحويل فواتير البيع/الشراء إلى مستندات مخازن (الأمر 8):
  * شراء وارد لمخزن X ⇒ كميات موجبة في X؛ بيع من X ⇒ سالبة.
  * الفواتير بلا مخزن محدد تُهمل هنا (تُحمَّل ضمنياً على الرئيسي).
+ *
+ * إصلاح R2: المرتجعات تعيد/تسحب رصيد مخزن فاتورتها الأصلية —
+ * مرتجع بيع من فاتورة على مخزن X ⇒ موجب في X (البضاعة عادت لنفس المخزن)،
+ * ومرتجع شراء عن فاتورة وردت لمخزن X ⇒ سالب في X (خرجت من حيث دخلت).
  */
 export function buildWarehouseDocs(
-  purchases: { warehouseId?: number | null; lines: { itemId: number; qty: number }[] }[],
-  sales: { warehouseId?: number | null; lines: { itemId: number; qty: number }[] }[],
+  purchases: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number }[] }[],
+  sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number }[] }[],
+  saleReturns: { saleId: number; lines: { itemId: number; qty: number }[] }[] = [],
+  purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number }[] }[] = [],
 ): WarehouseDoc[] {
   const docs: WarehouseDoc[] = []
   for (const p of purchases) {
@@ -121,6 +127,18 @@ export function buildWarehouseDocs(
   for (const s of sales) {
     if (s.warehouseId == null) continue
     docs.push({ warehouseId: s.warehouseId, lines: s.lines.map((l) => ({ itemId: l.itemId, qtyDelta: -l.qty })) })
+  }
+  const saleWh = new Map(sales.filter((s) => s.id != null).map((s) => [s.id!, s.warehouseId ?? null]))
+  for (const r of saleReturns) {
+    const wh = saleWh.get(r.saleId)
+    if (wh == null) continue // فاتورة بلا مخزن محدد ⇒ المرتجع ضمنياً على الرئيسي
+    docs.push({ warehouseId: wh, lines: r.lines.map((l) => ({ itemId: l.itemId, qtyDelta: l.qty })) })
+  }
+  const purchaseWh = new Map(purchases.filter((p) => p.id != null).map((p) => [p.id!, p.warehouseId ?? null]))
+  for (const r of purchaseReturns) {
+    const wh = purchaseWh.get(r.purchaseId)
+    if (wh == null) continue
+    docs.push({ warehouseId: wh, lines: r.lines.map((l) => ({ itemId: l.itemId, qtyDelta: -l.qty })) })
   }
   return docs
 }

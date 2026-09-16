@@ -12,6 +12,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { summarizeShift, currentOpenShift, type Shift } from '../../core/shifts.ts'
+import { returnCashRefundMinor } from '../../core/returns.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 
 function StatCard({ label, value, icon: Icon, tone }: { label: string; value: string; icon: typeof Banknote; tone: string }) {
@@ -50,7 +51,8 @@ export function ShiftsPage() {
   )
   const returnDocs = useMemo(
     // المرتجع يُرد من نفس خزينة فاتورته الأصلية — بنكيّ الأصل لا يمس الدرج
-    () => saleReturns.map((r) => ({ shiftId: r.shiftId, payment: r.refund, totalMinor: r.totals.totalMinor, treasuryKind: kindOf(sales.find((s) => s.id === r.saleId)?.treasury) })),
+    // الرد الهجين (R1): النقدية الخارجة فعلاً فقط — لا كامل قيمة المرتجع
+    () => saleReturns.map((r) => ({ shiftId: r.shiftId, payment: 'cash' as const, totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(sales.find((s) => s.id === r.saleId)?.treasury) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [saleReturns, sales, treasuries],
   )
