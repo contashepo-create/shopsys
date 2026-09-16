@@ -37,28 +37,62 @@ body {
 }
 
 /* ═══ الوضع الداكن — أفضل الممارسات العالمية (طلب المالك: «خطوط داكنة لا تُقرأ») ═══
+   المراجعة الثانية — 3 مبادئ:
    1) الأبيض الأساسي يُخفَّف إلى ~92% بدل الساطع 100% — يقلل الوهج (Material/Apple HIG)
-   2) النصوص الثانوية slate-400/500 تُرفع درجتها لتحقق تباين WCAG AA (≥4.5:1) على البطاقات الداكنة
-   3) الحدود تُفتَّح قليلاً كي تظل مرئية دون صخب */
+   2) كل نص بدرجة 500-800 (رمادي أو ملون) يُرفَع تباينه إلى ≥4.5:1 (WCAG AA) على البطاقة الداكنة —
+      الألوان الدلالية الداكنة (600) تُفتَّح لدرجة 400 كما تفعل Material 3 وGitHub Primer
+   3) كل override مقيد بـ :not([class*='dark:text']) — من حدد مقابلاً داكناً مقصوداً لا نلمسه أبداً */
 .dark {
   --color-white: #ecf0f7; /* أبيض ناعم — النص الأساسي */
+  color-scheme: dark; /* أيقونات التقويم والـ select والـ checkbox الأصلية تتلون داكنة */
 }
-/* النص الثانوي: slate-500 كان 3.4:1 على البطاقة الداكنة — نرفعه إلى ≥5:1 */
-.dark .text-slate-500 { color: #97a3ba; }
-.dark .text-slate-600 { color: #a8b3c7; }
-.dark .text-slate-700 { color: #c3cbdb; }
-.dark .text-slate-800 { color: #dde3ee; }
-/* النص الخافت (تلميحات/تواريخ): يبقى خافتاً لكنه مقروء (≥4.5:1) */
-.dark .text-slate-400 { color: #8994ab; }
-.dark .text-slate-300 { color: #6f7a90; }
-/* حدود أوضح قليلاً داخل البطاقات الداكنة */
-.dark .border-slate-100 { border-color: rgb(148 163 184 / 0.10); }
-.dark .border-slate-50 { border-color: rgb(148 163 184 / 0.07); }
-.dark .border-slate-200 { border-color: rgb(148 163 184 / 0.16); }
-/* خلفيات فاتحة نسيت مقابلها الداكن — تتحول لدرجات داكنة متسقة بدل البقع البيضاء */
-.dark .bg-slate-50 { background-color: rgb(148 163 184 / 0.06); }
-.dark .bg-slate-100 { background-color: rgb(148 163 184 / 0.10); }
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
+/* ── النص الرمادي الثانوي: slate-500 كان 3.4:1 — يُرفع إلى ≥5:1 ── */
+.dark .text-slate-500:not([class*='dark:text']) { color: #97a3ba; }
+.dark .text-slate-600:not([class*='dark:text']) { color: #a8b3c7; }
+.dark .text-slate-700:not([class*='dark:text']) { color: #c3cbdb; }
+.dark .text-slate-800:not([class*='dark:text']) { color: #dde3ee; }
+/* النص الخافت (تلميحات/تواريخ): يبقى خافتاً لكنه مقروء */
+.dark .text-slate-400:not([class*='dark:text']) { color: #8994ab; }
+.dark .text-slate-300:not([class*='dark:text']) { color: #6f7a90; }
+/* ── الألوان الدلالية (مبالغ/حالات/تنبيهات): درجة 600/700 داكنة على خلفية داكنة = غير مقروءة —
+      تُفتَّح تلقائياً لدرجة 400/300 في كل الشاشات دفعة واحدة ── */
+.dark .text-emerald-600:not([class*='dark:text']) { color: #34d399; }
+.dark .text-emerald-700:not([class*='dark:text']) { color: #6ee7b7; }
+.dark .text-rose-600:not([class*='dark:text']) { color: #fb7185; }
+.dark .text-rose-700:not([class*='dark:text']) { color: #fda4af; }
+.dark .text-rose-500:not([class*='dark:text']) { color: #fb7185; }
+.dark .text-sky-600:not([class*='dark:text']) { color: #38bdf8; }
+.dark .text-sky-700:not([class*='dark:text']) { color: #7dd3fc; }
+.dark .text-sky-500:not([class*='dark:text']) { color: #38bdf8; }
+.dark .text-amber-600:not([class*='dark:text']) { color: #fbbf24; }
+.dark .text-amber-700:not([class*='dark:text']) { color: #fcd34d; }
+.dark .text-amber-500:not([class*='dark:text']) { color: #fbbf24; }
+.dark .text-violet-600:not([class*='dark:text']) { color: #a78bfa; }
+.dark .text-violet-700:not([class*='dark:text']) { color: #c4b5fd; }
+.dark .text-violet-500:not([class*='dark:text']) { color: #a78bfa; }
+.dark .text-orange-600:not([class*='dark:text']) { color: #fb923c; }
+.dark .text-orange-500:not([class*='dark:text']) { color: #fb923c; }
+.dark .text-teal-600:not([class*='dark:text']) { color: #2dd4bf; }
+.dark .text-cyan-600:not([class*='dark:text']) { color: #22d3ee; }
+.dark .text-fuchsia-600:not([class*='dark:text']) { color: #e879f9; }
+.dark .text-indigo-600:not([class*='dark:text']) { color: #818cf8; }
+.dark .text-brand-600:not([class*='dark:text']) { color: #818cf8; }
+.dark .text-brand-700:not([class*='dark:text']) { color: #a5b4fc; }
+/* ── حدود أوضح قليلاً داخل البطاقات الداكنة ── */
+.dark .border-slate-100:not([class*='dark:border']) { border-color: rgb(148 163 184 / 0.10); }
+.dark .border-slate-50:not([class*='dark:border']) { border-color: rgb(148 163 184 / 0.07); }
+.dark .border-slate-200:not([class*='dark:border']) { border-color: rgb(148 163 184 / 0.16); }
+.dark .border-slate-300:not([class*='dark:border']) { border-color: rgb(148 163 184 / 0.24); }
+/* ── خلفيات فاتحة نسيت مقابلها الداكن — درجات داكنة متسقة بدل البقع البيضاء ── */
+.dark .bg-slate-50:not([class*='dark:bg']) { background-color: rgb(148 163 184 / 0.06); }
+.dark .bg-slate-100:not([class*='dark:bg']) { background-color: rgb(148 163 184 / 0.10); }
+.dark .bg-slate-200:not([class*='dark:bg']) { background-color: rgb(148 163 184 / 0.15); }
 .dark .bg-white:not([class*='dark:bg']) { background-color: var(--color-card-dark); }
+/* ── عناصر النماذج الأصلية: خيارات القوائم المنسدلة داكنة لا بيضاء ── */
+.dark select option { background-color: var(--color-card-dark); color: #ecf0f7; }
+.dark input[type='date']::-webkit-calendar-picker-indicator { filter: invert(0.8); }
 /* سكرول أوضح في الداكن */
 .dark ::-webkit-scrollbar-thumb { background: rgb(148 163 184 / 0.25); }
 .dark ::-webkit-scrollbar-thumb:hover { background: rgb(148 163 184 / 0.45); }
