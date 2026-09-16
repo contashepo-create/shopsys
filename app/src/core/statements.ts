@@ -54,7 +54,7 @@ export interface CustomerStatementInput {
 export interface ChequeLike {
   chequeNumber: string
   direction: string // incoming | outgoing
-  partyId: number
+  partyId: number | null // null = شيك بلا طرف مسجل
   amountMinor: Minor
   status: string
   createdAt: string

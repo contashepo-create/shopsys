@@ -98,6 +98,39 @@ ok('شامل: المعفى أساسه كامل والخاضع يفصل 14', tInc
 const tDisc = computeTotals([mk(10_000, 1, 0), mk(10_000, 1)], 10, 14, false)
 ok('خصم فاتورة 10% يوزع نسبياً: ضريبة على 90 فقط', tDisc.taxMinor === 1_260 && tDisc.totalMinor === 19_260)
 
+console.log('― دورة الشيكات الكاملة (كل السيناريوهات — طلب المالك) ―')
+const { buildChequeReceiveEntry, buildChequeIssueEntry, buildChequeCollectEntry } = await import('../src/core/cheques.ts')
+// شيك وارد بلا عميل يقيَّد كإيراد
+const rcvNoParty = buildChequeReceiveEntry(10_000, 'x', '4110')
+ok('وارد بلا عميل: 1106 مدين / 4110 دائن', balanced(rcvNoParty) && rcvNoParty.some((l) => l.accountCode === '4110' && l.credit === 10_000))
+// شيك صادر لراتب موظف
+const issSalary = buildChequeIssueEntry(20_000, 'x', '2104')
+ok('صادر لراتب: 2104 مدين / 2106 دائن', balanced(issSalary) && issSalary.some((l) => l.accountCode === '2104' && l.debit === 20_000))
+// تحصيل في خزينة نقدية لا بنك
+const colCash = buildChequeCollectEntry(10_000, 'x', '1101')
+ok('تحصيل في الخزينة النقدية: 1101 مدين / 1106 دائن', balanced(colCash) && colCash.some((l) => l.accountCode === '1101' && l.debit === 10_000))
+// repo: شيك وارد بلا طرف — دورة كاملة حتى التحصيل في الخزينة
+const chq = s().receiveCheque({ chequeNumber: 'NP-77', partyId: null, partyName: 'شركة الوفاء', counterAccount: '4110', bankName: 'بنك مصر', amountMinor: 50_000, dueDate: '2026-10-01', notes: '' })
+ok('repo: شيك بلا طرف سُجل باسم الدافع وحسابه', chq.partyId === null && chq.partyName === 'شركة الوفاء' && chq.counterAccount === '4110')
+const collected = s().setChequeStatus(chq.id, 'collected', '1101')
+const colEntry = s().journal.find((e) => e.id === collected.settleEntryId)
+ok('repo: حُصِّل في الخزينة 1101 بقيد متوازن', colEntry && balanced(colEntry.lines) && colEntry.lines.some((l) => l.accountCode === '1101' && l.debit === 50_000))
+// repo: تحصيل بحساب غير مسجل يُرفض
+const chq2 = s().receiveCheque({ chequeNumber: 'NP-78', partyId: null, partyName: 'فلان', bankName: 'CIB', amountMinor: 9_000, dueDate: '2026-10-05', notes: '' })
+assert.throws(() => s().setChequeStatus(chq2.id, 'collected', '9999'))
+ok('repo: التحصيل في حساب غير مسجل مرفوض (لا مبلغ عائماً)', true)
+// repo: شيك صادر راتب موظف ثم ارتداد وارد يعيد الالتزام لحسابه الأصلي
+const outChq = s().issueCheque({ chequeNumber: 'OUT-11', partyId: null, partyName: 'الموظف كريم', counterAccount: '2104', bankName: 'بنك مصر', amountMinor: 30_000, dueDate: '2026-10-10', notes: '' })
+ok('repo: شيك صادر لراتب بلا مورد', outChq.counterAccount === '2104' && outChq.partyId === null)
+const bounced = s().setChequeStatus(chq2.id, 'bounced')
+const bounceEntry = s().journal.find((e) => e.id === bounced.reverseEntryId)
+ok('repo: ارتداد شيك بلا طرف يعكس على حسابه المقابل الأصلي', bounceEntry && bounceEntry.lines.some((l) => l.accountCode === (chq2.counterAccount ?? '4110') && l.debit === 9_000))
+// repo: شيك بطرف مسجل ما زال يعمل كما كان (توافق خلفي)
+s().addCustomer({ nameAr: 'عميل شيكات', phone: '', notes: '' })
+const cust = s().customers.at(-1)
+const chq3 = s().receiveCheque({ chequeNumber: 'C-1', partyId: cust.id, bankName: 'الأهلي', amountMinor: 7_000, dueDate: '2026-09-30', notes: '' })
+ok('توافق خلفي: شيك عميل مسجل counterAccount=1104', chq3.counterAccount === '1104' && chq3.partyName === 'عميل شيكات')
+
 console.log('― نشاط المغسلة والوحدات ―')
 const laundryTpl = ACTIVITY_TEMPLATES.find((t) => t.id === 'laundry')
 ok('نشاط المغسلة يستخدم وحدة laundry لا maintenance', laundryTpl.modules.includes('laundry') && !laundryTpl.modules.includes('maintenance'))

@@ -1581,11 +1581,14 @@ interface DataState {
   runAutoDepreciation: () => number
   /* ─── الشيكات (أوراق القبض والدفع) ─── */
   /** استلام شيك وارد من عميل: قيد 1106 ← 1104 */
-  receiveCheque: (args: { chequeNumber: string; partyId: number; bankName: string; amountMinor: number; dueDate: string; notes: string }) => Cheque
+  /** استلام شيك وارد: من عميل مسجل (partyId) أو بلا طرف (partyName + counterAccount — افتراضي 4110 إيرادات أخرى) */
+  receiveCheque: (args: { chequeNumber: string; partyId: number | null; partyName?: string; counterAccount?: string; bankName: string; amountMinor: number; dueDate: string; notes: string }) => Cheque
   /** تحرير شيك صادر لمورد: قيد 2101 ← 2106 */
-  issueCheque: (args: { chequeNumber: string; partyId: number; bankName: string; amountMinor: number; dueDate: string; notes: string }) => Cheque
+  /** تحرير شيك صادر: لمورد مسجل (partyId) أو لمستفيد آخر (partyName + counterAccount — مصروف/رواتب/مخصص، افتراضي 5108) */
+  issueCheque: (args: { chequeNumber: string; partyId: number | null; partyName?: string; counterAccount?: string; bankName: string; amountMinor: number; dueDate: string; notes: string }) => Cheque
   /** نقل حالة الشيك وفق آلة الحالات — يولّد قيد التحصيل/الارتداد/الصرف/الإلغاء تلقائياً */
-  setChequeStatus: (chequeId: number, status: ChequeStatus, bank?: string) => Cheque
+  /** نقل حالة الشيك — التحصيل/الصرف يتطلبان حساب إيداع (بنك أو خزينة مسجلة) */
+  setChequeStatus: (chequeId: number, status: ChequeStatus, settleAccount?: string) => Cheque
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
@@ -6734,15 +6737,18 @@ export const useDataStore = create<DataState>()(
       receiveCheque: (args) => {
         const state = get()
         validateCheque(args)
-        const customer = state.customers.find((c) => c.id === args.partyId)
-        if (!customer) throw new Error('العميل غير موجود')
+        // شيك مربوط بعميل مسجل أو شيك بلا طرف (طلب المالك) — الحساب المقابل يتكيف
+        const customer = args.partyId != null ? state.customers.find((c) => c.id === args.partyId) : null
+        if (args.partyId != null && !customer) throw new Error('العميل غير موجود')
+        const counterAccount = customer ? '1104' : (args.counterAccount ?? '4110')
+        const partyName = customer ? customer.nameAr : (args.partyName ?? '').trim()
         if (state.cheques.some((c) => c.direction === 'incoming' && c.chequeNumber === args.chequeNumber.trim() && c.bankName === args.bankName.trim())) {
           throw new Error('شيك بنفس الرقم والبنك مسجل من قبل')
         }
         const id = nextId(state.cheques)
         const now = new Date().toISOString()
-        const note = `شيك وارد ${args.chequeNumber} — ${customer.nameAr}`
-        const lines = buildChequeReceiveEntry(args.amountMinor, note)
+        const note = `شيك وارد ${args.chequeNumber} — ${partyName}`
+        const lines = buildChequeReceiveEntry(args.amountMinor, note, counterAccount)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -6752,7 +6758,7 @@ export const useDataStore = create<DataState>()(
         }
         const cheque: Cheque = {
           id, chequeNumber: args.chequeNumber.trim(), direction: 'incoming',
-          partyId: customer.id, partyName: customer.nameAr, bankName: args.bankName.trim(),
+          partyId: customer?.id ?? null, partyName, counterAccount, bankName: args.bankName.trim(),
           amountMinor: args.amountMinor, dueDate: args.dueDate, status: 'held', notes: args.notes,
           createdAt: now, receiveEntryId: entryId, settleEntryId: null, reverseEntryId: null,
           depositedAt: null, settledAt: null,
@@ -6764,15 +6770,18 @@ export const useDataStore = create<DataState>()(
       issueCheque: (args) => {
         const state = get()
         validateCheque(args)
-        const supplier = state.suppliers.find((s) => s.id === args.partyId)
-        if (!supplier) throw new Error('المورد غير موجود')
+        // صادر لمورد مسجل أو لمستفيد آخر: مصروف/راتب/حساب مخصص (طلب المالك — كل السيناريوهات)
+        const supplier = args.partyId != null ? state.suppliers.find((s) => s.id === args.partyId) : null
+        if (args.partyId != null && !supplier) throw new Error('المورد غير موجود')
+        const counterAccount = supplier ? '2101' : (args.counterAccount ?? '5108')
+        const partyName = supplier ? supplier.nameAr : (args.partyName ?? '').trim()
         if (state.cheques.some((c) => c.direction === 'outgoing' && c.chequeNumber === args.chequeNumber.trim())) {
           throw new Error('رقم شيك صادر مكرر — كل ورقة من دفترك برقم فريد')
         }
         const id = nextId(state.cheques)
         const now = new Date().toISOString()
-        const note = `شيك صادر ${args.chequeNumber} — ${supplier.nameAr}`
-        const lines = buildChequeIssueEntry(args.amountMinor, note)
+        const note = `شيك صادر ${args.chequeNumber} — ${partyName}`
+        const lines = buildChequeIssueEntry(args.amountMinor, note, counterAccount)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -6782,7 +6791,7 @@ export const useDataStore = create<DataState>()(
         }
         const cheque: Cheque = {
           id, chequeNumber: args.chequeNumber.trim(), direction: 'outgoing',
-          partyId: supplier.id, partyName: supplier.nameAr, bankName: args.bankName.trim(),
+          partyId: supplier?.id ?? null, partyName, counterAccount, bankName: args.bankName.trim(),
           amountMinor: args.amountMinor, dueDate: args.dueDate, status: 'issued', notes: args.notes,
           createdAt: now, receiveEntryId: entryId, settleEntryId: null, reverseEntryId: null,
           depositedAt: null, settledAt: null,
@@ -6804,11 +6813,17 @@ export const useDataStore = create<DataState>()(
           set({ cheques: state.cheques.map((c) => (c.id === chequeId ? updated : c)) })
           return updated
         }
+        // حساب الإيداع/الصرف يجب أن يكون خزينة أو بنكاً مسجلاً فعلاً (طلب المالك — لا مبلغ عائماً)
+        const settleAccount = bank ?? state.treasuries.find((t) => t.kind === 'bank')?.code ?? '1101'
+        if ((status === 'collected' || status === 'cleared') && !state.treasuries.some((t) => t.code === settleAccount)) {
+          throw new Error('اختر حساب الإيداع/الصرف: خزينة أو بنكاً مسجلاً')
+        }
+        const counter = cheque.counterAccount ?? (cheque.direction === 'incoming' ? '1104' : '2101')
         const built =
-          status === 'collected' ? { lines: buildChequeCollectEntry(cheque.amountMinor, note, bank ?? '1102'), src: 'cheque_collect' as const, desc: `تحصيل ${note}`, reversal: false }
-          : status === 'bounced' ? { lines: buildChequeBounceEntry(cheque.amountMinor, note), src: 'cheque_bounce' as const, desc: `ارتداد ${note} — عاد الدين على العميل`, reversal: true }
-          : status === 'cleared' ? { lines: buildChequeClearEntry(cheque.amountMinor, note, bank ?? '1102'), src: 'cheque_clear' as const, desc: `صرف ${note} من البنك`, reversal: false }
-          : { lines: buildChequeCancelEntry(cheque.amountMinor, note), src: 'cheque_cancel' as const, desc: `إلغاء ${note} — عاد الدين للمورد`, reversal: true }
+          status === 'collected' ? { lines: buildChequeCollectEntry(cheque.amountMinor, note, settleAccount), src: 'cheque_collect' as const, desc: `تحصيل ${note}`, reversal: false }
+          : status === 'bounced' ? { lines: buildChequeBounceEntry(cheque.amountMinor, note, counter), src: 'cheque_bounce' as const, desc: `ارتداد ${note} — عاد الالتزام كما كان`, reversal: true }
+          : status === 'cleared' ? { lines: buildChequeClearEntry(cheque.amountMinor, note, settleAccount), src: 'cheque_clear' as const, desc: `صرف ${note}`, reversal: false }
+          : { lines: buildChequeCancelEntry(cheque.amountMinor, note, counter), src: 'cheque_cancel' as const, desc: `إلغاء ${note} — عاد الالتزام كما كان`, reversal: true }
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -6848,6 +6863,7 @@ export const useDataStore = create<DataState>()(
           externalCommissions: s.externalCommissions ?? [],
           customAccounts: s.customAccounts ?? [],
           laundryOrders: s.laundryOrders ?? [],
+          cheques: (s.cheques ?? []).map((c) => ({ ...c, counterAccount: c.counterAccount ?? (c.direction === 'incoming' ? '1104' : '2101') })),
           assets: (s.assets ?? []).map((a) => ({ ...a, funding: a.funding ?? 'cash', supplierId: a.supplierId ?? null, paidMinor: a.paidMinor ?? a.costMinor, installments: a.installments ?? [], payments: a.payments ?? [] })),
           appUsers: s.appUsers ?? [],
           roleOverrides: s.roleOverrides ?? {},
@@ -6999,7 +7015,6 @@ export const useDataStore = create<DataState>()(
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],
           serials: s.serials ?? [],
-          cheques: s.cheques ?? [],
           stocktakes: s.stocktakes ?? [],
           wastages: s.wastages ?? [],
           openingBalances: s.openingBalances ?? {},

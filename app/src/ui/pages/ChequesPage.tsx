@@ -1,7 +1,7 @@
 /**
- * الشيكات (أوراق القبض والدفع) —
- * وارد من عميل: استلام ← إيداع ← تحصيل / ارتداد
- * صادر لمورد: تحرير ← صرف / إلغاء
+ * الشيكات (أوراق القبض والدفع) — كل السيناريوهات العملية (طلب المالك):
+ * وارد: من عميل مسجل أو بلا طرف (إيراد/حساب آخر) ← إيداع ← تحصيل في بنك أو خزينة / ارتداد
+ * صادر: لمورد مسجل أو لمستفيد آخر (مصروف شركة/راتب موظف/حساب مخصص) ← صرف / إلغاء
  * كل تحول حالة مالي يولّد قيده المتوازن فوراً، مع تنبيهات استحقاق.
  */
 import { useMemo, useState } from 'react'
@@ -15,7 +15,9 @@ import {
   type Cheque, type ChequeStatus,
 } from '../../core/cheques.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
-import { ACCOUNT_NAMES } from './accountNames.ts'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { STANDARD_COA } from '../../core/ledger.ts'
+import { accountName } from './accountNames.ts'
 
 const STATUS_STYLE: Record<ChequeStatus, string> = {
   held: 'bg-amber-500/10 text-amber-600',
@@ -46,8 +48,7 @@ const NEXT_ACTIONS: Record<ChequeStatus, { to: ChequeStatus; label: string; dang
 }
 
 export function ChequesPage() {
-  const { cheques, journal, customers, suppliers, treasuries, receiveCheque, issueCheque, setChequeStatus } = useDataStore()
-  const banks = treasuries.filter((t) => t.kind === 'bank')
+  const { cheques, journal, customers, suppliers, treasuries, customAccounts, receiveCheque, issueCheque, setChequeStatus } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -56,12 +57,28 @@ export function ChequesPage() {
   const [open, setOpen] = useState(false)
   const [direction, setDirection] = useState<'incoming' | 'outgoing'>('incoming')
   const [chequeNumber, setChequeNumber] = useState('')
-  const [partyId, setPartyId] = useState('')
+  const [partyId, setPartyId] = useState('') // '' = شيك بلا طرف مسجل
+  const [partyName, setPartyName] = useState('')
+  const [counterAccount, setCounterAccount] = useState('')
   const [bankName, setBankName] = useState('')
   const [amount, setAmount] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
   const [viewing, setViewing] = useState<Cheque | null>(null)
+
+  // خيارات الحساب المقابل لشيك بلا طرف (طلب المالك — كل السيناريوهات):
+  // وارد بلا عميل ⇒ حسابات الإيراد؛ صادر بلا مورد ⇒ مصروفات + رواتب مستحقة + المخصصة
+  const counterOptions = useMemo(() => {
+    const std = STANDARD_COA.filter((a) => a.isPostable && (
+      direction === 'incoming' ? a.rootType === 'revenue' : (a.rootType === 'expenses' || a.code === '2104')
+    ))
+    const custom = customAccounts.filter((a) =>
+      direction === 'incoming' ? a.rootType === 'revenue' : a.rootType === 'expenses')
+    return [
+      ...std.map((a) => ({ code: a.code, nameAr: a.nameAr })),
+      ...custom.map((a) => ({ code: a.code, nameAr: `${a.nameAr} (مخصص)` })),
+    ]
+  }, [direction, customAccounts])
 
   const today = new Date().toISOString()
   const alerts = useMemo(() => dueCheques(cheques, today), [cheques, today])
@@ -74,7 +91,8 @@ export function ChequesPage() {
 
   const openNew = (d: 'incoming' | 'outgoing') => {
     setDirection(d)
-    setChequeNumber(''); setPartyId(''); setBankName(''); setAmount(''); setNotes('')
+    setChequeNumber(''); setPartyId(''); setPartyName(''); setBankName(''); setAmount(''); setNotes('')
+    setCounterAccount(d === 'incoming' ? '4110' : '5108')
     setDueDate(new Date().toISOString().slice(0, 10))
     setOpen(true)
   }
@@ -82,7 +100,11 @@ export function ChequesPage() {
   const save = () => {
     try {
       const args = {
-        chequeNumber: chequeNumber.trim(), partyId: Number(partyId), bankName: bankName.trim(),
+        chequeNumber: chequeNumber.trim(),
+        partyId: partyId ? Number(partyId) : null,
+        partyName: partyName.trim(),
+        counterAccount: partyId ? undefined : counterAccount,
+        bankName: bankName.trim(),
         amountMinor: toMinor(amount || '0', cur.decimals), dueDate, notes: notes.trim(),
       }
       const c = direction === 'incoming' ? receiveCheque(args) : issueCheque(args)
@@ -93,11 +115,11 @@ export function ChequesPage() {
     }
   }
 
-  // البنك المستلم/الصارف — يظهر عند التحصيل والصرف فقط (يدعم البنوك المتعددة)
-  const [bankAccount, setBankAccount] = useState('1102')
+  // حساب الإيداع/الصرف — بنك أو خزينة نقدية (طلب المالك: المحصَّل يدخل حساباً فعلياً دائماً)
+  const [settleAccount, setSettleAccount] = useState(() => treasuries.find((t) => t.kind === 'bank')?.code ?? treasuries[0]?.code ?? '1101')
   const transition = (c: Cheque, to: ChequeStatus) => {
     try {
-      const updated = setChequeStatus(c.id, to, to === 'collected' || to === 'cleared' ? bankAccount : undefined)
+      const updated = setChequeStatus(c.id, to, to === 'collected' || to === 'cleared' ? settleAccount : undefined)
       toast.show(`الشيك ${updated.chequeNumber} أصبح: ${CHEQUE_STATUS_LABELS[updated.status]}`)
       setViewing(updated)
     } catch (e) {
@@ -112,9 +134,9 @@ export function ChequesPage() {
       <div className="flex items-center justify-between anim-up flex-wrap gap-2">
         <div className="text-sm text-slate-500">ورقة القبض أصل وورقة الدفع التزام — وكل تحول يولّد قيده المتوازن فوراً</div>
         <div className="flex gap-2">
-          <Btn onClick={() => openNew('incoming')}><ArrowDownCircle size={15} /> شيك وارد (من عميل)</Btn>
+          <Btn onClick={() => openNew('incoming')}><ArrowDownCircle size={15} /> شيك وارد</Btn>
           <Btn variant="ghost" onClick={() => openNew('outgoing')} className="!text-rose-600 border-2 border-rose-500/30 hover:!bg-rose-500/5">
-            <ArrowUpCircle size={15} /> شيك صادر (لمورد)
+            <ArrowUpCircle size={15} /> شيك صادر
           </Btn>
         </div>
       </div>
@@ -200,7 +222,7 @@ export function ChequesPage() {
       )}
 
       {/* شيك جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title={direction === 'incoming' ? '⬇️ شيك وارد — ورقة قبض من عميل' : '⬆️ شيك صادر — ورقة دفع لمورد'}>
+      <Modal open={open} onClose={() => setOpen(false)} title={direction === 'incoming' ? '⬇️ شيك وارد — ورقة قبض' : '⬆️ شيك صادر — ورقة دفع'}>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Field label="رقم الشيك">
@@ -212,10 +234,22 @@ export function ChequesPage() {
           </div>
           <Field label={direction === 'incoming' ? 'العميل (يُخفَّض دينه فوراً)' : 'المورد (يُخفَّض ديننا له فوراً)'}>
             <select value={partyId} onChange={(e) => setPartyId(e.target.value)} className={inputCls}>
-              <option value="">اختر…</option>
+              <option value="">— بلا طرف مسجل (شيك {direction === 'incoming' ? 'وارد لإيراد/حساب آخر' : 'مصروف/راتب/حساب آخر'}) —</option>
               {parties.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
             </select>
           </Field>
+          {!partyId && (
+            <div className="grid grid-cols-2 gap-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-3">
+              <Field label={direction === 'incoming' ? 'اسم دافع الشيك' : 'اسم المستفيد'}>
+                <input value={partyName} onChange={(e) => setPartyName(e.target.value)} placeholder={direction === 'incoming' ? 'شركة كذا…' : 'الموظف/الجهة…'} className={inputCls} />
+              </Field>
+              <Field label={direction === 'incoming' ? 'يقيَّد كإيراد في' : 'يقيَّد على حساب'} hint={direction === 'incoming' ? 'الطرف الدائن لقيد الاستلام' : 'الطرف المدين لقيد التحرير — مصروف أو رواتب مستحقة'}>
+                <select value={counterAccount} onChange={(e) => setCounterAccount(e.target.value)} className={inputCls}>
+                  {counterOptions.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.nameAr}</option>)}
+                </select>
+              </Field>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Field label={`المبلغ (${cur.symbol})`}>
               <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputCls} dir="ltr" />
@@ -229,7 +263,7 @@ export function ChequesPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!chequeNumber.trim() || !partyId || !amount.trim() || !dueDate}>💾 تسجيل الشيك</Btn>
+            <Btn onClick={save} disabled={!chequeNumber.trim() || (!partyId && !partyName.trim()) || !amount.trim() || !dueDate}>💾 تسجيل الشيك</Btn>
           </div>
         </div>
       </Modal>
@@ -253,11 +287,12 @@ export function ChequesPage() {
             {!isFinalStatus(viewing.status) && (
               <div className="space-y-2">
                 <div className="text-[12px] font-bold text-slate-500 flex items-center gap-1.5"><Banknote size={13} /> ماذا حدث للشيك؟</div>
-                {NEXT_ACTIONS[viewing.status].some((a) => a.to === 'collected' || a.to === 'cleared') && banks.length > 1 && (
-                  <Field label="أي بنك؟" hint="التحصيل يدخل فيه والصرف يخرج منه">
-                    <select value={bankAccount} onChange={(e) => setBankAccount(e.target.value)} className={inputCls}>
-                      {banks.map((b) => <option key={b.code} value={b.code}>{b.nameAr}</option>)}
-                    </select>
+                {NEXT_ACTIONS[viewing.status].some((a) => a.to === 'collected' || a.to === 'cleared') && (
+                  <Field
+                    label={viewing.direction === 'incoming' ? 'أين يدخل المبلغ المُحصَّل؟' : 'من أي حساب يُصرف؟'}
+                    hint="بنك أو خزينة نقدية — القيد يُثبت المبلغ في الحساب المختار فوراً"
+                  >
+                    <TreasuryPicker value={settleAccount} onChange={setSettleAccount} compact />
                   </Field>
                 )}
                 {NEXT_ACTIONS[viewing.status].map((a) => (
@@ -282,7 +317,7 @@ export function ChequesPage() {
                     {entry.lines.map((l, i) => (
                       <tr key={i} className="border-t border-rose-500/5">
                         <td className="px-4 py-1.5 text-slate-600 dark:text-slate-300">
-                          {l.debit > 0 ? '' : '\u00A0\u00A0\u00A0\u00A0إلى '} {ACCOUNT_NAMES[l.accountCode] ?? l.accountCode}
+                          {l.debit > 0 ? '' : '\u00A0\u00A0\u00A0\u00A0إلى '} {accountName(l.accountCode)}
                         </td>
                         <td className="px-4 py-1.5 w-28 font-bold">{l.debit > 0 ? fmt(l.debit) : ''}</td>
                         <td className="px-4 py-1.5 w-28 font-bold text-slate-400">{l.credit > 0 ? fmt(l.credit) : ''}</td>

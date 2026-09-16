@@ -24,7 +24,7 @@ ok(ACTIVITY_TEMPLATES.length === EXPECTED.length, `عدد الأنشطة = ${EXP
 for (const id of EXPECTED) ok(!!getActivity(id), `نشاط ${id} موجود`)
 
 /* ─── فحوص عامة لكل نشاط ─── */
-const WORK_MODULES = ['pos', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
+const WORK_MODULES = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
 const ids = new Set()
 for (const a of ACTIVITY_TEMPLATES) {
   ok(!ids.has(a.id), `معرف ${a.id} غير مكرر`)
@@ -55,7 +55,7 @@ ok(jew.features.includes('weight_scale') && jew.features.includes('price_lists')
 ok(jew.taxInclusiveDefault === false && jew.defaultInvoiceTemplate === 'a4', 'المجوهرات: فاتورة A4 موثقة')
 
 const lau = getActivity('laundry')
-ok(lau.modules.includes('maintenance') && !lau.modules.includes('inventory'), 'المغسلة: تذاكر استلام/تسليم بلا مخازن')
+ok(lau.modules.includes('laundry') && !lau.modules.includes('maintenance') && !lau.modules.includes('inventory'), 'المغسلة: وحدة غسيل مستقلة (لا صيانة) بلا مخازن')
 
 /* ─── الأنشطة الخدمية بلا مخازن افتراضياً (قرار 22) ─── */
 for (const id of ['logistics', 'lab', 'contracting', 'clinic', 'equipment_rental', 'laundry']) {

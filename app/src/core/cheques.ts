@@ -37,8 +37,14 @@ export interface Cheque {
   id: number
   chequeNumber: string      // رقم الورقة كما هو مطبوع عليها
   direction: ChequeDirection
-  partyId: number           // عميل (وارد) أو مورد (صادر)
-  partyName: string
+  partyId: number | null    // عميل (وارد) أو مورد (صادر) — null = شيك بلا طرف مسجل (طلب المالك)
+  partyName: string         // اسم الطرف/المستفيد ولو غير مسجل
+  /**
+   * الحساب المقابل للورقة (طلب المالك — كل السيناريوهات العملية):
+   * وارد: 1104 عميل (افتراضي) أو أي إيراد/حساب آخر لشيك بلا عميل
+   * صادر: 2101 مورد (افتراضي) أو مصروف (5xxx) / رواتب مستحقة 2104 / حساب مخصص
+   */
+  counterAccount: string
   bankName: string          // البنك المسحوب عليه
   amountMinor: Minor
   dueDate: string           // تاريخ الاستحقاق ISO (yyyy-mm-dd)
@@ -75,50 +81,58 @@ export function validateCheque(args: {
   chequeNumber: string
   amountMinor: Minor
   dueDate: string
-  partyId: number
+  partyId: number | null
+  partyName?: string
 }): void {
   if (!args.chequeNumber.trim()) throw new Error('رقم الشيك مطلوب')
   if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ الشيك يجب أن يكون موجباً')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(args.dueDate)) throw new Error('تاريخ الاستحقاق غير صالح')
-  if (!Number.isInteger(args.partyId) || args.partyId <= 0) throw new Error('اختر الطرف (عميل/مورد)')
+  if (args.partyId != null && (!Number.isInteger(args.partyId) || args.partyId <= 0)) throw new Error('الطرف المختار غير صالح')
+  if (args.partyId == null && !(args.partyName ?? '').trim()) throw new Error('اكتب اسم الطرف/المستفيد للشيك غير المربوط بحساب مسجل')
 }
 
 /* ─── بناء القيود (نقية — ترمي لو غير متوازنة) ─── */
 
-/** استلام شيك وارد من عميل: 1106 ← 1104 */
-export function buildChequeReceiveEntry(amountMinor: Minor, note: string): JournalLine[] {
+/** استلام شيك وارد: 1106 ← الحساب المقابل (1104 عميل افتراضياً، أو إيراد/آخر لشيك بلا عميل) */
+export function buildChequeReceiveEntry(amountMinor: Minor, note: string, counterAccount: string = CUSTOMERS): JournalLine[] {
   const lines: JournalLine[] = [
     { accountCode: NOTES_RECEIVABLE, debit: amountMinor, credit: 0, note },
-    { accountCode: CUSTOMERS, debit: 0, credit: amountMinor, note },
+    { accountCode: counterAccount, debit: 0, credit: amountMinor, note },
   ]
   assertBalanced(lines)
   return lines
 }
 
-/** تحصيل شيك وارد: البنك المختار (افتراضياً 1102) ← 1106 — يدعم البنوك المتعددة */
-export function buildChequeCollectEntry(amountMinor: Minor, note: string, bank: string = BANK): JournalLine[] {
+/**
+ * تحصيل شيك وارد: حساب الإيداع المختار ← 1106
+ * (طلب المالك: المحصَّل يدخل بنكاً أو خزينة نقدية — لا مبلغ عائماً بلا حساب أبداً)
+ */
+export function buildChequeCollectEntry(amountMinor: Minor, note: string, depositAccount: string = BANK): JournalLine[] {
   const lines: JournalLine[] = [
-    { accountCode: bank, debit: amountMinor, credit: 0, note },
+    { accountCode: depositAccount, debit: amountMinor, credit: 0, note },
     { accountCode: NOTES_RECEIVABLE, debit: 0, credit: amountMinor, note },
   ]
   assertBalanced(lines)
   return lines
 }
 
-/** ارتداد شيك وارد: عكس الاستلام — 1104 ← 1106 (الدين يعود على العميل) */
-export function buildChequeBounceEntry(amountMinor: Minor, note: string): JournalLine[] {
+/** ارتداد شيك وارد: عكس الاستلام — الحساب المقابل ← 1106 (يعود الدين/الإيراد كما كان) */
+export function buildChequeBounceEntry(amountMinor: Minor, note: string, counterAccount: string = CUSTOMERS): JournalLine[] {
   const lines: JournalLine[] = [
-    { accountCode: CUSTOMERS, debit: amountMinor, credit: 0, note },
+    { accountCode: counterAccount, debit: amountMinor, credit: 0, note },
     { accountCode: NOTES_RECEIVABLE, debit: 0, credit: amountMinor, note },
   ]
   assertBalanced(lines)
   return lines
 }
 
-/** تحرير شيك صادر لمورد: 2101 ← 2106 */
-export function buildChequeIssueEntry(amountMinor: Minor, note: string): JournalLine[] {
+/**
+ * تحرير شيك صادر: الحساب المقابل ← 2106
+ * (2101 مورد افتراضياً — أو مصروف 5xxx / رواتب 2104 / أي حساب مخصص لشيك بلا مورد)
+ */
+export function buildChequeIssueEntry(amountMinor: Minor, note: string, counterAccount: string = SUPPLIERS): JournalLine[] {
   const lines: JournalLine[] = [
-    { accountCode: SUPPLIERS, debit: amountMinor, credit: 0, note },
+    { accountCode: counterAccount, debit: amountMinor, credit: 0, note },
     { accountCode: NOTES_PAYABLE, debit: 0, credit: amountMinor, note },
   ]
   assertBalanced(lines)
@@ -135,11 +149,11 @@ export function buildChequeClearEntry(amountMinor: Minor, note: string, bank: st
   return lines
 }
 
-/** إلغاء شيك صادر قبل صرفه: عكس التحرير — 2106 ← 2101 (الدين يعود للمورد) */
-export function buildChequeCancelEntry(amountMinor: Minor, note: string): JournalLine[] {
+/** إلغاء شيك صادر قبل صرفه: عكس التحرير — 2106 ← الحساب المقابل (يعود الالتزام كما كان) */
+export function buildChequeCancelEntry(amountMinor: Minor, note: string, counterAccount: string = SUPPLIERS): JournalLine[] {
   const lines: JournalLine[] = [
     { accountCode: NOTES_PAYABLE, debit: amountMinor, credit: 0, note },
-    { accountCode: SUPPLIERS, debit: 0, credit: amountMinor, note },
+    { accountCode: counterAccount, debit: 0, credit: amountMinor, note },
   ]
   assertBalanced(lines)
   return lines

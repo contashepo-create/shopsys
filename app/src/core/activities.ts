@@ -48,7 +48,8 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     id: 'grocery', nameAr: 'أغذية / سوبر ماركت', icon: '🛒',
     description: 'صلاحيات ودفعات، بيع بالوزن، وحدات متعددة',
     features: ['expiry_batches', 'weight_scale', 'multi_unit', 'price_lists'],
-    modules: ['pos', 'inventory', 'purchases', 'installments'],
+    // مراجعة سطرية (طلب المالك): لا أقساط في بيع الأغذية — الوحدة تُفعَّل بالمفتاح لو احتاجها أحد
+    modules: ['pos', 'inventory', 'purchases'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
@@ -76,7 +77,8 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     id: 'electronics', nameAr: 'أجهزة كهربائية', icon: '🔌',
     description: 'سيريال وضمان، أقساط',
     features: ['serial_warranty', 'multi_unit'],
-    modules: ['pos', 'inventory', 'purchases', 'maintenance', 'installments', 'wallet_services'],
+    // مراجعة سطرية (طلب المالك): خدمات المحافظ تخص محلات الموبايل لا معارض الأجهزة
+    modules: ['pos', 'inventory', 'purchases', 'maintenance', 'installments'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
@@ -185,7 +187,7 @@ export function toggleModuleList(current: BusinessModule[], m: BusinessModule): 
   if (current.includes(m)) {
     const next = current.filter((x) => x !== m)
     // لا يجوز إطفاء كل شيء: يجب أن تبقى وحدة «عمل» واحدة على الأقل
-    const workModules: BusinessModule[] = ['pos', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services']
+    const workModules: BusinessModule[] = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services']
     if (!next.some((x) => workModules.includes(x))) {
       throw new Error('لا يمكن إلغاء آخر وحدة عمل — يجب أن تبقى وحدة عمل واحدة على الأقل')
     }

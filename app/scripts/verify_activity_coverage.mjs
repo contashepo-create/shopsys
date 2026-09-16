@@ -50,7 +50,7 @@ for (const m of ALL_MODULES) {
 }
 
 console.log('\n🏪 الأنشطة الـ16: وحدات معرفة + وحدة عمل واحدة على الأقل')
-const workModules = ['pos', 'maintenance', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
+const workModules = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
 for (const a of ACTIVITY_TEMPLATES) {
   const allKnown = a.modules.every((m) => ALL_MODULES.includes(m))
   const hasWork = a.modules.some((m) => workModules.includes(m))
@@ -91,6 +91,7 @@ const MODULE_ACCOUNTS = {
   inventory: ['1103'],
   purchases: ['2101', '1103'],
   maintenance: ['4103'],
+  laundry: ['4103', '2109'],
   equipment_rental: ['4104', '2103', '5105'],
   logistics: ['4105', '5106'],
   lab: ['4106', '5109', '2105'],

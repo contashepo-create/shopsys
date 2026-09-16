@@ -294,6 +294,14 @@ export const useAppStore = create<AppState>()(
             state.setup = { ...state.setup, modules: [...state.setup.modules, 'inventory', 'purchases'] }
           }
         }
+        // ترحيل: نشاط المغسلة كان يعرض «الصيانة» خطأً (بلاغ المالك) — نستبدلها بوحدة المغسلة المستقلة
+        if (state && state.setup.completed && state.setup.activityId === 'laundry') {
+          const mods = state.setup.modules.filter((m) => m !== 'maintenance')
+          if (!mods.includes('laundry')) mods.push('laundry')
+          if (mods.length !== state.setup.modules.length || !state.setup.modules.includes('laundry')) {
+            state.setup = { ...state.setup, modules: mods }
+          }
+        }
         // ترحيل: مفاتيح الرصيد السالب والمخزن الافتراضي (طلب المالك) — الافتراضي: ممنوع
         if (state?.setup) {
           state.setup.allowNegativeTreasury = state.setup.allowNegativeTreasury ?? false
