@@ -14,6 +14,7 @@ import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegr
 import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
 import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
 import type { AboutContent } from '../core/cloud.ts'
+import type { DeviceFlags } from '../core/featureFlags.ts'
 
 export type ThemeMode = 'light' | 'dark'
 
@@ -88,7 +89,9 @@ interface AppState {
   cloudAbout: AboutContent | null
   revokedKeys: string[] // بصمات المفاتيح المحروقة
   cloudSyncedAt: string | null
-  setCloudData: (patch: { about?: AboutContent | null; revoked?: string[] }) => void
+  setCloudData: (patch: { about?: AboutContent | null; revoked?: string[]; flags?: DeviceFlags | null }) => void
+  /** أعلام الميزات عن بُعد (البند 5): المطفأ سحابياً من الميزات الممنوحة — kill-switch فقط */
+  deviceFlags: DeviceFlags | null
   // ─── النسخ الاحتياطي التلقائي كل ساعة (القرار 28) ───
   lastHourlyBackupAt: string | null
   setLastHourlyBackupAt: (iso: string) => void
@@ -237,11 +240,13 @@ export const useAppStore = create<AppState>()(
         }),
       cloudAbout: null,
       revokedKeys: [],
+      deviceFlags: null,
       cloudSyncedAt: null,
       setCloudData: (patch) =>
         set((s) => ({
           cloudAbout: patch.about !== undefined ? patch.about : s.cloudAbout,
           revokedKeys: patch.revoked !== undefined ? patch.revoked : s.revokedKeys,
+          deviceFlags: patch.flags !== undefined ? patch.flags : s.deviceFlags,
           cloudSyncedAt: new Date().toISOString(),
         })),
       lastHourlyBackupAt: null,

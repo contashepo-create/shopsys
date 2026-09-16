@@ -172,6 +172,49 @@ export default {
           await pushChat(env, deviceId, 'developer', text)
         }
       }
+
+      /* ─── أوامر المطوّر (البند 5 — مفاتيح الميزات عن بُعد) — من محادثة المطوّر فقط ───
+         عطل DEV-XXXX cloud_sync [ملاحظة عربية]   → إطفاء ميزة ممنوحة مؤقتاً
+         فعل DEV-XXXX cloud_sync                  → إعادة تفعيلها
+         أعلام DEV-XXXX                            → عرض أعلام الجهاز
+         نشر_تحديث 1.2.0 <رابط> <sha256> [إجباري] → تحديث نقطة /version            */
+      if (!replyTo && text && fromDevChat) {
+        const FEATURES = ['einvoice_eg', 'einvoice_sa', 'multi_branch', 'telegram_bot', 'cloud_sync', 'multi_user_lan']
+        const parts = text.trim().split(/\s+/)
+        const cmd = parts[0]
+
+        if ((cmd === 'عطل' || cmd === 'فعل') && parts[1] && DEVICE_RE.test(parts[1]) && FEATURES.includes(parts[2] ?? '')) {
+          const dev = parts[1], feat = parts[2]
+          const key = `flags:${dev}`
+          const cur = JSON.parse((await env.SHOPSYS_KV.get(key)) ?? '{"disabledFeatures":[],"noteAr":""}')
+          const set = new Set(cur.disabledFeatures ?? [])
+          if (cmd === 'عطل') {
+            set.add(feat)
+            cur.noteAr = clean(parts.slice(3).join(' '), 300) || cur.noteAr || ''
+          } else {
+            set.delete(feat)
+            if (set.size === 0) cur.noteAr = ''
+          }
+          cur.disabledFeatures = [...set]
+          cur.updatedAt = new Date().toISOString()
+          await env.SHOPSYS_KV.put(key, JSON.stringify(cur))
+          await tgSend(env, `${cmd === 'عطل' ? '🔴 عُطلت' : '🟢 فُعّلت'} ميزة ${feat} للجهاز ${dev}\nالمطفأ حالياً: ${cur.disabledFeatures.join('، ') || 'لا شيء'}`)
+        } else if (cmd === 'أعلام' && parts[1] && DEVICE_RE.test(parts[1])) {
+          const raw = await env.SHOPSYS_KV.get(`flags:${parts[1]}`)
+          await tgSend(env, raw ? `🚩 أعلام ${parts[1]}:\n${raw}` : `لا أعلام للجهاز ${parts[1]} — كل ميزاته الممنوحة تعمل`)
+        } else if (cmd === 'نشر_تحديث' && /^\d+\.\d+\.\d+$/.test(parts[1] ?? '')) {
+          const info = {
+            latestVersion: parts[1],
+            downloadUrl: parts[2] ?? '',
+            sha256: parts[3] ?? '',
+            mandatory: parts[4] === 'إجباري',
+            releaseNotesAr: '',
+            publishedAt: new Date().toISOString(),
+          }
+          await env.SHOPSYS_KV.put('version', JSON.stringify(info))
+          await tgSend(env, `📦 نُشر الإصدار v${info.latestVersion}${info.mandatory ? ' (إجباري)' : ''} — نقطة /version محدثة`)
+        }
+      }
       // أي شيء آخر (ملفات/وسائط/محادثات غريبة) يُتجاهل بصمت
       return json({ ok: true })
     }
@@ -215,6 +258,15 @@ export default {
       const raw = await env.SHOPSYS_KV.get(`sub:${m[1]}`)
       if (!raw) return json(null)
       return new Response(raw, { headers: JSON_HEADERS })
+    }
+
+    // GET /flags/:deviceId — مفتاح الإطفاء السحابي (البند 5):
+    // المنح دائماً بمفتاح موقَّع؛ السحابة تعطّل مؤقتاً فقط (متأخر سداد مثلاً).
+    // المطوّر يضبطه من البوت: «عطل <device> <feature>» / «فعل <device> <feature>»
+    const fm = path.match(/^\/flags\/([A-Z0-9-]+)$/i)
+    if (fm) {
+      const raw = await env.SHOPSYS_KV.get(`flags:${fm[1]}`)
+      return new Response(raw ?? JSON.stringify({ disabledFeatures: [], noteAr: '', updatedAt: '' }), { headers: JSON_HEADERS })
     }
 
     return json({ error: 'not found' }, 404)

@@ -12,6 +12,7 @@ import { validateSyncConfig, fetchRemote } from '../../data/syncClient.ts'
 import { runSyncCycle } from '../../data/syncRunner.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { deriveArchitectureMode, MODE_LABELS } from '../../core/architecture.ts'
+import { isCloudDisabled } from '../../core/featureFlags.ts'
 
 const CREATE_TABLE_SQL = `create table if not exists stores (
   store_id text primary key,
@@ -26,7 +27,7 @@ create policy "stores anon access" on stores for all
   to anon using (true) with check (true);`
 
 export function SyncPage() {
-  const { sync, updateSync, activatedPayload, trialStartedAt, lastSeenAt, deviceId } = useAppStore()
+  const { sync, updateSync, activatedPayload, trialStartedAt, lastSeenAt, deviceId, deviceFlags } = useAppStore()
   const toast = useToast()
 
   const licensed = useMemo(() => {
@@ -41,6 +42,9 @@ export function SyncPage() {
   )
   const archInfo = MODE_LABELS[archMode]
 
+  // مفتاح الإطفاء السحابي (البند 5): ممنوحة بالمفتاح لكن المطوّر أطفأها مؤقتاً
+  const cloudDisabled = isCloudDisabled('cloud_sync', activatedPayload?.features ?? [], deviceFlags)
+
   const [url, setUrl] = useState(sync.url)
   const [anonKey, setAnonKey] = useState(sync.anonKey)
   const [storeId, setStoreId] = useState(sync.storeId)
@@ -48,6 +52,23 @@ export function SyncPage() {
   const [busy, setBusy] = useState<string | null>(null)
 
   const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5'
+
+  /* ─── إطفاء سحابي مؤقت (البند 5): رسالة مختلفة عن «غير مشتراة» ─── */
+  if (licensed && cloudDisabled) {
+    return (
+      <div className="max-w-2xl">
+        <div className={`anim-up ${card} !p-10 text-center space-y-3 border-amber-400/40`}>
+          <Lock className="w-12 h-12 mx-auto text-amber-400" />
+          <h1 className="text-xl font-black">المزامنة السحابية معطَّلة مؤقتاً</h1>
+          <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed max-w-md mx-auto">
+            الميزة ضمن خطتك، لكن المطوّر أوقفها مؤقتاً من لوحة التحكم.
+            {deviceFlags?.noteAr ? ` السبب: ${deviceFlags.noteAr}.` : ''} بياناتك المحلية سليمة وتعمل كالمعتاد —
+            تواصل مع الدعم من صفحة «حول» لإعادة التفعيل.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   /* ─── شاشة القفل: الميزة تُباع ضمن الخطط الأعلى (القرار 24) ─── */
   if (!licensed) {

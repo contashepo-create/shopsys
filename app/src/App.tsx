@@ -9,6 +9,7 @@ import { runSyncCycle, watchLocalChanges } from './data/syncRunner.ts'
 import { hasFeature } from './core/license.ts'
 import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSender.ts'
 import { fetchAbout, fetchRevocationList, DEFAULT_CLOUD_BASE_URL } from './core/cloud.ts'
+import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
 import { buildAccentCssVars } from './core/appearance.ts'
@@ -220,14 +221,20 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     const sync = async () => {
-      const [about, revoked] = await Promise.all([
+      const devId = useAppStore.getState().deviceId
+      const [about, revoked, flags] = await Promise.all([
         fetchAbout(DEFAULT_CLOUD_BASE_URL),
         fetchRevocationList(DEFAULT_CLOUD_BASE_URL),
+        fetchDeviceFlags(DEFAULT_CLOUD_BASE_URL, devId), // مفاتيح الميزات عن بُعد (البند 5)
       ])
       if (cancelled) return
       // فشل الجلب (أوفلاين) لا يمس آخر بيانات محفوظة
-      if (about !== null || revoked !== null) {
-        setCloudData({ ...(about !== null ? { about } : {}), ...(revoked !== null ? { revoked } : {}) })
+      if (about !== null || revoked !== null || flags !== null) {
+        setCloudData({
+          ...(about !== null ? { about } : {}),
+          ...(revoked !== null ? { revoked } : {}),
+          ...(flags !== null ? { flags } : {}),
+        })
       }
     }
     sync()
@@ -293,6 +300,8 @@ export default function App() {
         lastSeenAt: app.lastSeenAt, today: new Date().toISOString(),
       })
       if (!hasFeature(lic, 'cloud_sync')) return
+      // مفتاح الإطفاء السحابي (البند 5): ميزة ممنوحة لكن المطوّر أطفأها مؤقتاً
+      if (lic.status === 'active' && !effectiveFeatures(lic.payload.features, app.deviceFlags).includes('cloud_sync')) return
       await runSyncCycle() // أخطاؤها تُسجل في sync.lastResult ولا ترمي أبداً
     }
     tick()
