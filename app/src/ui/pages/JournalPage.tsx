@@ -30,6 +30,7 @@ const SOURCE_LABELS: Record<string, string> = {
   logistics_trip: 'نقلة',
   opening: 'قيد افتتاحي',
   manual: 'قيد يدوي',
+  year_closing: 'إقفال سنة مالية',
   reversal: 'قيد عاكس',
 }
 

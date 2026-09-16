@@ -170,6 +170,8 @@ export interface EmployeeStatementInput {
   employeeId: number
   advances: { advanceNumber: string; date: string; employeeId: number; amountMinor: Minor }[]
   payrollRuns: { runNumber: string; date: string; lines: { employeeId: number; advancesMinor: Minor; deductionsMinor: Minor; netMinor: Minor }[] }[]
+  /** سداد نقدي لسلفة خارج المسير (إصلاح الترابط: كان يُسجَّل قيداً ولا يظهر بالكشف) */
+  advanceRepayments?: { repayNumber: string; date: string; employeeId: number; amountMinor: Minor }[]
 }
 
 export function employeeStatement(input: EmployeeStatementInput): StatementRow[] {
@@ -182,6 +184,10 @@ export function employeeStatement(input: EmployeeStatementInput): StatementRow[]
     const line = run.lines.find((l) => l.employeeId === input.employeeId)
     if (!line || line.advancesMinor <= 0) continue
     rows.push({ date: run.date, docLabel: `استقطاع سلفة — مسير ${run.runNumber}`, debitMinor: 0, creditMinor: line.advancesMinor })
+  }
+  for (const rp of input.advanceRepayments ?? []) {
+    if (rp.employeeId !== input.employeeId) continue
+    rows.push({ date: rp.date, docLabel: `سداد نقدي ${rp.repayNumber}`, debitMinor: 0, creditMinor: rp.amountMinor })
   }
   return runBalance(rows)
 }
@@ -203,9 +209,26 @@ export function customerUnitDocs(args: {
   rentals?: readonly { contractNumber: string; date: string; customerId: number | null; totals: { collectCreditMinor: Minor } }[]
   /** زيارات العيادة الآجلة لمريض مرتبط بهذا العميل (ترقية العيادة) + تحصيلاته */
   clinicVisits?: readonly { visitNumber: string; date: string; patientId: number; totals: { dueMinor: Minor } }[]
-  clinicCollections?: readonly { date: string; patientId: number; amountMinor: Minor }[]
+  clinicCollections?: readonly { date: string; patientId: number; amountMinor: Minor; viaVoucherId?: number | null }[]
   /** معرفات المرضى المرتبطين بهذا العميل */
   linkedPatientIds?: readonly number[]
+  /** طلبات معمل آجلة لمرضى معمل مرتبطين بهذا العميل (إصلاح الترابط الشامل) */
+  labOrders?: readonly { orderNumber: string; date: string; patientId: number; payment: string; totals: { totalMinor: Minor } }[]
+  linkedLabPatientIds?: readonly number[]
+  /** خدمات محافظ بجزء آجل على العميل */
+  walletOps?: readonly { opNumber: string; date: string; customerId: number | null; status: string; totals: { remainingMinor: Minor } }[]
+  /** مستخلصات مقاولات آجلة لمشروعات مربوطة بالعميل + دفعات مقدمة وتحصيلات المشروع */
+  projectExtracts?: readonly { extractNumber: string; date: string; projectId: number; payment: string; totals: { dueMinor: Minor } }[]
+  linkedProjectIds?: readonly number[]
+  /**
+   * خطط أقساط العميل — قيودها (هامش تمويل مدين، مقدم وسدادات دائنة) لا سندات لها
+   * فكانت غائبة تماماً عن الكشف (إصلاح الترابط الشامل)
+   */
+  installmentPlans?: readonly {
+    planNumber: string; customerId: number; createdAt: string
+    interestMinor?: number; downPaymentMinor: number
+    items: readonly { seq: number; dueDate: string; paidMinor: Minor; paidAt: string | null }[]
+  }[]
 }): { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[] {
   const rows: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[] = []
   const patientSet = new Set(args.linkedPatientIds ?? [])
@@ -215,7 +238,32 @@ export function customerUnitDocs(args: {
   }
   for (const c of args.clinicCollections ?? []) {
     if (!patientSet.has(c.patientId)) continue
+    // التحصيل عبر سند قبض يظهر في الكشف بالسند نفسه — لا يُكرَّر هنا (منع الازدواج)
+    if (c.viaVoucherId) continue
     rows.push({ docLabel: 'تحصيل من المريض', date: c.date, debitMinor: 0, creditMinor: c.amountMinor })
+  }
+  const labSet = new Set(args.linkedLabPatientIds ?? [])
+  for (const o of args.labOrders ?? []) {
+    if (o.payment !== 'credit' || !labSet.has(o.patientId)) continue
+    rows.push({ docLabel: `طلب معمل ${o.orderNumber} (آجل)`, date: o.date, debitMinor: o.totals.totalMinor, creditMinor: 0 })
+  }
+  for (const w of args.walletOps ?? []) {
+    if (w.customerId !== args.customerId || w.status === 'returned') continue
+    if (w.totals.remainingMinor > 0) rows.push({ docLabel: `خدمة محفظة ${w.opNumber} (آجل)`, date: w.date, debitMinor: w.totals.remainingMinor, creditMinor: 0 })
+  }
+  const projSet = new Set(args.linkedProjectIds ?? [])
+  for (const ex of args.projectExtracts ?? []) {
+    if (ex.payment !== 'credit' || !projSet.has(ex.projectId)) continue
+    if (ex.totals.dueMinor > 0) rows.push({ docLabel: `مستخلص ${ex.extractNumber} (آجل)`, date: ex.date, debitMinor: ex.totals.dueMinor, creditMinor: 0 })
+  }
+  for (const pl of args.installmentPlans ?? []) {
+    if (pl.customerId !== args.customerId) continue
+    const created = pl.createdAt.slice(0, 10)
+    if ((pl.interestMinor ?? 0) > 0) rows.push({ docLabel: `هامش تقسيط ${pl.planNumber}`, date: created, debitMinor: pl.interestMinor ?? 0, creditMinor: 0 })
+    if (pl.downPaymentMinor > 0) rows.push({ docLabel: `مقدم خطة ${pl.planNumber}`, date: created, debitMinor: 0, creditMinor: pl.downPaymentMinor })
+    for (const it of pl.items) {
+      if (it.paidMinor > 0) rows.push({ docLabel: `سداد قسط ${pl.planNumber}/${it.seq}`, date: (it.paidAt ?? it.dueDate).slice(0, 10), debitMinor: 0, creditMinor: it.paidMinor })
+    }
   }
   for (const t of args.trips ?? []) {
     if (t.customerId !== args.customerId) continue

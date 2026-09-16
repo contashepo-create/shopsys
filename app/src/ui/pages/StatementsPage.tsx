@@ -23,7 +23,7 @@ const KINDS: { id: Kind; nameAr: string; icon: typeof UserRound; debitLabel: str
 ]
 
 export function StatementsPage() {
-  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients } = useDataStore()
+  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, advanceRepayments } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -53,7 +53,7 @@ export function StatementsPage() {
         sales, saleReturns,
         allSales: sales,
         // إصلاح المالك: مستندات الوحدات الأخرى (نقلات/صيانة/إيجار) كانت غائبة عن الكشف
-        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id) }),
+        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), labOrders, linkedLabPatientIds: labPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), walletOps, projectExtracts, linkedProjectIds: projects.filter((p) => p.clientId === partyId).map((p) => p.id), installmentPlans }),
         // تسويات التحصيل FIFO تدخل الكشف كسندات قبض — كانت غائبة (إصلاح تقرير المديونيات)
         vouchers: [
           ...vouchers,
@@ -76,8 +76,8 @@ export function StatementsPage() {
         vouchers, cheques,
       })
     }
-    return employeeStatement({ employeeId: partyId, advances: employeeAdvances, payrollRuns })
-  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements])
+    return employeeStatement({ employeeId: partyId, advances: employeeAdvances, payrollRuns, advanceRepayments })
+  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, advanceRepayments, clientSettlements, openingBalances, settlements, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans])
 
   const balance = statementBalance(rows)
   const partyName = parties.find((p) => p.id === partyId)?.nameAr ?? ''

@@ -11,7 +11,6 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { KARAT_LABELS } from '../../core/jewelry.ts'
 import { themeForActivity, WIDGET_LABELS, type ActivityWidget } from '../../core/activityTheme.ts'
-import { customerStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
 
 interface Row { key: string; main: string; sub: string; badge?: string; tone?: 'ok' | 'warn' | 'danger' }
 
@@ -114,14 +113,10 @@ export function ActivityWidgets() {
           return { count: rows.length, rows: rows.slice(0, 4) }
         }
         case 'top_debtors': {
-          const allVouchers = [
-            ...store.vouchers,
-            ...store.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt' as const, date: st.date, partyKind: 'customer' as const, partyId: st.customerId, amountMinor: st.amountMinor })),
-          ]
           const rows = store.customers
             .map((c) => ({
               c,
-              bal: statementBalance(customerStatement({ customerId: c.id, sales: store.sales, saleReturns: store.saleReturns, allSales: store.sales, vouchers: allVouchers, cheques: store.cheques, extraDocs: customerUnitDocs({ customerId: c.id, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts, clinicVisits: store.clinicVisits, clinicCollections: store.clinicCollections, linkedPatientIds: store.clinicPatients.filter((p) => p.linkedCustomerId === c.id).map((p) => p.id) }) })),
+              bal: store.getCustomerBalance(c.id), // الرصيد الموحّد من كل الأنشطة
             }))
             .filter((x) => x.bal > 0)
             .sort((a, b) => b.bal - a.bal)

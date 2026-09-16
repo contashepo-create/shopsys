@@ -45,7 +45,7 @@ export type SourceType =
   | 'car_purchase' | 'car_sale'
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
-  | 'opening' | 'manual' | 'reversal'
+  | 'opening' | 'manual' | 'year_closing' | 'reversal'
 
 export interface JournalEntry {
   id: number

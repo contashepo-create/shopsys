@@ -10,7 +10,7 @@ import { useDataStore, EMPTY_EXTENDED, type Customer, type Supplier, type PartyE
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { customerStatement, customerUnitDocs, supplierStatement, statementBalance } from '../../core/statements.ts'
+import { supplierStatement, statementBalance } from '../../core/statements.ts'
 import { partyCode, matchesPartyCode } from '../../core/partyCodes.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
@@ -90,7 +90,7 @@ function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: Party
 }
 
 export function CustomersPage() {
-  const { customers, addCustomer, updateCustomer, removeCustomer, sales, saleReturns, vouchers, cheques, clientSettlements, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients } = useDataStore()
+  const { customers, addCustomer, updateCustomer, removeCustomer, sales, saleReturns, vouchers, cheques, clientSettlements, getCustomerBalance } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -100,18 +100,12 @@ export function CustomersPage() {
   const [query, setQuery] = useState('')
   const [view, setView] = useState<'cards' | 'list'>('cards')
 
-  // رصيد كل عميل بجانب اسمه (طلب المالك) — نفس نواة كشف الحساب فلا تعارض بين الشاشتين
+  // رصيد كل عميل بجانب اسمه (طلب المالك) — الرصيد الموحّد من كل الأنشطة (إصلاح الترابط)
   const balances = useMemo(() => {
     const map = new Map<number, number>()
-    const allVouchers = [
-      ...vouchers,
-      ...clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
-    ]
-    for (const c of customers) {
-      map.set(c.id, statementBalance(customerStatement({ customerId: c.id, sales, saleReturns, allSales: sales, vouchers: allVouchers, cheques, extraDocs: customerUnitDocs({ customerId: c.id, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === c.id).map((p) => p.id) }) })))
-    }
+    for (const c of customers) map.set(c.id, getCustomerBalance(c.id))
     return map
-  }, [customers, sales, saleReturns, vouchers, cheques, clientSettlements])
+  }, [customers, sales, saleReturns, vouchers, cheques, clientSettlements, getCustomerBalance])
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Customer | null>(null)
   const [name, setName] = useState('')

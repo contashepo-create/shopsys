@@ -56,6 +56,8 @@ interface AppState {
     contact?: { phone: string; email: string; city: string; street: string }
   }) => void
   addFiscalYear: (fy: Omit<FiscalYear, 'id' | 'status'>) => void
+  /** وسم سنة مالية مقفلة — يُستدعى بعد نجاح قيد الإقفال في repo (closeFiscalYear) */
+  markFiscalYearClosed: (id: number) => void
   setAccountingMode: (m: 'simple' | 'full') => void
   /** تفعيل/إلغاء وحدة عمل من الإعدادات (طلب المالك: الوحدات حسب النشاط وقابلة للتبديل) */
   toggleModule: (m: BusinessModule) => void
@@ -196,6 +198,8 @@ export const useAppStore = create<AppState>()(
         set((s) => ({
           fiscalYears: [...s.fiscalYears, { ...fy, id: s.fiscalYears.reduce((m, y) => Math.max(m, y.id), 0) + 1, status: 'open' }],
         })),
+      markFiscalYearClosed: (id) =>
+        set((s) => ({ fiscalYears: s.fiscalYears.map((y) => (y.id === id ? { ...y, status: 'closed' as const } : y)) })),
       setAccountingMode: (m) => set((s) => ({ setup: { ...s.setup, accountingMode: m } })),
       toggleModule: (m) =>
         set((s) => ({ setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } })),

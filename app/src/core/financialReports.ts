@@ -78,7 +78,8 @@ export interface IncomeStatement {
 }
 
 export function incomeStatement(journal: readonly JournalEntry[], p: FinPeriod, extraNames?: Record<string, string>): IncomeStatement {
-  const tb = trialBalance(journal, p, extraNames)
+  // قيود إقفال السنة تصفّر 4xxx/5xxx — تُستثنى هنا لتظل قائمة الدخل تعرض الأداء الحقيقي لأي فترة حتى بعد الإقفال
+  const tb = trialBalance(journal.filter((e) => e.sourceType !== 'year_closing'), p, extraNames)
   const revenues = tb.rows
     .filter((r) => r.rootType === 'revenue')
     .map((r) => ({ code: r.code, nameAr: r.nameAr, amountMinor: r.creditMinor - r.debitMinor }))
@@ -119,7 +120,11 @@ export function balanceSheet(journal: readonly JournalEntry[], asOf: string, ext
   const liabilities = pick('liabilities')
   const equity = pick('equity')
   const inc = incomeStatement(journal, p, extraNames)
-  const retainedEarningsMinor = inc.netProfitMinor
+  // ما أُقفل رسمياً في 3102 (قيود year_closing) صار ضمن حقوق الملكية أعلاه — يُطرح من نتيجة الفترة الجارية
+  const closedNetMinor = journal
+    .filter((e) => e.sourceType === 'year_closing' && e.date <= asOf)
+    .reduce((a, e) => a + e.lines.filter((l) => l.accountCode === '3102').reduce((x, l) => x + l.credit - l.debit, 0), 0)
+  const retainedEarningsMinor = inc.netProfitMinor - closedNetMinor
   const totalAssetsMinor = assets.reduce((a, r) => a + r.amountMinor, 0)
   const totalLiabilitiesEquityMinor =
     liabilities.reduce((a, r) => a + r.amountMinor, 0) + equity.reduce((a, r) => a + r.amountMinor, 0) + retainedEarningsMinor

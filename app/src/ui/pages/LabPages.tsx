@@ -494,7 +494,7 @@ export function LabTestsPage() {
 /* ═══════════════ 3) المرضى ═══════════════ */
 
 export function LabPatientsPage() {
-  const { labPatients, labOrders, addLabPatient } = useDataStore()
+  const { labPatients, labOrders, addLabPatient, updateLabPatient, customers } = useDataStore()
   const toast = useToast()
   const [open, setOpen] = useState(false)
   const [nameAr, setNameAr] = useState('')
@@ -530,7 +530,7 @@ export function LabPatientsPage() {
         <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
           <table className="w-full text-sm">
             <thead className="bg-violet-500/10 text-violet-700 dark:text-violet-300">
-              <tr>{['الكود', 'الاسم', 'الهاتف', 'النوع', 'تاريخ الميلاد', 'الطلبات', 'ملاحظات'].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
+              <tr>{['الكود', 'الاسم', 'الهاتف', 'النوع', 'تاريخ الميلاد', 'الطلبات', 'العميل المرتبط', 'ملاحظات'].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
             </thead>
             <tbody>
               {filtered.map((p) => (
@@ -541,6 +541,18 @@ export function LabPatientsPage() {
                   <td className="px-3 py-2.5">{p.gender === 'female' ? 'أنثى' : 'ذكر'}</td>
                   <td className="px-3 py-2.5">{p.birthDate || '—'}</td>
                   <td className="px-3 py-2.5 font-bold">{orderCount(p)}</td>
+                  <td className="px-3 py-2.5">
+                    {/* ربط بعميل مالي (إصلاح الترابط): طلباته الآجلة تدخل كشف حساب العميل */}
+                    <select
+                      value={p.linkedCustomerId ?? 0}
+                      onChange={(e) => { updateLabPatient(p.id, { linkedCustomerId: Number(e.target.value) || null }); }}
+                      className="text-[11px] rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-1 max-w-[130px]"
+                      title="اربط المريض بعميل مالي — طلباته الآجلة تظهر في كشف حساب العميل"
+                    >
+                      <option value={0}>بلا ربط</option>
+                      {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+                    </select>
+                  </td>
                   <td className="px-3 py-2.5 text-slate-500">{p.notes || '—'}</td>
                 </tr>
               ))}

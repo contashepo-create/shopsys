@@ -3,21 +3,49 @@
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
 import { useState } from 'react'
-import { Percent, Globe2, ShieldAlert, Warehouse } from 'lucide-react'
+import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES } from '../../core/activities.ts'
-import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { suggestFiscalYear, validateFiscalYear, validateYearClose } from '../../core/fiscal.ts'
+import { formatMinor } from '../../core/money.ts'
+import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 
 export function GeneralSettingsPage() {
-  const { setup } = useAppStore()
-  const { warehouses } = useDataStore()
+  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed } = useAppStore()
+  const { warehouses, closeFiscalYear } = useDataStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const activity = ACTIVITY_TEMPLATES.find((a) => a.id === setup.activityId)
   const [vat, setVat] = useState(String(setup.vatPercent))
   const [taxInclusive, setTaxInclusive] = useState(setup.taxInclusive)
+  const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const fmt = (m: number) => formatMinor(m, cur, false)
+
+  /* ─── إقفال السنة المالية (منهجية QuickBooks/Xero — طلب المالك) ─── */
+  const [closeTarget, setCloseTarget] = useState<(typeof fiscalYears)[number] | null>(null)
+  const [newYearOpen, setNewYearOpen] = useState(false)
+  const nextSuggested = suggestFiscalYear(new Date().getFullYear() + (fiscalYears.some((y) => y.nameAr === String(new Date().getFullYear())) ? 1 : 0))
+  const [fyName, setFyName] = useState(nextSuggested.nameAr)
+  const [fyStart, setFyStart] = useState(nextSuggested.startDate)
+  const [fyEnd, setFyEnd] = useState(nextSuggested.endDate)
+  const doCloseYear = () => {
+    if (!closeTarget) return
+    try {
+      const { netProfitMinor } = closeFiscalYear(closeTarget, fiscalYears)
+      markFiscalYearClosed(closeTarget.id)
+      toast.show(`أُقفلت سنة «${closeTarget.nameAr}» — صافي ${netProfitMinor >= 0 ? 'الربح' : 'الخسارة'} ${fmt(Math.abs(netProfitMinor))} ${cur.symbol} رُحّل للأرباح المرحلة ✅`)
+      setCloseTarget(null)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+  const saveNewYear = () => {
+    const errors = validateFiscalYear({ nameAr: fyName, startDate: fyStart, endDate: fyEnd }, fiscalYears)
+    if (errors.length) return toast.show(errors[0], 'error')
+    addFiscalYear({ nameAr: fyName.trim(), startDate: fyStart, endDate: fyEnd })
+    toast.show(`فُتحت السنة المالية «${fyName}» ✅`)
+    setNewYearOpen(false)
+  }
 
   const saveTax = () => {
     useAppStore.setState((s) => ({
@@ -204,6 +232,72 @@ export function GeneralSettingsPage() {
           الخصائص (البنفسجية) افتراضيات النشاط — كل خاصية تُفعَّل لأي قسم أو صنف من شاشة الأصناف (القرار 5).
         </p>
       </section>
+
+      {/* السنوات المالية والإقفال السنوي (طلب المالك — منهجية عالمية) */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '200ms' }}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-extrabold text-slate-800 dark:text-white text-sm flex items-center gap-2"><CalendarCheck2 size={16} className="text-emerald-500" /> السنوات المالية</h3>
+          <Btn variant="ghost" onClick={() => setNewYearOpen(true)}>+ فتح سنة جديدة</Btn>
+        </div>
+        <p className="text-[11px] text-slate-400 mb-3 leading-relaxed">
+          الإقفال السنوي (منهجية البرامج العالمية): قيد يُصفّر كل الإيرادات والمصروفات ويرحّل صافي
+          الربح/الخسارة إلى «الأرباح المرحّلة» — وبعده تُقفل الفترة فلا قيود بأثر رجعي فيها.
+          أرصدة العملاء والموردين والخزائن تنتقل تلقائياً (الميزانية تراكمية).
+        </p>
+        <div className="space-y-2">
+          {fiscalYears.length === 0 && <div className="text-[12px] text-slate-400">لا سنوات مسجلة</div>}
+          {fiscalYears.map((y) => {
+            const closable = validateYearClose(y, fiscalYears, new Date().toISOString().slice(0, 10)).length === 0
+            return (
+              <div key={y.id} className="flex items-center justify-between rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5">
+                <div>
+                  <span className="font-black text-slate-800 dark:text-white">{y.nameAr}</span>
+                  <span className="text-[11px] text-slate-400 ms-2" dir="ltr">{y.startDate} → {y.endDate}</span>
+                </div>
+                {y.status === 'closed' ? (
+                  <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-500/10 text-slate-500 font-bold flex items-center gap-1"><Lock size={11} /> مقفلة</span>
+                ) : closable ? (
+                  <Btn variant="ghost" onClick={() => setCloseTarget(y)}>🔒 إقفال السنة</Btn>
+                ) : (
+                  <span className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">مفتوحة — جارية</span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </section>
+
+      <Modal open={!!closeTarget} onClose={() => setCloseTarget(null)} title={`🔒 إقفال السنة المالية «${closeTarget?.nameAr ?? ''}»`}>
+        <div className="space-y-4">
+          <div className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
+            سيحدث الآتي (لا رجوع إلا بعكس القيد يدوياً):
+            <ul className="list-disc pr-5 mt-2 space-y-1 text-[12px]">
+              <li>قيد إقفال بتاريخ {closeTarget?.endDate} يصفّر كل حسابات الإيرادات والمصروفات</li>
+              <li>صافي الربح/الخسارة يُرحَّل إلى «أرباح مرحّلة 3102»</li>
+              <li>تُقفل الفترة: يُرفض أي قيد يدوي بتاريخ داخلها</li>
+              <li>قوائم الدخل التاريخية تظل صحيحة (قيد الإقفال مستثنى منها)</li>
+            </ul>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setCloseTarget(null)}>تراجع</Btn>
+            <Btn onClick={doCloseYear}>🔒 تأكيد الإقفال</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={newYearOpen} onClose={() => setNewYearOpen(false)} title="📅 فتح سنة مالية جديدة">
+        <div className="space-y-4">
+          <Field label="اسم السنة *"><input value={fyName} onChange={(e) => setFyName(e.target.value)} className={inputCls} placeholder="2027" /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="من *"><input type="date" value={fyStart} onChange={(e) => setFyStart(e.target.value)} className={inputCls} /></Field>
+            <Field label="إلى *"><input type="date" value={fyEnd} onChange={(e) => setFyEnd(e.target.value)} className={inputCls} /></Field>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setNewYearOpen(false)}>إلغاء</Btn>
+            <Btn onClick={saveNewYear}>💾 فتح السنة</Btn>
+          </div>
+        </div>
+      </Modal>
 
       {/* اختيار بلد آخر يدوياً */}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '240ms' }}>

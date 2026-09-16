@@ -38,7 +38,9 @@ import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBa
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
 import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
 import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
-import { customerStatement, supplierStatement, statementBalance } from '../core/statements.ts'
+import { customerStatement, supplierStatement, statementBalance, customerUnitDocs } from '../core/statements.ts'
+import { buildYearClosingLines, validateYearClose, dateInClosedYear, type FiscalYear } from '../core/fiscal.ts'
+import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput } from '../core/assets.ts'
@@ -272,6 +274,8 @@ export interface LabPatient {
   gender: Gender
   birthDate: string // YYYY-MM-DD ('' = غير معروف)
   notes: string
+  /** ربط بعميل مالي (إصلاح الترابط): طلباته الآجلة تظهر في كشف حساب العميل */
+  linkedCustomerId?: number | null
 }
 
 /** فحص داخل طلب — لقطة السعر والنطاق وقت الطلب + النتيجة ودورتها */
@@ -419,6 +423,12 @@ export interface ClinicCollection {
   date: string
   amountMinor: number
   journalEntryId: number
+  /**
+   * إن كان التحصيل جاء عبر سند قبض على العميل المرتبط (إصلاح المالك:
+   * «حصّلت بسند قبض ولم يخفض رصيد المريض») — السند نفسه يظهر في كشف العميل
+   * فلا يُكرر هذا الصف هناك، لكنه يخفض رصيد المريض في ملفه.
+   */
+  viaVoucherId?: number | null
 }
 
 /** موعد قادم */
@@ -705,6 +715,33 @@ export interface Voucher {
   partyId?: number | null
 }
 
+/**
+ * جزاء/خصم مسجل على موظف (إصلاح فجوة الرواتب): يُسجَّل بمستند مرقم DED-0001
+ * بلا قيد لحظة التسجيل — محاسبياً يُخصم عند المسير فيخفض مصروف الرواتب 5102 تلقائياً
+ * (طريقة صافي التكلفة). recoveredMinor يتتبع المخصوم منه عبر المسيرات (كامل/جزء/تأجيل).
+ */
+export interface EmployeeDeduction {
+  id: number
+  dedNumber: string // DED-0001
+  employeeId: number
+  date: string
+  amountMinor: number
+  recoveredMinor: number // المخصوم فعلاً من المسيرات حتى الآن
+  reason: string // غياب، تأخير، جزاء إداري…
+  notes: string
+}
+
+/** سداد نقدي لسلفة موظف خارج المسير: خزينة مدين / 1107 دائن */
+export interface AdvanceRepayment {
+  id: number
+  repayNumber: string // ADR-0001
+  employeeId: number
+  date: string
+  amountMinor: number
+  treasury: TreasuryAccount
+  journalEntryId: number
+}
+
 /** سلفة موظف — أصل على الموظف (1107) تُخصم من الرواتب على دفعات بحرية المالك */
 export interface EmployeeAdvance {
   id: number
@@ -879,6 +916,8 @@ interface DataState {
   goldTradeIns: GoldTradeInDoc[]
   vouchers: Voucher[]
   employeeAdvances: EmployeeAdvance[] // سلف الموظفين (طلب المالك)
+  employeeDeductions: EmployeeDeduction[] // جزاءات/خصومات مسجلة تُخصم من المسيرات (كامل/جزء/تأجيل)
+  advanceRepayments: AdvanceRepayment[] // سدادات نقدية للسلف خارج المسير
   sales: SaleInvoice[]
   saleReturns: SaleReturn[]
   shifts: Shift[]
@@ -1123,6 +1162,16 @@ interface DataState {
   }) => PayrollRun
   /** المتبقي غير المسترد من سلف موظف (سلفة نقدية أو عجز عهدة) — للخصم الحر بالمسير */
   getEmployeeAdvanceBalance: (employeeId: number) => { totalMinor: number; remainingMinor: number; advances: EmployeeAdvance[] }
+  /** تسجيل جزاء/خصم على موظف — يُخصم من المسيرات لاحقاً (كامل/جزء/تأجيل بحرية المالك) */
+  addEmployeeDeduction: (args: { employeeId: number; amountMinor: number; reason: string; notes?: string }) => EmployeeDeduction
+  /** متبقي الجزاءات غير المخصومة لموظف — يغذي زر «خصم الكل» في المسير */
+  getEmployeeDeductionBalance: (employeeId: number) => { totalMinor: number; remainingMinor: number; deductions: EmployeeDeduction[] }
+  /** سداد نقدي لسلفة خارج المسير: قيد خزينة ← 1107 ويخفض متبقي السلفة */
+  repayEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount }) => AdvanceRepayment
+  /** إقفال سنة مالية (منهجية QuickBooks/Xero): قيد يصفّر 4xxx/5xxx → أرباح مرحلة 3102 ثم يقفل الفترة */
+  closeFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { entryId: number; netProfitMinor: number }
+  /** رصيد العميل الموحّد من كل الأنشطة — مصدر حقيقة واحد لكل الشاشات */
+  getCustomerBalance: (customerId: number) => number
   /** مستحق الموظف من زيادات مصاريف العهد (2107) غير المصروف بعد */
   getEmployeeExcessDue: (employeeId: number) => number
   /**
@@ -1226,6 +1275,8 @@ interface DataState {
   seedStarterTests: (defaultPriceMinor: number) => number
   addLabReferrer: (r: Omit<Referrer, 'id'>) => Referrer
   addLabPatient: (p: Omit<LabPatient, 'id'>) => LabPatient
+  /** تعديل مريض معمل — منه ربطه بعميل مالي (linkedCustomerId) فتظهر طلباته الآجلة بكشف العميل */
+  updateLabPatient: (id: number, patch: Partial<Omit<LabPatient, 'id'>>) => void
   /**
    * تسجيل طلب تحاليل: لقطة أسعار ونطاقات وقت الطلب ← قيد تحصيل متوازن
    * (1101/1104 ← 4106+2102) + قيد استحقاق عمولة المُحيل (5109 ← 2105) إن وجد
@@ -1611,6 +1662,8 @@ export const useDataStore = create<DataState>()(
       goldTradeIns: [],
       vouchers: [],
       employeeAdvances: [],
+      employeeDeductions: [],
+      advanceRepayments: [],
       sales: [],
       saleReturns: [],
       shifts: [],
@@ -2510,21 +2563,8 @@ export const useDataStore = create<DataState>()(
           const c = state.customers.find((x) => x.id === Number(args.refId))
           if (!c) throw new Error('العميل غير موجود')
           refNameAr = c.nameAr
-          bookMinor = statementBalance(customerStatement({
-            customerId: c.id,
-            openingMinor: state.openingBalances[`customer:${c.id}`] ?? 0,
-            sales: state.sales, saleReturns: state.saleReturns, allSales: state.sales,
-            vouchers: [
-              ...state.vouchers,
-              ...state.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
-            ],
-            cheques: state.cheques,
-            adjustments: state.settlements.filter((st) => st.section === 'customer' && Number(st.refId) === c.id).map((st) => ({
-              docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
-              debitMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
-              creditMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
-            })),
-          }))
+          // الرصيد الموحّد من كل الأنشطة (إصلاح الترابط) — نفس مصدر كل الشاشات
+          bookMinor = get().getCustomerBalance(c.id)
         } else {
           const sup = state.suppliers.find((x) => x.id === Number(args.refId))
           if (!sup) throw new Error('المورد غير موجود')
@@ -2781,7 +2821,32 @@ export const useDataStore = create<DataState>()(
           partyId: args.partyId ?? null,
         }
 
-        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry] })
+        // ═══ إصلاح المالك: «المبالغ في الملف غير مطابقة لكشف الحساب» ═══
+        // سند قبض من عميل (1104) مرتبط بمرضى عيادة ⇒ نوزع المبلغ على أرصدة
+        // مرضاه المفتوحة (الأقدم أولاً) كتحصيلات عيادة، فيتصفّر ملف المريض
+        // وكشف الحساب معاً من نفس السند — مصدر حقيقة واحد بلا ازدواج قيود.
+        let clinicCollections = state.clinicCollections
+        if (args.kind === 'receipt' && args.partyKind === 'customer' && args.partyId && args.counterAccountCode === '1104') {
+          const linkedPatients = state.clinicPatients.filter((p) => p.linkedCustomerId === args.partyId)
+          let toAllocate = args.amountMinor
+          for (const pat of linkedPatients) {
+            if (toAllocate <= 0) break
+            const bal = patientBalance(
+              state.clinicVisits.filter((v) => v.patientId === pat.id).map((v) => ({ dueMinor: v.totals.dueMinor })),
+              clinicCollections.filter((c) => c.patientId === pat.id).map((c) => ({ amountMinor: c.amountMinor })),
+            )
+            const take = Math.min(bal, toAllocate)
+            if (take > 0) {
+              clinicCollections = [...clinicCollections, {
+                id: nextId(clinicCollections), patientId: pat.id, date: now,
+                amountMinor: take, journalEntryId: entryId, viaVoucherId: voucherId,
+              }]
+              toAllocate -= take
+            }
+          }
+        }
+
+        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry], clinicCollections })
         return voucher
       },
 
@@ -2833,6 +2898,11 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const errors = validateManualEntry(args.lines, STANDARD_COA)
         if (errors.length) throw new Error(errors.join('، '))
+        // حارس الفترة المقفلة (منهجية Closing Date العالمية): لا قيود بأثر رجعي في سنة مقفلة
+        if (args.date) {
+          const closed = dateInClosedYear(args.date, useAppStore.getState().fiscalYears)
+          if (closed) throw new Error(`التاريخ ${args.date} داخل السنة المالية المقفلة «${closed.nameAr}» — لا قيود في فترة مقفلة`)
+        }
         const meaningful = args.lines.filter((l) => l.debit !== 0 || l.credit !== 0)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -3484,6 +3554,21 @@ export const useDataStore = create<DataState>()(
             return { ...a, recoveredMinor: a.recoveredMinor + take }
           })
         }
+        // توزيع الخصومات على الجزاءات المسجلة — الأقدم أولاً (تتبع الجزاء كامل/جزء/تأجيل)
+        // الفائض عن المسجل = خصم مباشر لهذا الشهر (غياب/تأخير لحظي) — مسموح بلا سجل
+        let employeeDeductions = state.employeeDeductions
+        for (const l of computed) {
+          let toRecover = l.deductionsMinor
+          if (toRecover <= 0) continue
+          employeeDeductions = employeeDeductions.map((d) => {
+            if (d.employeeId !== l.employeeId || toRecover <= 0) return d
+            const open = d.amountMinor - d.recoveredMinor
+            if (open <= 0) return d
+            const take = Math.min(open, toRecover)
+            toRecover -= take
+            return { ...d, recoveredMinor: d.recoveredMinor + take }
+          })
+        }
         // المسير المصروف من عهدة → حركة في ملف العهدة (طلب المالك)
         let custodyTxs = state.custodyTxs
         if (payCustodyFile && totalOut > 0) {
@@ -3494,7 +3579,7 @@ export const useDataStore = create<DataState>()(
             treasury: null, projectId: null, purchaseId: null, journalEntryId: entryId,
           }]
         }
-        set({ payrollRuns: [...state.payrollRuns, run], journal: [...state.journal, entry], employeeAdvances, custodyTxs })
+        set({ payrollRuns: [...state.payrollRuns, run], journal: [...state.journal, entry], employeeAdvances, employeeDeductions, custodyTxs })
         return run
       },
 
@@ -3503,6 +3588,123 @@ export const useDataStore = create<DataState>()(
         const totalMinor = advances.reduce((s2, a) => s2 + a.amountMinor, 0)
         const remainingMinor = advances.reduce((s2, a) => s2 + (a.amountMinor - a.recoveredMinor), 0)
         return { totalMinor, remainingMinor, advances }
+      },
+
+      addEmployeeDeduction: (args) => {
+        const state = get()
+        const emp = state.employees.find((e) => e.id === args.employeeId)
+        if (!emp) throw new Error('الموظف غير موجود')
+        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ الخصم يجب أن يكون موجباً')
+        if (!args.reason.trim()) throw new Error('سبب الخصم مطلوب — غياب، تأخير، جزاء…')
+        const id = nextId(state.employeeDeductions)
+        const ded: EmployeeDeduction = {
+          id, dedNumber: `DED-${String(id).padStart(4, '0')}`, employeeId: args.employeeId,
+          date: new Date().toISOString(), amountMinor: args.amountMinor, recoveredMinor: 0,
+          reason: args.reason.trim(), notes: args.notes?.trim() ?? '',
+        }
+        // لا قيد الآن — الخصم يتحقق محاسبياً عند المسير (يخفض 5102 بطريقة صافي التكلفة)
+        set({ employeeDeductions: [...state.employeeDeductions, ded] })
+        return ded
+      },
+
+      getEmployeeDeductionBalance: (employeeId) => {
+        const deductions = get().employeeDeductions.filter((d) => d.employeeId === employeeId)
+        const totalMinor = deductions.reduce((s2, d) => s2 + d.amountMinor, 0)
+        const remainingMinor = deductions.reduce((s2, d) => s2 + (d.amountMinor - d.recoveredMinor), 0)
+        return { totalMinor, remainingMinor, deductions }
+      },
+
+      repayEmployeeAdvance: (args) => {
+        const state = get()
+        const emp = state.employees.find((e) => e.id === args.employeeId)
+        if (!emp) throw new Error('الموظف غير موجود')
+        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('المبلغ يجب أن يكون موجباً')
+        const remaining = state.employeeAdvances
+          .filter((a) => a.employeeId === args.employeeId)
+          .reduce((s2, a) => s2 + (a.amountMinor - a.recoveredMinor), 0)
+        if (args.amountMinor > remaining) throw new Error(`المبلغ أكبر من متبقي سلف الموظف (${remaining})`)
+        const id = nextId(state.advanceRepayments)
+        const repayNumber = `ADR-${String(id).padStart(4, '0')}`
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `سداد نقدي لسلفة — ${emp.nameAr} (${repayNumber})`,
+          sourceType: 'receipt_voucher', sourceId: id,
+          lines: [
+            { accountCode: args.treasury, debit: args.amountMinor, credit: 0, note: 'نقدية واردة' },
+            { accountCode: '1107', debit: 0, credit: args.amountMinor, note: `سداد سلفة ${emp.nameAr}` },
+          ],
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        // توزيع السداد على السلف الأقدم أولاً (نفس منهج المسير)
+        let toRecover = args.amountMinor
+        const employeeAdvances = state.employeeAdvances.map((a) => {
+          if (a.employeeId !== args.employeeId || toRecover <= 0) return a
+          const open = a.amountMinor - a.recoveredMinor
+          if (open <= 0) return a
+          const take = Math.min(open, toRecover)
+          toRecover -= take
+          return { ...a, recoveredMinor: a.recoveredMinor + take }
+        })
+        const repayment: AdvanceRepayment = { id, repayNumber, employeeId: args.employeeId, date: now, amountMinor: args.amountMinor, treasury: args.treasury, journalEntryId: entryId }
+        set({ advanceRepayments: [...state.advanceRepayments, repayment], employeeAdvances, journal: [...state.journal, entry] })
+        return repayment
+      },
+
+      closeFiscalYear: (fy, allYears) => {
+        const state = get()
+        // ① تحققات الإقفال (منتهية فعلاً + بالترتيب الزمني)
+        const errors = validateYearClose(fy, allYears, new Date().toISOString().slice(0, 10))
+        if (errors.length) throw new Error(errors.join(' — '))
+        // ② لا يُقفل مرتين: قيد إقفال سابق لنفس السنة؟
+        if (state.journal.some((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id)) {
+          throw new Error(`السنة «${fy.nameAr}» عليها قيد إقفال بالفعل`)
+        }
+        // ③ بناء قيد الإقفال من اليومية (يستثني قيود إقفال سابقة تلقائياً — لا 4xxx/5xxx فيها أصلاً غير مصفَّرة)
+        const result = buildYearClosingLines(state.journal.filter((e) => e.sourceType !== 'year_closing'), fy)
+        if (result.lines.length === 0) throw new Error('لا حركة إيرادات أو مصروفات في هذه السنة — لا شيء يُقفل')
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId,
+          date: fy.endDate, // قيد الإقفال بتاريخ آخر يوم في السنة (المنهجية العالمية)
+          description: `إقفال السنة المالية «${fy.nameAr}» — صافي ${result.netProfitMinor >= 0 ? 'ربح' : 'خسارة'} يُرحَّل للأرباح المرحلة`,
+          sourceType: 'year_closing', sourceId: fy.id,
+          lines: result.lines.map((l) => ({ accountCode: l.accountCode, debit: l.debit, credit: l.credit, note: l.note })),
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({ journal: [...state.journal, entry] })
+        return { entryId, netProfitMinor: result.netProfitMinor }
+      },
+
+      getCustomerBalance: (customerId) => {
+        const state = get()
+        return statementBalance(customerStatement({
+          customerId,
+          openingMinor: state.openingBalances[`customer:${customerId}`] ?? 0,
+          adjustments: state.settlements.filter((st) => st.section === 'customer' && Number(st.refId) === customerId).map((st) => ({
+            docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
+            debitMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
+            creditMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
+          })),
+          sales: state.sales, saleReturns: state.saleReturns, allSales: state.sales,
+          vouchers: [
+            ...state.vouchers,
+            ...state.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
+          ],
+          cheques: state.cheques,
+          extraDocs: customerUnitDocs({
+            customerId,
+            trips: state.trips, tickets: state.tickets, rentals: state.rentalContracts,
+            clinicVisits: state.clinicVisits, clinicCollections: state.clinicCollections,
+            linkedPatientIds: state.clinicPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
+            labOrders: state.labOrders, linkedLabPatientIds: state.labPatients.filter((p) => p.linkedCustomerId === customerId).map((p) => p.id),
+            walletOps: state.walletOps,
+            projectExtracts: state.projectExtracts, linkedProjectIds: state.projects.filter((p) => p.clientId === customerId).map((p) => p.id),
+            installmentPlans: state.installmentPlans,
+          }),
+        }))
       },
 
       getEmployeeExcessDue: (employeeId) => {
@@ -4236,6 +4438,9 @@ export const useDataStore = create<DataState>()(
         const patient: LabPatient = { ...p, id: nextId(state.labPatients) }
         set({ labPatients: [...state.labPatients, patient] })
         return patient
+      },
+      updateLabPatient: (id, patch) => {
+        set((s2) => ({ labPatients: s2.labPatients.map((p) => (p.id === id ? { ...p, ...patch } : p)) }))
       },
       registerLabOrder: (args) => {
         const state = get()
@@ -6321,6 +6526,8 @@ export const useDataStore = create<DataState>()(
           suppliers: (s.suppliers ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           employees: (s.employees ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           payrollRuns: s.payrollRuns ?? [],
+          employeeDeductions: s.employeeDeductions ?? [],
+          advanceRepayments: s.advanceRepayments ?? [],
           installmentPlans: s.installmentPlans ?? [],
           vehicles: s.vehicles ?? [],
           trips: s.trips ?? [],

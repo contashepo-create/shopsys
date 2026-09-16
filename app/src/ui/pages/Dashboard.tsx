@@ -12,14 +12,13 @@ import { accountBalance, STANDARD_COA } from '../../core/ledger.ts'
 import { Link } from 'react-router-dom'
 import { collectBusinessAlerts } from '../../core/alerts.ts'
 import { collectAlerts as collectInstallmentAlerts } from '../../core/installments.ts'
-import { customerStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
 import { themeForActivity, PERSONA_STYLES } from '../../core/activityTheme.ts'
 import { ActivityWidgets } from '../components/ActivityWidgets.tsx'
 import { getActivity } from '../../core/activities.ts'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients } = useDataStore()
+  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur)
@@ -87,10 +86,6 @@ export function Dashboard() {
 
   /* مركز التنبيهات الموحد (جولة المراجعة الختامية): صلاحية/أقساط/شيكات/حد ائتمان + نواقص */
   const businessAlerts = useMemo(() => {
-    const allVouchers = [
-      ...vouchers,
-      ...clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt' as const, date: st.date, partyKind: 'customer' as const, partyId: st.customerId, amountMinor: st.amountMinor })),
-    ]
     return collectBusinessAlerts({
       todayIso: new Date().toISOString(),
       items: items.map((it) => ({ id: it.id, nameAr: it.nameAr, stockQty: it.stockQty ?? 0, minQty: it.minQty, isActive: it.isActive })),
@@ -98,10 +93,10 @@ export function Dashboard() {
       installmentAlerts: collectInstallmentAlerts(installmentPlans, new Date().toISOString().slice(0, 10)),
       cheques,
       customers,
-      customerBalances: (id) => statementBalance(customerStatement({ customerId: id, sales, saleReturns, allSales: sales, vouchers: allVouchers, cheques, extraDocs: customerUnitDocs({ customerId: id, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === id).map((p) => p.id) }) })),
+      customerBalances: (id) => useDataStore.getState().getCustomerBalance(id), // الرصيد الموحّد من كل الأنشطة
       fmt,
     })
-  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements, trips, tickets, rentalContracts])
+  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements])
   // دين الموردين = فواتير غير مسددة − مرتجعات الشراء المخفِّضة للدين
   const suppliersDebt = Math.max(
     0,

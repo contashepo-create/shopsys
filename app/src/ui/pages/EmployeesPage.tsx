@@ -76,7 +76,7 @@ interface DraftLine {
 }
 
 export function EmployeesPage() {
-  const { employees, payrollRuns, journal, employeeAdvances, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeExcessDue } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -87,7 +87,7 @@ export function EmployeesPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const toMajor = (m: number) => (m ? String(m / 10 ** cur.decimals) : '')
 
-  const [tab, setTab] = useState<'staff' | 'payroll' | 'advances'>('staff')
+  const [tab, setTab] = useState<'staff' | 'payroll' | 'advances' | 'deductions'>('staff')
 
   /* ─── تبويب السلف (طلب المالك) ─── */
   const [advOpen, setAdvOpen] = useState(false)
@@ -95,6 +95,43 @@ export function EmployeesPage() {
   const [advAmount, setAdvAmount] = useState('')
   const [advTreasury, setAdvTreasury] = useState('1101')
   const [advNotes, setAdvNotes] = useState('')
+
+  /* ─── تبويب الخصومات والجزاءات (إصلاح فجوة الرواتب) ─── */
+  const [dedOpen, setDedOpen] = useState(false)
+  const [dedEmployeeId, setDedEmployeeId] = useState(0)
+  const [dedAmount, setDedAmount] = useState('')
+  const [dedReason, setDedReason] = useState('')
+  const [dedNotes, setDedNotes] = useState('')
+  const saveDeduction = () => {
+    try {
+      const ded = addEmployeeDeduction({
+        employeeId: dedEmployeeId,
+        amountMinor: toMinor(dedAmount, cur.decimals),
+        reason: dedReason.trim(),
+        notes: dedNotes.trim(),
+      })
+      toast.show(`سُجل الخصم ${ded.dedNumber} — يُخصم من مسير الرواتب (كامل أو جزء بحريتك) ✓`)
+      setDedOpen(false)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
+  /* ─── سداد نقدي لسلفة خارج المسير ─── */
+  const [repayOpen, setRepayOpen] = useState(false)
+  const [repayEmployeeId, setRepayEmployeeId] = useState(0)
+  const [repayAmount, setRepayAmount] = useState('')
+  const [repayTreasury, setRepayTreasury] = useState('1101')
+  const saveRepayment = () => {
+    try {
+      const rp = repayEmployeeAdvance({
+        employeeId: repayEmployeeId,
+        amountMinor: toMinor(repayAmount, cur.decimals),
+        treasury: repayTreasury,
+      })
+      toast.show(`سُدد ${rp.repayNumber} نقداً — انخفض متبقي سلف الموظف ✓`)
+      setRepayOpen(false)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
   const saveAdvance = () => {
     try {
       const adv = grantEmployeeAdvance({
@@ -224,7 +261,7 @@ export function EmployeesPage() {
   const listedRuns = useMemo(() => [...payrollRuns].reverse(), [payrollRuns])
   const empName = (id: number) => employees.find((e) => e.id === id)?.nameAr ?? `موظف #${id}`
 
-  const tabCls = (t: 'staff' | 'payroll' | 'advances') =>
+  const tabCls = (t: 'staff' | 'payroll' | 'advances' | 'deductions') =>
     `px-4 py-2 rounded-xl text-[13px] font-bold transition-all ${tab === t ? 'bg-brand-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`
 
   return (
@@ -233,6 +270,7 @@ export function EmployeesPage() {
         <button onClick={() => setTab('staff')} className={tabCls('staff')}><UserRound size={14} className="inline -mt-0.5 me-1" /> الموظفون ({employees.length})</button>
         <button onClick={() => setTab('payroll')} className={tabCls('payroll')}><Wallet size={14} className="inline -mt-0.5 me-1" /> مسيرات الرواتب ({payrollRuns.length})</button>
         <button onClick={() => setTab('advances')} className={tabCls('advances')}><Landmark size={14} className="inline -mt-0.5 me-1" /> السلف ({employeeAdvances.length})</button>
+        <button onClick={() => setTab('deductions')} className={tabCls('deductions')}><BadgeX size={14} className="inline -mt-0.5 me-1" /> الخصومات والجزاءات ({employeeDeductions.length})</button>
       </div>
 
       {tab === 'advances' && (
@@ -243,9 +281,14 @@ export function EmployeesPage() {
               وتُسترد تلقائياً حين تكتبها في خانة «سلف» بمسير الرواتب. رصيد كل موظف في
               <b> التقارير ← كشوف الحساب</b>.
             </p>
-            <Btn onClick={() => { setAdvEmployeeId(employees[0]?.id ?? 0); setAdvAmount(''); setAdvTreasury('1101'); setAdvNotes(''); setAdvOpen(true) }} disabled={employees.length === 0}>
-              <Plus size={15} /> صرف سلفة
-            </Btn>
+            <div className="flex gap-2">
+              <Btn variant="ghost" onClick={() => { setRepayEmployeeId(employees[0]?.id ?? 0); setRepayAmount(''); setRepayTreasury('1101'); setRepayOpen(true) }} disabled={employeeAdvances.length === 0}>
+                💵 سداد نقدي لسلفة
+              </Btn>
+              <Btn onClick={() => { setAdvEmployeeId(employees[0]?.id ?? 0); setAdvAmount(''); setAdvTreasury('1101'); setAdvNotes(''); setAdvOpen(true) }} disabled={employees.length === 0}>
+                <Plus size={15} /> صرف سلفة
+              </Btn>
+            </div>
           </div>
           {employeeAdvances.length === 0 ? (
             <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
@@ -274,7 +317,7 @@ export function EmployeesPage() {
                       </td>
                       <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{employees.find((e) => e.id === a.employeeId)?.nameAr ?? '—'}</td>
                       <td className="px-4 py-3 font-black text-rose-500">{fmt(a.amountMinor)}</td>
-                      <td className="px-4 py-3 font-bold text-emerald-600">{a.recoveredMinor ? fmt(a.recoveredMinor) : '—'}</td>
+                      <td className="px-4 py-3 font-bold text-emerald-600" title={advanceRepayments.some((r) => r.employeeId === a.employeeId) ? 'يشمل سداداً نقدياً خارج المسير' : 'استقطاع من مسيرات الرواتب'}>{a.recoveredMinor ? fmt(a.recoveredMinor) : '—'}</td>
                       <td className="px-4 py-3">
                         {a.amountMinor - (a.recoveredMinor ?? 0) === 0
                           ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">مُسدَّدة ✓</span>
@@ -292,6 +335,28 @@ export function EmployeesPage() {
               </table>
             </div>
           )}
+          <Modal open={repayOpen} onClose={() => setRepayOpen(false)} title="💵 سداد نقدي لسلفة (خارج المسير)">
+            <div className="space-y-4">
+              <Field label="الموظف *">
+                <select value={repayEmployeeId} onChange={(e) => setRepayEmployeeId(Number(e.target.value))} className={inputCls}>
+                  {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+                </select>
+              </Field>
+              {repayEmployeeId > 0 && (
+                <div className="text-[12px] rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300 p-3 font-bold">
+                  متبقي سلف الموظف: {fmt(getEmployeeAdvanceBalance(repayEmployeeId).remainingMinor)} {cur.symbol}
+                </div>
+              )}
+              <Field label={`المبلغ المسدد (${cur.symbol}) *`} hint="قيد فوري: الخزينة ← سلف وعهد الموظفين 1107">
+                <input value={repayAmount} onChange={(e) => setRepayAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+              </Field>
+              <Field label="إلى أي خزينة؟"><TreasuryPicker value={repayTreasury} onChange={setRepayTreasury} /></Field>
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => setRepayOpen(false)}>إلغاء</Btn>
+                <Btn onClick={saveRepayment} disabled={!repayEmployeeId || !repayAmount.trim()}>💾 تسجيل السداد</Btn>
+              </div>
+            </div>
+          </Modal>
           <Modal open={advOpen} onClose={() => setAdvOpen(false)} title="💸 صرف سلفة لموظف">
             <div className="space-y-4">
               <Field label="الموظف *">
@@ -311,6 +376,86 @@ export function EmployeesPage() {
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setAdvOpen(false)}>إلغاء</Btn>
                 <Btn onClick={saveAdvance} disabled={!advEmployeeId || !advAmount.trim()}>💾 صرف السلفة</Btn>
+              </div>
+            </div>
+          </Modal>
+        </>
+      )}
+
+      {tab === 'deductions' && (
+        <>
+          <div className="anim-up flex items-center justify-between flex-wrap gap-2">
+            <p className="text-[12px] text-slate-400 max-w-lg leading-relaxed">
+              ⚖️ سجّل الجزاء (غياب، تأخير، تلفيات…) بمستند مرقم — <b>بلا قيد فوري</b>:
+              يتحقق محاسبياً عند مسير الرواتب حيث تخصمه <b>كاملاً أو جزءاً أو تؤجله</b> بحرية،
+              والمتبقي يظل متتبَّعاً للشهور التالية.
+            </p>
+            <Btn onClick={() => { setDedEmployeeId(employees[0]?.id ?? 0); setDedAmount(''); setDedReason(''); setDedNotes(''); setDedOpen(true) }} disabled={employees.length === 0}>
+              <Plus size={15} /> تسجيل خصم / جزاء
+            </Btn>
+          </div>
+          {employeeDeductions.length === 0 ? (
+            <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
+              <EmptyState icon="⚖️" title="لا خصومات مسجلة" sub="سجّل جزاء بمستند مرقم يُخصم من المسيرات على دفعات بحريتك" />
+            </div>
+          ) : (
+            <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-4 py-3 font-bold">الخصم</th>
+                    <th className="px-4 py-3 font-bold">الموظف</th>
+                    <th className="px-4 py-3 font-bold">السبب</th>
+                    <th className="px-4 py-3 font-bold">المبلغ</th>
+                    <th className="px-4 py-3 font-bold">المخصوم</th>
+                    <th className="px-4 py-3 font-bold">المتبقي</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...employeeDeductions].reverse().map((d, i) => (
+                    <tr key={d.id} style={{ animationDelay: `${i * 25}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-slate-800 dark:text-white">{d.dedNumber}</div>
+                        <div className="text-[11px] text-slate-400">{d.date.slice(0, 10)}{d.notes && ` · ${d.notes}`}</div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{employees.find((e) => e.id === d.employeeId)?.nameAr ?? '—'}</td>
+                      <td className="px-4 py-3 text-[12px] text-slate-500">{d.reason}</td>
+                      <td className="px-4 py-3 font-black text-rose-500">{fmt(d.amountMinor)}</td>
+                      <td className="px-4 py-3 font-bold text-emerald-600">{d.recoveredMinor ? fmt(d.recoveredMinor) : '—'}</td>
+                      <td className="px-4 py-3">
+                        {d.amountMinor - d.recoveredMinor === 0
+                          ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">خُصم بالكامل ✓</span>
+                          : <span className="font-black text-amber-600">{fmt(d.amountMinor - d.recoveredMinor)}</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <Modal open={dedOpen} onClose={() => setDedOpen(false)} title="⚖️ تسجيل خصم / جزاء على موظف">
+            <div className="space-y-4">
+              <Field label="الموظف *">
+                <select value={dedEmployeeId} onChange={(e) => setDedEmployeeId(Number(e.target.value))} className={inputCls}>
+                  {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+                </select>
+              </Field>
+              <Field label={`مبلغ الخصم (${cur.symbol}) *`}>
+                <input value={dedAmount} onChange={(e) => setDedAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+              </Field>
+              <Field label="السبب *" hint="غياب، تأخير متكرر، تلفيات، جزاء إداري…">
+                <input value={dedReason} onChange={(e) => setDedReason(e.target.value)} className={inputCls} placeholder="غياب 3 أيام بدون إذن" />
+              </Field>
+              <Field label="ملاحظات">
+                <input value={dedNotes} onChange={(e) => setDedNotes(e.target.value)} className={inputCls} />
+              </Field>
+              <div className="text-[11px] text-slate-400 rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 leading-relaxed">
+                💡 لا يتولد قيد الآن — عند ترحيل المسير يدخل الخصم ضمن خانة «خصومات»
+                فيقل مصروف الرواتب (5102) بالمبلغ المخصوم تلقائياً.
+              </div>
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => setDedOpen(false)}>إلغاء</Btn>
+                <Btn onClick={saveDeduction} disabled={!dedEmployeeId || !dedAmount.trim() || !dedReason.trim()}>💾 تسجيل الخصم</Btn>
               </div>
             </div>
           </Modal>
@@ -509,6 +654,7 @@ export function EmployeesPage() {
                   const cell = 'w-20 px-1.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent text-center text-[12px] focus:border-brand-500 outline-none'
                   // شفافية كاملة (طلب المالك): إجمالي سلف الموظف والمتبقي منها وسببها + مستحقه من زيادات العهد
                   const advBal = getEmployeeAdvanceBalance(l.employeeId)
+                  const dedBal = getEmployeeDeductionBalance(l.employeeId)
                   const excessDue = getEmployeeExcessDue(l.employeeId)
                   const advReasons = advBal.advances.filter((a) => a.amountMinor > a.recoveredMinor)
                     .map((a) => `${a.advanceNumber}${a.source === 'custody_shortage' ? ' (عجز عهدة)' : ''}: متبقٍ ${fmt(a.amountMinor - a.recoveredMinor)}${a.notes ? ` — ${a.notes}` : ''}`)
@@ -519,7 +665,17 @@ export function EmployeesPage() {
                       <td className="px-1 py-1.5 text-center"><input value={l.base} onChange={(e) => patchDraft(l.employeeId, { base: e.target.value })} className={cell} dir="ltr" /></td>
                       <td className="px-1 py-1.5 text-center"><input value={l.allowances} onChange={(e) => patchDraft(l.employeeId, { allowances: e.target.value })} className={cell} dir="ltr" /></td>
                       <td className="px-1 py-1.5 text-center"><input value={l.overtime} onChange={(e) => patchDraft(l.employeeId, { overtime: e.target.value })} className={cell} dir="ltr" placeholder="0" /></td>
-                      <td className="px-1 py-1.5 text-center"><input value={l.deductions} onChange={(e) => patchDraft(l.employeeId, { deductions: e.target.value })} className={cell} dir="ltr" placeholder="0" /></td>
+                      <td className="px-1 py-1.5 text-center">
+                        <input value={l.deductions} onChange={(e) => patchDraft(l.employeeId, { deductions: e.target.value })} className={cell} dir="ltr" placeholder="0" title={dedBal.remainingMinor > 0 ? `جزاءات مسجلة غير مخصومة: ${fmt(dedBal.remainingMinor)}\nاكتب المبلغ كاملاً أو جزءاً — أو 0 للتأجيل` : 'اكتب أي خصم مباشر لهذا الشهر'} />
+                        {dedBal.remainingMinor > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => patchDraft(l.employeeId, { deductions: String(dedBal.remainingMinor / 10 ** cur.decimals) })}
+                            title={dedBal.deductions.filter((d) => d.amountMinor > d.recoveredMinor).map((d) => `${d.dedNumber}: ${d.reason} — متبقٍ ${fmt(d.amountMinor - d.recoveredMinor)}`).join('\n')}
+                            className="block mx-auto mt-0.5 text-[9.5px] font-bold text-rose-500 hover:underline"
+                          >جزاءات {fmt(dedBal.remainingMinor)}</button>
+                        )}
+                      </td>
                       <td className="px-1 py-1.5 text-center">
                         <input value={l.advances} onChange={(e) => patchDraft(l.employeeId, { advances: e.target.value })} className={cell} dir="ltr" placeholder="0" title={advReasons || 'لا سلف على الموظف'} disabled={advBal.remainingMinor === 0} />
                         {advBal.remainingMinor > 0 && (
