@@ -5,19 +5,22 @@
  *   كل ما يفعله كل مستخدم يُسجل باسمه في سجل النشاطات (يراه المالك فقط).
  */
 import { useMemo, useState } from 'react'
-import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX } from 'lucide-react'
-import { PERMISSIONS, PERMISSION_SECTIONS, DEFAULT_ROLES, type Role } from '../../core/permissions.ts'
+import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal } from 'lucide-react'
+import { PERMISSIONS, PERMISSION_SECTIONS, rolesWithOverrides } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { hashPin } from '../../core/audit.ts'
 import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 
 export function PermissionsPage() {
-  const [roles, setRoles] = useState<Role[]>(DEFAULT_ROLES)
   const [activeRoleId, setActiveRoleId] = useState('cashier')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
-  const { appUsers, currentUserId, addAppUser, removeAppUser, setCurrentUser } = useDataStore()
+  const { appUsers, currentUserId, addAppUser, removeAppUser, setCurrentUser, roleOverrides, setRolePermissions, setUserPermExceptions } = useDataStore()
+  // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
+  const roles = rolesWithOverrides(roleOverrides)
   const toast = useToast()
   const [userModal, setUserModal] = useState(false)
+  // استثناءات فردية (البند 4 — لكل موظف): منح فوق الدور أو حجب رغم الدور
+  const [excFor, setExcFor] = useState<number | null>(null)
   const [uName, setUName] = useState('')
   const [uRole, setURole] = useState('cashier')
   const [uPin, setUPin] = useState('')
@@ -37,35 +40,19 @@ export function PermissionsPage() {
 
   const togglePerm = (permId: string) => {
     if (isOwner) return // المالك محمي — كل الصلاحيات دائماً
-    setRoles((prev) =>
-      prev.map((r) =>
-        r.id === activeRoleId
-          ? {
-              ...r,
-              permissions: r.permissions.includes(permId)
-                ? r.permissions.filter((p) => p !== permId)
-                : [...r.permissions, permId],
-            }
-          : r,
-      ),
-    )
+    const next = activeRole.permissions.includes(permId)
+      ? activeRole.permissions.filter((p) => p !== permId)
+      : [...activeRole.permissions, permId]
+    setRolePermissions(activeRoleId, next) // حفظ دائم — يسري فوراً على القائمة والمسارات
   }
 
   const toggleSection = (sectionId: string, checkAll: boolean) => {
     if (isOwner) return
     const sectionPerms = PERMISSIONS.filter((p) => p.section === sectionId).map((p) => p.id)
-    setRoles((prev) =>
-      prev.map((r) =>
-        r.id === activeRoleId
-          ? {
-              ...r,
-              permissions: checkAll
-                ? [...new Set([...r.permissions, ...sectionPerms])]
-                : r.permissions.filter((p) => !sectionPerms.includes(p)),
-            }
-          : r,
-      ),
-    )
+    const next = checkAll
+      ? [...new Set([...activeRole.permissions, ...sectionPerms])]
+      : activeRole.permissions.filter((p) => !sectionPerms.includes(p))
+    setRolePermissions(activeRoleId, next)
   }
 
   return (
@@ -225,6 +212,13 @@ export function PermissionsPage() {
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">{roles.find((r) => r.id === u.roleId)?.nameAr ?? u.roleId}</span>
                 {currentUserId === u.id && <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-600 font-bold">نشط الآن</span>}
                 <button
+                  onClick={(e) => { e.preventDefault(); setExcFor(u.id) }}
+                  title="استثناءات فردية — منح أو حجب صلاحيات لهذا المستخدم تحديداً فوق دوره"
+                  className="p-1.5 rounded-lg text-slate-300 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
+                >
+                  <SlidersHorizontal size={13} />
+                </button>
+                <button
                   onClick={(e) => { e.preventDefault(); try { removeAppUser(u.id); toast.show(`عُطل «${u.nameAr}» — تاريخه محفوظ في السجل`) } catch (err) { toast.show((err as Error).message, 'error') } }}
                   title="تعطيل المستخدم (تاريخه يبقى في سجل النشاطات)"
                   className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
@@ -236,6 +230,66 @@ export function PermissionsPage() {
           </div>
         </div>
       </div>
+
+      {/* ⚖️ استثناءات فردية لمستخدم (البند 4): الفعال = صلاحيات الدور ∪ الممنوح − المحجوب */}
+      <Modal open={excFor != null} onClose={() => setExcFor(null)} title={(() => {
+        const u = appUsers.find((x) => x.id === excFor)
+        return u ? `⚖️ استثناءات «${u.nameAr}» — فوق دور ${roles.find((r) => r.id === u.roleId)?.nameAr ?? u.roleId}` : ''
+      })()} wide>
+        {excFor != null && (() => {
+          const u = appUsers.find((x) => x.id === excFor)
+          if (!u) return null
+          const rolePerms = new Set(roles.find((r) => r.id === u.roleId)?.permissions ?? [])
+          const extra = new Set(u.extraPerms ?? [])
+          const denied = new Set(u.deniedPerms ?? [])
+          const effective = (p: string) => (rolePerms.has(p) || extra.has(p)) && !denied.has(p)
+          const toggle = (p: string) => {
+            const nextExtra = new Set(extra); const nextDenied = new Set(denied)
+            if (effective(p)) {
+              // إطفاء: من الدور ⇒ حجب — من المنح الفردي ⇒ إزالة المنح
+              if (rolePerms.has(p)) nextDenied.add(p)
+              nextExtra.delete(p)
+            } else {
+              // تشغيل: كان محجوباً ⇒ فك الحجب — غير موجود أصلاً ⇒ منح فردي
+              if (denied.has(p)) nextDenied.delete(p)
+              else nextExtra.add(p)
+            }
+            try { setUserPermExceptions(u.id, [...nextExtra], [...nextDenied]) }
+            catch (err) { toast.show((err as Error).message, 'error') }
+          }
+          return (
+            <div className="space-y-3">
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                💡 الشيك يعرض <b>الصلاحية الفعالة</b> لهذا المستخدم: تفعيلها فوق الدور = <b className="text-emerald-500">منح فردي</b>،
+                وإطفاء صلاحية يمنحها الدور = <b className="text-rose-500">حجب فردي</b>. كل شيء يُحفظ فوراً ويسري على القائمة والمسارات.
+              </p>
+              {PERMISSION_SECTIONS.map((sec) => (
+                <div key={sec.id}>
+                  <div className="text-[11px] font-black text-slate-400 mb-1.5">{sec.icon} {sec.nameAr}</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {PERMISSIONS.filter((p) => p.section === sec.id).map((p) => {
+                      const on = effective(p.id)
+                      const isException = extra.has(p.id) || denied.has(p.id)
+                      return (
+                        <label key={p.id} className={`flex items-center gap-2 px-3 py-2 rounded-xl border cursor-pointer transition-all text-[12px] ${on ? 'border-brand-500/30 bg-brand-500/8' : 'border-slate-100 dark:border-slate-800'}`}>
+                          <input type="checkbox" checked={on} onChange={() => toggle(p.id)} className="w-4 h-4 rounded accent-brand-600" />
+                          <span className={`flex-1 ${on ? 'font-semibold text-slate-800 dark:text-white' : 'text-slate-500'}`}>{p.nameAr}</span>
+                          {isException && (
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${extra.has(p.id) ? 'bg-emerald-500/15 text-emerald-600' : 'bg-rose-500/15 text-rose-500'}`}>
+                              {extra.has(p.id) ? 'منح فردي' : 'محجوبة'}
+                            </span>
+                          )}
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+              <div className="flex justify-end"><Btn onClick={() => setExcFor(null)}>تم</Btn></div>
+            </div>
+          )
+        })()}
+      </Modal>
 
       {/* مستخدم جديد */}
       <Modal open={userModal} onClose={() => setUserModal(false)} title="👤 مستخدم جديد">

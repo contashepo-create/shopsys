@@ -47,6 +47,8 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'party.customer.statement', nameAr: 'كشف حساب عميل', section: 'parties' },
   { id: 'party.employee.manage', nameAr: 'إدارة الموظفين', section: 'parties', sensitive: true },
   { id: 'party.payroll', nameAr: 'الرواتب', section: 'parties', sensitive: true },
+  // شاشات النشاط التخصصي
+  { id: 'ops.activity.use', nameAr: 'شاشات النشاط التخصصي (صيانة/رحلات/معمل/عيادة...)', section: 'sales' },
   // الحسابات العامة
   { id: 'acc.journal.view', nameAr: 'عرض اليومية العامة', section: 'accounting' },
   { id: 'acc.journal.manual', nameAr: 'قيد يدوي', section: 'accounting', sensitive: true },
@@ -64,6 +66,98 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'set.backup', nameAr: 'النسخ الاحتياطي', section: 'settings', sensitive: true },
   { id: 'set.audit.view', nameAr: 'عرض سجل التدقيق', section: 'settings', sensitive: true },
 ]
+
+/* ─── فرض الصلاحيات (البند 4 — صفر تجاوز): خريطة مسار → صلاحية ─── */
+
+/**
+ * كل مسار في التطبيق مربوط بصلاحية — من لا يملكها لا يرى الشاشة في الشريط
+ * الجانبي ولا يستطيع فتحها بالرابط مباشرة. null = متاح للجميع (حول/الدعم).
+ * المطابقة بأطول بادئة (prefix) — المسارات التخصصية تُغطى بمجموعتها.
+ */
+export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
+  { prefix: '/pos', perm: 'sales.pos.open' },
+  { prefix: '/sales/returns', perm: 'sales.return.approve' },
+  { prefix: '/sales/shifts', perm: 'sales.shift.close' },
+  { prefix: '/sales/price-lists', perm: 'sales.price.edit' },
+  { prefix: '/sales', perm: 'sales.invoice.create' },
+  { prefix: '/inventory/transfers', perm: 'inv.transfer' },
+  { prefix: '/inventory/counting', perm: 'inv.count' },
+  { prefix: '/inventory/wastage', perm: 'inv.adjust' },
+  { prefix: '/inventory', perm: 'inv.view' },
+  { prefix: '/purchases/returns', perm: 'pur.return.create' },
+  { prefix: '/purchases/suppliers', perm: 'pur.supplier.manage' },
+  { prefix: '/purchases', perm: 'pur.invoice.create' },
+  { prefix: '/parties/employees', perm: 'party.employee.manage' },
+  { prefix: '/parties/custody', perm: 'party.employee.manage' },
+  { prefix: '/parties', perm: 'party.customer.manage' },
+  // شاشات النشاط التخصصي (صيانة/رحلات/معمل/عيادة/مقاولات/سيارات/محافظ/تأجير)
+  { prefix: '/maintenance', perm: 'ops.activity.use' },
+  { prefix: '/wallets', perm: 'ops.activity.use' },
+  { prefix: '/rental', perm: 'ops.activity.use' },
+  { prefix: '/logistics', perm: 'ops.activity.use' },
+  { prefix: '/lab', perm: 'ops.activity.use' },
+  { prefix: '/contracting', perm: 'ops.activity.use' },
+  { prefix: '/clinic', perm: 'ops.activity.use' },
+  { prefix: '/cars', perm: 'ops.activity.use' },
+  { prefix: '/accounting/coa', perm: 'acc.coa.manage' },
+  { prefix: '/accounting/opening-balances', perm: 'acc.coa.manage' },
+  { prefix: '/accounting/assets', perm: 'acc.coa.manage' },
+  { prefix: '/accounting/journal', perm: 'acc.journal.view' },
+  { prefix: '/accounting/trial-balance', perm: 'acc.journal.view' },
+  { prefix: '/accounting', perm: 'acc.vouchers' },
+  { prefix: '/reports/statements', perm: 'party.customer.statement' },
+  { prefix: '/reports', perm: 'rep.sales' },
+  { prefix: '/settings/permissions', perm: 'set.users' },
+  { prefix: '/settings/audit', perm: 'set.audit.view' },
+  { prefix: '/settings/backup', perm: 'set.backup' },
+  { prefix: '/settings/sync', perm: 'set.backup' },
+  { prefix: '/settings/about', perm: null }, // حول التطبيق — للجميع
+  { prefix: '/settings/support', perm: null }, // الدعم — للجميع
+  { prefix: '/settings/issues', perm: null }, // الإبلاغ عن مشكلة — للجميع
+  { prefix: '/settings', perm: 'set.general' },
+  { prefix: '/', perm: null }, // لوحة المعلومات — للجميع
+]
+
+/** الصلاحية المطلوبة لمسار — مطابقة بأطول بادئة */
+export function permissionForPath(path: string): string | null {
+  const hit = ROUTE_PERMISSIONS
+    .filter((r) => path === r.prefix || path.startsWith(r.prefix === '/' ? '/' : r.prefix + '/') || path.startsWith(r.prefix))
+    .sort((a, b) => b.prefix.length - a.prefix.length)[0]
+  return hit ? hit.perm : null
+}
+
+/**
+ * الصلاحيات الفعالة لمستخدم (البند 4 — لكل دور أو لكل موظف):
+ * (صلاحيات الدور ∪ الممنوح فردياً) − المحجوب فردياً. المالك = الكل دائماً.
+ * user=null هو المالك الافتراضي على الجهاز.
+ */
+/** دمج تعديلات الأدوار المحفوظة مع الافتراضيات — دور المالك لا يتأثر أبداً */
+export function rolesWithOverrides(overrides: Record<string, string[]>): Role[] {
+  return DEFAULT_ROLES.map((r) => {
+    if (r.isOwner) return r // محمي بنيوياً
+    const o = overrides[r.id]
+    return o ? { ...r, permissions: o } : r
+  })
+}
+
+export function effectivePermissionsFor(
+  user: { roleId: string; extraPerms?: string[]; deniedPerms?: string[] } | null,
+  roles: readonly Role[],
+): Set<string> {
+  if (user === null) return new Set(PERMISSIONS.map((p) => p.id)) // المالك الافتراضي
+  const role = roles.find((r) => r.id === user.roleId)
+  if (role?.isOwner) return new Set(PERMISSIONS.map((p) => p.id)) // دور المالك محمي — الكل
+  const set = new Set(role?.permissions ?? [])
+  for (const p of user.extraPerms ?? []) set.add(p)
+  for (const p of user.deniedPerms ?? []) set.delete(p)
+  return set
+}
+
+/** هل يستطيع فتح هذا المسار؟ */
+export function canAccessPath(path: string, perms: Set<string>): boolean {
+  const need = permissionForPath(path)
+  return need === null || perms.has(need)
+}
 
 export interface Role {
   id: string
@@ -87,6 +181,7 @@ export const DEFAULT_ROLES: Role[] = [
     permissions: [
       'sales.pos.open', 'sales.invoice.create', 'sales.discount.grant', 'sales.shift.close',
       'inv.view', 'inv.item.manage', 'inv.count', 'party.customer.manage', 'party.customer.statement',
+      'ops.activity.use',
     ],
   },
   {
@@ -97,7 +192,7 @@ export const DEFAULT_ROLES: Role[] = [
       'inv.view', 'inv.cost.view', 'inv.item.manage', 'inv.adjust', 'inv.transfer', 'inv.count',
       'pur.invoice.create', 'pur.return.create', 'pur.supplier.manage',
       'party.customer.manage', 'party.customer.statement',
-      'rep.sales', 'rep.profit', 'acc.vouchers',
+      'rep.sales', 'rep.profit', 'acc.vouchers', 'ops.activity.use',
     ],
   },
   {

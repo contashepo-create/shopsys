@@ -858,10 +858,15 @@ interface DataState {
   /* ─── سجل النشاطات والمستخدمون والبلاغات (طلب المالك) ─── */
   auditLog: AuditEvent[] // «من فعل ماذا ومتى» — يُبنى تلقائياً من كل كتابة، يظهر للمالك فقط
   appUsers: AppUser[] // مستخدمو التطبيق (المالك + الفرعيون) برقم سري ودور
+  /** تعديلات الأدوار المحفوظة (البند 4): roleId → قائمة صلاحيات — تعلو على الافتراضي (owner لا يُعدل أبداً) */
+  roleOverrides: Record<string, string[]>
+  setRolePermissions: (roleId: string, permissions: string[]) => void
+  /** استثناءات فردية لمستخدم: منح فوق الدور / حجب رغم الدور */
+  setUserPermExceptions: (id: number, extraPerms: string[], deniedPerms: string[]) => void
   currentUserId: number | null // المستخدم النشط حالياً (null = المالك الافتراضي)
   issues: IssueReport[] // بلاغات المشاكل الداخلية (مستخدم → مدير/محاسب)
   addAppUser: (u: { nameAr: string; roleId: string; pinHash: string }) => AppUser
-  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active'>>) => void
+  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms'>>) => void
   removeAppUser: (id: number) => void
   setCurrentUser: (id: number | null) => void
   /** بلاغ داخلي عن مشكلة في عملية — يظهر للمدير/المحاسب مع إشعار بالجرس */
@@ -1577,6 +1582,7 @@ export const useDataStore = create<DataState>()(
       journal: [],
       auditLog: [],
       appUsers: [],
+      roleOverrides: {},
       currentUserId: null,
       issues: [],
 
@@ -3220,6 +3226,23 @@ export const useDataStore = create<DataState>()(
         set({
           appUsers: state.appUsers.map((u) => (u.id === id
             ? { ...u, ...patch, ...(patch.nameAr !== undefined ? { nameAr: sanitizeText(patch.nameAr, 60) || u.nameAr } : {}) }
+            : u)),
+        })
+      },
+      setRolePermissions: (roleId, permissions) => {
+        // دور المالك محمي بنيوياً — أي محاولة تعديل تُرفض (صفر تجاوز)
+        if (roleId === 'owner') throw new Error('دور المالك محمي — كل الصلاحيات دائماً')
+        const state = get()
+        set({ roleOverrides: { ...state.roleOverrides, [roleId]: [...new Set(permissions)] } })
+      },
+      setUserPermExceptions: (id, extraPerms, deniedPerms) => {
+        const state = get()
+        const user = state.appUsers.find((u) => u.id === id)
+        if (!user) throw new Error('المستخدم غير موجود')
+        if (user.roleId === 'owner') throw new Error('حساب المالك لا تُحجب عنه صلاحية')
+        set({
+          appUsers: state.appUsers.map((u) => (u.id === id
+            ? { ...u, extraPerms: [...new Set(extraPerms)], deniedPerms: [...new Set(deniedPerms)] }
             : u)),
         })
       },
@@ -6187,6 +6210,7 @@ export const useDataStore = create<DataState>()(
           // سجل النشاطات والمستخدمون والبلاغات (الإصدار 11) — قواعد قديمة بلا هذه الحقول
           auditLog: s.auditLog ?? [],
           appUsers: s.appUsers ?? [],
+          roleOverrides: s.roleOverrides ?? {},
           currentUserId: s.currentUserId ?? null,
           issues: s.issues ?? [],
           // ترحيل الخزائن المتعددة: الحسابات القديمة تحصل على الافتراضيتين

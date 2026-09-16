@@ -7,6 +7,8 @@ import { NavLink, useLocation } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
+import { useDataStore } from '../../data/repo.ts'
+import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../../core/permissions.ts'
 
 export function Sidebar() {
   const location = useLocation()
@@ -20,6 +22,11 @@ export function Sidebar() {
     return s
   })
 
+  // صلاحيات المستخدم النشط (البند 4 — صفر تجاوز): ما لا يملكه لا يراه أصلاً
+  const { appUsers, currentUserId, roleOverrides } = useDataStore()
+  const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
+  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides))
+
   // إخفاء الأقسام والفروع حسب الوحدات المفعلة للنشاط (طلب المالك):
   // القسم كله يختفي لو وحدته مطفأة، والفرع المرتبط بوحدة يختفي وحده داخل قسم عام
   const visibleSections = NAV_SECTIONS
@@ -30,7 +37,10 @@ export function Sidebar() {
     })
     .map((sec) => ({
       ...sec,
-      children: sec.children.filter((c) => !c.module || setup.modules.includes(c.module)),
+      children: sec.children
+        .filter((c) => !c.module || setup.modules.includes(c.module))
+        // فرض الصلاحيات في الواجهة: الشاشة غير المصرح بها لا تظهر في القائمة
+        .filter((c) => canAccessPath(c.path, perms)),
     }))
     .filter((sec) => sec.children.length > 0)
 

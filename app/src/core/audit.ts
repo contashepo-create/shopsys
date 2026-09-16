@@ -190,6 +190,9 @@ export interface AppUser {
   roleId: string // من أدوار الصلاحيات (owner محجوز للمالك)
   pinHash: string // SHA-256 hex — لا يُخزن الرقم السري أبداً
   active: boolean
+  /** استثناءات فردية (البند 4 — لكل موظف): ممنوح فوق الدور / محجوب رغم الدور */
+  extraPerms?: string[]
+  deniedPerms?: string[]
 }
 
 /** تجزئة الرقم السري (4-8 أرقام) — WebCrypto متاح في المتصفح وNode 18+ */

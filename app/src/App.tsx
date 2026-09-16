@@ -14,6 +14,7 @@ import { encryptForDevice } from './data/secureStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
 import { buildAccentCssVars } from './core/appearance.ts'
 import { decideTabLock, parseTabLock, TAB_HEARTBEAT_MS } from './core/concurrency.ts'
+import { effectivePermissionsFor, rolesWithOverrides, canAccessPath, permissionForPath, PERMISSIONS } from './core/permissions.ts'
 import { useState } from 'react'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
@@ -91,6 +92,29 @@ function usePageTitle(): string {
 
 function Shell() {
   const title = usePageTitle()
+  const location = useLocation()
+
+  // ─── حارس المسارات (البند 4 — صفر تجاوز): حتى الرابط المباشر لا يفتح شاشة بلا صلاحية ───
+  const { appUsers, currentUserId, roleOverrides } = useDataStore()
+  const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
+  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides))
+  if (!canAccessPath(location.pathname, perms)) {
+    const needed = permissionForPath(location.pathname)
+    const permName = PERMISSIONS.find((p) => p.id === needed)?.nameAr ?? needed
+    return (
+      <MainLayout title="غير مصرح">
+        <div className="max-w-lg mx-auto mt-16 text-center space-y-4 p-10 rounded-3xl bg-white dark:bg-card-dark border border-rose-500/25 anim-pop">
+          <div className="text-5xl">🚫</div>
+          <h1 className="text-xl font-black text-slate-800 dark:text-white">هذه الشاشة تحتاج صلاحية</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+            حسابك «{activeUser?.nameAr ?? 'الحالي'}» لا يملك صلاحية «{permName}».
+            اطلب من المالك منحها لدورك أو لحسابك من شاشة الصلاحيات.
+          </p>
+        </div>
+      </MainLayout>
+    )
+  }
+
   return (
     <MainLayout title={title}>
       <Routes>
