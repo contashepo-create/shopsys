@@ -15,6 +15,7 @@ import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoi
 import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
 import { DEFAULT_REPORT_PRINT, type ReportPrintSettings } from '../core/reportPrint.ts'
 import { DEFAULT_LABEL_SETTINGS, type LabelSettings } from '../core/labels.ts'
+import { DEFAULT_SCALE_RULES, validateScaleRule, type ScaleRule } from '../core/barcode.ts'
 import type { AboutContent } from '../core/cloud.ts'
 import type { DeviceFlags } from '../core/featureFlags.ts'
 
@@ -74,6 +75,11 @@ interface AppState {
   /** قالب ملصقات الباركود/السيريال — يُضبط مرة ويسري على كل الطباعات (طلب المالك) */
   labelSettings: LabelSettings
   updateLabelSettings: (patch: Partial<LabelSettings>) => void
+  /** قواعد باركود الميزان العالمية (أي ميزان بأي صيغة) — تُجرب بالترتيب في الكاشير */
+  scaleRules: ScaleRule[]
+  addScaleRule: (rule: Omit<ScaleRule, 'id'>) => void
+  updateScaleRule: (id: number, patch: Partial<Omit<ScaleRule, 'id'>>) => void
+  removeScaleRule: (id: number) => void
   autoPrintAfterSale: boolean
   updateReceipt: (patch: Partial<ReceiptSettings>) => void
   setAutoPrint: (v: boolean) => void
@@ -225,6 +231,22 @@ export const useAppStore = create<AppState>()(
       updateReportPrint: (patch) => set((s) => ({ reportPrint: { ...s.reportPrint, ...patch } })),
       labelSettings: DEFAULT_LABEL_SETTINGS,
       updateLabelSettings: (patch) => set((s) => ({ labelSettings: { ...s.labelSettings, ...patch } })),
+      scaleRules: DEFAULT_SCALE_RULES,
+      addScaleRule: (rule) => set((s) => {
+        const errors = validateScaleRule(rule)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const id = s.scaleRules.reduce((m, r) => Math.max(m, r.id), 0) + 1
+        return { scaleRules: [...s.scaleRules, { ...rule, id }] }
+      }),
+      updateScaleRule: (id, patch) => set((s) => {
+        const cur = s.scaleRules.find((r) => r.id === id)
+        if (!cur) throw new Error('القاعدة غير موجودة')
+        const next = { ...cur, ...patch }
+        const errors = validateScaleRule(next)
+        if (errors.length) throw new Error(errors.join(' — '))
+        return { scaleRules: s.scaleRules.map((r) => (r.id === id ? next : r)) }
+      }),
+      removeScaleRule: (id) => set((s) => ({ scaleRules: s.scaleRules.filter((r) => r.id !== id) })),
       autoPrintAfterSale: false,
       updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
       setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
@@ -327,6 +349,8 @@ export const useAppStore = create<AppState>()(
         if (state) state.reportPrint = { ...DEFAULT_REPORT_PRINT, ...state.reportPrint }
         // ترحيل: قالب الملصقات (قسم الباركود والسيريال)
         if (state) state.labelSettings = { ...DEFAULT_LABEL_SETTINGS, ...state.labelSettings }
+        // ترحيل: قواعد باركود الميزان — حسابات قديمة تحصل على القاعدة الافتراضية (بادئة 22)
+        if (state && (!state.scaleRules || state.scaleRules.length === 0)) state.scaleRules = DEFAULT_SCALE_RULES
         // ترحيل: حسابات قبل ميزة المظهر تحصل على الافتراضيات (مع تنقية القيم)
         if (state) state.appearance = sanitizeAppearance(state.appearance)
         // ترحيل: حسابات قبل ميزة التليجرام تحصل على الافتراضيات

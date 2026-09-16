@@ -85,6 +85,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/inventory/wastage', perm: 'inv.adjust' },
   { prefix: '/inventory/consumption', perm: 'inv.adjust' },
   { prefix: '/inventory/barcode-center', perm: 'inv.view' },
+  { prefix: '/inventory/scale', perm: 'inv.item.manage' },
   { prefix: '/inventory', perm: 'inv.view' },
   { prefix: '/purchases/returns', perm: 'pur.return.create' },
   { prefix: '/purchases/suppliers', perm: 'pur.supplier.manage' },

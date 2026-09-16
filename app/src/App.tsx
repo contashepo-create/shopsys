@@ -71,6 +71,7 @@ import { WalletServicesPage } from './ui/pages/WalletServicesPage.tsx'
 import { WastagePage } from './ui/pages/WastagePage.tsx'
 import { ConsumptionPage } from './ui/pages/ConsumptionPage.tsx'
 import { BarcodeCenterPage } from './ui/pages/BarcodeCenterPage.tsx'
+import { ScaleSettingsPage } from './ui/pages/ScaleSettingsPage.tsx'
 import { OpeningBalancesPage } from './ui/pages/OpeningBalancesPage.tsx'
 import { SerialsPage } from './ui/pages/SerialsPage.tsx'
 import { SettlementsPage } from './ui/pages/SettlementsPage.tsx'
@@ -197,6 +198,7 @@ function Shell() {
         <Route path="/inventory/wastage" element={<WastagePage />} />
         <Route path="/inventory/consumption" element={<ConsumptionPage />} />
         <Route path="/inventory/barcode-center" element={<BarcodeCenterPage />} />
+        <Route path="/inventory/scale" element={<ScaleSettingsPage />} />
         <Route path="/accounting/opening-balances" element={<OpeningBalancesPage />} />
         <Route path="/inventory/serials" element={<SerialsPage />} />
         <Route path="/accounting/settlements" element={<SettlementsPage />} />

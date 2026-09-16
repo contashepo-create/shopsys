@@ -11,7 +11,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { computeTotals, type CartLine } from '../../core/pos.ts'
-import { parseScaleBarcode, matchScaleItem } from '../../core/barcode.ts'
+import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { itemMatchesPartQuery } from '../../core/items.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
@@ -34,7 +34,7 @@ export function PosPage() {
   // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
   const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
   const openShift = currentOpenShift(shifts)
-  const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -245,17 +245,35 @@ export function PosPage() {
       setQuery('')
       return
     }
-    // باركود ميزان؟ (طلب المالك: بائع الأجبان يزن ويطبع، والكاشير يمسح)
-    const scale = parseScaleBarcode(q)
+    // باركود ميزان؟ (عالمي — يجرب كل قواعد التفكيك الممكّنة بالترتيب: وزن أو سعر)
+    const scale = parseScaleBarcodeUniversal(q, scaleRules)
     if (scale) {
       const it = matchScaleItem(scale.itemCode, sellable)
       if (it) {
-        addToCart(it.id, scale.weightKg)
-        toast.show(`⚖️ ${it.nameAr} — ${scale.weightKg} كجم من باركود الميزان`)
+        if (scale.weightKg != null) {
+          // قاعدة وزن: الكمية = الوزن والسعر من بطاقة الصنف
+          addToCart(it.id, scale.weightKg)
+          toast.show(`⚖️ ${it.nameAr} — ${scale.weightKg} كجم من باركود الميزان`)
+        } else {
+          // قاعدة سعر: الميزان طبع السعر الإجمالي — نشتق الوزن = السعر ÷ سعر الكيلو
+          const priceMinor = scalePriceToMinor(scale.priceRaw ?? 0, scale.rule.valueDecimals, cur.decimals)
+          const perKg = getEffectivePrice(it.id, activePriceListId)
+          if (perKg <= 0) {
+            toast.show(`«${it.nameAr}» بلا سعر بيع للكيلو — حدّده أولاً لتفكيك باركود السعر`, 'error')
+          } else {
+            const weightKg = Math.round((priceMinor / perKg) * 1000) / 1000
+            if (weightKg <= 0) {
+              toast.show('باركود سعر بقيمة أصغر من أن تكوّن وزناً — راجع كسور القاعدة', 'error')
+            } else {
+              addToCart(it.id, weightKg)
+              toast.show(`⚖️ ${it.nameAr} — ${fmt(priceMinor)} ${cur.symbol} ≈ ${weightKg} كجم من باركود الميزان`)
+            }
+          }
+        }
         setQuery('')
         return
       }
-      toast.show(`باركود ميزان لصنف غير معروف (كود ${scale.itemCode})`, 'error')
+      toast.show(`باركود ميزان لصنف غير معروف (كود ${scale.itemCode}) — راجع قائمة PLU في إعدادات الميزان`, 'error')
       setQuery('')
       return
     }
