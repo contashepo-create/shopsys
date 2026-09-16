@@ -121,7 +121,7 @@ export function ActivityWidgets() {
           const rows = store.customers
             .map((c) => ({
               c,
-              bal: statementBalance(customerStatement({ customerId: c.id, sales: store.sales, saleReturns: store.saleReturns, allSales: store.sales, vouchers: allVouchers, cheques: store.cheques, extraDocs: customerUnitDocs({ customerId: c.id, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts }) })),
+              bal: statementBalance(customerStatement({ customerId: c.id, sales: store.sales, saleReturns: store.saleReturns, allSales: store.sales, vouchers: allVouchers, cheques: store.cheques, extraDocs: customerUnitDocs({ customerId: c.id, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts, clinicVisits: store.clinicVisits, clinicCollections: store.clinicCollections, linkedPatientIds: store.clinicPatients.filter((p) => p.linkedCustomerId === c.id).map((p) => p.id) }) })),
             }))
             .filter((x) => x.bal > 0)
             .sort((a, b) => b.bal - a.bal)

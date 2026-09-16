@@ -38,7 +38,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, customers, suppliers, purchases, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts } = useDataStore()
+  const { vouchers, journal, treasuries, customers, suppliers, purchases, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -68,7 +68,7 @@ export function VouchersPage() {
         customerId: partyId,
         openingMinor: openingBalances[`customer:${partyId}`] ?? 0,
         sales, saleReturns, allSales: sales,
-        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts }),
+        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id) }),
         vouchers: [
           ...vouchers,
           ...clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),

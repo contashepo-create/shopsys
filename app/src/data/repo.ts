@@ -64,6 +64,7 @@ import {
   type ApprovalAction, type ApprovalFlow, type ApprovalRequest,
 } from '../core/projectOps.ts'
 import { computeVisitTotals, buildVisitEntry, buildPatientCollectionEntry, validateTreatmentPlan, sessionFees, patientBalance, type VisitKind, type VisitTotals } from '../core/clinic.ts'
+import { validateRxLines, validateAttachment, migrateFreeHistory, EMPTY_VITALS, type RxLine, type MedicalHistory, type Vitals, type AttachmentKind } from '../core/prescription.ts'
 import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, buildConsignmentSaleEntry, buildConsignmentPayoutEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
 import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
 import { DEFAULT_TREASURIES, nextTreasuryCode, validateTreasury, type TreasuryDef } from '../core/treasury.ts'
@@ -354,7 +355,27 @@ export interface ClinicPatient {
   phone: string
   gender: Gender
   birthDate: string // '' = غير معروف
-  medicalHistory: string // أمراض مزمنة/حساسية/عمليات
+  medicalHistory: string // (قديم) نص حر — يُرحَّل إلى history.extraNotes
+  /** التاريخ المرضي المنظم (ترقية العيادة): فصيلة/مزمنة/حساسية/عمليات/أدوية حالية */
+  history?: MedicalHistory
+  /**
+   * ربط المريض بحساب عميل (سؤال المالك: المرضى هم العملاء مالياً) —
+   * ملف المريض طبي، وحساب العميل مالي. الربط يجعل كشف حساب العميل
+   * يشمل الزيارات، مع بقاء السرية الطبية في ملف العيادة فقط.
+   */
+  linkedCustomerId?: number | null
+  notes: string
+}
+
+/** مرفق مستند طبي: أشعة/تحليل/تقرير — صورة مضغوطة أو PDF (Base64 محلياً) */
+export interface PatientAttachment {
+  id: number
+  patientId: number
+  kind: AttachmentKind
+  name: string // «أشعة صدر 2026-09»
+  mime: string // image/jpeg | application/pdf
+  dataUrl: string // data:...;base64,...
+  addedAt: string // ISO
   notes: string
 }
 
@@ -367,7 +388,13 @@ export interface ClinicVisit {
   kind: VisitKind
   complaint: string // الشكوى
   diagnosis: string // التشخيص
-  treatment: string // العلاج / الإجراء المنفذ
+  treatment: string // (قديم) نص حر — الزيارات الجديدة تستخدم rxLines
+  /** الروشتة المنظمة (ترقية العيادة): بند لكل دواء بجرعة ووجبات ومدة وتكرار وصرف */
+  rxLines?: RxLine[]
+  /** العلامات الحيوية: ضغط/نبض/حرارة/وزن */
+  vitals?: Vitals
+  /** موعد المراجعة المقترح — يُطبع أسفل الروشتة ('' = بلا) */
+  nextVisit?: string
   totals: VisitTotals
   planId: number | null // إن كانت جلسة ضمن خطة علاج
   journalEntryId: number
@@ -815,6 +842,7 @@ interface DataState {
   custodyFiles: CustodyFile[] // ملفات عهد الموظفين (طلب المالك — نظام متكامل بنمط pro-acc)
   custodyTxs: CustodyTx[] // حركات ملفات العهد (تعزيز/مصروف/فاتورة/مرتجع/عجز)
   clinicPatients: ClinicPatient[] // العيادة (القرار 27)
+  patientAttachments: PatientAttachment[] // مستندات المرضى: أشعة/تحاليل/تقارير
   clinicVisits: ClinicVisit[]
   treatmentPlans: TreatmentPlan[]
   clinicCollections: ClinicCollection[]
@@ -1344,10 +1372,16 @@ interface DataState {
   getProjectWip: (projectId: number) => WipResult & { contractMinor: number; billedMinor: number; costsMinor: number }
   /* ─── العيادة (القرار 27) ─── */
   addClinicPatient: (p: Omit<ClinicPatient, 'id'>) => ClinicPatient
+  /** تحديث بيانات مريض (تاريخ مرضي منظم/ربط عميل/هاتف) */
+  updateClinicPatient: (id: number, patch: Partial<Omit<ClinicPatient, 'id'>>) => void
+  /** إرفاق مستند طبي (صورة/PDF) لملف المريض */
+  addPatientAttachment: (a: Omit<PatientAttachment, 'id' | 'addedAt'>) => PatientAttachment
+  removePatientAttachment: (id: number) => void
   /** زيارة بملاحظات الكشف وقيمتها — سداد جزئي مدعوم، والمتبقي دين على المريض */
   addClinicVisit: (args: {
     patientId: number; kind: VisitKind; complaint: string; diagnosis: string; treatment: string
     feeMinor: number; paidMinor: number; vatPercent: number; planId: number | null; treasury?: string
+    rxLines?: RxLine[]; vitals?: Vitals; nextVisit?: string
   }) => ClinicVisit
   addTreatmentPlan: (args: { patientId: number; title: string; totalSessions: number; totalFeeMinor: number }) => TreatmentPlan
   /** تحصيل متأخرات مريض بقيد 1101 ← 1104 */
@@ -1547,6 +1581,7 @@ export const useDataStore = create<DataState>()(
       custodyFiles: [],
       custodyTxs: [],
       clinicPatients: [],
+      patientAttachments: [],
       clinicVisits: [],
       treatmentPlans: [],
       clinicCollections: [],
@@ -5530,9 +5565,34 @@ export const useDataStore = create<DataState>()(
       addClinicPatient: (p) => {
         const state = get()
         if (!p.nameAr.trim()) throw new Error('اسم المريض مطلوب')
+        if (p.linkedCustomerId != null && !state.customers.some((c) => c.id === p.linkedCustomerId)) {
+          throw new Error('حساب العميل المرتبط غير موجود')
+        }
         const patient: ClinicPatient = { ...p, id: nextId(state.clinicPatients) }
         set({ clinicPatients: [...state.clinicPatients, patient] })
         return patient
+      },
+      updateClinicPatient: (id, patch) => {
+        const state = get()
+        const patient = state.clinicPatients.find((p) => p.id === id)
+        if (!patient) throw new Error('المريض غير مسجل')
+        if (patch.nameAr !== undefined && !patch.nameAr.trim()) throw new Error('اسم المريض مطلوب')
+        if (patch.linkedCustomerId != null && !state.customers.some((c) => c.id === patch.linkedCustomerId)) {
+          throw new Error('حساب العميل المرتبط غير موجود')
+        }
+        set({ clinicPatients: state.clinicPatients.map((p) => (p.id === id ? { ...p, ...patch } : p)) })
+      },
+      addPatientAttachment: (a) => {
+        const state = get()
+        if (!state.clinicPatients.some((p) => p.id === a.patientId)) throw new Error('المريض غير مسجل')
+        const errors = validateAttachment({ name: a.name, mime: a.mime, dataUrl: a.dataUrl })
+        if (errors.length) throw new Error(errors.join(' — '))
+        const att: PatientAttachment = { ...a, name: sanitizeText(a.name, 120), id: nextId(state.patientAttachments), addedAt: new Date().toISOString() }
+        set({ patientAttachments: [...state.patientAttachments, att] })
+        return att
+      },
+      removePatientAttachment: (id) => {
+        set({ patientAttachments: get().patientAttachments.filter((x) => x.id !== id) })
       },
       addClinicVisit: (args) => {
         const state = get()
@@ -5543,6 +5603,12 @@ export const useDataStore = create<DataState>()(
           if (!plan) throw new Error('خطة العلاج غير موجودة')
           if (plan.patientId !== patient.id) throw new Error('الخطة لمريض آخر')
           if (plan.doneSessions >= plan.totalSessions) throw new Error('اكتملت جلسات هذه الخطة')
+        }
+        // الروشتة المنظمة: بنود بها اسم دواء تُفحص بصرامة (بنود فارغة بالكامل تُستبعد)
+        const rxLines = (args.rxLines ?? []).filter((l) => l.medication.trim())
+        if (rxLines.length > 0) {
+          const rxErrors = validateRxLines(rxLines)
+          if (rxErrors.length) throw new Error(rxErrors.join(' — '))
         }
         const totals = computeVisitTotals({ kind: args.kind, feeMinor: args.feeMinor, paidMinor: args.paidMinor, vatPercent: args.vatPercent })
         const id = nextId(state.clinicVisits)
@@ -5559,6 +5625,7 @@ export const useDataStore = create<DataState>()(
         const visit: ClinicVisit = {
           id, visitNumber, patientId: patient.id, date: now, kind: args.kind,
           complaint: args.complaint, diagnosis: args.diagnosis, treatment: args.treatment,
+          rxLines, vitals: args.vitals ?? EMPTY_VITALS, nextVisit: args.nextVisit ?? '',
           totals, planId: args.planId, journalEntryId: entryId,
         }
         set({
@@ -6327,11 +6394,13 @@ export const useDataStore = create<DataState>()(
           projectExtracts: s.projectExtracts ?? [],
           projectCosts: s.projectCosts ?? [],
           retentionReleases: s.retentionReleases ?? [],
-          clinicPatients: s.clinicPatients ?? [],
           clinicVisits: s.clinicVisits ?? [],
           treatmentPlans: s.treatmentPlans ?? [],
           clinicCollections: s.clinicCollections ?? [],
           clinicAppointments: s.clinicAppointments ?? [],
+          patientAttachments: s.patientAttachments ?? [],
+          // ترحيل التاريخ المرضي الحر القديم إلى البنية المنظمة (بلا فقد)
+          clinicPatients: (s.clinicPatients ?? []).map((p) => (p.history ? p : { ...p, history: migrateFreeHistory(p.medicalHistory ?? ''), linkedCustomerId: p.linkedCustomerId ?? null })),
           cars: s.cars ?? [],
           // الأمر 23: تذاكر قديمة إجمالياتها بلا حقول الخدمات/التحصيل المجزأ/الربح — تُستكمل بأمان
           tickets: (s.tickets ?? []).map((t: MaintenanceTicket) => {

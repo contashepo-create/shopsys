@@ -201,8 +201,22 @@ export function customerUnitDocs(args: {
   trips?: readonly { tripNumber: string; date: string; customerId: number | null; payment: string; paidMinor?: number; totals: { grandMinor: Minor } }[]
   tickets?: readonly { ticketNumber: string; customerId: number | null; deliveredAt: string | null; totals: { creditMinor: Minor } | null }[]
   rentals?: readonly { contractNumber: string; date: string; customerId: number | null; totals: { collectCreditMinor: Minor } }[]
+  /** زيارات العيادة الآجلة لمريض مرتبط بهذا العميل (ترقية العيادة) + تحصيلاته */
+  clinicVisits?: readonly { visitNumber: string; date: string; patientId: number; totals: { dueMinor: Minor } }[]
+  clinicCollections?: readonly { date: string; patientId: number; amountMinor: Minor }[]
+  /** معرفات المرضى المرتبطين بهذا العميل */
+  linkedPatientIds?: readonly number[]
 }): { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[] {
   const rows: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[] = []
+  const patientSet = new Set(args.linkedPatientIds ?? [])
+  for (const v of args.clinicVisits ?? []) {
+    if (!patientSet.has(v.patientId)) continue
+    if (v.totals.dueMinor > 0) rows.push({ docLabel: `زيارة عيادة ${v.visitNumber} (آجل)`, date: v.date, debitMinor: v.totals.dueMinor, creditMinor: 0 })
+  }
+  for (const c of args.clinicCollections ?? []) {
+    if (!patientSet.has(c.patientId)) continue
+    rows.push({ docLabel: 'تحصيل من المريض', date: c.date, debitMinor: 0, creditMinor: c.amountMinor })
+  }
   for (const t of args.trips ?? []) {
     if (t.customerId !== args.customerId) continue
     const paid = t.paidMinor ?? (t.payment === 'cash' ? t.totals.grandMinor : 0)

@@ -19,7 +19,7 @@ import { getActivity } from '../../core/activities.ts'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements, trips, tickets, rentalContracts } = useDataStore()
+  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur)
@@ -98,7 +98,7 @@ export function Dashboard() {
       installmentAlerts: collectInstallmentAlerts(installmentPlans, new Date().toISOString().slice(0, 10)),
       cheques,
       customers,
-      customerBalances: (id) => statementBalance(customerStatement({ customerId: id, sales, saleReturns, allSales: sales, vouchers: allVouchers, cheques, extraDocs: customerUnitDocs({ customerId: id, trips, tickets, rentals: rentalContracts }) })),
+      customerBalances: (id) => statementBalance(customerStatement({ customerId: id, sales, saleReturns, allSales: sales, vouchers: allVouchers, cheques, extraDocs: customerUnitDocs({ customerId: id, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === id).map((p) => p.id) }) })),
       fmt,
     })
   }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements, trips, tickets, rentalContracts])
@@ -120,6 +120,11 @@ export function Dashboard() {
   const theme = themeForActivity(setup.activityId)
   const persona = PERSONA_STYLES[theme.persona]
   const activityName = (setup.activityId && getActivity(setup.activityId)?.nameAr) || 'نشاط عام'
+  // الترحيب باسم المستخدم نفسه (إصلاح المالك): المستخدم الفرعي النشط باسمه — وإلا اسم المالك
+  const { appUsers, currentUserId } = useDataStore()
+  const activeUserName = appUsers.find((u) => u.id === currentUserId)?.nameAr || setup.ownerName || ''
+  const hour = new Date().getHours()
+  const greeting = hour < 12 ? 'صباح الخير' : hour < 18 ? 'مساء الخير' : 'مساء الخير'
 
   return (
     <div className="space-y-6">
@@ -130,7 +135,7 @@ export function Dashboard() {
           <div className="text-4xl">{theme.heroEmoji}</div>
           <div>
             <h2 className="text-lg font-black text-slate-800 dark:text-white">
-              {setup.shopName ? `أهلاً — ${setup.shopName}` : 'أهلاً بك'}
+              {activeUserName ? `${greeting} يا ${activeUserName} 👋` : `${greeting} 👋`}
             </h2>
             <p className="text-[12.5px] text-slate-500 dark:text-slate-400 mt-0.5">
               {theme.heroLineAr} · <span className="font-bold">{activityName}</span>

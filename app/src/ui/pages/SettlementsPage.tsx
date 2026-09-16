@@ -54,7 +54,7 @@ export function SettlementsPage() {
         customerId: pid,
         openingMinor: store.openingBalances[`customer:${pid}`] ?? 0,
         sales: store.sales, saleReturns: store.saleReturns, allSales: store.sales,
-        extraDocs: customerUnitDocs({ customerId: pid, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts }),
+        extraDocs: customerUnitDocs({ customerId: pid, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts, clinicVisits: store.clinicVisits, clinicCollections: store.clinicCollections, linkedPatientIds: store.clinicPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id) }),
         vouchers: [
           ...store.vouchers,
           ...store.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
