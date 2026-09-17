@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, normalizeDigits } from '../../core/money.ts'
 import type { CountInput } from '../../core/stocktake.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function StocktakePage() {
@@ -72,9 +73,12 @@ export function StocktakePage() {
   )
   const liveDiffs = liveCounts.filter((c) => c.countedQty !== c.expectedQty)
 
+  // تسوية الجرد عملية حساسة (inv.adjust) — تغير قيمة 1103 بقيد؛ خلف موافقة المشرف
+  const approval = useSupervisorApproval('inv.adjust')
   const submit = () => {
+    if (!liveCounts.length) { toast.show('لم تعدّ أي صنف بعد', 'error'); return }
+    approval.request(() => {
     try {
-      if (!liveCounts.length) { toast.show('لم تعدّ أي صنف بعد', 'error'); return }
       const st = postStocktake(liveCounts, notes.trim())
       toast.show(
         st.journalEntryId
@@ -85,6 +89,7 @@ export function StocktakePage() {
     } catch (e) {
       toast.show((e as Error).message, 'error')
     }
+    })
   }
 
   return (
@@ -274,6 +279,7 @@ export function StocktakePage() {
           </div>
         )}
       </Modal>
+      {approval.dialog}
     </div>
   )
 }

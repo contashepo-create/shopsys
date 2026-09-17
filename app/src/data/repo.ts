@@ -2047,7 +2047,23 @@ export const useDataStore = create<DataState>()(
       addItem: (item) => set((s) => ({ items: [...s.items, { ...item, id: nextId(s.items) }] })),
       updateItem: (id, patch) =>
         set((s) => ({ items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) })),
-      removeItem: (id) => set((s) => ({ items: s.items.filter((it) => it.id !== id) })),
+      removeItem: (id) => {
+        const s = get()
+        const it = s.items.find((x) => x.id === id)
+        if (!it) return
+        // V1 (مراجعة المخزون): صنف له تاريخ حركة لا يُحذف — الحذف يفقد كروت الأصناف
+        // والتقارير مرجعيتها ويترك 1103 بقيمة صنف شبح. البديل: تعطيل (أرشفة).
+        const reasons: string[] = []
+        if (s.purchases.some((p) => p.lines.some((l) => l.itemId === id))) reasons.push('فواتير شراء')
+        if (s.sales.some((sl) => sl.lines.some((l) => l.itemId === id))) reasons.push('فواتير بيع')
+        if (s.stocktakes.some((st) => st.result.variances.some((v) => v.itemId === id))) reasons.push('تسويات جرد')
+        if (s.wastages.some((w) => w.lines.some((l) => l.itemId === id))) reasons.push('مستندات إتلاف')
+        if (s.consumptions.some((c) => c.lines.some((l) => l.itemId === id))) reasons.push('مستندات صرف داخلي')
+        if (s.transfers.some((t) => t.lines.some((l) => l.itemId === id))) reasons.push('تحويلات مخزنية')
+        if (reasons.length) throw new Error(`«${it.nameAr}» له ${reasons.join(' و')} — لا يُحذف حفاظاً على السجل؛ عطّله بدلاً من الحذف`)
+        if ((it.stockQty ?? 0) !== 0) throw new Error(`«${it.nameAr}» رصيده ${it.stockQty} — صفّره أولاً (بيع/إتلاف/جرد) ثم احذفه، وإلا بقيت قيمة 1103 بلا صنف`)
+        set({ items: s.items.filter((x) => x.id !== id) })
+      },
 
       addCategory: (nameAr, features, parentId = null) =>
         set((s) => ({ categories: [...s.categories, { id: nextId(s.categories), nameAr, parentId, features }] })),
@@ -2956,7 +2972,25 @@ export const useDataStore = create<DataState>()(
           countedBy.has(it.id) ? { ...it, stockQty: countedBy.get(it.id)! } : it,
         )
 
-        set({ stocktakes: [...state.stocktakes, st], journal, items: updatedItems })
+        // V2 (مراجعة المخزون): العجز يُخصم من دفعات الصلاحية أيضاً (FEFO — الأقدم
+        // انتهاءً أولاً باعتباره الأرجح فقداً/تلفاً) وإلا بقيت الدفعات أعلى من الرصيد
+        // فتنذر «منتهي الصلاحية» عن بضاعة غير موجودة أصلاً
+        let batches = state.batches
+        for (const v of result.variances) {
+          if (v.diffQty >= 0) continue
+          let rest = -v.diffQty
+          batches = batches
+            .slice()
+            .sort((a, b) => ((a.expiryDate ?? '9999') < (b.expiryDate ?? '9999') ? -1 : 1))
+            .map((b) => {
+              if (b.itemId !== v.itemId || rest <= 0 || b.qty <= 0) return b
+              const take = Math.min(b.qty, rest)
+              rest -= take
+              return { ...b, qty: Math.round((b.qty - take) * 1000) / 1000 }
+            })
+        }
+
+        set({ stocktakes: [...state.stocktakes, st], journal, items: updatedItems, batches })
         return st
       },
 

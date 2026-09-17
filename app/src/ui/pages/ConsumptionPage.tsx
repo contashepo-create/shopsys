@@ -14,6 +14,7 @@ import { formatMinor } from '../../core/money.ts'
 import { CONSUMPTION_PURPOSES, INTERNAL_USE_ACCOUNT } from '../../core/consumption.ts'
 import { STANDARD_COA } from '../../core/ledger.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 interface DraftLine { itemId: string; qty: string }
@@ -56,7 +57,10 @@ export function ConsumptionPage() {
     setOpen(true)
   }
 
+  // الصرف الداخلي عملية حساسة (inv.adjust) — بضاعة تتحول مصروفاً؛ خلف موافقة المشرف
+  const approval = useSupervisorApproval('inv.adjust')
   const save = () => {
+    approval.request(() => {
     try {
       const doc = postConsumption({
         purpose,
@@ -67,6 +71,7 @@ export function ConsumptionPage() {
       toast.show(`رُحّل الصرف ${doc.consumptionNumber} بقيمة ${fmt(doc.totalCostMinor)} ${cur.symbol} — تولد قيد ${doc.expenseAccount}/1103 ✓`)
       setOpen(false)
     } catch (e) { toast.show((e as Error).message, 'error') }
+    })
   }
 
   const [viewing, setViewing] = useState<ConsumptionDoc | null>(null)
@@ -226,6 +231,7 @@ export function ConsumptionPage() {
           </div>
         )}
       </Modal>
+      {approval.dialog}
     </div>
   )
 }

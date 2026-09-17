@@ -12,6 +12,7 @@ import { formatMinor } from '../../core/money.ts'
 import { WASTAGE_REASONS } from '../../core/wastage.ts'
 import { expiryAlerts } from '../../core/batches.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 interface DraftLine { itemId: string; qty: string }
@@ -53,7 +54,10 @@ export function WastagePage() {
     setOpen(true)
   }
 
+  // الإتلاف عملية حساسة (inv.adjust) — بضاعة تخرج بلا مقابل؛ خلف موافقة المشرف
+  const approval = useSupervisorApproval('inv.adjust')
   const save = () => {
+    approval.request(() => {
     try {
       const doc = postWastage({
         reason,
@@ -63,6 +67,7 @@ export function WastagePage() {
       toast.show(`رُحّل الإتلاف ${doc.wastageNumber} بقيمة ${fmt(doc.totalCostMinor)} ${cur.symbol} — تولد قيد 5111/1103 ✓`)
       setOpen(false)
     } catch (e) { toast.show((e as Error).message, 'error') }
+    })
   }
 
   const [viewing, setViewing] = useState<WastageDoc | null>(null)
@@ -228,6 +233,7 @@ export function WastagePage() {
           </div>
         )}
       </Modal>
+      {approval.dialog}
     </div>
   )
 }

@@ -464,7 +464,8 @@ export function ItemsPage() {
                           <Pencil size={15} />
                         </button>
                         <button
-                          onClick={() => { removeItem(it.id); toast.show(`تم حذف «${it.nameAr}»`) }}
+                          onClick={() => { try { removeItem(it.id); toast.show(`تم حذف «${it.nameAr}»`) } catch (e) { toast.show((e as Error).message, 'error') } }}
+                          title="حذف الصنف — يُرفض إن كان له حركة أو رصيد (عطّله بدلاً من الحذف)"
                           className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110"
                         >
                           <Trash2 size={15} />
