@@ -3417,6 +3417,19 @@ export const useDataStore = create<DataState>()(
 
       postVoucher: (args) => {
         const state = get()
+        // T1 (مراجعة الخزينة): فحوص ما قبل الكتابة — كانت خزينة/حساب/طرف أشباح تمر
+        if (!state.treasuries.some((t) => t.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود — أضفه من «الخزينة والبنوك» أولاً')
+        const accountExists = (code: string) =>
+          state.treasuries.some((t) => t.code === code) ||
+          STANDARD_COA.some((a) => a.code === code && a.isPostable) ||
+          state.customAccounts.some((a) => a.code === code)
+        if (args.kind === 'transfer') {
+          if (!state.treasuries.some((t) => t.code === args.counterAccountCode)) throw new Error('الخزينة الوجهة غير موجودة')
+        } else if (!accountExists(args.counterAccountCode)) {
+          throw new Error(`الحساب المقابل ${args.counterAccountCode} غير موجود في شجرة الحسابات`)
+        }
+        if (args.partyKind === 'customer' && args.partyId != null && !state.customers.some((c) => c.id === args.partyId)) throw new Error('العميل غير موجود — سجّله أولاً')
+        if (args.partyKind === 'supplier' && args.partyId != null && !state.suppliers.some((s) => s.id === args.partyId)) throw new Error('المورد غير موجود — سجّله أولاً')
         // القيد حسب نوع السند — كله عبر دوال النواة المتوازنة بنيوياً
         const entryLines =
           args.kind === 'receipt'

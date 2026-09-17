@@ -14,6 +14,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { summarizeShift, currentOpenShift, type Shift } from '../../core/shifts.ts'
 import { returnCashRefundMinor } from '../../core/returns.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 
 function StatCard({ label, value, icon: Icon, tone }: { label: string; value: string; icon: typeof Banknote; tone: string }) {
   return (
@@ -26,6 +27,8 @@ function StatCard({ label, value, icon: Icon, tone }: { label: string; value: st
 
 export function ShiftsPage() {
   const { shifts, sales, saleReturns, treasuries, employees, openShift, closeShift, settleShiftVariance } = useDataStore()
+  // تسوية فرق الدرج تحرك نقدية وتحمل موظفين سلفاً — خلف اعتماد المشرف
+  const settleApproval = useSupervisorApproval('trs.payment.approve')
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -280,13 +283,13 @@ export function ShiftsPage() {
                 <Btn variant="ghost" onClick={() => setSettleShift(null)}>إلغاء</Btn>
                 <Btn
                   disabled={settleMode === 'advance' && !settleEmployeeId}
-                  onClick={() => {
+                  onClick={() => settleApproval.request(() => {
                     try {
                       settleShiftVariance({ shiftId: settleShift.id, mode: settleMode, employeeId: settleEmployeeId || null })
                       toast.show(settleMode === 'advance' ? 'حُمّل العجز سلفة على الموظف — ستظهر في مسير الرواتب ✓' : 'سُوّي فرق الوردية وتولد قيده تلقائياً ✓')
                       setSettleShift(null)
                     } catch (err) { toast.show((err as Error).message, 'error') }
-                  }}
+                  })}
                 >
                   ⚖️ تنفيذ التسوية
                 </Btn>
@@ -295,6 +298,7 @@ export function ShiftsPage() {
           )
         })()}
       </Modal>
+      {settleApproval.dialog}
     </div>
   )
 }

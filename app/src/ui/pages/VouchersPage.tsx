@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import type { TreasuryAccount } from '../../core/accounting.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { customerStatement, supplierStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
@@ -112,7 +113,13 @@ export function VouchersPage() {
   const needsParty = (kind === 'receipt' && counter === '1104') || (kind === 'payment' && counter === '2101')
   const isPurchaseExpense = kind === 'payment' && counter === PURCHASE_EXPENSE_CODE
 
+  // خروج النقدية (سند صرف) عملية حساسة — اعتماد مشرف؛ القبض إدخال أموال يمر مباشرة
+  const paymentApproval = useSupervisorApproval('trs.payment.approve')
   const save = () => {
+    if (kind === 'payment') { paymentApproval.request(() => doSave()); return }
+    doSave()
+  }
+  const doSave = () => {
     try {
       if (needsParty && !partyId) throw new Error(kind === 'receipt' ? 'اختر العميل الذي سدد' : 'اختر المورد المسدد له')
       // مصروف على فاتورة شراء: يذهب لمحرك Landed Cost لا لسند عادي —
@@ -329,6 +336,7 @@ export function VouchersPage() {
           </div>
         )}
       </Modal>
+      {paymentApproval.dialog}
     </div>
   )
 }

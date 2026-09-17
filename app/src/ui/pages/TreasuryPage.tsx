@@ -11,6 +11,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import type { TreasuryDef } from '../../core/treasury.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 
 interface Move { date: string; description: string; inMinor: number; outMinor: number; balance: number; entryId: number }
 
@@ -58,7 +59,10 @@ export function TreasuryPage() {
 
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? code
 
+  // تحريك النقدية بين الخزائن عملية حساسة — اعتماد مشرف (نفس صلاحية سند الصرف)
+  const transferApproval = useSupervisorApproval('trs.payment.approve')
   const doTransfer = () => {
+    transferApproval.request(() => {
     try {
       const feeMinor = fee ? toMinor(fee, cur.decimals) : 0
       const v = postVoucher({
@@ -77,6 +81,7 @@ export function TreasuryPage() {
     } catch (e) {
       toast.show((e as Error).message, 'error')
     }
+    })
   }
 
   const fillForm = (t?: TreasuryDef) => {
@@ -299,6 +304,7 @@ export function TreasuryPage() {
           </div>
         )}
       </Modal>
+      {transferApproval.dialog}
     </div>
   )
 }

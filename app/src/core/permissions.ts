@@ -58,6 +58,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'acc.journal.reverse', nameAr: 'عكس قيد', section: 'accounting', sensitive: true },
   { id: 'acc.coa.manage', nameAr: 'إدارة شجرة الحسابات', section: 'accounting', sensitive: true },
   { id: 'acc.vouchers', nameAr: 'سندات قبض وصرف', section: 'accounting' },
+  { id: 'trs.payment.approve', nameAr: 'اعتماد خروج نقدية (سند صرف / تحويل خزائن / تسوية درج)', section: 'accounting', sensitive: true },
   { id: 'acc.fiscal.close', nameAr: 'إقفال السنة المالية', section: 'accounting', sensitive: true },
   // التقارير
   { id: 'rep.sales', nameAr: 'تقارير المبيعات', section: 'reports' },
