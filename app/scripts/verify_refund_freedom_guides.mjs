@@ -349,4 +349,40 @@ const line = (qty) => ({ itemId: item.id, nameAr: item.nameAr, qty, unitPriceMin
   ok('settleShiftVariance: عدّ الدرج يتبع خزينة الرد الفعلية لا خزينة البيع')
 }
 
+/* ═══ 9) أثر المرتجع على خطط الأقساط (reduceSchedule) ═══ */
+{
+  const { reduceSchedule, buildSchedule } = await import(join(root, 'src/core/installments.ts'))
+  // جدول 10 أقساط × 100
+  const items = buildSchedule({ totalMinor: 1000, downPaymentMinor: 0, count: 10, intervalMonths: 1, firstDueDate: '2026-01-01' })
+  const red = reduceSchedule(items, 250)
+  assert.equal(red.appliedMinor, 250)
+  assert.equal(red.unappliedMinor, 0)
+  // الخفض من الآخر: القسطان 10 و9 صفر (100+100)، القسط 8 = 50
+  assert.equal(red.items[9].amountMinor, 0)
+  assert.equal(red.items[8].amountMinor, 0)
+  assert.equal(red.items[7].amountMinor, 50)
+  assert.equal(red.items[6].amountMinor, 100)
+  assert.equal(red.items.reduce((a, i) => a + i.amountMinor, 0), 750)
+  ok('reduceSchedule: الخفض من آخر الأقساط غير المسددة والمجموع مضبوط')
+
+  // تكامل: فاتورة آجلة بخطة أقساط + مرتجع على الحساب ⇒ الجدول يتقلص
+  const sale = st().postSale({ lines: [line(10)], customerId: cust.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101', paidMinor: 0 })
+  st().createInstallmentPlan({ customerId: cust.id, saleId: sale.id, totalMinor: 10000, downPaymentMinor: 0, count: 5, intervalMonths: 1, firstDueDate: '2026-10-01', treasury: '1101', notes: '' })
+  const plan0 = st().installmentPlans.at(-1)
+  assert.equal(plan0.items.reduce((a, i) => a + i.amountMinor, 0), 10000)
+  const ret = st().postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 3, condition: 'resellable' }], refund: 'credit', reason: 'قسّط', reasonCode: 'other' })
+  assert.equal(ret.creditRefundMinor, 3000)
+  const plan1 = st().installmentPlans.find((pl) => pl.id === plan0.id)
+  assert.equal(plan1.items.reduce((a, i) => a + i.amountMinor, 0), 7000)
+  assert.equal(plan1.totalMinor, 7000)
+  ok('تكامل: مرتجع على الحساب يقلّص جدول أقساط الفاتورة تلقائياً (10000→7000)')
+
+  // مرتجع نقدي لا يمس الجدول (الذمة لم تنخفض)
+  const ret2 = st().postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable' }], refund: 'custom', allocation: { cashMinor: 0, creditMinor: 0, storeCreditMinor: 0, waivedMinor: 1000 }, reason: 'تنازل', reasonCode: 'other' })
+  assert.equal(ret2.waivedRefundMinor, 1000)
+  const plan2 = st().installmentPlans.find((pl) => pl.id === plan0.id)
+  assert.equal(plan2.totalMinor, 7000)
+  ok('التنازل لا يقلّص الجدول (الذمة لم تنخفض) — التمييز صحيح')
+}
+
 console.log(`\n✅ verify_refund_freedom_guides: ${pass}/${pass} فحصاً نجح`)

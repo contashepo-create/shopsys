@@ -132,6 +132,31 @@ export function applyPayment(
   return { items: out, excessMinor: rest }
 }
 
+/**
+ * تخفيض جدول الأقساط بمرتجع (مراجعة أثر المرتجعات — نمط التمويل العالمي):
+ * المرتجع «على الحساب» يخفض دين العميل، فيجب أن يتقلص جدول أقساطه بنفس المبلغ
+ * وإلا بقي مطالباً بأقساط أكثر من ذمته الحقيقية. الخفض من آخر الأقساط غير
+ * المسددة أولاً (الأحدث استحقاقاً) — كما تُسقط شركات التمويل أواخر الجدول
+ * عند السداد المعجل. يرجع نسخة جديدة + ما تعذر تطبيقه (جدول شبه مسدد).
+ */
+export function reduceSchedule(
+  items: InstallmentItem[],
+  reduceMinor: Minor,
+): { items: InstallmentItem[]; appliedMinor: Minor; unappliedMinor: Minor } {
+  if (!Number.isInteger(reduceMinor) || reduceMinor <= 0) throw new Error('مبلغ التخفيض يجب أن يكون موجباً')
+  let rest = reduceMinor
+  const out = [...items]
+  for (let i = out.length - 1; i >= 0 && rest > 0; i--) {
+    const it = out[i]
+    const unpaid = it.amountMinor - it.paidMinor
+    if (unpaid <= 0) continue
+    const cut = Math.min(unpaid, rest)
+    rest -= cut
+    out[i] = { ...it, amountMinor: it.amountMinor - cut }
+  }
+  return { items: out, appliedMinor: reduceMinor - rest, unappliedMinor: rest }
+}
+
 export interface InstallmentAlert {
   planId: number
   seq: number

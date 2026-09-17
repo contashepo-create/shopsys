@@ -40,7 +40,7 @@ import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEnt
 import { fullCoa } from '../core/treasury.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
-import { buildSchedule, applyPayment, planProgress, type InstallmentItem } from '../core/installments.ts'
+import { buildSchedule, applyPayment, planProgress, reduceSchedule, type InstallmentItem } from '../core/installments.ts'
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
 import { makeUniqueRefCode } from '../core/refcode.ts'
@@ -2669,16 +2669,34 @@ export const useDataStore = create<DataState>()(
             updatedVariantStocks = [...updatedVariantStocks, { itemId: l.itemId, color: (l.variantColor ?? '').trim(), size: (l.variantSize ?? '').trim(), qty: l.qty }]
           }
         }
+        // مراجعة أثر المرتجعات: فاتورة عليها خطة أقساط والمرتجع خفّض الذمم (خصم/رصيد) ⇒
+        // يتقلص جدول الأقساط بنفس المبلغ من آخر الأقساط غير المسددة (نمط شركات التمويل)
+        // وإلا بقي العميل مطالَباً بأقساط أكثر من دينه الحقيقي بعد المرتجع
+        const creditToPlan = alloc.creditMinor + alloc.storeCreditMinor
+        let updatedPlans = state.installmentPlans
+        let planNote = ''
+        if (creditToPlan > 0) {
+          const plan = state.installmentPlans.find((pl) => pl.saleId === sale.id)
+          if (plan) {
+            const red = reduceSchedule(plan.items, creditToPlan)
+            if (red.appliedMinor > 0) {
+              updatedPlans = state.installmentPlans.map((pl) =>
+                pl.id === plan.id ? { ...pl, items: red.items, totalMinor: pl.totalMinor - red.appliedMinor } : pl)
+              planNote = ` — خُفِّض جدول الأقساط ${plan.planNumber} بمبلغ ${(red.appliedMinor / 100).toFixed(2)}`
+            }
+          }
+        }
         // سجل تدقيق دائم: من طلب، من اعتمد، وسياق الوردية العابرة إن وجد
         const auditTitle = `مرتجع مبيعات ${returnNumber} (${(totals.totalMinor / 100).toFixed(2)})` +
           (ret.approvedBy && ret.approvedBy !== requesterName ? ` — اعتمده «${ret.approvedBy}»` : '') +
-          (shiftCtx.crossShift ? ` — ${shiftCtx.noteAr}` : '')
+          (shiftCtx.crossShift ? ` — ${shiftCtx.noteAr}` : '') + planNote
         set({
           saleReturns: [...state.saleReturns, ret],
           journal: [...state.journal, entry],
           items: updatedItems,
           serials: updatedSerials,
           variantStocks: updatedVariantStocks,
+          installmentPlans: updatedPlans,
           auditLog: appendAudit(state.auditLog, [{ at: now, user: requesterName, kind: 'doc', title: auditTitle }]),
         })
         return ret
