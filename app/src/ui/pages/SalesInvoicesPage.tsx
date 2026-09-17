@@ -12,7 +12,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
-import { computeTotals, type CartLine } from '../../core/pos.ts'
+import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
@@ -63,6 +63,8 @@ export function SalesInvoicesPage() {
   // تعديل فاتورة مرحلة = عملية حساسة (نمط QuickBooks audit): يتطلب صلاحية
   // sales.price.edit أو اعتماد مشرف بالرقم السري — يوثق في سجل التدقيق
   const editApproval = useSupervisorApproval('sales.price.edit')
+  // التعديل قد يرفع الجزء الآجل فوق حد ائتمان العميل — تجاوز باعتماد مدير (نفس نمط الكاشير)
+  const creditApproval = useSupervisorApproval('sales.credit.override')
   const openEdit = (s: SaleInvoice) => {
     const blocks = blocksOf(s)
     if (blocks.length) return toast.show(`لا يمكن تعديل ${s.invoiceNumber}: ${blocks[0]}`, 'error')
@@ -92,7 +94,7 @@ export function SalesInvoicesPage() {
     return computeTotals(editLines, editDiscount, taxPercent, taxInclusive)
   }, [editing, editLines, editDiscount])
 
-  const saveEdit = () => {
+  const saveEdit = (creditLimitOverrideBy?: string) => {
     if (!editing || !editTotals) return
     try {
       const paidMinor = toMinor(editPaid || '0', cur.decimals)
@@ -108,10 +110,16 @@ export function SalesInvoicesPage() {
         reason: editReason.trim(),
         einvoiceActive,
         allowNegativeStock: setup.allowNegativeStock,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`عُدلت ${updated.invoiceNumber} — عُكس قيدها القديم وتولد قيد جديد صحيح ✓`)
       setEditing(null)
     } catch (e) {
+      // التعديل رفع آجل العميل فوق حده — اعتماد مدير بصلاحية sales.credit.override
+      if (e instanceof CreditLimitError) {
+        creditApproval.request((by) => saveEdit(by ?? 'المشرف'))
+        return
+      }
       toast.show((e as Error).message, 'error')
     }
   }
@@ -430,6 +438,7 @@ export function SalesInvoicesPage() {
         )}
       </Modal>
       {editApproval.dialog}
+      {creditApproval.dialog}
     </div>
   )
 }

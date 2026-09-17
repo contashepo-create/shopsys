@@ -13,6 +13,8 @@ import { buildSchedule, planProgress, installmentStatus, collectAlerts, type Ins
 import type { TreasuryAccount } from '../../core/accounting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { CreditLimitError } from '../../core/pos.ts'
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   paid: { label: 'مدفوع', cls: 'text-emerald-600 bg-emerald-500/10' },
@@ -74,7 +76,9 @@ export function InstallmentsPage() {
     } catch { return null }
   }, [total, down, count, interval, firstDue, cur.decimals])
 
-  const save = () => {
+  // هامش تقسيط يرفع ذمم عميل تجاوز حده — تجاوز باعتماد مدير
+  const creditApproval = useSupervisorApproval('sales.credit.override')
+  const save = (creditLimitOverrideBy?: string) => {
     try {
       const plan = createInstallmentPlan({
         customerId: Number(customerId),
@@ -87,10 +91,14 @@ export function InstallmentsPage() {
         firstDueDate: firstDue,
         treasury,
         notes: notes.trim(),
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`أُنشئت الخطة ${plan.planNumber} — ${plan.items.length} قسطاً ✅`)
       setOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+    } catch (err) {
+      if (err instanceof CreditLimitError) { creditApproval.request((by) => save(by ?? 'المشرف')); return }
+      toast.show((err as Error).message, 'error')
+    }
   }
 
   /* عرض خطة وسدادها */
@@ -360,6 +368,7 @@ export function InstallmentsPage() {
           </div>
         )}
       </Modal>
+      {creditApproval.dialog}
     </div>
   )
 }

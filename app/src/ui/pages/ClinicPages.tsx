@@ -21,6 +21,8 @@ import {
 } from '../../core/prescription.ts'
 import type { Gender } from '../../core/lab.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { CreditLimitError } from '../../core/pos.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -380,7 +382,9 @@ export function ClinicPatientsPage() {
     }))
   }
 
-  const saveVisit = () => {
+  // زيارة بمتبقٍ لمريض مربوط بعميل تجاوز حده الائتماني — تجاوز باعتماد مدير
+  const creditApproval = useSupervisorApproval('sales.credit.override')
+  const saveVisit = (creditLimitOverrideBy?: string) => {
     if (!liveFile) return
     try {
       const fee = toMinor(vFee, cur.decimals)
@@ -391,10 +395,14 @@ export function ClinicPatientsPage() {
         feeMinor: fee, paidMinor: paid, vatPercent: vVat ? setup.vatPercent : 0,
         planId: vPlan ? Number(vPlan) : null,
         treasury: vTreasury,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`سُجلت الزيارة ${v.visitNumber}${v.totals.dueMinor > 0 ? ` — متبقٍ ${fmt(v.totals.dueMinor)} على المريض` : ''} ✅`)
       setVisitOpen(false)
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (e instanceof CreditLimitError) { creditApproval.request((by) => saveVisit(by ?? 'المشرف')); return }
+      toast.show((e as Error).message, 'error')
+    }
   }
 
   /* خطة علاج */
@@ -815,6 +823,7 @@ export function ClinicPatientsPage() {
           </tbody></table>
         )}
       </Modal>
+      {creditApproval.dialog}
     </div>
   )
 }

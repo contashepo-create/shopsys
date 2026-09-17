@@ -1270,6 +1270,8 @@ interface DataState {
     notes: string
     /** موافقة المشرف — تمرر لمستند المرتجع الداخلي */
     approvedBy?: string
+    /** تجاوز حد الائتمان للبيع الجديد (استبدال آجل بأغلى قد يتخطى حد العميل) */
+    creditLimitOverrideBy?: string | null
   }) => ExchangeDoc
   /** فتح أمر مطعم (صالة/تيك أواي/دليفري) — لا قيود حتى القفل؛ طاولة الصالة لا تُفتح مرتين */
   openRestaurantOrder: (args: { type: RestaurantOrderType; tableName?: string; deliveryInfo?: string; notes?: string }) => RestaurantOrder
@@ -1291,6 +1293,8 @@ interface DataState {
     deliveryFeeMinor?: number
     taxPercent: number
     taxInclusive: boolean
+    /** تجاوز حد ائتمان العميل (فوترة آجلة لعميل شركة تجاوز حده) */
+    creditLimitOverrideBy?: string | null
   }) => SaleInvoice
   /** سند قبض/صرف/تحويل — يولّد قيده المتوازن فوراً */
   postVoucher: (args: {
@@ -1334,6 +1338,8 @@ interface DataState {
     /** الفاتورة الإلكترونية مفعلة بمفتاح الترخيص؟ — تُمرر من الواجهة وتُرفض العملية لو true */
     einvoiceActive: boolean
     allowNegativeStock?: boolean
+    /** تجاوز حد ائتمان العميل بموافقة مدير — التعديل قد يرفع الجزء الآجل فوق الحد */
+    creditLimitOverrideBy?: string | null
   }) => SaleInvoice
   /** تعديل فاتورة شراء — نفس منهج editSale (عكس + إعادة ترحيل). يُرفض لو الفاتورة الإلكترونية مفعلة */
   editPurchase: (args: {
@@ -1407,6 +1413,8 @@ interface DataState {
     firstDueDate: string
     treasury: TreasuryAccount
     notes: string
+    /** تجاوز حد ائتمان العميل بموافقة مدير — الهامش يرفع ذممه */
+    creditLimitOverrideBy?: string | null
   }) => InstallmentPlan
   /** سداد دفعة على خطة: توزَّع على الأقساط الأقدم أولاً + قيد تحصيل متوازن */
   payInstallment: (planId: number, amountMinor: number, treasury: TreasuryAccount) => InstallmentPlan
@@ -1430,6 +1438,8 @@ interface DataState {
     custodyFileId?: number | null
     /** عمولة السائق عن الرحلة — تُستحق (2111) ولا تُدفع الآن؛ تسوى مجمعة */
     driverCommissionMinor?: number
+    /** تجاوز حد ائتمان العميل بموافقة مدير */
+    creditLimitOverrideBy?: string | null
   }) => Trip
   /** إجمالي غير المسوى لسائق */
   getDriverDueBalance: (driverId: number) => number
@@ -1470,6 +1480,8 @@ interface DataState {
     rateType?: RateType
     startReading?: number | null
     treasury?: string
+    /** تجاوز حد ائتمان العميل بموافقة مدير */
+    creditLimitOverrideBy?: string | null
   }) => RentalContract
   /**
    * إقفال عقد: ردّ التأمين نقداً مع خصم اختياري يُعترف به إيراداً (4104).
@@ -1507,6 +1519,8 @@ interface DataState {
     vatPercent: number
     notes: string
     treasury?: string
+    /** تجاوز حد ائتمان العميل المرتبط بالمريض بموافقة مدير */
+    creditLimitOverrideBy?: string | null
   }) => LabOrder
   /** تقدُّم فحص في دورته: سحب العينة ← نتيجة (بقيمة) ← اعتماد. انتقالات مشروعة فقط */
   advanceLabTest: (orderId: number, testId: number, to: TestStatus, resultValue?: string) => LabOrder
@@ -1531,7 +1545,7 @@ interface DataState {
   /** ملخص ملف عهدة (تعزيزات/منصرف/زيادة/متبقٍ) من حركاته */
   getCustodySummary: (fileId: number) => CustodySummary
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
-  addProjectExtract: (args: { projectId: number; grossMinor: number; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number }) => ProjectExtract
+  addProjectExtract: (args: { projectId: number; grossMinor: number; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
   addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string; custodyFileId?: number | null }) => ProjectCost
   /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
@@ -1650,6 +1664,8 @@ interface DataState {
     patientId: number; kind: VisitKind; complaint: string; diagnosis: string; treatment: string
     feeMinor: number; paidMinor: number; vatPercent: number; planId: number | null; treasury?: string
     rxLines?: RxLine[]; vitals?: Vitals; nextVisit?: string
+    /** تجاوز حد ائتمان العميل المرتبط بالمريض بموافقة مدير */
+    creditLimitOverrideBy?: string | null
   }) => ClinicVisit
   addTreatmentPlan: (args: { patientId: number; title: string; totalSessions: number; totalFeeMinor: number }) => TreatmentPlan
   /** تحصيل متأخرات مريض بقيد 1101 ← 1104 */
@@ -1697,12 +1713,14 @@ interface DataState {
   deliverTicket: (ticketId: number, input: Omit<TicketDeliveryInput, 'parts'> & {
     parts: { itemId: number; qty: number; unitPriceMinor: number }[]
     treasury?: string
+    /** تجاوز حد ائتمان العميل بموافقة مدير — الآجل الخدمي دين كالبيع */
+    creditLimitOverrideBy?: string | null
   }) => MaintenanceTicket
   /** كتالوج خدمات الصيانة (الأمر 23): إضافة/تعديل/تعطيل — التكلفة سرية لا تُطبع للعميل */
   addMaintenanceService: (input: { nameAr: string; costMinor: number; priceMinor: number }) => MaintenanceService
   updateMaintenanceService: (id: number, patch: Partial<Omit<MaintenanceService, 'id'>>) => void
   /** خدمة محافظ/دفع إلكتروني (نمط mobileshop): الربح = المحصَّل − المدفوع للمزوّد، قيد متوازن فوري */
-  postWalletService: (input: WalletServiceInput & { date?: string }) => WalletServiceOp
+  postWalletService: (input: WalletServiceInput & { date?: string; creditLimitOverrideBy?: string | null }) => WalletServiceOp
   /** مرتجع خدمة محافظ: قيد عاكس كامل + وسم العملية returned */
   returnWalletService: (opId: number, reason: string, approvedBy?: string) => WalletServiceOp
   /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
@@ -1793,6 +1811,26 @@ function approvalStamp(state: Pick<DataState, 'appUsers' | 'currentUserId'>, app
 }
 
 /** كل الأكواد المرجعية المستخدمة حالياً — لضمان تفرد الكود الجديد */
+/**
+ * حارس حد الائتمان الموحد (مراجعة البيع الشامل — نمط SAP B1: الحد يُفحص على أي
+ * مستند يرفع ذمم العميل، بيعاً كان أو خدمة): رصيد العميل + الآجل الجديد ≤ حده.
+ * حد 0 = بلا حد؛ التجاوز بموافقة مدير مسجلة (overrideBy) يمر.
+ */
+function guardCreditLimit(
+  st: { customers: Customer[]; getCustomerBalance: (id: number) => number },
+  customerId: number | null | undefined,
+  newCreditMinor: number,
+  overrideBy?: string | null,
+): void {
+  if (newCreditMinor <= 0 || customerId == null || overrideBy) return
+  const cust = st.customers.find((c) => c.id === customerId)
+  if (!cust || cust.creditLimitMinor <= 0) return
+  const balance = st.getCustomerBalance(cust.id)
+  if (exceedsCreditLimit(balance, newCreditMinor, cust.creditLimitMinor)) {
+    throw new CreditLimitError(cust.nameAr, balance, newCreditMinor, cust.creditLimitMinor)
+  }
+}
+
 function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturns' | 'purchaseReturns'>): Set<string> {
   const set = new Set<string>()
   for (const x of state.sales) if (x.refCode) set.add(x.refCode)
@@ -3196,6 +3234,8 @@ export const useDataStore = create<DataState>()(
             treasury: treasury as TreasuryAccount,
             paidMinor: isCreditSale ? 0 : undefined,
             warehouseId: sale.warehouseId ?? null,
+            // استبدال آجل بأغلى يزيد الذمم — CreditLimitError تصعد للواجهة بلقطة مسترجعة
+            creditLimitOverrideBy: args.creditLimitOverrideBy ?? null,
           })
           // 3) مستند الربط والصافي
           const afterState = get()
@@ -3295,6 +3335,7 @@ export const useDataStore = create<DataState>()(
           taxInclusive: args.taxInclusive,
           treasury: args.treasury,
           paidMinor: args.paidMinor,
+          creditLimitOverrideBy: args.creditLimitOverrideBy ?? null,
         })
         set({
           restaurantOrders: get().restaurantOrders.map((o) =>
@@ -3670,6 +3711,20 @@ export const useDataStore = create<DataState>()(
         if (paidM > totals.totalMinor) throw new Error('المدفوع أكبر من إجمالي الفاتورة المعدلة')
         if (paidM < totals.totalMinor && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
+        }
+        // حارس حد الائتمان (المراجعة التراجعية): التعديل قد يرفع الجزء الآجل —
+        // الفحص على صافي الزيادة: (رصيد العميل − آجل الفاتورة القديم) + الآجل الجديد ≤ الحد
+        const newCreditPart = totals.totalMinor - paidM
+        if (newCreditPart > 0 && args.customerId != null && !args.creditLimitOverrideBy) {
+          const cust = state.customers.find((c) => c.id === args.customerId)
+          if (cust && cust.creditLimitMinor > 0) {
+            const oldPaid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
+            const oldCreditPart = sale.customerId === args.customerId ? sale.totals.totalMinor - oldPaid : 0
+            const balanceWithoutThis = get().getCustomerBalance(cust.id) - oldCreditPart
+            if (exceedsCreditLimit(balanceWithoutThis, newCreditPart, cust.creditLimitMinor)) {
+              throw new CreditLimitError(cust.nameAr, balanceWithoutThis, newCreditPart, cust.creditLimitMinor)
+            }
+          }
         }
         const newEntryLines = buildSaleEntry(totals, args.payment, args.treasury, paidM)
         const now = new Date().toISOString()
@@ -4454,6 +4509,8 @@ export const useDataStore = create<DataState>()(
         const interestMinor = args.interestMinor ?? 0
         if (!Number.isInteger(interestMinor) || interestMinor < 0) throw new Error('هامش التقسيط لا يكون سالباً')
         if (interestMinor >= args.totalMinor) throw new Error('هامش التقسيط يجب أن يكون أقل من إجمالي الخطة')
+        // حد الائتمان: الهامش يرفع ذمم العميل (أصل الفاتورة فُحص في postSale)
+        guardCreditLimit(get(), args.customerId, interestMinor, args.creditLimitOverrideBy)
         let interestEntryId: number | null = null
         let downPaymentEntryId: number | null = null
         const journal = [...state.journal]
@@ -4587,6 +4644,11 @@ export const useDataStore = create<DataState>()(
           else if (args.paidMinor < totalsProbe.grandMinor && args.customerId == null) errors.push('التحصيل الجزئي يترك ديناً — يتطلب عميلاً مسجلاً')
         }
         if (errors.length) throw new Error(errors.join(' — '))
+        // حد الائتمان: المتبقي بعد المحصَّل الآن دين على العميل
+        {
+          const paidNow = args.paidMinor ?? (args.input.payment === 'cash' ? totalsProbe.grandMinor : 0)
+          guardCreditLimit(get(), args.customerId, totalsProbe.grandMinor - paidNow, args.creditLimitOverrideBy)
+        }
 
         // 2) الإجماليات والقيد بالنواة الخالصة
         const totals = totalsProbe
@@ -4906,6 +4968,8 @@ export const useDataStore = create<DataState>()(
 
         // 2) الإجماليات وقيد الفتح بالنواة الخالصة
         const totals = computeRentalTotals(args.input)
+        // حد الائتمان: الجزء الآجل من الإيجار دين على العميل
+        guardCreditLimit(get(), args.customerId, totals.collectCreditMinor, args.creditLimitOverrideBy)
         const contractId = nextId(state.rentalContracts)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -5179,6 +5243,10 @@ export const useDataStore = create<DataState>()(
 
         // الإجماليات وقيد التحصيل (كلاهما يرمي قبل أي كتابة)
         const totals = computeLabTotals(chosen.map((t) => t.priceMinor), args.discountPercent, args.vatPercent)
+        // حد الائتمان: الطلب الآجل لمريض مربوط بعميل مالي يرفع ذمم ذلك العميل
+        if (args.payment === 'credit') {
+          guardCreditLimit(get(), patient.linkedCustomerId ?? null, totals.totalMinor, args.creditLimitOverrideBy)
+        }
         const now = new Date().toISOString()
         const orderId = nextId(state.labOrders)
         const orderNumber = `LAB-${String(orderId).padStart(4, '0')}`
@@ -5545,6 +5613,10 @@ export const useDataStore = create<DataState>()(
         if (recovery > 0) {
           const advBalance = state.clientAdvances.filter((a) => a.projectId === project.id).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
           if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
+        }
+        // حد الائتمان: المستخلص الآجل دين على عميل المشروع (المستحق بعد استرداد الدفعة)
+        if (args.payment === 'credit') {
+          guardCreditLimit(get(), project.clientId ?? null, Math.max(totals.dueMinor - recovery, 0), args.creditLimitOverrideBy)
         }
         const lines = recovery > 0
           ? buildExtractEntryWithAdvance(totals, args.payment, extractNumber, args.treasury ?? '1101', recovery)
@@ -6539,6 +6611,8 @@ export const useDataStore = create<DataState>()(
           if (rxErrors.length) throw new Error(rxErrors.join(' — '))
         }
         const totals = computeVisitTotals({ kind: args.kind, feeMinor: args.feeMinor, paidMinor: args.paidMinor, vatPercent: args.vatPercent })
+        // حد الائتمان: متبقي الزيارة دين على العميل المالي المربوط بالمريض (إن وُجد)
+        guardCreditLimit(get(), patient.linkedCustomerId ?? null, totals.dueMinor, args.creditLimitOverrideBy)
         const id = nextId(state.clinicVisits)
         const visitNumber = `VIS-${String(id).padStart(4, '0')}`
         const lines = buildVisitEntry(totals, `${visitNumber} — ${patient.nameAr}`, args.treasury ?? '1101')
@@ -6867,6 +6941,8 @@ export const useDataStore = create<DataState>()(
         if (totals.creditMinor > 0 && ticket.customerId == null) {
           throw new Error('يوجد مبلغ آجل غير محصَّل — التحصيل الجزئي يتطلب عميلاً مسجلاً على التذكرة')
         }
+        // حد الائتمان يسري على الخدمات أيضاً — الآجل هنا دين 1104 كالبيع تماماً
+        guardCreditLimit(get(), ticket.customerId, totals.creditMinor, input.creditLimitOverrideBy)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const entryLines = buildTicketDeliveryEntry(totals, input.payment, ticket.ticketNumber, input.treasury ?? '1101')
@@ -6929,6 +7005,8 @@ export const useDataStore = create<DataState>()(
         if (!state.treasuries.some((t) => t.code === input.fundingTreasury)) throw new Error('خزينة التمويل غير موجودة')
         if (input.paidMinor > 0 && !state.treasuries.some((t) => t.code === input.receiveTreasury)) throw new Error('خزينة الاستلام غير موجودة')
         const totals = computeWalletTotals(input)
+        // حد الائتمان: المتبقي غير المحصَّل دين 1104 على العميل
+        guardCreditLimit(get(), input.customerId, totals.remainingMinor, input.creditLimitOverrideBy)
         const opId = nextId(state.walletOps)
         const opNumber = `WS-${String(opId).padStart(4, '0')}`
         const entryId = nextId(state.journal)

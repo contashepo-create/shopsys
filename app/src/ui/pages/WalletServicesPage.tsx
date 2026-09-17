@@ -13,6 +13,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { WALLET_SERVICE_TYPES, WALLET_PROVIDERS, walletSummary, type WalletServiceType, type WalletProvider } from '../../core/walletServices.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
@@ -21,6 +22,8 @@ export function WalletServicesPage() {
   const { setup } = useAppStore()
   const toast = useToast()
   const approval = useSupervisorApproval() // موافقة المشرف على مرتجع خدمة المحافظ
+  // خدمة آجلة فوق حد ائتمان العميل — تجاوز باعتماد مدير
+  const creditApproval = useSupervisorApproval('sales.credit.override')
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
@@ -45,7 +48,7 @@ export function WalletServicesPage() {
     return c > 0 && p > 0 ? c - p : null
   }, [charge, paidToProvider, cur.decimals])
 
-  const save = () => {
+  const save = (creditLimitOverrideBy?: string) => {
     try {
       const chargeMinor = toMinor(charge || '0', cur.decimals)
       const op = postWalletService({
@@ -58,10 +61,14 @@ export function WalletServicesPage() {
         receiveTreasury: receive,
         vatPercent: taxable ? setup.vatPercent : 0,
         notes,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`سُجلت ${op.opNumber} — الربح ${fmt(op.totals.profitGrossMinor)} محسوب آلياً ✓`)
       setOpen(false); setTargetPhone(''); setPaidToProvider(''); setCharge(''); setPaid(''); setCustomerId(0); setNotes('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (e instanceof CreditLimitError) { creditApproval.request((by) => save(by ?? 'المشرف')); return }
+      toast.show((e as Error).message, 'error')
+    }
   }
 
   const doReturn = (op: WalletServiceOp) => approval.request((approvedBy) => {
@@ -251,6 +258,7 @@ export function WalletServicesPage() {
         })()}
       </Modal>
       {approval.dialog}
+      {creditApproval.dialog}
     </div>
   )
 }

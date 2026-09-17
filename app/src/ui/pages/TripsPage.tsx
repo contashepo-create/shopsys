@@ -15,6 +15,8 @@ import { computeTripTotals, tripProfitReport, EXPENSE_SOURCE_LABELS, type TripEx
 import { summarizeCustody } from '../../core/custody.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderWaybillHtml } from '../print/printWaybill.ts'
@@ -116,7 +118,9 @@ export function TripsPage() {
     try { return computeTripTotals(draftInput) } catch { return null }
   }, [draftInput])
 
-  const save = () => {
+  // نقلة آجلة فوق حد ائتمان العميل — تجاوز باعتماد مدير (نفس نمط الكاشير)
+  const creditApproval = useSupervisorApproval('sales.credit.override')
+  const save = (creditLimitOverrideBy?: string) => {
     try {
       const trip = postTrip({
         customerId: customerId ? Number(customerId) : null,
@@ -128,11 +132,15 @@ export function TripsPage() {
         paidMinor: paidNow.trim() ? toMinor(paidNow, cur.decimals) : undefined,
         custodyFileId: custodyFileId ? Number(custodyFileId) : null,
         driverCommissionMinor: driverCommission && driverId ? toMinor(driverCommission, cur.decimals) : 0,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       const due = trip.totals.grandMinor - (trip.paidMinor ?? (trip.payment === 'cash' ? trip.totals.grandMinor : 0))
       toast.show(`رُحّلت النقلة ${trip.tripNumber} — ربحها ${fmt(trip.totals.profitMinor)}${due > 0 ? ` — متبقٍ على العميل ${fmt(due)}` : ''} ${cur.symbol} ✅`)
       setOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+    } catch (err) {
+      if (err instanceof CreditLimitError) { creditApproval.request((by) => save(by ?? 'المشرف')); return }
+      toast.show((err as Error).message, 'error')
+    }
   }
 
   /* ─── عرض نقلة ─── */
@@ -501,6 +509,7 @@ export function TripsPage() {
           </table>
         </div>
       )}
+      {creditApproval.dialog}
     </div>
   )
 }

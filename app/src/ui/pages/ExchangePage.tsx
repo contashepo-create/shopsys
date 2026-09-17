@@ -13,7 +13,7 @@ import { formatMinor } from '../../core/money.ts'
 import { remainingByLine, type ReturnCondition, type ReturnLineSpec } from '../../core/returns.ts'
 import { computeExchangeNet } from '../../core/exchange.ts'
 import { hasVariantStock, variantLabel } from '../../core/variants.ts'
-import type { CartLine } from '../../core/pos.ts'
+import { CreditLimitError, type CartLine } from '../../core/pos.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 
@@ -22,6 +22,8 @@ export function ExchangePage() {
   const { setup } = useAppStore()
   const toast = useToast()
   const approval = useSupervisorApproval() // الاستبدال يتضمن مرتجعاً — موافقة مشرف
+  // استبدال آجل بأغلى قد يتخطى حد ائتمان العميل — تجاوز باعتماد مدير (نفس نمط الكاشير)
+  const creditApproval = useSupervisorApproval('sales.credit.override')
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
@@ -85,7 +87,7 @@ export function ExchangePage() {
     setItemQuery('')
   }
 
-  const submit = () => {
+  const submit = (creditLimitOverrideBy?: string) => {
     if (!sale) return
     approval.request((approvedBy) => {
     try {
@@ -102,6 +104,7 @@ export function ExchangePage() {
         treasury: (treasury || undefined) as never,
         notes,
         approvedBy,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(
         doc.netMinor === 0
@@ -111,7 +114,14 @@ export function ExchangePage() {
             : `${doc.exchangeNumber}: يُرد للعميل ${fmt(-doc.netMinor)} ${cur.symbol}`,
       )
       setSale(null); setRetQtys({}); setRetConds({}); setNewLines([]); setNotes('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      // استبدال آجل بأغلى تخطى حد العميل: اللقطة استُرجعت في repo — اعرض اعتماد المدير
+      if (e instanceof CreditLimitError) {
+        creditApproval.request((creditBy) => submit(creditBy ?? 'المشرف'))
+        return
+      }
+      toast.show((e as Error).message, 'error')
+    }
     })
   }
 
@@ -271,6 +281,7 @@ export function ExchangePage() {
         </div>
       </Modal>
       {approval.dialog}
+      {creditApproval.dialog}
     </div>
   )
 }

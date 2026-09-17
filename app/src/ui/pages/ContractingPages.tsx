@@ -16,6 +16,8 @@ import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { CreditLimitError } from '../../core/pos.ts'
 import { renderExtractHtml } from '../print/printExtract.ts'
 import { printHtml } from '../print/printReceipt.ts'
 
@@ -75,17 +77,23 @@ export function ProjectsPage() {
   const [exVat, setExVat] = useState(true)
   const [exRecovery, setExRecovery] = useState('')
 
-  const saveExtract = () => {
+  // مستخلص آجل فوق حد ائتمان عميل المشروع — تجاوز باعتماد مدير
+  const creditApproval = useSupervisorApproval('sales.credit.override')
+  const saveExtract = (creditLimitOverrideBy?: string) => {
     if (!extractFor) return
     try {
       const ex = addProjectExtract({
         projectId: extractFor.id, grossMinor: toMinor(exGross, cur.decimals),
         vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
         advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`سُجل المستخلص ${ex.extractNumber} — المستحق ${fmt(ex.totals.dueMinor)} والمحتجز ${fmt(ex.totals.retentionMinor)} ✅`)
       setExtractFor(null); setExGross(''); setExDesc(''); setExRecovery('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (e instanceof CreditLimitError) { creditApproval.request((by) => saveExtract(by ?? 'المشرف')); return }
+      toast.show((e as Error).message, 'error')
+    }
   }
 
   /* تكلفة */
@@ -539,6 +547,7 @@ export function ProjectsPage() {
           />
         )}
       </Modal>
+      {creditApproval.dialog}
     </div>
   )
 }

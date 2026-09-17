@@ -18,6 +18,8 @@ import { printHtml } from '../print/printReceipt.ts'
 import { renderLabReportHtml } from '../print/printLabReport.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
@@ -75,7 +77,9 @@ export function LabOrdersPage() {
 
   const resetForm = () => { setPatientId(''); setReferrerId(''); setSelected([]); setPayment('cash'); setDiscount('0'); setWithVat(false); setNotes('') }
 
-  const save = () => {
+  // طلب آجل لمريض مربوط بعميل تجاوز حده — تجاوز باعتماد مدير
+  const creditApproval = useSupervisorApproval('sales.credit.override')
+  const save = (creditLimitOverrideBy?: string) => {
     try {
       const o = insuranceId
         ? registerInsuredLabOrder({
@@ -96,10 +100,14 @@ export function LabOrdersPage() {
             vatPercent: withVat ? setup.vatPercent : 0,
             notes: notes.trim(),
             treasury,
+            creditLimitOverrideBy: creditLimitOverrideBy ?? null,
           })
       toast.show(`سُجل الطلب ${o.orderNumber} بقيد متوازن${o.commissionMinor > 0 ? ` + استحقاق عمولة ${fmt(o.commissionMinor)}` : ''} ✅`)
       setOpen(false); resetForm()
-    } catch (e) { toast.show((e as Error).message, 'error') }
+    } catch (e) {
+      if (e instanceof CreditLimitError) { creditApproval.request((by) => save(by ?? 'المشرف')); return }
+      toast.show((e as Error).message, 'error')
+    }
   }
 
   /* دورة العينة */
@@ -374,6 +382,7 @@ export function LabOrdersPage() {
           </div>
         )}
       </Modal>
+      {creditApproval.dialog}
     </div>
   )
 }

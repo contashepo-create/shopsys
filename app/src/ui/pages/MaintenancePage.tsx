@@ -13,6 +13,8 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeTicketTotals, maintenanceReport, isTicketOverdue, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
 import { renderTicketReceiptHtml, renderTicketInvoiceHtml } from '../print/printMaintenanceTicket.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { CreditLimitError } from '../../core/pos.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -163,7 +165,9 @@ export function MaintenancePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [delivering, labor, parts, svcLines, paidNow, payment, withVat, items, setup.vatPercent, cur.decimals])
 
-  const doDeliver = () => {
+  // تسليم آجل فوق حد ائتمان العميل — تجاوز باعتماد مدير
+  const creditApproval = useSupervisorApproval('sales.credit.override')
+  const doDeliver = (creditLimitOverrideBy?: string) => {
     if (!delivering) return
     try {
       const t = deliverTicket(delivering.id, {
@@ -174,11 +178,15 @@ export function MaintenancePage() {
         paidMinor: paidNow !== '' ? toM(paidNow) : undefined,
         vatPercent: withVat ? setup.vatPercent : 0,
         treasury,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`سُلِّمت ${t.ticketNumber} — المحصَّل ${fmt(t.totals!.paidMinor)} والباقي آجل ${fmt(t.totals!.creditMinor)} ${cur.symbol} ✅`)
       setDelivering(null)
       printTicketInvoice(t)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+    } catch (err) {
+      if (err instanceof CreditLimitError) { creditApproval.request((by) => doDeliver(by ?? 'المشرف')); return }
+      toast.show((err as Error).message, 'error')
+    }
   }
 
   /* ─── كتالوج الخدمات (الأمر 23) ─── */
@@ -637,6 +645,7 @@ export function MaintenancePage() {
           </div>
         )}
       </Modal>
+      {creditApproval.dialog}
     </div>
   )
 }

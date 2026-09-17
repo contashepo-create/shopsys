@@ -19,6 +19,8 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { CreditLimitError } from '../../core/pos.ts'
 
 export function RentalContractsPage() {
   const { rentalContracts, equipment, customers, journal, openRental, closeRental, refundRental } = useDataStore()
@@ -116,7 +118,9 @@ export function RentalContractsPage() {
     try { return computeRentalTotals(draftInput) } catch { return null }
   }, [draftInput])
 
-  const save = () => {
+  // إيجار آجل فوق حد ائتمان العميل — تجاوز باعتماد مدير
+  const creditApproval = useSupervisorApproval('sales.credit.override')
+  const save = (creditLimitOverrideBy?: string) => {
     try {
       const c = openRental({
         customerId: customerId ? Number(customerId) : null,
@@ -126,10 +130,14 @@ export function RentalContractsPage() {
         rateType,
         startReading: rateType === 'hourly' && startReading.trim() !== '' ? Number(startReading) : null,
         treasury,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`فُتح العقد ${c.contractNumber} — يُقبض الآن ${fmt(c.totals.collectCashMinor)} ${cur.symbol} ✅`)
       setOpen(false)
-    } catch (err) { toast.show((err as Error).message, 'error') }
+    } catch (err) {
+      if (err instanceof CreditLimitError) { creditApproval.request((by) => save(by ?? 'المشرف')); return }
+      toast.show((err as Error).message, 'error')
+    }
   }
 
   /* ─── إقفال عقد ─── */
@@ -472,6 +480,7 @@ export function RentalContractsPage() {
           </div>
         )}
       </Modal>
+      {creditApproval.dialog}
     </div>
   )
 }
