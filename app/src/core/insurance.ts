@@ -48,9 +48,13 @@ export interface InsuranceClaim {
   sourceId: number
   date: string
   totalMinor: Minor // إجمالي الفاتورة
-  claimMinor: Minor // نصيب الجهة
+  claimMinor: Minor // نصيب الجهة (يتناقص مع مرتجعات G9)
   settled: boolean
   settlementEntryId: number | null
+  /** G9: ما عُكس من المطالبة بمرتجعات (تخفيض 1110) — undefined = سجل قديم */
+  reversedMinor?: Minor
+  /** G10: سطور البيع المؤمَّن بالوحدة الأساسية وقيمتها — لاسترجاع المخزون عند عكس القيد */
+  saleLines?: { itemId: number; qty: number; valueMinor: Minor }[]
 }
 
 /**

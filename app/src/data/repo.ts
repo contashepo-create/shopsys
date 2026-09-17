@@ -3288,6 +3288,39 @@ export const useDataStore = create<DataState>()(
         if (!original) throw new Error('القيد غير موجود')
         if (original.reversedByEntryId) throw new Error('القيد معكوس بالفعل — لا يُعكس مرتين')
         if (original.reversesEntryId) throw new Error('لا يُعكس قيد عاكس — عد للقيد الأصلي')
+        // G11: مستندات لها دفاتر مساعدة (مخزون/سيريالات/دفعات/أقساط) — عكس قيدها وحده
+        // يفصل دفتر الأستاذ عن الدفاتر المساعدة: وجّه للمسار التصحيحي الصحيح
+        const guarded: Partial<Record<JournalEntry['sourceType'], string>> = {
+          sale: 'فاتورة بيع — صححها بمرتجع مبيعات أو بتعديل الفاتورة من صفحة فواتير البيع',
+          purchase: 'فاتورة شراء — صححها بمرتجع شراء أو بتعديل الفاتورة من صفحة المشتريات',
+          sale_return: 'مرتجع مبيعات أعاد بضاعة للمخزون — صححه بفاتورة بيع جديدة لا بعكس القيد',
+          purchase_return: 'مرتجع شراء أخرج بضاعة من المخزون — صححه بفاتورة شراء جديدة لا بعكس القيد',
+          production: 'أمر إنتاج حرّك خامات ومنتجات — استخدم مسار الإنتاج للتصحيح',
+          material_issue: 'صرف مواد لمشروع — استخدم مستند تسوية مواد لا عكس القيد',
+        }
+        const guardMsg = guarded[original.sourceType]
+        if (guardMsg) throw new Error(`لا يُعكس هذا القيد مباشرة: ${guardMsg}`)
+        // G10: قيد بيع بتغطية تأمينية — عكسه المحاسبي وحده يترك المخزون مخصوماً
+        // والمطالبة مفتوحة (تُحصَّل عن بيع أُلغي!): نرجع البضاعة ونغلق المطالبة معاً
+        let updatedItems = state.items
+        let updatedClaims = state.insuranceClaims
+        if (original.sourceType === 'insured_sale') {
+          const claim = state.insuranceClaims.find((c) => c.source === 'sale' && c.sourceId === original.id)
+          if (claim) {
+            if (claim.settled) throw new Error('مطالبة هذا البيع حُصِّلت من جهة التأمين — لا يُعكس؛ سوِّ الفرق بسند صرف للجهة')
+            // استرجاع المخزون بالكمية والقيمة التاريخية (متوسط مرجح بالقيمة — نفس نمط المرتجع)
+            for (const sl of claim.saleLines ?? []) {
+              updatedItems = updatedItems.map((it) => {
+                if (it.id !== sl.itemId) return it
+                const newQty = Math.round(((it.stockQty ?? 0) + sl.qty) * 1000) / 1000
+                const newValue = Math.round((it.stockQty ?? 0) * it.costMinor) + sl.valueMinor
+                return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor }
+              })
+            }
+            // إقفال المطالبة: نصيب الجهة كله معكوس — لا يظهر في التحصيل بعد الآن
+            updatedClaims = updatedClaims.map((c) => (c.id === claim.id ? { ...c, claimMinor: 0, reversedMinor: (c.reversedMinor ?? 0) + c.claimMinor } : c))
+          }
+        }
         const newId = nextId(state.journal)
         const now = new Date().toISOString()
         const reversal: JournalEntry = {
@@ -3308,6 +3341,8 @@ export const useDataStore = create<DataState>()(
             ...state.journal.map((e) => (e.id === original.id ? { ...e, reversedByEntryId: newId } : e)),
             reversal,
           ],
+          items: updatedItems,
+          insuranceClaims: updatedClaims,
         })
         return reversal
       },
@@ -3418,7 +3453,8 @@ export const useDataStore = create<DataState>()(
         })
         if (blocks.length) throw new Error(`لا يمكن تعديل هذه الفاتورة: ${blocks.join('؛ ')}`)
         // أصناف الوصفات والمتغيرات تعديلها له تشعبات (خامات مطبوخة/تركيبات) — الأسلم مرتجع + فاتورة جديدة
-        const usesRecipes = sale.lines.some((l) => state.recipes.some((r) => r.productItemId === l.itemId && r.mode === 'made_to_order'))
+        const isDishItem = (id2: number) => state.recipes.some((r) => r.productItemId === id2 && r.mode === 'made_to_order')
+        const usesRecipes = sale.lines.some((l) => isDishItem(l.itemId)) || args.lines.some((l) => isDishItem(l.itemId))
         const usesVariants = sale.lines.some((l) => l.variantColor || l.variantSize) || args.lines.some((l) => l.variantColor || l.variantSize)
         if (usesRecipes) throw new Error('فاتورة أطباق بوصفات — الخامات صُرفت فعلاً؛ صحّح بمرتجع وفاتورة جديدة')
         if (usesVariants) throw new Error('فاتورة بتركيبات لون/مقاس — صحّح بمرتجع وفاتورة جديدة للحفاظ على أرصدة التركيبات')
@@ -3426,17 +3462,18 @@ export const useDataStore = create<DataState>()(
         // ① إعادة مخزون السطور القديمة (بتكلفتها التاريخية — نفس منطق المرتجع)
         const stockAfterRestore = new Map<number, { qty: number; costMinor: number }>()
         for (const it of state.items) stockAfterRestore.set(it.id, { qty: it.stockQty ?? 0, costMinor: it.costMinor })
+        // G7: الكمية بالوحدة الأساسية qty×unitFactor (صيدلية: علبة/شريط) — والقيمة بقيمة السطر كاملة
         for (const l of sale.lines) {
           const cur = stockAfterRestore.get(l.itemId)
           if (!cur) continue
-          const newQty = Math.round((cur.qty + l.qty) * 1000) / 1000
+          const newQty = Math.round((cur.qty + baseQty(l)) * 1000) / 1000
           const newValue = Math.round(cur.qty * cur.costMinor) + Math.round(l.qty * l.unitCostMinor)
           stockAfterRestore.set(l.itemId, { qty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : cur.costMinor })
         }
         // ② فحص كفاية المخزون للسطور الجديدة (بعد الإعادة)
         if (!args.allowNegativeStock) {
           const need = new Map<number, number>()
-          for (const l of args.lines) need.set(l.itemId, (need.get(l.itemId) ?? 0) + l.qty)
+          for (const l of args.lines) need.set(l.itemId, (need.get(l.itemId) ?? 0) + baseQty(l))
           const shortages: string[] = []
           for (const [itemId, qty] of need) {
             const cur = stockAfterRestore.get(itemId)
@@ -3447,9 +3484,10 @@ export const useDataStore = create<DataState>()(
           if (shortages.length) throw new Error(`مخزون غير كافٍ للتعديل — ${shortages.join('، ')}`)
         }
         // ③ تثبيت تكلفة السطور الجديدة على المتوسط بعد الإعادة (لا متوسط لحظة الإدخال)
+        // G7: تكلفة السطر بوحدته المختارة = متوسط الوحدة الأساسية × معامل الوحدة
         const costedLines = args.lines.map((l) => {
           const cur = stockAfterRestore.get(l.itemId)
-          return cur && Number.isInteger(cur.costMinor) ? { ...l, unitCostMinor: cur.costMinor } : l
+          return cur && Number.isInteger(cur.costMinor) ? { ...l, unitCostMinor: Math.round(cur.costMinor * (l.unitFactor ?? 1)) } : l
         })
         // ④ الإجماليات والقيد الجديد بنفس المعاملة الضريبية الأصلية
         // G1: المعاملة الضريبية المخزنة على الفاتورة أولاً (دقيقة مع الأصناف المعفاة المختلطة)
@@ -3492,7 +3530,7 @@ export const useDataStore = create<DataState>()(
         for (const l of costedLines) {
           const cur = finalStock.get(l.itemId)
           if (!cur) continue
-          finalStock.set(l.itemId, { ...cur, qty: Math.round((cur.qty - l.qty) * 1000) / 1000 })
+          finalStock.set(l.itemId, { ...cur, qty: Math.round((cur.qty - baseQty(l)) * 1000) / 1000 })
         }
         const updatedItems = state.items.map((it) => {
           const f = finalStock.get(it.id)
@@ -4475,9 +4513,13 @@ export const useDataStore = create<DataState>()(
         const provider = state.insuranceProviders.find((p) => p.id === args.providerId && p.isActive)
         if (!provider) throw new Error('جهة التأمين غير موجودة أو معطلة')
         if (!args.lines.length) throw new Error('لا أصناف')
-        // فحص المخزون
+        // فحص المخزون — بالوحدة الأساسية qty×unitFactor (G10)
         const qtyByItem = new Map<number, number>()
-        for (const l of args.lines) qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + l.qty)
+        const valueByItem = new Map<number, number>()
+        for (const l of args.lines) {
+          qtyByItem.set(l.itemId, (qtyByItem.get(l.itemId) ?? 0) + baseQty(l))
+          valueByItem.set(l.itemId, (valueByItem.get(l.itemId) ?? 0) + Math.round(l.qty * l.unitCostMinor))
+        }
         for (const [itemId, qty] of qtyByItem) {
           const it = state.items.find((x) => x.id === itemId)
           if (!it) throw new Error('صنف غير موجود')
@@ -4503,6 +4545,8 @@ export const useDataStore = create<DataState>()(
           id: claimId, providerId: provider.id, source: 'sale', sourceId: entryId,
           date: now.slice(0, 10), totalMinor: totals.totalMinor, claimMinor: providerShareMinor,
           settled: false, settlementEntryId: null,
+          // G10: سطور البيع بالوحدة الأساسية وقيمتها — ليسترجعها عكس القيد للمخزون
+          saleLines: [...qtyByItem].map(([itemId, qty]) => ({ itemId, qty, valueMinor: valueByItem.get(itemId) ?? 0 })),
         }
         const updatedItems = state.items.map((it) =>
           qtyByItem.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyByItem.get(it.id)!) * 1000) / 1000 } : it,
@@ -7218,6 +7262,17 @@ export const useDataStore = create<DataState>()(
         if (args.mode === 'customer_credit' && order.payment === 'cash' && patient?.linkedCustomerId == null) {
           throw new Error('طلب نقدي لمريض غير مرتبط بعميل — الاسترداد نقدي فقط')
         }
+        // G9: طلب بتغطية تأمينية — نصيب الجهة من المردود يخفض المطالبة (1110)
+        // لا يُرد نقداً (لم يُحصَّل قط): نسبةً وتناسباً بسقف غير المعكوس وغير المسوَّى
+        const claim = state.insuranceClaims.find((c) => c.source === 'lab_order' && c.sourceId === order.id)
+        let providerShare = 0
+        if (claim && !claim.settled && order.totals.totalMinor > 0) {
+          const claimOriginal = claim.claimMinor + (claim.reversedMinor ?? 0)
+          providerShare = Math.min(
+            Math.round((claimOriginal * args.amountMinor) / order.totals.totalMinor),
+            claim.claimMinor,
+          )
+        }
         const built = buildServiceRefundEntry({
           refundValueMinor: args.amountMinor,
           deliveredGrandMinor: order.totals.totalMinor,
@@ -7225,16 +7280,20 @@ export const useDataStore = create<DataState>()(
           priorRefundedMinor: order.refundedMinor ?? 0,
           priorRefundedTaxMinor: order.refundedTaxMinor ?? 0,
           mode: args.mode, treasury: args.treasury,
+          providerShareMinor: providerShare,
           note: `مرتجع تحاليل ${order.orderNumber}`,
         })
         const lines = [...built.lines]
         // عكس عمولة المُحيل النسبي — للعمولات غير المصروفة فقط (المصروفة شأن تسوية منفصل)
+        // G8: النسبة تُحسب من العمولة الأصلية (قبل أي عكس) لأن commissionMinor تتناقص
+        // مع كل مرتجع — وإلا انعكست العمولة ناقصة في المرتجعات المتتالية
         let commissionShare = 0
-        if (order.commissionMinor > 0 && !order.commissionPaid) {
-          const reversedSoFar = order.commissionReversedMinor ?? 0
+        const reversedSoFar = order.commissionReversedMinor ?? 0
+        const originalCommission = order.commissionMinor + reversedSoFar
+        if (originalCommission > 0 && !order.commissionPaid) {
           commissionShare = Math.min(
-            Math.round((order.commissionMinor * args.amountMinor) / order.totals.totalMinor),
-            order.commissionMinor - reversedSoFar,
+            Math.round((originalCommission * args.amountMinor) / order.totals.totalMinor),
+            originalCommission - reversedSoFar,
           )
           if (commissionShare > 0) {
             lines.push({ accountCode: '2105', debit: commissionShare, credit: 0, note: 'عكس عمولة إحالة (مرتجع)' })
@@ -7257,7 +7316,11 @@ export const useDataStore = create<DataState>()(
           commissionReversedMinor: (order.commissionReversedMinor ?? 0) + commissionShare,
           refunds: [...(order.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
         }
-        set({ labOrders: state.labOrders.map((o) => (o.id === order.id ? updated : o)), journal: [...state.journal, entry] })
+        // G9: تخفيض مطالبة الجهة بنصيبها من المردود — يوازي سطر 1110 الدائن في القيد
+        const updatedClaims = providerShare > 0 && claim
+          ? state.insuranceClaims.map((c) => (c.id === claim.id ? { ...c, claimMinor: c.claimMinor - providerShare, reversedMinor: (c.reversedMinor ?? 0) + providerShare } : c))
+          : state.insuranceClaims
+        set({ labOrders: state.labOrders.map((o) => (o.id === order.id ? updated : o)), insuranceClaims: updatedClaims, journal: [...state.journal, entry] })
         return updated
       },
 

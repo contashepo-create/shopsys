@@ -73,9 +73,12 @@ export function SalesInvoicesPage() {
   }
 
   // معاينة إجماليات التعديل بنفس المعاملة الضريبية الأصلية
+  // G1: النسبة المخزنة على الفاتورة أولاً (تطابق ما سيحسبه editSale في repo تماماً)
   const editTotals = useMemo(() => {
     if (!editing || !editLines.length) return null
-    const { taxPercent, taxInclusive } = deriveTaxConfig(editing.totals)
+    const { taxPercent, taxInclusive } = editing.taxPercent !== undefined
+      ? { taxPercent: editing.taxPercent, taxInclusive: editing.taxInclusive ?? true }
+      : deriveTaxConfig(editing.totals)
     return computeTotals(editLines, editDiscount, taxPercent, taxInclusive)
   }, [editing, editLines, editDiscount])
 
