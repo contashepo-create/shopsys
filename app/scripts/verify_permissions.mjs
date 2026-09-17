@@ -24,10 +24,10 @@ let uncovered = 0, badPerm = 0
 for (const r of routes) {
   const need = permissionForPath(r)
   if (need !== null && !permIds.has(need)) { badPerm++; console.log(`    ! صلاحية غير معرّفة لمسار ${r}: ${need}`) }
-  if (need === null && !['/', '/settings/about', '/settings/support', '/settings/issues'].includes(r)) uncovered++
+  if (need === null && !['/', '/settings/about', '/settings/support', '/settings/issues', '/settings/guides'].includes(r)) uncovered++
 }
 ok(badPerm === 0, 'كل صلاحيات الخريطة معرّفة في PERMISSIONS')
-ok(uncovered === 0, 'لا مسار مفتوح للجميع إلا المقصود (الرئيسية/حول/الدعم/البلاغات)')
+ok(uncovered === 0, 'لا مسار مفتوح للجميع إلا المقصود (الرئيسية/حول/الدعم/البلاغات/الشروحات)')
 ok(permissionForPath('/pos') === 'sales.pos.open', '/pos → فتح شاشة البيع')
 ok(permissionForPath('/settings/permissions') === 'set.users', 'شاشة الصلاحيات → إدارة المستخدمين')
 ok(permissionForPath('/accounting/coa') === 'acc.coa.manage', 'أطول بادئة تفوز: coa ≠ سندات')
@@ -86,7 +86,7 @@ ok(appSrc.includes('canAccessPath(location.pathname'), 'حارس المسارا�
 // وإلا فهو شاشة مفتوحة للجميع بالخطأ
 const navSrc = readFileSync(new URL('../src/ui/navCatalog.tsx', import.meta.url), 'utf8')
 const navPaths = [...navSrc.matchAll(/path: '([^']+)'/g)].map((m) => m[1])
-const PUBLIC_OK = new Set(['/', '/settings/about', '/settings/support', '/settings/issues'])
+const PUBLIC_OK = new Set(['/', '/settings/about', '/settings/support', '/settings/issues', '/settings/guides'])
 const uncoveredNav = navPaths.filter((p) => {
   const match = ROUTE_PERMISSIONS.filter((r) => p === r.prefix || p.startsWith(r.prefix)).sort((a, b) => b.prefix.length - a.prefix.length)[0]
   return match && match.prefix === '/' && !PUBLIC_OK.has(p)

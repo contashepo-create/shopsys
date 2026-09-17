@@ -82,7 +82,59 @@ export function deriveTaxConfig(totals: CartTotals): { taxPercent: number; taxIn
  * كامل قيمة المرتجع تُقيَّد دائنة على 1104 بلا سقف المفتوح — لو تجاوزت دينه
  * انقلب رصيده دائناً (له عندنا) ويُخصم من فواتيره القادمة. لا نقدية تخرج إطلاقاً.
  */
-export type RefundMode = PaymentMethod | 'store_credit'
+export type RefundMode = PaymentMethod | 'store_credit' | 'custom'
+
+/**
+ * حرية رد القيمة الكاملة (طلب المالك — نمط QuickBooks «Credit Memo vs Refund Receipt»):
+ * قيمة المرتجع تُوزَّع يدوياً على أربع وجهات بأي مزيج، بشرط أن يساوي مجموعها القيمة:
+ * - cashMinor: نقدية تخرج فعلاً (بسقف المُحصَّل فعلاً — لا نرد ما لم نستلمه)
+ * - creditMinor: تخفيض دين الفاتورة المفتوح (بسقف المتبقي غير المدفوع)
+ * - storeCreditMinor: إيداع رصيداً دائناً في حساب العميل (بلا سقف — يُخصم من مشترياته القادمة)
+ * - waivedMinor: تنازل العميل عن الرد (مرتجع بلا رد!) — يُقيَّد إيرادات أخرى 4110
+ *   (العميل أعاد البضاعة ولم يطلب شيئاً: البيع يُعكس والمبلغ المتنازل عنه مكسب محقق)
+ */
+export interface RefundAllocation {
+  cashMinor: number
+  creditMinor: number
+  storeCreditMinor: number
+  waivedMinor: number
+}
+
+/**
+ * تحقق التوزيع الحر — يعيد قائمة أخطاء عربية (فارغة = سليم):
+ * كل جزء عدد صحيح ≥ 0، المجموع = قيمة المرتجع بالضبط،
+ * النقدي ≤ المُحصَّل فعلاً، تخفيض الذمم ≤ الدين المفتوح،
+ * والذمم/الرصيد يتطلبان عميلاً مسجلاً (لا حساب لعميل نقدي).
+ */
+export function validateRefundAllocation(
+  totalMinor: number,
+  alloc: RefundAllocation,
+  openCreditMinor: number,
+  receivedMinor: number,
+  hasCustomer: boolean,
+): string[] {
+  const errors: string[] = []
+  const parts: [string, number][] = [
+    ['النقدي', alloc.cashMinor], ['خصم الذمم', alloc.creditMinor],
+    ['رصيد العميل', alloc.storeCreditMinor], ['التنازل', alloc.waivedMinor],
+  ]
+  for (const [name, v] of parts) {
+    if (!Number.isInteger(v) || v < 0) errors.push(`${name}: يجب أن يكون مبلغاً صحيحاً ≥ 0`)
+  }
+  if (errors.length) return errors
+  const sum = alloc.cashMinor + alloc.creditMinor + alloc.storeCreditMinor + alloc.waivedMinor
+  if (sum !== totalMinor) errors.push(`مجموع التوزيع (${sum}) لا يساوي قيمة المرتجع (${totalMinor})`)
+  if (alloc.cashMinor > Math.max(0, receivedMinor)) {
+    errors.push(`الرد النقدي (${alloc.cashMinor}) يتجاوز المُحصَّل فعلاً من الفاتورة (${Math.max(0, receivedMinor)})`)
+  }
+  if (alloc.creditMinor > Math.max(0, openCreditMinor)) {
+    errors.push(`خصم الذمم (${alloc.creditMinor}) يتجاوز دين الفاتورة المفتوح (${Math.max(0, openCreditMinor)}) — استخدم «رصيد العميل» للفائض`)
+  }
+  if (!hasCustomer && (alloc.creditMinor > 0 || alloc.storeCreditMinor > 0)) {
+    errors.push('فاتورة عميل نقدي — لا حساب يُخصم منه أو يُودَع فيه: وزِّع على النقدي والتنازل فقط')
+  }
+  return errors
+}
 
 /* ─── ترقية المرتجع للنمط العالمي (Shopify POS / Lightspeed / ERPNext) ─── */
 
@@ -193,6 +245,7 @@ export function splitRefund(
   receivedMinor: number,
 ): { cashMinor: number; creditMinor: number } {
   if (!Number.isInteger(refundValueMinor) || refundValueMinor <= 0) throw new RangeError('قيمة المرتجع يجب أن تكون موجبة')
+  if (refund === 'custom') throw new RangeError('التوزيع الحر يتطلب allocation صريحاً — لا تقسيم تلقائياً')
   const openCredit = Math.max(0, openCreditMinor)
   const received = Math.max(0, receivedMinor)
   if (refund === 'store_credit') {
@@ -205,6 +258,26 @@ export function splitRefund(
   }
   const cash = Math.min(refundValueMinor, received)
   return { cashMinor: cash, creditMinor: refundValueMinor - cash }
+}
+
+/**
+ * تحويل نمط رد تقليدي إلى توزيع كامل (RefundAllocation) —
+ * فيتوحد مسار القيد على buildReturnEntry بالتوزيع الرباعي دائماً:
+ * - cash/credit: نفس منطق splitRefund الهجين (بلا رصيد ولا تنازل)
+ * - store_credit: كل القيمة رصيداً في حساب العميل (storeCreditMinor)
+ */
+export function allocationOf(
+  refundValueMinor: number,
+  refund: RefundMode,
+  openCreditMinor: number,
+  receivedMinor: number,
+): RefundAllocation {
+  if (refund === 'custom') throw new RangeError('التوزيع الحر يتطلب allocation صريحاً')
+  if (refund === 'store_credit') {
+    return { cashMinor: 0, creditMinor: 0, storeCreditMinor: refundValueMinor, waivedMinor: 0 }
+  }
+  const s = splitRefund(refundValueMinor, refund, openCreditMinor, receivedMinor)
+  return { cashMinor: s.cashMinor, creditMinor: s.creditMinor, storeCreditMinor: 0, waivedMinor: 0 }
 }
 
 /** النقدية الخارجة فعلاً من مرتجع (للورديات/الطباعة) — التوافق الخلفي: سجلات قديمة بلا تقسيم */
@@ -236,12 +309,45 @@ export function buildReturnEntry(
   const creditMinor = split ? split.creditMinor : refund === 'cash' ? 0 : totals.totalMinor
   if (cashMinor < 0 || creditMinor < 0) throw new RangeError('تقسيم الرد لا يحتمل قيماً سالبة')
   if (cashMinor + creditMinor !== totals.totalMinor) throw new RangeError('تقسيم الرد لا يساوي قيمة المرتجع')
+  return buildReturnEntryAlloc(
+    totals,
+    { cashMinor, creditMinor, storeCreditMinor: 0, waivedMinor: 0 },
+    treasury,
+    damagedCostMinor,
+  )
+}
+
+/**
+ * القيد العاكس للمرتجع بالتوزيع الرباعي الحر (طلب المالك — رد القيمة اختياري بحرية كاملة):
+ *   مدين: مرتجعات المبيعات (4102) بالأساس الضريبي
+ *   مدين: ض.ق.م المستحقة (2102) — تخفيض الالتزام
+ *   دائن: الخزينة (نقدي) و/أو العملاء 1104 (خصم ذمم + رصيد دائن) و/أو
+ *         إيرادات أخرى 4110 (تنازل العميل عن الرد — «مرتجع بلا رد»)
+ *   مدين: المخزون (1103) بالسليم / الهالك (5111) بالتالف — دائن تكلفة المبيعات (5101)
+ */
+export function buildReturnEntryAlloc(
+  totals: CartTotals,
+  alloc: RefundAllocation,
+  treasury = '1101',
+  damagedCostMinor = 0,
+): JournalLine[] {
+  const { cashMinor, creditMinor, storeCreditMinor, waivedMinor } = alloc
+  for (const v of [cashMinor, creditMinor, storeCreditMinor, waivedMinor]) {
+    if (!Number.isInteger(v) || v < 0) throw new RangeError('توزيع الرد لا يحتمل قيماً سالبة أو كسوراً')
+  }
+  if (cashMinor + creditMinor + storeCreditMinor + waivedMinor !== totals.totalMinor) {
+    throw new RangeError('مجموع توزيع الرد لا يساوي قيمة المرتجع')
+  }
   const lines: JournalLine[] = [
     { accountCode: '4102', debit: totals.taxBaseMinor, credit: 0, note: 'مرتجعات مبيعات' },
   ]
   // الرد النقدي يخرج من الخزينة التي استلمت البيع أصلاً (توحيد مصدر النقدية)
   if (cashMinor > 0) lines.push({ accountCode: treasury, debit: 0, credit: cashMinor, note: 'رد نقدية' })
   if (creditMinor > 0) lines.push({ accountCode: '1104', debit: 0, credit: creditMinor, note: 'تخفيض ذمم عملاء' })
+  // الرصيد الدائن أيضاً على 1104 — يظهر «له عندنا» ويُخصم من فواتيره القادمة
+  if (storeCreditMinor > 0) lines.push({ accountCode: '1104', debit: 0, credit: storeCreditMinor, note: 'إيداع رصيداً في حساب العميل' })
+  // التنازل: العميل أعاد البضاعة ولم يطلب رداً — المبلغ مكسب محقق (إيرادات أخرى)
+  if (waivedMinor > 0) lines.push({ accountCode: '4110', debit: 0, credit: waivedMinor, note: 'تنازل العميل عن الرد' })
   if (totals.taxMinor > 0) {
     lines.push({ accountCode: '2102', debit: totals.taxMinor, credit: 0, note: 'تخفيض ض.ق.م' })
   }

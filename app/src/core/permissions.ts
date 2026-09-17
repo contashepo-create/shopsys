@@ -120,6 +120,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/settings/backup', perm: 'set.backup' },
   { prefix: '/settings/sync', perm: 'set.backup' },
   { prefix: '/settings/about', perm: null }, // حول التطبيق — للجميع
+  { prefix: '/settings/guides', perm: null }, // الشروحات — للجميع (تعليم كل مستخدم)
   { prefix: '/settings/support', perm: null }, // الدعم — للجميع
   { prefix: '/settings/issues', perm: null }, // الإبلاغ عن مشكلة — للجميع
   { prefix: '/settings', perm: 'set.general' },

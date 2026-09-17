@@ -181,7 +181,7 @@ export interface CustomerBalanceRow {
 
 export function customerBalances(
   sales: SaleDoc[],
-  returns: (SaleReturnDoc & { refund: PaymentMethod | 'store_credit'; creditRefundMinor?: Minor })[],
+  returns: (SaleReturnDoc & { refund: PaymentMethod | 'store_credit' | 'custom'; creditRefundMinor?: Minor })[],
   collections: { customerId: number; amountMinor: Minor }[],
 ): CustomerBalanceRow[] {
   const map = new Map<number, CustomerBalanceRow>()

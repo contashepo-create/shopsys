@@ -202,6 +202,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'permissions', nameAr: 'المستخدمون والصلاحيات', icon: ShieldCheck, path: '/settings/permissions' },
       { id: 'audit', nameAr: 'سجل النشاطات (للمالك)', icon: ScrollText, path: '/settings/audit' },
       { id: 'issues', nameAr: 'بلاغات المشاكل الداخلية', icon: MessageSquareWarning, path: '/settings/issues' },
+      { id: 'guides', nameAr: 'الشروحات (دليل نشاطك)', icon: BookOpenText, path: '/settings/guides' },
       { id: 'support', nameAr: 'الدعم الفني (المطوّر)', icon: Headset, path: '/settings/support' },
       { id: 'printing', nameAr: 'الطباعة', icon: Printer, path: '/settings/printing' },
       { id: 'backup', nameAr: 'النسخ الاحتياطي', icon: DatabaseBackup, path: '/settings/backup' },

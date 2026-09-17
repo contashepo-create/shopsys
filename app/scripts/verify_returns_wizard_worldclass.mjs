@@ -278,7 +278,7 @@ console.log('8️⃣ واجهات: المعالج والصناديق موصول�
   const fs = await import('node:fs')
   const ui = (p) => fs.readFileSync(new URL(`../src/ui/${p}`, import.meta.url), 'utf8')
   const wiz = ui('pages/SaleReturnsPage.tsx')
-  for (const marker of ['STEPS', 'lineSpecs: specs', "condition: 'damaged'", 'splitRefund', 'TreasuryPicker', "navigate('/sales/exchange')", 'RETURN_REASONS']) {
+  for (const marker of ['STEPS', 'lineSpecs: specs', "condition: 'damaged'", 'allocationOf', 'TreasuryPicker', "navigate('/sales/exchange')", 'RETURN_REASONS']) {
     assert.ok(wiz.includes(marker), `SaleReturnsPage يفتقد ${marker}`)
   }
   ok('معالج المرتجع: مراحل + سطر بسطر + حالة + خزينة رد + مسار استبدال + أسباب')

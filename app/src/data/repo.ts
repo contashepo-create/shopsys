@@ -13,7 +13,7 @@ import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, baseQty, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
-import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntry, deriveTaxConfig, splitRefund, returnCashRefundMinor, damagedCostOf, type RefundMode, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
+import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../core/permissions.ts'
@@ -930,6 +930,14 @@ export interface SaleReturn {
   cashRefundMinor?: number
   creditRefundMinor?: number
   /**
+   * التوزيع الحر الرباعي (طلب المالك — رد القيمة اختياري بحرية كاملة):
+   * storeCreditRefundMinor = المودع رصيداً دائناً في حساب العميل (جزء من creditRefundMinor)
+   * waivedRefundMinor = ما تنازل عنه العميل («مرتجع بلا رد») — قُيِّد إيرادات أخرى 4110
+   * undefined = سجل قديم (كله نقدي/ذمم حسب refund)
+   */
+  storeCreditRefundMinor?: number
+  waivedRefundMinor?: number
+  /**
    * موافقة المشرف (نمط برامج الكاشير العالمية): من اعتمد ومن نفّذ —
    * undefined = سجل قديم أو نفّذه المالك مباشرة قبل الخاصية.
    */
@@ -1181,6 +1189,11 @@ interface DataState {
     /** النمط العالمي: إرجاع سطر بسطر من الفاتورة بحالته (سليم/تالف) */
     lineSpecs?: ReturnLineSpec[]
     refund: RefundMode
+    /**
+     * التوزيع الحر الرباعي (refund='custom'): نقدي + خصم ذمم + رصيد عميل + تنازل —
+     * المجموع = قيمة المرتجع بالضبط، ويُتحقق منه بسقوف المُحصَّل والدين المفتوح.
+     */
+    allocation?: RefundAllocation
     reason: string
     /** كود سبب موحد (RETURN_REASONS) للتقارير — reason يبقى النص الحر */
     reasonCode?: string
@@ -2507,6 +2520,9 @@ export const useDataStore = create<DataState>()(
         if ((args.refund === 'credit' || args.refund === 'store_credit') && sale.customerId === null) {
           throw new Error('فاتورة عميل نقدي — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
         }
+        if (args.refund === 'custom' && !args.allocation) {
+          throw new Error('التوزيع الحر يتطلب تحديد allocation (نقدي/ذمم/رصيد/تنازل)')
+        }
         // 1) بناء سطور المرتجع بنفس أسعار وخصومات الأصل، مع منع تجاوز المتبقي —
         //    النمط العالمي: سطر بسطر بحالته (lineSpecs)؛ التوافق الخلفي: qtyByItem
         const priorLines = state.saleReturns.filter((r) => r.saleId === sale.id).flatMap((r) => r.lines)
@@ -2539,12 +2555,21 @@ export const useDataStore = create<DataState>()(
         )
         const openCredit = sale.totals.totalMinor - paidAtSale - priorCreditRefunds - settledToThisSale
         const received = paidAtSale + settledToThisSale - priorCashRefunds
-        const split = splitRefund(totals.totalMinor, args.refund, openCredit, received)
+        // التوزيع الرباعي الموحد (طلب المالك — رد القيمة اختياري بحرية كاملة):
+        // refund='custom' ⇒ توزيع المستخدم اليدوي بعد تحققه، وإلا التقسيم التلقائي القديم
+        let alloc: RefundAllocation
+        if (args.refund === 'custom') {
+          const allocErrors = validateRefundAllocation(totals.totalMinor, args.allocation!, openCredit, received, sale.customerId !== null)
+          if (allocErrors.length) throw new Error(allocErrors.join(' — '))
+          alloc = args.allocation!
+        } else {
+          alloc = allocationOf(totals.totalMinor, args.refund, openCredit, received)
+        }
         // القيد العاكس المتوازن
         // الرد النقدي من نفس خزينة البيع الأصلية (فواتير قديمة بلا خزينة → الرئيسية)
         // وجهة الرد النقدي: اختيار صريح (درج آخر/بنك «تحويل») وإلا خزينة البيع الأصلية
         const refundTreasury = args.treasury ?? sale.treasury ?? '1101'
-        const entryLines = buildReturnEntry(totals, args.refund, refundTreasury, split, damagedCost)
+        const entryLines = buildReturnEntryAlloc(totals, alloc, refundTreasury, damagedCost)
         const returnId = nextId(state.saleReturns)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -2591,8 +2616,12 @@ export const useDataStore = create<DataState>()(
           ...(args.reasonCode ? { reasonCode: args.reasonCode } : {}),
           treasury: refundTreasury,
           shiftId: currentShift?.id ?? null,
-          cashRefundMinor: split.cashMinor,
-          creditRefundMinor: split.creditMinor,
+          // creditRefundMinor يجمع كل ما قُيِّد دائناً على 1104 (خصم ذمم + رصيد) —
+          // فتبقى التقارير والكشوف القديمة صحيحة بلا تعديل؛ والحقلان الجديدان للتفصيل
+          cashRefundMinor: alloc.cashMinor,
+          creditRefundMinor: alloc.creditMinor + alloc.storeCreditMinor,
+          ...(alloc.storeCreditMinor > 0 ? { storeCreditRefundMinor: alloc.storeCreditMinor } : {}),
+          ...(alloc.waivedMinor > 0 ? { waivedRefundMinor: alloc.waivedMinor } : {}),
           approvedBy: args.approvedBy ?? requesterName,
           requestedBy: requesterName,
           ...(shiftCtx.crossShift ? { crossShiftNote: shiftCtx.noteAr } : {}),

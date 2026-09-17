@@ -36,7 +36,7 @@ export interface CustomerStatementInput {
   /** رصيد افتتاحي مثبت بقيد 1104/3101 (اختياري) — يظهر أول الكشف ويدخل الرصيد الجاري */
   openingMinor?: Minor
   sales: { invoiceNumber: string; date: string; customerId: number | null; payment: 'cash' | 'credit'; paidMinor?: number; totals: { totalMinor: Minor } }[]
-  saleReturns: { returnNumber: string; date: string; saleId: number; refund: 'cash' | 'credit' | 'store_credit'; totals: { totalMinor: Minor }; creditRefundMinor?: Minor }[]
+  saleReturns: { returnNumber: string; date: string; saleId: number; refund: 'cash' | 'credit' | 'store_credit' | 'custom'; totals: { totalMinor: Minor }; creditRefundMinor?: Minor }[]
   /** فواتير البيع كاملة لربط المرتجع بعميله */
   allSales: { id: number; customerId: number | null }[]
   vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor }[]

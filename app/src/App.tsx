@@ -67,6 +67,7 @@ import { AboutPage } from './ui/pages/AboutPage.tsx'
 import { AuditLogPage } from './ui/pages/AuditLogPage.tsx'
 import { IssuesPage } from './ui/pages/IssuesPage.tsx'
 import { SupportPage } from './ui/pages/SupportPage.tsx'
+import { GuidesPage } from './ui/pages/GuidesPage.tsx'
 import { WalletServicesPage } from './ui/pages/WalletServicesPage.tsx'
 import { WastagePage } from './ui/pages/WastagePage.tsx'
 import { ConsumptionPage } from './ui/pages/ConsumptionPage.tsx'
@@ -194,6 +195,7 @@ function Shell() {
         <Route path="/settings/audit" element={<AuditLogPage />} />
         <Route path="/settings/issues" element={<IssuesPage />} />
         <Route path="/settings/support" element={<SupportPage />} />
+        <Route path="/settings/guides" element={<GuidesPage />} />
         <Route path="/wallets/ops" element={<WalletServicesPage />} />
         <Route path="/inventory/wastage" element={<WastagePage />} />
         <Route path="/inventory/consumption" element={<ConsumptionPage />} />

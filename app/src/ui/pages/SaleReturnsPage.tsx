@@ -11,8 +11,8 @@ import { RotateCcw, Search, BookOpenText, Eye, Printer, ChevronRight, ChevronLef
 import { useDataStore, type SaleInvoice, type SaleReturn } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
-import { formatMinor } from '../../core/money.ts'
-import { remainingByLine, returnCashRefundMinor, splitRefund, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition } from '../../core/returns.ts'
+import { formatMinor, toMinor } from '../../core/money.ts'
+import { remainingByLine, returnCashRefundMinor, allocationOf, validateRefundAllocation, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition, type RefundAllocation } from '../../core/returns.ts'
 import { computeTotals } from '../../core/pos.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
@@ -45,8 +45,13 @@ export function SaleReturnsPage() {
   const [pickQuery, setPickQuery] = useState('')
   const [sale, setSale] = useState<SaleInvoice | null>(null)
   const [wiz, setWiz] = useState<Record<number, WizardLine>>({}) // بمفتاح فهرس السطر
-  const [refund, setRefund] = useState<'cash' | 'credit' | 'store_credit'>('cash')
+  const [refund, setRefund] = useState<'cash' | 'credit' | 'store_credit' | 'custom'>('cash')
   const [refundTreasury, setRefundTreasury] = useState('')
+  /** التوزيع الحر الرباعي (refund='custom') — نصوص المبالغ كما يكتبها المستخدم */
+  const [customCash, setCustomCash] = useState('')
+  const [customCredit, setCustomCredit] = useState('')
+  const [customStore, setCustomStore] = useState('')
+  const [customWaived, setCustomWaived] = useState('')
   const [reasonCode, setReasonCode] = useState('changed_mind')
   const [reason, setReason] = useState('')
   const [viewing, setViewing] = useState<SaleReturn | null>(null)
@@ -67,6 +72,7 @@ export function SaleReturnsPage() {
 
   const resetWizard = () => {
     setStep(0); setSale(null); setWiz({}); setRefund('cash'); setRefundTreasury('')
+    setCustomCash(''); setCustomCredit(''); setCustomStore(''); setCustomWaived('')
     setReasonCode('changed_mind'); setReason(''); setPickQuery('')
   }
   const openWizard = () => { resetWizard(); setWizardOpen(true) }
@@ -120,22 +126,42 @@ export function SaleReturnsPage() {
         (a, st) => a + st.allocations.filter((al) => al.docKey === `sale:${sale.id}`).reduce((b, al) => b + al.appliedMinor, 0), 0)
       const openCredit = sale.totals.totalMinor - paidAtSale - priorCredit - settled
       const received = paidAtSale + settled - priorCash
-      const split = splitRefund(totals.totalMinor, refund, openCredit, received)
+      // التوزيع الرباعي: تلقائي حسب نمط الرد، أو يدوي حر (custom) مع أخطائه المفصلة.
+      // تحويل آمن: مدخل غير رقمي لا يرمي (وإلا اختفت اللوحة كلها) — يُعدّ صفراً بخطأ واضح
+      const safeMinor = (s: string): number | null => { try { return toMinor(s || '0', cur.decimals) } catch { return null } }
+      let alloc: RefundAllocation
+      let allocErrors: string[] = []
+      if (refund === 'custom') {
+        const vals = [safeMinor(customCash), safeMinor(customCredit), safeMinor(customStore), safeMinor(customWaived)]
+        const bad = vals.some((v) => v === null)
+        alloc = {
+          cashMinor: vals[0] ?? 0,
+          creditMinor: vals[1] ?? 0,
+          storeCreditMinor: vals[2] ?? 0,
+          waivedMinor: vals[3] ?? 0,
+        }
+        allocErrors = bad
+          ? ['أحد المبالغ غير رقمي — صحّحه أولاً']
+          : validateRefundAllocation(totals.totalMinor, alloc, openCredit, received, sale.customerId !== null)
+      } else {
+        alloc = allocationOf(totals.totalMinor, refund, openCredit, received)
+      }
       const damagedCost = specs.filter((s) => s.condition === 'damaged')
         .reduce((a, s) => a + Math.round(s.qty * sale.lines[s.lineIndex].unitCostMinor), 0)
-      return { totals, split, damagedCost, openCredit: Math.max(0, openCredit), received: Math.max(0, received) }
+      return { totals, alloc, allocErrors, damagedCost, openCredit: Math.max(0, openCredit), received: Math.max(0, received) }
     } catch { return null }
-  }, [sale, specs, lineErrors, refund, saleReturns, clientSettlements])
+  }, [sale, specs, lineErrors, refund, saleReturns, clientSettlements, customCash, customCredit, customStore, customWaived, cur.decimals])
 
   const approval = useSupervisorApproval()
   const submit = () => {
-    if (!sale || !specs.length) return
+    if (!sale || !specs.length || !preview || preview.allocErrors.length > 0) return
     approval.request((approvedBy) => {
       try {
         const ret = postSaleReturn({
           saleId: sale.id,
           lineSpecs: specs,
           refund,
+          ...(refund === 'custom' && preview ? { allocation: preview.alloc } : {}),
           reason: reason.trim() || returnReasonName(reasonCode),
           reasonCode,
           treasury: refundTreasury || undefined,
@@ -170,11 +196,17 @@ export function SaleReturnsPage() {
     model.paidMinor = r.totals.totalMinor
     model.remainingMinor = 0
     const cashPart = returnCashRefundMinor(r)
-    const creditPart = r.totals.totalMinor - cashPart
-    model.paymentLabel =
-      cashPart > 0 && creditPart > 0
-        ? `رد نقدي ${fmt(cashPart)} + خصم من الحساب ${fmt(creditPart)}`
-        : cashPart > 0 ? 'رد نقدي' : r.refund === 'store_credit' ? 'إيداع رصيداً في حساب العميل' : 'خصم من حساب العميل'
+    const waivedPart = r.waivedRefundMinor ?? 0
+    const creditPart = r.totals.totalMinor - cashPart - waivedPart
+    const partsLabels: string[] = []
+    if (cashPart > 0) partsLabels.push(`رد نقدي ${fmt(cashPart)}`)
+    if (creditPart > 0) partsLabels.push((r.storeCreditRefundMinor ?? 0) >= creditPart ? `رصيد في الحساب ${fmt(creditPart)}` : `خصم من الحساب ${fmt(creditPart)}`)
+    if (waivedPart > 0) partsLabels.push(`تنازل ${fmt(waivedPart)}`)
+    model.paymentLabel = partsLabels.length > 1
+      ? partsLabels.join(' + ')
+      : cashPart > 0 ? 'رد نقدي'
+      : waivedPart > 0 ? 'تنازل — بلا رد'
+      : r.refund === 'store_credit' ? 'إيداع رصيداً في حساب العميل' : 'خصم من حساب العميل'
     printHtml(receipt.defaultTemplate === 'a4' ? renderInvoiceA4Html(model, cur, receipt) : renderReceiptHtml(model, cur, receipt))
     toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
   }
@@ -182,7 +214,7 @@ export function SaleReturnsPage() {
   const canNext =
     step === 0 ? sale !== null
     : step === 1 ? specs.length > 0 && lineErrors.length === 0
-    : step === 2 ? true
+    : step === 2 ? (refund !== 'custom' || (preview !== null && preview.allocErrors.length === 0))
     : false
 
   return (
@@ -231,8 +263,16 @@ export function SaleReturnsPage() {
                     <td className="px-4 py-3">
                       {(() => {
                         const cash = returnCashRefundMinor(r)
-                        const credit = r.totals.totalMinor - cash
-                        const label = cash > 0 && credit > 0 ? `💵 ${fmt(cash)} + 👥 ${fmt(credit)}` : cash > 0 ? '💵 نقدي' : r.refund === 'store_credit' ? '🏦 رصيد في حسابه' : '👥 خصم من حساب العميل'
+                        const waived = r.waivedRefundMinor ?? 0
+                        const credit = r.totals.totalMinor - cash - waived
+                        const many: string[] = []
+                        if (cash > 0) many.push(`💵 ${fmt(cash)}`)
+                        if (credit > 0) many.push(`👥 ${fmt(credit)}`)
+                        if (waived > 0) many.push(`🤝 ${fmt(waived)}`)
+                        const label = many.length > 1 ? many.join(' + ')
+                          : cash > 0 ? '💵 نقدي'
+                          : waived > 0 ? '🤝 تنازل — بلا رد'
+                          : r.refund === 'store_credit' ? '🏦 رصيد في حسابه' : '👥 خصم من حساب العميل'
                         return (
                           <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${credit === 0 ? 'bg-emerald-500/10 text-emerald-600' : cash === 0 ? 'bg-violet-500/10 text-violet-600' : 'bg-amber-500/10 text-amber-600'}`}>
                             {label}
@@ -394,7 +434,7 @@ export function SaleReturnsPage() {
           {/* ③ طريقة الرد */}
           {step === 2 && sale && (
             <div className="space-y-3 anim-pop">
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 <button
                   onClick={() => setRefund('cash')}
                   className={`p-3 rounded-2xl border-2 font-bold text-[12.5px] transition-all ${refund === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
@@ -411,7 +451,79 @@ export function SaleReturnsPage() {
                   title="لا نقدية تخرج: كامل القيمة تودع رصيداً دائناً في حساب العميل يُخصم من فواتيره القادمة (Store Credit)"
                   className={`p-3 rounded-2xl border-2 font-bold text-[12.5px] transition-all disabled:opacity-40 ${refund === 'store_credit' ? 'border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
                 >🏦 إيداع رصيداً في حسابه {!sale.customerId && '(عميل نقدي)'}</button>
+                <button
+                  onClick={() => setRefund('custom')}
+                  title="حرية كاملة: وزّع قيمة المرتجع يدوياً بين نقدي وخصم ذمم ورصيد عميل وتنازل (مرتجع بلا رد) — بأي مزيج"
+                  className={`p-3 rounded-2xl border-2 font-bold text-[12.5px] transition-all ${refund === 'custom' ? 'border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
+                >🎛️ توزيع حر / بلا رد</button>
               </div>
+
+              {refund === 'custom' && preview && (
+                <div className="p-3 rounded-2xl border border-amber-500/20 bg-amber-500/[0.03] space-y-2">
+                  <div className="text-[11.5px] font-bold text-amber-700 dark:text-amber-400">
+                    وزّع قيمة المرتجع {fmt(preview.totals.totalMinor)} بحرية — المجموع يجب أن يساويها بالضبط
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="space-y-1">
+                      <span className="text-[10.5px] text-emerald-600 font-bold">💵 نقدي يخرج فعلاً (بسقف المحصَّل {fmt(preview.received)})</span>
+                      <input value={customCash} onChange={(e) => setCustomCash(e.target.value)} inputMode="decimal" placeholder="0" className={inputCls} />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[10.5px] text-violet-600 font-bold">👥 خصم من دين الفاتورة (بسقف المفتوح {fmt(preview.openCredit)})</span>
+                      <input value={customCredit} onChange={(e) => setCustomCredit(e.target.value)} inputMode="decimal" placeholder="0" disabled={!sale.customerId} className={inputCls} />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[10.5px] text-sky-600 font-bold">🏦 رصيد في حساب العميل (بلا سقف)</span>
+                      <input value={customStore} onChange={(e) => setCustomStore(e.target.value)} inputMode="decimal" placeholder="0" disabled={!sale.customerId} className={inputCls} />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[10.5px] text-slate-500 font-bold">🤝 تنازل — العميل لا يريد رداً (إيرادات أخرى 4110)</span>
+                      <input value={customWaived} onChange={(e) => setCustomWaived(e.target.value)} inputMode="decimal" placeholder="0" className={inputCls} />
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <button
+                      onClick={() => { setCustomCash(''); setCustomCredit(''); setCustomStore(''); setCustomWaived(String(preview.totals.totalMinor / 10 ** cur.decimals)) }}
+                      className="px-2.5 py-1 rounded-lg text-[10.5px] font-bold border border-slate-300 dark:border-slate-600 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                    >مرتجع بلا رد — كله تنازلاً</button>
+                    <button
+                      onClick={() => {
+                        const cash = Math.min(preview.totals.totalMinor, preview.received)
+                        setCustomCash(String(cash / 10 ** cur.decimals)); setCustomCredit('')
+                        setCustomStore(sale.customerId ? String((preview.totals.totalMinor - cash) / 10 ** cur.decimals) : '')
+                        setCustomWaived(sale.customerId ? '' : String((preview.totals.totalMinor - cash) / 10 ** cur.decimals))
+                      }}
+                      className="px-2.5 py-1 rounded-lg text-[10.5px] font-bold border border-slate-300 dark:border-slate-600 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                    >أقصى نقدي والباقي {sale.customerId ? 'رصيداً' : 'تنازلاً'}</button>
+                    {sale.customerId != null && (
+                      <button
+                        onClick={() => {
+                          const credit = Math.min(preview.totals.totalMinor, preview.openCredit)
+                          setCustomCredit(String(credit / 10 ** cur.decimals)); setCustomCash('')
+                          setCustomStore(String((preview.totals.totalMinor - credit) / 10 ** cur.decimals)); setCustomWaived('')
+                        }}
+                        className="px-2.5 py-1 rounded-lg text-[10.5px] font-bold border border-slate-300 dark:border-slate-600 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+                      >إطفاء الدين والباقي رصيداً</button>
+                    )}
+                  </div>
+                  {(() => {
+                    const sum = preview.alloc.cashMinor + preview.alloc.creditMinor + preview.alloc.storeCreditMinor + preview.alloc.waivedMinor
+                    const diff = preview.totals.totalMinor - sum
+                    return diff !== 0 ? (
+                      <p className="text-[11px] font-bold text-rose-500">المجموع الموزع {fmt(sum)} — {diff > 0 ? `تبقى ${fmt(diff)} بلا وجهة` : `زيادة ${fmt(-diff)} عن قيمة المرتجع`}</p>
+                    ) : <p className="text-[11px] font-bold text-emerald-600">✓ التوزيع مكتمل ومطابق لقيمة المرتجع</p>
+                  })()}
+                  {preview.allocErrors.map((e, i) => (
+                    <p key={i} className="text-[11px] font-bold text-rose-500">⚠️ {e}</p>
+                  ))}
+                  {preview.alloc.cashMinor > 0 && (
+                    <div className="pt-1 space-y-1.5">
+                      <div className="text-[10.5px] font-bold text-slate-500">وجهة الجزء النقدي:</div>
+                      <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} compact />
+                    </div>
+                  )}
+                </div>
+              )}
 
               {refund === 'cash' && (
                 <div className="p-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.03] space-y-2">
@@ -471,13 +583,19 @@ export function SaleReturnsPage() {
                 </div>
                 <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 space-y-1.5">
                   <div className="text-[11px] font-bold text-slate-500 mb-1">توزيع الرد الفعلي</div>
-                  {preview.split.cashMinor > 0 && (
-                    <div className="flex justify-between text-emerald-600"><span>💵 يخرج نقداً/تحويلاً من {treasuries.find((t) => t.code === (refundTreasury || sale.treasury || '1101'))?.nameAr ?? 'الخزينة'}</span><b>{fmt(preview.split.cashMinor)}</b></div>
+                  {preview.alloc.cashMinor > 0 && (
+                    <div className="flex justify-between text-emerald-600"><span>💵 يخرج نقداً/تحويلاً من {treasuries.find((t) => t.code === (refundTreasury || sale.treasury || '1101'))?.nameAr ?? 'الخزينة'}</span><b>{fmt(preview.alloc.cashMinor)}</b></div>
                   )}
-                  {preview.split.creditMinor > 0 && (
-                    <div className="flex justify-between text-violet-600"><span>👥 {refund === 'store_credit' ? 'يودع رصيداً في حسابه' : 'يخفض دين العميل'}</span><b>{fmt(preview.split.creditMinor)}</b></div>
+                  {preview.alloc.creditMinor > 0 && (
+                    <div className="flex justify-between text-violet-600"><span>👥 يخفض دين العميل</span><b>{fmt(preview.alloc.creditMinor)}</b></div>
                   )}
-                  {refund !== 'store_credit' && preview.split.cashMinor > 0 && preview.split.creditMinor > 0 && (
+                  {preview.alloc.storeCreditMinor > 0 && (
+                    <div className="flex justify-between text-sky-600"><span>🏦 يودع رصيداً في حسابه</span><b>{fmt(preview.alloc.storeCreditMinor)}</b></div>
+                  )}
+                  {preview.alloc.waivedMinor > 0 && (
+                    <div className="flex justify-between text-slate-500"><span>🤝 تنازل العميل (إيرادات أخرى)</span><b>{fmt(preview.alloc.waivedMinor)}</b></div>
+                  )}
+                  {refund !== 'store_credit' && refund !== 'custom' && preview.alloc.cashMinor > 0 && preview.alloc.creditMinor > 0 && (
                     <p className="text-[10.5px] text-amber-600 leading-relaxed">رد هجين تلقائي: لا نرد نقداً أكثر من المحصَّل فعلاً ولا نخفض ديناً أكثر من المفتوح.</p>
                   )}
                 </div>
