@@ -16,13 +16,14 @@ import { Printer } from 'lucide-react'
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   in_stock: { label: 'بالمخزون', cls: 'bg-emerald-500/10 text-emerald-600' },
   sold: { label: 'مباعة', cls: 'bg-sky-500/10 text-sky-600' },
+  returned_supplier: { label: 'مرتجعة للمورد', cls: 'bg-rose-500/10 text-rose-600' },
 }
 
 export function SerialsPage() {
   const { serials, items, sales, customers } = useDataStore()
   const { setup } = useAppStore()
   const [query, setQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'sold'>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'in_stock' | 'sold' | 'returned_supplier'>('all')
   const today = new Date().toISOString().slice(0, 10)
 
   const itemName = (id: number) => items.find((it) => it.id === id)?.nameAr ?? '—'
@@ -103,7 +104,7 @@ export function SerialsPage() {
             style={{ textAlign: 'right' }}
           />
         </div>
-        {(['all', 'in_stock', 'sold'] as const).map((st) => (
+        {(['all', 'in_stock', 'sold', 'returned_supplier'] as const).map((st) => (
           <button
             key={st}
             onClick={() => setStatusFilter(st)}

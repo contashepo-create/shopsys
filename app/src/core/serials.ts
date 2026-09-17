@@ -11,7 +11,7 @@
  * - المرتجع يعيد السيريال متاحاً، والضمان يُستعلم عنه بأي سيريال
  */
 
-export type SerialStatus = 'in_stock' | 'sold'
+export type SerialStatus = 'in_stock' | 'sold' | 'returned_supplier'
 
 export interface SerialUnit {
   id: number
@@ -110,6 +110,28 @@ export function markReturned(pool: readonly SerialUnit[], saleId: number, serial
       ? { ...u, status: 'in_stock' as const, saleId: null, soldAt: null }
       : u,
   )
+}
+
+/**
+ * G5: إخراج سيريالات مع مرتجع الشراء — الوحدات تعود للمورد فلا تبقى «متاحة».
+ * تُختار FIFO من المتاح المسجل على فاتورة الشراء نفسها (الأقدم دخولاً أولاً)،
+ * وتُعلَّم returned_supplier (سجل تاريخي — لا تُباع ولا تعود إلا بشراء جديد).
+ * لو المتاح المسجل على الفاتورة أقل من الكمية يُعلَّم المتاح فقط (نظام استشاري
+ * مثل دفعات الصلاحية — لا نحبس المرتجع بسبب سجلات ناقصة).
+ */
+export function markReturnedToSupplier(
+  pool: readonly SerialUnit[],
+  purchaseId: number,
+  itemId: number,
+  qty: number,
+): SerialUnit[] {
+  const candidates = pool
+    .filter((u) => u.purchaseId === purchaseId && u.itemId === itemId && u.status === 'in_stock')
+    .sort((a, b) => (a.receivedAt < b.receivedAt ? -1 : a.receivedAt > b.receivedAt ? 1 : a.id - b.id))
+    .slice(0, Math.max(0, Math.floor(qty)))
+  if (!candidates.length) return [...pool]
+  const ids = new Set(candidates.map((u) => u.id))
+  return pool.map((u) => (ids.has(u.id) ? { ...u, status: 'returned_supplier' as const } : u))
 }
 
 /** حالة الضمان لسيريال مباع */

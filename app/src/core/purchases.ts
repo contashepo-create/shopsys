@@ -120,6 +120,8 @@ export interface PurchaseReturnLine {
   nameAr: string
   qty: number
   landedUnitCostMinor: Minor // تكلفة الوحدة النهائية من فاتورة الشراء الأصلية
+  /** سعر الوحدة في فاتورة المورد (قبل المصاريف) — undefined = سجل قديم (يعامل كالمحمل) */
+  unitPriceMinor?: Minor
 }
 
 /** سطر من فاتورة الشراء الأصلية كما تحتاجه حسابات المرتجع */
@@ -127,6 +129,7 @@ export interface OriginalPurchaseLine {
   itemId: number
   qty: number
   landedUnitCostMinor: Minor
+  unitPriceMinor?: Minor
 }
 
 /** المتبقي القابل للإرجاع لكل صنف (المشترى − مجموع المرتجعات السابقة على نفس الفاتورة) */
@@ -168,20 +171,35 @@ export function buildPurchaseReturnLines(
     if (info && wanted > info.stockQty + 1e-9) {
       throw new RangeError(`«${name}»: المخزون الحالي ${info.stockQty} فقط — لا يمكن إرجاع بضاعة بيعت بالفعل`)
     }
-    out.push({ itemId, nameAr: name, qty: wanted, landedUnitCostMinor: orig.landedUnitCostMinor })
+    out.push({ itemId, nameAr: name, qty: wanted, landedUnitCostMinor: orig.landedUnitCostMinor, unitPriceMinor: orig.unitPriceMinor })
   }
   if (!out.length) throw new RangeError('لا كميات للإرجاع')
   return out
 }
 
+/** قيمة المخزون الخارجة: بالتكلفة المحملة (نفس ما دخل به 1103) */
 export function purchaseReturnTotal(lines: PurchaseReturnLine[]): Minor {
   return lines.reduce((a, l) => a + Math.round(l.qty * l.landedUnitCostMinor), 0)
 }
 
 /**
+ * G4: المسترد من المورد = سعر فاتورته فقط (قبل المصاريف الموزعة) —
+ * المورد لا يرد شحناً/جماركاً دفعتُها أنا أو حُمّلت على حسابه كمصروف مستقل.
+ * سجل قديم بلا unitPriceMinor يعامل بالتكلفة المحملة (توافق خلفي).
+ */
+export function purchaseReturnSupplierValue(lines: PurchaseReturnLine[]): Minor {
+  return lines.reduce((a, l) => a + Math.round(l.qty * (l.unitPriceMinor ?? l.landedUnitCostMinor)), 0)
+}
+
+/**
  * قيد مرتجع الشراء:
- *   دائن: المخزون (1103) — البضاعة تخرج بقيمتها
- *   مدين: الخزينة (1101) استرداد نقدي، أو الموردون (2101) تخفيض الدين
+ *   دائن: المخزون (1103) بالتكلفة المحملة — البضاعة تخرج بقيمتها الدفترية كاملة
+ *   دائن: 2102 عكس حصة ض.ق.م المدخلات (إن وُجدت)
+ *   مدين: الخزينة (نقدي) أو الموردون 2101 (دين) بما يسترده المورد فعلاً =
+ *          سعر فاتورته + حصة الضريبة (G4: بلا المصاريف الموزعة)
+ *   مدين: 5111 هالك وتوالف — نصيب المصاريف الموزعة على البضاعة المرتجعة
+ *          (شحن/جمارك دُفعت ولا تُسترد: خسارة محققة، نمط QuickBooks/Odoo
+ *          «non-recoverable landed cost on returns»)
  */
 export function buildPurchaseReturnEntry(
   totalMinor: Minor,
@@ -191,13 +209,21 @@ export function buildPurchaseReturnEntry(
    * N2 (المراجعة الثانية): حصة ضريبة المدخلات المعكوسة عن البضاعة المرتجعة —
    * فاتورة سُجلت بضريبة مدخلات (2102 مدين) ورُدّ جزء من بضاعتها ⇒ يجب عكس
    * نصيب ذلك الجزء من الضريبة (2102 دائن) وإلا خصم الإقرار مدخلات عن بضاعة رُدَّت.
-   * المسترد من المورد = قيمة البضاعة + حصتها الضريبية.
+   * المسترد من المورد = قيمة بضاعته (بسعر فاتورته) + حصتها الضريبية.
    */
   inputVatShareMinor: Minor = 0,
+  /**
+   * G4: قيمة البضاعة بسعر فاتورة المورد (قبل المصاريف الموزعة) —
+   * هي ما يسترده المورد. الافتراضي = totalMinor (توافق خلفي: فواتير بلا مصاريف).
+   */
+  supplierValueMinor: Minor = totalMinor,
 ): JournalLine[] {
   if (totalMinor <= 0) throw new RangeError('قيمة المرتجع يجب أن تكون موجبة')
   if (!Number.isInteger(inputVatShareMinor) || inputVatShareMinor < 0) throw new RangeError('حصة ضريبة المرتجع لا تكون سالبة')
-  const refundTotal = totalMinor + inputVatShareMinor
+  if (!Number.isInteger(supplierValueMinor) || supplierValueMinor <= 0) throw new RangeError('قيمة مستحق المورد عن المرتجع غير صالحة')
+  if (supplierValueMinor > totalMinor) throw new RangeError('مستحق المورد عن المرتجع لا يتجاوز قيمته الدفترية')
+  const refundTotal = supplierValueMinor + inputVatShareMinor
+  const expenseLossMinor = totalMinor - supplierValueMinor // نصيب المصاريف الموزعة غير المسترد
   const lines: JournalLine[] = [
     {
       accountCode: refund === 'cash' ? treasury : '2101',
@@ -205,8 +231,11 @@ export function buildPurchaseReturnEntry(
       credit: 0,
       note: refund === 'cash' ? 'استرداد نقدي من المورد' : 'تخفيض دين المورد',
     },
-    { accountCode: '1103', debit: 0, credit: totalMinor, note: 'بضاعة خارجة للمورد' },
+    { accountCode: '1103', debit: 0, credit: totalMinor, note: 'بضاعة خارجة للمورد بتكلفتها المحملة' },
   ]
+  if (expenseLossMinor > 0) {
+    lines.push({ accountCode: '5111', debit: expenseLossMinor, credit: 0, note: 'مصاريف شراء موزعة غير مستردة (مرتجع)' })
+  }
   if (inputVatShareMinor > 0) {
     lines.push({ accountCode: '2102', debit: 0, credit: inputVatShareMinor, note: 'عكس ض.ق.م مدخلات عن بضاعة مرتجعة' })
   }

@@ -48,9 +48,10 @@ export function PurchaseReturnsPage() {
   /** الدين المتبقي غير المدفوع على الفاتورة المختارة (بعد مرتجعات الدين السابقة) */
   const unpaidDebt = useMemo(() => {
     if (!purchase) return 0
+    // G4+N2: ما خُفض من الدين سابقاً = مستحق المورد عن البضاعة + حصة الضريبة المعكوسة (تطابق قيد 2101)
     const priorDebt = purchaseReturns
       .filter((r) => r.purchaseId === purchase.id && r.refund === 'debt')
-      .reduce((a, r) => a + r.totalMinor, 0)
+      .reduce((a, r) => a + (r.supplierValueMinor ?? r.totalMinor) + (r.inputVatShareMinor ?? 0), 0)
     return Math.max(0, (purchase.supplierDueMinor ?? purchase.grandTotalMinor) - purchase.paidMinor - priorDebt)
   }, [purchase, purchaseReturns])
 

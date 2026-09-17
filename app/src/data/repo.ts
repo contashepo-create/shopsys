@@ -22,7 +22,7 @@ import {
 } from '../core/auth.ts'
 import { validateConsumption, buildConsumptionEntry, consumptionTotalMinor, INTERNAL_USE_ACCOUNT } from '../core/consumption.ts'
 import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, type WalletServiceInput, type WalletServiceType, type WalletProvider, type WalletServiceTotals } from '../core/walletServices.ts'
-import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, purchaseReturnTotal, buildPurchaseReturnEntry, type PurchaseReturnLine, type ExpensePaymentCredit } from '../core/purchases.ts'
+import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, type PurchaseReturnLine, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
@@ -54,7 +54,7 @@ import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildAssetPaymentEntry, buildAssetInstallments, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput, type AssetFunding, type AssetInstallment } from '../core/assets.ts'
-import { parseSerialsInput, markSold, markReturned, type SerialUnit } from '../core/serials.ts'
+import { parseSerialsInput, markSold, markReturned, markReturnedToSupplier, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
 import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
 import {
@@ -789,6 +789,8 @@ export interface PurchaseReturn {
   reason: string
   /** N2: حصة ض.ق.م المدخلات المعكوسة عن هذا المرتجع (2102 دائن) — undefined = سجل قديم/فاتورة بلا ضريبة */
   inputVatShareMinor?: number
+  /** G4: المسترد من المورد = قيمة بضاعته بسعر فاتورته (قبل المصاريف الموزعة) — undefined = سجل قديم (= totalMinor) */
+  supplierValueMinor?: number
 }
 
 /** جلسة جرد مرحّلة — الفوارق وقيد التسوية */
@@ -2581,6 +2583,9 @@ export const useDataStore = create<DataState>()(
           },
         )
         const total = purchaseReturnTotal(lines)
+        // G4: المسترد من المورد = سعر فاتورته فقط (قبل المصاريف الموزعة) —
+        // نصيب الشحن/الجمارك الموزع على البضاعة المرتجعة خسارة محققة (5111) لا يستردها المورد
+        const supplierValue = Math.min(purchaseReturnSupplierValue(lines), total)
         // N2 (المراجعة الثانية): فاتورة بضريبة مدخلات ⇒ نصيب البضاعة المرتجعة من الضريبة
         // يُعكس (2102 دائن) ويدخل المسترد من المورد — نسبةً وتناسباً بسقف غير المعكوس سابقاً
         const invoiceInputVat = purchase.inputVatMinor ?? 0
@@ -2598,15 +2603,15 @@ export const useDataStore = create<DataState>()(
         if (args.refund === 'debt') {
           const priorDebtReturns = state.purchaseReturns
             .filter((r) => r.purchaseId === purchase.id && r.refund === 'debt')
-            .reduce((a, r) => a + r.totalMinor + (r.inputVatShareMinor ?? 0), 0)
+            .reduce((a, r) => a + (r.supplierValueMinor ?? r.totalMinor) + (r.inputVatShareMinor ?? 0), 0)
           // دين المورد = مستحقه فقط (البضاعة + ضريبتها + مصاريفه) — لا المصاريف التي دفعتُها بنفسي
           const unpaid = (purchase.supplierDueMinor ?? purchase.grandTotalMinor) - purchase.paidMinor - priorDebtReturns
-          if (total + inputVatShare > unpaid) {
+          if (supplierValue + inputVatShare > unpaid) {
             throw new Error(`قيمة المرتجع أكبر من دين الفاتورة المتبقي (${unpaid}) — اختر الاسترداد النقدي`)
           }
         }
         // 2) القيد المتوازن
-        const entryLines = buildPurchaseReturnEntry(total, args.refund, args.treasury ?? '1101', inputVatShare)
+        const entryLines = buildPurchaseReturnEntry(total, args.refund, args.treasury ?? '1101', inputVatShare, supplierValue)
         const returnId = nextId(state.purchaseReturns)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -2637,6 +2642,7 @@ export const useDataStore = create<DataState>()(
           journalEntryId: entryId,
           reason: args.reason,
           inputVatShareMinor: inputVatShare,
+          supplierValueMinor: supplierValue,
         }
         // 3) خصم الكميات من المخزون بتكلفة الشراء الأصلية (نفس قيمة القيد 1103 دائن)
         //    مع إعادة حساب المتوسط المرجح بالقيمة — يبقي دفتر الأستاذ = كمية × متوسط
@@ -2652,7 +2658,26 @@ export const useDataStore = create<DataState>()(
           const newValue = Math.round((it.stockQty ?? 0) * it.costMinor) - valueOut.get(it.id)!
           return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(Math.max(0, newValue) / newQty) : it.costMinor }
         })
-        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems })
+        // G5: تخفيض دفعات الصلاحية — البضاعة العائدة للمورد تخرج من دفعات فاتورتها
+        // أولاً (هي المعيبة عادة) ثم الأقرب انتهاءً؛ نظام استشاري: لو السجل أقل لا نحبس
+        let workingBatches = state.batches
+        for (const [itemId, qty] of qtyOut) {
+          if (!state.items.find((it) => it.id === itemId)?.trackExpiry) continue
+          const own = workingBatches.filter((b) => b.itemId === itemId && b.purchaseId === purchase.id)
+          const ownPlan = planFefo(own, itemId, qty, now.slice(0, 10))
+          workingBatches = applyFefo(workingBatches, ownPlan)
+          if (ownPlan.untrackedQty > 0) {
+            // ما زاد عن دفعات الفاتورة يُصرف من باقي دفعات الصنف (الأقرب انتهاءً)
+            const rest = planFefo(workingBatches, itemId, ownPlan.untrackedQty, now.slice(0, 10))
+            workingBatches = applyFefo(workingBatches, rest)
+          }
+        }
+        // G5: السيريالات العائدة مع المرتجع تُعلَّم returned_supplier — لا تبقى «متاحة للبيع»
+        let updatedSerials = state.serials
+        for (const [itemId, qty] of qtyOut) {
+          updatedSerials = markReturnedToSupplier(updatedSerials, purchase.id, itemId, qty)
+        }
+        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials })
         return ret
       },
 
@@ -2989,7 +3014,10 @@ export const useDataStore = create<DataState>()(
             reason: `استبدال${args.notes.trim() ? ` — ${args.notes.trim()}` : ''}`,
           })
           // 2) البيع الجديد بنفس المعاملة الضريبية للفاتورة الأصلية (اتساق المستندين)
-          const { taxPercent, taxInclusive } = deriveTaxConfig(sale.totals)
+          // G1: النسبة المخزنة أولاً — الاستنتاج للفواتير القديمة فقط
+          const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
+            ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
+            : deriveTaxConfig(sale.totals)
           const newSale = get().postSale({
             lines: args.newLines,
             customerId: sale.customerId,
@@ -3424,7 +3452,10 @@ export const useDataStore = create<DataState>()(
           return cur && Number.isInteger(cur.costMinor) ? { ...l, unitCostMinor: cur.costMinor } : l
         })
         // ④ الإجماليات والقيد الجديد بنفس المعاملة الضريبية الأصلية
-        const { taxPercent, taxInclusive } = deriveTaxConfig(sale.totals)
+        // G1: المعاملة الضريبية المخزنة على الفاتورة أولاً (دقيقة مع الأصناف المعفاة المختلطة)
+        const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
+          ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
+          : deriveTaxConfig(sale.totals)
         const totals = computeTotals(costedLines, args.invoiceDiscountPercent, taxPercent, taxInclusive)
         const paidM = args.paidMinor
         if (!Number.isInteger(paidM) || paidM < 0) throw new Error('المدفوع لا يكون سالباً')
@@ -7270,10 +7301,13 @@ export const useDataStore = create<DataState>()(
         if (args.mode === 'customer_credit' && contract.customerId == null) {
           throw new Error('عميل نقدي — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
         }
+        // G6: تجاوز الاستخدام له ضريبته الخاصة (extraMinor أساس + ض.ق.م في قيد التجاوز) —
+        // الوعاء والضريبة يشملانها معاً وإلا انعكست الضريبة ناقصة عند الرد النسبي
+        const extraVat = Math.round((contract.extraMinor * contract.vatPercent) / 100)
         const built = buildServiceRefundEntry({
           refundValueMinor: args.amountMinor,
-          deliveredGrandMinor: contract.totals.grandMinor + contract.extraMinor,
-          deliveredTaxMinor: contract.totals.vatMinor,
+          deliveredGrandMinor: contract.totals.grandMinor + contract.extraMinor + extraVat,
+          deliveredTaxMinor: contract.totals.vatMinor + extraVat,
           priorRefundedMinor: contract.refundedMinor ?? 0,
           priorRefundedTaxMinor: contract.refundedTaxMinor ?? 0,
           mode: args.mode, treasury: args.treasury,

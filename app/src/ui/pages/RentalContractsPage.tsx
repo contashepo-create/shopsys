@@ -430,7 +430,7 @@ export function RentalContractsPage() {
             </div>
 
             <ServiceRefundBox
-              grandMinor={viewing.totals.grandMinor + viewing.extraMinor}
+              grandMinor={viewing.totals.grandMinor + viewing.extraMinor + Math.round((viewing.extraMinor * viewing.vatPercent) / 100)}
               refundedMinor={viewing.refundedMinor ?? 0}
               currencySymbol={cur.symbol}
               fmt={fmt}

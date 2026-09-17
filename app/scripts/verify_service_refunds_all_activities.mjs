@@ -118,6 +118,20 @@ ok('مرتجع يوم (1000) والتأمين 2103 لم يمس', urc.refundedMin
 throws('السقف: لا يتجاوز الإيجار + التجاوز', () => S().refundRental({ contractId: rc.id, amountMinor: 250000, mode: 'cash', reason: 'x' }), 'تتجاوز')
 ok('الميزان متوازن', balanced())
 
+console.log('\n5️⃣ب G6: عقد يومي بضريبة وتجاوز — الوعاء يشمل ضريبة التجاوز')
+// عقد يومي 2 × 1000 بضريبة 14٪ (grand=2280) — يُقفل بعد 3 أيام ⇒ تجاوز 1000 + ض 140
+const rc2 = S().openRental({ customerId: cust.id, equipmentId: null, input: { equipmentName: 'سقالة', days: 2, dailyRateMinor: 100000, vatPercent: 14, depositMinor: 0, payment: 'cash' }, notes: '' })
+S().closeRental(rc2.id, 0, { endDate: rc2.date.slice(0, 10).replace(/\d{2}$/, (d) => String(Number(d) + 3).padStart(2, '0')) }, '1101')
+const rc2b = S().rentalContracts.find((c) => c.id === rc2.id)
+ok('التجاوز سُجل (extra=1000)', rc2b.extraMinor === 100000, `فعلي ${rc2b.extraMinor}`)
+// الوعاء الكلي = 2280 + 1000 + 140 = 3420 والضريبة الكلية = 420 — رد الكل دفعة واحدة
+const vat5 = bal('2102')
+S().refundRental({ contractId: rc2.id, amountMinor: 342000, mode: 'cash', treasury: '1101', reason: 'نزاع سُوّي بالكامل' })
+ok('G6: رد كامل العقد + التجاوز قُبل (الوعاء يشمل ضريبة التجاوز)', true)
+ok('G6: كامل الضريبة عُكست 420 (شاملة ضريبة التجاوز)', bal('2102') - vat5 === 42000, `فعلي ${bal('2102') - vat5}`)
+throws('لا رد فوق الوعاء الكامل', () => S().refundRental({ contractId: rc2.id, amountMinor: 100, mode: 'cash', reason: 'x' }), 'تتجاوز')
+ok('الميزان متوازن', balanced())
+
 console.log('\n6️⃣ المقاولات — إشعار دائن على مستخلص معتمد')
 S().addProject({ nameAr: 'برج النيل', clientId: cust.id, contractValueMinor: 10000000, retentionPercent: 5, startDate: '2026-01-01', expectedEndDate: '', description: '' })
 const proj = S().projects.at(-1)

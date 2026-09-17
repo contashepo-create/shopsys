@@ -101,7 +101,7 @@ export function Dashboard() {
   const suppliersDebt = Math.max(
     0,
     purchases.reduce((a, p) => a + Math.max(0, (p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor), 0) -
-      purchaseReturns.filter((r) => r.refund === 'debt').reduce((a, r) => a + r.totalMinor, 0),
+      purchaseReturns.filter((r) => r.refund === 'debt').reduce((a, r) => a + (r.supplierValueMinor ?? r.totalMinor) + (r.inputVatShareMinor ?? 0), 0),
   )
 
   const cards = [
