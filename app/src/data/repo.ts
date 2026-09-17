@@ -811,6 +811,9 @@ export interface PurchaseReturn {
   inputVatShareMinor?: number
   /** G4: المسترد من المورد = قيمة بضاعته بسعر فاتورته (قبل المصاريف الموزعة) — undefined = سجل قديم (= totalMinor) */
   supplierValueMinor?: number
+  /** موافقة المشرف (قاعدة المالك المعممة) — undefined = سجل قديم */
+  approvedBy?: string
+  requestedBy?: string
 }
 
 /** جلسة جرد مرحّلة — الفوارق وقيد التسوية */
@@ -1244,6 +1247,8 @@ interface DataState {
     refund: 'cash' | 'debt'
     reason: string
     treasury?: string
+    /** موافقة المشرف (قاعدة المالك المعممة: كل المرتجعات باعتماد) — اسم المعتمد يُسجل على المستند */
+    approvedBy?: string
   }) => PurchaseReturn
   /**
    * ترحيل جلسة جرد: يقارن المعدود بالدفتري، يضبط المخزون على المعدود،
@@ -2061,6 +2066,13 @@ export const useDataStore = create<DataState>()(
         const state = get()
         // تحقق صارم قبل أي كتابة: سطور موجودة وكميات وأسعار سليمة (حماية من إفساد المخزون)
         if (!inv.lines.length) throw new Error('الفاتورة بلا أصناف')
+        // P1 (مراجعة المشتريات): المورد يجب أن يكون مسجلاً — دين 2101 بلا مورد حقيقي يفسد كشوف الموردين
+        if (!state.suppliers.some((s) => s.id === inv.supplierId)) throw new Error('المورد غير موجود — سجّله أولاً من «المشتريات ← الموردون»')
+        // P1: الخزينة/البنك المدفوع منه يجب أن يكون موجوداً (خزائن المصاريف كانت تُفحص والرئيسية لا)
+        if (inv.treasury && !state.treasuries.some((t) => t.code === inv.treasury)) throw new Error('الخزينة/البنك المدفوع منه غير موجود')
+        for (const l of inv.lines) {
+          if (!state.items.some((it) => it.id === l.itemId)) throw new Error(`صنف غير موجود بالمخزون (#${l.itemId})`)
+        }
         for (const l of inv.lines) {
           if (!Number.isFinite(l.qty) || l.qty <= 0) throw new Error('كل كمية يجب أن تكون رقماً موجباً')
           if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
@@ -2844,6 +2856,7 @@ export const useDataStore = create<DataState>()(
           reversedByEntryId: null,
           reversesEntryId: null,
         }
+        const stamp = approvalStamp(state, args.approvedBy)
         const ret: PurchaseReturn = {
           id: returnId,
           returnNumber,
@@ -2857,6 +2870,8 @@ export const useDataStore = create<DataState>()(
           reason: args.reason,
           inputVatShareMinor: inputVatShare,
           supplierValueMinor: supplierValue,
+          approvedBy: stamp.approvedBy,
+          requestedBy: stamp.requestedBy,
         }
         // 3) خصم الكميات من المخزون بتكلفة الشراء الأصلية (نفس قيمة القيد 1103 دائن)
         //    مع إعادة حساب المتوسط المرجح بالقيمة — يبقي دفتر الأستاذ = كمية × متوسط

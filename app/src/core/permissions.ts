@@ -42,6 +42,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'inv.count', nameAr: 'جرد بالباركود', section: 'inventory' },
   // المشتريات
   { id: 'pur.invoice.create', nameAr: 'إنشاء فاتورة شراء', section: 'purchases' },
+  { id: 'pur.invoice.edit', nameAr: 'تعديل فاتورة شراء مرحلة (عكس + إعادة ترحيل)', section: 'purchases', sensitive: true },
   { id: 'pur.return.create', nameAr: 'مرتجع مشتريات', section: 'purchases' },
   { id: 'pur.supplier.manage', nameAr: 'إدارة الموردين', section: 'purchases' },
   // العملاء والموظفون

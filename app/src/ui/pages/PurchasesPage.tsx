@@ -15,6 +15,7 @@ import { computeLandedCosts } from '../../core/costing.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy } from '../../core/invoiceEdit.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -101,7 +102,10 @@ export function PurchasesPage() {
   const [editReason, setEditReason] = useState('')
   const [editAddItemId, setEditAddItemId] = useState(0)
 
-  const openEdit = (p: PurchaseInvoice) => {
+  // تعديل فاتورة الشراء المرحلة عملية حساسة (نفس نمط المبيعات) — اعتماد مشرف بصلاحية مستقلة
+  const editApproval = useSupervisorApproval('pur.invoice.edit')
+  const openEdit = (p: PurchaseInvoice) => editApproval.request(() => doOpenEdit(p))
+  const doOpenEdit = (p: PurchaseInvoice) => {
     setEditing(p)
     setEditLines(p.lines.map((l) => ({ itemId: l.itemId, qty: String(l.qty), unitPrice: String(l.unitPriceMinor / 10 ** cur.decimals) })))
     setEditPaid(String(p.paidMinor / 10 ** cur.decimals))
@@ -195,12 +199,14 @@ export function PurchasesPage() {
   const save = () => {
     if (!preview || !supplierId) return
     try {
+    // P2 (مراجعة المشتريات): المطابقة بالترتيب لا بالبحث — سطران بنفس الصنف والكمية
+    // كانا يأخذان صلاحية/سيريالات السطر الأول معاً (computeLandedCosts يحفظ الترتيب)
+    const enteredLines = lines.filter((l) => l.itemId && Number(l.qty) > 0)
     const inv = postPurchase({
       supplierId,
       date: new Date().toISOString().slice(0, 10),
-      lines: preview.landed.map((l) => {
-        // سطر الإدخال المطابق: صلاحية FEFO + سيريالات القطع (نمط موبايل شوب)
-        const d = lines.find((x) => x.itemId === l.itemId && Number(x.qty) === l.qty)
+      lines: preview.landed.map((l, i) => {
+        const d = enteredLines[i]
         return {
           itemId: l.itemId,
           qty: l.qty,
@@ -822,6 +828,7 @@ export function PurchasesPage() {
           </div>
         )}
       </Modal>
+      {editApproval.dialog}
     </div>
   )
 }

@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { remainingPurchasable } from '../../core/purchases.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
@@ -63,20 +64,24 @@ export function PurchaseReturnsPage() {
     setPickOpen(false)
   }
 
+  // قاعدة المالك المعممة: كل المرتجعات باعتماد مشرف — مرتجع الشراء يخرج بضاعة ويرد مالاً
+  const approval = useSupervisorApproval()
   const submit = () => {
     if (!purchase) return
+    approval.request((approvedBy) => {
     try {
       const map = new Map<number, number>()
       for (const [id, v] of Object.entries(qtys)) {
         const n = Number(v)
         if (n > 0) map.set(Number(id), n)
       }
-      const ret = postPurchaseReturn({ purchaseId: purchase.id, qtyByItem: map, refund, reason: reason.trim(), treasury })
+      const ret = postPurchaseReturn({ purchaseId: purchase.id, qtyByItem: map, refund, reason: reason.trim(), treasury, approvedBy })
       toast.show(`تم مرتجع الشراء ${ret.returnNumber} — خرجت البضاعة وتولد القيد ✓`)
       setPurchase(null)
     } catch (e) {
       toast.show((e as Error).message, 'error')
     }
+    })
   }
 
   const anyQty = Object.values(qtys).some((v) => Number(v) > 0)
@@ -277,6 +282,7 @@ export function PurchaseReturnsPage() {
           </div>
         )}
       </Modal>
+      {approval.dialog}
     </div>
   )
 }
