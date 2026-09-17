@@ -3518,7 +3518,8 @@ export const useDataStore = create<DataState>()(
         const kindOf = (code?: string) => state.treasuries.find((t) => t.code === (code ?? '1101'))?.kind ?? 'cash'
         const saleDocs = state.sales.map((s) => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.paidMinor, treasuryKind: kindOf(s.treasury) }))
         // الرد الهجين (R1): النقدية الخارجة من الدرج فعلاً — لا كامل قيمة المرتجع
-        const returnDocs = state.saleReturns.map((r) => ({ shiftId: r.shiftId, payment: 'cash' as const, totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(state.sales.find((s) => s.id === r.saleId)?.treasury) }))
+        // المرتجع قد يُرد من خزينة غير خزينة البيع (وجهة صريحة) — عدّ الدرج يتبع خزينة الرد الفعلية
+        const returnDocs = state.saleReturns.map((r) => ({ shiftId: r.shiftId, payment: 'cash' as const, totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(r.treasury ?? state.sales.find((s) => s.id === r.saleId)?.treasury) }))
         const variance = summarizeShift(shift, saleDocs, returnDocs).varianceMinor
         if (variance === null || variance === 0) throw new Error('لا فرق في هذه الوردية للتسوية')
         const now = new Date().toISOString()

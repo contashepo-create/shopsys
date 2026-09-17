@@ -23,7 +23,7 @@ export interface ItemLedgerInput {
   purchases: { invoiceNumber: string; date: string; lines: { itemId: number; qty: number; unitPriceMinor: number; expenseShareMinor?: number }[] }[]
   purchaseReturns: { returnNumber: string; date: string; lines: { itemId: number; qty: number; unitCostMinor: number }[] }[]
   sales: { invoiceNumber: string; date: string; lines: { itemId: number; qty: number; unitPriceMinor: number; discountPercent: number }[] }[]
-  saleReturns: { returnNumber: string; date: string; lines: { itemId: number; qty: number; unitPriceMinor: number }[] }[]
+  saleReturns: { returnNumber: string; date: string; lines: { itemId: number; qty: number; unitPriceMinor: number; condition?: string }[] }[]
   stocktakes: { stocktakeNumber: string; date: string; rows: { itemId: number; systemQty: number; countedQty: number }[] }[]
   productionOrders: { orderNumber: string; date: string; productItemId: number; qty: number; ingredients: { itemId: number; qty: number }[] }[]
   materialRequisitions: { reqNumber: string; date: string; lines: { itemId: number; qty: number }[] }[]
@@ -79,10 +79,13 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
   for (const r of input.saleReturns) {
     for (const l of r.lines) {
       if (l.itemId !== id || l.qty <= 0) continue
+      // المرتجع التالف لا يدخل المخزون (تكلفته للهالك 5111) — يظهر في الكارت
+      // كسطر توثيقي بلا وارد كي لا ينحرف الرصيد الجاري عن الواقع
+      const damaged = l.condition === 'damaged'
       raw.push({
         date: r.date, docLabel: `مرتجع بيع ${r.returnNumber}`, docType: 'sale_return',
-        inQty: l.qty, outQty: 0, valueMinor: Math.round(l.qty * l.unitPriceMinor),
-        note: 'عودة بضاعة من عميل',
+        inQty: damaged ? 0 : l.qty, outQty: 0, valueMinor: Math.round(l.qty * l.unitPriceMinor),
+        note: damaged ? `مرتجع تالف (${l.qty}) — لا يدخل المخزون، تكلفته هالك` : 'عودة بضاعة من عميل',
       })
     }
   }

@@ -116,7 +116,7 @@ export function transferTotalQty(lines: TransferLine[]): number {
 export function buildWarehouseDocs(
   purchases: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number }[] }[],
   sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number }[] }[],
-  saleReturns: { saleId: number; lines: { itemId: number; qty: number }[] }[] = [],
+  saleReturns: { saleId: number; lines: { itemId: number; qty: number; condition?: string }[] }[] = [],
   purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number }[] }[] = [],
 ): WarehouseDoc[] {
   const docs: WarehouseDoc[] = []
@@ -132,7 +132,11 @@ export function buildWarehouseDocs(
   for (const r of saleReturns) {
     const wh = saleWh.get(r.saleId)
     if (wh == null) continue // فاتورة بلا مخزن محدد ⇒ المرتجع ضمنياً على الرئيسي
-    docs.push({ warehouseId: wh, lines: r.lines.map((l) => ({ itemId: l.itemId, qtyDelta: l.qty })) })
+    // المرتجع التالف لا يدخل أي مخزن (تكلفته للهالك 5111) — إدخاله هنا يخلق
+    // رصيداً وهمياً في مخزن الفاتورة ويخصم مثله من الرئيسي (اكتُشف بمراجعة المرتجعات)
+    const back = r.lines.filter((l) => l.condition !== 'damaged')
+    if (!back.length) continue
+    docs.push({ warehouseId: wh, lines: back.map((l) => ({ itemId: l.itemId, qtyDelta: l.qty })) })
   }
   const purchaseWh = new Map(purchases.filter((p) => p.id != null).map((p) => [p.id!, p.warehouseId ?? null]))
   for (const r of purchaseReturns) {

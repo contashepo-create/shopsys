@@ -294,4 +294,59 @@ const line = (qty) => ({ itemId: item.id, nameAr: item.nameAr, qty, unitPriceMin
   ok('ClinicPages: بند أتعاب الزيارة قابل للاختيار')
 }
 
+/* ═══ 8) إصلاحات المراجعة الاحترافية: التالف لا يدخل أرصدة المخازن ولا كارت الصنف ═══ */
+{
+  const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
+  const { buildItemLedger } = await import(join(root, 'src/core/itemLedger.ts'))
+
+  // buildWarehouseDocs: مرتجع فيه سطر سليم وسطر تالف — السليم فقط يعود لمخزن الفاتورة
+  const docs = buildWarehouseDocs(
+    [],
+    [{ id: 1, warehouseId: 2, lines: [{ itemId: 7, qty: 5 }] }],
+    [{ saleId: 1, lines: [{ itemId: 7, qty: 2, condition: 'resellable' }, { itemId: 7, qty: 1, condition: 'damaged' }] }],
+    [],
+  )
+  const retDoc = docs.find((d) => d.lines.some((l) => l.qtyDelta > 0))
+  assert.equal(retDoc.lines.length, 1)
+  assert.equal(retDoc.lines[0].qtyDelta, 2)
+  ok('buildWarehouseDocs: التالف لا يدخل مخزن الفاتورة (السليم فقط +2)')
+
+  // مرتجع كله تالف ⇒ لا مستند عودة إطلاقاً
+  const docs2 = buildWarehouseDocs([], [{ id: 1, warehouseId: 2, lines: [{ itemId: 7, qty: 5 }] }],
+    [{ saleId: 1, lines: [{ itemId: 7, qty: 3, condition: 'damaged' }] }], [])
+  assert.equal(docs2.filter((d) => d.lines.some((l) => l.qtyDelta > 0)).length, 0)
+  ok('buildWarehouseDocs: مرتجع كله تالف = لا عودة لأي مخزن')
+
+  // computeWarehouseStock متسق: الرئيسي = الإجمالي − الفرعي دائماً
+  const stock = computeWarehouseStock(
+    [{ id: 7, stockQty: 7 }],
+    [{ id: 1, isMain: true }, { id: 2, isMain: false }],
+    [{ fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 7, qty: 5 }] }],
+    docs,
+  )
+  assert.equal(stock.get(2).get(7), 2) // 5 − 5 مبيعة + 2 سليم
+  assert.equal(stock.get(1).get(7), 5) // 7 − 2
+  ok('computeWarehouseStock: الرئيسي + الفرعي = الإجمالي (لا رصيد وهمي من التالف)')
+
+  // كارت الصنف: التالف سطر توثيقي بلا وارد
+  const led = buildItemLedger({
+    itemId: 7, openingQty: 10,
+    purchases: [], purchaseReturns: [],
+    sales: [{ invoiceNumber: 'S-1', date: '2026-01-01', lines: [{ itemId: 7, qty: 3, unitPriceMinor: 100, discountPercent: 0 }] }],
+    saleReturns: [{ returnNumber: 'R-1', date: '2026-01-02', lines: [
+      { itemId: 7, qty: 1, unitPriceMinor: 100, condition: 'resellable' },
+      { itemId: 7, qty: 2, unitPriceMinor: 100, condition: 'damaged' },
+    ] }],
+    stocktakes: [], productionOrders: [], materialRequisitions: [],
+  })
+  assert.equal(led.closingQty, 8) // 10 − 3 + 1 (التالفان لا يعودان)
+  assert.ok(led.rows.some((r) => r.note.includes('هالك') && r.inQty === 0))
+  ok('كارت الصنف: الرصيد الختامي 8 والتالف سطر توثيقي «هالك» بلا وارد')
+
+  // عدّ الدرج في repo يتبع خزينة الرد الفعلية (r.treasury أولاً)
+  const repoSrc = readFileSync(join(root, 'src/data/repo.ts'), 'utf8')
+  assert.ok(repoSrc.includes('treasuryKind: kindOf(r.treasury ?? state.sales.find((s) => s.id === r.saleId)?.treasury)'))
+  ok('settleShiftVariance: عدّ الدرج يتبع خزينة الرد الفعلية لا خزينة البيع')
+}
+
 console.log(`\n✅ verify_refund_freedom_guides: ${pass}/${pass} فحصاً نجح`)
