@@ -46,6 +46,12 @@ export function buildServiceRefundEntry(args: {
    */
   providerShareMinor?: Minor
   providerAccount?: string
+  /**
+   * إرجاع قطع/مواد للمخزون مع مرتجع الخدمة (الصيانة — قطعة غيار أعادها العميل):
+   * تكلفتها التاريخية تُقيَّد: مدين 1103 مخزون / دائن 5101 تكلفة —
+   * عكس قيد صرفها عند التسليم. زوج متوازن مستقل لا يمس مبلغ الرد النقدي.
+   */
+  restockCostMinor?: Minor
   note: string
 }): { lines: JournalLine[]; taxShareMinor: Minor; baseMinor: Minor } {
   const { refundValueMinor: v, deliveredGrandMinor: grand, deliveredTaxMinor: tax } = args
@@ -70,6 +76,52 @@ export function buildServiceRefundEntry(args: {
     if (args.mode === 'cash') lines.push({ accountCode: args.treasury ?? '1101', debit: 0, credit: patientPart, note: 'رد نقدية' })
     else lines.push({ accountCode: args.creditAccount ?? '1104', debit: 0, credit: patientPart, note: 'خصم/إيداع في حساب العميل' })
   }
+  // إرجاع قطع للمخزون (الصيانة): زوج متوازن مستقل — عكس صرف القطع عند التسليم
+  const restock = args.restockCostMinor ?? 0
+  if (!Number.isInteger(restock) || restock < 0) throw new Error('تكلفة القطع المرتجعة لا تكون سالبة')
+  if (restock > 0) {
+    lines.push({ accountCode: '1103', debit: restock, credit: 0, note: 'عودة قطع غيار للمخزون' })
+    lines.push({ accountCode: '5101', debit: 0, credit: restock, note: 'تخفيض تكلفة قطع مصروفة' })
+  }
   assertBalanced(lines)
   return { lines, taxShareMinor: taxShare, baseMinor: base }
+}
+
+/* ─── معالج مرتجع الخدمة بالبنود (النمط العالمي: اختر البند لا المبلغ الحر فقط) ─── */
+
+/** بند قابل للاسترداد في مستند خدمة (فحص معمل/بند مغسلة/خدمة صيانة/قطعة غيار) */
+export interface RefundableServiceItem {
+  key: string // معرف فريد داخل المستند: test:3 / line:0 / part:2 / labor
+  label: string
+  /** قيمة البند بسعر البيع (قبل الضريبة أو بعدها حسب المستند — متسقة مع grand) */
+  valueMinor: Minor
+  /** قطعة مخزنية؟ تكلفتها التاريخية (لإرجاعها للمخزون عند اختيارها) */
+  restockCostMinor?: Minor
+  /** كمية البند (للعرض) */
+  qty?: number
+}
+
+/**
+ * حساب مبلغ الاسترداد من بنود مختارة: نسبة قيمة البنود المختارة من إجمالي
+ * قيم البنود × الإجمالي النهائي (شامل الضريبة) — فيرث الخصم والضريبة نسبياً
+ * بنفس معاملة المستند الأصلي، بسقف المتبقي القابل للرد.
+ */
+export function computeItemizedRefund(args: {
+  items: RefundableServiceItem[]
+  selectedKeys: string[]
+  grandMinor: Minor // إجمالي المستند النهائي (وعاء الاسترداد)
+  refundedMinor: Minor // المردود سابقاً
+}): { amountMinor: Minor; restockCostMinor: Minor; labels: string[] } {
+  const sumAll = args.items.reduce((a, i) => a + i.valueMinor, 0)
+  if (sumAll <= 0) throw new Error('لا بنود قابلة للاسترداد في المستند')
+  const chosen = args.items.filter((i) => args.selectedKeys.includes(i.key))
+  if (!chosen.length) throw new Error('اختر بنداً واحداً على الأقل')
+  const sumChosen = chosen.reduce((a, i) => a + i.valueMinor, 0)
+  // النسبة من الإجمالي النهائي — تقريب نصف بنكي بسيط ثم سقف المتبقي
+  const raw = Math.round((args.grandMinor * sumChosen) / sumAll)
+  const remaining = args.grandMinor - args.refundedMinor
+  const amount = Math.min(raw, remaining)
+  if (amount <= 0) throw new Error('لا متبقٍ قابل للرد')
+  const restock = chosen.reduce((a, i) => a + (i.restockCostMinor ?? 0), 0)
+  return { amountMinor: amount, restockCostMinor: restock, labels: chosen.map((c) => c.label) }
 }

@@ -585,12 +585,30 @@ export function MaintenancePage() {
                 currencySymbol={cur.symbol}
                 fmt={fmt}
                 allowCredit={viewing.customerId != null}
-                hint="عميل غير راضٍ عن الإصلاح؟ الاسترداد يعكس الإيراد وحصة الضريبة — القطع المستبدلة إن أُعيدت فلها مرتجع بيع مستقل."
+                hint="عميل غير راضٍ؟ اختر ما يُرد: أجر الفني، خدمات، أو قطع غيار — القطعة السليمة المختارة تعود للمخزون بتكلفتها تلقائياً."
+                refundableItems={[
+                  ...(viewing.totals.laborMinor > 0 ? [{ key: 'labor', label: 'أجر الفني (المصنعية)', valueMinor: viewing.totals.laborMinor }] : []),
+                  ...(viewing.services ?? []).map((s, si) => ({ key: `svc:${si}`, label: s.nameAr, valueMinor: Math.round(s.qty * s.unitPriceMinor), qty: s.qty })),
+                  ...viewing.parts.map((p, pi) => {
+                    const returned = (viewing.returnedParts ?? []).filter((x) => x.itemId === p.itemId).reduce((a, x) => a + x.qty, 0)
+                    const avail = p.qty - returned
+                    return avail > 0 ? [{ key: `part:${pi}`, label: `قطعة: ${p.nameAr}`, valueMinor: Math.round(avail * p.unitPriceMinor), qty: avail, restockCostMinor: Math.round(avail * p.unitCostMinor) }] : []
+                  }).flat(),
+                ]}
                 onSubmit={(a) => {
                   try {
-                    const u = refundMaintenanceTicket({ ticketId: viewing.id, ...a })
+                    // القطع المختارة تعود للمخزون بكامل كميتها المتبقية
+                    const returnParts = (a.selectedKeys ?? [])
+                      .filter((k) => k.startsWith('part:'))
+                      .map((k) => {
+                        const p = viewing.parts[Number(k.slice(5))]
+                        const returned = (viewing.returnedParts ?? []).filter((x) => x.itemId === p.itemId).reduce((s, x) => s + x.qty, 0)
+                        return { itemId: p.itemId, qty: p.qty - returned }
+                      })
+                      .filter((rp) => rp.qty > 0)
+                    const u = refundMaintenanceTicket({ ticketId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: a.treasury, reason: a.reason, approvedBy: a.approvedBy, returnParts })
                     setViewing(u)
-                    toast.show(`سُجل مرتجع خدمة ${u.ticketNumber} وتولد القيد العاكس ✅`)
+                    toast.show(`سُجل مرتجع خدمة ${u.ticketNumber} وتولد القيد العاكس ✅${returnParts.length ? ' — عادت القطع للمخزون 📦' : ''}`)
                   } catch (err) { toast.show((err as Error).message, 'error') }
                 }}
               />

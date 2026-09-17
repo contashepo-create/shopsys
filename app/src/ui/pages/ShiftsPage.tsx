@@ -52,7 +52,7 @@ export function ShiftsPage() {
   const returnDocs = useMemo(
     // المرتجع يُرد من نفس خزينة فاتورته الأصلية — بنكيّ الأصل لا يمس الدرج
     // الرد الهجين (R1): النقدية الخارجة فعلاً فقط — لا كامل قيمة المرتجع
-    () => saleReturns.map((r) => ({ shiftId: r.shiftId, payment: 'cash' as const, totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(sales.find((s) => s.id === r.saleId)?.treasury) })),
+    () => saleReturns.map((r) => ({ shiftId: r.shiftId, payment: 'cash' as const, totalMinor: returnCashRefundMinor(r), treasuryKind: kindOf(r.treasury ?? sales.find((s) => s.id === r.saleId)?.treasury) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [saleReturns, sales, treasuries],
   )

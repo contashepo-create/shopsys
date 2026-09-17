@@ -343,7 +343,8 @@ export function LabOrdersPage() {
               currencySymbol={cur.symbol}
               fmt={fmt}
               allowCredit={viewing.payment === 'credit' || labPatients.find((pt) => pt.id === viewing.patientId)?.linkedCustomerId != null}
-              hint="فحص أُلغي أو أُعيدت العينة؟ يعكس الإيراد وحصة الضريبة — وعمولة المُحيل غير المصروفة تُعكس بنفس النسبة تلقائياً."
+              hint="فحص أُلغي أو أُعيدت العينة؟ اختر الفحوصات الملغاة — يعكس الإيراد وحصة الضريبة، وعمولة المُحيل غير المصروفة تُعكس بنفس النسبة تلقائياً."
+              refundableItems={viewing.tests.map((t, ti) => ({ key: `test:${ti}`, label: `${t.nameAr} (${t.code})`, valueMinor: t.priceMinor }))}
               onSubmit={(a) => {
                 try {
                   const u = refundLabOrder({ orderId: viewing.id, ...a })

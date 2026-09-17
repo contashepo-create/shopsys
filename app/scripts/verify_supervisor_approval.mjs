@@ -191,9 +191,11 @@ console.log('6️⃣ التعميم: توقيعات مرتجع الخدمة كل
   const ui = (p) => fs.readFileSync(new URL(`../src/ui/${p}`, import.meta.url), 'utf8')
   assert.ok(ui('components/ServiceRefundBox.tsx').includes('useSupervisorApproval'))
   ok('ServiceRefundBox (6 صفحات أنشطة) يفرض الحوار')
-  for (const p of ['pages/SaleReturnsPage.tsx', 'pages/LaundryPage.tsx', 'pages/WalletServicesPage.tsx', 'pages/ExchangePage.tsx', 'pages/JournalPage.tsx', 'pages/SettlementsPage.tsx']) {
+  for (const p of ['pages/SaleReturnsPage.tsx', 'pages/WalletServicesPage.tsx', 'pages/ExchangePage.tsx', 'pages/JournalPage.tsx', 'pages/SettlementsPage.tsx']) {
     assert.ok(ui(p).includes('useSupervisorApproval'), p)
   }
+  // المغسلة ترقّت للصندوق الموحد ServiceRefundBox (الذي يفرض الحوار داخلياً)
+  assert.ok(ui('pages/LaundryPage.tsx').includes('ServiceRefundBox'))
   ok('صفحات: مرتجع مبيعات/مغسلة/محافظ/استبدال/عكس قيد/تسويات — كلها خلف البوابة')
   const pos = ui('pages/PosPage.tsx')
   assert.ok(pos.includes("useSupervisorApproval('sales.expiry.override')"))

@@ -15,7 +15,7 @@ import {
 } from '../../core/laundry.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderReportShell } from '../../core/reportPrint.ts'
 
@@ -33,7 +33,6 @@ export function LaundryPage() {
   const { laundryOrders, customers, journal, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder } = useDataStore()
   const { setup, reportPrint, receipt } = useAppStore()
   const toast = useToast()
-  const approval = useSupervisorApproval() // موافقة المشرف على مرتجع الخدمة
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -92,19 +91,6 @@ export function LaundryPage() {
     ? journal.filter((e) => [viewing.prepaidEntryId, viewing.deliverEntryId, viewing.cancelEntryId, ...(viewing.refunds ?? []).map((r) => r.journalEntryId)].includes(e.id))
     : []
 
-  /* ─── G3: مرتجع خدمة بعد التسليم (عميل غير راضٍ عن الغسيل) ─── */
-  const [refundAmount, setRefundAmount] = useState('')
-  const [refundMode, setRefundMode] = useState<'cash' | 'customer_credit'>('cash')
-  const [refundTreasury, setRefundTreasury] = useState('1101')
-  const [refundReason, setRefundReason] = useState('')
-  const doServiceRefund = (o: LaundryOrder) => approval.request((approvedBy) => {
-    try {
-      const amountMinor = Math.round(Number(refundAmount) * 100)
-      const u = refundLaundryOrder({ orderId: o.id, amountMinor, mode: refundMode, treasury: refundTreasury, reason: refundReason.trim(), approvedBy })
-      toast.show(`سُجل مرتجع خدمة ${u.orderNumber} بقيمة ${fmt(amountMinor)} ${cur.symbol} وتولد القيد العاكس ✅`)
-      setRefundAmount(''); setRefundReason('')
-    } catch (err) { toast.show((err as Error).message, 'error') }
-  })
 
   const move = (o: LaundryOrder, to: LaundryStatus) => {
     try {
@@ -350,33 +336,22 @@ export function LaundryPage() {
             )}
 
             {viewing.status === 'delivered' && (
-              <div className="rounded-2xl border border-amber-500/25 bg-amber-500/[0.04] p-4 space-y-3">
-                <div className="text-[13px] font-black text-amber-700 dark:text-amber-400">↩️ مرتجع خدمة (بعد التسليم)</div>
-                <p className="text-[11.5px] text-slate-500 leading-relaxed">
-                  عميل غير راضٍ عن الخدمة؟ الاسترداد يعكس الإيراد وحصة الضريبة بقيد تلقائي — لا مخزون يتحرك.
-                  المتبقي القابل للرد: <b className="text-amber-600">{fmt(viewing.grandMinor - (viewing.refundedMinor ?? 0))} {cur.symbol}</b>
-                  {(viewing.refundedMinor ?? 0) > 0 && <> (رُد سابقاً {fmt(viewing.refundedMinor ?? 0)})</>}
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <input value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} placeholder="المبلغ المردود (شامل الضريبة)" className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-[13px]" />
-                  <input value={refundReason} onChange={(e) => setRefundReason(e.target.value)} placeholder="السبب: بقع لم تُزل، قطعة تالفة…" className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-[13px]" />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => setRefundMode('cash')} className={`p-2.5 rounded-xl border-2 font-bold text-[12px] transition-all ${refundMode === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>💵 رد نقدي</button>
-                  <button onClick={() => setRefundMode('customer_credit')} disabled={viewing.customerId == null} className={`p-2.5 rounded-xl border-2 font-bold text-[12px] transition-all disabled:opacity-40 ${refundMode === 'customer_credit' ? 'border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>🏦 إيداع في حساب العميل {viewing.customerId == null && '(عميل عابر)'}</button>
-                </div>
-                {refundMode === 'cash' && (
-                  <Field label="الرد من">
-                    <TreasuryPicker value={refundTreasury} onChange={setRefundTreasury} compact />
-                  </Field>
-                )}
-                {approval.willAskPin && (
-                  <p className="text-[11px] text-amber-600 dark:text-amber-400">🔐 سيُطلب رقم مشرف أو المالك لاعتماد هذا المرتجع.</p>
-                )}
-                <div className="flex justify-end">
-                  <Btn onClick={() => doServiceRefund(viewing)} disabled={!refundAmount || Number(refundAmount) <= 0}>↩️ تنفيذ مرتجع الخدمة</Btn>
-                </div>
-              </div>
+              <ServiceRefundBox
+                grandMinor={viewing.grandMinor}
+                refundedMinor={viewing.refundedMinor ?? 0}
+                currencySymbol={cur.symbol}
+                fmt={fmt}
+                allowCredit={viewing.customerId != null}
+                creditLabel="حساب العميل"
+                hint="عميل غير راضٍ؟ اختر القطع المتضررة (بقع لم تُزل/قطعة تالفة) — يعكس الإيراد وحصة الضريبة بقيد تلقائي، لا مخزون يتحرك."
+                refundableItems={viewing.lines.map((l, li) => ({ key: `line:${li}`, label: `${l.desc} — ${LAUNDRY_SERVICE_LABELS[l.service]?.nameAr ?? l.service}`, valueMinor: Math.round(l.qty * l.unitPriceMinor), qty: l.qty }))}
+                onSubmit={(a) => {
+                  try {
+                    const u = refundLaundryOrder({ orderId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: a.treasury, reason: a.reason, approvedBy: a.approvedBy })
+                    toast.show(`سُجل مرتجع خدمة ${u.orderNumber} بقيمة ${fmt(a.amountMinor)} ${cur.symbol} وتولد القيد العاكس ✅`)
+                  } catch (err) { toast.show((err as Error).message, 'error') }
+                }}
+              />
             )}
 
             {viewingEntries.map((entry) => (
@@ -400,7 +375,6 @@ export function LaundryPage() {
           </div>
         )}
       </Modal>
-      {approval.dialog}
     </div>
   )
 }

@@ -13,7 +13,7 @@ import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, baseQty, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
-import { buildReturnLines, buildReturnEntry, deriveTaxConfig, splitRefund, returnCashRefundMinor, type RefundMode } from '../core/returns.ts'
+import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntry, deriveTaxConfig, splitRefund, returnCashRefundMinor, damagedCostOf, type RefundMode, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../core/permissions.ts'
@@ -664,6 +664,8 @@ export interface MaintenanceTicket {
   refundedMinor?: number
   refundedTaxMinor?: number
   refunds?: ServiceRefundRecord[]
+  /** قطع غيار أُرجعت للمخزون مع مرتجعات الخدمة (بسقف المصروف لكل قطعة) */
+  returnedParts?: { itemId: number; qty: number; at: string }[]
 }
 
 /** مستند إتلاف مخزون (هالك وتوالف) — موثق بسبب ومربوط بقيده (مراجعة نشاط الأغذية) */
@@ -911,10 +913,15 @@ export interface SaleReturn {
   date: string
   saleId: number // الفاتورة الأصلية
   refund: RefundMode // نقدي / تخفيض ذمم / إيداع رصيداً في حساب العميل (G2)
-  lines: CartLine[]
+  /** سطور المرتجع — الجديدة تحمل saleLineIndex (سطر الأصل) وcondition (سليم/تالف) */
+  lines: ReturnLine[]
   totals: CartTotals
   journalEntryId: number
   reason: string
+  /** كود سبب موحد (RETURN_REASONS) — undefined = سجل قديم/سبب حر */
+  reasonCode?: string
+  /** خزينة الرد النقدي الفعلية — undefined = سجل قديم (خزينة البيع الأصلية) */
+  treasury?: string
   shiftId: number | null
   /**
    * الرد الهجين للدفع المجزأ (إصلاح R1): النقدية الخارجة فعلاً وتخفيض الذمم —
@@ -1169,9 +1176,16 @@ interface DataState {
    */
   postSaleReturn: (args: {
     saleId: number
-    qtyByItem: Map<number, number>
+    /** المسار القديم (تجميع بالصنف) — يُستخدم فقط إن غاب lineSpecs */
+    qtyByItem?: Map<number, number>
+    /** النمط العالمي: إرجاع سطر بسطر من الفاتورة بحالته (سليم/تالف) */
+    lineSpecs?: ReturnLineSpec[]
     refund: RefundMode
     reason: string
+    /** كود سبب موحد (RETURN_REASONS) للتقارير — reason يبقى النص الحر */
+    reasonCode?: string
+    /** وجهة الرد النقدي: درج/خزينة أو بنك (تحويل) — الافتراضي خزينة البيع الأصلية */
+    treasury?: string
     /** موافقة المشرف (نمط POS العالمي): اسم المعتمد — يُسجل على المستند والتدقيق */
     approvedBy?: string
   }) => SaleReturn
@@ -1720,7 +1734,7 @@ interface DataState {
    */
   refundLaundryOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => LaundryOrder
   /** مرتجع خدمة صيانة بعد التسليم: يعكس 4102+2102 نسبياً — القطع المركبة لها مرتجع بيع مستقل إن أعيدت */
-  refundMaintenanceTicket: (args: { ticketId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => MaintenanceTicket
+  refundMaintenanceTicket: (args: { ticketId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; returnParts?: { itemId: number; qty: number }[] }) => MaintenanceTicket
   /** مرتجع نقلة (خصم/تعويض للعميل بعد الترحيل): يعكس 4102+2102 نسبياً — مصاريف النقلة تبقى (تكبدناها فعلاً) */
   refundTrip: (args: { tripId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => Trip
   /** مرتجع طلب تحاليل: يعكس 4102+2102 نسبياً + يعكس عمولة المُحيل غير المدفوعة بنفس النسبة */
@@ -2493,13 +2507,18 @@ export const useDataStore = create<DataState>()(
         if ((args.refund === 'credit' || args.refund === 'store_credit') && sale.customerId === null) {
           throw new Error('فاتورة عميل نقدي — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
         }
-        // 1) بناء سطور المرتجع بنفس أسعار وخصومات الأصل، مع منع تجاوز المتبقي
+        // 1) بناء سطور المرتجع بنفس أسعار وخصومات الأصل، مع منع تجاوز المتبقي —
+        //    النمط العالمي: سطر بسطر بحالته (lineSpecs)؛ التوافق الخلفي: qtyByItem
         const priorLines = state.saleReturns.filter((r) => r.saleId === sale.id).flatMap((r) => r.lines)
-        const rawLines = buildReturnLines(sale.lines, priorLines, args.qtyByItem)
+        const rawLines: ReturnLine[] = args.lineSpecs?.length
+          ? buildReturnLinesPerLine(sale.lines, priorLines, args.lineSpecs)
+          : buildReturnLines(sale.lines, priorLines, args.qtyByItem ?? new Map())
         // أطباق الوصفات «عند الطلب»: الخامات طُهيت ولا تعود للمخزون —
         // تبقى تكلفتها في 5101 (هالك اقتصادياً) ويُرد للعميل السعر فقط
         const isDish = (itemId: number) => state.recipes.some((r) => r.productItemId === itemId && r.mode === 'made_to_order')
         const lines = rawLines.map((l) => (isDish(l.itemId) ? { ...l, unitCostMinor: 0 } : l))
+        // تكلفة الجزء التالف: لا يعود للمخزون — يذهب لبند الهالك 5111 في القيد
+        const damagedCost = damagedCostOf(lines)
         // 2) نفس المعاملة الضريبية وقت البيع (حتى لو تغيرت الإعدادات لاحقاً) —
         // G1: النسبة المخزنة على الفاتورة أولاً (دقيقة حتى مع أصناف معفاة مختلطة)،
         // والاستنتاج من الإجماليات للفواتير القديمة فقط
@@ -2523,7 +2542,9 @@ export const useDataStore = create<DataState>()(
         const split = splitRefund(totals.totalMinor, args.refund, openCredit, received)
         // القيد العاكس المتوازن
         // الرد النقدي من نفس خزينة البيع الأصلية (فواتير قديمة بلا خزينة → الرئيسية)
-        const entryLines = buildReturnEntry(totals, args.refund, sale.treasury ?? '1101', split)
+        // وجهة الرد النقدي: اختيار صريح (درج آخر/بنك «تحويل») وإلا خزينة البيع الأصلية
+        const refundTreasury = args.treasury ?? sale.treasury ?? '1101'
+        const entryLines = buildReturnEntry(totals, args.refund, refundTreasury, split, damagedCost)
         const returnId = nextId(state.saleReturns)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -2567,6 +2588,8 @@ export const useDataStore = create<DataState>()(
           totals,
           journalEntryId: entryId,
           reason: args.reason,
+          ...(args.reasonCode ? { reasonCode: args.reasonCode } : {}),
+          treasury: refundTreasury,
           shiftId: currentShift?.id ?? null,
           cashRefundMinor: split.cashMinor,
           creditRefundMinor: split.creditMinor,
@@ -2582,6 +2605,7 @@ export const useDataStore = create<DataState>()(
         const valueBack = new Map<number, number>()
         for (const l of lines) {
           if (isDish(l.itemId)) continue // الطبق بلا مخزون — لا عودة
+          if (l.condition === 'damaged') continue // تالف: لا يدخل المخزون — تكلفته في 5111 بالقيد
           // سطر بوحدة أكبر: يعود للمخزون بالوحدة الأساسية qty×factor وبقيمته الكاملة
           qtyBack.set(l.itemId, (qtyBack.get(l.itemId) ?? 0) + baseQty(l))
           valueBack.set(l.itemId, (valueBack.get(l.itemId) ?? 0) + Math.round(l.qty * l.unitCostMinor))
@@ -2604,6 +2628,7 @@ export const useDataStore = create<DataState>()(
         let updatedVariantStocks = state.variantStocks
         for (const l of lines) {
           if (!l.variantColor && !l.variantSize) continue
+          if (l.condition === 'damaged') continue // تالف لا يعود لرصيد التركيبة
           const key = variantKey(l.variantColor ?? '', l.variantSize ?? '')
           const idx = updatedVariantStocks.findIndex((v) => v.itemId === l.itemId && variantKey(v.color, v.size) === key)
           if (idx >= 0) {
@@ -3068,14 +3093,18 @@ export const useDataStore = create<DataState>()(
         // (وإلا بقي مرتجع «يتيم» نصف استبدال — نفس درس فاتورة الكاشير)
         const snapshot = get()
         try {
-          // 1) المرتجع نقدي من خزينة الاستبدال: النقدية الخارجة والداخلة في نفس
-          //    الخزينة فحركتها الصافية = الفرق فقط (ما يراه الكاشير في الدرج)
+          // 1) مرتجع الاستبدال يتبع طبيعة الفاتورة الأصلية:
+          //    نقدية ⇒ رد نقدي (الخارج والداخل في نفس الخزينة فالصافي = الفرق فقط)
+          //    آجلة ⇒ تخفيض دين العميل (splitRefund يرد نقداً تلقائياً ما دُفع فعلاً)
           const treasury = args.treasury ?? sale.treasury ?? '1101'
+          const isCreditSale = sale.payment === 'credit' && sale.customerId != null
           const ret = get().postSaleReturn({
             saleId: sale.id,
             qtyByItem: args.returnQtyByItem,
-            refund: 'cash',
+            refund: isCreditSale ? 'credit' : 'cash',
             reason: `استبدال${args.notes.trim() ? ` — ${args.notes.trim()}` : ''}`,
+            reasonCode: 'wrong_size',
+            treasury,
             approvedBy: args.approvedBy,
           })
           // 2) البيع الجديد بنفس المعاملة الضريبية للفاتورة الأصلية (اتساق المستندين)
@@ -3083,14 +3112,17 @@ export const useDataStore = create<DataState>()(
           const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
             ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
             : deriveTaxConfig(sale.totals)
+          // البيع الجديد يتبع الفاتورة الأصلية أيضاً: آجلة ⇒ على حساب العميل
+          // (المرتجع خفض دينه والجديد يضيف له — الحركة الصافية على الذمم = الفرق)
           const newSale = get().postSale({
             lines: args.newLines,
             customerId: sale.customerId,
-            payment: 'cash',
+            payment: isCreditSale ? 'credit' : 'cash',
             invoiceDiscountPercent: 0,
             taxPercent,
             taxInclusive,
             treasury: treasury as TreasuryAccount,
+            paidMinor: isCreditSale ? 0 : undefined,
             warehouseId: sale.warehouseId ?? null,
           })
           // 3) مستند الربط والصافي
@@ -7290,6 +7322,22 @@ export const useDataStore = create<DataState>()(
         if (args.mode === 'customer_credit' && ticket.customerId == null) {
           throw new Error('عميل نقدي — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
         }
+        // إرجاع قطع غيار سليمة للمخزون مع المرتجع (اختياري):
+        // التحقق من أن القطع من قطع التذكرة فعلاً وبسقف كمياتها المصروفة −
+        // ما أُرجع سابقاً، وتُقيَّم بتكلفتها التاريخية على التذكرة
+        let restockCost = 0
+        const restockQty = new Map<number, number>()
+        for (const rp of args.returnParts ?? []) {
+          if (rp.qty <= 0) continue
+          const part = ticket.parts.find((p) => p.itemId === rp.itemId)
+          if (!part) throw new Error('قطعة ليست من قطع هذه التذكرة')
+          const prevReturned = (ticket.returnedParts ?? []).filter((x) => x.itemId === rp.itemId).reduce((a, x) => a + x.qty, 0)
+          if (rp.qty > part.qty - prevReturned + 1e-9) {
+            throw new Error(`«${part.nameAr}»: المطلوب إرجاع ${rp.qty} والمصروف المتبقي ${part.qty - prevReturned}`)
+          }
+          restockCost += Math.round(rp.qty * part.unitCostMinor)
+          restockQty.set(rp.itemId, (restockQty.get(rp.itemId) ?? 0) + rp.qty)
+        }
         const built = buildServiceRefundEntry({
           refundValueMinor: args.amountMinor,
           deliveredGrandMinor: ticket.totals.grandMinor,
@@ -7297,6 +7345,7 @@ export const useDataStore = create<DataState>()(
           priorRefundedMinor: ticket.refundedMinor ?? 0,
           priorRefundedTaxMinor: ticket.refundedTaxMinor ?? 0,
           mode: args.mode, treasury: args.treasury,
+          restockCostMinor: restockCost,
           note: `مرتجع خدمة صيانة ${ticket.ticketNumber}`,
         })
         const now = new Date().toISOString()
@@ -7311,9 +7360,23 @@ export const useDataStore = create<DataState>()(
           ...ticket,
           refundedMinor: (ticket.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (ticket.refundedTaxMinor ?? 0) + built.taxShareMinor,
+          returnedParts: restockQty.size
+            ? [...(ticket.returnedParts ?? []), ...[...restockQty].map(([itemId, qty]) => ({ itemId, qty, at: now }))]
+            : ticket.returnedParts,
           refunds: [...(ticket.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
-        set({ tickets: state.tickets.map((t) => (t.id === ticket.id ? updated : t)), journal: [...state.journal, entry] })
+        // عودة القطع للمخزون بالمتوسط المرجح بالقيمة (نفس أسلوب مرتجع المبيعات)
+        const updatedItems = restockQty.size
+          ? state.items.map((it) => {
+              const q = restockQty.get(it.id)
+              if (!q) return it
+              const part = ticket.parts.find((p) => p.itemId === it.id)!
+              const newQty = Math.round(((it.stockQty ?? 0) + q) * 1000) / 1000
+              const newValue = Math.round((it.stockQty ?? 0) * it.costMinor) + Math.round(q * part.unitCostMinor)
+              return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor }
+            })
+          : state.items
+        set({ tickets: state.tickets.map((t) => (t.id === ticket.id ? updated : t)), journal: [...state.journal, entry], items: updatedItems })
         return updated
       },
 

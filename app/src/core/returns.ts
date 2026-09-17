@@ -84,6 +84,108 @@ export function deriveTaxConfig(totals: CartTotals): { taxPercent: number; taxIn
  */
 export type RefundMode = PaymentMethod | 'store_credit'
 
+/* ─── ترقية المرتجع للنمط العالمي (Shopify POS / Lightspeed / ERPNext) ─── */
+
+/**
+ * حالة البضاعة المرتجعة — تحدد المسار المحاسبي لجانب التكلفة:
+ * - resellable: تعود للمخزون القابل للبيع (مدين 1103 / دائن 5101)
+ * - damaged: تالفة لا تصلح للبيع — تُعاد التكلفة من COGS إلى الهالك
+ *   (مدين 5111 / دائن 5101) ولا يلمس رصيد المخزون إطلاقاً.
+ *   فالعميل استرد ماله، والخسارة تظهر في بند الهالك لا في تكلفة المبيعات.
+ */
+export type ReturnCondition = 'resellable' | 'damaged'
+
+/** أكواد أسباب الإرجاع الموحدة (نمط POS العالمي — تقارير «لماذا يرجعون؟») */
+export const RETURN_REASONS: { id: string; nameAr: string; defaultCondition: ReturnCondition }[] = [
+  { id: 'defective', nameAr: 'عيب مصنعي / تالف', defaultCondition: 'damaged' },
+  { id: 'wrong_item', nameAr: 'صنف خاطئ / غير مطابق للطلب', defaultCondition: 'resellable' },
+  { id: 'changed_mind', nameAr: 'العميل غيّر رأيه', defaultCondition: 'resellable' },
+  { id: 'expired', nameAr: 'منتهي الصلاحية', defaultCondition: 'damaged' },
+  { id: 'wrong_size', nameAr: 'مقاس/لون غير مناسب', defaultCondition: 'resellable' },
+  { id: 'late_delivery', nameAr: 'تأخر التسليم', defaultCondition: 'resellable' },
+  { id: 'price_dispute', nameAr: 'خلاف على السعر', defaultCondition: 'resellable' },
+  { id: 'other', nameAr: 'سبب آخر…', defaultCondition: 'resellable' },
+]
+
+export function returnReasonName(id: string): string {
+  return RETURN_REASONS.find((r) => r.id === id)?.nameAr ?? id
+}
+
+/** سطر مرتجع مطوّر: يذكر سطر الفاتورة الأصلي الذي استُهلك منه + حالة البضاعة */
+export type ReturnLine = CartLine & {
+  /** فهرس السطر في فاتورة البيع الأصلية — undefined = سجل قديم (قبل الترقية) */
+  saleLineIndex?: number
+  /** حالة البضاعة — undefined = سجل قديم (عوملت resellable) */
+  condition?: ReturnCondition
+}
+
+/** طلب إرجاع سطر محدد بعينه من الفاتورة (النمط العالمي — لا تجميع بالصنف) */
+export interface ReturnLineSpec {
+  lineIndex: number
+  qty: number
+  condition: ReturnCondition
+}
+
+/**
+ * المتبقي القابل للإرجاع لكل «سطر» من الفاتورة (لا لكل صنف):
+ * المرتجعات القديمة بلا saleLineIndex تُستهلك من سطور نفس الصنف بالترتيب
+ * (نفس خوارزمية buildReturnLines القديمة — فلا انحراف عن السجلات القائمة).
+ */
+export function remainingByLine(saleLines: CartLine[], priorReturnLines: ReturnLine[]): number[] {
+  const rem = saleLines.map((l) => l.qty)
+  for (const r of priorReturnLines) {
+    if (r.saleLineIndex !== undefined && saleLines[r.saleLineIndex]?.itemId === r.itemId) {
+      rem[r.saleLineIndex] = Math.round((rem[r.saleLineIndex] - r.qty) * 1000) / 1000
+      continue
+    }
+    // سجل قديم: استهلاك من سطور نفس الصنف بالترتيب
+    let left = r.qty
+    for (let i = 0; i < saleLines.length && left > 1e-9; i++) {
+      if (saleLines[i].itemId !== r.itemId || rem[i] <= 0) continue
+      const take = Math.min(left, rem[i])
+      rem[i] = Math.round((rem[i] - take) * 1000) / 1000
+      left = Math.round((left - take) * 1000) / 1000
+    }
+  }
+  return rem
+}
+
+/**
+ * بناء سطور المرتجع من مواصفات «سطر بسطر» (المرحلة 2 من معالج المرتجع):
+ * كل سطر يحمل سعره وخصمه الأصليين + حالته (سليم/تالف) + مرجع سطره الأصلي.
+ * يرمي خطأ عند تجاوز المتبقي القابل للإرجاع لذلك السطر تحديداً.
+ */
+export function buildReturnLinesPerLine(
+  saleLines: CartLine[],
+  priorReturnLines: ReturnLine[],
+  specs: ReturnLineSpec[],
+): ReturnLine[] {
+  const rem = remainingByLine(saleLines, priorReturnLines)
+  const out: ReturnLine[] = []
+  const seen = new Set<number>()
+  for (const spec of specs) {
+    if (spec.qty <= 0) continue
+    const src = saleLines[spec.lineIndex]
+    if (!src) throw new RangeError(`سطر غير موجود في الفاتورة (#${spec.lineIndex + 1})`)
+    if (seen.has(spec.lineIndex)) throw new RangeError(`السطر «${src.nameAr}» مكرر في طلب الإرجاع`)
+    seen.add(spec.lineIndex)
+    const can = rem[spec.lineIndex]
+    if (spec.qty > can + 1e-9) {
+      throw new RangeError(`«${src.nameAr}» (سطر ${spec.lineIndex + 1}): المطلوب إرجاع ${spec.qty} والمتبقي القابل للإرجاع ${can}`)
+    }
+    out.push({ ...src, qty: Math.round(spec.qty * 1000) / 1000, saleLineIndex: spec.lineIndex, condition: spec.condition })
+  }
+  if (!out.length) throw new RangeError('لا كميات للإرجاع')
+  return out
+}
+
+/** تكلفة الجزء التالف من سطور مرتجع (لقيد الهالك 5111 وتخطي عودة المخزون) */
+export function damagedCostOf(lines: ReturnLine[]): number {
+  return lines
+    .filter((l) => l.condition === 'damaged')
+    .reduce((a, l) => a + Math.round(l.qty * l.unitCostMinor), 0)
+}
+
 export function splitRefund(
   refundValueMinor: number,
   refund: RefundMode,
@@ -122,6 +224,12 @@ export function buildReturnEntry(
   refund: RefundMode,
   treasury = '1101',
   split?: { cashMinor: number; creditMinor: number },
+  /**
+   * تكلفة الجزء التالف من البضاعة المرتجعة (حالة damaged):
+   * لا يعود للمخزون — مدين «هالك وتوالف 5111» بدلاً من «مخزون 1103».
+   * كلا الجزأين يخفضان تكلفة المبيعات 5101 (البيع انعكس بالكامل).
+   */
+  damagedCostMinor = 0,
 ): JournalLine[] {
   // بلا تقسيم صريح: السلوك القديم — كل القيمة على طرف واحد حسب نوع الرد
   const cashMinor = split ? split.cashMinor : refund === 'cash' ? totals.totalMinor : 0
@@ -137,8 +245,13 @@ export function buildReturnEntry(
   if (totals.taxMinor > 0) {
     lines.push({ accountCode: '2102', debit: totals.taxMinor, credit: 0, note: 'تخفيض ض.ق.م' })
   }
+  if (!Number.isInteger(damagedCostMinor) || damagedCostMinor < 0) throw new RangeError('تكلفة التالف لا تكون سالبة')
+  if (damagedCostMinor > totals.cogsMinor) throw new RangeError('تكلفة التالف تتجاوز تكلفة المرتجع')
   if (totals.cogsMinor > 0) {
-    lines.push({ accountCode: '1103', debit: totals.cogsMinor, credit: 0, note: 'عودة بضاعة للمخزون' })
+    const backToStock = totals.cogsMinor - damagedCostMinor
+    if (backToStock > 0) lines.push({ accountCode: '1103', debit: backToStock, credit: 0, note: 'عودة بضاعة للمخزون' })
+    // التالف: خسارة محققة في بند الهالك — لا يدخل المخزون ولا يبقى في COGS
+    if (damagedCostMinor > 0) lines.push({ accountCode: '5111', debit: damagedCostMinor, credit: 0, note: 'مرتجع تالف — هالك وتوالف' })
     lines.push({ accountCode: '5101', debit: 0, credit: totals.cogsMinor, note: 'تخفيض تكلفة مبيعات' })
   }
   assertBalanced(lines)
