@@ -19,6 +19,7 @@ import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, saleEditBlocks } from '../../core/invoiceEdit.ts'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { Modal, EmptyState, useToast, inputCls, Btn, Field } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -59,9 +60,18 @@ export function SalesInvoicesPage() {
     shiftClosed: s.shiftId != null && shifts.some((sh) => sh.id === s.shiftId && sh.status === 'closed'),
   })
 
+  // تعديل فاتورة مرحلة = عملية حساسة (نمط QuickBooks audit): يتطلب صلاحية
+  // sales.price.edit أو اعتماد مشرف بالرقم السري — يوثق في سجل التدقيق
+  const editApproval = useSupervisorApproval('sales.price.edit')
   const openEdit = (s: SaleInvoice) => {
     const blocks = blocksOf(s)
     if (blocks.length) return toast.show(`لا يمكن تعديل ${s.invoiceNumber}: ${blocks[0]}`, 'error')
+    editApproval.request((approvedBy) => {
+      if (approvedBy) toast.show(`فُتح التعديل — اعتمده «${approvedBy}» ✓`)
+      doOpenEdit(s)
+    })
+  }
+  const doOpenEdit = (s: SaleInvoice) => {
     setEditing(s)
     setEditLines(s.lines.map((l) => ({ ...l })))
     setEditCustomerId(s.customerId)
@@ -419,6 +429,7 @@ export function SalesInvoicesPage() {
           </div>
         )}
       </Modal>
+      {editApproval.dialog}
     </div>
   )
 }

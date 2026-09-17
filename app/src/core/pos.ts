@@ -39,6 +39,37 @@ export function baseQty(l: { qty: number; unitFactor?: number }): number {
   return Math.round(l.qty * (l.unitFactor ?? 1) * 1000) / 1000
 }
 
+/**
+ * حارس حد الائتمان (مراجعة المبيعات — سد فجوة SAP B1/أودو):
+ * البرامج العالمية تفحص حد ائتمان العميل لحظة البيع الآجل لا بعد وقوعه —
+ * رصيده القائم + الجزء الآجل الجديد لا يتجاوز حده، والتجاوز بموافقة مدير
+ * تُسجَّل على الفاتورة وفي سجل التدقيق (نفس نمط تجاوز الصلاحية — القرار 8).
+ * حد = 0 يعني «بلا حد» (لم يُضبط) — لا فحص.
+ */
+export class CreditLimitError extends Error {
+  customerName: string
+  balanceMinor: Minor
+  newCreditMinor: Minor
+  limitMinor: Minor
+  constructor(customerName: string, balanceMinor: Minor, newCreditMinor: Minor, limitMinor: Minor) {
+    super(
+      `«${customerName}» سيتجاوز حد ائتمانه: الرصيد ${(balanceMinor / 100).toFixed(2)} + آجل جديد ${(newCreditMinor / 100).toFixed(2)} > الحد ${(limitMinor / 100).toFixed(2)}`,
+    )
+    this.name = 'CreditLimitError'
+    this.customerName = customerName
+    this.balanceMinor = balanceMinor
+    this.newCreditMinor = newCreditMinor
+    this.limitMinor = limitMinor
+  }
+}
+
+/** فحص خالص: هل يتجاوز البيع الآجل حد ائتمان العميل؟ (حد 0 = بلا حد) */
+export function exceedsCreditLimit(balanceMinor: Minor, newCreditMinor: Minor, limitMinor: Minor): boolean {
+  if (limitMinor <= 0) return false
+  if (newCreditMinor <= 0) return false
+  return balanceMinor + newCreditMinor > limitMinor
+}
+
 export type PaymentMethod = 'cash' | 'credit'
 
 export interface CartTotals {

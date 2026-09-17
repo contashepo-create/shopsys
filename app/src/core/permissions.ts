@@ -31,6 +31,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'sales.return.create', nameAr: 'تسجيل مرتجع (بموافقة مشرف عند الحاجة)', section: 'sales' },
   { id: 'sales.return.approve', nameAr: 'اعتماد مرتجع دون رقم سري (مشرف/مالك)', section: 'sales', sensitive: true },
   { id: 'sales.expiry.override', nameAr: 'تجاوز حظر بيع منتهي الصلاحية', section: 'sales', sensitive: true },
+  { id: 'sales.credit.override', nameAr: 'تجاوز حد ائتمان العميل (بيع آجل فوق الحد)', section: 'sales', sensitive: true },
   { id: 'sales.shift.close', nameAr: 'إقفال وردية', section: 'sales' },
   // المخزون
   { id: 'inv.view', nameAr: 'عرض الكميات', section: 'inventory' },

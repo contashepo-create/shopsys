@@ -10,7 +10,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { computeTotals, type CartLine } from '../../core/pos.ts'
+import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { itemMatchesPartQuery } from '../../core/items.ts'
@@ -30,6 +30,27 @@ import { toMinor } from '../../core/money.ts'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
 
+/**
+ * تثبيت الفواتير المعلقة (مراجعة المبيعات — نمط Square/Lightspeed):
+ * الفاتورة المعلقة تنجو من إغلاق التطبيق وتحديث الصفحة — كاشير علّق سلة
+ * لعميل نسي محفظته ثم انقطع التيار: يجدها كما تركها عند العودة.
+ */
+const HELD_KEY = 'shopsys-held-carts'
+function loadHeldCarts(): HeldCart[] {
+  try {
+    const raw = localStorage.getItem(HELD_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch { return [] }
+}
+function saveHeldCarts(held: HeldCart[]) {
+  try {
+    if (held.length === 0) localStorage.removeItem(HELD_KEY)
+    else localStorage.setItem(HELD_KEY, JSON.stringify(held))
+  } catch { /* تخزين ممتلئ — التعليق يبقى في الذاكرة فقط */ }
+}
+
 export function PosPage() {
   const { items, customers, shifts, serials, postSale, priceLists, getEffectivePrice, variantStocks, warehouses, appUsers, currentUserId } = useDataStore()
   // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
@@ -43,7 +64,15 @@ export function PosPage() {
   const [query, setQuery] = useState('')
   const [cart, setCart] = useState<CartLine[]>([])
   const [invoiceDiscount, setInvoiceDiscount] = useState(0)
-  const [held, setHeld] = useState<HeldCart[]>([])
+  const [held, setHeldRaw] = useState<HeldCart[]>(loadHeldCarts)
+  // كل تغيير في المعلقة يُثبَّت فوراً (نمط Square: parked sales تنجو من الإغلاق)
+  const setHeld = (updater: HeldCart[] | ((prev: HeldCart[]) => HeldCart[])) => {
+    setHeldRaw((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      saveHeldCarts(next)
+      return next
+    })
+  }
   const [payOpen, setPayOpen] = useState(false)
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [customerId, setCustomerId] = useState<number | null>(null)
@@ -366,6 +395,10 @@ export function PosPage() {
   // ترقية القرار 8 لنمط POS العالمي: تجاوز الصلاحية برقم مشرف سري موثق
   // (لا مجرد كتابة اسم) — المالك/المخول بـsales.expiry.override يمر مباشرة
   const expiryApproval = useSupervisorApproval('sales.expiry.override')
+  // حارس حد الائتمان (نمط SAP B1): بيع آجل يتجاوز حد العميل ⇒ حوار اعتماد مدير
+  const creditApproval = useSupervisorApproval('sales.credit.override')
+  // نحفظ اعتماد الصلاحية المرافق — فاتورة فيها التجاوزان معاً لا تفقد الأول عند اعتماد الثاني
+  const [creditBlock, setCreditBlock] = useState<{ message: string; expiryOverrideBy?: string } | null>(null)
   // الخصومات (سطر/فاتورة): كاشير بلا sales.discount.grant يفتح القفل برقم مشرف
   // مرة واحدة لكل سلة (نمط Square: passcode لكل خصم مقيد) — يُسجل المعتمد
   const discountApproval = useSupervisorApproval('sales.discount.grant')
@@ -376,7 +409,7 @@ export function PosPage() {
     toast.show(`فُتحت الخصومات لهذه السلة — اعتمدها «${approvedBy ?? 'المشرف'}» ✓`)
   })
 
-  const finishSale = (expiryOverrideBy?: string) => {
+  const finishSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string) => {
     if (!cart.length) return
     try {
       // مجزأ فعلاً (جزء نقدي + جزء آجل) أو آجل بالكامل ⇒ عميل إلزامي
@@ -391,6 +424,7 @@ export function PosPage() {
         treasury,
         paidMinor: payment === 'credit' ? 0 : paidCashMinor,
         expiryOverrideBy: expiryOverrideBy ?? null,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
         warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
       })
@@ -410,6 +444,11 @@ export function PosPage() {
       // بيع يمس كمية منتهية: حوار موافقة المدير بدل رسالة الخطأ (القرار 8)
       if (e instanceof ExpiredStockError) {
         setExpiredBlock(e.itemNames)
+        return
+      }
+      // تجاوز حد الائتمان: حوار اعتماد مدير بدل الرسالة (نمط SAP B1)
+      if (e instanceof CreditLimitError) {
+        setCreditBlock({ message: e.message, expiryOverrideBy })
         return
       }
       toast.show((e as Error).message, 'error')
@@ -957,8 +996,30 @@ export function PosPage() {
           )
         })()}
       </Modal>
+      {/* تجاوز حد ائتمان العميل — اعتماد مدير موثق (مراجعة المبيعات) */}
+      <Modal open={!!creditBlock} onClose={() => setCreditBlock(null)} title="⛔ تجاوز حد الائتمان">
+        {creditBlock && (
+          <div className="space-y-4">
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-[12.5px] leading-relaxed text-amber-700 dark:text-amber-400">
+              {creditBlock.message}
+            </div>
+            <p className="text-[12px] text-slate-500 leading-relaxed">
+              البيع الآجل فوق حد العميل محظور افتراضياً. للمتابعة يلزم <b>اعتماد مدير</b> — {creditApproval.willAskPin
+                ? 'سيُطلب رقم المشرف/المالك السري، ويُسجَّل اسم المعتمد على الفاتورة وفي سجل التدقيق.'
+                : 'حسابك مخول بالتجاوز — يُسجَّل اسمك على الفاتورة وفي سجل التدقيق.'}
+            </p>
+            <div className="flex gap-2 justify-end">
+              <Btn variant="ghost" onClick={() => setCreditBlock(null)}>إلغاء البيع</Btn>
+              <Btn onClick={() => { const keptExpiry = creditBlock.expiryOverrideBy; setCreditBlock(null); creditApproval.request((approvedBy) => finishSale(keptExpiry, approvedBy ?? (appUsers.find((u) => u.id === currentUserId)?.nameAr ?? 'المالك'))) }}>
+                ⚠️ اعتماد المدير والمتابعة
+              </Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
       {expiryApproval.dialog}
       {discountApproval.dialog}
+      {creditApproval.dialog}
     </div>
   )
 }

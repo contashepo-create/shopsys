@@ -12,7 +12,7 @@ import { secureStorage } from './secureStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
-import { computeTotals, buildSaleEntry, baseQty, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
+import { computeTotals, buildSaleEntry, baseQty, exceedsCreditLimit, CreditLimitError, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
@@ -890,6 +890,8 @@ export interface SaleInvoice {
   totals: CartTotals
   journalEntryId: number // القيد المتولد — كل مستند مربوط بقيده (القرار 9)
   expiryOverrideBy: string | null // من وافق على تجاوز الصلاحية (القرار 8)
+  /** من اعتمد تجاوز حد ائتمان العميل (نمط SAP B1) — null = لم يتجاوز */
+  creditLimitOverrideBy?: string | null
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
   /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
@@ -1176,6 +1178,8 @@ interface DataState {
     allowNegativeStock?: boolean
     /** المخزن المختار أعلى الفاتورة (الأمر 8) — null = غير محدد */
     warehouseId?: number | null
+    /** تجاوز حد ائتمان العميل بموافقة مدير (نمط SAP B1) — اسم المعتمد يُسجل على الفاتورة */
+    creditLimitOverrideBy?: string | null
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -2456,6 +2460,18 @@ export const useDataStore = create<DataState>()(
         if (paidM < totals.totalMinor && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
+        // حارس حد الائتمان (مراجعة المبيعات — نمط SAP B1/أودو): البيع الآجل لعميل له حد
+        // يُفحص لحظة الترحيل — رصيده + الآجل الجديد ≤ حده، والتجاوز بموافقة مدير مسجلة
+        const newCredit = totals.totalMinor - paidM
+        if (newCredit > 0 && args.customerId != null && !args.creditLimitOverrideBy) {
+          const cust = state.customers.find((c) => c.id === args.customerId)
+          if (cust && cust.creditLimitMinor > 0) {
+            const balance = get().getCustomerBalance(cust.id)
+            if (exceedsCreditLimit(balance, newCredit, cust.creditLimitMinor)) {
+              throw new CreditLimitError(cust.nameAr, balance, newCredit, cust.creditLimitMinor)
+            }
+          }
+        }
         const entryLines = buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM)
         const saleId = nextId(state.sales)
         const entryId = nextId(state.journal)
@@ -2491,6 +2507,7 @@ export const useDataStore = create<DataState>()(
           totals,
           journalEntryId: entryId,
           expiryOverrideBy: args.expiryOverrideBy ?? null,
+          creditLimitOverrideBy: args.creditLimitOverrideBy ?? null,
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
           warehouseId: args.warehouseId ?? null,
           taxPercent: args.taxPercent, // G1: تثبيت المعاملة الضريبية على المستند
