@@ -667,7 +667,7 @@ export function ClinicPatientsPage() {
             hint="كشف ملغي أو تنازل عن أتعاب: يعكس الإيراد وحصة الضريبة — «على حساب المريض» يخفض مديونيته إن وُجدت."
             onSubmit={(a) => {
               try {
-                const u = refundClinicVisit({ visitId: refundingVisit.id, amountMinor: a.amountMinor, mode: a.mode === 'cash' ? 'cash' : 'patient_credit', treasury: a.treasury, reason: a.reason })
+                const u = refundClinicVisit({ visitId: refundingVisit.id, amountMinor: a.amountMinor, mode: a.mode === 'cash' ? 'cash' : 'patient_credit', treasury: a.treasury, reason: a.reason, approvedBy: a.approvedBy })
                 setRefundingVisit(null)
                 toast.show(`سُجل مرتجع الزيارة ${u.visitNumber} وتولد القيد العاكس ✅`)
               } catch (err) { toast.show((err as Error).message, 'error') }

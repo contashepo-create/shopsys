@@ -28,7 +28,8 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'sales.invoice.create', nameAr: 'إنشاء فاتورة بيع', section: 'sales' },
   { id: 'sales.price.edit', nameAr: 'تعديل سعر البيع في الفاتورة', section: 'sales', sensitive: true },
   { id: 'sales.discount.grant', nameAr: 'منح خصم', section: 'sales', sensitive: true },
-  { id: 'sales.return.approve', nameAr: 'اعتماد مرتجع مبيعات', section: 'sales', sensitive: true },
+  { id: 'sales.return.create', nameAr: 'تسجيل مرتجع (بموافقة مشرف عند الحاجة)', section: 'sales' },
+  { id: 'sales.return.approve', nameAr: 'اعتماد مرتجع دون رقم سري (مشرف/مالك)', section: 'sales', sensitive: true },
   { id: 'sales.expiry.override', nameAr: 'تجاوز حظر بيع منتهي الصلاحية', section: 'sales', sensitive: true },
   { id: 'sales.shift.close', nameAr: 'إقفال وردية', section: 'sales' },
   // المخزون
@@ -76,7 +77,10 @@ export const PERMISSIONS: PermissionDef[] = [
  */
 export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/pos', perm: 'sales.pos.open' },
-  { prefix: '/sales/returns', perm: 'sales.return.approve' },
+  // نمط POS العالمي: الكاشير يفتح شاشة المرتجع ويجهزه، والتنفيذ يتطلب
+  // رقم مشرف سرياً ما لم يملك sales.return.approve (حوار SupervisorPinDialog)
+  { prefix: '/sales/returns', perm: 'sales.return.create' },
+  { prefix: '/sales/exchange', perm: 'sales.return.create' },
   { prefix: '/sales/shifts', perm: 'sales.shift.close' },
   { prefix: '/sales/price-lists', perm: 'sales.price.edit' },
   { prefix: '/sales', perm: 'sales.invoice.create' },
@@ -178,12 +182,13 @@ export const DEFAULT_ROLES: Role[] = [
   { id: 'owner', nameAr: 'المالك', isSystem: true, isOwner: true, permissions: ALL },
   {
     id: 'cashier', nameAr: 'كاشير', isSystem: true,
-    permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.shift.close', 'inv.view'],
+    // يفتح شاشة المرتجع ويجهزه — التنفيذ برقم مشرف سري (sales.return.approve ليست له)
+    permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.return.create', 'sales.shift.close', 'inv.view'],
   },
   {
     id: 'senior_seller', nameAr: 'بائع أول', isSystem: true,
     permissions: [
-      'sales.pos.open', 'sales.invoice.create', 'sales.discount.grant', 'sales.shift.close',
+      'sales.pos.open', 'sales.invoice.create', 'sales.discount.grant', 'sales.return.create', 'sales.shift.close',
       'inv.view', 'inv.item.manage', 'inv.count', 'party.customer.manage', 'party.customer.statement',
       'ops.activity.use',
     ],
@@ -192,7 +197,7 @@ export const DEFAULT_ROLES: Role[] = [
     id: 'branch_manager', nameAr: 'مدير فرع', isSystem: true,
     permissions: [
       'sales.pos.open', 'sales.invoice.create', 'sales.price.edit', 'sales.discount.grant',
-      'sales.return.approve', 'sales.expiry.override', 'sales.shift.close',
+      'sales.return.create', 'sales.return.approve', 'sales.expiry.override', 'sales.shift.close',
       'inv.view', 'inv.cost.view', 'inv.item.manage', 'inv.adjust', 'inv.transfer', 'inv.count',
       'pur.invoice.create', 'pur.return.create', 'pur.supplier.manage',
       'party.customer.manage', 'party.customer.statement',

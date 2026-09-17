@@ -24,13 +24,14 @@ import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { toMinor } from '../../core/money.ts'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, priceLists, getEffectivePrice, variantStocks, warehouses } = useDataStore()
+  const { items, customers, shifts, serials, postSale, priceLists, getEffectivePrice, variantStocks, warehouses, appUsers, currentUserId } = useDataStore()
   // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
   const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
   const openShift = currentOpenShift(shifts)
@@ -362,7 +363,18 @@ export function PosPage() {
   /* الأمر 8: مخزن البيع أعلى الفاتورة — الافتراضي من الإعدادات، و«غير محدد» يعامل كالرئيسي */
   const [saleWarehouseId, setSaleWarehouseId] = useState<number | null>(setup.defaultWarehouseId ?? null)
   const [expiredBlock, setExpiredBlock] = useState<string[] | null>(null)
-  const [overrideName, setOverrideName] = useState('')
+  // ترقية القرار 8 لنمط POS العالمي: تجاوز الصلاحية برقم مشرف سري موثق
+  // (لا مجرد كتابة اسم) — المالك/المخول بـsales.expiry.override يمر مباشرة
+  const expiryApproval = useSupervisorApproval('sales.expiry.override')
+  // الخصومات (سطر/فاتورة): كاشير بلا sales.discount.grant يفتح القفل برقم مشرف
+  // مرة واحدة لكل سلة (نمط Square: passcode لكل خصم مقيد) — يُسجل المعتمد
+  const discountApproval = useSupervisorApproval('sales.discount.grant')
+  const [discountUnlockedBy, setDiscountUnlockedBy] = useState<string | null>(null)
+  const discountLocked = discountApproval.willAskPin && discountUnlockedBy === null
+  const unlockDiscount = () => discountApproval.request((approvedBy) => {
+    setDiscountUnlockedBy(approvedBy ?? 'المشرف')
+    toast.show(`فُتحت الخصومات لهذه السلة — اعتمدها «${approvedBy ?? 'المشرف'}» ✓`)
+  })
 
   const finishSale = (expiryOverrideBy?: string) => {
     if (!cart.length) return
@@ -385,13 +397,13 @@ export function PosPage() {
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
       setCart([])
+      setDiscountUnlockedBy(null)
       setInvoiceDiscount(0)
       setPayOpen(false)
       setPayment('cash')
       setCustomerId(null)
       setPaidCash('')
       setExpiredBlock(null)
-      setOverrideName('')
       toast.show(`تمت الفاتورة ${sale.invoiceNumber} — القيد المحاسبي تولّد تلقائياً ✓`)
       if (autoPrintAfterSale) printSale(sale)
     } catch (e) {
@@ -699,11 +711,15 @@ export function PosPage() {
                   {/* خصم السطر */}
                   <input
                     value={l.discountPercent || ''}
+                    readOnly={discountLocked}
+                    onClick={() => { if (discountLocked) unlockDiscount() }}
                     onChange={(e) => {
+                      if (discountLocked) return
                       const v = Math.min(100, Math.max(0, Number(e.target.value) || 0))
                       setCart((c) => c.map((x, j) => (j === i ? { ...x, discountPercent: v } : x)))
                     }}
-                    placeholder="—"
+                    placeholder={discountLocked ? '🔐' : '—'}
+                    title={discountLocked ? 'الخصم يتطلب اعتماد مشرف — اضغط لإدخال الرقم السري' : undefined}
                     className="h-9 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-transparent text-center text-[13px] font-bold text-rose-500 outline-none focus:border-rose-400 transition-colors"
                   />
                   {/* إجمالي السطر */}
@@ -731,8 +747,11 @@ export function PosPage() {
             <span>خصم فاتورة ٪</span>
             <input
               value={invoiceDiscount || ''}
-              onChange={(e) => setInvoiceDiscount(Math.min(100, Math.max(0, Number(e.target.value) || 0)))}
-              placeholder="0"
+              readOnly={discountLocked}
+              onClick={() => { if (discountLocked) unlockDiscount() }}
+              onChange={(e) => { if (!discountLocked) setInvoiceDiscount(Math.min(100, Math.max(0, Number(e.target.value) || 0))) }}
+              placeholder={discountLocked ? '🔐' : '0'}
+              title={discountLocked ? 'الخصم يتطلب اعتماد مشرف — اضغط لإدخال الرقم السري' : undefined}
               className="w-16 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-center outline-none focus:border-brand-400"
             />
           </div>
@@ -839,7 +858,7 @@ export function PosPage() {
       </Modal>
 
       {/* حظر بيع منتهي الصلاحية — تجاوز بموافقة المدير (القرار 8) */}
-      <Modal open={!!expiredBlock} onClose={() => { setExpiredBlock(null); setOverrideName('') }} title="⛔ أصناف منتهية الصلاحية">
+      <Modal open={!!expiredBlock} onClose={() => setExpiredBlock(null)} title="⛔ أصناف منتهية الصلاحية">
         {expiredBlock && (
           <div className="space-y-4">
             <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/25 text-[12.5px] leading-relaxed text-rose-700 dark:text-rose-400">
@@ -849,20 +868,14 @@ export function PosPage() {
               </ul>
             </div>
             <p className="text-[12px] text-slate-500 leading-relaxed">
-              البيع محظور افتراضياً. للمتابعة يلزم <b>اسم المدير الموافق</b> — يُسجَّل على الفاتورة
-              ويظهر في سجل التدقيق (القرار 8).
+              البيع محظور افتراضياً. للمتابعة يلزم <b>اعتماد مدير</b> — {expiryApproval.willAskPin
+                ? 'سيُطلب رقم المشرف/المالك السري، ويُسجَّل اسم المعتمد على الفاتورة وفي سجل التدقيق (القرار 8).'
+                : 'حسابك مخول بالتجاوز — يُسجَّل اسمك على الفاتورة وفي سجل التدقيق (القرار 8).'}
             </p>
-            <input
-              value={overrideName}
-              onChange={(e) => setOverrideName(e.target.value)}
-              className={inputCls}
-              placeholder="اسم المدير الموافق…"
-              autoFocus
-            />
             <div className="flex gap-2 justify-end">
-              <Btn variant="ghost" onClick={() => { setExpiredBlock(null); setOverrideName('') }}>إلغاء البيع</Btn>
-              <Btn onClick={() => finishSale(overrideName.trim())} disabled={overrideName.trim().length < 2}>
-                ⚠️ موافقة المدير والمتابعة
+              <Btn variant="ghost" onClick={() => setExpiredBlock(null)}>إلغاء البيع</Btn>
+              <Btn onClick={() => expiryApproval.request((approvedBy) => finishSale(approvedBy ?? (appUsers.find((u) => u.id === currentUserId)?.nameAr ?? 'المالك')))}>
+                ⚠️ اعتماد المدير والمتابعة
               </Btn>
             </div>
           </div>
@@ -944,6 +957,8 @@ export function PosPage() {
           )
         })()}
       </Modal>
+      {expiryApproval.dialog}
+      {discountApproval.dialog}
     </div>
   )
 }

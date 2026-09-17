@@ -11,6 +11,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { customerStatement, customerUnitDocs, supplierStatement, statementBalance } from '../../core/statements.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 
 type Section = 'treasury' | 'customer' | 'supplier'
 
@@ -84,10 +85,13 @@ export function SettlementsPage() {
   const actualMinor = actual.trim() === '' ? null : (() => { try { return toMinor(actual, cur.decimals) } catch { return null } })()
   const variance = bookMinor != null && actualMinor != null ? actualMinor - bookMinor : null
 
+  // التسويات تضرب حساب 5112 مباشرة — عملية حساسة تتطلب اعتماد مشرف (inv.adjust)
+  const approval = useSupervisorApproval('inv.adjust')
   const submit = () => {
     if (!refId || actualMinor == null) return
+    approval.request((approvedBy) => {
     try {
-      const doc = applySettlement({ section, refId: section === 'treasury' ? refId : Number(refId), actualMinor, reason })
+      const doc = applySettlement({ section, refId: section === 'treasury' ? refId : Number(refId), actualMinor, reason, approvedBy })
       toast.show(
         doc.varianceMinor === 0
           ? `مطابقة تامة ✓ وُثقت ${doc.settlementNumber} بلا قيد (لا فرق)`
@@ -95,6 +99,7 @@ export function SettlementsPage() {
       )
       setActual(''); setReason('')
     } catch (e) { toast.show((e as Error).message, 'error') }
+    })
   }
 
   return (
@@ -187,6 +192,7 @@ export function SettlementsPage() {
           )}
         </div>
       </div>
+      {approval.dialog}
     </div>
   )
 }

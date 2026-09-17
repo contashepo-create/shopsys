@@ -24,6 +24,9 @@ export interface ServiceRefundRecord {
   mode: 'cash' | 'customer_credit'
   reason: string
   journalEntryId: number
+  /** موافقة المشرف (نمط POS العالمي): من اعتمد ومن نفّذ — undefined = سجل قديم */
+  approvedBy?: string
+  requestedBy?: string
 }
 
 export function buildServiceRefundEntry(args: {

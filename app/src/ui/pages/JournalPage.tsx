@@ -15,6 +15,7 @@ import { fullCoa } from '../../core/treasury.ts'
 import { customAsAccounts } from '../../core/customAccounts.ts'
 import { validateManualEntry } from '../../core/accounting.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 interface DraftLine { accountCode: string; debit: string; credit: string }
@@ -163,16 +164,20 @@ export function JournalPage() {
     }
   }
 
+  // عكس القيد عملية حساسة — موافقة مشرف برقم سري لغير المخول (acc.journal.reverse)
+  const reverseApproval = useSupervisorApproval('acc.journal.reverse')
   const doReverse = () => {
     if (reversing === null) return
-    try {
-      const r = reverseEntry(reversing, revReason.trim())
-      toast.show(`عُكس القيد — القيد العاكس #${r.entryNumber} ✓`)
-      setReversing(null)
-      setRevReason('')
-    } catch (err) {
-      toast.show((err as Error).message, 'error')
-    }
+    reverseApproval.request((approvedBy) => {
+      try {
+        const r = reverseEntry(reversing, revReason.trim() + (approvedBy ? ` — اعتمده «${approvedBy}»` : ''))
+        toast.show(`عُكس القيد — القيد العاكس #${r.entryNumber} ✓`)
+        setReversing(null)
+        setRevReason('')
+      } catch (err) {
+        toast.show((err as Error).message, 'error')
+      }
+    })
   }
 
   if (journal.length === 0) {
@@ -327,6 +332,7 @@ export function JournalPage() {
         mLines={mLines} setMLines={setMLines} errors={manualErrors} onSave={saveManual} fmt={fmt}
         parsed={parsedLines} postable={POSTABLE}
       />
+      {reverseApproval.dialog}
     </div>
   )
 }

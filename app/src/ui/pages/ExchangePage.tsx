@@ -15,11 +15,13 @@ import { computeExchangeNet } from '../../core/exchange.ts'
 import { hasVariantStock, variantLabel } from '../../core/variants.ts'
 import type { CartLine } from '../../core/pos.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 
 export function ExchangePage() {
   const { sales, saleReturns, items, customers, treasuries, variantStocks, exchanges, postExchange, getEffectivePrice } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
+  const approval = useSupervisorApproval() // الاستبدال يتضمن مرتجعاً — موافقة مشرف
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
@@ -83,6 +85,7 @@ export function ExchangePage() {
 
   const submit = () => {
     if (!sale) return
+    approval.request((approvedBy) => {
     try {
       const map = new Map<number, number>()
       for (const [id, v] of Object.entries(retQtys)) {
@@ -95,6 +98,7 @@ export function ExchangePage() {
         newLines,
         treasury: (treasury || undefined) as never,
         notes,
+        approvedBy,
       })
       toast.show(
         doc.netMinor === 0
@@ -105,6 +109,7 @@ export function ExchangePage() {
       )
       setSale(null); setRetQtys({}); setNewLines([]); setNotes('')
     } catch (e) { toast.show((e as Error).message, 'error') }
+    })
   }
 
   return (
@@ -247,6 +252,7 @@ export function ExchangePage() {
           ))}
         </div>
       </Modal>
+      {approval.dialog}
     </div>
   )
 }

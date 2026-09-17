@@ -14,6 +14,7 @@ import { buildReceiptModel } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function SaleReturnsPage() {
@@ -53,20 +54,24 @@ export function SaleReturnsPage() {
     setPickOpen(false)
   }
 
+  // موافقة المشرف (نمط POS العالمي): الكاشير يحتاج رقم مشرف/مالك — المخول يمر مباشرة
+  const approval = useSupervisorApproval()
   const submit = () => {
     if (!sale) return
-    try {
-      const map = new Map<number, number>()
-      for (const [id, v] of Object.entries(qtys)) {
-        const n = Number(v)
-        if (n > 0) map.set(Number(id), n)
+    approval.request((approvedBy) => {
+      try {
+        const map = new Map<number, number>()
+        for (const [id, v] of Object.entries(qtys)) {
+          const n = Number(v)
+          if (n > 0) map.set(Number(id), n)
+        }
+        const ret = postSaleReturn({ saleId: sale.id, qtyByItem: map, refund, reason: reason.trim(), approvedBy })
+        toast.show(`تم المرتجع ${ret.returnNumber} — عادت البضاعة للمخزون وتولد القيد العاكس ✓${approvedBy ? ` (اعتمده «${approvedBy}»)` : ''}${ret.crossShiftNote ? ` — ${ret.crossShiftNote}` : ''}`)
+        setSale(null)
+      } catch (e) {
+        toast.show((e as Error).message, 'error')
       }
-      const ret = postSaleReturn({ saleId: sale.id, qtyByItem: map, refund, reason: reason.trim() })
-      toast.show(`تم المرتجع ${ret.returnNumber} — عادت البضاعة للمخزون وتولد القيد العاكس ✓`)
-      setSale(null)
-    } catch (e) {
-      toast.show((e as Error).message, 'error')
-    }
+    })
   }
 
   const anyQty = Object.values(qtys).some((v) => Number(v) > 0)
@@ -264,6 +269,11 @@ export function SaleReturnsPage() {
 
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="سبب الإرجاع (اختياري): تالف، غير مطابق…" className={inputCls} />
 
+            {approval.willAskPin && (
+              <p className="text-[11.5px] text-amber-600 dark:text-amber-400 p-2.5 rounded-xl bg-amber-500/5 border border-amber-500/20 leading-relaxed">
+                🔐 سيُطلب رقم مشرف الكاشير أو المالك لاعتماد هذا المرتجع.
+              </p>
+            )}
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSale(null)}>إلغاء</Btn>
               <Btn onClick={submit} disabled={!anyQty}>↩️ تنفيذ المرتجع</Btn>
@@ -271,6 +281,7 @@ export function SaleReturnsPage() {
           </div>
         )}
       </Modal>
+      {approval.dialog}
 
       {/* عرض مرتجع */}
       <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `المرتجع ${viewing.returnNumber}` : ''} wide>
@@ -294,6 +305,15 @@ export function SaleReturnsPage() {
               </tbody>
             </table>
             {viewing.reason && <div className="text-[12px] text-slate-500">السبب: {viewing.reason}</div>}
+            {viewing.approvedBy && (
+              <div className="text-[12px] text-slate-500">
+                🔐 نفّذه: <b>{viewing.requestedBy ?? '—'}</b>
+                {viewing.approvedBy !== viewing.requestedBy && <> — اعتمده: <b className="text-amber-600">{viewing.approvedBy}</b></>}
+              </div>
+            )}
+            {viewing.crossShiftNote && (
+              <div className="text-[11.5px] text-amber-600 dark:text-amber-400 p-2 rounded-xl bg-amber-500/5 border border-amber-500/20">⏱️ {viewing.crossShiftNote}</div>
+            )}
             {entry && (
               <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] overflow-hidden">
                 <div className="px-4 py-2.5 text-[12px] font-bold text-rose-600 dark:text-rose-400 border-b border-rose-500/10 flex items-center gap-1.5">

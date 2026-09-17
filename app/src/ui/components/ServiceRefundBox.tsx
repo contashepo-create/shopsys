@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import { Btn, Field } from './ui.tsx'
 import { TreasuryPicker } from './TreasuryPicker.tsx'
+import { useSupervisorApproval } from './SupervisorPinDialog.tsx'
 
 export function ServiceRefundBox(props: {
   /** إجمالي المستند شامل الضريبة (وعاء الاسترداد) */
@@ -23,12 +24,14 @@ export function ServiceRefundBox(props: {
   creditLabel?: string
   /** ملاحظة سياق تحت العنوان (اختياري) */
   hint?: string
-  onSubmit: (args: { amountMinor: number; mode: 'cash' | 'customer_credit'; treasury: string; reason: string }) => void
+  onSubmit: (args: { amountMinor: number; mode: 'cash' | 'customer_credit'; treasury: string; reason: string; approvedBy?: string }) => void
 }) {
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState<'cash' | 'customer_credit'>('cash')
   const [treasury, setTreasury] = useState('1101')
   const [reason, setReason] = useState('')
+  // موافقة المشرف (نمط POS العالمي): غير المخول يُدخل رقم مشرف/مالك قبل التنفيذ
+  const approval = useSupervisorApproval()
   const remaining = props.grandMinor - props.refundedMinor
   const creditLabel = props.creditLabel ?? 'حساب العميل'
   if (remaining <= 0) {
@@ -61,12 +64,16 @@ export function ServiceRefundBox(props: {
           <TreasuryPicker value={treasury} onChange={setTreasury} compact />
         </Field>
       )}
+      {approval.willAskPin && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400">🔐 سيُطلب رقم مشرف الكاشير أو المالك لاعتماد هذا المرتجع.</p>
+      )}
       <div className="flex justify-end">
         <Btn
-          onClick={() => props.onSubmit({ amountMinor: Math.round(Number(amount) * 100), mode, treasury, reason: reason.trim() })}
+          onClick={() => approval.request((approvedBy) => props.onSubmit({ amountMinor: Math.round(Number(amount) * 100), mode, treasury, reason: reason.trim(), approvedBy }))}
           disabled={!amount || Number(amount) <= 0}
         >↩️ تنفيذ المرتجع</Btn>
       </div>
+      {approval.dialog}
     </div>
   )
 }

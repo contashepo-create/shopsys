@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { WALLET_SERVICE_TYPES, WALLET_PROVIDERS, walletSummary, type WalletServiceType, type WalletProvider } from '../../core/walletServices.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
@@ -19,6 +20,7 @@ export function WalletServicesPage() {
   const { walletOps, customers, journal, postWalletService, returnWalletService } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
+  const approval = useSupervisorApproval() // موافقة المشرف على مرتجع خدمة المحافظ
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
@@ -62,12 +64,12 @@ export function WalletServicesPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  const doReturn = (op: WalletServiceOp) => {
+  const doReturn = (op: WalletServiceOp) => approval.request((approvedBy) => {
     try {
-      returnWalletService(op.id, 'مرتجع من الشاشة')
-      toast.show(`ارتجعت ${op.opNumber} بقيد عاكس كامل ✓`)
+      returnWalletService(op.id, 'مرتجع من الشاشة', approvedBy)
+      toast.show(`ارتجعت ${op.opNumber} بقيد عاكس كامل ✓${approvedBy ? ` (اعتمده «${approvedBy}»)` : ''}`)
     } catch (e) { toast.show((e as Error).message, 'error') }
-  }
+  })
 
   const typeName = (t: string) => WALLET_SERVICE_TYPES.find((x) => x.id === t)?.nameAr ?? t
   const providerName = (p: string) => WALLET_PROVIDERS.find((x) => x.id === p)?.nameAr ?? p
@@ -248,6 +250,7 @@ export function WalletServicesPage() {
           )
         })()}
       </Modal>
+      {approval.dialog}
     </div>
   )
 }

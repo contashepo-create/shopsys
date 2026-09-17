@@ -16,6 +16,8 @@ import { computeTotals, buildSaleEntry, baseQty, type CartLine, type PaymentMeth
 import { buildReturnLines, buildReturnEntry, deriveTaxConfig, splitRefund, returnCashRefundMinor, type RefundMode } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
+import { effectivePermissionsFor, rolesWithOverrides } from '../core/permissions.ts'
+import { isEligibleApprover, describeShiftContext } from '../core/refundApproval.ts'
 import {
   EMPTY_GUARD, registerFailure, lockoutMinutesLeft, tempPinExpired, validateResetRequest,
   type LoginGuard, type OwnerTempPin, type PinResetRequest,
@@ -630,6 +632,9 @@ export interface WalletServiceOp {
   journalEntryId: number
   returnEntryId: number | null
   notes: string
+  /** موافقة المشرف على المرتجع (نمط POS العالمي) — undefined = سجل قديم */
+  approvedBy?: string
+  requestedBy?: string
 }
 
 export interface MaintenanceTicket {
@@ -699,6 +704,9 @@ export interface SettlementDoc {
   varianceMinor: number // الفعلي − الدفتري
   reason: string
   journalEntryId: number | null // null لو الفرق صفر (توثيق مطابقة فقط)
+  /** موافقة المشرف على التسوية (عملية حساسة) — undefined = سجل قديم */
+  approvedBy?: string
+  requestedBy?: string
 }
 
 /** مسير رواتب مرحّل لشهر — مربوط بقيده المحاسبي */
@@ -914,6 +922,14 @@ export interface SaleReturn {
    */
   cashRefundMinor?: number
   creditRefundMinor?: number
+  /**
+   * موافقة المشرف (نمط برامج الكاشير العالمية): من اعتمد ومن نفّذ —
+   * undefined = سجل قديم أو نفّذه المالك مباشرة قبل الخاصية.
+   */
+  approvedBy?: string
+  requestedBy?: string
+  /** سياق الوردية عند مرتجع عابر للورديات (وردية مغلقة/كاشير آخر) — للتدقيق */
+  crossShiftNote?: string
 }
 
 /** مستند مقايضة ذهب (الصاغة): بيع مشغول جديد + شراء كسر العميل بعملية واحدة — الفرق النقدي فقط بالخزينة */
@@ -1072,6 +1088,14 @@ interface DataState {
   login: (id: number | null, pin: string) => Promise<{ usedTempPin: boolean }>
   /** خروج — يعيد شاشة الدخول */
   logout: () => void
+  /**
+   * موافقة مشرف برقم سري على عملية حساسة (نمط Square/Toast/Roller):
+   * يفحص الرقم ضد رقم المالك ثم ضد كل مستخدم نشط يملك الصلاحية المطلوبة
+   * (الافتراضي: اعتماد المرتجعات) — ينجح بإرجاع اسم المعتمد (يُسجَّل على
+   * المستند وفي التدقيق)، ويرمي عربياً عند الرفض مع عدّاد المحاولات الفاشلة
+   * نفسه (قفل مؤقت — لا تخمين بلا حساب).
+   */
+  approveByPin: (pin: string, permId?: string) => Promise<{ approvedBy: string }>
   /** موظف نسي رقمه: يسجل طلباً من شاشة الدخول ← إشعار للمالك */
   requestPinReset: (userId: number) => void
   /** المالك ينفذ/يرفض طلب الاستعادة (مع تعيين pinHash جديد عند التنفيذ) */
@@ -1148,6 +1172,8 @@ interface DataState {
     qtyByItem: Map<number, number>
     refund: RefundMode
     reason: string
+    /** موافقة المشرف (نمط POS العالمي): اسم المعتمد — يُسجل على المستند والتدقيق */
+    approvedBy?: string
   }) => SaleReturn
   /**
    * مصروف لاحق على فاتورة شراء مرحّلة (Landed Cost Voucher — طلب المالك):
@@ -1196,7 +1222,7 @@ interface DataState {
    * تسوية شاملة (نمط mobileshop): مطابقة رصيد خزينة/عميل/مورد بالواقع —
    * الفرق يضرب 5112 إجبارياً (درس عجز الـ5,000 المتبخر) ويُوثق بمستند SET-####.
    */
-  applySettlement: (args: { section: 'treasury' | 'customer' | 'supplier'; refId: string | number; actualMinor: number; reason: string }) => SettlementDoc
+  applySettlement: (args: { section: 'treasury' | 'customer' | 'supplier'; refId: string | number; actualMinor: number; reason: string; approvedBy?: string }) => SettlementDoc
   /**
    * استبدال (ملابس): مرتجع عن فاتورة أصلية + بيع جديد فوري بمستند EXC واحد —
    * قيدا العمليتين يبقيان كاملين (4102 و4101 بلا تشويه) وحركة الخزينة الصافية = الفرق فقط.
@@ -1208,6 +1234,8 @@ interface DataState {
     newLines: CartLine[]
     treasury?: TreasuryAccount
     notes: string
+    /** موافقة المشرف — تمرر لمستند المرتجع الداخلي */
+    approvedBy?: string
   }) => ExchangeDoc
   /** فتح أمر مطعم (صالة/تيك أواي/دليفري) — لا قيود حتى القفل؛ طاولة الصالة لا تُفتح مرتين */
   openRestaurantOrder: (args: { type: RestaurantOrderType; tableName?: string; deliveryInfo?: string; notes?: string }) => RestaurantOrder
@@ -1642,7 +1670,7 @@ interface DataState {
   /** خدمة محافظ/دفع إلكتروني (نمط mobileshop): الربح = المحصَّل − المدفوع للمزوّد، قيد متوازن فوري */
   postWalletService: (input: WalletServiceInput & { date?: string }) => WalletServiceOp
   /** مرتجع خدمة محافظ: قيد عاكس كامل + وسم العملية returned */
-  returnWalletService: (opId: number, reason: string) => WalletServiceOp
+  returnWalletService: (opId: number, reason: string, approvedBy?: string) => WalletServiceOp
   /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
   postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string }) => StockTransfer
   /** اقتناء أصل ثابت: قيد 1201 / 1101 + 2101 وترقيم FA-#### */
@@ -1690,19 +1718,19 @@ interface DataState {
    * يعكس الإيراد 4102 وحصة الضريبة 2102 النسبية، ويرد نقداً أو يودِع في حساب العميل.
    * لا مخزون يتحرك (خدمة). تراكمي بسقف إجمالي الأمر المُسلَّم.
    */
-  refundLaundryOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => LaundryOrder
+  refundLaundryOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => LaundryOrder
   /** مرتجع خدمة صيانة بعد التسليم: يعكس 4102+2102 نسبياً — القطع المركبة لها مرتجع بيع مستقل إن أعيدت */
-  refundMaintenanceTicket: (args: { ticketId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => MaintenanceTicket
+  refundMaintenanceTicket: (args: { ticketId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => MaintenanceTicket
   /** مرتجع نقلة (خصم/تعويض للعميل بعد الترحيل): يعكس 4102+2102 نسبياً — مصاريف النقلة تبقى (تكبدناها فعلاً) */
-  refundTrip: (args: { tripId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => Trip
+  refundTrip: (args: { tripId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => Trip
   /** مرتجع طلب تحاليل: يعكس 4102+2102 نسبياً + يعكس عمولة المُحيل غير المدفوعة بنفس النسبة */
-  refundLabOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => LabOrder
+  refundLabOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => LabOrder
   /** مرتجع زيارة عيادة (كشف ملغي/مبلغ تنازل عنه): يعكس 4102+2102 نسبياً — الآجل يخصم من ذمة المريض أولاً */
-  refundClinicVisit: (args: { visitId: number; amountMinor: number; mode: 'cash' | 'patient_credit'; treasury?: string; reason: string }) => ClinicVisit
+  refundClinicVisit: (args: { visitId: number; amountMinor: number; mode: 'cash' | 'patient_credit'; treasury?: string; reason: string; approvedBy?: string }) => ClinicVisit
   /** مرتجع عقد إيجار (خصم تعويضي): يعكس 4102+2102 نسبياً — التأمين له مساره في إقفال العقد */
-  refundRental: (args: { contractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => RentalContract
+  refundRental: (args: { contractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => RentalContract
   /** إشعار دائن على مستخلص (رفض المالك/الاستشاري جزءاً من الأعمال بعد الاعتماد): يعكس 4102+2102 نسبياً */
-  refundProjectExtract: (args: { extractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string }) => ProjectExtract
+  refundProjectExtract: (args: { extractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => ProjectExtract
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
   /** إهلاك تلقائي (طلب المالك): يرحّل كل الأشهر المتأخرة دفعة واحدة بلا تدخل — يُستدعى عند فتح البرنامج. يعيد عدد القيود المرحّلة */
@@ -1720,6 +1748,15 @@ interface DataState {
 }
 
 const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math.max(m, x.id), 0) + 1
+
+/**
+ * ختم موافقة المرتجع (نمط POS العالمي): requestedBy = المستخدم النشط،
+ * approvedBy = المشرف المُعتمِد (من حوار الرقم السري) أو المنفذ نفسه إن كان مخولاً
+ */
+function approvalStamp(state: Pick<DataState, 'appUsers' | 'currentUserId'>, approvedBy?: string): { approvedBy: string; requestedBy: string } {
+  const requester = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+  return { approvedBy: approvedBy ?? requester, requestedBy: requester }
+}
 
 /** كل الأكواد المرجعية المستخدمة حالياً — لضمان تفرد الكود الجديد */
 function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturns' | 'purchaseReturns'>): Set<string> {
@@ -2507,6 +2544,18 @@ export const useDataStore = create<DataState>()(
           reversesEntryId: null,
         }
 
+        // موافقة المشرف + سياق الوردية (المرتجع العابر للورديات يُحتسب في الوردية الحالية)
+        const requesterName = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+        const currentShift = currentOpenShift(state.shifts)
+        const saleShift = sale.shiftId != null ? state.shifts.find((sh) => sh.id === sale.shiftId) ?? null : null
+        const shiftCtx = describeShiftContext({
+          saleShiftId: sale.shiftId ?? null,
+          saleShiftStatus: saleShift?.status ?? null,
+          saleShiftOpenedBy: saleShift?.openedBy ?? null,
+          currentShiftId: currentShift?.id ?? null,
+          currentUserName: requesterName,
+        })
+
         const ret: SaleReturn = {
           id: returnId,
           returnNumber,
@@ -2518,9 +2567,12 @@ export const useDataStore = create<DataState>()(
           totals,
           journalEntryId: entryId,
           reason: args.reason,
-          shiftId: currentOpenShift(state.shifts)?.id ?? null,
+          shiftId: currentShift?.id ?? null,
           cashRefundMinor: split.cashMinor,
           creditRefundMinor: split.creditMinor,
+          approvedBy: args.approvedBy ?? requesterName,
+          requestedBy: requesterName,
+          ...(shiftCtx.crossShift ? { crossShiftNote: shiftCtx.noteAr } : {}),
         }
 
         // 4) عودة البضاعة للمخزون بتكلفة بيعها التاريخية (نفس قيمة القيد 1103 مدين)
@@ -2560,7 +2612,18 @@ export const useDataStore = create<DataState>()(
             updatedVariantStocks = [...updatedVariantStocks, { itemId: l.itemId, color: (l.variantColor ?? '').trim(), size: (l.variantSize ?? '').trim(), qty: l.qty }]
           }
         }
-        set({ saleReturns: [...state.saleReturns, ret], journal: [...state.journal, entry], items: updatedItems, serials: updatedSerials, variantStocks: updatedVariantStocks })
+        // سجل تدقيق دائم: من طلب، من اعتمد، وسياق الوردية العابرة إن وجد
+        const auditTitle = `مرتجع مبيعات ${returnNumber} (${(totals.totalMinor / 100).toFixed(2)})` +
+          (ret.approvedBy && ret.approvedBy !== requesterName ? ` — اعتمده «${ret.approvedBy}»` : '') +
+          (shiftCtx.crossShift ? ` — ${shiftCtx.noteAr}` : '')
+        set({
+          saleReturns: [...state.saleReturns, ret],
+          journal: [...state.journal, entry],
+          items: updatedItems,
+          serials: updatedSerials,
+          variantStocks: updatedVariantStocks,
+          auditLog: appendAudit(state.auditLog, [{ at: now, user: requesterName, kind: 'doc', title: auditTitle }]),
+        })
         return ret
       },
 
@@ -2967,6 +3030,7 @@ export const useDataStore = create<DataState>()(
           varianceMinor: variance,
           reason: args.reason.trim(),
           journalEntryId: null,
+          ...approvalStamp(state, args.approvedBy),
         }
         const journal = [...state.journal]
         if (entryLines.length) {
@@ -3012,6 +3076,7 @@ export const useDataStore = create<DataState>()(
             qtyByItem: args.returnQtyByItem,
             refund: 'cash',
             reason: `استبدال${args.notes.trim() ? ` — ${args.notes.trim()}` : ''}`,
+            approvedBy: args.approvedBy,
           })
           // 2) البيع الجديد بنفس المعاملة الضريبية للفاتورة الأصلية (اتساق المستندين)
           // G1: النسبة المخزنة أولاً — الاستنتاج للفواتير القديمة فقط
@@ -3826,6 +3891,39 @@ export const useDataStore = create<DataState>()(
           loggedOut: true,
           auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: activeUser?.nameAr ?? 'المالك', kind: 'auth', title: `تسجيل خروج «${activeUser?.nameAr ?? 'المالك'}»` }]),
         })
+      },
+      approveByPin: async (pin, permId) => {
+        const state = get()
+        const nowIso = new Date().toISOString()
+        // نفس حارس شاشة الدخول — لا تخمين رقم المشرف بلا حساب
+        const lockLeft = lockoutMinutesLeft(state.loginGuard, nowIso)
+        if (lockLeft > 0) throw new Error(`محاولات كثيرة خاطئة — الاعتماد مقفول ${lockLeft} دقيقة`)
+        // 1) رقم المالك الرئيسي يعتمد دائماً
+        if (state.ownerPinHash && (await verifyPin(pin, state.ownerPinHash))) {
+          set({ loginGuard: EMPTY_GUARD })
+          return { approvedBy: 'المالك' }
+        }
+        // 2) رقم أي مستخدم نشط مؤهل (owner أو يملك الصلاحية المطلوبة)
+        const roles = rolesWithOverrides(state.roleOverrides)
+        for (const u of state.appUsers) {
+          if (!u.active) continue
+          const perms = effectivePermissionsFor(u, roles)
+          if (!isEligibleApprover(u, perms, permId)) continue
+          if (await verifyPin(pin, u.pinHash)) {
+            set({ loginGuard: EMPTY_GUARD })
+            return { approvedBy: u.nameAr }
+          }
+        }
+        // رفض: يسجل محاولة فاشلة (قد يقفل مؤقتاً) + حدث تدقيق
+        const guard = registerFailure(state.loginGuard, nowIso)
+        const requester = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+        set({
+          loginGuard: guard,
+          auditLog: appendAudit(state.auditLog, [{ at: nowIso, user: requester, kind: 'auth', title: 'محاولة اعتماد عملية حساسة برقم سري خاطئ' }]),
+        })
+        throw new Error(guard.lockedUntil
+          ? `رقم مشرف خاطئ — قُفل الاعتماد ${lockoutMinutesLeft(guard, nowIso)} دقائق`
+          : 'الرقم السري غير صحيح أو صاحبه لا يملك صلاحية الاعتماد المطلوبة')
       },
       requestPinReset: (userId) => {
         const state = get()
@@ -6756,7 +6854,7 @@ export const useDataStore = create<DataState>()(
         return op
       },
 
-      returnWalletService: (opId, reason) => {
+      returnWalletService: (opId, reason, approvedBy) => {
         const state = get()
         const op = state.walletOps.find((o) => o.id === opId)
         if (!op) throw new Error('العملية غير موجودة')
@@ -6772,10 +6870,12 @@ export const useDataStore = create<DataState>()(
           lines: buildReversalLines(orig.lines),
           createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: orig.id,
         }
-        const updated: WalletServiceOp = { ...op, status: 'returned', returnEntryId: entryId }
+        const stamp = approvalStamp(state, approvedBy)
+        const updated: WalletServiceOp = { ...op, status: 'returned', returnEntryId: entryId, approvedBy: stamp.approvedBy, requestedBy: stamp.requestedBy }
         set({
           walletOps: state.walletOps.map((o) => (o.id === opId ? updated : o)),
           journal: [...state.journal.map((e) => (e.id === orig.id ? { ...e, reversedByEntryId: entryId } : e)), entry],
+          auditLog: appendAudit(state.auditLog, [{ at: now, user: stamp.requestedBy, kind: 'doc', title: `مرتجع خدمة محافظ ${op.opNumber}` + (stamp.approvedBy !== stamp.requestedBy ? ` — اعتمده «${stamp.approvedBy}»` : '') }]),
         })
         return updated
       },
@@ -7175,7 +7275,7 @@ export const useDataStore = create<DataState>()(
           ...order,
           refundedMinor: (order.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (order.refundedTaxMinor ?? 0) + built.taxShareMinor,
-          refunds: [...(order.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+          refunds: [...(order.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
         set({ laundryOrders: state.laundryOrders.map((o) => (o.id === order.id ? updated : o)), journal: [...state.journal, entry] })
         return updated
@@ -7211,7 +7311,7 @@ export const useDataStore = create<DataState>()(
           ...ticket,
           refundedMinor: (ticket.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (ticket.refundedTaxMinor ?? 0) + built.taxShareMinor,
-          refunds: [...(ticket.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+          refunds: [...(ticket.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
         set({ tickets: state.tickets.map((t) => (t.id === ticket.id ? updated : t)), journal: [...state.journal, entry] })
         return updated
@@ -7245,7 +7345,7 @@ export const useDataStore = create<DataState>()(
           ...trip,
           refundedMinor: (trip.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (trip.refundedTaxMinor ?? 0) + built.taxShareMinor,
-          refunds: [...(trip.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+          refunds: [...(trip.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
         set({ trips: state.trips.map((t) => (t.id === trip.id ? updated : t)), journal: [...state.journal, entry] })
         return updated
@@ -7314,7 +7414,7 @@ export const useDataStore = create<DataState>()(
           refundedTaxMinor: (order.refundedTaxMinor ?? 0) + built.taxShareMinor,
           commissionMinor: order.commissionMinor - commissionShare,
           commissionReversedMinor: (order.commissionReversedMinor ?? 0) + commissionShare,
-          refunds: [...(order.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+          refunds: [...(order.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
         // G9: تخفيض مطالبة الجهة بنصيبها من المردود — يوازي سطر 1110 الدائن في القيد
         const updatedClaims = providerShare > 0 && claim
@@ -7351,7 +7451,7 @@ export const useDataStore = create<DataState>()(
           ...visit,
           refundedMinor: (visit.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (visit.refundedTaxMinor ?? 0) + built.taxShareMinor,
-          refunds: [...(visit.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode === 'cash' ? 'cash' : 'customer_credit', reason: args.reason, journalEntryId: entryId }],
+          refunds: [...(visit.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode === 'cash' ? 'cash' : 'customer_credit', reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
         set({ clinicVisits: state.clinicVisits.map((v) => (v.id === visit.id ? updated : v)), journal: [...state.journal, entry] })
         return updated
@@ -7388,7 +7488,7 @@ export const useDataStore = create<DataState>()(
           ...contract,
           refundedMinor: (contract.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (contract.refundedTaxMinor ?? 0) + built.taxShareMinor,
-          refunds: [...(contract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+          refunds: [...(contract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
         set({ rentalContracts: state.rentalContracts.map((c) => (c.id === contract.id ? updated : c)), journal: [...state.journal, entry] })
         return updated
@@ -7423,7 +7523,7 @@ export const useDataStore = create<DataState>()(
           ...extract,
           refundedMinor: (extract.refundedMinor ?? 0) + args.amountMinor,
           refundedTaxMinor: (extract.refundedTaxMinor ?? 0) + built.taxShareMinor,
-          refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId }],
+          refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
         set({ projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? updated : e)), journal: [...state.journal, entry] })
         return updated

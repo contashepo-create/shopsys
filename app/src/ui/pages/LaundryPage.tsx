@@ -15,6 +15,7 @@ import {
 } from '../../core/laundry.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderReportShell } from '../../core/reportPrint.ts'
 
@@ -32,6 +33,7 @@ export function LaundryPage() {
   const { laundryOrders, customers, journal, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder } = useDataStore()
   const { setup, reportPrint, receipt } = useAppStore()
   const toast = useToast()
+  const approval = useSupervisorApproval() // موافقة المشرف على مرتجع الخدمة
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -95,14 +97,14 @@ export function LaundryPage() {
   const [refundMode, setRefundMode] = useState<'cash' | 'customer_credit'>('cash')
   const [refundTreasury, setRefundTreasury] = useState('1101')
   const [refundReason, setRefundReason] = useState('')
-  const doServiceRefund = (o: LaundryOrder) => {
+  const doServiceRefund = (o: LaundryOrder) => approval.request((approvedBy) => {
     try {
       const amountMinor = Math.round(Number(refundAmount) * 100)
-      const u = refundLaundryOrder({ orderId: o.id, amountMinor, mode: refundMode, treasury: refundTreasury, reason: refundReason.trim() })
+      const u = refundLaundryOrder({ orderId: o.id, amountMinor, mode: refundMode, treasury: refundTreasury, reason: refundReason.trim(), approvedBy })
       toast.show(`سُجل مرتجع خدمة ${u.orderNumber} بقيمة ${fmt(amountMinor)} ${cur.symbol} وتولد القيد العاكس ✅`)
       setRefundAmount(''); setRefundReason('')
     } catch (err) { toast.show((err as Error).message, 'error') }
-  }
+  })
 
   const move = (o: LaundryOrder, to: LaundryStatus) => {
     try {
@@ -368,6 +370,9 @@ export function LaundryPage() {
                     <TreasuryPicker value={refundTreasury} onChange={setRefundTreasury} compact />
                   </Field>
                 )}
+                {approval.willAskPin && (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400">🔐 سيُطلب رقم مشرف أو المالك لاعتماد هذا المرتجع.</p>
+                )}
                 <div className="flex justify-end">
                   <Btn onClick={() => doServiceRefund(viewing)} disabled={!refundAmount || Number(refundAmount) <= 0}>↩️ تنفيذ مرتجع الخدمة</Btn>
                 </div>
@@ -395,6 +400,7 @@ export function LaundryPage() {
           </div>
         )}
       </Modal>
+      {approval.dialog}
     </div>
   )
 }
