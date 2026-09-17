@@ -48,7 +48,13 @@ throws('سداد مكرر يُرفض', () => S().payConsignmentOwner(cg.id), 'ل
 
 console.log('🧾 بيع آجل بضريبة على العمولة')
 const cg2 = S().addConsignmentCar({ make: 'هيونداي', model: 'إلنترا', year: 2023, plateOrVin: 'م م م 99', ownerName: 'أ/ منى', ownerNetMinor: 90_000_000, askingPriceMinor: 100_000_000 })
-const sold2 = S().sellConsignmentCar({ id: cg2.id, salePriceMinor: 101_500_000, vatPercentOnCommission: 15, payment: 'credit', buyerName: 'شركة نقل' })
+// سياسة ربط المشتري (طلب المالك): الآجل يتطلب مشترياً من سجل العملاء — ذمته تُتتبع بكشفه
+throws('الآجل بلا مشترٍ مسجل يُرفض', () => S().sellConsignmentCar({ id: cg2.id, salePriceMinor: 101_500_000, vatPercentOnCommission: 15, payment: 'credit', buyerName: 'شركة نقل' }), 'سجل العملاء')
+S().addCustomer({ nameAr: 'شركة نقل', phone: '0100', address: '', notes: '', openingMinor: 0, creditLimitMinor: 0 })
+const buyerCo = S().customers.at(-1)
+const sold2 = S().sellConsignmentCar({ id: cg2.id, salePriceMinor: 101_500_000, vatPercentOnCommission: 15, payment: 'credit', buyerCustomerId: buyerCo.id })
+ok('المشتري مرتبط بسجل العملاء واسمه من السجل', sold2.buyerCustomerId === buyerCo.id && sold2.buyerName === 'شركة نقل')
+ok('ذمة البيع في رصيد المشتري', S().getCustomerBalance(buyerCo.id) === 101_500_000)
 // عمولة إجمالية 11.5م تشمل الضريبة: صافي 10م + ضريبة 1.5م
 ok('العمولة الصافية 10م والضريبة 1.5م', sold2.commissionMinor === 10_000_000 && sold2.vatOnCommissionMinor === 1_500_000)
 ok('العملاء مدينون بسعر البيع كاملاً', bal('1104') === 101_500_000)

@@ -12,6 +12,8 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { showroomSummary } from '../../core/cars.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderCarSaleContractHtml } from '../print/printCarSale.ts'
@@ -24,7 +26,7 @@ const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
 }
 
 export function CarsPage() {
-  const { cars, journal, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar } = useDataStore()
+  const { cars, journal, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -116,21 +118,29 @@ export function CarsPage() {
   const [sellFor, setSellFor] = useState<Car | null>(null)
   const [price, setPrice] = useState('')
   const [buyer, setBuyer] = useState('')
+  const [buyerCustomerId, setBuyerCustomerId] = useState(0)
   const [sellVat, setSellVat] = useState(false)
   const [sellPayment, setSellPayment] = useState<'cash' | 'credit'>('cash')
   const [sellTreasury, setSellTreasury] = useState('1101')
+  // بيع آجل فوق حد ائتمان المشتري — تجاوز باعتماد مدير (نفس نمط الكاشير)
+  const creditApproval = useSupervisorApproval('sales.credit.override')
 
-  const doSell = () => {
+  const doSell = (creditLimitOverrideBy?: string) => {
     if (!sellFor) return
     try {
       const c = sellCar({
         carId: sellFor.id, priceMinor: toMinor(price, cur.decimals),
         vatPercent: sellVat ? setup.vatPercent : 0, payment: sellPayment, buyerName: buyer.trim(), treasury: sellTreasury,
+        buyerCustomerId: buyerCustomerId || null,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       const p = c.saleProfitMinor ?? 0
       toast.show(p >= 0 ? `بيعت بربح ${fmt(p)} ${cur.symbol} 🎉` : `بيعت بخسارة ${fmt(-p)} ${cur.symbol}`, p >= 0 ? 'success' : 'error')
-      setSellFor(null); setPrice(''); setBuyer('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      setSellFor(null); setPrice(''); setBuyer(''); setBuyerCustomerId(0)
+    } catch (e) {
+      if (e instanceof CreditLimitError) { creditApproval.request((by) => doSell(by ?? 'المشرف')); return }
+      toast.show((e as Error).message, 'error')
+    }
   }
 
   /* تحويل للتأجير */
@@ -178,15 +188,23 @@ export function CarsPage() {
   const cgSellCar = consignmentCars.find((c) => c.id === cgSellFor)
   const [cgSalePrice, setCgSalePrice] = useState('')
   const [cgBuyer, setCgBuyer] = useState('')
+  const [cgBuyerCustomerId, setCgBuyerCustomerId] = useState(0)
   const [cgPayment, setCgPayment] = useState<'cash' | 'credit'>('cash')
   const [cgTreasury, setCgTreasury] = useState('1101')
-  const doSellConsignment = () => {
+  const doSellConsignment = (creditLimitOverrideBy?: string) => {
     if (!cgSellCar) return
     try {
-      const sold = sellConsignmentCar({ id: cgSellCar.id, salePriceMinor: toMinor(cgSalePrice, cur.decimals), payment: cgPayment, buyerName: cgBuyer.trim(), treasury: cgTreasury })
+      const sold = sellConsignmentCar({
+        id: cgSellCar.id, salePriceMinor: toMinor(cgSalePrice, cur.decimals), payment: cgPayment, buyerName: cgBuyer.trim(), treasury: cgTreasury,
+        buyerCustomerId: cgBuyerCustomerId || null,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null,
+      })
       toast.show(`بيعت الأمانة — عمولتك ${fmt(sold.commissionMinor ?? 0)} والمستحق للمالك ${fmt(sold.ownerNetMinor)} ✅`)
-      setCgSellFor(null); setCgSalePrice(''); setCgBuyer('')
-    } catch (e) { toast.show((e as Error).message, 'error') }
+      setCgSellFor(null); setCgSalePrice(''); setCgBuyer(''); setCgBuyerCustomerId(0)
+    } catch (e) {
+      if (e instanceof CreditLimitError) { creditApproval.request((by) => doSellConsignment(by ?? 'المشرف')); return }
+      toast.show((e as Error).message, 'error')
+    }
   }
 
   return (
@@ -313,8 +331,14 @@ export function CarsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label={`سعر البيع (${cur.symbol}) *`}><input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-              <Field label="المشتري"><input value={buyer} onChange={(e) => setBuyer(e.target.value)} className={inputCls} /></Field>
+              <Field label={sellPayment === 'credit' ? 'المشتري من سجل العملاء *' : 'المشتري من سجل العملاء'} hint="الآجل يتطلبه — ذمته تظهر بكشف حسابه ويسري حده الائتماني">
+                <select value={buyerCustomerId} onChange={(e) => setBuyerCustomerId(Number(e.target.value))} className={inputCls}>
+                  <option value={0}>— مشترٍ عابر (نقدي فقط) —</option>
+                  {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+                </select>
+              </Field>
             </div>
+            {!buyerCustomerId && <Field label="اسم المشتري (حر — للعقد المطبوع)"><input value={buyer} onChange={(e) => setBuyer(e.target.value)} className={inputCls} /></Field>}
             <div className="grid grid-cols-2 gap-3">
               <Field label="التحصيل">
                 <div className="flex gap-2">
@@ -474,7 +498,13 @@ export function CarsPage() {
             <Field label={`سعر البيع (${cur.symbol}) *`} hint={`صافي المالك ${fmt(cgSellCar.ownerNetMinor)} — ما زاد عمولتك`}>
               <input value={cgSalePrice} onChange={(e) => setCgSalePrice(e.target.value)} inputMode="decimal" className={inputCls} />
             </Field>
-            <Field label="اسم المشتري"><input value={cgBuyer} onChange={(e) => setCgBuyer(e.target.value)} className={inputCls} /></Field>
+            <Field label={cgPayment === 'credit' ? 'المشتري من سجل العملاء *' : 'المشتري من سجل العملاء'} hint="بيع الأمانة الآجل يتطلبه — الذمة على المشتري لا على مالك السيارة">
+              <select value={cgBuyerCustomerId} onChange={(e) => setCgBuyerCustomerId(Number(e.target.value))} className={inputCls}>
+                <option value={0}>— مشترٍ عابر (نقدي فقط) —</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
+              </select>
+            </Field>
+            {!cgBuyerCustomerId && <Field label="اسم المشتري (حر — للإيصال)"><input value={cgBuyer} onChange={(e) => setCgBuyer(e.target.value)} className={inputCls} /></Field>}
             <div className="grid grid-cols-2 gap-3">
               <Field label="التحصيل">
                 <div className="flex gap-2">
@@ -496,6 +526,7 @@ export function CarsPage() {
           </div>
         )}
       </Modal>
+      {creditApproval.dialog}
     </div>
   )
 }

@@ -235,8 +235,20 @@ export function customerUnitDocs(args: {
   }[]
   /** G3: مرتجعات خدمة مغسلة أودعت في حساب العميل (customer_credit) — تخفض ذمته */
   laundryOrders?: readonly { orderNumber: string; customerId: number | null; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
+  /** سيارات معرض بيعت آجلاً لمشترٍ مربوط بهذا العميل (ربط المشتري — طلب المالك) */
+  cars?: readonly { make: string; model: string; year: number; plateOrVin: string; buyerCustomerId?: number | null; salePayment?: string; saleTotalMinor?: number | null; soldAt: string | null }[]
+  /** سيارات أمانة بيعت آجلاً لمشترٍ مربوط بهذا العميل */
+  consignmentCars?: readonly { make: string; model: string; plateOrVin: string; buyerCustomerId?: number | null; salePayment?: string; salePriceMinor: number | null; soldAt: string | null }[]
 }): { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[] {
   const rows: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[] = []
+  for (const c of args.cars ?? []) {
+    if (c.buyerCustomerId !== args.customerId || c.salePayment !== 'credit' || !c.soldAt) continue
+    if ((c.saleTotalMinor ?? 0) > 0) rows.push({ docLabel: `بيع سيارة ${c.make} ${c.model} ${c.year} (${c.plateOrVin}) آجل`, date: c.soldAt, debitMinor: c.saleTotalMinor ?? 0, creditMinor: 0 })
+  }
+  for (const c of args.consignmentCars ?? []) {
+    if (c.buyerCustomerId !== args.customerId || c.salePayment !== 'credit' || !c.soldAt) continue
+    if ((c.salePriceMinor ?? 0) > 0) rows.push({ docLabel: `بيع أمانة ${c.make} ${c.model} (${c.plateOrVin}) آجل`, date: c.soldAt, debitMinor: c.salePriceMinor ?? 0, creditMinor: 0 })
+  }
   for (const o of args.laundryOrders ?? []) {
     if (o.customerId !== args.customerId) continue
     for (const r of o.refunds ?? []) {

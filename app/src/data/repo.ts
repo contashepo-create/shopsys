@@ -496,6 +496,12 @@ export interface Car {
   saleEntryId: number | null
   soldAt: string | null
   buyerName: string
+  /** ربط المشتري بسجل العملاء (طلب المالك): البيع الآجل يتطلبه — ذمته تظهر بكشفه ويسري حده */
+  buyerCustomerId?: number | null
+  /** طريقة تحصيل البيع — credit = الإجمالي دين على المشتري */
+  salePayment?: 'cash' | 'credit'
+  /** إجمالي البيع بالضريبة (ما قُيّد على 1104 في الآجل) — salePriceMinor صافٍ قبلها */
+  saleTotalMinor?: number | null
   /** ربط بسجل معدات الإيجار إن حُوّلت للتأجير */
   rentalEquipmentId: number | null
   notes: string
@@ -524,6 +530,10 @@ export interface ConsignmentCar {
   commissionMinor: number | null
   vatOnCommissionMinor: number
   buyerName: string
+  /** ربط المشتري بسجل العملاء — بيع الأمانة الآجل يتطلبه (ذمة 1104 على المشتري) */
+  buyerCustomerId?: number | null
+  /** طريقة التحصيل — credit = سعر البيع كاملاً دين على المشتري */
+  salePayment?: 'cash' | 'credit'
   saleEntryId: number | null
   soldAt: string | null
   payoutEntryId: number | null
@@ -1680,14 +1690,25 @@ interface DataState {
   /** تجهيز يُرسمل على تكلفة السيارة (سمكرة/دهان/قطع) */
   addCarPrep: (carId: number, amountMinor: number, payment: 'cash' | 'credit', description: string, treasury?: string) => void
   /** بيع سيارة: إيراد + إخراج التكلفة الكاملة من المخزون في قيد واحد */
-  sellCar: (args: { carId: number; priceMinor: number; vatPercent: number; payment: 'cash' | 'credit'; buyerName: string; treasury?: string }) => Car
+  sellCar: (args: {
+    carId: number; priceMinor: number; vatPercent: number; payment: 'cash' | 'credit'; buyerName: string; treasury?: string
+    /** مشترٍ من سجل العملاء — إلزامي للبيع الآجل (الذمة تُتتبع بكشفه ويسري حده الائتماني) */
+    buyerCustomerId?: number | null
+    /** تجاوز حد ائتمان المشتري بموافقة مدير */
+    creditLimitOverrideBy?: string | null
+  }) => Car
   /** تحويل سيارة للتأجير: تُنشأ كمعدة في وحدة الإيجار وتُربط بها */
   moveCarToRental: (carId: number, dailyRateMinor: number, monthlyRateMinor: number) => void
   // ————— سيارات الأمانة (بيع بالعمولة) —————
   /** استلام سيارة أمانة: لا قيد — تسجيل فقط */
   addConsignmentCar: (args: { make: string; model: string; year: number; plateOrVin: string; ownerName: string; ownerPhone?: string; ownerNetMinor: number; askingPriceMinor: number; notes?: string }) => ConsignmentCar
   /** بيع الأمانة: خزينة|عملاء / 2110 صافي المالك + 4109 عمولة (+2102 على العمولة) */
-  sellConsignmentCar: (args: { id: number; salePriceMinor: number; vatPercentOnCommission?: number; payment: 'cash' | 'credit'; buyerName?: string; treasury?: string }) => ConsignmentCar
+  sellConsignmentCar: (args: {
+    id: number; salePriceMinor: number; vatPercentOnCommission?: number; payment: 'cash' | 'credit'; buyerName?: string; treasury?: string
+    /** مشترٍ من سجل العملاء — إلزامي للبيع الآجل */
+    buyerCustomerId?: number | null
+    creditLimitOverrideBy?: string | null
+  }) => ConsignmentCar
   /** سداد صافي المالك: 2110 / خزينة — يقفل الملف */
   payConsignmentOwner: (id: number, treasury?: string) => void
   /** رد سيارة الأمانة لمالكها دون بيع */
@@ -4459,6 +4480,7 @@ export const useDataStore = create<DataState>()(
             projectExtracts: state.projectExtracts, linkedProjectIds: state.projects.filter((p) => p.clientId === customerId).map((p) => p.id),
             installmentPlans: state.installmentPlans,
             laundryOrders: state.laundryOrders,
+            cars: state.cars, consignmentCars: state.consignmentCars,
           }),
         }))
       },
@@ -6751,8 +6773,19 @@ export const useDataStore = create<DataState>()(
         const car = state.cars.find((c) => c.id === args.carId)
         if (!car) throw new Error('السيارة غير موجودة')
         if (car.status !== 'in_stock') throw new Error(car.status === 'sold' ? 'السيارة مباعة بالفعل' : 'السيارة مؤجرة حالياً — أنهِ عقدها أولاً')
+        // ربط المشتري بسجل العملاء (طلب المالك): الآجل دين 1104 يحتاج عميلاً مسجلاً يُتتبع بكشفه
+        if (args.payment === 'credit' && args.buyerCustomerId == null) {
+          throw new Error('بيع السيارة الآجل يتطلب اختيار المشتري من سجل العملاء — لا دين على مشترٍ غير مسجل')
+        }
+        if (args.buyerCustomerId != null && !state.customers.some((c) => c.id === args.buyerCustomerId)) {
+          throw new Error('المشتري غير موجود في سجل العملاء')
+        }
         const fullCost = car.purchaseCostMinor + car.prepCostMinor
         const totals = computeCarSale(args.priceMinor, fullCost, args.vatPercent)
+        // حد الائتمان: إجمالي البيع الآجل (بالضريبة) دين على المشتري
+        if (args.payment === 'credit') {
+          guardCreditLimit(get(), args.buyerCustomerId, totals.totalMinor, args.creditLimitOverrideBy)
+        }
         const label = `${car.make} ${car.model} ${car.year} (${car.plateOrVin})`
         const lines = buildCarSaleEntry(totals, args.payment, label, args.treasury ?? '1101')
         const now = new Date().toISOString()
@@ -6763,9 +6796,13 @@ export const useDataStore = create<DataState>()(
           sourceType: 'car_sale', sourceId: car.id, lines,
           createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
+        const buyerCustomer = args.buyerCustomerId != null ? state.customers.find((c) => c.id === args.buyerCustomerId) : undefined
         const updated: Car = {
           ...car, status: 'sold', salePriceMinor: totals.priceMinor, saleProfitMinor: totals.profitMinor,
-          saleEntryId: entryId, soldAt: now, buyerName: args.buyerName.trim(),
+          saleEntryId: entryId, soldAt: now,
+          buyerName: (args.buyerName.trim() || buyerCustomer?.nameAr) ?? '',
+          buyerCustomerId: args.buyerCustomerId ?? null,
+          salePayment: args.payment, saleTotalMinor: totals.totalMinor,
         }
         set({ cars: state.cars.map((c) => (c.id === car.id ? updated : c)), journal: [...state.journal, entry] })
         return updated
@@ -6815,6 +6852,16 @@ export const useDataStore = create<DataState>()(
         const car = state.consignmentCars.find((c) => c.id === args.id)
         if (!car) throw new Error('سيارة الأمانة غير موجودة')
         if (car.status !== 'available') throw new Error('السيارة ليست معروضة — بيعت أو رُدت')
+        // ربط المشتري بسجل العملاء: بيع الأمانة الآجل ذمة 1104 تحتاج عميلاً مسجلاً
+        if (args.payment === 'credit' && args.buyerCustomerId == null) {
+          throw new Error('بيع الأمانة الآجل يتطلب اختيار المشتري من سجل العملاء')
+        }
+        if (args.buyerCustomerId != null && !state.customers.some((c) => c.id === args.buyerCustomerId)) {
+          throw new Error('المشتري غير موجود في سجل العملاء')
+        }
+        if (args.payment === 'credit') {
+          guardCreditLimit(get(), args.buyerCustomerId, args.salePriceMinor, args.creditLimitOverrideBy)
+        }
         const label = `${car.make} ${car.model} ${car.year} (${car.plateOrVin})`
         const grossCommission = args.salePriceMinor - car.ownerNetMinor
         if (grossCommission < 0) throw new Error('سعر البيع أقل من صافي المالك المتفق عليه')
@@ -6830,10 +6877,14 @@ export const useDataStore = create<DataState>()(
           sourceType: 'consignment_sale', sourceId: car.id, lines,
           createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
+        const buyerCustomer = args.buyerCustomerId != null ? state.customers.find((c) => c.id === args.buyerCustomerId) : undefined
         const updated: ConsignmentCar = {
           ...car, status: 'sold', salePriceMinor: args.salePriceMinor,
           commissionMinor: grossCommission - vatOnCommission, vatOnCommissionMinor: vatOnCommission,
-          buyerName: args.buyerName ?? '', saleEntryId: entryId, soldAt: now,
+          buyerName: (args.buyerName?.trim() || buyerCustomer?.nameAr) ?? '',
+          buyerCustomerId: args.buyerCustomerId ?? null,
+          salePayment: args.payment,
+          saleEntryId: entryId, soldAt: now,
         }
         set({ consignmentCars: state.consignmentCars.map((c) => (c.id === car.id ? updated : c)), journal: [...state.journal, entry] })
         return updated
