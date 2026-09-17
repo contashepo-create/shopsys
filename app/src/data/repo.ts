@@ -1257,7 +1257,10 @@ interface DataState {
    */
   postExchange: (args: {
     originalSaleId: number
-    returnQtyByItem: Map<number, number>
+    /** المسار القديم (تجميع بالصنف) — يُستخدم فقط إن غاب returnLineSpecs */
+    returnQtyByItem?: Map<number, number>
+    /** النمط العالمي: إرجاع سطر بسطر بحالته (سليم/تالف) — التالف لا يعود للمخزون */
+    returnLineSpecs?: ReturnLineSpec[]
     newLines: CartLine[]
     treasury?: TreasuryAccount
     notes: string
@@ -3112,8 +3115,11 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((x) => x.id === args.originalSaleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        const retLinesForValidation = args.returnLineSpecs?.length
+          ? args.returnLineSpecs.map((s) => ({ itemId: sale.lines[s.lineIndex]?.itemId ?? -1, qty: s.qty }))
+          : [...(args.returnQtyByItem ?? new Map())].map(([itemId, qty]) => ({ itemId, qty }))
         const coreErrors = validateExchange({
-          returnLines: [...args.returnQtyByItem].map(([itemId, qty]) => ({ itemId, qty })),
+          returnLines: retLinesForValidation,
           newLines: args.newLines.map((l) => ({ itemId: l.itemId, qty: l.qty, variantColor: l.variantColor, variantSize: l.variantSize })),
         })
         if (coreErrors.length) throw new Error(coreErrors.join(' — '))
@@ -3129,7 +3135,9 @@ export const useDataStore = create<DataState>()(
           const isCreditSale = sale.payment === 'credit' && sale.customerId != null
           const ret = get().postSaleReturn({
             saleId: sale.id,
-            qtyByItem: args.returnQtyByItem,
+            ...(args.returnLineSpecs?.length
+              ? { lineSpecs: args.returnLineSpecs }
+              : { qtyByItem: args.returnQtyByItem ?? new Map() }),
             refund: isCreditSale ? 'credit' : 'cash',
             reason: `استبدال${args.notes.trim() ? ` — ${args.notes.trim()}` : ''}`,
             reasonCode: 'wrong_size',

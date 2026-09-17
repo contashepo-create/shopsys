@@ -247,4 +247,51 @@ const line = (qty) => ({ itemId: item.id, nameAr: item.nameAr, qty, unitPriceMin
   ok('التوجيه + القائمة + الصلاحيات (للجميع) موصولة للشروحات')
 }
 
+/* ═══ 7) استكمالات الجولة الثانية: الاستبدال سطر-بسطر + بنود النقلات/الإيجار/العيادة ═══ */
+{
+  // postExchange بreturnLineSpecs: قطعة تالفة تُستبدل — لا تعود للمخزون وتذهب للهالك
+  const sale = st().postSale({ lines: [line(2)], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101' })
+  const stockBefore = st().items.find((i) => i.id === item.id).stockQty
+  const doc = st().postExchange({
+    originalSaleId: sale.id,
+    returnLineSpecs: [{ lineIndex: 0, qty: 1, condition: 'damaged' }],
+    newLines: [line(1)],
+    notes: 'استبدال تالف بسليم',
+  })
+  assert.equal(doc.netMinor, 0) // نفس السعر — تبادل متكافئ
+  const ret = st().saleReturns.find((r) => r.id === doc.returnId)
+  assert.equal(ret.lines[0].condition, 'damaged')
+  assert.equal(ret.lines[0].saleLineIndex, 0)
+  const entry = st().journal.find((e) => e.id === ret.journalEntryId)
+  assert.ok(entry.lines.some((l) => l.accountCode === '5111' && l.debit === 600))
+  assert.ok(!entry.lines.some((l) => l.accountCode === '1103'))
+  // المخزون: التالف لم يعد (−0) والبيع الجديد خصم 1 ⇒ صافي −1
+  assert.equal(st().items.find((i) => i.id === item.id).stockQty, stockBefore - 1)
+  ok('postExchange بلاين-سبيكس: التالف للهالك لا للمخزون، والمستند متكافئ الصافي')
+
+  // التوافق الخلفي: qtyByItem القديمة ما زالت تعمل
+  const sale2 = st().postSale({ lines: [line(1)], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101' })
+  const doc2 = st().postExchange({ originalSaleId: sale2.id, returnQtyByItem: new Map([[item.id, 1]]), newLines: [line(1)], notes: '' })
+  assert.equal(doc2.netMinor, 0)
+  ok('postExchange التوافق الخلفي: qtyByItem القديمة تعمل')
+
+  // فحص UI نصي: ExchangePage سطر-بسطر بحالة
+  const exp = readFileSync(join(root, 'src/ui/pages/ExchangePage.tsx'), 'utf8')
+  for (const marker of ['remainingByLine', 'returnLineSpecs', 'retConds', "condition: retConds[idx] ?? 'resellable'", 'تالف']) {
+    assert.ok(exp.includes(marker), `ExchangePage يفتقد: ${marker}`)
+  }
+  ok('ExchangePage: مُرقّاة لسطر-بسطر بحالة سليم/تالف')
+
+  // النقلات/الإيجار/العيادة: refundableItems موصولة
+  const trips = readFileSync(join(root, 'src/ui/pages/TripsPage.tsx'), 'utf8')
+  assert.ok(trips.includes('refundableItems') && trips.includes("key: 'base'") && trips.includes("source === 'customer'"))
+  ok('TripsPage: بنود الاسترداد (نولون + مصاريف على العميل)')
+  const rental = readFileSync(join(root, 'src/ui/pages/RentalContractsPage.tsx'), 'utf8')
+  assert.ok(rental.includes('refundableItems') && rental.includes("key: 'rent'") && rental.includes("key: 'extra'"))
+  ok('RentalContractsPage: بنود الاسترداد (إيجار + تسوية تجاوز)')
+  const clinic = readFileSync(join(root, 'src/ui/pages/ClinicPages.tsx'), 'utf8')
+  assert.ok(clinic.includes('refundableItems') && clinic.includes("key: 'fee'"))
+  ok('ClinicPages: بند أتعاب الزيارة قابل للاختيار')
+}
+
 console.log(`\n✅ verify_refund_freedom_guides: ${pass}/${pass} فحصاً نجح`)

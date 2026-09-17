@@ -664,6 +664,9 @@ export function ClinicPatientsPage() {
             fmt={fmt}
             allowCredit={true}
             creditLabel="حساب المريض"
+            refundableItems={[
+              { key: 'fee', label: `أتعاب الزيارة ${refundingVisit.visitNumber}`, valueMinor: refundingVisit.totals.feeMinor },
+            ]}
             hint="كشف ملغي أو تنازل عن أتعاب: يعكس الإيراد وحصة الضريبة — «على حساب المريض» يخفض مديونيته إن وُجدت."
             onSubmit={(a) => {
               try {

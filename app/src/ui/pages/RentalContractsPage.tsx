@@ -435,6 +435,10 @@ export function RentalContractsPage() {
               currencySymbol={cur.symbol}
               fmt={fmt}
               allowCredit={viewing.customerId != null}
+              refundableItems={[
+                { key: 'rent', label: `إيجار ${viewing.days} × ${fmt(viewing.dailyRateMinor)} — ${viewing.equipmentName}`, valueMinor: viewing.totals.rentMinor, qty: viewing.days },
+                ...(viewing.extraMinor > 0 ? [{ key: 'extra', label: 'تسوية تجاوز العدّاد/المدة', valueMinor: viewing.extraMinor }] : []),
+              ]}
               hint="خصم تعويضي على الإيجار (عطل المعدة/إنهاء مبكر): يعكس الإيراد وحصة الضريبة — التأمين له مساره عند إقفال العقد."
               onSubmit={(a) => {
                 try {

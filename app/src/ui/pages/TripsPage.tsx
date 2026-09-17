@@ -435,6 +435,13 @@ export function TripsPage() {
               currencySymbol={cur.symbol}
               fmt={fmt}
               allowCredit={viewing.customerId != null}
+              refundableItems={[
+                { key: 'base', label: `نولون النقلة (${viewing.qty} × ${fmt(viewing.unitPriceMinor)})`, valueMinor: viewing.totals.baseMinor, qty: viewing.qty },
+                ...viewing.expenses
+                  .map((ex, i) => ({ ex, i }))
+                  .filter(({ ex }) => ex.source === 'customer')
+                  .map(({ ex, i }) => ({ key: `exp:${i}`, label: `${ex.nameAr} (على العميل)`, valueMinor: ex.amountMinor, qty: ex.qty })),
+              ]}
               hint="خصم/تعويض للعميل عن النقلة (تأخير/تلفيات): يعكس الإيراد وحصة الضريبة — مصاريف النقلة تبقى لأنها تُكبدت فعلاً."
               onSubmit={(a) => {
                 try {
