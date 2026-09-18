@@ -127,6 +127,27 @@ export function JewelryPage() {
     .map((p) => ({ p, item: items.find((it) => it.id === p.itemId) }))
     .filter((x) => x.item)
 
+  /* تقييم المخزون الذهبي بالعيار بسعر اليوم (نمط SwilERP/BUSY valuation report):
+     لكل عيار: مجموع (وزن القطعة × رصيدها) × جرام اليوم + كسر العيار بوزنه × جرام اليوم */
+  const valuation = useMemo(() => {
+    const per = new Map(ALL_KARATS.map((k) => [k, { grams: 0, pieces: 0, goldMinor: 0 }]))
+    for (const { p, item } of profiled) {
+      const qty = Math.max(0, item!.stockQty ?? 0)
+      if (qty <= 0) continue
+      const row = per.get(p.karat)!
+      row.grams += p.weightGrams * qty
+      row.pieces += qty
+      row.goldMinor += Math.round(p.weightGrams * qty * (gramPrices[p.karat] ?? 0))
+    }
+    // كسر المحل (اللوطات المتبقية) يقيم بسعر اليوم أيضاً
+    for (const k of ALL_KARATS) {
+      const sc = scrapByKarat.get(k)
+      if (sc && sc.grams > 0) per.get(k)!.goldMinor += Math.round(sc.grams * (gramPrices[k] ?? 0))
+    }
+    const totalMinor = [...per.values()].reduce((a, r) => a + r.goldMinor, 0)
+    return { per, totalMinor }
+  }, [profiled, gramPrices, scrapByKarat])
+
   return (
     <div className="p-5 space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -158,6 +179,31 @@ export function JewelryPage() {
           </div>
         ))}
       </div>
+
+      {/* تقييم المخزون الذهبي بسعر اليوم (نمط SwilERP valuation) */}
+      {valuation.totalMinor > 0 && (
+        <div className="rounded-2xl border border-yellow-500/30 bg-gradient-to-l from-yellow-500/10 to-transparent p-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <div className="text-[11px] font-bold text-slate-500">💰 قيمة الذهب في المحل بسعر اليوم (أصناف × أرصدتها + الكسر)</div>
+              <div className="text-2xl font-black text-yellow-600">{fmt(valuation.totalMinor)} {cur.symbol}</div>
+            </div>
+            <div className="flex gap-4 text-center">
+              {ALL_KARATS.map((k) => {
+                const r = valuation.per.get(k)!
+                if (r.goldMinor <= 0) return null
+                return (
+                  <div key={k}>
+                    <div className="text-[10px] text-slate-400">{KARAT_LABELS[k]}</div>
+                    <div className="text-[13px] font-black text-slate-700 dark:text-slate-200">{fmt(r.goldMinor)}</div>
+                    <div className="text-[10px] text-slate-400">{r.pieces > 0 ? `${r.pieces} قطعة · ` : ''}{(r.grams + (scrapByKarat.get(k)?.grams ?? 0)).toFixed(1)} جم</div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* الأصناف الموصوفة */}
       {profiled.length === 0 ? (

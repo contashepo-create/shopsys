@@ -30,6 +30,10 @@ export interface NotificationsInput {
   installmentPlans: { id: number; planNumber: string; customerId: number; items: InstallmentItem[] }[]
   customerName: (id: number) => string
   cheques: { chequeNumber: string; direction: string; partyName: string; amountMinor: number; dueDate: string; status: string }[]
+  /** عقود إيجار متجاوزة موعد الإرجاع (نمط Point of Rental: overdue return alerts) */
+  overdueRentals?: { id: number; contractNumber: string; equipmentName: string; expectedEnd: string }[]
+  /** تذاكر صيانة/أوامر غسيل متجاوزة موعد التسليم الموعود */
+  overduePromises?: { id: number; docNumber: string; what: string; kind: 'maintenance' | 'laundry'; promisedAt: string }[]
   /** بلاغات المشاكل الداخلية المفتوحة (مستخدم → مدير/محاسب) — طلب المالك */
   openIssues?: { id: number; title: string; reportedBy: string }[]
   /** طلبات استعادة كلمة السر المفتوحة — تظهر للمالك ليعيّن رقماً جديداً */
@@ -70,6 +74,32 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       severity: it.stockQty <= 0 ? 'danger' : 'warn',
       route: '/inventory/items',
       perm: 'inv.view',
+    })
+  }
+
+  // 1.6) عقود إيجار متجاوزة موعد الإرجاع (Point of Rental: overdue alerts)
+  for (const r of input.overdueRentals ?? []) {
+    out.push({
+      id: `rentover:${r.id}`,
+      icon: '🚜',
+      title: `إيجار متأخر: ${r.equipmentName}`,
+      body: `العقد ${r.contractNumber} تجاوز موعد الإرجاع (${r.expectedEnd.slice(0, 10)}) — تابع العميل أو سوِّ التجاوز عند الإقفال`,
+      severity: 'danger',
+      route: '/rental/contracts',
+      perm: 'ops.activity.use', // وحدات النشاط التشغيلية
+    })
+  }
+
+  // 1.7) مواعيد تسليم موعودة متجاوزة (صيانة/مغسلة) — أهم التزام أمام العميل
+  for (const t of input.overduePromises ?? []) {
+    out.push({
+      id: `promise:${t.kind}:${t.id}`,
+      icon: '⏰',
+      title: `موعد تسليم متجاوز: ${t.what}`,
+      body: `${t.docNumber} وُعد العميل بتسليمه ${t.promisedAt.slice(0, 10)} — اتصل به أو أعد جدولته`,
+      severity: 'warn',
+      route: t.kind === 'maintenance' ? '/maintenance/tickets' : '/laundry/orders',
+      perm: 'ops.activity.use',
     })
   }
 

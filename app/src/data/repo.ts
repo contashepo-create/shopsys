@@ -312,9 +312,12 @@ export interface LabOrderTest {
   priceMinor: number
   status: TestStatus
   resultValue: string // '' = لم تُدخل
-  resultFlag: 'low' | 'high' | 'normal' | 'none'
+  resultFlag: 'low' | 'high' | 'critical_low' | 'critical_high' | 'normal' | 'none'
   refLow: number | null // النطاق المطبق لهذا المريض (لقطة)
   refHigh: number | null
+  /** القيم الحرجة المطبقة (لقطة) — تجاوزها يستلزم إبلاغ الطبيب فوراً (CAP/CLIA) */
+  criticalLow?: number | null
+  criticalHigh?: number | null
   collectedAt: string | null
   resultedAt: string | null
   approvedAt: string | null
@@ -5445,6 +5448,7 @@ export const useDataStore = create<DataState>()(
             testId: t.id, code: t.code, nameAr: t.nameAr, unit: t.unit, priceMinor: t.priceMinor,
             status: 'pending', resultValue: '', resultFlag: 'none',
             refLow: range?.low ?? null, refHigh: range?.high ?? null,
+            criticalLow: range?.criticalLow ?? null, criticalHigh: range?.criticalHigh ?? null,
             collectedAt: null, resultedAt: null, approvedAt: null,
           }
         })
@@ -5858,6 +5862,7 @@ export const useDataStore = create<DataState>()(
             testId: t.id, code: t.code, nameAr: t.nameAr, unit: t.unit, priceMinor: t.priceMinor,
             status: 'pending', resultValue: '', resultFlag: 'none',
             refLow: range?.low ?? null, refHigh: range?.high ?? null,
+            criticalLow: range?.criticalLow ?? null, criticalHigh: range?.criticalHigh ?? null,
             collectedAt: null, resultedAt: null, approvedAt: null,
           }
         })
@@ -5894,7 +5899,7 @@ export const useDataStore = create<DataState>()(
             ? {
                 resultedAt: now,
                 resultValue: resultValue!.trim(),
-                resultFlag: evaluateResultFn(resultValue!, test.refLow == null && test.refHigh == null ? null : { gender: 'any', ageMinYears: 0, ageMaxYears: 999, low: test.refLow, high: test.refHigh }),
+                resultFlag: evaluateResultFn(resultValue!, test.refLow == null && test.refHigh == null && test.criticalLow == null && test.criticalHigh == null ? null : { gender: 'any', ageMinYears: 0, ageMaxYears: 999, low: test.refLow, high: test.refHigh, criticalLow: test.criticalLow, criticalHigh: test.criticalHigh }),
               }
             : {}),
           ...(to === 'approved' ? { approvedAt: now } : {}),

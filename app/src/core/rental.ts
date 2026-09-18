@@ -148,6 +148,67 @@ export function rentalReport(
   }
 }
 
+/* ─── معدل الاستغلال (نمط Point of Rental/EZRentOut: utilization rate) ───
+   نسبة الأيام المؤجَّرة من أيام الفترة لكل معدة — المعدة الراكدة تظهر فوراً */
+
+export interface UtilizationRow {
+  equipmentId: number
+  equipmentName: string
+  rentedDays: number
+  periodDays: number
+  utilizationPercent: number // 0..100
+  revenueMinor: Minor
+}
+
+export function utilizationReport(
+  contracts: {
+    equipmentId: number | null
+    equipmentName: string
+    date: string
+    days: number
+    rateType?: 'hourly' | 'daily' | 'monthly'
+    totals: RentalTotals
+  }[],
+  equipment: { id: number; nameAr: string; isActive?: boolean }[],
+  period: { from: string; to: string },
+): UtilizationRow[] {
+  const periodDays = Math.max(1, daysBetweenIso(period.from, period.to) + 1)
+  const rows: UtilizationRow[] = []
+  for (const eq of equipment) {
+    if (eq.isActive === false) continue
+    let rented = 0
+    let revenue = 0
+    for (const c of contracts) {
+      if (c.equipmentId !== eq.id) continue
+      // مدة العقد بالأيام (الساعي: نسبة من يوم، الشهري: 30 يوماً للوحدة)
+      const contractDays = (c.rateType ?? 'daily') === 'hourly' ? c.days / 24 : (c.rateType ?? 'daily') === 'monthly' ? c.days * 30 : c.days
+      const start = c.date.slice(0, 10)
+      const end = rentalExpectedEnd(c.date, c.days, c.rateType ?? 'daily').slice(0, 10)
+      // التقاطع مع الفترة
+      const s0 = start > period.from ? start : period.from
+      const e0 = end < period.to ? end : period.to
+      if (s0 > e0) continue
+      const overlap = Math.min(contractDays, daysBetweenIso(s0, e0) + 1)
+      rented += overlap
+      revenue += c.totals.rentMinor
+    }
+    rows.push({
+      equipmentId: eq.id,
+      equipmentName: eq.nameAr,
+      rentedDays: Math.round(rented * 10) / 10,
+      periodDays,
+      utilizationPercent: Math.min(100, Math.round((rented / periodDays) * 100)),
+      revenueMinor: revenue,
+    })
+  }
+  rows.sort((a, b) => b.utilizationPercent - a.utilizationPercent)
+  return rows
+}
+
+function daysBetweenIso(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000)
+}
+
 /* ─── جولة مراجعة إيجار المعدات (الطلبات 6–9): تجاوز المدة ─── */
 
 /** نهاية العقد المتوقعة حسب نوع التسعير: ساعات تُحوَّل زمنياً، أيام وأشهر تقويمياً */

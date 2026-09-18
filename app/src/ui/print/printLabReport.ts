@@ -30,15 +30,17 @@ export function renderLabReportHtml(
   const rows = order.tests
     .map((t) => {
       const flag =
-        t.resultFlag === 'high'
-          ? '<span style="color:#dc2626;font-weight:800">▲ مرتفع</span>'
-          : t.resultFlag === 'low'
-            ? '<span style="color:#2563eb;font-weight:800">▼ منخفض</span>'
-            : t.resultFlag === 'normal'
-              ? '<span style="color:#059669;font-weight:700">طبيعي</span>'
-              : ''
+        t.resultFlag === 'critical_high' || t.resultFlag === 'critical_low'
+          ? `<span style="color:#fff;background:#dc2626;font-weight:900;padding:2px 8px;border-radius:6px">🚨 قيمة حرجة ${t.resultFlag === 'critical_high' ? 'مرتفعة' : 'منخفضة'}</span>`
+          : t.resultFlag === 'high'
+            ? '<span style="color:#dc2626;font-weight:800">▲ مرتفع</span>'
+            : t.resultFlag === 'low'
+              ? '<span style="color:#2563eb;font-weight:800">▼ منخفض</span>'
+              : t.resultFlag === 'normal'
+                ? '<span style="color:#059669;font-weight:700">طبيعي</span>'
+                : ''
       const val = t.resultValue ? esc(t.resultValue) : '<span style="color:#94a3b8">لم تُدخل</span>'
-      const bg = t.resultFlag === 'high' ? 'background:#fef2f2' : t.resultFlag === 'low' ? 'background:#eff6ff' : ''
+      const bg = t.resultFlag === 'critical_high' || t.resultFlag === 'critical_low' ? 'background:#fee2e2;border-right:4px solid #dc2626' : t.resultFlag === 'high' ? 'background:#fef2f2' : t.resultFlag === 'low' ? 'background:#eff6ff' : ''
       return `<tr style="${bg}">
         <td>${esc(t.code)}</td>
         <td style="font-weight:700">${esc(t.nameAr)}</td>

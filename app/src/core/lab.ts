@@ -24,6 +24,9 @@ export interface RefRange {
   ageMaxYears: number // شامل (999 = بلا حد)
   low: number | null
   high: number | null
+  /** القيم الحرجة (معيار CAP/CLIA critical values): تجاوزها يستلزم إبلاغ الطبيب فوراً */
+  criticalLow?: number | null
+  criticalHigh?: number | null
 }
 
 export interface LabTest {
@@ -66,7 +69,7 @@ export function matchRefRange(test: Pick<LabTest, 'refRanges'>, gender: Gender, 
   return candidates.find((r) => r.gender === gender) ?? candidates[0]
 }
 
-export type ResultFlag = 'low' | 'high' | 'normal' | 'none'
+export type ResultFlag = 'low' | 'high' | 'critical_low' | 'critical_high' | 'normal' | 'none'
 
 /**
  * تقييم نتيجة رقمية مقابل النطاق: منخفض/مرتفع/طبيعي.
@@ -78,9 +81,17 @@ export function evaluateResult(rawValue: string, range: RefRange | null): Result
   const normalized = rawValue.trim().replace(/[٠-٩]/g, (d) => String(ar.indexOf(d))).replace('٫', '.')
   const v = Number(normalized)
   if (!normalized || !Number.isFinite(v) || !range) return 'none'
+  // القيم الحرجة أولاً (CAP/CLIA): إبلاغ فوري — أخطر من مجرد خارج النطاق
+  if (range.criticalLow != null && v < range.criticalLow) return 'critical_low'
+  if (range.criticalHigh != null && v > range.criticalHigh) return 'critical_high'
   if (range.low != null && v < range.low) return 'low'
   if (range.high != null && v > range.high) return 'high'
   return 'normal'
+}
+
+/** هل العلامة حرجة؟ (تستلزم إبلاغ الطبيب المعالج فوراً وتوثيق الإبلاغ) */
+export function isCriticalFlag(f: ResultFlag): boolean {
+  return f === 'critical_low' || f === 'critical_high'
 }
 
 /** عمر بالسنين من تاريخ ميلاد حتى تاريخ معين */

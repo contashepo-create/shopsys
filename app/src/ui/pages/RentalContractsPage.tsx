@@ -10,7 +10,7 @@ import { useDataStore, type RentalContract } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { computeRentalTotals, rentalReport, isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
+import { computeRentalTotals, rentalReport, utilizationReport, isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
 import { renderRentalContractHtml } from '../print/printRentalContract.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { RATE_TYPE_LABELS, type RateType } from '../../core/rentalMeter.ts'
@@ -174,6 +174,8 @@ export function RentalContractsPage() {
   const [presetId, setPresetId] = useState('month')
   const period: Period = presets.find((p) => p.id === presetId)?.period ?? presets[2].period
   const report = useMemo(() => rentalReport(rentalContracts, period), [rentalContracts, period])
+  // معدل الاستغلال (Point of Rental): نسبة أيام التأجير من الفترة لكل معدة — الراكد يظهر فوراً
+  const utilization = useMemo(() => utilizationReport(rentalContracts, equipment, period), [rentalContracts, equipment, period])
 
   const listed = useMemo(() => [...rentalContracts].reverse(), [rentalContracts])
   const tabCls = (t: 'list' | 'report') =>
@@ -267,6 +269,30 @@ export function RentalContractsPage() {
               <div className="font-black text-lg text-amber-600">{fmt(report.heldDepositsMinor)}</div>
             </div>
           </div>
+          {/* معدل استغلال الأسطول (نمط Point of Rental utilization) */}
+          {utilization.length > 0 && (
+            <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+              <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">📊 معدل استغلال المعدات خلال الفترة — الراكد يأكل من ربح الشغّال</div>
+              <table className="w-full text-[12.5px]">
+                <tbody>
+                  {utilization.map((u) => (
+                    <tr key={u.equipmentId} className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-2 font-bold">{u.equipmentName}</td>
+                      <td className="px-4 py-2 w-1/2">
+                        <div className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                          <div className={`h-full rounded-full transition-all ${u.utilizationPercent >= 60 ? 'bg-emerald-500' : u.utilizationPercent >= 25 ? 'bg-amber-500' : 'bg-rose-400'}`} style={{ width: `${u.utilizationPercent}%` }} />
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 font-black tabular-nums w-16 text-center">{u.utilizationPercent}٪</td>
+                      <td className="px-4 py-2 text-slate-500 text-[11px] whitespace-nowrap">{u.rentedDays} / {u.periodDays} يوماً</td>
+                      <td className="px-4 py-2 font-bold text-teal-600 whitespace-nowrap">{fmt(u.revenueMinor)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
             {report.rows.length === 0 ? (
               <div className="text-center text-slate-400 text-[13px] py-10">لا عقود في هذه الفترة</div>

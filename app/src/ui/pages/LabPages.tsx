@@ -286,8 +286,8 @@ export function LabOrdersPage() {
                   <div className="flex items-center gap-2 text-[12px] text-slate-500">
                     <span>النطاق: {t.refLow ?? '—'} – {t.refHigh ?? '—'} {t.unit}</span>
                     {t.resultValue && (
-                      <span className={`font-black text-sm ${t.resultFlag === 'high' ? 'text-rose-600' : t.resultFlag === 'low' ? 'text-sky-600' : 'text-emerald-600'}`}>
-                        النتيجة: {t.resultValue} {t.unit} {t.resultFlag === 'high' ? '▲' : t.resultFlag === 'low' ? '▼' : ''}
+                      <span className={`font-black text-sm ${t.resultFlag === 'critical_high' || t.resultFlag === 'critical_low' ? 'text-white bg-rose-600 px-2 py-0.5 rounded-lg animate-pulse' : t.resultFlag === 'high' ? 'text-rose-600' : t.resultFlag === 'low' ? 'text-sky-600' : 'text-emerald-600'}`}>
+                        النتيجة: {t.resultValue} {t.unit} {t.resultFlag === 'critical_high' ? '🚨 حرجة مرتفعة — أبلغ الطبيب فوراً' : t.resultFlag === 'critical_low' ? '🚨 حرجة منخفضة — أبلغ الطبيب فوراً' : t.resultFlag === 'high' ? '▲' : t.resultFlag === 'low' ? '▼' : ''}
                       </span>
                     )}
                   </div>
@@ -489,10 +489,10 @@ export function LabTestsPage() {
             <Field label="تكلفة المستهلكات (اختياري)"><input value={cost} onChange={(e) => setCost(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
 
-          <Field label="النطاقات المرجعية" hint="حسب الجنس والعمر — تُطبع في التقرير ويُقيَّم بها مرتفع/منخفض">
+          <Field label="النطاقات المرجعية" hint="حسب الجنس والعمر — تُطبع في التقرير ويُقيَّم بها مرتفع/منخفض — والقيم الحرجة 🚨 تستلزم إبلاغ الطبيب فوراً (معيار CAP/CLIA)">
             <div className="space-y-2">
               {ranges.map((r, i) => (
-                <div key={i} className="grid grid-cols-6 gap-2 items-center">
+                <div key={i} className="grid grid-cols-8 gap-2 items-center">
                   <select value={r.gender} onChange={(e) => setRange(i, { gender: e.target.value as RefRange['gender'] })} className={inputCls}>
                     <option value="any">الجميع</option><option value="male">ذكور</option><option value="female">إناث</option>
                   </select>
@@ -500,6 +500,8 @@ export function LabTestsPage() {
                   <input value={r.ageMaxYears} onChange={(e) => setRange(i, { ageMaxYears: Number(e.target.value) || 999 })} inputMode="numeric" className={inputCls} placeholder="إلى سن" />
                   <input value={r.low ?? ''} onChange={(e) => setRange(i, { low: e.target.value === '' ? null : Number(e.target.value) })} inputMode="decimal" className={inputCls} placeholder="الأدنى" dir="ltr" />
                   <input value={r.high ?? ''} onChange={(e) => setRange(i, { high: e.target.value === '' ? null : Number(e.target.value) })} inputMode="decimal" className={inputCls} placeholder="الأعلى" dir="ltr" />
+                  <input value={r.criticalLow ?? ''} onChange={(e) => setRange(i, { criticalLow: e.target.value === '' ? null : Number(e.target.value) })} inputMode="decimal" className={`${inputCls} !border-rose-300`} placeholder="🚨 حرج أدنى" dir="ltr" title="قيمة حرجة منخفضة (CAP/CLIA) — دونها إبلاغ فوري للطبيب" />
+                  <input value={r.criticalHigh ?? ''} onChange={(e) => setRange(i, { criticalHigh: e.target.value === '' ? null : Number(e.target.value) })} inputMode="decimal" className={`${inputCls} !border-rose-300`} placeholder="🚨 حرج أعلى" dir="ltr" title="قيمة حرجة مرتفعة (CAP/CLIA) — فوقها إبلاغ فوري للطبيب" />
                   <button onClick={() => setRanges(ranges.filter((_, j) => j !== i))} className="text-rose-500 font-bold text-sm hover:scale-110 transition-transform">حذف</button>
                 </div>
               ))}
