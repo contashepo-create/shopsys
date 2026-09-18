@@ -116,21 +116,34 @@ export interface TopItemRow {
   profitMinor: Minor
 }
 
-/** يجمع مبيعات الأصناف (يطرح كميات المرتجعات وقيمها) ويرتب حسب الإيراد */
+/**
+ * يجمع مبيعات الأصناف (يطرح كميات المرتجعات وقيمها) ويرتب حسب الإيراد.
+ * إيراد الصنف = نصيبه من صافي الفاتورة (بعد خصم الفاتورة الإجمالي وبلا ضريبة) —
+ * يوزَّع صافي كل مستند على سطوره نسبياً، فتتسق أرباح الأصناف مع ملخص المبيعات
+ * وقائمة الدخل بالقرش (إصلاح المراجعة: كان يضخَّم بالضريبة ويتجاهل خصم الفاتورة).
+ */
 export function topItems(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period, limit = 10): TopItemRow[] {
   const map = new Map<number, TopItemRow>()
-  const acc = (l: CartLine, sign: 1 | -1) => {
-    const lineNet = Math.round(Math.round(l.unitPriceMinor * l.qty) * (1 - l.discountPercent / 100))
-    const lineCogs = Math.round(l.unitCostMinor * l.qty)
-    const row = map.get(l.itemId) ?? { itemId: l.itemId, nameAr: l.nameAr, qty: 0, revenueMinor: 0, cogsMinor: 0, profitMinor: 0 }
-    row.qty = Math.round((row.qty + sign * l.qty) * 1000) / 1000
-    row.revenueMinor += sign * lineNet
-    row.cogsMinor += sign * lineCogs
-    row.profitMinor = row.revenueMinor - row.cogsMinor
-    map.set(l.itemId, row)
+  const acc = (doc: { lines: CartLine[]; totals: CartTotals }, sign: 1 | -1) => {
+    const lineNets = doc.lines.map((l) => Math.round(Math.round(l.unitPriceMinor * l.qty) * (1 - l.discountPercent / 100)))
+    const sumNets = lineNets.reduce((a, v) => a + v, 0)
+    // صافي المستند بلا ضريبة وبعد خصم الفاتورة — التوزيع النسبي على السطور
+    const docNet = doc.totals.totalMinor - doc.totals.taxMinor
+    const factor = sumNets > 0 ? docNet / sumNets : 0
+    for (let i = 0; i < doc.lines.length; i++) {
+      const l = doc.lines[i]
+      const lineRevenue = Math.round(lineNets[i] * factor)
+      const lineCogs = Math.round(l.unitCostMinor * l.qty)
+      const row = map.get(l.itemId) ?? { itemId: l.itemId, nameAr: l.nameAr, qty: 0, revenueMinor: 0, cogsMinor: 0, profitMinor: 0 }
+      row.qty = Math.round((row.qty + sign * l.qty) * 1000) / 1000
+      row.revenueMinor += sign * lineRevenue
+      row.cogsMinor += sign * lineCogs
+      row.profitMinor = row.revenueMinor - row.cogsMinor
+      map.set(l.itemId, row)
+    }
   }
-  for (const s of sales) if (inPeriod(s.date, p)) for (const l of s.lines) acc(l, 1)
-  for (const r of returns) if (inPeriod(r.date, p)) for (const l of r.lines) acc(l, -1)
+  for (const s of sales) if (inPeriod(s.date, p)) acc(s, 1)
+  for (const r of returns) if (inPeriod(r.date, p)) acc(r, -1)
   return [...map.values()].sort((a, b) => b.revenueMinor - a.revenueMinor).slice(0, limit)
 }
 

@@ -230,22 +230,44 @@ export function cashFlowReport(
 /* ─── ⑥ تقرير الضريبة ─── */
 
 export interface VatReport {
-  outputVatMinor: Minor // ضريبة مخرجات (دائن 2102 من المبيعات)
-  inputVatMinor: Minor // ضريبة مدخلات (مدين 2102 من المشتريات/المرتجعات)
-  netDueMinor: Minor // موجب = مستحق للدولة
+  outputVatMinor: Minor // ضريبة مخرجات: صافي جانب المبيعات (مبيعات − مرتجعاتها)
+  inputVatMinor: Minor // ضريبة مدخلات: صافي جانب المشتريات (مشتريات − مرتجعاتها)
+  netDueMinor: Minor // إقرار الفترة: مخرجات − مدخلات (موجب = مستحق للدولة)
+  settledMinor: Minor // المسدد للمصلحة خلال الفترة (سندات على 2102) — لا يدخل الإقرار
+  remainingMinor: Minor // المتبقي بعد السداد = netDue − settled
 }
 
+/** مصادر جانب المدخلات: الوحيدة التي تقيّد 2102 مديناً كمدخلات (وعكسها دائناً بالمرتجع) */
+const VAT_INPUT_SOURCES = new Set(['purchase', 'purchase_return'])
+/** تسويات لا تدخل الإقرار: سداد/استرداد مع المصلحة وقيود الإقفال */
+const VAT_SETTLEMENT_SOURCES = new Set(['payment_voucher', 'receipt_voucher', 'year_closing'])
+
+/**
+ * تقرير ض.ق.م بتصنيف مصدر القيد (إصلاح المراجعة):
+ * كان التصنيف باتجاه السطر (دائن = مخرجات / مدين = مدخلات) فظهر عكس مدخلات
+ * مرتجع الشراء «مخرجاتٍ» وسداد الضريبة للمصلحة «مدخلاتٍ» — الآن:
+ * جانب المشتريات ومرتجعاتها = مدخلات، السندات على 2102 = تسوية سداد منفصلة،
+ * وكل مصادر الإيراد (بيع/خدمات/عقود…) ومرتجعاتها = مخرجات.
+ * قيود بلا sourceType (بيانات خارجية) تعود للتصنيف الاتجاهي القديم.
+ */
 export function vatReport(journal: readonly JournalEntry[], p: FinPeriod, vatCode = '2102'): VatReport {
-  let output = 0, input = 0
+  let output = 0, input = 0, settled = 0
   for (const e of journal) {
     if (!inP(e.date, p)) continue
+    let credit = 0, debit = 0
     for (const l of e.lines) {
       if (l.accountCode !== vatCode) continue
-      output += l.credit
-      input += l.debit
+      credit += l.credit; debit += l.debit
     }
+    if (credit === 0 && debit === 0) continue
+    const st = (e as { sourceType?: string }).sourceType
+    if (st === undefined) { output += credit; input += debit }
+    else if (VAT_INPUT_SOURCES.has(st)) input += debit - credit
+    else if (VAT_SETTLEMENT_SOURCES.has(st)) settled += debit - credit
+    else output += credit - debit
   }
-  return { outputVatMinor: output, inputVatMinor: input, netDueMinor: output - input }
+  const netDueMinor = output - input
+  return { outputVatMinor: output, inputVatMinor: input, netDueMinor, settledMinor: settled, remainingMinor: netDueMinor - settled }
 }
 
 /* ─── تصدير CSV احترافي (أمر المالك: تصدير Excel بكل التقارير) ─── */

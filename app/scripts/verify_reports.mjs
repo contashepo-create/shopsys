@@ -69,15 +69,15 @@ ok('مرتجع خارج الفترة لا يؤثر', () => {
 
 console.log('🔍 أفضل الأصناف والمبيعات اليومية')
 
-ok('topItems يطرح المرتجعات ويرتب بالإيراد', () => {
+ok('topItems يطرح المرتجعات ويرتب بالإيراد — صافياً بلا ضريبة (إصلاح مراجعة التقارير)', () => {
   const rows = topItems(SALES, RETURNS, P)
   assert.equal(rows.length, 2)
   assert.equal(rows[0].nameAr, 'جبنة')
-  assert.equal(rows[0].revenueMinor, 26000)
+  assert.equal(rows[0].revenueMinor, 26000 - 3193) // صافي الفاتورة بلا ضريبة — يتسق مع قائمة الدخل
   const milk = rows[1]
   assert.equal(milk.qty, 1) // 2 − 1 مرتجع
-  assert.equal(milk.revenueMinor, 3500)
-  assert.equal(milk.profitMinor, 3500 - 2800)
+  assert.equal(milk.revenueMinor, (7000 - 860) - (3500 - 430)) // بيع صافٍ − مرتجع صافٍ
+  assert.equal(milk.profitMinor, milk.revenueMinor - 2800) // التكلفة المتبقية بعد المرتجع
 })
 
 ok('خصم السطر يدخل في إيراد الصنف', () => {
