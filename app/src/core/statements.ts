@@ -176,6 +176,13 @@ export interface EmployeeStatementInput {
   payrollRuns: { runNumber: string; date: string; lines: { employeeId: number; advancesMinor: Minor; deductionsMinor: Minor; netMinor: Minor }[] }[]
   /** سداد نقدي لسلفة خارج المسير (إصلاح الترابط: كان يُسجَّل قيداً ولا يظهر بالكشف) */
   advanceRepayments?: { repayNumber: string; date: string; employeeId: number; amountMinor: Minor }[]
+  /**
+   * جزاءات/خصومات مسجلة (مراجعة الموظفين — طلب المالك: «يجب أن يكون هناك قسم خصومات»):
+   * ليست حركة نقدية ولا ديناً على 1107، لكنها التزام موثق يظهر بالكشف صفوفاً
+   * إخبارية بمبلغ صفري مالياً (debit/credit صفر) مع بيان واضح — أو حسب سياسة العرض.
+   * هنا نعرضها كصفوف توثيقية: الجزاء لا يغير رصيد سلف الموظف.
+   */
+  deductions?: { dedNumber: string; date: string; employeeId: number; amountMinor: Minor; recoveredMinor: Minor; waivedMinor?: number; reason: string }[]
 }
 
 export function employeeStatement(input: EmployeeStatementInput): StatementRow[] {
@@ -192,6 +199,12 @@ export function employeeStatement(input: EmployeeStatementInput): StatementRow[]
   for (const rp of input.advanceRepayments ?? []) {
     if (rp.employeeId !== input.employeeId) continue
     rows.push({ date: rp.date, docLabel: `سداد نقدي ${rp.repayNumber}`, debitMinor: 0, creditMinor: rp.amountMinor })
+  }
+  // الجزاءات: صفوف توثيقية بمبلغ صفري — تُعلم القارئ دون أن تلوث رصيد السلف النقدي
+  for (const d of input.deductions ?? []) {
+    if (d.employeeId !== input.employeeId) continue
+    const status = (d.waivedMinor ?? 0) > 0 ? 'معفو عنه' : d.recoveredMinor >= d.amountMinor ? 'خُصم بالكامل' : d.recoveredMinor > 0 ? 'خُصم جزئياً' : 'قائم'
+    rows.push({ date: d.date.slice(0, 10), docLabel: `جزاء ${d.dedNumber} (${d.reason}) — ${status} [${d.amountMinor}]`, debitMinor: 0, creditMinor: 0 })
   }
   return runBalance(rows)
 }

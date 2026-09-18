@@ -18,6 +18,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 
 /** قسم البيانات الموسعة القابل للطي — نفس نمط العملاء والموردين */
 function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: PartyExtended) => void }) {
@@ -76,7 +77,11 @@ interface DraftLine {
 }
 
 export function EmployeesPage() {
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction } = useDataStore()
+  // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
+  const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
+  // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
+  const waiveApproval = useSupervisorApproval('trs.payment.approve')
   const { setup } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -245,14 +250,30 @@ export function EmployeesPage() {
         advancesMinor: toM(l.advances),
         excessPaidMinor: toM(l.excessPaid),
       }))
-      const run = postPayroll({
-        month, payMode,
-        treasury: paySource.kind === 'treasury' ? paySource.treasury : '1101',
-        custodyFileId: paySource.kind === 'custody' ? paySource.custodyFileId : null,
-        lines, notes: runNotes.trim(),
-      })
-      toast.show(`رُحّل مسير ${run.runNumber} — صافي ${fmt(run.totals.netMinor)} ${cur.symbol} ✅`)
-      setRunOpen(false)
+      const post = (overrideBy?: string) => {
+        const run = postPayroll({
+          month, payMode,
+          treasury: paySource.kind === 'treasury' ? paySource.treasury : '1101',
+          custodyFileId: paySource.kind === 'custody' ? paySource.custodyFileId : null,
+          lines, notes: runNotes.trim(),
+          ...(overrideBy ? { deductionOverrideBy: overrideBy } : {}),
+        })
+        toast.show(`رُحّل مسير ${run.runNumber} — صافي ${fmt(run.totals.netMinor)} ${cur.symbol} ✅`)
+        setRunOpen(false)
+      }
+      try {
+        post()
+      } catch (err) {
+        // سقف الخصم 50% (قوانين العمل): نطلب اعتماد المشرف بالرقم السري ثم نعيد الترحيل باسمه
+        if ((err as Error).message.includes('50%')) {
+          toast.show((err as Error).message, 'error')
+          dedOverrideApproval.request((approvedBy) => {
+            try { post(approvedBy) } catch (e2) { toast.show((e2 as Error).message, 'error') }
+          })
+          return
+        }
+        throw err
+      }
     } catch (err) {
       toast.show((err as Error).message, 'error')
     }
@@ -409,6 +430,7 @@ export function EmployeesPage() {
                     <th className="px-4 py-3 font-bold">المبلغ</th>
                     <th className="px-4 py-3 font-bold">المخصوم</th>
                     <th className="px-4 py-3 font-bold">المتبقي</th>
+                    <th className="px-4 py-3 font-bold"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -423,9 +445,25 @@ export function EmployeesPage() {
                       <td className="px-4 py-3 font-black text-rose-500">{fmt(d.amountMinor)}</td>
                       <td className="px-4 py-3 font-bold text-emerald-600">{d.recoveredMinor ? fmt(d.recoveredMinor) : '—'}</td>
                       <td className="px-4 py-3">
-                        {d.amountMinor - d.recoveredMinor === 0
-                          ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">خُصم بالكامل ✓</span>
-                          : <span className="font-black text-amber-600">{fmt(d.amountMinor - d.recoveredMinor)}</span>}
+                        {(d.waivedMinor ?? 0) > 0
+                          ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 font-bold" title={`عفا عنه ${d.waivedBy ?? ''} — ${d.waivedReason ?? ''}`}>معفو عنه ({d.waivedBy}) ✓</span>
+                          : d.amountMinor - d.recoveredMinor === 0
+                            ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">خُصم بالكامل ✓</span>
+                            : <span className="font-black text-amber-600">{fmt(d.amountMinor - d.recoveredMinor)}</span>}
+                      </td>
+                      <td className="px-4 py-3 text-left">
+                        {d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0) > 0 && (
+                          <button
+                            title="عفو/إلغاء المتبقي (تسجيل خاطئ أو صفح) — يتطلب اعتماد المشرف"
+                            onClick={() => waiveApproval.request((approvedBy) => {
+                              try {
+                                waiveEmployeeDeduction({ deductionId: d.id, approvedBy: approvedBy ?? 'المالك', reason: 'عفو معتمد من الشاشة' })
+                                toast.show(`عُفي عن متبقي ${d.dedNumber} — لن يُخصم من المسيرات ✓`)
+                              } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                            })}
+                            className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-colors"
+                          >🕊️ عفو</button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -791,6 +829,8 @@ export function EmployeesPage() {
           </div>
         )}
       </Modal>
+      {dedOverrideApproval.dialog}
+      {waiveApproval.dialog}
     </div>
   )
 }

@@ -733,6 +733,8 @@ export interface PayrollRun {
   totals: PayrollTotals
   journalEntryId: number
   notes: string
+  /** اسم معتمد تجاوز سقف الخصم 50% إن حدث (قوانين العمل) */
+  deductionOverrideBy?: string | null
 }
 
 /* ─── فواتير الشراء (مع مصاريف الشراء الموزعة) ─── */
@@ -857,6 +859,11 @@ export interface EmployeeDeduction {
   recoveredMinor: number // المخصوم فعلاً من المسيرات حتى الآن
   reason: string // غياب، تأخير، جزاء إداري…
   notes: string
+  /** عفو/إلغاء عن المتبقي (مراجعة الموظفين): يوقف خصم الباقي مع توثيق المعتمد والسبب */
+  waivedMinor?: number
+  waivedBy?: string | null
+  waivedReason?: string
+  waivedAt?: string | null
 }
 
 /** سداد نقدي لسلفة موظف خارج المسير: خزينة مدين / 1107 دائن */
@@ -1395,6 +1402,8 @@ interface DataState {
     custodyFileId?: number | null
     lines: PayrollLineInput[]
     notes: string
+    /** اعتماد تجاوز سقف الخصم 50% (اسم المعتمد) — قوانين العمل */
+    deductionOverrideBy?: string | null
   }) => PayrollRun
   /** المتبقي غير المسترد من سلف موظف (سلفة نقدية أو عجز عهدة) — للخصم الحر بالمسير */
   getEmployeeAdvanceBalance: (employeeId: number) => { totalMinor: number; remainingMinor: number; advances: EmployeeAdvance[] }
@@ -1402,6 +1411,8 @@ interface DataState {
   addEmployeeDeduction: (args: { employeeId: number; amountMinor: number; reason: string; notes?: string }) => EmployeeDeduction
   /** متبقي الجزاءات غير المخصومة لموظف — يغذي زر «خصم الكل» في المسير */
   getEmployeeDeductionBalance: (employeeId: number) => { totalMinor: number; remainingMinor: number; deductions: EmployeeDeduction[] }
+  /** عفو/إلغاء متبقي جزاء (تسجيل خاطئ أو صفح) — بلا قيد (لم يتولد قيد أصلاً) مع توثيق المعتمد */
+  waiveEmployeeDeduction: (args: { deductionId: number; approvedBy: string; reason: string }) => EmployeeDeduction
   /** سداد نقدي لسلفة خارج المسير: قيد خزينة ← 1107 ويخفض متبقي السلفة */
   repayEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount }) => AdvanceRepayment
   /** إقفال سنة مالية (منهجية QuickBooks/Xero): قيد يصفّر 4xxx/5xxx → أرباح مرحلة 3102 ثم يقفل الفترة */
@@ -4351,13 +4362,33 @@ export const useDataStore = create<DataState>()(
         set((st2) => ({ suppliers: st2.suppliers.filter((x) => x.id !== id) }))
       },
 
-      addEmployee: (e) => set((s) => ({ employees: [...s.employees, { ...e, id: nextId(s.employees) }] })),
-      updateEmployee: (id, patch) =>
-        set((s) => ({ employees: s.employees.map((x) => (x.id === id ? { ...x, ...patch } : x)) })),
+      addEmployee: (e) => {
+        // مراجعة الموظفين: اسم فارغ ومكرر كانا يمران من المستودع
+        const nameAr = e.nameAr.trim()
+        if (!nameAr) throw new Error('اسم الموظف مطلوب')
+        if (get().employees.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف مسجل بنفس الاسم «${nameAr}»`)
+        set((s) => ({ employees: [...s.employees, { ...e, nameAr, id: nextId(s.employees) }] }))
+      },
+      updateEmployee: (id, patch) => {
+        if (patch.nameAr !== undefined) {
+          const nameAr = patch.nameAr.trim()
+          if (!nameAr) throw new Error('اسم الموظف مطلوب')
+          if (get().employees.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف آخر بنفس الاسم «${nameAr}»`)
+          patch = { ...patch, nameAr }
+        }
+        set((s) => ({ employees: s.employees.map((x) => (x.id === id ? { ...x, ...patch } : x)) }))
+      },
       removeEmployee: (id) => {
-        const used = get().payrollRuns.some((r) => r.lines.some((l) => l.employeeId === id))
-        if (used) throw new Error('لا يمكن حذف موظف له مسيرات رواتب مرحّلة — أوقف حالته «على رأس العمل» بدلاً من الحذف')
-        set((s) => ({ employees: s.employees.filter((x) => x.id !== id) }))
+        const s = get()
+        if (s.payrollRuns.some((r) => r.lines.some((l) => l.employeeId === id))) throw new Error('لا يمكن حذف موظف له مسيرات رواتب مرحّلة — أوقف حالته «على رأس العمل» بدلاً من الحذف')
+        // مراجعة الموظفين (فجوة مؤكدة): كان يُحذف وعليه سلفة غير مستردة فيبقى 1107 يتيماً بالدفتر
+        const advOpen = s.employeeAdvances.filter((a) => a.employeeId === id).reduce((x, a) => x + (a.amountMinor - a.recoveredMinor), 0)
+        if (advOpen > 0) throw new Error(`لا يمكن حذف موظف عليه سلف غير مستردة (${advOpen}) — استردها بالمسير أو نقداً أولاً`)
+        const dedOpen = s.employeeDeductions.filter((d) => d.employeeId === id).reduce((x, d) => x + (d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)), 0)
+        if (dedOpen > 0) throw new Error('لا يمكن حذف موظف له جزاءات غير مخصومة — اخصمها بالمسير أو اعفُ عنها أولاً')
+        if (s.custodyFiles.some((f) => f.employeeId === id && f.status === 'open')) throw new Error('لا يمكن حذف موظف له ملف عهدة مفتوح — أقفله أولاً')
+        if (s.getEmployeeExcessDue(id) > 0) throw new Error('للموظف مستحقات زيادة عهدة لم تُصرف — صفِّها بالمسير أولاً')
+        set((s2) => ({ employees: s2.employees.filter((x) => x.id !== id) }))
       },
 
       postPayroll: (args) => {
@@ -4374,6 +4405,16 @@ export const useDataStore = create<DataState>()(
 
         const totals: PayrollTotals = computePayrollTotals(computed)
         const label = monthLabelAr(args.month)
+        // سقف الخصم القانوني (المقارنة العالمية — م91/92 نظام العمل السعودي ونظيره المصري):
+        // مجموع الخصومات والسلف المستقطعة لا يتجاوز 50% من إجمالي راتب الشهر
+        // إلا باعتماد موقَّع بالاسم (موافقة خطية/حكم) — يُسجل على المسير للتدقيق
+        for (const l of computed) {
+          const cut = l.deductionsMinor + l.advancesMinor
+          if (cut * 2 > l.grossMinor && !args.deductionOverrideBy) {
+            const emp = state.employees.find((e) => e.id === l.employeeId)
+            throw new Error(`«${emp?.nameAr ?? l.employeeId}»: الخصومات والسلف (${cut}) تتجاوز 50% من راتب الشهر (${l.grossMinor}) — قوانين العمل تشترط موافقة خاصة، اعتمد التجاوز بالرقم السري`)
+          }
+        }
         // تحقق السلف: المخصوم من كل موظف لا يتجاوز متبقي سلفه (الخصم حر على عدة رواتب — طلب المالك)
         for (const l of computed) {
           if (l.advancesMinor <= 0) continue
@@ -4444,6 +4485,7 @@ export const useDataStore = create<DataState>()(
           totals,
           journalEntryId: entryId,
           notes: args.notes,
+          ...(args.deductionOverrideBy ? { deductionOverrideBy: args.deductionOverrideBy } : {}),
         }
 
         // توزيع المخصوم على سلف كل موظف — الأقدم أولاً (تتبع السلفة عبر عدة أشهر)
@@ -4468,7 +4510,7 @@ export const useDataStore = create<DataState>()(
           if (toRecover <= 0) continue
           employeeDeductions = employeeDeductions.map((d) => {
             if (d.employeeId !== l.employeeId || toRecover <= 0) return d
-            const open = d.amountMinor - d.recoveredMinor
+            const open = d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)
             if (open <= 0) return d
             const take = Math.min(open, toRecover)
             toRecover -= take
@@ -4516,8 +4558,29 @@ export const useDataStore = create<DataState>()(
       getEmployeeDeductionBalance: (employeeId) => {
         const deductions = get().employeeDeductions.filter((d) => d.employeeId === employeeId)
         const totalMinor = deductions.reduce((s2, d) => s2 + d.amountMinor, 0)
-        const remainingMinor = deductions.reduce((s2, d) => s2 + (d.amountMinor - d.recoveredMinor), 0)
+        // المتبقي يستثني المعفو عنه (المعفو لا يُخصم أبداً)
+        const remainingMinor = deductions.reduce((s2, d) => s2 + (d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)), 0)
         return { totalMinor, remainingMinor, deductions }
+      },
+
+      waiveEmployeeDeduction: (args) => {
+        const state = get()
+        const ded = state.employeeDeductions.find((d) => d.id === args.deductionId)
+        if (!ded) throw new Error('الجزاء غير موجود')
+        if (!args.approvedBy.trim()) throw new Error('اسم معتمد العفو مطلوب')
+        if (!args.reason.trim()) throw new Error('سبب العفو مطلوب — تسجيل خاطئ، صفح، حكم…')
+        const remaining = ded.amountMinor - ded.recoveredMinor - (ded.waivedMinor ?? 0)
+        if (remaining <= 0) throw new Error('لا متبقي على هذا الجزاء — خُصم أو عُفي عنه بالكامل')
+        // لا قيد: الجزاء لم يولّد قيداً عند تسجيله (يتحقق محاسبياً بالمسير فقط)
+        const updated: EmployeeDeduction = {
+          ...ded,
+          waivedMinor: (ded.waivedMinor ?? 0) + remaining,
+          waivedBy: args.approvedBy.trim(),
+          waivedReason: args.reason.trim(),
+          waivedAt: new Date().toISOString(),
+        }
+        set({ employeeDeductions: state.employeeDeductions.map((d) => (d.id === ded.id ? updated : d)) })
+        return updated
       },
 
       repayEmployeeAdvance: (args) => {
