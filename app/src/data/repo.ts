@@ -1106,6 +1106,11 @@ interface DataState {
   /** تعديلات الأدوار المحفوظة (البند 4): roleId → قائمة صلاحيات — تعلو على الافتراضي (owner لا يُعدل أبداً) */
   roleOverrides: Record<string, string[]>
   setRolePermissions: (roleId: string, permissions: string[]) => void
+  /** أدوار مخصصة أنشأها المالك (نمط Square permission sets): صلاحياتها في roleOverrides */
+  customRoles: { id: string; nameAr: string }[]
+  addCustomRole: (nameAr: string, basedOnRoleId?: string) => string
+  renameCustomRole: (id: string, nameAr: string) => void
+  removeCustomRole: (id: string) => void
   /** استثناءات فردية لمستخدم: منح فوق الدور / حجب رغم الدور */
   setUserPermExceptions: (id: number, extraPerms: string[], deniedPerms: string[]) => void
   currentUserId: number | null // المستخدم النشط حالياً (null = المالك الافتراضي)
@@ -2076,6 +2081,7 @@ export const useDataStore = create<DataState>()(
       auditLog: [],
       appUsers: [],
       roleOverrides: {},
+      customRoles: [],
       currentUserId: null,
       issues: [],
       ownerPinHash: null,
@@ -4153,6 +4159,49 @@ export const useDataStore = create<DataState>()(
         const state = get()
         set({ roleOverrides: { ...state.roleOverrides, [roleId]: [...new Set(permissions)] } })
       },
+      /* ─── أدوار مخصصة (نمط Square «Create permission set» — مراجعة المالك) ─── */
+      addCustomRole: (nameAr, basedOnRoleId) => {
+        const state = get()
+        const name = sanitizeText(nameAr, 40)
+        if (!name) throw new Error('اكتب اسم الدور')
+        const allRoles = rolesWithOverrides(state.roleOverrides, state.customRoles)
+        if (allRoles.some((r) => r.nameAr === name)) throw new Error('يوجد دور بهذا الاسم بالفعل')
+        const seq = state.customRoles.reduce((m, r) => Math.max(m, Number(r.id.replace('custom_', '')) || 0), 0) + 1
+        const id = `custom_${seq}`
+        // «ابدأ من دور موجود»: انسخ صلاحيات الدور الأساس ثم عدّل بحرية (أفضل ممارسة Toast/Square)
+        const base = basedOnRoleId && basedOnRoleId !== 'owner'
+          ? allRoles.find((r) => r.id === basedOnRoleId)?.permissions ?? []
+          : []
+        const requester = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+        set({
+          customRoles: [...state.customRoles, { id, nameAr: name }],
+          roleOverrides: { ...state.roleOverrides, [id]: [...new Set(base)] },
+          auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: requester, kind: 'auth', title: `أُنشئ دور مخصص «${name}»${basedOnRoleId ? ' نسخاً من دور موجود' : ''}` }]),
+        })
+        return id
+      },
+      renameCustomRole: (id, nameAr) => {
+        const state = get()
+        const name = sanitizeText(nameAr, 40)
+        if (!name) throw new Error('اكتب اسم الدور')
+        if (!state.customRoles.some((r) => r.id === id)) throw new Error('الدور غير موجود')
+        set({ customRoles: state.customRoles.map((r) => (r.id === id ? { ...r, nameAr: name } : r)) })
+      },
+      removeCustomRole: (id) => {
+        const state = get()
+        if (!state.customRoles.some((r) => r.id === id)) throw new Error('الدور غير موجود')
+        // حماية بنيوية: لا حذف لدور معيّن على مستخدم نشط — عيّن دوراً آخر أولاً
+        const holder = state.appUsers.find((u) => u.active && u.roleId === id)
+        if (holder) throw new Error(`لا يمكن حذف الدور — «${holder.nameAr}» معيّن عليه. غيّر دوره أولاً`)
+        const { [id]: _drop, ...restOverrides } = state.roleOverrides
+        const requester = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+        const roleName = state.customRoles.find((r) => r.id === id)?.nameAr ?? id
+        set({
+          customRoles: state.customRoles.filter((r) => r.id !== id),
+          roleOverrides: restOverrides,
+          auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: requester, kind: 'auth', title: `حُذف الدور المخصص «${roleName}»` }]),
+        })
+      },
       setUserPermExceptions: (id, extraPerms, deniedPerms) => {
         const state = get()
         const user = state.appUsers.find((u) => u.id === id)
@@ -4247,7 +4296,7 @@ export const useDataStore = create<DataState>()(
           return { approvedBy: 'المالك' }
         }
         // 2) رقم أي مستخدم نشط مؤهل (owner أو يملك الصلاحية المطلوبة)
-        const roles = rolesWithOverrides(state.roleOverrides)
+        const roles = rolesWithOverrides(state.roleOverrides, state.customRoles)
         for (const u of state.appUsers) {
           if (!u.active) continue
           const perms = effectivePermissionsFor(u, roles)
@@ -8345,6 +8394,7 @@ export const useDataStore = create<DataState>()(
           assets: (s.assets ?? []).map((a) => ({ ...a, funding: a.funding ?? 'cash', supplierId: a.supplierId ?? null, paidMinor: a.paidMinor ?? a.costMinor, installments: a.installments ?? [], payments: a.payments ?? [] })),
           appUsers: s.appUsers ?? [],
           roleOverrides: s.roleOverrides ?? {},
+          customRoles: s.customRoles ?? [],
           currentUserId: s.currentUserId ?? null,
           issues: s.issues ?? [],
           // الإصدار 18: تسجيل الدخول الفعلي + الصرف الداخلي

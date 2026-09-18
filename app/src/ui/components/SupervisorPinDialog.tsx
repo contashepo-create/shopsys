@@ -25,14 +25,14 @@ export function useSupervisorApproval(permId: string = REFUND_APPROVE_PERM): {
   /** حوار الرقم — ضعه في نهاية JSX الصفحة */
   dialog: React.ReactNode
 } {
-  const { appUsers, currentUserId, roleOverrides, approveByPin } = useDataStore()
+  const { appUsers, currentUserId, roleOverrides, customRoles, approveByPin } = useDataStore()
   const [pending, setPending] = useState<((approvedBy?: string) => void) | null>(null)
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
-  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides))
+  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles))
   const decision = needsSupervisorPin(activeUser, perms, permId)
 
   const request = useCallback((onApproved: (approvedBy?: string) => void) => {

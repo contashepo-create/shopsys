@@ -104,12 +104,12 @@ function Shell() {
   const location = useLocation()
 
   // ─── بوابة تسجيل الدخول (سد ثغرة انتحال الصلاحيات): PIN إجباري متى فُعّلت المصادقة ───
-  const { appUsers, currentUserId, roleOverrides, ownerPinHash, loggedOut } = useDataStore()
+  const { appUsers, currentUserId, roleOverrides, customRoles, ownerPinHash, loggedOut } = useDataStore()
   if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && loggedOut) {
     return <LoginScreen />
   }
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
-  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides))
+  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles))
   if (!canAccessPath(location.pathname, perms)) {
     const needed = permissionForPath(location.pathname)
     const permName = PERMISSIONS.find((p) => p.id === needed)?.nameAr ?? needed

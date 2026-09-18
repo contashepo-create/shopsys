@@ -143,13 +143,28 @@ export function permissionForPath(path: string): string | null {
  * (صلاحيات الدور ∪ الممنوح فردياً) − المحجوب فردياً. المالك = الكل دائماً.
  * user=null هو المالك الافتراضي على الجهاز.
  */
-/** دمج تعديلات الأدوار المحفوظة مع الافتراضيات — دور المالك لا يتأثر أبداً */
-export function rolesWithOverrides(overrides: Record<string, string[]>): Role[] {
-  return DEFAULT_ROLES.map((r) => {
+/** وصف دور مخصص أنشأه المالك (نمط Square «Create permission set» / Toast custom jobs) */
+export interface CustomRoleDef {
+  id: string // custom_1, custom_2 …
+  nameAr: string
+}
+
+/**
+ * دمج تعديلات الأدوار المحفوظة مع الافتراضيات — دور المالك لا يتأثر أبداً.
+ * customRoles (اختياري): أدوار أنشأها المالك بنفسه — صلاحياتها تعيش في overrides
+ * بنفس آلية أدوار النظام، فكل مسارات التقييم (الدخول/القائمة/الاعتماد) تعمل تلقائياً.
+ */
+export function rolesWithOverrides(overrides: Record<string, string[]>, customRoles: readonly CustomRoleDef[] = []): Role[] {
+  const base = DEFAULT_ROLES.map((r) => {
     if (r.isOwner) return r // محمي بنيوياً
     const o = overrides[r.id]
     return o ? { ...r, permissions: o } : r
   })
+  const custom: Role[] = customRoles.map((c) => ({
+    id: c.id, nameAr: c.nameAr, isSystem: false,
+    permissions: overrides[c.id] ?? [],
+  }))
+  return [...base, ...custom]
 }
 
 export function effectivePermissionsFor(

@@ -14,9 +14,9 @@ import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('cashier')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
-  const { appUsers, currentUserId, addAppUser, removeAppUser, updateAppUser, roleOverrides, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees } = useDataStore()
+  const { appUsers, currentUserId, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
-  const roles = rolesWithOverrides(roleOverrides)
+  const roles = rolesWithOverrides(roleOverrides, customRoles)
   const toast = useToast()
   const [userModal, setUserModal] = useState(false)
   // استثناءات فردية (البند 4 — لكل موظف): منح فوق الدور أو حجب رغم الدور
@@ -30,6 +30,12 @@ export function PermissionsPage() {
   const [oPin, setOPin] = useState('')
   const [oPin2, setOPin2] = useState('')
   const [pinFor, setPinFor] = useState<number | null>(null)
+  // ➕ دور مخصص جديد (نمط Square «Create permission set»)
+  const [roleModal, setRoleModal] = useState(false)
+  const [newRoleName, setNewRoleName] = useState('')
+  const [newRoleBase, setNewRoleBase] = useState('cashier')
+  // 🔄 تغيير دور مستخدم قائم (ترقية كاشير لمشرف بضغطة — فجوة سُدت بمراجعة المالك)
+  const [roleFor, setRoleFor] = useState<number | null>(null)
   const [ePin, setEPin] = useState('')
   const [ePin2, setEPin2] = useState('')
   const openResets = pinResetRequests.filter((r) => r.status === 'open')
@@ -74,7 +80,16 @@ export function PermissionsPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  const activeRole = roles.find((r) => r.id === activeRoleId)!
+  const saveNewRole = () => {
+    try {
+      const id = addCustomRole(newRoleName, newRoleBase || undefined)
+      setActiveRoleId(id)
+      setRoleModal(false); setNewRoleName(''); setNewRoleBase('cashier')
+      toast.show('أُنشئ الدور — عدّل صلاحياته الآن بالتشيك بوكس ✅')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const activeRole = roles.find((r) => r.id === activeRoleId) ?? roles[0]
   const isOwner = !!activeRole.isOwner
   const permSet = useMemo(() => new Set(activeRole.permissions), [activeRole])
 
@@ -101,7 +116,7 @@ export function PermissionsPage() {
       <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 h-fit">
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-extrabold text-slate-800 dark:text-white text-sm">الأدوار</h3>
-          <button className="flex items-center gap-1 text-[11px] font-bold text-brand-600 dark:text-brand-400 hover:bg-brand-500/10 px-2 py-1 rounded-lg transition-colors duration-200">
+          <button onClick={() => setRoleModal(true)} className="flex items-center gap-1 text-[11px] font-bold text-brand-600 dark:text-brand-400 hover:bg-brand-500/10 px-2 py-1 rounded-lg transition-colors duration-200">
             <Plus size={13} /> دور جديد
           </button>
         </div>
@@ -118,6 +133,16 @@ export function PermissionsPage() {
             >
               {r.isOwner ? <Crown size={15} className="text-amber-500" /> : <ShieldCheck size={15} className="opacity-60" />}
               <span className="flex-1 text-right">{r.nameAr}</span>
+              {!r.isSystem && (
+                <span
+                  role="button"
+                  title="حذف الدور المخصص (يُرفض لو معيّن على مستخدم نشط)"
+                  onClick={(e) => { e.stopPropagation(); try { if (activeRoleId === r.id) setActiveRoleId('cashier'); removeCustomRole(r.id); toast.show(`حُذف دور «${r.nameAr}»`) } catch (err) { toast.show((err as Error).message, 'error') } }}
+                  className="p-1 rounded-md text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                >
+                  <UserX size={12} />
+                </span>
+              )}
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">
                 {r.isOwner ? 'الكل' : r.permissions.length}
               </span>
@@ -274,7 +299,11 @@ export function PermissionsPage() {
                   {u.nameAr}
                   {u.employeeId != null && <span className="text-[9.5px] text-slate-400 font-normal mr-1.5">👥 موظف مربوط</span>}
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">{roles.find((r) => r.id === u.roleId)?.nameAr ?? u.roleId}</span>
+                <button
+                  onClick={() => setRoleFor(u.id)}
+                  title="تغيير دور هذا المستخدم — ترقية لمشرف أو تخصيص دور آخر"
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-brand-500/15 hover:text-brand-600 font-bold transition-colors"
+                >{roles.find((r) => r.id === u.roleId)?.nameAr ?? u.roleId} ▾</button>
                 {u.mustChangePin && u.initialPin && (
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-bold" title="الرقم المبدئي — سيختفي فور تغييره بأول دخول">
                     🔑 {u.initialPin}
@@ -407,6 +436,65 @@ export function PermissionsPage() {
             </div>
           )
         })()}
+      </Modal>
+
+      {/* ➕ دور مخصص جديد (نمط Square «Create permission set» / Toast custom jobs) */}
+      <Modal open={roleModal} onClose={() => { setRoleModal(false); setNewRoleName('') }} title="🛡️ دور جديد">
+        <div className="space-y-4">
+          <p className="text-[11.5px] text-slate-500 dark:text-slate-400 leading-relaxed bg-sky-500/5 rounded-xl p-3">
+            أنشئ دوراً باسمك أنت — «مشرف مساء»، «أمين مخزن»، «مشرفة صالة»… يبدأ بنسخة من صلاحيات
+            دور موجود ثم تعدّلها بالتشيك بوكس بحرية. أي موظف تعيّنه على هذا الدور يرث صلاحياته فوراً.
+          </p>
+          <Field label="اسم الدور *">
+            <input value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} className={inputCls} placeholder="مثال: مشرف وردية المساء" autoFocus autoComplete="off" />
+          </Field>
+          <Field label="ابدأ بصلاحيات دور" hint="نسخة أولية تعدّلها بعد الإنشاء — اختر الأقرب لما تريد">
+            <select value={newRoleBase} onChange={(e) => setNewRoleBase(e.target.value)} className={inputCls}>
+              {roles.filter((r) => !r.isOwner).map((r) => <option key={r.id} value={r.id}>{r.nameAr} ({r.permissions.length} صلاحية)</option>)}
+              <option value="">— فارغ تماماً (أضف كل صلاحية بنفسك) —</option>
+            </select>
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => { setRoleModal(false); setNewRoleName('') }}>إلغاء</Btn>
+            <Btn onClick={saveNewRole} disabled={!newRoleName.trim()}>إنشاء الدور</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      {/* 🔄 تغيير دور مستخدم قائم — ترقية كاشير لمشرف بضغطة (مراجعة المالك) */}
+      <Modal open={roleFor != null} onClose={() => setRoleFor(null)} title={`🔄 تغيير دور — ${appUsers.find((x) => x.id === roleFor)?.nameAr ?? ''}`}>
+        <div className="space-y-3">
+          <p className="text-[11.5px] text-slate-500 dark:text-slate-400 leading-relaxed bg-sky-500/5 rounded-xl p-3">
+            الدور الجديد يسري <b>فوراً</b> على القوائم والشاشات وحوارات الاعتماد.
+            لجعل المستخدم <b>مشرفاً يعتمد بالرقم السري</b>: اختر «مدير فرع» أو أي دور يملك
+            صلاحيات الاعتماد الحساسة (اعتماد مرتجع، تسوية مخزنية…).
+          </p>
+          <div className="space-y-1.5">
+            {roles.filter((r) => !r.isOwner).map((r) => {
+              const current = appUsers.find((x) => x.id === roleFor)?.roleId === r.id
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => {
+                    if (roleFor == null || current) return
+                    try {
+                      updateAppUser(roleFor, { roleId: r.id })
+                      const uName = appUsers.find((x) => x.id === roleFor)?.nameAr ?? ''
+                      setRoleFor(null)
+                      toast.show(`صار «${uName}» بدور «${r.nameAr}» — يسري فوراً ✅`)
+                    } catch (err) { toast.show((err as Error).message, 'error') }
+                  }}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl border-2 text-sm transition-all ${current ? 'border-brand-500/50 bg-brand-500/10 text-brand-700 dark:text-brand-300 font-bold' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-brand-400/40'}`}
+                >
+                  <ShieldCheck size={15} className="opacity-60" />
+                  <span className="flex-1 text-right">{r.nameAr}</span>
+                  <span className="text-[10px] text-slate-400">{r.permissions.length} صلاحية</span>
+                  {current && <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-600 font-bold">الحالي</span>}
+                </button>
+              )
+            })}
+          </div>
+        </div>
       </Modal>
 
       {/* مستخدم جديد — يُبنى على موظف مسجل (سياسة المالك) */}
