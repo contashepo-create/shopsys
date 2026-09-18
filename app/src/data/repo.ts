@@ -15,7 +15,7 @@ import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput
 import { computeTotals, buildSaleEntry, baseQty, exceedsCreditLimit, CreditLimitError, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
-import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
+import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../core/permissions.ts'
 import { isEligibleApprover, describeShiftContext } from '../core/refundApproval.ts'
 import {
@@ -1118,6 +1118,16 @@ interface DataState {
   /* ─── تسجيل الدخول الفعلي (سد ثغرة انتحال الصلاحيات) ─── */
   /** تجزئة الرقم السري للمالك — null = لم يعيّن بعد فلا تُفرض شاشة الدخول */
   ownerPinHash: string | null
+  /** هوية المالك للدخول الموحد (لا زر مالك مميز — مراجعة أمنية): اسم/هاتف/بريد/صورة */
+  ownerProfile: OwnerProfile
+  updateOwnerProfile: (patch: Partial<OwnerProfile>) => void
+  /**
+   * البروفايل الذاتي (نمط Lightspeed «كل مستخدم يعدل ملفه وأمانه بنفسه»):
+   * تغيير الرقم السري بحرية بعد التحقق من الرقم الحالي + تحديث بيانات التواصل والصورة.
+   * الحقول الحساسة (الدور/الصلاحيات/التفعيل) ليست هنا — للمالك فقط في شاشة الصلاحيات.
+   */
+  changeMyPin: (currentPin: string, newPinHash: string) => Promise<void>
+  updateMyProfile: (patch: { phone?: string; email?: string; avatarDataUrl?: string }) => void
   /** true = لا أحد داخل — شاشة الدخول تحجب التطبيق كله (متى كانت المصادقة مطلوبة) */
   loggedOut: boolean
   /** حارس المحاولات الفاشلة (يبقى بعد تحديث الصفحة — لا تحايل) */
@@ -1929,6 +1939,19 @@ export const DATA_VERSION = 18 // 16: مقايضة ذهب GTI — 17: تمويل
  * في خزينة/بنك والإعداد يمنع ذلك، تُرفض العملية كلها برسالة واضحة.
  * (فحص المخزون السالب يتم في مواضع الخصم نفسها لأنه لكل عملية سياقها)
  */
+/**
+ * سياسة «لا بيع بلا وردية» (النمط العالمي — Toast/Square: كل بيع يُربط بدرج
+ * مفتوح كي يُحاسَب الكاشير على العجز/الزيادة عند الإقفال). الافتراضي: إلزامي،
+ * ويُعطَّل من إعدادات التشغيل لمن يعمل وحده. قراءة مباشرة لتفادي دورة استيراد.
+ */
+function shiftRequiredForSales(): boolean {
+  try {
+    const raw = localStorage.getItem('shopsys-app')
+    if (raw) return JSON.parse(raw)?.state?.setup?.requireOpenShiftForSales !== false
+  } catch { /* الافتراضي: إلزامي */ }
+  return true
+}
+
 function assertTreasuryNotNegative(
   prevJournal: JournalEntry[],
   nextJournal: JournalEntry[],
@@ -2085,6 +2108,7 @@ export const useDataStore = create<DataState>()(
       currentUserId: null,
       issues: [],
       ownerPinHash: null,
+      ownerProfile: DEFAULT_OWNER_PROFILE,
       loggedOut: false,
       loginGuard: EMPTY_GUARD,
       ownerTempPin: null,
@@ -2518,6 +2542,10 @@ export const useDataStore = create<DataState>()(
 
       postSale: (args) => {
         const state = get()
+        // سياسة الورديات: بيع بلا وردية مفتوحة مرفوض ما دام الإعداد إلزامياً
+        if (shiftRequiredForSales() && !currentOpenShift(state.shifts)) {
+          throw new Error('لا توجد وردية مفتوحة — افتح وردية أولاً من زر «فتح وردية» أعلى شاشة الكاشير، أو عطّل الإلزام من الإعدادات العامة')
+        }
         // 0) وصفات «يُجهَّز عند الطلب» (مطاعم): الطبق بلا مخزون —
         // تُفكَّك سطوره إلى احتياجات خامات تُفحص وتُخصم بدلاً منه
         const recipeOf = (itemId: number) => state.recipes.find((r) => r.productItemId === itemId && r.mode === 'made_to_order' && r.isActive)
@@ -4236,6 +4264,77 @@ export const useDataStore = create<DataState>()(
       setOwnerPin: (pinHash) => {
         if (!pinHash) throw new Error('الرقم السري مطلوب')
         set({ ownerPinHash: pinHash, ownerTempPin: null })
+      },
+      updateOwnerProfile: (patch) => {
+        const state = get()
+        // تعديل هوية المالك للمالك نفسه فقط (currentUserId=null) — حماية بنيوية
+        if (state.currentUserId != null) throw new Error('هوية المالك يعدلها المالك فقط')
+        const next = { ...state.ownerProfile, ...patch }
+        next.nameAr = sanitizeText(next.nameAr, 60) || 'المالك'
+        next.phone = sanitizeText(next.phone, 20)
+        next.email = sanitizeText(next.email, 80)
+        // منع تصادم هوية المالك مع معرف موظف — وإلا اختلط الدخول الموحد
+        const clash = state.appUsers.find((u) => u.active && (
+          u.nameAr.trim() === next.nameAr.trim()
+          || (next.phone && u.phone && u.phone.trim() === next.phone.trim())
+          || (next.email && u.email && u.email.trim().toLowerCase() === next.email.trim().toLowerCase())
+        ))
+        if (clash) throw new Error(`المعرف يتصادم مع حساب «${clash.nameAr}» — اختر اسماً/هاتفاً/بريداً مختلفاً`)
+        set({
+          ownerProfile: next,
+          auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: next.nameAr, kind: 'auth', title: 'المالك حدّث هوية الدخول الخاصة به' }]),
+        })
+      },
+      changeMyPin: async (currentPin, newPinHash) => {
+        const state = get()
+        if (!newPinHash) throw new Error('الرقم الجديد مطلوب')
+        if (state.currentUserId == null) {
+          // المالك: تحقق من رقمه الحالي ثم بدّل
+          if (!state.ownerPinHash || !(await verifyPin(currentPin, state.ownerPinHash))) throw new Error('الرقم الحالي غير صحيح')
+          if (newPinHash === state.ownerPinHash) throw new Error('الرقم الجديد يطابق الحالي — اختر رقماً مختلفاً')
+          set({
+            ownerPinHash: newPinHash,
+            ownerTempPin: null,
+            auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: state.ownerProfile.nameAr, kind: 'auth', title: 'المالك غيّر رقمه السري بنفسه' }]),
+          })
+          return
+        }
+        const user = state.appUsers.find((u) => u.id === state.currentUserId && u.active)
+        if (!user) throw new Error('المستخدم غير موجود')
+        if (!(await verifyPin(currentPin, user.pinHash))) throw new Error('الرقم الحالي غير صحيح')
+        if (newPinHash === user.pinHash) throw new Error('الرقم الجديد يطابق الحالي — اختر رقماً مختلفاً')
+        set({
+          appUsers: state.appUsers.map((u) => (u.id === user.id ? { ...u, pinHash: newPinHash, mustChangePin: false, initialPin: null } : u)),
+          auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: user.nameAr, kind: 'auth', title: `«${user.nameAr}» غيّر رقمه السري من بروفايله` }]),
+        })
+      },
+      updateMyProfile: (patch) => {
+        const state = get()
+        if (state.currentUserId == null) {
+          // المالك يعدل بيانات تواصله وصورته عبر نفس البوابة
+          get().updateOwnerProfile({ phone: patch.phone, email: patch.email, avatarDataUrl: patch.avatarDataUrl })
+          return
+        }
+        const user = state.appUsers.find((u) => u.id === state.currentUserId && u.active)
+        if (!user) throw new Error('المستخدم غير موجود')
+        const phone = patch.phone !== undefined ? sanitizeText(patch.phone, 20) : undefined
+        const email = patch.email !== undefined ? sanitizeText(patch.email, 80) : undefined
+        // منع التصادم مع معرف مستخدم آخر أو هوية المالك (سلامة الدخول الموحد)
+        const clash = state.appUsers.find((u) => u.id !== user.id && u.active && (
+          (phone && u.phone && u.phone.trim() === phone.trim())
+          || (email && u.email && u.email.trim().toLowerCase() === email.trim().toLowerCase())
+        ))
+        if (clash) throw new Error(`البيانات تتصادم مع حساب «${clash.nameAr}»`)
+        const op = state.ownerProfile
+        if ((phone && op.phone && op.phone.trim() === phone.trim()) || (email && op.email && op.email.trim().toLowerCase() === email.trim().toLowerCase())) {
+          throw new Error('البيانات محجوزة — اختر هاتفاً/بريداً مختلفاً')
+        }
+        set({
+          appUsers: state.appUsers.map((u) => (u.id === user.id
+            ? { ...u, ...(phone !== undefined ? { phone } : {}), ...(email !== undefined ? { email } : {}), ...(patch.avatarDataUrl !== undefined ? { avatarDataUrl: patch.avatarDataUrl } : {}) }
+            : u)),
+          auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: user.nameAr, kind: 'auth', title: `«${user.nameAr}» حدّث بيانات بروفايله` }]),
+        })
       },
       login: async (id, pin) => {
         const state = get()
@@ -8399,6 +8498,7 @@ export const useDataStore = create<DataState>()(
           issues: s.issues ?? [],
           // الإصدار 18: تسجيل الدخول الفعلي + الصرف الداخلي
           ownerPinHash: s.ownerPinHash ?? null,
+          ownerProfile: s.ownerProfile ?? DEFAULT_OWNER_PROFILE,
           loggedOut: s.loggedOut ?? false,
           loginGuard: s.loginGuard ?? EMPTY_GUARD,
           ownerTempPin: s.ownerTempPin ?? null,

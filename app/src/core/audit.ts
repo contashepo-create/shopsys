@@ -208,6 +208,8 @@ export interface AppUser {
    * المدير يعيّن رقماً مبدئياً، وأول دخول به يفتح شاشة تعيين رقم جديد إلزامية.
    */
   mustChangePin?: boolean
+  /** صورة شخصية (Data URL) — يرفعها المستخدم من بروفايله */
+  avatarDataUrl?: string
   /**
    * الرقم المبدئي الذي عيّنه المدير — يظهر له في شاشة المستخدمين حتى يغيّره
    * الموظف عند أول دخول (بعدها يُمسح ولا يُعرف رقمه لأحد). طلب المالك:
@@ -234,6 +236,30 @@ export function suggestRoleForJobTitle(jobTitle: string): string {
  * الاسم كاملاً أو الهاتف أو البريد. المطابقة حرفية بعد التشذيب —
  * لا بحث جزئي كي لا يُكشف وجود حسابات.
  */
+/**
+ * هوية دخول المالك (مراجعة المالك الأمنية): لا زر «دخول المالك» مميز —
+ * المالك يدخل من نفس نموذج الجميع بمعرفه (اسم/هاتف/بريد) + رقمه السري،
+ * فلا يعرف المخترق أي حقل يخص المالك ولا أن للمالك مدخلاً خاصاً.
+ */
+export interface OwnerProfile {
+  nameAr: string
+  phone: string
+  email: string
+  avatarDataUrl: string
+}
+
+export const DEFAULT_OWNER_PROFILE: OwnerProfile = { nameAr: 'المالك', phone: '', email: '', avatarDataUrl: '' }
+
+/** هل المعرف المكتوب يخص المالك؟ نفس قواعد الموظف: مطابقة حرفية للاسم/الهاتف/البريد */
+export function matchesOwnerIdentity(profile: OwnerProfile, identifier: string): boolean {
+  const q = identifier.trim()
+  if (!q) return false
+  const qLower = q.toLowerCase()
+  return profile.nameAr.trim() === q
+    || (profile.phone.trim() !== '' && profile.phone.trim() === q)
+    || (profile.email.trim() !== '' && profile.email.trim().toLowerCase() === qLower)
+}
+
 export function findUserByIdentifier(users: readonly AppUser[], identifier: string): AppUser | null {
   const q = identifier.trim()
   if (!q) return null

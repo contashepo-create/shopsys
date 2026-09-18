@@ -11,7 +11,7 @@ import {
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
   FileText, ListChecks, Users2, ChefHat, Scissors, Gem, Tags, PackageMinus, HandCoins, Gauge,
-  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt } from 'lucide-react'
+  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule, ItemFeature } from '../core/activities.ts'
 
@@ -200,6 +200,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'settings', nameAr: 'الإعدادات', icon: Settings, color: 'slate',
     children: [
       { id: 'general', nameAr: 'عامة (بلد/عملة/ضريبة)', icon: Percent, path: '/settings/general' },
+      { id: 'profile', nameAr: 'حسابي (بياناتي ورقمي السري)', icon: UserCircle2, path: '/settings/profile' },
       { id: 'permissions', nameAr: 'المستخدمون والصلاحيات', icon: ShieldCheck, path: '/settings/permissions' },
       { id: 'audit', nameAr: 'سجل النشاطات (للمالك)', icon: ScrollText, path: '/settings/audit' },
       { id: 'issues', nameAr: 'بلاغات المشاكل الداخلية', icon: MessageSquareWarning, path: '/settings/issues' },

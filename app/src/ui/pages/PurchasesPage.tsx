@@ -5,7 +5,7 @@
  * - الترحيل يحدّث تكلفة الأصناف بالمتوسط المرجح ويزيد المخزون
  */
 import { useMemo, useState } from 'react'
-import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History } from 'lucide-react'
+import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type PurchaseInvoice } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -19,6 +19,9 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { buildSimpleDocModel } from '../../core/receipt.ts'
+import { printModelWithTemplate } from '../print/printDoc.ts'
+import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 
 interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string }
 interface DraftExpense {
@@ -36,7 +39,7 @@ const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', m
 
 export function PurchasesPage() {
   const { items, suppliers, purchases, journal, projects, treasuries, custodyFiles, employees, warehouses, categories, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
-  const { setup, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
+  const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt } = useAppStore()
   const navigate = useNavigate()
 
   // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة ⇒ لا تعديل — إشعار مدين على المورد
@@ -53,6 +56,32 @@ export function PurchasesPage() {
 
   const [open, setOpen] = useState(false)
   const [viewing, setViewing] = useState<PurchaseInvoice | null>(null)
+  // طباعة فاتورة الشراء بقوالب الكاشير الثلاثة (طلب المالك)
+  const [printTarget, setPrintTarget] = useState<PurchaseInvoice | null>(null)
+
+  /** نموذج طباعة فاتورة الشراء: سطور بسعر المورد + إبراز المصاريف المحملة */
+  const printPurchase = (inv: PurchaseInvoice, template: Parameters<typeof printModelWithTemplate>[3]) => {
+    const model = buildSimpleDocModel({
+      docTitle: 'فاتورة شراء',
+      invoiceNumber: inv.invoiceNumber,
+      refCode: inv.refCode ?? '',
+      dateIso: inv.date,
+      partyLabel: suppliers.find((sp) => sp.id === inv.supplierId)?.nameAr ?? `مورد #${inv.supplierId}`,
+      paymentLabel: inv.paidMinor >= (inv.supplierDueMinor ?? inv.grandTotalMinor) ? 'مدفوعة بالكامل' : inv.paidMinor > 0 ? 'مدفوعة جزئياً' : 'آجلة',
+      rows: inv.lines.map((l) => ({
+        nameAr: items.find((it) => it.id === l.itemId)?.nameAr ?? `صنف #${l.itemId}`,
+        qty: l.qty,
+        unitPriceMinor: l.unitPriceMinor,
+        totalMinor: Math.round(l.unitPriceMinor * l.qty),
+      })),
+      totalMinor: inv.grandTotalMinor,
+      paidMinor: inv.paidMinor,
+      settings: receipt,
+      extraFooter: inv.expensesTotalMinor > 0 ? `بضاعة ${fmt(inv.goodsTotalMinor)} + مصاريف ${fmt(inv.expensesTotalMinor)}` : undefined,
+    })
+    printModelWithTemplate(model, cur, receipt, template)
+    toast.show(`أُرسلت فاتورة الشراء ${inv.invoiceNumber} للطباعة 🖨️`)
+  }
   const [supplierId, setSupplierId] = useState(0)
   const [lines, setLines] = useState<DraftLine[]>([])
   /* الأمر 6: إضافة صنف سريعة داخل فاتورة الشراء — بضاعة جديدة تصل مع المورد */
@@ -311,6 +340,9 @@ export function PurchasesPage() {
                     )}
                     <button onClick={() => setViewing(p)} title="عرض الفاتورة وقيدها" className="p-2 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-all duration-200 hover:scale-110">
                       <Eye size={15} />
+                    </button>
+                    <button onClick={() => setPrintTarget(p)} title="طباعة فاتورة الشراء — حراري/A4/A5" className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
+                      <Printer size={15} />
                     </button>
                   </td>
                 </tr>
@@ -841,6 +873,15 @@ export function PurchasesPage() {
         )}
       </Modal>
       {editApproval.dialog}
+
+      {/* اختيار قالب طباعة فاتورة الشراء (حراري/A4/A5) */}
+      <PrintTemplateModal
+        open={printTarget != null}
+        onClose={() => setPrintTarget(null)}
+        defaultTemplate={receipt.defaultTemplate}
+        title="🖨️ طباعة فاتورة الشراء"
+        onPrint={(t) => { if (printTarget) printPurchase(printTarget, t) }}
+      />
     </div>
   )
 }

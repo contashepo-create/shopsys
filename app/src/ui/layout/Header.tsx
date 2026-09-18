@@ -7,11 +7,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Moon, Sun, BookOpenText, Calculator, Bell, UserCircle2, BellOff, LogOut } from 'lucide-react'
 import { authRequired } from '../../core/auth.ts'
+import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { collectNotifications } from '../../core/notifications.ts'
+import { collectNotifications, visibleNotifications } from '../../core/notifications.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 
 export function Header({ title }: { title: string }) {
@@ -28,7 +29,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile } = useDataStore()
   const navigate = useNavigate()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -64,10 +65,20 @@ export function Header({ title }: { title: string }) {
     }),
     [batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur],
   )
+  // مراجعة المالك («لماذا إشعارات المالك تظهر لأي مستخدم؟»):
+  // الجرس يفلتر بصلاحيات المستخدم النشط — الكاشير لا يرى أقساطاً ولا شيكات ولا بلاغات
+  const myPerms = useMemo(
+    () => effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles)),
+    [activeUser, roleOverrides, customRoles],
+  )
+  const notificationsForMe = useMemo(
+    () => visibleNotifications(notifications, myPerms),
+    [notifications, myPerms],
+  )
   // طلب المالك: التحكم في الإشعارات وتعليمها كمقروء — الشارة تعدّ غير المقروء فقط
   const readSet = new Set(readNotificationIds)
-  const unread = notifications.filter((n) => !readSet.has(n.id))
-  const readOnes = notifications.filter((n) => readSet.has(n.id))
+  const unread = notificationsForMe.filter((n) => !readSet.has(n.id))
+  const readOnes = notificationsForMe.filter((n) => readSet.has(n.id))
 
   return (
     <header className="sticky top-0 z-20 flex items-center gap-4 px-6 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-card-dark/70 glass">
@@ -193,7 +204,14 @@ export function Header({ title }: { title: string }) {
             {activeUser ? `🛡️ ${activeUser.roleId}` : '👑 كل الصلاحيات'}
           </div>
         </div>
-        <UserCircle2 size={30} className="text-brand-500" />
+        <button onClick={() => navigate('/settings/profile')} title="حسابي — بياناتي ورقمي السري" className="transition-transform hover:scale-110">
+          {(() => {
+            const av = activeUser ? activeUser.avatarDataUrl : ownerProfile.avatarDataUrl
+            return av
+              ? <img src={av} alt="" className="w-8 h-8 rounded-xl object-cover border border-brand-500/40" />
+              : <UserCircle2 size={30} className="text-brand-500" />
+          })()}
+        </button>
         {authOn && (
           <button
             onClick={logout}

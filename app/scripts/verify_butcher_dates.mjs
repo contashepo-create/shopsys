@@ -116,7 +116,7 @@ eq(PROCESSING_KIND_LABELS.dates.orderPrefix, 'PKG', 'بادئة التمور PKG
 const sa = getCountry('SA')
 eq(sa.vatPercent, 15, 'ضريبة السعودية 15٪')
 mem.clear()
-mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, countryCode: 'SA', activityId: 'butcher', vatPercent: 15, taxInclusive: true, allowNegativeTreasury: false }, license: { plan: 'pro' } }, version: 0 }))
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  done: true, countryCode: 'SA', activityId: 'butcher', vatPercent: 15, taxInclusive: true, allowNegativeTreasury: false }, license: { plan: 'pro' } }, version: 0 }))
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 {
   const { useDataStore } = await import(`${repoUrl}?bd=butcher`)
@@ -190,7 +190,7 @@ const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 
 /* ═══ د) تمور بالسعودية — فرز وتعبئة ═══ */
 mem.clear()
-mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, countryCode: 'SA', activityId: 'dates', vatPercent: 15, taxInclusive: true, allowNegativeTreasury: false }, license: { plan: 'pro' } }, version: 0 }))
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  done: true, countryCode: 'SA', activityId: 'dates', vatPercent: 15, taxInclusive: true, allowNegativeTreasury: false }, license: { plan: 'pro' } }, version: 0 }))
 {
   const { useDataStore } = await import(`${repoUrl}?bd=dates`)
   const st = () => useDataStore.getState()

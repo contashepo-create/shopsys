@@ -16,7 +16,7 @@ globalThis.localStorage = {
   clear: () => storage.clear(),
 }
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
-localStorage.setItem('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury: true, vatPercent: 14, taxInclusive: false } }, version: 0 }))
+localStorage.setItem('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  allowNegativeTreasury: true, vatPercent: 14, taxInclusive: false } }, version: 0 }))
 
 const {
   LAUNDRY_SERVICE_LABELS, LAUNDRY_STATUS_LABELS, LAUNDRY_TRANSITIONS, assertLaundryTransition,

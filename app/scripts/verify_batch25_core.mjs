@@ -13,7 +13,7 @@ const mem = new Map()
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) }
 globalThis.window = globalThis
 // نبدأ بالوضع الافتراضي: الرصيد السالب ممنوع — سنموّل الخزينة أولاً
-mem.set('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury: false } } }))
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  allowNegativeTreasury: false } } }))
 
 const { useDataStore } = await import('../src/data/repo.ts')
 const { summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry } = await import('../src/core/shifts.ts')
@@ -152,10 +152,10 @@ console.log('\n6️⃣ الحارس المركزي: منع الرصيد السا
   }), 'سالباً')
   ok('لم يُكتب أي قيد بعد الرفض (الرصيد كما هو)', bal('1101') === cash)
   // تفعيل السماح — نفس العملية تمر
-  mem.set('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury: true } } }))
+  mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  allowNegativeTreasury: true } } }))
   S().postVoucher({ kind: 'payment', treasury: '1101', counterAccountCode: '5103', amountMinor: cash + 100000, description: 'إيجار ضخم' })
   ok('بعد تفعيل الإعداد تمر العملية ويصبح الرصيد سالباً', bal('1101') === -100000, bal('1101'))
-  mem.set('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury: false } } }))
+  mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  allowNegativeTreasury: false } } }))
 }
 
 console.log('\n7️⃣ الحقول الاحترافية للخزائن/البنوك (طلب المالك)')

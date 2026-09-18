@@ -15,7 +15,7 @@
 const mem = new Map()
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) }
 globalThis.window = globalThis
-mem.set('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury: true } } }))
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  allowNegativeTreasury: true } } }))
 
 const { useDataStore } = await import('../src/data/repo.ts')
 const { vatReport } = await import('../src/core/financialReports.ts')

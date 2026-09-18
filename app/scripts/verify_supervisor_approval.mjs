@@ -21,7 +21,7 @@ globalThis.localStorage = {
   clear: () => mem.clear(),
 }
 globalThis.window = globalThis
-mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, countryId: 'EG', activityId: 'grocery', vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true, allowNegativeStock: false } }, version: 0 }))
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  done: true, countryId: 'EG', activityId: 'grocery', vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true, allowNegativeStock: false } }, version: 0 }))
 
 const { refundNeedsSupervisorPin, needsSupervisorPin, isEligibleApprover, describeShiftContext, REFUND_APPROVE_PERM, REFUND_CREATE_PERM } =
   await import('../src/core/refundApproval.ts')

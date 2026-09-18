@@ -173,6 +173,44 @@ export function GeneralSettingsPage() {
         </div>
       </section>
 
+      {/* سياسة الورديات (مراجعة المالك — النمط العالمي Toast/Square) */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '130ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          <ShieldAlert size={17} className="text-violet-500" /> سياسة الورديات
+        </h3>
+        <p className="text-[11.5px] text-slate-400 mb-4">
+          النمط العالمي (Toast / Square): كل بيع يُربط بوردية مفتوحة كي يُحاسَب الكاشير على العجز
+          والزيادة عند الإقفال — بيع بلا وردية = نقدية بلا مسؤول عنها. عطّله فقط لو تعمل وحدك.
+        </p>
+        {(() => {
+          const on = setup.requireOpenShiftForSales
+          return (
+            <button
+              onClick={() => {
+                useAppStore.setState((s) => ({ setup: { ...s.setup, requireOpenShiftForSales: !s.setup.requireOpenShiftForSales } }))
+                toast.show(!on ? 'أصبح فتح الوردية إلزامياً قبل أي بيع ✓' : '⚠️ سُمح بالبيع بلا وردية — الفواتير ستُسجل «بلا وردية» ولن تدخل محاسبة الدرج')
+              }}
+              className={`w-full sm:w-auto text-right p-4 rounded-2xl border-2 transition-all duration-200 hover:scale-[1.01] ${
+                on ? 'border-violet-500/50 bg-violet-500/10' : 'border-amber-500/50 bg-amber-500/10'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-6">
+                <span className={`font-bold text-[13px] ${on ? 'text-violet-700 dark:text-violet-400' : 'text-amber-700 dark:text-amber-400'}`}>
+                  ⏱️ منع البيع بلا وردية مفتوحة
+                </span>
+                <span className={`w-10 h-5.5 rounded-full p-0.5 transition-colors ${on ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                  <span className={`block w-4.5 h-4.5 rounded-full bg-white shadow transition-transform ${on ? '-translate-x-4.5' : ''}`} />
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1.5">
+                عند التفعيل: شاشة الكاشير ترفض إتمام أي فاتورة حتى تُفتح وردية بعهدة افتتاحية
+              </div>
+              <div className={`text-[10.5px] font-bold mt-1 ${on ? 'text-violet-600' : 'text-amber-600'}`}>{on ? 'إلزامي (مُوصى به)' : 'غير إلزامي — البيع بلا وردية مسموح'}</div>
+            </button>
+          )
+        })()}
+      </section>
+
       {/* المخزن الافتراضي للفواتير (الأمر 8) */}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '140ms' }}>
         <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">

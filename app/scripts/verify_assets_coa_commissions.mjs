@@ -17,7 +17,7 @@ globalThis.localStorage = {
   clear: () => storage.clear(),
 }
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
-localStorage.setItem('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury: true } }, version: 0 }))
+localStorage.setItem('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  allowNegativeTreasury: true } }, version: 0 }))
 
 const { buildAssetPurchaseEntry, buildAssetInstallments, buildAssetPaymentEntry, ASSET_FUNDING_LABELS } = await import('../src/core/assets.ts')
 const { validateCustomAccount, customAsAccounts, rootOfParent } = await import('../src/core/customAccounts.ts')

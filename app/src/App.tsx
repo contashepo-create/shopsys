@@ -65,6 +65,7 @@ import { SyncPage } from './ui/pages/SyncPage.tsx'
 import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
 import { CarsPage } from './ui/pages/CarsPage.tsx'
 import { AboutPage } from './ui/pages/AboutPage.tsx'
+import { ProfilePage } from './ui/pages/ProfilePage.tsx'
 import { AuditLogPage } from './ui/pages/AuditLogPage.tsx'
 import { IssuesPage } from './ui/pages/IssuesPage.tsx'
 import { SupportPage } from './ui/pages/SupportPage.tsx'
@@ -105,10 +106,13 @@ function Shell() {
 
   // ─── بوابة تسجيل الدخول (سد ثغرة انتحال الصلاحيات): PIN إجباري متى فُعّلت المصادقة ───
   const { appUsers, currentUserId, roleOverrides, customRoles, ownerPinHash, loggedOut } = useDataStore()
-  if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && loggedOut) {
+  const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
+  // بوابة الدخول + إصلاح باج «إجبار تغيير الرقم أول دخول»: login() كان يرفع loggedOut
+  // فتختفي شاشة الدخول قبل ظهور مودال التغيير الإجباري — الآن من عليه mustChangePin
+  // يبقى محتجزاً في LoginScreen (بمودالها الإجباري) حتى يعيّن رقمه الخاص
+  if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && (loggedOut || activeUser?.mustChangePin)) {
     return <LoginScreen />
   }
-  const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles))
   if (!canAccessPath(location.pathname, perms)) {
     const needed = permissionForPath(location.pathname)
@@ -193,6 +197,7 @@ function Shell() {
         <Route path="/settings/appearance" element={<AppearancePage />} />
         <Route path="/settings/einvoice" element={<EinvoicePage />} />
         <Route path="/settings/license" element={<LicensePage />} />
+        <Route path="/settings/profile" element={<ProfilePage />} />
         <Route path="/settings/about" element={<AboutPage />} />
         <Route path="/settings/audit" element={<AuditLogPage />} />
         <Route path="/settings/issues" element={<IssuesPage />} />

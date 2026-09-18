@@ -34,6 +34,12 @@ interface SetupState {
   accountingMode: 'simple' | 'full'
   /** السماح بالرصيد السالب في الخزائن والبنوك (طلب المالك — الافتراضي: ممنوع) */
   allowNegativeTreasury: boolean
+  /**
+   * إلزام فتح وردية قبل البيع (النمط العالمي — Toast/Square: كل بيع نقدي يُربط
+   * بدرج/وردية مفتوحة كي يُحاسب الكاشير على العجز والزيادة عند الإقفال).
+   * الافتراضي: إلزامي. أطفئه فقط لو تعمل وحدك بلا محاسبة ورديات.
+   */
+  requireOpenShiftForSales: boolean
   /** السماح بالبيع/الصرف برصيد مخزون سالب (الافتراضي: ممنوع) */
   allowNegativeStock: boolean
   /** المخزن الافتراضي للفواتير (إعدادات الفواتير) — null = المخزن الرئيسي */
@@ -182,6 +188,7 @@ export const useAppStore = create<AppState>()(
         accountingMode: 'simple',
         allowNegativeTreasury: false,
         allowNegativeStock: false,
+        requireOpenShiftForSales: true,
         defaultWarehouseId: null,
         phone: '', email: '', city: '', street: '',
         doctorSpecialty: '',
@@ -208,6 +215,7 @@ export const useAppStore = create<AppState>()(
             accountingMode: 'simple',
             allowNegativeTreasury: false,
             allowNegativeStock: false,
+            requireOpenShiftForSales: true,
             defaultWarehouseId: null,
             phone: contact?.phone ?? '', email: contact?.email ?? '', city: contact?.city ?? '', street: contact?.street ?? '',
             doctorSpecialty: doctorSpecialty?.trim() ?? '',
@@ -333,6 +341,7 @@ export const useAppStore = create<AppState>()(
         // ترحيل: مفاتيح الرصيد السالب والمخزن الافتراضي (طلب المالك) — الافتراضي: ممنوع
         if (state?.setup) {
           state.setup.allowNegativeTreasury = state.setup.allowNegativeTreasury ?? false
+          state.setup.requireOpenShiftForSales = state.setup.requireOpenShiftForSales ?? true
           state.setup.allowNegativeStock = state.setup.allowNegativeStock ?? false
           state.setup.defaultWarehouseId = state.setup.defaultWarehouseId ?? null
           // ترحيل: تخصص الطبيب (طلب المالك — لا يُفرض «أسنان»)

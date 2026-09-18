@@ -45,7 +45,7 @@ for (const activityId of ACTIVITIES) {
   const nameAr = ACTIVITY_TEMPLATES.find((a) => a.id === activityId).nameAr
   mem.clear()
   // الإعداد يمنع الرصيد السالب — فحص الحارس المركزي في كل نشاط
-  mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, countryCode: 'EG', activityId, vatPercent: 0, taxInclusive: true, allowNegativeTreasury: false }, license: { plan: 'pro' } }, version: 0 }))
+  mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  done: true, countryCode: 'EG', activityId, vatPercent: 0, taxInclusive: true, allowNegativeTreasury: false }, license: { plan: 'pro' } }, version: 0 }))
   const { useDataStore } = await import(`${repoUrl}?trsactivity=${activityId}`)
   const st = () => useDataStore.getState()
   const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }

@@ -63,7 +63,7 @@ eq(findUserByIdentifier(usersFixture, ''), null, 'فارغ = null')
 
 /* ═══ متجر فعلي ═══ */
 mem.clear()
-mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, countryCode: 'SA', activityId: 'butcher', vatPercent: 15, taxInclusive: true, allowNegativeTreasury: false }, license: { plan: 'pro' } }, version: 0 }))
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  done: true, countryCode: 'SA', activityId: 'butcher', vatPercent: 15, taxInclusive: true, allowNegativeTreasury: false }, license: { plan: 'pro' } }, version: 0 }))
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 const { useDataStore } = await import(`${repoUrl}?ulogin=1`)
 const st = () => useDataStore.getState()

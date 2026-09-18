@@ -50,7 +50,7 @@ let pass = 0
 for (const activityId of ACTIVITIES) {
   const tpl = ACTIVITY_TEMPLATES.find((a) => a.id === activityId)
   mem.clear()
-  mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, countryCode: 'EG', activityId, vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
+  mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  done: true, countryCode: 'EG', activityId, vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
   const { useDataStore } = await import(`${repoUrl}?batch18=${activityId}`)
   const st = () => useDataStore.getState()
 

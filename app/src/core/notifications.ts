@@ -14,6 +14,12 @@ export interface AppNotification {
   severity: 'danger' | 'warn' | 'info'
   /** مسار الشاشة المرتبطة — الضغط على التنبيه يفتحها */
   route: string
+  /**
+   * الصلاحية المطلوبة لرؤية هذا الإشعار (مراجعة المالك: «لماذا إشعارات المالك
+   * تظهر لأي مستخدم؟») — null = للجميع. الجرس يفلتر بصلاحيات المستخدم النشط،
+   * فالكاشير لا يرى شيكات ولا أقساطاً ولا طلبات استعادة كلمات السر.
+   */
+  perm: string | null
 }
 
 export interface NotificationsInput {
@@ -48,6 +54,7 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       // الوجهة المنطقية (مراجعة المالك): المنتهي → صفحة الهوالك (فيها زر إعدام فوري للمنتهي)،
       // والموشِك → تقارير المخزون حيث جدول تنبيهات الصلاحية FEFO الكامل
       route: a.status === 'expired' ? '/inventory/wastage' : '/reports',
+      perm: 'inv.view', // من يرى المخزون يرى تنبيهات صلاحيته
     })
   }
 
@@ -64,6 +71,7 @@ export function collectNotifications(input: NotificationsInput): AppNotification
         body: `${p.planNumber} قسط ${it.seq} · المتبقي ${input.fmt(remaining)} · استحقاق ${it.dueDate}`,
         severity: st === 'overdue' ? 'danger' : 'warn',
         route: '/parties/installments',
+        perm: 'party.customer.statement', // مالية العملاء — ليست للكاشير
       })
     }
   }
@@ -77,6 +85,7 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       body: `أبلغ عنها ${iss.reportedBy} — افتح البلاغات لمعالجتها وتوثيق الحل`,
       severity: 'warn',
       route: '/settings/issues',
+      perm: 'set.users', // معالجة البلاغات شأن إداري
     })
   }
 
@@ -89,6 +98,7 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       body: 'افتح شاشة الصلاحيات ← المستخدمون لتعيين رقم جديد له وإبلاغه به',
       severity: 'warn',
       route: '/settings/permissions',
+      perm: 'set.users', // تعيين أرقام سرية = إدارة مستخدمين
     })
   }
 
@@ -105,10 +115,20 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       body: `${dirLabel} ${c.partyName} · ${input.fmt(c.amountMinor)} · ${c.dueDate}`,
       severity: daysLeft < 0 ? 'danger' : 'warn',
       route: '/accounting/cheques',
+      perm: 'acc.vouchers', // مالية الشيكات — ليست للكاشير
     })
   }
 
   // الأخطر أولاً
   const rank = { danger: 0, warn: 1, info: 2 } as const
   return out.sort((a, b) => rank[a.severity] - rank[b.severity])
+}
+
+/**
+ * فلترة الإشعارات بصلاحيات المستخدم النشط (مراجعة المالك):
+ * الجرس يعرض فقط ما يستطيع صاحبه التصرف فيه — النمط العالمي
+ * (Square/Toast: التنبيهات المالية للمدير، التشغيلية للجميع حسب الدور).
+ */
+export function visibleNotifications(all: readonly AppNotification[], perms: ReadonlySet<string>): AppNotification[] {
+  return all.filter((n) => n.perm === null || perms.has(n.perm))
 }

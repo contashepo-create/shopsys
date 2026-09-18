@@ -2,28 +2,28 @@
  * شاشة تسجيل الدخول (طلب المالك — سد ثغرة انتحال الصلاحيات):
  * تحجب التطبيق كله حتى دخول صحيح بالرقم السري — لا تبديل مستخدم بدونها.
  * سياسة المالك (المراجعة الأمنية): **لا قائمة أسماء تُعرض** — كل مستخدم يكتب
- * معرّفه بنفسه (اسمه كاملاً أو هاتفه أو بريده) كالنظم العالمية، فلا يعرف
- * الغريب أسماء الحسابات ولا عددها. المالك يدخل من زر «دخول المالك».
+ * معرّفه بنفسه (اسمه كاملاً أو هاتفه أو بريده) كالنظم العالمية.
+ * **دخول موحّد بلا زر مالك مميز** (مراجعة المالك الثانية): المالك يدخل من نفس
+ * النموذج بمعرفه الخاص — فلا يعرف الغريب أن للمالك مدخلاً خاصاً أصلاً.
  * + أول دخول لموظف برقم مبدئي من المدير ⇒ تغيير الرقم إجباري قبل المتابعة.
  * + استعادة كلمة السر: الموظف يسجل طلباً يصل المالك إشعاراً،
  *   والمالك يستلم رقماً مؤقتاً على تليجرام صالحاً 15 دقيقة.
  */
 import { useState } from 'react'
-import { Crown, UserCircle2, LogIn, KeyRound, Send, LifeBuoy } from 'lucide-react'
+import { LogIn, KeyRound, LifeBuoy } from 'lucide-react'
 import { useDataStore } from '../data/repo.ts'
 import { useAppStore } from '../stores/app.store.ts'
-import { hashPin, findUserByIdentifier } from '../core/audit.ts'
+import { hashPin, findUserByIdentifier, matchesOwnerIdentity } from '../core/audit.ts'
 import { generateTempPin, buildTempPinMessage, TEMP_PIN_TTL_MIN, lockoutMinutesLeft } from '../core/auth.ts'
 import { apiUrl, isValidBotToken, isValidChatId } from '../core/telegram.ts'
 import { Btn, Modal, inputCls, useToast } from './components/ui.tsx'
 
 export function LoginScreen() {
-  const { appUsers, login, requestPinReset, setOwnerTempPin, setOwnerPin, changeOwnPin, loginGuard } = useDataStore()
+  const { appUsers, login, requestPinReset, setOwnerTempPin, setOwnerPin, changeOwnPin, loginGuard, currentUserId, loggedOut, ownerProfile } = useDataStore()
   const { setup, telegram } = useAppStore()
   const toast = useToast()
 
-  /** وضعان: موظف (يكتب معرفه بنفسه) أو المالك (زر صريح) */
-  const [mode, setMode] = useState<'employee' | 'owner'>('employee')
+  /** دخول موحد: الجميع (مالكاً وموظفين) يكتبون المعرف + الرقم في نفس النموذج */
   const [identifier, setIdentifier] = useState('')
   const [pin, setPin] = useState('')
   const [busy, setBusy] = useState(false)
@@ -32,6 +32,14 @@ export function LoginScreen() {
   const [newPin, setNewPin] = useState('')
   const [newPin2, setNewPin2] = useState('')
 
+  // إصلاح باج «إجبار تغيير الرقم» (بلاغ المالك): الاعتماد على حالة محلية فقط كان
+  // يُسقط المودال إذا أُعيد تركيب الشاشة بعد login() — الآن يُشتق من المخزن مباشرة:
+  // مستخدم داخل (غير خارج) وعليه mustChangePin ⇒ المودال إجباري مهما حدث للحالة المحلية
+  const storeUser = appUsers.find((u) => u.id === currentUserId) ?? null
+  const forcedChange: null | { kind: 'employee'; userId: number } =
+    !loggedOut && storeUser?.mustChangePin ? { kind: 'employee', userId: storeUser.id } : null
+  const effectiveMustSet = forcedChange ?? mustSetNewPin
+
   const lockLeft = lockoutMinutesLeft(loginGuard, new Date().toISOString())
   const telegramReady = isValidBotToken(telegram.botToken) && isValidChatId(telegram.chatId)
 
@@ -39,7 +47,15 @@ export function LoginScreen() {
     if (busy) return
     setBusy(true)
     try {
-      if (mode === 'employee') {
+      // المعرف يحدد الحساب: هوية المالك أولاً (الافتراضية «المالك» حتى يخصصها من بروفايله)
+      // + اسم المالك المكتوب في ويزارد الإعداد يعمل كمعرف أيضاً — حتى لا يُحبس مالك لم يخصص هويته
+      const ownerByWizardName = !!setup.ownerName?.trim() && identifier.trim() === setup.ownerName.trim()
+      if (matchesOwnerIdentity(ownerProfile, identifier) || ownerByWizardName) {
+        const { usedTempPin } = await login(null, pin)
+        setPin('')
+        if (usedTempPin) setMustSetNewPin({ kind: 'owner' })
+        else toast.show('أهلاً بك — دخول موفق ✅')
+      } else {
         const user = findUserByIdentifier(appUsers, identifier)
         // رسالة واحدة عامة سواء أخطأ المعرف أو الرقم — لا نكشف أي الاثنين خاطئ
         if (!user) throw new Error('بيانات الدخول غير صحيحة — تحقق من المعرف والرقم السري')
@@ -50,11 +66,6 @@ export function LoginScreen() {
         } else {
           toast.show(`أهلاً ${user.nameAr} — دخول موفق ✅`)
         }
-      } else {
-        const { usedTempPin } = await login(null, pin)
-        setPin('')
-        if (usedTempPin) setMustSetNewPin({ kind: 'owner' })
-        else toast.show('أهلاً بك — دخول موفق ✅')
       }
     } catch (e) {
       toast.show((e as Error).message, 'error')
@@ -68,7 +79,7 @@ export function LoginScreen() {
     try {
       if (newPin !== newPin2) throw new Error('الرقمان غير متطابقين')
       const hash = await hashPin(newPin)
-      if (mustSetNewPin?.kind === 'employee') changeOwnPin(mustSetNewPin.userId, hash)
+      if (effectiveMustSet?.kind === 'employee') changeOwnPin(effectiveMustSet.userId, hash)
       else setOwnerPin(hash)
       setMustSetNewPin(null)
       setNewPin(''); setNewPin2('')
@@ -76,8 +87,15 @@ export function LoginScreen() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  /** الموظف نسي رقمه: طلب يصل المالك إشعاراً بالجرس وفي شاشة الصلاحيات */
-  const forgotEmployee = () => {
+  /**
+   * «نسيت رقمي» موحد: المعرف يحدد المسار —
+   * هوية المالك ⇒ رقم مؤقت عبر تليجرام؛ موظف ⇒ طلب يصل المالك إشعاراً بالجرس.
+   */
+  const forgotUnified = () => {
+    if (matchesOwnerIdentity(ownerProfile, identifier) || (!!setup.ownerName?.trim() && identifier.trim() === setup.ownerName.trim())) {
+      void forgotOwner()
+      return
+    }
     const user = findUserByIdentifier(appUsers, identifier)
     if (!user) {
       toast.show('اكتب اسمك أو هاتفك أو بريدك أولاً حتى نعرف صاحب الطلب', 'error')
@@ -117,7 +135,7 @@ export function LoginScreen() {
     }
   }
 
-  const canSubmit = pin.length >= 4 && (mode === 'owner' || identifier.trim().length > 0)
+  const canSubmit = pin.length >= 4 && identifier.trim().length > 0
 
   return (
     <div dir="rtl" className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-slate-100 via-white to-brand-500/10 dark:from-slate-950 dark:via-slate-900 dark:to-brand-500/10">
@@ -126,42 +144,25 @@ export function LoginScreen() {
           <div className="text-4xl">🔐</div>
           <h1 className="text-2xl font-black text-slate-800 dark:text-white">{setup.shopName || 'تَحَكَّم'}</h1>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            {mode === 'employee' ? 'اكتب اسمك أو هاتفك أو بريدك ثم رقمك السري' : 'أدخل الرقم السري للمالك'}
+            اكتب اسمك أو هاتفك أو بريدك ثم رقمك السري
           </p>
         </div>
 
         <div className="rounded-3xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 shadow-2xl p-5 space-y-4">
-          {/* تبديل الوضع: موظف / مالك — لا قائمة أسماء تُعرض أبداً */}
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => { setMode('employee'); setPin('') }}
-              className={`flex items-center justify-center gap-2 py-2.5 rounded-xl border text-[12px] font-bold transition-all ${mode === 'employee' ? 'border-brand-500/50 bg-brand-500/10 text-brand-600 dark:text-brand-400' : 'border-slate-100 dark:border-slate-800 text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'}`}
-            >
-              <UserCircle2 size={15} /> موظف
-            </button>
-            <button
-              onClick={() => { setMode('owner'); setIdentifier(''); setPin('') }}
-              className={`flex items-center justify-center gap-2 py-2.5 rounded-xl border text-[12px] font-bold transition-all ${mode === 'owner' ? 'border-amber-500/50 bg-amber-500/10 text-amber-600 dark:text-amber-400' : 'border-slate-100 dark:border-slate-800 text-slate-400 hover:border-slate-300 dark:hover:border-slate-600'}`}
-            >
-              <Crown size={15} /> دخول المالك
-            </button>
-          </div>
-
-          {/* معرّف الموظف: يكتبه بنفسه — name="tahakam-login-id" وautoComplete=off لمنع اقتراحات المتصفح */}
-          {mode === 'employee' && (
-            <input
-              type="text"
-              name="tahakam-login-id"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              value={identifier}
-              disabled={lockLeft > 0}
-              onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="الاسم الكامل أو رقم الهاتف أو البريد"
-              className={inputCls}
-            />
-          )}
+          {/* دخول موحد (مراجعة المالك): لا زر «دخول المالك» مميز ولا قائمة أسماء —
+              المالك والموظفون يدخلون من نفس الحقلين، فلا يُكشف للغريب أي شيء عن الحسابات */}
+          <input
+            type="text"
+            name="tahakam-login-id"
+            autoComplete="off"
+            autoCorrect="off"
+            spellCheck={false}
+            value={identifier}
+            disabled={lockLeft > 0}
+            onChange={(e) => setIdentifier(e.target.value)}
+            placeholder="الاسم الكامل أو رقم الهاتف أو البريد"
+            className={inputCls}
+          />
 
           {/* الرقم السري */}
           <div className="space-y-2">
@@ -189,29 +190,15 @@ export function LoginScreen() {
             </Btn>
           </div>
 
-          {/* نسيت رقمي */}
+          {/* نسيت رقمي — موحد: المعرف يحدد المسار (مالك ⇒ تليجرام، موظف ⇒ إبلاغ المالك) */}
           <div className="pt-1 border-t border-slate-100 dark:border-slate-800 text-center">
-            {mode === 'owner' ? (
-              <button
-                onClick={() => void forgotOwner()}
-                disabled={busy}
-                className="inline-flex items-center gap-1.5 text-[12px] font-bold text-brand-600 dark:text-brand-400 hover:underline disabled:opacity-50"
-              >
-                <Send size={13} /> نسيت رقمي — أرسل رقماً مؤقتاً إلى تليجرامي
-              </button>
-            ) : (
-              <button
-                onClick={forgotEmployee}
-                className="inline-flex items-center gap-1.5 text-[12px] font-bold text-brand-600 dark:text-brand-400 hover:underline"
-              >
-                <LifeBuoy size={13} /> نسيت رقمي — إبلاغ المالك ليعيد تعيينه
-              </button>
-            )}
-            {mode === 'owner' && !telegramReady && (
-              <p className="text-[10.5px] text-slate-400 mt-1.5 leading-relaxed">
-                💡 لتفعيل استعادة رقم المالك: اربط بوت التليجرام من «الإعدادات ← بوت التليجرام» وأنت داخل.
-              </p>
-            )}
+            <button
+              onClick={forgotUnified}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 text-[12px] font-bold text-brand-600 dark:text-brand-400 hover:underline disabled:opacity-50"
+            >
+              <LifeBuoy size={13} /> نسيت رقمي السري
+            </button>
           </div>
         </div>
 
@@ -221,10 +208,10 @@ export function LoginScreen() {
       </div>
 
       {/* تعيين رقم جديد إجباري: مالك برقم مؤقت أو موظف بأول دخول */}
-      <Modal open={mustSetNewPin != null} onClose={() => { /* إجباري — لا إغلاق قبل التعيين */ }} title="🔑 عيّن رقمك السري الجديد الآن">
+      <Modal open={effectiveMustSet != null} onClose={() => { /* إجباري — لا إغلاق قبل التعيين */ }} title="🔑 عيّن رقمك السري الجديد الآن">
         <div className="space-y-3">
           <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
-            {mustSetNewPin?.kind === 'employee'
+            {effectiveMustSet?.kind === 'employee'
               ? 'هذا أول دخول لك برقم مبدئي من المدير — عيّن رقمك الخاص الآن (4-8 أرقام). بعد الحفظ لا يعرفه أحد غيرك.'
               : 'دخلت برقم مؤقت من تليجرام وقد احترق باستخدامه. عيّن رقمك الدائم الجديد (4-8 أرقام) قبل المتابعة.'}
           </p>

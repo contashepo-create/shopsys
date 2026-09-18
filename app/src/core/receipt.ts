@@ -201,3 +201,55 @@ export function buildReceiptModel(args: {
     footerText: settings.footerText,
   }
 }
+
+/**
+ * باني نموذج طباعة عام لمستندات المشتريات (طلب المالك — طباعة فاتورة الشراء
+ * ومرتجعه بقوالب الكاشير الثلاثة): سطور مبسطة اسم/كمية/سعر/إجمالي بلا ضريبة
+ * مبيعات — الضريبة هناك مدخلات وليست عرضاً للعميل.
+ */
+export function buildSimpleDocModel(args: {
+  docTitle: string
+  invoiceNumber: string
+  refCode: string
+  dateIso: string
+  partyLabel: string // اسم المورد
+  paymentLabel: string
+  rows: { nameAr: string; qty: number; unitPriceMinor: Minor; totalMinor: Minor }[]
+  totalMinor: Minor
+  paidMinor: Minor
+  settings: ReceiptSettings
+  /** سطر ملخص إضافي يُبرز في الحاشية (مثلاً «مصاريف شحن وجمارك: …») */
+  extraFooter?: string
+}): ReceiptModel {
+  const rows: ReceiptRow[] = args.rows.map((r) => ({
+    nameAr: r.nameAr,
+    qtyLabel: String(r.qty),
+    unitPriceMinor: r.unitPriceMinor,
+    totalMinor: r.totalMinor,
+    discountPercent: 0,
+    serials: [],
+  }))
+  const totalQty = Math.round(args.rows.reduce((a, r) => a + r.qty, 0) * 1000) / 1000
+  return {
+    shopName: args.settings.shopName || 'تَحَكَّم',
+    headerLines: args.settings.headerLines.filter((l) => l.trim()),
+    docTitle: args.docTitle,
+    invoiceNumber: args.invoiceNumber,
+    refCode: args.refCode,
+    dateLabel: args.dateIso.slice(0, 16).replace('T', ' '),
+    customerName: args.partyLabel,
+    paymentLabel: args.paymentLabel,
+    rows,
+    itemCount: rows.length,
+    totalQty,
+    grossMinor: args.totalMinor,
+    taxBaseMinor: args.totalMinor,
+    discountMinor: 0,
+    taxLabel: null,
+    taxMinor: 0,
+    totalMinor: args.totalMinor,
+    paidMinor: args.paidMinor,
+    remainingMinor: args.totalMinor - args.paidMinor,
+    footerText: args.extraFooter ? `${args.extraFooter}${args.settings.footerText ? ' — ' + args.settings.footerText : ''}` : args.settings.footerText,
+  }
+}

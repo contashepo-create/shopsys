@@ -12,7 +12,7 @@ globalThis.localStorage = {
 }
 globalThis.window = globalThis
 // هذه السيناريوهات تدفع من خزائن لم تُموَّل — نفعّل السماح بالرصيد السالب صراحة (الافتراضي: ممنوع)
-mem.set('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury: true } } }))
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  allowNegativeTreasury: true } } }))
 
 
 const { useDataStore } = await import('../src/data/repo.ts')

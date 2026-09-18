@@ -19,7 +19,7 @@ globalThis.localStorage = {
   clear: () => mem.clear(),
 }
 globalThis.window = globalThis
-mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, countryId: 'EG', activityId: 'grocery', vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true, allowNegativeStock: false } }, version: 0 }))
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  done: true, countryId: 'EG', activityId: 'grocery', vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true, allowNegativeStock: false } }, version: 0 }))
 
 const { buildReturnLinesPerLine, remainingByLine, buildReturnEntry, damagedCostOf, RETURN_REASONS, returnReasonName } = await import('../src/core/returns.ts')
 const { computeItemizedRefund } = await import('../src/core/serviceRefund.ts')

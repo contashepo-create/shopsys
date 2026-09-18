@@ -122,6 +122,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/settings/audit', perm: 'set.audit.view' },
   { prefix: '/settings/backup', perm: 'set.backup' },
   { prefix: '/settings/sync', perm: 'set.backup' },
+  { prefix: '/settings/profile', perm: null }, // «حسابي» — كل مستخدم يدير ملفه بنفسه
   { prefix: '/settings/about', perm: null }, // حول التطبيق — للجميع
   { prefix: '/settings/guides', perm: null }, // الشروحات — للجميع (تعليم كل مستخدم)
   { prefix: '/settings/support', perm: null }, // الدعم — للجميع

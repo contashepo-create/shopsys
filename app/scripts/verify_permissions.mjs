@@ -24,10 +24,10 @@ let uncovered = 0, badPerm = 0
 for (const r of routes) {
   const need = permissionForPath(r)
   if (need !== null && !permIds.has(need)) { badPerm++; console.log(`    ! صلاحية غير معرّفة لمسار ${r}: ${need}`) }
-  if (need === null && !['/', '/settings/about', '/settings/support', '/settings/issues', '/settings/guides'].includes(r)) uncovered++
+  if (need === null && !['/', '/settings/about', '/settings/support', '/settings/issues', '/settings/guides', '/settings/profile'].includes(r)) uncovered++
 }
 ok(badPerm === 0, 'كل صلاحيات الخريطة معرّفة في PERMISSIONS')
-ok(uncovered === 0, 'لا مسار مفتوح للجميع إلا المقصود (الرئيسية/حول/الدعم/البلاغات/الشروحات)')
+ok(uncovered === 0, 'لا مسار مفتوح للجميع إلا المقصود (الرئيسية/حول/الدعم/البلاغات/الشروحات/حسابي)')
 ok(permissionForPath('/pos') === 'sales.pos.open', '/pos → فتح شاشة البيع')
 ok(permissionForPath('/settings/permissions') === 'set.users', 'شاشة الصلاحيات → إدارة المستخدمين')
 ok(permissionForPath('/accounting/coa') === 'acc.coa.manage', 'أطول بادئة تفوز: coa ≠ سندات')

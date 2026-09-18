@@ -5,7 +5,7 @@
  * الاسترداد: نقدي من المورد أو تخفيض دينه.
  */
 import { useMemo, useState } from 'react'
-import { RotateCcw, Search, BookOpenText, Eye } from 'lucide-react'
+import { RotateCcw, Search, BookOpenText, Eye, Printer } from 'lucide-react'
 import { useDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -15,10 +15,13 @@ import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { buildSimpleDocModel } from '../../core/receipt.ts'
+import { printModelWithTemplate } from '../print/printDoc.ts'
+import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 
 export function PurchaseReturnsPage() {
   const { purchases, purchaseReturns, suppliers, items, journal, postPurchaseReturn } = useDataStore()
-  const { setup } = useAppStore()
+  const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -31,6 +34,33 @@ export function PurchaseReturnsPage() {
   const [treasury, setTreasury] = useState('1101')
   const [reason, setReason] = useState('')
   const [viewing, setViewing] = useState<PurchaseReturn | null>(null)
+  // طباعة إشعار مرتجع الشراء بقوالب الكاشير الثلاثة (طلب المالك)
+  const [printTarget, setPrintTarget] = useState<PurchaseReturn | null>(null)
+
+  /** إشعار مدين للمورد: سطور بتكلفة الوحدة النهائية + المسترد نقداً/ديناً */
+  const printPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
+    const orig = purchases.find((pv) => pv.id === r.purchaseId)
+    const model = buildSimpleDocModel({
+      docTitle: 'مرتجع مشتريات (إشعار مدين)',
+      invoiceNumber: r.returnNumber,
+      refCode: r.refCode ?? '',
+      dateIso: r.date,
+      partyLabel: orig ? (suppliers.find((sp) => sp.id === orig.supplierId)?.nameAr ?? `مورد #${orig.supplierId}`) : 'مورد؟',
+      paymentLabel: r.refund === 'cash' ? 'استرداد نقدي' : 'تخفيض من دين المورد',
+      rows: r.lines.map((l) => ({
+        nameAr: l.nameAr,
+        qty: l.qty,
+        unitPriceMinor: l.unitPriceMinor ?? l.landedUnitCostMinor,
+        totalMinor: Math.round((l.unitPriceMinor ?? l.landedUnitCostMinor) * l.qty),
+      })),
+      totalMinor: r.supplierValueMinor ?? r.totalMinor,
+      paidMinor: r.refund === 'cash' ? (r.supplierValueMinor ?? r.totalMinor) : 0,
+      settings: receipt,
+      extraFooter: r.reason ? `السبب: ${r.reason}` : undefined,
+    })
+    printModelWithTemplate(model, cur, receipt, template)
+    toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
+  }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
   const supplierName = (id: number) => suppliers.find((s) => s.id === id)?.nameAr ?? '—'
@@ -139,6 +169,9 @@ export function PurchaseReturnsPage() {
                     <td className="px-4 py-3 text-left">
                       <button onClick={() => setViewing(r)} className="p-2 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-all duration-200 hover:scale-110">
                         <Eye size={15} />
+                      </button>
+                      <button onClick={() => setPrintTarget(r)} title="طباعة إشعار المرتجع — حراري/A4/A5" className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
+                        <Printer size={15} />
                       </button>
                     </td>
                   </tr>
@@ -283,6 +316,15 @@ export function PurchaseReturnsPage() {
         )}
       </Modal>
       {approval.dialog}
+
+      {/* اختيار قالب طباعة إشعار مرتجع الشراء (حراري/A4/A5) */}
+      <PrintTemplateModal
+        open={printTarget != null}
+        onClose={() => setPrintTarget(null)}
+        defaultTemplate={receipt.defaultTemplate}
+        title="🖨️ طباعة إشعار مرتجع الشراء"
+        onPrint={(t) => { if (printTarget) printPurchaseReturn(printTarget, t) }}
+      />
     </div>
   )
 }

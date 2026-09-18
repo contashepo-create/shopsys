@@ -52,7 +52,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, priceLists, getEffectivePrice, variantStocks, warehouses, appUsers, currentUserId } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, appUsers, currentUserId } = useDataStore()
   // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
   const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
   const openShift = currentOpenShift(shifts)
@@ -77,6 +77,9 @@ export function PosPage() {
     })
   }
   const [payOpen, setPayOpen] = useState(false)
+  // فتح وردية من الكاشير مباشرة (سياسة «لا بيع بلا وردية» — نمط Toast/Square)
+  const [shiftOpenModal, setShiftOpenModal] = useState(false)
+  const [shiftOpeningCash, setShiftOpeningCash] = useState('')
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [customerId, setCustomerId] = useState<number | null>(null)
   // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
@@ -109,7 +112,11 @@ export function PosPage() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'F9') {
         e.preventDefault()
-        if (cart.length) setPayOpen(true)
+        if (!cart.length) return
+        // F9 يحترم سياسة الورديات أيضاً
+        const st = useAppStore.getState().setup
+        if (st.requireOpenShiftForSales && !currentOpenShift(useDataStore.getState().shifts)) { setShiftOpenModal(true); return }
+        setPayOpen(true)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -607,7 +614,13 @@ export function PosPage() {
             {openShift ? (
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">وردية #{openShift.id}</span>
             ) : (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-400/10 text-slate-400 font-bold" title="الفواتير ستُسجل خارج وردية — افتحها من المبيعات ← الورديات">بلا وردية</span>
+              <button
+                onClick={() => setShiftOpenModal(true)}
+                title={setup.requireOpenShiftForSales ? 'البيع موقوف حتى تُفتح وردية — اضغط لفتحها الآن' : 'الفواتير ستُسجل خارج وردية — اضغط لفتح وردية'}
+                className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-all hover:scale-105 ${setup.requireOpenShiftForSales ? 'bg-rose-500/10 text-rose-600 border border-rose-500/30 animate-pulse' : 'bg-slate-400/10 text-slate-400'}`}
+              >
+                {setup.requireOpenShiftForSales ? '⛔ افتح وردية أولاً' : 'بلا وردية — فتح؟'}
+              </button>
             )}
           </span>
           <div className="flex gap-1.5 items-center">
@@ -641,6 +654,35 @@ export function PosPage() {
             </button>
             <button onClick={() => { setCart([]); setQtyDrafts({}); setInvoiceDiscount(0) }} disabled={!cart.length} title="إفراغ السلة" className="p-2 rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
               <Trash2 size={17} />
+            </button>
+          </div>
+        </div>
+        {/* شريط قالب الطباعة الحصري — فوق الفاتورة (طلب المالك): تفعيل خيار يلغي الآخرين،
+            تجاوز مؤقت للجلسة لا يغيّر إعدادات الطباعة الدائمة، ومتاح للكاشير بلا صلاحيات */}
+        <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
+          <div className="flex items-center gap-1.5 pt-1">
+            <span className="text-[10px] font-bold text-slate-400 shrink-0">🖨️ طباعة:</span>
+            <div className="flex-1 grid grid-cols-3 gap-1">
+              {INVOICE_TEMPLATE_OPTIONS.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setPosTemplate(t.id)}
+                  title={`${t.label} — ${t.sub}${t.id === posTemplate ? ' (مفعّل)' : ''}`}
+                  className={`flex items-center justify-center gap-1 py-1.5 rounded-lg border-2 text-[10.5px] font-bold transition-all ${posTemplate === t.id ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-emerald-400/40'}`}
+                >
+                  <span className={`inline-block w-3 h-3 rounded border ${posTemplate === t.id ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 dark:border-slate-600'}`}>
+                    {posTemplate === t.id && <span className="block text-white text-[8px] leading-3 text-center">✓</span>}
+                  </span>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setQuickPrintOpen(true)}
+              title="خيارات طباعة سريعة"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors shrink-0"
+            >
+              <Settings2 size={15} />
             </button>
           </div>
         </div>
@@ -828,35 +870,12 @@ export function PosPage() {
               </div>
             </>
           )}
-          {/* شريط قالب الطباعة الحصري (طلب المالك): تفعيل خيار يلغي الآخرين — تجاوز مؤقت للفاتورة
-              الطارئة لا يغيّر إعدادات قسم الطباعة الدائمة، ومتاح للكاشير بلا صلاحيات */}
-          <div className="flex items-center gap-1.5 pt-1">
-            <span className="text-[10px] font-bold text-slate-400 shrink-0">🖨️ طباعة:</span>
-            <div className="flex-1 grid grid-cols-3 gap-1">
-              {INVOICE_TEMPLATE_OPTIONS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setPosTemplate(t.id)}
-                  title={`${t.label} — ${t.sub}${t.id === posTemplate ? ' (مفعّل)' : ''}`}
-                  className={`flex items-center justify-center gap-1 py-1.5 rounded-lg border-2 text-[10.5px] font-bold transition-all ${posTemplate === t.id ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-emerald-400/40'}`}
-                >
-                  <span className={`inline-block w-3 h-3 rounded border ${posTemplate === t.id ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 dark:border-slate-600'}`}>
-                    {posTemplate === t.id && <span className="block text-white text-[8px] leading-3 text-center">✓</span>}
-                  </span>
-                  {t.label}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => setQuickPrintOpen(true)}
-              title="خيارات طباعة سريعة"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors shrink-0"
-            >
-              <Settings2 size={15} />
-            </button>
-          </div>
           <button
-            onClick={() => setPayOpen(true)}
+            onClick={() => {
+              // سياسة الورديات: وجّه لفتح الوردية بدل مودال الدفع (رسالة قبل الرفض)
+              if (setup.requireOpenShiftForSales && !openShift) { setShiftOpenModal(true); return }
+              setPayOpen(true)
+            }}
             disabled={!totals}
             className="w-full py-3.5 rounded-2xl font-black text-white bg-gradient-to-l from-emerald-600 to-teal-500 shadow-lg shadow-emerald-500/30 transition-all duration-200 hover:scale-[1.02] hover:shadow-xl active:scale-95 disabled:opacity-40 disabled:pointer-events-none flex items-center justify-center gap-2"
           >
@@ -864,6 +883,42 @@ export function PosPage() {
           </button>
         </div>
       </div>
+
+      {/* مودال فتح الوردية من الكاشير (سياسة «لا بيع بلا وردية») */}
+      <Modal open={shiftOpenModal} onClose={() => setShiftOpenModal(false)} title="فتح وردية">
+        <div className="space-y-4">
+          <p className="text-[12px] text-slate-500 leading-relaxed">
+            عُدّ النقدية الموجودة في الدرج الآن وسجّلها كعهدة افتتاحية — عند الإقفال يقارن النظام
+            المعدود بالمتوقع ويُظهر العجز أو الزيادة (النمط العالمي في إدارة الأدراج).
+          </p>
+          <Field label="العهدة الافتتاحية (نقدية الدرج)" hint="اكتب 0 لو الدرج فارغ">
+            <input
+              autoFocus
+              inputMode="decimal"
+              value={shiftOpeningCash}
+              onChange={(e) => setShiftOpeningCash(e.target.value)}
+              placeholder="0"
+              autoComplete="off"
+              className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent outline-none focus:border-emerald-400 text-left"
+              dir="ltr"
+            />
+          </Field>
+          <button
+            onClick={() => {
+              try {
+                const activeName = appUsers.find((u) => u.id === currentUserId)?.nameAr ?? (setup.ownerName || 'المالك')
+                const sh = openShiftAction(activeName, toMinor(shiftOpeningCash || '0', cur.decimals))
+                toast.show(`فُتحت الوردية #${sh.id} — كل فاتورة من الآن تُحسب عليها ✓`)
+                setShiftOpenModal(false)
+                setShiftOpeningCash('')
+              } catch (e) { toast.show((e as Error).message, 'error') }
+            }}
+            className="w-full py-3 rounded-2xl font-black text-white bg-gradient-to-l from-emerald-600 to-teal-500 shadow-lg shadow-emerald-500/25 transition-all hover:scale-[1.01] active:scale-95"
+          >
+            فتح الوردية الآن
+          </button>
+        </div>
+      </Modal>
 
       {/* مودال الدفع */}
       <Modal open={payOpen} onClose={() => setPayOpen(false)} title="إتمام الفاتورة">

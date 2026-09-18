@@ -16,8 +16,9 @@ import { remainingByLine, returnCashRefundMinor, allocationOf, validateRefundAll
 import { computeTotals } from '../../core/pos.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
-import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
-import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
+import { printModelWithTemplate } from '../print/printDoc.ts'
+import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
+import type { InvoiceTemplate } from '../../core/receipt.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -176,8 +177,11 @@ export function SaleReturnsPage() {
     })
   }
 
-  /** طباعة إشعار المرتجع للعميل */
-  const printReturn = (r: SaleReturn) => {
+  // اختيار قالب لحظة الطباعة (تعميم قوالب الكاشير الثلاثة — طلب المالك)
+  const [printTarget, setPrintTarget] = useState<SaleReturn | null>(null)
+
+  /** طباعة إشعار المرتجع للعميل — بالقالب المختار (حراري/A4/A5) */
+  const printReturn = (r: SaleReturn, template?: InvoiceTemplate) => {
     const orig = sales.find((s) => s.id === r.saleId)
     const model = buildReceiptModel({
       invoiceNumber: r.returnNumber,
@@ -207,7 +211,7 @@ export function SaleReturnsPage() {
       : cashPart > 0 ? 'رد نقدي'
       : waivedPart > 0 ? 'تنازل — بلا رد'
       : r.refund === 'store_credit' ? 'إيداع رصيداً في حساب العميل' : 'خصم من حساب العميل'
-    printHtml(receipt.defaultTemplate === 'thermal' ? renderReceiptHtml(model, cur, receipt) : renderInvoiceA4Html(model, cur, receipt, receipt.defaultTemplate === 'a5' ? 'a5' : 'a4'))
+    printModelWithTemplate(model, cur, receipt, template ?? receipt.defaultTemplate)
     toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
   }
 
@@ -283,7 +287,7 @@ export function SaleReturnsPage() {
                     <td className="px-4 py-3 font-black text-rose-500">-{fmt(r.totals.totalMinor)}</td>
                     <td className="px-4 py-3 text-left">
                       <span className="flex items-center gap-1 justify-end">
-                        <button title="طباعة إشعار المرتجع للعميل" onClick={() => printReturn(r)} className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
+                        <button title="طباعة إشعار المرتجع للعميل — اختر القالب" onClick={() => setPrintTarget(r)} className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
                           <Printer size={15} />
                         </button>
                         <button title="تفاصيل المرتجع وقيده" onClick={() => setViewing(r)} className="p-2 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110">
@@ -686,11 +690,20 @@ export function SaleReturnsPage() {
               </div>
             )}
             <div className="flex justify-end">
-              <Btn variant="ghost" onClick={() => printReturn(viewing)}><Printer size={14} /> طباعة إشعار المرتجع</Btn>
+              <Btn variant="ghost" onClick={() => setPrintTarget(viewing)}><Printer size={14} /> طباعة إشعار المرتجع</Btn>
             </div>
           </div>
         )}
       </Modal>
+
+      {/* اختيار قالب الطباعة (حراري/A4/A5) — تعميم شريط الكاشير */}
+      <PrintTemplateModal
+        open={printTarget != null}
+        onClose={() => setPrintTarget(null)}
+        defaultTemplate={receipt.defaultTemplate}
+        title="🖨️ طباعة إشعار المرتجع"
+        onPrint={(t) => { if (printTarget) printReturn(printTarget, t) }}
+      />
     </div>
   )
 }

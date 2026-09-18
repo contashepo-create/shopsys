@@ -21,7 +21,7 @@ globalThis.localStorage = {
 }
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true }
 globalThis.document = { createElement: () => ({ style: {} }), addEventListener: () => {}, removeEventListener: () => {} }
-mem.set('shopsys-app', JSON.stringify({ state: { setup: { completed: true, allowNegativeTreasury: true, countryCode: 'EG', activityId: 'clinic', modules: [] }, fiscalYears: [] }, version: 0 }))
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  completed: true, allowNegativeTreasury: true, countryCode: 'EG', activityId: 'clinic', modules: [] }, fiscalYears: [] }, version: 0 }))
 
 const { useDataStore } = await import('../src/data/repo.ts')
 const { useAppStore } = await import('../src/stores/app.store.ts')

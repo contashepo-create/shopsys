@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs'
 const mem = new Map()
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) }
 globalThis.window = globalThis
-mem.set('shopsys-app', JSON.stringify({ state: { setup: { allowNegativeTreasury: true } } }))
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  allowNegativeTreasury: true } } }))
 
 const { collectNotifications } = await import('../src/core/notifications.ts')
 const { CONSUMPTION_PURPOSES } = await import('../src/core/consumption.ts')
@@ -148,7 +148,8 @@ console.log('\n6️⃣ المراجعة الثانية (طلب المالك): ط
   ok('فواتير المبيعات: زر A5 لكل فاتورة', salesPage.includes("printInvoice(s, 'a5')"))
   ok('فواتير المبيعات: التمرير يمرر القالب للمولد', salesPage.includes('renderInvoiceA4Html(model, cur, receipt, template)'))
   const returnsPage = readFileSync(new URL('../src/ui/pages/SaleReturnsPage.tsx', import.meta.url), 'utf-8')
-  ok('إشعار المرتجع يحترم افتراضي A5', returnsPage.includes("receipt.defaultTemplate === 'a5' ? 'a5' : 'a4'"))
+  ok('إشعار المرتجع يحترم افتراضي A5 (عبر printModelWithTemplate)', returnsPage.includes('printModelWithTemplate(model, cur, receipt, template ?? receipt.defaultTemplate)'))
+  ok('إشعار المرتجع: اختيار قالب لحظة الطباعة', returnsPage.includes('PrintTemplateModal'))
   const printSettings = readFileSync(new URL('../src/ui/pages/PrintSettingsPage.tsx', import.meta.url), 'utf-8')
   ok('إعدادات الطباعة: A5 خيار افتراضي ثالث', printSettings.includes('فاتورة A5'))
   ok('إعدادات الطباعة: زر تجربة A5', printSettings.includes('testPrintA5'))
