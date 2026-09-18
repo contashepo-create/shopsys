@@ -423,7 +423,7 @@ export function MaintenancePage() {
                       {maintenanceServices.filter((x) => x.isActive).map((x) => <option key={x.id} value={x.id}>{x.nameAr}</option>)}
                     </select>
                   ) : (
-                    <input value={sv.nameAr} onChange={(e) => patchSvc(i, { nameAr: e.target.value, serviceId: '' })} className={`${inputCls} !py-1.5 !text-[12px]`} placeholder="اسم الخدمة (حر)" list={`svc-names-${i}`} />
+                    <input value={sv.nameAr} onChange={(e) => patchSvc(i, { nameAr: e.target.value, serviceId: '' })} className={`${inputCls} !py-1.5 !text-[12px]`} placeholder="اسم الخدمة (حر)" autoComplete="off" />
                   )}
                   <input value={sv.qty} onChange={(e) => patchSvc(i, { qty: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" />
                   <input value={sv.unitPrice} onChange={(e) => patchSvc(i, { unitPrice: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" placeholder="السعر" />

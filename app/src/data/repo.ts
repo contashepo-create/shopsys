@@ -1119,12 +1119,21 @@ interface DataState {
   loginGuard: LoginGuard
   /** رقم مؤقت للمالك أُرسل عبر تليجرام (تجزئة + انتهاء) — يُمحى فور استخدامه */
   ownerTempPin: OwnerTempPin | null
+  /**
+   * تنبيهات معلّمة كمقروءة (طلب المالك): معرفات التنبيهات المخفاة من الجرس.
+   * التنبيه يعود تلقائياً لو تجدد سببه بمعرف جديد (قسط شهر تالٍ مثلاً).
+   */
+  readNotificationIds: string[]
+  /** تعليم تنبيه/كل التنبيهات كمقروء + إرجاع الكل */
+  markNotificationRead: (id: string) => void
+  markAllNotificationsRead: (ids: string[]) => void
+  restoreNotifications: () => void
   /** طلبات استعادة كلمة سر الموظفين — تظهر إشعاراً للمالك */
   pinResetRequests: PinResetRequest[]
   /** تعيين/تغيير الرقم السري للمالك (يفعّل شاشة الدخول من أول تعيين) */
   setOwnerPin: (pinHash: string) => void
   /** دخول بفحص PIN فعلي: id=null للمالك — يرمي خطأً عربياً عند الرفض؛ usedTempPin=true ⇒ ألزم المالك بتعيين رقم جديد */
-  login: (id: number | null, pin: string) => Promise<{ usedTempPin: boolean }>
+  login: (id: number | null, pin: string) => Promise<{ usedTempPin: boolean; mustChangePin: boolean }>
   /** خروج — يعيد شاشة الدخول */
   logout: () => void
   /**
@@ -1141,8 +1150,15 @@ interface DataState {
   resolvePinReset: (requestId: number, action: 'done' | 'cancelled', newPinHash?: string) => void
   /** حفظ الرقم المؤقت للمالك (تجزئة) بعد إرساله عبر البوت */
   setOwnerTempPin: (t: OwnerTempPin | null) => void
-  addAppUser: (u: { nameAr: string; roleId: string; pinHash: string }) => AppUser
-  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms'>>) => void
+  /**
+   * إضافة مستخدم (سياسة المالك): الحساب يُبنى على موظف مسجل (employeeId) —
+   * بياناته المالية والوظيفية في سجل الموظفين، وحسابه هنا للدخول والصلاحيات.
+   * initialPin يُعرض للمدير حتى يغيّره الموظف عند أول دخول (mustChangePin).
+   */
+  addAppUser: (u: { nameAr: string; roleId: string; pinHash: string; employeeId?: number | null; phone?: string; email?: string; initialPin?: string | null; mustChangePin?: boolean }) => AppUser
+  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms' | 'employeeId' | 'phone' | 'email' | 'mustChangePin' | 'initialPin'>>) => void
+  /** الموظف يغيّر رقمه بنفسه (أول دخول الإجباري): يمسح initialPin فلا يعود أحد يعرفه */
+  changeOwnPin: (userId: number, newPinHash: string) => void
   removeAppUser: (id: number) => void
   setCurrentUser: (id: number | null) => void
   /** بلاغ داخلي عن مشكلة في عملية — يظهر للمدير/المحاسب مع إشعار بالجرس */
@@ -1854,6 +1870,15 @@ const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math
  * ختم موافقة المرتجع (نمط POS العالمي): requestedBy = المستخدم النشط،
  * approvedBy = المشرف المُعتمِد (من حوار الرقم السري) أو المنفذ نفسه إن كان مخولاً
  */
+/**
+ * اسم منشئ العملية الفعلي (بلاغ المالك — فجوة عالمية): كل قيد كان يُختم
+ * «المالك» ثابتة حتى لو نفذه كاشير — الآن يُختم باسم المستخدم المسجل دخوله،
+ * كما تفعل QuickBooks/Zoho (كل مستند باسم منشئه الحقيقي للتدقيق).
+ */
+function activeUserName(state: Pick<DataState, 'appUsers' | 'currentUserId'>): string {
+  return state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+}
+
 function approvalStamp(state: Pick<DataState, 'appUsers' | 'currentUserId'>, approvedBy?: string): { approvedBy: string; requestedBy: string } {
   const requester = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
   return { approvedBy: approvedBy ?? requester, requestedBy: requester }
@@ -2058,6 +2083,7 @@ export const useDataStore = create<DataState>()(
       loginGuard: EMPTY_GUARD,
       ownerTempPin: null,
       pinResetRequests: [],
+      readNotificationIds: [],
 
       seed: (activityFeatures) => {
         if (get().seeded) return
@@ -2225,7 +2251,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'purchase',
           sourceId: purchaseId,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: nowIso,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -2428,7 +2454,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'purchase',
           sourceId: purchase.id,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: nowIso,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -2598,7 +2624,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'sale',
           sourceId: saleId,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -2715,7 +2741,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'sale_return',
           sourceId: returnId,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -2891,7 +2917,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'purchase_return',
           sourceId: returnId,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -2972,7 +2998,7 @@ export const useDataStore = create<DataState>()(
             sourceType: 'adjustment',
             sourceId: stocktakeId,
             lines: entryLines,
-            createdBy: 'المالك',
+            createdBy: activeUserName(get()),
             createdAt: now,
             reversedByEntryId: null,
             reversesEntryId: null,
@@ -3045,7 +3071,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'wastage',
           sourceId: wastageId,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -3191,7 +3217,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'adjustment',
           sourceId: null,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -3292,7 +3318,7 @@ export const useDataStore = create<DataState>()(
             sourceType: 'adjustment',
             sourceId: id,
             lines: entryLines,
-            createdBy: 'المالك',
+            createdBy: activeUserName(get()),
             createdAt: now,
             reversedByEntryId: null,
             reversesEntryId: null,
@@ -3501,7 +3527,7 @@ export const useDataStore = create<DataState>()(
           sourceType: args.kind === 'receipt' ? 'receipt_voucher' : 'payment_voucher',
           sourceId: voucherId,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -3574,7 +3600,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'payment_voucher',
           sourceId: advId,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -3616,7 +3642,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'manual',
           sourceId: null,
           lines: meaningful,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -3674,7 +3700,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'reversal',
           sourceId: original.id,
           lines: buildReversalLines(original.lines),
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: original.id,
@@ -3747,7 +3773,7 @@ export const useDataStore = create<DataState>()(
             description: `عجز ${label} محمَّل سلفة على ${emp.nameAr} — ${advanceNumber}`,
             sourceType: 'payment_voucher', sourceId: advId,
             lines: buildVarianceAdvanceEntry(variance, '1101', emp.nameAr),
-            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }
           const advance: EmployeeAdvance = {
             id: advId, advanceNumber, employeeId: emp.id, date: now,
@@ -3771,7 +3797,7 @@ export const useDataStore = create<DataState>()(
           description: variance < 0 ? `تسوية عجز ${label} كمصروف` : `تسوية زيادة ${label} كإيراد آخر`,
           sourceType: 'adjustment', sourceId: shift.id,
           lines: buildVarianceExpenseEntry(variance, '1101', label),
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: Shift = { ...shift, varianceSettledMode: 'expense', varianceEntryId: entryId, varianceAdvanceId: null }
         set({ journal: [...state.journal, entry], shifts: state.shifts.map((s) => (s.id === shift.id ? updated : s)) })
@@ -3872,7 +3898,7 @@ export const useDataStore = create<DataState>()(
           description: `عكس قيد ${sale.invoiceNumber} — تعديل الفاتورة${args.reason ? `: ${args.reason}` : ''}`,
           sourceType: 'reversal', sourceId: oldEntry.id,
           lines: buildReversalLines(oldEntry.lines),
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: oldEntry.id,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: oldEntry.id,
         }
         const newEntryId = reversalId + 1
         const newEntry: JournalEntry = {
@@ -3880,7 +3906,7 @@ export const useDataStore = create<DataState>()(
           description: `فاتورة بيع ${sale.invoiceNumber} (معدلة)`,
           sourceType: 'sale', sourceId: sale.id,
           lines: newEntryLines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
 
         // ⑥ المخزون النهائي = بعد الإعادة − السطور الجديدة (متوسط التكلفة لا يتغير بالبيع)
@@ -4002,7 +4028,7 @@ export const useDataStore = create<DataState>()(
           description: `عكس قيد ${inv.invoiceNumber} — تعديل الفاتورة${args.reason ? `: ${args.reason}` : ''}`,
           sourceType: 'reversal', sourceId: oldEntry.id,
           lines: buildReversalLines(oldEntry.lines),
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: oldEntry.id,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: oldEntry.id,
         }
         const newEntryId = reversalId + 1
         const newEntry: JournalEntry = {
@@ -4010,7 +4036,7 @@ export const useDataStore = create<DataState>()(
           description: `فاتورة شراء ${inv.invoiceNumber} (معدلة)`,
           sourceType: 'purchase', sourceId: inv.id,
           lines: newEntryLines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
 
         // ④ المخزون النهائي: إضافة السطور الجديدة بمتوسط مرجح على أساس ما بعد التراجع
@@ -4082,9 +4108,31 @@ export const useDataStore = create<DataState>()(
         if (u.roleId === 'owner' && state.appUsers.some((x) => x.roleId === 'owner' && x.active)) {
           throw new Error('يوجد حساب مالك بالفعل — دور المالك لحساب واحد فقط')
         }
-        const user: AppUser = { id: nextId(state.appUsers), nameAr, roleId: u.roleId, pinHash: u.pinHash, active: true }
+        // ربط الموظف (طلب المالك): حساب واحد لكل موظف — التكرار يعني خطأ إدخال
+        if (u.employeeId != null) {
+          if (!state.employees.some((e) => e.id === u.employeeId && e.active)) throw new Error('الموظف المرتبط غير موجود أو غير نشط — سجله في شاشة الموظفين أولاً')
+          if (state.appUsers.some((x) => x.active && x.employeeId === u.employeeId)) throw new Error('لهذا الموظف حساب دخول نشط بالفعل')
+        }
+        const user: AppUser = {
+          id: nextId(state.appUsers), nameAr, roleId: u.roleId, pinHash: u.pinHash, active: true,
+          employeeId: u.employeeId ?? null,
+          phone: sanitizeText(u.phone ?? '', 30), email: sanitizeText(u.email ?? '', 80),
+          mustChangePin: u.mustChangePin ?? true,
+          initialPin: u.initialPin ?? null,
+        }
         set({ appUsers: [...state.appUsers, user] })
         return user
+      },
+      changeOwnPin: (userId, newPinHash) => {
+        const state = get()
+        const user = state.appUsers.find((u) => u.id === userId)
+        if (!user) throw new Error('المستخدم غير موجود')
+        if (!newPinHash) throw new Error('الرقم الجديد مطلوب')
+        if (newPinHash === user.pinHash) throw new Error('الرقم الجديد يطابق القديم — اختر رقماً مختلفاً')
+        set({
+          appUsers: state.appUsers.map((u) => (u.id === userId ? { ...u, pinHash: newPinHash, mustChangePin: false, initialPin: null } : u)),
+          auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: user.nameAr, kind: 'auth', title: `«${user.nameAr}» غيّر رقمه السري (أول دخول)` }]),
+        })
       },
       updateAppUser: (id, patch) => {
         const state = get()
@@ -4147,6 +4195,7 @@ export const useDataStore = create<DataState>()(
         if (lockLeft > 0) throw new Error(`محاولات كثيرة خاطئة — الدخول مقفول ${lockLeft} دقيقة`)
         let ok = false
         let usedTempPin = false
+        let mustChangePin = false
         if (id == null) {
           // المالك: الرقم الأساسي أو الرقم المؤقت (تليجرام) غير المنتهي
           if (state.ownerPinHash && (await verifyPin(pin, state.ownerPinHash))) ok = true
@@ -4158,6 +4207,7 @@ export const useDataStore = create<DataState>()(
           const user = state.appUsers.find((u) => u.id === id && u.active)
           if (!user) throw new Error('مستخدم غير موجود أو معطل')
           if (await verifyPin(pin, user.pinHash)) ok = true
+          if (ok && user.mustChangePin) mustChangePin = true // أول دخول: تغيير الرقم إجباري
         }
         if (!ok) {
           const guard = registerFailure(state.loginGuard, nowIso)
@@ -4175,7 +4225,7 @@ export const useDataStore = create<DataState>()(
           ...(usedTempPin ? { ownerTempPin: null } : {}),
           auditLog: appendAudit(state.auditLog, [{ at: nowIso, user: userName, kind: 'auth', title: usedTempPin ? 'دخول المالك برقم مؤقت (استعادة تليجرام)' : `تسجيل دخول «${userName}»` }]),
         })
-        return { usedTempPin }
+        return { usedTempPin, mustChangePin }
       },
       logout: () => {
         const state = get()
@@ -4218,6 +4268,17 @@ export const useDataStore = create<DataState>()(
           ? `رقم مشرف خاطئ — قُفل الاعتماد ${lockoutMinutesLeft(guard, nowIso)} دقائق`
           : 'الرقم السري غير صحيح أو صاحبه لا يملك صلاحية الاعتماد المطلوبة')
       },
+      markNotificationRead: (id) => {
+        const state = get()
+        if (state.readNotificationIds.includes(id)) return
+        // سقف صيانة: أقدم المعرفات تُطوى بعد 500 (لا تضخم بلا حدود)
+        set({ readNotificationIds: [...state.readNotificationIds, id].slice(-500) })
+      },
+      markAllNotificationsRead: (ids) => {
+        const state = get()
+        set({ readNotificationIds: [...new Set([...state.readNotificationIds, ...ids])].slice(-500) })
+      },
+      restoreNotifications: () => set({ readNotificationIds: [] }),
       requestPinReset: (userId) => {
         const state = get()
         const user = state.appUsers.find((u) => u.id === userId && u.active)
@@ -4507,7 +4568,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'payroll',
           sourceId: runId,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -4645,7 +4706,7 @@ export const useDataStore = create<DataState>()(
             { accountCode: args.treasury, debit: args.amountMinor, credit: 0, note: 'نقدية واردة' },
             { accountCode: '1107', debit: 0, credit: args.amountMinor, note: `سداد سلفة ${emp.nameAr}` },
           ],
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         // توزيع السداد على السلف الأقدم أولاً (نفس منهج المسير)
         let toRecover = args.amountMinor
@@ -4682,7 +4743,7 @@ export const useDataStore = create<DataState>()(
           description: `إقفال السنة المالية «${fy.nameAr}» — صافي ${result.netProfitMinor >= 0 ? 'ربح' : 'خسارة'} يُرحَّل للأرباح المرحلة`,
           sourceType: 'year_closing', sourceId: fy.id,
           lines: result.lines.map((l) => ({ accountCode: l.accountCode, debit: l.debit, credit: l.credit, note: l.note })),
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({ journal: [...state.journal, entry] })
         return { entryId, netProfitMinor: result.netProfitMinor }
@@ -4787,7 +4848,7 @@ export const useDataStore = create<DataState>()(
               { accountCode: '1104', debit: interestMinor, credit: 0, note: `هامش تقسيط ${planNumber} على العميل` },
               { accountCode: '4111', debit: 0, credit: interestMinor, note: 'أرباح تقسيط (هامش تمويل)' },
             ],
-            createdBy: 'المالك',
+            createdBy: activeUserName(get()),
             createdAt: now,
             reversedByEntryId: null,
             reversesEntryId: null,
@@ -4805,7 +4866,7 @@ export const useDataStore = create<DataState>()(
             sourceType: 'receipt_voucher',
             sourceId: planId,
             lines: entryLines,
-            createdBy: 'المالك',
+            createdBy: activeUserName(get()),
             createdAt: now,
             reversedByEntryId: null,
             reversesEntryId: null,
@@ -4855,7 +4916,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'receipt_voucher',
           sourceId: plan.id,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -4926,7 +4987,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'logistics_trip',
           sourceId: tripId,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -4967,7 +5028,7 @@ export const useDataStore = create<DataState>()(
             id: commEntryId, entryNumber: commEntryId, date: now.slice(0, 10),
             description: `استحقاق عمولة سائق ${driver?.nameAr ?? ''} — ${trip.tripNumber}`,
             sourceType: 'driver_settlement', sourceId: trip.id, lines: commLines,
-            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }
           newJournal = [...newJournal, commEntry]
           newDues = [...newDues, {
@@ -5004,7 +5065,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تسوية مستحقات السائق ${driver.nameAr} (${unsettled.length} رحلة)`,
           sourceType: 'driver_settlement', sourceId: driverId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
           driverDues: state.driverDues.map((d) => (d.driverId === driverId && !d.settled ? { ...d, settled: true, settlementEntryId: entryId } : d)),
@@ -5064,7 +5125,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `بيع بتغطية ${provider.nameAr} (${provider.coveragePercent}٪)`,
           sourceType: 'insured_sale', sourceId: claimId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const claim: InsuranceClaim = {
           id: claimId, providerId: provider.id, source: 'sale', sourceId: entryId,
@@ -5109,7 +5170,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `طلب تحاليل ${orderNumber} — ${patient.nameAr} بتغطية ${provider.nameAr}`,
           sourceType: 'insured_sale', sourceId: orderId, lines: entryLines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }]
         const commissionMinor = referrer ? commissionFor(totals.netMinor, referrer.commissionPercent) : 0
         let commissionEntryId: number | null = null
@@ -5120,7 +5181,7 @@ export const useDataStore = create<DataState>()(
             description: `استحقاق عمولة د. ${referrer!.nameAr} عن ${orderNumber}`,
             sourceType: 'lab_commission', sourceId: orderId,
             lines: buildCommissionAccrualEntry(commissionMinor, orderNumber),
-            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }]
         }
         const age = patient.birthDate ? ageYearsFn(patient.birthDate, now) : 30
@@ -5167,7 +5228,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تحصيل مطالبات ${provider.nameAr} (${unsettled.length} مطالبة)`,
           sourceType: 'claim_settlement', sourceId: providerId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
           insuranceClaims: state.insuranceClaims.map((c) => (c.providerId === providerId && !c.settled ? { ...c, settled: true, settlementEntryId: entryId } : c)),
@@ -5244,7 +5305,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'rental_contract',
           sourceId: contractId,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -5323,7 +5384,7 @@ export const useDataStore = create<DataState>()(
             sourceType: 'rental_contract',
             sourceId: contract.id,
             lines: extraLines,
-            createdBy: 'المالك',
+            createdBy: activeUserName(get()),
             createdAt: now,
             reversedByEntryId: null,
             reversesEntryId: null,
@@ -5343,7 +5404,7 @@ export const useDataStore = create<DataState>()(
             sourceType: 'rental_contract',
             sourceId: contract.id,
             lines: closeLines,
-            createdBy: 'المالك',
+            createdBy: activeUserName(get()),
             createdAt: now,
             reversedByEntryId: null,
             reversesEntryId: null,
@@ -5414,7 +5475,7 @@ export const useDataStore = create<DataState>()(
             { accountCode: '5105', debit: args.amountMinor, credit: 0, note: `${label} ${eq.nameAr}` },
             { accountCode: treasury, debit: 0, credit: args.amountMinor, note: 'دفع مصروف تشغيل' },
           ],
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const cost: EquipmentCost = {
           id: costId, equipmentId: args.equipmentId, date: now.slice(0, 10), kind: args.kind,
@@ -5518,7 +5579,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `طلب تحاليل ${orderNumber} — ${patient.nameAr}`,
           sourceType: 'lab_order', sourceId: orderId, lines: entryLines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }]
 
         // عمولة المُحيل — استحقاق فوري بقيد منفصل (من صافي الطلب)
@@ -5531,7 +5592,7 @@ export const useDataStore = create<DataState>()(
             description: `استحقاق عمولة د. ${referrer!.nameAr} عن ${orderNumber}`,
             sourceType: 'lab_commission', sourceId: orderId,
             lines: buildCommissionAccrualEntry(commissionMinor, orderNumber),
-            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }]
         }
 
@@ -5601,7 +5662,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `صرف عمولات د. ${referrer.nameAr} (${unpaid.length} طلب)`,
           sourceType: 'lab_commission_payout', sourceId: referrerId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const paidIds = new Set(unpaid.map((o) => o.id))
         set({
@@ -5741,7 +5802,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تعزيز عهدة ${file.fileNumber} — ${emp?.nameAr ?? ''}${args.description ? ` — ${args.description}` : ''}`,
           sourceType: 'payment_voucher', sourceId: txId, lines: entryLines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const tx: CustodyTx = {
           id: txId, fileId: file.id, type: 'fund', date: now.slice(0, 10),
@@ -5773,7 +5834,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مصروف من عهدة ${file.fileNumber} — ${args.description.trim()}${excessMinor > 0 ? ` (زيادة ${excessMinor} مستحقة لـ${emp?.nameAr ?? 'الموظف'})` : ''}`,
           sourceType: 'payment_voucher', sourceId: txId, lines: entryLines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const tx: CustodyTx = {
           id: txId, fileId: file.id, type: 'expense', date: now.slice(0, 10),
@@ -5816,7 +5877,7 @@ export const useDataStore = create<DataState>()(
             id: entryId, entryNumber: entryId, date: now.slice(0, 10),
             description: `تسوية عهدة ${file.fileNumber} — ${emp?.nameAr ?? ''}: مرتجع ${args.returnedMinor}${shortage > 0 ? ` + عجز ${shortage} سلفة تُخصم من الراتب` : ''}`,
             sourceType: 'payment_voucher', sourceId: file.id, lines: entryLines,
-            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }]
           if (args.returnedMinor > 0) {
             custodyTxs = [...custodyTxs, {
@@ -5887,7 +5948,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مستخلص ${extractNumber} — ${project.nameAr}`,
           sourceType: 'project_extract', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const extract: ProjectExtract = {
           id, extractNumber, projectId: project.id, date: now,
@@ -5928,7 +5989,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تكلفة على ${project.nameAr}: ${args.description || '—'}${custodyFile ? ` — من عهدة ${custodyFile.fileNumber}` : ''}`,
           sourceType: 'project_cost', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const cost: ProjectCost = {
           id, projectId: project.id, date: now, kind: args.kind,
@@ -5961,7 +6022,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `إفراج عن محتجزات ${project.nameAr} وإقفال المشروع`,
           sourceType: 'retention_release', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
           retentionReleases: [...state.retentionReleases, { id, projectId, date: now, amountMinor: remaining, journalEntryId: entryId }],
@@ -6046,7 +6107,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `دفعة مقدمة من عميل ${project.nameAr}`,
           sourceType: 'client_advance', sourceId: project.id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
           clientAdvances: [...state.clientAdvances, { id: nextId(state.clientAdvances), projectId: project.id, date: now.slice(0, 10), amountMinor: args.amountMinor, recoveredMinor: 0, journalEntryId: entryId }],
@@ -6110,7 +6171,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `شهادة أعمال باطن #${number} — ${label}`,
           sourceType: 'sub_certificate', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const cert: SubCertificate = {
           id, contractId: contract.id, number, date: now.slice(0, 10),
@@ -6153,7 +6214,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `دفعة لمقاول باطن ${label}`,
           sourceType: 'sub_payment', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({ subPayments: [...state.subPayments, { id, contractId: contract.id, date: now.slice(0, 10), amountMinor: args.amountMinor, kind: 'payment', journalEntryId: entryId }], journal: [...state.journal, entry] })
       },
@@ -6173,7 +6234,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `إفراج محتجزات باطن ${label} وإقفال عقده`,
           sourceType: 'retention_release', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
           subPayments: [...state.subPayments, { id, contractId, date: now.slice(0, 10), amountMinor: remaining, kind: 'retention_release', journalEntryId: entryId }],
@@ -6197,7 +6258,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `إصدار خطاب ضمان ${label}`,
           sourceType: 'bond_issue', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const bond: Bond = { ...args, id, status: 'active', issueEntryId: entryId, settleEntryId: null }
         set({ bonds: [...state.bonds, bond], journal: [...state.journal, entry] })
@@ -6218,7 +6279,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: outcome === 'released' ? `رد خطاب ضمان ${label}` : `مصادرة خطاب ضمان ${label}`,
           sourceType: 'bond_settle', sourceId: bond.id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: Bond = { ...bond, status: outcome, settleEntryId: entryId }
         set({ bonds: state.bonds.map((b) => (b.id === bondId ? updated : b)), journal: [...state.journal, entry] })
@@ -6266,7 +6327,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تسوية أجور يومية ${worker.nameAr} (${unsettled.length} سجل)`,
           sourceType: 'daily_wages', sourceId: workerId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         // السجلات المشروعية فقط تدخل تكاليف مشاريعها (لدقة الربحية) — التشغيل العام مصروف عمومي
         let costId = nextId(state.projectCosts)
@@ -6318,7 +6379,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `إذن صرف مواد ${reqNumber} — ${project.nameAr}`,
           sourceType: 'material_issue', sourceId: id, lines: entryLines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const req: MaterialRequisition = {
           id, reqNumber, projectId: project.id, date: now,
@@ -6403,7 +6464,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تحصيل ${settlementNumber} من ${customer.nameAr}${unallocatedMinor > 0 ? ' (يشمل دفعة تحت الحساب)' : ''}`,
           sourceType: 'client_payment', sourceId: id, lines: entryLines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const settlement = {
           id, settlementNumber, customerId: customer.id, date: now,
@@ -6427,7 +6488,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `دفعة مقدمة لمقاول باطن ${contract.contractorName} (${contract.contractNumber})`,
           sourceType: 'sub_advance', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const adv: SubAdvance = { id, contractId: contract.id, date: now.slice(0, 10), amountMinor: args.amountMinor, recoveredMinor: 0, journalEntryId: entryId }
         set({ subAdvances: [...state.subAdvances, adv], journal: [...state.journal, entry] })
@@ -6454,7 +6515,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `توريد ضريبة استقطاع مقاولي الباطن`,
           sourceType: 'payment_voucher', sourceId: entryId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({ journal: [...state.journal, entry] })
         return { amount: balance }
@@ -6595,7 +6656,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `أمر إنتاج ${orderNumber} — ${product.nameAr} (${producedQty})`,
           sourceType: 'production', sourceId: orderId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const order: ProductionOrder = {
           id: orderId, orderNumber, refCode: makeUniqueRefCode('PRD', now, usedRefCodes(state)),
@@ -6656,7 +6717,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `${PROCESSING_KIND_LABELS[args.kind].nameAr} ${orderNumber} — ${source.nameAr} (${args.sourceQty})`,
           sourceType: 'processing', sourceId: orderId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const order: ProcessingOrder = {
           id: orderId, orderNumber, refCode: makeUniqueRefCode(prefix, now, usedRefCodes(state)),
@@ -6738,7 +6799,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `شراء كسر ${KARAT_LABELS[args.karat]} — ${args.weightGrams} جم${args.sellerName ? ` من ${args.sellerName}` : ''}`,
           sourceType: 'scrap_purchase', sourceId: lotId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const lot: ScrapLot = {
           id: lotId, refCode: makeUniqueRefCode('SCR', now, usedRefCodes(state)), date: now,
@@ -6763,7 +6824,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `بيع كسر ${KARAT_LABELS[args.karat]} — ${args.weightGrams} جم${args.buyerName ? ` إلى ${args.buyerName}` : ''}`,
           sourceType: 'scrap_sale', sourceId: saleId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const consumed = new Map(plan.map((p) => [p.lotId, p.grams]))
         const sale: ScrapSale = {
@@ -6945,7 +7006,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `زيارة ${visitNumber} — ${patient.nameAr}`,
           sourceType: 'clinic_visit', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const visit: ClinicVisit = {
           id, visitNumber, patientId: patient.id, date: now, kind: args.kind,
@@ -6990,7 +7051,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تحصيل متأخرات من ${patient.nameAr}`,
           sourceType: 'clinic_visit', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const collection: ClinicCollection = { id, patientId, date: now, amountMinor, journalEntryId: entryId }
         set({ clinicCollections: [...state.clinicCollections, collection], journal: [...state.journal, entry] })
@@ -7034,7 +7095,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `شراء سيارة ${label}`,
           sourceType: 'car_purchase', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const car: Car = {
           id, make: args.make.trim(), model: args.model.trim(), year: args.year,
@@ -7060,7 +7121,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تجهيز ${label}: ${description || '—'}`,
           sourceType: 'car_purchase', sourceId: carId, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
           journal: [...state.journal, entry],
@@ -7095,7 +7156,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `بيع سيارة ${label}${args.buyerName ? ` — ${args.buyerName}` : ''}`,
           sourceType: 'car_sale', sourceId: car.id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const buyerCustomer = args.buyerCustomerId != null ? state.customers.find((c) => c.id === args.buyerCustomerId) : undefined
         const updated: Car = {
@@ -7176,7 +7237,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `بيع أمانة ${label} — عمولة المعرض`,
           sourceType: 'consignment_sale', sourceId: car.id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const buyerCustomer = args.buyerCustomerId != null ? state.customers.find((c) => c.id === args.buyerCustomerId) : undefined
         const updated: ConsignmentCar = {
@@ -7203,7 +7264,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `سداد مالك الأمانة ${car.ownerName} — ${label}`,
           sourceType: 'consignment_payout', sourceId: car.id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
           consignmentCars: state.consignmentCars.map((c) => (c.id === id ? { ...c, status: 'paid' as const, payoutEntryId: entryId } : c)),
@@ -7307,7 +7368,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'maintenance_ticket',
           sourceId: ticket.id,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -7369,7 +7430,7 @@ export const useDataStore = create<DataState>()(
           description: `خدمة محافظ ${opNumber} — ${input.provider}`,
           sourceType: 'wallet_service', sourceId: opId,
           lines: buildWalletServiceEntry(input, totals, opNumber),
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const op: WalletServiceOp = {
           id: opId, opNumber,
@@ -7403,7 +7464,7 @@ export const useDataStore = create<DataState>()(
           description: `مرتجع خدمة محافظ ${op.opNumber}${reason ? ` — ${sanitizeText(reason, 120)}` : ''}`,
           sourceType: 'reversal', sourceId: orig.id,
           lines: buildReversalLines(orig.lines),
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: orig.id,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: orig.id,
         }
         const stamp = approvalStamp(state, approvedBy)
         const updated: WalletServiceOp = { ...op, status: 'returned', returnEntryId: entryId, approvedBy: stamp.approvedBy, requestedBy: stamp.requestedBy }
@@ -7487,7 +7548,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'asset_purchase',
           sourceId: id,
           lines: entryLines,
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -7531,7 +7592,7 @@ export const useDataStore = create<DataState>()(
           description: `سداد دفعة أصل ${asset.assetNumber} — ${asset.nameAr}${supName ? ` (${supName})` : ''}`,
           sourceType: 'asset_payment', sourceId: asset.id,
           lines: buildAssetPaymentEntry(args.amountMinor, `${asset.assetNumber}`, args.treasury),
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         // توزيع السداد على الأقساط الأقدم أولاً
         let toApply = args.amountMinor
@@ -7614,7 +7675,7 @@ export const useDataStore = create<DataState>()(
           lines: args.direction === 'earned'
             ? buildEarnedAccrualEntry(args.amountMinor, party.nameAr)
             : buildOwedAccrualEntry(args.amountMinor, party.nameAr),
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const commission: ExternalCommission = {
           id, commissionNumber, direction: args.direction, partyId: party.id, partyName: party.nameAr, date: now,
@@ -7642,7 +7703,7 @@ export const useDataStore = create<DataState>()(
           lines: earned
             ? buildEarnedCollectEntry(args.amountMinor, com.partyName, args.treasury)
             : buildOwedPayEntry(args.amountMinor, com.partyName, args.treasury),
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: ExternalCommission = {
           ...com, collectedMinor: com.collectedMinor + args.amountMinor,
@@ -7699,7 +7760,7 @@ export const useDataStore = create<DataState>()(
             description: `عربون أمر غسيل ${orderNumber} — ${args.customerName || 'عميل نقدي'}`,
             sourceType: 'laundry', sourceId: id,
             lines: buildLaundryPrepaidEntry(args.prepaidMinor, `عربون ${orderNumber}`, args.treasury ?? '1101'),
-            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }]
         }
         const order: LaundryOrder = {
@@ -7746,7 +7807,7 @@ export const useDataStore = create<DataState>()(
           description: `تسليم أمر غسيل ${order.orderNumber} — ${order.customerName}`,
           sourceType: 'laundry', sourceId: order.id,
           lines: built.lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: LaundryOrder = {
           ...order, status: 'delivered', deliverEntryId: entryId,
@@ -7773,7 +7834,7 @@ export const useDataStore = create<DataState>()(
             description: `إلغاء أمر غسيل ${order.orderNumber} — رد العربون`,
             sourceType: 'laundry', sourceId: order.id,
             lines: buildLaundryCancelEntry(order.prepaidMinor, `رد عربون ${order.orderNumber}`),
-            createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
           }]
         }
         const updated: LaundryOrder = { ...order, status: 'cancelled', cancelEntryId, statusHistory: [...order.statusHistory, { status: 'cancelled', at: now }] }
@@ -7804,7 +7865,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مرتجع خدمة ${order.orderNumber} — ${order.customerName}${args.reason ? ` (${args.reason})` : ''}`,
           sourceType: 'laundry', sourceId: order.id, lines: built.lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: LaundryOrder = {
           ...order,
@@ -7857,7 +7918,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مرتجع خدمة صيانة ${ticket.ticketNumber} — ${ticket.deviceName}${args.reason ? ` (${args.reason})` : ''}`,
           sourceType: 'maintenance_ticket', sourceId: ticket.id, lines: built.lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: MaintenanceTicket = {
           ...ticket,
@@ -7905,7 +7966,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مرتجع نقلة ${trip.tripNumber} — ${trip.fromLoc} ← ${trip.toLoc}${args.reason ? ` (${args.reason})` : ''}`,
           sourceType: 'logistics_trip', sourceId: trip.id, lines: built.lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: Trip = {
           ...trip,
@@ -7972,7 +8033,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مرتجع تحاليل ${order.orderNumber} — ${order.patientName}${args.reason ? ` (${args.reason})` : ''}`,
           sourceType: 'lab_order', sourceId: order.id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: LabOrder = {
           ...order,
@@ -8011,7 +8072,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مرتجع زيارة ${visit.visitNumber} — ${patient?.nameAr ?? ''}${args.reason ? ` (${args.reason})` : ''}`,
           sourceType: 'clinic_visit', sourceId: visit.id, lines: built.lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: ClinicVisit = {
           ...visit,
@@ -8048,7 +8109,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `مرتجع إيجار ${contract.contractNumber} — ${contract.equipmentName}${args.reason ? ` (${args.reason})` : ''}`,
           sourceType: 'rental_contract', sourceId: contract.id, lines: built.lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: RentalContract = {
           ...contract,
@@ -8083,7 +8144,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `إشعار دائن على مستخلص ${extract.extractNumber}${args.reason ? ` (${args.reason})` : ''}`,
           sourceType: 'project_extract', sourceId: extract.id, lines: built.lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const updated: ProjectExtract = {
           ...extract,
@@ -8118,7 +8179,7 @@ export const useDataStore = create<DataState>()(
           sourceType: 'depreciation',
           sourceId: null,
           lines: buildDepreciationEntry(totalMinor, monthLabel),
-          createdBy: 'المالك',
+          createdBy: activeUserName(get()),
           createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: null,
@@ -8170,7 +8231,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `استلام ${note} (استحقاق ${args.dueDate})`,
           sourceType: 'cheque_receive', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const cheque: Cheque = {
           id, chequeNumber: args.chequeNumber.trim(), direction: 'incoming',
@@ -8203,7 +8264,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: `تحرير ${note} (استحقاق ${args.dueDate})`,
           sourceType: 'cheque_issue', sourceId: id, lines,
-          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const cheque: Cheque = {
           id, chequeNumber: args.chequeNumber.trim(), direction: 'outgoing',
@@ -8245,7 +8306,7 @@ export const useDataStore = create<DataState>()(
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
           description: built.desc,
           sourceType: built.src, sourceId: cheque.id, lines: built.lines,
-          createdBy: 'المالك', createdAt: now,
+          createdBy: activeUserName(get()), createdAt: now,
           reversedByEntryId: null,
           reversesEntryId: built.reversal ? cheque.receiveEntryId : null,
         }
@@ -8292,6 +8353,7 @@ export const useDataStore = create<DataState>()(
           loginGuard: s.loginGuard ?? EMPTY_GUARD,
           ownerTempPin: s.ownerTempPin ?? null,
           pinResetRequests: s.pinResetRequests ?? [],
+          readNotificationIds: s.readNotificationIds ?? [],
           consumptions: s.consumptions ?? [],
           // ترحيل الخزائن المتعددة: الحسابات القديمة تحصل على الافتراضيتين
           treasuries: s.treasuries && s.treasuries.length > 0 ? s.treasuries : DEFAULT_TREASURIES,

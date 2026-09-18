@@ -8,22 +8,23 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound } from 'lucide-react'
 import { PERMISSIONS, PERMISSION_SECTIONS, rolesWithOverrides } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
-import { hashPin } from '../../core/audit.ts'
+import { hashPin, suggestRoleForJobTitle } from '../../core/audit.ts'
 import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('cashier')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
-  const { appUsers, currentUserId, addAppUser, removeAppUser, updateAppUser, roleOverrides, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset } = useDataStore()
+  const { appUsers, currentUserId, addAppUser, removeAppUser, updateAppUser, roleOverrides, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
   const roles = rolesWithOverrides(roleOverrides)
   const toast = useToast()
   const [userModal, setUserModal] = useState(false)
   // استثناءات فردية (البند 4 — لكل موظف): منح فوق الدور أو حجب رغم الدور
   const [excFor, setExcFor] = useState<number | null>(null)
-  const [uName, setUName] = useState('')
   const [uRole, setURole] = useState('cashier')
   const [uPin, setUPin] = useState('')
+  // سياسة المالك: الحساب يُبنى على موظف مسجل — بياناته وماليته في شاشة الموظفين
+  const [uEmployeeId, setUEmployeeId] = useState(0)
   // 🔐 رقم المالك + إعادة تعيين أرقام الموظفين (استعادة كلمة السر)
   const [ownerPinModal, setOwnerPinModal] = useState(false)
   const [oPin, setOPin] = useState('')
@@ -50,18 +51,26 @@ export function PermissionsPage() {
       const openReq = openResets.find((r) => r.userId === pinFor)
       if (openReq) resolvePinReset(openReq.id, 'done', pinHash)
       else updateAppUser(pinFor, { pinHash })
+      // رقم من المدير = مبدئي دائماً: يظهر له في القائمة ويُجبر الموظف على تغييره بأول دخول
+      updateAppUser(pinFor, { mustChangePin: true, initialPin: ePin })
       const name = appUsers.find((x) => x.id === pinFor)?.nameAr ?? ''
       setPinFor(null); setEPin(''); setEPin2('')
-      toast.show(`عُيّن رقم جديد لـ«${name}» — أبلغه به بنفسك ✅`)
+      toast.show(`عُيّن رقم مبدئي لـ«${name}» — سيُجبر على تغييره بأول دخول ✅`)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
   const saveUser = async () => {
     try {
+      const emp = employees.find((x) => x.id === uEmployeeId)
+      if (!emp) throw new Error('اختر الموظف أولاً — الحساب يُبنى على موظف مسجل ببياناته المالية')
       const pinHash = await hashPin(uPin)
-      addAppUser({ nameAr: uName, roleId: uRole, pinHash })
-      toast.show(`أُضيف المستخدم «${uName}» — كل ما يفعله سيُسجل باسمه في سجل النشاطات ✓`)
-      setUserModal(false); setUName(''); setUPin(''); setURole('cashier')
+      addAppUser({
+        nameAr: emp.nameAr, roleId: uRole, pinHash,
+        employeeId: emp.id, phone: emp.phone, email: emp.email,
+        initialPin: uPin, mustChangePin: true,
+      })
+      toast.show(`أُنشئ حساب «${emp.nameAr}» — سيُجبر على تغيير الرقم عند أول دخول ✓`)
+      setUserModal(false); setUPin(''); setURole('cashier'); setUEmployeeId(0)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -261,8 +270,17 @@ export function PermissionsPage() {
             {appUsers.filter((u) => u.active).map((u) => (
               <div key={u.id} className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border transition-all ${currentUserId === u.id ? 'border-brand-500/40 bg-brand-500/8' : 'border-slate-100 dark:border-slate-800'}`}>
                 <ShieldCheck size={14} className="text-slate-400" />
-                <span className="text-[13px] font-bold flex-1">{u.nameAr}</span>
+                <span className="text-[13px] font-bold flex-1">
+                  {u.nameAr}
+                  {u.employeeId != null && <span className="text-[9.5px] text-slate-400 font-normal mr-1.5">👥 موظف مربوط</span>}
+                </span>
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">{roles.find((r) => r.id === u.roleId)?.nameAr ?? u.roleId}</span>
+                {u.mustChangePin && u.initialPin && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-bold" title="الرقم المبدئي — سيختفي فور تغييره بأول دخول">
+                    🔑 {u.initialPin}
+                  </span>
+                )}
+                {u.mustChangePin && !u.initialPin && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-bold">لم يغيّر رقمه بعد</span>}
                 {currentUserId === u.id && <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-600 font-bold">نشط الآن</span>}
                 <button
                   onClick={() => setPinFor(u.id)}
@@ -391,23 +409,42 @@ export function PermissionsPage() {
         })()}
       </Modal>
 
-      {/* مستخدم جديد */}
-      <Modal open={userModal} onClose={() => setUserModal(false)} title="👤 مستخدم جديد">
+      {/* مستخدم جديد — يُبنى على موظف مسجل (سياسة المالك) */}
+      <Modal open={userModal} onClose={() => setUserModal(false)} title="👤 حساب دخول جديد (من الموظفين)">
         <div className="space-y-4">
-          <Field label="الاسم">
-            <input value={uName} onChange={(e) => setUName(e.target.value)} className={inputCls} placeholder="أحمد الكاشير" />
+          <p className="text-[11.5px] text-slate-500 dark:text-slate-400 leading-relaxed bg-sky-500/5 rounded-xl p-3">
+            🧾 الحساب يُبنى على <b>موظف مسجل</b>: سجله أولاً في «شاشة الموظفين» ببياناته المالية
+            (راتب/بدلات/هاتف) — فتُخصم عليه السلف وعجوزات الورديات وتُربط وردياته باسمه.
+            ثم فعّل حساب دخوله من هنا برقم مبدئي <b>سيُجبر على تغييره عند أول دخول</b>.
+          </p>
+          <Field label="الموظف *" hint="غير موجود؟ أضفه من شاشة الموظفين أولاً — وظيفته تقترح دوره تلقائياً">
+            <select
+              value={uEmployeeId}
+              onChange={(e) => {
+                const id = Number(e.target.value)
+                setUEmployeeId(id)
+                const emp = employees.find((x) => x.id === id)
+                if (emp?.jobTitle) setURole(suggestRoleForJobTitle(emp.jobTitle))
+              }}
+              className={inputCls}
+            >
+              <option value={0}>— اختر الموظف —</option>
+              {employees
+                .filter((e) => e.active && !appUsers.some((u) => u.active && u.employeeId === e.id))
+                .map((e) => <option key={e.id} value={e.id}>{e.nameAr}{e.jobTitle ? ` — ${e.jobTitle}` : ''}</option>)}
+            </select>
           </Field>
-          <Field label="الدور" hint="يحدد صلاحياته من جدول الصلاحيات أعلاه">
+          <Field label="الدور" hint="اقتُرح تلقائياً من وظيفته — يمكنك تعديله">
             <select value={uRole} onChange={(e) => setURole(e.target.value)} className={inputCls}>
               {roles.filter((r) => !r.isOwner).map((r) => <option key={r.id} value={r.id}>{r.nameAr}</option>)}
             </select>
           </Field>
-          <Field label="الرقم السري (4–8 أرقام)" hint="يُخزن مشفراً — لا يمكن استرجاعه، فقط تغييره">
-            <input value={uPin} onChange={(e) => setUPin(e.target.value.replace(/\D/g, '').slice(0, 8))} className={inputCls} dir="ltr" type="password" placeholder="••••" />
+          <Field label="الرقم السري المبدئي (4–8 أرقام)" hint="سيظهر لك في القائمة حتى يغيّره الموظف بأول دخول — بعدها لا يعرفه أحد">
+            <input value={uPin} onChange={(e) => setUPin(e.target.value.replace(/\D/g, '').slice(0, 8))} className={inputCls} dir="ltr" placeholder="مثال: 1234" name="tahakam-initial-pin" autoComplete="off" />
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setUserModal(false)}>إلغاء</Btn>
-            <Btn onClick={saveUser} disabled={!uName.trim() || uPin.length < 4}>حفظ المستخدم</Btn>
+            <Btn onClick={saveUser} disabled={!uEmployeeId || uPin.length < 4}>إنشاء الحساب</Btn>
           </div>
         </div>
       </Modal>

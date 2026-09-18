@@ -399,6 +399,16 @@ const S = () => useDataStore.getState()
 - **بهذا اكتملت جولات المراجعة للأنشطة الـ16** (الطلبات 6–9): grocery/mobile/clothing/pharmacy/restaurant/parts+electronics/jewelry/clinic/rental/logistics/laundry/lab/cars/contracting/general — كل جولة بنواتها وواجهتها وسكربت فحصها.
 - الفحص: `scripts/verify_general_review.mjs` (13 فحصاً). البوابة الكاملة: 74 سكربت تمر جميعها.
 
+## 8.20) دفعة مراجعة المالك: المستخدمون والدخول والإشعارات (سبتمبر 2026 — مطبقة)
+- **الدخول بلا قوائم أسماء** (طلب المالك): LoginScreen أعيدت كتابتها — وضعان (موظف/مالك)، الموظف يكتب معرفه بنفسه (اسم كامل/هاتف/بريد) عبر `findUserByIdentifier` في audit.ts (مطابقة حرفية فقط — لا جزئية كي لا تُكشف الحسابات، رسالة خطأ عامة واحدة).
+- **الحساب مبني على موظف**: AppUser أضيف له employeeId/phone/email/mustChangePin/initialPin؛ addAppUser يرفض موظفاً غير موجود/غير نشط وحسابين لنفس الموظف؛ نافذة «مستخدم جديد» في PermissionsPage تختار من الموظفين النشطين غير المربوطين + `suggestRoleForJobTitle` يقترح الدور من المسمى الوظيفي (اقتراح قابل للتعديل).
+- **أول دخول إجباري التغيير**: login يعيد mustChangePin؛ LoginScreen يفتح Modal إلزامياً؛ `changeOwnPin` يحفظ الجديد ويمسح initialPin (لا يعود أحد يعرفه) ويسجل حدث تدقيق. الرقم المبدئي يظهر للمدير كشارة 🔑 في قائمة المستخدمين حتى يتغير. إعادة تعيين من المدير = mustChangePin+initialPin من جديد.
+- **الإشعارات كمقروء**: readNotificationIds في repo (سقف 500) + markNotificationRead/markAllNotificationsRead/restoreNotifications؛ الجرس في Header يعد غير المقروء فقط + زر ✓ لكل تنبيه + «تعليم الكل» + أرشيف قابل للإظهار. المعرف ثابت لكل سبب — سبب جديد (قسط الشهر التالي) يظهر تلقائياً.
+- **قيود باسم المنفذ الفعلي**: 88 قيداً كانت `createdBy: 'المالك'` ثابتة — الآن `activeUserName(get())` (اسم المستخدم المسجل). فتح الوردية في ShiftsPage باسم المستخدم النشط أيضاً.
+- **الاستبدال بوزن عشري**: ExchangePage — كمية القطع الجديدة نص حر بمنقٍّ عشري (كانت Number فورية تمنع «2.»)، soldByWeight يؤخذ من الصنف (كانت false ثابتة!)، inputMode=decimal للحقلين، NewQtyTexts تُزاح عند حذف سطر. SaleReturnsPage نفس المعاملة للمعالج.
+- **اقتراحات المتصفح**: حارس عام في App.tsx (MutationObserver يختم autocomplete=off على كل input بلا سمة صريحة) + datalist المشتريات/المعدات تحولت شرائح اقتراح داخلية مصممة + إزالة مرجع datalist يتيم في MaintenancePage.
+- الفحص: `scripts/verify_users_login_notifications.mjs` (40 فحصاً) يشمل أيضاً سيناريو صلاحيات المجموعة (التغيير يسري فوراً على كل مستخدمي الدور، والاستثناءات الفردية extraPerms/deniedPerms تبقى فوقه لأنها تحسب وقت التقييم لا بالنسخ).
+
 ## 9) حالة العمل الجارية والتالي
 
 - ✅ منجز: **كل الفجوات المعيارية السبع** (وصفات، صاغة، قوائم أسعار، تكاليف معدات، أمانة، سائقون، تأمين، **مصفوفة لون×مقاس**) + عمق المقاولات الكامل.

@@ -193,6 +193,56 @@ export interface AppUser {
   /** استثناءات فردية (البند 4 — لكل موظف): ممنوح فوق الدور / محجوب رغم الدور */
   extraPerms?: string[]
   deniedPerms?: string[]
+  /**
+   * ربط الحساب بسجل الموظف (طلب المالك): المستخدم يجب أن يكون موظفاً مسجلاً
+   * أولاً ببياناته المالية والوظيفية — فتُخصم عليه السلف/العجوزات وتُربط وردياته.
+   * undefined/null = حساب قديم قبل الربط (يبقى صالحاً للتوافق الخلفي).
+   */
+  employeeId?: number | null
+  /** هاتف الدخول (من سجل الموظف) — يُدخل به بدل الاسم */
+  phone?: string
+  /** بريد الدخول (من سجل الموظف) — يُدخل به بدل الاسم */
+  email?: string
+  /**
+   * إجبار تغيير الرقم السري عند أول دخول (طلب المالك — النمط العالمي):
+   * المدير يعيّن رقماً مبدئياً، وأول دخول به يفتح شاشة تعيين رقم جديد إلزامية.
+   */
+  mustChangePin?: boolean
+  /**
+   * الرقم المبدئي الذي عيّنه المدير — يظهر له في شاشة المستخدمين حتى يغيّره
+   * الموظف عند أول دخول (بعدها يُمسح ولا يُعرف رقمه لأحد). طلب المالك:
+   * «أريد أن أرى رقمه السري الجديد عندي في إعدادات المستخدمين».
+   */
+  initialPin?: string | null
+}
+
+/**
+ * اقتراح دور تلقائي من المسمى الوظيفي (طلب المالك: «وظيفته وعلى أساسها
+ * تتحدد صلاحياته بشكل تلقائي») — اقتراح قابل للتعديل، لا فرض.
+ */
+export function suggestRoleForJobTitle(jobTitle: string): string {
+  const t = jobTitle.trim()
+  if (/مدير|مشرف|supervisor|manager/i.test(t)) return 'branch_manager'
+  if (/محاسب|حسابات|account/i.test(t)) return 'accountant'
+  if (/بائع أول|senior/i.test(t)) return 'senior_seller'
+  if (/كاشير|بائع|بيع|cashier|seller/i.test(t)) return 'cashier'
+  return 'cashier'
+}
+
+/**
+ * إيجاد الحساب بمعرّف يكتبه المستخدم بنفسه (طلب المالك — لا قائمة أسماء):
+ * الاسم كاملاً أو الهاتف أو البريد. المطابقة حرفية بعد التشذيب —
+ * لا بحث جزئي كي لا يُكشف وجود حسابات.
+ */
+export function findUserByIdentifier(users: readonly AppUser[], identifier: string): AppUser | null {
+  const q = identifier.trim()
+  if (!q) return null
+  const qLower = q.toLowerCase()
+  return users.find((u) => u.active && (
+    u.nameAr.trim() === q
+    || (u.phone && u.phone.trim() === q)
+    || (u.email && u.email.trim().toLowerCase() === qLower)
+  )) ?? null
 }
 
 /** تجزئة الرقم السري (4-8 أرقام) — WebCrypto متاح في المتصفح وNode 18+ */

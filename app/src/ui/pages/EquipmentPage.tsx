@@ -242,8 +242,14 @@ export function EquipmentPage() {
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? `تعديل ${editing.nameAr}` : 'معدة جديدة'}>
         <div className="space-y-3">
           <Field label="اسم المعدة *">
-            <input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="حفار كاتربيلر 320" list="equip-kinds" />
-            <datalist id="equip-kinds">{EQUIPMENT_KINDS.map((k) => <option key={k} value={k} />)}</datalist>
+            <input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="حفار كاتربيلر 320" autoComplete="off" />
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {EQUIPMENT_KINDS.map((k) => (
+                <button key={k} type="button" onClick={() => setNameAr(k)}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${nameAr === k ? 'border-amber-500/60 bg-amber-500/15 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-amber-400 hover:text-amber-500'}`}
+                >{k}</button>
+              ))}
+            </div>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="الكود / اللوحة">

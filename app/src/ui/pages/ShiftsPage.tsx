@@ -26,7 +26,7 @@ function StatCard({ label, value, icon: Icon, tone }: { label: string; value: st
 }
 
 export function ShiftsPage() {
-  const { shifts, sales, saleReturns, treasuries, employees, openShift, closeShift, settleShiftVariance } = useDataStore()
+  const { shifts, sales, saleReturns, treasuries, employees, openShift, closeShift, settleShiftVariance, appUsers, currentUserId } = useDataStore()
   // تسوية فرق الدرج تحرك نقدية وتحمل موظفين سلفاً — خلف اعتماد المشرف
   const settleApproval = useSupervisorApproval('trs.payment.approve')
   const { setup } = useAppStore()
@@ -64,7 +64,8 @@ export function ShiftsPage() {
 
   const doOpen = () => {
     try {
-      const s = openShift(setup.ownerName || 'المالك', toMinor(openingCash || '0', cur.decimals))
+      const activeName = appUsers.find((u) => u.id === currentUserId)?.nameAr ?? (setup.ownerName || 'المالك')
+      const s = openShift(activeName, toMinor(openingCash || '0', cur.decimals))
       toast.show(`فُتحت الوردية #${s.id} — كل فاتورة من الآن تُحسب عليها ✓`)
       setOpenModal(false)
       setOpeningCash('')

@@ -28,7 +28,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications } = useDataStore()
   const navigate = useNavigate()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -64,6 +64,10 @@ export function Header({ title }: { title: string }) {
     }),
     [batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur],
   )
+  // طلب المالك: التحكم في الإشعارات وتعليمها كمقروء — الشارة تعدّ غير المقروء فقط
+  const readSet = new Set(readNotificationIds)
+  const unread = notifications.filter((n) => !readSet.has(n.id))
+  const readOnes = notifications.filter((n) => readSet.has(n.id))
 
   return (
     <header className="sticky top-0 z-20 flex items-center gap-4 px-6 py-3 border-b border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-card-dark/70 glass">
@@ -107,39 +111,67 @@ export function Header({ title }: { title: string }) {
       <div ref={bellRef} className="relative">
         <button
           onClick={() => setBellOpen((v) => !v)}
-          title={notifications.length ? `${notifications.length} تنبيه` : 'لا تنبيهات'}
+          title={unread.length ? `${unread.length} تنبيه غير مقروء` : 'لا تنبيهات جديدة'}
           className="relative p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-all duration-200 hover:scale-110"
         >
           <Bell size={18} />
-          {notifications.length > 0 && (
+          {unread.length > 0 && (
             <span className="absolute -top-0.5 -left-0.5 min-w-4 h-4 px-0.5 rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center">
-              {notifications.length > 9 ? '9+' : notifications.length}
+              {unread.length > 9 ? '9+' : unread.length}
             </span>
           )}
         </button>
         {bellOpen && (
           <div className="absolute left-0 top-full mt-2 w-80 max-h-96 overflow-y-auto rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700 shadow-2xl z-50 anim-in">
-            <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-800 text-[12px] font-extrabold text-slate-700 dark:text-slate-200">
-              🔔 التنبيهات {notifications.length > 0 && <span className="text-slate-400 font-bold">({notifications.length})</span>}
+            <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <span className="text-[12px] font-extrabold text-slate-700 dark:text-slate-200">
+                🔔 التنبيهات {unread.length > 0 && <span className="text-rose-500 font-bold">({unread.length} جديد)</span>}
+              </span>
+              {unread.length > 0 && (
+                <button
+                  onClick={() => markAllNotificationsRead(unread.map((n) => n.id))}
+                  className="text-[10.5px] font-bold text-brand-600 dark:text-brand-400 hover:underline"
+                >✓✓ تعليم الكل كمقروء</button>
+              )}
             </div>
             {notifications.length === 0 ? (
               <div className="p-6 text-center text-slate-400">
                 <BellOff size={22} className="mx-auto mb-2 opacity-50" />
                 <div className="text-[12px]">لا تنبيهات حالياً — كل شيء تحت السيطرة ✓</div>
               </div>
+            ) : unread.length === 0 && readOnes.length > 0 ? (
+              <div className="p-4 text-center text-slate-400 space-y-2">
+                <div className="text-[12px]">كل التنبيهات مقروءة ✓ ({readOnes.length} في الأرشيف)</div>
+                <button onClick={restoreNotifications} className="text-[10.5px] font-bold text-brand-600 dark:text-brand-400 hover:underline">↩️ إظهار المقروءة</button>
+              </div>
             ) : (
-              notifications.map((n) => (
-                <button
-                  key={n.id}
-                  onClick={() => { setBellOpen(false); navigate(n.route) }}
-                  className="w-full text-right px-4 py-2.5 border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-                >
-                  <div className={`text-[12px] font-bold flex items-center gap-1.5 ${n.severity === 'danger' ? 'text-rose-600' : n.severity === 'warn' ? 'text-amber-600' : 'text-slate-700 dark:text-slate-200'}`}>
-                    <span>{n.icon}</span> {n.title}
+              <>
+                {unread.map((n) => (
+                  <div
+                    key={n.id}
+                    className="w-full flex items-start gap-1 px-2 py-2.5 border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                  >
+                    <button onClick={() => { setBellOpen(false); navigate(n.route) }} className="flex-1 text-right">
+                      <div className={`text-[12px] font-bold flex items-center gap-1.5 ${n.severity === 'danger' ? 'text-rose-600' : n.severity === 'warn' ? 'text-amber-600' : 'text-slate-700 dark:text-slate-200'}`}>
+                        <span>{n.icon}</span> {n.title}
+                      </div>
+                      <div className="text-[10.5px] text-slate-400 mt-0.5">{n.body}</div>
+                    </button>
+                    <button
+                      onClick={() => markNotificationRead(n.id)}
+                      title="تعليم كمقروء"
+                      className="shrink-0 p-1.5 rounded-lg text-slate-300 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors text-[11px] font-black"
+                    >✓</button>
                   </div>
-                  <div className="text-[10.5px] text-slate-400 mt-0.5">{n.body}</div>
-                </button>
-              ))
+                ))}
+                {readOnes.length > 0 && (
+                  <div className="px-4 py-2 text-center">
+                    <button onClick={restoreNotifications} className="text-[10px] font-bold text-slate-400 hover:text-brand-500 hover:underline">
+                      ↩️ {readOnes.length} تنبيه مقروء — اضغط للإظهار
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

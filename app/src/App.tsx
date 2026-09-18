@@ -241,6 +241,25 @@ export default function App() {
 
   // ─── قفل الكاتب الواحد (البند 4): تبويب ثانٍ على نفس القاعدة = قراءة فقط ───
   const [readOnlyTab, setReadOnlyTab] = useState(false)
+  // ─── حارس اقتراحات المتصفح (بلاغ المالك: «القوائم تقترح نصوصاً محفوظة») ───
+  // كل input بلا autocomplete صريح يُختم off تلقائياً — التطبيق مكتبي داخلي،
+  // اقتراحات المتصفح المحفوظة تشوش الكاشير وقد تكشف مدخلات مستخدم سابق.
+  useEffect(() => {
+    const stamp = (root: ParentNode) => {
+      root.querySelectorAll<HTMLInputElement>('input:not([autocomplete])').forEach((el) => {
+        el.setAttribute('autocomplete', 'off')
+      })
+    }
+    stamp(document)
+    const mo = new MutationObserver((muts) => {
+      for (const m of muts) {
+        m.addedNodes.forEach((n) => { if (n instanceof HTMLElement) stamp(n) })
+      }
+    })
+    mo.observe(document.body, { childList: true, subtree: true })
+    return () => mo.disconnect()
+  }, [])
+
   useEffect(() => {
     const beat = () => {
       const existing = parseTabLock(localStorage.getItem(TAB_LOCK_KEY))

@@ -382,8 +382,10 @@ export function SaleReturnsPage() {
                         <td className="px-3 py-2">
                           <input
                             value={w?.qty ?? ''}
-                            onChange={(e) => setWiz((prev) => ({ ...prev, [idx]: { qty: e.target.value, condition: prev[idx]?.condition ?? 'resellable' } }))}
+                            onChange={(e) => setWiz((prev) => ({ ...prev, [idx]: { qty: e.target.value.replace(/[^\d.]/g, ''), condition: prev[idx]?.condition ?? 'resellable' } }))}
                             placeholder="0"
+                            inputMode="decimal" autoComplete="off"
+                            title={l.soldByWeight ? 'صنف وزني ⚖️ — يقبل كسوراً مثل 1.75' : 'الكمية المرتجعة'}
                             disabled={rem <= 0}
                             className={`${inputCls} text-center py-1.5 disabled:opacity-40`}
                           />

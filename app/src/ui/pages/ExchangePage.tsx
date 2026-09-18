@@ -34,6 +34,8 @@ export function ExchangePage() {
   const [retQtys, setRetQtys] = useState<Record<number, string>>({})
   const [retConds, setRetConds] = useState<Record<number, ReturnCondition>>({})
   const [newLines, setNewLines] = useState<CartLine[]>([])
+  /** نص الكمية لكل سطر جديد — يقبل الكسور العشرية (وزن ⚖️) أثناء الكتابة */
+  const [newQtyTexts, setNewQtyTexts] = useState<Record<number, string>>({})
   const [itemQuery, setItemQuery] = useState('')
   const [treasury, setTreasury] = useState('')
   const [notes, setNotes] = useState('')
@@ -78,12 +80,15 @@ export function ExchangePage() {
       // أبسط مسار: خذ أول تركيبة متاحة كافتراضي والمستخدم يعدل من السطر
       color = variants[0].color; size = variants[0].size
     }
-    setNewLines((prev) => [...prev, {
-      itemId, nameAr: color || size ? `${it.nameAr} (${variantLabel(color, size)})` : it.nameAr,
-      qty: 1, unitPriceMinor: getEffectivePrice(itemId, null), unitCostMinor: it.costMinor,
-      discountPercent: 0, soldByWeight: false,
-      variantColor: color || undefined, variantSize: size || undefined,
-    }])
+    setNewLines((prev) => {
+      setNewQtyTexts((t) => ({ ...t, [prev.length]: '1' }))
+      return [...prev, {
+        itemId, nameAr: color || size ? `${it.nameAr} (${variantLabel(color, size)})` : it.nameAr,
+        qty: 1, unitPriceMinor: getEffectivePrice(itemId, null), unitCostMinor: it.costMinor,
+        discountPercent: 0, soldByWeight: it.soldByWeight, // ⚖️ الوزني يقبل كسوراً (كان false ثابتة)
+        variantColor: color || undefined, variantSize: size || undefined,
+      }]
+    })
     setItemQuery('')
   }
 
@@ -113,7 +118,7 @@ export function ExchangePage() {
             ? `${doc.exchangeNumber}: العميل يدفع فرقاً ${fmt(doc.netMinor)} ${cur.symbol}`
             : `${doc.exchangeNumber}: يُرد للعميل ${fmt(-doc.netMinor)} ${cur.symbol}`,
       )
-      setSale(null); setRetQtys({}); setRetConds({}); setNewLines([]); setNotes('')
+      setSale(null); setRetQtys({}); setRetConds({}); setNewLines([]); setNewQtyTexts({}); setNotes('')
     } catch (e) {
       // استبدال آجل بأغلى تخطى حد العميل: اللقطة استُرجعت في repo — اعرض اعتماد المدير
       if (e instanceof CreditLimitError) {
@@ -144,7 +149,7 @@ export function ExchangePage() {
           <div className="rounded-2xl bg-white dark:bg-card-dark border border-rose-200/60 dark:border-rose-900/40 p-5 space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="font-black text-[13px] text-rose-500">① القطع المرتجعة — {sale.invoiceNumber}</h3>
-              <button onClick={() => { setSale(null); setRetQtys({}); setRetConds({}); setNewLines([]) }} className="text-[11px] text-slate-400 hover:text-rose-500">تغيير الفاتورة</button>
+              <button onClick={() => { setSale(null); setRetQtys({}); setRetConds({}); setNewLines([]); setNewQtyTexts({}) }} className="text-[11px] text-slate-400 hover:text-rose-500">تغيير الفاتورة</button>
             </div>
             {sale.lines.map((l, idx) => {
               const rem = remaining[idx] ?? 0
@@ -171,7 +176,9 @@ export function ExchangePage() {
                   </div>
                   <input
                     value={retQtys[idx] ?? ''}
-                    onChange={(e) => setRetQtys((p) => ({ ...p, [idx]: e.target.value }))}
+                    onChange={(e) => setRetQtys((p) => ({ ...p, [idx]: e.target.value.replace(/[^\d.]/g, '') }))}
+                    inputMode="decimal" autoComplete="off"
+                    title={l.soldByWeight ? 'صنف وزني ⚖️ — اكتب الوزن بكسور مثل 1.75' : 'الكمية المرتجعة'}
                     className={`${inputCls} !w-20 !py-1.5 text-center`} dir="ltr" placeholder="0" disabled={rem <= 0}
                   />
                 </div>
@@ -202,9 +209,20 @@ export function ExchangePage() {
             {newLines.map((l, i) => (
               <div key={i} className="flex items-center gap-2 text-[12px]">
                 <div className="flex-1 font-bold text-slate-700 dark:text-slate-200">{l.nameAr}</div>
-                <input value={l.qty} onChange={(e) => setNewLines((p) => p.map((x, j) => (j === i ? { ...x, qty: Number(e.target.value) || 0 } : x)))} className={`${inputCls} !w-16 !py-1.5 text-center`} dir="ltr" />
+                <input
+                  value={newQtyTexts[i] ?? String(l.qty)}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/[^\d.]/g, '')
+                    setNewQtyTexts((t) => ({ ...t, [i]: raw }))
+                    const n = Number(raw)
+                    if (Number.isFinite(n)) setNewLines((p) => p.map((x, j) => (j === i ? { ...x, qty: l.soldByWeight ? Math.round(n * 1000) / 1000 : Math.floor(n) } : x)))
+                  }}
+                  inputMode="decimal" autoComplete="off"
+                  title={l.soldByWeight ? 'صنف وزني — يقبل كسوراً مثل 2.35' : 'كمية صحيحة'}
+                  className={`${inputCls} !w-20 !py-1.5 text-center`} dir="ltr"
+                />
                 <span className="text-slate-400 w-20 text-left" dir="ltr">{fmt(Math.round(l.unitPriceMinor * l.qty))}</span>
-                <button onClick={() => setNewLines((p) => p.filter((_, j) => j !== i))} className="text-slate-300 hover:text-rose-500"><Trash2 size={14} /></button>
+                <button onClick={() => { setNewLines((p) => p.filter((_, j) => j !== i)); setNewQtyTexts((t) => { const out: Record<number, string> = {}; Object.entries(t).forEach(([k, v]) => { const ki = Number(k); if (ki < i) out[ki] = v; else if (ki > i) out[ki - 1] = v }); return out }) }} className="text-slate-300 hover:text-rose-500"><Trash2 size={14} /></button>
               </div>
             ))}
             <div className="rounded-xl bg-emerald-500/5 px-4 py-2.5 flex justify-between text-[12px] font-bold">
@@ -272,7 +290,7 @@ export function ExchangePage() {
         <input value={pickQuery} onChange={(e) => setPickQuery(e.target.value)} className={inputCls} placeholder="رقم الفاتورة أو الكود المرجعي…" autoFocus />
         <div className="mt-3 space-y-1.5 max-h-80 overflow-auto">
           {pickable.map((s) => (
-            <button key={s.id} onClick={() => { setSale(s); setRetQtys({}); setRetConds({}); setNewLines([]); setPickOpen(false) }}
+            <button key={s.id} onClick={() => { setSale(s); setRetQtys({}); setRetConds({}); setNewLines([]); setNewQtyTexts({}); setPickOpen(false) }}
               className="w-full flex justify-between items-center px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-brand-500/60 hover:bg-brand-500/5 transition-all text-[12px]">
               <span className="font-bold">{s.invoiceNumber} <span className="text-slate-400 font-normal">— {s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr : 'عميل نقدي'}</span></span>
               <span className="text-slate-400" dir="ltr">{fmt(s.totals.totalMinor)} {cur.symbol}</span>

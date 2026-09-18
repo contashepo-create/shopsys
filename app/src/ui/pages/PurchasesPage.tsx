@@ -242,10 +242,6 @@ export function PurchasesPage() {
 
   return (
     <div className="space-y-4">
-      {/* اقتراحات أنواع المصاريف — والحقل نص حر (ملاحظة المالك: القائمة كانت ضيقة) */}
-      <datalist id="purchase-expense-presets">
-        {EXPENSE_PRESETS.map((p2) => <option key={p2} value={p2} />)}
-      </datalist>
       <div className="anim-up flex items-center justify-between">
         <p className="text-[12px] text-slate-400 max-w-lg leading-relaxed">
           💡 الترحيل يوزع مصاريف الشراء على الأصناف (حسب القيمة أو الكمية لكل مصروف) ثم يحدّث
@@ -442,14 +438,23 @@ export function PurchasesPage() {
               {expenses.map((e, i) => (
                 <div key={i} className="anim-in p-3 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-amber-500/15 space-y-2.5">
                   <div className="grid grid-cols-2 sm:grid-cols-[1fr_150px_auto_36px] gap-2 items-end">
-                    <Field label="نوع المصروف — اكتب أو اختر">
+                    <Field label="نوع المصروف — اكتب أو اختر من الشرائح">
                       <input
                         value={e.nameAr}
                         onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, nameAr: ev.target.value } : x)))}
-                        list="purchase-expense-presets"
+                        autoComplete="off"
                         placeholder="نولون، جمارك، شحن…"
                         className={inputCls}
                       />
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {EXPENSE_PRESETS.map((p2) => (
+                          <button
+                            key={p2} type="button"
+                            onClick={() => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, nameAr: p2 } : x)))}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${e.nameAr === p2 ? 'border-amber-500/60 bg-amber-500/15 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-amber-400 hover:text-amber-500'}`}
+                          >{p2}</button>
+                        ))}
+                      </div>
                     </Field>
                     <Field label={`المبلغ (${cur.symbol})`}>
                       <input
@@ -649,7 +654,14 @@ export function PurchasesPage() {
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-[1fr_130px_auto] gap-2 items-end">
                 <Field label="نوع المصروف">
-                  <input value={lateName} onChange={(e) => setLateName(e.target.value)} list="purchase-expense-presets" placeholder="نولون، جمارك…" className={inputCls} />
+                  <input value={lateName} onChange={(e) => setLateName(e.target.value)} autoComplete="off" placeholder="نولون، جمارك…" className={inputCls} />
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {EXPENSE_PRESETS.map((p2) => (
+                      <button key={p2} type="button" onClick={() => setLateName(p2)}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-all ${lateName === p2 ? 'border-amber-500/60 bg-amber-500/15 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-amber-400 hover:text-amber-500'}`}
+                      >{p2}</button>
+                    ))}
+                  </div>
                 </Field>
                 <Field label={`المبلغ (${cur.symbol})`}>
                   <input value={lateAmount} onChange={(e) => setLateAmount(e.target.value)} type="number" min={0} placeholder="0" className={inputCls} />
