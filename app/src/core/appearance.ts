@@ -55,6 +55,16 @@ export const ACCENTS: AccentPalette[] = [
     id: 'gold', nameAr: 'ذهبي فاخر',
     shades: { 50: '#fdfaf0', 100: '#faf0d7', 200: '#f3ddaa', 300: '#eac776', 400: '#dfae4a', 500: '#c9952c', 600: '#a97a1f', 700: '#875f1b', 800: '#6e4d1c', 900: '#5c401b' },
   },
+  {
+    // 🥩 الجزارة: أحمر لحمي حِرفي — أدفأ وأعمق من الوردي، يوحي بالطزاجة
+    id: 'crimson', nameAr: 'قرمزي الجزارة',
+    shades: { 50: '#fef2f2', 100: '#fee2e2', 200: '#fecaca', 300: '#fca5a5', 400: '#f87171', 500: '#ef4444', 600: '#dc2626', 700: '#b91c1c', 800: '#991b1b', 900: '#7f1d1d' },
+  },
+  {
+    // 🌴 التمور: بني تمري صحراوي — لون السكري والخلاص الناضج وكرم النخيل
+    id: 'date_palm', nameAr: 'تمري صحراوي',
+    shades: { 50: '#fdf8ef', 100: '#f9edd3', 200: '#f1d9a3', 300: '#e6bf6d', 400: '#d9a441', 500: '#c78a28', 600: '#a86e1e', 700: '#86541b', 800: '#6d441c', 900: '#5a371a' },
+  },
 ]
 
 /**
@@ -78,6 +88,8 @@ export const ACTIVITY_ACCENTS: Record<string, string> = {
   restaurant: 'orange', // مطاعم دافئة
   jewelry: 'gold', // ذهب فاخر
   laundry: 'sky', // نظافة وانتعاش
+  butcher: 'crimson', // أحمر لحمي حِرفي
+  dates: 'date_palm', // بني تمري صحراوي
   general: 'indigo', // الافتراضي
 }
 

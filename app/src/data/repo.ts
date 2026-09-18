@@ -27,6 +27,7 @@ import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, ty
 import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, type PurchaseReturnLine, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
+import { validateProcessing, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { validatePriceList, resolvePrice, type PriceList, type PriceListEntry } from '../core/priceLists.ts'
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
@@ -1040,6 +1041,7 @@ interface DataState {
   approvalRequests: ApprovalRequest[] // طلبات الاعتماد الجارية والمحسومة
   recipes: Recipe[] // وصفات الأطباق والتصنيع (مطاعم)
   productionOrders: ProductionOrder[] // أوامر الإنتاج المسبق
+  processingOrders: ProcessingOrder[] // أوامر التجهيز والتفكيك (جزارة/تمور)
   gramPrices: GramPrices // أسعار الجرام اليومية بالعيار (صاغة)
   jewelryProfiles: JewelryProfile[] // الوصف الذهبي للأصناف: عيار/وزن/مصنعية
   scrapLots: ScrapLot[] // دفعات الكسر المشتراة (FIFO)
@@ -1640,6 +1642,12 @@ interface DataState {
   getRecipeUnitCost: (recipeId: number) => number
   /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
   postProduction: (args: { recipeId: number; batches: number; treasury?: string; notes?: string }) => ProductionOrder
+  /**
+   * أمر تجهيز/تفكيك (جزارة 🥩/تمور 🌴): خام واحد → نواتج متعددة.
+   * توزيع (تكلفة الخام + المصاريف) على النواتج بنسبة قيمها البيعية بالقرش،
+   * الفاقد موثق بلا تكلفة، والقيد تحويل داخل 1103 (+ خزينة للمصاريف).
+   */
+  postProcessing: (args: ProcessingInput) => ProcessingOrder
 
   // ————— الذهب والمجوهرات (صاغة) —————
   /** تحديث أسعار الجرام اليومية — لا يعيد التسعير تلقائياً */
@@ -1987,6 +1995,7 @@ export const useDataStore = create<DataState>()(
       approvalFlows: [],
       approvalRequests: [],
       recipes: [],
+      processingOrders: [],
       productionOrders: [],
       gramPrices: EMPTY_GRAM_PRICES,
       jewelryProfiles: [],
@@ -6614,6 +6623,69 @@ export const useDataStore = create<DataState>()(
         return order
       },
 
+      /* ─── التجهيز والتفكيك (جزارة 🥩 / تمور 🌴) ─── */
+      postProcessing: (args) => {
+        const state = get()
+        const errors = validateProcessing({ sourceQty: args.sourceQty, outputs: args.outputs, overheadMinor: args.overheadMinor, wasteQty: args.wasteQty })
+        if (errors.length) throw new Error(errors[0])
+        const source = state.items.find((it) => it.id === args.sourceItemId)
+        if (!source) throw new Error('الصنف الخام غير موجود')
+        if (args.outputs.some((o) => o.itemId === args.sourceItemId)) throw new Error('لا يكون الخام نفسه ضمن النواتج — أنشئ صنفاً لكل جزء/درجة')
+        for (const o of args.outputs) {
+          if (!state.items.some((it) => it.id === o.itemId)) throw new Error('صنف ناتج غير موجود — أضفه في الأصناف أولاً')
+        }
+        if ((source.stockQty ?? 0) < args.sourceQty) {
+          throw new Error(`رصيد الخام «${source.nameAr}» لا يكفي — متاح ${source.stockQty ?? 0} ومطلوب ${args.sourceQty}`)
+        }
+        const treasury = args.treasury ?? '1101'
+        if (args.overheadMinor > 0 && !state.treasuries.some((t) => t.code === treasury)) {
+          throw new Error('خزينة مصاريف التجهيز غير موجودة')
+        }
+        // تكلفة الخام المستهلك بالمتوسط المرجح لحظة التنفيذ
+        const sourceCost = Math.round(source.costMinor * args.sourceQty)
+        const totalCost = sourceCost + args.overheadMinor
+        const priceOf = (id: number) => state.items.find((it) => it.id === id)?.priceMinor ?? 0
+        const outputs = allocateProcessingCost(args.outputs, totalCost, priceOf)
+        const lines = buildProcessingEntry(sourceCost, args.overheadMinor, treasury)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const orderId = nextId(state.processingOrders)
+        const prefix = PROCESSING_KIND_LABELS[args.kind].orderPrefix
+        const orderNumber = `${prefix}-${String(orderId).padStart(4, '0')}`
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `${PROCESSING_KIND_LABELS[args.kind].nameAr} ${orderNumber} — ${source.nameAr} (${args.sourceQty})`,
+          sourceType: 'processing', sourceId: orderId, lines,
+          createdBy: 'المالك', createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const order: ProcessingOrder = {
+          id: orderId, orderNumber, refCode: makeUniqueRefCode(prefix, now, usedRefCodes(state)),
+          date: now, kind: args.kind, sourceItemId: args.sourceItemId, sourceQty: args.sourceQty,
+          sourceCostMinor: sourceCost, overheadMinor: args.overheadMinor,
+          treasury: args.overheadMinor > 0 ? treasury : null,
+          outputs, wasteQty: args.wasteQty ?? 0,
+          compliance: { ...EMPTY_COMPLIANCE, ...(args.compliance ?? {}) },
+          journalEntryId: entryId, notes: args.notes ?? '',
+        }
+        // خصم الخام + إدخال كل ناتج بمتوسط مرجح جديد (قيمته القديمة + نصيبه من التكلفة)
+        const outMap = new Map(outputs.map((o) => [o.itemId, o]))
+        const updatedItems2 = state.items.map((it) => {
+          if (it.id === args.sourceItemId) {
+            return { ...it, stockQty: Math.round(((it.stockQty ?? 0) - args.sourceQty) * 1000) / 1000 }
+          }
+          const out = outMap.get(it.id)
+          if (out) {
+            const oldQty = it.stockQty ?? 0
+            const newQty = Math.round((oldQty + out.qty) * 1000) / 1000
+            const newValue = Math.round(oldQty * it.costMinor) + out.allocatedCostMinor
+            return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor }
+          }
+          return it
+        })
+        set({ items: updatedItems2, processingOrders: [...state.processingOrders, order], journal: [...state.journal, entry] })
+        return order
+      },
+
       /* ─── الذهب والمجوهرات (صاغة) ─── */
       setGramPrices: (prices) => {
         if (!(prices.k18 > 0) || !(prices.k21 > 0) || !(prices.k24 > 0)) throw new Error('أدخل سعراً موجباً لكل عيار')
@@ -8313,6 +8385,7 @@ export const useDataStore = create<DataState>()(
           dailyWorkers: s.dailyWorkers ?? [],
           dailyWorkRecords: s.dailyWorkRecords ?? [],
           recipes: s.recipes ?? [],
+          processingOrders: s.processingOrders ?? [],
           productionOrders: s.productionOrders ?? [],
           gramPrices: s.gramPrices ?? EMPTY_GRAM_PRICES,
           jewelryProfiles: s.jewelryProfiles ?? [],

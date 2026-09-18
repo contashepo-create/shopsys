@@ -7,7 +7,7 @@
 
 ## 1) ما هو المشروع
 
-**«تَحَكَّم» TAHAKAM ERP** — نظام محاسبة وكاشير وإدارة عربي متعدد الأنشطة (16 نشاطاً) متعدد الدول (19 دولة عربية)، منافس لـEasy Store وأنظمة الأنشطة الرأسية العالمية (Foodics للمطاعم، RepairDesk للموبايلات، أنظمة الصاغة، pro-acc للمقاولات…). الهدف: **محاسبة متكاملة وإدارة متكاملة لكل نشاط** بمحرك قيود مزدوجة مخفي التعقيد عن المستخدم.
+**«تَحَكَّم» TAHAKAM ERP** — نظام محاسبة وكاشير وإدارة عربي متعدد الأنشطة (18 نشاطاً) متعدد الدول (19 دولة عربية)، منافس لـEasy Store وأنظمة الأنشطة الرأسية العالمية (Foodics للمطاعم، RepairDesk للموبايلات، أنظمة الصاغة، pro-acc للمقاولات…). الهدف: **محاسبة متكاملة وإدارة متكاملة لكل نشاط** بمحرك قيود مزدوجة مخفي التعقيد عن المستخدم.
 
 - **المالك**: م/ محمد عبدة — توقيع الملكية «تطوير وملكية حصرية — جميع الحقوق محفوظة م / محمد عبدة» (عبدة بالتاء المربوطة) يظهر في «حول» وشاشة القفل وذيل الشريط الجانبي.
 - **شعار المطور**: `app/public/dev-logo.png` (نسر تركوازي/ذهبي + M-A). شعار التطبيق بالإنجليزية ثلاثي الأبعاد.
@@ -91,9 +91,11 @@ const S = () => useDataStore.getState()
 
 **refCode**: `PREFIX-YYMMDD-XXXXXC` بأبجدية `23456789ABCDEFGHJKMNPQRSTUVWXYZ` وخانة تحقق. البادئات: SAL, PUR, SRT, PRT, PRD (إنتاج), SCR (كسر ذهب).
 
-## 5) الأنشطة الـ16 وموديولاتها
+## 5) الأنشطة الـ18 وموديولاتها
 
-الموديولات (BusinessModule): pos, inventory, purchases, installments, recipes, jewelry, maintenance, equipment_rental, logistics, lab, contracting, clinic, cars. تُفعَّل حسب النشاط وقابلة للتبديل من الإعدادات، والقائمة الجانبية تُفلتر بها.
+الموديولات (BusinessModule): pos, inventory, purchases, installments, recipes, processing, jewelry, maintenance, laundry, equipment_rental, logistics, lab, contracting, clinic, cars, wallet_services. تُفعَّل حسب النشاط وقابلة للتبديل من الإعدادات، والقائمة الجانبية تُفلتر بها.
+
+**دفعة الجزارة والتمور (سبتمبر 2026)**: نشاطان جديدان `butcher` 🥩 و`dates` 🌴 (16→18) بوحدة `processing` جديدة (`core/processing.ts` — خام واحد → نواتج متعددة، عكس recipes): توزيع التكلفة على النواتج **بالقيمة البيعية النسبية** (joint cost allocation بالمعيار العالمي) بتقريب «الباقي للأكبر» فيصفّي بالقرش دائماً؛ فاقد موثق بلا تكلفة؛ نسبة تصافٍ لكل أمر؛ حقول توثيق SFDA اختيارية (بلد المنشأ/رقم المسلخ أو منشأة التعبئة/شهادة الحلال/تاريخ الذبح أو الجني/الموسم). القيد: 1103 مدين (نواتج) / 1103 دائن (خام) + خزينة دائن (مصاريف تجهيز) — `sourceType: 'processing'`، بادئات CUT/PKG في refcode. `postProcessing` في repo (فحص رصيد الخام + خام≠ناتج + متوسط مرجح جديد لكل ناتج). الصفحة `ProcessingPage.tsx` على `/inventory/processing` (معاينة توزيع حية + توثيق SFDA)، بند nav «التقطيع والفرز والتعبئة» بوحدة processing. الثيمات: شخصيتان جديدتان `butcher` و`oasis` في activityTheme + لوحتا ألوان `crimson` و`date_palm` في appearance (ACCENTS الآن 13) + ويدجت `yield_today`. كارت الصنف (itemLedger) يعرض حركات processing (الحقل اختياري للتوافق). سكربتات ×16 حُدثت إلى 18 (10 سكربتات + activities_complete + theming + coverage + e2e_registration + appearance=13 لوحة). الفحص الشامل: `scripts/verify_butcher_dates.mjs` (87 فحصاً — دورتان سعوديتان كاملتان بزاتكا QR).
 
 | النشاط | الموديولات | خصائص الأصناف |
 |---|---|---|

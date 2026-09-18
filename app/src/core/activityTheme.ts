@@ -15,6 +15,8 @@ export type CardPersona =
   | 'warm' // دافئ شهي — مطاعم/كافيهات: برتقالي وكريمي
   | 'industrial' // صناعي متين — مقاولات/معدات/قطع غيار/لوجستيات: خطوط قوية
   | 'boutique' // أنيق عصري — ملابس: فوشيا وتباين جريء
+  | 'butcher' // جزارة حِرفية — أحمر لحمي دافئ على خشب وستانلس: طزاجة وثقة
+  | 'oasis' // واحة التمور — عنبري ونخلي: ذهب صحراوي وكرم عربي
 
 /** نمط شاشة الكاشير */
 export type PosLayout =
@@ -34,6 +36,7 @@ export type ActivityWidget =
   | 'expiry_soon' // أصناف قرب انتهاء الصلاحية — بقالة/صيدلية
   | 'gold_position' // مركز الذهب (وزن المخزون) — مجوهرات
   | 'top_debtors' // أعلى المديونيات — عام
+  | 'yield_today' // تصافي التقطيع/الفرز الأخير — جزارة وتمور
 
 export interface ActivityTheme {
   persona: CardPersona
@@ -62,6 +65,8 @@ export const ACTIVITY_THEMES: Record<string, ActivityTheme> = {
   contracting: { persona: 'industrial', posLayout: 'fast_list', heroEmoji: '🏗️', heroLineAr: 'مشروعاتك بمستخلصات دقيقة', widgets: ['open_projects', 'top_debtors'] },
   equipment_rental: { persona: 'industrial', posLayout: 'detail_cards', heroEmoji: '🚜', heroLineAr: 'معداتك شغالة وعقودك سارية', widgets: ['open_rentals', 'top_debtors'] },
   laundry: { persona: 'fresh', posLayout: 'fast_list', heroEmoji: '🧺', heroLineAr: 'نظافة تلمع وتسليم في الميعاد', widgets: ['top_debtors'] },
+  butcher: { persona: 'butcher', posLayout: 'fast_list', heroEmoji: '🥩', heroLineAr: 'ذبايح طازجة وميزان أمين وتصافي مضبوط', widgets: ['yield_today', 'expiry_soon', 'top_debtors'] },
+  dates: { persona: 'oasis', posLayout: 'visual_grid', heroEmoji: '🌴', heroLineAr: 'خير النخيل مفروز ومعبأ بكرم عربي', widgets: ['yield_today', 'expiry_soon', 'top_debtors'] },
   general: { persona: 'fresh', posLayout: 'fast_list', heroEmoji: '🏪', heroLineAr: 'تجارتك كلها تحت السيطرة', widgets: ['top_debtors'] },
 }
 
@@ -122,6 +127,18 @@ export const PERSONA_STYLES: Record<CardPersona, {
     hero: 'from-fuchsia-500/15 via-pink-500/8 to-transparent border-fuchsia-500/25',
     descAr: 'تباين جريء وحيوية تناسب الأزياء',
   },
+  butcher: {
+    nameAr: 'جزارة حِرفية',
+    card: 'rounded-2xl border-red-600/20 shadow-red-600/8',
+    hero: 'from-red-600/18 via-rose-500/10 to-transparent border-red-600/25',
+    descAr: 'أحمر لحمي دافئ يوحي بالطزاجة والحِرفة — للجزارات ومحلات اللحوم',
+  },
+  oasis: {
+    nameAr: 'واحة التمور',
+    card: 'rounded-2xl border-yellow-700/25 shadow-yellow-700/10',
+    hero: 'from-yellow-700/20 via-amber-600/12 to-transparent border-yellow-700/30',
+    descAr: 'عنبري صحراوي بكرم النخيل — لمحلات التمور والتعبئة',
+  },
 }
 
 /** عناوين الويدجات — الواجهة تحسب الأرقام من المخزن */
@@ -136,4 +153,5 @@ export const WIDGET_LABELS: Record<ActivityWidget, { titleAr: string; icon: stri
   expiry_soon: { titleAr: 'قرب انتهاء الصلاحية', icon: '⏳', route: '/inventory/items', emptyAr: 'لا أصناف قرب الانتهاء' },
   gold_position: { titleAr: 'مركز الذهب', icon: '⚖️', route: '/inventory/jewelry', emptyAr: 'لا مخزون ذهب' },
   top_debtors: { titleAr: 'أعلى المديونيات', icon: '💳', route: '/reports/statements', emptyAr: 'لا مديونيات — ممتاز' },
+  yield_today: { titleAr: 'آخر تصافي تجهيز', icon: '⚖️', route: '/inventory/processing', emptyAr: 'لا أوامر تجهيز بعد' },
 }

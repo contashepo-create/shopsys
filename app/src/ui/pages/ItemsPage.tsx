@@ -29,7 +29,7 @@ import { printHtml } from '../print/printReceipt.ts'
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
 export function ItemsPage() {
-  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers } = useDataStore()
+  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers } = useDataStore()
   const { setup, labelSettings } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -122,8 +122,9 @@ export function ItemsPage() {
         }
       }),
       materialRequisitions: materialRequisitions.map((mr) => ({ reqNumber: mr.reqNumber, date: mr.date, lines: mr.lines.map((l) => ({ itemId: l.itemId, qty: l.qty })) })),
+      processingOrders: processingOrders.map((pr) => ({ orderNumber: pr.orderNumber, date: pr.date.slice(0, 10), sourceItemId: pr.sourceItemId, sourceQty: pr.sourceQty, outputs: pr.outputs.map((o) => ({ itemId: o.itemId, qty: o.qty })) })),
     }
-  }, [cardFor, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, recipes, materialRequisitions])
+  }, [cardFor, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, recipes, materialRequisitions])
 
   const itemLedger = useMemo(() => {
     if (!cardFor || !ledgerInput) return null

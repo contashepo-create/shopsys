@@ -112,6 +112,22 @@ export function ActivityWidgets() {
           const rows = [...byKarat.entries()].map(([k, g]) => ({ key: k, main: `عيار ${k}`, sub: 'في المخزون', badge: `${g.toFixed(2)} جم`, tone: 'ok' as const }))
           return { count: rows.length, rows: rows.slice(0, 4) }
         }
+        case 'yield_today': {
+          const recent = [...store.processingOrders].reverse().slice(0, 4)
+          return {
+            count: store.processingOrders.length,
+            rows: recent.map((o) => {
+              const outQty = o.outputs.reduce((a, x) => a + x.qty, 0)
+              const y = o.sourceQty > 0 ? Math.round((outQty / o.sourceQty) * 1000) / 10 : 0
+              return {
+                key: `pr${o.id}`,
+                main: `${o.orderNumber} — ${store.items.find((i) => i.id === o.sourceItemId)?.nameAr ?? '؟'}`,
+                sub: `خام ${o.sourceQty} → نواتج ${Math.round(outQty * 1000) / 1000}${o.wasteQty > 0 ? ` + فاقد ${o.wasteQty}` : ''}`,
+                badge: `${y}٪`, tone: y >= 45 ? ('ok' as const) : ('warn' as const),
+              }
+            }),
+          }
+        }
         case 'top_debtors': {
           const rows = store.customers
             .map((c) => ({

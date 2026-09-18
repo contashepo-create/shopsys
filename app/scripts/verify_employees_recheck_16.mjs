@@ -33,7 +33,7 @@ const { trialBalance, balanceSheet } = await import(join(root, 'src/core/financi
 const { employeeStatement, statementBalance } = await import(join(root, 'src/core/statements.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 16)
+assert.equal(ACTIVITIES.length, 18)
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 
 let pass = 0
@@ -174,5 +174,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✓ ${nameAr} (${activityId}): 14 سيناريو × ${audits} تدقيقاً دفترياً — ${st().journal.length} قيداً، 1107 = Σ السجلات دائماً`)
 }
 
-assert.equal(pass, 16)
+assert.equal(pass, 18)
 console.log(`\n✅ verify_employees_recheck_16: إعادة الفحص الكاملة — كل السيناريوهات سليمة على الأنشطة الـ16`)

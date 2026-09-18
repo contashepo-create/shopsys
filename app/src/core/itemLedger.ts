@@ -8,7 +8,7 @@
 export interface ItemLedgerRow {
   date: string // YYYY-MM-DD
   docLabel: string // «فاتورة شراء P-0001»
-  docType: string // purchase | sale | sale_return | purchase_return | stocktake | production | material_issue
+  docType: string // purchase | sale | sale_return | purchase_return | stocktake | production | processing | material_issue
   inQty: number // وارد
   outQty: number // منصرف
   balance: number // الرصيد الجاري بعد الحركة
@@ -27,6 +27,8 @@ export interface ItemLedgerInput {
   stocktakes: { stocktakeNumber: string; date: string; rows: { itemId: number; systemQty: number; countedQty: number }[] }[]
   productionOrders: { orderNumber: string; date: string; productItemId: number; qty: number; ingredients: { itemId: number; qty: number }[] }[]
   materialRequisitions: { reqNumber: string; date: string; lines: { itemId: number; qty: number }[] }[]
+  /** أوامر التجهيز والتفكيك (جزارة/تمور): خام خارج ونواتج داخلة — اختياري لتوافق المستدعين الأقدم */
+  processingOrders?: { orderNumber: string; date: string; sourceItemId: number; sourceQty: number; outputs: { itemId: number; qty: number }[] }[]
 }
 
 export interface ItemLedgerResult {
@@ -113,6 +115,21 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
       raw.push({
         date: po.date, docLabel: `أمر إنتاج ${po.orderNumber}`, docType: 'production',
         inQty: 0, outQty: ing.qty, valueMinor: 0, note: 'خامة مستهلكة في الإنتاج',
+      })
+    }
+  }
+  for (const pr of input.processingOrders ?? []) {
+    if (pr.sourceItemId === id && pr.sourceQty > 0) {
+      raw.push({
+        date: pr.date, docLabel: `أمر تجهيز ${pr.orderNumber}`, docType: 'processing',
+        inQty: 0, outQty: pr.sourceQty, valueMinor: 0, note: 'خام مستهلك في التقطيع/الفرز',
+      })
+    }
+    for (const out of pr.outputs) {
+      if (out.itemId !== id || out.qty <= 0) continue
+      raw.push({
+        date: pr.date, docLabel: `أمر تجهيز ${pr.orderNumber}`, docType: 'processing',
+        inQty: out.qty, outQty: 0, valueMinor: 0, note: 'ناتج تقطيع/فرز داخل المخزون',
       })
     }
   }

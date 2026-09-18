@@ -29,6 +29,7 @@ import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
 import { PurchaseReturnsPage } from './ui/pages/PurchaseReturnsPage.tsx'
 import { StocktakePage } from './ui/pages/StocktakePage.tsx'
 import { RecipesPage } from './ui/pages/RecipesPage.tsx'
+import { ProcessingPage } from './ui/pages/ProcessingPage.tsx'
 import { JewelryPage } from './ui/pages/JewelryPage.tsx'
 import { PriceListsPage } from './ui/pages/PriceListsPage.tsx'
 import { PosPage } from './ui/pages/PosPage.tsx'
@@ -145,6 +146,7 @@ function Shell() {
         <Route path="/inventory/transfers" element={<TransfersPage />} />
         <Route path="/inventory/counting" element={<StocktakePage />} />
         <Route path="/inventory/recipes" element={<RecipesPage />} />
+        <Route path="/inventory/processing" element={<ProcessingPage />} />
         <Route path="/inventory/jewelry" element={<JewelryPage />} />
         <Route path="/purchases/invoices" element={<PurchasesPage />} />
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />

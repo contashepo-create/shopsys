@@ -10,7 +10,7 @@ import {
   PenLine, ListTree, PiggyBank, CalendarClock, Store, Percent,
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
-  FileText, ListChecks, Users2, ChefHat, Gem, Tags, PackageMinus, HandCoins, Gauge,
+  FileText, ListChecks, Users2, ChefHat, Scissors, Gem, Tags, PackageMinus, HandCoins, Gauge,
   ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule, ItemFeature } from '../core/activities.ts'
@@ -84,6 +84,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'scale', nameAr: 'باركود الميزان', icon: Scale, path: '/inventory/scale' },
       { id: 'serials', nameAr: 'سجل السيريالات', icon: ScanBarcode, path: '/inventory/serials', feature: 'serial_warranty' },
       { id: 'recipes', nameAr: 'الوصفات والإنتاج', icon: ChefHat, path: '/inventory/recipes', module: 'recipes' },
+      { id: 'processing', nameAr: 'التقطيع والفرز والتعبئة', icon: Scissors, path: '/inventory/processing', module: 'processing' },
       { id: 'jewelry', nameAr: 'الصاغة والكسر', icon: Gem, path: '/inventory/jewelry', module: 'jewelry' },
     ],
   },

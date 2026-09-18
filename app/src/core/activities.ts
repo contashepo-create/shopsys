@@ -29,6 +29,7 @@ export type BusinessModule =
   | 'jewelry' // الصاغة: سعر الجرام اليومي والمصنعية والكسر
   | 'wallet_services' // خدمات المحافظ والدفع الإلكتروني (نمط mobileshop): ربح = المحصَّل − المدفوع للمزوّد
   | 'laundry' // المغاسل: أوامر غسيل بقطع وخدمات وعربون (وحدة مستقلة — ليست صيانة)
+  | 'processing' // التجهيز والتفكيك: ذبيحة→أجزاء (جزارة) أو محصول→درجات (تمور) بتوزيع تكلفة بالقيمة البيعية
 
 export interface ActivityTemplate {
   id: string
@@ -155,6 +156,20 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
+    id: 'butcher', nameAr: 'جزارة ولحوم', icon: '🥩',
+    description: 'تقطيع ذبائح لأجزاء بتكلفة موزونة، بيع بالوزن، توثيق حلال وSFDA',
+    features: ['expiry_batches', 'weight_scale', 'multi_unit', 'price_lists'],
+    modules: ['pos', 'inventory', 'purchases', 'processing'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
+  },
+  {
+    id: 'dates', nameAr: 'تمور وتعبئة', icon: '🌴',
+    description: 'فرز محصول لدرجات وعبوات، مواسم وسنوات جني، بيع بالوزن وقوائم أسعار',
+    features: ['expiry_batches', 'weight_scale', 'multi_unit', 'price_lists'],
+    modules: ['pos', 'inventory', 'purchases', 'processing'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
+  },
+  {
     id: 'general', nameAr: 'نشاط عام / آخر', icon: '🏪',
     description: 'قالب مرن — فعّل ما تحتاجه لاحقاً',
     features: ['multi_unit'],
@@ -224,7 +239,8 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   jewelry: { nameAr: 'الصاغة', icon: '💍', desc: 'سعر الجرام اليومي بالعيار، مصنعية منفصلة، وشراء وبيع الكسر FIFO' },
   wallet_services: { nameAr: 'خدمات المحافظ', icon: '📲', desc: 'تحويل رصيد ودفع إلكتروني وفواتير — الربح آلياً: المحصَّل − المدفوع للمزوّد' },
   laundry: { nameAr: 'المغسلة', icon: '🧺', desc: 'أوامر غسيل بقطع وخدمات وعربون — استلام وتجهيز وتسليم بقيود سليمة' },
+  processing: { nameAr: 'التجهيز والتفكيك', icon: '🔪', desc: 'ذبيحة → أجزاء أو محصول → درجات: توزيع التكلفة بالقيمة البيعية وفاقد موثق ونسب تصافٍ' },
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'jewelry', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services']

@@ -38,7 +38,7 @@ export type SourceType =
   | 'lab_order' | 'lab_commission' | 'lab_commission_payout'
   | 'clinic_visit' | 'project_extract' | 'project_cost' | 'retention_release'
   | 'sub_certificate' | 'sub_payment' | 'bond_issue' | 'bond_settle' | 'client_advance' | 'daily_wages'
-  | 'production' | 'scrap_purchase' | 'scrap_sale' | 'equipment_cost'
+  | 'production' | 'processing' | 'scrap_purchase' | 'scrap_sale' | 'equipment_cost'
   | 'consignment_sale' | 'consignment_payout' | 'driver_settlement'
   | 'sub_advance' | 'material_issue' | 'client_payment' | 'wastage' | 'internal_use'
   | 'insured_sale' | 'claim_settlement'
