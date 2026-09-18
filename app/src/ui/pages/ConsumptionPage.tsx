@@ -12,6 +12,9 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { CONSUMPTION_PURPOSES, INTERNAL_USE_ACCOUNT } from '../../core/consumption.ts'
+
+/** خيار الكتابة الحرة في قائمة الغرض — يظهر حقلاً نصياً عند اختياره */
+const CUSTOM_PURPOSE = '✍️ غرض آخر (اكتبه بنفسك)'
 import { STANDARD_COA } from '../../core/ledger.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -35,6 +38,9 @@ export function ConsumptionPage() {
 
   const [open, setOpen] = useState(false)
   const [purpose, setPurpose] = useState<string>(CONSUMPTION_PURPOSES[0])
+  // غرض حر بكتابة يدوية (مراجعة المالك): اختيار «✍️ غرض آخر» يُظهر حقلاً نصياً حراً
+  const [customPurpose, setCustomPurpose] = useState('')
+  const effectivePurpose = purpose === CUSTOM_PURPOSE ? customPurpose.trim() : purpose
   const [account, setAccount] = useState(INTERNAL_USE_ACCOUNT)
   const [notes, setNotes] = useState('')
   const [lines, setLines] = useState<DraftLine[]>([{ itemId: '', qty: '1' }])
@@ -51,6 +57,7 @@ export function ConsumptionPage() {
 
   const openNew = () => {
     setPurpose(CONSUMPTION_PURPOSES[0])
+    setCustomPurpose('')
     setAccount(INTERNAL_USE_ACCOUNT)
     setNotes('')
     setLines([{ itemId: '', qty: '1' }])
@@ -60,10 +67,11 @@ export function ConsumptionPage() {
   // الصرف الداخلي عملية حساسة (inv.adjust) — بضاعة تتحول مصروفاً؛ خلف موافقة المشرف
   const approval = useSupervisorApproval('inv.adjust')
   const save = () => {
+    if (purpose === CUSTOM_PURPOSE && !customPurpose.trim()) { toast.show('اكتب الغرض الحر أولاً — التوثيق إلزامي', 'error'); return }
     approval.request(() => {
     try {
       const doc = postConsumption({
-        purpose,
+        purpose: effectivePurpose,
         expenseAccount: account,
         lines: lines.filter((l) => l.itemId && Number(l.qty) > 0).map((l) => ({ itemId: Number(l.itemId), qty: Number(l.qty) })),
         notes: notes.trim(),
@@ -140,10 +148,21 @@ export function ConsumptionPage() {
       <Modal open={open} onClose={() => setOpen(false)} title="📦 مستند صرف داخلي (استهلاك تشغيل)" wide>
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Field label="الغرض *" hint="التوثيق إلزامي — يظهر في القيد والسجل">
+            <Field label="الغرض *" hint="التوثيق إلزامي — يظهر في القيد والسجل، ويمكن كتابة غرض حر">
               <select value={purpose} onChange={(e) => setPurpose(e.target.value)} className={inputCls}>
                 {CONSUMPTION_PURPOSES.map((p) => <option key={p} value={p}>{p}</option>)}
+                <option value={CUSTOM_PURPOSE}>{CUSTOM_PURPOSE}</option>
               </select>
+              {purpose === CUSTOM_PURPOSE && (
+                <input
+                  value={customPurpose}
+                  onChange={(e) => setCustomPurpose(e.target.value)}
+                  className={`${inputCls} mt-1.5`}
+                  placeholder="اكتب الغرض بحرية — مثال: تجهيز حفل افتتاح الفرع"
+                  autoFocus
+                  autoComplete="off"
+                />
+              )}
             </Field>
             <Field label="حساب المصروف" hint="افتراضياً 5114 مستهلكات تشغيل — اختر حساباً أدق إن أردت">
               <select value={account} onChange={(e) => setAccount(e.target.value)} className={inputCls}>

@@ -45,7 +45,9 @@ export function collectNotifications(input: NotificationsInput): AppNotification
         ? `كمية ${a.qty} انتهت صلاحيتها في ${a.expiryDate} — اعزلها أو أعدمها`
         : `كمية ${a.qty} تنتهي خلال ${a.daysLeft} يوماً (${a.expiryDate})`,
       severity: a.status === 'expired' ? 'danger' : 'warn',
-      route: '/reports',
+      // الوجهة المنطقية (مراجعة المالك): المنتهي → صفحة الهوالك (فيها زر إعدام فوري للمنتهي)،
+      // والموشِك → تقارير المخزون حيث جدول تنبيهات الصلاحية FEFO الكامل
+      route: a.status === 'expired' ? '/inventory/wastage' : '/reports',
     })
   }
 

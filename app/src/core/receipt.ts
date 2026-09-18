@@ -9,8 +9,15 @@ import type { CartLine, CartTotals, PaymentMethod } from './pos.ts'
 
 export type PaperWidth = '80' | '58'
 
-/** قالب الطباعة الافتراضي بعد البيع: إيصال حراري أو فاتورة A4 */
-export type InvoiceTemplate = 'thermal' | 'a4'
+/** قالب الطباعة الافتراضي بعد البيع: إيصال حراري أو فاتورة A4 أو A5 (نصف الورقة — طلب المالك) */
+export type InvoiceTemplate = 'thermal' | 'a4' | 'a5'
+
+/** خيارات شريط الطباعة السريع في شاشة الكاشير — تجاوز مؤقت لا يمس الإعدادات الدائمة */
+export const INVOICE_TEMPLATE_OPTIONS: { id: InvoiceTemplate; label: string; sub: string }[] = [
+  { id: 'thermal', label: '🖨️ حراري', sub: 'رول 80/58مم' },
+  { id: 'a4', label: '📄 A4', sub: 'ورقة كاملة' },
+  { id: 'a5', label: '📃 A5', sub: 'نصف ورقة' },
+]
 
 /** أنماط فاتورة A4 الاحترافية — منقولة ومكيّفة من قوالب logistics-web */
 export type A4Style = 'modern' | 'classic' | 'compact' | 'elegant' | 'royal'

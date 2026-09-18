@@ -5,7 +5,7 @@
  * - كل فاتورة تولّد قيداً محاسبياً متوازناً تلقائياً (القرار 9)
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer } from 'lucide-react'
+import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -18,12 +18,12 @@ import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift } from '../../core/shifts.ts'
-import { buildReceiptModel } from '../../core/receipt.ts'
+import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
+import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { toMinor } from '../../core/money.ts'
@@ -56,13 +56,16 @@ export function PosPage() {
   // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
   const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
   const openShift = currentOpenShift(shifts)
-  const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [query, setQuery] = useState('')
   const [cart, setCart] = useState<CartLine[]>([])
+  // كتابة الكمية العشرية بحرية («.25» لربع كيلو): مسودة نصية لكل سطر أثناء الكتابة،
+  // تُرحَّل للسلة عند كل حرف صالح وتُنظَّف عند مغادرة الحقل (بلاغ المالك — نفس نمط الاستبدال الوزني)
+  const [qtyDrafts, setQtyDrafts] = useState<Record<number, string>>({})
   const [invoiceDiscount, setInvoiceDiscount] = useState(0)
   const [held, setHeldRaw] = useState<HeldCart[]>(loadHeldCarts)
   // كل تغيير في المعلقة يُثبَّت فوراً (نمط Square: parked sales تنجو من الإغلاق)
@@ -378,15 +381,22 @@ export function PosPage() {
       settings: receipt,
     })
     if (qrDataUrl) model.qrDataUrl = qrDataUrl
-    // القالب الافتراضي من الإعدادات: حراري أو فاتورة A4 احترافية
+    // القالب من شريط الكاشير (تجاوز مؤقت) — حراري أو A4 أو A5؛ الإعدادات الدائمة لا تُمس
     printHtml(
-      receipt.defaultTemplate === 'a4'
-        ? renderInvoiceA4Html(model, cur, receipt)
-        : renderReceiptHtml(model, cur, receipt),
+      posTemplate === 'thermal'
+        ? renderReceiptHtml(model, cur, receipt)
+        : renderInvoiceA4Html(model, cur, receipt, posTemplate === 'a5' ? 'a5' : 'a4'),
     )
   }
 
   const [lastSale, setLastSale] = useState<Parameters<typeof printSale>[0] | null>(null)
+
+  /* شريط اختيار قالب الطباعة (طلب المالك): حراري/A4/A5 حصري — تجاوز مؤقت لهذه الجلسة فقط،
+     لا يكتب شيئاً في إعدادات الطباعة الدائمة، ومتاح للكاشير بلا أي صلاحية إضافية.
+     يبدأ على القالب الدائم من الإعدادات (حراري افتراضاً)؛ للفاتورة الطارئة يكفي ضغط
+     A4/A5 قبل التحصيل ثم العودة بضغطة واحدة. */
+  const [posTemplate, setPosTemplate] = useState<InvoiceTemplate>(receipt.defaultTemplate === 'a4' ? 'a4' : 'thermal')
+  const [quickPrintOpen, setQuickPrintOpen] = useState(false)
 
   // تجاوز بيع منتهي الصلاحية بموافقة المدير (القرار 8) — يُسجَّل اسمه على الفاتورة
   /* الأمر 8: مخزن البيع أعلى الفاتورة — الافتراضي من الإعدادات، و«غير محدد» يعامل كالرئيسي */
@@ -430,7 +440,7 @@ export function PosPage() {
       })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
-      setCart([])
+      setCart([]); setQtyDrafts({})
       setDiscountUnlockedBy(null)
       setInvoiceDiscount(0)
       setPayOpen(false)
@@ -458,7 +468,7 @@ export function PosPage() {
   const holdCart = () => {
     if (!cart.length) return
     setHeld((h) => [...h, { id: Date.now(), label: `فاتورة معلقة ${h.length + 1}`, lines: cart, discount: invoiceDiscount }])
-    setCart([])
+    setCart([]); setQtyDrafts({})
     setInvoiceDiscount(0)
     toast.show('عُلّقت الفاتورة — استكملها من الزر الأصفر')
   }
@@ -629,7 +639,7 @@ export function PosPage() {
             <button onClick={holdCart} disabled={!cart.length} title="تعليق الفاتورة" className="p-2 rounded-lg text-amber-500 hover:bg-amber-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
               <PauseCircle size={17} />
             </button>
-            <button onClick={() => { setCart([]); setInvoiceDiscount(0) }} disabled={!cart.length} title="إفراغ السلة" className="p-2 rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
+            <button onClick={() => { setCart([]); setQtyDrafts({}); setInvoiceDiscount(0) }} disabled={!cart.length} title="إفراغ السلة" className="p-2 rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
               <Trash2 size={17} />
             </button>
           </div>
@@ -730,19 +740,26 @@ export function PosPage() {
                   ) : (
                   <div className="flex items-center justify-center rounded-xl border-2 border-slate-200 dark:border-slate-700 overflow-hidden h-9">
                     <button
-                      onClick={() => setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.max(l.soldByWeight ? 0.1 : 1, Math.round((x.qty - (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000) } : x)))}
+                      onClick={() => { setQtyDrafts((d) => { const n = { ...d }; delete n[i]; return n }); setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.max(l.soldByWeight ? 0.1 : 1, Math.round((x.qty - (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000) } : x))) }}
                       className="w-8 h-full text-slate-500 font-bold hover:bg-rose-500/10 hover:text-rose-500 transition-colors"
                     >−</button>
                     <input
-                      value={l.qty}
+                      value={qtyDrafts[i] ?? String(l.qty)}
+                      inputMode="decimal"
                       onChange={(e) => {
-                        const v = Number(e.target.value)
-                        if (v > 0) setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: v } : x)))
+                        const raw = e.target.value.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d))).replace('٫', '.').replace(',', '.')
+                        // نقبل أثناء الكتابة: فارغ، «.», «0.», «2.» … حتى يكمل المستخدم الكسر
+                        if (!/^\d*\.?\d*$/.test(raw)) return
+                        setQtyDrafts((d) => ({ ...d, [i]: raw }))
+                        const v = Number(raw)
+                        if (raw !== '' && Number.isFinite(v) && v > 0) setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: v } : x)))
                       }}
+                      onBlur={() => setQtyDrafts((d) => { const n = { ...d }; delete n[i]; return n })}
+                      onFocus={(e) => e.target.select()}
                       className="w-full h-full text-center text-[13px] font-black bg-transparent text-slate-800 dark:text-white outline-none"
                     />
                     <button
-                      onClick={() => setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.round((x.qty + (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000 } : x)))}
+                      onClick={() => { setQtyDrafts((d) => { const n = { ...d }; delete n[i]; return n }); setCart((c) => c.map((x, j) => (j === i ? { ...x, qty: Math.round((x.qty + (l.soldByWeight ? 0.25 : 1)) * 1000) / 1000 } : x))) }}
                       className="w-8 h-full text-slate-500 font-bold hover:bg-emerald-500/10 hover:text-emerald-600 transition-colors"
                     >+</button>
                   </div>
@@ -771,7 +788,7 @@ export function PosPage() {
                     )}
                   </div>
                   {/* حذف */}
-                  <button onClick={() => setCart((c) => c.filter((_, j) => j !== i))} className="text-slate-300 hover:text-rose-500 hover:scale-125 transition-all duration-200 justify-self-center">
+                  <button onClick={() => { setQtyDrafts({}); setCart((c) => c.filter((_, j) => j !== i)) }} className="text-slate-300 hover:text-rose-500 hover:scale-125 transition-all duration-200 justify-self-center">
                     <Trash2 size={15} />
                   </button>
                 </div>
@@ -811,6 +828,33 @@ export function PosPage() {
               </div>
             </>
           )}
+          {/* شريط قالب الطباعة الحصري (طلب المالك): تفعيل خيار يلغي الآخرين — تجاوز مؤقت للفاتورة
+              الطارئة لا يغيّر إعدادات قسم الطباعة الدائمة، ومتاح للكاشير بلا صلاحيات */}
+          <div className="flex items-center gap-1.5 pt-1">
+            <span className="text-[10px] font-bold text-slate-400 shrink-0">🖨️ طباعة:</span>
+            <div className="flex-1 grid grid-cols-3 gap-1">
+              {INVOICE_TEMPLATE_OPTIONS.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setPosTemplate(t.id)}
+                  title={`${t.label} — ${t.sub}${t.id === posTemplate ? ' (مفعّل)' : ''}`}
+                  className={`flex items-center justify-center gap-1 py-1.5 rounded-lg border-2 text-[10.5px] font-bold transition-all ${posTemplate === t.id ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-emerald-400/40'}`}
+                >
+                  <span className={`inline-block w-3 h-3 rounded border ${posTemplate === t.id ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 dark:border-slate-600'}`}>
+                    {posTemplate === t.id && <span className="block text-white text-[8px] leading-3 text-center">✓</span>}
+                  </span>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setQuickPrintOpen(true)}
+              title="خيارات طباعة سريعة"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors shrink-0"
+            >
+              <Settings2 size={15} />
+            </button>
+          </div>
           <button
             onClick={() => setPayOpen(true)}
             disabled={!totals}
@@ -1016,6 +1060,50 @@ export function PosPage() {
             </div>
           </div>
         )}
+      </Modal>
+      {/* خيارات طباعة سريعة (طلب المالك): مودال مختصر بجانب شريط القالب — يعدّل أهم إعدادات
+          الطباعة فوراً بلا مغادرة الكاشير؛ لكل الخيارات الكاملة يبقى قسم «إعدادات الطباعة» */}
+      <Modal open={quickPrintOpen} onClose={() => setQuickPrintOpen(false)} title="🖨️ خيارات طباعة سريعة">
+        <div className="space-y-4">
+          <div className="rounded-xl bg-sky-500/5 border border-sky-500/20 p-3 text-[11px] text-slate-500 leading-relaxed">
+            هذه اختصارات لأهم الخيارات — التعديل هنا يُحفَظ في إعدادات الطباعة نفسها.
+            أما شريط «حراري / A4 / A5» في الكاشير فهو تجاوز مؤقت للفاتورة الحالية ولا يغيّر شيئاً دائماً.
+          </div>
+          <Field label="الطباعة التلقائية بعد التحصيل" hint="يُطبع الإيصال فور إتمام كل فاتورة بلا ضغطة إضافية">
+            <button
+              onClick={() => setAutoPrint(!autoPrintAfterSale)}
+              className={`w-full p-3 rounded-xl border-2 font-bold text-sm transition-all ${autoPrintAfterSale ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
+            >
+              {autoPrintAfterSale ? '✅ مفعّلة — كل فاتورة تُطبع فوراً' : '⭕ متوقفة — الطباعة يدوياً من زر الطابعة'}
+            </button>
+          </Field>
+          <Field label="عرض ورق الإيصال الحراري">
+            <div className="grid grid-cols-2 gap-2">
+              {(['80', '58'] as const).map((w) => (
+                <button
+                  key={w}
+                  onClick={() => updateReceipt({ paperWidth: w })}
+                  className={`p-2.5 rounded-xl border-2 font-bold text-sm transition-all ${receipt.paperWidth === w ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
+                >{w} مم</button>
+              ))}
+            </div>
+          </Field>
+          <Field label="نمط فاتورة A4 / A5">
+            <div className="grid grid-cols-3 gap-1.5">
+              {A4_STYLES.map((st) => (
+                <button
+                  key={st.id}
+                  onClick={() => updateReceipt({ a4Style: st.id })}
+                  className={`p-2 rounded-xl border-2 font-bold text-[11px] transition-all ${receipt.a4Style === st.id ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
+                >{st.nameAr}</button>
+              ))}
+            </div>
+          </Field>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] text-slate-400">كل الخيارات (شعار، علامة مائية، إظهار/إخفاء…) في قسم إعدادات الطباعة</span>
+            <Btn variant="ghost" onClick={() => setQuickPrintOpen(false)}>تم ✓</Btn>
+          </div>
+        </div>
       </Modal>
       {expiryApproval.dialog}
       {discountApproval.dialog}

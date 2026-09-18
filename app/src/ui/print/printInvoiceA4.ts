@@ -304,10 +304,14 @@ const STYLE_ACCENTS: Record<A4Style, string> = {
   modern: '#2563eb', classic: '#1e293b', compact: '#0d9488', elegant: '#7c3aed', royal: '#b45309',
 }
 
-/** HTML فاتورة A4 كاملة — دالة خالصة (تُفحص في verify) */
-export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, settings: ReceiptSettings): string {
+/**
+ * HTML فاتورة A4/A5 كاملة — دالة خالصة (تُفحص في verify).
+ * paper='a5' يطبع نفس الأنماط الخمسة على نصف ورقة (148×210مم) بهوامش وخط أصغر — طلب المالك.
+ */
+export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, settings: ReceiptSettings, paper: 'a4' | 'a5' = 'a4'): string {
   const style: A4Style = settings.a4Style ?? 'modern'
   const accent = safeColor(settings.accentColor, STYLE_ACCENTS[style] ?? '#6366f1')
+  const a5 = paper === 'a5'
   const body =
     style === 'classic' ? renderClassic(model, cur, settings, accent)
     : style === 'compact' ? renderCompact(model, cur, settings, accent)
@@ -318,9 +322,24 @@ export function renderInvoiceA4Html(model: ReceiptModel, cur: CurrencyConfig, se
   return `<!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <style>
-  @page { size: A4; margin: 12mm; }
+  @page { size: ${a5 ? 'A5' : 'A4'}; margin: ${a5 ? '7mm' : '12mm'}; }
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  body { font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; color: #0f172a; font-size: 12px; background: #fff; }
+  body { font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; color: #0f172a; font-size: ${a5 ? '10px' : '12px'}; background: #fff; }
+  ${a5 ? `/* تكييف A5: خطوط وفراغات أصغر لتتسع نصف الورقة */
+  .shop { font-size: 15px !important; }
+  .tb { font-size: 12px !important; padding: 5px 10px !important; }
+  table.items { font-size: 9.5px !important; }
+  .items thead th { padding: 5px 5px !important; }
+  .items td { padding: 4px 5px !important; }
+  .cards { gap: 8px !important; margin: 8px 0 !important; }
+  .card { padding: 7px 9px !important; font-size: 10px !important; }
+  .totals { min-width: 200px !important; font-size: 10px !important; }
+  .totals .grand { font-size: 12.5px !important; }
+  .words .wv { font-size: 10px !important; }
+  .sig { gap: 40px !important; margin-top: 18px !important; font-size: 9.5px !important; }
+  .head { padding-bottom: 8px !important; margin-bottom: 8px !important; }
+  .bottom { margin-top: 8px !important; }
+  .foot { margin-top: 9px !important; }` : ''}
   .sheet { position: relative; overflow: hidden; }
   /* العلامة المائية فوق كل المحتوى (z-index:5) — الشفافية المنخفضة تمنعها من إعاقة القراءة
      (إصلاح: كانت z-index:0 فتختفي خلف خلفيات جدول الأصناف) */

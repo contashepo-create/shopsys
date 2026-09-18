@@ -250,7 +250,8 @@ export function CustomersPage() {
   )
 }
 
-const SUPPLIER_CATEGORIES = ['مواد بناء', 'بضاعة تجارية', 'قطع غيار', 'مقاول باطن', 'خدمات ونقل', 'أخرى']
+/** تصنيفات مقترحة فقط — الحقل نص حر مفتوح، وكل تصنيف كتبته سابقاً يظهر كشريحة اقتراح (مراجعة المالك) */
+const SUPPLIER_CATEGORIES = ['مواد بناء', 'بضاعة تجارية', 'قطع غيار', 'مقاول باطن', 'خدمات ونقل', 'مواد غذائية', 'أخرى']
 
 export function SuppliersPage() {
   const { suppliers, addSupplier, updateSupplier, removeSupplier, purchases, purchaseReturns, vouchers, cheques } = useDataStore()
@@ -395,11 +396,24 @@ export function SuppliersPage() {
             <Field label="اسم المورد *"><input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} autoFocus /></Field>
             <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label="مسؤول التواصل"><input value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} className={inputCls} placeholder="أ. محمود — مدير المبيعات" /></Field>
-            <Field label="تصنيف المورد">
-              <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
-                <option value="">— بلا تصنيف —</option>
-                {SUPPLIER_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+            <Field label="تصنيف المورد" hint="اكتب أي تصنيف يناسب نشاطك — أو اختر من الشرائح المقترحة">
+              <input
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className={inputCls}
+                placeholder="مثال: مورد لحوم، مستلزمات طبية…"
+                autoComplete="off"
+              />
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {[...new Set([...suppliers.map((s) => s.category ?? '').filter(Boolean), ...SUPPLIER_CATEGORIES])].map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setCategory(c)}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition-colors ${category === c ? 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-300 border-cyan-400/50' : 'bg-slate-50 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700 hover:border-cyan-400/50 hover:text-cyan-600'}`}
+                  >{c}</button>
+                ))}
+              </div>
             </Field>
             <Field label="شروط السداد (أيام)" hint="0 أو فارغ = نقدي؛ 30 = فاتورة تستحق بعد شهر">
               <input value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} inputMode="numeric" className={inputCls} dir="ltr" />

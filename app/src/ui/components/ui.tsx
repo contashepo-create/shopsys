@@ -1,5 +1,6 @@
 /** مكونات UI مشتركة — أزرار، مودال، حقول، توست */
 import { useEffect, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { create } from 'zustand'
 
@@ -52,8 +53,11 @@ export function Modal({
   }, [open, onClose])
 
   if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" dir="rtl">
+  /* بلاغ المالك: نوافذ منبثقة كانت تُغطى جزئياً خلف الهيدر — السبب أن الصفحات تُغلَّف بـ
+     anim-in/anim-up (animation تنشئ stacking context) فيصبح z-50 محلياً داخل الصفحة ويعلوه
+     هيدر sticky z-20 الخارجي. الحل الجذري: createPortal إلى <body> فيخرج المودال من أي سياق. */
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" dir="rtl">
       {/* إصلاح الظل الغريب: الحركة كانت مزدوجة (حاوية + لوحة) فيومض الـ blur — الآن التعتيم يتحرك وحده بلا blur متحرك */}
       <div className="absolute inset-0 bg-slate-900/55 anim-in" onClick={onClose} />
       <div className={`relative anim-pop w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto rounded-3xl bg-white dark:bg-card-dark shadow-2xl border border-slate-200 dark:border-slate-700`}>
@@ -65,7 +69,8 @@ export function Modal({
         </div>
         <div className="p-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
