@@ -887,7 +887,7 @@ export interface EmployeeAdvance {
   /** المسترد حتى الآن من مسيرات الرواتب — المتبقي = amountMinor − recoveredMinor */
   recoveredMinor: number
   /** مصدرها: سلفة نقدية عادية أو عجز تسوية عهدة (طلب المالك) */
-  source: 'cash' | 'custody_shortage'
+  source: 'cash' | 'custody_shortage' | 'opening'
   custodyFileId: number | null // لو كان مصدرها عجز عهدة
   treasury: TreasuryAccount
   notes: string
@@ -3187,9 +3187,33 @@ export const useDataStore = create<DataState>()(
           reversedByEntryId: null,
           reversesEntryId: null,
         }
+        // إعادة مراجعة الموظفين (GAP-R1): افتتاحي سلفة موظف كان قيداً بلا سجل سلفة —
+        // فلا يظهر بالمسير للاستقطاع وينكسر ثابت 1107 = Σ سجلات السلف.
+        // نزامن سجل سلفة بمصدر 'opening' واحداً لكل موظف مع كل إثبات/تعديل.
+        let employeeAdvances = state.employeeAdvances
+        if (args.kind === 'employee_advance') {
+          const empId = Number(args.refId)
+          const existing = employeeAdvances.find((a) => a.employeeId === empId && a.source === 'opening')
+          if (existing) {
+            if (args.amountMinor < existing.recoveredMinor) {
+              throw new Error(`لا يمكن تخفيض الافتتاحي لأقل من المستقطع منه بالفعل (${existing.recoveredMinor})`)
+            }
+            employeeAdvances = employeeAdvances.map((a) => (a.id === existing.id ? { ...a, amountMinor: args.amountMinor } : a))
+          } else if (args.amountMinor > 0) {
+            const advId = nextId(employeeAdvances)
+            employeeAdvances = [...employeeAdvances, {
+              id: advId, advanceNumber: `ADV-${String(advId).padStart(4, '0')}`,
+              employeeId: empId, date: now,
+              amountMinor: args.amountMinor, recoveredMinor: 0,
+              source: 'opening' as const, custodyFileId: null, treasury: '1101',
+              notes: `رصيد افتتاحي — ${args.label}`, journalEntryId: entryId,
+            }]
+          }
+        }
         set({
           openingBalances: { ...state.openingBalances, [key]: args.amountMinor },
           journal: [...state.journal, entry],
+          ...(args.kind === 'employee_advance' ? { employeeAdvances } : {}),
         })
       },
 
@@ -3522,6 +3546,8 @@ export const useDataStore = create<DataState>()(
         const emp = state.employees.find((e) => e.id === args.employeeId)
         if (!emp) throw new Error('الموظف غير موجود')
         if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ السلفة يجب أن يكون موجباً')
+        // إعادة مراجعة الموظفين (R7): خزينة شبح كانت تمر وتولد قيداً على حساب غير موجود
+        if (!state.treasuries.some((t) => t.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود — أضفه من «الخزينة والبنوك» أولاً')
         // قيد السلفة: مدين 1107 (أصل على الموظف) / دائن الخزينة المختارة
         const entryLines: JournalLine[] = [
           { accountCode: '1107', debit: args.amountMinor, credit: 0, note: `سلفة ${emp.nameAr}` },
@@ -4439,6 +4465,10 @@ export const useDataStore = create<DataState>()(
         // مصدر الصرف: خزينة/بنك أو ملف عهدة موظف مفتوح برصيد كافٍ (طلب المالك)
         let payCustodyFile: CustodyFile | null = null
         let payAccount: TreasuryAccount = args.treasury
+        // إعادة مراجعة الموظفين (R9): مسير نقدي بخزينة شبح كان يمر ويكسر الدفتر
+        if (args.payMode === 'cash' && args.custodyFileId == null && !state.treasuries.some((t) => t.code === args.treasury)) {
+          throw new Error('خزينة الصرف غير موجودة — اختر خزينة/بنكاً مسجلاً')
+        }
         if (args.payMode === 'cash' && args.custodyFileId != null) {
           payCustodyFile = state.custodyFiles.find((f) => f.id === args.custodyFileId) ?? null
           if (!payCustodyFile) throw new Error('ملف العهدة غير موجود')
@@ -4588,6 +4618,8 @@ export const useDataStore = create<DataState>()(
         const emp = state.employees.find((e) => e.id === args.employeeId)
         if (!emp) throw new Error('الموظف غير موجود')
         if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('المبلغ يجب أن يكون موجباً')
+        // إعادة مراجعة الموظفين (R8): خزينة شبح كانت تمر
+        if (!state.treasuries.some((t) => t.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود')
         const remaining = state.employeeAdvances
           .filter((a) => a.employeeId === args.employeeId)
           .reduce((s2, a) => s2 + (a.amountMinor - a.recoveredMinor), 0)
