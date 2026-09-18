@@ -395,7 +395,7 @@ export function PosPage() {
      لا يكتب شيئاً في إعدادات الطباعة الدائمة، ومتاح للكاشير بلا أي صلاحية إضافية.
      يبدأ على القالب الدائم من الإعدادات (حراري افتراضاً)؛ للفاتورة الطارئة يكفي ضغط
      A4/A5 قبل التحصيل ثم العودة بضغطة واحدة. */
-  const [posTemplate, setPosTemplate] = useState<InvoiceTemplate>(receipt.defaultTemplate === 'a4' ? 'a4' : 'thermal')
+  const [posTemplate, setPosTemplate] = useState<InvoiceTemplate>(receipt.defaultTemplate)
   const [quickPrintOpen, setQuickPrintOpen] = useState(false)
 
   // تجاوز بيع منتهي الصلاحية بموافقة المدير (القرار 8) — يُسجَّل اسمه على الفاتورة

@@ -95,7 +95,7 @@ export function ToastHost() {
   const { msg, kind } = useToast()
   if (!msg) return null
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] anim-pop" dir="rtl">
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] anim-pop" dir="rtl">
       <div className={`px-5 py-3 rounded-2xl shadow-2xl text-sm font-bold text-white ${kind === 'success' ? 'bg-gradient-to-l from-emerald-600 to-teal-500' : 'bg-gradient-to-l from-rose-600 to-red-500'}`}>
         {kind === 'success' ? '✅ ' : '⚠️ '}{msg}
       </div>

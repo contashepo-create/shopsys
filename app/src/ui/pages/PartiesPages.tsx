@@ -293,7 +293,7 @@ export function SuppliersPage() {
     if (!name.trim()) return
     const data = {
       nameAr: name.trim(), phone: phone.trim(), notes: notes.trim(), ...ext,
-      contactPerson: contactPerson.trim(), category, paymentTermsDays: Number(paymentTerms) || 0,
+      contactPerson: contactPerson.trim(), category: category.trim(), paymentTermsDays: Number(paymentTerms) || 0,
       bankName: bankName.trim(), iban: iban.trim(), active: true,
     }
     try {

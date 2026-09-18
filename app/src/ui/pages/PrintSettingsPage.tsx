@@ -87,6 +87,7 @@ export function PrintSettingsPage() {
   // نفس HTML الذي سيخرج للطابعة — المعاينة صادقة 100٪
   const thermalHtml = useMemo(() => renderReceiptHtml(sampleModel, cur, receipt), [sampleModel, cur, receipt])
   const a4Html = useMemo(() => renderInvoiceA4Html(sampleModel, cur, receipt), [sampleModel, cur, receipt])
+  const a5Html = useMemo(() => renderInvoiceA4Html(sampleModel, cur, receipt, 'a5'), [sampleModel, cur, receipt])
 
   const testPrint = () => {
     printHtml(thermalHtml)
@@ -95,6 +96,10 @@ export function PrintSettingsPage() {
   const testPrintA4 = () => {
     printHtml(a4Html)
     toast.show('أُرسلت فاتورة A4 تجريبية للطباعة 📄')
+  }
+  const testPrintA5 = () => {
+    printHtml(a5Html)
+    toast.show('أُرسلت فاتورة A5 تجريبية للطباعة 📃')
   }
 
   const pickLogo = (file: File | undefined) => {
@@ -224,10 +229,11 @@ export function PrintSettingsPage() {
           </div>
 
           <Field label="القالب الافتراضي بعد البيع" hint="ما يُطبع من الكاشير — القالبان متاحان دائماً من فواتير المبيعات">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {([
                 { id: 'thermal', label: '🖨️ إيصال حراري', sub: 'سريع لورق الرول' },
                 { id: 'a4', label: '📄 فاتورة A4', sub: 'احترافية للشركات' },
+                { id: 'a5', label: '📃 فاتورة A5', sub: 'نصف ورقة اقتصادية' },
               ] as { id: InvoiceTemplate; label: string; sub: string }[]).map((t) => (
                 <button
                   key={t.id}
@@ -440,9 +446,10 @@ export function PrintSettingsPage() {
             <input type="checkbox" checked={autoPrintAfterSale} onChange={(e) => setAutoPrint(e.target.checked)} className="w-4 h-4 accent-brand-600" />
           </label>
 
-          <div className="grid grid-cols-2 gap-2 pt-1">
+          <div className="grid grid-cols-3 gap-2 pt-1">
             <Btn onClick={testPrint}><Printer size={15} /> تجربة الحراري</Btn>
             <Btn onClick={testPrintA4} variant="ghost" className="border-2 border-brand-500/30"><FileText size={15} /> تجربة A4</Btn>
+            <Btn onClick={testPrintA5} variant="ghost" className="border-2 border-teal-500/30"><FileText size={15} /> تجربة A5</Btn>
           </div>
         </div>
       </div>

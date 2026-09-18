@@ -133,7 +133,7 @@ export function SalesInvoicesPage() {
       s.invoiceNumber.includes(q) || (s.refCode ?? '').includes(ref))
   }, [sales, query])
 
-  const printInvoice = async (s: SaleInvoice, template: 'thermal' | 'a4') => {
+  const printInvoice = async (s: SaleInvoice, template: 'thermal' | 'a4' | 'a5') => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
     const qrDataUrl = await maybeZatcaQr({
       featureActive: hasFeature(licState, 'einvoice_sa'),
@@ -159,8 +159,8 @@ export function SalesInvoicesPage() {
       settings: receipt,
     })
     if (qrDataUrl) model.qrDataUrl = qrDataUrl
-    printHtml(template === 'a4' ? renderInvoiceA4Html(model, cur, receipt) : renderReceiptHtml(model, cur, receipt))
-    toast.show(template === 'a4' ? `أُرسلت فاتورة A4 ${s.invoiceNumber} للطباعة 📄` : `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️`)
+    printHtml(template === 'thermal' ? renderReceiptHtml(model, cur, receipt) : renderInvoiceA4Html(model, cur, receipt, template))
+    toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${template.toUpperCase()} ${s.invoiceNumber} للطباعة 📄`)
   }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
@@ -226,6 +226,9 @@ export function SalesInvoicesPage() {
                   </button>
                   <button onClick={() => printInvoice(s, 'a4')} title="طباعة فاتورة A4 احترافية" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all duration-200 hover:scale-110">
                     <FileText size={15} />
+                  </button>
+                  <button onClick={() => printInvoice(s, 'a5')} title="طباعة فاتورة A5 (نصف ورقة)" className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all duration-200 hover:scale-110 text-[10px] font-black leading-none">
+                    A5
                   </button>
                   {policy.canEdit ? (
                     /* تعديل متاح — الفاتورة الإلكترونية غير مفعلة (سياسة المالك) */

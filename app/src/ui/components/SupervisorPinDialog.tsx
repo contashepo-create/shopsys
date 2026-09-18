@@ -12,6 +12,7 @@
  *   … ثم {approval.dialog} في الـJSX
  */
 import { useState, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useDataStore } from '../../data/repo.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { needsSupervisorPin, REFUND_APPROVE_PERM } from '../../core/refundApproval.ts'
@@ -57,8 +58,10 @@ export function useSupervisorApproval(permId: string = REFUND_APPROVE_PERM): {
     }
   }
 
-  const dialog = pending ? (
-    <div className="fixed inset-0 z-[80] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPending(null)}>
+  /* مراجعة المالك الثانية: المودال العام صار createPortal بـ z-[100] — هذا الحوار يُطلب
+     غالباً ومودال مفتوح (صرف/إتلاف/مرتجع)، فيجب أن يكون بوابةً أيضاً وفوقه: z-[110] */
+  const dialog = pending ? createPortal(
+    <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPending(null)}>
       <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-card-dark border border-amber-500/30 p-6 space-y-4 anim-pop" onClick={(e) => e.stopPropagation()}>
         <div className="text-center space-y-1">
           <div className="text-4xl">🔐</div>
@@ -86,7 +89,8 @@ export function useSupervisorApproval(permId: string = REFUND_APPROVE_PERM): {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   ) : null
 
   return { willAskPin: decision.needsPin, request, dialog }

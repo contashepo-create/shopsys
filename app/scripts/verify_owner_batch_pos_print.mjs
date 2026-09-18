@@ -134,6 +134,32 @@ console.log('\n5️⃣ ثبات الإعدادات الدائمة + بنية ا�
   ok('الترحيل بالغرض الفعلي effectivePurpose', consPage.includes('purpose: effectivePurpose'))
 }
 
+console.log('\n6️⃣ المراجعة الثانية (طلب المالك): طبقات الحوارات + اتساق A5 في كل الشاشات')
+{
+  // حوار المشرف يُفتح فوق مودال مفتوح (صرف/إتلاف/مرتجع) — يجب أن يكون بوابةً وأعلى طبقة
+  const pinDlg = readFileSync(new URL('../src/ui/components/SupervisorPinDialog.tsx', import.meta.url), 'utf-8')
+  ok('حوار المشرف عبر createPortal أيضاً', pinDlg.includes('createPortal(') && pinDlg.includes('document.body'))
+  ok('حوار المشرف z-[110] فوق المودال z-[100]', pinDlg.includes('z-[110]'))
+  const ui = readFileSync(new URL('../src/ui/components/ui.tsx', import.meta.url), 'utf-8')
+  ok('التوست z-[120] فوق كل الطبقات', ui.includes('z-[120]'))
+
+  // A5 متاح من كل منافذ الطباعة لا الكاشير فقط
+  const salesPage = readFileSync(new URL('../src/ui/pages/SalesInvoicesPage.tsx', import.meta.url), 'utf-8')
+  ok('فواتير المبيعات: زر A5 لكل فاتورة', salesPage.includes("printInvoice(s, 'a5')"))
+  ok('فواتير المبيعات: التمرير يمرر القالب للمولد', salesPage.includes('renderInvoiceA4Html(model, cur, receipt, template)'))
+  const returnsPage = readFileSync(new URL('../src/ui/pages/SaleReturnsPage.tsx', import.meta.url), 'utf-8')
+  ok('إشعار المرتجع يحترم افتراضي A5', returnsPage.includes("receipt.defaultTemplate === 'a5' ? 'a5' : 'a4'"))
+  const printSettings = readFileSync(new URL('../src/ui/pages/PrintSettingsPage.tsx', import.meta.url), 'utf-8')
+  ok('إعدادات الطباعة: A5 خيار افتراضي ثالث', printSettings.includes('فاتورة A5'))
+  ok('إعدادات الطباعة: زر تجربة A5', printSettings.includes('testPrintA5'))
+  const pos = readFileSync(new URL('../src/ui/pages/PosPage.tsx', import.meta.url), 'utf-8')
+  ok('شريط الكاشير يبدأ على الافتراضي الدائم أياً كان', pos.includes('useState<InvoiceTemplate>(receipt.defaultTemplate)'))
+
+  // تصنيف المورد يُحفظ منظفاً من الفراغات مثل بقية الحقول
+  const parties = readFileSync(new URL('../src/ui/pages/PartiesPages.tsx', import.meta.url), 'utf-8')
+  ok('تصنيف المورد يُحفظ بـ trim()', parties.includes('category: category.trim()'))
+}
+
 console.log(`\n══════════════════\nPASS=${pass} FAIL=${fail}`)
 if (fail > 0) { process.exit(1) }
 console.log('OWNER-BATCH-POS-PRINT-OK ✅')

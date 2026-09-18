@@ -207,7 +207,7 @@ export function SaleReturnsPage() {
       : cashPart > 0 ? 'رد نقدي'
       : waivedPart > 0 ? 'تنازل — بلا رد'
       : r.refund === 'store_credit' ? 'إيداع رصيداً في حساب العميل' : 'خصم من حساب العميل'
-    printHtml(receipt.defaultTemplate === 'a4' ? renderInvoiceA4Html(model, cur, receipt) : renderReceiptHtml(model, cur, receipt))
+    printHtml(receipt.defaultTemplate === 'thermal' ? renderReceiptHtml(model, cur, receipt) : renderInvoiceA4Html(model, cur, receipt, receipt.defaultTemplate === 'a5' ? 'a5' : 'a4'))
     toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
   }
 
