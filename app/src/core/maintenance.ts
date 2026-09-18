@@ -173,13 +173,30 @@ export function computeTicketTotals(input: TicketDeliveryInput): TicketTotals {
  *   من ح/ 5101 تكلفة البضاعة (partsCost — القطع المستهلكة)
  *     إلى ح/ 1103 المخزون (partsCost)
  */
-export function buildTicketDeliveryEntry(totals: TicketTotals, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
+/** إلغاء تذكرة عليها عربون: رد العربون من الخزينة وتصفية 2109 (نمط RepairShopr refund-on-cancel) */
+export function buildTicketCancelEntry(prepaidMinor: Minor, label: string, treasury = '1101'): JournalLine[] {
+  if (!Number.isInteger(prepaidMinor) || prepaidMinor <= 0) throw new Error('لا عربون لرده')
+  const lines: JournalLine[] = [
+    { accountCode: '2109', debit: prepaidMinor, credit: 0, note: `إلغاء ${label} — تصفية العربون` },
+    { accountCode: treasury, debit: 0, credit: prepaidMinor, note: 'رد عربون للعميل' },
+  ]
+  assertBalanced(lines)
+  return lines
+}
+
+export function buildTicketDeliveryEntry(totals: TicketTotals, payment: 'cash' | 'credit', label: string, treasury = '1101', prepaidMinor = 0): JournalLine[] {
   if (totals.revenueMinor <= 0) throw new Error('إيراد التذكرة يجب أن يكون موجباً')
+  if (!Number.isInteger(prepaidMinor) || prepaidMinor < 0) throw new Error('العربون لا يكون سالباً')
+  if (prepaidMinor > totals.grandMinor) throw new Error('العربون أكبر من إجمالي التذكرة — رد الفارق بسند صرف')
   const lines: JournalLine[] = []
-  // التحصيل المجزأ (الأمر 23): نقدي محصَّل الآن + الباقي ذمم عميل
-  if (totals.paidMinor > 0) lines.push({ accountCode: treasury, debit: totals.paidMinor, credit: 0, note: `تحصيل نقدي ${label}` })
-  if (totals.creditMinor > 0) lines.push({ accountCode: '1104', debit: totals.creditMinor, credit: 0, note: `آجل على العميل ${label}` })
-  if (totals.paidMinor === 0 && totals.creditMinor === 0 && totals.grandMinor > 0) {
+  // تصفية العربون المقبوض عند الاستلام (نمط RepairShopr): 2109 مدين — تحقق الإيراد الآن
+  if (prepaidMinor > 0) lines.push({ accountCode: '2109', debit: prepaidMinor, credit: 0, note: `تصفية عربون ${label}` })
+  // التحصيل المجزأ (الأمر 23): نقدي محصَّل الآن + الباقي ذمم عميل — بعد خصم العربون
+  const cashDue = Math.max(0, totals.paidMinor - prepaidMinor)
+  const creditDue = totals.grandMinor - prepaidMinor - cashDue
+  if (cashDue > 0) lines.push({ accountCode: treasury, debit: cashDue, credit: 0, note: `تحصيل نقدي ${label}` })
+  if (creditDue > 0) lines.push({ accountCode: '1104', debit: creditDue, credit: 0, note: `آجل على العميل ${label}` })
+  if (prepaidMinor === 0 && totals.paidMinor === 0 && totals.creditMinor === 0 && totals.grandMinor > 0) {
     // fallback نظري — لا يحدث عملياً لأن grand = paid + credit
     lines.push({ accountCode: payment === 'cash' ? treasury : '1104', debit: totals.grandMinor, credit: 0, note: `تحصيل ${label}` })
   }

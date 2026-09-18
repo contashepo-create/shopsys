@@ -25,6 +25,8 @@ export interface AppNotification {
 export interface NotificationsInput {
   batches: StockBatch[]
   itemName: (itemId: number) => string
+  /** أصناف انخفض رصيدها لحد إعادة الطلب (فجوة عالمية — Lightspeed reorder alerts) */
+  lowStockItems?: { id: number; nameAr: string; stockQty: number; minQty: number }[]
   installmentPlans: { id: number; planNumber: string; customerId: number; items: InstallmentItem[] }[]
   customerName: (id: number) => string
   cheques: { chequeNumber: string; direction: string; partyName: string; amountMinor: number; dueDate: string; status: string }[]
@@ -55,6 +57,19 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       // والموشِك → تقارير المخزون حيث جدول تنبيهات الصلاحية FEFO الكامل
       route: a.status === 'expired' ? '/inventory/wastage' : '/reports',
       perm: 'inv.view', // من يرى المخزون يرى تنبيهات صلاحيته
+    })
+  }
+
+  // 1.5) انخفاض مخزون تحت حد إعادة الطلب (Lightspeed/Square: reorder point alert)
+  for (const it of input.lowStockItems ?? []) {
+    out.push({
+      id: `low:${it.id}`,
+      icon: '📉',
+      title: `مخزون منخفض: ${it.nameAr}`,
+      body: `المتبقي ${it.stockQty} وحد إعادة الطلب ${it.minQty} — اطلب من المورد قبل النفاد`,
+      severity: it.stockQty <= 0 ? 'danger' : 'warn',
+      route: '/inventory/items',
+      perm: 'inv.view',
     })
   }
 

@@ -165,4 +165,5 @@ export const STANDARD_COA: Account[] = [
   { code: '5112', nameAr: 'فروق تسويات وجرد نقدية', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'settlement_variance' },
   { code: '5113', nameAr: 'مصروف عمولات للغير', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'commission_expense_others' },
   { code: '5114', nameAr: 'مستهلكات تشغيل داخلي', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'internal_use' },
+  { code: '5115', nameAr: 'مصروف برنامج الولاء', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'loyalty_expense' },
 ]

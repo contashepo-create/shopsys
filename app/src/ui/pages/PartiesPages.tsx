@@ -5,8 +5,9 @@
  */
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Pencil, Trash2, Phone, UserRound, Building2, ChevronDown, FileBadge, FileSpreadsheet, LayoutGrid, List } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Phone, UserRound, Building2, ChevronDown, FileBadge, FileSpreadsheet, LayoutGrid, List, Gift } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Customer, type Supplier, type PartyExtended } from '../../data/repo.ts'
+import { redeemValue } from '../../core/loyalty.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -90,8 +91,8 @@ function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: Party
 }
 
 export function CustomersPage() {
-  const { customers, addCustomer, updateCustomer, removeCustomer, sales, saleReturns, vouchers, cheques, clientSettlements, getCustomerBalance } = useDataStore()
-  const { setup } = useAppStore()
+  const { customers, addCustomer, updateCustomer, removeCustomer, sales, saleReturns, vouchers, cheques, clientSettlements, getCustomerBalance, redeemLoyaltyPoints } = useDataStore()
+  const { setup, loyalty } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -108,6 +109,17 @@ export function CustomersPage() {
   }, [customers, sales, saleReturns, vouchers, cheques, clientSettlements, getCustomerBalance])
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Customer | null>(null)
+  /* استبدال نقاط الولاء (نمط Lightspeed): نقاط ← رصيد دائن في حساب العميل */
+  const [redeeming, setRedeeming] = useState<Customer | null>(null)
+  const [redeemPts, setRedeemPts] = useState('')
+  const doRedeem = () => {
+    if (!redeeming) return
+    try {
+      const r = redeemLoyaltyPoints(redeeming.id, Math.round(Number(redeemPts)))
+      toast.show(`استُبدلت النقاط — أُضيف ${fmt(r.valueMinor)} ${cur.symbol} رصيداً دائناً للعميل ✅`)
+      setRedeeming(null)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [creditLimit, setCreditLimit] = useState('')
@@ -179,10 +191,18 @@ export function CustomersPage() {
                         حد ائتمان: {formatMinor(c.creditLimitMinor, cur)}
                       </span>
                     )}
+                    {loyalty.enabled && (c.loyaltyPoints ?? 0) > 0 && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-pink-500/10 text-pink-600 dark:text-pink-400 font-bold w-fit">
+                        🎁 {c.loyaltyPoints} نقطة
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   {/* كشف حساب فوري بجانب كل عميل (طلب المالك) */}
+                  {loyalty.enabled && (c.loyaltyPoints ?? 0) >= loyalty.minRedeemPoints && (
+                    <button title="استبدال نقاط الولاء" onClick={() => { setRedeeming(c); setRedeemPts(String(c.loyaltyPoints ?? 0)) }} className="p-1.5 rounded-lg text-slate-400 hover:text-pink-600 hover:bg-pink-500/10 transition-colors"><Gift size={14} /></button>
+                  )}
                   <button title="كشف حساب العميل" onClick={() => navigate(`/reports/statements?kind=customer&id=${c.id}`)} className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-colors"><FileSpreadsheet size={14} /></button>
                   <button title="تعديل بيانات العميل" onClick={() => openEdit(c)} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
                   <button title="حذف العميل" onClick={() => { try { removeCustomer(c.id); toast.show('تم حذف العميل') } catch (e) { toast.show((e as Error).message, 'error') } }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
@@ -231,6 +251,31 @@ export function CustomersPage() {
           </table>
         </div>
       )}
+
+      {/* استبدال نقاط الولاء: قيد 5115 مصروف ولاء ← 1104 رصيد دائن للعميل */}
+      <Modal open={!!redeeming} onClose={() => setRedeeming(null)} title={redeeming ? `🎁 استبدال نقاط — ${redeeming.nameAr}` : ''}>
+        {redeeming && (
+          <div className="space-y-4">
+            <div className="rounded-2xl bg-pink-500/5 border border-pink-500/20 p-4 text-center">
+              <div className="text-[11px] text-slate-400">رصيد النقاط الحالي</div>
+              <div className="text-2xl font-black text-pink-600">{redeeming.loyaltyPoints ?? 0} نقطة</div>
+              <div className="text-[11px] text-slate-400 mt-1">قيمة النقطة {fmt(loyalty.redeemValueMinor)} {cur.symbol} — أدنى استبدال {loyalty.minRedeemPoints} نقطة</div>
+            </div>
+            <Field label="عدد النقاط المستبدلة">
+              <input value={redeemPts} onChange={(e) => setRedeemPts(e.target.value)} className={inputCls} dir="ltr" />
+            </Field>
+            {Number(redeemPts) > 0 && (
+              <div className="text-center text-[13px] font-bold text-emerald-600">
+                = {fmt(redeemValue(Math.round(Number(redeemPts)), loyalty))} {cur.symbol} رصيد دائن يخصم من مشترياته القادمة
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setRedeeming(null)}>إلغاء</Btn>
+              <Btn onClick={doRedeem} disabled={!(Number(redeemPts) > 0)}>🎁 استبدال وتوليد القيد</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? 'تعديل عميل' : 'عميل جديد'} wide>
         <div className="space-y-4">

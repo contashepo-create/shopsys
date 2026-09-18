@@ -30,7 +30,7 @@ const STATUS_STYLE: Record<LaundryStatus, string> = {
 interface DraftLine { desc: string; service: LaundryService; qty: string; price: string }
 
 export function LaundryPage() {
-  const { laundryOrders, customers, journal, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder } = useDataStore()
+  const { laundryOrders, customers, journal, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
   const { setup, reportPrint, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -50,12 +50,13 @@ export function LaundryPage() {
   const [phone, setPhone] = useState('')
   const [promisedAt, setPromisedAt] = useState('')
   const [prepaid, setPrepaid] = useState('')
+  const [rack, setRack] = useState('') // رقم الرف/الشماعة (نمط CleanCloud rack number)
   const [treasury, setTreasury] = useState('1101')
   const [notes, setNotes] = useState('')
   const [dLines, setDLines] = useState<DraftLine[]>([{ desc: '', service: 'wash_iron', qty: '1', price: '' }])
 
   const openNew = () => {
-    setCustomerId(''); setCustName(''); setPhone(''); setPrepaid(''); setNotes('')
+    setCustomerId(''); setCustName(''); setPhone(''); setPrepaid(''); setRack(''); setNotes('')
     setPromisedAt(new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10))
     setDLines([{ desc: '', service: 'wash_iron', qty: '1', price: '' }])
     setOpen(true)
@@ -75,7 +76,7 @@ export function LaundryPage() {
       const o = openLaundryOrder({
         customerId: customerId ? Number(customerId) : null,
         customerName: customerId ? (customers.find((c) => c.id === Number(customerId))?.nameAr ?? '') : custName,
-        phone, promisedAt, lines: parsedLines,
+        phone, promisedAt, rackNumber: rack, lines: parsedLines,
         prepaidMinor: toM(prepaid), treasury: treasury as '1101', notes,
       })
       toast.show(`فُتح أمر الغسيل ${o.orderNumber} ✅${o.prepaidMinor > 0 ? ' وتولد قيد العربون' : ''}`)
@@ -115,7 +116,7 @@ export function LaundryPage() {
     const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     printHtml(renderReportShell({
       title: `إيصال استلام غسيل ${o.orderNumber}`,
-      subtitle: `${o.customerName}${o.phone ? ` — ${o.phone}` : ''} · استُلم ${o.receivedAt.slice(0, 10)}${o.promisedAt ? ` · التسليم ${o.promisedAt}` : ''}`,
+      subtitle: `${o.customerName}${o.phone ? ` — ${o.phone}` : ''} · استُلم ${o.receivedAt.slice(0, 10)}${o.promisedAt ? ` · التسليم ${o.promisedAt}` : ''}${o.rackNumber ? ` · 📍 رف ${o.rackNumber}` : ''}`,
       companyName: setup.shopName || 'المغسلة',
       logoDataUrl: receipt.logoDataUrl,
       settings: reportPrint,
@@ -171,7 +172,7 @@ export function LaundryPage() {
                         <div className="text-slate-600 dark:text-slate-300">{o.customerName}</div>
                         {o.phone && <div className="text-[10px] text-slate-400" dir="ltr">{o.phone}</div>}
                       </td>
-                      <td className="px-4 py-3 text-slate-500">{o.lines.reduce((a, l) => a + l.qty, 0)} قطعة</td>
+                      <td className="px-4 py-3 text-slate-500">{o.lines.reduce((a, l) => a + l.qty, 0)} قطعة{o.rackNumber ? <span className="mr-1 text-[10px] font-bold text-violet-500">📍 {o.rackNumber}</span> : null}</td>
                       <td className="px-4 py-3 font-black">{fmt(o.totalMinor)}</td>
                       <td className="px-4 py-3 text-emerald-600">{o.prepaidMinor > 0 ? fmt(o.prepaidMinor) : '—'}</td>
                       <td className={`px-4 py-3 text-[12px] ${overdue ? 'text-rose-500 font-bold' : 'text-slate-500'}`} dir="ltr">{o.promisedAt || '—'}{overdue ? ' ⚠' : ''}</td>
@@ -229,6 +230,9 @@ export function LaundryPage() {
             </Field>
             <Field label="موعد التسليم الموعود">
               <input type="date" value={promisedAt} onChange={(e) => setPromisedAt(e.target.value)} className={inputCls} dir="ltr" />
+            </Field>
+            <Field label="رقم الرف / الشماعة" hint="أين تُعلَّق القطع بعد التجهيز — يظهر على الإيصال">
+              <input value={rack} onChange={(e) => setRack(e.target.value)} className={inputCls} placeholder="A-12" />
             </Field>
           </div>
 
@@ -290,6 +294,23 @@ export function LaundryPage() {
                 <Printer size={13} /> طباعة إيصال الاستلام
               </button>
             </div>
+
+            {viewing.status !== 'delivered' && viewing.status !== 'cancelled' && (
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-bold text-slate-400 shrink-0">📍 رقم الرف</span>
+                <input
+                  defaultValue={viewing.rackNumber ?? ''}
+                  key={viewing.id}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim()
+                    if (v === (viewing.rackNumber ?? '')) return
+                    try { setLaundryRack(viewing.id, v); toast.show(v ? `الرف الآن ${v} ✓` : 'أُزيل رقم الرف ✓') }
+                    catch (err) { toast.show((err as Error).message, 'error') }
+                  }}
+                  className={`${inputCls} max-w-[10rem]`} placeholder="A-12"
+                />
+              </div>
+            )}
 
             <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <table className="w-full text-[12.5px]">

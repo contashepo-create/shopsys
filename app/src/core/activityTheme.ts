@@ -67,6 +67,8 @@ export const ACTIVITY_THEMES: Record<string, ActivityTheme> = {
   laundry: { persona: 'fresh', posLayout: 'fast_list', heroEmoji: '🧺', heroLineAr: 'نظافة تلمع وتسليم في الميعاد', widgets: ['top_debtors'] },
   butcher: { persona: 'butcher', posLayout: 'fast_list', heroEmoji: '🥩', heroLineAr: 'ذبايح طازجة وميزان أمين وتصافي مضبوط', widgets: ['yield_today', 'expiry_soon', 'top_debtors'] },
   dates: { persona: 'oasis', posLayout: 'visual_grid', heroEmoji: '🌴', heroLineAr: 'خير النخيل مفروز ومعبأ بكرم عربي', widgets: ['yield_today', 'expiry_soon', 'top_debtors'] },
+  salon: { persona: 'boutique', posLayout: 'visual_grid', heroEmoji: '💈', heroLineAr: 'زبونك يخرج أشيك مما دخل', widgets: ['top_debtors'] },
+  bakery: { persona: 'warm', posLayout: 'visual_grid', heroEmoji: '🥐', heroLineAr: 'فرنك ولّاع وطلباتك سخنة', widgets: ['expiry_soon', 'top_debtors'] },
   general: { persona: 'fresh', posLayout: 'fast_list', heroEmoji: '🏪', heroLineAr: 'تجارتك كلها تحت السيطرة', widgets: ['top_debtors'] },
 }
 

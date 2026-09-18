@@ -14,11 +14,11 @@ let pass = 0, fail = 0
 const ok = (cond, name) => { if (cond) { pass++ } else { fail++; console.error(`❌ ${name}`) } }
 const throws = (fn, name) => { try { fn(); fail++; console.error(`❌ لم يرمِ: ${name}`) } catch { pass++ } }
 
-/* ─── القائمة الكاملة (18 نشاطاً بعد إضافة جزارة/تمور) ─── */
+/* ─── القائمة الكاملة (20 نشاطاً بعد إضافة صالون/مخبز) ─── */
 const EXPECTED = [
   'grocery', 'mobile', 'clothing', 'pharmacy', 'electronics', 'spare_parts',
   'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars',
-  'restaurant', 'jewelry', 'laundry', 'butcher', 'dates', 'general',
+  'restaurant', 'jewelry', 'laundry', 'butcher', 'dates', 'salon', 'bakery', 'general',
 ]
 ok(ACTIVITY_TEMPLATES.length === EXPECTED.length, `عدد الأنشطة = ${EXPECTED.length}`)
 for (const id of EXPECTED) ok(!!getActivity(id), `نشاط ${id} موجود`)

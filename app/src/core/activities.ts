@@ -170,6 +170,26 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
+    // نشاط جديد (توسعة الشراكة): أكثر نشاط خدمي انتشاراً في السوق العربي —
+    // بيع خدمات (حلاقة/صبغة/عناية) كأصناف isService بلا مخزون + بيع منتجات عناية
+    // من المخزون + مواعيد وعمولات موظفين. المرجع العالمي: Fresha / Booksy.
+    id: 'salon', nameAr: 'صالون حلاقة وتجميل', icon: '💈',
+    description: 'خدمات بلا مخزون + منتجات عناية، مواعيد وعمولات موظفين',
+    features: ['price_lists'],
+    modules: ['pos', 'inventory', 'purchases'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
+  },
+  {
+    // نشاط جديد (توسعة الشراكة): المخابز والحلويات — إنتاج مسبق بوصفات
+    // (recipes موجودة) + بيع بالوزن والقطعة + صلاحيات قصيرة وهوالك يومية.
+    // المرجع العالمي: FlexiBake / Cybake.
+    id: 'bakery', nameAr: 'مخبز وحلويات', icon: '🥐',
+    description: 'إنتاج بوصفات، بيع بالوزن والقطعة، صلاحيات قصيرة وهوالك يومية',
+    features: ['expiry_batches', 'weight_scale', 'multi_unit', 'price_lists'],
+    modules: ['pos', 'inventory', 'purchases', 'recipes'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
+  },
+  {
     id: 'general', nameAr: 'نشاط عام / آخر', icon: '🏪',
     description: 'قالب مرن — فعّل ما تحتاجه لاحقاً',
     features: ['multi_unit'],

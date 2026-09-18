@@ -90,6 +90,8 @@ export const ACTIVITY_ACCENTS: Record<string, string> = {
   laundry: 'sky', // نظافة وانتعاش
   butcher: 'crimson', // أحمر لحمي حِرفي
   dates: 'date_palm', // بني تمري صحراوي
+  salon: 'fuchsia', // أناقة وعناية
+  bakery: 'amber', // دفء الأفران
   general: 'indigo', // الافتراضي
 }
 

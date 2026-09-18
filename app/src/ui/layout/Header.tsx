@@ -52,6 +52,10 @@ export function Header({ title }: { title: string }) {
     () => collectNotifications({
       batches,
       itemName: (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`,
+      // انخفاض المخزون تحت حد إعادة الطلب (نمط Lightspeed) — للأصناف النشطة ذات حد فقط
+      lowStockItems: items
+        .filter((it) => it.isActive && it.minQty > 0 && (it.stockQty ?? 0) <= it.minQty)
+        .map((it) => ({ id: it.id, nameAr: it.nameAr, stockQty: it.stockQty ?? 0, minQty: it.minQty })),
       installmentPlans,
       customerName: (id) => customers.find((c) => c.id === id)?.nameAr ?? `عميل #${id}`,
       cheques,

@@ -41,7 +41,7 @@ const { REFUND_APPROVE_PERM } = await import(join(root, 'src/core/refundApproval
 const { hashPin } = await import(join(root, 'src/core/audit.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 18, `المتوقع 18 نشاطاً — الموجود ${ACTIVITIES.length}`)
+assert.equal(ACTIVITIES.length, 20, `المتوقع 20 نشاطاً — الموجود ${ACTIVITIES.length}`)
 
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 const cur = { code: 'EGP', symbol: 'ج.م', decimals: 2, name: '' }
@@ -123,6 +123,6 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✅ ${tpl.icon ?? ''} ${tpl.nameAr} (${activityId}) — عشري POS + صرف حر + تصنيف حر + 3 قوالب + مشرف مخصص + وجهات الإشعار`)
 }
 
-console.log(`\n══════════════════\n${pass}/18 نشاطاً اجتاز المراجعة الشاملة`)
-if (pass !== 18) process.exit(1)
+console.log(`\n══════════════════\n${pass}/20 نشاطاً اجتاز المراجعة الشاملة`)
+if (pass !== 20) process.exit(1)
 console.log('OWNER-BATCH-18-ACTIVITIES-OK ✅')

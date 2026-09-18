@@ -3,7 +3,7 @@
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
 import { useState } from 'react'
-import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock } from 'lucide-react'
+import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
@@ -13,7 +13,7 @@ import { formatMinor } from '../../core/money.ts'
 import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 
 export function GeneralSettingsPage() {
-  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed } = useAppStore()
+  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty } = useAppStore()
   const { warehouses, closeFiscalYear } = useDataStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -209,6 +209,61 @@ export function GeneralSettingsPage() {
             </button>
           )
         })()}
+      </section>
+
+      {/* برنامج نقاط الولاء (نمط Lightspeed Loyalty / Square) */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '135ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          <Gift size={17} className="text-pink-500" /> برنامج نقاط الولاء
+        </h3>
+        <p className="text-[11.5px] text-slate-400 mb-4">
+          النمط العالمي (Lightspeed / Square): العميل المسجل يكسب نقاطاً تلقائياً من كل فاتورة،
+          ويستبدلها برصيد دائن في حسابه يُخصم من مشترياته القادمة. الكسب يُقرَّب لأسفل — لا أنصاف نقاط.
+        </p>
+        <div className="space-y-4">
+          <button
+            onClick={() => {
+              updateLoyalty({ enabled: !loyalty.enabled })
+              toast.show(!loyalty.enabled ? 'فُعّل برنامج الولاء — العملاء المسجلون يكسبون نقاطاً من الآن ✓' : 'أُوقف برنامج الولاء — النقاط المكتسبة محفوظة')
+            }}
+            className={`w-full sm:w-auto text-right p-4 rounded-2xl border-2 transition-all duration-200 hover:scale-[1.01] ${
+              loyalty.enabled ? 'border-pink-500/50 bg-pink-500/10' : 'border-slate-200 dark:border-slate-700'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-6">
+              <span className={`font-bold text-[13px] ${loyalty.enabled ? 'text-pink-700 dark:text-pink-400' : 'text-slate-500'}`}>
+                🎁 تفعيل نقاط الولاء
+              </span>
+              <span className={`w-10 h-5.5 rounded-full p-0.5 transition-colors ${loyalty.enabled ? 'bg-pink-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                <span className={`block w-4.5 h-4.5 rounded-full bg-white shadow transition-transform ${loyalty.enabled ? '-translate-x-4.5' : ''}`} />
+              </span>
+            </div>
+            <div className="text-[11px] text-slate-400 mt-1.5">الكسب للعملاء المسجلين فقط — العميل النقدي لا يكسب نقاطاً</div>
+          </button>
+
+          {loyalty.enabled && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <Field label={`نقاط لكل ${cur.symbol} من الفاتورة`} hint="الافتراضي العالمي: 1 نقطة لكل وحدة عملة">
+                <input
+                  value={String(loyalty.pointsPerUnit)} dir="ltr" className={inputCls}
+                  onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && v >= 0) updateLoyalty({ pointsPerUnit: v }) }}
+                />
+              </Field>
+              <Field label={`قيمة النقطة عند الاستبدال (${cur.decimals === 3 ? 'فلس' : 'قرش/هللة'})`} hint={`5 = كل 100 نقطة تساوي ${fmt(500)} ${cur.symbol}`}>
+                <input
+                  value={String(loyalty.redeemValueMinor)} dir="ltr" className={inputCls}
+                  onChange={(e) => { const v = Math.round(Number(e.target.value)); if (Number.isFinite(v) && v >= 0) updateLoyalty({ redeemValueMinor: v }) }}
+                />
+              </Field>
+              <Field label="أدنى نقاط للاستبدال" hint="منع استبدال الفتات — الافتراضي 100">
+                <input
+                  value={String(loyalty.minRedeemPoints)} dir="ltr" className={inputCls}
+                  onChange={(e) => { const v = Math.round(Number(e.target.value)); if (Number.isFinite(v) && v >= 0) updateLoyalty({ minRedeemPoints: v }) }}
+                />
+              </Field>
+            </div>
+          )}
+        </div>
       </section>
 
       {/* المخزن الافتراضي للفواتير (الأمر 8) */}

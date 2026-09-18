@@ -279,6 +279,7 @@ export function ItemsPage() {
 
   const featureBadges = (it: Item) => {
     const badges: { icon: string; label: string; cls: string }[] = []
+    if (it.isService) badges.push({ icon: '🛎️', label: 'خدمة', cls: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' })
     if (it.trackExpiry) badges.push({ icon: '📅', label: 'صلاحية', cls: 'bg-amber-500/10 text-amber-600 dark:text-amber-400' })
     if (it.trackSerial) badges.push({ icon: '🔢', label: 'سيريال', cls: 'bg-sky-500/10 text-sky-600 dark:text-sky-400' })
     if (it.grade) badges.push({ icon: GRADE_LABELS[it.grade].icon, label: GRADE_LABELS[it.grade].nameAr, cls: 'bg-slate-500/10 text-slate-500 dark:text-slate-400' })
@@ -790,6 +791,8 @@ function ItemForm({
     { key: 'trackExpiry' as const, label: '📅 تتبع الصلاحية والدفعات', on: draft.trackExpiry, relevant: activityFeatures.has('expiry_batches') },
     { key: 'trackSerial' as const, label: '🔢 تتبع السيريال والضمان', on: draft.trackSerial, relevant: activityFeatures.has('serial_warranty') },
     { key: 'soldByWeight' as const, label: '⚖️ يُباع بالوزن', on: draft.soldByWeight, relevant: activityFeatures.has('weight_scale') },
+    // صنف خدمة (Square/Lightspeed): حلاقة/غسيل سيارة/اشتراك جيم — يُباع بلا مخزون ولا تكلفة
+    { key: 'isService' as const, label: '🛎️ صنف خدمة (بلا مخزون)', on: draft.isService ?? false, relevant: setup.activityId === 'salon' },
   ]
   const mainProps = allProps.filter((x) => x.relevant || x.on)
   const extraProps = allProps.filter((x) => !x.relevant && !x.on)

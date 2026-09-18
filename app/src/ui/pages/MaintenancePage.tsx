@@ -80,12 +80,17 @@ export function MaintenancePage() {
   const [deviceName, setDeviceName] = useState('')
   const [issue, setIssue] = useState('')
   const [estimate, setEstimate] = useState('')
+  const [deviceSerial, setDeviceSerial] = useState('') // سيريال/IMEI (نمط RepairDesk)
+  const [deviceCondition, setDeviceCondition] = useState('') // حالة الجهاز الظاهرية عند الاستلام
+  const [prepaid, setPrepaid] = useState('') // عربون مقبوض عند الاستلام (نمط RepairShopr)
+  const [prepaidTreasury, setPrepaidTreasury] = useState('1101')
   const [promisedAt, setPromisedAt] = useState('') // موعد التسليم الموعود (جولة المغسلة)
   const [notes, setNotes] = useState('')
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
 
   const openNew = () => {
     setCustomerId(''); setCustomerName(''); setCustomerPhone(''); setDeviceName('')
+    setDeviceSerial(''); setDeviceCondition(''); setPrepaid(''); setPrepaidTreasury('1101')
     setIssue(''); setEstimate(''); setPromisedAt(''); setNotes(''); setOpen(true)
   }
   const saveTicket = () => {
@@ -94,11 +99,15 @@ export function MaintenancePage() {
         customerId: customerId ? Number(customerId) : null,
         customerName, customerPhone,
         deviceName, issue,
+        deviceSerial: deviceSerial.trim() || undefined,
+        deviceCondition: deviceCondition.trim() || undefined,
         estimateMinor: toM(estimate),
+        prepaidMinor: toM(prepaid) || undefined,
+        treasury: prepaidTreasury as '1101',
         promisedAt: promisedAt ? new Date(promisedAt).toISOString() : undefined,
         notes,
       })
-      toast.show(`فُتحت التذكرة ${t.ticketNumber} ✅`)
+      toast.show(`فُتحت التذكرة ${t.ticketNumber} ✅${(t.prepaidMinor ?? 0) > 0 ? ' وتولد قيد العربون' : ''}`)
       setOpen(false)
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
@@ -367,6 +376,22 @@ export function MaintenancePage() {
               <input value={estimate} onChange={(e) => setEstimate(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
             </Field>
           </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="السيريال / IMEI" hint="يوثق أي جهاز بالضبط استُلم — يحميك من الالتباس">
+              <input value={deviceSerial} onChange={(e) => setDeviceSerial(e.target.value)} className={inputCls} dir="ltr" placeholder="اختياري" />
+            </Field>
+            <Field label="حالة الجهاز عند الاستلام" hint="خدوش، شاشة مكسورة… — يحميك من الادعاءات">
+              <input value={deviceCondition} onChange={(e) => setDeviceCondition(e.target.value)} className={inputCls} placeholder="اختياري" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label={`عربون مقبوض الآن (${cur.symbol})`} hint="يتولد قيد فوراً (خزينة/دفعات مقدمة) ويُخصم عند التسليم">
+              <input value={prepaid} onChange={(e) => setPrepaid(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+            </Field>
+            <Field label="خزينة قبض العربون">
+              <TreasuryPicker value={prepaidTreasury} onChange={setPrepaidTreasury} />
+            </Field>
+          </div>
           <Field label="وصف العطل *">
             <textarea value={issue} onChange={(e) => setIssue(e.target.value)} className={`${inputCls} min-h-[70px]`} placeholder="الشاشة مكسورة، البطارية تفرغ سريعاً…" />
           </Field>
@@ -463,7 +488,10 @@ export function MaintenancePage() {
                 <div><div className="text-slate-400">الضريبة</div><b>{fmt(deliverPreview.vatMinor)}</b></div>
                 <div><div className="text-slate-400">المستحق من العميل</div><b className="text-emerald-600">{fmt(deliverPreview.grandMinor)}</b></div>
                 <div><div className="text-slate-400">التكلفة (قطع+خدمات)</div><b className="text-rose-500">{fmt(deliverPreview.partsCostMinor + deliverPreview.servicesCostMinor)}</b></div>
-                <div><div className="text-slate-400">محصَّل نقداً</div><b className="text-emerald-600">{fmt(deliverPreview.paidMinor)}</b></div>
+                {(delivering.prepaidMinor ?? 0) > 0 && (
+                  <div><div className="text-slate-400">عربون مدفوع مسبقاً</div><b className="text-sky-600">{fmt(delivering.prepaidMinor ?? 0)}</b></div>
+                )}
+                <div><div className="text-slate-400">محصَّل نقداً الآن</div><b className="text-emerald-600">{fmt(Math.max(0, deliverPreview.paidMinor - (delivering.prepaidMinor ?? 0)))}</b></div>
                 <div><div className="text-slate-400">الباقي آجل</div><b className={deliverPreview.creditMinor > 0 ? 'text-amber-600' : ''}>{fmt(deliverPreview.creditMinor)}</b></div>
                 <div className="col-span-2"><div className="text-slate-400">🔒 الربح المتوقع (سري — لا يُطبع للعميل)</div><b className="text-violet-600">{fmt(deliverPreview.profitMinor)}</b></div>
               </div>

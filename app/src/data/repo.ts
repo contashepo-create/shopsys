@@ -33,7 +33,9 @@ import { validatePriceList, resolvePrice, type PriceList, type PriceListEntry } 
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
-import { STANDARD_COA, buildReversalLines, type JournalLine } from '../core/ledger.ts'
+import { STANDARD_COA, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
+import { getCountry } from '../core/countries.ts'
+import { DEFAULT_LOYALTY, earnedPoints, redeemValue, validateRedeem, buildLoyaltyRedeemEntry, type LoyaltySettings } from '../core/loyalty.ts'
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
 import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
@@ -45,7 +47,7 @@ import { buildSchedule, applyPayment, planProgress, reduceSchedule, type Install
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
 import { makeUniqueRefCode } from '../core/refcode.ts'
-import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
+import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
@@ -118,6 +120,8 @@ export interface Customer extends PartyExtended {
   notes: string
   /** قائمة الأسعار المربوطة (جملة/نصف جملة…) — null = تجزئة */
   priceListId?: number | null
+  /** رصيد نقاط الولاء (نمط Lightspeed Loyalty) — يكسب من البيع ويستبدل برصيد دائن */
+  loyaltyPoints?: number
 }
 
 export interface Supplier extends PartyExtended {
@@ -574,6 +578,8 @@ export interface LaundryOrder {
   phone: string
   receivedAt: string
   promisedAt: string // موعد التسليم الموعود ('' = بلا)
+  /** رقم الرف/الشماعة حيث تُعلق القطع الجاهزة (فجوة مقابل CleanCloud/Enlite POS) */
+  rackNumber?: string
   status: LaundryStatus
   lines: LaundryLine[]
   prepaidMinor: number // العربون المقبوض عند الاستلام
@@ -656,8 +662,15 @@ export interface MaintenanceTicket {
   customerName: string // اسم حر عند عدم التسجيل
   customerPhone: string
   deviceName: string
+  /** سيريال/IMEI الجهاز المستلَم (فجوة مقابل RepairDesk: يوثق أي جهاز بالضبط استُلم) */
+  deviceSerial?: string
+  /** حالة الجهاز الظاهرية عند الاستلام (خدوش/شاشة مكسورة…) — تحمي المحل من الادعاءات */
+  deviceCondition?: string
   issue: string
   estimateMinor: number // تقدير مبدئي يُتفق عليه عند الاستلام (0 = بلا)
+  /** عربون مقبوض عند الاستلام (نمط RepairShopr deposit): قيده خزينة/2109 ويُصفى عند التسليم */
+  prepaidMinor?: number
+  prepaidEntryId?: number | null
   /** موعد التسليم الموعود (جولة المغسلة) — '' أو غياب = بلا موعد */
   promisedAt?: string
   status: TicketStatus
@@ -1067,6 +1080,8 @@ interface DataState {
   /** كتالوج خدمات الصيانة بتكلفة وسعر بيع (الأمر 23) */
   maintenanceServices: MaintenanceService[]
   walletOps: WalletServiceOp[] // خدمات المحافظ والدفع الإلكتروني (نمط mobileshop)
+  /** سجل استبدالات نقاط الولاء — يدخل كشف حساب العميل كرصيد دائن */
+  loyaltyRedemptions: { id: number; date: string; customerId: number; points: number; valueMinor: number; journalEntryId: number }[]
   transfers: StockTransfer[]
   batches: StockBatch[] // دفعات الصلاحية FEFO (القراران 5 و8)
   assets: FixedAsset[]
@@ -1452,6 +1467,12 @@ interface DataState {
   closeFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { entryId: number; netProfitMinor: number }
   /** رصيد العميل الموحّد من كل الأنشطة — مصدر حقيقة واحد لكل الشاشات */
   getCustomerBalance: (customerId: number) => number
+  /**
+   * استبدال نقاط ولاء برصيد دائن في حساب العميل (نمط Lightspeed Loyalty):
+   * قيد 5115 مصروف ولاء ← 1104 دائن — الرصيد يخصم من مشترياته القادمة تلقائياً.
+   * الكسب يتم آلياً داخل postSale لعميل مسجل حسب إعدادات الولاء.
+   */
+  redeemLoyaltyPoints: (customerId: number, points: number) => { valueMinor: number; journalEntryId: number }
   /** صفوف كشف العميل كاملة — نفس تجميعة getCustomerBalance (مصدر واحد للأعمار والكشوف) */
   getCustomerStatementRows: (customerId: number) => StatementRow[]
   /** صفوف كشف المورد كاملة */
@@ -1778,8 +1799,14 @@ interface DataState {
     customerName: string
     customerPhone: string
     deviceName: string
+    /** سيريال/IMEI الجهاز + حالته الظاهرية عند الاستلام (نمط RepairDesk) */
+    deviceSerial?: string
+    deviceCondition?: string
     issue: string
     estimateMinor: number
+    /** عربون مقبوض عند الاستلام — قيده خزينة/2109 (نمط RepairShopr) */
+    prepaidMinor?: number
+    treasury?: TreasuryAccount
     promisedAt?: string
     notes: string
   }) => MaintenanceTicket
@@ -1838,7 +1865,9 @@ interface DataState {
   deleteCustomAccount: (code: string) => void
   /* ─── المغاسل (وحدة مستقلة — طلب المالك) ─── */
   /** فتح أمر غسيل: قطع + خدمات + عربون اختياري (قيده: خزينة/2109 دفعات مقدمة) */
-  openLaundryOrder: (args: { customerId: number | null; customerName: string; phone: string; promisedAt: string; lines: LaundryLine[]; prepaidMinor: number; treasury?: TreasuryAccount; notes: string }) => LaundryOrder
+  openLaundryOrder: (args: { customerId: number | null; customerName: string; phone: string; promisedAt: string; rackNumber?: string; lines: LaundryLine[]; prepaidMinor: number; treasury?: TreasuryAccount; notes: string }) => LaundryOrder
+  /** تحديث رقم الرف/الشماعة لأمر غير مُسلَّم (نمط CleanCloud) */
+  setLaundryRack: (orderId: number, rackNumber: string) => void
   /** نقل حالة أمر الغسيل (بلا قيد — القيود عند التسليم/الإلغاء فقط) */
   setLaundryStatus: (orderId: number, status: LaundryStatus) => LaundryOrder
   /** تسليم الأمر: تحقق الإيراد — خزينة (المتبقي) + 2109 (العربون) ← 4103 + 2102 */
@@ -1944,6 +1973,33 @@ export const DATA_VERSION = 18 // 16: مقايضة ذهب GTI — 17: تمويل
  * مفتوح كي يُحاسَب الكاشير على العجز/الزيادة عند الإقفال). الافتراضي: إلزامي،
  * ويُعطَّل من إعدادات التشغيل لمن يعمل وحده. قراءة مباشرة لتفادي دورة استيراد.
  */
+/** إعدادات الولاء من مخزن التطبيق — قراءة مباشرة لتفادي دورة استيراد */
+function readLoyaltySettings(): LoyaltySettings {
+  try {
+    const raw = localStorage.getItem('shopsys-app')
+    if (raw) {
+      const l = JSON.parse(raw)?.state?.loyalty
+      if (l) return { ...DEFAULT_LOYALTY, ...l }
+    }
+  } catch { /* الافتراضي */ }
+  return DEFAULT_LOYALTY
+}
+
+/** خانات العملة العشرية من إعداد البلد — للولاء (نقاط لكل وحدة كاملة) */
+function readCurrencyDecimals(): number {
+  try {
+    const raw = localStorage.getItem('shopsys-app')
+    if (raw) {
+      const code = JSON.parse(raw)?.state?.setup?.countryCode
+      if (code) {
+        const c = getCountry(code)
+        if (c) return c.currency.decimals
+      }
+    }
+  } catch { /* الافتراضي */ }
+  return 2
+}
+
 function shiftRequiredForSales(): boolean {
   try {
     const raw = localStorage.getItem('shopsys-app')
@@ -2074,6 +2130,7 @@ export const useDataStore = create<DataState>()(
       tickets: [],
       maintenanceServices: [],
       walletOps: [],
+      loyaltyRedemptions: [],
       transfers: [],
       batches: [],
       assets: [],
@@ -2551,7 +2608,12 @@ export const useDataStore = create<DataState>()(
         const recipeOf = (itemId: number) => state.recipes.find((r) => r.productItemId === itemId && r.mode === 'made_to_order' && r.isActive)
         const saleQty = new Map<number, number>()
         // البيع بوحدة أكبر (صيدلية: شريط/علبة) — المخزون يُخصم بالوحدة الأساسية qty×factor
-        for (const l of args.lines) saleQty.set(l.itemId, (saleQty.get(l.itemId) ?? 0) + baseQty(l))
+        // أصناف الخدمة (isService — نمط Square): لا فحص مخزون ولا خصم ولا تكلفة
+        const isServiceItem = (itemId: number) => state.items.find((it) => it.id === itemId)?.isService === true
+        for (const l of args.lines) {
+          if (isServiceItem(l.itemId)) continue
+          saleQty.set(l.itemId, (saleQty.get(l.itemId) ?? 0) + baseQty(l))
+        }
         const stockNeeds = explodeIngredientNeeds(saleQty, recipeOf)
         // 1) فحص المخزون (على الخامات للأطباق، وعلى الصنف نفسه لغيرها)
         if (!args.allowNegativeStock) {
@@ -2612,6 +2674,8 @@ export const useDataStore = create<DataState>()(
         // لو رُحّلت فاتورة شراء أثناء وجود الصنف في السلة تغيّر المتوسط —
         // فيجب أن يخرج قيد التكلفة (5101/1103) بنفس متوسط لحظة البيع وإلا انفصل الدفتر عن المخزون
         const costedLines = args.lines.map((l) => {
+          // صنف خدمة: لا تكلفة بضاعة — الإيراد كامل بلا قيد 5101/1103
+          if (isServiceItem(l.itemId)) return l.unitCostMinor === 0 ? l : { ...l, unitCostMinor: 0 }
           // طبق بوصفة «عند الطلب»: تكلفته = تكلفة خاماته بالمتوسط المرجح لحظة البيع
           const recipe = recipeOf(l.itemId)
           if (recipe) {
@@ -2685,6 +2749,11 @@ export const useDataStore = create<DataState>()(
           taxInclusive: args.taxInclusive,
         }
 
+        // كسب نقاط الولاء لعميل مسجل (نمط Lightspeed Pay+Earn — تقريب لأسفل، لا أنصاف)
+        const loyaltySettings = readLoyaltySettings()
+        const decimals = readCurrencyDecimals()
+        const earned = args.customerId != null ? earnedPoints(totals.totalMinor, decimals, loyaltySettings) : 0
+
         // 4) خصم المخزون (خامات الأطباق بدل الطبق نفسه) + تعليم السيريالات مباعة
         const updatedItems = state.items.map((it) =>
           stockNeeds.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - stockNeeds.get(it.id)!) * 1000) / 1000 } : it,
@@ -2700,7 +2769,12 @@ export const useDataStore = create<DataState>()(
             })
           : state.variantStocks
 
-        set({ sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials, variantStocks: updatedVariants })
+        set({
+          sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems,
+          batches: workingBatches, serials: updatedSerials, variantStocks: updatedVariants,
+          // إضافة نقاط الولاء المكتسبة لرصيد العميل (0 = برنامج معطل أو عميل نقدي)
+          ...(earned > 0 ? { customers: state.customers.map((c) => (c.id === args.customerId ? { ...c, loyaltyPoints: (c.loyaltyPoints ?? 0) + earned } : c)) } : {}),
+        })
         return sale
       },
 
@@ -4898,17 +4972,49 @@ export const useDataStore = create<DataState>()(
       },
 
       getCustomerBalance: (customerId) => statementBalance(get().getCustomerStatementRows(customerId)),
+      redeemLoyaltyPoints: (customerId, points) => {
+        const state = get()
+        const cust = state.customers.find((c) => c.id === customerId)
+        if (!cust) throw new Error('العميل غير موجود')
+        const loyalty = readLoyaltySettings()
+        const errors = validateRedeem({ requestedPoints: points, customerPoints: cust.loyaltyPoints ?? 0, settings: loyalty })
+        if (errors.length) throw new Error(errors.join(' — '))
+        const valueMinor = redeemValue(points, loyalty)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `استبدال ${points} نقطة ولاء — ${cust.nameAr}`,
+          sourceType: 'manual', sourceId: null,
+          lines: buildLoyaltyRedeemEntry(valueMinor, cust.nameAr),
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({
+          journal: [...state.journal, entry],
+          customers: state.customers.map((c) => (c.id === customerId ? { ...c, loyaltyPoints: (c.loyaltyPoints ?? 0) - points } : c)),
+          loyaltyRedemptions: [...state.loyaltyRedemptions, { id: nextId(state.loyaltyRedemptions), date: now.slice(0, 10), customerId, points, valueMinor, journalEntryId: entryId }],
+          auditLog: appendAudit(state.auditLog, [{ at: now, user: activeUserName(state), kind: 'ops', title: `استبدال ${points} نقطة ولاء لـ«${cust.nameAr}» بقيمة ${valueMinor}` }]),
+        })
+        return { valueMinor, journalEntryId: entryId }
+      },
 
       getCustomerStatementRows: (customerId) => {
         const state = get()
         return customerStatement({
           customerId,
           openingMinor: state.openingBalances[`customer:${customerId}`] ?? 0,
-          adjustments: state.settlements.filter((st) => st.section === 'customer' && Number(st.refId) === customerId).map((st) => ({
-            docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
-            debitMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
-            creditMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
-          })),
+          adjustments: [
+            ...state.settlements.filter((st) => st.section === 'customer' && Number(st.refId) === customerId).map((st) => ({
+              docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
+              debitMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
+              creditMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
+            })),
+            // استبدالات نقاط الولاء: رصيد دائن للعميل يخصم من مشترياته القادمة (5115/1104)
+            ...state.loyaltyRedemptions.filter((r) => r.customerId === customerId).map((r) => ({
+              docLabel: `استبدال ${r.points} نقطة ولاء`, date: r.date,
+              debitMinor: 0, creditMinor: r.valueMinor,
+            })),
+          ],
           sales: state.sales, saleReturns: state.saleReturns, allSales: state.sales,
           vouchers: [
             ...state.vouchers,
@@ -7433,8 +7539,28 @@ export const useDataStore = create<DataState>()(
         if (!Number.isInteger(args.estimateMinor) || args.estimateMinor < 0) errors.push('التقدير المبدئي لا يكون سالباً')
         if (errors.length) throw new Error(errors.join(' — '))
 
+        const prepaid = args.prepaidMinor ?? 0
+        if (!Number.isInteger(prepaid) || prepaid < 0) throw new Error('العربون لا يكون سالباً')
         const id = nextId(state.tickets)
         const now = new Date().toISOString()
+        // عربون الاستلام (نمط RepairShopr): خزينة ← 2109 دفعات مقدمة — التزام لا إيراد
+        let prepaidEntryId: number | null = null
+        let journal = state.journal
+        if (prepaid > 0) {
+          prepaidEntryId = nextId(state.journal)
+          const pLines: JournalLine[] = [
+            { accountCode: args.treasury ?? '1101', debit: prepaid, credit: 0, note: `عربون صيانة MT-${String(id).padStart(4, '0')}` },
+            { accountCode: '2109', debit: 0, credit: prepaid, note: 'دفعة مقدمة من عميل (عربون صيانة)' },
+          ]
+          assertBalanced(pLines)
+          journal = [...state.journal, {
+            id: prepaidEntryId, entryNumber: prepaidEntryId, date: now.slice(0, 10),
+            description: `عربون استلام صيانة MT-${String(id).padStart(4, '0')} — ${args.customerName || 'عميل نقدي'}`,
+            sourceType: 'maintenance_ticket', sourceId: id, lines: pLines,
+            createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+          assertTreasuryNotNegative(state.journal, journal, state.treasuries)
+        }
         const ticket: MaintenanceTicket = {
           id,
           ticketNumber: `MT-${String(id).padStart(4, '0')}`,
@@ -7443,8 +7569,12 @@ export const useDataStore = create<DataState>()(
           customerName: args.customerName.trim(),
           customerPhone: args.customerPhone.trim(),
           deviceName: args.deviceName.trim(),
+          deviceSerial: args.deviceSerial?.trim() || undefined,
+          deviceCondition: args.deviceCondition?.trim() || undefined,
           issue: args.issue.trim(),
           estimateMinor: args.estimateMinor,
+          prepaidMinor: prepaid > 0 ? prepaid : undefined,
+          prepaidEntryId,
           promisedAt: args.promisedAt || undefined,
           status: 'received',
           statusHistory: [{ status: 'received', at: now }],
@@ -7455,7 +7585,7 @@ export const useDataStore = create<DataState>()(
           deliveredAt: null,
           notes: args.notes.trim(),
         }
-        set({ tickets: [...state.tickets, ticket] })
+        set({ tickets: [...state.tickets, ticket], journal })
         return ticket
       },
       setTicketStatus: (ticketId, status) => {
@@ -7466,12 +7596,25 @@ export const useDataStore = create<DataState>()(
         if (!TICKET_TRANSITIONS[ticket.status].includes(status)) {
           throw new Error(`لا يمكن الانتقال من «${ticket.status}» إلى «${status}»`)
         }
+        const now = new Date().toISOString()
+        let journal = state.journal
+        // إلغاء تذكرة عليها عربون: رده تلقائياً من الخزينة (2109 مدين / 1101 دائن)
+        if (status === 'cancelled' && (ticket.prepaidMinor ?? 0) > 0) {
+          const entryId = nextId(journal)
+          journal = [...journal, {
+            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+            description: `إلغاء تذكرة صيانة ${ticket.ticketNumber} — رد العربون`,
+            sourceType: 'maintenance_ticket', sourceId: ticket.id,
+            lines: buildTicketCancelEntry(ticket.prepaidMinor ?? 0, ticket.ticketNumber),
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+        }
         const updated: MaintenanceTicket = {
           ...ticket,
           status,
-          statusHistory: [...ticket.statusHistory, { status, at: new Date().toISOString() }],
+          statusHistory: [...ticket.statusHistory, { status, at: now }],
         }
-        set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)) })
+        set({ tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)), journal })
         return updated
       },
       deliverTicket: (ticketId, input) => {
@@ -7499,14 +7642,21 @@ export const useDataStore = create<DataState>()(
         const errors = validateDelivery(delivery)
         if (errors.length) throw new Error(errors.join(' — '))
         const totals = computeTicketTotals(delivery)
-        if (totals.creditMinor > 0 && ticket.customerId == null) {
+        // الآجل الحقيقي = الإجمالي − العربون − المحصل الآن (العربون المدفوع سلفاً ليس ديناً)
+        const ticketPrepaid = ticket.prepaidMinor ?? 0
+        if (ticketPrepaid > totals.grandMinor) {
+          throw new Error(`العربون المقبوض (${ticketPrepaid}) أكبر من إجمالي التذكرة — رد الفارق للعميل بسند صرف أولاً`)
+        }
+        const realCredit = Math.max(0, totals.grandMinor - ticketPrepaid - Math.max(0, totals.paidMinor - ticketPrepaid))
+        if (realCredit > 0 && ticket.customerId == null) {
           throw new Error('يوجد مبلغ آجل غير محصَّل — التحصيل الجزئي يتطلب عميلاً مسجلاً على التذكرة')
         }
         // حد الائتمان يسري على الخدمات أيضاً — الآجل هنا دين 1104 كالبيع تماماً
-        guardCreditLimit(get(), ticket.customerId, totals.creditMinor, input.creditLimitOverrideBy)
+        guardCreditLimit(get(), ticket.customerId, realCredit, input.creditLimitOverrideBy)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
-        const entryLines = buildTicketDeliveryEntry(totals, input.payment, ticket.ticketNumber, input.treasury ?? '1101')
+        // تصفية عربون الاستلام إن وُجد (2109 مدين) — التحصيل النقدي الآن = المدفوع − العربون
+        const entryLines = buildTicketDeliveryEntry(totals, input.payment, ticket.ticketNumber, input.treasury ?? '1101', ticket.prepaidMinor ?? 0)
 
         const entry: JournalEntry = {
           id: entryId,
@@ -7915,6 +8065,7 @@ export const useDataStore = create<DataState>()(
           id, orderNumber,
           customerId: args.customerId, customerName: args.customerName.trim() || 'عميل نقدي', phone: args.phone.trim(),
           receivedAt: now, promisedAt: args.promisedAt, status: 'received',
+          rackNumber: args.rackNumber?.trim() || undefined,
           lines, prepaidMinor: args.prepaidMinor,
           prepaidEntryId, deliverEntryId: null, cancelEntryId: null,
           totalMinor: laundryTotal(lines), grandMinor: 0, taxMinor: 0,
@@ -7923,6 +8074,13 @@ export const useDataStore = create<DataState>()(
         }
         set({ laundryOrders: [...state.laundryOrders, order], journal })
         return order
+      },
+      setLaundryRack: (orderId, rackNumber) => {
+        const state = get()
+        const order = state.laundryOrders.find((o) => o.id === orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        if (order.status === 'delivered' || order.status === 'cancelled') throw new Error('الأمر مغلق — لا تعديل للرف')
+        set({ laundryOrders: state.laundryOrders.map((o) => (o.id === orderId ? { ...o, rackNumber: rackNumber.trim() || undefined } : o)) })
       },
 
       setLaundryStatus: (orderId, status) => {
@@ -8649,6 +8807,7 @@ export const useDataStore = create<DataState>()(
           }),
           maintenanceServices: s.maintenanceServices ?? [],
           walletOps: s.walletOps ?? [],
+          loyaltyRedemptions: s.loyaltyRedemptions ?? [],
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],
           serials: s.serials ?? [],

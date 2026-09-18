@@ -96,6 +96,12 @@ export interface Item {
    * تغيير النسبة العامة لاحقاً لا يمس الفواتير القديمة (كل فاتورة تحفظ نسبتها وقت الإصدار)
    */
   vatOverride?: number | null
+  /**
+   * صنف خدمة (سد فجوة عالمية — Square/Lightspeed service items):
+   * لا يتتبع مخزوناً: البيع لا يفحص رصيداً ولا يخصمه ولا يولد قيد تكلفة —
+   * أساس أنشطة الصالونات والجيم وأي بيع خدمات من الكاشير مباشرة.
+   */
+  isService?: boolean
   isActive: boolean
 }
 
@@ -141,6 +147,10 @@ export function validateItem(draft: ItemDraft, existing: Item[], editingId?: num
     errors.push('تنبيه: التكلفة أعلى من سعر البيع — بيع بخسارة')
   if (!draft.baseUnit.trim()) errors.push('الوحدة الأساسية مطلوبة')
   if (draft.trackSerial && draft.soldByWeight) errors.push('لا يجتمع السيريال مع البيع بالوزن')
+  // صنف خدمة: لا مخزون — التتبعات المخزنية بلا معنى (نمط Square service items)
+  if (draft.isService && (draft.trackSerial || draft.trackExpiry || draft.soldByWeight)) {
+    errors.push('صنف الخدمة بلا مخزون — لا صلاحية ولا سيريال ولا وزن')
+  }
   // تفرد الباركود عبر كل الأصناف (بما فيها باركودات الوحدات)
   const allCodes = new Set<string>()
   for (const it of existing) {

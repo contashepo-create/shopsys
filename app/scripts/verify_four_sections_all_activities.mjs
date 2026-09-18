@@ -34,7 +34,7 @@ const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
 const { supplierStatement, statementBalance } = await import(join(root, 'src/core/statements.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 18, `المتوقع 18 نشاطاً — الموجود ${ACTIVITIES.length}`)
+assert.equal(ACTIVITIES.length, 20, `المتوقع 20 نشاطاً — الموجود ${ACTIVITIES.length}`)
 
 let pass = 0
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
@@ -104,5 +104,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✓ ${nameAr} (${activityId}): شراء→بيع→مرتجع بيع→مرتجع شراء — 1103 مطابق، ${st().journal.length} قيود متوازنة، كشف المورد = 2101`)
 }
 
-assert.equal(pass, 18)
+assert.equal(pass, 20)
 console.log(`\n✅ verify_four_sections_all_activities: الدورة الرباعية سليمة على الأنشطة الـ${pass} كلها`)
