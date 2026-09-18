@@ -19,6 +19,9 @@ import { useAppStore } from '../../stores/app.store.ts'
 
 type FinReportId = 'trial_balance' | 'income' | 'balance_sheet' | 'gl' | 'cash_flow' | 'vat'
 
+/** تسميات أنشطة التدفق النقدي (IAS 7) */
+const CF_ACTIVITY_LABELS = { operating: 'تشغيلي', investing: 'استثماري', financing: 'تمويلي' } as const
+
 const REPORTS: { id: FinReportId; nameAr: string; icon: string }[] = [
   { id: 'trial_balance', nameAr: 'ميزان المراجعة', icon: '⚖️' },
   { id: 'income', nameAr: 'قائمة الدخل (الأرباح والخسائر)', icon: '📈' },
@@ -77,12 +80,18 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
     if (inc) csv = toCsv(['البند', 'المبلغ'], [
       ...inc.revenues.map((r) => [`إيراد — ${r.nameAr}`, fmt(r.amountMinor)]),
       ['إجمالي الإيرادات', fmt(inc.totalRevenueMinor)],
-      ...inc.expenses.map((r) => [`مصروف — ${r.nameAr}`, fmt(r.amountMinor)]),
-      ['إجمالي المصروفات', fmt(inc.totalExpenseMinor)],
+      ...inc.costOfSales.map((r) => [`تكلفة مباشرة — ${r.nameAr}`, fmt(r.amountMinor)]),
+      ['إجمالي التكاليف المباشرة', fmt(inc.totalCostOfSalesMinor)],
+      ['مجمل الربح', fmt(inc.grossProfitMinor)],
+      ...inc.operatingExpenses.map((r) => [`مصروف تشغيلي — ${r.nameAr}`, fmt(r.amountMinor)]),
+      ['إجمالي المصروفات التشغيلية', fmt(inc.totalOperatingExpenseMinor)],
       [inc.netProfitMinor >= 0 ? 'صافي الربح' : 'صافي الخسارة', fmt(Math.abs(inc.netProfitMinor))],
     ])
     if (bs) csv = toCsv(['البند', 'المبلغ'], [
-      ...bs.assets.map((r) => [`أصول — ${r.nameAr}`, fmt(r.amountMinor)]),
+      ...bs.currentAssets.map((r) => [`أصول متداولة — ${r.nameAr}`, fmt(r.amountMinor)]),
+      ['إجمالي الأصول المتداولة', fmt(bs.totalCurrentAssetsMinor)],
+      ...bs.nonCurrentAssets.map((r) => [`أصول غير متداولة — ${r.nameAr}`, fmt(r.amountMinor)]),
+      ['إجمالي الأصول غير المتداولة', fmt(bs.totalNonCurrentAssetsMinor)],
       ['إجمالي الأصول', fmt(bs.totalAssetsMinor)],
       ...bs.liabilities.map((r) => [`التزامات — ${r.nameAr}`, fmt(r.amountMinor)]),
       ...bs.equity.map((r) => [`حقوق ملكية — ${r.nameAr}`, fmt(r.amountMinor)]),
@@ -96,10 +105,13 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
     ])
     if (cf) csv = toCsv(['البند', 'المبلغ'], [
       ['رصيد النقدية أول الفترة', fmt(cf.openingCashMinor)],
-      ...cf.inflows.map((r) => [`داخل — ${r.label}`, fmt(r.amountMinor)]),
+      ...cf.inflows.map((r) => [`داخل (${CF_ACTIVITY_LABELS[r.activity]}) — ${r.label}`, fmt(r.amountMinor)]),
       ['إجمالي المقبوضات', fmt(cf.totalInMinor)],
-      ...cf.outflows.map((r) => [`خارج — ${r.label}`, fmt(r.amountMinor)]),
+      ...cf.outflows.map((r) => [`خارج (${CF_ACTIVITY_LABELS[r.activity]}) — ${r.label}`, fmt(r.amountMinor)]),
       ['إجمالي المدفوعات', fmt(cf.totalOutMinor)],
+      ['صافي التدفق التشغيلي', fmt(cf.operatingNetMinor)],
+      ['صافي التدفق الاستثماري', fmt(cf.investingNetMinor)],
+      ['صافي التدفق التمويلي', fmt(cf.financingNetMinor)],
       ['صافي التغير', fmt(cf.netChangeMinor)],
       ['رصيد النقدية آخر الفترة', fmt(cf.closingCashMinor)],
     ])
@@ -118,10 +130,10 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
     const num = (m: number) => `<td class="num">${fmt(m)}</td>`
     let body = ''
     if (tb) body = `<table><tr><th>الكود</th><th>الحساب</th><th>مدين</th><th>دائن</th></tr>${tb.rows.map((r) => `<tr><td dir="ltr">${r.code}</td><td>${r.nameAr}</td>${num(r.debitMinor)}${num(r.creditMinor)}</tr>`).join('')}<tr class="total"><td></td><td>الإجمالي ${tb.balanced ? '✓ متوازن' : '⚠ غير متوازن'}</td>${num(tb.totalDebitMinor)}${num(tb.totalCreditMinor)}</tr></table>`
-    if (inc) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr class="sec"><td colspan="2">الإيرادات</td></tr>${inc.revenues.map((r) => `<tr><td>${r.nameAr}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي الإيرادات</td>${num(inc.totalRevenueMinor)}</tr><tr class="sec"><td colspan="2">المصروفات</td></tr>${inc.expenses.map((r) => `<tr><td>${r.nameAr}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المصروفات</td>${num(inc.totalExpenseMinor)}</tr><tr class="total"><td>${inc.netProfitMinor >= 0 ? 'صافي الربح' : 'صافي الخسارة'}</td>${num(Math.abs(inc.netProfitMinor))}</tr></table>`
-    if (bs) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr class="sec"><td colspan="2">الأصول</td></tr>${bs.assets.map((r) => `<tr><td>${r.nameAr}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي الأصول</td>${num(bs.totalAssetsMinor)}</tr><tr class="sec"><td colspan="2">الالتزامات وحقوق الملكية</td></tr>${[...bs.liabilities, ...bs.equity].map((r) => `<tr><td>${r.nameAr}</td>${num(r.amountMinor)}</tr>`).join('')}<tr><td>أرباح مرحلة (نتيجة النشاط)</td>${num(bs.retainedEarningsMinor)}</tr><tr class="total"><td>إجمالي الالتزامات وحقوق الملكية ${bs.balanced ? '✓' : '⚠'}</td>${num(bs.totalLiabilitiesEquityMinor)}</tr></table>`
+    if (inc) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr class="sec"><td colspan="2">الإيرادات</td></tr>${inc.revenues.map((r) => `<tr><td>${r.nameAr}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي الإيرادات</td>${num(inc.totalRevenueMinor)}</tr><tr class="sec"><td colspan="2">التكاليف المباشرة (تكلفة الإيراد)</td></tr>${inc.costOfSales.map((r) => `<tr><td>${r.nameAr}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>مجمل الربح</td>${num(inc.grossProfitMinor)}</tr><tr class="sec"><td colspan="2">المصروفات التشغيلية</td></tr>${inc.operatingExpenses.map((r) => `<tr><td>${r.nameAr}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المصروفات التشغيلية</td>${num(inc.totalOperatingExpenseMinor)}</tr><tr class="total"><td>${inc.netProfitMinor >= 0 ? 'صافي الربح' : 'صافي الخسارة'}</td>${num(Math.abs(inc.netProfitMinor))}</tr></table>`
+    if (bs) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr class="sec"><td colspan="2">الأصول المتداولة</td></tr>${bs.currentAssets.map((r) => `<tr><td>${r.nameAr}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي الأصول المتداولة</td>${num(bs.totalCurrentAssetsMinor)}</tr>${bs.nonCurrentAssets.length ? `<tr class="sec"><td colspan="2">الأصول غير المتداولة</td></tr>${bs.nonCurrentAssets.map((r) => `<tr><td>${r.nameAr}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي الأصول غير المتداولة</td>${num(bs.totalNonCurrentAssetsMinor)}</tr>` : ''}<tr class="total"><td>إجمالي الأصول</td>${num(bs.totalAssetsMinor)}</tr><tr class="sec"><td colspan="2">الالتزامات وحقوق الملكية</td></tr>${[...bs.liabilities, ...bs.equity].map((r) => `<tr><td>${r.nameAr}</td>${num(r.amountMinor)}</tr>`).join('')}<tr><td>أرباح مرحلة (نتيجة النشاط)</td>${num(bs.retainedEarningsMinor)}</tr><tr class="total"><td>إجمالي الالتزامات وحقوق الملكية ${bs.balanced ? '✓' : '⚠'}</td>${num(bs.totalLiabilitiesEquityMinor)}</tr></table>`
     if (gl) body = `<table><tr><th>التاريخ</th><th>قيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr><tr class="sec"><td colspan="5">رصيد أول الفترة — ${gl.accountName}</td>${num(gl.openingMinor)}</tr>${gl.rows.map((r) => `<tr><td dir="ltr">${r.date.slice(0, 10)}</td><td dir="ltr">#${r.entryNumber}</td><td>${r.description}</td>${num(r.debitMinor)}${num(r.creditMinor)}${num(r.balanceMinor)}</tr>`).join('')}<tr class="total"><td colspan="5">رصيد آخر الفترة</td>${num(gl.closingMinor)}</tr></table>`
-    if (cf) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr><td>رصيد النقدية أول الفترة</td>${num(cf.openingCashMinor)}</tr><tr class="sec"><td colspan="2">المقبوضات</td></tr>${cf.inflows.map((r) => `<tr><td>${r.label}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المقبوضات</td>${num(cf.totalInMinor)}</tr><tr class="sec"><td colspan="2">المدفوعات</td></tr>${cf.outflows.map((r) => `<tr><td>${r.label}</td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المدفوعات</td>${num(cf.totalOutMinor)}</tr><tr class="total"><td>رصيد النقدية آخر الفترة</td>${num(cf.closingCashMinor)}</tr></table>`
+    if (cf) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr><td>رصيد النقدية أول الفترة</td>${num(cf.openingCashMinor)}</tr><tr class="sec"><td colspan="2">المقبوضات</td></tr>${cf.inflows.map((r) => `<tr><td>${r.label} <small>(${CF_ACTIVITY_LABELS[r.activity]})</small></td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المقبوضات</td>${num(cf.totalInMinor)}</tr><tr class="sec"><td colspan="2">المدفوعات</td></tr>${cf.outflows.map((r) => `<tr><td>${r.label} <small>(${CF_ACTIVITY_LABELS[r.activity]})</small></td>${num(r.amountMinor)}</tr>`).join('')}<tr class="total"><td>إجمالي المدفوعات</td>${num(cf.totalOutMinor)}</tr><tr class="sec"><td colspan="2">صافي التدفقات حسب النشاط (IAS 7)</td></tr><tr><td>التشغيلي</td>${num(cf.operatingNetMinor)}</tr><tr><td>الاستثماري</td>${num(cf.investingNetMinor)}</tr><tr><td>التمويلي</td>${num(cf.financingNetMinor)}</tr><tr class="total"><td>رصيد النقدية آخر الفترة</td>${num(cf.closingCashMinor)}</tr></table>`
     if (vat) body = `<table><tr><th>البند</th><th>المبلغ</th></tr><tr><td>ضريبة المخرجات (مبيعات ومرتجعاتها)</td>${num(vat.outputVatMinor)}</tr><tr><td>ضريبة المدخلات (مشتريات ومرتجعاتها)</td>${num(vat.inputVatMinor)}</tr><tr class="total"><td>${vat.netDueMinor >= 0 ? 'صافي إقرار الفترة (مستحق للمصلحة)' : 'رصيد ضريبي دائن لك'}</td>${num(Math.abs(vat.netDueMinor))}</tr><tr><td>المسدد للمصلحة خلال الفترة</td>${num(vat.settledMinor)}</tr><tr class="total"><td>${vat.remainingMinor >= 0 ? 'المتبقي بعد السداد' : 'رصيد دائن بعد السداد'}</td>${num(Math.abs(vat.remainingMinor))}</tr></table>`
     // الغلاف الموحّد بإعدادات طباعة التقارير (طلب المالك: إعدادات لكل مطبوعة لا الفواتير فقط)
     const { reportPrint, receipt } = useAppStore.getState()
@@ -193,19 +205,35 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
 
       {/* ─── قائمة الدخل ─── */}
       {inc && (
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="rounded-xl border border-emerald-500/20 overflow-hidden">
-            <div className="px-4 py-2 bg-emerald-500/5 font-black text-[12px] text-emerald-600">الإيرادات</div>
-            {inc.revenues.map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
-            <div className={`flex justify-between px-4 py-2 ${rowB} bg-emerald-500/5 font-black text-[13px]`}><span>إجمالي الإيرادات</span><span className="tabular-nums">{fmt(inc.totalRevenueMinor)}</span></div>
+        <div className="space-y-4">
+          <div className="grid md:grid-cols-3 gap-4">
+            <div className="rounded-xl border border-emerald-500/20 overflow-hidden">
+              <div className="px-4 py-2 bg-emerald-500/5 font-black text-[12px] text-emerald-600">الإيرادات</div>
+              {inc.revenues.map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
+              <div className={`flex justify-between px-4 py-2 ${rowB} bg-emerald-500/5 font-black text-[13px]`}><span>إجمالي الإيرادات</span><span className="tabular-nums">{fmt(inc.totalRevenueMinor)}</span></div>
+            </div>
+            <div className="rounded-xl border border-amber-500/20 overflow-hidden">
+              <div className="px-4 py-2 bg-amber-500/5 font-black text-[12px] text-amber-600">التكاليف المباشرة (تكلفة الإيراد)</div>
+              {inc.costOfSales.length === 0 && <div className="px-4 py-3 text-center text-slate-400 text-[12px]">لا تكاليف مباشرة</div>}
+              {inc.costOfSales.map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
+              <div className={`flex justify-between px-4 py-2 ${rowB} bg-amber-500/5 font-black text-[13px]`}><span>إجمالي التكاليف المباشرة</span><span className="tabular-nums">{fmt(inc.totalCostOfSalesMinor)}</span></div>
+            </div>
+            <div className="rounded-xl border border-rose-500/20 overflow-hidden">
+              <div className="px-4 py-2 bg-rose-500/5 font-black text-[12px] text-rose-600">المصروفات التشغيلية</div>
+              {inc.operatingExpenses.length === 0 && <div className="px-4 py-3 text-center text-slate-400 text-[12px]">لا مصروفات تشغيلية</div>}
+              {inc.operatingExpenses.map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
+              <div className={`flex justify-between px-4 py-2 ${rowB} bg-rose-500/5 font-black text-[13px]`}><span>إجمالي المصروفات التشغيلية</span><span className="tabular-nums">{fmt(inc.totalOperatingExpenseMinor)}</span></div>
+            </div>
           </div>
-          <div className="rounded-xl border border-rose-500/20 overflow-hidden">
-            <div className="px-4 py-2 bg-rose-500/5 font-black text-[12px] text-rose-600">المصروفات</div>
-            {inc.expenses.map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
-            <div className={`flex justify-between px-4 py-2 ${rowB} bg-rose-500/5 font-black text-[13px]`}><span>إجمالي المصروفات</span><span className="tabular-nums">{fmt(inc.totalExpenseMinor)}</span></div>
-          </div>
-          <div className={`md:col-span-2 rounded-xl p-4 text-center font-black text-lg ${inc.netProfitMinor >= 0 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}`}>
-            {inc.netProfitMinor >= 0 ? '📈 صافي الربح' : '📉 صافي الخسارة'}: {fmt(Math.abs(inc.netProfitMinor))} {cur.symbol}
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className={`rounded-xl p-4 text-center font-black text-lg ${inc.grossProfitMinor >= 0 ? 'bg-sky-500/10 text-sky-600' : 'bg-rose-500/10 text-rose-600'}`}>
+              مجمل الربح: {fmt(Math.abs(inc.grossProfitMinor))} {cur.symbol}{inc.grossProfitMinor < 0 ? ' (خسارة)' : ''}
+              {inc.totalRevenueMinor > 0 && <span className="block text-[11px] font-bold text-slate-400 mt-1">هامش مجمل {(Math.round((inc.grossProfitMinor / inc.totalRevenueMinor) * 1000) / 10).toLocaleString('ar-EG')}٪</span>}
+            </div>
+            <div className={`rounded-xl p-4 text-center font-black text-lg ${inc.netProfitMinor >= 0 ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}`}>
+              {inc.netProfitMinor >= 0 ? '📈 صافي الربح' : '📉 صافي الخسارة'}: {fmt(Math.abs(inc.netProfitMinor))} {cur.symbol}
+              {inc.totalRevenueMinor > 0 && <span className="block text-[11px] font-bold text-slate-400 mt-1">هامش صافٍ {(Math.round((inc.netProfitMinor / inc.totalRevenueMinor) * 1000) / 10).toLocaleString('ar-EG')}٪</span>}
+            </div>
           </div>
         </div>
       )}
@@ -215,7 +243,16 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
         <div className="grid md:grid-cols-2 gap-4">
           <div className="rounded-xl border border-sky-500/20 overflow-hidden">
             <div className="px-4 py-2 bg-sky-500/5 font-black text-[12px] text-sky-600">الأصول (حتى {p.to})</div>
-            {bs.assets.map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
+            <div className="px-4 py-1.5 text-[10px] font-black text-slate-400 bg-slate-50 dark:bg-slate-800/40">الأصول المتداولة</div>
+            {bs.currentAssets.map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
+            <div className={`flex justify-between px-4 py-1.5 ${rowB} text-[11.5px] font-bold text-slate-500`}><span>إجمالي المتداولة</span><span className="tabular-nums">{fmt(bs.totalCurrentAssetsMinor)}</span></div>
+            {bs.nonCurrentAssets.length > 0 && (
+              <>
+                <div className="px-4 py-1.5 text-[10px] font-black text-slate-400 bg-slate-50 dark:bg-slate-800/40">الأصول غير المتداولة</div>
+                {bs.nonCurrentAssets.map((r) => <div key={r.code} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.nameAr}</span><b className="tabular-nums">{fmt(r.amountMinor)}</b></div>)}
+                <div className={`flex justify-between px-4 py-1.5 ${rowB} text-[11.5px] font-bold text-slate-500`}><span>إجمالي غير المتداولة</span><span className="tabular-nums">{fmt(bs.totalNonCurrentAssetsMinor)}</span></div>
+              </>
+            )}
             <div className={`flex justify-between px-4 py-2 ${rowB} bg-sky-500/5 font-black text-[13px]`}><span>إجمالي الأصول</span><span className="tabular-nums">{fmt(bs.totalAssetsMinor)}</span></div>
           </div>
           <div className="rounded-xl border border-violet-500/20 overflow-hidden">
@@ -263,16 +300,22 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
             <div className="p-3 rounded-xl bg-rose-500/5"><div className="text-[10px] text-slate-400">إجمالي المدفوعات</div><div className="font-black text-rose-600 tabular-nums">{fmt(cf.totalOutMinor)}</div></div>
             <div className="p-3 rounded-xl bg-sky-500/5"><div className="text-[10px] text-slate-400">نقدية آخر الفترة</div><div className="font-black text-sky-600 tabular-nums">{fmt(cf.closingCashMinor)}</div></div>
           </div>
+          {/* صافي التدفقات حسب النشاط — IAS 7 (المقارنة العالمية: QuickBooks/Xero) */}
+          <div className="grid grid-cols-3 gap-3 text-center">
+            <div className="p-3 rounded-xl border border-emerald-500/15 bg-emerald-500/5"><div className="text-[10px] text-slate-400 font-bold">صافي التشغيلي</div><div className={`font-black tabular-nums ${cf.operatingNetMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(cf.operatingNetMinor)}</div></div>
+            <div className="p-3 rounded-xl border border-violet-500/15 bg-violet-500/5"><div className="text-[10px] text-slate-400 font-bold">صافي الاستثماري</div><div className={`font-black tabular-nums ${cf.investingNetMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(cf.investingNetMinor)}</div></div>
+            <div className="p-3 rounded-xl border border-amber-500/15 bg-amber-500/5"><div className="text-[10px] text-slate-400 font-bold">صافي التمويلي</div><div className={`font-black tabular-nums ${cf.financingNetMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(cf.financingNetMinor)}</div></div>
+          </div>
           <div className="grid md:grid-cols-2 gap-4">
             <div className="rounded-xl border border-emerald-500/20 overflow-hidden">
               <div className="px-4 py-2 bg-emerald-500/5 font-black text-[12px] text-emerald-600">تدفقات داخلة</div>
               {cf.inflows.length === 0 && <div className="p-4 text-center text-slate-400 text-[12px]">لا مقبوضات</div>}
-              {cf.inflows.map((r, i) => <div key={i} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.label}</span><b className="text-emerald-600 tabular-nums">{fmt(r.amountMinor)}</b></div>)}
+              {cf.inflows.map((r, i) => <div key={i} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.label} <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 font-bold">{CF_ACTIVITY_LABELS[r.activity]}</span></span><b className="text-emerald-600 tabular-nums">{fmt(r.amountMinor)}</b></div>)}
             </div>
             <div className="rounded-xl border border-rose-500/20 overflow-hidden">
               <div className="px-4 py-2 bg-rose-500/5 font-black text-[12px] text-rose-600">تدفقات خارجة</div>
               {cf.outflows.length === 0 && <div className="p-4 text-center text-slate-400 text-[12px]">لا مدفوعات</div>}
-              {cf.outflows.map((r, i) => <div key={i} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.label}</span><b className="text-rose-600 tabular-nums">{fmt(r.amountMinor)}</b></div>)}
+              {cf.outflows.map((r, i) => <div key={i} className={`flex justify-between px-4 py-2 ${rowB} text-[12.5px]`}><span>{r.label} <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 font-bold">{CF_ACTIVITY_LABELS[r.activity]}</span></span><b className="text-rose-600 tabular-nums">{fmt(r.amountMinor)}</b></div>)}
             </div>
           </div>
         </div>
