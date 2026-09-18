@@ -50,7 +50,7 @@ import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBa
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
 import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
 import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
-import { customerStatement, supplierStatement, statementBalance, customerUnitDocs } from '../core/statements.ts'
+import { customerStatement, supplierStatement, statementBalance, customerUnitDocs, type StatementRow } from '../core/statements.ts'
 import { buildYearClosingLines, validateYearClose, dateInClosedYear, type FiscalYear } from '../core/fiscal.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
@@ -1408,6 +1408,10 @@ interface DataState {
   closeFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { entryId: number; netProfitMinor: number }
   /** رصيد العميل الموحّد من كل الأنشطة — مصدر حقيقة واحد لكل الشاشات */
   getCustomerBalance: (customerId: number) => number
+  /** صفوف كشف العميل كاملة — نفس تجميعة getCustomerBalance (مصدر واحد للأعمار والكشوف) */
+  getCustomerStatementRows: (customerId: number) => StatementRow[]
+  /** صفوف كشف المورد كاملة */
+  getSupplierStatementRows: (supplierId: number) => StatementRow[]
   /** رصيد المورد الموحّد (افتتاحي + مشتريات − مرتجعات − سندات − شيكات + تسويات) — نفس مصدر كل الشاشات */
   getSupplierBalance: (supplierId: number) => number
   /** مستحق الموظف من زيادات مصاريف العهد (2107) غير المصروف بعد */
@@ -4273,15 +4277,79 @@ export const useDataStore = create<DataState>()(
         set((s) => ({ warehouses: s.warehouses.filter((w) => w.id !== id || w.isMain) }))
       },
 
-      addCustomer: (c) => set((s) => ({ customers: [...s.customers, { ...c, id: nextId(s.customers) }] })),
-      updateCustomer: (id, patch) =>
-        set((s) => ({ customers: s.customers.map((c) => (c.id === id ? { ...c, ...patch } : c)) })),
-      removeCustomer: (id) => set((s) => ({ customers: s.customers.filter((c) => c.id !== id) })),
+      addCustomer: (c) => {
+        // مراجعة الأطراف: اسم فارغ ومكرر كانا يمران من المستودع (بوت التليجرام وغيره لا يمر بالشاشة)
+        const nameAr = c.nameAr.trim()
+        if (!nameAr) throw new Error('اسم العميل مطلوب')
+        if (get().customers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
+        set((s) => ({ customers: [...s.customers, { ...c, nameAr, id: nextId(s.customers) }] }))
+      },
+      updateCustomer: (id, patch) => {
+        if (patch.nameAr !== undefined) {
+          const nameAr = patch.nameAr.trim()
+          if (!nameAr) throw new Error('اسم العميل مطلوب')
+          if (get().customers.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل آخر بنفس الاسم «${nameAr}»`)
+          patch = { ...patch, nameAr }
+        }
+        set((s) => ({ customers: s.customers.map((c) => (c.id === id ? { ...c, ...patch } : c)) }))
+      },
+      removeCustomer: (id) => {
+        // مراجعة الأطراف (فجوة مؤكدة): كان الحذف يمر لعميل عليه رصيد ومعاملات —
+        // يترك 1104 يتيمة في الدفتر ويضيع كشف الحساب. العرف العالمي: لا حذف مع سجل.
+        const s = get()
+        const bal = s.getCustomerBalance(id)
+        if (bal !== 0) throw new Error(`لا يمكن حذف العميل وعليه/له رصيد قائم (${bal > 0 ? 'عليه' : 'له'} ${Math.abs(bal)}) — سوِّ الرصيد أولاً`)
+        const referenced =
+          s.sales.some((x) => x.customerId === id) ||
+          s.vouchers.some((v) => v.partyKind === 'customer' && v.partyId === id) ||
+          s.cheques.some((c) => c.direction === 'incoming' && c.partyId === id) ||
+          s.installmentPlans.some((p) => p.customerId === id) ||
+          s.clientSettlements.some((x) => x.customerId === id) ||
+          s.settlements.some((x) => x.section === 'customer' && Number(x.refId) === id) ||
+          (s.openingBalances[`customer:${id}`] ?? 0) !== 0 ||
+          s.clinicPatients.some((p) => p.linkedCustomerId === id) ||
+          s.labPatients.some((p) => p.linkedCustomerId === id) ||
+          s.projects.some((p) => p.clientId === id) ||
+          s.trips.some((t) => t.customerId === id) ||
+          s.tickets.some((t) => t.customerId === id) ||
+          s.rentalContracts.some((r) => r.customerId === id) ||
+          s.walletOps.some((w) => w.customerId === id) ||
+          s.laundryOrders.some((o) => o.customerId === id) ||
+          s.cars.some((c) => c.buyerCustomerId === id) ||
+          s.consignmentCars.some((c) => c.buyerCustomerId === id)
+        if (referenced) throw new Error('لا يمكن حذف عميل له معاملات مسجلة — يبقى للسجل والتدقيق (فواتيره وكشفه تاريخ لا يُمحى)')
+        set((st2) => ({ customers: st2.customers.filter((c) => c.id !== id) }))
+      },
 
-      addSupplier: (sup) => set((s) => ({ suppliers: [...s.suppliers, { ...sup, id: nextId(s.suppliers) }] })),
-      updateSupplier: (id, patch) =>
-        set((s) => ({ suppliers: s.suppliers.map((x) => (x.id === id ? { ...x, ...patch } : x)) })),
-      removeSupplier: (id) => set((s) => ({ suppliers: s.suppliers.filter((x) => x.id !== id) })),
+      addSupplier: (sup) => {
+        const nameAr = sup.nameAr.trim()
+        if (!nameAr) throw new Error('اسم المورد مطلوب')
+        if (get().suppliers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد مورد مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
+        set((s) => ({ suppliers: [...s.suppliers, { ...sup, nameAr, id: nextId(s.suppliers) }] }))
+      },
+      updateSupplier: (id, patch) => {
+        if (patch.nameAr !== undefined) {
+          const nameAr = patch.nameAr.trim()
+          if (!nameAr) throw new Error('اسم المورد مطلوب')
+          if (get().suppliers.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد مورد آخر بنفس الاسم «${nameAr}»`)
+          patch = { ...patch, nameAr }
+        }
+        set((s) => ({ suppliers: s.suppliers.map((x) => (x.id === id ? { ...x, ...patch } : x)) }))
+      },
+      removeSupplier: (id) => {
+        const s = get()
+        const bal = s.getSupplierBalance(id)
+        if (bal !== 0) throw new Error(`لا يمكن حذف المورد وله/لنا رصيد قائم (${bal > 0 ? 'مستحق له' : 'لنا عنده'} ${Math.abs(bal)}) — سوِّ الرصيد أولاً`)
+        const referenced =
+          s.purchases.some((x) => x.supplierId === id) ||
+          s.vouchers.some((v) => v.partyKind === 'supplier' && v.partyId === id) ||
+          s.cheques.some((c) => c.direction === 'outgoing' && c.partyId === id) ||
+          s.settlements.some((x) => x.section === 'supplier' && Number(x.refId) === id) ||
+          (s.openingBalances[`supplier:${id}`] ?? 0) !== 0 ||
+          s.assets.some((a) => a.supplierId === id)
+        if (referenced) throw new Error('لا يمكن حذف مورد له معاملات مسجلة — يبقى للسجل والتدقيق')
+        set((st2) => ({ suppliers: st2.suppliers.filter((x) => x.id !== id) }))
+      },
 
       addEmployee: (e) => set((s) => ({ employees: [...s.employees, { ...e, id: nextId(s.employees) }] })),
       updateEmployee: (id, patch) =>
@@ -4516,9 +4584,11 @@ export const useDataStore = create<DataState>()(
         return { entryId, netProfitMinor: result.netProfitMinor }
       },
 
-      getCustomerBalance: (customerId) => {
+      getCustomerBalance: (customerId) => statementBalance(get().getCustomerStatementRows(customerId)),
+
+      getCustomerStatementRows: (customerId) => {
         const state = get()
-        return statementBalance(customerStatement({
+        return customerStatement({
           customerId,
           openingMinor: state.openingBalances[`customer:${customerId}`] ?? 0,
           adjustments: state.settlements.filter((st) => st.section === 'customer' && Number(st.refId) === customerId).map((st) => ({
@@ -4544,12 +4614,14 @@ export const useDataStore = create<DataState>()(
             laundryOrders: state.laundryOrders,
             cars: state.cars, consignmentCars: state.consignmentCars,
           }),
-        }))
+        })
       },
 
-      getSupplierBalance: (supplierId) => {
+      getSupplierBalance: (supplierId) => statementBalance(get().getSupplierStatementRows(supplierId)),
+
+      getSupplierStatementRows: (supplierId) => {
         const state = get()
-        return statementBalance(supplierStatement({
+        return supplierStatement({
           supplierId,
           openingMinor: state.openingBalances[`supplier:${supplierId}`] ?? 0,
           purchases: state.purchases, purchaseReturns: state.purchaseReturns, allPurchases: state.purchases,
@@ -4559,7 +4631,7 @@ export const useDataStore = create<DataState>()(
             debitMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
             creditMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
           })),
-        }))
+        })
       },
 
       getEmployeeExcessDue: (employeeId) => {

@@ -14,6 +14,7 @@ import {
   stockAlerts, inventoryValue, periodPresets, type Period,
 } from '../../core/reports.ts'
 import { expiryAlerts } from '../../core/batches.ts'
+import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
 import { expensesSummary, expenseDetails } from '../../core/expenseReports.ts'
 import { accountName } from './accountNames.ts'
 import { inputCls } from '../components/ui.tsx'
@@ -77,6 +78,18 @@ export function ReportsPage() {
       .filter((r) => r.balanceMinor !== 0)
       .sort((a, b) => b.balanceMinor - a.balanceMinor),
     [suppliers, getSupplierBalance, journalLen],
+  )
+  // أعمار الديون (المقارنة العالمية: QuickBooks/Xero يقدمان A/R Aging 30/60/90 — كان غائباً)
+  const getCustomerStatementRows = useDataStore((s) => s.getCustomerStatementRows)
+  const getSupplierStatementRows = useDataStore((s) => s.getSupplierStatementRows)
+  const todayYmd = today.slice(0, 10)
+  const custAging = useMemo(
+    () => custRows.map((r) => ({ customerId: r.customerId, aging: agingFromStatement(getCustomerStatementRows(r.customerId), todayYmd) })).filter((r) => r.aging.totalMinor > 0),
+    [custRows, getCustomerStatementRows, todayYmd],
+  )
+  const suppAging = useMemo(
+    () => suppRows.map((r) => ({ supplierId: r.supplierId, aging: agingFromStatement(supplierRowsForAging(getSupplierStatementRows(r.supplierId)), todayYmd) })).filter((r) => r.aging.totalMinor > 0),
+    [suppRows, getSupplierStatementRows, todayYmd],
   )
   const alerts = useMemo(() => stockAlerts(items), [items])
   const invValue = useMemo(() => inventoryValue(items), [items])
@@ -322,6 +335,50 @@ export function ReportsPage() {
             )}
           </div>
         </div>
+
+        {/* أعمار الديون 30/60/90 — المقارنة العالمية (QuickBooks A/R Aging Summary) */}
+        {(custAging.length > 0 || suppAging.length > 0) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {[
+              { title: 'أعمار ديون العملاء (المتبقي غير المسدد)', rows: custAging.map((r) => ({ key: r.customerId, name: custName(r.customerId), a: r.aging })) },
+              { title: 'أعمار مستحقات الموردين', rows: suppAging.map((r) => ({ key: r.supplierId, name: suppName(r.supplierId), a: r.aging })) },
+            ].map((sec) => (
+              <div key={sec.title} className={`${card} overflow-hidden`}>
+                <div className="px-4 py-3 text-[12px] font-extrabold text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800">
+                  ⏳ {sec.title}
+                </div>
+                {sec.rows.length === 0 ? (
+                  <div className="text-center text-slate-400 text-[12px] py-8">لا ديون قائمة ✅</div>
+                ) : (
+                  <table className="w-full text-[11.5px]">
+                    <thead>
+                      <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                        <th className="px-3 py-2 font-bold">الاسم</th>
+                        <th className="px-2 py-2 font-bold">حتى 30ي</th>
+                        <th className="px-2 py-2 font-bold">31–60</th>
+                        <th className="px-2 py-2 font-bold">61–90</th>
+                        <th className="px-2 py-2 font-bold text-rose-500">+90</th>
+                        <th className="px-2 py-2 font-bold">الإجمالي</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sec.rows.map((r) => (
+                        <tr key={r.key} className="border-b border-slate-50 dark:border-slate-800/50">
+                          <td className="px-3 py-2 font-bold text-slate-700 dark:text-slate-200">{r.name}</td>
+                          <td className="px-2 py-2">{r.a.currentMinor ? fmt(r.a.currentMinor) : '—'}</td>
+                          <td className="px-2 py-2 text-amber-600">{r.a.d31_60Minor ? fmt(r.a.d31_60Minor) : '—'}</td>
+                          <td className="px-2 py-2 text-orange-600">{r.a.d61_90Minor ? fmt(r.a.d61_90Minor) : '—'}</td>
+                          <td className="px-2 py-2 font-black text-rose-600">{r.a.over90Minor ? fmt(r.a.over90Minor) : '—'}</td>
+                          <td className="px-2 py-2 font-black">{fmt(r.a.totalMinor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         </div>
       )}
 

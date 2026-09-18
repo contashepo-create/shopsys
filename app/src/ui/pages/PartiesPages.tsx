@@ -139,9 +139,11 @@ export function CustomersPage() {
       notes: notes.trim(),
       ...ext,
     }
-    if (editing) { updateCustomer(editing.id, data); toast.show('تم تعديل العميل') }
-    else { addCustomer(data); toast.show(`تم إضافة العميل «${data.nameAr}»`) }
-    setOpen(false)
+    try {
+      if (editing) { updateCustomer(editing.id, data); toast.show('تم تعديل العميل') }
+      else { addCustomer(data); toast.show(`تم إضافة العميل «${data.nameAr}»`) }
+      setOpen(false)
+    } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
   return (
@@ -183,7 +185,7 @@ export function CustomersPage() {
                   {/* كشف حساب فوري بجانب كل عميل (طلب المالك) */}
                   <button title="كشف حساب العميل" onClick={() => navigate(`/reports/statements?kind=customer&id=${c.id}`)} className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-colors"><FileSpreadsheet size={14} /></button>
                   <button title="تعديل بيانات العميل" onClick={() => openEdit(c)} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
-                  <button title="حذف العميل" onClick={() => { removeCustomer(c.id); toast.show('تم حذف العميل') }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
+                  <button title="حذف العميل" onClick={() => { try { removeCustomer(c.id); toast.show('تم حذف العميل') } catch (e) { toast.show((e as Error).message, 'error') } }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
                 </div>
               </div>
             </div>
@@ -219,7 +221,7 @@ export function CustomersPage() {
                       <span className="flex gap-0.5 justify-end">
                         <button title="كشف حساب العميل" onClick={() => navigate(`/reports/statements?kind=customer&id=${c.id}`)} className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-colors"><FileSpreadsheet size={14} /></button>
                         <button title="تعديل" onClick={() => openEdit(c)} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
-                        <button title="حذف" onClick={() => { removeCustomer(c.id); toast.show('تم حذف العميل') }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
+                        <button title="حذف" onClick={() => { try { removeCustomer(c.id); toast.show('تم حذف العميل') } catch (e) { toast.show((e as Error).message, 'error') } }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
                       </span>
                     </td>
                   </tr>
@@ -293,9 +295,11 @@ export function SuppliersPage() {
       contactPerson: contactPerson.trim(), category, paymentTermsDays: Number(paymentTerms) || 0,
       bankName: bankName.trim(), iban: iban.trim(), active: true,
     }
-    if (editing) { updateSupplier(editing.id, data); toast.show('تم تعديل المورد') }
-    else { addSupplier(data); toast.show(`تم إضافة المورد «${data.nameAr}»`) }
-    setOpen(false)
+    try {
+      if (editing) { updateSupplier(editing.id, data); toast.show('تم تعديل المورد') }
+      else { addSupplier(data); toast.show(`تم إضافة المورد «${data.nameAr}»`) }
+      setOpen(false)
+    } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
   return (
@@ -336,7 +340,7 @@ export function SuppliersPage() {
                   {/* كشف حساب فوري بجانب كل مورد (طلب المالك) */}
                   <button title="كشف حساب المورد" onClick={() => navigate(`/reports/statements?kind=supplier&id=${s.id}`)} className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-colors"><FileSpreadsheet size={14} /></button>
                   <button title="تعديل بيانات المورد" onClick={() => { setEditing(s); setName(s.nameAr); setPhone(s.phone); setNotes(s.notes); setExt({ taxNumber: s.taxNumber, commercialReg: s.commercialReg, email: s.email, address: s.address, city: s.city, postalCode: s.postalCode, buildingNo: s.buildingNo, nationalId: s.nationalId }); setContactPerson(s.contactPerson ?? ''); setCategory(s.category ?? ''); setPaymentTerms(s.paymentTermsDays ? String(s.paymentTermsDays) : ''); setBankName(s.bankName ?? ''); setIban(s.iban ?? ''); setOpen(true) }} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
-                  <button title="حذف المورد" onClick={() => { removeSupplier(s.id); toast.show('تم حذف المورد') }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
+                  <button title="حذف المورد" onClick={() => { try { removeSupplier(s.id); toast.show('تم حذف المورد') } catch (e) { toast.show((e as Error).message, 'error') } }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
                 </div>
               </div>
             </div>
@@ -374,7 +378,7 @@ export function SuppliersPage() {
                       <span className="flex gap-0.5 justify-end">
                         <button title="كشف حساب المورد" onClick={() => navigate(`/reports/statements?kind=supplier&id=${s.id}`)} className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-600 hover:bg-cyan-500/10 transition-colors"><FileSpreadsheet size={14} /></button>
                         <button title="تعديل" onClick={() => { setEditing(s); setName(s.nameAr); setPhone(s.phone); setNotes(s.notes); setExt({ taxNumber: s.taxNumber, commercialReg: s.commercialReg, email: s.email, address: s.address, city: s.city, postalCode: s.postalCode, buildingNo: s.buildingNo, nationalId: s.nationalId }); setContactPerson(s.contactPerson ?? ''); setCategory(s.category ?? ''); setPaymentTerms(s.paymentTermsDays ? String(s.paymentTermsDays) : ''); setBankName(s.bankName ?? ''); setIban(s.iban ?? ''); setOpen(true) }} className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-colors"><Pencil size={14} /></button>
-                        <button title="حذف" onClick={() => { removeSupplier(s.id); toast.show('تم حذف المورد') }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
+                        <button title="حذف" onClick={() => { try { removeSupplier(s.id); toast.show('تم حذف المورد') } catch (e) { toast.show((e as Error).message, 'error') } }} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={14} /></button>
                       </span>
                     </td>
                   </tr>

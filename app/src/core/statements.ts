@@ -320,3 +320,57 @@ export function customerUnitDocs(args: {
   }
   return rows
 }
+
+/* ─── أعمار الديون (A/R & A/P Aging) — المقارنة العالمية ───
+ * QuickBooks/Xero/Odoo كلها تقدم Aging بشرائح 30/60/90 — كان غائباً تماماً.
+ * النهج المحاسبي المعتمد: تخصيص المدفوعات على أقدم المديونيات أولاً (FIFO)
+ * ثم توزيع المتبقي غير المسدد على شرائح عمرية بحسب تاريخ مستند المديونية.
+ */
+
+export interface AgingBuckets {
+  currentMinor: Minor // 0–30 يوماً
+  d31_60Minor: Minor
+  d61_90Minor: Minor
+  over90Minor: Minor
+  totalMinor: Minor
+}
+
+/**
+ * توزيع رصيد كشف حساب على شرائح عمرية.
+ * يعمل على صفوف الكشف نفسها (مصدر الحقيقة الوحيد) فلا يتناقض مع الرصيد أبداً:
+ * المدينات (debit) ديون بتاريخها، الدائنات (credit) سداد يُخصص FIFO على الأقدم.
+ * asOf بصيغة YYYY-MM-DD. يصلح للعملاء، وللموردين تُقلب الأعمدة قبل النداء.
+ */
+export function agingFromStatement(rows: readonly StatementRow[], asOf: string): AgingBuckets {
+  // ديون قائمة: كل صف مدين يبدأ بكامل قيمته ثم تأكله الدائنات بالأقدمية
+  const debts: { date: string; remaining: number }[] = []
+  let creditPool = 0
+  for (const r of rows) {
+    if (r.debitMinor > 0) debts.push({ date: r.date, remaining: r.debitMinor })
+    if (r.creditMinor > 0) creditPool += r.creditMinor
+  }
+  for (const d of debts) {
+    if (creditPool <= 0) break
+    const eat = Math.min(d.remaining, creditPool)
+    d.remaining -= eat
+    creditPool -= eat
+  }
+  const buckets: AgingBuckets = { currentMinor: 0, d31_60Minor: 0, d61_90Minor: 0, over90Minor: 0, totalMinor: 0 }
+  const asOfMs = Date.parse(asOf)
+  for (const d of debts) {
+    if (d.remaining <= 0) continue
+    // الرصيد الافتتاحي (0000-00-00) أقدم من كل شيء ⇒ +90 تلقائياً
+    const ageDays = d.date === '0000-00-00' ? 999 : Math.max(0, Math.floor((asOfMs - Date.parse(d.date.slice(0, 10))) / 86400000))
+    if (ageDays <= 30) buckets.currentMinor += d.remaining
+    else if (ageDays <= 60) buckets.d31_60Minor += d.remaining
+    else if (ageDays <= 90) buckets.d61_90Minor += d.remaining
+    else buckets.over90Minor += d.remaining
+    buckets.totalMinor += d.remaining
+  }
+  return buckets
+}
+
+/** كشف المورد معكوس الاتجاه (الدائن دين علينا) — نقلبه لنمرره لنفس محرك الأعمار */
+export function supplierRowsForAging(rows: readonly StatementRow[]): StatementRow[] {
+  return rows.map((r) => ({ ...r, debitMinor: r.creditMinor, creditMinor: r.debitMinor }))
+}
