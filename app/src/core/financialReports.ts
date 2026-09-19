@@ -310,8 +310,12 @@ export interface VatReport {
   remainingMinor: Minor // المتبقي بعد السداد = netDue − settled
 }
 
-/** مصادر جانب المدخلات: الوحيدة التي تقيّد 2102 مديناً كمدخلات (وعكسها دائناً بالمرتجع) */
-const VAT_INPUT_SOURCES = new Set(['purchase', 'purchase_return'])
+/**
+ * مصادر جانب المدخلات: التي تقيّد 2102 مديناً كمدخلات (وعكسها دائناً بالمرتجع).
+ * project_cost أُضيف مع عزل ضريبة تكاليف المشاريع (دفعة الـ18) — بدونه كانت
+ * مدخلات المشروع تُخصم خطأً من بند المخرجات في الإقرار (الصافي صحيح والبندان مشوهان).
+ */
+const VAT_INPUT_SOURCES = new Set(['purchase', 'purchase_return', 'project_cost'])
 /** تسويات لا تدخل الإقرار: سداد/استرداد مع المصلحة وقيود الإقفال */
 const VAT_SETTLEMENT_SOURCES = new Set(['payment_voucher', 'receipt_voucher', 'year_closing'])
 
