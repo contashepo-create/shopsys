@@ -74,6 +74,11 @@ import { computeExtractLines, budgetVarianceReport, validateProject, computeExtr
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
   type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask } from '../core/contracting.ts'
 import {
+  validateProperty, validateLease, generateLeaseSchedule, buildDepositReceiptEntry, buildRentCollectionEntry,
+  buildOwnerPayoutEntry, buildDepositRefundEntry, buildPropertySaleEntry, buildPropertyAcquisitionEntry, buildUnitMaintenanceEntry,
+  type Property, type PropertyUnit, type Lease, type RentFrequency, type UnitStatus,
+} from '../core/realestate.ts'
+import {
   buildIssueLine, buildMaterialIssueEntry, allocateClientPayment, buildClientReceiptEntry, computeProjectEvm,
   validateApprovalFlow, applyApprovalDecision, APPROVAL_ACTION_LABELS,
   type MaterialRequisition, type MaterialIssueLine, type IssueLineInput, type StockMove,
@@ -1048,6 +1053,12 @@ interface DataState {
   projectBudgets: { id: number; projectId: number; kind: CostKind; amountMinor: number; notes: string }[]
   /** مهام المشروع — جدول زمني مبسط (جانت) بربط اختياري ببنود BOQ */
   projectTasks: ProjectTask[]
+  /* ─── العقارات (النشاط 21): عقارات ووحدات وعقود إيجار وتحصيلات ─── */
+  properties: Property[]
+  propertyUnits: PropertyUnit[]
+  leases: Lease[]
+  /** حركة حساب كل مالك عقار مدار: + نصيبه من التحصيل، − سداد له، − صيانة على حسابه */
+  ownerTxns: { id: number; propertyId: number; kind: 'collection' | 'payout' | 'maintenance'; amountMinor: number; date: string; note: string; journalEntryId: number }[]
   changeOrders: ChangeOrder[] // أوامر التغيير على العقود
   clientAdvances: { id: number; projectId: number; date: string; amountMinor: number; recoveredMinor: number; journalEntryId: number }[]
   subContracts: SubContract[] // عقود مقاولي الباطن
@@ -1649,6 +1660,23 @@ interface DataState {
   addProjectTask: (args: Omit<ProjectTask, 'id' | 'status'>) => ProjectTask
   /** تحديث تقدم المهمة — 100٪ تُنجزها تلقائياً؛ ربطها ببند BOQ يزامن نسبته إن تقدّم */
   updateProjectTaskProgress: (taskId: number, progressPercent: number) => void
+  /* ─── العقارات: عقار/وحدات/عقد إيجار بأقساط/تحصيل/سداد مالك/إخلاء/بيع ─── */
+  addProperty: (args: Omit<Property, 'id' | 'code' | 'status'> & { unitCodes?: string[]; acquisitionPayment?: 'cash' | 'credit'; treasury?: string }) => Property
+  addPropertyUnit: (args: Omit<PropertyUnit, 'id' | 'status'>) => PropertyUnit
+  /** عقد إيجار: يولّد جدول الأقساط ويقبض التأمين (2103) ويشغل الوحدة */
+  addLease: (args: { propertyId: number; unitId: number; tenantName: string; tenantId?: number | null; startDate: string; months: number; frequency: RentFrequency; totalRentMinor: number; depositMinor: number; ejarNumber?: string; treasury?: string }) => Lease
+  /** تحصيل قسط إيجار: مملوك → 4113، مدار → 2115 نصيب المالك + 4114 سعي (نمط الوسيط) */
+  collectLeaseInstallment: (args: { leaseId: number; seq: number; amountMinor?: number; vatOnRent?: boolean; treasury?: string }) => { paidMinor: number; commissionMinor: number; ownerShareMinor: number }
+  /** سداد المتجمع لمالك عقار مدار: 2115 ← نقدية */
+  payPropertyOwner: (args: { propertyId: number; amountMinor: number; treasury?: string }) => void
+  /** رصيد مستحق مالك عقار مدار (تحصيلات ناقص سداداته) */
+  getOwnerBalance: (propertyId: number) => number
+  /** إنهاء/إخلاء عقد: رد التأمين بخصم أضرار اختياري وإخلاء الوحدة */
+  endLease: (args: { leaseId: number; deductionMinor?: number; evicted?: boolean; treasury?: string }) => void
+  /** صيانة وحدة: على المكتب (5108) أو خصماً من مستحق المالك (2115) */
+  addUnitMaintenance: (args: { unitId: number; amountMinor: number; bearer: 'office' | 'owner'; description: string; treasury?: string }) => void
+  /** بيع عقار مملوك بالكامل: إيراد 4115 وتكلفة 5116 وإقفال السجل */
+  sellProperty: (args: { propertyId: number; salePriceMinor: number; payment: 'cash' | 'credit'; vatPercent?: number; treasury?: string }) => void
   /** تقرير انحرافات الموازنة عن الفعلي لكل فئة */
   getProjectBudgetVariance: (projectId: number) => { rows: BudgetVarianceRow[]; totalBudgetMinor: number; totalActualMinor: number }
   /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
@@ -2111,6 +2139,10 @@ export const useDataStore = create<DataState>()(
       boqItems: [],
       projectBudgets: [],
       projectTasks: [],
+      properties: [],
+      propertyUnits: [],
+      leases: [],
+      ownerTxns: [],
       changeOrders: [],
       clientAdvances: [],
       subContracts: [],
@@ -6308,6 +6340,242 @@ export const useDataStore = create<DataState>()(
           projectTasks: state.projectTasks.map((t) => (t.id === taskId ? { ...t, progressPercent, status: progressPercent >= 100 ? 'done' : progressPercent > 0 ? 'in_progress' : 'pending' } : t)),
         })
       },
+
+      /* ─────────────── العقارات (النشاط 21 — نمط سند/الوسيط/سمات) ─────────────── */
+      addProperty: (args) => {
+        const state = get()
+        const errors = validateProperty(args)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const id = nextId(state.properties)
+        const property: Property = {
+          id, code: `RE-${String(id).padStart(4, '0')}`,
+          nameAr: args.nameAr.trim(), kind: args.kind, ownership: args.ownership,
+          ownerName: args.ownerName.trim(), commissionPercent: args.commissionPercent,
+          address: args.address.trim(), costMinor: args.costMinor, status: 'active', notes: args.notes,
+        }
+        // وحدات أولية اختيارية
+        let nextUnitId = state.propertyUnits.reduce((m, u) => Math.max(m, u.id), 0)
+        const units: PropertyUnit[] = (args.unitCodes ?? []).filter((c) => c.trim()).map((code) => ({
+          id: ++nextUnitId, propertyId: id, code: code.trim(), annualRentMinor: 0, status: 'vacant' as UnitStatus,
+        }))
+        // اقتناء عقار مملوك بتكلفة: قيد 1113 ← نقدية/مورد
+        let journal = state.journal
+        if (args.ownership === 'owned' && args.costMinor > 0) {
+          const payment = args.acquisitionPayment ?? 'cash'
+          const treasury = args.treasury ?? '1101'
+          const entryId = nextId(state.journal)
+          const now = new Date().toISOString()
+          journal = [...state.journal, {
+            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+            description: `اقتناء عقار ${property.code} — ${property.nameAr}`,
+            sourceType: 'property_acquisition' as const, sourceId: id,
+            lines: buildPropertyAcquisitionEntry(args.costMinor, payment, treasury, property.nameAr),
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+        }
+        set({ properties: [...state.properties, property], propertyUnits: [...state.propertyUnits, ...units], journal })
+        return property
+      },
+      addPropertyUnit: (args) => {
+        const state = get()
+        const property = state.properties.find((p) => p.id === args.propertyId)
+        if (!property) throw new Error('العقار غير موجود')
+        if (property.status === 'sold') throw new Error('العقار مباع — لا وحدات جديدة')
+        if (!args.code.trim()) throw new Error('كود الوحدة مطلوب')
+        if (state.propertyUnits.some((u) => u.propertyId === args.propertyId && u.code.trim() === args.code.trim())) throw new Error('كود الوحدة مكرر في هذا العقار')
+        if (!Number.isInteger(args.annualRentMinor) || args.annualRentMinor < 0) throw new Error('الأجرة الاسترشادية لا تكون سالبة')
+        const unit: PropertyUnit = { id: nextId(state.propertyUnits), propertyId: args.propertyId, code: args.code.trim(), annualRentMinor: args.annualRentMinor, status: 'vacant' }
+        set({ propertyUnits: [...state.propertyUnits, unit] })
+        return unit
+      },
+      addLease: (args) => {
+        const state = get()
+        const property = state.properties.find((p) => p.id === args.propertyId)
+        if (!property) throw new Error('العقار غير موجود')
+        if (property.status === 'sold') throw new Error('العقار مباع')
+        const unit = state.propertyUnits.find((u) => u.id === args.unitId && u.propertyId === args.propertyId)
+        if (!unit) throw new Error('الوحدة غير موجودة في هذا العقار')
+        if (unit.status === 'leased') throw new Error('الوحدة مؤجرة بالفعل — أنهِ عقدها أولاً')
+        const errors = validateLease(args)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (args.tenantId != null && !state.customers.some((c) => c.id === args.tenantId)) throw new Error('العميل المربوط غير موجود')
+        const installments = generateLeaseSchedule(args.startDate, args.months, args.frequency, args.totalRentMinor)
+        const id = nextId(state.leases)
+        const now = new Date().toISOString()
+        // قبض التأمين المسترد (إن وجد): نقدية ← 2103
+        let journal = state.journal
+        if (args.depositMinor > 0) {
+          const entryId = nextId(state.journal)
+          journal = [...state.journal, {
+            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+            description: `تأمين عقد إيجار LC-${String(id).padStart(4, '0')} — ${args.tenantName.trim()}`,
+            sourceType: 'lease' as const, sourceId: id,
+            lines: buildDepositReceiptEntry(args.depositMinor, args.treasury ?? '1101', args.tenantName.trim()),
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+        }
+        const lease: Lease = {
+          id, contractNumber: `LC-${String(id).padStart(4, '0')}`,
+          propertyId: args.propertyId, unitId: args.unitId,
+          tenantName: args.tenantName.trim(), tenantId: args.tenantId ?? null,
+          startDate: args.startDate, months: args.months, frequency: args.frequency,
+          totalRentMinor: args.totalRentMinor, depositMinor: args.depositMinor,
+          ejarNumber: (args.ejarNumber ?? '').trim(), installments, status: 'active', depositRefundedMinor: 0,
+        }
+        set({
+          leases: [...state.leases, lease],
+          propertyUnits: state.propertyUnits.map((u) => (u.id === unit.id ? { ...u, status: 'leased' as UnitStatus } : u)),
+          journal,
+        })
+        return lease
+      },
+      collectLeaseInstallment: (args) => {
+        const state = get()
+        const lease = state.leases.find((l) => l.id === args.leaseId)
+        if (!lease) throw new Error('العقد غير موجود')
+        if (lease.status !== 'active') throw new Error('العقد منتهٍ')
+        const inst = lease.installments.find((i) => i.seq === args.seq)
+        if (!inst) throw new Error('القسط غير موجود')
+        const remaining = inst.amountMinor - inst.paidMinor
+        if (remaining <= 0) throw new Error('القسط محصَّل بالكامل')
+        const amount = args.amountMinor ?? remaining
+        if (!Number.isInteger(amount) || amount <= 0) throw new Error('قيمة التحصيل يجب أن تكون موجبة')
+        if (amount > remaining) throw new Error(`المبلغ أكبر من متبقي القسط (${remaining})`)
+        const property = state.properties.find((p) => p.id === lease.propertyId)!
+        // السعودية: أجرة السكني معفاة من ض.ق.م — السعي (العمولة) خاضع دوماً عند التسجيل
+        const vatPercent = useAppStore.getState().setup.vatPercent
+        const commissionBase = property.ownership === 'managed' ? Math.round(amount * property.commissionPercent / 100) : 0
+        const vatOnCommission = property.ownership === 'managed' && vatPercent > 0 ? Math.round(commissionBase * vatPercent / 100) : 0
+        const vatOnRent = property.ownership === 'owned' && args.vatOnRent ? Math.round(amount * vatPercent / 100) : 0
+        const treasury = args.treasury ?? '1101'
+        const label = `${lease.contractNumber} قسط ${inst.seq}`
+        const { lines, commissionMinor, ownerShareMinor } = buildRentCollectionEntry({
+          amountMinor: amount, ownership: property.ownership, commissionPercent: property.commissionPercent,
+          vatOnCommissionMinor: vatOnCommission, vatOnRentMinor: vatOnRent, treasury, label,
+        })
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `تحصيل إيجار ${label} — ${lease.tenantName}`,
+          sourceType: 'lease_collection', sourceId: lease.id, lines,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const ownerTxns = ownerShareMinor > 0
+          ? [...state.ownerTxns, { id: nextId(state.ownerTxns), propertyId: property.id, kind: 'collection' as const, amountMinor: ownerShareMinor, date: now.slice(0, 10), note: label, journalEntryId: entryId }]
+          : state.ownerTxns
+        set({
+          leases: state.leases.map((l) => l.id === lease.id ? {
+            ...l,
+            installments: l.installments.map((i) => (i.seq === inst.seq ? { ...i, paidMinor: i.paidMinor + amount, paidAt: i.paidMinor + amount >= i.amountMinor ? now.slice(0, 10) : i.paidAt } : i)),
+          } : l),
+          ownerTxns,
+          journal: [...state.journal, entry],
+        })
+        return { paidMinor: amount, commissionMinor, ownerShareMinor }
+      },
+      getOwnerBalance: (propertyId) => {
+        return get().ownerTxns.filter((t) => t.propertyId === propertyId)
+          .reduce((s, t) => s + (t.kind === 'collection' ? t.amountMinor : -t.amountMinor), 0)
+      },
+      payPropertyOwner: (args) => {
+        const state = get()
+        const property = state.properties.find((p) => p.id === args.propertyId)
+        if (!property) throw new Error('العقار غير موجود')
+        if (property.ownership !== 'managed') throw new Error('العقار مملوك لك — لا مالك خارجي')
+        const balance = get().getOwnerBalance(args.propertyId)
+        if (args.amountMinor > balance) throw new Error(`المبلغ أكبر من مستحق المالك (${balance})`)
+        const treasury = args.treasury ?? '1101'
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `سداد لمالك العقار ${property.code} — ${property.ownerName}`,
+          sourceType: 'owner_payout', sourceId: property.id,
+          lines: buildOwnerPayoutEntry(args.amountMinor, treasury, property.ownerName),
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({
+          ownerTxns: [...state.ownerTxns, { id: nextId(state.ownerTxns), propertyId: property.id, kind: 'payout', amountMinor: args.amountMinor, date: now.slice(0, 10), note: 'سداد', journalEntryId: entryId }],
+          journal: [...state.journal, entry],
+        })
+      },
+      endLease: (args) => {
+        const state = get()
+        const lease = state.leases.find((l) => l.id === args.leaseId)
+        if (!lease) throw new Error('العقد غير موجود')
+        if (lease.status !== 'active') throw new Error('العقد منتهٍ بالفعل')
+        const deduction = args.deductionMinor ?? 0
+        let journal = state.journal
+        let refunded = 0
+        if (lease.depositMinor > 0) {
+          const treasury = args.treasury ?? '1101'
+          refunded = lease.depositMinor - deduction
+          const now = new Date().toISOString()
+          const entryId = nextId(state.journal)
+          journal = [...state.journal, {
+            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+            description: `تسوية تأمين ${lease.contractNumber} — ${lease.tenantName}`,
+            sourceType: 'lease_end' as const, sourceId: lease.id,
+            lines: buildDepositRefundEntry(lease.depositMinor, deduction, treasury, lease.tenantName),
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+        } else if (deduction > 0) {
+          throw new Error('لا تأمين مقبوضاً لتخصم منه')
+        }
+        set({
+          leases: state.leases.map((l) => (l.id === lease.id ? { ...l, status: args.evicted ? 'evicted' as const : 'ended' as const, depositRefundedMinor: refunded } : l)),
+          propertyUnits: state.propertyUnits.map((u) => (u.id === lease.unitId ? { ...u, status: 'vacant' as UnitStatus } : u)),
+          journal,
+        })
+      },
+      addUnitMaintenance: (args) => {
+        const state = get()
+        const unit = state.propertyUnits.find((u) => u.id === args.unitId)
+        if (!unit) throw new Error('الوحدة غير موجودة')
+        const property = state.properties.find((p) => p.id === unit.propertyId)!
+        if (args.bearer === 'owner' && property.ownership !== 'managed') throw new Error('العقار مملوك لك — الصيانة على المكتب')
+        if (args.bearer === 'owner' && args.amountMinor > get().getOwnerBalance(property.id)) throw new Error('الصيانة أكبر من مستحق المالك — حصّل أولاً أو حمّلها على المكتب')
+        const treasury = args.treasury ?? '1101'
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `صيانة وحدة ${unit.code} — ${property.nameAr}: ${args.description}`,
+          sourceType: 'unit_maintenance', sourceId: unit.id,
+          lines: buildUnitMaintenanceEntry(args.amountMinor, args.bearer, treasury, unit.code),
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({
+          ownerTxns: args.bearer === 'owner'
+            ? [...state.ownerTxns, { id: nextId(state.ownerTxns), propertyId: property.id, kind: 'maintenance', amountMinor: args.amountMinor, date: now.slice(0, 10), note: args.description, journalEntryId: entryId }]
+            : state.ownerTxns,
+          journal: [...state.journal, entry],
+        })
+      },
+      sellProperty: (args) => {
+        const state = get()
+        const property = state.properties.find((p) => p.id === args.propertyId)
+        if (!property) throw new Error('العقار غير موجود')
+        if (property.status === 'sold') throw new Error('العقار مباع بالفعل')
+        if (property.ownership !== 'owned') throw new Error('لا يُباع إلا عقار مملوك لك — المدار ملك صاحبه')
+        if (state.leases.some((l) => l.propertyId === property.id && l.status === 'active')) throw new Error('على العقار عقود إيجار نشطة — أنهِها أولاً')
+        const vatPercent = args.vatPercent ?? 0
+        const vat = Math.round(args.salePriceMinor * vatPercent / 100)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `بيع عقار ${property.code} — ${property.nameAr}`,
+          sourceType: 'property_sale', sourceId: property.id,
+          lines: buildPropertySaleEntry({ salePriceMinor: args.salePriceMinor, costMinor: property.costMinor, payment: args.payment, treasury: args.treasury ?? '1101', vatMinor: vat, label: property.nameAr }),
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        set({
+          properties: state.properties.map((p) => (p.id === property.id ? { ...p, status: 'sold' as const } : p)),
+          journal: [...state.journal, entry],
+        })
+      },
       addProjectCost: (args) => {
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
@@ -8865,6 +9133,10 @@ export const useDataStore = create<DataState>()(
           clientAdvances: s.clientAdvances ?? [],
           projectBudgets: s.projectBudgets ?? [],
           projectTasks: s.projectTasks ?? [],
+          properties: s.properties ?? [],
+          propertyUnits: s.propertyUnits ?? [],
+          leases: s.leases ?? [],
+          ownerTxns: s.ownerTxns ?? [],
           subPayments: s.subPayments ?? [],
           bonds: s.bonds ?? [],
           dailyWorkers: s.dailyWorkers ?? [],
