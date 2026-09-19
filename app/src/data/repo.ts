@@ -72,7 +72,7 @@ import { computeExtractLines, budgetVarianceReport, validateProject, computeExtr
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
-  type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult } from '../core/contracting.ts'
+  type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult, type ProjectTask, validateProjectTask } from '../core/contracting.ts'
 import {
   buildIssueLine, buildMaterialIssueEntry, allocateClientPayment, buildClientReceiptEntry, computeProjectEvm,
   validateApprovalFlow, applyApprovalDecision, APPROVAL_ACTION_LABELS,
@@ -1044,6 +1044,8 @@ interface DataState {
   boqItems: BoqItem[] // جداول الكميات لكل مشروع
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc project_budgets) — أساس تقرير الانحرافات */
   projectBudgets: { id: number; projectId: number; kind: CostKind; amountMinor: number; notes: string }[]
+  /** مهام المشروع — جدول زمني مبسط (جانت) بربط اختياري ببنود BOQ */
+  projectTasks: ProjectTask[]
   changeOrders: ChangeOrder[] // أوامر التغيير على العقود
   clientAdvances: { id: number; projectId: number; date: string; amountMinor: number; recoveredMinor: number; journalEntryId: number }[]
   subContracts: SubContract[] // عقود مقاولي الباطن
@@ -1641,6 +1643,10 @@ interface DataState {
   addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string; custodyFileId?: number | null }) => ProjectCost
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
   setProjectBudget: (projectId: number, budgetLines: ProjectBudgetLine[]) => void
+  /** مهمة جدول زمني للمشروع (جانت مبسط) */
+  addProjectTask: (args: Omit<ProjectTask, 'id' | 'status'>) => ProjectTask
+  /** تحديث تقدم المهمة — 100٪ تُنجزها تلقائياً؛ ربطها ببند BOQ يزامن نسبته إن تقدّم */
+  updateProjectTaskProgress: (taskId: number, progressPercent: number) => void
   /** تقرير انحرافات الموازنة عن الفعلي لكل فئة */
   getProjectBudgetVariance: (projectId: number) => { rows: BudgetVarianceRow[]; totalBudgetMinor: number; totalActualMinor: number }
   /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
@@ -1652,7 +1658,7 @@ interface DataState {
   updateBoqProgress: (id: number, progressPercent: number) => void
   removeBoqItem: (id: number) => void
   addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number }) => ChangeOrder
-  setChangeOrderStatus: (id: number, status: 'approved' | 'rejected') => void
+  setChangeOrderStatus: (id: number, status: 'approved' | 'invoiced' | 'rejected') => void
   /** دفعة مقدمة من عميل المشروع: نقدية ← 2109 (التزام حتى تنفيذ الأعمال) */
   receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string }) => void
   /** رصيد الدفعات المقدمة غير المستردة لمشروع */
@@ -2101,6 +2107,7 @@ export const useDataStore = create<DataState>()(
       quotations: [],
       boqItems: [],
       projectBudgets: [],
+      projectTasks: [],
       changeOrders: [],
       clientAdvances: [],
       subContracts: [],
@@ -6271,6 +6278,26 @@ export const useDataStore = create<DataState>()(
           state.projectCosts.filter((c) => c.projectId === projectId),
         )
       },
+      addProjectTask: (args) => {
+        const state = get()
+        if (!state.projects.some((p) => p.id === args.projectId)) throw new Error('المشروع غير موجود')
+        const errors = validateProjectTask(args)
+        if (errors.length) throw new Error(errors[0])
+        if (args.boqItemId !== null && !state.boqItems.some((b) => b.id === args.boqItemId && b.projectId === args.projectId)) throw new Error('بند BOQ المربوط غير موجود في هذا المشروع')
+        const task: ProjectTask = { ...args, nameAr: args.nameAr.trim(), id: nextId(state.projectTasks), status: args.progressPercent >= 100 ? 'done' : args.progressPercent > 0 ? 'in_progress' : 'pending' }
+        set({ projectTasks: [...state.projectTasks, task] })
+        return task
+      },
+      updateProjectTaskProgress: (taskId, progressPercent) => {
+        const state = get()
+        const task = state.projectTasks.find((t) => t.id === taskId)
+        if (!task) throw new Error('المهمة غير موجودة')
+        if (!Number.isFinite(progressPercent) || progressPercent < 0 || progressPercent > 100) throw new Error('نسبة الإنجاز بين 0 و100')
+        if (progressPercent < task.progressPercent) throw new Error('تقدم المهمة تراكمي لا يتراجع')
+        set({
+          projectTasks: state.projectTasks.map((t) => (t.id === taskId ? { ...t, progressPercent, status: progressPercent >= 100 ? 'done' : progressPercent > 0 ? 'in_progress' : 'pending' } : t)),
+        })
+      },
       addProjectCost: (args) => {
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
@@ -6387,7 +6414,10 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const order = state.changeOrders.find((o) => o.id === id)
         if (!order) throw new Error('أمر التغيير غير موجود')
-        if (order.status !== 'draft') throw new Error('أمر التغيير محسوم بالفعل')
+        // المسارات: draft→approved|rejected ثم approved→invoiced (فُوتر ضمن مستخلص)
+        if (status === 'invoiced') {
+          if (order.status !== 'approved') throw new Error('لا يُستخلَص إلا أمر تغيير معتمد')
+        } else if (order.status !== 'draft') throw new Error('أمر التغيير محسوم بالفعل')
         // التخفيض لا يهبط بالعقد الفعلي تحت الصفر
         if (status === 'approved' && order.amountMinor < 0) {
           const project = state.projects.find((p) => p.id === order.projectId)!
@@ -6396,7 +6426,7 @@ export const useDataStore = create<DataState>()(
         }
         set({
           changeOrders: state.changeOrders.map((o) =>
-            o.id === id ? { ...o, status, approvedAt: status === 'approved' ? new Date().toISOString() : null } : o),
+            o.id === id ? { ...o, status, approvedAt: status === 'approved' ? new Date().toISOString() : o.approvedAt } : o),
         })
       },
 
@@ -8802,6 +8832,7 @@ export const useDataStore = create<DataState>()(
           changeOrders: s.changeOrders ?? [],
           clientAdvances: s.clientAdvances ?? [],
           projectBudgets: s.projectBudgets ?? [],
+          projectTasks: s.projectTasks ?? [],
           subPayments: s.subPayments ?? [],
           bonds: s.bonds ?? [],
           dailyWorkers: s.dailyWorkers ?? [],

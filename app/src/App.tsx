@@ -60,6 +60,7 @@ import { ProjectsPage } from './ui/pages/ContractingPages.tsx'
 import { QuotationsPage } from './ui/pages/QuotationsPage.tsx'
 import { BoqPage, SubcontractorsPage, BondsPage, DailyWorkersPage } from './ui/pages/ContractingDepthPages.tsx'
 import { MaterialIssuesPage, ClientCollectionsPage, EvmDashboardPage, ApprovalsPage } from './ui/pages/ProjectOpsPages.tsx'
+import { ProjectBudgetPage, ProjectTasksPage } from './ui/pages/ContractingPlanPages.tsx'
 import { CustodyPage } from './ui/pages/CustodyPage.tsx'
 import { SyncPage } from './ui/pages/SyncPage.tsx'
 import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
@@ -173,6 +174,8 @@ function Shell() {
         <Route path="/contracting/material-issues" element={<MaterialIssuesPage />} />
         <Route path="/contracting/collections" element={<ClientCollectionsPage />} />
         <Route path="/contracting/evm" element={<EvmDashboardPage />} />
+        <Route path="/contracting/budget" element={<ProjectBudgetPage />} />
+        <Route path="/contracting/tasks" element={<ProjectTasksPage />} />
         <Route path="/contracting/approvals" element={<ApprovalsPage />} />
         <Route path="/parties/custody" element={<CustodyPage />} />
         <Route path="/clinic/patients" element={<ClinicPatientsPage />} />

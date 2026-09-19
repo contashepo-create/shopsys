@@ -576,8 +576,13 @@ export function ProjectsPage() {
                         <button onClick={() => { try { setChangeOrderStatus(o.id, 'approved'); toast.show('اعتُمد ✅') } catch (e) { toast.show((e as Error).message, 'error') } }} className="text-emerald-600 font-bold hover:underline">اعتماد</button>
                         <button onClick={() => { setChangeOrderStatus(o.id, 'rejected'); toast.show('رُفض') }} className="text-rose-500 font-bold hover:underline mr-2">رفض</button>
                       </span>
+                    ) : o.status === 'approved' ? (
+                      <span className="flex gap-2 items-center">
+                        <span className="font-bold text-emerald-600">✅ معتمد</span>
+                        <button onClick={() => { try { setChangeOrderStatus(o.id, 'invoiced'); toast.show('عُلّم مُستخلَصاً 🧾') } catch (e) { toast.show((e as Error).message, 'error') } }} title="عُدّ ضمن مستخلص صادر" className="text-sky-600 font-bold hover:underline">تعليم كمُستخلَص</button>
+                      </span>
                     ) : (
-                      <span className={`font-bold ${o.status === 'approved' ? 'text-emerald-600' : 'text-rose-500'}`}>{o.status === 'approved' ? '✅ معتمد' : '❌ مرفوض'}</span>
+                      <span className={`font-bold ${o.status === 'invoiced' ? 'text-sky-600' : 'text-rose-500'}`}>{o.status === 'invoiced' ? '🧾 مُستخلَص' : '❌ مرفوض'}</span>
                     )}
                   </div>
                 ))}

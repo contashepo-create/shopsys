@@ -379,7 +379,7 @@ export function budgetVarianceReport(
   }
 }
 
-export type ChangeOrderStatus = 'draft' | 'approved' | 'rejected'
+export type ChangeOrderStatus = 'draft' | 'approved' | 'invoiced' | 'rejected'
 
 export interface ChangeOrder {
   id: number
@@ -396,12 +396,14 @@ export interface ChangeOrder {
 export const CHANGE_ORDER_STATUS_LABELS: Record<ChangeOrderStatus, { nameAr: string; icon: string }> = {
   draft: { nameAr: 'مسودة', icon: '📝' },
   approved: { nameAr: 'معتمد', icon: '✅' },
+  invoiced: { nameAr: 'مُستخلَص (فُوتر)', icon: '🧾' },
   rejected: { nameAr: 'مرفوض', icon: '❌' },
 }
 
 /** قيمة العقد الفعلية = الأصلية + أوامر التغيير المعتمدة فقط */
 export function effectiveContractValue(baseMinor: Minor, orders: readonly ChangeOrder[]): Minor {
-  return baseMinor + orders.filter((o) => o.status === 'approved').reduce((a, o) => a + o.amountMinor, 0)
+  // «مُستخلَص» = معتمد سبق فوترته — يبقى ضمن قيمة العقد الفعلية
+  return baseMinor + orders.filter((o) => o.status === 'approved' || o.status === 'invoiced').reduce((a, o) => a + o.amountMinor, 0)
 }
 
 /* ─── الدفعات المقدمة من العملاء — التزام 2109 يُسترد تدريجياً من المستخلصات ─── */
@@ -570,8 +572,39 @@ export function buildSubRetentionReleaseEntry(amountMinor: Minor, treasury: stri
   return lines
 }
 
+/* ─── مهام المشروع (جدول زمني/جانت مبسط — نمط pro-acc project_tasks) ─── */
+export type ProjectTaskStatus = 'pending' | 'in_progress' | 'done'
+
+export interface ProjectTask {
+  id: number
+  projectId: number
+  nameAr: string
+  startDate: string // ISO
+  endDate: string // ISO
+  progressPercent: number // 0–100
+  status: ProjectTaskStatus
+  /** ربط اختياري ببند BOQ لمزامنة النسبة */
+  boqItemId: number | null
+}
+
+export const PROJECT_TASK_STATUS_LABELS: Record<ProjectTaskStatus, { nameAr: string; icon: string }> = {
+  pending: { nameAr: 'لم تبدأ', icon: '⏳' },
+  in_progress: { nameAr: 'جارية', icon: '🔨' },
+  done: { nameAr: 'منجزة', icon: '✅' },
+}
+
+export function validateProjectTask(t: Pick<ProjectTask, 'nameAr' | 'startDate' | 'endDate' | 'progressPercent'>): string[] {
+  const errors: string[] = []
+  if (!t.nameAr.trim()) errors.push('اسم المهمة مطلوب')
+  if (!t.startDate) errors.push('تاريخ البداية مطلوب')
+  if (!t.endDate) errors.push('تاريخ النهاية مطلوب')
+  if (t.startDate && t.endDate && t.endDate < t.startDate) errors.push('النهاية لا تسبق البداية')
+  if (!Number.isFinite(t.progressPercent) || t.progressPercent < 0 || t.progressPercent > 100) errors.push('نسبة الإنجاز بين 0 و100')
+  return errors
+}
+
 /* ─── خطابات الضمان البنكية — أصل مجمّد (الهامش) + مصاريف إصدار ─── */
-export type BondType = 'bid' | 'performance' | 'advance_payment' | 'retention_release' | 'other'
+export type BondType = 'bid' | 'performance' | 'advance_payment' | 'retention_release' | 'warranty' | 'insurance' | 'other'
 export type BondStatus = 'active' | 'released' | 'forfeited'
 
 export const BOND_TYPE_LABELS: Record<BondType, string> = {
@@ -579,6 +612,8 @@ export const BOND_TYPE_LABELS: Record<BondType, string> = {
   performance: 'نهائي (حسن تنفيذ)',
   advance_payment: 'دفعة مقدمة',
   retention_release: 'بديل محتجزات',
+  warranty: 'ضمان صيانة (فترة الضمان)',
+  insurance: 'تأمين',
   other: 'أخرى',
 }
 
