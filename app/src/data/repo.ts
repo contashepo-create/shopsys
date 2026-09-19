@@ -4276,6 +4276,12 @@ export const useDataStore = create<DataState>()(
         if (u.roleId === 'owner' && state.appUsers.some((x) => x.roleId === 'owner' && x.active)) {
           throw new Error('يوجد حساب مالك بالفعل — دور المالك لحساب واحد فقط')
         }
+        // حماية بنيوية: الدور يجب أن يكون من كتالوج الأدوار (نظامية أو مخصصة) —
+        // دور غير موجود يعني مستخدماً بلا صلاحيات بصمت، وهذا خطأ إدخال يُرفض مبكراً
+        {
+          const knownRoles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
+          if (!knownRoles.some((r) => r.id === u.roleId)) throw new Error('الدور المحدد غير موجود — اختر دوراً من قائمة الأدوار')
+        }
         // ربط الموظف (طلب المالك): حساب واحد لكل موظف — التكرار يعني خطأ إدخال
         if (u.employeeId != null) {
           if (!state.employees.some((e) => e.id === u.employeeId && e.active)) throw new Error('الموظف المرتبط غير موجود أو غير نشط — سجله في شاشة الموظفين أولاً')
@@ -4308,6 +4314,11 @@ export const useDataStore = create<DataState>()(
         if (!user) throw new Error('المستخدم غير موجود')
         if (user.roleId === 'owner' && patch.roleId && patch.roleId !== 'owner') {
           throw new Error('حساب المالك لا يُخفَّض دوره — محمي بنيوياً')
+        }
+        // نفس حماية الإضافة: تغيير الدور إلى دور غير موجود في الكتالوج مرفوض
+        if (patch.roleId && patch.roleId !== user.roleId) {
+          const knownRoles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
+          if (!knownRoles.some((r) => r.id === patch.roleId)) throw new Error('الدور المحدد غير موجود — اختر دوراً من قائمة الأدوار')
         }
         set({
           appUsers: state.appUsers.map((u) => (u.id === id

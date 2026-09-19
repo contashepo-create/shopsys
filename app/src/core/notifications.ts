@@ -167,8 +167,9 @@ export function collectNotifications(input: NotificationsInput): AppNotification
   }
 
   // 3) شيكات قائمة تستحق خلال 7 أيام أو تجاوزت الاستحقاق
+  // الحالات القائمة (غير النهائية): held/deposited للوارد، issued للصادر — راجع ChequeStatus في cheques.ts
   for (const c of input.cheques) {
-    if (c.status !== 'pending' && c.status !== 'deposited') continue
+    if (c.status !== 'held' && c.status !== 'deposited' && c.status !== 'issued') continue
     const daysLeft = Math.floor((Date.parse(`${c.dueDate}T00:00:00Z`) - dayMs) / 86_400_000)
     if (daysLeft > 7) continue
     const dirLabel = c.direction === 'incoming' ? 'وارد من' : 'صادر إلى'

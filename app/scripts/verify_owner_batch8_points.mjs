@@ -120,7 +120,7 @@ mem.set('shopsys-app', appState('grocery', false))
     openIssues: [{ id: 1, title: 'مشكلة', reportedBy: 'كاشير' }],
     openPinResets: [{ id: 1, nameAr: 'ناسي الرقم' }],
     items: [], suppliers: [], purchases: [], vouchers: [],
-    cheques: [{ chequeNumber: 'CH1', dueDate: '2026-09-19', status: 'pending', direction: 'incoming', partyName: 'عميل', amountMinor: 5000 }],
+    cheques: [{ chequeNumber: 'CH1', dueDate: '2026-09-19', status: 'held', direction: 'incoming', partyName: 'عميل', amountMinor: 5000 }],
   })
   assert.ok(all.length >= 4, `⑤ عيّنة كاملة من الإشعارات — الموجود ${all.length}`)
   assert.ok(all.every((n) => n.perm !== undefined), '⑤ كل إشعار يحمل حقل perm')
