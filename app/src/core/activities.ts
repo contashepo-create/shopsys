@@ -30,6 +30,7 @@ export type BusinessModule =
   | 'wallet_services' // خدمات المحافظ والدفع الإلكتروني (نمط mobileshop): ربح = المحصَّل − المدفوع للمزوّد
   | 'laundry' // المغاسل: أوامر غسيل بقطع وخدمات وعربون (وحدة مستقلة — ليست صيانة)
   | 'processing' // التجهيز والتفكيك: ذبيحة→أجزاء (جزارة) أو محصول→درجات (تمور) بتوزيع تكلفة بالقيمة البيعية
+  | 'realestate' // العقارات: إيجار وبيع وإدارة أملاك بسعي (خصوصاً السعودية — سند/الوسيط/سمات)
 
 export interface ActivityTemplate {
   id: string
@@ -190,6 +191,13 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
+    id: 'realestate', nameAr: 'عقارات وإدارة أملاك', icon: '🏘️',
+    description: 'عقارات ووحدات، عقود إيجار بأقساط وتأمين مسترد وتوثيق إيجار، سعي أملاك الغير، وبيع عقارات (بلا مخازن ولا كاشير)',
+    features: [],
+    modules: ['realestate'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
+  },
+  {
     id: 'general', nameAr: 'نشاط عام / آخر', icon: '🏪',
     description: 'قالب مرن — فعّل ما تحتاجه لاحقاً',
     features: ['multi_unit'],
@@ -260,7 +268,8 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   wallet_services: { nameAr: 'خدمات المحافظ', icon: '📲', desc: 'تحويل رصيد ودفع إلكتروني وفواتير — الربح آلياً: المحصَّل − المدفوع للمزوّد' },
   laundry: { nameAr: 'المغسلة', icon: '🧺', desc: 'أوامر غسيل بقطع وخدمات وعربون — استلام وتجهيز وتسليم بقيود سليمة' },
   processing: { nameAr: 'التجهيز والتفكيك', icon: '🔪', desc: 'ذبيحة → أجزاء أو محصول → درجات: توزيع التكلفة بالقيمة البيعية وفاقد موثق ونسب تصافٍ' },
+  realestate: { nameAr: 'العقارات', icon: '🏘️', desc: 'عقارات ووحدات وعقود إيجار بأقساط وتأمينات، سعي إدارة أملاك الغير، وبيع العقارات المملوكة' },
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate']
