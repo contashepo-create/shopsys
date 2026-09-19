@@ -5460,6 +5460,22 @@ export const useDataStore = create<DataState>()(
           if (state.items.find((x) => x.id === l.itemId)?.isService) continue
           valueByItem.set(l.itemId, (valueByItem.get(l.itemId) ?? 0) + Math.round(l.qty * l.unitCostMinor))
         }
+        // دفعات الصلاحية FEFO — الصيدلية نشاط expiry_batches أصلاً: بيع مؤمَّن لا يستهلك
+        // الدفعات يترك أرصدة وهمية فيها (تنبيهات صلاحية كاذبة) — نفس سياسة postSale:
+        // المنتهي محظور بيعه للمريض (لا تجاوز هنا — البيع المؤمَّن ليس له مسار override)
+        const nowIso = new Date().toISOString()
+        let workingBatches = state.batches
+        {
+          const expiredNames: string[] = []
+          for (const [itemId, qty] of qtyByItem) {
+            const it = state.items.find((x) => x.id === itemId)
+            if (!it?.trackExpiry) continue
+            const plan = planFefo(workingBatches, itemId, qty, nowIso)
+            if (plan.touchesExpired) expiredNames.push(it.nameAr)
+            workingBatches = applyFefo(workingBatches, plan)
+          }
+          if (expiredNames.length) throw new Error(`أصناف منتهية الصلاحية لا تُباع — ${expiredNames.join('، ')} (أعدمها من شاشة الهالك)`)
+        }
         const totals = computeTotals(costedLines, 0, args.taxPercent, args.taxInclusive)
         const { providerShareMinor, patientShareMinor } = splitCoverage(totals.totalMinor, provider.coveragePercent)
         const lines = buildInsuredEntry({
@@ -5486,7 +5502,7 @@ export const useDataStore = create<DataState>()(
         const updatedItems = state.items.map((it) =>
           qtyByItem.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyByItem.get(it.id)!) * 1000) / 1000 } : it,
         )
-        set({ items: updatedItems, insuranceClaims: [...state.insuranceClaims, claim], journal: [...state.journal, entry] })
+        set({ items: updatedItems, batches: workingBatches, insuranceClaims: [...state.insuranceClaims, claim], journal: [...state.journal, entry] })
         return { patientShareMinor, providerShareMinor }
       },
       registerInsuredLabOrder: (args) => {
@@ -7068,6 +7084,14 @@ export const useDataStore = create<DataState>()(
           const issued = planned.get(it.id)
           return issued ? { ...it, stockQty: Math.round((it.stockQty - issued) * 1000) / 1000 } : it
         })
+        // دفعات الصلاحية (مواد كيماوية/إضافات لها تاريخ): الصرف يستهلك الدفعات FEFO
+        // كي لا تبقى أرصدة وهمية تولد تنبيهات صلاحية كاذبة — الصرف للتشغيل يقبل حتى المنتهي
+        // (قرار المهندس في الموقع) لذا لا حظر هنا، فقط الخصم المنظم
+        let issueBatches = state.batches
+        for (const [itemId, qty] of planned) {
+          if (!state.items.find((it) => it.id === itemId)?.trackExpiry) continue
+          issueBatches = applyFefo(issueBatches, planFefo(issueBatches, itemId, qty, now))
+        }
         let moveId = nextId(state.stockMoves)
         const moves: StockMove[] = lines.map((l) => ({
           id: moveId++, date: now, itemId: l.itemId, qtyDelta: -l.baseQty,
@@ -7084,7 +7108,7 @@ export const useDataStore = create<DataState>()(
           materialRequisitions: [...state.materialRequisitions, req],
           stockMoves: [...state.stockMoves, ...moves],
           projectCosts: [...state.projectCosts, cost],
-          items: updatedItems, journal: [...state.journal, entry],
+          items: updatedItems, batches: issueBatches, journal: [...state.journal, entry],
         })
         return req
       },
