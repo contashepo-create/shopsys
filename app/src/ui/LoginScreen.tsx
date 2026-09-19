@@ -16,11 +16,8 @@ import { useAppStore } from '../stores/app.store.ts'
 import { hashPin, findUserByIdentifier, matchesOwnerIdentity } from '../core/audit.ts'
 import { generateTempPin, buildTempPinMessage, TEMP_PIN_TTL_MIN, lockoutMinutesLeft, validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../core/auth.ts'
 import { apiUrl, isValidBotToken, isValidChatId } from '../core/telegram.ts'
-import { encryptForDevice, decryptForDevice } from '../data/secureStorage.ts'
+import { loadSavedLogin, storeSavedLogin, clearSavedLogin } from '../data/savedLogin.ts'
 import { Btn, Modal, inputCls, PinInput, useToast } from './components/ui.tsx'
-
-/** مفتاح بيانات الدخول المحفوظة (طلب المالك) — مشفرة بمفتاح الجهاز، لا نص صريح أبداً */
-const SAVED_LOGIN_KEY = 'tahakam-saved-login'
 
 export function LoginScreen() {
   const { appUsers, login, requestPinReset, setOwnerTempPin, setOwnerPin, changeOwnPin, loginGuard, currentUserId, loggedOut, ownerProfile } = useDataStore()
@@ -34,22 +31,17 @@ export function LoginScreen() {
   // عرض حفظ بيانات الدخول (طلب المالك): تُحفظ مشفرة بمفتاح الجهاز وتُملأ تلقائياً
   const [rememberMe, setRememberMe] = useState(false)
   useEffect(() => {
-    const stored = localStorage.getItem(SAVED_LOGIN_KEY)
-    if (!stored) return
-    void decryptForDevice(stored).then((plain) => {
-      if (!plain) return
-      try {
-        const saved = JSON.parse(plain) as { identifier?: string; pin?: string }
-        if (saved.identifier) setIdentifier(saved.identifier)
-        if (saved.pin) setPin(saved.pin)
-        setRememberMe(true)
-      } catch { /* بيانات تالفة — تجاهل */ }
+    void loadSavedLogin().then((saved) => {
+      if (!saved) return
+      if (saved.identifier) setIdentifier(saved.identifier)
+      if (saved.pin) setPin(saved.pin)
+      setRememberMe(true)
     })
   }, [])
   const persistLogin = async (id: string, p: string) => {
     try {
-      if (rememberMe) localStorage.setItem(SAVED_LOGIN_KEY, await encryptForDevice(JSON.stringify({ identifier: id, pin: p })))
-      else localStorage.removeItem(SAVED_LOGIN_KEY)
+      if (rememberMe) await storeSavedLogin(id, p)
+      else clearSavedLogin()
     } catch { /* لا يعطل الدخول */ }
   }
   // إجبار تعيين رقم جديد: للمالك بعد رقم مؤقت، وللموظف عند أول دخول
@@ -165,6 +157,9 @@ export function LoginScreen() {
     }
   }
 
+  // حد الإرسال 4 مقصود (لا يُرفع إلى PIN_MIN_LENGTH): التوافق الخلفي مع الأرقام
+  // القديمة (4-8 أرقام) + الرقم المؤقت من تليجرام (6 أرقام) — سياسة 8-32 تُفرض
+  // عند «التعيين» فقط عبر validatePinFormat، والتحقق الفعلي دوماً في verifyPin
   const canSubmit = pin.length >= 4 && identifier.trim().length > 0
 
   return (
@@ -217,7 +212,7 @@ export function LoginScreen() {
                 checked={rememberMe}
                 onChange={(e) => {
                   setRememberMe(e.target.checked)
-                  if (!e.target.checked) localStorage.removeItem(SAVED_LOGIN_KEY)
+                  if (!e.target.checked) clearSavedLogin()
                 }}
                 className="w-4 h-4 rounded accent-brand-600"
               />

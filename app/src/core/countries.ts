@@ -43,6 +43,6 @@ export function getCountry(code: string): Country | undefined {
 }
 
 /** placeholder هاتف حسب بلد الإعداد — يسقط على المثال المصري لو البلد غير معروف */
-export function phonePlaceholder(countryCode: string): string {
-  return getCountry(countryCode)?.phoneExample ?? '01012345678'
+export function phonePlaceholder(countryCode: string | null | undefined): string {
+  return (countryCode ? getCountry(countryCode)?.phoneExample : undefined) ?? '01012345678'
 }

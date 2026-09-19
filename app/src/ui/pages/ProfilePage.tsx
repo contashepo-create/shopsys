@@ -13,7 +13,8 @@ import { UserCircle2, KeyRound, Camera, Save, ShieldCheck } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { phonePlaceholder } from '../../core/countries.ts'
-import { hashPin } from '../../core/audit.ts'
+import { hashPin, matchesOwnerIdentity, findUserByIdentifier } from '../../core/audit.ts'
+import { updateSavedLoginPin } from '../../data/savedLogin.ts'
 import { Btn, Field, inputCls, useToast, PinInput } from '../components/ui.tsx'
 
 /** ضغط الصورة إلى مربع صغير (Data URL) — تخزين محلي خفيف بلا ملفات خارجية */
@@ -74,6 +75,12 @@ export function ProfilePage() {
       const fmtErr = validatePinFormat(newPin)
       if (fmtErr.length) throw new Error(fmtErr.join(' — '))
       await changeMyPin(curPin, await hashPin(newPin))
+      // بيانات الدخول المحفوظة على هذا الجهاز: إن كانت تخصني تُحدَّث بكلمتي
+      // الجديدة — وإلا امتلأت شاشة الدخول تلقائياً برقم قديم فيحترق عدّاد القفل
+      await updateSavedLoginPin(newPin, (saved) =>
+        isOwner
+          ? matchesOwnerIdentity(ownerProfile, saved) || (!!setup.ownerName?.trim() && saved.trim() === setup.ownerName.trim())
+          : findUserByIdentifier(me ? [me] : [], saved) != null)
       setCurPin(''); setNewPin(''); setNewPin2('')
       toast.show('تغيّر رقمك السري — لا يعرفه أحد غيرك الآن ✅')
     } catch (e) { toast.show((e as Error).message, 'error') }

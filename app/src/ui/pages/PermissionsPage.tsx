@@ -8,14 +8,16 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound } from 'lucide-react'
 import { PERMISSIONS, PERMISSION_SECTIONS, rolesWithOverrides } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
+import { useAppStore } from '../../stores/app.store.ts'
 import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/auth.ts'
-import { hashPin, suggestRoleForJobTitle } from '../../core/audit.ts'
+import { hashPin, suggestRoleForJobTitle, matchesOwnerIdentity, findUserByIdentifier } from '../../core/audit.ts'
+import { updateSavedLoginPin } from '../../data/savedLogin.ts'
 import { Btn, Field, inputCls, Modal, useToast, PinInput } from '../components/ui.tsx'
 
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('cashier')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
-  const { appUsers, currentUserId, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees } = useDataStore()
+  const { appUsers, currentUserId, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
   const roles = rolesWithOverrides(roleOverrides, customRoles, useAppStore.getState().setup.activityId)
   const toast = useToast()
@@ -47,6 +49,9 @@ export function PermissionsPage() {
       const fmtErr = validatePinFormat(oPin)
       if (fmtErr.length) throw new Error(fmtErr.join(' — '))
       setOwnerPin(await hashPin(oPin))
+      // إن كانت بيانات دخول المالك محفوظة على هذا الجهاز تُحدَّث بكلمته الجديدة
+      await updateSavedLoginPin(oPin, (saved) =>
+        matchesOwnerIdentity(ownerProfile, saved) || (!!useAppStore.getState().setup.ownerName?.trim() && saved.trim() === useAppStore.getState().setup.ownerName.trim()))
       setOwnerPinModal(false); setOPin(''); setOPin2('')
       toast.show('حُفظ رقم المالك — شاشة الدخول مفعلة من الآن ✅')
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -64,7 +69,10 @@ export function PermissionsPage() {
       else updateAppUser(pinFor, { pinHash })
       // رقم من المدير = مبدئي دائماً: يظهر له في القائمة ويُجبر الموظف على تغييره بأول دخول
       updateAppUser(pinFor, { mustChangePin: true, initialPin: ePin })
-      const name = appUsers.find((x) => x.id === pinFor)?.nameAr ?? ''
+      // إن كانت بيانات الدخول المحفوظة على هذا الجهاز تخص نفس الموظف (جهاز مشترك) تُحدَّث
+      const target = appUsers.find((x) => x.id === pinFor)
+      if (target) await updateSavedLoginPin(ePin, (saved) => findUserByIdentifier([target], saved) != null)
+      const name = target?.nameAr ?? ''
       setPinFor(null); setEPin(''); setEPin2('')
       toast.show(`عُيّن رقم مبدئي لـ«${name}» — سيُجبر على تغييره بأول دخول ✅`)
     } catch (e) { toast.show((e as Error).message, 'error') }
