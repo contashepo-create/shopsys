@@ -9,14 +9,18 @@
  * + استعادة كلمة السر: الموظف يسجل طلباً يصل المالك إشعاراً،
  *   والمالك يستلم رقماً مؤقتاً على تليجرام صالحاً 15 دقيقة.
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { LogIn, KeyRound, LifeBuoy } from 'lucide-react'
 import { useDataStore } from '../data/repo.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { hashPin, findUserByIdentifier, matchesOwnerIdentity } from '../core/audit.ts'
-import { generateTempPin, buildTempPinMessage, TEMP_PIN_TTL_MIN, lockoutMinutesLeft } from '../core/auth.ts'
+import { generateTempPin, buildTempPinMessage, TEMP_PIN_TTL_MIN, lockoutMinutesLeft, validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../core/auth.ts'
 import { apiUrl, isValidBotToken, isValidChatId } from '../core/telegram.ts'
-import { Btn, Modal, inputCls, useToast } from './components/ui.tsx'
+import { encryptForDevice, decryptForDevice } from '../data/secureStorage.ts'
+import { Btn, Modal, inputCls, PinInput, useToast } from './components/ui.tsx'
+
+/** مفتاح بيانات الدخول المحفوظة (طلب المالك) — مشفرة بمفتاح الجهاز، لا نص صريح أبداً */
+const SAVED_LOGIN_KEY = 'tahakam-saved-login'
 
 export function LoginScreen() {
   const { appUsers, login, requestPinReset, setOwnerTempPin, setOwnerPin, changeOwnPin, loginGuard, currentUserId, loggedOut, ownerProfile } = useDataStore()
@@ -27,6 +31,27 @@ export function LoginScreen() {
   const [identifier, setIdentifier] = useState('')
   const [pin, setPin] = useState('')
   const [busy, setBusy] = useState(false)
+  // عرض حفظ بيانات الدخول (طلب المالك): تُحفظ مشفرة بمفتاح الجهاز وتُملأ تلقائياً
+  const [rememberMe, setRememberMe] = useState(false)
+  useEffect(() => {
+    const stored = localStorage.getItem(SAVED_LOGIN_KEY)
+    if (!stored) return
+    void decryptForDevice(stored).then((plain) => {
+      if (!plain) return
+      try {
+        const saved = JSON.parse(plain) as { identifier?: string; pin?: string }
+        if (saved.identifier) setIdentifier(saved.identifier)
+        if (saved.pin) setPin(saved.pin)
+        setRememberMe(true)
+      } catch { /* بيانات تالفة — تجاهل */ }
+    })
+  }, [])
+  const persistLogin = async (id: string, p: string) => {
+    try {
+      if (rememberMe) localStorage.setItem(SAVED_LOGIN_KEY, await encryptForDevice(JSON.stringify({ identifier: id, pin: p })))
+      else localStorage.removeItem(SAVED_LOGIN_KEY)
+    } catch { /* لا يعطل الدخول */ }
+  }
   // إجبار تعيين رقم جديد: للمالك بعد رقم مؤقت، وللموظف عند أول دخول
   const [mustSetNewPin, setMustSetNewPin] = useState<null | { kind: 'owner' } | { kind: 'employee'; userId: number }>(null)
   const [newPin, setNewPin] = useState('')
@@ -52,6 +77,7 @@ export function LoginScreen() {
       const ownerByWizardName = !!setup.ownerName?.trim() && identifier.trim() === setup.ownerName.trim()
       if (matchesOwnerIdentity(ownerProfile, identifier) || ownerByWizardName) {
         const { usedTempPin } = await login(null, pin)
+        await persistLogin(identifier, pin)
         setPin('')
         if (usedTempPin) setMustSetNewPin({ kind: 'owner' })
         else toast.show('أهلاً بك — دخول موفق ✅')
@@ -60,6 +86,7 @@ export function LoginScreen() {
         // رسالة واحدة عامة سواء أخطأ المعرف أو الرقم — لا نكشف أي الاثنين خاطئ
         if (!user) throw new Error('بيانات الدخول غير صحيحة — تحقق من المعرف والرقم السري')
         const { mustChangePin } = await login(user.id, pin)
+        await persistLogin(identifier, pin)
         setPin('')
         if (mustChangePin) {
           setMustSetNewPin({ kind: 'employee', userId: user.id })
@@ -78,12 +105,15 @@ export function LoginScreen() {
   const saveNewPin = async () => {
     try {
       if (newPin !== newPin2) throw new Error('الرقمان غير متطابقين')
+      const fmtErrors = validatePinFormat(newPin)
+      if (fmtErrors.length) throw new Error(fmtErrors.join(' — '))
       const hash = await hashPin(newPin)
       if (effectiveMustSet?.kind === 'employee') changeOwnPin(effectiveMustSet.userId, hash)
       else setOwnerPin(hash)
+      await persistLogin(identifier, newPin) // تحديث كلمة السر المحفوظة إن كان الحفظ مفعلاً
       setMustSetNewPin(null)
       setNewPin(''); setNewPin2('')
-      toast.show('حُفظ رقمك السري الجديد — لا يعرفه أحد غيرك الآن ✅')
+      toast.show('حُفظت كلمة سرك الجديدة — لا يعرفها أحد غيرك الآن ✅')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -164,27 +194,35 @@ export function LoginScreen() {
             className={inputCls}
           />
 
-          {/* الرقم السري */}
+          {/* كلمة السر — بعين إظهار/إخفاء (طلب المالك) */}
           <div className="space-y-2">
-            <input
-              type="password"
-              inputMode="numeric"
-              autoComplete="off"
-              name="tahakam-login-pin"
-              dir="ltr"
-              maxLength={8}
+            <PinInput
               value={pin}
+              onChange={setPin}
               disabled={lockLeft > 0}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-              onKeyDown={(e) => { if (e.key === 'Enter' && canSubmit) void doLogin() }}
-              placeholder="● ● ● ●"
-              className={`${inputCls} text-center !text-xl tracking-[0.5em] font-black`}
+              onEnter={() => { if (canSubmit) void doLogin() }}
+              placeholder="كلمة السر"
+              name="tahakam-login-pin"
+              centered
             />
             {lockLeft > 0 && (
               <p className="text-[11px] text-rose-500 font-bold text-center">
                 ⛔ محاولات كثيرة خاطئة — انتظر {lockLeft} دقيقة ثم أعد المحاولة
               </p>
             )}
+            {/* عرض حفظ بيانات الدخول (طلب المالك) — مشفرة بمفتاح الجهاز */}
+            <label className="flex items-center gap-2 text-[12px] font-bold text-slate-500 dark:text-slate-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => {
+                  setRememberMe(e.target.checked)
+                  if (!e.target.checked) localStorage.removeItem(SAVED_LOGIN_KEY)
+                }}
+                className="w-4 h-4 rounded accent-brand-600"
+              />
+              حفظ بيانات الدخول على هذا الجهاز (مشفرة)
+            </label>
             <Btn className="w-full !py-3 !text-sm" onClick={() => void doLogin()} disabled={busy || !canSubmit || lockLeft > 0}>
               <LogIn size={16} /> {busy ? 'جارٍ التحقق…' : 'دخول'}
             </Btn>
@@ -212,13 +250,13 @@ export function LoginScreen() {
         <div className="space-y-3">
           <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
             {effectiveMustSet?.kind === 'employee'
-              ? 'هذا أول دخول لك برقم مبدئي من المدير — عيّن رقمك الخاص الآن (4-8 أرقام). بعد الحفظ لا يعرفه أحد غيرك.'
-              : 'دخلت برقم مؤقت من تليجرام وقد احترق باستخدامه. عيّن رقمك الدائم الجديد (4-8 أرقام) قبل المتابعة.'}
+              ? `هذا أول دخول لك بكلمة سر مبدئية من المدير — عيّن كلمتك الخاصة الآن (${PIN_MIN_LENGTH}-${PIN_MAX_LENGTH} خانة: أرقام وحروف ورموز). بعد الحفظ لا يعرفها أحد غيرك.`
+              : `دخلت برقم مؤقت من تليجرام وقد احترق باستخدامه. عيّن كلمة سرك الدائمة الجديدة (${PIN_MIN_LENGTH}-${PIN_MAX_LENGTH} خانة) قبل المتابعة.`}
           </p>
-          <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} placeholder="الرقم الجديد" className={`${inputCls} text-center tracking-widest`} />
-          <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={newPin2} onChange={(e) => setNewPin2(e.target.value.replace(/\D/g, ''))} placeholder="تأكيد الرقم" className={`${inputCls} text-center tracking-widest`} />
-          <Btn className="w-full" onClick={() => void saveNewPin()} disabled={newPin.length < 4 || newPin2.length < 4}>
-            <KeyRound size={15} /> حفظ الرقم الجديد
+          <PinInput value={newPin} onChange={setNewPin} placeholder="كلمة السر الجديدة" centered />
+          <PinInput value={newPin2} onChange={setNewPin2} placeholder="تأكيد كلمة السر" centered />
+          <Btn className="w-full" onClick={() => void saveNewPin()} disabled={newPin.length < PIN_MIN_LENGTH || newPin2.length < PIN_MIN_LENGTH}>
+            <KeyRound size={15} /> حفظ كلمة السر الجديدة
           </Btn>
         </div>
       </Modal>

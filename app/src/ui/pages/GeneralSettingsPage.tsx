@@ -8,13 +8,14 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES } from '../../core/activities.ts'
-import { suggestFiscalYear, validateFiscalYear, validateYearClose } from '../../core/fiscal.ts'
+import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, type FiscalYear } from '../../core/fiscal.ts'
 import { formatMinor } from '../../core/money.ts'
 import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
+import { accountName } from './accountNames.ts'
 
 export function GeneralSettingsPage() {
   const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty } = useAppStore()
-  const { warehouses, closeFiscalYear } = useDataStore()
+  const { warehouses, closeFiscalYear, journal } = useDataStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const activity = ACTIVITY_TEMPLATES.find((a) => a.id === setup.activityId)
@@ -30,6 +31,16 @@ export function GeneralSettingsPage() {
   const [fyName, setFyName] = useState(nextSuggested.nameAr)
   const [fyStart, setFyStart] = useState(nextSuggested.startDate)
   const [fyEnd, setFyEnd] = useState(nextSuggested.endDate)
+  /* تقرير السنة المالية (طلب المالك): مفتوحة أو مقفلة — رصيد كل حساب أول السنة + الحركة + الحالي */
+  const [reportYear, setReportYear] = useState<FiscalYear | null>(null)
+  const yearReport = reportYear
+    ? buildFiscalYearReport(
+        journal,
+        reportYear,
+        journal.filter((e) => e.sourceType === 'year_closing' && e.sourceId === reportYear.id).map((e) => e.id),
+      )
+    : null
+
   const doCloseYear = () => {
     if (!closeTarget) return
     try {
@@ -242,6 +253,7 @@ export function GeneralSettingsPage() {
           </button>
 
           {loyalty.enabled && (
+            <>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Field label={`نقاط لكل ${cur.symbol} من الفاتورة`} hint="الافتراضي العالمي: 1 نقطة لكل وحدة عملة">
                 <input
@@ -262,6 +274,37 @@ export function GeneralSettingsPage() {
                 />
               </Field>
             </div>
+            {/* الشرح الديناميكي (طلب المالك): يتحدث مع الأرقام — مثال حي يتغير فور تعديل أي خانة */}
+            {(() => {
+              const sample = 100 * 10 ** cur.decimals // فاتورة افتراضية: 100 وحدة عملة
+              const earned = Math.floor((sample / 10 ** cur.decimals) * loyalty.pointsPerUnit)
+              const redeemAll = earned * loyalty.redeemValueMinor
+              const minValue = loyalty.minRedeemPoints * loyalty.redeemValueMinor
+              const invoicesToMin = loyalty.pointsPerUnit > 0 && earned > 0 ? Math.ceil(loyalty.minRedeemPoints / earned) : 0
+              return (
+                <div className="p-4 rounded-2xl bg-pink-500/5 border border-pink-500/20 space-y-2">
+                  <div className="text-[12px] font-black text-pink-700 dark:text-pink-300">📖 كيف تعمل إعداداتك الحالية؟ (مثال حي يتحدث مع أرقامك)</div>
+                  <ul className="text-[11.5px] text-slate-600 dark:text-slate-300 leading-relaxed space-y-1.5 pr-4 list-disc">
+                    <li>
+                      عميل مسجل يشتري بفاتورة <b>{fmt(sample)} {cur.symbol}</b> ⇒ يكسب فوراً <b className="text-pink-600">{earned.toLocaleString('ar-EG')} نقطة</b>
+                      {' '}({loyalty.pointsPerUnit} نقطة × {fmt(sample)} {cur.symbol} — الكسر يُقرَّب لأسفل).
+                    </li>
+                    <li>
+                      لو استبدل هذه النقاط كلها يحصل على خصم <b className="text-emerald-600">{fmt(redeemAll)} {cur.symbol}</b>
+                      {' '}(كل نقطة = {loyalty.redeemValueMinor} {cur.decimals === 3 ? 'فلس' : 'قرش/هللة'}).
+                    </li>
+                    <li>
+                      لا يستطيع الاستبدال قبل جمع <b>{loyalty.minRedeemPoints.toLocaleString('ar-EG')} نقطة</b>
+                      {' '}(= خصم {fmt(minValue)} {cur.symbol}){invoicesToMin > 1 ? <> — أي بعد نحو <b>{invoicesToMin.toLocaleString('ar-EG')} فواتير</b> بحجم المثال</> : null}.
+                    </li>
+                    <li className="text-slate-400">
+                      محاسبياً: الاستبدال قيد تلقائي — مصروف برنامج الولاء (5115) مديناً / ذمم العملاء (1104) دائناً. لا شيء يدوي.
+                    </li>
+                  </ul>
+                </div>
+              )
+            })()}
+            </>
           )}
         </div>
       </section>
@@ -367,13 +410,16 @@ export function GeneralSettingsPage() {
                   <span className="font-black text-slate-800 dark:text-white">{y.nameAr}</span>
                   <span className="text-[11px] text-slate-400 ms-2" dir="ltr">{y.startDate} → {y.endDate}</span>
                 </div>
-                {y.status === 'closed' ? (
-                  <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-500/10 text-slate-500 font-bold flex items-center gap-1"><Lock size={11} /> مقفلة</span>
-                ) : closable ? (
-                  <Btn variant="ghost" onClick={() => setCloseTarget(y)}>🔒 إقفال السنة</Btn>
-                ) : (
-                  <span className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">مفتوحة — جارية</span>
-                )}
+                <div className="flex items-center gap-2">
+                  <Btn variant="ghost" onClick={() => setReportYear(y)}>📊 تقرير السنة</Btn>
+                  {y.status === 'closed' ? (
+                    <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-500/10 text-slate-500 font-bold flex items-center gap-1"><Lock size={11} /> مقفلة</span>
+                  ) : closable ? (
+                    <Btn variant="ghost" onClick={() => setCloseTarget(y)}>🔒 إقفال السنة</Btn>
+                  ) : (
+                    <span className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">مفتوحة — جارية</span>
+                  )}
+                </div>
               </div>
             )
           })}
@@ -396,6 +442,61 @@ export function GeneralSettingsPage() {
             <Btn onClick={doCloseYear}>🔒 تأكيد الإقفال</Btn>
           </div>
         </div>
+      </Modal>
+
+      {/* تقرير السنة المالية (طلب المالك): رصيد كل حساب أول السنة + حركة الفترة + الرصيد الحالي/الختامي */}
+      <Modal open={!!reportYear} onClose={() => setReportYear(null)} title={`📊 تقرير السنة المالية «${reportYear?.nameAr ?? ''}» — ${reportYear?.status === 'closed' ? 'مقفلة' : 'مفتوحة'}`} wide>
+        {reportYear && yearReport && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/25 p-3.5">
+                <div className="text-[10.5px] font-bold text-emerald-600">إيرادات الفترة</div>
+                <div className="text-lg font-black text-emerald-700 dark:text-emerald-300 mt-0.5">{fmt(yearReport.totalRevenueMinor)} {cur.symbol}</div>
+              </div>
+              <div className="rounded-2xl bg-rose-500/10 border border-rose-500/25 p-3.5">
+                <div className="text-[10.5px] font-bold text-rose-600">مصروفات الفترة</div>
+                <div className="text-lg font-black text-rose-700 dark:text-rose-300 mt-0.5">{fmt(yearReport.totalExpenseMinor)} {cur.symbol}</div>
+              </div>
+              <div className={`rounded-2xl p-3.5 border ${yearReport.netProfitMinor >= 0 ? 'bg-sky-500/10 border-sky-500/25' : 'bg-amber-500/10 border-amber-500/25'}`}>
+                <div className="text-[10.5px] font-bold text-slate-500">صافي {yearReport.netProfitMinor >= 0 ? 'الربح' : 'الخسارة'}</div>
+                <div className="text-lg font-black text-slate-800 dark:text-white mt-0.5">{fmt(Math.abs(yearReport.netProfitMinor))} {cur.symbol}</div>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              لكل حساب: رصيده أول السنة (تراكمي من كل ما قبل {reportYear.startDate})، حركة الفترة، ثم الرصيد
+              {reportYear.status === 'closed' ? ' الختامي (حتى نهاية السنة)' : ' الحالي'} — موجب = مدين، وبين قوسين = دائن.
+            </p>
+            {yearReport.rows.length === 0 ? (
+              <div className="text-center text-[12px] text-slate-400 py-8">لا حركة على أي حساب في هذه السنة</div>
+            ) : (
+              <div className="max-h-[50vh] overflow-auto rounded-xl border border-slate-200 dark:border-slate-700">
+                <table className="w-full text-[12px]">
+                  <thead className="sticky top-0 bg-slate-50 dark:bg-slate-800 text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-right font-bold">الحساب</th>
+                      <th className="px-3 py-2 text-center font-bold">رصيد أول السنة</th>
+                      <th className="px-3 py-2 text-center font-bold">حركة الفترة</th>
+                      <th className="px-3 py-2 text-center font-bold">{reportYear.status === 'closed' ? 'الرصيد الختامي' : 'الرصيد الحالي'}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {yearReport.rows.map((r) => {
+                      const cell = (v: number) => (v >= 0 ? fmt(v) : `(${fmt(-v)})`)
+                      return (
+                        <tr key={r.accountCode} className="border-t border-slate-100 dark:border-slate-800">
+                          <td className="px-3 py-2 font-bold text-slate-700 dark:text-slate-200">{accountName(r.accountCode)} <span className="text-[10px] text-slate-400" dir="ltr">{r.accountCode}</span></td>
+                          <td className="px-3 py-2 text-center" dir="ltr">{cell(r.openingMinor)}</td>
+                          <td className="px-3 py-2 text-center" dir="ltr">{cell(r.movementMinor)}</td>
+                          <td className="px-3 py-2 text-center font-black" dir="ltr">{cell(r.closingMinor)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
 
       <Modal open={newYearOpen} onClose={() => setNewYearOpen(false)} title="📅 فتح سنة مالية جديدة">

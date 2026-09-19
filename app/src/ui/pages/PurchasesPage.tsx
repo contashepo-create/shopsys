@@ -383,7 +383,7 @@ export function PurchasesPage() {
             </Field>
           )}
           {projects.some((p) => p.status === 'active') && (
-            <Field label="ربط بمشروع مقاولات (اختياري)" hint="الفاتورة تدخل تكاليف المشروع وربحيته">
+            <Field label="ربط بمشروع مقاولات (اختياري)" hint="الفاتورة تدخل تكاليف المشروع وربحيته — ربحية المشروع تُحسب صافية من الضريبة: أدخل ض.ق.م المدخلات في خانتها أعلاه فتُعزل عن التكلفة (كما يُسجل إيراد المستخلص صافياً والضريبة على حسابها)">
               <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
                 <option value="">— بلا مشروع —</option>
                 {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}

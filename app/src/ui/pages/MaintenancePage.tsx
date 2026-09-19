@@ -8,7 +8,7 @@ import { useMemo, useState } from 'react'
 import { Plus, Wrench, Eye, BookOpenText, PackageCheck, Trash2, TrendingUp, Printer, Settings2 } from 'lucide-react'
 import { useDataStore, type MaintenanceTicket } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { getCountry } from '../../core/countries.ts'
+import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeTicketTotals, maintenanceReport, isTicketOverdue, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
 import { renderTicketReceiptHtml, renderTicketInvoiceHtml } from '../print/printMaintenanceTicket.ts'
@@ -365,7 +365,7 @@ export function MaintenancePage() {
               <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className={inputCls} disabled={!!customerId} />
             </Field>
             <Field label="الهاتف">
-              <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className={inputCls} dir="ltr" />
+              <input value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} />
             </Field>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -11,7 +11,7 @@ import { useMemo, useRef, useState } from 'react'
 import { Plus, Stethoscope, CalendarClock, Eye, BookOpenText, Banknote, ClipboardList, CheckCircle2, Trash2, Paperclip, FileText, Printer, Link2, HeartPulse, X } from 'lucide-react'
 import { useDataStore, type ClinicPatient, type ClinicVisit } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { getCountry } from '../../core/countries.ts'
+import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { VISIT_KIND_LABELS, patientFileSummary, type VisitKind } from '../../core/clinic.ts'
 import {
@@ -490,7 +490,7 @@ export function ClinicPatientsPage() {
         <div className="space-y-3">
           <Field label="الاسم *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} /></Field>
           <div className="grid grid-cols-3 gap-3">
-            <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
+            <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} /></Field>
             <Field label="النوع">
               <div className="flex gap-2">
                 {(['male', 'female'] as const).map((g) => (

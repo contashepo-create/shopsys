@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react'
 import { Plus, Shirt, TrendingUp, Trash2, Printer, BookOpenText } from 'lucide-react'
 import { useDataStore, type LaundryOrder } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { getCountry } from '../../core/countries.ts'
+import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import {
   LAUNDRY_SERVICE_LABELS, LAUNDRY_STATUS_LABELS, LAUNDRY_TRANSITIONS, laundryTotal, laundryReport,
@@ -226,7 +226,7 @@ export function LaundryPage() {
               </Field>
             )}
             <Field label="الهاتف">
-              <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder="اختياري" />
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} />
             </Field>
             <Field label="موعد التسليم الموعود">
               <input type="date" value={promisedAt} onChange={(e) => setPromisedAt(e.target.value)} className={inputCls} dir="ltr" />

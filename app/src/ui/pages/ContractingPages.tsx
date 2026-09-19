@@ -24,7 +24,7 @@ import { printHtml } from '../print/printReceipt.ts'
 export function ProjectsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems,
-    addProject, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
+    addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
   } = useDataStore()
   const { setup } = useAppStore()
@@ -51,20 +51,45 @@ export function ProjectsPage() {
   const [managerId, setManagerId] = useState('')
   const [tags, setTags] = useState('')
 
+  /* البند العالمي (طلب المالك): المشروع يُنشأ بجدول كميات BOQ —
+     قيمة العقد تُحسب من مجموع البنود (كمية × سعر) لا تُكتب يدوياً */
+  interface BoqDraft { code: string; descriptionAr: string; unit: string; qty: string; unitPrice: string; estCost: string }
+  const emptyBoqLine = (): BoqDraft => ({ code: '', descriptionAr: '', unit: 'م2', qty: '', unitPrice: '', estCost: '' })
+  const [boqDraft, setBoqDraft] = useState<BoqDraft[]>([emptyBoqLine()])
+  const patchBoqLine = (i: number, patch: Partial<BoqDraft>) =>
+    setBoqDraft((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)))
+  const validBoqLines = boqDraft.filter((l) => l.descriptionAr.trim() && Number(l.qty) > 0 && Number(l.unitPrice) >= 0)
+  const boqTotalMinor = validBoqLines.reduce((a, l) => a + Math.round(Number(l.qty) * toMinor(l.unitPrice, cur.decimals)), 0)
+  // نمط الإدخال: بنود (الافتراضي العالمي) أو قيمة إجمالية (عقود المقطوعية بلا جدول)
+  const [valueMode, setValueMode] = useState<'boq' | 'manual'>('boq')
+  const effectiveContractMinor = valueMode === 'boq' ? boqTotalMinor : toMinor(contractValue, cur.decimals)
+
   const saveProject = () => {
     try {
+      if (valueMode === 'boq' && validBoqLines.length === 0) throw new Error('أدخل بند جدول كميات واحداً على الأقل (وصف + كمية + سعر) — أو بدّل إلى «قيمة إجمالية»')
       const p = addProject({
         nameAr: nameAr.trim(), clientName: clientName.trim(),
         clientId: clientId ? Number(clientId) : null,
-        contractValueMinor: toMinor(contractValue, cur.decimals),
+        contractValueMinor: effectiveContractMinor,
         retentionPercent: Number(retention) || 0, startDate, notes: notes.trim(),
         contractNumber: contractNumber.trim(), location: location.trim(),
         expectedEndDate: expectedEnd, managerEmployeeId: managerId ? Number(managerId) : null,
         tags: tags.split('،').map((t) => t.trim()).filter(Boolean),
       })
-      toast.show(`أُنشئ المشروع ${p.code} ✅`)
+      // بنود BOQ تُسجل مع المشروع — المستخلصات البندية تعمل من اليوم الأول
+      if (valueMode === 'boq') {
+        validBoqLines.forEach((l, idx) => {
+          addBoqItem({
+            projectId: p.id, code: l.code.trim() || String(idx + 1),
+            descriptionAr: l.descriptionAr.trim(), unit: l.unit.trim() || 'مقطوعية',
+            qty: Number(l.qty), unitPriceMinor: toMinor(l.unitPrice, cur.decimals),
+            estCostMinor: l.estCost ? toMinor(l.estCost, cur.decimals) : 0,
+          })
+        })
+      }
+      toast.show(`أُنشئ المشروع ${p.code}${valueMode === 'boq' ? ` بجدول كميات من ${validBoqLines.length} بند — قيمة العقد ${fmt(effectiveContractMinor)}` : ''} ✅`)
       setOpen(false); setNameAr(''); setClientName(''); setClientId(''); setContractValue(''); setRetention('5'); setNotes('')
-      setContractNumber(''); setLocation(''); setExpectedEnd(''); setManagerId(''); setTags('')
+      setContractNumber(''); setLocation(''); setExpectedEnd(''); setManagerId(''); setTags(''); setBoqDraft([emptyBoqLine()]); setValueMode('boq')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -132,18 +157,20 @@ export function ProjectsPage() {
   const [costDesc, setCostDesc] = useState('')
   const [costPayment, setCostPayment] = useState<'cash' | 'credit'>('cash')
   const [costPaySource, setCostPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
+  const [costVat, setCostVat] = useState('')
 
   const saveCost = () => {
     if (!costFor) return
     try {
       addProjectCost({
         projectId: costFor.id, kind: costKind, amountMinor: toMinor(costAmount, cur.decimals),
+        inputVatMinor: costVat ? toMinor(costVat, cur.decimals) : 0,
         payment: costPayment, description: costDesc.trim(),
         treasury: costPaySource.kind === 'treasury' ? costPaySource.treasury : undefined,
         custodyFileId: costPayment === 'cash' && costPaySource.kind === 'custody' ? costPaySource.custodyFileId : null,
       })
       toast.show('سُجلت التكلفة على المشروع بقيد متوازن ✅')
-      setCostFor(null); setCostAmount(''); setCostDesc('')
+      setCostFor(null); setCostAmount(''); setCostDesc(''); setCostVat('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -298,11 +325,62 @@ export function ProjectsPage() {
           <div className="rounded-2xl border border-orange-500/20 p-4 space-y-3">
             <div className="text-[11.5px] font-black text-orange-600 dark:text-orange-400">📋 بيانات العقد الأساسية</div>
             <Field label="اسم المشروع *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="فيلا الشيخ زايد…" /></Field>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label={`قيمة العقد (${cur.symbol}) *`}><input value={contractValue} onChange={(e) => setContractValue(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="رقم العقد الرسمي"><input value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} className={inputCls} dir="ltr" placeholder="CT-2026-014" /></Field>
               <Field label="محتجز ضمان الأعمال ٪" hint="يُخصم من كل مستخلص ويُفرج عنه عند التسليم"><input value={retention} onChange={(e) => setRetention(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             </div>
+          </div>
+          {/* القسم: جدول الكميات BOQ — قيمة العقد من البنود (النمط العالمي — طلب المالك) */}
+          <div className="rounded-2xl border border-emerald-500/25 p-4 space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="text-[11.5px] font-black text-emerald-600 dark:text-emerald-400">📐 قيمة العقد وجدول الكميات</div>
+              <div className="flex gap-1.5">
+                {([['boq', 'بنود جدول كميات (مُوصى به)'], ['manual', 'قيمة إجمالية']] as const).map(([m, label]) => (
+                  <button key={m} onClick={() => setValueMode(m)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border-2 transition-all ${valueMode === m ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {valueMode === 'manual' ? (
+              <Field label={`قيمة العقد الإجمالية (${cur.symbol}) *`} hint="لعقود المقطوعية بلا جدول كميات — يمكنك إضافة البنود لاحقاً من «جدول الكميات»">
+                <input value={contractValue} onChange={(e) => setContractValue(e.target.value)} inputMode="decimal" className={inputCls} />
+              </Field>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-[11px] text-slate-400">كل بند بخانات مسماة — قيمة العقد تُحسب تلقائياً من مجموع (الكمية × سعر الوحدة)</p>
+                {boqDraft.map((l, i) => (
+                  <div key={i} className="grid grid-cols-2 sm:grid-cols-7 gap-2 items-end p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+                    <Field label="كود البند"><input value={l.code} onChange={(e) => patchBoqLine(i, { code: e.target.value })} className={inputCls} dir="ltr" placeholder={String(i + 1)} /></Field>
+                    <div className="col-span-2"><Field label="وصف البند *"><input value={l.descriptionAr} onChange={(e) => patchBoqLine(i, { descriptionAr: e.target.value })} className={inputCls} placeholder="أعمال حفر وردم…" /></Field></div>
+                    <Field label="الوحدة *"><input value={l.unit} onChange={(e) => patchBoqLine(i, { unit: e.target.value })} className={inputCls} placeholder="م2 / م3 / طن" /></Field>
+                    <Field label="الكمية *"><input value={l.qty} onChange={(e) => patchBoqLine(i, { qty: e.target.value })} inputMode="decimal" className={inputCls} dir="ltr" /></Field>
+                    <Field label={`سعر الوحدة (${cur.symbol}) *`}><input value={l.unitPrice} onChange={(e) => patchBoqLine(i, { unitPrice: e.target.value })} inputMode="decimal" className={inputCls} dir="ltr" /></Field>
+                    <div className="flex items-center gap-1.5">
+                      <div className="flex-1 min-w-0">
+                        <Field label="تكلفة تقديرية/وحدة" hint="">
+                          <input value={l.estCost} onChange={(e) => patchBoqLine(i, { estCost: e.target.value })} inputMode="decimal" className={inputCls} dir="ltr" placeholder="اختياري" />
+                        </Field>
+                      </div>
+                      {boqDraft.length > 1 && (
+                        <button onClick={() => setBoqDraft((prev) => prev.filter((_, idx) => idx !== i))} title="حذف البند" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all">✕</button>
+                      )}
+                    </div>
+                    {Number(l.qty) > 0 && Number(l.unitPrice) > 0 && (
+                      <div className="col-span-2 sm:col-span-7 text-[11px] font-bold text-emerald-600">
+                        إجمالي البند: {fmt(Math.round(Number(l.qty) * toMinor(l.unitPrice, cur.decimals)))} {cur.symbol}
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <Btn variant="ghost" onClick={() => setBoqDraft((prev) => [...prev, emptyBoqLine()])}>+ بند جديد</Btn>
+                  <div className="text-[13px] font-black text-emerald-700 dark:text-emerald-300">
+                    💰 قيمة العقد المحسوبة: {fmt(boqTotalMinor)} {cur.symbol} <span className="text-[10.5px] font-bold text-slate-400">({validBoqLines.length} بند)</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           {/* القسم 2: العميل */}
           <div className="rounded-2xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
@@ -336,7 +414,7 @@ export function ProjectsPage() {
           </div>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveProject} disabled={!nameAr.trim() || !contractValue}>إنشاء المشروع</Btn>
+            <Btn onClick={saveProject} disabled={!nameAr.trim() || (valueMode === 'manual' ? !contractValue : validBoqLines.length === 0)}>إنشاء المشروع</Btn>
           </div>
         </div>
       </Modal>
@@ -462,6 +540,9 @@ export function ProjectsPage() {
               </Field>
             </div>
             <Field label="الوصف"><input value={costDesc} onChange={(e) => setCostDesc(e.target.value)} className={inputCls} placeholder="حديد تسليح، أجور نجارين…" /></Field>
+            <Field label={`ض.ق.م مدخلات قابلة للخصم (${cur.symbol}) — اختياري`} hint="للمنشآت المسجلة ضريبياً: تُعزل عن تكلفة المشروع (المبلغ أعلاه صافٍ) فتبقى ربحية المشروع صافية من الضريبة تماماً — غير المسجل يتركها فارغة">
+              <input value={costVat} onChange={(e) => setCostVat(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
+            </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setCostFor(null)}>إلغاء</Btn>
               <Btn onClick={saveCost} disabled={!costAmount}>تسجيل التكلفة</Btn>

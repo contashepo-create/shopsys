@@ -25,7 +25,7 @@ export function Sidebar() {
   // صلاحيات المستخدم النشط (البند 4 — صفر تجاوز): ما لا يملكه لا يراه أصلاً
   const { appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
-  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles))
+  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, setup.activityId))
 
   // إخفاء الأقسام والفروع حسب الوحدات المفعلة للنشاط (طلب المالك):
   // القسم كله يختفي لو وحدته مطفأة، والفرع المرتبط بوحدة يختفي وحده داخل قسم عام

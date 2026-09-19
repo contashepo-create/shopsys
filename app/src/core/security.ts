@@ -75,11 +75,20 @@ export interface HourlySnapshot {
   data: string // JSON النسخة
 }
 
-/** هل حان موعد لقطة جديدة؟ (مرت ساعة منذ الأخيرة أو لا لقطات) */
-export function isBackupDue(lastAtIso: string | null, nowIso: string): boolean {
+/** هل حان موعد لقطة جديدة؟ الفاصل قابل للجدولة من الإعدادات (طلب المالك) — الافتراضي كل ساعة */
+export function isBackupDue(lastAtIso: string | null, nowIso: string, intervalMs = HOURLY_BACKUP_INTERVAL_MS): boolean {
   if (!lastAtIso) return true
-  return Date.parse(nowIso) - Date.parse(lastAtIso) >= HOURLY_BACKUP_INTERVAL_MS
+  return Date.parse(nowIso) - Date.parse(lastAtIso) >= intervalMs
 }
+
+/** خيارات جدولة النسخ التلقائي (بالدقائق) — تُعرض في صفحة النسخ الاحتياطي */
+export const BACKUP_INTERVAL_CHOICES: { minutes: number; labelAr: string }[] = [
+  { minutes: 30, labelAr: 'كل نصف ساعة' },
+  { minutes: 60, labelAr: 'كل ساعة (مُوصى به)' },
+  { minutes: 180, labelAr: 'كل 3 ساعات' },
+  { minutes: 360, labelAr: 'كل 6 ساعات' },
+  { minutes: 1440, labelAr: 'مرة يومياً' },
+]
 
 /** إضافة لقطة للحلقة مع إبقاء آخر KEEP فقط (الأحدث أولاً) */
 export function pushSnapshot(ring: readonly HourlySnapshot[], snap: HourlySnapshot, keep = HOURLY_BACKUP_KEEP): HourlySnapshot[] {

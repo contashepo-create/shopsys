@@ -1,8 +1,9 @@
 /** مكونات UI مشتركة — أزرار، مودال، حقول، توست */
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { X, Eye, EyeOff } from 'lucide-react'
 import { create } from 'zustand'
+import { PIN_MAX_LENGTH } from '../../core/auth.ts'
 
 export function Btn({
   children, onClick, variant = 'primary', disabled, type = 'button', className = '',
@@ -42,6 +43,56 @@ export function Field({
 
 export const inputCls =
   'w-full px-3.5 py-2.5 rounded-xl border-2 border-slate-200 dark:border-slate-700 bg-transparent text-sm text-slate-800 dark:text-white focus:border-brand-500 focus:outline-none transition-colors duration-200 placeholder:text-slate-300 dark:placeholder:text-slate-600'
+
+/**
+ * حقل كلمة سر موحد بعين إظهار/إخفاء (طلب المالك) — يُستخدم في كل شاشات
+ * الأرقام السرية: الدخول، ملفي، المستخدمين، موافقة المشرف.
+ * كلمة السر 8–32 خانة: أرقام وحروف ورموز (لا مسافات).
+ */
+export function PinInput({
+  value, onChange, placeholder = 'كلمة السر', disabled, autoComplete = 'off', name, centered, onEnter, className = '',
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  disabled?: boolean
+  autoComplete?: string
+  name?: string
+  centered?: boolean
+  onEnter?: () => void
+  className?: string
+}) {
+  const [show, setShow] = useState(false)
+  const keyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && onEnter) onEnter()
+  }
+  return (
+    <div className="relative">
+      <input
+        type={show ? 'text' : 'password'}
+        autoComplete={autoComplete}
+        name={name}
+        dir="ltr"
+        maxLength={PIN_MAX_LENGTH}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value.replace(/\s/g, ''))}
+        onKeyDown={keyDown}
+        placeholder={placeholder}
+        className={`${inputCls} !pl-10 ${centered ? 'text-center font-black' : ''} ${className}`}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setShow((s) => !s)}
+        title={show ? 'إخفاء كلمة السر' : 'إظهار كلمة السر'}
+        className="absolute left-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+      >
+        {show ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+  )
+}
 
 export function Modal({
   open, onClose, title, children, wide,

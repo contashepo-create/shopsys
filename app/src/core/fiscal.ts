@@ -32,6 +32,9 @@ export function validateFiscalYear(fy: { nameAr: string; startDate: string; endD
         errors.push(`تتداخل مع السنة «${ex.nameAr}» (${ex.startDate} → ${ex.endDate})`)
       }
     }
+    // (طلب المالك): سنة مالية واحدة مفتوحة فقط — لا تُفتح جديدة قبل إقفال المفتوحة
+    const open = existing.find((y) => y.status === 'open')
+    if (open) errors.push(`السنة «${open.nameAr}» ما زالت مفتوحة — أقفلها أولاً (سنة مالية واحدة مفتوحة فقط)`)
   }
   return errors
 }
@@ -111,6 +114,69 @@ export function buildYearClosingLines(
   const c = lines.reduce((a, l) => a + l.credit, 0)
   if (d !== c) throw new Error(`قيد الإقفال غير متوازن (${d} ≠ ${c}) — عيب داخلي`)
   return { lines, totalRevenueMinor, totalExpenseMinor, netProfitMinor }
+}
+
+/* ─── تقرير السنة المالية (طلب المالك) ───
+ * سنة مفتوحة: رصيد كل حساب أول السنة (تراكمي قبل بدايتها) + الحركة داخلها + الرصيد الحالي.
+ * سنة مقفلة: نفس البنية حتى نهايتها — مع ملخص إيراد/مصروف/صافي الفترة.
+ */
+
+export interface YearAccountRow {
+  accountCode: string
+  /** الرصيد التراكمي قبل أول يوم في السنة (مدين موجب/دائن سالب) */
+  openingMinor: number
+  /** صافي الحركة داخل السنة (مدين − دائن) */
+  movementMinor: number
+  /** الرصيد في نهاية الفترة (المفتوحة: حتى الآن، المقفلة: حتى نهايتها) */
+  closingMinor: number
+}
+
+export interface FiscalYearReport {
+  rows: YearAccountRow[]
+  totalRevenueMinor: number // إيرادات الفترة (4xxx)
+  totalExpenseMinor: number // مصروفات الفترة (5xxx)
+  netProfitMinor: number
+}
+
+/**
+ * تقرير سنة مالية من دفتر اليومية — دالة خالصة:
+ * يجمع لكل حساب: رصيد ما قبل السنة، حركة السنة، الرصيد النهائي.
+ * للسنة المقفلة تُستثنى أسطر قيد الإقفال نفسها من «حركة الفترة» في ملخص
+ * الإيراد/المصروف (وإلا ظهر صفراً بعد التصفير) — تُميَّز بأنها قيود على 4xxx/5xxx
+ * مقابلها 3102 بوصف يبدأ بـ«إقفال»، لذا نطلب تمرير معرفات قيود الإقفال إن وجدت.
+ */
+export function buildFiscalYearReport(
+  journal: readonly { id: number; date: string; lines: readonly { accountCode: string; debit: number; credit: number }[] }[],
+  fy: Pick<FiscalYear, 'startDate' | 'endDate'>,
+  closingEntryIds: readonly number[] = [],
+): FiscalYearReport {
+  const closing = new Set(closingEntryIds)
+  const acc = new Map<string, { open: number; move: number }>()
+  let rev = 0
+  let exp = 0
+  for (const e of journal) {
+    const inYear = e.date >= fy.startDate && e.date <= fy.endDate
+    const before = e.date < fy.startDate
+    if (!inYear && !before) continue // بعد نهاية السنة — خارج التقرير
+    for (const l of e.lines) {
+      const cur = acc.get(l.accountCode) ?? { open: 0, move: 0 }
+      const net = l.debit - l.credit
+      if (before) cur.open += net
+      else cur.move += net
+      acc.set(l.accountCode, cur)
+      // ملخص الأرباح: حركة 4xxx/5xxx داخل السنة مع استثناء قيد الإقفال
+      if (inYear && !closing.has(e.id)) {
+        const root = l.accountCode[0]
+        if (root === '4') rev += l.credit - l.debit
+        else if (root === '5') exp += l.debit - l.credit
+      }
+    }
+  }
+  const rows: YearAccountRow[] = [...acc.entries()]
+    .map(([accountCode, v]) => ({ accountCode, openingMinor: v.open, movementMinor: v.move, closingMinor: v.open + v.move }))
+    .filter((r) => r.openingMinor !== 0 || r.movementMinor !== 0)
+    .sort((a, b) => a.accountCode.localeCompare(b.accountCode))
+  return { rows, totalRevenueMinor: rev, totalExpenseMinor: exp, netProfitMinor: rev - exp }
 }
 
 /** تحقق قبل الإقفال: السنة منتهية فعلاً، ولا سنة أقدم منها ما زالت مفتوحة (الإقفال بالترتيب) */

@@ -9,7 +9,7 @@
  * التي ستُحمَّل داخل Electron لاحقاً (HashRouter + localStorage).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react'
+import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react'
 import React from 'react'
 
 // عزل الشبكة: مزامنة السحابة تفشل بصمت (سلوك الأوفلاين المدعوم)
@@ -37,12 +37,18 @@ async function completeWizard(activityNameAr: string, shopName: string) {
   // الخطوة 4: بيانات المنشأة الإلزامية
   fireEvent.change(screen.getByPlaceholderText('مثال: أسواق البركة'), { target: { value: shopName } })
   fireEvent.change(screen.getByPlaceholderText('مثال: محمد عبده'), { target: { value: 'م. محمد عبدة' } })
-  fireEvent.change(screen.getByPlaceholderText('01xxxxxxxxx'), { target: { value: '01000000000' } })
+  // placeholder الهاتف صار حسب البلد (طلب المالك) — مصر: 01012345678
+  fireEvent.change(screen.getByPlaceholderText('01012345678'), { target: { value: '01000000000' } })
   fireEvent.change(screen.getByPlaceholderText('name@example.com'), { target: { value: 'owner@tahakam.app' } })
   const citySelect = [...document.querySelectorAll('select')].at(-1)!
   fireEvent.change(citySelect, { target: { value: 'القاهرة' } })
   fireEvent.change(screen.getByPlaceholderText('مثال: شارع الجمهورية — حي السلام'), { target: { value: 'شارع التحرير' } })
+  // كلمة سر المالك تُنشأ مع التسجيل (طلب المالك) — 8-32 خانة
+  fireEvent.change(screen.getByPlaceholderText('8 خانات فأكثر'), { target: { value: 'Owner@2026' } })
+  fireEvent.change(screen.getByPlaceholderText('أعد كتابتها'), { target: { value: 'Owner@2026' } })
   fireEvent.click(screen.getByText('🚀 ابدأ العمل'))
+  // إنهاء المعالج صار غير متزامن (تجزئة كلمة السر) — انتظر اكتمال الإعداد
+  await waitFor(() => expect(useAppStore.getState().setup.completed).toBe(true))
 }
 
 function sidebar() {
@@ -61,7 +67,7 @@ function resetApp() {
     fiscalYears: [],
   })
   // seeded=false ليعاد بذر النشاط الجديد — محاكاة تثبيت نظيف لكل مستأجر
-  useDataStore.setState({ ...useDataStore.getState(), categories: [], items: [], journal: [], seeded: false })
+  useDataStore.setState({ ...useDataStore.getState(), categories: [], items: [], journal: [], seeded: false, ownerPinHash: null, currentUserId: null, loggedOut: false })
 }
 
 beforeEach(resetApp)

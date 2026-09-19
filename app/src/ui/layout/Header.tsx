@@ -91,7 +91,7 @@ export function Header({ title }: { title: string }) {
   // مراجعة المالك («لماذا إشعارات المالك تظهر لأي مستخدم؟»):
   // الجرس يفلتر بصلاحيات المستخدم النشط — الكاشير لا يرى أقساطاً ولا شيكات ولا بلاغات
   const myPerms = useMemo(
-    () => effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles)),
+    () => effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, useAppStore.getState().setup.activityId)),
     [activeUser, roleOverrides, customRoles],
   )
   const notificationsForMe = useMemo(

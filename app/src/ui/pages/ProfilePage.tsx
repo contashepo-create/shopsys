@@ -8,11 +8,13 @@
  * الحقول الحساسة (الدور/الصلاحيات/التفعيل) ليست هنا — للمالك فقط في شاشة الصلاحيات.
  */
 import { useRef, useState } from 'react'
+import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/auth.ts'
 import { UserCircle2, KeyRound, Camera, Save, ShieldCheck } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
+import { phonePlaceholder } from '../../core/countries.ts'
 import { hashPin } from '../../core/audit.ts'
-import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { Btn, Field, inputCls, useToast, PinInput } from '../components/ui.tsx'
 
 /** ضغط الصورة إلى مربع صغير (Data URL) — تخزين محلي خفيف بلا ملفات خارجية */
 function readAvatar(file: File): Promise<string> {
@@ -68,7 +70,9 @@ export function ProfilePage() {
     if (busy) return
     setBusy(true)
     try {
-      if (newPin !== newPin2) throw new Error('الرقمان الجديدان غير متطابقين')
+      if (newPin !== newPin2) throw new Error('كلمتا السر الجديدتان غير متطابقتين')
+      const fmtErr = validatePinFormat(newPin)
+      if (fmtErr.length) throw new Error(fmtErr.join(' — '))
       await changeMyPin(curPin, await hashPin(newPin))
       setCurPin(''); setNewPin(''); setNewPin2('')
       toast.show('تغيّر رقمك السري — لا يعرفه أحد غيرك الآن ✅')
@@ -141,7 +145,7 @@ export function ProfilePage() {
             </Field>
           )}
           <Field label="الهاتف" hint="يصلح معرف دخول">
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} dir="ltr" autoComplete="off" className={inputCls} />
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} dir="ltr" autoComplete="off" className={inputCls} placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} />
           </Field>
           <Field label="البريد" hint="يصلح معرف دخول">
             <input value={email} onChange={(e) => setEmail(e.target.value)} dir="ltr" autoComplete="off" className={inputCls} />
@@ -159,20 +163,17 @@ export function ProfilePage() {
           غيّره متى شئت — يلزم رقمك الحالي أولاً (النمط العالمي). لو نسيته: زر «نسيت رقمي السري» في شاشة الدخول.
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Field label="الرقم الحالي">
-            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={curPin} autoComplete="off"
-              onChange={(e) => setCurPin(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          <Field label="كلمة السر الحالية">
+            <PinInput value={curPin} onChange={setCurPin} centered />
           </Field>
-          <Field label="الرقم الجديد" hint="4-8 أرقام">
-            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={newPin} autoComplete="off"
-              onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          <Field label="كلمة السر الجديدة" hint={`${PIN_MIN_LENGTH}-${PIN_MAX_LENGTH} خانة — أرقام وحروف ورموز`}>
+            <PinInput value={newPin} onChange={setNewPin} centered />
           </Field>
-          <Field label="تأكيد الرقم الجديد">
-            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={newPin2} autoComplete="off"
-              onChange={(e) => setNewPin2(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          <Field label="تأكيد كلمة السر الجديدة">
+            <PinInput value={newPin2} onChange={setNewPin2} centered />
           </Field>
         </div>
-        <Btn className="mt-4" onClick={() => void savePin()} disabled={busy || curPin.length < 4 || newPin.length < 4 || newPin2.length < 4}>
+        <Btn className="mt-4" onClick={() => void savePin()} disabled={busy || curPin.length === 0 || newPin.length < PIN_MIN_LENGTH || newPin2.length < PIN_MIN_LENGTH}>
           <KeyRound size={15} /> {busy ? 'جارٍ الحفظ…' : 'تغيير الرقم'}
         </Btn>
       </section>

@@ -54,9 +54,14 @@ interface CollectionSpec {
   idField?: string // الافتراضي id
 }
 
-/** السجلات التي تُرصد إضافتها/حذفها تلقائياً */
+/**
+ * السجلات التي تُرصد إضافتها/حذفها تلقائياً — (طلب المالك: كل تغيير يُسجَّل).
+ * القيود المالية كلها مغطاة ببند القيود أعلاه؛ هذه القائمة تغطي السجلات
+ * غير المالية في كل الأنشطة: مشاريع، عروض، مرضى، عقارات، عقود، مركبات…
+ */
 const WATCHED: CollectionSpec[] = [
   { key: 'items', labelAr: 'صنف', nameField: 'nameAr' },
+  { key: 'categories', labelAr: 'قسم أصناف', nameField: 'nameAr' },
   { key: 'customers', labelAr: 'عميل', nameField: 'nameAr' },
   { key: 'suppliers', labelAr: 'مورد', nameField: 'nameAr' },
   { key: 'employees', labelAr: 'موظف', nameField: 'nameAr' },
@@ -64,6 +69,30 @@ const WATCHED: CollectionSpec[] = [
   { key: 'warehouses', labelAr: 'مخزن', nameField: 'nameAr' },
   { key: 'appUsers', labelAr: 'مستخدم', nameField: 'nameAr' },
   { key: 'issues', labelAr: 'بلاغ داخلي', nameField: 'title' },
+  // المقاولات
+  { key: 'projects', labelAr: 'مشروع مقاولات', nameField: 'nameAr' },
+  { key: 'quotations', labelAr: 'عرض سعر/مناقصة', nameField: 'titleAr' },
+  { key: 'boqItems', labelAr: 'بند جدول كميات', nameField: 'descriptionAr' },
+  { key: 'subContracts', labelAr: 'عقد مقاول باطن', nameField: 'contractorName' },
+  { key: 'changeOrders', labelAr: 'أمر تغيير', nameField: 'titleAr' },
+  { key: 'projectTasks', labelAr: 'مهمة مشروع', nameField: 'nameAr' },
+  // العقارات
+  { key: 'properties', labelAr: 'عقار', nameField: 'nameAr' },
+  { key: 'leases', labelAr: 'عقد إيجار عقاري', nameField: 'tenantName' },
+  // الصحة والمعامل
+  { key: 'labPatients', labelAr: 'مريض معمل', nameField: 'nameAr' },
+  { key: 'labTests', labelAr: 'تحليل معمل', nameField: 'nameAr' },
+  { key: 'labReferrers', labelAr: 'محيل معمل', nameField: 'nameAr' },
+  { key: 'clinicPatients', labelAr: 'مريض عيادة', nameField: 'nameAr' },
+  // اللوجستيات والتأجير والسيارات
+  { key: 'vehicles', labelAr: 'مركبة', nameField: 'plateNumber' },
+  { key: 'equipment', labelAr: 'معدة', nameField: 'nameAr' },
+  { key: 'rentalContracts', labelAr: 'عقد تأجير معدة', nameField: 'contractNumber' },
+  // التصنيع والوصفات وقوائم الأسعار
+  { key: 'recipes', labelAr: 'وصفة إنتاج', nameField: 'nameAr' },
+  { key: 'priceLists', labelAr: 'قائمة أسعار', nameField: 'nameAr' },
+  // العهد
+  { key: 'custodyFiles', labelAr: 'ملف عهدة', nameField: 'fileNumber' },
 ]
 
 type AnyRec = Record<string, unknown>
@@ -271,16 +300,22 @@ export function findUserByIdentifier(users: readonly AppUser[], identifier: stri
   )) ?? null
 }
 
-/** تجزئة الرقم السري (4-8 أرقام) — WebCrypto متاح في المتصفح وNode 18+ */
+/**
+ * تجزئة كلمة السر — WebCrypto متاح في المتصفح وNode 18+.
+ * سياسة الطول (8-32 خانة، أرقام وحروف ورموز) تُفرض عند التعيين عبر
+ * validatePinFormat في core/auth.ts — التجزئة نفسها محايدة حتى تظل
+ * الأرقام القديمة (4-8 أرقام) صالحة للدخول ثم تُرقَّى عند أول تغيير.
+ */
 export async function hashPin(pin: string): Promise<string> {
   const clean = pin.trim()
-  if (!/^\d{4,8}$/.test(clean)) throw new Error('الرقم السري: 4 إلى 8 أرقام')
+  if (!clean || clean.length > 64) throw new Error('كلمة السر فارغة أو أطول من المسموح')
   const data = new TextEncoder().encode(`tahakam:${clean}`)
   const digest = await crypto.subtle.digest('SHA-256', data)
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 export async function verifyPin(pin: string, pinHash: string): Promise<boolean> {
-  if (!/^\d{4,8}$/.test(pin.trim())) return false
-  return (await hashPin(pin)) === pinHash
+  const clean = pin.trim()
+  if (!clean || clean.length > 64) return false
+  return (await hashPin(clean)) === pinHash
 }

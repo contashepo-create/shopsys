@@ -115,7 +115,7 @@ function Shell() {
   if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && (loggedOut || activeUser?.mustChangePin)) {
     return <LoginScreen />
   }
-  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles))
+  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, useAppStore.getState().setup.activityId))
   if (!canAccessPath(location.pathname, perms)) {
     const needed = permissionForPath(location.pathname)
     const permName = PERMISSIONS.find((p) => p.id === needed)?.nameAr ?? needed
@@ -346,7 +346,8 @@ export default function App() {
     if (!setup.completed) return
     const takeSnapshot = async () => {
       const now = new Date().toISOString()
-      if (!isBackupDue(useAppStore.getState().lastHourlyBackupAt, now)) return
+      const appNow = useAppStore.getState()
+      if (!isBackupDue(appNow.lastHourlyBackupAt, now, appNow.backupIntervalMinutes * 60_000)) return
       try {
         const payload = JSON.stringify({ at: now, store: useDataStore.getState() })
         const encrypted = await encryptForDevice(payload)

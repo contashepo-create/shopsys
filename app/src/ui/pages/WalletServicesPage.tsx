@@ -8,7 +8,7 @@ import { useMemo, useState } from 'react'
 import { Smartphone, Plus, RotateCcw, BookOpenText, Wallet2 } from 'lucide-react'
 import { useDataStore, type WalletServiceOp } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { getCountry } from '../../core/countries.ts'
+import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { WALLET_SERVICE_TYPES, WALLET_PROVIDERS, walletSummary, type WalletServiceType, type WalletProvider } from '../../core/walletServices.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -174,7 +174,7 @@ export function WalletServicesPage() {
               </select>
             </Field>
             <Field label="رقم الوجهة / المرجع">
-              <input value={targetPhone} onChange={(e) => setTargetPhone(e.target.value)} className={inputCls} dir="ltr" placeholder="01xxxxxxxxx" />
+              <input value={targetPhone} onChange={(e) => setTargetPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(setup.countryCode)} />
             </Field>
             <Field label={`المدفوع للمزوّد (${cur.symbol})`} hint="ما يخرج فعلاً من المحفظة/المكينة الممولة">
               <input value={paidToProvider} onChange={(e) => setPaidToProvider(e.target.value)} className={inputCls} dir="ltr" />

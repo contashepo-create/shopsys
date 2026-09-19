@@ -9,7 +9,7 @@ import { useMemo, useState } from 'react'
 import { Plus, HandCoins, Users2, Trash2, Pencil, BookOpenText } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { getCountry } from '../../core/countries.ts'
+import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { COMMISSION_DIRECTION_LABELS, commissionsByParty, type CommissionDirection } from '../../core/commissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -344,7 +344,7 @@ export function ExternalCommissionsPage() {
               <input value={pKind} onChange={(e) => setPKind(e.target.value)} className={inputCls} placeholder="سمسار، مندوب، مركز أشعة…" />
             </Field>
             <Field label="الهاتف">
-              <input value={pPhone} onChange={(e) => setPPhone(e.target.value)} className={inputCls} dir="ltr" />
+              <input value={pPhone} onChange={(e) => setPPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} />
             </Field>
             <Field label="ملاحظات">
               <input value={pNotes} onChange={(e) => setPNotes(e.target.value)} className={inputCls} />

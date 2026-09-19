@@ -10,7 +10,7 @@ import { Plus, Search, Pencil, Trash2, Phone, UserRound, ChevronDown, FileBadge,
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
 import type { PartyExtended } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { getCountry } from '../../core/countries.ts'
+import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { matchesPartyCode } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
@@ -613,7 +613,7 @@ export function EmployeesPage() {
               <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} autoFocus />
             </Field>
             <Field label="الهاتف">
-              <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" />
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} />
             </Field>
             <Field label="المسمى الوظيفي">
               <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className={inputCls} placeholder="كاشير، بائع، محاسب…" />

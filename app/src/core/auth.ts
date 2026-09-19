@@ -8,6 +8,19 @@
  * نواة خالصة بلا واجهات — التجزئة في audit.ts (SHA-256، لا يُخزن الرقم أبداً).
  */
 
+/** سياسة طول كلمة السر (طلب المالك): 8 إلى 32 خانة — أرقام وحروف ورموز */
+export const PIN_MIN_LENGTH = 8
+export const PIN_MAX_LENGTH = 32
+
+/** فحص صيغة كلمة السر قبل التجزئة — رسائل عربية جاهزة للعرض */
+export function validatePinFormat(pin: string): string[] {
+  const errors: string[] = []
+  if (pin.length < PIN_MIN_LENGTH) errors.push(`كلمة السر قصيرة — ${PIN_MIN_LENGTH} خانات على الأقل`)
+  if (pin.length > PIN_MAX_LENGTH) errors.push(`كلمة السر طويلة — ${PIN_MAX_LENGTH} خانة كحد أقصى`)
+  if (/\s/.test(pin)) errors.push('كلمة السر لا تحتوي مسافات')
+  return errors
+}
+
 /** حد المحاولات الفاشلة قبل القفل المؤقت */
 export const MAX_LOGIN_FAILURES = 5
 /** مدة القفل بعد استنفاد المحاولات (دقائق) */

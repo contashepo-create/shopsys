@@ -8,15 +8,16 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound } from 'lucide-react'
 import { PERMISSIONS, PERMISSION_SECTIONS, rolesWithOverrides } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
+import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/auth.ts'
 import { hashPin, suggestRoleForJobTitle } from '../../core/audit.ts'
-import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
+import { Btn, Field, inputCls, Modal, useToast, PinInput } from '../components/ui.tsx'
 
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('cashier')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
   const { appUsers, currentUserId, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
-  const roles = rolesWithOverrides(roleOverrides, customRoles)
+  const roles = rolesWithOverrides(roleOverrides, customRoles, useAppStore.getState().setup.activityId)
   const toast = useToast()
   const [userModal, setUserModal] = useState(false)
   // استثناءات فردية (البند 4 — لكل موظف): منح فوق الدور أو حجب رغم الدور
@@ -42,7 +43,9 @@ export function PermissionsPage() {
 
   const saveOwnerPin = async () => {
     try {
-      if (oPin !== oPin2) throw new Error('الرقمان غير متطابقين')
+      if (oPin !== oPin2) throw new Error('كلمتا السر غير متطابقتين')
+      const fmtErr = validatePinFormat(oPin)
+      if (fmtErr.length) throw new Error(fmtErr.join(' — '))
       setOwnerPin(await hashPin(oPin))
       setOwnerPinModal(false); setOPin(''); setOPin2('')
       toast.show('حُفظ رقم المالك — شاشة الدخول مفعلة من الآن ✅')
@@ -52,7 +55,9 @@ export function PermissionsPage() {
   const saveEmployeePin = async () => {
     if (pinFor == null) return
     try {
-      if (ePin !== ePin2) throw new Error('الرقمان غير متطابقين')
+      if (ePin !== ePin2) throw new Error('كلمتا السر غير متطابقتين')
+      const fmtErr = validatePinFormat(ePin)
+      if (fmtErr.length) throw new Error(fmtErr.join(' — '))
       const pinHash = await hashPin(ePin)
       const openReq = openResets.find((r) => r.userId === pinFor)
       if (openReq) resolvePinReset(openReq.id, 'done', pinHash)
@@ -69,6 +74,8 @@ export function PermissionsPage() {
     try {
       const emp = employees.find((x) => x.id === uEmployeeId)
       if (!emp) throw new Error('اختر الموظف أولاً — الحساب يُبنى على موظف مسجل ببياناته المالية')
+      const fmtErr = validatePinFormat(uPin)
+      if (fmtErr.length) throw new Error(fmtErr.join(' — '))
       const pinHash = await hashPin(uPin)
       addAppUser({
         nameAr: emp.nameAr, roleId: uRole, pinHash,
@@ -348,13 +355,13 @@ export function PermissionsPage() {
             من أول تعيين تُفعَّل شاشة الدخول: لا أحد يفتح التطبيق بلا رقمه السري، وكل دخول وخروج يُسجل.
             إن نسيت رقمك لاحقاً يصلك رقم مؤقت على تليجرامك (اربط البوت من الإعدادات).
           </p>
-          <Field label="الرقم السري (4-8 أرقام)">
-            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={oPin} onChange={(e) => setOPin(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          <Field label={`كلمة السر (${PIN_MIN_LENGTH}-${PIN_MAX_LENGTH} خانة — أرقام وحروف ورموز)`}>
+            <PinInput value={oPin} onChange={setOPin} centered />
           </Field>
-          <Field label="تأكيد الرقم">
-            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={oPin2} onChange={(e) => setOPin2(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          <Field label="تأكيد كلمة السر">
+            <PinInput value={oPin2} onChange={setOPin2} centered />
           </Field>
-          <Btn className="w-full" disabled={oPin.length < 4} onClick={() => void saveOwnerPin()}>
+          <Btn className="w-full" disabled={oPin.length < PIN_MIN_LENGTH} onClick={() => void saveOwnerPin()}>
             <KeyRound size={15} /> حفظ
           </Btn>
         </div>
@@ -366,13 +373,13 @@ export function PermissionsPage() {
           <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
             عيّن الرقم الجديد ثم أبلغه للموظف بنفسك (هاتفياً أو واتساب) — النظام لا يخزن الرقم، فقط بصمته المشفرة.
           </p>
-          <Field label="الرقم الجديد (4-8 أرقام)">
-            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={ePin} onChange={(e) => setEPin(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          <Field label={`كلمة السر الجديدة (${PIN_MIN_LENGTH}-${PIN_MAX_LENGTH} خانة)`}>
+            <PinInput value={ePin} onChange={setEPin} centered />
           </Field>
-          <Field label="تأكيد الرقم">
-            <input type="password" inputMode="numeric" dir="ltr" maxLength={8} value={ePin2} onChange={(e) => setEPin2(e.target.value.replace(/\D/g, ''))} className={`${inputCls} text-center tracking-widest`} />
+          <Field label="تأكيد كلمة السر">
+            <PinInput value={ePin2} onChange={setEPin2} centered />
           </Field>
-          <Btn className="w-full" disabled={ePin.length < 4} onClick={() => void saveEmployeePin()}>
+          <Btn className="w-full" disabled={ePin.length < PIN_MIN_LENGTH} onClick={() => void saveEmployeePin()}>
             <KeyRound size={15} /> حفظ وإغلاق الطلب
           </Btn>
         </div>
@@ -527,12 +534,12 @@ export function PermissionsPage() {
               {roles.filter((r) => !r.isOwner).map((r) => <option key={r.id} value={r.id}>{r.nameAr}</option>)}
             </select>
           </Field>
-          <Field label="الرقم السري المبدئي (4–8 أرقام)" hint="سيظهر لك في القائمة حتى يغيّره الموظف بأول دخول — بعدها لا يعرفه أحد">
-            <input value={uPin} onChange={(e) => setUPin(e.target.value.replace(/\D/g, '').slice(0, 8))} className={inputCls} dir="ltr" placeholder="مثال: 1234" name="tahakam-initial-pin" autoComplete="off" />
+          <Field label={`كلمة السر المبدئية (${PIN_MIN_LENGTH}–${PIN_MAX_LENGTH} خانة)`} hint="ستظهر لك في القائمة حتى يغيّرها الموظف بأول دخول — بعدها لا يعرفها أحد">
+            <PinInput value={uPin} onChange={setUPin} placeholder="مثال: Ahmed@2026" name="tahakam-initial-pin" />
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setUserModal(false)}>إلغاء</Btn>
-            <Btn onClick={saveUser} disabled={!uEmployeeId || uPin.length < 4}>إنشاء الحساب</Btn>
+            <Btn onClick={saveUser} disabled={!uEmployeeId || uPin.length < PIN_MIN_LENGTH}>إنشاء الحساب</Btn>
           </div>
         </div>
       </Modal>

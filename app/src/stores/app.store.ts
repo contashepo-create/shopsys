@@ -121,9 +121,12 @@ interface AppState {
   setCloudData: (patch: { about?: AboutContent | null; revoked?: string[]; flags?: DeviceFlags | null }) => void
   /** أعلام الميزات عن بُعد (البند 5): المطفأ سحابياً من الميزات الممنوحة — kill-switch فقط */
   deviceFlags: DeviceFlags | null
-  // ─── النسخ الاحتياطي التلقائي كل ساعة (القرار 28) ───
+  // ─── النسخ الاحتياطي التلقائي (القرار 28 + جدولة بطلب المالك) ───
   lastHourlyBackupAt: string | null
   setLastHourlyBackupAt: (iso: string) => void
+  /** فاصل النسخ التلقائي بالدقائق — الافتراضي 60 (كل ساعة) */
+  backupIntervalMinutes: number
+  setBackupIntervalMinutes: (minutes: number) => void
   // ─── المزامنة السحابية متعددة الأجهزة (Supabase — ميزة cloud_sync المدفوعة) ───
   sync: SyncSettings
   updateSync: (patch: Partial<SyncSettings>) => void
@@ -308,6 +311,8 @@ export const useAppStore = create<AppState>()(
         })),
       lastHourlyBackupAt: null,
       setLastHourlyBackupAt: (iso) => set({ lastHourlyBackupAt: iso }),
+      backupIntervalMinutes: 60,
+      setBackupIntervalMinutes: (minutes) => set({ backupIntervalMinutes: Math.max(5, Math.round(minutes)) }),
       sync: DEFAULT_SYNC_SETTINGS,
       updateSync: (patch) => set((s) => ({ sync: { ...s.sync, ...patch } })),
     }),

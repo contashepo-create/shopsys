@@ -156,8 +156,13 @@ export interface CustomRoleDef {
  * customRoles (اختياري): أدوار أنشأها المالك بنفسه — صلاحياتها تعيش في overrides
  * بنفس آلية أدوار النظام، فكل مسارات التقييم (الدخول/القائمة/الاعتماد) تعمل تلقائياً.
  */
-export function rolesWithOverrides(overrides: Record<string, string[]>, customRoles: readonly CustomRoleDef[] = []): Role[] {
-  const base = DEFAULT_ROLES.map((r) => {
+export function rolesWithOverrides(
+  overrides: Record<string, string[]>,
+  customRoles: readonly CustomRoleDef[] = [],
+  activityId?: string | null,
+): Role[] {
+  const activityExtras = activityId ? (ACTIVITY_ROLES[activityId] ?? []) : []
+  const base = [...DEFAULT_ROLES, ...activityExtras].map((r) => {
     if (r.isOwner) return r // محمي بنيوياً
     const o = overrides[r.id]
     return o ? { ...r, permissions: o } : r
@@ -236,3 +241,96 @@ export const DEFAULT_ROLES: Role[] = [
     ],
   },
 ]
+
+/* ─── أدوار جاهزة حسب النشاط (طلب المالك) ───
+ * «كاشير وبائع أول» لا يناسبان عيادة أو مقاولات — كل نشاط تخصصي يضيف
+ * أدواره العالمية فوق الأدوار العامة (المالك/المحاسب يظلان مشتركين).
+ * المرجعية: أدوار برامج المقاولات (مدير مشاريع/مهندس موقع)، العيادات
+ * (طبيب/استقبال)، المعامل (فني/استقبال)، العقارات (مدير أملاك/وسيط)…
+ */
+export const ACTIVITY_ROLES: Record<string, Role[]> = {
+  contracting: [
+    {
+      id: 'project_manager', nameAr: 'مدير مشاريع', isSystem: true,
+      permissions: [
+        'ops.activity.use', 'inv.view', 'inv.cost.view', 'inv.transfer', 'inv.count',
+        'pur.invoice.create', 'pur.supplier.manage',
+        'party.customer.manage', 'party.customer.statement',
+        'rep.sales', 'rep.profit', 'acc.vouchers',
+      ],
+    },
+    {
+      id: 'site_engineer', nameAr: 'مهندس موقع', isSystem: true,
+      permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.transfer'],
+    },
+  ],
+  clinic: [
+    {
+      id: 'doctor', nameAr: 'طبيب', isSystem: true,
+      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'rep.sales'],
+    },
+    {
+      id: 'clinic_reception', nameAr: 'استقبال العيادة', isSystem: true,
+      permissions: ['ops.activity.use', 'party.customer.manage', 'acc.vouchers'],
+    },
+  ],
+  lab: [
+    {
+      id: 'lab_technician', nameAr: 'فني معمل', isSystem: true,
+      permissions: ['ops.activity.use', 'inv.view'],
+    },
+    {
+      id: 'lab_reception', nameAr: 'استقبال المعمل', isSystem: true,
+      permissions: ['ops.activity.use', 'party.customer.manage', 'acc.vouchers'],
+    },
+  ],
+  realestate: [
+    {
+      id: 'property_manager', nameAr: 'مدير أملاك', isSystem: true,
+      permissions: [
+        'ops.activity.use', 'party.customer.manage', 'party.customer.statement',
+        'acc.vouchers', 'rep.sales',
+      ],
+    },
+    {
+      id: 'realestate_agent', nameAr: 'وسيط عقاري', isSystem: true,
+      permissions: ['ops.activity.use', 'party.customer.manage'],
+    },
+  ],
+  logistics: [
+    {
+      id: 'fleet_coordinator', nameAr: 'منسق أسطول ورحلات', isSystem: true,
+      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers', 'rep.sales'],
+    },
+  ],
+  cars: [
+    {
+      id: 'showroom_seller', nameAr: 'بائع معرض', isSystem: true,
+      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'rep.sales'],
+    },
+  ],
+  equipment_rental: [
+    {
+      id: 'rental_officer', nameAr: 'مسؤول تأجير', isSystem: true,
+      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
+    },
+  ],
+  laundry: [
+    {
+      id: 'laundry_operator', nameAr: 'موظف استلام وتسليم', isSystem: true,
+      permissions: ['ops.activity.use', 'party.customer.manage'],
+    },
+  ],
+  mobile: [
+    {
+      id: 'technician', nameAr: 'فني صيانة', isSystem: true,
+      permissions: ['ops.activity.use', 'inv.view', 'party.customer.manage'],
+    },
+  ],
+  restaurant: [
+    {
+      id: 'kitchen_manager', nameAr: 'مسؤول مطبخ وإنتاج', isSystem: true,
+      permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
+    },
+  ],
+}

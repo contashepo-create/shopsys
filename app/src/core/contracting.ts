@@ -94,12 +94,20 @@ export const COST_KIND_LABELS: Record<CostKind, { nameAr: string; icon: string }
 }
 
 /** قيد تكلفة: 5110 ← 1101 نقدي أو 2101 آجل (مورد/مقاول باطن) */
-export function buildProjectCostEntry(amountMinor: Minor, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
+/**
+ * قيد تكلفة المشروع — عزل الضريبة (طلب المالك: ربحية المشروع صافية من الضريبة):
+ * المبلغ الصافي وحده يدخل 5110 (وتقارير الربحية)، وض.ق.م المدخلات القابلة للخصم
+ * تُقيَّد مدينة على 2102 — للمنشآت المسجلة ضريبياً. غير المسجل يتركها 0
+ * فتبقى الضريبة ضمن التكلفة (المعالجة المحاسبية الصحيحة لغير المسجل).
+ */
+export function buildProjectCostEntry(amountMinor: Minor, payment: 'cash' | 'credit', label: string, treasury = '1101', inputVatMinor: Minor = 0): JournalLine[] {
   if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة التكلفة يجب أن تكون موجبة')
+  if (!Number.isInteger(inputVatMinor) || inputVatMinor < 0) throw new Error('ضريبة المدخلات لا تكون سالبة')
   const lines: JournalLine[] = [
     { accountCode: '5110', debit: amountMinor, credit: 0, note: `تكلفة ${label}` },
-    { accountCode: payment === 'cash' ? treasury : '2101', debit: 0, credit: amountMinor, note: payment === 'cash' ? 'سداد نقدي' : 'مستحق للمورد' },
   ]
+  if (inputVatMinor > 0) lines.push({ accountCode: '2102', debit: inputVatMinor, credit: 0, note: 'ض.ق.م مدخلات قابلة للخصم' })
+  lines.push({ accountCode: payment === 'cash' ? treasury : '2101', debit: 0, credit: amountMinor + inputVatMinor, note: payment === 'cash' ? 'سداد نقدي' : 'مستحق للمورد' })
   assertBalanced(lines)
   return lines
 }

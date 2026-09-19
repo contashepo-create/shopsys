@@ -4,16 +4,17 @@
  * نفس صيغة الملف ستُستخدم لاحقاً للنسخ اليومي عبر بوت التليجرام.
  */
 import { useRef, useState } from 'react'
-import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson } from 'lucide-react'
+import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupSummary } from '../../core/backup.ts'
+import { BACKUP_INTERVAL_CHOICES } from '../../core/security.ts'
 import { decryptForDevice, encryptForDevice } from '../../data/secureStorage.ts'
 import { Btn, useToast } from '../components/ui.tsx'
 
 
 export function BackupPage() {
-  const { setup } = useAppStore()
+  const { setup, backupIntervalMinutes, setBackupIntervalMinutes, lastHourlyBackupAt } = useAppStore()
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
   const [pending, setPending] = useState<{ raw: string; summary: BackupSummary } | null>(null)
@@ -101,6 +102,37 @@ export function BackupPage() {
           <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="font-black text-lg">{counts.journal}</div><div className="text-slate-400">قيداً</div></div>
         </div>
         <Btn onClick={download} className="w-full"><Download size={15} /> تنزيل نسخة احتياطية الآن</Btn>
+      </div>
+
+      {/* جدولة النسخ التلقائي (طلب المالك) — لقطة مشفرة على الجهاز حسب الفاصل المختار */}
+      <div className={`anim-up ${card} space-y-4 lg:col-span-2`} style={{ animationDelay: '40ms' }}>
+        <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+          <CalendarClock size={17} className="text-violet-500" /> جدولة النسخ التلقائي
+        </div>
+        <div className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed">
+          التطبيق يأخذ لقطة كاملة مشفرة على هذا الجهاز تلقائياً (حلقة من 3 لقطات — الأقدم يُستبدل)
+          حسب الفاصل الذي تختاره. النسخة اليومية إلى تليجرام تُضبط من «بوت التليجرام».
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {BACKUP_INTERVAL_CHOICES.map((c) => (
+            <button
+              key={c.minutes}
+              onClick={() => { setBackupIntervalMinutes(c.minutes); toast.show(`ستُؤخذ لقطة تلقائية ${c.labelAr} ✓`) }}
+              className={`px-4 py-2.5 rounded-xl text-[12.5px] font-bold border-2 transition-all duration-200 hover:scale-[1.02] ${
+                backupIntervalMinutes === c.minutes
+                  ? 'border-violet-500/50 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                  : 'border-slate-200 dark:border-slate-700 text-slate-400'
+              }`}
+            >
+              {c.labelAr}
+            </button>
+          ))}
+        </div>
+        <div className="text-[11px] text-slate-400">
+          {lastHourlyBackupAt
+            ? <>آخر لقطة تلقائية: <b dir="ltr">{lastHourlyBackupAt.slice(0, 16).replace('T', ' ')}</b></>
+            : 'لم تُؤخذ لقطة تلقائية بعد — تُؤخذ الأولى خلال دقائق من فتح التطبيق'}
+        </div>
       </div>
 
       {/* استعادة */}

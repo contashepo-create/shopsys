@@ -1659,7 +1659,7 @@ interface DataState {
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
   addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
-  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string; custodyFileId?: number | null }) => ProjectCost
+  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number }) => ProjectCost
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
   setProjectBudget: (projectId: number, budgetLines: ProjectBudgetLine[]) => void
   /** مهمة جدول زمني للمشروع (جانت مبسط) */
@@ -4326,7 +4326,7 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const name = sanitizeText(nameAr, 40)
         if (!name) throw new Error('اكتب اسم الدور')
-        const allRoles = rolesWithOverrides(state.roleOverrides, state.customRoles)
+        const allRoles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
         if (allRoles.some((r) => r.nameAr === name)) throw new Error('يوجد دور بهذا الاسم بالفعل')
         const seq = state.customRoles.reduce((m, r) => Math.max(m, Number(r.id.replace('custom_', '')) || 0), 0) + 1
         const id = `custom_${seq}`
@@ -4529,7 +4529,7 @@ export const useDataStore = create<DataState>()(
           return { approvedBy: 'المالك' }
         }
         // 2) رقم أي مستخدم نشط مؤهل (owner أو يملك الصلاحية المطلوبة)
-        const roles = rolesWithOverrides(state.roleOverrides, state.customRoles)
+        const roles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
         for (const u of state.appUsers) {
           if (!u.active) continue
           const perms = effectivePermissionsFor(u, roles)
@@ -6603,10 +6603,11 @@ export const useDataStore = create<DataState>()(
           if (!custodyFile) throw new Error('ملف العهدة غير موجود')
           assertFileOpen(custodyFile)
           const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === custodyFile!.id)).remainingMinor
-          if (args.amountMinor > remaining) throw new Error(`التكلفة أكبر من المتبقي في ملف العهدة (${remaining})`)
+          if (args.amountMinor + (args.inputVatMinor ?? 0) > remaining) throw new Error(`التكلفة أكبر من المتبقي في ملف العهدة (${remaining})`)
         }
         const payAccount = custodyFile ? CUSTODY_ACCOUNT : (args.treasury ?? '1101')
-        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr, payAccount)
+        // عزل الضريبة (طلب المالك): الصافي فقط يدخل 5110 وربحية المشروع — الضريبة على 2102
+        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr, payAccount, args.inputVatMinor ?? 0)
         const now = new Date().toISOString()
         const id = nextId(state.projectCosts)
         const entryId = nextId(state.journal)
@@ -6624,7 +6625,7 @@ export const useDataStore = create<DataState>()(
         if (custodyFile) {
           custodyTxs = [...custodyTxs, {
             id: nextId(custodyTxs), fileId: custodyFile.id, type: 'expense' as const,
-            date: now.slice(0, 10), amountMinor: args.amountMinor, excessMinor: 0,
+            date: now.slice(0, 10), amountMinor: args.amountMinor + (args.inputVatMinor ?? 0), excessMinor: 0,
             description: `تكلفة مشروع ${project.nameAr}: ${args.description || '—'}`,
             treasury: null, projectId: project.id, purchaseId: null, journalEntryId: entryId,
           }]

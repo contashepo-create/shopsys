@@ -80,8 +80,10 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'counting', nameAr: 'الجرد', icon: ClipboardList, path: '/inventory/counting' },
       { id: 'wastage', nameAr: 'الإتلاف والهالك', icon: Trash2, path: '/inventory/wastage' },
       { id: 'consumption', nameAr: 'الصرف الداخلي', icon: PackageMinus, path: '/inventory/consumption' },
-      { id: 'barcode-center', nameAr: 'الباركود والملصقات', icon: Tags, path: '/inventory/barcode-center' },
-      { id: 'scale', nameAr: 'باركود الميزان', icon: Scale, path: '/inventory/scale' },
+      // فلترة دقيقة حسب النشاط (طلب المالك): الباركود لأنشطة البيع بالكاشير فقط —
+      // والميزان لأنشطة خاصية الوزن (بقالة/جزارة/تمور/مخبز…) — المقاولات ونحوها لا تراهما
+      { id: 'barcode-center', nameAr: 'الباركود والملصقات', icon: Tags, path: '/inventory/barcode-center', module: 'pos' },
+      { id: 'scale', nameAr: 'باركود الميزان', icon: Scale, path: '/inventory/scale', feature: 'weight_scale' },
       { id: 'serials', nameAr: 'سجل السيريالات', icon: ScanBarcode, path: '/inventory/serials', feature: 'serial_warranty' },
       { id: 'recipes', nameAr: 'الوصفات والإنتاج', icon: ChefHat, path: '/inventory/recipes', module: 'recipes' },
       { id: 'processing', nameAr: 'التقطيع والفرز والتعبئة', icon: Scissors, path: '/inventory/processing', module: 'processing' },

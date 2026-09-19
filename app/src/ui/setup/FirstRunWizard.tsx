@@ -9,12 +9,16 @@
  * البلد يُقفل بعد الإنهاء — تغييره عبر المطوّر فقط.
  */
 import { useState } from 'react'
-import { Check, ChevronLeft, Crown, Sparkles, CalendarRange, Globe2, Store, Building2 } from 'lucide-react'
+import { Check, ChevronLeft, Crown, Sparkles, CalendarRange, Globe2, Store, Building2, KeyRound } from 'lucide-react'
 import { ARAB_COUNTRIES, getCountry, type Country } from '../../core/countries.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, type ActivityTemplate } from '../../core/activities.ts'
 import { citiesOf } from '../../core/cities.ts'
 import { suggestFiscalYear, validateFiscalYear } from '../../core/fiscal.ts'
+import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/auth.ts'
+import { hashPin } from '../../core/audit.ts'
 import { useAppStore } from '../../stores/app.store.ts'
+import { useDataStore } from '../../data/repo.ts'
+import { PinInput } from '../components/ui.tsx'
 
 /** تخصصات شائعة لنشاط العيادة — والمالك حر يكتب غيرها (طلب المالك) */
 const DOCTOR_SPECIALTIES = [
@@ -65,9 +69,16 @@ export function FirstRunWizard() {
   const [fyEnd, setFyEnd] = useState(`${thisYear}-12-31`)
   const fyErrors = validateFiscalYear({ nameAr: fyName, startDate: fyStart, endDate: fyEnd }, [])
 
+  // كلمة سر المالك تُنشأ من التسجيل مباشرة (طلب المالك): اسمه = معرف دخوله،
+  // وكلمة السر تُعيَّن هنا فتُفعَّل شاشة الدخول من اللحظة الأولى
+  const [ownerPin, setOwnerPin] = useState('')
+  const [ownerPin2, setOwnerPin2] = useState('')
+  const pinErrors = ownerPin ? validatePinFormat(ownerPin) : []
+  const pinOk = ownerPin.length >= PIN_MIN_LENGTH && pinErrors.length === 0 && ownerPin === ownerPin2
+
   const companyOk =
     Boolean(shopName.trim() && ownerName.trim() && effectiveCity && street.trim()) &&
-    isValidPhone(phone) && isValidEmail(email)
+    isValidPhone(phone) && isValidEmail(email) && pinOk
 
   const canNext =
     step === 1 ? !!country
@@ -80,8 +91,14 @@ export function FirstRunWizard() {
     setFyName(fy.nameAr); setFyStart(fy.startDate); setFyEnd(fy.endDate)
   }
 
-  const finish = () => {
+  const finish = async () => {
     if (country && activity && companyOk && fyErrors.length === 0) {
+      // هوية المالك تُستمد من بيانات التسجيل (طلب المالك): اسمه معرف دخوله +
+      // هاتفه وبريده معرفات بديلة + كلمة سره تُعيَّن الآن فتُفعَّل شاشة الدخول فوراً
+      const pinHash = await hashPin(ownerPin)
+      const data = useDataStore.getState()
+      data.updateOwnerProfile({ nameAr: ownerName.trim(), phone: phone.trim(), email: email.trim() })
+      data.setOwnerPin(pinHash)
       completeSetup({
         country, activity, shopName: shopName.trim(), ownerName: ownerName.trim(),
         fiscalYear: { nameAr: fyName.trim(), startDate: fyStart, endDate: fyEnd },
@@ -296,7 +313,7 @@ export function FirstRunWizard() {
                 </div>
                 <div>
                   <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">رقم الهاتف *</label>
-                  <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="01xxxxxxxxx" dir="ltr" className={`${inputCls} ${phone && !isValidPhone(phone) ? '!border-rose-400' : ''}`} />
+                  <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder={country ? country.phoneExample : "01012345678"} dir="ltr" className={`${inputCls} ${phone && !isValidPhone(phone) ? '!border-rose-400' : ''}`} />
                 </div>
                 <div>
                   <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">البريد الإلكتروني *</label>
@@ -326,6 +343,33 @@ export function FirstRunWizard() {
                 <div className="sm:col-span-2">
                   <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">الشارع / الحي *</label>
                   <input value={street} onChange={(e) => setStreet(e.target.value)} placeholder="مثال: شارع الجمهورية — حي السلام" className={inputCls} />
+                </div>
+                {/* كلمة سر المالك — تُنشأ مع التسجيل (طلب المالك): اسمك هو معرف دخولك */}
+                <div className="sm:col-span-2 p-4 rounded-2xl bg-brand-500/5 border border-brand-500/20 space-y-3">
+                  <div className="flex items-center gap-2 text-[13px] font-black text-brand-700 dark:text-brand-300">
+                    <KeyRound size={16} /> كلمة سر الدخول — تُنشأ الآن
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                    اسمك أعلاه (أو هاتفك أو بريدك) هو معرف دخولك — وكلمة السر هذه ({PIN_MIN_LENGTH}-{PIN_MAX_LENGTH} خانة:
+                    أرقام وحروف ورموز) تفتح بها التطبيق من أول لحظة. لو نسيتها يصلك رقم مؤقت على تليجرامك بعد ربط البوت.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">كلمة السر *</label>
+                      <PinInput value={ownerPin} onChange={setOwnerPin} placeholder={`${PIN_MIN_LENGTH} خانات فأكثر`} />
+                    </div>
+                    <div>
+                      <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">تأكيد كلمة السر *</label>
+                      <PinInput value={ownerPin2} onChange={setOwnerPin2} placeholder="أعد كتابتها" />
+                    </div>
+                  </div>
+                  {ownerPin.length > 0 && pinErrors.length > 0 && (
+                    <p className="text-[11px] font-bold text-rose-500">{pinErrors.join(' — ')}</p>
+                  )}
+                  {ownerPin.length >= PIN_MIN_LENGTH && pinErrors.length === 0 && ownerPin2.length > 0 && ownerPin !== ownerPin2 && (
+                    <p className="text-[11px] font-bold text-rose-500">كلمتا السر غير متطابقتين</p>
+                  )}
+                  {pinOk && <p className="text-[11px] font-bold text-emerald-600">✓ كلمة السر جاهزة — ستدخل بها فور إنهاء الإعداد</p>}
                 </div>
               </div>
               <div className="max-w-xl mx-auto mt-4 space-y-3">
@@ -360,7 +404,7 @@ export function FirstRunWizard() {
             </button>
             <button
               disabled={!canNext}
-              onClick={() => (step === 4 ? finish() : setStep((s) => s + 1))}
+              onClick={() => (step === 4 ? void finish() : setStep((s) => s + 1))}
               className="group flex items-center gap-2 px-7 py-2.5 rounded-xl text-sm font-bold text-white bg-gradient-to-l from-brand-600 to-fuchsia-600 shadow-lg shadow-brand-500/30 transition-all duration-200 hover:scale-105 hover:shadow-xl active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
             >
               {step === 4 ? '🚀 ابدأ العمل' : 'التالي'}

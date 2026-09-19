@@ -210,24 +210,29 @@ export function QuotationsPage() {
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">بنود الأعمال</span>
               <Btn variant="soft" onClick={() => setQLines((l) => [...l, { nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '' }])}>+ بند</Btn>
             </div>
-            <div className="hidden lg:grid grid-cols-[130px_1fr_70px_100px_110px_110px_90px_36px] gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400">
-              <span>اسم البند</span><span>الوصف التفصيلي</span><span>الكمية</span><span>الوحدة</span><span>سعر الوحدة ({cur.symbol})</span><span>تكلفة تقديرية/وحدة</span><span>الإجمالي</span><span />
-            </div>
+            {/* إدخال بنود عالمي (طلب المالك): كل خانة مسماة فوق حقلها في كل المقاسات —
+                لا اعتماد على صف عناوين يختفي في الشاشات الصغيرة */}
             <div className="space-y-2">
               {qLines.map((l, i) => {
                 const lineTotal = Math.round((Number(l.qty) || 0) * safeMinor(l.unitPrice))
                 return (
-                  <div key={i} className="anim-in grid grid-cols-2 lg:grid-cols-[130px_1fr_70px_100px_110px_110px_90px_36px] gap-2 items-center">
-                    <input value={l.nameAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, nameAr: e.target.value } : x)))} placeholder="حفر وأساسات" className={inputCls} />
-                    <input value={l.descriptionAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, descriptionAr: e.target.value } : x)))} placeholder="حفر حتى منسوب التأسيس مع نقل المخلفات…" className={inputCls} />
-                    <input value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" min={0} className={inputCls} />
-                    <select value={l.unitAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls}>
-                      {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                    </select>
-                    <input value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))} type="number" min={0} className={inputCls} />
-                    <input value={l.estCost} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, estCost: e.target.value } : x)))} type="number" min={0} placeholder="للموازنة" className={inputCls} />
-                    <span className="text-[12px] font-black text-slate-600 dark:text-slate-300 text-center">{lineTotal > 0 ? fmt(lineTotal) : '—'}</span>
-                    <button onClick={() => setQLines((arr) => arr.filter((_, j) => j !== i))} className="p-2 text-slate-300 hover:text-rose-500 transition-colors justify-self-center"><Trash2 size={15} /></button>
+                  <div key={i} className="anim-in p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+                    <div className="grid grid-cols-2 lg:grid-cols-[130px_1fr_80px_100px_110px_110px] gap-2 items-end">
+                      <Field label="اسم البند *"><input value={l.nameAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, nameAr: e.target.value } : x)))} placeholder="حفر وأساسات" className={inputCls} /></Field>
+                      <Field label="الوصف التفصيلي *"><input value={l.descriptionAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, descriptionAr: e.target.value } : x)))} placeholder="حفر حتى منسوب التأسيس مع نقل المخلفات…" className={inputCls} /></Field>
+                      <Field label="الكمية *"><input value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" min={0} className={inputCls} dir="ltr" /></Field>
+                      <Field label="الوحدة *">
+                        <select value={l.unitAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls}>
+                          {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                        </select>
+                      </Field>
+                      <Field label={`سعر الوحدة (${cur.symbol}) *`}><input value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))} type="number" min={0} className={inputCls} dir="ltr" /></Field>
+                      <Field label="تكلفة تقديرية/وحدة" hint=""><input value={l.estCost} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, estCost: e.target.value } : x)))} type="number" min={0} placeholder="للموازنة" className={inputCls} dir="ltr" /></Field>
+                    </div>
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="text-[12px] font-black text-emerald-600 dark:text-emerald-400">إجمالي البند: {lineTotal > 0 ? `${fmt(lineTotal)} ${cur.symbol}` : '—'}</span>
+                      <button onClick={() => setQLines((arr) => arr.filter((_, j) => j !== i))} title="حذف البند" className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={15} /></button>
+                    </div>
                   </div>
                 )
               })}

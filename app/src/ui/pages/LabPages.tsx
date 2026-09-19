@@ -10,7 +10,7 @@ import { useMemo, useState } from 'react'
 import { Plus, Microscope, FlaskConical, Printer, Eye, BookOpenText, Stethoscope, HeartPulse, CheckCircle2, Banknote, Sparkles } from 'lucide-react'
 import { useDataStore, type LabOrder, type LabPatient } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { getCountry } from '../../core/countries.ts'
+import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { partyCode, partySearchFilter } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLabTotals, deriveOrderStatus, ORDER_STATUS_LABELS, referrerStatement, patientResultHistory, resultDeltaPercent, type RefRange, type Gender, type TestStatus } from '../../core/lab.ts'
@@ -593,7 +593,7 @@ export function LabPatientsPage() {
         <div className="space-y-3">
           <Field label="الاسم *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
+            <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} /></Field>
             <Field label="النوع" hint="يحدد النطاق المرجعي المناسب">
               <div className="flex gap-2">
                 {(['male', 'female'] as const).map((g) => (
@@ -727,7 +727,7 @@ export function LabReferrersPage() {
         <div className="space-y-3">
           <Field label="اسم الطبيب *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
+            <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} /></Field>
             <Field label="نسبة العمولة ٪ *" hint="من صافي الطلب بعد الخصم (حد أقصى 50٪)"><input value={percent} onChange={(e) => setPercent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
