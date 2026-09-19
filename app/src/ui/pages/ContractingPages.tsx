@@ -78,6 +78,7 @@ export function ProjectsPage() {
   const [exRecovery, setExRecovery] = useState('')
   /* المستخلص البندي (AccFlex): نسب تنفيذ تراكمية لكل بند BOQ — قيمة الشريحة تُحسب تلقائياً */
   const [exMode, setExMode] = useState<'lines' | 'gross'>('gross')
+  const [exFinal, setExFinal] = useState(false)
   const [exLines, setExLines] = useState<Record<number, string>>({}) // boqItemId → النسبة الجديدة كنص
   const extractBoq = useMemo(() => (extractFor ? boqItems.filter((b) => b.projectId === extractFor.id) : []), [boqItems, extractFor])
   const exLinesPreview = useMemo(() => {
@@ -114,9 +115,10 @@ export function ProjectsPage() {
         vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
         advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
+        isFinal: exFinal,
       })
       toast.show(`سُجل المستخلص ${ex.extractNumber} — المستحق ${fmt(ex.totals.dueMinor)} والمحتجز ${fmt(ex.totals.retentionMinor)} ✅`)
-      setExtractFor(null); setExGross(''); setExDesc(''); setExRecovery(''); setExLines({})
+      setExtractFor(null); setExGross(''); setExDesc(''); setExRecovery(''); setExLines({}); setExFinal(false)
     } catch (e) {
       if (e instanceof CreditLimitError) { creditApproval.request((by) => saveExtract(by ?? 'المشرف')); return }
       toast.show((e as Error).message, 'error')
@@ -420,6 +422,10 @@ export function ProjectsPage() {
             <div className="rounded-xl bg-orange-500/10 border border-orange-500/30 p-3 text-[12px] font-bold text-orange-700 dark:text-orange-300">
               يُخصم محتجز {extractFor.retentionPercent}٪ تلقائياً ويقيد على 1105 حتى التسليم النهائي
             </div>
+            <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-rose-300 dark:border-rose-800 cursor-pointer">
+              <input type="checkbox" checked={exFinal} onChange={(e) => setExFinal(e.target.checked)} className="accent-rose-600" />
+              <span className="text-[12px] font-bold text-rose-600 dark:text-rose-400">مستخلص ختامي — لا مستخلصات بعده (يمهد للتسليم والإفراج عن المحتجز)</span>
+            </label>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setExtractFor(null)}>إلغاء</Btn>
               <Btn onClick={saveExtract} disabled={exMode === 'lines' ? exLinesPreview.grossMinor <= 0 : !exGross}>تسجيل المستخلص وقيده</Btn>

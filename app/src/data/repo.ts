@@ -362,6 +362,8 @@ export interface ProjectExtract {
   journalEntryId: number
   /** بنود المستخلص البندي من BOQ (نمط AccFlex) — غيابها = مستخلص مبلغ إجمالي قديم */
   lines?: { boqItemId: number; code: string; descriptionAr: string; prevProgressPercent: number; newProgressPercent: number; lineValueMinor: number }[]
+  /** مستخلص ختامي (نمط pro-acc is_final): لا مستخلصات بعده — يمهد للتسليم والإفراج عن المحتجز */
+  isFinal?: boolean
   /** مرتجع خدمة (مستخلص معتمد رُفض جزء من أعماله): تراكمي بسقف dueMinor */
   refundedMinor?: number
   refundedTaxMinor?: number
@@ -1638,7 +1640,7 @@ interface DataState {
   /** ملخص ملف عهدة (تعزيزات/منصرف/زيادة/متبقٍ) من حركاته */
   getCustodySummary: (fileId: number) => CustodySummary
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
-  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null }) => ProjectExtract
+  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
   addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string; custodyFileId?: number | null }) => ProjectCost
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
@@ -6202,6 +6204,10 @@ export const useDataStore = create<DataState>()(
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
         // بوابة الموافقات: إصدار مستخلص العميل إجراء حرج (أمر التعديل)
         get().assertApproved('project_extract', project.id, `مستخلص جديد — ${project.nameAr}`)
+        // بعد المستخلص الختامي لا مستخلصات — التسليم والإفراج عن المحتجز فقط
+        if (state.projectExtracts.some((x) => x.projectId === project.id && x.isFinal)) {
+          throw new Error('صدر المستخلص الختامي لهذا المشروع — لا مستخلصات بعده، أفرج عن المحتجز لإقفاله')
+        }
         // المستخلص البندي (نمط AccFlex): بنود من BOQ بنسب تراكمية — أو مبلغ إجمالي (النمط القديم)
         let extractLinesComputed: ExtractLineComputed[] | undefined
         let gross = args.grossMinor ?? 0
@@ -6240,6 +6246,7 @@ export const useDataStore = create<DataState>()(
           id, extractNumber, projectId: project.id, date: now,
           description: args.description, payment: args.payment, totals, journalEntryId: entryId,
           lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor })),
+          ...(args.isFinal ? { isFinal: true } : {}),
         }
         // تحديث نسب إنجاز بنود BOQ تلقائياً من المستخلص (ربط العقد بالمستخلص — AccFlex)
         const updatedBoq = extractLinesComputed

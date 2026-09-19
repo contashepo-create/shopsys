@@ -126,5 +126,10 @@ ok('رصيد مقدمة الباطن صفر بعد الإطفاء', S().getSubAd
 throws('رفض شهادة بلا مبلغ ولا نسبة', () => S().addSubCertificate({ contractId: sc.id, description: 'فارغة' }))
 ok('دفتر الأستاذ متوازن بعد شهادات الباطن', balanced())
 
+console.log('🏁 المستخلص الختامي')
+const exF = S().addProjectExtract({ projectId: proj.id, grossMinor: 10_000, vatPercent: 0, payment: 'credit', description: 'الختامي', isFinal: true })
+ok('المستخلص الختامي مُعلَّم isFinal', exF.isFinal === true)
+throws('لا مستخلصات بعد الختامي', () => S().addProjectExtract({ projectId: proj.id, grossMinor: 5_000, vatPercent: 0, payment: 'credit', description: 'بعد الختامي' }), 'الختامي')
+
 console.log(`\n${fail === 0 ? '🎉' : '💥'} النتيجة: ${pass} ناجح، ${fail} فاشل`)
 process.exit(fail === 0 ? 0 : 1)
