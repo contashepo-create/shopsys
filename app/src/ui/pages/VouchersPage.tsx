@@ -95,7 +95,7 @@ export function VouchersPage() {
       openingMinor: openingBalances[`supplier:${partyId}`] ?? 0,
       purchases, purchaseReturns, allPurchases: purchases, vouchers, cheques,
     }))
-  }, [partyId, kind, sales, saleReturns, vouchers, cheques, purchases, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts])
+  }, [partyId, kind, sales, saleReturns, vouchers, cheques, purchases, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, laundryOrders, cars, consignmentCars])
 
   const openNew = (k: 'receipt' | 'payment') => {
     setKind(k)

@@ -77,7 +77,7 @@ export function StatementsPage() {
       })
     }
     return employeeStatement({ employeeId: partyId, advances: employeeAdvances, payrollRuns, advanceRepayments, deductions: employeeDeductions })
-  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, advanceRepayments, clientSettlements, openingBalances, settlements, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans])
+  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, advanceRepayments, clientSettlements, openingBalances, settlements, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, laundryOrders, cars, consignmentCars, employeeDeductions])
 
   const balance = statementBalance(rows)
   const partyName = parties.find((p) => p.id === partyId)?.nameAr ?? ''

@@ -162,7 +162,7 @@ export function ProcessingPage() {
                       <td className="px-4 py-2 font-bold tabular-nums">{fmt(o.sourceCostMinor + o.overheadMinor)}</td>
                       <td className="px-4 py-2">
                         {hasDocs && (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-500/10 rounded-lg px-2 py-0.5" title={[o.compliance.originCountry && `المنشأ: ${o.compliance.originCountry}`, o.compliance.facilityNo && `منشأة: ${o.compliance.facilityNo}`, o.compliance.halalCert && `حلال: ${o.compliance.halalCert}`, o.compliance.productionDate && `${L.dateLabel}: ${o.compliance.productionDate}`, o.compliance.season && o.compliance.season].filter(Boolean).join(' — ')}>
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-500/10 rounded-lg px-2 py-0.5" title={[o.compliance.originCountry && `المنشأ: ${o.compliance.originCountry}`, o.compliance.facilityNo && `منشأة: ${o.compliance.facilityNo}`, o.compliance.halalCert && `حلال: ${o.compliance.halalCert}`, o.compliance.productionDate && `${L.dateLabel}: ${o.compliance.productionDate}`, o.compliance.season].filter(Boolean).join(' — ')}>
                             <ShieldCheck className="w-3 h-3" /> SFDA
                           </span>
                         )}
