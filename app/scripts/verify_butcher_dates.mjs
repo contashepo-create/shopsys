@@ -43,7 +43,7 @@ const eq = (a, b, name) => { assert.equal(a, b, `${name} — الفعلي ${a} �
 const throws = (fn, name) => { assert.throws(fn, undefined, name); pass++ }
 
 /* ═══ أ) القالبان والثيمات ═══ */
-eq(ACTIVITY_TEMPLATES.length, 20, 'عدد الأنشطة 20')
+eq(ACTIVITY_TEMPLATES.length, 21, 'عدد الأنشطة 21')
 const butcher = getActivity('butcher')
 const dates = getActivity('dates')
 ok(butcher && dates, 'القالبان موجودان')

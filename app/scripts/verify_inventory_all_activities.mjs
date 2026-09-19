@@ -38,7 +38,7 @@ const { supplierStatement, statementBalance } = await import(join(root, 'src/cor
 const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 20)
+assert.equal(ACTIVITIES.length, 21)
 
 let pass = 0
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
@@ -137,5 +137,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✓ ${nameAr} (${activityId}): شراء→تحويل→بيع→مرتجع→جرد→إتلاف→صرف→مرتجع شراء — ${st().journal.length} قيود متوازنة و1103 مطابق في كل خطوة`)
 }
 
-assert.equal(pass, 20)
+assert.equal(pass, 21)
 console.log(`\n✅ verify_inventory_all_activities: دورة المخزون المتشابكة مع الأقسام الأربعة سليمة على الأنشطة الـ${pass}`)

@@ -39,7 +39,7 @@ const { renderInvoiceA4Html } = await import(join(root, 'src/ui/print/printInvoi
 const { renderReceiptHtml } = await import(join(root, 'src/ui/print/printReceipt.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 20, `المتوقع 20 نشاطاً — الموجود ${ACTIVITIES.length}`)
+assert.equal(ACTIVITIES.length, 21, `المتوقع 21 نشاطاً — الموجود ${ACTIVITIES.length}`)
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 const cur = { code: 'EGP', symbol: 'ج.م', decimals: 2, name: '' }
 
@@ -223,5 +223,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✔ ${tpl.nameAr} (${activityId}) — ⑥ طباعة الشراء ومرتجعه ×3 قوالب + ⑦ سياسة الورديات`)
 }
 
-assert.equal(pass, 20, 'اكتمال الأنشطة الـ20')
+assert.equal(pass, 21, 'اكتمال الأنشطة الـ21')
 console.log(`\n✅ دفعة النقاط الثماني: الجزء العام (①②③⑤) + ${pass}/20 نشاطاً (⑥⑦) — كله سليم`)

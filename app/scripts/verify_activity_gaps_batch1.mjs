@@ -188,7 +188,7 @@ const baseItem = (over = {}) => ({
 
 /* ═══════════ ④ النشاطان الجديدان ═══════════ */
 {
-  assert.equal(ACTIVITY_TEMPLATES.length, 20)
+  assert.equal(ACTIVITY_TEMPLATES.length, 21)
   for (const id of ['salon', 'bakery']) {
     const a = getActivity(id)
     assert.ok(a, `${id} موجود`)
