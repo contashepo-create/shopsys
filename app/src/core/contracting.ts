@@ -219,6 +219,18 @@ export interface Quotation {
   status: QuotationStatus
   notes: string
   projectId: number | null // المشروع المتولد عند الفوز
+  /** احتمالية الفوز 0–100 (نمط pro-acc win_probability) — أساس القيمة المتوقعة للمناقصات */
+  winProbability: number
+  /** التأمين الابتدائي المطلوب لدخول العطاء (bid bond) — للمتابعة؛ إصداره من خطابات الضمان */
+  bidBondMinor: Minor
+}
+
+/** خط أنابيب المناقصات: القيمة المتوقعة = Σ قيمة العرض × احتمالية فوزه (للمقدَّمة فقط) */
+export function quotationPipeline(quotes: readonly Quotation[]): { submittedCount: number; submittedMinor: Minor; expectedMinor: Minor } {
+  const submitted = quotes.filter((q) => q.status === 'submitted')
+  const submittedMinor = submitted.reduce((a, q) => a + quotationTotal(q.lines), 0)
+  const expectedMinor = submitted.reduce((a, q) => a + Math.round(quotationTotal(q.lines) * q.winProbability / 100), 0)
+  return { submittedCount: submitted.length, submittedMinor, expectedMinor }
 }
 
 export function quotationTotal(lines: readonly QuotationLine[]): Minor {

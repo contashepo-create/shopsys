@@ -9,7 +9,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { quotationTotal, QUOTATION_STATUS_LABELS, type Quotation, type QuotationLine } from '../../core/contracting.ts'
+import { quotationTotal, quotationPipeline, QUOTATION_STATUS_LABELS, type Quotation, type QuotationLine } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
 interface DraftLine { nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string }
@@ -36,6 +36,8 @@ export function QuotationsPage() {
   const [validUntil, setValidUntil] = useState('')
   const [qLines, setQLines] = useState<DraftLine[]>([])
   const [notes, setNotes] = useState('')
+  const [winProb, setWinProb] = useState('50')
+  const [bidBond, setBidBond] = useState('')
 
   const openNew = () => {
     setKind('quotation'); setTitleAr(''); setClientName(''); setClientId('')
@@ -61,7 +63,7 @@ export function QuotationsPage() {
 
   const save = () => {
     try {
-      const q = addQuotation({ kind, clientName, clientId: clientId ? Number(clientId) : null, titleAr, validUntil, lines: parsedLines, notes: notes.trim() })
+      const q = addQuotation({ kind, clientName, clientId: clientId ? Number(clientId) : null, titleAr, validUntil, lines: parsedLines, notes: notes.trim(), winProbability: Number(winProb) || 0, bidBondMinor: bidBond ? toMinor(bidBond, cur.decimals) : 0 })
       toast.show(`سُجل ${q.kind === 'tender' ? 'ملف المناقصة' : 'عرض السعر'} ${q.quoteNumber} — الإجمالي ${fmt(quotationTotal(q.lines))} ✅`)
       setOpen(false)
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -97,6 +99,26 @@ export function QuotationsPage() {
             <EmptyState icon="📋" title="لا عروض أسعار بعد" sub="سجّل عرض سعر أو مناقصة ببنود الأعمال — الفائز يتحول لمشروع كامل بضغطة واحدة" />
           </div>
         ) : (
+        <>
+          {(() => {
+            const pipe = quotationPipeline(quotations)
+            return pipe.submittedCount === 0 ? null : (
+              <div className="anim-up grid grid-cols-3 gap-3">
+                <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4">
+                  <div className="text-[11px] font-bold text-slate-400">عروض مقدمة قيد البت</div>
+                  <div className="text-xl font-black text-slate-800 dark:text-white mt-1">{pipe.submittedCount}</div>
+                </div>
+                <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4">
+                  <div className="text-[11px] font-bold text-slate-400">قيمتها الإجمالية</div>
+                  <div className="text-xl font-black text-slate-800 dark:text-white mt-1">{fmt(pipe.submittedMinor)}</div>
+                </div>
+                <div className="rounded-2xl bg-orange-500/10 border border-orange-500/30 p-4">
+                  <div className="text-[11px] font-bold text-orange-600 dark:text-orange-300">القيمة المتوقعة (× الاحتمالية)</div>
+                  <div className="text-xl font-black text-orange-700 dark:text-orange-300 mt-1">{fmt(pipe.expectedMinor)}</div>
+                </div>
+              </div>
+            )
+          })()}
           <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
             <table className="w-full text-sm">
               <thead>
@@ -116,7 +138,7 @@ export function QuotationsPage() {
                     <tr key={q.id} style={{ animationDelay: `${i * 25}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50">
                       <td className="px-4 py-3">
                         <div className="font-bold text-slate-800 dark:text-white">{q.quoteNumber} — {q.titleAr}</div>
-                        <div className="text-[11px] text-slate-400">{q.kind === 'tender' ? '🏛️ مناقصة' : '📄 عرض سعر'} · {q.lines.length} بنداً · {q.date}</div>
+                        <div className="text-[11px] text-slate-400">{q.kind === 'tender' ? '🏛️ مناقصة' : '📄 عرض سعر'} · {q.lines.length} بنداً · {q.date}{q.status === 'submitted' ? ` · فوز ${q.winProbability}٪` : ''}</div>
                       </td>
                       <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{q.clientName}</td>
                       <td className="px-4 py-3 font-black text-slate-800 dark:text-white">{fmt(quotationTotal(q.lines))}</td>
@@ -153,6 +175,7 @@ export function QuotationsPage() {
               </tbody>
             </table>
           </div>
+        </>
       )}
 
       {/* عرض جديد */}
@@ -172,6 +195,14 @@ export function QuotationsPage() {
               </select>
             </Field>
             <Field label="ساري حتى"><input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className={inputCls} dir="ltr" /></Field>
+            <Field label="احتمالية الفوز ٪" hint="أساس «القيمة المتوقعة» في ملخص المناقصات المقدمة">
+              <input value={winProb} onChange={(e) => setWinProb(e.target.value)} inputMode="numeric" className={inputCls} />
+            </Field>
+            {kind === 'tender' && (
+              <Field label={`التأمين الابتدائي (${cur.symbol})`} hint="للمتابعة — إصدار خطاب الضمان من قسم خطابات الضمان">
+                <input value={bidBond} onChange={(e) => setBidBond(e.target.value)} inputMode="decimal" className={inputCls} />
+              </Field>
+            )}
           </div>
 
           <div>

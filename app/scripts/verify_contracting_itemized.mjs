@@ -131,5 +131,16 @@ const exF = S().addProjectExtract({ projectId: proj.id, grossMinor: 10_000, vatP
 ok('المستخلص الختامي مُعلَّم isFinal', exF.isFinal === true)
 throws('لا مستخلصات بعد الختامي', () => S().addProjectExtract({ projectId: proj.id, grossMinor: 5_000, vatPercent: 0, payment: 'credit', description: 'بعد الختامي' }), 'الختامي')
 
+console.log('📋 خط أنابيب المناقصات (القيمة المتوقعة)')
+const { quotationPipeline } = await import('../src/core/contracting.ts')
+const qt1 = S().addQuotation({ kind: 'tender', clientName: 'وزارة', titleAr: 'مناقصة طرق', validUntil: '2026-12-31', lines: [{ descriptionAr: 'أعمال طرق', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 1_000_000 }], notes: '', winProbability: 30, bidBondMinor: 20_000 })
+const qt2 = S().addQuotation({ kind: 'quotation', clientName: 'شركة', titleAr: 'تشطيبات', validUntil: '2026-12-31', lines: [{ descriptionAr: 'تشطيب', qty: 1, unitAr: 'مقطوعية', unitPriceMinor: 400_000 }], notes: '', winProbability: 80 })
+S().setQuotationStatus(qt1.id, 'submitted')
+S().setQuotationStatus(qt2.id, 'submitted')
+const pipe = quotationPipeline(S().quotations)
+ok('المقدمة = 2 بقيمة 1,400,000', pipe.submittedCount === 2 && pipe.submittedMinor === 1_400_000, JSON.stringify(pipe))
+ok('القيمة المتوقعة = 300,000+320,000 = 620,000', pipe.expectedMinor === 620_000, pipe.expectedMinor)
+ok('حُفظ التأمين الابتدائي واحتمالية الفوز', S().quotations.find((q) => q.id === qt1.id).bidBondMinor === 20_000 && S().quotations.find((q) => q.id === qt1.id).winProbability === 30)
+
 console.log(`\n${fail === 0 ? '🎉' : '💥'} النتيجة: ${pass} ناجح، ${fail} فاشل`)
 process.exit(fail === 0 ? 0 : 1)

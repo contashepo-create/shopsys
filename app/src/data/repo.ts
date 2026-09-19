@@ -1624,7 +1624,7 @@ interface DataState {
   /* ─── المقاولات (القرار 27) ─── */
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
-  addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string }) => Quotation
+  addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
   setQuotationStatus: (id: number, status: QuotationStatus) => void
   /** تحويل عرض فائز لمشروع (يرث الاسم والعميل وقيمة العرض) */
   convertQuotationToProject: (id: number, retentionPercent: number) => Project
@@ -5995,6 +5995,8 @@ export const useDataStore = create<DataState>()(
           status: 'draft',
           notes: q.notes,
           projectId: null,
+          winProbability: Math.min(100, Math.max(0, q.winProbability ?? 50)),
+          bidBondMinor: Number.isInteger(q.bidBondMinor) && (q.bidBondMinor ?? 0) >= 0 ? (q.bidBondMinor as number) : 0,
         }
         set({ quotations: [...state.quotations, quote] })
         return quote
@@ -8843,6 +8845,8 @@ export const useDataStore = create<DataState>()(
             ...q,
             clientId: q.clientId ?? null,
             lines: (q.lines ?? []).map((l) => ({ ...l, nameAr: l.nameAr ?? l.descriptionAr.slice(0, 40), estCostMinor: l.estCostMinor ?? 0 })),
+            winProbability: q.winProbability ?? 50,
+            bidBondMinor: q.bidBondMinor ?? 0,
           })),
           boqItems: (s.boqItems ?? []).map((b) => ({ ...b, estCostMinor: b.estCostMinor ?? 0 })),
           subContracts: (s.subContracts ?? []).map((c) => ({ ...c, supplierId: c.supplierId ?? null, taxWithholdPercent: c.taxWithholdPercent ?? 0, boqItemIds: c.boqItemIds ?? [], advanceRecoveryPercent: c.advanceRecoveryPercent ?? 0, progressPercent: c.progressPercent ?? 0 })),
