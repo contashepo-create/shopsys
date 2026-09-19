@@ -5444,7 +5444,23 @@ export const useDataStore = create<DataState>()(
           if (!it) throw new Error('صنف غير موجود')
           if ((it.stockQty ?? 0) < qty) throw new Error(`مخزون غير كافٍ — «${it.nameAr}»`)
         }
-        const totals = computeTotals(args.lines, 0, args.taxPercent, args.taxInclusive)
+        // تثبيت تكلفة السطر على المتوسط المرجح لحظة الترحيل — نفس درس postSale (2.7):
+        // الثقة بتكلفة المُستدعي تفصل قيد 5101/1103 عن المخزون لو مرت تكلفة قديمة/صفرية
+        const costedLines = args.lines.map((l) => {
+          const it = state.items.find((x) => x.id === l.itemId)
+          if (it?.isService) return l.unitCostMinor === 0 ? l : { ...l, unitCostMinor: 0 }
+          const current = it?.costMinor
+          if (!Number.isInteger(current)) return l
+          const expected = Math.round((current as number) * (l.unitFactor ?? 1))
+          return expected !== l.unitCostMinor ? { ...l, unitCostMinor: expected } : l
+        })
+        // قيم المخزون الخارجة (للاسترجاع عند عكس القيد) تُبنى من التكلفة المثبتة لا المُمررة
+        valueByItem.clear()
+        for (const l of costedLines) {
+          if (state.items.find((x) => x.id === l.itemId)?.isService) continue
+          valueByItem.set(l.itemId, (valueByItem.get(l.itemId) ?? 0) + Math.round(l.qty * l.unitCostMinor))
+        }
+        const totals = computeTotals(costedLines, 0, args.taxPercent, args.taxInclusive)
         const { providerShareMinor, patientShareMinor } = splitCoverage(totals.totalMinor, provider.coveragePercent)
         const lines = buildInsuredEntry({
           patientShareMinor, providerShareMinor, revenueMinor: totals.taxBaseMinor,
