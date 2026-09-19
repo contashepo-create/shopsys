@@ -34,6 +34,8 @@ export interface NotificationsInput {
   overdueRentals?: { id: number; contractNumber: string; equipmentName: string; expectedEnd: string }[]
   /** تذاكر صيانة/أوامر غسيل متجاوزة موعد التسليم الموعود */
   overduePromises?: { id: number; docNumber: string; what: string; kind: 'maintenance' | 'laundry'; promisedAt: string }[]
+  /** تنبيهات عقود إيجار العقارات (نمط سمات): انتهاء قريب أو قسط متأخر */
+  leaseAlerts?: { leaseId: number; contractNumber: string; tenantName: string; kind: 'expiring' | 'overdue'; days: number; amountMinor: number }[]
   /** بلاغات المشاكل الداخلية المفتوحة (مستخدم → مدير/محاسب) — طلب المالك */
   openIssues?: { id: number; title: string; reportedBy: string }[]
   /** طلبات استعادة كلمة السر المفتوحة — تظهر للمالك ليعيّن رقماً جديداً */
@@ -87,6 +89,23 @@ export function collectNotifications(input: NotificationsInput): AppNotification
       severity: 'danger',
       route: '/rental/contracts',
       perm: 'ops.activity.use', // وحدات النشاط التشغيلية
+    })
+  }
+
+  // 1.65) عقود إيجار عقارات: انتهاء قريب أو قسط متأخر (نمط سمات)
+  for (const a of input.leaseAlerts ?? []) {
+    out.push({
+      id: `lease:${a.kind}:${a.leaseId}${a.kind === 'overdue' ? `:${a.amountMinor}` : ''}`,
+      icon: a.kind === 'overdue' ? '⏰' : '📅',
+      title: a.kind === 'overdue' ? `قسط إيجار متأخر: ${a.tenantName}` : `عقد يقارب الانتهاء: ${a.tenantName}`,
+      body: a.kind === 'overdue'
+        ? `${a.contractNumber} متأخر ${a.days} يوماً بمبلغ ${input.fmt(a.amountMinor)} — حصّله أو جدوله`
+        : a.days < 0
+          ? `${a.contractNumber} منتهٍ منذ ${-a.days} يوماً — جدد العقد أو أخلِ الوحدة`
+          : `${a.contractNumber} ينتهي خلال ${a.days} يوماً — جهز التجديد أو الإخلاء`,
+      severity: a.kind === 'overdue' ? 'danger' : 'warn',
+      route: '/realestate/leases',
+      perm: 'ops.activity.use',
     })
   }
 

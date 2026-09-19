@@ -14,6 +14,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { collectNotifications, visibleNotifications } from '../../core/notifications.ts'
 import { isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
+import { collectLeaseAlerts } from '../../core/realestate.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 
 export function Header({ title }: { title: string }) {
@@ -30,7 +31,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, tickets, laundryOrders } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, tickets, laundryOrders, leases } = useDataStore()
   const navigate = useNavigate()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -72,6 +73,8 @@ export function Header({ title }: { title: string }) {
           .filter((o) => o.status !== 'delivered' && o.status !== 'cancelled' && o.promisedAt && o.promisedAt < new Date().toISOString().slice(0, 10))
           .map((o) => ({ id: o.id, docNumber: o.orderNumber, what: o.customerName, kind: 'laundry' as const, promisedAt: o.promisedAt })),
       ],
+      // عقود إيجار العقارات: انتهاء قريب (60 يوماً) أو أقساط متأخرة (نمط سمات)
+      leaseAlerts: collectLeaseAlerts(leases, new Date().toISOString().slice(0, 10), 60),
       openIssues: issues.filter((i) => i.status !== 'resolved').map((i) => ({ id: i.id, title: i.title, reportedBy: i.reportedBy })),
       // طلبات استعادة كلمة السر — تظهر للمالك فقط (الموظف لا يرى الجرس المالي أصلاً بحكم الصلاحيات)
       openPinResets: currentUserId == null
@@ -80,7 +83,7 @@ export function Header({ title }: { title: string }) {
       fmt: (m) => formatMinor(m, cur, false),
       todayIso: new Date().toISOString(),
     }),
-    [batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, tickets, laundryOrders],
+    [batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, tickets, laundryOrders, leases],
   )
   // مراجعة المالك («لماذا إشعارات المالك تظهر لأي مستخدم؟»):
   // الجرس يفلتر بصلاحيات المستخدم النشط — الكاشير لا يرى أقساطاً ولا شيكات ولا بلاغات
