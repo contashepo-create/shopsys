@@ -38,6 +38,10 @@ export interface StocktakeResult {
 export function computeStocktake(counts: CountInput[]): StocktakeResult {
   const seen = new Set<number>()
   for (const c of counts) {
+    // تحصين: مدخل ناقص (expectedQty/unitCostMinor غير رقمية) ينتج NaN صامتاً وقيداً مكسوراً
+    if (!Number.isFinite(c.countedQty) || !Number.isFinite(c.expectedQty) || !Number.isFinite(c.unitCostMinor)) {
+      throw new RangeError(`«${c.nameAr}»: بيانات الجرد ناقصة — المعدود والدفتري والتكلفة أرقام مطلوبة`)
+    }
     if (c.countedQty < 0) throw new RangeError(`«${c.nameAr}»: المعدود لا يكون سالباً`)
     if (seen.has(c.itemId)) throw new RangeError(`«${c.nameAr}» مكرر في الجرد`)
     seen.add(c.itemId)
