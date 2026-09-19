@@ -38,4 +38,3 @@ export const UNIT_GROUPS: UnitGroup[] = [
   },
 ]
 
-export const ALL_UNITS: string[] = UNIT_GROUPS.flatMap((g) => g.units)

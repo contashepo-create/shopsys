@@ -12,7 +12,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { supplierStatement, statementBalance } from '../../core/statements.ts'
-import { partyCode, matchesPartyCode } from '../../core/partyCodes.ts'
+import { partyCode, matchesPartyCode, PARTY_CODE_LABELS } from '../../core/partyCodes.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
 /** مبدّل عرض بطاقات/قائمة (طلب المالك) — مشترك بين العملاء والموردين */
@@ -229,7 +229,7 @@ export function CustomersPage() {
                 const bal = balances.get(c.id) ?? 0
                 return (
                   <tr key={c.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-violet-500/[0.03] transition-colors">
-                    <td className="px-4 py-2.5"><span className="font-mono font-black text-[11px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-300" dir="ltr">{partyCode('CUS', c.id)}</span></td>
+                    <td className="px-4 py-2.5"><span title={PARTY_CODE_LABELS.CUS} className="font-mono font-black text-[11px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-300" dir="ltr">{partyCode('CUS', c.id)}</span></td>
                     <td className="px-4 py-2.5 font-bold text-slate-800 dark:text-white">{c.nameAr}</td>
                     <td className="px-4 py-2.5 text-slate-500 text-[12px]" dir="ltr">{c.phone || '—'}</td>
                     <td className="px-4 py-2.5">
@@ -411,7 +411,7 @@ export function SuppliersPage() {
                 const bal = balances.get(s.id) ?? 0
                 return (
                   <tr key={s.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.03] transition-colors">
-                    <td className="px-4 py-2.5"><span className="font-mono font-black text-[11px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-700 dark:text-cyan-300" dir="ltr">{partyCode('SUP', s.id)}</span></td>
+                    <td className="px-4 py-2.5"><span title={PARTY_CODE_LABELS.SUP} className="font-mono font-black text-[11px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-700 dark:text-cyan-300" dir="ltr">{partyCode('SUP', s.id)}</span></td>
                     <td className="px-4 py-2.5 font-bold text-slate-800 dark:text-white">{s.nameAr}</td>
                     <td className="px-4 py-2.5 text-slate-500 text-[12px]" dir="ltr">{s.phone || '—'}</td>
                     <td className="px-4 py-2.5 text-slate-500 text-[12px]">{s.category || '—'}</td>

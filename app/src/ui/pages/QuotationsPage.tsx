@@ -9,7 +9,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { quotationTotal, quotationPipeline, QUOTATION_STATUS_LABELS, type Quotation, type QuotationLine } from '../../core/contracting.ts'
+import { quotationTotal, quotationEstCost, quotationPipeline, QUOTATION_STATUS_LABELS, type Quotation, type QuotationLine } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
 interface DraftLine { nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string }
@@ -59,7 +59,7 @@ export function QuotationsPage() {
       estCostMinor: safeMinor(l.estCost),
     }))
   const draftTotal = quotationTotal(parsedLines)
-  const draftEstCost = parsedLines.reduce((sum, l) => sum + Math.round(l.qty * l.estCostMinor), 0)
+  const draftEstCost = quotationEstCost(parsedLines)
 
   const save = () => {
     try {

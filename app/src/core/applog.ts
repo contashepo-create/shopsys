@@ -53,7 +53,6 @@ export function logEvent(level: LogLevel, msg: string): void {
 
 export function getLogLines(): LogLine[] { return readRing() }
 export function getLogText(): string { return logToText(readRing()) }
-export function clearLog(): void { try { localStorage.removeItem(LOG_KEY) } catch { /* صامت */ } }
 
 /** تركيب مصائد الأخطاء العامة — تُستدعى مرة واحدة عند الإقلاع */
 export function installErrorHooks(): void {

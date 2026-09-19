@@ -6,7 +6,7 @@
 import { useMemo, useState } from 'react'
 import { MessageSquareWarning, Plus, CheckCircle2, CircleDot, Timer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
-import type { IssueStatus } from '../../core/audit.ts'
+import { ISSUE_STATUS_LABELS, type IssueStatus } from '../../core/audit.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
 export function IssuesPage() {
@@ -75,6 +75,7 @@ export function IssuesPage() {
                 <div className="flex-1 min-w-52">
                   <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2 text-[14px]">
                     {statusIcon(i.status)} {i.title}
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-bold">{ISSUE_STATUS_LABELS[i.status].nameAr}</span>
                     {i.refKey && <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 font-bold">{refLabel(i.refKey)}</span>}
                   </div>
                   <div className="text-[12.5px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed whitespace-pre-wrap">{i.details}</div>

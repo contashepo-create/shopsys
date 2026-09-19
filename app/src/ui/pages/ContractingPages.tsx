@@ -10,7 +10,7 @@ import type { Project } from '../../core/contracting.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { COST_KIND_LABELS, type CostKind } from '../../core/contracting.ts'
+import { COST_KIND_LABELS, CHANGE_ORDER_STATUS_LABELS, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -588,7 +588,7 @@ export function ProjectsPage() {
                         <button onClick={() => { try { setChangeOrderStatus(o.id, 'invoiced'); toast.show('عُلّم مُستخلَصاً 🧾') } catch (e) { toast.show((e as Error).message, 'error') } }} title="عُدّ ضمن مستخلص صادر" className="text-sky-600 font-bold hover:underline">تعليم كمُستخلَص</button>
                       </span>
                     ) : (
-                      <span className={`font-bold ${o.status === 'invoiced' ? 'text-sky-600' : 'text-rose-500'}`}>{o.status === 'invoiced' ? '🧾 مُستخلَص' : '❌ مرفوض'}</span>
+                      <span className={`font-bold ${o.status === 'invoiced' ? 'text-sky-600' : 'text-rose-500'}`}>{CHANGE_ORDER_STATUS_LABELS[o.status].icon} {CHANGE_ORDER_STATUS_LABELS[o.status].nameAr}</span>
                     )}
                   </div>
                 ))}
