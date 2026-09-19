@@ -3825,8 +3825,11 @@ export const useDataStore = create<DataState>()(
         if (!original) throw new Error('القيد غير موجود')
         if (original.reversedByEntryId) throw new Error('القيد معكوس بالفعل — لا يُعكس مرتين')
         if (original.reversesEntryId) throw new Error('لا يُعكس قيد عاكس — عد للقيد الأصلي')
-        // G11: مستندات لها دفاتر مساعدة (مخزون/سيريالات/دفعات/أقساط) — عكس قيدها وحده
-        // يفصل دفتر الأستاذ عن الدفاتر المساعدة: وجّه للمسار التصحيحي الصحيح
+        // G11 (مُحكم بقائمة سماح — سد الفئة كلها): كل مستند له دفتر مساعد
+        // (مخزون/سيريالات/دفعات/أقساط/عهدة/مطالبات/كسر/سيارات/شيكات/عقود…)
+        // عكس قيده وحده يفصل الأستاذ العام عن دفتره المساعد. لذلك لا يُسمح
+        // بالعكس المباشر إلا لما لا دفتر له: القيد اليدوي، والسند البسيط،
+        // والبيع المؤمَّن (له معالجة خاصة أدناه ترجع المخزون وتغلق المطالبة).
         const guarded: Partial<Record<JournalEntry['sourceType'], string>> = {
           sale: 'فاتورة بيع — صححها بمرتجع مبيعات أو بتعديل الفاتورة من صفحة فواتير البيع',
           purchase: 'فاتورة شراء — صححها بمرتجع شراء أو بتعديل الفاتورة من صفحة المشتريات',
@@ -3834,9 +3837,47 @@ export const useDataStore = create<DataState>()(
           purchase_return: 'مرتجع شراء أخرج بضاعة من المخزون — صححه بفاتورة شراء جديدة لا بعكس القيد',
           production: 'أمر إنتاج حرّك خامات ومنتجات — استخدم مسار الإنتاج للتصحيح',
           material_issue: 'صرف مواد لمشروع — استخدم مستند تسوية مواد لا عكس القيد',
+          processing: 'أمر تشغيل/تجهيز حرّك مخزوناً — استخدم مسار التشغيل للتصحيح',
+          wastage: 'مستند هالك خصم مخزوناً — صحح الكمية بمستند جرد لا بعكس القيد',
+          internal_use: 'صرف داخلي خصم مخزوناً — صحح الكمية بمستند جرد لا بعكس القيد',
+          adjustment: 'تسوية جرد/افتتاحي عدّلت أرصدة المخزون — صححها بجرد جديد لا بعكس القيد',
+          maintenance_ticket: 'تذكرة صيانة حركت قطع غيار ومدفوعات — استخدم استرداد التذكرة من صفحة الصيانة',
+          claim_settlement: 'تحصيل مطالبات تأمين أقفل مطالبات في سجلها — سوِّ الفرق بسند لا بعكس القيد',
+          scrap_purchase: 'شراء كسر أضاف وزناً لدفتر الكسر — صححه ببيع كسر لا بعكس القيد',
+          scrap_sale: 'بيع كسر خصم وزناً من دفتر الكسر — صححه بشراء كسر لا بعكس القيد',
+          car_purchase: 'شراء سيارة سجّلها في دفتر السيارات — صحح من صفحة المعرض لا بعكس القيد',
+          car_sale: 'بيع سيارة أخرجها من دفتر السيارات — صحح من صفحة المعرض لا بعكس القيد',
+          cheque_receive: 'استلام شيك سجّله في دفتر الشيكات — استخدم تغيير حالة الشيك (ارتداد/إلغاء)',
+          cheque_issue: 'إصدار شيك سجّله في دفتر الشيكات — استخدم تغيير حالة الشيك',
+          lab_order: 'طلب معمل له سجل فحوص ومطالبات — استخدم استرداد الطلب من صفحة المعمل',
+          depreciation: 'قيد إهلاك مربوط بعدّاد شهور الأصل — عدّل من صفحة الأصول الثابتة',
+          year_closing: 'قيد إقفال سنة مالية — أعد فتح السنة من صفحة السنوات المالية',
         }
         const guardMsg = guarded[original.sourceType]
         if (guardMsg) throw new Error(`لا يُعكس هذا القيد مباشرة: ${guardMsg}`)
+        // قائمة السماح المغلقة: أي sourceType جديد مستقبلاً يُحجب تلقائياً حتى
+        // يُقرر مساره التصحيحي — يستحيل تكرار ثغرة «نوع جديد نسيناه في القائمة»
+        const reversible = new Set<JournalEntry['sourceType']>(['manual', 'receipt_voucher', 'payment_voucher', 'insured_sale', 'reversal'])
+        if (!reversible.has(original.sourceType)) {
+          throw new Error('هذا القيد وُلد من مستند له دفتر مساعد — صححه من مستنده الأصلي (مرتجع/استرداد/تسوية) لا بعكس القيد')
+        }
+        // سندات مولدة آلياً من مستندات أخرى (قسط/عهدة/سلفة عجز/هامش تقسيط/توريد
+        // استقطاع): ليست في سجل السندات — عكسها يفصل القيد عن دفترها المساعد
+        if (original.sourceType === 'receipt_voucher' || original.sourceType === 'payment_voucher') {
+          const isRealVoucher = state.vouchers.some((v) => v.journalEntryId === original.id)
+          if (!isRealVoucher) {
+            throw new Error('لا يُعكس هذا القيد مباشرة: سند مولد آلياً من مستند آخر (قسط/عهدة/سلفة/توريد ضريبة) — صححه من مستنده الأصلي')
+          }
+          if (state.clinicCollections.some((c) => c.journalEntryId === original.id)) {
+            throw new Error('لا يُعكس هذا القيد مباشرة: السند خفّض رصيد مريض في سجل تحصيلات العيادة — صححه من صفحة العيادة')
+          }
+          if (state.custodyTxs.some((t) => t.journalEntryId === original.id)) {
+            throw new Error('لا يُعكس هذا القيد مباشرة: مرتبط بحركة عهدة — سوِّه من ملف العهدة')
+          }
+          if (state.employeeAdvances.some((a) => a.journalEntryId === original.id)) {
+            throw new Error('لا يُعكس هذا القيد مباشرة: مرتبط بسلفة موظف — سوِّها من صفحة الموظفين')
+          }
+        }
         // G10: قيد بيع بتغطية تأمينية — عكسه المحاسبي وحده يترك المخزون مخصوماً
         // والمطالبة مفتوحة (تُحصَّل عن بيع أُلغي!): نرجع البضاعة ونغلق المطالبة معاً
         let updatedItems = state.items
@@ -6729,7 +6770,16 @@ export const useDataStore = create<DataState>()(
         if (progressPercent < 0 || progressPercent > 100) throw new Error('نسبة الإنجاز بين 0 و100')
         set((s) => ({ boqItems: s.boqItems.map((b) => (b.id === id ? { ...b, progressPercent } : b)) }))
       },
-      removeBoqItem: (id) => set((s) => ({ boqItems: s.boqItems.filter((b) => b.id !== id) })),
+      removeBoqItem: (id) => {
+        const state = get()
+        const boq = state.boqItems.find((b) => b.id === id)
+        if (!boq) throw new Error('بند الكميات غير موجود')
+        // حارس الفئة (الحذف الآمن): بند بتقدم مرحَّل عليه مستخلصات — حذفه يشوه
+        // المستخلصات التراكمية القادمة والتقارير؛ وبند مربوط بعقد باطن يكسر نطاق العقد
+        if (boq.progressPercent > 0) throw new Error('البند عليه مستخلصات مرحلة — لا يُحذف حفاظاً على تسلسل التقدم')
+        if (state.subContracts.some((sc) => sc.boqItemIds.includes(id))) throw new Error('البند مربوط بعقد مقاول باطن — فك الربط أولاً')
+        set({ boqItems: state.boqItems.filter((b) => b.id !== id) })
+      },
 
       addChangeOrder: (args) => {
         const state = get()
@@ -7429,6 +7479,13 @@ export const useDataStore = create<DataState>()(
           journalEntryId: entryId, notes: args.notes ?? '',
         }
         // خصم الخام + إدخال كل ناتج بمتوسط مرجح جديد (قيمته القديمة + نصيبه من التكلفة)
+        // دفعات صلاحية الخام (جزارة: ذبيحة بتاريخ؛ تمور: خام موسمي) تُستهلك FEFO —
+        // قاعدة الفئة: كل خصم stockQty يرافقه استهلاك batches وإلا بقيت أرصدة دفعات
+        // وهمية تولد تنبيهات كاذبة. التجهيز يقبل حتى المنتهي (قرار المشغل — كالصرف الداخلي)
+        let procBatches = state.batches
+        if (source.trackExpiry) {
+          procBatches = applyFefo(procBatches, planFefo(procBatches, source.id, args.sourceQty, now))
+        }
         const outMap = new Map(outputs.map((o) => [o.itemId, o]))
         const updatedItems2 = state.items.map((it) => {
           if (it.id === args.sourceItemId) {
@@ -7443,7 +7500,7 @@ export const useDataStore = create<DataState>()(
           }
           return it
         })
-        set({ items: updatedItems2, processingOrders: [...state.processingOrders, order], journal: [...state.journal, entry] })
+        set({ items: updatedItems2, batches: procBatches, processingOrders: [...state.processingOrders, order], journal: [...state.journal, entry] })
         return order
       },
 
@@ -8121,12 +8178,18 @@ export const useDataStore = create<DataState>()(
           reversesEntryId: null,
         }
 
-        // 3) إنقاص مخزون القطع المستهلكة
+        // 3) إنقاص مخزون القطع المستهلكة (+ دفعات صلاحيتها إن وُجدت — قاعدة الفئة:
+        // كل خصم stockQty يرافقه استهلاك batches؛ قطعة بصلاحية مثل بطارية/أحبار لا تترك رصيداً وهمياً)
         const qtyByItem = new Map<number, number>()
         for (const p of parts) qtyByItem.set(p.itemId, (qtyByItem.get(p.itemId) ?? 0) + p.qty)
         const items = state.items.map((it) =>
-          qtyByItem.has(it.id) ? { ...it, stockQty: (it.stockQty ?? 0) - qtyByItem.get(it.id)! } : it,
+          qtyByItem.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) - qtyByItem.get(it.id)!) * 1000) / 1000 } : it,
         )
+        let ticketBatches = state.batches
+        for (const [itemId, qty] of qtyByItem) {
+          if (!state.items.find((it) => it.id === itemId)?.trackExpiry) continue
+          ticketBatches = applyFefo(ticketBatches, planFefo(ticketBatches, itemId, qty, now))
+        }
 
         const updated: MaintenanceTicket = {
           ...ticket,
@@ -8143,6 +8206,7 @@ export const useDataStore = create<DataState>()(
           tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)),
           journal: [...state.journal, entry],
           items,
+          batches: ticketBatches,
         })
         return updated
       },
