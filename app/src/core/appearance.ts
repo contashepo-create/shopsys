@@ -92,6 +92,7 @@ export const ACTIVITY_ACCENTS: Record<string, string> = {
   dates: 'date_palm', // بني تمري صحراوي
   salon: 'fuchsia', // أناقة وعناية
   bakery: 'amber', // دفء الأفران
+  realestate: 'teal', // عقارات وعمران
   general: 'indigo', // الافتراضي
 }
 

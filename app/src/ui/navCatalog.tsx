@@ -131,6 +131,13 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    id: 'realestate', nameAr: 'العقارات', icon: Building2, color: 'teal', module: 'realestate',
+    children: [
+      { id: 'properties', nameAr: 'العقارات والملاك', icon: Building2, path: '/realestate/properties' },
+      { id: 'leases', nameAr: 'عقود الإيجار', icon: KeyRound, path: '/realestate/leases' },
+    ],
+  },
+  {
     id: 'logistics', nameAr: 'اللوجستيات', icon: Route, color: 'fuchsia', module: 'logistics',
     children: [
       { id: 'trips', nameAr: 'النقلات', icon: Route, path: '/logistics/trips' },

@@ -50,7 +50,7 @@ for (const m of ALL_MODULES) {
 }
 
 console.log('\n🏪 الأنشطة الـ18: وحدات معرفة + وحدة عمل واحدة على الأقل')
-const workModules = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
+const workModules = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'realestate']
 for (const a of ACTIVITY_TEMPLATES) {
   const allKnown = a.modules.every((m) => ALL_MODULES.includes(m))
   const hasWork = a.modules.some((m) => workModules.includes(m))

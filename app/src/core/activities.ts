@@ -233,7 +233,7 @@ export function toggleModuleList(current: BusinessModule[], m: BusinessModule): 
   if (current.includes(m)) {
     const next = current.filter((x) => x !== m)
     // لا يجوز إطفاء كل شيء: يجب أن تبقى وحدة «عمل» واحدة على الأقل
-    const workModules: BusinessModule[] = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services']
+    const workModules: BusinessModule[] = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate']
     if (!next.some((x) => workModules.includes(x))) {
       throw new Error('لا يمكن إلغاء آخر وحدة عمل — يجب أن تبقى وحدة عمل واحدة على الأقل')
     }

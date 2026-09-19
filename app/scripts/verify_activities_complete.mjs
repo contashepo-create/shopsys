@@ -18,13 +18,13 @@ const throws = (fn, name) => { try { fn(); fail++; console.error(`❌ لم ير�
 const EXPECTED = [
   'grocery', 'mobile', 'clothing', 'pharmacy', 'electronics', 'spare_parts',
   'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars',
-  'restaurant', 'jewelry', 'laundry', 'butcher', 'dates', 'salon', 'bakery', 'general',
+  'restaurant', 'jewelry', 'laundry', 'butcher', 'dates', 'salon', 'bakery', 'realestate', 'general',
 ]
 ok(ACTIVITY_TEMPLATES.length === EXPECTED.length, `عدد الأنشطة = ${EXPECTED.length}`)
 for (const id of EXPECTED) ok(!!getActivity(id), `نشاط ${id} موجود`)
 
 /* ─── فحوص عامة لكل نشاط ─── */
-const WORK_MODULES = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars']
+const WORK_MODULES = ['pos', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'realestate']
 const ids = new Set()
 for (const a of ACTIVITY_TEMPLATES) {
   ok(!ids.has(a.id), `معرف ${a.id} غير مكرر`)
