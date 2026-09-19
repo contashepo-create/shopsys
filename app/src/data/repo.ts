@@ -68,10 +68,10 @@ import {
   assertFileOpen, CUSTODY_ACCOUNT,
   type CustodyFile, type CustodyTx, type CustodySummary,
 } from '../core/custody.ts'
-import { validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
+import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
-  validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip,
+  validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
   type BoqItem, type ChangeOrder, type SubContract, type SubAdvance, type SubCertificate, type SubPayment, type Bond, type BondType, type DailyWorker, type DailyWorkRecord, type WipResult } from '../core/contracting.ts'
 import {
   buildIssueLine, buildMaterialIssueEntry, allocateClientPayment, buildClientReceiptEntry, computeProjectEvm,
@@ -360,6 +360,8 @@ export interface ProjectExtract {
   payment: 'cash' | 'credit'
   totals: ExtractTotals
   journalEntryId: number
+  /** بنود المستخلص البندي من BOQ (نمط AccFlex) — غيابها = مستخلص مبلغ إجمالي قديم */
+  lines?: { boqItemId: number; code: string; descriptionAr: string; prevProgressPercent: number; newProgressPercent: number; lineValueMinor: number }[]
   /** مرتجع خدمة (مستخلص معتمد رُفض جزء من أعماله): تراكمي بسقف dueMinor */
   refundedMinor?: number
   refundedTaxMinor?: number
@@ -1040,6 +1042,8 @@ interface DataState {
   quotations: Quotation[] // عروض أسعار ومناقصات (طلب المالك)
   /* عمق المقاولات (مقارنة pro-acc — طلب المالك) */
   boqItems: BoqItem[] // جداول الكميات لكل مشروع
+  /** موازنة تكاليف المشروع بالفئات (نمط pro-acc project_budgets) — أساس تقرير الانحرافات */
+  projectBudgets: { id: number; projectId: number; kind: CostKind; amountMinor: number; notes: string }[]
   changeOrders: ChangeOrder[] // أوامر التغيير على العقود
   clientAdvances: { id: number; projectId: number; date: string; amountMinor: number; recoveredMinor: number; journalEntryId: number }[]
   subContracts: SubContract[] // عقود مقاولي الباطن
@@ -1632,9 +1636,13 @@ interface DataState {
   /** ملخص ملف عهدة (تعزيزات/منصرف/زيادة/متبقٍ) من حركاته */
   getCustodySummary: (fileId: number) => CustodySummary
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
-  addProjectExtract: (args: { projectId: number; grossMinor: number; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null }) => ProjectExtract
+  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
   addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string; custodyFileId?: number | null }) => ProjectCost
+  /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
+  setProjectBudget: (projectId: number, budgetLines: ProjectBudgetLine[]) => void
+  /** تقرير انحرافات الموازنة عن الفعلي لكل فئة */
+  getProjectBudgetVariance: (projectId: number) => { rows: BudgetVarianceRow[]; totalBudgetMinor: number; totalActualMinor: number }
   /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
   releaseRetention: (projectId: number, treasury?: string) => { amount: number }
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
@@ -2092,6 +2100,7 @@ export const useDataStore = create<DataState>()(
       retentionReleases: [],
       quotations: [],
       boqItems: [],
+      projectBudgets: [],
       changeOrders: [],
       clientAdvances: [],
       subContracts: [],
@@ -6185,7 +6194,17 @@ export const useDataStore = create<DataState>()(
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
         // بوابة الموافقات: إصدار مستخلص العميل إجراء حرج (أمر التعديل)
         get().assertApproved('project_extract', project.id, `مستخلص جديد — ${project.nameAr}`)
-        const totals = computeExtractTotals(args.grossMinor, project.retentionPercent, args.vatPercent)
+        // المستخلص البندي (نمط AccFlex): بنود من BOQ بنسب تراكمية — أو مبلغ إجمالي (النمط القديم)
+        let extractLinesComputed: ExtractLineComputed[] | undefined
+        let gross = args.grossMinor ?? 0
+        if (args.extractLines && args.extractLines.length > 0) {
+          const projBoq = state.boqItems.filter((b) => b.projectId === project.id)
+          const r = computeExtractLines(args.extractLines, projBoq)
+          extractLinesComputed = r.computed
+          gross = r.grossMinor
+        }
+        if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
+        const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const id = nextId(state.projectExtracts)
         const extractNumber = `PRX-${String(id).padStart(4, '0')}`
         // استرداد الدفعة المقدمة (اختياري): يخصم من مستحق المستخلص ويطفئ 2109
@@ -6212,7 +6231,15 @@ export const useDataStore = create<DataState>()(
         const extract: ProjectExtract = {
           id, extractNumber, projectId: project.id, date: now,
           description: args.description, payment: args.payment, totals, journalEntryId: entryId,
+          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor })),
         }
+        // تحديث نسب إنجاز بنود BOQ تلقائياً من المستخلص (ربط العقد بالمستخلص — AccFlex)
+        const updatedBoq = extractLinesComputed
+          ? state.boqItems.map((b) => {
+              const c = extractLinesComputed.find((x) => x.boqItemId === b.id)
+              return c ? { ...b, progressPercent: c.newProgressPercent } : b
+            })
+          : state.boqItems
         // استهلاك الدفعات المقدمة FIFO (الأقدم أولاً)
         let toRecover = recovery
         const updatedAdvances = state.clientAdvances.map((a) => {
@@ -6222,8 +6249,27 @@ export const useDataStore = create<DataState>()(
           toRecover -= take
           return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
         })
-        set({ projectExtracts: [...state.projectExtracts, extract], clientAdvances: updatedAdvances, journal: [...state.journal, entry] })
+        set({ projectExtracts: [...state.projectExtracts, extract], clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry] })
         return extract
+      },
+      /* موازنة تكاليف المشروع بالفئات (نمط pro-acc): تُدخل مرة وتقارن بالفعلي أولاً بأول */
+      setProjectBudget: (projectId, budgetLines) => {
+        const state = get()
+        if (!state.projects.some((p) => p.id === projectId)) throw new Error('المشروع غير موجود')
+        for (const b of budgetLines) {
+          if (!Number.isInteger(b.amountMinor) || b.amountMinor < 0) throw new Error('مبلغ الموازنة لا يكون سالباً')
+        }
+        const others = state.projectBudgets.filter((b) => b.projectId !== projectId)
+        let nid = state.projectBudgets.reduce((m, b) => Math.max(m, b.id), 0)
+        const fresh = budgetLines.filter((b) => b.amountMinor > 0).map((b) => ({ id: ++nid, projectId, kind: b.kind, amountMinor: b.amountMinor, notes: '' }))
+        set({ projectBudgets: [...others, ...fresh] })
+      },
+      getProjectBudgetVariance: (projectId) => {
+        const state = get()
+        return budgetVarianceReport(
+          state.projectBudgets.filter((b) => b.projectId === projectId),
+          state.projectCosts.filter((c) => c.projectId === projectId),
+        )
       },
       addProjectCost: (args) => {
         const state = get()
@@ -8755,6 +8801,7 @@ export const useDataStore = create<DataState>()(
           labOrders: s.labOrders ?? [],
           changeOrders: s.changeOrders ?? [],
           clientAdvances: s.clientAdvances ?? [],
+          projectBudgets: s.projectBudgets ?? [],
           subPayments: s.subPayments ?? [],
           bonds: s.bonds ?? [],
           dailyWorkers: s.dailyWorkers ?? [],

@@ -23,7 +23,7 @@ import { printHtml } from '../print/printReceipt.ts'
 
 export function ProjectsPage() {
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems,
     addProject, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
   } = useDataStore()
@@ -76,20 +76,47 @@ export function ProjectsPage() {
   const [exTreasury, setExTreasury] = useState('1101')
   const [exVat, setExVat] = useState(true)
   const [exRecovery, setExRecovery] = useState('')
+  /* المستخلص البندي (AccFlex): نسب تنفيذ تراكمية لكل بند BOQ — قيمة الشريحة تُحسب تلقائياً */
+  const [exMode, setExMode] = useState<'lines' | 'gross'>('gross')
+  const [exLines, setExLines] = useState<Record<number, string>>({}) // boqItemId → النسبة الجديدة كنص
+  const extractBoq = useMemo(() => (extractFor ? boqItems.filter((b) => b.projectId === extractFor.id) : []), [boqItems, extractFor])
+  const exLinesPreview = useMemo(() => {
+    let sum = 0
+    const rows = extractBoq.map((b) => {
+      const raw = exLines[b.id]
+      const np = raw === undefined || raw === '' ? null : Number(raw)
+      const total = Math.round(b.qty * b.unitPriceMinor)
+      const slice = np !== null && Number.isFinite(np) && np > b.progressPercent && np <= 100 ? Math.round((total * (np - b.progressPercent)) / 100) : 0
+      sum += slice
+      return { boq: b, newPercent: np, sliceMinor: slice }
+    })
+    return { rows, grossMinor: sum }
+  }, [extractBoq, exLines])
 
   // مستخلص آجل فوق حد ائتمان عميل المشروع — تجاوز باعتماد مدير
   const creditApproval = useSupervisorApproval('sales.credit.override')
   const saveExtract = (creditLimitOverrideBy?: string) => {
     if (!extractFor) return
     try {
+      const linesInput = exMode === 'lines'
+        ? Object.entries(exLines)
+            .filter(([, v]) => v !== '')
+            .map(([id, v]) => ({ boqItemId: Number(id), newProgressPercent: Number(v) }))
+            .filter((l) => {
+              const b = extractBoq.find((x) => x.id === l.boqItemId)
+              return b ? l.newProgressPercent > b.progressPercent : false
+            })
+        : undefined
       const ex = addProjectExtract({
-        projectId: extractFor.id, grossMinor: toMinor(exGross, cur.decimals),
+        projectId: extractFor.id,
+        grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
+        extractLines: linesInput,
         vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
         advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`سُجل المستخلص ${ex.extractNumber} — المستحق ${fmt(ex.totals.dueMinor)} والمحتجز ${fmt(ex.totals.retentionMinor)} ✅`)
-      setExtractFor(null); setExGross(''); setExDesc(''); setExRecovery('')
+      setExtractFor(null); setExGross(''); setExDesc(''); setExRecovery(''); setExLines({})
     } catch (e) {
       if (e instanceof CreditLimitError) { creditApproval.request((by) => saveExtract(by ?? 'المشرف')); return }
       toast.show((e as Error).message, 'error')
@@ -242,7 +269,7 @@ export function ProjectsPage() {
                       <div className="flex gap-1 justify-end">
                         {p.status === 'active' && (
                           <>
-                            <button onClick={() => { setExtractFor(p); setExGross(''); setExDesc('') }} title="مستخلص جديد" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Receipt className="w-4 h-4" /></button>
+                            <button onClick={() => { setExtractFor(p); setExGross(''); setExDesc(''); setExLines({}); setExMode(boqItems.some((b) => b.projectId === p.id) ? 'lines' : 'gross') }} title="مستخلص جديد" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Receipt className="w-4 h-4" /></button>
                             <button onClick={() => { setCostFor(p); setCostAmount(''); setCostDesc('') }} title="تسجيل تكلفة" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Hammer className="w-4 h-4" /></button>
                             <button onClick={() => setAdvanceFor(p)} title="دفعة مقدمة من العميل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Wallet2 className="w-4 h-4" /></button>
                             <button onClick={() => setCoFor(p)} title="أمر تغيير على العقد" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all hover:scale-110"><FilePlus2 className="w-4 h-4" /></button>
@@ -316,7 +343,56 @@ export function ProjectsPage() {
       <Modal open={!!extractFor} onClose={() => setExtractFor(null)} title={extractFor ? `مستخلص جديد — ${extractFor.nameAr}` : ''}>
         {extractFor && (
           <div className="space-y-3">
-            <Field label={`قيمة الأعمال المنفذة (${cur.symbol}) *`}><input value={exGross} onChange={(e) => setExGross(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            {extractBoq.length > 0 && (
+              <div className="flex gap-2">
+                {([['lines', 'بندي من جدول الكميات'], ['gross', 'مبلغ إجمالي']] as const).map(([m, label]) => (
+                  <button key={m} onClick={() => setExMode(m)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border transition-all ${exMode === m ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {exMode === 'lines' && extractBoq.length > 0 ? (
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                <table className="w-full text-[12px]">
+                  <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
+                    <tr>
+                      <th className="p-2 text-right font-bold">البند</th>
+                      <th className="p-2 text-center font-bold">سابق ٪</th>
+                      <th className="p-2 text-center font-bold">جديد ٪ (تراكمي)</th>
+                      <th className="p-2 text-left font-bold">قيمة الشريحة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {exLinesPreview.rows.map(({ boq: b, newPercent, sliceMinor }) => (
+                      <tr key={b.id} className="border-t border-slate-100 dark:border-slate-800">
+                        <td className="p-2 font-bold text-slate-700 dark:text-slate-200">{b.code} — {b.descriptionAr}</td>
+                        <td className="p-2 text-center text-slate-500">{b.progressPercent}٪</td>
+                        <td className="p-2">
+                          <input
+                            value={exLines[b.id] ?? ''} inputMode="decimal" placeholder={`${b.progressPercent}`}
+                            onChange={(e) => setExLines((s) => ({ ...s, [b.id]: e.target.value }))}
+                            className="w-20 mx-auto block text-center rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent py-1 text-[12px] font-bold"
+                          />
+                          {newPercent !== null && (newPercent < b.progressPercent || newPercent > 100) && (
+                            <div className="text-[10px] text-red-500 text-center font-bold mt-0.5">{newPercent > 100 ? 'أقصاها 100' : 'لا تقل عن السابق'}</div>
+                          )}
+                        </td>
+                        <td className="p-2 text-left font-bold tabular-nums text-emerald-600">{sliceMinor > 0 ? fmt(sliceMinor) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-orange-500/10">
+                    <tr>
+                      <td colSpan={3} className="p-2 font-bold text-orange-700 dark:text-orange-300">إجمالي أعمال هذا المستخلص</td>
+                      <td className="p-2 text-left font-black tabular-nums text-orange-700 dark:text-orange-300">{fmt(exLinesPreview.grossMinor)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            ) : (
+              <Field label={`قيمة الأعمال المنفذة (${cur.symbol}) *`}><input value={exGross} onChange={(e) => setExGross(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            )}
             <Field label="وصف الأعمال"><input value={exDesc} onChange={(e) => setExDesc(e.target.value)} className={inputCls} placeholder="أعمال الأساسات…" /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="التحصيل">
@@ -346,7 +422,7 @@ export function ProjectsPage() {
             </div>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setExtractFor(null)}>إلغاء</Btn>
-              <Btn onClick={saveExtract} disabled={!exGross}>تسجيل المستخلص وقيده</Btn>
+              <Btn onClick={saveExtract} disabled={exMode === 'lines' ? exLinesPreview.grossMinor <= 0 : !exGross}>تسجيل المستخلص وقيده</Btn>
             </div>
           </div>
         )}

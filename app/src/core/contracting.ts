@@ -284,6 +284,101 @@ export function validateBoqItem(item: Pick<BoqItem, 'descriptionAr' | 'unit' | '
 }
 
 /* ─── أوامر التغيير — تعديل معتمد على قيمة العقد (لا قيد؛ يغيّر WIP والربحية المتوقعة) ─── */
+/* ─── المستخلص البندي من جدول الكميات (نمط AccFlex/دفترة — قلب محاسبة المقاولات):
+   لكل بند نسبة إنجاز تراكمية جديدة؛ قيمة المستخلص الحالي =
+   Σ (إجمالي البند × (النسبة الجديدة − النسبة السابقة)) — لا إعادة إدخال بنود ─── */
+
+export interface ExtractLineInput {
+  boqItemId: number
+  /** النسبة التراكمية الجديدة 0–100 — يجب ألا تقل عن السابقة */
+  newProgressPercent: number
+}
+
+export interface ExtractLineComputed {
+  boqItemId: number
+  code: string
+  descriptionAr: string
+  boqTotalMinor: Minor
+  prevProgressPercent: number
+  newProgressPercent: number
+  /** قيمة الشريحة المنفذة في هذا المستخلص */
+  lineValueMinor: Minor
+}
+
+/** حساب بنود المستخلص من BOQ — يرمي عند نسبة راجعة أو فوق 100 أو بند غير موجود */
+export function computeExtractLines(
+  lines: readonly ExtractLineInput[],
+  boqItems: readonly Pick<BoqItem, 'id' | 'code' | 'descriptionAr' | 'qty' | 'unitPriceMinor' | 'progressPercent'>[],
+): { computed: ExtractLineComputed[]; grossMinor: Minor } {
+  if (lines.length === 0) throw new Error('اختر بنداً واحداً على الأقل من جدول الكميات')
+  const computed: ExtractLineComputed[] = []
+  for (const l of lines) {
+    const item = boqItems.find((b) => b.id === l.boqItemId)
+    if (!item) throw new Error(`بند الكميات #${l.boqItemId} غير موجود`)
+    if (!Number.isFinite(l.newProgressPercent) || l.newProgressPercent < 0 || l.newProgressPercent > 100) {
+      throw new Error(`نسبة غير صالحة للبند ${item.code} — بين 0 و100`)
+    }
+    if (l.newProgressPercent < item.progressPercent) {
+      throw new Error(`البند ${item.code}: النسبة الجديدة (${l.newProgressPercent}٪) أقل من المنفذ سابقاً (${item.progressPercent}٪) — المستخلص تراكمي لا يتراجع`)
+    }
+    const total = boqItemTotal(item)
+    const slice = Math.round(total * (l.newProgressPercent - item.progressPercent) / 100)
+    computed.push({
+      boqItemId: item.id, code: item.code, descriptionAr: item.descriptionAr,
+      boqTotalMinor: total,
+      prevProgressPercent: item.progressPercent,
+      newProgressPercent: l.newProgressPercent,
+      lineValueMinor: slice,
+    })
+  }
+  const grossMinor = computed.reduce((a, c) => a + c.lineValueMinor, 0)
+  if (grossMinor <= 0) throw new Error('قيمة المستخلص صفر — لا نسب تقدم جديدة في البنود المختارة')
+  return { computed, grossMinor }
+}
+
+/* ─── موازنة تكاليف المشروع بالفئات + تقرير الانحرافات (نمط AccFlex/pro-acc):
+   موازنة معيارية لكل فئة (مواد/عمالة/معدات/باطن/أخرى) تقارن بالفعلي أولاً بأول ─── */
+
+export interface ProjectBudgetLine {
+  kind: CostKind
+  amountMinor: Minor
+}
+
+export interface BudgetVarianceRow {
+  kind: CostKind
+  budgetMinor: Minor
+  actualMinor: Minor
+  varianceMinor: Minor // موجب = وفر، سالب = تجاوز
+  usagePercent: number // الفعلي ÷ الموازنة ×100 (0 عند غياب موازنة)
+  status: 'ok' | 'warning' | 'over' // >85٪ تحذير، >100٪ تجاوز
+}
+
+export function budgetVarianceReport(
+  budgets: readonly ProjectBudgetLine[],
+  costs: readonly { kind: CostKind; amountMinor: Minor }[],
+): { rows: BudgetVarianceRow[]; totalBudgetMinor: Minor; totalActualMinor: Minor } {
+  const kinds: CostKind[] = ['materials', 'labor', 'equipment', 'subcontract', 'other']
+  const rows: BudgetVarianceRow[] = []
+  for (const kind of kinds) {
+    const budget = budgets.filter((b) => b.kind === kind).reduce((a, b) => a + b.amountMinor, 0)
+    const actual = costs.filter((c) => c.kind === kind).reduce((a, c) => a + c.amountMinor, 0)
+    if (budget === 0 && actual === 0) continue
+    const usage = budget > 0 ? Math.round((actual / budget) * 100) : actual > 0 ? 100 : 0
+    rows.push({
+      kind, budgetMinor: budget, actualMinor: actual,
+      varianceMinor: budget - actual,
+      usagePercent: usage,
+      // فعلي بلا موازنة = تجاوز صريح (إنفاق خارج الخطة)
+      status: actual > budget ? 'over' : budget > 0 && usage >= 85 ? 'warning' : 'ok',
+    })
+  }
+  return {
+    rows,
+    totalBudgetMinor: rows.reduce((a, r) => a + r.budgetMinor, 0),
+    totalActualMinor: rows.reduce((a, r) => a + r.actualMinor, 0),
+  }
+}
+
 export type ChangeOrderStatus = 'draft' | 'approved' | 'rejected'
 
 export interface ChangeOrder {
