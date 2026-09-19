@@ -482,3 +482,24 @@ const S = () => useDataStore.getState()
   كسر ذهب FIFO/عهدة كاملة/مقاولات/أمانة سيارات/إنتاج مسبق/تحويل وجرد (postStocktake يحتاج
   CountInput كاملاً: nameAr/expectedQty/unitCostMinor) + تطابق القوائم المالية من مسارين مستقلين.
   ⚠️ السكربتات الحية تبدأ بـ `S().seed([])` لإنشاء المخزن الرئيسي.
+
+## 8.23) نقلة المقاولات الكبرى + نشاط العقارات (الجولة الحالية — مطبقة)
+### المقاولات (مقارنة pro-acc + اكفليكس + دفترة):
+- **المستخلص البندي من BOQ** (نمط AccFlex): `computeExtractLines` في core/contracting.ts — نسب تنفيذ **تراكمية** لكل بند (ترفض التراجع و>100 وبند مشروع آخر)، قيمة الشريحة = الإجمالي×(الجديدة−السابقة). `addProjectExtract` يقبل `extractLines` بدل `grossMinor` ويحدّث `progressPercent` للبنود ذرياً. مودال المستخلص بوضعين (بندي افتراضياً عند وجود BOQ).
+- **المستخلص الختامي**: `isFinal` يمنع أي مستخلص لاحق («أفرج عن المحتجز لإقفاله»).
+- **موازنة الفئات + الانحراف**: `projectBudgets` (materials/labor/equipment/subcontract/other) + `budgetVarianceReport` (ok / warning≥85٪ / over>100٪ — **فعلي بلا موازنة = over**). صفحة `/contracting/budget`. `setProjectBudget` يستبدل لا يراكم.
+- **مهام/جانت مبسط**: `projectTasks` بحالات تلقائية من النسبة (pending/in_progress/done)، تقدم تراكمي لا يتراجع، ربط اختياري ببند BOQ من نفس المشروع. صفحة `/contracting/tasks` بشريط زمني وخط اليوم وتلوين المتأخر.
+- **شهادة باطن بنسبة إنجاز**: `SubContract.advanceRecoveryPercent + progressPercent`؛ `addSubCertificate({newProgressPercent})` تحسب الشريحة من قيمة العقد وتخصم المقدمة **تلقائياً** بنسبة العقد بسقف رصيدها.
+- **أوامر التغيير**: حالة `invoiced` (approved→invoiced فقط) وتبقى ضمن `effectiveContractValue`.
+- **الضمانات**: BondType += `warranty` (ضمان صيانة) و`insurance`.
+- **المناقصات**: `Quotation.winProbability + bidBondMinor` + `quotationPipeline` (القيمة المتوقعة للمقدَّمة) — 3 بطاقات ملخص في QuotationsPage.
+- **getProjectWip**: الموازنة = الصريحة ← Σ(qty×estCost) للبنود ← Σ إجمالي BOQ.
+- تحقق: `verify_contracting_itemized.mjs` (**43 فحصاً**).
+
+### العقارات (النشاط 21 — معايير سند/الوسيط/سمات السعودية):
+- `core/realestate.ts` نقية بالكامل: عقار **مملوك** (إيراد 4113، بيع 4115/5116، أصل 1113) أو **مدار** (سعي 4114 بنسبة + نصيب المالك 2115)؛ عقد إيجار بجدول أقساط `generateLeaseSchedule` (شهري/ربع/نصف/سنوي — الباقي على الأخير)؛ تأمين مسترد 2103 يُرد ناقص خصم أضرار (4110)؛ صيانة وحدة على المكتب (5108) أو **خصماً من مستحق المالك** بسقف رصيده؛ `collectLeaseAlerts` (انتهاء ≤60 يوماً + أقساط متأخرة).
+- **ض.ق.م**: أجرة السكني معفاة (السعودية) — تُحصَّل على **السعي** دائماً عند تسجيل ض.ق.م، وعلى أجرة المملوك اختيارياً (`vatOnRent`).
+- repo: `properties/propertyUnits/leases/ownerTxns` + 9 إجراءات + 7 مصادر قيد جديدة؛ `ejarNumber` لتوثيق منصة إيجار.
+- UI: `/realestate/properties` و`/realestate/leases` (قسم teal) + جرس (leaseAlerts) + شروحات + هوية نشاط.
+- **العدد الآن 21 نشاطاً** — أي سكربت/اختبار يفحص العدد حُدّث (16 موضعاً). `toggleModuleList` يعد realestate وحدة عمل.
+- تحقق: `verify_realestate.mjs` (**37 فحصاً**). ⚠️ حسابات جديدة: 1113، 2115، 4113–4115، 5116.
