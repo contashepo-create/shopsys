@@ -219,11 +219,12 @@ export function buildReturnLinesPerLine(
     if (spec.qty <= 0) continue
     const src = saleLines[spec.lineIndex]
     if (!src) throw new RangeError(`سطر غير موجود في الفاتورة (#${spec.lineIndex + 1})`)
-    if (seen.has(spec.lineIndex)) throw new RangeError(`السطر «${src.nameAr}» مكرر في طلب الإرجاع`)
+    const srcName = src.nameAr || `صنف #${src.itemId}` // سجلات قديمة بلا اسم — لا «undefined» في رسالة عربية
+    if (seen.has(spec.lineIndex)) throw new RangeError(`السطر «${srcName}» مكرر في طلب الإرجاع`)
     seen.add(spec.lineIndex)
     const can = rem[spec.lineIndex]
     if (spec.qty > can + 1e-9) {
-      throw new RangeError(`«${src.nameAr}» (سطر ${spec.lineIndex + 1}): المطلوب إرجاع ${spec.qty} والمتبقي القابل للإرجاع ${can}`)
+      throw new RangeError(`«${srcName}» (سطر ${spec.lineIndex + 1}): المطلوب إرجاع ${spec.qty} والمتبقي القابل للإرجاع ${can}`)
     }
     out.push({ ...src, qty: Math.round(spec.qty * 1000) / 1000, saleLineIndex: spec.lineIndex, condition: spec.condition })
   }

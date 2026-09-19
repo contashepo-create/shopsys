@@ -68,6 +68,8 @@ export function validateTrip(input: TripInput): string[] {
     if (!e.nameAr.trim()) errors.push(`مصروف ${i + 1}: حدد البيان`)
     if (!(e.qty > 0)) errors.push(`مصروف ${i + 1}: العدد يجب أن يكون موجباً`)
     if (!isPosInt(e.unitAmountMinor) || e.unitAmountMinor <= 0) errors.push(`مصروف ${i + 1}: القيمة يجب أن تكون موجبة`)
+    // تحصين: مصدر غير معروف كان يمر صامتاً فيختفي المصروف من التكلفة والقيد كلياً
+    if (!(e.source in EXPENSE_SOURCE_LABELS)) errors.push(`مصروف ${i + 1}: مصدر الصرف غير معروف (${String(e.source)})`)
   })
   return errors
 }
