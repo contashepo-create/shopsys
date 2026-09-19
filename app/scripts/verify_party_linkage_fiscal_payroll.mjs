@@ -76,6 +76,7 @@ ok(docs.some((d) => d.docLabel.includes('طلب معمل')), 'صف «طلب مع
 // أقساط: خطة بمقدم وسداد
 S().addCustomer({ nameAr: 'عميل أقساط', phone: '', creditLimitMinor: 0, notes: '', extended: null })
 const instCust = S().customers.at(-1)
+S().setOpeningBalance({ kind: 'customer', refId: instCust.id, amountMinor: 100000, label: instCust.nameAr }) // حارس الدين الشبح
 let instPlanned = false
 try {
   S().createInstallmentPlan({ customerId: instCust.id, totalMinor: 1200_00, downPaymentMinor: 200_00, count: 4, intervalMonths: 1, firstDueDate: '2026-10-01', treasury: '1101', saleId: null, interestMinor: 200_00, notes: '' })

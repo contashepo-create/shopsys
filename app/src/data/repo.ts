@@ -1365,7 +1365,7 @@ interface DataState {
     returnLineSpecs?: ReturnLineSpec[]
     newLines: CartLine[]
     treasury?: TreasuryAccount
-    notes: string
+    notes?: string
     /** موافقة المشرف — تمرر لمستند المرتجع الداخلي */
     approvedBy?: string
     /** تجاوز حد الائتمان للبيع الجديد (استبدال آجل بأغلى قد يتخطى حد العميل) */
@@ -3524,7 +3524,7 @@ export const useDataStore = create<DataState>()(
               ? { lineSpecs: args.returnLineSpecs }
               : { qtyByItem: args.returnQtyByItem ?? new Map() }),
             refund: isCreditSale ? 'credit' : 'cash',
-            reason: `استبدال${args.notes.trim() ? ` — ${args.notes.trim()}` : ''}`,
+            reason: `استبدال${(args.notes ?? '').trim() ? ` — ${(args.notes ?? '').trim()}` : ''}`,
             reasonCode: 'wrong_size',
             treasury,
             approvedBy: args.approvedBy,
@@ -3563,7 +3563,7 @@ export const useDataStore = create<DataState>()(
             returnValueMinor: preview.returnValueMinor,
             newValueMinor: preview.newValueMinor,
             netMinor: preview.netMinor,
-            notes: args.notes.trim(),
+            notes: (args.notes ?? '').trim(),
           }
           set({ exchanges: [...afterState.exchanges, doc] })
           return doc
@@ -5146,6 +5146,14 @@ export const useDataStore = create<DataState>()(
         if (interestMinor >= args.totalMinor) throw new Error('هامش التقسيط يجب أن يكون أقل من إجمالي الخطة')
         // حد الائتمان: الهامش يرفع ذمم العميل (أصل الفاتورة فُحص في postSale)
         guardCreditLimit(get(), args.customerId, interestMinor, args.creditLimitOverrideBy)
+        // حارس الدين الشبح (مراجعة كمستخدم نهائي): الخطة تجدول ديناً قائماً فعلاً —
+        // أصل الخطة (الإجمالي − الهامش) يجب أن يكون مغطى بذمة العميل الحالية
+        // (فاتورة آجلة أو رصيد افتتاحي)، وإلا انقلبت ذمته سالبة وسُجل تحصيل لدين لم يُثبت
+        const principalMinor = args.totalMinor - interestMinor
+        const currentBalance = get().getCustomerBalance(args.customerId)
+        if (currentBalance < principalMinor) {
+          throw new Error(`أصل الخطة (${principalMinor}) أكبر من ذمة العميل الحالية (${currentBalance}) — سجّل فاتورة البيع الآجلة أولاً (أو رصيداً افتتاحياً) ثم أنشئ خطة التقسيط عليها`)
+        }
         let interestEntryId: number | null = null
         let downPaymentEntryId: number | null = null
         const journal = [...state.journal]

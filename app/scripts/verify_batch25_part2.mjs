@@ -213,6 +213,8 @@ throws('تحصيل جزئي بلا عميل مسجل يُرفض', () => {
 console.log('\n5️⃣ الأقساط: هامش تمويل يُثبت إيراداً 4111 (الأمر 22)')
 S().addCustomer({ ...party('عميل أقساط22'), creditLimitMinor: 0 })
 const iCust = S().customers.at(-1)
+// حارس الدين الشبح: الخطة تجدول ديناً قائماً — رصيد افتتاحي يغطي أصل الخطتين
+S().setOpeningBalance({ kind: 'customer', refId: iCust.id, amountMinor: 160000, label: iCust.nameAr })
 const plan = S().createInstallmentPlan({ customerId: iCust.id, saleId: null, totalMinor: 120000, downPaymentMinor: 20000, interestMinor: 20000, count: 10, intervalMonths: 1, firstDueDate: '2026-04-01', treasury: '1101', notes: '' })
 ok('الخطة حفظت الهامش', plan.interestMinor === 20000 && plan.interestEntryId != null)
 const iEntry = S().journal.find((e) => e.id === plan.interestEntryId)

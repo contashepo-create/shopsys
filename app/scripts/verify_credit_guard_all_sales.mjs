@@ -257,6 +257,8 @@ const line = (qty, price = 10000) => ({ itemId: item.id, nameAr: item.nameAr, qt
 
 /* ═══ 10) createInstallmentPlan: هامش التقسيط يرفع الذمم ═══ */
 {
+  // حارس الدين الشبح: أصل الخطة (140000) يجب أن يكون ديناً قائماً فعلاً
+  st().setOpeningBalance({ kind: 'customer', refId: bounded.id, amountMinor: 140000, label: bounded.nameAr })
   assert.throws(
     () => st().createInstallmentPlan({ customerId: bounded.id, saleId: null, totalMinor: 200000, downPaymentMinor: 0, interestMinor: 60000, count: 4, intervalMonths: 1, firstDueDate: '2026-10-01', treasury: '1101', notes: '' }),
     isCL,
@@ -266,6 +268,8 @@ const line = (qty, price = 10000) => ({ itemId: item.id, nameAr: item.nameAr, qt
   assert.equal(plan.items.length, 4)
   ok('createInstallmentPlan: التجاوز المعتمد ينشئ الخطة')
   // خطة بلا هامش لا تفحص (الأصل فُحص في postSale لحظة الفاتورة)
+  // حارس الدين الشبح: ارفع الرصيد الافتتاحي ليغطي أصل الخطة الثانية (500000)
+  st().setOpeningBalance({ kind: 'customer', refId: bounded.id, amountMinor: 440000, label: bounded.nameAr })
   const plan2 = st().createInstallmentPlan({ customerId: bounded.id, saleId: null, totalMinor: 500000, downPaymentMinor: 100000, interestMinor: 0, count: 4, intervalMonths: 1, firstDueDate: '2026-10-01', treasury: '1101', notes: '' })
   assert.equal(plan2.items.length, 4)
   ok('createInstallmentPlan: خطة بلا هامش حرة — لا ذمة جديدة تنشأ منها')

@@ -145,6 +145,7 @@ ok('صُرفت عمولة واحدة', refPay.orderCount === 1 && refPay.total =
 
 /* ═════ ⑦ أقساط بهامش تمويل ═════ */
 console.log('📆 الأقساط')
+S().setOpeningBalance({ kind: 'customer', refId: cust.id, amountMinor: 100000, label: cust.nameAr }) // حارس الدين الشبح
 const arBefore = bal('1104')
 S().createInstallmentPlan({ customerId: cust.id, saleId: null, totalMinor: 120000, downPaymentMinor: 20000, interestMinor: 20000, count: 10, intervalMonths: 1, firstDueDate: '2026-10-01', treasury: '1101', notes: '' })
 const plan = S().installmentPlans.at(-1)
