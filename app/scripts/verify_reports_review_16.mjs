@@ -47,7 +47,7 @@ const { salesSummary, topItems, dailySales } = await import(join(root, 'src/core
 const { expensesSummary } = await import(join(root, 'src/core/expenseReports.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 21)
+assert.equal(ACTIVITIES.length, 28)
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 const ALL = { from: '0000-01-01', to: '9999-12-31' }
 
@@ -194,5 +194,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✓ ${nameAr} (${activityId}): 10 فحوص تقارير × دورة كاملة — كل التقارير متسقة بالقرش مع الدفتر`)
 }
 
-assert.equal(pass, 21)
+assert.equal(pass, 28)
 console.log(`\n✅ verify_reports_review_16: مراجعة قسم التقارير — 12 محوراً على الأنشطة الـ16 سليمة`)

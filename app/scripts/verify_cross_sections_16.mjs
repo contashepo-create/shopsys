@@ -43,7 +43,7 @@ const { trialBalance, balanceSheet } = await import(join(root, 'src/core/financi
 const { agingFromStatement, supplierRowsForAging, statementBalance } = await import(join(root, 'src/core/statements.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 21)
+assert.equal(ACTIVITIES.length, 28)
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 const today = new Date().toISOString().slice(0, 10)
 
@@ -190,5 +190,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✓ ${nameAr} (${activityId}): ${st().journal.length} قيداً عبر ${checks} فحوص دفترية — ميزان+ميزانية متزنان بعد كل مرحلة${unitLabel !== '—' ? ` · ${unitLabel}` : ''}`)
 }
 
-assert.equal(pass, 21)
+assert.equal(pass, 28)
 console.log(`\n✅ verify_cross_sections_16: كل الأقسام متوافقة بعد التعديلات والقيود سليمة على الأنشطة الـ16`)

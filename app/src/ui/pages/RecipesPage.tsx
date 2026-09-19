@@ -80,19 +80,24 @@ export function RecipesPage() {
     orders: productionOrders.length,
   }), [recipes, productionOrders])
 
+  // تعميم التصنيع (طلب المالك): لغة الشاشة تتبع النشاط — «طبق» للمطاعم/المخابز
+  // و«منتج» للمصانع وأي نشاط فُعّلت له الوحدة إضافياً
+  const kitchenActivity = setup.activityId === 'restaurant' || setup.activityId === 'bakery'
+  const unitWord = kitchenActivity ? 'الطبق' : 'المنتج'
+
   return (
     <div className="p-5 space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-black flex items-center gap-2"><ChefHat className="w-6 h-6 text-amber-500" /> الوصفات والإنتاج</h1>
-          <p className="text-[12px] text-slate-500 mt-1">الطبق يخصم خاماته آلياً عند البيع — تكلفة حقيقية وربحية صادقة لكل صنف</p>
+          <p className="text-[12px] text-slate-500 mt-1">{unitWord} يخصم خاماته آلياً — تكلفة حقيقية وربحية صادقة لكل صنف</p>
         </div>
         <Btn onClick={openNew}><Plus className="w-4 h-4" /> وصفة جديدة</Btn>
       </div>
 
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: 'أطباق عند الطلب', value: stats.dishes, color: 'text-amber-600' },
+          { label: kitchenActivity ? 'أطباق عند الطلب' : 'منتجات عند الطلب', value: stats.dishes, color: 'text-amber-600' },
           { label: 'منتجات إنتاج مسبق', value: stats.prepped, color: 'text-sky-600' },
           { label: 'أوامر إنتاج مرحلة', value: stats.orders, color: 'text-emerald-600' },
         ].map((s) => (

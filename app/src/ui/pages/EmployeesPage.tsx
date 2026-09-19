@@ -6,7 +6,7 @@
  */
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Pencil, Trash2, Phone, UserRound, ChevronDown, FileBadge, Wallet, BookOpenText, Eye, BadgeCheck, BadgeX, Landmark, FileSpreadsheet } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Phone, UserRound, ChevronDown, FileBadge, Wallet, BookOpenText, Eye, BadgeCheck, BadgeX, Landmark, FileSpreadsheet, HandCoins } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
 import type { PartyExtended } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -14,6 +14,7 @@ import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { matchesPartyCode } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
+import { STAFF_COMMISSION_SOURCE_LABELS, STAFF_COMMISSION_STATUS_LABELS, type StaffCommissionSource } from '../../core/staffCommissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
@@ -74,10 +75,12 @@ interface DraftLine {
   deductions: string
   advances: string
   excessPaid: string // صرف مستحق زيادة مصاريف العهدة مع الراتب
+  /** صرف عمولات الموظف المستحقة مع الراتب — كاملة أو لا شيء (تصفية 2116) */
+  payCommissions: boolean
 }
 
 export function EmployeesPage() {
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -92,7 +95,30 @@ export function EmployeesPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const toMajor = (m: number) => (m ? String(m / 10 ** cur.decimals) : '')
 
-  const [tab, setTab] = useState<'staff' | 'payroll' | 'advances' | 'deductions'>('staff')
+  const [tab, setTab] = useState<'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions'>('staff')
+
+  /* ─── تبويب العمولات (طلب المالك): مربوطة بالعمليات وتُصرف منفردة أو مع الراتب ─── */
+  const [comOpen, setComOpen] = useState(false)
+  const [comEmployeeId, setComEmployeeId] = useState(0)
+  const [comSource, setComSource] = useState<StaffCommissionSource>('manual')
+  const [comSourceId, setComSourceId] = useState('')
+  const [comAmount, setComAmount] = useState('')
+  const [comDesc, setComDesc] = useState('')
+  const [comPayId, setComPayId] = useState<number | null>(null)
+  const [comPayTreasury, setComPayTreasury] = useState('1101')
+  const saveCommission = () => {
+    try {
+      const c = addStaffCommission({
+        employeeId: comEmployeeId,
+        source: comSource,
+        sourceId: comSourceId.trim() ? Number(comSourceId) : null,
+        description: comDesc.trim(),
+        amountMinor: toMinor(comAmount, cur.decimals),
+      })
+      toast.show(`سُجلت العمولة ${c.code} — حُمّلت مصروفاً وتُصرف منفردة أو مع الراتب ✓`)
+      setComOpen(false)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
 
   /* ─── تبويب السلف (طلب المالك) ─── */
   const [advOpen, setAdvOpen] = useState(false)
@@ -217,7 +243,7 @@ export function EmployeesPage() {
       employeeId: e.id,
       base: toMajor(e.baseSalaryMinor),
       allowances: toMajor(e.allowancesMinor),
-      overtime: '', deductions: '', advances: '', excessPaid: '',
+      overtime: '', deductions: '', advances: '', excessPaid: '', payCommissions: false,
     })))
     setMonth(new Date().toISOString().slice(0, 7))
     setPayMode('cash'); setPaySource(DEFAULT_PAY_SOURCE); setRunNotes('')
@@ -249,6 +275,7 @@ export function EmployeesPage() {
         deductionsMinor: toM(l.deductions),
         advancesMinor: toM(l.advances),
         excessPaidMinor: toM(l.excessPaid),
+        commissionsPaidMinor: l.payCommissions ? getStaffCommissionsDue(l.employeeId).totalMinor : 0,
       }))
       const post = (overrideBy?: string) => {
         const run = postPayroll({
@@ -282,7 +309,7 @@ export function EmployeesPage() {
   const listedRuns = useMemo(() => [...payrollRuns].reverse(), [payrollRuns])
   const empName = (id: number) => employees.find((e) => e.id === id)?.nameAr ?? `موظف #${id}`
 
-  const tabCls = (t: 'staff' | 'payroll' | 'advances' | 'deductions') =>
+  const tabCls = (t: 'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions') =>
     `px-4 py-2 rounded-xl text-[13px] font-bold transition-all ${tab === t ? 'bg-brand-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`
 
   return (
@@ -292,6 +319,7 @@ export function EmployeesPage() {
         <button onClick={() => setTab('payroll')} className={tabCls('payroll')}><Wallet size={14} className="inline -mt-0.5 me-1" /> مسيرات الرواتب ({payrollRuns.length})</button>
         <button onClick={() => setTab('advances')} className={tabCls('advances')}><Landmark size={14} className="inline -mt-0.5 me-1" /> السلف ({employeeAdvances.length})</button>
         <button onClick={() => setTab('deductions')} className={tabCls('deductions')}><BadgeX size={14} className="inline -mt-0.5 me-1" /> الخصومات والجزاءات ({employeeDeductions.length})</button>
+        <button onClick={() => setTab('commissions')} className={tabCls('commissions')}><HandCoins size={14} className="inline -mt-0.5 me-1" /> العمولات ({staffCommissions.length})</button>
       </div>
 
       {tab === 'advances' && (
@@ -500,6 +528,141 @@ export function EmployeesPage() {
         </>
       )}
 
+      {tab === 'commissions' && (
+        <>
+          <div className="anim-up flex items-center justify-between gap-3">
+            <div className="text-[12px] text-slate-400 leading-relaxed">
+              عمولة الموظف تُسجل <b>مربوطة بعمليتها</b> (عقد إيجار/بيع عقار/فاتورة…) وتُحمَّل مصروفاً (5117)
+              لحظة الاستحقاق فتدخل الأرباح والخسائر فوراً — ثم تُصرف <b>منفردة</b> بسند أو <b>مع الراتب</b> من خانة «عمولات» في المسير.
+            </div>
+            <Btn onClick={() => {
+              if (employees.filter((e) => e.active).length === 0) return toast.show('لا يوجد موظفون نشطون', 'error')
+              setComEmployeeId(employees.find((e) => e.active)?.id ?? 0)
+              setComSource('manual'); setComSourceId(''); setComAmount(''); setComDesc(''); setComOpen(true)
+            }}><span className="flex items-center gap-1.5"><Plus size={15} /> عمولة جديدة</span></Btn>
+          </div>
+          {staffCommissions.length === 0 ? (
+            <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
+              <EmptyState icon="🤝" title="لا عمولات بعد" sub="سجّل عمولة موظف عن عملية إيجار أو بيع أو أي مستند — وستتبع صرفها هنا" />
+            </div>
+          ) : (
+            <div className="anim-up overflow-x-auto rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-right text-[11px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-4 py-3 font-bold">العمولة</th>
+                    <th className="px-4 py-3 font-bold">الموظف</th>
+                    <th className="px-4 py-3 font-bold">العملية</th>
+                    <th className="px-4 py-3 font-bold">المبلغ</th>
+                    <th className="px-4 py-3 font-bold">الحالة</th>
+                    <th className="px-4 py-3 font-bold"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...staffCommissions].reverse().map((c, i) => (
+                    <tr key={c.id} style={{ animationDelay: `${i * 25}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-slate-800 dark:text-white">{c.code}</div>
+                        <div className="text-[11px] text-slate-400">{c.date} · {c.description}</div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{employees.find((e) => e.id === c.employeeId)?.nameAr ?? '—'}</td>
+                      <td className="px-4 py-3 text-[12px] text-slate-500">{STAFF_COMMISSION_SOURCE_LABELS[c.source]}{c.sourceId != null && ` #${c.sourceId}`}</td>
+                      <td className="px-4 py-3 font-black text-violet-600">{fmt(c.amountMinor)}</td>
+                      <td className="px-4 py-3">
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${c.status === 'paid' ? 'bg-emerald-500/10 text-emerald-600' : c.status === 'cancelled' ? 'bg-rose-500/10 text-rose-500' : 'bg-amber-500/10 text-amber-600'}`}
+                          title={c.status === 'paid' ? (c.payoutMode === 'payroll' ? 'صُرفت ضمن مسير رواتب' : 'صُرفت بسند منفرد') : c.status === 'cancelled' ? c.cancelReason : 'بانتظار الصرف'}>
+                          {STAFF_COMMISSION_STATUS_LABELS[c.status].icon} {STAFF_COMMISSION_STATUS_LABELS[c.status].nameAr}
+                          {c.status === 'paid' && (c.payoutMode === 'payroll' ? ' (مع الراتب)' : ' (منفردة)')}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-left whitespace-nowrap">
+                        {c.status === 'accrued' && (
+                          <>
+                            <button title="صرف منفرد الآن من الخزينة" onClick={() => setComPayId(c.id)}
+                              className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors">💵 صرف</button>
+                            <button title="تعديل المبلغ (إلغاء + استحقاق جديد بأثر تدقيقي)" onClick={() => {
+                              const raw = prompt(`المبلغ الجديد لـ${c.code} (${cur.symbol}):`, String(c.amountMinor / 10 ** cur.decimals))
+                              if (raw == null || !raw.trim()) return
+                              const reason = prompt('سبب التعديل:')
+                              if (reason == null || !reason.trim()) return toast.show('سبب التعديل مطلوب', 'error')
+                              try {
+                                const nc = updateStaffCommissionAmount({ commissionId: c.id, newAmountMinor: toMinor(raw, cur.decimals), reason: reason.trim() })
+                                toast.show(`عُدلت — العمولة الجديدة ${nc.code} ✓`)
+                              } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                            }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-colors">✏️ تعديل</button>
+                            <button title="إلغاء العمولة (قيد عاكس + سبب موثق)" onClick={() => {
+                              const reason = prompt(`سبب إلغاء ${c.code}:`)
+                              if (reason == null || !reason.trim()) return
+                              try {
+                                cancelStaffCommission({ commissionId: c.id, reason: reason.trim() })
+                                toast.show(`أُلغيت ${c.code} بقيد عاكس ✓`)
+                              } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                            }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors">🚫 إلغاء</button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <Modal open={comOpen} onClose={() => setComOpen(false)} title="🤝 استحقاق عمولة موظف عن عملية">
+            <div className="space-y-4">
+              <Field label="الموظف *">
+                <select value={comEmployeeId} onChange={(e) => setComEmployeeId(Number(e.target.value))} className={inputCls}>
+                  {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+                </select>
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="نوع العملية *">
+                  <select value={comSource} onChange={(e) => setComSource(e.target.value as StaffCommissionSource)} className={inputCls}>
+                    {Object.entries(STAFF_COMMISSION_SOURCE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </Field>
+                <Field label="رقم المستند" hint="رقم عقد الإيجار/الفاتورة… — اتركه فارغاً لليدوية">
+                  <input value={comSourceId} onChange={(e) => setComSourceId(e.target.value)} className={inputCls} dir="ltr" placeholder="—" disabled={comSource === 'manual'} />
+                </Field>
+              </div>
+              <Field label={`مبلغ العمولة (${cur.symbol}) *`}>
+                <input value={comAmount} onChange={(e) => setComAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+              </Field>
+              <Field label="البيان *" hint="يظهر في القيد وكشوف المتابعة">
+                <input value={comDesc} onChange={(e) => setComDesc(e.target.value)} className={inputCls} placeholder="عمولة تأجير وحدة A-3 — عقد LC-0007" />
+              </Field>
+              <div className="text-[11px] text-slate-400 rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 leading-relaxed">
+                💡 يتولد فوراً قيد استحقاق: <b>مصروف عمولات موظفين (5117)</b> ← <b>عمولات مستحقة (2116)</b>
+                — فتنخفض أرباح الفترة بالعمولة من لحظة العملية، والصرف لاحقاً تصفية لا مصروف جديد.
+              </div>
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => setComOpen(false)}>إلغاء</Btn>
+                <Btn onClick={saveCommission} disabled={!comEmployeeId || !comAmount.trim() || !comDesc.trim()}>💾 استحقاق العمولة</Btn>
+              </div>
+            </div>
+          </Modal>
+          <Modal open={comPayId != null} onClose={() => setComPayId(null)} title="💵 صرف عمولة منفردة">
+            <div className="space-y-4">
+              {(() => {
+                const c = staffCommissions.find((x) => x.id === comPayId)
+                if (!c) return null
+                return <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{c.code} — {employees.find((e) => e.id === c.employeeId)?.nameAr}: <span className="text-violet-600 font-black">{fmt(c.amountMinor)}</span></div>
+              })()}
+              <Field label="الصرف من *"><TreasuryPicker value={comPayTreasury} onChange={setComPayTreasury} /></Field>
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => setComPayId(null)}>إلغاء</Btn>
+                <Btn onClick={() => {
+                  try {
+                    const c = payStaffCommission({ commissionId: comPayId!, treasury: comPayTreasury })
+                    toast.show(`صُرفت ${c.code} من الخزينة ✓`)
+                    setComPayId(null)
+                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                }}>💵 صرف الآن</Btn>
+              </div>
+            </div>
+          </Modal>
+        </>
+      )}
+
       {tab === 'staff' && (
         <>
           <div className="anim-up flex gap-3">
@@ -682,6 +845,7 @@ export function EmployeesPage() {
                   <th className="px-2 py-2 font-bold">خصومات</th>
                   <th className="px-2 py-2 font-bold">خصم سلفة</th>
                   <th className="px-2 py-2 font-bold">مستحق عهدة</th>
+                  <th className="px-2 py-2 font-bold">عمولات</th>
                   <th className="px-2 py-2 font-bold">الصافي</th>
                   <th className="px-1 py-2" />
                 </tr>
@@ -735,7 +899,19 @@ export function EmployeesPage() {
                           >له {fmt(excessDue)}</button>
                         )}
                       </td>
-                      <td className={`px-2 py-1.5 text-center font-black whitespace-nowrap ${net < 0 ? 'text-rose-500' : ''}`}>{fmt(net)}{toM(l.excessPaid) > 0 && <span className="block text-[9px] text-emerald-600 font-bold">+{fmt(toM(l.excessPaid))} عهدة</span>}</td>
+                      <td className="px-1 py-1.5 text-center">
+                        {(() => {
+                          const commDue = getStaffCommissionsDue(l.employeeId).totalMinor
+                          if (commDue === 0) return <span className="text-[10px] text-slate-300">—</span>
+                          return (
+                            <label className="flex flex-col items-center gap-0.5 cursor-pointer" title={`عمولات مستحقة: ${fmt(commDue)} — تُصرف كاملة مع الراتب (تصفية لا مصروف جديد)`}>
+                              <input type="checkbox" checked={l.payCommissions} onChange={(e) => patchDraft(l.employeeId, { payCommissions: e.target.checked })} className="accent-brand-600" />
+                              <span className="text-[9.5px] font-bold text-violet-600">{fmt(commDue)}</span>
+                            </label>
+                          )
+                        })()}
+                      </td>
+                      <td className={`px-2 py-1.5 text-center font-black whitespace-nowrap ${net < 0 ? 'text-rose-500' : ''}`}>{fmt(net)}{toM(l.excessPaid) > 0 && <span className="block text-[9px] text-emerald-600 font-bold">+{fmt(toM(l.excessPaid))} عهدة</span>}{l.payCommissions && getStaffCommissionsDue(l.employeeId).totalMinor > 0 && <span className="block text-[9px] text-violet-600 font-bold">+{fmt(getStaffCommissionsDue(l.employeeId).totalMinor)} عمولات</span>}</td>
                       <td className="px-1 py-1.5">
                         <button onClick={() => dropDraft(l.employeeId)} title="استبعاد من هذا المسير" className="p-1 rounded text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={12} /></button>
                       </td>

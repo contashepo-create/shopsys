@@ -198,6 +198,73 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
+    // نشاط جديد (طلب المالك): شركة تجارة — شراء من موردين وبيع لعملاء بالجملة
+    // والتجزئة، آجل بحدود ائتمان، قوائم أسعار للفئات، فواتير A4 وعروض أسعار.
+    // المرجع العالمي: SAP Business One (Wholesale) / QuickBooks Commerce / دفترة توزيع.
+    id: 'trading', nameAr: 'تجارة وتوزيع (جملة وقطاعي)', icon: '📦',
+    description: 'شراء من موردين وبيع جملة وقطاعي بآجال وحدود ائتمان وقوائم أسعار — بلا كاشير سريع افتراضياً',
+    features: ['multi_unit', 'price_lists'],
+    modules: ['pos', 'inventory', 'purchases', 'installments'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
+  },
+  {
+    // نشاط جديد (طلب المالك): مصنع/ورشة إنتاج — خامات تُشترى وتُصنَّع بوصفات
+    // (recipes معممة) والمنتج التام يُباع؛ تكلفة الناتج = خامات + تشغيل.
+    // المرجع العالمي: Katana MRP / MRPeasy / odoo Manufacturing.
+    id: 'manufacturing', nameAr: 'مصنع / ورشة إنتاج', icon: '🏭',
+    description: 'شراء خامات وتصنيع بوصفات (مكونات + تكلفة تشغيل) وبيع منتج تام بتكلفة حقيقية',
+    features: ['expiry_batches', 'multi_unit', 'price_lists'],
+    modules: ['inventory', 'purchases', 'recipes', 'pos'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
+  },
+  {
+    // نشاط جديد (طلب المالك): شركة خدمية — أصناف خدمات بلا مخزون (isService)
+    // فواتير خدمات آجلة وعقود ومقبوضات. المرجع العالمي: FreshBooks / Zoho Invoice.
+    id: 'services', nameAr: 'شركة خدمات', icon: '🧾',
+    description: 'بيع خدمات بلا مخزون: فواتير آجلة ونقدية، عملاء بحدود ائتمان، مصروفات وأرباح لكل فترة',
+    features: ['price_lists'],
+    // inventory ضرورية: شاشة «الأصناف» فيها هي مكان تعريف الخدمات (isService) نفسها
+    modules: ['pos', 'inventory', 'purchases'],
+    taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
+  },
+  {
+    // نشاط جديد (طلب المالك): مكتبة وخدمة طالب — منتجات (أدوات مكتبية) + خدمات
+    // (تصوير/طباعة/تغليف كأصناف isService) في كاشير واحد سريع.
+    // منتشر جداً في مصر — المرجع: تجربة المكتبات المحلية + نمط Square hybrid.
+    id: 'stationery', nameAr: 'مكتبة وخدمة طالب', icon: '📚',
+    description: 'منتجات مكتبية + خدمات تصوير وطباعة وتغليف في كاشير واحد — بيع سريع بالقطعة',
+    features: ['multi_unit', 'price_lists'],
+    modules: ['pos', 'inventory', 'purchases'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
+  },
+  {
+    // نشاط جديد: عطارة وبهارات — منتشر في مصر والسعودية؛ بيع بالوزن (فرط)
+    // ووحدات متعددة وخلطات بوصفات، صلاحيات للأعشاب المعبأة.
+    id: 'herbalist', nameAr: 'عطارة وبهارات', icon: '🌿',
+    description: 'بيع بالوزن والفرط، خلطات بوصفات، وحدات متعددة وصلاحيات للمعبأ',
+    features: ['weight_scale', 'expiry_batches', 'multi_unit', 'price_lists'],
+    modules: ['pos', 'inventory', 'purchases', 'recipes'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
+  },
+  {
+    // نشاط جديد: مواد بناء وحدايد وبويات — منتشر جداً في مصر والسعودية؛
+    // بيع جملة وقطاعي بوحدات متعددة (طن/شيكارة/متر) وآجل واسع للمقاولين.
+    id: 'building_materials', nameAr: 'مواد بناء وحدايد وبويات', icon: '🧱',
+    description: 'وحدات متعددة (طن/شيكارة/متر)، آجل للمقاولين بحدود ائتمان، تسليم ونقل',
+    features: ['multi_unit', 'price_lists'],
+    modules: ['pos', 'inventory', 'purchases', 'installments'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'a4',
+  },
+  {
+    // نشاط جديد: منظفات وأدوات منزلية — منتشر في مصر؛ بيع قطاعي سريع
+    // ووحدات متعددة (كرتونة/قطعة) مع صلاحيات لبعض الأصناف.
+    id: 'household', nameAr: 'منظفات وأدوات منزلية', icon: '🧴',
+    description: 'قطاعي سريع بالباركود، وحدات متعددة (كرتونة/قطعة)، صلاحيات لبعض الأصناف',
+    features: ['multi_unit', 'expiry_batches', 'price_lists'],
+    modules: ['pos', 'inventory', 'purchases'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
+  },
+  {
     id: 'general', nameAr: 'نشاط عام / آخر', icon: '🏪',
     description: 'قالب مرن — فعّل ما تحتاجه لاحقاً',
     features: ['multi_unit'],

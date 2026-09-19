@@ -34,7 +34,7 @@ const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
 const { employeeStatement, statementBalance } = await import(join(root, 'src/core/statements.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 21)
+assert.equal(ACTIVITIES.length, 28)
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 
 let pass = 0
@@ -106,5 +106,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✓ ${nameAr} (${activityId}): سلف↔جزاءات↔عفو↔سقف 50%↔مسير — 1107 = Σ المتبقي والكشوف مطابقة`)
 }
 
-assert.equal(pass, 21)
+assert.equal(pass, 28)
 console.log(`\n✅ verify_employees_all_activities: دورة الموظفين والخصومات سليمة على الأنشطة الـ${pass}`)

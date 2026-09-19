@@ -70,6 +70,13 @@ export const ACTIVITY_THEMES: Record<string, ActivityTheme> = {
   salon: { persona: 'boutique', posLayout: 'visual_grid', heroEmoji: '💈', heroLineAr: 'زبونك يخرج أشيك مما دخل', widgets: ['top_debtors'] },
   bakery: { persona: 'warm', posLayout: 'visual_grid', heroEmoji: '🥐', heroLineAr: 'فرنك ولّاع وطلباتك سخنة', widgets: ['expiry_soon', 'top_debtors'] },
   realestate: { persona: 'industrial', posLayout: 'fast_list', heroEmoji: '🏘️', heroLineAr: 'عقاراتك مؤجرة وأقساطك في مواعيدها', widgets: ['top_debtors'] },
+  trading: { persona: 'industrial', posLayout: 'fast_list', heroEmoji: '📦', heroLineAr: 'بضاعتك ماشية وذممك مضبوطة', widgets: ['top_debtors'] },
+  manufacturing: { persona: 'industrial', posLayout: 'fast_list', heroEmoji: '🏭', heroLineAr: 'خطوط إنتاجك شغالة وتكلفتك محسوبة', widgets: ['top_debtors'] },
+  services: { persona: 'clinical', posLayout: 'fast_list', heroEmoji: '🧾', heroLineAr: 'خدماتك موثقة وفواتيرك محصلة', widgets: ['top_debtors'] },
+  stationery: { persona: 'fresh', posLayout: 'fast_list', heroEmoji: '📚', heroLineAr: 'مكتبتك عامرة وخدمة الطالب جاهزة', widgets: ['top_debtors'] },
+  herbalist: { persona: 'oasis', posLayout: 'fast_list', heroEmoji: '🌿', heroLineAr: 'أعشابك موزونة وخلطاتك مضبوطة', widgets: ['expiry_soon', 'top_debtors'] },
+  building_materials: { persona: 'industrial', posLayout: 'fast_list', heroEmoji: '🧱', heroLineAr: 'موادك بالطن والشيكارة وآجالك موثقة', widgets: ['top_debtors'] },
+  household: { persona: 'fresh', posLayout: 'fast_list', heroEmoji: '🧴', heroLineAr: 'رفوفك مرتبة وبيعك سريع', widgets: ['expiry_soon', 'top_debtors'] },
   general: { persona: 'fresh', posLayout: 'fast_list', heroEmoji: '🏪', heroLineAr: 'تجارتك كلها تحت السيطرة', widgets: ['top_debtors'] },
 }
 

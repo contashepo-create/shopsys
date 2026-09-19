@@ -9,7 +9,7 @@ import { ACTIVITY_TEMPLATES } from '../src/core/activities.ts'
 let PASS = 0, FAIL = 0
 const ok = (cond, msg) => { if (cond) { PASS++; console.log(`  ✓ ${msg}`) } else { FAIL++; console.log(`  ✗ ${msg}`) } }
 
-ok(ACTIVITY_TEMPLATES.length === 21, `21 نشاطاً (${ACTIVITY_TEMPLATES.length})`)
+ok(ACTIVITY_TEMPLATES.length === 28, `28 نشاطاً (${ACTIVITY_TEMPLATES.length})`)
 for (const a of ACTIVITY_TEMPLATES) {
   const acc = activityAccentId(a.id)
   ok(ACCENTS.some((p) => p.id === acc), `${a.nameAr} → لوحة «${acc}» موجودة`)

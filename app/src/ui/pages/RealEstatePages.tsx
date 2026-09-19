@@ -32,7 +32,7 @@ function useCur() {
 
 /* ─────────────────────────── العقارات والملاك ─────────────────────────── */
 export function PropertiesPage() {
-  const { properties, propertyUnits, addProperty, addPropertyUnit, getOwnerBalance, payPropertyOwner, addUnitMaintenance, sellProperty } = useDataStore()
+  const { properties, propertyUnits, employees, addProperty, addPropertyUnit, getOwnerBalance, payPropertyOwner, addUnitMaintenance, sellProperty, addStaffCommission } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
 
@@ -108,11 +108,21 @@ export function PropertiesPage() {
   const [sPrice, setSPrice] = useState('')
   const [sPay, setSPay] = useState<'cash' | 'credit'>('cash')
   const [sTreasury, setSTreasury] = useState('1101')
+  // عمولة موظف عن البيع (طلب المالك): استحقاق مربوط بالعقار المباع
+  const [sCommEmpId, setSCommEmpId] = useState('')
+  const [sCommAmount, setSCommAmount] = useState('')
   const saveSale = () => {
     if (!sellFor) return
     try {
       sellProperty({ propertyId: sellFor.id, salePriceMinor: toMinor(sPrice, cur.decimals), payment: sPay, treasury: sTreasury })
-      toast.show('بيع العقار وقُيد الربح ✅'); setSellFor(null); setSPrice('')
+      if (sCommEmpId && sCommAmount.trim()) {
+        addStaffCommission({
+          employeeId: Number(sCommEmpId), source: 'property_sale', sourceId: sellFor.id,
+          description: `عمولة بيع عقار «${sellFor.nameAr}»`,
+          amountMinor: toMinor(sCommAmount, cur.decimals),
+        })
+      }
+      toast.show(`بيع العقار وقُيد الربح${sCommEmpId && sCommAmount.trim() ? ' + استحقاق عمولة الموظف' : ''} ✅`); setSellFor(null); setSPrice(''); setSCommEmpId(''); setSCommAmount('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -288,7 +298,16 @@ export function PropertiesPage() {
               </div>
               {sPay === 'cash' && <div className="mt-2"><TreasuryPicker value={sTreasury} onChange={setSTreasury} compact /></div>}
             </Field>
-            <Btn onClick={saveSale} className="w-full" disabled={!sPrice}>بيع وقيد الربح</Btn>
+            <Field label="عمولة موظف (اختياري)" hint="الموظف الذي أتم الصفقة — مصروف مربوط بالبيع يدخل ربحيته">
+              <div className="grid grid-cols-2 gap-2">
+                <select value={sCommEmpId} onChange={(e) => setSCommEmpId(e.target.value)} className={inputCls}>
+                  <option value="">— بلا عمولة —</option>
+                  {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+                </select>
+                <input value={sCommAmount} onChange={(e) => setSCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!sCommEmpId} />
+              </div>
+            </Field>
+            <Btn onClick={saveSale} className="w-full" disabled={!sPrice || (!!sCommEmpId && !sCommAmount.trim())}>بيع وقيد الربح</Btn>
           </div>
         )}
       </Modal>
@@ -298,7 +317,7 @@ export function PropertiesPage() {
 
 /* ─────────────────────────── عقود الإيجار ─────────────────────────── */
 export function LeasesPage() {
-  const { properties, propertyUnits, leases, customers, addLease, collectLeaseInstallment, endLease } = useDataStore()
+  const { properties, propertyUnits, leases, customers, employees, addLease, collectLeaseInstallment, endLease, addStaffCommission } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
   const todayIso = new Date().toISOString().slice(0, 10)
@@ -317,6 +336,9 @@ export function LeasesPage() {
   const [deposit, setDeposit] = useState('')
   const [ejar, setEjar] = useState('')
   const [leaseTreasury, setLeaseTreasury] = useState('1101')
+  // عمولة موظف عن العقد (طلب المالك): تُستحق مصروفاً مربوطاً بالعقد وتُصرف مع الراتب أو منفردة
+  const [commEmpId, setCommEmpId] = useState('')
+  const [commAmount, setCommAmount] = useState('')
   const activeProps = properties.filter((p) => p.status === 'active')
   const vacantUnits = useMemo(() => propertyUnits.filter((u) => u.propertyId === propId && u.status === 'vacant'), [propertyUnits, propId])
 
@@ -328,8 +350,17 @@ export function LeasesPage() {
         startDate, months: Number(months) || 0, frequency, totalRentMinor: toMinor(totalRent, cur.decimals),
         depositMinor: deposit ? toMinor(deposit, cur.decimals) : 0, ejarNumber: ejar, treasury: leaseTreasury,
       })
-      toast.show(`أُنشئ العقد ${l.contractNumber} بجدول ${l.installments.length} قسطاً ✅`)
-      setOpen(false); setTenant(''); setTotalRent(''); setDeposit(''); setEjar(''); setUnitId('')
+      // عمولة الموظف المسوّق (اختيارية): استحقاق مربوط بالعقد — تظهر في «الموظفون ← العمولات»
+      if (commEmpId && commAmount.trim()) {
+        const unit = propertyUnits.find((u) => u.id === unitId)
+        addStaffCommission({
+          employeeId: Number(commEmpId), source: 'lease', sourceId: l.id,
+          description: `عمولة تأجير ${unit?.code ?? ''} — عقد ${l.contractNumber}`,
+          amountMinor: toMinor(commAmount, cur.decimals),
+        })
+      }
+      toast.show(`أُنشئ العقد ${l.contractNumber} بجدول ${l.installments.length} قسطاً${commEmpId && commAmount.trim() ? ' + استحقاق عمولة الموظف' : ''} ✅`)
+      setOpen(false); setTenant(''); setTotalRent(''); setDeposit(''); setEjar(''); setUnitId(''); setCommEmpId(''); setCommAmount('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -457,6 +488,17 @@ export function LeasesPage() {
             <Field label={`إجمالي أجرة كامل المدة (${cur.symbol}) *`}><input value={totalRent} onChange={(e) => setTotalRent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يقيد التزاماً (2103) ويُرد عند الإخلاء ناقص الأضرار"><input value={deposit} onChange={(e) => setDeposit(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="رقم توثيق منصة إيجار" hint="السعودية: رقم العقد الموثق في المنصة الحكومية"><input value={ejar} onChange={(e) => setEjar(e.target.value)} className={inputCls} dir="ltr" /></Field>
+            <Field label="عمولة موظف (اختياري)" hint="الموظف الذي سوّق العقد — تُستحق مصروفاً مربوطاً به">
+              <select value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
+                <option value="">— بلا عمولة —</option>
+                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+              </select>
+            </Field>
+            {commEmpId && (
+              <Field label={`مبلغ العمولة (${cur.symbol}) *`} hint="تُصرف مع الراتب أو منفردة من «الموظفون ← العمولات»">
+                <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
+              </Field>
+            )}
           </div>
           {deposit && <TreasuryPicker value={leaseTreasury} onChange={setLeaseTreasury} />}
           <div className="flex justify-end gap-2">

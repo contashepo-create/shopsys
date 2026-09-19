@@ -40,6 +40,7 @@ import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccou
 import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaundryDeliverEntry, buildLaundryCancelEntry, assertLaundryTransition, type LaundryLine, type LaundryStatus } from '../core/laundry.ts'
 import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
+import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
 import { fullCoa } from '../core/treasury.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
@@ -1115,6 +1116,7 @@ interface DataState {
   assets: FixedAsset[]
   externalCommissions: ExternalCommission[] // العمولات بقسميها: لي لدى الغير / عليّ للغير (طلب المالك)
   commissionParties: CommissionParty[] // سجل أشخاص/جهات العمولات — التسجيل إلزامي قبل أي عمولة
+  staffCommissions: StaffCommission[] // عمولات الموظفين المربوطة بالعمليات (طلب المالك — عقارات وغيرها)
   customAccounts: CustomAccount[] // حسابات مخصصة يضيفها المالك للشجرة (بند شجرة الحسابات المفتوحة)
   laundryOrders: LaundryOrder[] // أوامر الغسيل (وحدة المغاسل)
   serials: SerialUnit[] // وحدات السيريال/IMEI والضمان (نمط موبايل شوب)
@@ -1913,6 +1915,17 @@ interface DataState {
   /** تحصيل من عمولة خارجية: خزينة / 1112 */
   /** تسوية عمولة: تحصيل (لي) أو دفع (عليّ) من الخزينة/البنك المختار */
   collectExternalCommission: (args: { commissionId: number; amountMinor: number; treasury: TreasuryAccount }) => ExternalCommission
+  /* ─── عمولات الموظفين (طلب المالك): مربوطة بالعمليات، مصروف لحظة الاستحقاق، تُصرف منفردة أو مع الراتب ─── */
+  /** استحقاق عمولة موظف عن عملية: 5117/2116 — تدخل ربحية الفترة فوراً */
+  addStaffCommission: (args: { employeeId: number; source: StaffCommissionSource; sourceId: number | null; description: string; amountMinor: number }) => StaffCommission
+  /** صرف عمولة منفردة بسند: 2116/خزينة */
+  payStaffCommission: (args: { commissionId: number; treasury: TreasuryAccount }) => StaffCommission
+  /** إلغاء عمولة مستحقة (غير مصروفة): قيد عاكس 2116/5117 */
+  cancelStaffCommission: (args: { commissionId: number; reason: string }) => StaffCommission
+  /** تعديل مبلغ عمولة مستحقة: إلغاء + استحقاق جديد بأثر تدقيقي كامل */
+  updateStaffCommissionAmount: (args: { commissionId: number; newAmountMinor: number; reason: string }) => StaffCommission
+  /** عمولات موظف المستحقة غير المصروفة — لعرضها في مسير الرواتب */
+  getStaffCommissionsDue: (employeeId: number) => { totalMinor: number; commissions: StaffCommission[] }
   /** إضافة حساب مخصص لشجرة الحسابات — يُستخدم فوراً في القيود والتقارير (الشجرة ليست مفروضة) */
   addCustomAccount: (args: { code: string; nameAr: string; parentCode: string }) => CustomAccount
   /** حذف حساب مخصص — يُرفض لو عليه حركة في اليومية */
@@ -2196,6 +2209,7 @@ export const useDataStore = create<DataState>()(
       assets: [],
       externalCommissions: [],
       commissionParties: [],
+      staffCommissions: [],
       customAccounts: [],
       laundryOrders: [],
       serials: [],
@@ -3852,6 +3866,9 @@ export const useDataStore = create<DataState>()(
           lab_order: 'طلب معمل له سجل فحوص ومطالبات — استخدم استرداد الطلب من صفحة المعمل',
           depreciation: 'قيد إهلاك مربوط بعدّاد شهور الأصل — عدّل من صفحة الأصول الثابتة',
           year_closing: 'قيد إقفال سنة مالية — أعد فتح السنة من صفحة السنوات المالية',
+          staff_commission: 'استحقاق عمولة موظف له سجل بدورة حياة — ألغِ العمولة من شاشة عمولات الموظفين',
+          staff_commission_payout: 'صرف عمولة موظف مسجل في سجلها — استرده بسند قبض إن لزم لا بعكس القيد',
+          staff_commission_cancel: 'قيد إلغاء عمولة — لا يُعكس؛ سجّل عمولة جديدة إن لزم',
         }
         const guardMsg = guarded[original.sourceType]
         if (guardMsg) throw new Error(`لا يُعكس هذا القيد مباشرة: ${guardMsg}`)
@@ -4811,6 +4828,7 @@ export const useDataStore = create<DataState>()(
       removeEmployee: (id) => {
         const s = get()
         if (s.payrollRuns.some((r) => r.lines.some((l) => l.employeeId === id))) throw new Error('لا يمكن حذف موظف له مسيرات رواتب مرحّلة — أوقف حالته «على رأس العمل» بدلاً من الحذف')
+        if (s.staffCommissions.some((c) => c.employeeId === id)) throw new Error('لا يمكن حذف موظف له عمولات مسجلة — أوقف حالته بدلاً من الحذف')
         // مراجعة الموظفين (فجوة مؤكدة): كان يُحذف وعليه سلفة غير مستردة فيبقى 1107 يتيماً بالدفتر
         const advOpen = s.employeeAdvances.filter((a) => a.employeeId === id).reduce((x, a) => x + (a.amountMinor - a.recoveredMinor), 0)
         if (advOpen > 0) throw new Error(`لا يمكن حذف موظف عليه سلف غير مستردة (${advOpen}) — استردها بالمسير أو نقداً أولاً`)
@@ -4866,6 +4884,20 @@ export const useDataStore = create<DataState>()(
             throw new Error(`«${emp?.nameAr ?? l.employeeId}»: المصروف من مستحق العهدة (${excess}) أكبر من رصيده (${due})`)
           }
         }
+        // تحقق العمولات المصروفة مع الراتب: لا تتجاوز مستحق الموظف على 2116 (طلب المالك)
+        for (const l of computed) {
+          const comm = l.commissionsPaidMinor ?? 0
+          if (comm <= 0) continue
+          const due = unpaidCommissionsMinor(state.staffCommissions, l.employeeId)
+          if (comm > due) {
+            const emp = state.employees.find((e) => e.id === l.employeeId)
+            throw new Error(`«${emp?.nameAr ?? l.employeeId}»: العمولات المصروفة (${comm}) أكبر من مستحقه (${due})`)
+          }
+          if (comm !== due) {
+            const emp = state.employees.find((e) => e.id === l.employeeId)
+            throw new Error(`«${emp?.nameAr ?? l.employeeId}»: تُصرف العمولات المستحقة كاملة مع الراتب (${due}) أو لا تُصرف — للصرف الجزئي استخدم الصرف المنفرد من شاشة العمولات`)
+          }
+        }
         // مصدر الصرف: خزينة/بنك أو ملف عهدة موظف مفتوح برصيد كافٍ (طلب المالك)
         let payCustodyFile: CustodyFile | null = null
         let payAccount: TreasuryAccount = args.treasury
@@ -4882,12 +4914,13 @@ export const useDataStore = create<DataState>()(
         // 3) القيد المتوازن بنيوياً — السلف المستقطعة تُقفل من 1107 ومستحقات العهد تُصفّى من 2107
         const advancesRecovered = computed.reduce((a, l) => a + l.advancesMinor, 0)
         const excessPaid = computed.reduce((a, l) => a + (l.excessPaidMinor ?? 0), 0)
-        const totalOut = totals.netMinor + excessPaid
+        const commissionsPaid = computed.reduce((a, l) => a + (l.commissionsPaidMinor ?? 0), 0)
+        const totalOut = totals.netMinor + excessPaid + commissionsPaid
         if (payCustodyFile) {
           const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === payCustodyFile!.id)).remainingMinor
           if (totalOut > remaining) throw new Error(`المسير (${totalOut}) أكبر من المتبقي في ملف العهدة (${remaining})`)
         }
-        const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, payAccount, label, advancesRecovered, excessPaid)
+        const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, payAccount, label, advancesRecovered, excessPaid, commissionsPaid)
 
         const runId = nextId(state.payrollRuns)
         const entryId = nextId(state.journal)
@@ -4961,7 +4994,17 @@ export const useDataStore = create<DataState>()(
             treasury: null, projectId: null, purchaseId: null, journalEntryId: entryId,
           }]
         }
-        set({ payrollRuns: [...state.payrollRuns, run], journal: [...state.journal, entry], employeeAdvances, employeeDeductions, custodyTxs })
+        // العمولات المصروفة مع الراتب: علّم عمولات كل موظف المستحقة «مصروفة» بقيد المسير
+        let staffCommissions = state.staffCommissions
+        for (const l of computed) {
+          if ((l.commissionsPaidMinor ?? 0) <= 0) continue
+          staffCommissions = staffCommissions.map((c) =>
+            c.employeeId === l.employeeId && c.status === 'accrued'
+              ? { ...c, status: 'paid' as const, payoutEntryId: entryId, payoutMode: 'payroll' as const }
+              : c,
+          )
+        }
+        set({ payrollRuns: [...state.payrollRuns, run], journal: [...state.journal, entry], employeeAdvances, employeeDeductions, custodyTxs, staffCommissions })
         return run
       },
 
@@ -7430,7 +7473,15 @@ export const useDataStore = create<DataState>()(
           }
           return it
         })
-        set({ items: updatedItems, productionOrders: [...state.productionOrders, order], journal: [...state.journal, entry] })
+        // خامات بصلاحية تستهلك دفعاتها FEFO (سد الفئة ب — التصنيع معمم لكل الأنشطة:
+        // مصنع أغذية/أدوية خاماته بصلاحية، وإلا تجمدت الدفعات وظهرت تنبيهات كاذبة)
+        let prodBatches = state.batches
+        for (const [ingId, qty] of consumed) {
+          if (!state.items.find((it) => it.id === ingId)?.trackExpiry) continue
+          const plan = planFefo(prodBatches, ingId, qty, now.slice(0, 10))
+          prodBatches = applyFefo(prodBatches, plan)
+        }
+        set({ items: updatedItems, batches: prodBatches, productionOrders: [...state.productionOrders, order], journal: [...state.journal, entry] })
         return order
       },
 
@@ -8522,6 +8573,112 @@ export const useDataStore = create<DataState>()(
         }
         set({ externalCommissions: state.externalCommissions.map((c) => (c.id === com.id ? updated : c)), journal: [...state.journal, entry] })
         return updated
+      },
+
+      /* ─── عمولات الموظفين (طلب المالك) ─── */
+      addStaffCommission: (args) => {
+        const state = get()
+        const emp = state.employees.find((e) => e.id === args.employeeId)
+        if (!emp) throw new Error('الموظف غير موجود — سجّله أولاً')
+        if (!emp.active) throw new Error('الموظف غير نشط — لا عمولات لموظف موقوف')
+        const errors = validateStaffCommission({ employeeId: args.employeeId, amountMinor: args.amountMinor, description: args.description })
+        if (errors.length) throw new Error(errors.join(' — '))
+        // ربط المستند المصدر: تحقق من وجوده فعلاً (لا عمولات على عمليات وهمية)
+        if (args.sourceId != null) {
+          const exists =
+            args.source === 'lease' ? state.leases.some((l) => l.id === args.sourceId)
+            : args.source === 'property_sale' ? state.properties.some((p) => p.id === args.sourceId)
+            : args.source === 'sale' ? state.sales.some((s2) => s2.id === args.sourceId)
+            : args.source === 'car_sale' ? state.cars.some((c) => c.id === args.sourceId)
+            : args.source === 'project' ? state.projects.some((p) => p.id === args.sourceId)
+            : true // manual لا مستند لها
+          if (!exists) throw new Error('المستند المصدر غير موجود — لا تُسجل عمولة على عملية غير مسجلة')
+        }
+        const id = nextId(state.staffCommissions)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const code = `SCM-${String(id).padStart(4, '0')}`
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `استحقاق عمولة ${code} — ${emp.nameAr}: ${args.description.trim()}`,
+          sourceType: 'staff_commission', sourceId: id,
+          lines: buildStaffCommissionAccrual(args.amountMinor, emp.nameAr, args.description.trim()),
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const commission: StaffCommission = {
+          id, code, employeeId: emp.id, source: args.source, sourceId: args.sourceId,
+          description: args.description.trim(), amountMinor: args.amountMinor,
+          date: now.slice(0, 10), status: 'accrued', accrualEntryId: entryId,
+          payoutEntryId: null, payoutMode: null, cancelEntryId: null, cancelReason: '',
+          createdBy: activeUserName(get()), createdAt: now,
+        }
+        set({ staffCommissions: [...state.staffCommissions, commission], journal: [...state.journal, entry] })
+        return commission
+      },
+
+      payStaffCommission: (args) => {
+        const state = get()
+        const com = state.staffCommissions.find((c) => c.id === args.commissionId)
+        if (!com) throw new Error('العمولة غير موجودة')
+        if (com.status === 'paid') throw new Error('العمولة مصروفة بالفعل')
+        if (com.status === 'cancelled') throw new Error('العمولة ملغاة — لا تُصرف')
+        if (!state.treasuries.some((t) => t.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود')
+        const emp = state.employees.find((e) => e.id === com.employeeId)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `صرف عمولة ${com.code} — ${emp?.nameAr ?? ''} (منفردة)`,
+          sourceType: 'staff_commission_payout', sourceId: com.id,
+          lines: buildStaffCommissionPayout(com.amountMinor, args.treasury, emp?.nameAr ?? ''),
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: StaffCommission = { ...com, status: 'paid', payoutEntryId: entryId, payoutMode: 'voucher' }
+        set({ staffCommissions: state.staffCommissions.map((c) => (c.id === com.id ? updated : c)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+      cancelStaffCommission: (args) => {
+        const state = get()
+        const com = state.staffCommissions.find((c) => c.id === args.commissionId)
+        if (!com) throw new Error('العمولة غير موجودة')
+        if (com.status === 'paid') throw new Error('العمولة مصروفة — لا تُلغى؛ استردها بسند قبض على 5117 إن لزم')
+        if (com.status === 'cancelled') throw new Error('العمولة ملغاة بالفعل')
+        if (!args.reason.trim()) throw new Error('سبب الإلغاء مطلوب — يبقى في سجل التدقيق')
+        const emp = state.employees.find((e) => e.id === com.employeeId)
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `إلغاء عمولة ${com.code} — ${emp?.nameAr ?? ''}: ${args.reason.trim()}`,
+          sourceType: 'staff_commission_cancel', sourceId: com.id,
+          lines: buildStaffCommissionCancel(com.amountMinor, emp?.nameAr ?? '', args.reason.trim()),
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: StaffCommission = { ...com, status: 'cancelled', cancelEntryId: entryId, cancelReason: args.reason.trim() }
+        set({ staffCommissions: state.staffCommissions.map((c) => (c.id === com.id ? updated : c)), journal: [...state.journal, entry] })
+        return updated
+      },
+
+      updateStaffCommissionAmount: (args) => {
+        const state = get()
+        const com = state.staffCommissions.find((c) => c.id === args.commissionId)
+        if (!com) throw new Error('العمولة غير موجودة')
+        if (com.status !== 'accrued') throw new Error('يُعدل مبلغ العمولات المستحقة فقط — المصروفة والملغاة لا تُعدل')
+        if (!Number.isInteger(args.newAmountMinor) || args.newAmountMinor <= 0) throw new Error('المبلغ الجديد يجب أن يكون رقماً صحيحاً موجباً')
+        if (args.newAmountMinor === com.amountMinor) throw new Error('المبلغ الجديد مساوٍ للحالي — لا تعديل')
+        if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب — يبقى في سجل التدقيق')
+        // إلغاء ثم استحقاق جديد (أثر تدقيقي كامل — لا تعديل صامت على قيد مرحّل)
+        get().cancelStaffCommission({ commissionId: com.id, reason: `تعديل المبلغ: ${args.reason.trim()}` })
+        return get().addStaffCommission({
+          employeeId: com.employeeId, source: com.source, sourceId: com.sourceId,
+          description: `${com.description} (معدلة من ${com.code})`, amountMinor: args.newAmountMinor,
+        })
+      },
+
+      getStaffCommissionsDue: (employeeId) => {
+        const commissions = get().staffCommissions.filter((c) => c.employeeId === employeeId && c.status === 'accrued')
+        return { totalMinor: commissions.reduce((a, c) => a + c.amountMinor, 0), commissions }
       },
 
       addCustomAccount: (args) => {

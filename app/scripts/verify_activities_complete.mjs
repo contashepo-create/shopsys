@@ -18,7 +18,10 @@ const throws = (fn, name) => { try { fn(); fail++; console.error(`❌ لم ير�
 const EXPECTED = [
   'grocery', 'mobile', 'clothing', 'pharmacy', 'electronics', 'spare_parts',
   'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars',
-  'restaurant', 'jewelry', 'laundry', 'butcher', 'dates', 'salon', 'bakery', 'realestate', 'general',
+  'restaurant', 'jewelry', 'laundry', 'butcher', 'dates', 'salon', 'bakery', 'realestate',
+  // دفعة المالك (تغطية الأنشطة التجارية والخدمية المصرية/السعودية):
+  'trading', 'manufacturing', 'services', 'stationery', 'herbalist', 'building_materials', 'household',
+  'general',
 ]
 ok(ACTIVITY_TEMPLATES.length === EXPECTED.length, `عدد الأنشطة = ${EXPECTED.length}`)
 for (const id of EXPECTED) ok(!!getActivity(id), `نشاط ${id} موجود`)

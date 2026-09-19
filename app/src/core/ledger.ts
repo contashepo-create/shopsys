@@ -46,6 +46,7 @@ export type SourceType =
   | 'cheque_receive' | 'cheque_collect' | 'cheque_bounce'
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
   | 'lease' | 'lease_collection' | 'owner_payout' | 'lease_end' | 'unit_maintenance' | 'property_acquisition' | 'property_sale'
+  | 'staff_commission' | 'staff_commission_payout' | 'staff_commission_cancel'
   | 'opening' | 'manual' | 'year_closing' | 'asset_purchase' | 'asset_payment' | 'depreciation' | 'external_commission' | 'laundry' | 'reversal'
 
 export interface JournalEntry {
@@ -136,6 +137,7 @@ export const STANDARD_COA: Account[] = [
   { code: '2113', nameAr: 'مصروفات نقلات مستحقة (كروت/محطات)', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'trip_expenses_payable' },
   { code: '2114', nameAr: 'عمولات مستحقة للغير', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'commissions_payable_others' },
   { code: '2115', nameAr: 'مستحق لملاك العقارات المدارة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'property_owners_payable' },
+  { code: '2116', nameAr: 'عمولات موظفين مستحقة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'staff_commissions_payable' },
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },
   { code: '3102', nameAr: 'أرباح مرحّلة', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'retained_earnings' },
@@ -173,4 +175,5 @@ export const STANDARD_COA: Account[] = [
   { code: '5114', nameAr: 'مستهلكات تشغيل داخلي', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'internal_use' },
   { code: '5115', nameAr: 'مصروف برنامج الولاء', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'loyalty_expense' },
   { code: '5116', nameAr: 'تكلفة عقارات مباعة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'property_cogs' },
+  { code: '5117', nameAr: 'مصروف عمولات موظفين', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'staff_commission_expense' },
 ]

@@ -24,6 +24,11 @@ export interface NavChild {
   module?: BusinessModule
   /** يظهر فقط إن كانت خاصية الأصناف هذه مفعلة للنشاط (مثل السيريالات) */
   feature?: ItemFeature
+  /**
+   * يظهر فقط لهذه الأنشطة تحديداً — لشاشات لصيقة بنشاط لا بوحدة:
+   * «أوامر الطاولات» للمطاعم فقط وإن فُعّلت وحدة التصنيع لمصنع (تعميم التصنيع)
+   */
+  activities?: string[]
 }
 
 export interface NavSection {
@@ -63,7 +68,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'sales', nameAr: 'المبيعات', icon: ShoppingCart, color: 'emerald', module: 'pos',
     children: [
       { id: 'pos', nameAr: 'شاشة البيع (كاشير)', icon: Store, path: '/pos' },
-      { id: 'restaurant-orders', nameAr: 'أوامر الطاولات والدليفري', icon: UtensilsCrossed, path: '/sales/restaurant-orders', module: 'recipes' },
+      { id: 'restaurant-orders', nameAr: 'أوامر الطاولات والدليفري', icon: UtensilsCrossed, path: '/sales/restaurant-orders', module: 'recipes', activities: ['restaurant'] },
       { id: 'invoices', nameAr: 'فواتير المبيعات', icon: Receipt, path: '/sales/invoices' },
       { id: 'returns', nameAr: 'مرتجعات المبيعات', icon: RotateCcw, path: '/sales/returns' },
       { id: 'exchange', nameAr: 'الاستبدال', icon: Repeat, path: '/sales/exchange' },
