@@ -96,7 +96,9 @@ export function Dashboard() {
       customerBalances: (id) => useDataStore.getState().getCustomerBalance(id), // الرصيد الموحّد من كل الأنشطة
       fmt,
     })
-  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements])
+    // fmt يتغير فقط بتغير عملة الدولة — نمثلها بـ setup.countryCode بدل الدالة المتجددة كل رندر
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements, setup.countryCode])
   // دين الموردين = فواتير غير مسددة − مرتجعات الشراء المخفِّضة للدين
   const suppliersDebt = Math.max(
     0,
