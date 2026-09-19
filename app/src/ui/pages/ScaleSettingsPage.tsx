@@ -25,7 +25,10 @@ export function ScaleSettingsPage() {
   const { setup, scaleRules, addScaleRule, updateScaleRule, removeScaleRule } = useAppStore()
   const { items } = useDataStore()
   const toast = useToast()
-  const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const cur = useMemo(
+    () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
+    [setup.countryCode],
+  )
 
   /* ─── محرر قاعدة (جديدة أو تعديل) ─── */
   const [editorOpen, setEditorOpen] = useState(false)

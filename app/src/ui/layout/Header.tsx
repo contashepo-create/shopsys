@@ -34,7 +34,10 @@ export function Header({ title }: { title: string }) {
   const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, tickets, laundryOrders, leases } = useDataStore()
   const navigate = useNavigate()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
-  const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const cur = useMemo(
+    () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
+    [setup.countryCode],
+  )
 
   const [bellOpen, setBellOpen] = useState(false)
   const bellRef = useRef<HTMLDivElement>(null)
