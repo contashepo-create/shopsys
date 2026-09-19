@@ -235,7 +235,7 @@ export function customerUnitDocs(args: {
   /** خدمات محافظ بجزء آجل على العميل */
   walletOps?: readonly { opNumber: string; date: string; customerId: number | null; status: string; totals: { remainingMinor: Minor } }[]
   /** مستخلصات مقاولات آجلة لمشروعات مربوطة بالعميل + دفعات مقدمة وتحصيلات المشروع */
-  projectExtracts?: readonly { extractNumber: string; date: string; projectId: number; payment: string; totals: { dueMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
+  projectExtracts?: readonly { extractNumber: string; date: string; projectId: number; payment: string; totals: { dueMinor: Minor }; advanceRecoveryMinor?: Minor; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
   linkedProjectIds?: readonly number[]
   /**
    * خطط أقساط العميل — قيودها (هامش تمويل مدين، مقدم وسدادات دائنة) لا سندات لها
@@ -294,7 +294,9 @@ export function customerUnitDocs(args: {
   const projSet = new Set(args.linkedProjectIds ?? [])
   for (const ex of args.projectExtracts ?? []) {
     if (!projSet.has(ex.projectId)) continue
-    if (ex.payment === 'credit' && ex.totals.dueMinor > 0) rows.push({ docLabel: `مستخلص ${ex.extractNumber} (آجل)`, date: ex.date, debitMinor: ex.totals.dueMinor, creditMinor: 0 })
+    // ذمة المستخلص الآجل = المستحق − ما استُرد من الدفعة المقدمة (القيد يدين العميل بالصافي فقط)
+    const exNet = ex.totals.dueMinor - (ex.advanceRecoveryMinor ?? 0)
+    if (ex.payment === 'credit' && exNet > 0) rows.push({ docLabel: `مستخلص ${ex.extractNumber} (آجل)`, date: ex.date, debitMinor: exNet, creditMinor: 0 })
     for (const r of ex.refunds ?? []) {
       if (r.mode === 'customer_credit') rows.push({ docLabel: `إشعار دائن مستخلص ${ex.extractNumber}`, date: r.date, debitMinor: 0, creditMinor: r.amountMinor })
     }

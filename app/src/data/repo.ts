@@ -369,6 +369,12 @@ export interface ProjectExtract {
   lines?: { boqItemId: number; code: string; descriptionAr: string; prevProgressPercent: number; newProgressPercent: number; lineValueMinor: number }[]
   /** مستخلص ختامي (نمط pro-acc is_final): لا مستخلصات بعده — يمهد للتسليم والإفراج عن المحتجز */
   isFinal?: boolean
+  /**
+   * ما استُرد من الدفعة المقدمة في هذا المستخلص (يطفئ 2109):
+   * القيد يدين العميل بالصافي (dueMinor − هذا المبلغ) — فيجب أن يخصمه
+   * كشف الحساب أيضاً وإلا تضارب الدفتر مع الكشف
+   */
+  advanceRecoveryMinor?: number
   /** مرتجع خدمة (مستخلص معتمد رُفض جزء من أعماله): تراكمي بسقف dueMinor */
   refundedMinor?: number
   refundedTaxMinor?: number
@@ -6280,6 +6286,7 @@ export const useDataStore = create<DataState>()(
           id, extractNumber, projectId: project.id, date: now,
           description: args.description, payment: args.payment, totals, journalEntryId: entryId,
           lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor })),
+          ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : {}),
           ...(args.isFinal ? { isFinal: true } : {}),
         }
         // تحديث نسب إنجاز بنود BOQ تلقائياً من المستخلص (ربط العقد بالمستخلص — AccFlex)
