@@ -27,7 +27,7 @@ function useCur() {
 
 /* ─────────────────────────── موازنة المشروع والانحرافات ─────────────────────────── */
 export function ProjectBudgetPage() {
-  const { projects, projectBudgets, setProjectBudget, getProjectBudgetVariance } = useDataStore()
+  const { projects, projectBudgets, projectCosts, setProjectBudget, getProjectBudgetVariance } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
   const open = projects.filter((p) => p.status === 'active')
@@ -38,7 +38,8 @@ export function ProjectBudgetPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [draft, setDraft] = useState<Record<CostKind, string>>({ materials: '', labor: '', equipment: '', subcontract: '', other: '' })
 
-  const report = useMemo(() => (project ? getProjectBudgetVariance(project.id) : null), [project, getProjectBudgetVariance, projectBudgets])
+  // projectCosts في التبعيات ضرورية: أي تكلفة جديدة يجب أن تحدّث تقرير الانحراف فوراً
+  const report = useMemo(() => (project ? getProjectBudgetVariance(project.id) : null), [project, getProjectBudgetVariance, projectBudgets, projectCosts])
 
   const startEdit = () => {
     if (!project) return

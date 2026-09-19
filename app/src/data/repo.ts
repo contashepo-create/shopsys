@@ -7573,8 +7573,11 @@ export const useDataStore = create<DataState>()(
         const contractMinor = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === projectId))
         const billedMinor = state.projectExtracts.filter((e) => e.projectId === projectId).reduce((s, e) => s + e.totals.grossMinor, 0)
         const costsMinor = state.projectCosts.filter((c) => c.projectId === projectId).reduce((s, c) => s + c.amountMinor, 0)
-        // موازنة التكاليف = مجموع BOQ إن وُجد (أدق من قيمة العقد)
-        const budget = state.boqItems.filter((b) => b.projectId === projectId).reduce((s, b) => s + boqItemTotal(b), 0)
+        // موازنة التكاليف بالأدق فالأعم: موازنة الفئات الصريحة ← تكاليف BOQ التقديرية ← إجمالي BOQ البيعي
+        const explicitBudget = state.projectBudgets.filter((b) => b.projectId === projectId).reduce((s, b) => s + b.amountMinor, 0)
+        const projBoq = state.boqItems.filter((b) => b.projectId === projectId)
+        const estCostBudget = projBoq.reduce((s, b) => s + Math.round(b.qty * b.estCostMinor), 0)
+        const budget = explicitBudget > 0 ? explicitBudget : estCostBudget > 0 ? estCostBudget : projBoq.reduce((s, b) => s + boqItemTotal(b), 0)
         return { contractMinor, billedMinor, costsMinor, ...computeWip({ contractMinor, budgetCostMinor: budget, costsIncurredMinor: costsMinor, billedMinor }) }
       },
 
