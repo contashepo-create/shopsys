@@ -88,6 +88,11 @@ export interface Item {
   oemNumbers?: string[]
   /** التوافق (Fitment): الموديلات/الأجهزة التي تناسبها القطعة — نص حر يبحث فيه الكاشير */
   fitment?: string
+  /**
+   * المادة الفعالة (الصيدلية — نمط ShelfLifePro salt-equivalent finder):
+   * الدواء الناقص يُقترح بديله بنفس المادة الفعالة المتوفر بالمخزون
+   */
+  activeIngredient?: string
   /** درجة القطعة: أصلي / بديل تجاري / مستعمل (قطع الغيار) */
   grade?: 'original' | 'aftermarket' | 'used'
   /**
@@ -120,6 +125,23 @@ export const GRADE_LABELS: Record<NonNullable<Item['grade']>, { nameAr: string; 
  * بحث موحّد للكاشير (قطع الغيار): اسم / باركود / SKU / رقم OEM / توافق.
  * أرقام OEM تطابق بلا حساسية للشرطات والمسافات (BOSCH-0986 = bosch 0986).
  */
+/**
+ * بدائل الدواء بنفس المادة الفعالة (نمط ShelfLifePro): عند نفاد صنف،
+ * اقترح الأصناف النشطة المتوفرة التي تشاركه المادة الفعالة — مرتبة بالسعر
+ */
+export function sameIngredientAlternatives(item: Pick<Item, 'id' | 'activeIngredient'>, all: readonly Item[]): Item[] {
+  const ing = (item.activeIngredient ?? '').trim()
+  if (!ing) return []
+  const norm = (x: string) => x.trim().replace(/\s+/g, ' ')
+  return all
+    .filter((it) =>
+      it.id !== item.id && it.isActive && !it.isService &&
+      norm(it.activeIngredient ?? '') !== '' && norm(it.activeIngredient ?? '') === norm(ing) &&
+      (it.stockQty ?? 0) > 0,
+    )
+    .sort((a, b) => a.priceMinor - b.priceMinor)
+}
+
 export function normalizePartNumber(raw: string): string {
   return raw.replace(/[\s\-_./]/g, '').toUpperCase()
 }

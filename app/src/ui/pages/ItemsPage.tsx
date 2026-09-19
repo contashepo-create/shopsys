@@ -284,6 +284,7 @@ export function ItemsPage() {
     if (it.trackSerial) badges.push({ icon: '🔢', label: 'سيريال', cls: 'bg-sky-500/10 text-sky-600 dark:text-sky-400' })
     if (it.grade) badges.push({ icon: GRADE_LABELS[it.grade].icon, label: GRADE_LABELS[it.grade].nameAr, cls: 'bg-slate-500/10 text-slate-500 dark:text-slate-400' })
     if (it.oemNumbers?.length) badges.push({ icon: '🔧', label: `${it.oemNumbers.length} OEM`, cls: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400' })
+    if (it.activeIngredient) badges.push({ icon: '🧪', label: it.activeIngredient, cls: 'bg-lime-500/10 text-lime-600 dark:text-lime-400' })
     if (it.soldByWeight) badges.push({ icon: '⚖️', label: 'وزن', cls: 'bg-teal-500/10 text-teal-600 dark:text-teal-400' })
     if (it.variantColors.length || it.variantSizes.length) badges.push({ icon: '🎨', label: 'متغيرات', cls: 'bg-violet-500/10 text-violet-600 dark:text-violet-400' })
     if (it.extraUnits.length) badges.push({ icon: '📦', label: `${it.extraUnits.length + 1} وحدات`, cls: 'bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400' })
@@ -995,6 +996,15 @@ function ItemForm({
             </div>
           </Field>
         </div>
+
+        {/* المادة الفعالة (الصيدلية — نمط ShelfLifePro): الدواء الناقص يقترح بديله آلياً */}
+        {(setup.activityId === 'pharmacy' || (draft.activeIngredient ?? '') !== '') && (
+          <div className="mt-3 anim-pop">
+            <Field label="🧪 المادة الفعالة (Active Ingredient)" hint="عند نفاد الدواء يقترح الكاشير البدائل المتوفرة بنفس المادة — مثال: Paracetamol 500mg">
+              <input value={draft.activeIngredient ?? ''} onChange={(e) => p({ activeIngredient: e.target.value })} placeholder="مثال: Amoxicillin 500mg" className={inputCls} dir="ltr" />
+            </Field>
+          </div>
+        )}
 
         {/* أرقام OEM والتوافق (جولة قطع الغيار) — أساسية لنشاطي قطع الغيار والأجهزة */}
         {(setup.activityId === 'spare_parts' || setup.activityId === 'electronics' || (draft.oemNumbers?.length ?? 0) > 0 || (draft.fitment ?? '') !== '') && (

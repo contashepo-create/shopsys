@@ -13,7 +13,7 @@ import { formatMinor } from '../../core/money.ts'
 import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
-import { itemMatchesPartQuery } from '../../core/items.ts'
+import { sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
@@ -134,6 +134,8 @@ export function PosPage() {
 
   // نافذة اختيار السيريال/IMEI (نمط موبايل شوب: البيع بالقطعة المعيّنة)
   const [serialPickItem, setSerialPickItem] = useState<number | null>(null)
+  // اقتراح بدائل الدواء النافد (نفس المادة الفعالة) — نمط ShelfLifePro
+  const [altSuggest, setAltSuggest] = useState<{ forItem: Item; alternatives: Item[] } | null>(null)
   const [variantPickItem, setVariantPickItem] = useState<number | null>(null)
   const addVariantToCart = (itemId: number, color: string, size: string) => {
     const it = items.find((x) => x.id === itemId)
@@ -185,6 +187,14 @@ export function PosPage() {
     if (it.priceMinor <= 0) {
       toast.show(`«${it.nameAr}» بلا سعر بيع! حدّد سعره من المخزون ← الأصناف أولاً`, 'error')
       return
+    }
+    // الصيدلية (نمط ShelfLifePro): الدواء النافد يقترح بدائله بنفس المادة الفعالة فوراً
+    if (!it.isService && (it.stockQty ?? 0) <= 0 && (it.activeIngredient ?? '').trim()) {
+      const alts = sameIngredientAlternatives(it, items)
+      if (alts.length > 0) {
+        setAltSuggest({ forItem: it, alternatives: alts })
+        return
+      }
     }
     // صنف يتتبع السيريال وله قطع مسيرلة متاحة ⇒ اختيار القطعة المعيّنة أولاً
     if (it.trackSerial && availableSerials(serials, it.id).length > 0) {
@@ -1096,6 +1106,35 @@ export function PosPage() {
         })()}
       </Modal>
       {/* تجاوز حد ائتمان العميل — اعتماد مدير موثق (مراجعة المبيعات) */}
+      {/* بدائل الدواء النافد بنفس المادة الفعالة (نمط ShelfLifePro salt-equivalent finder) */}
+      <Modal open={!!altSuggest} onClose={() => setAltSuggest(null)} title={altSuggest ? `🧪 «${altSuggest.forItem.nameAr}» نافد — البدائل المتوفرة` : ''}>
+        {altSuggest && (
+          <div className="space-y-3">
+            <div className="text-[12px] text-slate-500">
+              نفس المادة الفعالة: <b className="text-lime-600" dir="ltr">{altSuggest.forItem.activeIngredient}</b> — مرتبة بالأرخص
+            </div>
+            <div className="space-y-2">
+              {altSuggest.alternatives.map((alt) => (
+                <button
+                  key={alt.id}
+                  onClick={() => { const id = alt.id; setAltSuggest(null); addToCart(id) }}
+                  className="w-full flex items-center justify-between p-3 rounded-xl border-2 border-slate-200 dark:border-slate-700 hover:border-lime-500/60 hover:bg-lime-500/5 transition-all text-right"
+                >
+                  <span>
+                    <span className="font-bold text-slate-800 dark:text-white block">{alt.nameAr}</span>
+                    <span className="text-[11px] text-slate-400">متوفر: {alt.stockQty} {alt.baseUnit}</span>
+                  </span>
+                  <span className="font-black text-emerald-600">{formatMinor(alt.priceMinor, cur, false)} {cur.symbol}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end">
+              <Btn variant="ghost" onClick={() => setAltSuggest(null)}>إغلاق</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <Modal open={!!creditBlock} onClose={() => setCreditBlock(null)} title="⛔ تجاوز حد الائتمان">
         {creditBlock && (
           <div className="space-y-4">
