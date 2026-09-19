@@ -1663,9 +1663,10 @@ interface DataState {
   receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string }) => void
   /** رصيد الدفعات المقدمة غير المستردة لمشروع */
   getAdvanceBalance: (projectId: number) => number
-  addSubContract: (args: Omit<SubContract, 'id' | 'contractNumber' | 'status' | 'supplierId' | 'taxWithholdPercent' | 'boqItemIds'> & { supplierId?: number | null; taxWithholdPercent?: number; boqItemIds?: number[] }) => SubContract
+  addSubContract: (args: Omit<SubContract, 'id' | 'contractNumber' | 'status' | 'supplierId' | 'taxWithholdPercent' | 'boqItemIds' | 'advanceRecoveryPercent' | 'progressPercent'> & { supplierId?: number | null; taxWithholdPercent?: number; boqItemIds?: number[]; advanceRecoveryPercent?: number }) => SubContract
   /** شهادة أعمال باطن: 5110 ← 2101 صافي + 2108 محتجز */
-  addSubCertificate: (args: { contractId: number; amountMinor: number; description: string; advanceRecoveryMinor?: number }) => SubCertificate
+  /** شهادة أعمال باطن: مبلغ مباشر أو نسبة إنجاز تراكمية من قيمة العقد (نمط AccFlex)؛ خصم المقدمة تلقائي بنسبة العقد ما لم يُمرَّر يدوياً */
+  addSubCertificate: (args: { contractId: number; amountMinor?: number; newProgressPercent?: number; description: string; advanceRecoveryMinor?: number }) => SubCertificate
   /** دفعة لمقاول الباطن من مستحقاته */
   paySubContractor: (args: { contractId: number; amountMinor: number; treasury: string }) => void
   /** إفراج محتجزات الباطن وإقفال عقده */
@@ -6459,6 +6460,8 @@ export const useDataStore = create<DataState>()(
         const errors = validateSubContract(args)
         const withhold = args.taxWithholdPercent ?? 0
         if (withhold < 0 || withhold > 20) errors.push('نسبة ضريبة الاستقطاع بين 0 و20٪')
+        const advPct = args.advanceRecoveryPercent ?? 0
+        if (advPct < 0 || advPct > 100) errors.push('نسبة خصم الدفعة المقدمة بين 0 و100٪')
         // ربط اختياري بسجل مورد — يوحّد المستحقات في كشف حسابه (تكامل الموردين)
         if (args.supplierId != null && !state.suppliers.find((x) => x.id === args.supplierId)) errors.push('المورد المربوط غير موجود')
         const boqIds = args.boqItemIds ?? []
@@ -6470,6 +6473,7 @@ export const useDataStore = create<DataState>()(
         const id = nextId(state.subContracts)
         const contract: SubContract = {
           ...args, supplierId: args.supplierId ?? null, taxWithholdPercent: withhold, boqItemIds: boqIds,
+          advanceRecoveryPercent: advPct, progressPercent: 0,
           id, contractNumber: `SC-${String(id).padStart(4, '0')}`, status: 'active',
         }
         set({ subContracts: [...state.subContracts, contract] })
@@ -6482,22 +6486,36 @@ export const useDataStore = create<DataState>()(
         if (contract.status !== 'active') throw new Error('العقد غير نشط')
         // بوابة الموافقات: اعتماد مستخلص الباطن إجراء حرج
         get().assertApproved('sub_certificate', contract.id, `اعتماد شهادة أعمال ${contract.contractNumber}`)
+        // نمط AccFlex: نسبة إنجاز تراكمية من قيمة العقد بدل إعادة إدخال المبالغ
+        let amountMinor = args.amountMinor ?? 0
+        let newProgress: number | null = null
+        if (args.newProgressPercent !== undefined) {
+          const np = args.newProgressPercent
+          if (!Number.isFinite(np) || np <= contract.progressPercent || np > 100) {
+            throw new Error(`نسبة الإنجاز تراكمية: أكبر من ${contract.progressPercent}٪ وحتى 100٪`)
+          }
+          amountMinor = Math.round(contract.contractValueMinor * (np - contract.progressPercent) / 100)
+          newProgress = np
+        }
+        if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة الشهادة يجب أن تكون موجبة — أدخل مبلغاً أو نسبة إنجاز جديدة')
         // حماية تجاوز قيمة العقد
         const certified = state.subCertificates.filter((c) => c.contractId === contract.id).reduce((s, c) => s + c.amountMinor, 0)
-        if (certified + args.amountMinor > contract.contractValueMinor) {
+        if (certified + amountMinor > contract.contractValueMinor) {
           throw new Error(`الشهادات تتجاوز قيمة العقد (متبقٍ ${contract.contractValueMinor - certified})`)
         }
-        const retention = Math.round(args.amountMinor * contract.retentionPercent / 100)
+        const retention = Math.round(amountMinor * contract.retentionPercent / 100)
         // ضريبة الاستقطاع من نسبة العقد → التزام 2112 حتى توريدها للمصلحة
-        const withhold = Math.round(args.amountMinor * contract.taxWithholdPercent / 100)
-        // استرداد الدفعة المقدمة (اختياري) — لا يتجاوز رصيدها غير المسترد
-        const recovery = args.advanceRecoveryMinor ?? 0
-        if (recovery > 0) {
-          const advBalance = get().getSubAdvanceBalance(contract.id)
-          if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
-        }
+        const withhold = Math.round(amountMinor * contract.taxWithholdPercent / 100)
+        // استرداد الدفعة المقدمة: يدوي إن مُرر — وإلا تلقائي بنسبة العقد بسقف الرصيد (نمط AccFlex)
+        const advBalance = get().getSubAdvanceBalance(contract.id)
+        const recovery = args.advanceRecoveryMinor !== undefined
+          ? args.advanceRecoveryMinor
+          : contract.advanceRecoveryPercent > 0
+            ? Math.min(Math.round(amountMinor * contract.advanceRecoveryPercent / 100), advBalance)
+            : 0
+        if (recovery > 0 && recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
         const label = `${contract.contractNumber} — ${contract.contractorName}`
-        const lines = buildSubCertificateEntry(args.amountMinor, retention, withhold, recovery, label)
+        const lines = buildSubCertificateEntry(amountMinor, retention, withhold, recovery, label)
         const now = new Date().toISOString()
         const id = nextId(state.subCertificates)
         const entryId = nextId(state.journal)
@@ -6510,9 +6528,9 @@ export const useDataStore = create<DataState>()(
         }
         const cert: SubCertificate = {
           id, contractId: contract.id, number, date: now.slice(0, 10),
-          descriptionAr: args.description, amountMinor: args.amountMinor,
+          descriptionAr: args.description, amountMinor,
           retentionMinor: retention, taxWithholdMinor: withhold, advanceRecoveryMinor: recovery,
-          netMinor: args.amountMinor - retention - withhold - recovery, journalEntryId: entryId,
+          netMinor: amountMinor - retention - withhold - recovery, journalEntryId: entryId,
         }
         // إطفاء الدفعات المقدمة FIFO (الأقدم أولاً)
         let toRecover = recovery
@@ -6527,9 +6545,12 @@ export const useDataStore = create<DataState>()(
         const cost = {
           id: nextId(state.projectCosts), projectId: contract.projectId, date: now.slice(0, 10),
           kind: 'subcontract' as CostKind, description: `شهادة ${label}: ${args.description}`,
-          amountMinor: args.amountMinor, payment: 'credit' as const, journalEntryId: entryId,
+          amountMinor, payment: 'credit' as const, journalEntryId: entryId,
         }
-        set({ subCertificates: [...state.subCertificates, cert], projectCosts: [...state.projectCosts, cost], subAdvances: updatedSubAdvances, journal: [...state.journal, entry] })
+        const updatedContracts = newProgress !== null
+          ? state.subContracts.map((c) => (c.id === contract.id ? { ...c, progressPercent: newProgress } : c))
+          : state.subContracts
+        set({ subCertificates: [...state.subCertificates, cert], projectCosts: [...state.projectCosts, cost], subAdvances: updatedSubAdvances, subContracts: updatedContracts, journal: [...state.journal, entry] })
         return cert
       },
       paySubContractor: (args) => {
@@ -8817,7 +8838,7 @@ export const useDataStore = create<DataState>()(
             lines: (q.lines ?? []).map((l) => ({ ...l, nameAr: l.nameAr ?? l.descriptionAr.slice(0, 40), estCostMinor: l.estCostMinor ?? 0 })),
           })),
           boqItems: (s.boqItems ?? []).map((b) => ({ ...b, estCostMinor: b.estCostMinor ?? 0 })),
-          subContracts: (s.subContracts ?? []).map((c) => ({ ...c, supplierId: c.supplierId ?? null, taxWithholdPercent: c.taxWithholdPercent ?? 0, boqItemIds: c.boqItemIds ?? [] })),
+          subContracts: (s.subContracts ?? []).map((c) => ({ ...c, supplierId: c.supplierId ?? null, taxWithholdPercent: c.taxWithholdPercent ?? 0, boqItemIds: c.boqItemIds ?? [], advanceRecoveryPercent: c.advanceRecoveryPercent ?? 0, progressPercent: c.progressPercent ?? 0 })),
           subCertificates: (s.subCertificates ?? []).map((c) => ({ ...c, taxWithholdMinor: c.taxWithholdMinor ?? 0, advanceRecoveryMinor: c.advanceRecoveryMinor ?? 0 })),
           materialRequisitions: s.materialRequisitions ?? [],
           stockMoves: s.stockMoves ?? [],

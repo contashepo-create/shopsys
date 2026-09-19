@@ -151,9 +151,12 @@ export function SubcontractorsPage() {
   const [retention, setRetention] = useState('5')
   const [supplierId, setSupplierId] = useState('') // ربط اختياري بسجل مورد
   const [withhold, setWithhold] = useState('0') // ضريبة استقطاع ٪
+  const [advPct, setAdvPct] = useState('0') // خصم الدفعة المقدمة تلقائياً ٪
   const [assignedBoq, setAssignedBoq] = useState<number[]>([]) // بنود BOQ المسندة
 
   const [certFor, setCertFor] = useState<SubContract | null>(null)
+  const [certMode, setCertMode] = useState<'percent' | 'amount'>('percent')
+  const [certPercent, setCertPercent] = useState('')
   const [certAmount, setCertAmount] = useState('')
   const [certDesc, setCertDesc] = useState('')
   const [certRecovery, setCertRecovery] = useState('') // استرداد من الدفعة المقدمة
@@ -185,20 +188,27 @@ export function SubcontractorsPage() {
         projectId: projectId as number, contractorName: name.trim(), scopeAr: scope.trim(),
         supplierId: supplierId ? Number(supplierId) : null,
         contractValueMinor: toMinor(value, cur.decimals), retentionPercent: Number(retention) || 0,
-        taxWithholdPercent: Number(withhold) || 0, boqItemIds: assignedBoq,
+        taxWithholdPercent: Number(withhold) || 0, boqItemIds: assignedBoq, advanceRecoveryPercent: Number(advPct) || 0,
         startDate: new Date().toISOString().slice(0, 10),
       })
       toast.show(`أُنشئ عقد الباطن ${c.contractNumber} ✅`)
-      setOpen(false); setName(''); setScope(''); setValue(''); setSupplierId(''); setWithhold('0'); setAssignedBoq([])
+      setOpen(false); setName(''); setScope(''); setValue(''); setSupplierId(''); setWithhold('0'); setAdvPct('0'); setAssignedBoq([])
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
   const saveCert = () => {
     if (!certFor) return
     try {
-      const cert = addSubCertificate({ contractId: certFor.id, amountMinor: toMinor(certAmount, cur.decimals), description: certDesc.trim(), advanceRecoveryMinor: certRecovery ? toMinor(certRecovery, cur.decimals) : 0 })
+      const cert = addSubCertificate({
+        contractId: certFor.id,
+        ...(certMode === 'percent'
+          ? { newProgressPercent: Number(certPercent) }
+          : { amountMinor: toMinor(certAmount, cur.decimals) }),
+        description: certDesc.trim(),
+        ...(certRecovery ? { advanceRecoveryMinor: toMinor(certRecovery, cur.decimals) } : {}),
+      })
       toast.show(`اعتُمدت الشهادة #${cert.number} — صافي ${fmt(cert.netMinor)} (محتجز ${fmt(cert.retentionMinor)}${cert.taxWithholdMinor > 0 ? ` + استقطاع ${fmt(cert.taxWithholdMinor)}` : ''}${cert.advanceRecoveryMinor > 0 ? ` + استرداد ${fmt(cert.advanceRecoveryMinor)}` : ''}) ✅`)
-      setCertFor(null); setCertAmount(''); setCertDesc(''); setCertRecovery('')
+      setCertFor(null); setCertAmount(''); setCertDesc(''); setCertRecovery(''); setCertPercent('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -304,6 +314,9 @@ export function SubcontractorsPage() {
             <Field label="ضريبة استقطاع ٪" hint="تُخصم من كل شهادة التزاماً (2112) حتى توريدها للمصلحة">
               <input value={withhold} onChange={(e) => setWithhold(e.target.value)} inputMode="numeric" className={inputCls} />
             </Field>
+            <Field label="خصم الدفعة المقدمة ٪" hint="تُخصم تلقائياً من كل شهادة بهذه النسبة حتى إطفاء المقدمة — 0 = خصم يدوي">
+              <input value={advPct} onChange={(e) => setAdvPct(e.target.value)} inputMode="numeric" className={inputCls} />
+            </Field>
             <Field label="ربط بسجل مورد (اختياري)" hint="يوحّد مستحقاته في كشف حساب المورد">
               <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={inputCls}>
                 <option value="">— بلا ربط —</option>
@@ -332,16 +345,27 @@ export function SubcontractorsPage() {
         {certFor && (
           <div className="space-y-3">
             <div className="text-[12px] text-slate-500 bg-orange-500/5 rounded-xl p-3">
-              الاستقطاعات آلية: محتجز {certFor.retentionPercent}٪ (2108){certFor.taxWithholdPercent > 0 && <> + ضريبة استقطاع {certFor.taxWithholdPercent}٪ (2112)</>} + استرداد اختياري من الدفعة المقدمة (1111) — والتكلفة تُعترف فور الاعتماد
+              الاستقطاعات آلية: محتجز {certFor.retentionPercent}٪ (2108){certFor.taxWithholdPercent > 0 && <> + ضريبة استقطاع {certFor.taxWithholdPercent}٪ (2112)</>} + استرداد الدفعة المقدمة (1111): تلقائي بنسبة العقد {certFor.advanceRecoveryPercent > 0 ? `${certFor.advanceRecoveryPercent}٪` : '—'} أو يدوي أدناه — والتكلفة تُعترف فور الاعتماد
             </div>
-            <Field label={`قيمة الأعمال المعتمدة (${cur.symbol})`}><input value={certAmount} onChange={(e) => setCertAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <div className="flex gap-2">
+              {([['percent', 'بنسبة إنجاز تراكمية'], ['amount', 'بمبلغ مباشر']] as const).map(([m, label]) => (
+                <button key={m} onClick={() => setCertMode(m)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border transition-all ${certMode === m ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>{label}</button>
+              ))}
+            </div>
+            {certMode === 'percent' ? (
+              <Field label={`نسبة الإنجاز الجديدة ٪ (السابقة ${certFor.progressPercent}٪)`} hint={`قيمة الشريحة = ${fmt(certFor.contractValueMinor)} × (الجديدة − ${certFor.progressPercent})٪`}>
+                <input value={certPercent} onChange={(e) => setCertPercent(e.target.value)} inputMode="decimal" className={inputCls} placeholder={`أكبر من ${certFor.progressPercent} وحتى 100`} />
+              </Field>
+            ) : (
+              <Field label={`قيمة الأعمال المعتمدة (${cur.symbol})`}><input value={certAmount} onChange={(e) => setCertAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            )}
             <Field label="وصف الأعمال"><input value={certDesc} onChange={(e) => setCertDesc(e.target.value)} placeholder="أعمال الأسبوع الثالث…" className={inputCls} /></Field>
             {getSubAdvanceBalance(certFor.id) > 0 && (
               <Field label={`استرداد من الدفعة المقدمة (رصيدها ${fmt(getSubAdvanceBalance(certFor.id))})`} hint="يخصم من صافي الشهادة ويطفئ 1111">
                 <input value={certRecovery} onChange={(e) => setCertRecovery(e.target.value)} inputMode="decimal" className={inputCls} />
               </Field>
             )}
-            <Btn onClick={saveCert} className="w-full">اعتماد الشهادة</Btn>
+            <Btn onClick={saveCert} className="w-full" disabled={certMode === 'percent' ? !certPercent : !certAmount}>اعتماد الشهادة</Btn>
           </div>
         )}
       </Modal>

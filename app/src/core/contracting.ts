@@ -461,6 +461,10 @@ export interface SubContract {
   retentionPercent: number // محتجز يُخصم من كل شهادة
   /** نسبة ضريبة الاستقطاع من كل شهادة (0 = بلا) → 2112 */
   taxWithholdPercent: number
+  /** نسبة خصم الدفعة المقدمة تلقائياً من كل شهادة (نمط AccFlex — 0 = خصم يدوي) */
+  advanceRecoveryPercent: number
+  /** نسبة الإنجاز التراكمية المعتمدة بالشهادات 0–100 (تُحدَّث تلقائياً) */
+  progressPercent: number
   /** بنود BOQ المسندة لهذا المقاول (إسناد إداري لمتابعة النطاق) */
   boqItemIds: number[]
   status: SubContractStatus
