@@ -503,3 +503,12 @@ const S = () => useDataStore.getState()
 - UI: `/realestate/properties` و`/realestate/leases` (قسم teal) + جرس (leaseAlerts) + شروحات + هوية نشاط.
 - **العدد الآن 21 نشاطاً** — أي سكربت/اختبار يفحص العدد حُدّث (16 موضعاً). `toggleModuleList` يعد realestate وحدة عمل.
 - تحقق: `verify_realestate.mjs` (**37 فحصاً**). ⚠️ حسابات جديدة: 1113، 2115، 4113–4115، 5116.
+
+### 8.24 المراجعة الشاملة الكبرى (5 دفعات — d4f1128 حتى 1a8f931)
+- **strict: true مفعل في tsconfig.app.json ويمر بصفر أخطاء** — أي كود جديد يخضع لفحص null/undefined الكامل.
+- أُزيلت كل الأكواد الميتة المؤكدة: quotationLineTotal، buildProjectPurchaseEntry (منطق repo أغنى)، clearLog، ALL_UNITS، ComingSoon.tsx.
+- مصادر التسميات وحيدة: CHANGE_ORDER_STATUS_LABELS وISSUE_STATUS_LABELS وPARTY_CODE_LABELS مربوطة في الواجهات.
+- ACTIVITY_GUIDES الآن 21/21 (سُدّت فجوة butcher وdates).
+- تبعيات useMemo الناقصة أُصلحت في VouchersPage/StatementsPage/Dashboard؛ كائن العملة مثبت بمذكرة في Header/ScaleSettingsPage.
+- فحوص عرضية موثقة كلها خضراء: توازن القيود المضمنة الثلاثة، migrate يغطي كل الحقول، ROUTE_PERMISSIONS بالبادئات تغطي 83 مساراً، لا حسابات وهمية، لا مفاتيح localStorage يتيمة، آلية العكس متسقة.
+- oxlint: 25 تحذيراً متبقياً كلها أنماط مقصودة (react purity على Date.now في العرض، only-export-components، no-control-regex في التعقيم) — لا يُعمل على «تصفيرها» بلا داعٍ وظيفي.
