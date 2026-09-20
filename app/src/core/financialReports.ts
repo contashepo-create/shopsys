@@ -338,7 +338,10 @@ export function vatReport(journal: readonly JournalEntry[], p: FinPeriod, vatCod
     }
     if (credit === 0 && debit === 0) continue
     const st = (e as { sourceType?: string }).sourceType
-    if (st === undefined) { output += credit; input += debit }
+    // قيود بلا مصدر (بيانات خارجية) والقيود اليدوية: تصنيف اتجاهي —
+    // كانت اليدوية تقع في «مخرجات صافية» فيظهر قيد يدوي مدين على 2102
+    // مخرجاتٍ سالبة تشوه بندي الإقرار (اكتشاف رحلة التقارير)
+    if (st === undefined || st === 'manual') { output += credit; input += debit }
     else if (VAT_INPUT_SOURCES.has(st)) input += debit - credit
     else if (VAT_SETTLEMENT_SOURCES.has(st)) settled += debit - credit
     else output += credit - debit
