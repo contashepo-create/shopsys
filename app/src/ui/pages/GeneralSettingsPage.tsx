@@ -316,11 +316,11 @@ export function GeneralSettingsPage() {
         </h3>
         <p className="text-[11.5px] text-slate-400 mb-4">
           يظهر مُختاراً تلقائياً أعلى فاتورة البيع (الكاشير) وفاتورة الشراء — ويمكن تغييره لكل فاتورة.
-          «مخزن غير محدد» يعامل حركته على المخزن الرئيسي.
+          لا يوجد اختيار مبهم: اختر مخزناً محدداً، وفاتورة الشراء يمكنها التحديد لكل سطر عند الحاجة.
         </p>
         <div className="max-w-sm">
           <select
-            value={setup.defaultWarehouseId ?? ''}
+            value={setup.defaultWarehouseId ?? warehouses.find((w) => w.isMain)?.id ?? ''}
             onChange={(e) => {
               const v = e.target.value === '' ? null : Number(e.target.value)
               useAppStore.setState((s) => ({ setup: { ...s.setup, defaultWarehouseId: v } }))
@@ -328,7 +328,7 @@ export function GeneralSettingsPage() {
             }}
             className={inputCls}
           >
-            <option value="">🏬 مخزن غير محدد</option>
+            {warehouses.length === 0 && <option value="">لا توجد مخازن</option>}
             {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
           </select>
         </div>

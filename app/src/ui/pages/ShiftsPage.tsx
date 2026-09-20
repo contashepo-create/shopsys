@@ -29,6 +29,7 @@ export function ShiftsPage() {
   const { shifts, sales, saleReturns, treasuries, employees, openShift, closeShift, settleShiftVariance, appUsers, currentUserId } = useDataStore()
   // تسوية فرق الدرج تحرك نقدية وتحمل موظفين سلفاً — خلف اعتماد المشرف
   const settleApproval = useSupervisorApproval('trs.payment.approve')
+  const closeApproval = useSupervisorApproval('trs.payment.approve')
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -72,15 +73,30 @@ export function ShiftsPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  const doClose = () => {
+  const finishCloseShift = (approvedBy?: string) => {
     try {
-      const s = closeShift(toMinor(countedCash || '0', cur.decimals))
+      if (!openSummary) return
+      const counted = toMinor(countedCash || '0', cur.decimals)
+      const projectedVariance = counted - openSummary.expectedCashMinor
+      const approvalNote = projectedVariance === 0 ? null : (projectedVariance < 0 ? `اعتماد عجز ${fmt(-projectedVariance)}` : `اعتماد زيادة ${fmt(projectedVariance)}`)
+      const closerName = appUsers.find((u) => u.id === currentUserId)?.nameAr ?? (setup.ownerName || 'المالك')
+      const s = closeShift(counted, projectedVariance === 0 ? null : (approvedBy ?? closerName), approvalNote)
       const sum = summarizeShift(s, saleDocs, returnDocs)
       const v = sum.varianceMinor ?? 0
-      toast.show(v === 0 ? `أُقفلت الوردية — الدرج مضبوط تماماً ✓` : v < 0 ? `أُقفلت الوردية — عجز ${fmt(-v)}!` : `أُقفلت الوردية — زيادة ${fmt(v)}`, v < 0 ? 'error' : 'success')
+      toast.show(v === 0 ? `أُقفلت الوردية — الدرج مضبوط تماماً ✓` : v < 0 ? `أُقفلت الوردية باعتماد مشرف — عجز ${fmt(-v)}` : `أُقفلت الوردية باعتماد مشرف — زيادة ${fmt(v)}`, v < 0 ? 'error' : 'success')
       setCloseModal(false)
       setCountedCash('')
     } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const doClose = () => {
+    if (!openSummary) return
+    let counted = 0
+    try { counted = toMinor(countedCash || '0', cur.decimals) }
+    catch (e) { toast.show((e as Error).message, 'error'); return }
+    const projectedVariance = counted - openSummary.expectedCashMinor
+    if (projectedVariance === 0) finishCloseShift()
+    else closeApproval.request((approvedBy) => finishCloseShift(approvedBy))
   }
 
   return (
@@ -157,7 +173,7 @@ export function ShiftsPage() {
                   <tr key={s.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/[0.03] transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-800 dark:text-white">#{s.id} · {s.openedBy}</div>
-                      <div className="text-[11px] text-slate-400">{sum.invoiceCount} فاتورة · {sum.returnCount} مرتجع</div>
+                      <div className="text-[11px] text-slate-400">{sum.invoiceCount} فاتورة · {sum.returnCount} مرتجع{ s.closeApprovedBy ? ` · اعتماد: ${s.closeApprovedBy}` : ''}</div>
                     </td>
                     <td className="px-4 py-3 text-[12px] text-slate-500">
                       {s.openedAt.slice(5, 16).replace('T', ' ')} ← {s.closedAt?.slice(5, 16).replace('T', ' ')}
@@ -223,7 +239,7 @@ export function ShiftsPage() {
               <div className="text-[11px] text-slate-400 mt-1">افتتاحي {fmt(open?.openingCashMinor ?? 0)} + كاش {fmt(openSummary.cashSalesMinor)} − مرتجعات {fmt(openSummary.cashRefundsMinor)}</div>
             </div>
           )}
-          <Field label={`النقدية المعدودة فعلياً (${cur.symbol})`} hint="عدّ ما في الدرج الآن — الفارق سيُسجل عجزاً أو زيادة">
+          <Field label={`النقدية المعدودة فعلياً (${cur.symbol})`} hint="إذا ظهر عجز أو زيادة فلن تُقفل الوردية إلا باعتماد مشرف/مالك، ثم تُسوّى كإجراء مستقل.">
             <input value={countedCash} onChange={(e) => setCountedCash(e.target.value)} placeholder="0" className={inputCls} autoFocus dir="ltr" />
           </Field>
           <div className="flex justify-end gap-2">
@@ -300,6 +316,7 @@ export function ShiftsPage() {
         })()}
       </Modal>
       {settleApproval.dialog}
+      {closeApproval.dialog}
     </div>
   )
 }

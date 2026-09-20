@@ -27,7 +27,7 @@ export type WarehouseStock = Map<number, Map<number, number>> // warehouseId -> 
 /**
  * مستند مؤثر على مخزن بعينه (الأمر 8 — اختيار المخزن أعلى الفاتورة):
  * فاتورة شراء وارد مخزنها X ⇒ qtyDelta موجب في X؛ بيع من X ⇒ سالب.
- * warehouseId=null («مخزن غير محدد») أو الرئيسي ⇒ لا إزاحة (الرئيسي هو المتبقي).
+ * warehouseId=null («مخزن غير مختار») أو الرئيسي ⇒ لا إزاحة (الرئيسي هو المتبقي).
  */
 export interface WarehouseDoc {
   warehouseId: number | null
@@ -114,35 +114,64 @@ export function transferTotalQty(lines: TransferLine[]): number {
  * ومرتجع شراء عن فاتورة وردت لمخزن X ⇒ سالب في X (خرجت من حيث دخلت).
  */
 export function buildWarehouseDocs(
-  purchases: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number }[] }[],
-  sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number }[] }[],
+  purchases: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
+  sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
   saleReturns: { saleId: number; lines: { itemId: number; qty: number; condition?: string }[] }[] = [],
   purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number }[] }[] = [],
 ): WarehouseDoc[] {
   const docs: WarehouseDoc[] = []
+  const pushLineDoc = (warehouseId: number | null | undefined, itemId: number, qtyDelta: number) => {
+    if (warehouseId == null || qtyDelta === 0) return
+    docs.push({ warehouseId, lines: [{ itemId, qtyDelta }] })
+  }
+
+  // الفاتورة قد تكون على مخزن واحد، أو «تحديد بالسطر» وفيها warehouseId على كل سطر.
   for (const p of purchases) {
-    if (p.warehouseId == null) continue
-    docs.push({ warehouseId: p.warehouseId, lines: p.lines.map((l) => ({ itemId: l.itemId, qtyDelta: l.qty })) })
+    for (const l of p.lines) pushLineDoc(l.warehouseId ?? p.warehouseId ?? null, l.itemId, l.qty)
   }
   for (const s of sales) {
-    if (s.warehouseId == null) continue
-    docs.push({ warehouseId: s.warehouseId, lines: s.lines.map((l) => ({ itemId: l.itemId, qtyDelta: -l.qty })) })
+    for (const l of s.lines) pushLineDoc(l.warehouseId ?? s.warehouseId ?? null, l.itemId, -l.qty)
   }
-  const saleWh = new Map(sales.filter((s) => s.id != null).map((s) => [s.id!, s.warehouseId ?? null]))
+
+  const saleById = new Map(sales.filter((s) => s.id != null).map((s) => [s.id!, s]))
   for (const r of saleReturns) {
-    const wh = saleWh.get(r.saleId)
-    if (wh == null) continue // فاتورة بلا مخزن محدد ⇒ المرتجع ضمنياً على الرئيسي
-    // المرتجع التالف لا يدخل أي مخزن (تكلفته للهالك 5111) — إدخاله هنا يخلق
-    // رصيداً وهمياً في مخزن الفاتورة ويخصم مثله من الرئيسي (اكتُشف بمراجعة المرتجعات)
-    const back = r.lines.filter((l) => l.condition !== 'damaged')
-    if (!back.length) continue
-    docs.push({ warehouseId: wh, lines: back.map((l) => ({ itemId: l.itemId, qtyDelta: l.qty })) })
+    const sale = saleById.get(r.saleId)
+    if (!sale) continue
+    const remainingByLine = sale.lines.map((l) => l.qty)
+    for (const retLine of r.lines.filter((l) => l.condition !== 'damaged')) {
+      let left = retLine.qty
+      for (let i = 0; i < sale.lines.length && left > 1e-9; i++) {
+        const sl = sale.lines[i]
+        if (sl.itemId !== retLine.itemId || remainingByLine[i] <= 0) continue
+        const take = Math.min(left, remainingByLine[i])
+        remainingByLine[i] -= take
+        left = Math.round((left - take) * 1000) / 1000
+        pushLineDoc(sl.warehouseId ?? sale.warehouseId ?? null, retLine.itemId, take)
+      }
+    }
   }
-  const purchaseWh = new Map(purchases.filter((p) => p.id != null).map((p) => [p.id!, p.warehouseId ?? null]))
+
+  const purchaseById = new Map(purchases.filter((p) => p.id != null).map((p) => [p.id!, p]))
+  // مرتجعات الشراء الحالية مجمعة بالصنف؛ نوزعها على سطور الأصل بترتيبها حتى لا يخرج رصيد من مخزن لم يستلم.
+  const remainingPurchaseLineQty = new Map<string, number>()
+  for (const p of purchases) p.lines.forEach((l, i) => remainingPurchaseLineQty.set(`${p.id ?? 0}:${i}`, l.qty))
   for (const r of purchaseReturns) {
-    const wh = purchaseWh.get(r.purchaseId)
-    if (wh == null) continue
-    docs.push({ warehouseId: wh, lines: r.lines.map((l) => ({ itemId: l.itemId, qtyDelta: -l.qty })) })
+    const purchase = purchaseById.get(r.purchaseId)
+    if (!purchase) continue
+    for (const retLine of r.lines) {
+      let left = retLine.qty
+      for (let i = 0; i < purchase.lines.length && left > 1e-9; i++) {
+        const pl = purchase.lines[i]
+        if (pl.itemId !== retLine.itemId) continue
+        const key = `${purchase.id ?? 0}:${i}`
+        const can = remainingPurchaseLineQty.get(key) ?? 0
+        if (can <= 0) continue
+        const take = Math.min(left, can)
+        remainingPurchaseLineQty.set(key, Math.round((can - take) * 1000) / 1000)
+        left = Math.round((left - take) * 1000) / 1000
+        pushLineDoc(pl.warehouseId ?? purchase.warehouseId ?? null, retLine.itemId, -take)
+      }
+    }
   }
   return docs
 }

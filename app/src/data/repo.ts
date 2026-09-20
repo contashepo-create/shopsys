@@ -785,6 +785,8 @@ export interface PurchaseLine {
   vatPercent?: number
   /** ضريبة المدخلات المحسوبة لهذا السطر (تُقيد 2102 مديناً عند الإجمال) */
   inputVatMinor?: number
+  /** المخزن الذي استلم هذا السطر — يستخدم عند فاتورة مختلطة المخازن */
+  warehouseId?: number | null
 }
 
 export interface PurchaseExpense {
@@ -833,7 +835,7 @@ export interface PurchaseInvoice {
   journalEntryId: number | null // القيد المتولد (فواتير قديمة قبل الترحيل = null)
   /** سجل تدقيق التعديلات (طلب المالك) */
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
-  /** المخزن الذي وردت إليه البضاعة (الأمر 8) — null/undefined = «مخزن غير محدد» (يعامل كالرئيسي) */
+  /** المخزن الذي وردت إليه البضاعة (الأمر 8) — null/undefined = «مخزن غير مختار» (سجل قديم يعامل كالرئيسي) */
   warehouseId?: number | null
 }
 
@@ -956,7 +958,7 @@ export interface SaleInvoice {
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
   /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
-  /** المخزن الذي بيعت منه (الأمر 8) — null/undefined = «مخزن غير محدد» (يعامل كالرئيسي) */
+  /** المخزن الذي بيعت منه (الأمر 8) — null/undefined = «مخزن غير مختار» (سجل قديم يعامل كالرئيسي) */
   warehouseId?: number | null
   /**
    * G1 (مراجعة المرتجعات): نسبة الضريبة ونمطها الفعليان وقت البيع — يستخدمهما المرتجع
@@ -1252,7 +1254,7 @@ interface DataState {
   postPurchase: (inv: {
     supplierId: number
     date: string
-    lines: { itemId: number; qty: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; expiryDate?: string | null; serialsRaw?: string }[]
+    lines: { itemId: number; qty: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
     paidMinor: number
     treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه (افتراضياً الرئيسية)
@@ -1432,7 +1434,7 @@ interface DataState {
   /** فتح وردية كاشير برصيد درج افتتاحي — لا ورديتين مفتوحتين معاً */
   openShift: (openedBy: string, openingCashMinor: number) => Shift
   /** إقفال الوردية بالنقدية المعدودة — يظهر العجز/الزيادة في الملخص */
-  closeShift: (countedCashMinor: number) => Shift
+  closeShift: (countedCashMinor: number, closeApprovedBy?: string | null, closeApprovalNote?: string | null) => Shift
   /** تسوية عجز/زيادة وردية مقفلة (طلب المالك): مصروف/إيراد أو سلفة على الموظف تُخصم من رواتبه */
   settleShiftVariance: (args: { shiftId: number; mode: 'expense' | 'advance'; employeeId?: number | null }) => Shift
   /**
@@ -2477,6 +2479,7 @@ export const useDataStore = create<DataState>()(
             landedUnitCostMinor: l.landedUnitCostMinor,
             vatPercent: inv.lines[i]?.vatPercent,
             inputVatMinor: inv.lines[i]?.inputVatMinor,
+            warehouseId: inv.lines[i]?.warehouseId ?? inv.warehouseId ?? null,
           })),
           expenses: inv.expenses,
           goodsTotalMinor: goodsTotal,
@@ -4049,12 +4052,12 @@ export const useDataStore = create<DataState>()(
         return shift
       },
 
-      closeShift: (countedCashMinor) => {
+      closeShift: (countedCashMinor, closeApprovedBy = null, closeApprovalNote = null) => {
         const state = get()
         const open = currentOpenShift(state.shifts)
         if (!open) throw new Error('لا وردية مفتوحة')
         if (countedCashMinor < 0) throw new Error('النقدية المعدودة لا تكون سالبة')
-        const closed: Shift = { ...open, closedAt: new Date().toISOString(), countedCashMinor, status: 'closed' }
+        const closed: Shift = { ...open, closedAt: new Date().toISOString(), countedCashMinor, status: 'closed', closeApprovedBy, closeApprovalNote }
         set({ shifts: state.shifts.map((s) => (s.id === open.id ? closed : s)) })
         return closed
       },

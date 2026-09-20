@@ -124,7 +124,6 @@ export function Header({ title }: { title: string }) {
       {country && (
         <span className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/70 px-3 py-1.5 rounded-full">
           {country.flag} {country.nameAr} · {country.currency.symbol}
-          {country.vatPercent > 0 && ` · ضريبة ${country.vatPercent}٪`}
         </span>
       )}
 

@@ -15,21 +15,25 @@ export interface ItemLedgerRow {
   /** قيمة الحركة بالتكلفة أو بسعر البيع حسب النوع (للاطلاع) */
   valueMinor: number
   note: string
+  warehouseId?: number | null
+  userName?: string | null
 }
 
 export interface ItemLedgerInput {
   itemId: number
   openingQty: number // رصيد الصنف الافتتاحي (وقت إنشائه)
-  purchases: { invoiceNumber: string; date: string; lines: { itemId: number; qty: number; unitPriceMinor: number; expenseShareMinor?: number }[] }[]
-  purchaseReturns: { returnNumber: string; date: string; lines: { itemId: number; qty: number; unitCostMinor: number }[] }[]
-  sales: { invoiceNumber: string; date: string; lines: { itemId: number; qty: number; unitPriceMinor: number; discountPercent: number }[] }[]
-  saleReturns: { returnNumber: string; date: string; lines: { itemId: number; qty: number; unitPriceMinor: number; condition?: string }[] }[]
-  stocktakes: { stocktakeNumber: string; date: string; rows: { itemId: number; systemQty: number; countedQty: number }[] }[]
+  purchases: { invoiceNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; expenseShareMinor?: number; warehouseId?: number | null }[] }[]
+  purchaseReturns: { returnNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitCostMinor: number; warehouseId?: number | null }[] }[]
+  sales: { invoiceNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; discountPercent: number; warehouseId?: number | null }[] }[]
+  saleReturns: { returnNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number; unitPriceMinor: number; condition?: string; warehouseId?: number | null }[] }[]
+  stocktakes: { stocktakeNumber: string; date: string; warehouseId?: number | null; userName?: string | null; rows: { itemId: number; systemQty: number; countedQty: number }[] }[]
   productionOrders: { orderNumber: string; date: string; productItemId: number; qty: number; ingredients: { itemId: number; qty: number }[] }[]
-  materialRequisitions: { reqNumber: string; date: string; lines: { itemId: number; qty: number }[] }[]
+  materialRequisitions: { reqNumber: string; date: string; warehouseId?: number | null; userName?: string | null; lines: { itemId: number; qty: number }[] }[]
   /** أوامر التجهيز والتفكيك (جزارة/تمور): خام خارج ونواتج داخلة — اختياري لتوافق المستدعين الأقدم */
   processingOrders?: { orderNumber: string; date: string; sourceItemId: number; sourceQty: number; outputs: { itemId: number; qty: number }[] }[]
+  transfers?: { transferNumber?: string; date: string; fromWarehouseId: number; toWarehouseId: number; userName?: string | null; lines: { itemId: number; qty: number }[] }[]
 }
+
 
 export interface ItemLedgerResult {
   openingQty: number
@@ -52,7 +56,7 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
         date: p.date, docLabel: `فاتورة شراء ${p.invoiceNumber}`, docType: 'purchase',
         inQty: l.qty, outQty: 0,
         valueMinor: Math.round(l.qty * l.unitPriceMinor) + (l.expenseShareMinor ?? 0),
-        note: 'وارد شراء بتكلفته المحملة',
+        note: 'وارد شراء بتكلفته المحملة', warehouseId: l.warehouseId ?? p.warehouseId ?? null, userName: p.userName ?? null,
       })
     }
   }
@@ -62,7 +66,7 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
       raw.push({
         date: r.date, docLabel: `مرتجع شراء ${r.returnNumber}`, docType: 'purchase_return',
         inQty: 0, outQty: l.qty, valueMinor: Math.round(l.qty * l.unitCostMinor),
-        note: 'رد بضاعة للمورد',
+        note: 'رد بضاعة للمورد', warehouseId: l.warehouseId ?? r.warehouseId ?? null, userName: r.userName ?? null,
       })
     }
   }
@@ -74,7 +78,7 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
         date: s.date, docLabel: `فاتورة بيع ${s.invoiceNumber}`, docType: 'sale',
         inQty: 0, outQty: l.qty,
         valueMinor: gross - Math.round((gross * (l.discountPercent ?? 0)) / 100),
-        note: 'منصرف بيع (القيمة بسعر البيع)',
+        note: 'منصرف بيع (القيمة بسعر البيع)', warehouseId: l.warehouseId ?? s.warehouseId ?? null, userName: s.userName ?? null,
       })
     }
   }
@@ -87,7 +91,7 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
       raw.push({
         date: r.date, docLabel: `مرتجع بيع ${r.returnNumber}`, docType: 'sale_return',
         inQty: damaged ? 0 : l.qty, outQty: 0, valueMinor: Math.round(l.qty * l.unitPriceMinor),
-        note: damaged ? `مرتجع تالف (${l.qty}) — لا يدخل المخزون، تكلفته هالك` : 'عودة بضاعة من عميل',
+        note: damaged ? `مرتجع تالف (${l.qty}) — لا يدخل المخزون، تكلفته هالك` : 'عودة بضاعة من عميل', warehouseId: l.warehouseId ?? r.warehouseId ?? null, userName: r.userName ?? null,
       })
     }
   }
@@ -99,7 +103,7 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
       raw.push({
         date: st.date, docLabel: `جرد ${st.stocktakeNumber}`, docType: 'stocktake',
         inQty: diff > 0 ? diff : 0, outQty: diff < 0 ? -diff : 0, valueMinor: 0,
-        note: diff > 0 ? 'زيادة جرد (تسوية)' : 'عجز جرد (تسوية)',
+        note: diff > 0 ? 'زيادة جرد (تسوية)' : 'عجز جرد (تسوية)', warehouseId: st.warehouseId ?? null, userName: st.userName ?? null,
       })
     }
   }
@@ -138,7 +142,21 @@ export function buildItemLedger(input: ItemLedgerInput, fromDate?: string, toDat
       if (l.itemId !== id || l.qty <= 0) continue
       raw.push({
         date: mr.date, docLabel: `إذن صرف ${mr.reqNumber}`, docType: 'material_issue',
-        inQty: 0, outQty: l.qty, valueMinor: 0, note: 'صرف لمشروع/تشغيل',
+        inQty: 0, outQty: l.qty, valueMinor: 0, note: 'صرف لمشروع/تشغيل', warehouseId: mr.warehouseId ?? null, userName: mr.userName ?? null,
+      })
+    }
+  }
+  for (const tr of input.transfers ?? []) {
+    for (const l of tr.lines) {
+      if (l.itemId !== id || l.qty <= 0) continue
+      const label = tr.transferNumber ?? 'تحويل مخزني'
+      raw.push({
+        date: tr.date, docLabel: `تحويل ${label}`, docType: 'transfer',
+        inQty: 0, outQty: l.qty, valueMinor: 0, note: 'خروج من مخزن', warehouseId: tr.fromWarehouseId, userName: tr.userName ?? null,
+      })
+      raw.push({
+        date: tr.date, docLabel: `تحويل ${label}`, docType: 'transfer',
+        inQty: l.qty, outQty: 0, valueMinor: 0, note: 'دخول إلى مخزن', warehouseId: tr.toWarehouseId, userName: tr.userName ?? null,
       })
     }
   }

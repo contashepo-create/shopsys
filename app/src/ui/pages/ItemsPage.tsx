@@ -4,7 +4,7 @@
  * - كتالوج وحدات احترافي شامل + وحدة مخصصة
  * - سعر التكلفة محسوب تلقائياً من فواتير الشراء (متوسط مرجح) — لا يُعدَّل يدوياً بعد أول حركة
  */
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useRef } from 'react'
 import { Plus, Search, Pencil, Trash2, Barcode, FolderPlus, Package, Lock, CornerDownLeft, FileDown, FileUp, Grid3x3, BookOpen, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
@@ -29,7 +29,7 @@ import { printHtml } from '../print/printReceipt.ts'
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
 export function ItemsPage() {
-  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers } = useDataStore()
+  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers, journal } = useDataStore()
   const { setup, labelSettings } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -37,6 +37,7 @@ export function ItemsPage() {
 
   const [query, setQuery] = useState('')
   const [catFilter, setCatFilter] = useState<number | 0>(0)
+  const [warehouseFilter, setWarehouseFilter] = useState<number | 0>(0)
   const [modal, setModal] = useState<'closed' | 'item' | 'category'>('closed')
   const [editing, setEditing] = useState<Item | null>(null)
   const [draft, setDraft] = useState<ItemDraft | null>(null)
@@ -60,15 +61,22 @@ export function ItemsPage() {
     return result
   }, [categories])
 
+  const warehouseStock = useMemo(
+    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns)),
+    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns],
+  )
+  const stockInWarehouse = useCallback((warehouseId: number, itemId: number) => warehouseStock.get(warehouseId)?.get(itemId) ?? 0, [warehouseStock])
+
   const filtered = useMemo(() => {
     const allowedIds = catFilter ? new Set(categoryDescendants(catFilter, categories)) : null
     return items.filter((it) => {
       if (allowedIds && !allowedIds.has(it.categoryId)) return false
+      if (warehouseFilter && stockInWarehouse(warehouseFilter, it.id) <= 0) return false
       const q = query.trim()
       if (!q) return true
       return it.nameAr.includes(q) || it.sku.includes(q) || it.barcodes.some((b) => b.includes(q))
     })
-  }, [items, query, catFilter, categories])
+  }, [items, query, catFilter, categories, warehouseFilter, stockInWarehouse])
 
   /** هل للصنف حركة شراء؟ عندها تُقفل التكلفة (تصبح محسوبة فقط) */
   const hasPurchases = (itemId: number) => purchases.some((p) => p.lines.some((l) => l.itemId === itemId))
@@ -103,17 +111,25 @@ export function ItemsPage() {
   }
   const [ledgerFrom, setLedgerFrom] = useState('')
   const [ledgerTo, setLedgerTo] = useState('')
+  const [ledgerWarehouseId, setLedgerWarehouseId] = useState<number | 0>(0)
+  const [ledgerUser, setLedgerUser] = useState('')
+
+  const journalUser = useCallback((sourceType: string, sourceId: number | null | undefined) =>
+    journal.find((j) => j.sourceType === sourceType && j.sourceId === sourceId)?.createdBy ?? null, [journal])
+  const openItemCard = (it: Item) => {
+    setCardFor(it); setLedgerFrom(''); setLedgerTo(''); setLedgerWarehouseId(0); setLedgerUser('')
+  }
 
   const ledgerInput = useMemo(() => {
     if (!cardFor) return null
     return {
       itemId: cardFor.id,
       openingQty: 0, // يُحسب عكسياً بالأسفل من الرصيد الحالي
-      purchases: purchases.map((p) => ({ invoiceNumber: p.invoiceNumber, date: p.date, lines: p.lines })),
-      purchaseReturns: purchaseReturns.map((r) => ({ returnNumber: r.returnNumber, date: r.date, lines: r.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitCostMinor: l.landedUnitCostMinor })) })),
-      sales: sales.map((sl) => ({ invoiceNumber: sl.invoiceNumber, date: sl.date, lines: sl.lines })),
-      saleReturns: saleReturns.map((r) => ({ returnNumber: r.returnNumber, date: r.date, lines: r.lines })),
-      stocktakes: stocktakes.map((st) => ({ stocktakeNumber: st.stocktakeNumber, date: st.date, rows: st.result.variances.map((v) => ({ itemId: v.itemId, systemQty: v.expectedQty, countedQty: v.countedQty })) })),
+      purchases: purchases.map((p) => ({ invoiceNumber: p.invoiceNumber, date: p.date, warehouseId: p.warehouseId ?? null, userName: journalUser('purchase', p.id), lines: p.lines })),
+      purchaseReturns: purchaseReturns.map((r) => ({ returnNumber: r.returnNumber, date: r.date, warehouseId: purchases.find((p) => p.id === r.purchaseId)?.warehouseId ?? null, userName: journalUser('purchase_return', r.id), lines: r.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitCostMinor: l.landedUnitCostMinor })) })),
+      sales: sales.map((sl) => ({ invoiceNumber: sl.invoiceNumber, date: sl.date, warehouseId: sl.warehouseId ?? null, userName: journalUser('sale', sl.id), lines: sl.lines })),
+      saleReturns: saleReturns.map((r) => ({ returnNumber: r.returnNumber, date: r.date, warehouseId: sales.find((sl) => sl.id === r.saleId)?.warehouseId ?? null, userName: journalUser('sale_return', r.id), lines: r.lines })),
+      stocktakes: stocktakes.map((st) => ({ stocktakeNumber: st.stocktakeNumber, date: st.date, warehouseId: null, userName: journal.find((j) => j.id === st.journalEntryId)?.createdBy ?? null, rows: st.result.variances.map((v) => ({ itemId: v.itemId, systemQty: v.expectedQty, countedQty: v.countedQty })) })),
       productionOrders: productionOrders.map((po) => {
         const recipe = recipes.find((rc) => rc.id === po.recipeId)
         return {
@@ -121,18 +137,39 @@ export function ItemsPage() {
           ingredients: (recipe?.ingredients ?? []).map((ing) => ({ itemId: ing.itemId, qty: ing.qty * po.batches })),
         }
       }),
-      materialRequisitions: materialRequisitions.map((mr) => ({ reqNumber: mr.reqNumber, date: mr.date, lines: mr.lines.map((l) => ({ itemId: l.itemId, qty: l.qty })) })),
+      materialRequisitions: materialRequisitions.map((mr) => ({ reqNumber: mr.reqNumber, date: mr.date, warehouseId: warehouses.find((w) => w.isMain)?.id ?? null, userName: journal.find((j) => j.id === mr.journalEntryId)?.createdBy ?? null, lines: mr.lines.map((l) => ({ itemId: l.itemId, qty: l.qty })) })),
       processingOrders: processingOrders.map((pr) => ({ orderNumber: pr.orderNumber, date: pr.date.slice(0, 10), sourceItemId: pr.sourceItemId, sourceQty: pr.sourceQty, outputs: pr.outputs.map((o) => ({ itemId: o.itemId, qty: o.qty })) })),
+      transfers: transfers.map((tr) => ({ transferNumber: tr.transferNumber, date: tr.date, fromWarehouseId: tr.fromWarehouseId, toWarehouseId: tr.toWarehouseId, userName: null, lines: tr.lines })),
     }
-  }, [cardFor, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, recipes, materialRequisitions])
+  }, [cardFor, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, recipes, materialRequisitions, transfers, warehouses, journal, journalUser])
 
   const itemLedger = useMemo(() => {
     if (!cardFor || !ledgerInput) return null
-    // الرصيد الافتتاحي يُشتق عكسياً: الرصيد الحالي − صافي كل الحركات المسجلة
-    const all = buildItemLedger(ledgerInput)
-    const opening = Math.round(((cardFor.stockQty ?? 0) - (all.totalIn - all.totalOut)) * 1000) / 1000
-    return buildItemLedger({ ...ledgerInput, openingQty: opening }, ledgerFrom || undefined, ledgerTo || undefined)
-  }, [cardFor, ledgerInput, ledgerFrom, ledgerTo])
+    const filterWarehouse = <T extends { warehouseId?: number | null }>(rows: T[]) => ledgerWarehouseId ? rows.filter((r) => (r.warehouseId ?? 0) === ledgerWarehouseId) : rows
+    const scopedInput = ledgerWarehouseId ? {
+      ...ledgerInput,
+      purchases: ledgerInput.purchases.map((p) => ({ ...p, lines: p.lines.filter((l) => (l.warehouseId ?? p.warehouseId ?? 0) === ledgerWarehouseId) })).filter((p) => p.lines.length),
+      purchaseReturns: filterWarehouse(ledgerInput.purchaseReturns),
+      sales: filterWarehouse(ledgerInput.sales),
+      saleReturns: filterWarehouse(ledgerInput.saleReturns),
+      stocktakes: filterWarehouse(ledgerInput.stocktakes),
+      materialRequisitions: filterWarehouse(ledgerInput.materialRequisitions),
+      transfers: (ledgerInput.transfers ?? []).filter((t) => t.fromWarehouseId === ledgerWarehouseId || t.toWarehouseId === ledgerWarehouseId),
+    } : ledgerInput
+    // الرصيد الافتتاحي يُشتق عكسياً من الرصيد الحالي في النطاق المختار (كل المخازن أو مخزن محدد)
+    const currentQty = ledgerWarehouseId ? stockInWarehouse(ledgerWarehouseId, cardFor.id) : (cardFor.stockQty ?? 0)
+    const all = buildItemLedger(scopedInput)
+    const opening = Math.round((currentQty - (all.totalIn - all.totalOut)) * 1000) / 1000
+    return buildItemLedger({ ...scopedInput, openingQty: opening }, ledgerFrom || undefined, ledgerTo || undefined)
+  }, [cardFor, ledgerInput, ledgerFrom, ledgerTo, ledgerWarehouseId, stockInWarehouse])
+  const shownLedgerRows = useMemo(
+    () => itemLedger?.rows.filter((r) => !ledgerUser || (r.userName ?? '') === ledgerUser) ?? [],
+    [itemLedger, ledgerUser],
+  )
+  const ledgerUsers = useMemo(
+    () => Array.from(new Set((itemLedger?.rows ?? []).map((r) => r.userName).filter(Boolean) as string[])).sort(),
+    [itemLedger],
+  )
 
   const printItemCard = () => {
     if (!cardFor || !itemLedger) return
@@ -310,6 +347,12 @@ export function ItemsPage() {
             <option key={cat.id} value={cat.id}>{'\u00A0\u00A0'.repeat(depth)}{depth > 0 ? '↳ ' : ''}{cat.nameAr}</option>
           ))}
         </select>
+        {warehouses.length > 1 && (
+          <select value={warehouseFilter} onChange={(e) => setWarehouseFilter(Number(e.target.value))} className={`${inputCls} w-56`} title="فلترة الأصناف حسب المخزن">
+            <option value={0}>كل المخازن</option>
+            {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
+          </select>
+        )}
         <Btn variant="soft" onClick={openNewCategory}>
           <span className="flex items-center gap-1.5"><FolderPlus size={15} /> قسم جديد</span>
         </Btn>
@@ -416,6 +459,8 @@ export function ItemsPage() {
                   <tr
                     key={it.id}
                     style={{ animationDelay: `${i * 30}ms` }}
+                    onDoubleClick={() => openItemCard(it)}
+                    title="اضغط مرتين لفتح كارت حركة الصنف"
                     className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-brand-500/[0.03] dark:hover:bg-brand-500/[0.06] transition-colors duration-150"
                   >
                     <td className="px-4 py-3">
@@ -442,7 +487,7 @@ export function ItemsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`font-bold text-[13px] ${(it.stockQty ?? 0) <= it.minQty ? 'text-rose-500' : 'text-slate-600 dark:text-slate-300'}`}>
-                        {it.stockQty ?? 0}
+                        {warehouseFilter ? stockInWarehouse(warehouseFilter, it.id) : (it.stockQty ?? 0)}
                       </span>
                       <span className="text-[10px] text-slate-400 mr-1">{it.baseUnit}</span>
                     </td>
@@ -460,7 +505,7 @@ export function ItemsPage() {
                             <Grid3x3 size={15} />
                           </button>
                         )}
-                        <button onClick={() => { setCardFor(it); setLedgerFrom(''); setLedgerTo('') }} title="كارت الصنف — دفتر الحركة الكامل مع فلتر وطباعة" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all duration-200 hover:scale-110">
+                        <button onClick={() => openItemCard(it)} title="كارت الصنف — دفتر الحركة الكامل مع فلتر وطباعة" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all duration-200 hover:scale-110">
                           <BookOpen size={15} />
                         </button>
                         <button onClick={() => openEditItem(it)} title="تعديل بيانات الصنف" className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
@@ -708,11 +753,23 @@ export function ItemsPage() {
               </div>
 
               {/* فلتر الفترة + طباعة */}
-              <div className="flex flex-wrap items-end gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end">
                 <Field label="من تاريخ"><input type="date" value={ledgerFrom} onChange={(e) => setLedgerFrom(e.target.value)} className={inputCls} /></Field>
                 <Field label="إلى تاريخ"><input type="date" value={ledgerTo} onChange={(e) => setLedgerTo(e.target.value)} className={inputCls} /></Field>
+                <Field label="المخزن">
+                  <select value={ledgerWarehouseId} onChange={(e) => setLedgerWarehouseId(Number(e.target.value))} className={inputCls}>
+                    <option value={0}>كل المخازن</option>
+                    {warehouses.map((w) => <option key={w.id} value={w.id}>{w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
+                  </select>
+                </Field>
+                <Field label="المستخدم">
+                  <select value={ledgerUser} onChange={(e) => setLedgerUser(e.target.value)} className={inputCls}>
+                    <option value="">كل المستخدمين</option>
+                    {ledgerUsers.map((u) => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </Field>
                 <Btn variant="ghost" className="border border-slate-200 dark:border-slate-700" onClick={printItemCard}>
-                  <Printer size={14} /> طباعة كارت الصنف
+                  <Printer size={14} /> طباعة
                 </Btn>
               </div>
 
@@ -723,8 +780,9 @@ export function ItemsPage() {
                   <span className="text-emerald-600">وارد: {qtyFmt(itemLedger.totalIn)}</span>
                   <span className="text-rose-500">منصرف: {qtyFmt(itemLedger.totalOut)}</span>
                   <span>آخر الفترة: {qtyFmt(itemLedger.closingQty)}</span>
+                  {ledgerUser && <span className="text-sky-600">المعروض للمستخدم: {shownLedgerRows.length} حركة</span>}
                 </div>
-                {itemLedger.rows.length === 0 ? (
+                {shownLedgerRows.length === 0 ? (
                   <div className="p-6 text-center text-slate-400 text-[12px]">لا حركات في الفترة المحددة</div>
                 ) : (
                   <table className="w-full text-[12px]">
@@ -732,6 +790,8 @@ export function ItemsPage() {
                       <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
                         <th className="px-3 py-2">التاريخ</th>
                         <th className="px-3 py-2">المستند</th>
+                        <th className="px-3 py-2">المخزن</th>
+                        <th className="px-3 py-2">المستخدم</th>
                         <th className="px-3 py-2">وارد</th>
                         <th className="px-3 py-2">منصرف</th>
                         <th className="px-3 py-2">الرصيد</th>
@@ -739,10 +799,12 @@ export function ItemsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {itemLedger.rows.map((r, i) => (
+                      {shownLedgerRows.map((r, i) => (
                         <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                           <td className="px-3 py-1.5 text-slate-400 font-mono text-[10.5px]" dir="ltr">{r.date}</td>
                           <td className="px-3 py-1.5 font-bold text-slate-700 dark:text-slate-200">{r.docLabel}<div className="text-[9.5px] text-slate-400 font-normal">{r.note}</div></td>
+                          <td className="px-3 py-1.5 text-slate-500">{r.warehouseId ? (warehouses.find((w) => w.id === r.warehouseId)?.nameAr ?? '—') : '—'}</td>
+                          <td className="px-3 py-1.5 text-slate-500">{r.userName ?? '—'}</td>
                           <td className="px-3 py-1.5 font-bold text-emerald-600">{r.inQty ? qtyFmt(r.inQty) : '—'}</td>
                           <td className="px-3 py-1.5 font-bold text-rose-500">{r.outQty ? qtyFmt(r.outQty) : '—'}</td>
                           <td className="px-3 py-1.5 font-black">{qtyFmt(r.balance)}</td>

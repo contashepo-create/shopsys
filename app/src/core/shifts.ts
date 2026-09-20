@@ -15,6 +15,10 @@ export interface Shift {
   closedAt: string | null
   countedCashMinor: Minor | null // النقدية المعدودة عند الإقفال
   status: 'open' | 'closed'
+  /** اسم المشرف/المالك الذي اعتمد إقفال وردية بها فرق نقدي — null/undefined = فرق صفر أو سجل قديم */
+  closeApprovedBy?: string | null
+  /** سبب الاعتماد عند وجود عجز/زيادة وقت الإقفال */
+  closeApprovalNote?: string | null
   /** تسوية العجز/الزيادة (طلب المالك): مصروف، أو سلفة على الموظف تُخصم من رواتبه */
   varianceSettledMode?: 'expense' | 'advance' | null
   varianceEntryId?: number | null // قيد التسوية

@@ -30,7 +30,7 @@ import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
  * «الكمية» و«السعر» المدخلين بهذه الوحدة — وعند الترحيل يتحولان تلقائياً
  * للوحدة الأساسية (كمية×المعامل، السعر÷المعامل) فيبقى المخزون بالقطعة دائماً.
  */
-interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string; unitName: string; vatPercent: number }
+interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string; unitName: string; vatPercent: number; warehouseId: number | null }
 interface DraftExpense {
   nameAr: string
   amount: string
@@ -61,9 +61,11 @@ export function PurchasesPage() {
   const country = setup.countryCode ? getCountry(setup.countryCode) : null
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  const mainWarehouseId = warehouses.find((w) => w.isMain)?.id ?? warehouses[0]?.id ?? null
+  const defaultPurchaseWarehouseId = setup.defaultWarehouseId ?? mainWarehouseId
   const itemVatPercent = (itemId: number) => effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, countryVatPercent)
   const makeDraftLine = (itemId: number = items[0]?.id ?? 0, patch: Partial<DraftLine> = {}): DraftLine => ({
-    itemId, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), ...patch,
+    itemId, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), warehouseId: defaultPurchaseWarehouseId, ...patch,
   })
   const fmt = (m: number) => formatMinor(m, cur, false)
 
@@ -82,7 +84,7 @@ export function PurchasesPage() {
       partyLabel: suppliers.find((sp) => sp.id === inv.supplierId)?.nameAr ?? `مورد #${inv.supplierId}`,
       paymentLabel: inv.paidMinor >= (inv.supplierDueMinor ?? inv.grandTotalMinor) ? 'مدفوعة بالكامل' : inv.paidMinor > 0 ? 'مدفوعة جزئياً' : 'آجلة',
       rows: inv.lines.map((l) => ({
-        nameAr: `${items.find((it) => it.id === l.itemId)?.nameAr ?? `صنف #${l.itemId}`}${l.vatPercent != null ? ` — ض. ${l.vatPercent > 0 ? l.vatPercent + '٪' : 'معفى'}` : ''}`,
+        nameAr: items.find((it) => it.id === l.itemId)?.nameAr ?? `صنف #${l.itemId}`,
         qty: l.qty,
         unitPriceMinor: l.unitPriceMinor,
         totalMinor: Math.round(l.unitPriceMinor * l.qty),
@@ -125,10 +127,14 @@ export function PurchasesPage() {
   const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [projectId, setProjectId] = useState('')
   /* الأمر 8: المخزن المستلم للبضاعة — الافتراضي من الإعدادات */
-  const [warehouseId, setWarehouseId] = useState<number | null>(setup.defaultWarehouseId ?? null)
+  const [warehouseId, setWarehouseId] = useState<number | null>(defaultPurchaseWarehouseId)
   const [notes, setNotes] = useState('')
   const [lineOptionsOpen, setLineOptionsOpen] = useState(false)
   const [lineOptions, setLineOptions] = useState({ expiry: false, serials: false })
+  const lineWarehouseMode = warehouses.length > 1 && warehouseId == null
+  const lineGridClass = lineWarehouseMode
+    ? (lineOptions.expiry ? 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_130px_36px]' : 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_36px]')
+    : (lineOptions.expiry ? 'sm:grid-cols-[1fr_110px_90px_120px_96px_140px_36px]' : 'sm:grid-cols-[1fr_110px_90px_120px_96px_36px]')
   // مصروف لاحق على فاتورة مرحّلة (طلب المالك — «يمكن لاحقاً تسجيل مصروفات أخرى»)
   const [lateName, setLateName] = useState('')
   const [lateAmount, setLateAmount] = useState('')
@@ -209,6 +215,7 @@ export function PurchasesPage() {
     setPaid('')
     setPaySource(DEFAULT_PAY_SOURCE)
     setProjectId('')
+    setWarehouseId(defaultPurchaseWarehouseId)
     setNotes('')
     setOpen(true)
   }
@@ -298,6 +305,10 @@ export function PurchasesPage() {
     // P2 (مراجعة المشتريات): المطابقة بالترتيب لا بالبحث — سطران بنفس الصنف والكمية
     // كانا يأخذان صلاحية/سيريالات السطر الأول معاً (computeLandedCosts يحفظ الترتيب)
     const enteredLines = lines.filter((l) => l.itemId && Number(l.qty) > 0)
+    if (lineWarehouseMode && enteredLines.some((l) => l.warehouseId == null)) {
+      toast.show('اختر مخزناً لكل سطر — لا يمكن ترحيل بضاعة على مخزن غير مختار', 'error')
+      return
+    }
     const inv = postPurchase({
       supplierId,
       date: new Date().toISOString().slice(0, 10),
@@ -309,6 +320,7 @@ export function PurchasesPage() {
           unitPriceMinor: l.unitPriceMinor,
           vatPercent: d?.vatPercent ?? 0,
           inputVatMinor: d ? lineVatMinor(d) : 0,
+          warehouseId: lineWarehouseMode ? (d?.warehouseId ?? null) : (warehouseId ?? null),
           expiryDate: d?.expiryDate || null,
           serialsRaw: d?.serialsRaw || undefined,
         }
@@ -327,7 +339,7 @@ export function PurchasesPage() {
       treasury: paySource.kind === 'treasury' ? paySource.treasury : undefined,
       custodyFileId: paySource.kind === 'custody' ? paySource.custodyFileId : null,
       projectId: projectId ? Number(projectId) : null,
-      warehouseId, // الأمر 8: المخزن المستلم
+      warehouseId: lineWarehouseMode ? null : warehouseId, // مخزن الفاتورة أو null = تحديد بالسطر
       inputVatMinor,
       notes,
     })
@@ -382,6 +394,9 @@ export function PurchasesPage() {
                     <div className="font-bold text-slate-800 dark:text-white">{p.invoiceNumber}</div>
                     {p.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{p.refCode}</div>}
                     <div className="text-[11px] text-slate-400">{p.date}</div>
+                    {warehouses.length > 1 && (
+                      <div className="text-[10.5px] text-slate-400">مخزن: {p.warehouseId == null ? 'متعدد حسب السطور' : (warehouses.find((w) => w.id === p.warehouseId)?.nameAr ?? '—')}</div>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{suppliers.find((s) => s.id === p.supplierId)?.nameAr ?? '—'}</td>
                   <td className="px-4 py-3">{fmt(p.goodsTotalMinor)}</td>
@@ -437,16 +452,15 @@ export function PurchasesPage() {
               <PaySourcePicker value={paySource} onChange={setPaySource} />
             </Field>
           </div>
-          <div className="rounded-2xl border border-sky-500/20 bg-sky-500/[0.06] px-4 py-3 text-[12px] text-slate-500 leading-relaxed">
-            🧾 ضريبة المدخلات لا تُدخل كرقم عام على الفاتورة: تظهر الآن <b>نسبة الضريبة بجانب كل بند</b>
-            وتُحسب تلقائياً حسب بلد المنشأة {country ? <b>({country.flag} {country.nameAr} — {countryVatPercent}٪)</b> : null}،
-            مع احترام استثناء الصنف إن كان معفى. الإجمالي المحسوب الآن: <b className="text-sky-700 dark:text-sky-300">{fmt(inputVatMinor)} {cur.symbol}</b>.
-          </div>
           {warehouses.length > 1 && (
-            <Field label="المخزن المستلم للبضاعة" hint="«غير محدد» يعامل كالمخزن الرئيسي — الافتراضي من الإعدادات العامة">
-              <select value={warehouseId ?? ''} onChange={(e) => setWarehouseId(e.target.value === '' ? null : Number(e.target.value))} className={inputCls}>
-                <option value="">🏬 مخزن غير محدد</option>
+            <Field label="مخزن الفاتورة" hint="اختر مخزناً واحداً للفاتورة كلها، أو «تحديد لكل سطر» إذا كانت البضاعة موزعة على أكثر من مخزن. لا يوجد مخزن مبهم.">
+              <select
+                value={warehouseId == null ? 'line' : String(warehouseId)}
+                onChange={(e) => setWarehouseId(e.target.value === 'line' ? null : Number(e.target.value))}
+                className={inputCls}
+              >
                 {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
+                <option value="line">↳ تحديد المخزن لكل سطر</option>
               </select>
             </Field>
           )}
@@ -510,8 +524,8 @@ export function PurchasesPage() {
               />
             </div>
             {/* رؤوس أعمدة واضحة — الضريبة بجانب كل بند، والصلاحية لا تظهر إلا من «خيارات أكثر» */}
-            <div className={`hidden sm:grid ${lineOptions.expiry ? 'grid-cols-[1fr_110px_90px_120px_96px_140px_36px]' : 'grid-cols-[1fr_110px_90px_120px_96px_36px]'} gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400`}>
-              <span>الصنف</span><span>الوحدة</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>ضريبة</span>{lineOptions.expiry && <span>الصلاحية</span>}<span />
+            <div className={`hidden sm:grid ${lineGridClass} gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400`}>
+              <span>الصنف</span>{lineWarehouseMode && <span>المخزن</span>}<span>الوحدة</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>ضريبة</span>{lineOptions.expiry && <span>الصلاحية</span>}<span />
             </div>
             <div className="space-y-2">
               {lines.map((l, i) => {
@@ -519,7 +533,7 @@ export function PurchasesPage() {
                 const lineUnit = l.unitName ? lineItem?.extraUnits.find((u) => u.nameAr === l.unitName) : undefined
                 return (
                 <div key={i} className="anim-in">
-                <div className={`grid grid-cols-2 ${lineOptions.expiry ? 'sm:grid-cols-[1fr_110px_90px_120px_96px_140px_36px]' : 'sm:grid-cols-[1fr_110px_90px_120px_96px_36px]'} gap-2 items-center`}>
+                <div className={`grid grid-cols-2 ${lineGridClass} gap-2 items-center`}>
                   <select
                     value={l.itemId}
                     onChange={(e) => { const nextId = Number(e.target.value); setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: nextId, unitName: '', vatPercent: itemVatPercent(nextId) } : x))) }}
@@ -527,6 +541,17 @@ export function PurchasesPage() {
                   >
                     {items.map((it) => <option key={it.id} value={it.id}>{it.nameAr}{it.baseUnit ? ` (${it.baseUnit})` : ''}</option>)}
                   </select>
+                  {lineWarehouseMode && (
+                    <select
+                      value={l.warehouseId ?? ''}
+                      onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, warehouseId: e.target.value ? Number(e.target.value) : null } : x)))}
+                      className={inputCls}
+                      title="المخزن الذي يستلم هذا السطر"
+                    >
+                      <option value="">— اختر مخزناً —</option>
+                      {warehouses.map((w) => <option key={w.id} value={w.id}>{w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
+                    </select>
+                  )}
                   {/* وحدة الشراء (تدقيق المالك): أساسية أو كرتونة/علبة — الكمية والسعر بها والترحيل يفكها تلقائياً */}
                   {lineItem && lineItem.extraUnits.length > 0 ? (
                     <select
@@ -788,7 +813,7 @@ export function PurchasesPage() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                  <th className="px-3 py-2">الصنف</th><th className="px-3 py-2">كمية</th><th className="px-3 py-2">سعر</th><th className="px-3 py-2">ضريبة</th>
+                  <th className="px-3 py-2">الصنف</th>{warehouses.length > 1 && <th className="px-3 py-2">المخزن</th>}<th className="px-3 py-2">كمية</th><th className="px-3 py-2">سعر</th><th className="px-3 py-2">ضريبة</th>
                   <th className="px-3 py-2">نصيب مصاريف</th><th className="px-3 py-2">تكلفة نهائية</th>
                 </tr>
               </thead>
@@ -796,6 +821,7 @@ export function PurchasesPage() {
                 {viewing.lines.map((l, i) => (
                   <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                     <td className="px-3 py-2 font-bold">{items.find((it) => it.id === l.itemId)?.nameAr ?? `#${l.itemId}`}</td>
+                    {warehouses.length > 1 && <td className="px-3 py-2 text-slate-500">{warehouses.find((w) => w.id === (l.warehouseId ?? viewing.warehouseId))?.nameAr ?? '—'}</td>}
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
                     <td className="px-3 py-2 text-sky-600 font-bold">{l.vatPercent != null ? (l.vatPercent > 0 ? `${l.vatPercent}٪ · ${fmt(l.inputVatMinor ?? 0)}` : 'معفى') : '—'}</td>

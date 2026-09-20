@@ -63,6 +63,8 @@ export function PosPage() {
   const country = setup.countryCode ? getCountry(setup.countryCode) : null
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  const mainWarehouseId = warehouses.find((w) => w.isMain)?.id ?? warehouses[0]?.id ?? null
+  const defaultSaleWarehouseId = setup.defaultWarehouseId ?? mainWarehouseId
   const itemVatPercent = (itemId: number) => effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, countryVatPercent)
   const fmt = (m: number) => formatMinor(m, cur, false)
 
@@ -421,8 +423,8 @@ export function PosPage() {
   const [quickPrintOpen, setQuickPrintOpen] = useState(false)
 
   // تجاوز بيع منتهي الصلاحية بموافقة المدير (القرار 8) — يُسجَّل اسمه على الفاتورة
-  /* الأمر 8: مخزن البيع أعلى الفاتورة — الافتراضي من الإعدادات، و«غير محدد» يعامل كالرئيسي */
-  const [saleWarehouseId, setSaleWarehouseId] = useState<number | null>(setup.defaultWarehouseId ?? null)
+  /* مخزن البيع أعلى الفاتورة — لا اختيار مبهم: يبدأ بالمخزن الافتراضي أو الرئيسي */
+  const [saleWarehouseId, setSaleWarehouseId] = useState<number | null>(defaultSaleWarehouseId)
   const [expiredBlock, setExpiredBlock] = useState<string[] | null>(null)
   // ترقية القرار 8 لنمط POS العالمي: تجاوز الصلاحية برقم مشرف سري موثق
   // (لا مجرد كتابة اسم) — المالك/المخول بـsales.expiry.override يمر مباشرة
@@ -680,13 +682,12 @@ export function PosPage() {
           <div className="flex gap-1.5 items-center">
             {warehouses.length > 1 && (
               <select
-                value={saleWarehouseId ?? ''}
-                onChange={(e) => setSaleWarehouseId(e.target.value === '' ? null : Number(e.target.value))}
+                value={saleWarehouseId ?? defaultSaleWarehouseId ?? ''}
+                onChange={(e) => setSaleWarehouseId(e.target.value === '' ? defaultSaleWarehouseId : Number(e.target.value))}
                 title="المخزن الذي تُصرف منه هذه الفاتورة (الأمر 8)"
                 className="text-[11px] font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1.5 max-w-[8.5rem]"
               >
-                <option value="">🏬 مخزن غير محدد</option>
-                {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}</option>)}
+                {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
               </select>
             )}
             {customers.some((c) => c.priceListId != null) && (
