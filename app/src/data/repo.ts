@@ -10,6 +10,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { secureStorage } from './secureStorage.ts'
 import type { Item, Category } from '../core/items.ts'
+import { priceFloorViolations, PriceFloorError } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
@@ -31,6 +32,7 @@ import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildP
 import { validateProcessing, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { validatePriceList, resolvePrice, type PriceList, type PriceListEntry } from '../core/priceLists.ts'
+import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotion, type PromotionInput } from '../core/promotions.ts'
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
@@ -1092,6 +1094,7 @@ interface DataState {
   equipmentCosts: EquipmentCost[] // مصاريف تشغيل المعدات (وقود/صيانة/إصلاح)
   priceLists: PriceList[] // قوائم الأسعار (جملة/نصف جملة/VIP)
   priceListEntries: PriceListEntry[] // أسعار خاصة لكل صنف داخل قائمة
+  promotions: Promotion[] // العروض الترويجية/الباقات (سد فجوة السوق المصرية/السعودية)
   custodyFiles: CustodyFile[] // ملفات عهد الموظفين (طلب المالك — نظام متكامل بنمط pro-acc)
   custodyTxs: CustodyTx[] // حركات ملفات العهد (تعزيز/مصروف/فاتورة/مرتجع/عجز)
   clinicPatients: ClinicPatient[] // العيادة (القرار 27)
@@ -1279,6 +1282,8 @@ interface DataState {
     warehouseId?: number | null
     /** تجاوز حد ائتمان العميل بموافقة مدير (نمط SAP B1) — اسم المعتمد يُسجل على الفاتورة */
     creditLimitOverrideBy?: string | null
+    /** تجاوز الحد الأدنى لسعر البيع بموافقة مدير (نمط DEXEF/الأمين) */
+    priceFloorOverrideBy?: string | null
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -1797,6 +1802,13 @@ interface DataState {
   getEffectivePrice: (itemId: number, listId: number | null) => number
   /** ربط عميل بقائمة أسعار */
   setCustomerPriceList: (customerId: number, listId: number | null) => void
+  /* ─── العروض الترويجية/الباقات ─── */
+  addPromotion: (input: PromotionInput) => Promotion
+  updatePromotion: (id: number, input: PromotionInput) => void
+  togglePromotion: (id: number) => void
+  removePromotion: (id: number) => void
+  /** سطور سلة جاهزة لباقات العرض (تفكيك بأسعار موزعة بالقرش) — يرفض عرضاً غير سارٍ */
+  getPromotionCartLines: (promotionId: number, count: number) => CartLine[]
   /** تقرير WIP لمشروع: نسبة الإنجاز والفوترة الزائدة/الناقصة */
   getProjectWip: (projectId: number) => WipResult & { contractMinor: number; billedMinor: number; costsMinor: number }
   /* ─── العيادة (القرار 27) ─── */
@@ -2028,7 +2040,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 18 // 16: مقايضة ذهب GTI — 17: تمويل الأصول والحسابات المخصصة — 18: تسجيل الدخول الفعلي + الصرف الداخلي
+export const DATA_VERSION = 19 // 17: تمويل الأصول والحسابات المخصصة — 18: تسجيل الدخول الفعلي + الصرف الداخلي — 19: العروض الترويجية/الباقات
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -2193,6 +2205,7 @@ export const useDataStore = create<DataState>()(
       equipmentCosts: [],
       priceLists: [],
       priceListEntries: [],
+      promotions: [],
       custodyFiles: [],
       custodyTxs: [],
       clinicPatients: [],
@@ -2696,6 +2709,14 @@ export const useDataStore = create<DataState>()(
           saleQty.set(l.itemId, (saleQty.get(l.itemId) ?? 0) + baseQty(l))
         }
         const stockNeeds = explodeIngredientNeeds(saleQty, recipeOf)
+        // 0.5) أرضية السعر (سد فجوة DEXEF/الأمين): بيع تحت الحد الأدنى للسعر
+        // مرفوض إلا بموافقة مدير موثقة — حماية من البيع بخسارة سهواً أو تلاعباً
+        {
+          const floorBad = priceFloorViolations(args.lines, state.items)
+          if (floorBad.length && !args.priceFloorOverrideBy) {
+            throw new PriceFloorError(floorBad)
+          }
+        }
         // 1) فحص المخزون (على الخامات للأطباق، وعلى الصنف نفسه لغيرها)
         if (!args.allowNegativeStock) {
           const shortages: string[] = []
@@ -7748,6 +7769,32 @@ export const useDataStore = create<DataState>()(
         set({ customers: state.customers.map((c) => (c.id === customerId ? { ...c, priceListId: listId } : c)) })
       },
 
+      /* ─── العروض الترويجية/الباقات (سد فجوة السوق المصرية/السعودية) ─── */
+      addPromotion: (input) => {
+        const state = get()
+        const errors = validatePromotion(input, state.promotions, state.items, (iid) => hasVariantStock(state.variantStocks, iid))
+        if (errors.length) throw new Error(errors.join('، '))
+        const promo: Promotion = { ...input, nameAr: input.nameAr.trim(), id: nextId(state.promotions) }
+        set({ promotions: [...state.promotions, promo] })
+        return promo
+      },
+      updatePromotion: (id, input) => {
+        const state = get()
+        if (!state.promotions.some((p) => p.id === id)) throw new Error('العرض غير موجود')
+        const errors = validatePromotion(input, state.promotions, state.items, (iid) => hasVariantStock(state.variantStocks, iid), id)
+        if (errors.length) throw new Error(errors.join('، '))
+        set({ promotions: state.promotions.map((p) => (p.id === id ? { ...p, ...input, nameAr: input.nameAr.trim() } : p)) })
+      },
+      togglePromotion: (id) => set((s) => ({ promotions: s.promotions.map((p) => (p.id === id ? { ...p, isActive: !p.isActive } : p)) })),
+      removePromotion: (id) => set((s) => ({ promotions: s.promotions.filter((p) => p.id !== id) })),
+      getPromotionCartLines: (promotionId, count) => {
+        const state = get()
+        const promo = state.promotions.find((p) => p.id === promotionId)
+        if (!promo) throw new Error('العرض غير موجود')
+        if (!promotionActiveOn(promo, new Date().toISOString())) throw new Error(`عرض «${promo.nameAr}» غير سارٍ اليوم — راجع فترة السريان أو فعّله`)
+        return promotionCartLines(promo, count, state.items)
+      },
+
       getProjectWip: (projectId) => {
         const state = get()
         const project = state.projects.find((p) => p.id === projectId)
@@ -9453,6 +9500,7 @@ export const useDataStore = create<DataState>()(
           insuranceClaims: s.insuranceClaims ?? [],
           variantStocks: s.variantStocks ?? [],
           priceLists: s.priceLists ?? [],
+          promotions: s.promotions ?? [], // الإصدار 19: العروض الترويجية/الباقات
           priceListEntries: s.priceListEntries ?? [],
           custodyFiles: s.custodyFiles ?? [],
           custodyTxs: s.custodyTxs ?? [],

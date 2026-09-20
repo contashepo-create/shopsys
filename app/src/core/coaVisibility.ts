@@ -136,6 +136,7 @@ export const MODULE_ROUTES: ModuleRoute[] = [
   { prefix: '/pos', module: 'pos' },
   { prefix: '/sales/restaurant-orders', module: 'recipes', activities: ['restaurant'] },
   { prefix: '/sales/price-lists', module: 'pos', feature: 'price_lists' },
+  { prefix: '/sales/promotions', module: 'pos', feature: 'price_lists' },
   { prefix: '/sales/exchange', module: 'pos', hideForActivities: INVOICE_FIRST_ACTIVITIES },
   { prefix: '/sales/shifts', module: 'pos', hideForActivities: INVOICE_FIRST_ACTIVITIES },
   { prefix: '/sales', module: 'pos' },

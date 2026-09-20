@@ -107,7 +107,44 @@ export interface Item {
    * أساس أنشطة الصالونات والجيم وأي بيع خدمات من الكاشير مباشرة.
    */
   isService?: boolean
+  /**
+   * حد أدنى لسعر البيع (سد فجوة DEXEF/الأمين — أشهر برامج مصر والسعودية):
+   * «تحديد حد أدنى لسعر البيع لتجنب الخسائر» — الكاشير لا يبيع تحته حتى
+   * بصلاحية تعديل السعر؛ التجاوز باعتماد مدير موثق (نفس نمط حد الائتمان).
+   * 0/undefined = بلا حد.
+   */
+  minSalePriceMinor?: Minor
   isActive: boolean
+}
+
+/**
+ * فحص أرضية السعر لسطور فاتورة — يعيد أسماء الأصناف المبيعة تحت حدها الأدنى.
+ * السعر يقارن بالوحدة الأساسية (سعر الوحدة المختارة ÷ معاملها).
+ */
+/** خطأ أرضية السعر — تلتقطه الواجهة لعرض حوار اعتماد المدير (نمط CreditLimitError) */
+export class PriceFloorError extends Error {
+  itemNames: string[]
+  constructor(itemNames: string[]) {
+    super(`سعر بيع تحت الحد الأدنى: ${itemNames.join('، ')} — يلزم اعتماد مدير`)
+    this.name = 'PriceFloorError'
+    this.itemNames = itemNames
+  }
+}
+
+export function priceFloorViolations(
+  lines: readonly { itemId: number; unitPriceMinor: Minor; unitFactor?: number; discountPercent: number }[],
+  items: readonly Pick<Item, 'id' | 'nameAr' | 'minSalePriceMinor'>[],
+): string[] {
+  const bad: string[] = []
+  for (const l of lines) {
+    const it = items.find((x) => x.id === l.itemId)
+    const floor = it?.minSalePriceMinor ?? 0
+    if (!it || floor <= 0) continue
+    // السعر الفعلي بعد خصم السطر وبالوحدة الأساسية
+    const perBase = (l.unitPriceMinor * (1 - l.discountPercent / 100)) / (l.unitFactor ?? 1)
+    if (perBase < floor - 0.5) bad.push(it.nameAr)
+  }
+  return [...new Set(bad)]
 }
 
 /** النسبة الفعلية للصنف: تجاوزه إن وُجد وإلا النسبة العامة */

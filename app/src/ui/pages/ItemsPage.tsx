@@ -894,6 +894,9 @@ function ItemForm({
           </p>
         </Field>
         <Field label="سعر البيع">{moneyInput(draft.priceMinor, (m) => p({ priceMinor: m }))}</Field>
+        <Field label="حد أدنى لسعر البيع" hint="لا بيع تحته إلا باعتماد مدير — حماية من البيع بخسارة (اتركه 0 لتعطيله)">
+          {moneyInput(draft.minSalePriceMinor ?? 0, (m) => p({ minSalePriceMinor: m }))}
+        </Field>
         <Field label="حد إعادة الطلب" hint="عند وصول الرصيد إليه يظهر تنبيه نواقص">
           <input
             type="number" min={0} defaultValue={draft.minQty || ''}

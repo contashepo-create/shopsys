@@ -11,7 +11,7 @@ import {
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
   FileText, ListChecks, Users2, ChefHat, Scissors, Gem, Tags, PackageMinus, HandCoins, Gauge,
-  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2 } from 'lucide-react'
+  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2, Gift } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule, ItemFeature } from '../core/activities.ts'
 import { INVOICE_FIRST_ACTIVITIES } from '../core/activities.ts'
@@ -79,6 +79,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'exchange', nameAr: 'الاستبدال', icon: Repeat, path: '/sales/exchange', hideForActivities: INVOICE_FIRST_ACTIVITIES },
       { id: 'shifts', nameAr: 'الورديات', icon: CalendarClock, path: '/sales/shifts', hideForActivities: INVOICE_FIRST_ACTIVITIES },
       { id: 'price-lists', nameAr: 'قوائم الأسعار', icon: Tags, path: '/sales/price-lists', feature: 'price_lists' },
+      // العروض/الباقات: لأنشطة الكاشير أصحاب قوائم الأسعار (بقالة/صيدلية/ملابس…) — لا معنى لها في المقاولات ونحوها
+      { id: 'promotions', nameAr: 'العروض والباقات', icon: Gift, path: '/sales/promotions', feature: 'price_lists' },
     ],
   },
   {

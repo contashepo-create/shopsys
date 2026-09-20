@@ -132,6 +132,8 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/sales/exchange', perm: 'sales.return.create' },
   { prefix: '/sales/shifts', perm: 'sales.shift.close' },
   { prefix: '/sales/price-lists', perm: 'sales.price.edit' },
+  // العروض/الباقات تسعير إداري مثل قوائم الأسعار — نفس صلاحية تعديل الأسعار
+  { prefix: '/sales/promotions', perm: 'sales.price.edit' },
   { prefix: '/sales', perm: 'sales.invoice.create' },
   { prefix: '/inventory/transfers', perm: 'inv.transfer' },
   { prefix: '/inventory/counting', perm: 'inv.count' },
@@ -333,8 +335,9 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
   ],
   lab: [
     {
+      // مراجعة العزل: كانت له inv.view لكن المعمل بلا وحدة مخزون أصلاً — صلاحية ميتة أزيلت
       id: 'lab_technician', nameAr: 'فني معمل', isSystem: true,
-      permissions: ['ops.activity.use', 'inv.view'],
+      permissions: ['ops.activity.use'],
     },
     {
       id: 'lab_reception', nameAr: 'استقبال المعمل', isSystem: true,

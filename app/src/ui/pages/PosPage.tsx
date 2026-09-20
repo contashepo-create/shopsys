@@ -5,17 +5,19 @@
  * - كل فاتورة تولّد قيداً محاسبياً متوازناً تلقائياً (القرار 9)
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2 } from 'lucide-react'
+import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
+import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
+import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift } from '../../core/shifts.ts'
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
@@ -52,7 +54,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, appUsers, currentUserId } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, appUsers, currentUserId, promotions, getPromotionCartLines } = useDataStore()
   // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
   const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
   const openShift = currentOpenShift(shifts)
@@ -424,6 +426,8 @@ export function PosPage() {
   const expiryApproval = useSupervisorApproval('sales.expiry.override')
   // حارس حد الائتمان (نمط SAP B1): بيع آجل يتجاوز حد العميل ⇒ حوار اعتماد مدير
   const creditApproval = useSupervisorApproval('sales.credit.override')
+  // أرضية السعر (DEXEF/الأمين): البيع تحت الحد الأدنى للصنف باعتماد مدير فقط
+  const priceFloorApproval = useSupervisorApproval('sales.price.edit')
   // نحفظ اعتماد الصلاحية المرافق — فاتورة فيها التجاوزان معاً لا تفقد الأول عند اعتماد الثاني
   const [creditBlock, setCreditBlock] = useState<{ message: string; expiryOverrideBy?: string } | null>(null)
   // الخصومات (سطر/فاتورة): كاشير بلا sales.discount.grant يفتح القفل برقم مشرف
@@ -436,7 +440,7 @@ export function PosPage() {
     toast.show(`فُتحت الخصومات لهذه السلة — اعتمدها «${approvedBy ?? 'المشرف'}» ✓`)
   })
 
-  const finishSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string) => {
+  const finishSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
     if (!cart.length) return
     try {
       // مجزأ فعلاً (جزء نقدي + جزء آجل) أو آجل بالكامل ⇒ عميل إلزامي
@@ -452,6 +456,7 @@ export function PosPage() {
         paidMinor: payment === 'credit' ? 0 : paidCashMinor,
         expiryOverrideBy: expiryOverrideBy ?? null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
+        priceFloorOverrideBy: priceFloorOverrideBy ?? null,
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
         warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
       })
@@ -478,8 +483,44 @@ export function PosPage() {
         setCreditBlock({ message: e.message, expiryOverrideBy })
         return
       }
+      // بيع تحت الحد الأدنى للسعر (نمط DEXEF/الأمين): اعتماد مدير موثق
+      if (e instanceof PriceFloorError) {
+        priceFloorApproval.request((approvedBy) => finishSale(expiryOverrideBy, creditLimitOverrideBy, approvedBy ?? 'المشرف'))
+        return
+      }
       toast.show((e as Error).message, 'error')
     }
+  }
+
+
+  /* العروض/الباقات (سد فجوة السوق): زر 🎁 يضيف مكونات الباقة كسطور عادية */
+
+  const [promoPickOpen, setPromoPickOpen] = useState(false)
+
+  const livePromotions = useMemo(() => {
+
+    const now = new Date().toISOString()
+
+    return promotions.filter((p) => promotionActiveOn(p, now))
+
+  }, [promotions])
+
+  const addPromotionToCart = (promotionId: number) => {
+
+    try {
+
+      const lines = getPromotionCartLines(promotionId, 1)
+
+      setCart((prev) => [...prev, ...lines])
+
+      setPromoPickOpen(false)
+
+      const promo = promotions.find((p) => p.id === promotionId)
+
+      toast.show(`🎁 أُضيفت باقة «${promo?.nameAr ?? ''}» للسلة`)
+
+    } catch (e) { toast.show((e as Error).message, 'error') }
+
   }
 
   const holdCart = () => {
@@ -658,6 +699,11 @@ export function PosPage() {
                   return <option key={c.id} value={c.id}>{c.nameAr}{ln ? ` — ${ln}` : ''}</option>
                 })}
               </select>
+            )}
+            {livePromotions.length > 0 && (
+              <button onClick={() => setPromoPickOpen(true)} title="إضافة عرض/باقة للسلة" className="p-2 rounded-lg text-pink-500 hover:bg-pink-500/10 transition-all duration-200 hover:scale-110">
+                <Gift size={17} />
+              </button>
             )}
             <button onClick={holdCart} disabled={!cart.length} title="تعليق الفاتورة" className="p-2 rounded-lg text-amber-500 hover:bg-amber-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
               <PauseCircle size={17} />
@@ -1202,6 +1248,35 @@ export function PosPage() {
       {expiryApproval.dialog}
       {discountApproval.dialog}
       {creditApproval.dialog}
+      {priceFloorApproval.dialog}
+
+      {/* حوار اختيار عرض/باقة (سد فجوة السوق): اختيار واحد يضيف كل مكونات الباقة للسلة */}
+      <Modal open={promoPickOpen} onClose={() => setPromoPickOpen(false)} title="🎁 العروض السارية اليوم">
+        <div className="space-y-1.5 max-h-[24rem] overflow-y-auto">
+          {livePromotions.length === 0 && <div className="text-[12px] text-slate-400 text-center py-6">لا عروض سارية اليوم</div>}
+          {livePromotions.map((p) => {
+            const savings = promotionSavingsMinor(p, items)
+            return (
+              <button
+                key={p.id}
+                onClick={() => addPromotionToCart(p.id)}
+                className="w-full text-right flex items-center gap-2 text-[12.5px] bg-slate-50 dark:bg-slate-800/50 hover:bg-pink-500/10 rounded-xl px-3 py-2.5 transition-colors"
+              >
+                <span className="flex-1">
+                  <span className="font-black block">🎁 {p.nameAr}</span>
+                  <span className="text-[10.5px] text-slate-400">
+                    {p.components.map((c) => `${c.qty} × ${items.find((it) => it.id === c.itemId)?.nameAr ?? '؟'}`).join(' + ')}
+                  </span>
+                </span>
+                <span className="text-left">
+                  <b className="text-pink-600 block">{fmt(p.bundlePriceMinor)}</b>
+                  {savings > 0 && <span className="text-emerald-600 text-[10px] font-bold">وفر {fmt(savings)}</span>}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </Modal>
     </div>
   )
 }

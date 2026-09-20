@@ -10,7 +10,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import {
-  salesSummary, topItems, dailySales,
+  salesSummary, topItems, dailySales, stagnantItems,
   stockAlerts, inventoryValue, periodPresets, type Period,
 } from '../../core/reports.ts'
 import { expiryAlerts } from '../../core/batches.ts'
@@ -59,6 +59,8 @@ export function ReportsPage() {
   const summary = useMemo(() => salesSummary(sales, saleReturns, period), [sales, saleReturns, period])
   const daily = useMemo(() => dailySales(sales, period), [sales, period])
   const top = useMemo(() => topItems(sales, saleReturns, period, 10), [sales, saleReturns, period])
+  // الراكد (سد فجوة DEXEF): مخزون بلا حركة بيع 30+ يوماً = رأس مال محبوس
+  const stagnant = useMemo(() => stagnantItems(items, sales, new Date().toISOString(), 30), [items, sales])
   // الرصيد الموحّد من repo (إصلاح بلاغ المالك: سداد بسند قبض + رصيد افتتاحي لم يكونا محسوبين هنا)
   // نفس مصدر كشف الحساب وشاشات الأطراف — فلا تتناقض الأرقام أبداً
   const getCustomerBalance = useDataStore((s) => s.getCustomerBalance)
@@ -261,6 +263,37 @@ export function ReportsPage() {
               </tbody>
             </table>
           )}
+          {/* الراكد — نمط DEXEF «تقرير الراكد وحد الطلب»: رأس المال المحبوس أولاً */}
+          <div className="border-t border-slate-100 dark:border-slate-800">
+            <div className="px-4 py-3 text-[12px] font-black text-slate-600 dark:text-slate-300 flex items-center justify-between">
+              <span>🐢 الأصناف الراكدة (لم تُبع منذ 30+ يوماً وعليها مخزون)</span>
+              {stagnant.length > 0 && <span className="text-rose-500">رأس مال محبوس: {fmt(stagnant.reduce((a, r) => a + r.stockValueMinor, 0))} {cur.symbol}</span>}
+            </div>
+            {stagnant.length === 0 ? (
+              <div className="text-center text-emerald-500 text-[12px] pb-4 font-bold">لا أصناف راكدة — كل المخزون يتحرك ✓</div>
+            ) : (
+              <table className="w-full text-[12.5px]">
+                <thead>
+                  <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-4 py-2 text-right font-bold">الصنف</th>
+                    <th className="px-4 py-2 text-right font-bold">الرصيد</th>
+                    <th className="px-4 py-2 text-right font-bold">قيمة المخزون</th>
+                    <th className="px-4 py-2 text-right font-bold">آخر بيع</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stagnant.slice(0, 15).map((r) => (
+                    <tr key={r.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                      <td className="px-4 py-2">{r.stockQty}</td>
+                      <td className="px-4 py-2 font-bold text-rose-600">{fmt(r.stockValueMinor)}</td>
+                      <td className="px-4 py-2 text-slate-500">{r.idleDays === -1 ? 'لم يُبع قط' : `${r.lastSoldDate} (${r.idleDays} يوماً)`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
       )}
 

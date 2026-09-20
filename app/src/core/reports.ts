@@ -147,6 +147,55 @@ export function topItems(sales: SaleDoc[], returns: SaleReturnDoc[], p: Period, 
   return [...map.values()].sort((a, b) => b.revenueMinor - a.revenueMinor).slice(0, limit)
 }
 
+/* ─── 2.5) الأصناف الراكدة (سد فجوة DEXEF/برامج السوق السعودي: «تقرير الراكد») ─── */
+
+export interface StagnantItemRow {
+  itemId: number
+  nameAr: string
+  stockQty: number
+  stockValueMinor: Minor // بقيمة التكلفة — رأس مال محبوس
+  /** آخر تاريخ بيع — null = لم يُبع قط */
+  lastSoldDate: string | null
+  /** أيام منذ آخر بيع (أو منذ بداية الفترة إن لم يُبع) */
+  idleDays: number
+}
+
+/**
+ * الأصناف الراكدة: صنف عليه مخزون ولم يُبع خلال آخر idleDaysThreshold يوماً —
+ * مرتبة بقيمة المخزون المحبوس تنازلياً (الأغلى ركوداً أولاً).
+ * أصناف الخدمة والمعطلة مستثناة (لا مخزون لها أصلاً).
+ */
+export function stagnantItems(
+  items: readonly { id: number; nameAr: string; stockQty: number; costMinor: Minor; isActive: boolean; isService?: boolean }[],
+  sales: readonly SaleDoc[],
+  todayIso: string,
+  idleDaysThreshold = 30,
+): StagnantItemRow[] {
+  const lastSold = new Map<number, string>()
+  for (const s of sales) {
+    for (const l of s.lines) {
+      const prev = lastSold.get(l.itemId)
+      if (!prev || s.date > prev) lastSold.set(l.itemId, s.date)
+    }
+  }
+  const today = new Date(todayIso.slice(0, 10) + 'T00:00:00Z').getTime()
+  const rows: StagnantItemRow[] = []
+  for (const it of items) {
+    if (!it.isActive || it.isService || (it.stockQty ?? 0) <= 0) continue
+    const last = lastSold.get(it.id) ?? null
+    const refTime = last ? new Date(last.slice(0, 10) + 'T00:00:00Z').getTime() : 0
+    const idleDays = last ? Math.floor((today - refTime) / 86_400_000) : Number.MAX_SAFE_INTEGER
+    if (idleDays < idleDaysThreshold) continue
+    rows.push({
+      itemId: it.id, nameAr: it.nameAr, stockQty: it.stockQty,
+      stockValueMinor: Math.round(it.costMinor * it.stockQty),
+      lastSoldDate: last ? last.slice(0, 10) : null,
+      idleDays: last ? idleDays : -1, // -1 = لم يُبع قط (تعرضها الواجهة «لم يُبع»)
+    })
+  }
+  return rows.sort((a, b) => b.stockValueMinor - a.stockValueMinor)
+}
+
 /* ─── 3) المبيعات اليومية (لرسم بياني بسيط) ─── */
 
 export interface DailyRow {
