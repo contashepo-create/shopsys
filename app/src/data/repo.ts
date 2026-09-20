@@ -61,7 +61,7 @@ import { customerStatement, supplierStatement, statementBalance, customerUnitDoc
 import { buildYearClosingLines, validateYearClose, dateInClosedYear, type FiscalYear } from '../core/fiscal.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
-import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
+import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
 import { validateAsset, buildAssetPurchaseEntry, buildAssetPaymentEntry, buildAssetInstallments, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput, type AssetFunding, type AssetInstallment } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, markReturnedToSupplier, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
@@ -1385,6 +1385,8 @@ interface DataState {
   setRestaurantOrderLines: (orderId: number, lines: CartLine[]) => void
   /** إلغاء أمر مفتوح (لم يلمس الدفاتر أصلاً — توثيق حالة فقط) */
   cancelRestaurantOrder: (orderId: number, reason: string) => void
+  /** تقسيم الفاتورة (فودكس/Toast): فصل سطور محددة لأمر جديد يُفوتر مستقلاً */
+  splitRestaurantOrder: (orderId: number, lineIndexes: number[]) => RestaurantOrder
   /**
    * قفل الأمر بفاتورة: رسوم الخدمة/التوصيل تُحقن سطوراً صناعية (itemId=-1)
    * ثم postSale واحد يتولى المخزون/الوصفات/الضريبة/القيد — المحاسبة تبدأ هنا فقط.
@@ -3661,6 +3663,37 @@ export const useDataStore = create<DataState>()(
             o.id === orderId ? { ...o, status: 'cancelled' as const, notes: [o.notes, `أُلغي: ${reason.trim()}`].filter(Boolean).join(' — ') } : o,
           ),
         })
+      },
+
+      splitRestaurantOrder: (orderId, lineIndexes) => {
+        const state = get()
+        const order = state.restaurantOrders.find((o) => o.id === orderId)
+        if (!order) throw new Error('الأمر غير موجود')
+        if (order.status !== 'open') throw new Error('لا يُقسَّم إلا أمر مفتوح')
+        const { moved, remaining } = splitOrderLines(order.lines, lineIndexes)
+        const id = nextId(state.restaurantOrders)
+        const child: RestaurantOrder = {
+          id,
+          orderNumber: `ORD-${String(id).padStart(4, '0')}`,
+          // أمر الصالة المفصول يتحول «تيك أواي» تصنيفاً (صالة بلا طاولة باطلة،
+          // والطاولة الأصلية عليها أمرها القائم) — واسم الطاولة يبقى في البيان للتتبع
+          type: order.type === 'dine_in' ? 'takeaway' : order.type,
+          tableName: '',
+          deliveryInfo: order.deliveryInfo,
+          lines: moved,
+          notes: [order.notes, `مفصول من ${order.orderNumber}${order.tableName ? ` (طاولة ${order.tableName})` : ''}`].filter(Boolean).join(' — '),
+          status: 'open',
+          openedAt: new Date().toISOString(),
+          settledAt: null,
+          saleId: null,
+        }
+        set({
+          restaurantOrders: [
+            ...state.restaurantOrders.map((o) => (o.id === orderId ? { ...o, lines: remaining } : o)),
+            child,
+          ],
+        })
+        return child
       },
 
       settleRestaurantOrder: (args) => {

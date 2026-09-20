@@ -80,7 +80,7 @@ interface DraftLine {
 }
 
 export function EmployeesPage() {
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -616,12 +616,23 @@ export function EmployeesPage() {
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="نوع العملية *">
-                  <select value={comSource} onChange={(e) => setComSource(e.target.value as StaffCommissionSource)} className={inputCls}>
+                  <select value={comSource} onChange={(e) => { setComSource(e.target.value as StaffCommissionSource); setComSourceId('') }} className={inputCls}>
                     {Object.entries(STAFF_COMMISSION_SOURCE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </Field>
-                <Field label="رقم المستند" hint="رقم عقد الإيجار/الفاتورة… — اتركه فارغاً لليدوية">
-                  <input value={comSourceId} onChange={(e) => setComSourceId(e.target.value)} className={inputCls} dir="ltr" placeholder="—" disabled={comSource === 'manual'} />
+                <Field label="المستند" hint="اختر المستند من قائمته — لا كتابة أرقام يدوية">
+                  {comSource === 'manual' ? (
+                    <input value="" className={inputCls} placeholder="— يدوية بلا مستند —" disabled />
+                  ) : (
+                    <select value={comSourceId} onChange={(e) => setComSourceId(e.target.value)} className={inputCls}>
+                      <option value="">— اختر —</option>
+                      {comSource === 'sale' && sales.slice(-80).reverse().map((x) => <option key={x.id} value={x.id}>{x.invoiceNumber} — {new Date(x.date).toLocaleDateString('ar-EG')}</option>)}
+                      {comSource === 'car_sale' && cars.map((x) => <option key={x.id} value={x.id}>{x.make} {x.model} {x.year} — {x.plateOrVin}</option>)}
+                      {comSource === 'project' && projects.map((x) => <option key={x.id} value={x.id}>{x.code} — {x.nameAr}</option>)}
+                      {comSource === 'lease' && leases.map((x) => <option key={x.id} value={x.id}>{x.contractNumber} — {x.tenantName}</option>)}
+                      {comSource === 'property_sale' && properties.map((x) => <option key={x.id} value={x.id}>{x.nameAr}</option>)}
+                    </select>
+                  )}
                 </Field>
               </div>
               <Field label={`مبلغ العمولة (${cur.symbol}) *`}>

@@ -73,6 +73,27 @@ export function orderSubtotalMinor(lines: readonly CartLine[]): Minor {
   return lines.reduce((a, l) => a + Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)), 0)
 }
 
+/**
+ * تقسيم الفاتورة (نمط فودكس/Toast — الطاولة تنقسم على دافعَيْن):
+ * فصل سطور محددة من أمر مفتوح إلى أمر جديد مفتوح يُقفل بفاتورته المستقلة.
+ * لا أثر محاسبياً — الأمران لم يلمسا الدفاتر بعد، وكلٌّ يُفوتر عند قفله.
+ * تُعاد السطور المفصولة والباقية؛ ويُرفض فصل الكل أو لا شيء (ليس تقسيماً).
+ */
+export function splitOrderLines(
+  lines: readonly CartLine[],
+  indexes: readonly number[],
+): { moved: CartLine[]; remaining: CartLine[] } {
+  const uniq = [...new Set(indexes)]
+  if (uniq.length === 0) throw new Error('اختر الأصناف المراد فصلها')
+  if (uniq.some((i) => !Number.isInteger(i) || i < 0 || i >= lines.length)) throw new Error('سطر غير موجود في الأمر')
+  if (uniq.length === lines.length) throw new Error('فصل كل الأصناف ليس تقسيماً — اقفل الأمر كاملاً بفاتورة واحدة')
+  const idx = new Set(uniq)
+  return {
+    moved: lines.filter((_, i) => idx.has(i)),
+    remaining: lines.filter((_, i) => !idx.has(i)),
+  }
+}
+
 /** الطاولات المشغولة الآن (أوامر صالة مفتوحة) — لمنع فتح أمرين لنفس الطاولة */
 export function occupiedTables(orders: readonly RestaurantOrder[]): Set<string> {
   const s = new Set<string>()

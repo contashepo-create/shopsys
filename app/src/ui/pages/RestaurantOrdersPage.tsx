@@ -5,7 +5,7 @@
  * (postSale يتولى الوصفات والمخزون والقيد) — قبل القفل لا شيء يلمس الدفاتر.
  */
 import { useMemo, useState } from 'react'
-import { UtensilsCrossed, Printer, XCircle, ReceiptText, Plus } from 'lucide-react'
+import { UtensilsCrossed, Printer, XCircle, ReceiptText, Plus, Scissors } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -17,7 +17,7 @@ import { printHtml } from '../print/printReceipt.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 
 export function RestaurantOrdersPage() {
-  const { restaurantOrders, items, treasuries, openRestaurantOrder, setRestaurantOrderLines, cancelRestaurantOrder, settleRestaurantOrder, getEffectivePrice } = useDataStore()
+  const { restaurantOrders, items, treasuries, openRestaurantOrder, setRestaurantOrderLines, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, getEffectivePrice } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -37,6 +37,18 @@ export function RestaurantOrdersPage() {
   const [svcPct, setSvcPct] = useState('')
   const [delFee, setDelFee] = useState('')
   const settleOrder = open.find((o) => o.id === settleFor) ?? null
+
+  /* تقسيم الفاتورة (فودكس/Toast): اختيار سطور تُفصل لأمر جديد يُفوتر مستقلاً */
+  const [splitOpen, setSplitOpen] = useState(false)
+  const [splitSel, setSplitSel] = useState<number[]>([])
+  const doSplit = () => {
+    if (!active) return
+    try {
+      const child = splitRestaurantOrder(active.id, splitSel)
+      setSplitOpen(false); setSplitSel([])
+      toast.show(`✂️ فُصلت ${child.lines.length} أصناف إلى ${child.orderNumber} — يُفوتر مستقلاً`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   const sellable = useMemo(() => {
     const q = itemQuery.trim()
@@ -144,6 +156,7 @@ export function RestaurantOrdersPage() {
             <h3 className="font-black text-[14px] text-orange-600">{ORDER_TYPE_LABELS[active.type].icon} {active.orderNumber}{active.tableName ? ` — طاولة ${active.tableName}` : ''}</h3>
             <div className="flex gap-2">
               <Btn variant="soft" onClick={() => printKitchen(active)} disabled={active.lines.length === 0}><Printer size={14} /> بون المطبخ</Btn>
+              <Btn variant="soft" onClick={() => { setSplitSel([]); setSplitOpen(true) }} disabled={active.lines.length < 2}><Scissors size={14} /> تقسيم</Btn>
               <Btn variant="soft" onClick={() => {
                 const reason = window.prompt('سبب الإلغاء؟')
                 if (reason?.trim()) { try { cancelRestaurantOrder(active.id, reason); setActiveId(null); toast.show('أُلغي الأمر') } catch (e) { toast.show((e as Error).message, 'error') } }
@@ -225,6 +238,40 @@ export function RestaurantOrdersPage() {
             </div>
             <p className="text-[11px] text-slate-400">الضريبة والوصفات وخصم الخامات كلها عبر فاتورة الكاشير نفسها — قيد واحد متوازن.</p>
             <Btn onClick={settle} className="w-full">قفل الأمر وإصدار الفاتورة</Btn>
+          </div>
+        )}
+      </Modal>
+
+      {/* حوار تقسيم الحساب: اختر السطور المفصولة لأمر جديد يُفوتر مستقلاً */}
+      <Modal open={splitOpen && !!active} onClose={() => setSplitOpen(false)} title="✂️ تقسيم الحساب">
+        {active && (
+          <div className="space-y-3">
+            <p className="text-[11.5px] text-slate-400 leading-relaxed">
+              اختر الأصناف التي يدفعها الطرف الآخر — تُفصل لأمر جديد مستقل يُقفل بفاتورته،
+              والباقي يبقى على {active.type === 'dine_in' ? `طاولة ${active.tableName}` : 'الأمر الأصلي'}.
+            </p>
+            <div className="space-y-1.5 max-h-[20rem] overflow-y-auto">
+              {active.lines.map((l, i) => (
+                <label key={i} className="flex items-center gap-2 text-[12.5px] bg-slate-50 dark:bg-slate-800/50 rounded-xl px-3 py-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={splitSel.includes(i)}
+                    onChange={(e) => setSplitSel((prev) => (e.target.checked ? [...prev, i] : prev.filter((x) => x !== i)))}
+                    className="accent-orange-600"
+                  />
+                  <span className="font-bold flex-1">{l.nameAr}</span>
+                  <span className="text-slate-400">× {l.qty}</span>
+                  <span className="text-slate-500 font-bold w-20 text-left" dir="ltr">{fmt(Math.round(l.unitPriceMinor * l.qty))}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex items-center justify-between text-[12px] font-bold">
+              <span className="text-slate-500">المفصول: {splitSel.length} من {active.lines.length}</span>
+              <span className="text-orange-600">{fmt(active.lines.filter((_, i) => splitSel.includes(i)).reduce((s, l) => s + Math.round(l.unitPriceMinor * l.qty), 0))} {cur.symbol}</span>
+            </div>
+            <Btn onClick={doSplit} className="w-full" disabled={splitSel.length === 0 || splitSel.length === active.lines.length}>
+              <Scissors size={14} /> فصل المحدد لفاتورة مستقلة
+            </Btn>
           </div>
         )}
       </Modal>
