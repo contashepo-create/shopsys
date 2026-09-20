@@ -5,13 +5,14 @@
  * - الترحيل يحدّث تكلفة الأصناف بالمتوسط المرجح ويزيد المخزون
  */
 import { useMemo, useState } from 'react'
-import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer } from 'lucide-react'
+import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer, MoreHorizontal } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type PurchaseInvoice } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
+import { effectiveVatPercent } from '../../core/items.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy } from '../../core/invoiceEdit.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -29,7 +30,7 @@ import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
  * «الكمية» و«السعر» المدخلين بهذه الوحدة — وعند الترحيل يتحولان تلقائياً
  * للوحدة الأساسية (كمية×المعامل، السعر÷المعامل) فيبقى المخزون بالقطعة دائماً.
  */
-interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string; unitName: string }
+interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string; unitName: string; vatPercent: number }
 interface DraftExpense {
   nameAr: string
   amount: string
@@ -57,7 +58,13 @@ export function PurchasesPage() {
   const editPolicy = invoiceEditPolicy({ einvoiceActive })
   const openCustodyFiles = custodyFiles.filter((f) => f.status === 'open')
   const toast = useToast()
-  const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const country = setup.countryCode ? getCountry(setup.countryCode) : null
+  const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  const itemVatPercent = (itemId: number) => effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, countryVatPercent)
+  const makeDraftLine = (itemId: number = items[0]?.id ?? 0, patch: Partial<DraftLine> = {}): DraftLine => ({
+    itemId, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), ...patch,
+  })
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [open, setOpen] = useState(false)
@@ -75,7 +82,7 @@ export function PurchasesPage() {
       partyLabel: suppliers.find((sp) => sp.id === inv.supplierId)?.nameAr ?? `مورد #${inv.supplierId}`,
       paymentLabel: inv.paidMinor >= (inv.supplierDueMinor ?? inv.grandTotalMinor) ? 'مدفوعة بالكامل' : inv.paidMinor > 0 ? 'مدفوعة جزئياً' : 'آجلة',
       rows: inv.lines.map((l) => ({
-        nameAr: items.find((it) => it.id === l.itemId)?.nameAr ?? `صنف #${l.itemId}`,
+        nameAr: `${items.find((it) => it.id === l.itemId)?.nameAr ?? `صنف #${l.itemId}`}${l.vatPercent != null ? ` — ض. ${l.vatPercent > 0 ? l.vatPercent + '٪' : 'معفى'}` : ''}`,
         qty: l.qty,
         unitPriceMinor: l.unitPriceMinor,
         totalMinor: Math.round(l.unitPriceMinor * l.qty),
@@ -108,19 +115,20 @@ export function PurchasesPage() {
       variantColors: [], variantSizes: [], isActive: true,
     })
     const created = useDataStore.getState().items.at(-1)!
-    setLines((l) => [...l, { itemId: created.id, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '' }])
+    setLines((l) => [...l, makeDraftLine(created.id)])
     setQuickOpen(false); setQName(''); setQBarcode(''); setQPrice(''); setQCat('')
     toast.show(`أُضيف «${created.nameAr}» وسطر له في الفاتورة — التكلفة ستتحدد من هذه الفاتورة ✓`)
   }
   const [expenses, setExpenses] = useState<DraftExpense[]>([])
   const [paid, setPaid] = useState('')
-  // T1: ض.ق.م مدخلات قابلة للخصم (اختياري — للمسجلين ضريبياً): تقيد 2102 مديناً ولا تدخل التكلفة
-  const [inputVat, setInputVat] = useState('')
+  // T1: ض.ق.م المدخلات تُحسب الآن من كل سطر حسب نسبة بلد المنشأة/استثناء الصنف — لا حقل عام على الفاتورة
   const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [projectId, setProjectId] = useState('')
   /* الأمر 8: المخزن المستلم للبضاعة — الافتراضي من الإعدادات */
   const [warehouseId, setWarehouseId] = useState<number | null>(setup.defaultWarehouseId ?? null)
   const [notes, setNotes] = useState('')
+  const [lineOptionsOpen, setLineOptionsOpen] = useState(false)
+  const [lineOptions, setLineOptions] = useState({ expiry: false, serials: false })
   // مصروف لاحق على فاتورة مرحّلة (طلب المالك — «يمكن لاحقاً تسجيل مصروفات أخرى»)
   const [lateName, setLateName] = useState('')
   const [lateAmount, setLateAmount] = useState('')
@@ -196,10 +204,9 @@ export function PurchasesPage() {
 
   const openNew = () => {
     setSupplierId(suppliers[0]?.id ?? 0)
-    setLines([{ itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '' }])
+    setLines([makeDraftLine()])
     setExpenses([])
     setPaid('')
-    setInputVat('')
     setPaySource(DEFAULT_PAY_SOURCE)
     setProjectId('')
     setNotes('')
@@ -224,6 +231,20 @@ export function PurchasesPage() {
     }
   }
 
+  /** قيمة البضاعة والضريبة لكل سطر: نسبة البلد تُطبَّق تلقائياً على كل بند لا على الفاتورة ككل */
+  const lineGoodsMinor = (l: DraftLine) => {
+    try {
+      const qty = Number(l.qty) || 0
+      const unitPriceMinor = toMinor(l.unitPrice || '0', cur.decimals)
+      return Math.round(qty * unitPriceMinor)
+    } catch { return 0 }
+  }
+  const lineVatMinor = (l: DraftLine) => Math.round((lineGoodsMinor(l) * Math.max(0, l.vatPercent || 0)) / 100)
+  const inputVatMinor = useMemo(
+    () => lines.filter((l) => l.itemId && Number(l.qty) > 0).reduce((sum, l) => sum + lineVatMinor(l), 0),
+    [lines, cur.decimals],
+  )
+
   /** مسح باركود لإضافة سطر: يجد الصنف بباركود القطعة أو باركود الوحدة الأكبر (كرتونة المصنع) */
   const [scanBuf, setScanBuf] = useState('')
   const scanIntoLines = () => {
@@ -233,7 +254,7 @@ export function PurchasesPage() {
       const u = it.extraUnits.find((x) => x.barcode === q)
       if (u) {
         // باركود كرتونة المصنع: سطر جاهز بوحدة الكرتونة — الكمية بالكرتونة والسعر سعرها
-        setLines((arr) => [...arr, { itemId: it.id, qty: '1', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: u.nameAr }])
+        setLines((arr) => [...arr, makeDraftLine(it.id, { qty: '1', unitName: u.nameAr })])
         toast.show(`📦 ${it.nameAr} — ${u.nameAr} (×${u.factor} ${it.baseUnit}) من باركود الوحدة`)
         setScanBuf('')
         return
@@ -241,7 +262,7 @@ export function PurchasesPage() {
     }
     const exact = items.find((it) => it.barcodes.includes(q) || it.sku === q)
     if (exact) {
-      setLines((arr) => [...arr, { itemId: exact.id, qty: '1', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '' }])
+      setLines((arr) => [...arr, makeDraftLine(exact.id, { qty: '1' })])
       toast.show(`✓ ${exact.nameAr} أُضيف من الباركود`)
       setScanBuf('')
       return
@@ -263,13 +284,13 @@ export function PurchasesPage() {
       const landed = computeLandedCosts(costLines, exps)
       const goods = landed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
       const expTotal = exps.reduce((a, e) => a + e.amountMinor, 0)
-      // مستحق المورد = البضاعة + مصاريفه فقط (ما دفعتُه بنفسي لا يدخل دينه)
+      // مستحق المورد = البضاعة + ضريبة المدخلات المحسوبة من السطور + مصاريفه فقط (ما دفعتُه بنفسي لا يدخل دينه)
       const expDirect = exps.filter((e) => e.paidBy !== 'supplier').reduce((a, e) => a + e.amountMinor, 0)
-      return { landed, goods, expTotal, grand: goods + expTotal, supplierDue: goods + expTotal - expDirect }
+      return { landed, goods, expTotal, inputVat: inputVatMinor, grand: goods + expTotal, supplierDue: goods + inputVatMinor + expTotal - expDirect }
     } catch {
       return null
     }
-  }, [lines, expenses, cur.decimals])
+  }, [lines, expenses, cur.decimals, inputVatMinor])
 
   const save = () => {
     if (!preview || !supplierId) return
@@ -286,6 +307,8 @@ export function PurchasesPage() {
           itemId: l.itemId,
           qty: l.qty,
           unitPriceMinor: l.unitPriceMinor,
+          vatPercent: d?.vatPercent ?? 0,
+          inputVatMinor: d ? lineVatMinor(d) : 0,
           expiryDate: d?.expiryDate || null,
           serialsRaw: d?.serialsRaw || undefined,
         }
@@ -305,7 +328,7 @@ export function PurchasesPage() {
       custodyFileId: paySource.kind === 'custody' ? paySource.custodyFileId : null,
       projectId: projectId ? Number(projectId) : null,
       warehouseId, // الأمر 8: المخزن المستلم
-      inputVatMinor: inputVat ? toMinor(inputVat, cur.decimals) : 0,
+      inputVatMinor,
       notes,
     })
     toast.show(`رُحّلت الفاتورة ${inv.invoiceNumber} — تحدثت تكلفة الأصناف بالمتوسط المرجح ✓`)
@@ -414,12 +437,11 @@ export function PurchasesPage() {
               <PaySourcePicker value={paySource} onChange={setPaySource} />
             </Field>
           </div>
-          <Field
-            label={`ض.ق.م مدخلات قابلة للخصم (${cur.symbol}) — اختياري`}
-            hint="للمنشآت المسجلة ضريبياً فقط: تُقيَّد على حساب الضريبة (2102 مديناً) فتُخصم من ضريبة مبيعاتك في الإقرار، ولا تدخل تكلفة المخزون. غير المسجل يتركها فارغة فتبقى الضريبة ضمن التكلفة"
-          >
-            <input value={inputVat} onChange={(e) => setInputVat(e.target.value)} type="number" min={0} className={inputCls} placeholder="0" />
-          </Field>
+          <div className="rounded-2xl border border-sky-500/20 bg-sky-500/[0.06] px-4 py-3 text-[12px] text-slate-500 leading-relaxed">
+            🧾 ضريبة المدخلات لا تُدخل كرقم عام على الفاتورة: تظهر الآن <b>نسبة الضريبة بجانب كل بند</b>
+            وتُحسب تلقائياً حسب بلد المنشأة {country ? <b>({country.flag} {country.nameAr} — {countryVatPercent}٪)</b> : null}،
+            مع احترام استثناء الصنف إن كان معفى. الإجمالي المحسوب الآن: <b className="text-sky-700 dark:text-sky-300">{fmt(inputVatMinor)} {cur.symbol}</b>.
+          </div>
           {warehouses.length > 1 && (
             <Field label="المخزن المستلم للبضاعة" hint="«غير محدد» يعامل كالمخزن الرئيسي — الافتراضي من الإعدادات العامة">
               <select value={warehouseId ?? ''} onChange={(e) => setWarehouseId(e.target.value === '' ? null : Number(e.target.value))} className={inputCls}>
@@ -429,7 +451,7 @@ export function PurchasesPage() {
             </Field>
           )}
           {projects.some((p) => p.status === 'active') && (
-            <Field label="ربط بمشروع مقاولات (اختياري)" hint="الفاتورة تدخل تكاليف المشروع وربحيته — ربحية المشروع تُحسب صافية من الضريبة: أدخل ض.ق.م المدخلات في خانتها أعلاه فتُعزل عن التكلفة (كما يُسجل إيراد المستخلص صافياً والضريبة على حسابها)">
+            <Field label="ربط بمشروع مقاولات (اختياري)" hint="الفاتورة تدخل تكاليف المشروع وربحيته — ربحية المشروع تُحسب صافية من الضريبة: ض.ق.م المدخلات تُحسب تلقائياً من نسب السطور وتُعزل عن التكلفة">
               <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
                 <option value="">— بلا مشروع —</option>
                 {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
@@ -441,11 +463,41 @@ export function PurchasesPage() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5"><Receipt size={14} /> أصناف الفاتورة</span>
-              <div className="flex gap-1.5">
+              <div className="flex gap-1.5 items-center">
+                <button
+                  type="button"
+                  onClick={() => setLineOptionsOpen((v) => !v)}
+                  title="خيارات إضافية تظهر كخانات بجانب كل سطر عند تفعيلها"
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border-2 text-[11px] font-black transition-all hover:scale-[1.02] ${lineOptionsOpen || lineOptions.expiry || lineOptions.serials ? 'border-violet-500/50 bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-violet-400/50'}`}
+                >
+                  <MoreHorizontal size={15} /> خيارات أكثر
+                  {(lineOptions.expiry || lineOptions.serials) && <span className="w-2 h-2 rounded-full bg-violet-500" />}
+                </button>
                 <Btn variant="ghost" onClick={() => setQuickOpen(true)}>⚡ صنف جديد سريع</Btn>
-                <Btn variant="soft" onClick={() => setLines((l) => [...l, { itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '' }])}>+ سطر</Btn>
+                <Btn variant="soft" onClick={() => setLines((l) => [...l, makeDraftLine()])}>+ سطر</Btn>
               </div>
             </div>
+            {lineOptionsOpen && (
+              <div className="anim-pop mb-3 rounded-2xl border border-violet-500/20 bg-violet-500/[0.06] p-3">
+                <div className="text-[12px] font-black text-violet-700 dark:text-violet-300 mb-2">⚙️ خانات إضافية للسطور</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <label className="flex items-start gap-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-violet-500/10 p-2.5 cursor-pointer hover:border-violet-400 transition-colors">
+                    <input type="checkbox" checked={lineOptions.expiry} onChange={(e) => setLineOptions((o) => ({ ...o, expiry: e.target.checked }))} className="mt-1 accent-violet-600" />
+                    <span>
+                      <b className="block text-[12px] text-slate-700 dark:text-slate-200">تاريخ الصلاحية لكل سطر</b>
+                      <span className="text-[10.5px] text-slate-400">مخفي افتراضياً — فعّله فقط للأصناف ذات الصلاحية.</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 rounded-xl bg-white/60 dark:bg-slate-900/40 border border-violet-500/10 p-2.5 cursor-pointer hover:border-violet-400 transition-colors">
+                    <input type="checkbox" checked={lineOptions.serials} onChange={(e) => setLineOptions((o) => ({ ...o, serials: e.target.checked }))} className="mt-1 accent-violet-600" />
+                    <span>
+                      <b className="block text-[12px] text-slate-700 dark:text-slate-200">سيريالات / IMEI للسطور</b>
+                      <span className="text-[10.5px] text-slate-400">تظهر خانة السيريالات أسفل السطر عند الحاجة فقط.</span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+            )}
             {/* مسح باركود لإضافة سطر (تدقيق المالك): باركود القطعة أو باركود كرتونة المصنع */}
             <div className="mb-2">
               <input
@@ -457,9 +509,9 @@ export function PurchasesPage() {
                 dir="ltr"
               />
             </div>
-            {/* رؤوس أعمدة واضحة — حقل الصنف يأخذ نصف العرض (ملاحظة المالك) + عمود الوحدة */}
-            <div className="hidden sm:grid grid-cols-[1fr_110px_90px_120px_140px_36px] gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400">
-              <span>الصنف</span><span>الوحدة</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>الصلاحية (إن وجدت)</span><span />
+            {/* رؤوس أعمدة واضحة — الضريبة بجانب كل بند، والصلاحية لا تظهر إلا من «خيارات أكثر» */}
+            <div className={`hidden sm:grid ${lineOptions.expiry ? 'grid-cols-[1fr_110px_90px_120px_96px_140px_36px]' : 'grid-cols-[1fr_110px_90px_120px_96px_36px]'} gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400`}>
+              <span>الصنف</span><span>الوحدة</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>ضريبة</span>{lineOptions.expiry && <span>الصلاحية</span>}<span />
             </div>
             <div className="space-y-2">
               {lines.map((l, i) => {
@@ -467,10 +519,10 @@ export function PurchasesPage() {
                 const lineUnit = l.unitName ? lineItem?.extraUnits.find((u) => u.nameAr === l.unitName) : undefined
                 return (
                 <div key={i} className="anim-in">
-                <div className="grid grid-cols-2 sm:grid-cols-[1fr_110px_90px_120px_140px_36px] gap-2 items-center">
+                <div className={`grid grid-cols-2 ${lineOptions.expiry ? 'sm:grid-cols-[1fr_110px_90px_120px_96px_140px_36px]' : 'sm:grid-cols-[1fr_110px_90px_120px_96px_36px]'} gap-2 items-center`}>
                   <select
                     value={l.itemId}
-                    onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: Number(e.target.value), unitName: '' } : x)))}
+                    onChange={(e) => { const nextId = Number(e.target.value); setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: nextId, unitName: '', vatPercent: itemVatPercent(nextId) } : x))) }}
                     className={`${inputCls} col-span-2 sm:col-span-1`}
                   >
                     {items.map((it) => <option key={it.id} value={it.id}>{it.nameAr}{it.baseUnit ? ` (${it.baseUnit})` : ''}</option>)}
@@ -499,13 +551,20 @@ export function PurchasesPage() {
                     onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))}
                     type="number" min={0} placeholder={lineUnit ? `سعر ${lineUnit.nameAr}` : 'سعر الوحدة'} className={inputCls}
                   />
-                  {items.find((it) => it.id === l.itemId)?.trackExpiry ? (
+                  <div
+                    title={`ضريبة هذا البند تلقائياً حسب البلد/استثناء الصنف: ${l.vatPercent}٪`}
+                    className="h-11 rounded-xl border-2 border-sky-200 dark:border-sky-800/70 bg-sky-500/[0.06] flex flex-col items-center justify-center text-center"
+                  >
+                    <span className="text-[12px] font-black text-sky-700 dark:text-sky-300">{l.vatPercent > 0 ? `${l.vatPercent}٪` : 'معفى'}</span>
+                    <span className="text-[9px] text-sky-500/80">{fmt(lineVatMinor(l))}</span>
+                  </div>
+                  {lineOptions.expiry && (lineItem?.trackExpiry ? (
                     <input
                       value={l.expiryDate}
                       onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, expiryDate: e.target.value } : x)))}
                       type="date" title="تاريخ الصلاحية (FEFO)" className={inputCls} dir="ltr"
                     />
-                  ) : <span className="hidden sm:block text-center text-slate-200 dark:text-slate-700 text-[11px]">—</span>}
+                  ) : <span className="hidden sm:flex h-11 items-center justify-center rounded-xl border-2 border-slate-100 dark:border-slate-800 text-slate-300 dark:text-slate-700 text-[11px]">لا يتتبع</span>)}
                   <button onClick={() => setLines((arr) => arr.filter((_, j) => j !== i))} className="p-2 text-slate-300 hover:text-rose-500 transition-colors justify-self-center">
                     <Trash2 size={15} />
                   </button>
@@ -526,7 +585,7 @@ export function PurchasesPage() {
                   )
                 })()}
                 {/* سيريالات القطع (أصناف الموبايلات/الأجهزة) — عددها يجب أن يطابق الكمية */}
-                {items.find((it) => it.id === l.itemId)?.trackSerial && (
+                {lineOptions.serials && lineItem?.trackSerial && (
                   <textarea
                     value={l.serialsRaw}
                     onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, serialsRaw: e.target.value } : x)))}
@@ -680,7 +739,8 @@ export function PurchasesPage() {
               <div className="px-4 py-2.5 flex flex-wrap gap-5 text-[12px] border-t border-emerald-500/15 bg-emerald-500/5">
                 <span>البضاعة: <b>{fmt(preview.goods)}</b></span>
                 <span>المصاريف: <b className="text-amber-600">{fmt(preview.expTotal)}</b></span>
-                <span>الإجمالي: <b className="text-emerald-700 dark:text-emerald-400">{fmt(preview.grand)}</b></span>
+                {preview.inputVat > 0 && <span>ض.ق.م السطور: <b className="text-sky-700 dark:text-sky-300">{fmt(preview.inputVat)}</b></span>}
+                <span>الإجمالي قبل الضريبة: <b className="text-emerald-700 dark:text-emerald-400">{fmt(preview.grand)}</b></span>
                 {preview.supplierDue !== preview.grand && (
                   <span>مستحق المورد فقط: <b className="text-sky-700 dark:text-sky-400">{fmt(preview.supplierDue)}</b> <span className="text-[10.5px] text-slate-400">(الباقي دفعتَه أنت مباشرة)</span></span>
                 )}
@@ -728,7 +788,7 @@ export function PurchasesPage() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                  <th className="px-3 py-2">الصنف</th><th className="px-3 py-2">كمية</th><th className="px-3 py-2">سعر</th>
+                  <th className="px-3 py-2">الصنف</th><th className="px-3 py-2">كمية</th><th className="px-3 py-2">سعر</th><th className="px-3 py-2">ضريبة</th>
                   <th className="px-3 py-2">نصيب مصاريف</th><th className="px-3 py-2">تكلفة نهائية</th>
                 </tr>
               </thead>
@@ -738,6 +798,7 @@ export function PurchasesPage() {
                     <td className="px-3 py-2 font-bold">{items.find((it) => it.id === l.itemId)?.nameAr ?? `#${l.itemId}`}</td>
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
+                    <td className="px-3 py-2 text-sky-600 font-bold">{l.vatPercent != null ? (l.vatPercent > 0 ? `${l.vatPercent}٪ · ${fmt(l.inputVatMinor ?? 0)}` : 'معفى') : '—'}</td>
                     <td className="px-3 py-2 text-amber-600">{fmt(l.expenseShareMinor)}</td>
                     <td className="px-3 py-2 font-black text-emerald-600">{fmt(l.landedUnitCostMinor)}</td>
                   </tr>

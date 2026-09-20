@@ -13,6 +13,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
+import { effectiveVatPercent } from '../../core/items.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
@@ -30,7 +31,9 @@ export function SalesInvoicesPage() {
   const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
-  const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const country = setup.countryCode ? getCountry(setup.countryCode) : null
+  const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const countryVatPercent = country?.vatPercent ?? setup.vatPercent
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [viewing, setViewing] = useState<SaleInvoice | null>(null)
 
@@ -171,8 +174,8 @@ export function SalesInvoicesPage() {
       payment: s.payment,
       paidMinor: s.paidMinor, // الدفع المجزأ: المدفوع/المتبقي على المطبوعة (بلاغ المالك)
       customerName: s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : null,
-      taxPercent: setup.vatPercent,
-      taxInclusive: setup.taxInclusive,
+      taxPercent: s.taxPercent ?? countryVatPercent,
+      taxInclusive: s.taxInclusive ?? setup.taxInclusive,
       settings: receipt,
     })
     if (qrDataUrl) model.qrDataUrl = qrDataUrl
@@ -286,7 +289,7 @@ export function SalesInvoicesPage() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                  <th className="px-3 py-2">الصنف</th><th className="px-3 py-2">كمية</th><th className="px-3 py-2">سعر</th><th className="px-3 py-2">خصم</th><th className="px-3 py-2">الإجمالي</th>
+                  <th className="px-3 py-2">الصنف</th><th className="px-3 py-2">كمية</th><th className="px-3 py-2">سعر</th><th className="px-3 py-2">ضريبة</th><th className="px-3 py-2">خصم</th><th className="px-3 py-2">الإجمالي</th>
                 </tr>
               </thead>
               <tbody>
@@ -295,6 +298,7 @@ export function SalesInvoicesPage() {
                     <td className="px-3 py-2 font-bold">{l.nameAr}</td>
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
+                    <td className="px-3 py-2 text-sky-600 font-bold">{(l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent}٪` : 'معفى'}</td>
                     <td className="px-3 py-2">{l.discountPercent ? `${l.discountPercent}٪` : '—'}</td>
                     <td className="px-3 py-2 font-bold">{fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}</td>
                   </tr>
@@ -362,6 +366,7 @@ export function SalesInvoicesPage() {
                     <th className="px-3 py-2">الصنف</th>
                     <th className="px-3 py-2 w-24">الكمية</th>
                     <th className="px-3 py-2 w-28">السعر ({cur.symbol})</th>
+                    <th className="px-3 py-2 w-20">ضريبة</th>
                     <th className="px-3 py-2 w-20">خصم ٪</th>
                     <th className="px-3 py-2 w-24">الإجمالي</th>
                     <th className="px-3 py-2 w-10"></th>
@@ -385,6 +390,7 @@ export function SalesInvoicesPage() {
                           className={inputCls + ' !py-1.5 !text-[12px]'} dir="ltr"
                         />
                       </td>
+                      <td className="px-3 py-2 text-sky-600 font-bold text-center">{(l.vatPercentOverride ?? editing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? editing.taxPercent ?? countryVatPercent}٪` : 'معفى'}</td>
                       <td className="px-3 py-2">
                         <input
                           value={l.discountPercent || ''}
@@ -416,7 +422,7 @@ export function SalesInvoicesPage() {
                   onClick={() => {
                     const it = items.find((x) => x.id === editAddItemId)
                     if (!it) return
-                    setEditLines([...editLines, { itemId: it.id, nameAr: it.nameAr, qty: 1, unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, discountPercent: 0, soldByWeight: it.soldByWeight }])
+                    setEditLines([...editLines, { itemId: it.id, nameAr: it.nameAr, qty: 1, unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, discountPercent: 0, soldByWeight: it.soldByWeight, vatPercentOverride: effectiveVatPercent(it, countryVatPercent) }])
                     setEditAddItemId(0)
                   }}
                 >

@@ -14,7 +14,7 @@ import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.t
 import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
-import { sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
+import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
@@ -60,7 +60,10 @@ export function PosPage() {
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint } = useAppStore()
   const toast = useToast()
-  const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const country = setup.countryCode ? getCountry(setup.countryCode) : null
+  const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  const itemVatPercent = (itemId: number) => effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, countryVatPercent)
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [query, setQuery] = useState('')
@@ -147,7 +150,7 @@ export function PosPage() {
       if (idx >= 0) return prev.map((l, i) => (i === idx ? { ...l, qty: l.qty + 1 } : l))
       return [...prev, {
         itemId: it.id, nameAr: `${it.nameAr} (${variantLabel(color, size)})`, qty: 1,
-        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: it.vatOverride ?? undefined,
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: effectiveVatPercent(it, countryVatPercent),
         discountPercent: 0, soldByWeight: false, variantColor: color, variantSize: size,
       }]
     })
@@ -174,7 +177,7 @@ export function PosPage() {
       }
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr, qty: 1,
-        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, vatPercentOverride: it.vatOverride ?? undefined,
+        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, vatPercentOverride: effectiveVatPercent(it, countryVatPercent),
         discountPercent: 0, soldByWeight: false, serials: [serial],
       }]
     })
@@ -220,7 +223,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr,
         qty: weightQty ?? (it.soldByWeight ? 0.5 : 1),
-        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: it.vatOverride ?? undefined,
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: effectiveVatPercent(it, countryVatPercent),
         discountPercent: 0, soldByWeight: it.soldByWeight,
       }]
     })
@@ -234,7 +237,7 @@ export function PosPage() {
       if (!it) return l
       const basePrice = getEffectivePrice(it.id, activePriceListId)
       if (unitName === it.baseUnit) {
-        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: it.vatOverride ?? undefined, unitFactor: undefined, unitLabel: undefined }
+        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: effectiveVatPercent(it, countryVatPercent), unitFactor: undefined, unitLabel: undefined }
       }
       const u = it.extraUnits.find((x) => x.nameAr === unitName)
       if (!u) return l
@@ -242,7 +245,7 @@ export function PosPage() {
         ...l,
         nameAr: `${it.nameAr} (${u.nameAr})`,
         unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
-        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: it.vatOverride ?? undefined,
+        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: effectiveVatPercent(it, countryVatPercent),
         unitFactor: u.factor,
         unitLabel: u.nameAr,
       }
@@ -261,7 +264,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: `${it.nameAr} (${u.nameAr})`, qty: 1,
         unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
-        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: it.vatOverride ?? undefined,
+        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: effectiveVatPercent(it, countryVatPercent),
         discountPercent: 0, soldByWeight: false, unitFactor: u.factor, unitLabel: u.nameAr,
       }]
     })
@@ -353,9 +356,9 @@ export function PosPage() {
   const totals = useMemo(() => {
     try {
       if (!cart.length) return null
-      return computeTotals(cart, invoiceDiscount, setup.vatPercent, setup.taxInclusive)
+      return computeTotals(cart, invoiceDiscount, countryVatPercent, setup.taxInclusive)
     } catch { return null }
-  }, [cart, invoiceDiscount, setup.vatPercent, setup.taxInclusive])
+  }, [cart, invoiceDiscount, countryVatPercent, setup.taxInclusive])
 
   // عند فتح شاشة الدفع: المبلغ النقدي يتعبأ تلقائياً بالإجمالي (قابل للتعديل — طلب المالك)
   useEffect(() => {
@@ -395,7 +398,7 @@ export function PosPage() {
       payment: sale.payment,
       paidMinor: sale.paidMinor, // الدفع المجزأ: يطبع المدفوع/المتبقي (بلاغ المالك)
       customerName: sale.customerId ? customers.find((c) => c.id === sale.customerId)?.nameAr ?? null : null,
-      taxPercent: setup.vatPercent,
+      taxPercent: countryVatPercent,
       taxInclusive: setup.taxInclusive,
       settings: receipt,
     })
@@ -450,7 +453,7 @@ export function PosPage() {
         customerId: isSplitOrCredit ? customerId : null,
         payment: payment === 'cash' && creditRemainder > 0 ? 'credit' : payment,
         invoiceDiscountPercent: invoiceDiscount,
-        taxPercent: setup.vatPercent,
+        taxPercent: countryVatPercent,
         taxInclusive: setup.taxInclusive,
         treasury,
         paidMinor: payment === 'credit' ? 0 : paidCashMinor,
@@ -768,15 +771,16 @@ export function PosPage() {
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {/* رأس أعمدة السلة */}
-              <div className="grid grid-cols-[1fr_7.5rem_4.5rem_6rem_2rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
+              <div className="grid grid-cols-[1fr_7.3rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
                 <span>الصنف</span>
                 <span className="text-center">الكمية</span>
+                <span className="text-center" title="النسبة الفعلية لكل سطر: نسبة البلد تلقائياً أو استثناء الصنف إن كان معفى">ضريبة</span>
                 <span className="text-center">خصم ٪</span>
                 <span className="text-left">الإجمالي</span>
                 <span></span>
               </div>
               {cart.map((l, i) => (
-                <div key={i} className="anim-pop grid grid-cols-[1fr_7.5rem_4.5rem_6rem_2rem] gap-2 items-center px-4 py-3 hover:bg-emerald-500/[0.03] transition-colors duration-150">
+                <div key={i} className="anim-pop grid grid-cols-[1fr_7.3rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-3 hover:bg-emerald-500/[0.03] transition-colors duration-150">
                   {/* الصنف: الاسم + سعر الوحدة */}
                   <div className="min-w-0">
                     <div className="font-bold text-[13px] text-slate-800 dark:text-white truncate leading-snug">
@@ -862,6 +866,13 @@ export function PosPage() {
                     >+</button>
                   </div>
                   )}
+                  {/* ضريبة السطر — تلقائية من بلد المنشأة أو استثناء الصنف (معفى/نسبة خاصة) */}
+                  <div
+                    title={`نسبة الضريبة لهذا السطر: ${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪ — ${country?.nameAr ?? 'حسب بلد المنشأة'}`}
+                    className="h-9 rounded-xl border-2 border-sky-200 dark:border-sky-800/70 bg-sky-500/[0.06] text-center flex items-center justify-center text-[11px] font-black text-sky-700 dark:text-sky-300"
+                  >
+                    {(l.vatPercentOverride ?? itemVatPercent(l.itemId)) > 0 ? `${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪` : 'معفى'}
+                  </div>
                   {/* خصم السطر */}
                   <input
                     value={l.discountPercent || ''}
@@ -914,9 +925,9 @@ export function PosPage() {
               {totals.discountMinor > 0 && (
                 <div className="flex justify-between text-[12px] text-rose-500"><span>الخصومات</span><span>-{fmt(totals.discountMinor)}</span></div>
               )}
-              {setup.vatPercent > 0 && (
+              {totals.taxMinor > 0 && (
                 <div className="flex justify-between text-[12px] text-slate-400">
-                  <span>الضريبة {setup.vatPercent}٪ {setup.taxInclusive ? '(مشمولة)' : '(مضافة)'}</span>
+                  <span>إجمالي ضريبة السطور {setup.taxInclusive ? '(مشمولة)' : '(مضافة)'} — النسبة تظهر بجانب كل بند</span>
                   <span>{fmt(totals.taxMinor)}</span>
                 </div>
               )}
@@ -1041,7 +1052,7 @@ export function PosPage() {
               {payment !== 'credit' && paidCashMinor > 0 && <> <b>الخزينة</b> {fmt(paidCashMinor)}</>}
               {(payment === 'credit' || creditRemainder > 0) && <> {payment !== 'credit' && paidCashMinor > 0 ? '+' : ''} <b>العملاء</b> {fmt(payment === 'credit' ? totals.totalMinor : creditRemainder)}</>}
               {' '}/ المبيعات {fmt(totals.taxBaseMinor)}
-              {totals.taxMinor > 0 && <> / ض.ق.م {fmt(totals.taxMinor)}</>}
+              {totals.taxMinor > 0 && <> / ض.ق.م من سطور الفاتورة {fmt(totals.taxMinor)}</>}
               {totals.cogsMinor > 0 && <> + تكلفة مبيعات {fmt(totals.cogsMinor)} / المخزون</>}
             </div>
             <Btn onClick={() => finishSale()} disabled={(payment === 'credit' || creditRemainder > 0) && !customerId} className="w-full py-3.5">

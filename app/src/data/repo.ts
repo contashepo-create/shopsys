@@ -781,6 +781,10 @@ export interface PurchaseLine {
   unitPriceMinor: number // سعر الوحدة قبل المصاريف
   expenseShareMinor: number // نصيب السطر من المصاريف (يُحسب)
   landedUnitCostMinor: number // التكلفة النهائية للوحدة (يُحسب)
+  /** نسبة ضريبة المدخلات لهذا السطر وقت الشراء — undefined = سجل قديم/غير ضريبي */
+  vatPercent?: number
+  /** ضريبة المدخلات المحسوبة لهذا السطر (تُقيد 2102 مديناً عند الإجمال) */
+  inputVatMinor?: number
 }
 
 export interface PurchaseExpense {
@@ -1248,7 +1252,7 @@ interface DataState {
   postPurchase: (inv: {
     supplierId: number
     date: string
-    lines: { itemId: number; qty: number; unitPriceMinor: number; expiryDate?: string | null; serialsRaw?: string }[]
+    lines: { itemId: number; qty: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; expiryDate?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
     paidMinor: number
     treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه (افتراضياً الرئيسية)
@@ -2390,7 +2394,13 @@ export const useDataStore = create<DataState>()(
         }
         const expensesPaidDirect = expensePayments.reduce((a, e) => a + e.amountMinor, 0)
         // T1: ضريبة مدخلات قابلة للخصم — تُفحص مبكراً وتدخل مستحق المورد (يقبضها ليوردها للدولة)
-        const inputVatMinor = inv.inputVatMinor ?? 0
+        // تُحسب من السطور عند وجود نسب لكل بند؛ ويبقى inv.inputVatMinor للتوافق/الاستدعاءات القديمة.
+        const linesInputVatMinor = inv.lines.reduce((sum, l) => {
+          if (l.inputVatMinor != null) return sum + l.inputVatMinor
+          if (l.vatPercent == null) return sum
+          return sum + Math.round((l.qty * l.unitPriceMinor * Math.max(0, l.vatPercent)) / 100)
+        }, 0)
+        const inputVatMinor = inv.inputVatMinor ?? linesInputVatMinor
         if (!Number.isInteger(inputVatMinor) || inputVatMinor < 0) throw new Error('ضريبة المدخلات لا تكون سالبة')
         // مستحق المورد = البضاعة + ضريبة المدخلات + المصاريف المحملة على حسابه فقط
         const supplierDue = grandTotal + inputVatMinor - expensesPaidDirect
@@ -2459,12 +2469,14 @@ export const useDataStore = create<DataState>()(
           refCode,
           supplierId: inv.supplierId,
           date: inv.date,
-          lines: landed.map((l) => ({
+          lines: landed.map((l, i) => ({
             itemId: l.itemId,
             qty: l.qty,
             unitPriceMinor: l.unitPriceMinor,
             expenseShareMinor: l.expenseShareMinor,
             landedUnitCostMinor: l.landedUnitCostMinor,
+            vatPercent: inv.lines[i]?.vatPercent,
+            inputVatMinor: inv.lines[i]?.inputVatMinor,
           })),
           expenses: inv.expenses,
           goodsTotalMinor: goodsTotal,

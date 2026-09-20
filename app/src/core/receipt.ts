@@ -111,6 +111,8 @@ export interface ReceiptRow {
   unitPriceMinor: Minor
   totalMinor: Minor // بعد خصم السطر
   discountPercent: number
+  /** نسبة ضريبة هذا السطر المطبوعة بجانب البند؛ null للمستندات غير الضريبية */
+  vatPercent: number | null
   /** سيريالات/IMEI القطع المعيّنة — تُطبع تحت اسم الصنف (نمط موبايل شوب) */
   serials: string[]
 }
@@ -168,6 +170,7 @@ export function buildReceiptModel(args: {
       unitPriceMinor: l.unitPriceMinor,
       totalMinor: net,
       discountPercent: l.discountPercent,
+      vatPercent: l.vatPercentOverride ?? args.taxPercent,
       serials: l.serials ?? [],
     }
   })
@@ -175,9 +178,13 @@ export function buildReceiptModel(args: {
   // الدفع المجزأ (بلاغ المالك): المدفوع والمتبقي يُطبعان — لا قيمة الفاتورة وحدها
   const paid = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
   const remaining = totals.totalMinor - paid
+  const vatSet = [...new Set(lines.map((l) => l.vatPercentOverride ?? args.taxPercent))].sort((a, b) => a - b)
+  const vatLabel = vatSet.length === 1
+    ? `${vatSet[0]}٪`
+    : vatSet.map((p) => (p > 0 ? `${p}٪` : 'معفى')).join(' / ')
   const taxLabel =
-    settings.showTaxSummary && args.taxPercent > 0 && totals.taxMinor > 0
-      ? `ض.ق.م ${args.taxPercent}٪ ${args.taxInclusive ? '(مشمولة في الإجمالي)' : '(مضافة)'}`
+    settings.showTaxSummary && totals.taxMinor > 0
+      ? `ض.ق.م من السطور ${vatLabel} ${args.taxInclusive ? '(مشمولة في الإجمالي)' : '(مضافة)'}`
       : null
   return {
     shopName: settings.shopName || 'تَحَكَّم',
@@ -227,6 +234,7 @@ export function buildSimpleDocModel(args: {
     unitPriceMinor: r.unitPriceMinor,
     totalMinor: r.totalMinor,
     discountPercent: 0,
+    vatPercent: null,
     serials: [],
   }))
   const totalQty = Math.round(args.rows.reduce((a, r) => a + r.qty, 0) * 1000) / 1000

@@ -21,7 +21,7 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
       (r) => `
       <tr>
         <td class="name">${esc(r.nameAr)}${showDisc && r.discountPercent ? `<span class="disc"> خصم ${r.discountPercent}٪</span>` : ''}
-          <div class="sub">${esc(r.qtyLabel)} × ${fmt(r.unitPriceMinor)}</div>
+          <div class="sub">${esc(r.qtyLabel)} × ${fmt(r.unitPriceMinor)}${r.vatPercent != null ? ` · ض. ${r.vatPercent > 0 ? r.vatPercent + '٪' : 'معفى'}` : ''}</div>
           ${r.serials.length ? `<div class="sub" dir="ltr" style="text-align:right">${r.serials.map(esc).join(' · ')}</div>` : ''}
         </td>
         <td class="amt">${fmt(r.totalMinor)}</td>

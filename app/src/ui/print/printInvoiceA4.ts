@@ -124,7 +124,8 @@ function metaRows(m: ReceiptModel, s: ReceiptSettings): string {
 function itemsTable(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, opts: { dense?: boolean; classic?: boolean; elegant?: boolean }): string {
   const fmt = (v: number) => formatMinor(v, cur, false)
   const showDisc = s.showDiscount && m.rows.some((r) => r.discountPercent > 0)
-  const cols = showDisc ? 6 : 5
+  const showVat = m.rows.some((r) => r.vatPercent != null)
+  const cols = 5 + (showDisc ? 1 : 0) + (showVat ? 1 : 0)
   const rows = m.rows
     .map(
       (r, i) => `<tr class="${i % 2 && !opts.elegant ? 'alt' : ''}">
@@ -132,6 +133,7 @@ function itemsTable(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, op
       <td class="name">${esc(r.nameAr)}${r.serials.length ? `<div style="font-size:9px;color:#64748b;direction:ltr;text-align:right">${r.serials.map(esc).join(' · ')}</div>` : ''}</td>
       <td class="c">${esc(r.qtyLabel)}</td>
       <td class="c">${fmt(r.unitPriceMinor)}</td>
+      ${showVat ? `<td class="c">${r.vatPercent == null ? '—' : r.vatPercent > 0 ? `${r.vatPercent}٪` : 'معفى'}</td>` : ''}
       ${showDisc ? `<td class="c">${r.discountPercent ? `${r.discountPercent}٪` : '—'}</td>` : ''}
       <td class="c b">${fmt(r.totalMinor)}</td>
     </tr>`,
@@ -140,7 +142,7 @@ function itemsTable(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, op
   return `<table class="items" data-cols="${cols}">
     <thead><tr>
       <th style="width:28px">#</th><th class="r">الصنف</th><th>الكمية</th><th>سعر الوحدة</th>
-      ${showDisc ? '<th>الخصم</th>' : ''}<th>الإجمالي</th>
+      ${showVat ? '<th>الضريبة</th>' : ''}${showDisc ? '<th>الخصم</th>' : ''}<th>الإجمالي</th>
     </tr></thead><tbody>${rows}</tbody>
   </table>`
 }
