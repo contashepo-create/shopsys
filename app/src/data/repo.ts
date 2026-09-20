@@ -53,6 +53,7 @@ import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalC
 import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
+import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
 import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
@@ -1037,6 +1038,8 @@ interface DataState {
   items: Item[]
   categories: Category[]
   warehouses: Warehouse[]
+  /** الفروع الحقيقية (سد فجوة التدقيق): فرع = مخزن + خزينة + هوية — فارغة = وضع الفرع الواحد */
+  branches: Branch[]
   treasuries: TreasuryDef[] // الخزائن والبنوك المتعددة (طلب المالك)
   customers: Customer[]
   suppliers: Supplier[]
@@ -1460,6 +1463,15 @@ interface DataState {
     einvoiceActive: boolean
   }) => PurchaseInvoice
   addWarehouse: (nameAr: string) => void
+  /**
+   * إنشاء فرع: يتحقق من حد الفروع في الرخصة (maxBranchesAllowed يمرره الاستدعاء
+   * من الرخصة الموقعة) — أول فرع يُنشأ يصبح «الرئيسي» تلقائياً على المخزن
+   * والخزينة الرئيسيين، والفرع الجديد بمخزنه وخزينته الخاصين (يُنشآن إن طُلب).
+   */
+  addBranch: (input: BranchInput & { createWarehouse?: boolean; createTreasury?: 'cash' | 'bank' | null }, maxBranchesAllowed: number) => Branch
+  updateBranch: (id: number, patch: Partial<Omit<Branch, 'id' | 'isMain'>>) => void
+  /** حذف فرع (فك الربط التنظيمي فقط — المخزن والخزينة وتاريخهما باقيان) */
+  removeBranch: (id: number) => void
   /** إضافة خزينة/بنك جديد — يفتح له حساب دفتري تلقائياً (1121+) + بيانات احترافية اختيارية */
   addTreasury: (nameAr: string, kind: 'cash' | 'bank', extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => TreasuryDef
   renameTreasury: (code: string, nameAr: string, extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => void
@@ -2042,7 +2054,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 19 // 17: تمويل الأصول والحسابات المخصصة — 18: تسجيل الدخول الفعلي + الصرف الداخلي — 19: العروض الترويجية/الباقات
+export const DATA_VERSION = 20 // 18: تسجيل الدخول الفعلي + الصرف الداخلي — 19: العروض الترويجية/الباقات — 20: الفروع الحقيقية
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -2156,6 +2168,7 @@ export const useDataStore = create<DataState>()(
       items: [],
       categories: [],
       warehouses: [],
+      branches: [],
       treasuries: DEFAULT_TREASURIES,
       customers: [],
       suppliers: [],
@@ -4768,6 +4781,73 @@ export const useDataStore = create<DataState>()(
 
       addWarehouse: (nameAr) =>
         set((s) => ({ warehouses: [...s.warehouses, { id: nextId(s.warehouses), nameAr, isMain: false }] })),
+
+      addBranch: (input, maxBranchesAllowed) => {
+        const state = get()
+        let warehouses = state.warehouses
+        let treasuries = state.treasuries
+        let branches = state.branches
+        // أول استخدام للفروع: الفرع الرئيسي (المركز) يُنشأ تلقائياً على الرئيسيين
+        if (!branches.length) {
+          const mainWh = warehouses.find((w) => w.isMain)
+          if (!mainWh) throw new Error('لا يوجد مخزن رئيسي — أكمل إعداد التطبيق أولاً')
+          branches = [{
+            id: 1, nameAr: 'الفرع الرئيسي', isMain: true, active: true,
+            warehouseId: mainWh.id, treasuryCode: '1101',
+          }]
+        }
+        // حد الفروع من الرخصة الموقعة (القرار 24): النشِطة فقط + الجديد
+        const activeCount = branches.filter((b) => b.active).length
+        if (activeCount + 1 > maxBranchesAllowed) {
+          throw new Error(`خطتك تسمح بـ${maxBranchesAllowed} ${maxBranchesAllowed === 1 ? 'فرع' : 'فروع'} — لزيادة الحد تواصل مع المطوّر من صفحة «حول التطبيق»`)
+        }
+        let warehouseId = input.warehouseId
+        if (input.createWarehouse) {
+          const wh = { id: nextId(warehouses), nameAr: `مخزن ${input.nameAr.trim()}`, isMain: false }
+          warehouses = [...warehouses, wh]
+          warehouseId = wh.id
+        }
+        let treasuryCode = input.treasuryCode
+        if (input.createTreasury) {
+          const errs = validateTreasury(`خزينة ${input.nameAr.trim()}`, treasuries)
+          if (errs.length) throw new Error(errs.join(' — '))
+          const t: TreasuryDef = { code: nextTreasuryCode(treasuries), nameAr: `خزينة ${input.nameAr.trim()}`, kind: input.createTreasury }
+          treasuries = [...treasuries, t]
+          treasuryCode = t.code
+        }
+        const errors = validateBranch({ ...input, warehouseId, treasuryCode }, branches, warehouses, treasuries)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const branch: Branch = {
+          id: nextId(branches), nameAr: input.nameAr.trim(), isMain: false, active: true,
+          warehouseId, treasuryCode,
+          address: input.address?.trim() || undefined,
+          phone: input.phone?.trim() || undefined,
+          managerName: input.managerName?.trim() || undefined,
+        }
+        set({ warehouses, treasuries, branches: [...branches, branch] })
+        return branch
+      },
+
+      updateBranch: (id, patch) => {
+        const state = get()
+        const b = state.branches.find((x) => x.id === id)
+        if (!b) throw new Error('الفرع غير موجود')
+        const next = { ...b, ...patch, nameAr: (patch.nameAr ?? b.nameAr).trim() }
+        const errors = validateBranch(next, state.branches, state.warehouses, state.treasuries, id)
+        if (errors.length) throw new Error(errors.join(' — '))
+        set({ branches: state.branches.map((x) => (x.id === id ? next : x)) })
+      },
+
+      removeBranch: (id) => {
+        const state = get()
+        const b = state.branches.find((x) => x.id === id)
+        if (!b) throw new Error('الفرع غير موجود')
+        const blocked = canRemoveBranch(b, state.branches)
+        if (blocked) throw new Error(blocked)
+        const rest = state.branches.filter((x) => x.id !== id)
+        // حذف آخر فرع غير الرئيسي يعيد وضع الفرع الواحد (الرئيسي وحده بلا معنى)
+        set({ branches: rest.length === 1 && rest[0].isMain ? [] : rest })
+      },
 
       addTreasury: (nameAr, kind, extra) => {
         const state = get()
@@ -9538,6 +9618,7 @@ export const useDataStore = create<DataState>()(
           variantStocks: s.variantStocks ?? [],
           priceLists: s.priceLists ?? [],
           promotions: s.promotions ?? [], // الإصدار 19: العروض الترويجية/الباقات
+          branches: s.branches ?? [], // الإصدار 20: الفروع الحقيقية (فرع = مخزن + خزينة)
           priceListEntries: s.priceListEntries ?? [],
           custodyFiles: s.custodyFiles ?? [],
           custodyTxs: s.custodyTxs ?? [],

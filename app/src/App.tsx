@@ -26,6 +26,7 @@ import { Dashboard } from './ui/pages/Dashboard.tsx'
 import { PermissionsPage } from './ui/pages/PermissionsPage.tsx'
 import { ItemsPage } from './ui/pages/ItemsPage.tsx'
 import { WarehousesPage } from './ui/pages/WarehousesPage.tsx'
+import { BranchesPage } from './ui/pages/BranchesPage.tsx'
 import { CustomersPage, SuppliersPage } from './ui/pages/PartiesPages.tsx'
 import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
 import { PurchaseReturnsPage } from './ui/pages/PurchaseReturnsPage.tsx'
@@ -221,6 +222,7 @@ function Shell() {
         <Route path="/accounting/cheques" element={<ChequesPage />} />
         <Route path="/accounting/assets" element={<AssetsPage />} />
         <Route path="/accounting/external-commissions" element={<ExternalCommissionsPage />} />
+        <Route path="/branches" element={<BranchesPage />} />
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/reports/statements" element={<StatementsPage />} />
         <Route path="/settings/printing" element={<PrintSettingsPage />} />

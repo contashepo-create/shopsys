@@ -11,7 +11,7 @@ import {
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
   FileText, ListChecks, Users2, ChefHat, Scissors, Gem, Tags, PackageMinus, HandCoins, Gauge,
-  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2, Gift } from 'lucide-react'
+  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2, Gift, GitBranch } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule, ItemFeature } from '../core/activities.ts'
 import { INVOICE_FIRST_ACTIVITIES } from '../core/activities.ts'
@@ -217,6 +217,8 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'all', nameAr: 'مركز التقارير', icon: BarChart3, path: '/reports' },
       { id: 'statements', nameAr: 'كشوف الحساب', icon: FileSpreadsheet, path: '/reports/statements' },
+      // الفروع الحقيقية (سد فجوة التدقيق): إدارة + لوحة مقارنة أداء للمالك
+      { id: 'branches', nameAr: 'الفروع ومقارنة الأداء', icon: GitBranch, path: '/branches' },
     ],
   },
   {

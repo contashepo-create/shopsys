@@ -72,6 +72,37 @@ export function listConflictSnapshots(): { at: string; size: number }[] {
   } catch { return [] }
 }
 
+/** نص لقطة تعارض بعينها (للتنزيل كملف JSON) — null إن لم توجد */
+export function getConflictSnapshotData(at: string): string | null {
+  try {
+    const raw = localStorage.getItem(CONFLICT_SNAPSHOTS_KEY)
+    const arr: { at: string; data: string }[] = raw ? JSON.parse(raw) : []
+    return arr.find((s) => s.at === at)?.data ?? null
+  } catch { return null }
+}
+
+/**
+ * استرجاع لقطة تعارض: يعيد حالة هذا الجهاز كما كانت لحظة الحفظ —
+ * قبل الاسترجاع تُحفظ الحالة الحالية كلقطة جديدة (فلا يضيع شيء في الاتجاهين)،
+ * وبعده يُرفع علم dirty كي تُدفع الحالة المسترجعة للسحابة في الدورة التالية.
+ */
+export function restoreConflictSnapshot(at: string): { ok: boolean; message: string } {
+  const data = getConflictSnapshotData(at)
+  if (!data) return { ok: false, message: 'اللقطة غير موجودة' }
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(data) as Record<string, unknown>
+  } catch {
+    return { ok: false, message: 'اللقطة تالفة — لا يمكن قراءتها' }
+  }
+  saveConflictSnapshot(serializeStore()) // شبكة أمان مزدوجة: الحالة الحالية تُحفظ قبل الدهس
+  for (const k of LOCAL_SESSION_KEYS) delete parsed[k]
+  useDataStore.setState(parsed)
+  const app = useAppStore.getState()
+  if (app.sync.enabled && !app.sync.dirty) app.updateSync({ dirty: true })
+  return { ok: true, message: 'استُرجعت اللقطة ✅ — ستُدفع للسحابة في المزامنة التالية' }
+}
+
 /**
  * دورة مزامنة واحدة — آمنة للاستدعاء من مؤقّت أو زر يدوي.
  * أخطاء الشبكة/الإعداد تعود رسالة ولا ترمي (لا تعطل التطبيق أبداً).

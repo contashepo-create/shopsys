@@ -5,11 +5,11 @@
  * والبيانات تُشفَّر AES-256-GCM على الجهاز قبل الرفع — السحابة لا ترى إلا شفرة.
  */
 import { useMemo, useState } from 'react'
-import { CloudUpload, Lock, RefreshCw, CheckCircle2, ShieldCheck, Copy, PlugZap } from 'lucide-react'
+import { CloudUpload, Lock, RefreshCw, CheckCircle2, ShieldCheck, Copy, PlugZap, History, Download, Undo2 } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { validateSyncConfig, fetchRemote } from '../../data/syncClient.ts'
-import { runSyncCycle } from '../../data/syncRunner.ts'
+import { runSyncCycle, listConflictSnapshots, getConflictSnapshotData, restoreConflictSnapshot } from '../../data/syncRunner.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { deriveArchitectureMode, MODE_LABELS } from '../../core/architecture.ts'
 import { isCloudDisabled } from '../../core/featureFlags.ts'
@@ -50,6 +50,9 @@ export function SyncPage() {
   const [storeId, setStoreId] = useState(sync.storeId)
   const [secret, setSecret] = useState(sync.secret)
   const [busy, setBusy] = useState<string | null>(null)
+  // لقطات التعارض (شبكة الأمان): تُحدَّث بعد كل مزامنة/استرجاع عبر هذا العداد
+  const [snapVer, setSnapVer] = useState(0)
+  const snapshots = useMemo(() => { void snapVer; return listConflictSnapshots().slice().reverse() }, [snapVer])
 
   const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5'
 
@@ -120,7 +123,26 @@ export function SyncPage() {
       toast.show(r.message, r.ok ? undefined : 'error')
     } finally {
       setBusy(null)
+      setSnapVer((v) => v + 1) // قد تكون المزامنة حفظت لقطة تعارض جديدة
     }
+  }
+
+  const downloadSnapshot = (at: string) => {
+    const data = getConflictSnapshotData(at)
+    if (!data) return toast.show('اللقطة غير موجودة', 'error')
+    const blob = new Blob([data], { type: 'application/json' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `لقطة-تعارض-${at.slice(0, 19).replace(/[T:]/g, '-')}.json`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  const restoreSnapshot = (at: string) => {
+    if (!window.confirm('سيُستبدل ما على هذا الجهاز الآن بحالة اللقطة (وتُحفظ الحالة الحالية كلقطة جديدة أولاً — لا يضيع شيء). متابعة؟')) return
+    const r = restoreConflictSnapshot(at)
+    toast.show(r.message, r.ok ? undefined : 'error')
+    setSnapVer((v) => v + 1)
   }
 
   const copySql = async () => {
@@ -203,6 +225,31 @@ export function SyncPage() {
         </div>
         <div className="text-[11px] text-slate-400">معرف هذا الجهاز: <code dir="ltr">{deviceId}</code></div>
       </div>
+
+      {/* لقطات أمان التعارض: حالة الجهاز قبل تطبيق سحابي فوق تغييرات معلقة */}
+      {snapshots.length > 0 && (
+        <div className={`anim-up ${card} space-y-3`} style={{ animationDelay: '90ms' }}>
+          <div className="font-bold text-[13px] flex items-center gap-2"><History size={15} className="text-amber-500" /> لقطات أمان التعارض ({snapshots.length})</div>
+          <p className="text-[11.5px] text-slate-400 leading-relaxed">
+            حين يصل من السحابة إدخالُ جهازٍ آخر وعندك هنا تغييرات لم تُدفع بعد، يحفظ التطبيق حالة جهازك كاملةً كلقطة قبل التطبيق —
+            فلا يضيع إدخال أي جهاز أبداً. نزّل اللقطة لمراجعتها، أو استرجعها لتصبح هي الحالة الحالية (وتُدفع للسحابة).
+          </p>
+          <div className="space-y-2">
+            {snapshots.map((s) => (
+              <div key={s.at} className="flex items-center justify-between gap-3 p-3 rounded-xl bg-amber-500/5 border border-amber-400/20">
+                <div className="text-[12px]">
+                  <div className="font-bold text-slate-700 dark:text-slate-200">{s.at.slice(0, 16).replace('T', ' ')}</div>
+                  <div className="text-slate-400 text-[10.5px]">{(s.size / 1024).toFixed(1)} ك.ب</div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Btn variant="soft" onClick={() => downloadSnapshot(s.at)}><Download size={13} /> تنزيل</Btn>
+                  <Btn variant="ghost" onClick={() => restoreSnapshot(s.at)}><Undo2 size={13} /> استرجاع</Btn>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* تجهيز قاعدة Supabase */}
       <div className={`anim-up ${card} space-y-3`} style={{ animationDelay: '120ms' }}>

@@ -112,6 +112,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'rep.financial', nameAr: 'القوائم المالية', section: 'reports', sensitive: true },
   // الإعدادات
   { id: 'set.general', nameAr: 'الإعدادات العامة', section: 'settings', sensitive: true },
+  { id: 'set.branches', nameAr: 'إدارة الفروع ومقارنة أدائها (مالك/مدير عام)', section: 'settings', sensitive: true },
   { id: 'set.users', nameAr: 'المستخدمون والصلاحيات', section: 'settings', sensitive: true },
   { id: 'set.backup', nameAr: 'النسخ الاحتياطي', section: 'settings', sensitive: true },
   { id: 'set.audit.view', nameAr: 'عرض سجل التدقيق', section: 'settings', sensitive: true },
@@ -165,6 +166,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/accounting/journal', perm: 'acc.journal.view' },
   { prefix: '/accounting/trial-balance', perm: 'acc.journal.view' },
   { prefix: '/accounting', perm: 'acc.vouchers' },
+  { prefix: '/branches', perm: 'set.branches' },
   { prefix: '/reports/statements', perm: 'party.customer.statement' },
   { prefix: '/reports', perm: 'rep.sales' },
   { prefix: '/settings/permissions', perm: 'set.users' },
