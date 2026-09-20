@@ -41,6 +41,86 @@ const LOG_MAX = 60_000
 const CHAT_KEEP = 200 // آخر 200 رسالة لكل جهاز
 const RATE_LIMIT = 10 // رسائل لكل جهاز في الساعة
 
+/* ─── إصدار المفاتيح من البوت (ترقية بوت المطوّر — سد فجوة التدقيق) ───
+ * نفس صيغة license_tool.mjs حرفياً: canonicalPayload → Ed25519 → SHOPSYS1.<b64u>.<b64u>
+ * يتطلب: wrangler secret put SHOPSYS_PRIVATE_KEY (pkcs8 بترميز base64url)
+ * بدون هذا السر أمرا «اصدار» يرد برسالة إرشادية — وباقي البوت يعمل كالمعتاد. */
+
+const PLANS = ['basic', 'pro', 'lifetime']
+const KEY_FEATURES = ['einvoice_eg', 'einvoice_sa', 'multi_branch', 'telegram_bot', 'cloud_sync', 'multi_user_lan']
+
+function b64uEncode(bytes) {
+  let s = ''
+  for (const b of bytes) s += String.fromCharCode(b)
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+function b64uDecode(s) {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4)
+  const raw = atob(b64)
+  const out = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i)
+  return out
+}
+
+/** مطابق حرفياً لـcanonicalPayload في core/license.ts — أي اختلاف يكسر التوقيع */
+function canonicalPayload(p) {
+  const base = {
+    v: p.v, deviceId: p.deviceId, customer: p.customer, plan: p.plan,
+    features: [...p.features].sort(), issuedAt: p.issuedAt, expiresAt: p.expiresAt,
+  }
+  if (p.extraUsers != null) base.extraUsers = p.extraUsers
+  if (p.extraBranches != null) base.extraBranches = p.extraBranches
+  if (p.activityId != null) base.activityId = p.activityId
+  if (p.extraModules != null) base.extraModules = [...p.extraModules].sort()
+  return JSON.stringify(base)
+}
+
+/** بصمة المفتاح — مطابقة لـkeyFingerprint في core/license.ts (DJB2 على جزء التوقيع) */
+function keyFingerprint(key) {
+  const sigPart = key.trim().split('.')[2] ?? key
+  let h = 5381
+  for (let i = 0; i < sigPart.length; i++) h = ((h << 5) + h + sigPart.charCodeAt(i)) >>> 0
+  return h.toString(16).padStart(8, '0')
+}
+
+async function signLicense(env, payload) {
+  const priv = await crypto.subtle.importKey('pkcs8', b64uDecode(env.SHOPSYS_PRIVATE_KEY), 'Ed25519', false, ['sign'])
+  const sig = new Uint8Array(await crypto.subtle.sign('Ed25519', priv, new TextEncoder().encode(canonicalPayload(payload))))
+  return `SHOPSYS1.${b64uEncode(new TextEncoder().encode(canonicalPayload(payload)))}.${b64uEncode(sig)}`
+}
+
+async function readRevoked(env) {
+  try {
+    const arr = JSON.parse((await env.SHOPSYS_KV.get('revoked')) ?? '[]')
+    return Array.isArray(arr) ? arr : []
+  } catch { return [] }
+}
+
+/** فحص الاشتراكات المنتهية/الموشكة (تذكير المطوّر) — يعمل من الأمر «تذكير» ومن الـcron اليومي */
+async function subscriptionDigest(env) {
+  const now = Date.now()
+  const soon = []
+  const expired = []
+  let total = 0
+  let cursor
+  do {
+    const page = await env.SHOPSYS_KV.list({ prefix: 'sub:', cursor })
+    for (const k of page.keys) {
+      total++
+      try {
+        const sub = JSON.parse((await env.SHOPSYS_KV.get(k.name)) ?? 'null')
+        if (!sub?.expiresAt) continue // دائم — لا تذكير
+        const device = k.name.slice(4)
+        const days = Math.ceil((new Date(sub.expiresAt).getTime() - now) / 86_400_000)
+        if (days < 0) expired.push(`⛔ ${device} (${sub.plan ?? '؟'}) انتهى منذ ${-days} يوم — ${sub.expiresAt}`)
+        else if (days <= 7) soon.push(`⏳ ${device} (${sub.plan ?? '؟'}) يتبقى ${days} يوم — ${sub.expiresAt}`)
+      } catch { /* سجل تالف — نتجاهله */ }
+    }
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
+  return { total, soon, expired }
+}
+
 /** تعقيم نص وارد: لا وسوم، لا محارف تحكم، طول محدود */
 function clean(v, max = TEXT_MAX) {
   if (typeof v !== 'string') return ''
@@ -179,9 +259,124 @@ export default {
          أعلام DEV-XXXX                            → عرض أعلام الجهاز
          نشر_تحديث 1.2.0 <رابط> <sha256> [إجباري] → تحديث نقطة /version            */
       if (!replyTo && text && fromDevChat) {
-        const FEATURES = ['einvoice_eg', 'einvoice_sa', 'multi_branch', 'telegram_bot', 'cloud_sync', 'multi_user_lan']
+        const FEATURES = KEY_FEATURES
         const parts = text.trim().split(/\s+/)
         const cmd = parts[0]
+
+        /* ─── ترقية البوت (سد فجوة التدقيق): إصدار مفاتيح + حرق + إحصاءات + تذكير ─── */
+        if (cmd === 'مساعدة' || cmd === '/start' || cmd === 'اوامر' || cmd === 'أوامر') {
+          await tgSend(env, [
+            '🤖 أوامر بوت المطوّر:',
+            '',
+            '🔑 اصدار <device> <خطة> [أيام] [ميزات,] — مفتاح تفعيل موقّع',
+            '   مثال: اصدار SHOP-AAAA-BBBB-CCCC pro 365 cloud_sync,telegram_bot',
+            '   إضافات: نشاط=pharmacy مستخدمين=3 فروع=2 وحدات=logistics عميل=بقالة_النور',
+            `   الخطط: ${PLANS.join(' | ')} — بلا أيام = مدى الحياة`,
+            '🔥 حرق <بصمة أو مفتاح كامل> — إبطال نهائي (قائمة /revoked)',
+            '📋 محروق — عرض قائمة البصمات المحروقة',
+            '💼 اشتراك <device> <خطة> <YYYY-MM-DD أو دائم> [رسالة] — بطاقة الاشتراك في التطبيق',
+            '📊 احصائيات — عدد الاشتراكات والأعلام والمحروق',
+            '⏰ تذكير — الاشتراكات المنتهية والموشكة (٧ أيام)',
+            '🚩 أعلام <device> — أعلام الجهاز',
+            '🔴 عطل <device> <ميزة> [سبب] / 🟢 فعل <device> <ميزة>',
+            '📦 نشر_تحديث <نسخة> <رابط> <sha256> [إجباري]',
+            '',
+            `الميزات: ${FEATURES.join('، ')}`,
+          ].join('\n'))
+        } else if (cmd === 'اصدار' || cmd === 'إصدار') {
+          if (!env.SHOPSYS_PRIVATE_KEY) {
+            await tgSend(env, '❌ سر التوقيع غير مضبوط — نفّذ: wrangler secret put SHOPSYS_PRIVATE_KEY\n(المفتاح الخاص pkcs8 بترميز base64url من license_tool.mjs genkeys)')
+          } else if (!parts[1] || !DEVICE_RE.test(parts[1])) {
+            await tgSend(env, '❌ معرف الجهاز مطلوب: اصدار SHOP-XXXX-XXXX-XXXX pro 365')
+          } else if (!PLANS.includes(parts[2] ?? '')) {
+            await tgSend(env, `❌ الخطة مطلوبة: ${PLANS.join(' | ')}`)
+          } else {
+            const deviceId = parts[1]
+            const plan = parts[2]
+            // الوسائط المرنة: أيام (رقم صرف) وميزات (قائمة بفواصل) وأزواج مفتاح=قيمة
+            let days = null
+            let features = []
+            let activityId = null, extraUsers = 0, extraBranches = 0, extraModules = [], customer = ''
+            for (const tok of parts.slice(3)) {
+              if (/^\d+$/.test(tok)) days = Number(tok)
+              else if (tok.startsWith('نشاط=')) activityId = clean(tok.slice(5), 40)
+              else if (tok.startsWith('مستخدمين=')) extraUsers = Number(tok.slice(9)) || 0
+              else if (tok.startsWith('فروع=')) extraBranches = Number(tok.slice(5)) || 0
+              else if (tok.startsWith('وحدات=')) extraModules = tok.slice(6).split(',').filter(Boolean)
+              else if (tok.startsWith('عميل=')) customer = clean(tok.slice(5).replace(/_/g, ' '), 80)
+              else features = features.concat(tok.split(',').filter((f) => FEATURES.includes(f)))
+            }
+            const today = new Date().toISOString().slice(0, 10)
+            const expiresAt = days ? new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10) : null
+            const payload = { v: 1, deviceId, customer, plan, features, issuedAt: today, expiresAt }
+            if (extraUsers > 0) payload.extraUsers = extraUsers
+            if (extraBranches > 0) payload.extraBranches = extraBranches
+            if (activityId) payload.activityId = activityId
+            if (extraModules.length > 0) payload.extraModules = extraModules
+            try {
+              const key = await signLicense(env, payload)
+              // بطاقة الاشتراك تُسجل تلقائياً لتذكير الانتهاء وعرضها في التطبيق
+              await env.SHOPSYS_KV.put(`sub:${deviceId}`, JSON.stringify({ plan, expiresAt, message: '', customer, issuedAt: today }))
+              await tgSend(env, `🔑 مفتاح ${plan}${expiresAt ? ` حتى ${expiresAt}` : ' (مدى الحياة)'} للجهاز ${deviceId}\nالبصمة (للحرق لاحقاً): ${keyFingerprint(key)}\n\nأرسل السطر التالي كاملاً للعميل:`)
+              await tgSend(env, key)
+            } catch (e) {
+              await tgSend(env, `❌ فشل التوقيع: ${String(e?.message ?? e).slice(0, 200)}\nتأكد أن SHOPSYS_PRIVATE_KEY هو pkcs8 بترميز base64url`)
+            }
+          }
+        } else if (cmd === 'حرق') {
+          const target = clean(parts[1] ?? '', 4000)
+          if (!target) {
+            await tgSend(env, '❌ أرسل: حرق <بصمة 8 خانات أو المفتاح كاملاً>')
+          } else {
+            const fp = target.includes('.') ? keyFingerprint(target) : target.toLowerCase()
+            if (!/^[0-9a-f]{8}$/.test(fp)) {
+              await tgSend(env, '❌ البصمة يجب أن تكون 8 خانات سداسية عشرية — أو أرسل المفتاح كاملاً وسأحسبها')
+            } else {
+              const revoked = await readRevoked(env)
+              if (!revoked.includes(fp)) revoked.push(fp)
+              await env.SHOPSYS_KV.put('revoked', JSON.stringify(revoked))
+              await tgSend(env, `🔥 حُرقت البصمة ${fp} نهائياً — التطبيقات ستجلبها مع دورة /revoked (كل ٦ ساعات)\nالمحروق الآن: ${revoked.length}`)
+            }
+          }
+        } else if (cmd === 'محروق') {
+          const revoked = await readRevoked(env)
+          await tgSend(env, revoked.length ? `📋 البصمات المحروقة (${revoked.length}):\n${revoked.join('\n')}` : 'لا مفاتيح محروقة')
+        } else if (cmd === 'اشتراك' && parts[1] && DEVICE_RE.test(parts[1])) {
+          const plan = PLANS.includes(parts[2] ?? '') ? parts[2] : null
+          const expiryTok = parts[3] ?? ''
+          const expiresAt = expiryTok === 'دائم' ? null : /^\d{4}-\d{2}-\d{2}$/.test(expiryTok) ? expiryTok : undefined
+          if (!plan || expiresAt === undefined) {
+            await tgSend(env, '❌ الصيغة: اشتراك <device> <basic|pro|lifetime> <YYYY-MM-DD أو دائم> [رسالة للعميل]')
+          } else {
+            const message = clean(parts.slice(4).join(' '), 300)
+            await env.SHOPSYS_KV.put(`sub:${parts[1]}`, JSON.stringify({ plan, expiresAt, message }))
+            await tgSend(env, `💼 سُجل اشتراك ${parts[1]}: ${plan}${expiresAt ? ` حتى ${expiresAt}` : ' (دائم)'}${message ? `\nرسالة العميل: ${message}` : ''}`)
+          }
+        } else if (cmd === 'احصائيات' || cmd === 'إحصائيات') {
+          const digest = await subscriptionDigest(env)
+          const revoked = await readRevoked(env)
+          let flagged = 0
+          let cursor
+          do {
+            const page = await env.SHOPSYS_KV.list({ prefix: 'flags:', cursor })
+            flagged += page.keys.length
+            cursor = page.list_complete ? undefined : page.cursor
+          } while (cursor)
+          await tgSend(env, [
+            '📊 إحصائيات المنظومة:',
+            `💼 اشتراكات مسجلة: ${digest.total}`,
+            `⏳ تنتهي خلال ٧ أيام: ${digest.soon.length}`,
+            `⛔ منتهية: ${digest.expired.length}`,
+            `🚩 أجهزة عليها أعلام إطفاء: ${flagged}`,
+            `🔥 مفاتيح محروقة: ${revoked.length}`,
+          ].join('\n'))
+        } else if (cmd === 'تذكير') {
+          const digest = await subscriptionDigest(env)
+          const lines = [...digest.expired, ...digest.soon]
+          await tgSend(env, lines.length
+            ? `⏰ تذكير الاشتراكات:\n${lines.join('\n')}`
+            : '✅ لا اشتراكات منتهية ولا موشكة على الانتهاء (٧ أيام)')
+        } else
 
         if ((cmd === 'عطل' || cmd === 'فعل') && parts[1] && DEVICE_RE.test(parts[1]) && FEATURES.includes(parts[2] ?? '')) {
           const dev = parts[1], feat = parts[2]
@@ -270,5 +465,16 @@ export default {
     }
 
     return json({ error: 'not found' }, 404)
+  },
+
+  /**
+   * تذكير تلقائي يومي (ترقية البوت): الاشتراكات المنتهية والموشكة (٧ أيام)
+   * تصل المطوّر على التليجرام بلا أمر — يتفعل بإضافة crons في wrangler.toml.
+   * لا شيء = لا رسالة (بلا إزعاج يومي فارغ).
+   */
+  async scheduled(_event, env) {
+    const digest = await subscriptionDigest(env)
+    const lines = [...digest.expired, ...digest.soon]
+    if (lines.length) await tgSend(env, `⏰ تذكير الاشتراكات اليومي:\n${lines.join('\n')}`)
   },
 }
