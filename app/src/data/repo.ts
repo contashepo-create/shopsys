@@ -2470,11 +2470,15 @@ export const useDataStore = create<DataState>()(
 
         // تحديث تكلفة الأصناف بالمتوسط المرجح + زيادة المخزون
         // (فاتورة المشروع لا تمس المخزون: بضاعتها تكلفة موقع مباشرة 5110)
+        // إصلاح (تدقيق المالك): سطران لنفس الصنف في فاتورة واحدة (سعران مختلفان مثلاً)
+        // كانا يُحتسب أولهما فقط (find) — الآن تُجمع كل سطور الصنف كمية وقيمة معاً
         const updatedItems = linkedProject ? state.items : state.items.map((it) => {
-          const line = landed.find((l) => l.itemId === it.id)
-          if (!line) return it
-          const newCost = weightedAverage(it.stockQty ?? 0, it.costMinor, line.qty, line.landedTotalMinor)
-          return { ...it, costMinor: newCost, stockQty: (it.stockQty ?? 0) + line.qty }
+          const itemLines = landed.filter((l) => l.itemId === it.id)
+          if (itemLines.length === 0) return it
+          const totalQty = itemLines.reduce((s, l) => s + l.qty, 0)
+          const totalLanded = itemLines.reduce((s, l) => s + l.landedTotalMinor, 0)
+          const newCost = weightedAverage(it.stockQty ?? 0, it.costMinor, totalQty, totalLanded)
+          return { ...it, costMinor: newCost, stockQty: (it.stockQty ?? 0) + totalQty }
         })
 
         // فتح دفعات صلاحية للأصناف المتتبَّعة (FEFO — القرار 5)

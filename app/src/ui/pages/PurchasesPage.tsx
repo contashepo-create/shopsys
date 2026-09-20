@@ -23,7 +23,13 @@ import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 
-interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string }
+/**
+ * سطر شراء (تدقيق المالك — الشراء بالكرتونة):
+ * unitName = '' يعني الوحدة الأساسية؛ اسم وحدة أكبر (كرتونة/علبة…) يعني أن
+ * «الكمية» و«السعر» المدخلين بهذه الوحدة — وعند الترحيل يتحولان تلقائياً
+ * للوحدة الأساسية (كمية×المعامل، السعر÷المعامل) فيبقى المخزون بالقطعة دائماً.
+ */
+interface DraftLine { itemId: number; qty: string; unitPrice: string; expiryDate: string; serialsRaw: string; unitName: string }
 interface DraftExpense {
   nameAr: string
   amount: string
@@ -102,7 +108,7 @@ export function PurchasesPage() {
       variantColors: [], variantSizes: [], isActive: true,
     })
     const created = useDataStore.getState().items.at(-1)!
-    setLines((l) => [...l, { itemId: created.id, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '' }])
+    setLines((l) => [...l, { itemId: created.id, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '' }])
     setQuickOpen(false); setQName(''); setQBarcode(''); setQPrice(''); setQCat('')
     toast.show(`أُضيف «${created.nameAr}» وسطر له في الفاتورة — التكلفة ستتحدد من هذه الفاتورة ✓`)
   }
@@ -190,7 +196,7 @@ export function PurchasesPage() {
 
   const openNew = () => {
     setSupplierId(suppliers[0]?.id ?? 0)
-    setLines([{ itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '' }])
+    setLines([{ itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '' }])
     setExpenses([])
     setPaid('')
     setInputVat('')
@@ -200,16 +206,56 @@ export function PurchasesPage() {
     setOpen(true)
   }
 
+  /**
+   * تحويل سطر مُدخل بوحدة أكبر إلى الوحدة الأساسية (تدقيق المالك):
+   * «3 كرتونة × 240ج» ⇒ كمية 3×24=72 قطعة وسعر 240÷24=10ج للقطعة —
+   * فيدخل المخزون بالقطعة والتكلفة صحيحة والبيع بالقطعة يعمل مباشرة.
+   */
+  const toBaseLine = (l: DraftLine) => {
+    const it = items.find((x) => x.id === l.itemId)
+    const u = l.unitName ? it?.extraUnits.find((x) => x.nameAr === l.unitName) : undefined
+    const factor = u?.factor ?? 1
+    const enteredQty = Number(l.qty)
+    const enteredPriceMinor = toMinor(l.unitPrice || '0', cur.decimals)
+    return {
+      itemId: l.itemId,
+      qty: Math.round(enteredQty * factor * 1000) / 1000,
+      unitPriceMinor: factor > 1 ? Math.round(enteredPriceMinor / factor) : enteredPriceMinor,
+    }
+  }
+
+  /** مسح باركود لإضافة سطر: يجد الصنف بباركود القطعة أو باركود الوحدة الأكبر (كرتونة المصنع) */
+  const [scanBuf, setScanBuf] = useState('')
+  const scanIntoLines = () => {
+    const q = scanBuf.trim()
+    if (!q) return
+    for (const it of items) {
+      const u = it.extraUnits.find((x) => x.barcode === q)
+      if (u) {
+        // باركود كرتونة المصنع: سطر جاهز بوحدة الكرتونة — الكمية بالكرتونة والسعر سعرها
+        setLines((arr) => [...arr, { itemId: it.id, qty: '1', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: u.nameAr }])
+        toast.show(`📦 ${it.nameAr} — ${u.nameAr} (×${u.factor} ${it.baseUnit}) من باركود الوحدة`)
+        setScanBuf('')
+        return
+      }
+    }
+    const exact = items.find((it) => it.barcodes.includes(q) || it.sku === q)
+    if (exact) {
+      setLines((arr) => [...arr, { itemId: exact.id, qty: '1', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '' }])
+      toast.show(`✓ ${exact.nameAr} أُضيف من الباركود`)
+      setScanBuf('')
+      return
+    }
+    toast.show(`لا صنف بالباركود «${q}» — أضفه أولاً (صنف جديد سريع) وسجّل الباركود عليه`, 'error')
+    setScanBuf('')
+  }
+
   /** معاينة حية للتوزيع أثناء الإدخال */
   const preview = useMemo(() => {
     try {
       const costLines = lines
         .filter((l) => l.itemId && Number(l.qty) > 0)
-        .map((l) => ({
-          itemId: l.itemId,
-          qty: Number(l.qty),
-          unitPriceMinor: toMinor(l.unitPrice || '0', cur.decimals),
-        }))
+        .map(toBaseLine)
       if (!costLines.length) return null
       const exps = expenses
         .filter((e) => Number(e.amount) > 0)
@@ -397,33 +443,61 @@ export function PurchasesPage() {
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5"><Receipt size={14} /> أصناف الفاتورة</span>
               <div className="flex gap-1.5">
                 <Btn variant="ghost" onClick={() => setQuickOpen(true)}>⚡ صنف جديد سريع</Btn>
-                <Btn variant="soft" onClick={() => setLines((l) => [...l, { itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '' }])}>+ سطر</Btn>
+                <Btn variant="soft" onClick={() => setLines((l) => [...l, { itemId: items[0]?.id ?? 0, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '' }])}>+ سطر</Btn>
               </div>
             </div>
-            {/* رؤوس أعمدة واضحة — حقل الصنف يأخذ نصف العرض (ملاحظة المالك) */}
-            <div className="hidden sm:grid grid-cols-[1fr_90px_120px_140px_36px] gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400">
-              <span>الصنف</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>الصلاحية (إن وجدت)</span><span />
+            {/* مسح باركود لإضافة سطر (تدقيق المالك): باركود القطعة أو باركود كرتونة المصنع */}
+            <div className="mb-2">
+              <input
+                value={scanBuf}
+                onChange={(e) => setScanBuf(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); scanIntoLines() } }}
+                placeholder="🔍 امسح باركود الصنف أو باركود الكرتونة لإضافة سطر تلقائياً…"
+                className={inputCls}
+                dir="ltr"
+              />
+            </div>
+            {/* رؤوس أعمدة واضحة — حقل الصنف يأخذ نصف العرض (ملاحظة المالك) + عمود الوحدة */}
+            <div className="hidden sm:grid grid-cols-[1fr_110px_90px_120px_140px_36px] gap-2 px-1 pb-1 text-[10.5px] font-bold text-slate-400">
+              <span>الصنف</span><span>الوحدة</span><span>الكمية</span><span>سعر الوحدة ({cur.symbol})</span><span>الصلاحية (إن وجدت)</span><span />
             </div>
             <div className="space-y-2">
-              {lines.map((l, i) => (
+              {lines.map((l, i) => {
+                const lineItem = items.find((it) => it.id === l.itemId)
+                const lineUnit = l.unitName ? lineItem?.extraUnits.find((u) => u.nameAr === l.unitName) : undefined
+                return (
                 <div key={i} className="anim-in">
-                <div className="grid grid-cols-2 sm:grid-cols-[1fr_90px_120px_140px_36px] gap-2 items-center">
+                <div className="grid grid-cols-2 sm:grid-cols-[1fr_110px_90px_120px_140px_36px] gap-2 items-center">
                   <select
                     value={l.itemId}
-                    onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: Number(e.target.value) } : x)))}
+                    onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: Number(e.target.value), unitName: '' } : x)))}
                     className={`${inputCls} col-span-2 sm:col-span-1`}
                   >
                     {items.map((it) => <option key={it.id} value={it.id}>{it.nameAr}{it.baseUnit ? ` (${it.baseUnit})` : ''}</option>)}
                   </select>
+                  {/* وحدة الشراء (تدقيق المالك): أساسية أو كرتونة/علبة — الكمية والسعر بها والترحيل يفكها تلقائياً */}
+                  {lineItem && lineItem.extraUnits.length > 0 ? (
+                    <select
+                      value={l.unitName}
+                      onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitName: e.target.value } : x)))}
+                      className={inputCls}
+                      title="وحدة الإدخال — الكمية والسعر بهذه الوحدة"
+                    >
+                      <option value="">{lineItem.baseUnit || 'أساسية'}</option>
+                      {lineItem.extraUnits.map((u) => <option key={u.nameAr} value={u.nameAr}>{u.nameAr} ×{u.factor}</option>)}
+                    </select>
+                  ) : (
+                    <span className="hidden sm:block text-center text-[11px] text-slate-400">{lineItem?.baseUnit || '—'}</span>
+                  )}
                   <input
                     value={l.qty}
                     onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))}
-                    type="number" min={0} placeholder="الكمية" className={inputCls}
+                    type="number" min={0} placeholder={lineUnit ? `كم ${lineUnit.nameAr}؟` : 'الكمية'} className={inputCls}
                   />
                   <input
                     value={l.unitPrice}
                     onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))}
-                    type="number" min={0} placeholder="سعر الوحدة" className={inputCls}
+                    type="number" min={0} placeholder={lineUnit ? `سعر ${lineUnit.nameAr}` : 'سعر الوحدة'} className={inputCls}
                   />
                   {items.find((it) => it.id === l.itemId)?.trackExpiry ? (
                     <input
@@ -436,6 +510,21 @@ export function PurchasesPage() {
                     <Trash2 size={15} />
                   </button>
                 </div>
+                {/* معاينة فك الوحدة (تدقيق المالك): «3 كرتونة ×24 = 72 قطعة بسعر 10ج للقطعة» */}
+                {lineUnit && Number(l.qty) > 0 && (() => {
+                  const entered = toMinor(l.unitPrice || '0', cur.decimals)
+                  const perBase = Math.round(entered / lineUnit.factor)
+                  const roundDiff = entered - perBase * lineUnit.factor // فرق تقريب القسمة لكل وحدة كبرى
+                  return (
+                    <p className="text-[10.5px] font-bold text-teal-600 dark:text-teal-400 mt-1 px-1">
+                      ↳ {l.qty} {lineUnit.nameAr} × {lineUnit.factor} = {Math.round(Number(l.qty) * lineUnit.factor * 1000) / 1000} {lineItem?.baseUnit || 'وحدة'}
+                      {entered > 0 && <> — تكلفة {lineItem?.baseUnit || 'الوحدة'} = {formatMinor(perBase, cur, false)} {cur.symbol}</>}
+                      {roundDiff !== 0 && (
+                        <span className="text-amber-600 dark:text-amber-400"> ⚠️ سعر الـ{lineUnit.nameAr} لا يقبل القسمة على {lineUnit.factor} — سيُسجل {formatMinor(perBase * lineUnit.factor, cur, false)} بدل {formatMinor(entered, cur, false)} (فرق {formatMinor(Math.abs(roundDiff), cur, false)})؛ عدّل السعر ليقبل القسمة إن أردت مطابقة تامة لفاتورة المورد</span>
+                      )}
+                    </p>
+                  )
+                })()}
                 {/* سيريالات القطع (أصناف الموبايلات/الأجهزة) — عددها يجب أن يطابق الكمية */}
                 {items.find((it) => it.id === l.itemId)?.trackSerial && (
                   <textarea
@@ -448,7 +537,7 @@ export function PurchasesPage() {
                   />
                 )}
                 </div>
-              ))}
+              )})}
             </div>
           </div>
 

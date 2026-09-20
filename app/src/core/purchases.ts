@@ -162,8 +162,14 @@ export function buildPurchaseReturnLines(
     if (wanted <= 0) continue
     const info = itemInfo(itemId)
     const name = info?.nameAr ?? `#${itemId}`
-    const orig = purchaseLines.find((l) => l.itemId === itemId)
-    if (!orig) throw new RangeError(`«${name}» ليس في فاتورة الشراء الأصلية`)
+    // إصلاح (تدقيق المالك): سطران لنفس الصنف بسعرين — كان يؤخذ سعر أول سطر فقط،
+    // الآن تكلفة/سعر الإرجاع = المتوسط المرجح لكل سطور الصنف في الفاتورة
+    const itemLines = purchaseLines.filter((l) => l.itemId === itemId)
+    if (itemLines.length === 0) throw new RangeError(`«${name}» ليس في فاتورة الشراء الأصلية`)
+    const totQty = itemLines.reduce((s, l) => s + l.qty, 0)
+    const avgLanded = totQty > 0 ? Math.round(itemLines.reduce((s, l) => s + l.qty * l.landedUnitCostMinor, 0) / totQty) : itemLines[0].landedUnitCostMinor
+    const hasPrices = itemLines.every((l) => l.unitPriceMinor != null)
+    const avgPrice = hasPrices && totQty > 0 ? Math.round(itemLines.reduce((s, l) => s + l.qty * (l.unitPriceMinor ?? 0), 0) / totQty) : itemLines[0].unitPriceMinor
     const canReturn = remaining.get(itemId) ?? 0
     if (wanted > canReturn + 1e-9) {
       throw new RangeError(`«${name}»: المطلوب إرجاع ${wanted} والمتبقي القابل للإرجاع ${canReturn}`)
@@ -171,7 +177,7 @@ export function buildPurchaseReturnLines(
     if (info && wanted > info.stockQty + 1e-9) {
       throw new RangeError(`«${name}»: المخزون الحالي ${info.stockQty} فقط — لا يمكن إرجاع بضاعة بيعت بالفعل`)
     }
-    out.push({ itemId, nameAr: name, qty: wanted, landedUnitCostMinor: orig.landedUnitCostMinor, unitPriceMinor: orig.unitPriceMinor })
+    out.push({ itemId, nameAr: name, qty: wanted, landedUnitCostMinor: avgLanded, unitPriceMinor: avgPrice })
   }
   if (!out.length) throw new RangeError('لا كميات للإرجاع')
   return out

@@ -14,9 +14,18 @@ let applyingPull = false // يمنع اعتبار «تطبيق المسحوب» 
 let cycleRunning = false // قفل: دورة واحدة في اللحظة
 let subscribed = false
 
-/** تسلسل حالة المتجر: JSON.stringify يتجاهل الدوال فتبقى البيانات فقط */
+/**
+ * مفاتيح جلسة محلية لا تُزامَن أبداً (تدقيق المالك — أمان تعدد الأجهزة):
+ * currentUserId = من سجّل دخوله على «هذا الجهاز» — لو تزامن لانتحل جهازٌ
+ * هويةَ مستخدمِ جهازٍ آخر (كاشير الفرع يصبح فجأة «المحاسب» في سجل التدقيق!).
+ */
+const LOCAL_SESSION_KEYS = ['currentUserId'] as const
+
+/** تسلسل حالة المتجر: JSON.stringify يتجاهل الدوال فتبقى البيانات فقط — بلا مفاتيح الجلسة المحلية */
 function serializeStore(): string {
-  return JSON.stringify(useDataStore.getState())
+  const state = { ...useDataStore.getState() } as Record<string, unknown>
+  for (const k of LOCAL_SESSION_KEYS) delete state[k]
+  return JSON.stringify(state)
 }
 
 /** بدء مراقبة التغييرات المحلية — يُستدعى مرة عند الإقلاع */
@@ -34,6 +43,33 @@ export interface CycleResult {
   ok: boolean
   message: string
   action?: 'pushed' | 'pulled' | 'noop'
+}
+
+/** مفتاح لقطات التعارض + سقفها (الأحدث يطرد الأقدم — لا امتلاء للتخزين) */
+const CONFLICT_SNAPSHOTS_KEY = 'shopsys-conflict-snapshots'
+const CONFLICT_KEEP = 5
+
+/**
+ * لقطة أمان قبل تطبيق حالة سحابية فوق تغييرات محلية غير مدفوعة:
+ * تُحفظ محلياً (آخر 5) ويمكن استرجاعها يدوياً — «لا ضياع بيانات أبداً».
+ */
+function saveConflictSnapshot(data: string): void {
+  try {
+    const raw = localStorage.getItem(CONFLICT_SNAPSHOTS_KEY)
+    const arr: { at: string; data: string }[] = raw ? JSON.parse(raw) : []
+    arr.push({ at: new Date().toISOString(), data })
+    while (arr.length > CONFLICT_KEEP) arr.shift()
+    localStorage.setItem(CONFLICT_SNAPSHOTS_KEY, JSON.stringify(arr))
+  } catch { /* تخزين ممتلئ — المزامنة نفسها لا تتعطل */ }
+}
+
+/** قائمة لقطات التعارض المحفوظة (للعرض في شاشة المزامنة) */
+export function listConflictSnapshots(): { at: string; size: number }[] {
+  try {
+    const raw = localStorage.getItem(CONFLICT_SNAPSHOTS_KEY)
+    const arr: { at: string; data: string }[] = raw ? JSON.parse(raw) : []
+    return arr.map((s) => ({ at: s.at, size: s.data.length }))
+  } catch { return [] }
 }
 
 /**
@@ -58,8 +94,17 @@ export async function runSyncCycle(): Promise<CycleResult> {
       localDirty: s.dirty,
     })
     if (outcome.action === 'pulled' && outcome.pulledData) {
+      // ⛑️ شبكة أمان التعارض (تدقيق المالك — «إدخال من جهازين في نفس اللحظة»):
+      // لو عندنا تغييرات محلية لم تُدفع بعد (dirty) وسنطبق حالة أحدث من جهاز آخر،
+      // نحفظ لقطة كاملة من حالتنا المحلية أولاً — فلا يضيع إدخال أي جهاز أبداً،
+      // ويستطيع المالك استرجاع اللقطة من النسخ الاحتياطية لو لزم.
+      if (useAppStore.getState().sync.dirty) {
+        saveConflictSnapshot(serializeStore())
+      }
       // التطبيق دفعة واحدة — البيانات اجتازت (بصمة + AES-GCM + JSON) في العميل
       const parsed = JSON.parse(outcome.pulledData) as Record<string, unknown>
+      // جلسة هذا الجهاز تبقى كما هي: المستخدم النشط محلي لا يأتي من السحابة
+      for (const k of LOCAL_SESSION_KEYS) delete parsed[k]
       applyingPull = true
       try {
         useDataStore.setState(parsed)
