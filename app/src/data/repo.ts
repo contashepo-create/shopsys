@@ -11,6 +11,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { secureStorage } from './secureStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
+import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
 import { computeTotals, buildSaleEntry, baseQty, exceedsCreditLimit, CreditLimitError, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
@@ -2070,7 +2071,13 @@ function readCurrencyDecimals(): number {
 function shiftRequiredForSales(): boolean {
   try {
     const raw = localStorage.getItem('shopsys-app')
-    if (raw) return JSON.parse(raw)?.state?.setup?.requireOpenShiftForSales !== false
+    if (raw) {
+      const setup = JSON.parse(raw)?.state?.setup
+      // أنشطة «الفاتورة أولاً» (تجارة جملة/مصنع/خدمات): شاشة الورديات مخفية عنها
+      // أصلاً — فرض الوردية عليها يسد فواتيرها بمأزق لا مخرج منه (فحص المراجعة)
+      if (isInvoiceFirst(setup?.activityId ?? null)) return false
+      return setup?.requireOpenShiftForSales !== false
+    }
   } catch { /* الافتراضي: إلزامي */ }
   return true
 }

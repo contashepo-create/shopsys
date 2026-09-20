@@ -26,7 +26,7 @@ const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
 }
 
 export function CarsPage() {
-  const { cars, journal, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers } = useDataStore()
+  const { cars, journal, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, employees, addStaffCommission } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -122,6 +122,9 @@ export function CarsPage() {
   const [sellVat, setSellVat] = useState(false)
   const [sellPayment, setSellPayment] = useState<'cash' | 'credit'>('cash')
   const [sellTreasury, setSellTreasury] = useState('1101')
+  // عمولة موظف عن البيع (تعميم — أمر المالك): مصروف مربوط بالسيارة يدخل ربحيتها
+  const [commEmpId, setCommEmpId] = useState('')
+  const [commAmount, setCommAmount] = useState('')
   // بيع آجل فوق حد ائتمان المشتري — تجاوز باعتماد مدير (نفس نمط الكاشير)
   const creditApproval = useSupervisorApproval('sales.credit.override')
 
@@ -134,9 +137,17 @@ export function CarsPage() {
         buyerCustomerId: buyerCustomerId || null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
+      // عمولة الموظف — استحقاق 5117/2116 مربوط بالسيارة (بعد نجاح البيع)
+      if (commEmpId && commAmount.trim()) {
+        addStaffCommission({
+          employeeId: Number(commEmpId), source: 'car_sale', sourceId: sellFor.id,
+          description: `عمولة بيع ${sellFor.make} ${sellFor.model} ${sellFor.year}`,
+          amountMinor: toMinor(commAmount, cur.decimals),
+        })
+      }
       const p = c.saleProfitMinor ?? 0
       toast.show(p >= 0 ? `بيعت بربح ${fmt(p)} ${cur.symbol} 🎉` : `بيعت بخسارة ${fmt(-p)} ${cur.symbol}`, p >= 0 ? 'success' : 'error')
-      setSellFor(null); setPrice(''); setBuyer(''); setBuyerCustomerId(0)
+      setSellFor(null); setPrice(''); setBuyer(''); setBuyerCustomerId(0); setCommEmpId(''); setCommAmount('')
     } catch (e) {
       if (e instanceof CreditLimitError) { creditApproval.request((by) => doSell(by ?? 'المشرف')); return }
       toast.show((e as Error).message, 'error')
@@ -357,9 +368,18 @@ export function CarsPage() {
                 </label>
               </Field>
             </div>
+            <Field label="عمولة موظف (اختياري)" hint="البائع الذي أتم الصفقة — مصروف مربوط بالسيارة يدخل ربحيتها">
+              <div className="grid grid-cols-2 gap-2">
+                <select value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
+                  <option value="">— بلا عمولة —</option>
+                  {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+                </select>
+                <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!commEmpId} />
+              </div>
+            </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSellFor(null)}>إلغاء</Btn>
-              <Btn onClick={doSell} disabled={!price}>بيع وقيد الربحية</Btn>
+              <Btn onClick={doSell} disabled={!price || (!!commEmpId && !commAmount.trim())}>بيع وقيد الربحية</Btn>
             </div>
           </div>
         )}

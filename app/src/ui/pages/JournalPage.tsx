@@ -10,7 +10,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { STANDARD_COA } from '../../core/ledger.ts'
+import { useActivityBaseCoa } from '../activityCoa.ts'
 import { fullCoa } from '../../core/treasury.ts'
 import { customAsAccounts } from '../../core/customAccounts.ts'
 import { validateManualEntry } from '../../core/accounting.ts'
@@ -46,7 +46,9 @@ export function JournalPage() {
   const { journal, treasuries, customAccounts, postManualEntry, reverseEntry } = useDataStore()
   // الشجرة الكاملة تشمل الخزائن المخصصة — القيد اليدوي يستطيع استخدامها
   // الشجرة الكاملة = القياسية + خزائن المالك + حساباته المخصصة (الشجرة ليست مفروضة)
-  const COA = useMemo(() => [...fullCoa(STANDARD_COA, treasuries), ...customAsAccounts(customAccounts)], [treasuries, customAccounts])
+  // فلترة حسب النشاط (أمر المالك): القيد اليدوي لا يعرض حسابات نشاط آخر
+  const activityBase = useActivityBaseCoa()
+  const COA = useMemo(() => [...fullCoa(activityBase, treasuries), ...customAsAccounts(customAccounts)], [activityBase, treasuries, customAccounts])
   const POSTABLE = useMemo(() => COA.filter((a) => a.isPostable), [COA])
   const { setup } = useAppStore()
   const toast = useToast()

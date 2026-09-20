@@ -162,15 +162,24 @@ for (const activityId of ACTIVITIES) {
   const pur = st().purchases.at(-1)
 
   const line = { itemId: item.id, nameAr: item.nameAr, qty: 1, unitPriceMinor: 100_00, unitCostMinor: 65_00, discountPercent: 0, soldByWeight: false }
-  assert.throws(
-    () => st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true }),
-    /وردية/,
-    `${activityId}: ⑦ البيع بلا وردية مرفوض والرسالة تشرح`,
-  )
-  const shift = st().openShift('كاشير', 100_00)
-  const sale = st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true })
-  assert.equal(sale.shiftId, shift.id, `${activityId}: ⑦ الفاتورة مربوطة بالوردية`)
-  assertBalanced(st().journal.find((e) => e.id === sale.journalEntryId).lines)
+  // أنشطة «الفاتورة أولاً» (تجارة/مصنع/خدمات): شاشة الورديات مخفية عنها —
+  // فسياسة «لا بيع بلا وردية» لا تسري عليها (مراجعة عزل الأنشطة)
+  const invoiceFirst = ['trading', 'manufacturing', 'services'].includes(activityId)
+  if (invoiceFirst) {
+    const sale0 = st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true })
+    assert.equal(sale0.shiftId, null, `${activityId}: ⑦ فاتورة أولاً — بيع بلا وردية يمر وبلا ربط`)
+    assertBalanced(st().journal.find((e) => e.id === sale0.journalEntryId).lines)
+  } else {
+    assert.throws(
+      () => st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true }),
+      /وردية/,
+      `${activityId}: ⑦ البيع بلا وردية مرفوض والرسالة تشرح`,
+    )
+    const shift = st().openShift('كاشير', 100_00)
+    const sale = st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true })
+    assert.equal(sale.shiftId, shift.id, `${activityId}: ⑦ الفاتورة مربوطة بالوردية`)
+    assertBalanced(st().journal.find((e) => e.id === sale.journalEntryId).lines)
+  }
 
   // ── ⑥ طباعة فاتورة الشراء بالقوالب الثلاثة ──
   const settings = { ...DEFAULT_RECEIPT_SETTINGS, shopName: `متجر ${tpl.nameAr}`, defaultTemplate: tpl.defaultInvoiceTemplate }
@@ -213,11 +222,14 @@ for (const activityId of ACTIVITIES) {
   assert.ok(rA5.includes('size: A5') && rA5.includes(pr.returnNumber), `${activityId}: ⑥ A5 المرتجع`)
   assertBalanced(st().journal.find((e) => e.id === pr.journalEntryId).lines)
 
-  // ── ⑦ التعطيل: البيع بلا وردية يمر وshiftId=null ──
-  mem.set('shopsys-app', appState(activityId, false))
-  st().closeShift(shift.openingCashMinor + sale.totals.totalMinor) // إقفال مضبوط
-  const sale2 = st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true })
-  assert.equal(sale2.shiftId, null, `${activityId}: ⑦ التعطيل يسمح والفاتورة «بلا وردية»`)
+  // ── ⑦ التعطيل: البيع بلا وردية يمر وshiftId=null (لغير «الفاتورة أولاً» — هم بلا ورديات أصلاً) ──
+  if (!invoiceFirst) {
+    mem.set('shopsys-app', appState(activityId, false))
+    const openShiftNow = st().shifts.find((s) => s.status === 'open')
+    if (openShiftNow) st().closeShift(openShiftNow.openingCashMinor + st().sales.filter((s) => s.shiftId === openShiftNow.id).reduce((a, s) => a + (s.paidMinor ?? s.totals.totalMinor), 0))
+    const sale2 = st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true })
+    assert.equal(sale2.shiftId, null, `${activityId}: ⑦ التعطيل يسمح والفاتورة «بلا وردية»`)
+  }
 
   pass++
   console.log(`  ✔ ${tpl.nameAr} (${activityId}) — ⑥ طباعة الشراء ومرتجعه ×3 قوالب + ⑦ سياسة الورديات`)

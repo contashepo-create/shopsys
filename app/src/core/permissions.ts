@@ -22,6 +22,52 @@ export const PERMISSION_SECTIONS: { id: string; nameAr: string; icon: string }[]
   { id: 'settings', nameAr: 'الإعدادات والنظام', icon: '⚙️' },
 ]
 
+/* ─── فلترة الصلاحيات حسب وحدات النشاط (أمر المالك) ───
+ * «الكاشير غير موجود في كل الأنشطة — لكل نشاط أدواره وصلاحياته»:
+ * صلاحية مربوطة بوحدة عمل تختفي من شاشة الصلاحيات إن لم تكن الوحدة مفعلة.
+ * الصلاحية غير المذكورة هنا عامة تظهر دائماً.
+ */
+export const PERMISSION_MODULE_MAP: Record<string, string[]> = {
+  'sales.pos.open': ['pos'],
+  'sales.invoice.create': ['pos'],
+  'sales.price.edit': ['pos'],
+  'sales.discount.grant': ['pos'],
+  'sales.return.create': ['pos'],
+  'sales.return.approve': ['pos'],
+  'sales.expiry.override': ['pos'],
+  'sales.credit.override': ['pos'],
+  'sales.shift.close': ['pos'],
+  'inv.view': ['inventory'],
+  'inv.cost.view': ['inventory'],
+  'inv.item.manage': ['inventory'],
+  'inv.adjust': ['inventory'],
+  'inv.transfer': ['inventory'],
+  'inv.count': ['inventory'],
+  'pur.invoice.create': ['purchases'],
+  'pur.invoice.edit': ['purchases'],
+  'pur.return.create': ['purchases'],
+  'pur.supplier.manage': ['purchases'],
+  // شاشات النشاط التخصصي — تظهر فقط إن وُجدت وحدة تخصصية واحدة على الأقل
+  'ops.activity.use': [
+    'maintenance', 'laundry', 'wallet_services', 'equipment_rental', 'logistics',
+    'lab', 'contracting', 'clinic', 'cars', 'realestate', 'recipes', 'processing', 'jewelry', 'installments',
+  ],
+}
+
+/** الصلاحيات الظاهرة لنشاطٍ وحداته modules — العامة + المرتبطة بوحدة مفعلة */
+export function permissionsForModules(modules: readonly string[]): PermissionDef[] {
+  return PERMISSIONS.filter((p) => {
+    const req = PERMISSION_MODULE_MAP[p.id]
+    return !req || req.some((m) => modules.includes(m))
+  })
+}
+
+/** أقسام شاشة الصلاحيات الظاهرة — قسم بلا أي صلاحية ظاهرة يختفي كله */
+export function permissionSectionsForModules(modules: readonly string[]): { id: string; nameAr: string; icon: string }[] {
+  const visible = permissionsForModules(modules)
+  return PERMISSION_SECTIONS.filter((s) => visible.some((p) => p.section === s.id))
+}
+
 export const PERMISSIONS: PermissionDef[] = [
   // المبيعات
   { id: 'sales.pos.open', nameAr: 'فتح شاشة البيع', section: 'sales' },
@@ -174,6 +220,15 @@ export function rolesWithOverrides(
   return [...base, ...custom]
 }
 
+/**
+ * الأدوار المعروضة في شاشة الصلاحيات وقوائم الاختيار (أمر المالك):
+ * دور مربوط بوحدة غير مفعلة (كاشير بلا pos) يختفي من العرض —
+ * لكن تقييم صلاحيات مستخدم قديم معيّن عليه يظل يعمل (rolesWithOverrides كاملة).
+ */
+export function visibleRolesForModules(roles: readonly Role[], modules: readonly string[]): Role[] {
+  return roles.filter((r) => !r.requiredModule || modules.includes(r.requiredModule))
+}
+
 export function effectivePermissionsFor(
   user: { roleId: string; extraPerms?: string[]; deniedPerms?: string[] } | null,
   roles: readonly Role[],
@@ -199,6 +254,8 @@ export interface Role {
   isSystem: boolean // أدوار النظام الجاهزة
   isOwner?: boolean // دور المالك المحمي بنيوياً
   permissions: string[] // معرّفات الصلاحيات
+  /** الدور يظهر فقط إن كانت هذه الوحدة مفعلة (كاشير بلا وحدة pos لا معنى له) */
+  requiredModule?: string
 }
 
 const ALL = PERMISSIONS.map((p) => p.id)
@@ -207,12 +264,12 @@ const ALL = PERMISSIONS.map((p) => p.id)
 export const DEFAULT_ROLES: Role[] = [
   { id: 'owner', nameAr: 'المالك', isSystem: true, isOwner: true, permissions: ALL },
   {
-    id: 'cashier', nameAr: 'كاشير', isSystem: true,
+    id: 'cashier', nameAr: 'كاشير', isSystem: true, requiredModule: 'pos',
     // يفتح شاشة المرتجع ويجهزه — التنفيذ برقم مشرف سري (sales.return.approve ليست له)
     permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.return.create', 'sales.shift.close', 'inv.view'],
   },
   {
-    id: 'senior_seller', nameAr: 'بائع أول', isSystem: true,
+    id: 'senior_seller', nameAr: 'بائع أول', isSystem: true, requiredModule: 'pos',
     permissions: [
       'sales.pos.open', 'sales.invoice.create', 'sales.discount.grant', 'sales.return.create', 'sales.shift.close',
       'inv.view', 'inv.item.manage', 'inv.count', 'party.customer.manage', 'party.customer.statement',
@@ -220,7 +277,7 @@ export const DEFAULT_ROLES: Role[] = [
     ],
   },
   {
-    id: 'branch_manager', nameAr: 'مدير فرع', isSystem: true,
+    id: 'branch_manager', nameAr: 'مدير فرع', isSystem: true, requiredModule: 'pos',
     permissions: [
       'sales.pos.open', 'sales.invoice.create', 'sales.price.edit', 'sales.discount.grant',
       'sales.return.create', 'sales.return.approve', 'sales.expiry.override', 'sales.shift.close',
@@ -331,6 +388,91 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
     {
       id: 'kitchen_manager', nameAr: 'مسؤول مطبخ وإنتاج', isSystem: true,
       permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
+    },
+  ],
+  // ─── أدوار الأنشطة المضافة (سد فجوة «لكل نشاط أدواره») ───
+  pharmacy: [
+    {
+      // الصيدلي المسؤول — نمط برامج الصيدليات: يدير الأصناف والصلاحيات دون رؤية التكلفة
+      id: 'pharmacist', nameAr: 'صيدلي', isSystem: true,
+      permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.return.create', 'sales.shift.close', 'inv.view', 'inv.item.manage', 'inv.count', 'party.customer.manage'],
+    },
+  ],
+  butcher: [
+    {
+      id: 'butcher_master', nameAr: 'معلم جزارة (تقطيع وتجهيز)', isSystem: true,
+      permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
+    },
+  ],
+  dates: [
+    {
+      id: 'sorting_supervisor', nameAr: 'مشرف فرز وتعبئة', isSystem: true,
+      permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
+    },
+  ],
+  salon: [
+    {
+      // الحلاق/الخبيرة — يسجل خدماته فقط، الخصومات بموافقة
+      id: 'stylist', nameAr: 'حلاق / خبيرة تجميل', isSystem: true,
+      permissions: ['sales.pos.open', 'sales.invoice.create', 'party.customer.manage'],
+    },
+  ],
+  bakery: [
+    {
+      id: 'baker', nameAr: 'خباز (إنتاج يومي)', isSystem: true,
+      permissions: ['ops.activity.use', 'inv.view', 'inv.count', 'inv.item.manage'],
+    },
+  ],
+  trading: [
+    {
+      // مندوب مبيعات الجملة — نمط SAP B1/دفترة توزيع: فواتير وعملاء وتحصيل، بلا أسعار خاصة
+      id: 'sales_rep', nameAr: 'مندوب مبيعات', isSystem: true,
+      permissions: ['sales.invoice.create', 'sales.return.create', 'inv.view', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
+    },
+    {
+      id: 'warehouse_keeper', nameAr: 'أمين مخزن', isSystem: true,
+      permissions: ['inv.view', 'inv.item.manage', 'inv.transfer', 'inv.count'],
+    },
+  ],
+  manufacturing: [
+    {
+      // مسؤول الإنتاج — نمط Katana/MRPeasy: أوامر إنتاج وجرد بلا مبيعات
+      id: 'production_manager', nameAr: 'مسؤول إنتاج', isSystem: true,
+      permissions: ['ops.activity.use', 'inv.view', 'inv.cost.view', 'inv.item.manage', 'inv.count', 'inv.transfer'],
+    },
+    {
+      id: 'warehouse_keeper', nameAr: 'أمين مخزن', isSystem: true,
+      permissions: ['inv.view', 'inv.item.manage', 'inv.transfer', 'inv.count'],
+    },
+  ],
+  services: [
+    {
+      // منسق خدمات — فواتير وعملاء ومقبوضات (نمط FreshBooks staff)
+      id: 'service_coordinator', nameAr: 'منسق خدمات', isSystem: true,
+      permissions: ['sales.invoice.create', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
+    },
+  ],
+  building_materials: [
+    {
+      id: 'sales_rep', nameAr: 'مندوب مبيعات وتوصيل', isSystem: true,
+      permissions: ['sales.invoice.create', 'sales.return.create', 'inv.view', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers'],
+    },
+    {
+      id: 'warehouse_keeper', nameAr: 'أمين مخزن', isSystem: true,
+      permissions: ['inv.view', 'inv.item.manage', 'inv.transfer', 'inv.count'],
+    },
+  ],
+  grocery: [
+    {
+      id: 'warehouse_keeper', nameAr: 'أمين مخزن', isSystem: true,
+      permissions: ['inv.view', 'inv.item.manage', 'inv.transfer', 'inv.count'],
+    },
+  ],
+  jewelry: [
+    {
+      // صايغ أول — يسعّر بحسب جرام اليوم لكن التكلفة والخصومات للمالك
+      id: 'goldsmith', nameAr: 'صايغ أول', isSystem: true,
+      permissions: ['sales.pos.open', 'sales.invoice.create', 'ops.activity.use', 'inv.view', 'party.customer.manage'],
     },
   ],
 }

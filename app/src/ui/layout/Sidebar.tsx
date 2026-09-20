@@ -9,6 +9,7 @@ import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../../core/permissions.ts'
+import { labelFor } from '../../core/activityLabels.ts'
 
 export function Sidebar() {
   const location = useLocation()
@@ -43,8 +44,13 @@ export function Sidebar() {
         .filter((c) => !c.feature || setup.features.includes(c.feature))
         // فرع لصيق بنشاط بعينه (أوامر الطاولات للمطاعم) — لا يظهر لمصنع فعّل وحدة التصنيع
         .filter((c) => !c.activities || c.activities.includes(setup.activityId ?? ''))
+        // قائمة سوداء: الكاشير/الورديات تختفي لأنشطة «الفاتورة أولاً» (تجارة/مصنع/خدمات)
+        .filter((c) => !c.hideForActivities || !c.hideForActivities.includes(setup.activityId ?? ''))
         // فرض الصلاحيات في الواجهة: الشاشة غير المصرح بها لا تظهر في القائمة
-        .filter((c) => canAccessPath(c.path, perms)),
+        .filter((c) => canAccessPath(c.path, perms))
+        // مسميات حسب النشاط (أمر المالك): «الزبائن» للجزارة، «الخامات والمنتجات» للمصنع…
+        .map((c) => ({ ...c, nameAr: labelFor(setup.activityId, `${sec.id}.${c.id}`, c.nameAr) })),
+      nameAr: labelFor(setup.activityId, sec.id, sec.nameAr),
     }))
     .filter((sec) => sec.children.length > 0)
 

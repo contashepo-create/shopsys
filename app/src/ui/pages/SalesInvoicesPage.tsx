@@ -5,7 +5,7 @@
  *   مع تفعيلها: يظهر بدلاً منه زرا «إشعار دائن» (مرتجع) و«إشعار مدين» (فاتورة إضافية).
  */
 import { useMemo, useState } from 'react'
-import { Eye, BookOpenText, Printer, FileText, Pencil, FileMinus2, FilePlus2, Trash2, History } from 'lucide-react'
+import { Eye, BookOpenText, Printer, FileText, Pencil, FileMinus2, FilePlus2, Trash2, History, HandCoins } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -26,7 +26,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { normalizeRefQuery } from '../../core/refcode.ts'
 
 export function SalesInvoicesPage() {
-  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, shifts, editSale } = useDataStore()
+  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, shifts, editSale, employees, staffCommissions, addStaffCommission } = useDataStore()
   const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -51,6 +51,23 @@ export function SalesInvoicesPage() {
   const [editDiscount, setEditDiscount] = useState(0)
   const [editReason, setEditReason] = useState('')
   const [editAddItemId, setEditAddItemId] = useState(0)
+
+  /* ─── عمولة موظف عن الفاتورة (تعميم — أمر المالك): مصروف مربوط بها ─── */
+  const [commFor, setCommFor] = useState<SaleInvoice | null>(null)
+  const [commEmpId, setCommEmpId] = useState('')
+  const [commAmount, setCommAmount] = useState('')
+  const saveInvoiceCommission = () => {
+    if (!commFor || !commEmpId || !commAmount.trim()) return
+    try {
+      const c = addStaffCommission({
+        employeeId: Number(commEmpId), source: 'sale', sourceId: commFor.id,
+        description: `عمولة بيع — فاتورة ${commFor.invoiceNumber}`,
+        amountMinor: toMinor(commAmount, cur.decimals),
+      })
+      toast.show(`استُحقت ${c.code} — مصروف مربوط بالفاتورة، تُصرف مع الراتب أو منفردة من شاشة الموظفين ✅`)
+      setCommFor(null); setCommEmpId(''); setCommAmount('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   const blocksOf = (s: SaleInvoice) => saleEditBlocks({
     hasReturns: saleReturns.some((r) => r.saleId === s.id),
@@ -246,6 +263,13 @@ export function SalesInvoicesPage() {
                       </button>
                     </>
                   )}
+                  <button
+                    onClick={() => setCommFor(s)}
+                    title={staffCommissions.some((c) => c.source === 'sale' && c.sourceId === s.id && c.status !== 'cancelled') ? 'عليها عمولة موظف مستحقة — إدارتها من شاشة الموظفين' : 'استحقاق عمولة موظف عن هذه الفاتورة'}
+                    className={`p-2 rounded-lg transition-all duration-200 hover:scale-110 ${staffCommissions.some((c) => c.source === 'sale' && c.sourceId === s.id && c.status !== 'cancelled') ? 'text-violet-500 bg-violet-500/10' : 'text-slate-400 hover:text-violet-600 hover:bg-violet-500/10'}`}
+                  >
+                    <HandCoins size={15} />
+                  </button>
                   <button onClick={() => setViewing(s)} title="عرض الفاتورة وقيدها" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all duration-200 hover:scale-110">
                     <Eye size={15} />
                   </button>
@@ -436,6 +460,36 @@ export function SalesInvoicesPage() {
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setEditing(null)}>إلغاء</Btn>
               <Btn onClick={saveEdit} disabled={!editLines.length || editLines.some((l) => l.qty <= 0)}>💾 حفظ التعديل</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* 🤝 عمولة موظف عن فاتورة بيع — استحقاق مربوط بالفاتورة (تعميم أمر المالك) */}
+      <Modal open={!!commFor} onClose={() => setCommFor(null)} title={commFor ? `🤝 عمولة موظف — فاتورة ${commFor.invoiceNumber}` : ''}>
+        {commFor && (
+          <div className="space-y-3">
+            {staffCommissions.filter((c) => c.source === 'sale' && c.sourceId === commFor.id && c.status !== 'cancelled').map((c) => (
+              <div key={c.id} className="rounded-xl bg-violet-500/10 border border-violet-500/25 p-3 text-[12px] font-bold text-violet-700 dark:text-violet-300">
+                {c.code} — {employees.find((e) => e.id === c.employeeId)?.nameAr}: {fmt(c.amountMinor)} ({c.status === 'paid' ? 'مصروفة ✓' : 'مستحقة ⏳'})
+              </div>
+            ))}
+            <Field label="الموظف *">
+              <select value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
+                <option value="">— اختر الموظف —</option>
+                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+              </select>
+            </Field>
+            <Field label={`مبلغ العمولة (${cur.symbol}) *`}>
+              <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
+            </Field>
+            <div className="text-[11px] text-slate-400 rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 leading-relaxed">
+              💡 قيد فوري: مصروف عمولات موظفين (5117) ← عمولات مستحقة (2116) —
+              تنخفض ربحية الفترة من لحظة الفاتورة، وتُصرف لاحقاً مع الراتب أو منفردة من شاشة الموظفين ← العمولات.
+            </div>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setCommFor(null)}>إغلاق</Btn>
+              <Btn onClick={saveInvoiceCommission} disabled={!commEmpId || !commAmount.trim()}>💾 استحقاق العمولة</Btn>
             </div>
           </div>
         )}

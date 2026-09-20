@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react'
 import { Printer, FileSpreadsheet } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { formatMinor, type CurrencyConfig } from '../../core/money.ts'
-import { STANDARD_COA } from '../../core/ledger.ts'
+import { useActivityBaseCoa } from '../activityCoa.ts'
 import {
   trialBalance, incomeStatement, balanceSheet, generalLedger, cashFlowReport, vatReport, toCsv,
   type FinPeriod,
@@ -53,13 +53,15 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
   const periodLabel = `من ${p.from} إلى ${p.to}`
   const extraNames = useMemo(() => Object.fromEntries([...treasuries.map((t) => [t.code, t.nameAr] as const), ...customAccounts.map((a) => [a.code, a.nameAr] as const)]), [treasuries, customAccounts])
   const cashCodes = useMemo(() => treasuries.map((t) => t.code), [treasuries])
+  // قائمة حسابات دفتر الأستاذ مفلترة حسب النشاط (وحساب متحرك يظهر دائماً — صمام الأمان)
+  const activityBase = useActivityBaseCoa()
   const accountOptions = useMemo(() => {
-    const std = STANDARD_COA.filter((a) => a.isPostable).map((a) => ({ code: a.code, nameAr: a.nameAr }))
+    const std = activityBase.filter((a) => a.isPostable).map((a) => ({ code: a.code, nameAr: a.nameAr }))
     const extra = treasuries.filter((t) => !std.some((a) => a.code === t.code)).map((t) => ({ code: t.code, nameAr: t.nameAr }))
     // الحسابات المخصصة التي أضافها المالك — تظهر في دفتر الأستاذ كأي حساب
     const customs = customAccounts.map((a) => ({ code: a.code, nameAr: a.nameAr }))
     return [...std, ...extra, ...customs].sort((a, b) => a.code.localeCompare(b.code))
-  }, [treasuries, customAccounts])
+  }, [activityBase, treasuries, customAccounts])
 
   const tb = useMemo(() => (reportId === 'trial_balance' ? trialBalance(journal, p, extraNames) : null), [reportId, journal, p, extraNames])
   const inc = useMemo(() => (reportId === 'income' ? incomeStatement(journal, p, extraNames) : null), [reportId, journal, p, extraNames])

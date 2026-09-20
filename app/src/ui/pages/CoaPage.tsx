@@ -8,7 +8,8 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { STANDARD_COA, accountBalance, type Account } from '../../core/ledger.ts'
+import { accountBalance, type Account } from '../../core/ledger.ts'
+import { useActivityBaseCoa } from '../activityCoa.ts'
 import { fullCoa } from '../../core/treasury.ts'
 import { customAsAccounts, customParentGroups } from '../../core/customAccounts.ts'
 import { Btn, Field, Modal, inputCls, useToast } from '../components/ui.tsx'
@@ -25,8 +26,11 @@ export function CoaPage() {
   const { journal, treasuries, customAccounts, addCustomAccount, deleteCustomAccount } = useDataStore()
   const toast = useToast()
   // الشجرة الكاملة = القياسية + خزائن المالك + حساباته المخصصة (الشجرة ليست مفروضة — طلب المالك)
+  // فلترة الشجرة حسب النشاط (أمر المالك): حسابات المقاولات لا تظهر لصيدلية —
+  // وصمام الأمان يُبقي أي حساب عليه حركة فعلية ظاهراً مهما كانت الوحدات
+  const activityBase = useActivityBaseCoa()
   const COA = useMemo(() => {
-    const base = fullCoa(STANDARD_COA, treasuries)
+    const base = fullCoa(activityBase, treasuries)
     const customs = customAsAccounts(customAccounts)
     if (customs.length === 0) return base
     // إدراج كل حساب مخصص بعد آخر ابن لمجموعته الأم — يظهر بمكانه الطبيعي بالشجرة
@@ -42,7 +46,7 @@ export function CoaPage() {
     // أي مخصص لم يُدرج (مجموعة بلا أبناء قياسيين) يُلحق آخر الشجرة
     for (const c of customs) if (!out.includes(c)) out.push(c)
     return out
-  }, [treasuries, customAccounts])
+  }, [activityBase, treasuries, customAccounts])
   const { setup } = useAppStore()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)

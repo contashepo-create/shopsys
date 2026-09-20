@@ -6,7 +6,7 @@
  */
 import { useMemo, useState } from 'react'
 import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound } from 'lucide-react'
-import { PERMISSIONS, PERMISSION_SECTIONS, rolesWithOverrides } from '../../core/permissions.ts'
+import { rolesWithOverrides, visibleRolesForModules, permissionsForModules, permissionSectionsForModules } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/auth.ts'
@@ -15,16 +15,24 @@ import { updateSavedLoginPin } from '../../data/savedLogin.ts'
 import { Btn, Field, inputCls, Modal, useToast, PinInput } from '../components/ui.tsx'
 
 export function PermissionsPage() {
-  const [activeRoleId, setActiveRoleId] = useState('cashier')
+  const [activeRoleId, setActiveRoleId] = useState('')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
   const { appUsers, currentUserId, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
-  const roles = rolesWithOverrides(roleOverrides, customRoles, useAppStore.getState().setup.activityId)
+  const setup = useAppStore.getState().setup
+  const allRoles = rolesWithOverrides(roleOverrides, customRoles, setup.activityId)
+  // فلترة حسب النشاط (أمر المالك): «كاشير» لا يظهر لنشاط بلا كاشير،
+  // والصلاحيات المعروضة = العامة + ما تخص وحدات النشاط المفعلة فقط
+  const roles = visibleRolesForModules(allRoles, setup.modules)
+  const PERMISSIONS = permissionsForModules(setup.modules)
+  const PERMISSION_SECTIONS = permissionSectionsForModules(setup.modules)
   const toast = useToast()
   const [userModal, setUserModal] = useState(false)
   // استثناءات فردية (البند 4 — لكل موظف): منح فوق الدور أو حجب رغم الدور
   const [excFor, setExcFor] = useState<number | null>(null)
-  const [uRole, setURole] = useState('cashier')
+  // الدور الافتراضي = أول دور معروض غير المالك (نشاط بلا كاشير لا يقترح «كاشير»)
+  const firstAssignableRole = roles.find((r) => !r.isOwner)?.id ?? 'accountant'
+  const [uRole, setURole] = useState(firstAssignableRole)
   const [uPin, setUPin] = useState('')
   // سياسة المالك: الحساب يُبنى على موظف مسجل — بياناته وماليته في شاشة الموظفين
   const [uEmployeeId, setUEmployeeId] = useState(0)
@@ -36,7 +44,7 @@ export function PermissionsPage() {
   // ➕ دور مخصص جديد (نمط Square «Create permission set»)
   const [roleModal, setRoleModal] = useState(false)
   const [newRoleName, setNewRoleName] = useState('')
-  const [newRoleBase, setNewRoleBase] = useState('cashier')
+  const [newRoleBase, setNewRoleBase] = useState(firstAssignableRole) // أول دور معروض لهذا النشاط
   // 🔄 تغيير دور مستخدم قائم (ترقية كاشير لمشرف بضغطة — فجوة سُدت بمراجعة المالك)
   const [roleFor, setRoleFor] = useState<number | null>(null)
   const [ePin, setEPin] = useState('')
@@ -99,12 +107,13 @@ export function PermissionsPage() {
     try {
       const id = addCustomRole(newRoleName, newRoleBase || undefined)
       setActiveRoleId(id)
-      setRoleModal(false); setNewRoleName(''); setNewRoleBase('cashier')
+      setRoleModal(false); setNewRoleName(''); setNewRoleBase(firstAssignableRole)
       toast.show('أُنشئ الدور — عدّل صلاحياته الآن بالتشيك بوكس ✅')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  const activeRole = roles.find((r) => r.id === activeRoleId) ?? roles[0]
+  // الدور المعروض ابتداءً = أول دور غير المالك في القائمة المفلترة لهذا النشاط
+  const activeRole = roles.find((r) => r.id === activeRoleId) ?? roles.find((r) => !r.isOwner) ?? roles[0]
   const isOwner = !!activeRole.isOwner
   const permSet = useMemo(() => new Set(activeRole.permissions), [activeRole])
 

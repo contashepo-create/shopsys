@@ -16,7 +16,7 @@ import {
 } from '../../core/cheques.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { STANDARD_COA } from '../../core/ledger.ts'
+import { useActivityBaseCoa } from '../activityCoa.ts'
 import { accountName } from './accountNames.ts'
 
 const STATUS_STYLE: Record<ChequeStatus, string> = {
@@ -68,8 +68,10 @@ export function ChequesPage() {
 
   // خيارات الحساب المقابل لشيك بلا طرف (طلب المالك — كل السيناريوهات):
   // وارد بلا عميل ⇒ حسابات الإيراد؛ صادر بلا مورد ⇒ مصروفات + رواتب مستحقة + المخصصة
+  const activityBase = useActivityBaseCoa()
   const counterOptions = useMemo(() => {
-    const std = STANDARD_COA.filter((a) => a.isPostable && (
+    // مفلترة حسب النشاط (أمر المالك): لا «إيرادات تحاليل طبية» في شيكات محل موبايلات
+    const std = activityBase.filter((a) => a.isPostable && (
       direction === 'incoming' ? a.rootType === 'revenue' : (a.rootType === 'expenses' || a.code === '2104')
     ))
     const custom = customAccounts.filter((a) =>
@@ -78,7 +80,7 @@ export function ChequesPage() {
       ...std.map((a) => ({ code: a.code, nameAr: a.nameAr })),
       ...custom.map((a) => ({ code: a.code, nameAr: `${a.nameAr} (مخصص)` })),
     ]
-  }, [direction, customAccounts])
+  }, [activityBase, direction, customAccounts])
 
   const today = new Date().toISOString()
   const alerts = useMemo(() => dueCheques(cheques, today), [cheques, today])

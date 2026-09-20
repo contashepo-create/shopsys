@@ -9,7 +9,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { STANDARD_COA } from '../../core/ledger.ts'
+import { useActivityBaseCoa } from '../activityCoa.ts'
 import { fullCoa } from '../../core/treasury.ts'
 import { customAsAccounts } from '../../core/customAccounts.ts'
 import { computeTrialBalance, computeIncomeStatement } from '../../core/accounting.ts'
@@ -26,7 +26,9 @@ export function TrialBalancePage() {
   const [to, setTo] = useState('')
 
   // الشجرة الكاملة تشمل الخزائن والبنوك المخصصة — حتى لا تسقط أرصدتها من الميزان
-  const coa = useMemo(() => [...fullCoa(STANDARD_COA, treasuries), ...customAsAccounts(customAccounts)], [treasuries, customAccounts])
+  // فلترة حسب النشاط + صمام الأمان (حساب متحرك يظهر دائماً) — الميزان لا يفقد أرصدة أبداً
+  const activityBase = useActivityBaseCoa()
+  const coa = useMemo(() => [...fullCoa(activityBase, treasuries), ...customAsAccounts(customAccounts)], [activityBase, treasuries, customAccounts])
   const tb = useMemo(() => computeTrialBalance(journal, coa), [journal, coa])
   const is = useMemo(
     () => computeIncomeStatement(journal, coa, from || undefined, to || undefined),

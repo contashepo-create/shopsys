@@ -14,6 +14,7 @@ import {
   ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule, ItemFeature } from '../core/activities.ts'
+import { INVOICE_FIRST_ACTIVITIES } from '../core/activities.ts'
 
 export interface NavChild {
   id: string
@@ -29,6 +30,8 @@ export interface NavChild {
    * «أوامر الطاولات» للمطاعم فقط وإن فُعّلت وحدة التصنيع لمصنع (تعميم التصنيع)
    */
   activities?: string[]
+  /** يختفي لهذه الأنشطة (قائمة سوداء): الكاشير/الورديات لأنشطة «الفاتورة أولاً» */
+  hideForActivities?: readonly string[]
 }
 
 export interface NavSection {
@@ -67,13 +70,15 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     id: 'sales', nameAr: 'المبيعات', icon: ShoppingCart, color: 'emerald', module: 'pos',
     children: [
+      // أنشطة «الفاتورة أولاً» (تجارة جملة/مصنع/خدمات): نفس الشاشة تظهر لهم باسم
+      // «إنشاء فاتورة بيع» عبر ACTIVITY_LABELS (sales.pos) — ولا ورديات ولا استبدال
       { id: 'pos', nameAr: 'شاشة البيع (كاشير)', icon: Store, path: '/pos' },
       { id: 'restaurant-orders', nameAr: 'أوامر الطاولات والدليفري', icon: UtensilsCrossed, path: '/sales/restaurant-orders', module: 'recipes', activities: ['restaurant'] },
       { id: 'invoices', nameAr: 'فواتير المبيعات', icon: Receipt, path: '/sales/invoices' },
       { id: 'returns', nameAr: 'مرتجعات المبيعات', icon: RotateCcw, path: '/sales/returns' },
-      { id: 'exchange', nameAr: 'الاستبدال', icon: Repeat, path: '/sales/exchange' },
-      { id: 'shifts', nameAr: 'الورديات', icon: CalendarClock, path: '/sales/shifts' },
-      { id: 'price-lists', nameAr: 'قوائم الأسعار', icon: Tags, path: '/sales/price-lists' },
+      { id: 'exchange', nameAr: 'الاستبدال', icon: Repeat, path: '/sales/exchange', hideForActivities: INVOICE_FIRST_ACTIVITIES },
+      { id: 'shifts', nameAr: 'الورديات', icon: CalendarClock, path: '/sales/shifts', hideForActivities: INVOICE_FIRST_ACTIVITIES },
+      { id: 'price-lists', nameAr: 'قوائم الأسعار', icon: Tags, path: '/sales/price-lists', feature: 'price_lists' },
     ],
   },
   {

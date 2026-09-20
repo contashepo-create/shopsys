@@ -16,6 +16,7 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { customerStatement, supplierStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
+import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
 
 /** الحسابات المقابلة المتاحة لكل نوع سند — بلغة التاجر */
 const RECEIPT_COUNTERS = [
@@ -61,17 +62,24 @@ export function VouchersPage() {
   // ربط الشجرة المفتوحة بالسندات (طلب المالك): حساب إيراد مخصص يظهر في القبض،
   // وحساب مصروف مخصص يظهر في الصرف — ويُعالج بقيد سليم فور اختياره
   const counters = useMemo(() => {
+    // فلترة حسب النشاط (أمر المالك): «إيراد مبيعات بدون فاتورة» لا يظهر لنشاط بلا بيع،
+    // و«مصروف على فاتورة شراء» لا يظهر لنشاط بلا وحدة مشتريات
+    const allowed = (code: string): boolean => {
+      if (code === PURCHASE_EXPENSE_CODE) return setup.modules.includes('purchases')
+      const req = ACCOUNT_MODULE_MAP[code]
+      return !req || req.some((m) => setup.modules.includes(m))
+    }
     if (kind === 'receipt') {
       return [
-        ...RECEIPT_COUNTERS,
+        ...RECEIPT_COUNTERS.filter((c) => allowed(c.code)),
         ...customAccounts.filter((a) => a.rootType === 'revenue').map((a) => ({ code: a.code, label: `${a.nameAr} (حساب مخصص)` })),
       ]
     }
     return [
-      ...PAYMENT_COUNTERS,
+      ...PAYMENT_COUNTERS.filter((c) => allowed(c.code)),
       ...customAccounts.filter((a) => a.rootType === 'expenses').map((a) => ({ code: a.code, label: `${a.nameAr} (حساب مخصص)` })),
     ]
-  }, [kind, customAccounts])
+  }, [kind, customAccounts, setup.modules])
   const listed = useMemo(() => [...vouchers].filter((v) => v.kind !== 'transfer').reverse(), [vouchers])
 
   /** الرصيد الحي للطرف المختار (أمر التعديل: يظهر تحت العميل/المورد قبل الحفظ) */

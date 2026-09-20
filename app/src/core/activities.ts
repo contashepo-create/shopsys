@@ -279,6 +279,21 @@ export function getActivity(id: string | null): ActivityTemplate | undefined {
 }
 
 /**
+ * أنشطة «الفاتورة أولاً» (سد فجوة — أمر المالك «لا يظهر قسم لا يخص النشاط»):
+ * وحدة pos مفعلة لهم لأجل فواتير المبيعات والمرتجعات، لكن أسلوب عملهم
+ * فواتير A4 بآجال لا كاشير سريع — لذا شاشة الكاشير والورديات والاستبدال
+ * تختفي عندهم، وسياسة «لا بيع بلا وردية» لا تسري عليهم (وإلا انسدت فواتيرهم
+ * بوردية لا تظهر شاشتها أصلاً — مأزق حقيقي اكتُشف بالفحص).
+ * المرجعية: SAP B1 وQuickBooks — بيع الجملة والخدمات بالفاتورة لا بجلسة كاشير.
+ */
+export const INVOICE_FIRST_ACTIVITIES: readonly string[] = ['trading', 'manufacturing', 'services']
+
+/** هل هذا النشاط يبيع بالفاتورة لا بالكاشير؟ */
+export function isInvoiceFirst(activityId: string | null): boolean {
+  return activityId != null && INVOICE_FIRST_ACTIVITIES.includes(activityId)
+}
+
+/**
  * تبديل وحدة عمل (تفعيل/إلغاء) — دالة خالصة:
  * تعيد قائمة الوحدات الجديدة، وتمنع إلغاء آخر وحدة عمل (لا تطبيق بلا أي وحدة).
  */

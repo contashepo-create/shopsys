@@ -15,7 +15,7 @@ import { CONSUMPTION_PURPOSES, INTERNAL_USE_ACCOUNT } from '../../core/consumpti
 
 /** خيار الكتابة الحرة في قائمة الغرض — يظهر حقلاً نصياً عند اختياره */
 const CUSTOM_PURPOSE = '✍️ غرض آخر (اكتبه بنفسك)'
-import { STANDARD_COA } from '../../core/ledger.ts'
+import { useActivityBaseCoa } from '../activityCoa.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -30,11 +30,12 @@ export function ConsumptionPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const active = useMemo(() => items.filter((it) => it.isActive), [items])
 
-  // حسابات المصروفات المتاحة للصرف عليها: القياسية القابلة للترحيل + المخصصة (5xxx)
+  // حسابات المصروفات المتاحة للصرف عليها: القياسية المفلترة حسب النشاط + المخصصة (5xxx)
+  const activityBase = useActivityBaseCoa()
   const expenseAccounts = useMemo(() => [
-    ...STANDARD_COA.filter((a) => a.rootType === 'expenses' && a.isPostable).map((a) => ({ code: a.code, nameAr: a.nameAr })),
+    ...activityBase.filter((a) => a.rootType === 'expenses' && a.isPostable).map((a) => ({ code: a.code, nameAr: a.nameAr })),
     ...customAccounts.filter((a) => a.rootType === 'expenses').map((a) => ({ code: a.code, nameAr: a.nameAr })),
-  ], [customAccounts])
+  ], [activityBase, customAccounts])
 
   const [open, setOpen] = useState(false)
   const [purpose, setPurpose] = useState<string>(CONSUMPTION_PURPOSES[0])

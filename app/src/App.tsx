@@ -17,6 +17,8 @@ import { authRequired } from './core/auth.ts'
 import { buildAccentCssVars } from './core/appearance.ts'
 import { decideTabLock, parseTabLock, TAB_HEARTBEAT_MS } from './core/concurrency.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath, permissionForPath, PERMISSIONS } from './core/permissions.ts'
+import { pathAllowedForSetup } from './core/coaVisibility.ts'
+import { labelFor } from './core/activityLabels.ts'
 import { useState } from 'react'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
@@ -95,9 +97,15 @@ import { NAV_SECTIONS } from './ui/navCatalog.tsx'
 
 function usePageTitle(): string {
   const { pathname } = useLocation()
+  const activityId = useAppStore((s) => s.setup.activityId)
   for (const sec of NAV_SECTIONS) {
     const child = sec.children.find((c) => c.path === pathname)
-    if (child) return sec.children.length === 1 ? sec.nameAr : `${sec.nameAr} — ${child.nameAr}`
+    if (child) {
+      // مسميات حسب النشاط (أمر المالك) — العنوان يطابق اسم الفرع في القائمة
+      const secName = labelFor(activityId, sec.id, sec.nameAr)
+      const childName = labelFor(activityId, `${sec.id}.${child.id}`, child.nameAr)
+      return sec.children.length === 1 ? secName : `${secName} — ${childName}`
+    }
   }
   return 'TAHAKAM ERP'
 }
@@ -115,7 +123,24 @@ function Shell() {
   if (authRequired(ownerPinHash, appUsers.filter((u) => u.active).length) && (loggedOut || activeUser?.mustChangePin)) {
     return <LoginScreen />
   }
-  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, useAppStore.getState().setup.activityId))
+  // ─── حراسة الوحدات (سد ثغرة الرابط المباشر): شاشة وحدة غير مفعلة للنشاط ───
+  // لا تُفتح حتى بكتابة المسار يدوياً — القائمة تخفيها والحارس يمنعها (دفاع مزدوج)
+  const setupState = useAppStore.getState().setup
+  if (!pathAllowedForSetup(location.pathname, setupState.modules, setupState.features, setupState.activityId)) {
+    return (
+      <MainLayout title="غير متاح لنشاطك">
+        <div className="max-w-lg mx-auto mt-16 text-center space-y-4 p-10 rounded-3xl bg-white dark:bg-card-dark border border-amber-500/25 anim-pop">
+          <div className="text-5xl">🔒</div>
+          <h1 className="text-xl font-black text-slate-800 dark:text-white">هذه الشاشة غير مفعلة لنشاطك</h1>
+          <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+            هذا القسم يخص وحدة عمل غير مفعلة في نشاطك الحالي.
+            تفعيل الأقسام الإضافية يتم عبر المطوّر بمفتاح موقّع.
+          </p>
+        </div>
+      </MainLayout>
+    )
+  }
+  const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, setupState.activityId))
   if (!canAccessPath(location.pathname, perms)) {
     const needed = permissionForPath(location.pathname)
     const permName = PERMISSIONS.find((p) => p.id === needed)?.nameAr ?? needed

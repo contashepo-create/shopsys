@@ -4,7 +4,7 @@
  * كل قيد يظهر ويربط بالمشروع؛ الإفراج عن المحتجز يقفل المشروع.
  */
 import { useMemo, useState } from 'react'
-import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer } from 'lucide-react'
+import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import type { Project } from '../../core/contracting.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -26,6 +26,7 @@ export function ProjectsPage() {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems,
     addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
+    staffCommissions, addStaffCommission,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -177,6 +178,22 @@ export function ProjectsPage() {
   /* عرض */
   const [viewing, setViewing] = useState<Project | null>(null)
   const [refundingExtract, setRefundingExtract] = useState<(typeof projectExtracts)[number] | null>(null)
+  // عمولة موظف عن المشروع (تعميم — أمر المالك): مهندس مبيعات جلب العقد مثلاً
+  const [commFor, setCommFor] = useState<Project | null>(null)
+  const [commEmpId, setCommEmpId] = useState('')
+  const [commAmount, setCommAmount] = useState('')
+  const saveProjectCommission = () => {
+    if (!commFor || !commEmpId || !commAmount.trim()) return
+    try {
+      const c = addStaffCommission({
+        employeeId: Number(commEmpId), source: 'project', sourceId: commFor.id,
+        description: `عمولة مشروع ${commFor.code} — ${commFor.nameAr}`,
+        amountMinor: toMinor(commAmount, cur.decimals),
+      })
+      toast.show(`استُحقت ${c.code} — مصروف مربوط بالمشروع، تُصرف من شاشة الموظفين ← العمولات ✅`)
+      setCommFor(null); setCommEmpId(''); setCommAmount('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
   const viewingLive = viewing ? projects.find((p) => p.id === viewing.id) ?? null : null
   const profit = viewingLive ? getProjectProfit(viewingLive.id) : null
   const viewExtracts = viewingLive ? projectExtracts.filter((e) => e.projectId === viewingLive.id) : []
@@ -307,6 +324,11 @@ export function ProjectsPage() {
                             )}
                           </>
                         )}
+                        <button
+                          onClick={() => setCommFor(p)}
+                          title={staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'عليه عمولة موظف — إدارتها من شاشة الموظفين' : 'عمولة موظف عن المشروع'}
+                          className={`p-2 rounded-lg transition-all hover:scale-110 ${staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'text-violet-500 bg-violet-500/10' : 'text-slate-400 hover:text-violet-600 hover:bg-violet-500/10'}`}
+                        ><HandCoins className="w-4 h-4" /></button>
                         <button onClick={() => setViewing(p)} title="التفاصيل والقيود" className="p-2 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all hover:scale-110"><Eye className="w-4 h-4" /></button>
                       </div>
                     </td>
@@ -713,6 +735,34 @@ export function ProjectsPage() {
               } catch (err) { toast.show((err as Error).message, 'error') }
             }}
           />
+        )}
+      </Modal>
+      {/* 🤝 عمولة موظف عن المشروع (تعميم أمر المالك) */}
+      <Modal open={!!commFor} onClose={() => setCommFor(null)} title={commFor ? `🤝 عمولة موظف — ${commFor.code}` : ''}>
+        {commFor && (
+          <div className="space-y-3">
+            {staffCommissions.filter((c) => c.source === 'project' && c.sourceId === commFor.id && c.status !== 'cancelled').map((c) => (
+              <div key={c.id} className="rounded-xl bg-violet-500/10 border border-violet-500/25 p-3 text-[12px] font-bold text-violet-700 dark:text-violet-300">
+                {c.code} — {employees.find((e) => e.id === c.employeeId)?.nameAr}: {fmt(c.amountMinor)} ({c.status === 'paid' ? 'مصروفة ✓' : 'مستحقة ⏳'})
+              </div>
+            ))}
+            <Field label="الموظف *">
+              <select value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
+                <option value="">— اختر الموظف —</option>
+                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
+              </select>
+            </Field>
+            <Field label={`مبلغ العمولة (${cur.symbol}) *`}>
+              <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
+            </Field>
+            <div className="text-[11px] text-slate-400 rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 leading-relaxed">
+              💡 استحقاق فوري: مصروف عمولات (5117) ← مستحقة (2116) — مربوطة بالمشروع وتدخل ربحية الفترة، والصرف من شاشة الموظفين.
+            </div>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setCommFor(null)}>إغلاق</Btn>
+              <Btn onClick={saveProjectCommission} disabled={!commEmpId || !commAmount.trim()}>💾 استحقاق العمولة</Btn>
+            </div>
+          </div>
         )}
       </Modal>
       {creditApproval.dialog}
