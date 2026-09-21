@@ -32,6 +32,8 @@ export interface CartLine {
    */
   unitFactor?: number
   unitLabel?: string
+  /** مخزن هذا السطر — يعلو على مخزن رأس الفاتورة في البيع متعدد المخازن */
+  warehouseId?: number | null
 }
 
 /** كمية السطر بالوحدة الأساسية (للمخزون/الدفعات) — qty × unitFactor */
