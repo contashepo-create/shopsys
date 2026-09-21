@@ -13,6 +13,7 @@ import { runSyncCycle, listConflictSnapshots, getConflictSnapshotData, restoreCo
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { deriveArchitectureMode, MODE_LABELS } from '../../core/architecture.ts'
 import { isCloudDisabled } from '../../core/featureFlags.ts'
+import { exportSyncPairing, importSyncPairing, PAIRING_PASSWORD_MIN } from '../../core/syncPairing.ts'
 
 const MIGRATION_PATH = 'supabase/migrations/202609220001_secure_store_rls.sql'
 
@@ -40,6 +41,7 @@ export function SyncPage() {
   const [storeId, setStoreId] = useState(sync.storeId)
   const [secret, setSecret] = useState(sync.secret)
   const [accessToken, setAccessToken] = useState(sync.accessToken)
+  const [pairingPassword, setPairingPassword] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   // لقطات التعارض (شبكة الأمان): تُحدَّث بعد كل مزامنة/استرجاع عبر هذا العداد
   const [snapVer, setSnapVer] = useState(0)
@@ -145,6 +147,37 @@ export function SyncPage() {
     }
   }
 
+  const exportPairing = async () => {
+    try {
+      const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
+      const errors = validateSyncConfig(cfg)
+      if (errors.length) throw new Error(errors[0])
+      const content = await exportSyncPairing(cfg, pairingPassword)
+      const blob = new Blob([content], { type: 'application/octet-stream' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `tahakam-sync-${cfg.storeId}.tksync`
+      a.click(); URL.revokeObjectURL(a.href)
+      toast.show('تم تنزيل ملف ربط مشفر — انقله للجهاز الآخر بأمان ✅')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const importPairing = () => {
+    const input = document.createElement('input')
+    input.type = 'file'; input.accept = '.tksync,text/plain'
+    input.onchange = async () => {
+      try {
+        const file = input.files?.[0]
+        if (!file) return
+        const cfg = await importSyncPairing(await file.text(), pairingPassword)
+        setUrl(cfg.url); setAnonKey(cfg.anonKey); setStoreId(cfg.storeId); setSecret(cfg.secret); setAccessToken(cfg.accessToken)
+        updateSync(cfg)
+        toast.show('استُورد إعداد الربط وحُفظ — اختبر الاتصال الآن ✅')
+      } catch (e) { toast.show((e as Error).message, 'error') }
+    }
+    input.click()
+  }
+
   return (
     <div className="max-w-3xl space-y-4">
       {/* وضع التشغيل الحالي — البنية الهجينة (٤ أوضاع) */}
@@ -193,8 +226,11 @@ export function SyncPage() {
           <Field label="معرف المتجر *" hint="نفسه على كل الأجهزة — مثل: matgar-alnour">
             <input value={storeId} onChange={(e) => setStoreId(e.target.value)} className={inputCls} dir="ltr" />
           </Field>
-          <Field label="سر التشفير المشترك *" hint="16 حرفاً فأكثر — يُدخل على كل جهاز ولا يُرفع للسحابة أبداً">
-            <input value={secret} onChange={(e) => setSecret(e.target.value)} type="password" className={inputCls} dir="ltr" />
+          <Field label="سر التشفير المشترك *" hint="ولّده عشوائياً ولا تعِد استخدام كلمة سر شخصية">
+            <div className="flex gap-2">
+              <input value={secret} onChange={(e) => setSecret(e.target.value)} type="password" className={inputCls} dir="ltr" />
+              <Btn variant="soft" onClick={() => setSecret(generateStoreAccessToken())}>توليد</Btn>
+            </div>
           </Field>
           <Field label="اعتماد عزل المتجر *" hint="اعتماد 256-bit منفصل عن التشفير — انسخه بأمان لكل أجهزة المتجر">
             <div className="flex gap-2">
@@ -219,6 +255,15 @@ export function SyncPage() {
           >
             {sync.enabled ? 'إيقاف المزامنة' : 'تفعيل المزامنة'}
           </button>
+        </div>
+        <div className="rounded-xl border border-sky-400/20 bg-sky-500/5 p-3 space-y-2">
+          <div className="text-[12px] font-bold text-slate-700 dark:text-slate-200">ربط جهاز آخر دون إرسال الأسرار كنص واضح</div>
+          <div className="text-[10.5px] text-slate-400">اكتب كلمة حماية مؤقتة من {PAIRING_PASSWORD_MIN} خانة فأكثر، نزّل ملف الربط المشفر، ثم افتحه على الجهاز الآخر بنفس الكلمة. أرسل الملف والكلمة في قناتين مختلفتين.</div>
+          <div className="flex flex-wrap gap-2">
+            <input value={pairingPassword} onChange={(e) => setPairingPassword(e.target.value)} type="password" className={`${inputCls} max-w-xs`} placeholder="كلمة حماية ملف الربط" autoComplete="new-password" />
+            <Btn variant="soft" onClick={exportPairing}><Download size={14} /> تنزيل ملف ربط</Btn>
+            <Btn variant="ghost" onClick={importPairing}>استيراد ملف ربط</Btn>
+          </div>
         </div>
         <div className="text-[11px] text-slate-400">معرف هذا الجهاز: <code dir="ltr">{deviceId}</code></div>
       </div>
