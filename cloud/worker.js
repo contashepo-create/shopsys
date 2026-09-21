@@ -20,6 +20,7 @@
  * حماية (طلب المالك — ضد الحقن والرفع):
  * - نصوص JSON فقط: لا ملفات ولا وسائط — أي رد تليجرام غير نصي يُتجاهل.
  * - كل نص يُعقَّم (لا وسوم ولا محارف تحكم) وبحدود طول صارمة.
+ * - كل GET/POST للدعم يتطلب اعتماد جهاز عشوائياً 256-bit؛ KV يخزن بصمته فقط (TOFU للترحيل).
  * - معرف الجهاز يُطابق نمطاً صارماً؛ حد معدل للإرسال لكل جهاز (10 رسائل/ساعة).
  * - ويبهوك تليجرام محمي بـsecret_token — أي استدعاء بدونه يُرفض.
  *
@@ -31,7 +32,7 @@ const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type',
+  'access-control-allow-headers': 'content-type, authorization, x-support-protocol',
   'cache-control': 'no-store',
 }
 
@@ -40,6 +41,40 @@ const TEXT_MAX = 1500
 const LOG_MAX = 60_000
 const CHAT_KEEP = 200 // آخر 200 رسالة لكل جهاز
 const RATE_LIMIT = 10 // رسائل لكل جهاز في الساعة
+const SUPPORT_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/ // 32 bytes base64url
+
+function hex(bytes) {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function supportTokenHash(token) {
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))))
+}
+
+function constantTimeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return diff === 0
+}
+
+/**
+ * توثيق قناة الدعم بنمط Trust On First Use:
+ * أول طلب صحيح الشكل يربط اعتماداً عشوائياً 256-bit بمعرف الجهاز، وبعدها لا يكفي
+ * معرفة deviceId لقراءة المحادثة أو الكتابة فيها. لا نخزن الاعتماد نفسه بل SHA-256.
+ */
+async function authorizeSupport(request, env, deviceId) {
+  if (request.headers.get('x-support-protocol') !== '1') return false
+  const auth = request.headers.get('authorization') ?? ''
+  const token = auth.startsWith('Support ') ? auth.slice(8) : ''
+  if (!SUPPORT_TOKEN_RE.test(token)) return false
+  const presentedHash = await supportTokenHash(token)
+  const key = `support-auth:${deviceId}`
+  const storedHash = await env.SHOPSYS_KV.get(key)
+  if (storedHash) return constantTimeEqual(storedHash, presentedHash)
+  await env.SHOPSYS_KV.put(key, presentedHash)
+  return true
+}
 
 /* ─── إصدار المفاتيح من البوت (ترقية بوت المطوّر — سد فجوة التدقيق) ───
  * نفس صيغة license_tool.mjs حرفياً: canonicalPayload → Ed25519 → SHOPSYS1.<b64u>.<b64u>
@@ -192,6 +227,7 @@ export default {
     if (sm) {
       const deviceId = sm[1]
       if (!DEVICE_RE.test(deviceId)) return json({ error: 'bad device' }, 400)
+      if (!(await authorizeSupport(request, env, deviceId))) return json({ error: 'unauthorized' }, 401)
 
       if (request.method === 'GET') {
         return json(await readChat(env, deviceId))

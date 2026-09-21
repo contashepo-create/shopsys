@@ -12,6 +12,7 @@ import { getActivity } from '../../core/activities.ts'
 import { DEFAULT_CLOUD_BASE_URL } from '../../core/cloud.ts'
 import { buildSupportPayload, fetchConversation, sendSupportMessage, SUPPORT_POLL_MS, type SupportMessage } from '../../core/support.ts'
 import { getLogText, getLogLines, logEvent } from '../../core/applog.ts'
+import { getOrCreateSupportToken } from '../../data/supportAuth.ts'
 import { Btn, inputCls, useToast } from '../components/ui.tsx'
 
 const APP_VERSION = '1.0'
@@ -31,7 +32,8 @@ export function SupportPage() {
   const logCount = useMemo(() => getLogLines().length, [])
 
   const refresh = async () => {
-    const conv = await fetchConversation(DEFAULT_CLOUD_BASE_URL, deviceId)
+    const token = await getOrCreateSupportToken()
+    const conv = await fetchConversation(DEFAULT_CLOUD_BASE_URL, deviceId, token)
     if (conv) setMessages(conv)
     setLoading(false)
   }
@@ -56,7 +58,8 @@ export function SupportPage() {
         logText: attachLog ? getLogText() : '',
       })
       setSending(true)
-      const ok = await sendSupportMessage(DEFAULT_CLOUD_BASE_URL, deviceId, payload)
+      const token = await getOrCreateSupportToken()
+      const ok = await sendSupportMessage(DEFAULT_CLOUD_BASE_URL, deviceId, token, payload)
       setSending(false)
       if (!ok) return toast.show('تعذر الإرسال — تأكد من اتصال الإنترنت وحاول ثانية', 'error')
       logEvent('info', `support: أُرسلت رسالة دعم${attachLog ? ' + لوج' : ''}`)
