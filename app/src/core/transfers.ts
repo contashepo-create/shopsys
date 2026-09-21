@@ -27,7 +27,7 @@ export type WarehouseStock = Map<number, Map<number, number>> // warehouseId -> 
 /**
  * مستند مؤثر على مخزن بعينه (الأمر 8 — اختيار المخزن أعلى الفاتورة):
  * فاتورة شراء وارد مخزنها X ⇒ qtyDelta موجب في X؛ بيع من X ⇒ سالب.
- * warehouseId=null («مخزن غير مختار») أو الرئيسي ⇒ لا إزاحة (الرئيسي هو المتبقي).
+ * warehouseId=null = سجل قديم/فاتورة مختلطة تُقرأ من السطور؛ والرئيسي لا يحتاج إزاحة لأنه المتبقي.
  */
 export interface WarehouseDoc {
   warehouseId: number | null
@@ -114,7 +114,7 @@ export function transferTotalQty(lines: TransferLine[]): number {
  * ومرتجع شراء عن فاتورة وردت لمخزن X ⇒ سالب في X (خرجت من حيث دخلت).
  */
 export function buildWarehouseDocs(
-  purchases: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
+  purchases: { id?: number; projectId?: number | null; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
   sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
   saleReturns: { saleId: number; lines: { itemId: number; qty: number; condition?: string }[] }[] = [],
   purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number }[] }[] = [],
@@ -127,6 +127,7 @@ export function buildWarehouseDocs(
 
   // الفاتورة قد تكون على مخزن واحد، أو «تحديد بالسطر» وفيها warehouseId على كل سطر.
   for (const p of purchases) {
+    if (p.projectId != null) continue // فاتورة مشروع: بضاعتها تكلفة موقع مباشرة وليست رصيد مخزن
     for (const l of p.lines) pushLineDoc(l.warehouseId ?? p.warehouseId ?? null, l.itemId, l.qty)
   }
   for (const s of sales) {
@@ -151,7 +152,7 @@ export function buildWarehouseDocs(
     }
   }
 
-  const purchaseById = new Map(purchases.filter((p) => p.id != null).map((p) => [p.id!, p]))
+  const purchaseById = new Map(purchases.filter((p) => p.id != null && p.projectId == null).map((p) => [p.id!, p]))
   // مرتجعات الشراء الحالية مجمعة بالصنف؛ نوزعها على سطور الأصل بترتيبها حتى لا يخرج رصيد من مخزن لم يستلم.
   const remainingPurchaseLineQty = new Map<string, number>()
   for (const p of purchases) p.lines.forEach((l, i) => remainingPurchaseLineQty.set(`${p.id ?? 0}:${i}`, l.qty))

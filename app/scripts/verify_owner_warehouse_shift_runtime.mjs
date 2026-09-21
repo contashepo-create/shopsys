@@ -36,6 +36,45 @@ const supplierId = S().suppliers.at(-1).id
 const mainWh = S().warehouses.find((w) => w.isMain).id
 const coldWh = S().warehouses.find((w) => w.nameAr === 'مخزن التجميد').id
 
+const wideInv = S().postPurchase({
+  supplierId,
+  date: '2026-09-19',
+  warehouseId: coldWh,
+  lines: [{ itemId, qty: 3, unitPriceMinor: 950 }],
+  expenses: [],
+  paidMinor: 0,
+  notes: 'مخزن واحد للفاتورة',
+})
+assert.equal(wideInv.warehouseId, coldWh)
+assert.equal(wideInv.lines[0].warehouseId, coldWh)
+ok('فاتورة بمخزن واحد تُحفظ على مستوى الفاتورة وليست كمختلطة')
+
+const legacyInv = S().postPurchase({
+  supplierId,
+  date: '2026-09-20',
+  lines: [{ itemId, qty: 2, unitPriceMinor: 900 }],
+  expenses: [],
+  paidMinor: 0,
+  notes: 'مسار قديم بلا مخزن',
+})
+assert.equal(legacyInv.warehouseId, mainWh)
+assert.equal(legacyInv.lines[0].warehouseId, mainWh)
+ok('المسارات القديمة بلا مخزن تُطبَّع على المخزن الرئيسي ولا تبقى مبهمة')
+
+assert.throws(() => S().postPurchase({
+  supplierId,
+  date: '2026-09-20',
+  warehouseId: null,
+  lines: [
+    { itemId, qty: 1, unitPriceMinor: 1000, warehouseId: mainWh },
+    { itemId, qty: 1, unitPriceMinor: 1000 },
+  ],
+  expenses: [],
+  paidMinor: 0,
+  notes: 'مختلطة ناقصة',
+}), /حدد مخزناً لكل سطر/)
+ok('فاتورة شراء مختلطة ناقصة مخزن لأحد السطور تُرفض من طبقة البيانات')
+
 const inv = S().postPurchase({
   supplierId,
   date: '2026-09-21',
@@ -52,9 +91,27 @@ assert.equal(inv.warehouseId, null)
 assert.equal(inv.lines[0].warehouseId, mainWh)
 assert.equal(inv.lines[1].warehouseId, coldWh)
 const stock = computeWarehouseStock(S().items, S().warehouses, S().transfers, buildWarehouseDocs(S().purchases, S().sales, S().saleReturns, S().purchaseReturns))
-assert.equal(stock.get(mainWh).get(itemId), 8)
-assert.equal(stock.get(coldWh).get(itemId), 5)
+assert.equal(stock.get(mainWh).get(itemId), 10)
+assert.equal(stock.get(coldWh).get(itemId), 8)
 ok('شراء مختلط: كل سطر حُفظ على مخزنه وانعكس على الرصيد')
+assert.throws(() => S().editPurchase({
+  purchaseId: inv.id,
+  lines: [{ itemId, qty: 13, unitPriceMinor: 1000 }],
+  expenses: [],
+  paidMinor: 0,
+  treasury: '1101',
+  reason: 'اختبار منع تعديل متعدد المخازن',
+  einvoiceActive: false,
+}), /متعددة المخازن/)
+ok('تعديل فاتورة شراء متعددة المخازن يُرفض حتى لا يمسح توزيع المخازن')
+
+const projectDocs = buildWarehouseDocs([
+  { id: 999, projectId: 77, warehouseId: coldWh, lines: [{ itemId, qty: 50 }] },
+], [], [], [])
+const projectStock = computeWarehouseStock([{ id: itemId, stockQty: 50 }], S().warehouses, [], projectDocs)
+assert.equal(projectStock.get(coldWh).get(itemId) ?? 0, 0)
+assert.equal(projectStock.get(mainWh).get(itemId), 50)
+ok('مشتريات المشاريع لا تُحتسب داخل أي مخزن لأنها تكلفة موقع مباشرة')
 
 const sh = S().openShift('كاشير الصباح', 10000)
 const closed = S().closeShift(9000, 'مدير الفرع', 'اعتماد عجز 10.00')
@@ -65,4 +122,4 @@ assert.equal(sh.id, closed.id)
 assert.equal(sum.varianceMinor, -1000)
 ok('إقفال وردية بفارق يخزن اسم/سبب الاعتماد ويظهر العجز في الملخص')
 
-console.log(`\n✅ فحص التشغيل الفعلي: ${pass} محطتان — خضراء\n`)
+console.log(`\n✅ فحص التشغيل الفعلي: ${pass} محطات — خضراء\n`)

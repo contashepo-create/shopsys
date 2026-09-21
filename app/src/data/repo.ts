@@ -835,7 +835,7 @@ export interface PurchaseInvoice {
   journalEntryId: number | null // القيد المتولد (فواتير قديمة قبل الترحيل = null)
   /** سجل تدقيق التعديلات (طلب المالك) */
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
-  /** المخزن الذي وردت إليه البضاعة (الأمر 8) — null/undefined = «مخزن غير مختار» (سجل قديم يعامل كالرئيسي) */
+  /** المخزن الذي وردت إليه البضاعة — null = فاتورة مختلطة تُقرأ مخازنها من السطور أو سجل قديم */
   warehouseId?: number | null
 }
 
@@ -958,7 +958,7 @@ export interface SaleInvoice {
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
   /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
-  /** المخزن الذي بيعت منه (الأمر 8) — null/undefined = «مخزن غير مختار» (سجل قديم يعامل كالرئيسي) */
+  /** المخزن الذي بيعت منه — يُطبّع للرئيسي عند غياب الاختيار في المسارات القديمة */
   warehouseId?: number | null
   /**
    * G1 (مراجعة المرتجعات): نسبة الضريبة ونمطها الفعليان وقت البيع — يستخدمهما المرتجع
@@ -2465,6 +2465,10 @@ export const useDataStore = create<DataState>()(
           reversesEntryId: null,
         }
 
+        const mainWarehouseId = state.warehouses.find((w) => w.isMain)?.id ?? state.warehouses[0]?.id ?? null
+        const hasLineWarehouses = inv.lines.some((l) => l.warehouseId != null)
+        if (hasLineWarehouses && inv.lines.some((l) => l.warehouseId == null)) throw new Error('فاتورة شراء مختلطة المخازن — حدد مخزناً لكل سطر')
+        const effectivePurchaseWarehouseId = hasLineWarehouses ? null : (inv.warehouseId ?? mainWarehouseId)
         const invoice: PurchaseInvoice = {
           id: purchaseId,
           invoiceNumber,
@@ -2479,7 +2483,7 @@ export const useDataStore = create<DataState>()(
             landedUnitCostMinor: l.landedUnitCostMinor,
             vatPercent: inv.lines[i]?.vatPercent,
             inputVatMinor: inv.lines[i]?.inputVatMinor,
-            warehouseId: inv.lines[i]?.warehouseId ?? inv.warehouseId ?? null,
+            warehouseId: inv.lines[i]?.warehouseId ?? effectivePurchaseWarehouseId,
           })),
           expenses: inv.expenses,
           goodsTotalMinor: goodsTotal,
@@ -2490,7 +2494,7 @@ export const useDataStore = create<DataState>()(
           treasury: custodyFile ? undefined : (inv.treasury ?? '1101'),
           custodyFileId: custodyFile?.id ?? null,
           projectId: inv.projectId ?? null,
-          warehouseId: inv.warehouseId ?? null,
+          warehouseId: effectivePurchaseWarehouseId,
           inputVatMinor,
           notes: inv.notes,
           journalEntryId: entryId,
@@ -2864,6 +2868,8 @@ export const useDataStore = create<DataState>()(
           reversesEntryId: null,
         }
 
+        const mainWarehouseId = state.warehouses.find((w) => w.isMain)?.id ?? state.warehouses[0]?.id ?? null
+        const effectiveSaleWarehouseId = args.warehouseId ?? mainWarehouseId
         const sale: SaleInvoice = {
           id: saleId,
           invoiceNumber,
@@ -2880,7 +2886,7 @@ export const useDataStore = create<DataState>()(
           expiryOverrideBy: args.expiryOverrideBy ?? null,
           creditLimitOverrideBy: args.creditLimitOverrideBy ?? null,
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
-          warehouseId: args.warehouseId ?? null,
+          warehouseId: effectiveSaleWarehouseId,
           taxPercent: args.taxPercent, // G1: تثبيت المعاملة الضريبية على المستند
           taxInclusive: args.taxInclusive,
         }
@@ -4295,6 +4301,9 @@ export const useDataStore = create<DataState>()(
         }
         if (inv.custodyFileId != null) throw new Error('فاتورة مدفوعة من عهدة — عدّلها بمرتجع وفاتورة جديدة حفاظاً على ملف العهدة')
         if (inv.projectId != null) throw new Error('فاتورة مشروع — تكاليف المشاريع تُصحح بمستند تكلفة عاكس لا بتعديل')
+        if (inv.warehouseId == null && inv.lines.some((l) => l.warehouseId != null)) {
+          throw new Error('فاتورة شراء متعددة المخازن — صحّحها بمرتجع/فاتورة جديدة حتى لا يضيع توزيع المخازن')
+        }
         if (inv.expenses.some((e) => (e.paidBy ?? 'supplier') !== 'supplier')) {
           throw new Error('فيها مصاريف مدفوعة من خزائن/عهد — عدّلها بمرتجع وفاتورة جديدة')
         }

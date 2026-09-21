@@ -69,6 +69,12 @@ export function PurchasesPage() {
   })
   const fmt = (m: number) => formatMinor(m, cur, false)
 
+  const purchaseWarehouseLabel = (p: PurchaseInvoice) => {
+    if (p.warehouseId != null) return warehouses.find((w) => w.id === p.warehouseId)?.nameAr ?? '—'
+    if (p.lines.some((l) => l.warehouseId != null)) return 'متعدد حسب السطور'
+    return warehouses.find((w) => w.isMain)?.nameAr ?? warehouses[0]?.nameAr ?? '—'
+  }
+
   const [open, setOpen] = useState(false)
   const [viewing, setViewing] = useState<PurchaseInvoice | null>(null)
   // طباعة فاتورة الشراء بقوالب الكاشير الثلاثة (طلب المالك)
@@ -320,7 +326,7 @@ export function PurchasesPage() {
           unitPriceMinor: l.unitPriceMinor,
           vatPercent: d?.vatPercent ?? 0,
           inputVatMinor: d ? lineVatMinor(d) : 0,
-          warehouseId: lineWarehouseMode ? (d?.warehouseId ?? null) : (warehouseId ?? null),
+          warehouseId: lineWarehouseMode ? (d?.warehouseId ?? null) : undefined,
           expiryDate: d?.expiryDate || null,
           serialsRaw: d?.serialsRaw || undefined,
         }
@@ -395,7 +401,7 @@ export function PurchasesPage() {
                     {p.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{p.refCode}</div>}
                     <div className="text-[11px] text-slate-400">{p.date}</div>
                     {warehouses.length > 1 && (
-                      <div className="text-[10.5px] text-slate-400">مخزن: {p.warehouseId == null ? 'متعدد حسب السطور' : (warehouses.find((w) => w.id === p.warehouseId)?.nameAr ?? '—')}</div>
+                      <div className="text-[10.5px] text-slate-400">مخزن: {purchaseWarehouseLabel(p)}</div>
                     )}
                   </td>
                   <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{suppliers.find((s) => s.id === p.supplierId)?.nameAr ?? '—'}</td>
@@ -821,7 +827,7 @@ export function PurchasesPage() {
                 {viewing.lines.map((l, i) => (
                   <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                     <td className="px-3 py-2 font-bold">{items.find((it) => it.id === l.itemId)?.nameAr ?? `#${l.itemId}`}</td>
-                    {warehouses.length > 1 && <td className="px-3 py-2 text-slate-500">{warehouses.find((w) => w.id === (l.warehouseId ?? viewing.warehouseId))?.nameAr ?? '—'}</td>}
+                    {warehouses.length > 1 && <td className="px-3 py-2 text-slate-500">{warehouses.find((w) => w.id === (l.warehouseId ?? viewing.warehouseId ?? warehouses.find((ww) => ww.isMain)?.id))?.nameAr ?? '—'}</td>}
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
                     <td className="px-3 py-2 text-sky-600 font-bold">{l.vatPercent != null ? (l.vatPercent > 0 ? `${l.vatPercent}٪ · ${fmt(l.inputVatMinor ?? 0)}` : 'معفى') : '—'}</td>
