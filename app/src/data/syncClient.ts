@@ -17,6 +17,7 @@ export interface SyncConfig {
   anonKey: string // مفتاح anon (Row Level Security تضبط الوصول)
   storeId: string // معرف المتجر — نفسه على كل الأجهزة
   secret: string // سر التشفير المشترك — لا يغادر الأجهزة أبداً
+  accessToken: string // اعتماد RLS عشوائي — يُرسل للتفويض ولا يُستخدم للتشفير
 }
 
 export function validateSyncConfig(c: SyncConfig): string[] {
@@ -26,14 +27,29 @@ export function validateSyncConfig(c: SyncConfig): string[] {
   }
   if (c.anonKey.trim().length < 20) errors.push('مفتاح anon قصير جداً — انسخه من إعدادات مشروع Supabase')
   if (!c.storeId.trim()) errors.push('معرف المتجر مطلوب — نفس المعرف على كل الأجهزة')
-  if (c.secret.trim().length < 8) errors.push('سر المزامنة 8 أحرف على الأقل — نفسه على كل الأجهزة')
+  if (c.secret.trim().length < 16) errors.push('سر التشفير 16 حرفاً على الأقل — نفسه على كل الأجهزة')
+  if (!/^[A-Za-z0-9_-]{43}$/.test(c.accessToken.trim())) errors.push('اعتماد عزل المتجر غير صالح — ولّده من الزر وانسخه لكل الأجهزة')
   return errors
+}
+
+export function generateStoreAccessToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+async function accessTokenHash(token: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 const headers = (c: SyncConfig) => ({
   apikey: c.anonKey,
   Authorization: `Bearer ${c.anonKey}`,
   'Content-Type': 'application/json',
+  'X-Store-Id': c.storeId,
+  'X-Store-Access-Token': c.accessToken,
 })
 
 const restUrl = (c: SyncConfig) =>
@@ -46,6 +62,21 @@ interface RawRow {
   updated_at: string
   checksum: string
   data: string
+  access_token_hash?: string | null
+}
+
+/** مطالبة آمنة لمرة واحدة بصف قديم أنشأته السياسة التاريخية المفتوحة. */
+async function claimLegacyRow(c: SyncConfig): Promise<void> {
+  const hash = await accessTokenHash(c.accessToken)
+  const res = await fetch(`${restUrl(c)}?store_id=eq.${encodeURIComponent(c.storeId)}&access_token_hash=is.null`, {
+    method: 'PATCH',
+    headers: { ...headers(c), Prefer: 'return=representation' },
+    body: JSON.stringify({ access_token_hash: hash }),
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!res.ok) throw new Error(`تعذر تأمين سجل المزامنة القديم (${res.status})`)
+  const rows = await res.json() as unknown[]
+  if (!Array.isArray(rows) || rows.length !== 1) throw new Error('سجل المزامنة مرتبط باعتماد آخر — راجع مسؤول النظام')
 }
 
 /** قراءة صف المتجر من السحابة — null لو غير موجود بعد */
@@ -58,6 +89,7 @@ export async function fetchRemote(c: SyncConfig): Promise<RemoteRow | null> {
   const rows = (await res.json()) as RawRow[]
   if (!Array.isArray(rows) || rows.length === 0) return null
   const r = rows[0]
+  if (!r.access_token_hash) await claimLegacyRow(c)
   return { rev: r.rev, deviceId: r.device_id, updatedAt: r.updated_at, checksum: r.checksum, data: r.data }
 }
 
@@ -66,7 +98,10 @@ export async function ensureRemoteRow(c: SyncConfig): Promise<void> {
   const res = await fetch(restUrl(c), {
     method: 'POST',
     headers: { ...headers(c), Prefer: 'resolution=ignore-duplicates' },
-    body: JSON.stringify({ store_id: c.storeId, rev: 0, device_id: '', checksum: '', data: '' }),
+    body: JSON.stringify({
+      store_id: c.storeId, rev: 0, device_id: '', checksum: '', data: '',
+      access_token_hash: await accessTokenHash(c.accessToken),
+    }),
     signal: AbortSignal.timeout(15000),
   })
   if (!res.ok && res.status !== 409) throw new Error(`تعذر إنشاء سجل المتجر (${res.status})`)

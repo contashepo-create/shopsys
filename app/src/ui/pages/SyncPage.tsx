@@ -8,23 +8,13 @@ import { useMemo, useState } from 'react'
 import { CloudUpload, Lock, RefreshCw, CheckCircle2, ShieldCheck, Copy, PlugZap, History, Download, Undo2 } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { validateSyncConfig, fetchRemote } from '../../data/syncClient.ts'
+import { validateSyncConfig, fetchRemote, generateStoreAccessToken } from '../../data/syncClient.ts'
 import { runSyncCycle, listConflictSnapshots, getConflictSnapshotData, restoreConflictSnapshot } from '../../data/syncRunner.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { deriveArchitectureMode, MODE_LABELS } from '../../core/architecture.ts'
 import { isCloudDisabled } from '../../core/featureFlags.ts'
 
-const CREATE_TABLE_SQL = `create table if not exists stores (
-  store_id text primary key,
-  rev bigint not null default 0,
-  device_id text not null default '',
-  updated_at timestamptz not null default now(),
-  checksum text not null default '',
-  data text not null default ''
-);
-alter table stores enable row level security;
-create policy "stores anon access" on stores for all
-  to anon using (true) with check (true);`
+const MIGRATION_PATH = 'supabase/migrations/202609220001_secure_store_rls.sql'
 
 export function SyncPage() {
   const { sync, updateSync, activatedPayload, trialStartedAt, lastSeenAt, deviceId, deviceFlags } = useAppStore()
@@ -49,6 +39,7 @@ export function SyncPage() {
   const [anonKey, setAnonKey] = useState(sync.anonKey)
   const [storeId, setStoreId] = useState(sync.storeId)
   const [secret, setSecret] = useState(sync.secret)
+  const [accessToken, setAccessToken] = useState(sync.accessToken)
   const [busy, setBusy] = useState<string | null>(null)
   // لقطات التعارض (شبكة الأمان): تُحدَّث بعد كل مزامنة/استرجاع عبر هذا العداد
   const [snapVer, setSnapVer] = useState(0)
@@ -92,7 +83,7 @@ export function SyncPage() {
 
   /* بطاقة وضع التشغيل تُعرض أعلى الصفحة (JSX أدناه) */
   const saveConfig = () => {
-    const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim() }
+    const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
     const errors = validateSyncConfig(cfg)
     if (errors.length) return toast.show(errors[0], 'error')
     updateSync({ ...cfg })
@@ -100,7 +91,7 @@ export function SyncPage() {
   }
 
   const testConnection = async () => {
-    const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim() }
+    const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
     const errors = validateSyncConfig(cfg)
     if (errors.length) return toast.show(errors[0], 'error')
     setBusy('test')
@@ -145,12 +136,12 @@ export function SyncPage() {
     setSnapVer((v) => v + 1)
   }
 
-  const copySql = async () => {
+  const copyMigrationPath = async () => {
     try {
-      await navigator.clipboard.writeText(CREATE_TABLE_SQL)
-      toast.show('نُسخ SQL — ألصقه في SQL Editor داخل مشروع Supabase ✅')
+      await navigator.clipboard.writeText(MIGRATION_PATH)
+      toast.show('نُسخ مسار ملف الترحيل الآمن ✅')
     } catch {
-      toast.show('تعذر النسخ — انسخه يدوياً من الصندوق', 'error')
+      toast.show('تعذر النسخ', 'error')
     }
   }
 
@@ -202,8 +193,14 @@ export function SyncPage() {
           <Field label="معرف المتجر *" hint="نفسه على كل الأجهزة — مثل: matgar-alnour">
             <input value={storeId} onChange={(e) => setStoreId(e.target.value)} className={inputCls} dir="ltr" />
           </Field>
-          <Field label="سر التشفير المشترك *" hint="8 أحرف فأكثر — يُدخل على كل جهاز ولا يُرفع للسحابة أبداً">
+          <Field label="سر التشفير المشترك *" hint="16 حرفاً فأكثر — يُدخل على كل جهاز ولا يُرفع للسحابة أبداً">
             <input value={secret} onChange={(e) => setSecret(e.target.value)} type="password" className={inputCls} dir="ltr" />
+          </Field>
+          <Field label="اعتماد عزل المتجر *" hint="اعتماد 256-bit منفصل عن التشفير — انسخه بأمان لكل أجهزة المتجر">
+            <div className="flex gap-2">
+              <input value={accessToken} onChange={(e) => setAccessToken(e.target.value.trim())} type="password" className={inputCls} dir="ltr" />
+              <Btn variant="soft" onClick={() => setAccessToken(generateStoreAccessToken())}>توليد</Btn>
+            </div>
           </Field>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -212,7 +209,7 @@ export function SyncPage() {
           <button
             onClick={() => {
               if (!sync.enabled) {
-                const errors = validateSyncConfig({ url: sync.url, anonKey: sync.anonKey, storeId: sync.storeId, secret: sync.secret })
+                const errors = validateSyncConfig({ url: sync.url, anonKey: sync.anonKey, storeId: sync.storeId, secret: sync.secret, accessToken: sync.accessToken })
                 if (errors.length) return toast.show('احفظ إعدادات صحيحة أولاً ثم فعّل', 'error')
               }
               updateSync({ enabled: !sync.enabled })
@@ -255,10 +252,10 @@ export function SyncPage() {
       <div className={`anim-up ${card} space-y-3`} style={{ animationDelay: '120ms' }}>
         <div className="font-bold text-[13px] flex items-center gap-2"><ShieldCheck size={15} className="text-emerald-500" /> تجهيز المشروع (مرة واحدة)</div>
         <p className="text-[12px] text-slate-500 leading-relaxed">
-          أنشئ مشروعاً مجانياً على supabase.com، ثم افتح SQL Editor وألصق هذا السكربت لإنشاء جدول المزامنة:
+          طبّق ملف الترحيل المراجع داخل المستودع عبر Supabase CLI أو SQL Editor. لا تستخدم سياسة <code>using (true)</code> القديمة لأنها تكشف بيانات المتاجر المشفرة لأي حامل لمفتاح anon.
         </p>
-        <pre dir="ltr" className="text-[10.5px] leading-relaxed bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 overflow-x-auto">{CREATE_TABLE_SQL}</pre>
-        <Btn variant="ghost" onClick={copySql}><Copy size={14} /> نسخ SQL</Btn>
+        <pre dir="ltr" className="text-[10.5px] leading-relaxed bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 overflow-x-auto">{MIGRATION_PATH}</pre>
+        <Btn variant="ghost" onClick={copyMigrationPath}><Copy size={14} /> نسخ مسار الترحيل</Btn>
         <div className="text-[11.5px] text-slate-400 leading-relaxed space-y-1">
           <div>🔒 <b>الخصوصية:</b> بياناتك تُشفَّر على جهازك قبل الرفع — Supabase يخزن شفرة لا تُقرأ بلا «سر التشفير» الذي لا يغادر أجهزتك.</div>
           <div>⚔️ <b>لا ضياع بيانات:</b> لو دفع جهازان معاً، يُقبل الأول ويسحب الثاني الأحدث ويعيد تلقائياً (قفل تفاؤلي).</div>

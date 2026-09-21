@@ -138,6 +138,8 @@ export interface SyncSettings {
   anonKey: string
   storeId: string
   secret: string
+  /** اعتماد RLS عشوائي 256-bit، منفصل عن سر تشفير المحتوى */
+  accessToken: string
   lastKnownRev: number // آخر مراجعة سحابية طبقها هذا الجهاز
   lastSyncedAt: string | null
   lastResult: string | null // آخر رسالة نتيجة للعرض
@@ -145,7 +147,7 @@ export interface SyncSettings {
 }
 
 export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
-  enabled: false, url: '', anonKey: '', storeId: '', secret: '',
+  enabled: false, url: '', anonKey: '', storeId: '', secret: '', accessToken: '',
   lastKnownRev: 0, lastSyncedAt: null, lastResult: null, dirty: false,
 }
 
