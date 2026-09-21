@@ -2735,14 +2735,23 @@ export const useDataStore = create<DataState>()(
         if (shiftRequiredForSales() && !currentOpenShift(state.shifts)) {
           throw new Error('لا توجد وردية مفتوحة — افتح وردية أولاً من زر «فتح وردية» أعلى شاشة الكاشير، أو عطّل الإلزام من الإعدادات العامة')
         }
-        // 0) وصفات «يُجهَّز عند الطلب» (مطاعم): الطبق بلا مخزون —
-        // تُفكَّك سطوره إلى احتياجات خامات تُفحص وتُخصم بدلاً منه
+        // 0) ثبّت مخزن كل سطر لحظة الترحيل. السطر يعلو على مخزن الرأس،
+        // والفواتير القديمة/الطلبات التي لا ترسله ترث مخزن الرأس ثم الرئيسي.
+        const mainWarehouseId = state.warehouses.find((w) => w.isMain)?.id ?? state.warehouses[0]?.id ?? null
+        const effectiveSaleWarehouseId = args.warehouseId ?? mainWarehouseId
+        if (effectiveSaleWarehouseId == null) throw new Error('لا يوجد مخزن متاح لترحيل البيع')
+        const saleLines = args.lines.map((line) => ({ ...line, warehouseId: line.warehouseId ?? effectiveSaleWarehouseId }))
+        const unknownWarehouse = saleLines.find((line) => !state.warehouses.some((warehouse) => warehouse.id === line.warehouseId))
+        if (unknownWarehouse) throw new Error(`مخزن سطر الصنف غير موجود (${unknownWarehouse.warehouseId})`)
+
+        // وصفات «يُجهَّز عند الطلب» (مطاعم): الطبق بلا مخزون —
+        // تُفكَّك سطوره إلى احتياجات خامات تُفحص وتُخصم بدلاً منه.
         const recipeOf = (itemId: number) => state.recipes.find((r) => r.productItemId === itemId && r.mode === 'made_to_order' && r.isActive)
         const saleQty = new Map<number, number>()
         // البيع بوحدة أكبر (صيدلية: شريط/علبة) — المخزون يُخصم بالوحدة الأساسية qty×factor
         // أصناف الخدمة (isService — نمط Square): لا فحص مخزون ولا خصم ولا تكلفة
         const isServiceItem = (itemId: number) => state.items.find((it) => it.id === itemId)?.isService === true
-        for (const l of args.lines) {
+        for (const l of saleLines) {
           if (isServiceItem(l.itemId)) continue
           saleQty.set(l.itemId, (saleQty.get(l.itemId) ?? 0) + baseQty(l))
         }
@@ -2750,18 +2759,36 @@ export const useDataStore = create<DataState>()(
         // 0.5) أرضية السعر (سد فجوة DEXEF/الأمين): بيع تحت الحد الأدنى للسعر
         // مرفوض إلا بموافقة مدير موثقة — حماية من البيع بخسارة سهواً أو تلاعباً
         {
-          const floorBad = priceFloorViolations(args.lines, state.items)
+          const floorBad = priceFloorViolations(saleLines, state.items)
           if (floorBad.length && !args.priceFloorOverrideBy) {
             throw new PriceFloorError(floorBad)
           }
         }
-        // 1) فحص المخزون (على الخامات للأطباق، وعلى الصنف نفسه لغيرها)
+        // 1) فحص المخزون في المخزن الفعلي لكل سطر (وعلى خامات الوصفة داخله).
         if (!args.allowNegativeStock) {
+          const warehouseStock = computeWarehouseStock(
+            state.items, state.warehouses, state.transfers,
+            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns),
+          )
+          const needsByWarehouse = new Map<number, Map<number, number>>()
+          for (const line of saleLines) {
+            if (isServiceItem(line.itemId)) continue
+            const lineNeeds = explodeIngredientNeeds(new Map([[line.itemId, baseQty(line)]]), recipeOf)
+            const warehouseNeeds = needsByWarehouse.get(line.warehouseId!) ?? new Map<number, number>()
+            for (const [itemId, qty] of lineNeeds) warehouseNeeds.set(itemId, (warehouseNeeds.get(itemId) ?? 0) + qty)
+            needsByWarehouse.set(line.warehouseId!, warehouseNeeds)
+          }
           const shortages: string[] = []
-          for (const [itemId, needed] of stockNeeds) {
-            const item = state.items.find((it) => it.id === itemId)
-            if (!item) continue
-            if ((item.stockQty ?? 0) < needed) shortages.push(`«${item.nameAr}»: متاح ${item.stockQty ?? 0} ومطلوب ${needed}`)
+          for (const [warehouseId, needs] of needsByWarehouse) {
+            const warehouse = state.warehouses.find((candidate) => candidate.id === warehouseId)
+            for (const [itemId, needed] of needs) {
+              const item = state.items.find((candidate) => candidate.id === itemId)
+              if (!item) continue
+              const available = warehouseStock.get(warehouseId)?.get(itemId) ?? 0
+              if (Math.round(available * 1000) < Math.round(needed * 1000)) {
+                shortages.push(`«${item.nameAr}» في مخزن «${warehouse?.nameAr ?? warehouseId}»: متاح ${available} ومطلوب ${needed}`)
+              }
+            }
           }
           if (shortages.length) throw new Error(`مخزون غير كافٍ — ${shortages.join('، ')}`)
         }
@@ -2782,7 +2809,7 @@ export const useDataStore = create<DataState>()(
         // 2.4) مصفوفة المتغيرات (ملابس — استشارية كنمط السيريالات):
         // صنف له تركيبات برصيد ⇒ يجب تحديد لون/مقاس لكل سطر ويُخصم من رصيد التركيبة
         const variantWanted: { itemId: number; color: string; size: string; qty: number; itemName: string }[] = []
-        for (const l of args.lines) {
+        for (const l of saleLines) {
           const item = state.items.find((it) => it.id === l.itemId)
           if (!item) continue
           if (!hasVariantStock(state.variantStocks, l.itemId)) continue
@@ -2797,7 +2824,7 @@ export const useDataStore = create<DataState>()(
         // صنف يتتبع السيريال وله سيريالات متاحة ⇒ يجب تعيين سيريال لكل قطعة؛
         // لا سيريالات مسجلة أصلاً ⇒ يُباع عادياً (مخزون افتتاحي بلا سيريالات)
         const assignments: { itemId: number; serial: string }[] = []
-        for (const l of args.lines) {
+        for (const l of saleLines) {
           const item = state.items.find((it) => it.id === l.itemId)
           if (!item?.trackSerial) continue
           const availCount = state.serials.filter((u) => u.itemId === l.itemId && u.status === 'in_stock').length
@@ -2813,7 +2840,7 @@ export const useDataStore = create<DataState>()(
         // 2.7) تثبيت تكلفة السطر على المتوسط المرجح لحظة الترحيل (لا لحظة الإضافة للسلة):
         // لو رُحّلت فاتورة شراء أثناء وجود الصنف في السلة تغيّر المتوسط —
         // فيجب أن يخرج قيد التكلفة (5101/1103) بنفس متوسط لحظة البيع وإلا انفصل الدفتر عن المخزون
-        const costedLines = args.lines.map((l) => {
+        const costedLines = saleLines.map((l) => {
           // صنف خدمة: لا تكلفة بضاعة — الإيراد كامل بلا قيد 5101/1103
           if (isServiceItem(l.itemId)) return l.unitCostMinor === 0 ? l : { ...l, unitCostMinor: 0 }
           // طبق بوصفة «عند الطلب»: تكلفته = تكلفة خاماته بالمتوسط المرجح لحظة البيع
@@ -2868,8 +2895,6 @@ export const useDataStore = create<DataState>()(
           reversesEntryId: null,
         }
 
-        const mainWarehouseId = state.warehouses.find((w) => w.isMain)?.id ?? state.warehouses[0]?.id ?? null
-        const effectiveSaleWarehouseId = args.warehouseId ?? mainWarehouseId
         const sale: SaleInvoice = {
           id: saleId,
           invoiceNumber,
