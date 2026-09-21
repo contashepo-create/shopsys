@@ -1,0 +1,19 @@
+# ShopSys Control Worker — النشر: npx wrangler deploy (من داخل مجلد cloud/)
+name = "shopsys-control"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+# اربط مساحة KV من لوحة Cloudflare ثم ضع المعرف هنا:
+# [[kv_namespaces]]
+# binding = "SHOPSYS_KV"
+# id = "ضع-المعرف-هنا"
+
+# التذكير اليومي بالاشتراكات المنتهية/الموشكة (9 صباحاً UTC) — فعّله بإزالة التعليق:
+# [triggers]
+# crons = ["0 9 * * *"]
+
+# أسرار البوت (تُضبط مرة واحدة):
+#   wrangler secret put DEV_BOT_TOKEN        ← توكن بوت المطوّر
+#   wrangler secret put DEV_CHAT_ID          ← محادثة المطوّر
+#   wrangler secret put TG_WEBHOOK_SECRET    ← سر ويبهوك تليجرام
+#   wrangler secret put SHOPSYS_PRIVATE_KEY  ← مفتاح التوقيع الخاص (pkcs8 b64u) لأمر «اصدار»

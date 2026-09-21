@@ -1,0 +1,388 @@
+/**
+ * تحقق «حرية رد القيمة + قسم الشروحات» (طلب المالك):
+ * 1) validateRefundAllocation: كل قواعد التحقق (مجموع/سقوف/عميل نقدي/سالب)
+ * 2) allocationOf: تحويل الأنماط التقليدية لتوزيع رباعي مطابق للسلوك القديم
+ * 3) buildReturnEntryAlloc: تنازل → 4110 دائن، رصيد → 1104، قيد متوازن دائماً
+ * 4) postSaleReturn refund='custom': مرتجع بلا رد (كله تنازلاً)، مزيج ثلاثي،
+ *    رفض التجاوزات، التوافق الخلفي (cash/credit/store_credit كما كانت)
+ * 5) core/guides: تغطية كل الأنشطة الستة عشر + البحث
+ * 6) فحص UI نصي: SaleReturnsPage (توزيع حر) + GuidesPage + التوجيه والصلاحيات
+ */
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const root = join(__dirname, '..')
+
+/* ─── بيئة صورية ─── */
+const mem = new Map()
+globalThis.localStorage = {
+  getItem: (k) => mem.get(k) ?? null,
+  setItem: (k, v) => mem.set(k, v),
+  removeItem: (k) => mem.delete(k),
+  clear: () => mem.clear(),
+  key: (i) => [...mem.keys()][i] ?? null,
+  get length() { return mem.size },
+}
+globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
+mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false,  done: true, countryCode: 'EG', activityId: 'general', vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
+
+let pass = 0
+const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
+
+const {
+  validateRefundAllocation, allocationOf, buildReturnEntryAlloc, splitRefund,
+} = await import(join(root, 'src/core/returns.ts'))
+const { guidesForActivity, searchGuides, COMMON_GUIDES, ACTIVITY_GUIDES } = await import(join(root, 'src/core/guides.ts'))
+const { ACTIVITY_TEMPLATES } = await import(join(root, 'src/core/activities.ts'))
+
+/* ═══ 1) validateRefundAllocation ═══ */
+{
+  // توزيع سليم: 100 نقدي + 150 ذمم + 30 رصيد + 20 تنازل = 300
+  const errs = validateRefundAllocation(300, { cashMinor: 100, creditMinor: 150, storeCreditMinor: 30, waivedMinor: 20 }, 200, 100, true)
+  assert.deepEqual(errs, [])
+  ok('توزيع رباعي سليم يمر بلا أخطاء')
+
+  assert.ok(validateRefundAllocation(300, { cashMinor: 100, creditMinor: 100, storeCreditMinor: 0, waivedMinor: 0 }, 200, 100, true).some((e) => e.includes('لا يساوي')))
+  ok('مجموع ناقص يُرفض برسالة واضحة')
+
+  assert.ok(validateRefundAllocation(300, { cashMinor: 150, creditMinor: 150, storeCreditMinor: 0, waivedMinor: 0 }, 200, 100, true).some((e) => e.includes('يتجاوز المُحصَّل')))
+  ok('نقدي فوق المحصَّل فعلاً يُرفض')
+
+  assert.ok(validateRefundAllocation(300, { cashMinor: 0, creditMinor: 300, storeCreditMinor: 0, waivedMinor: 0 }, 200, 100, true).some((e) => e.includes('يتجاوز دين الفاتورة')))
+  ok('خصم ذمم فوق الدين المفتوح يُرفض')
+
+  assert.ok(validateRefundAllocation(300, { cashMinor: 100, creditMinor: 0, storeCreditMinor: 200, waivedMinor: 0 }, 0, 300, false).some((e) => e.includes('عميل نقدي')))
+  ok('رصيد لعميل نقدي (بلا حساب) يُرفض')
+
+  assert.ok(validateRefundAllocation(300, { cashMinor: -50, creditMinor: 350, storeCreditMinor: 0, waivedMinor: 0 }, 400, 100, true).length > 0)
+  ok('مبلغ سالب يُرفض')
+
+  // مرتجع بلا رد: كله تنازلاً — يمر حتى بلا عميل وبلا محصَّل
+  assert.deepEqual(validateRefundAllocation(300, { cashMinor: 0, creditMinor: 0, storeCreditMinor: 0, waivedMinor: 300 }, 0, 0, false), [])
+  ok('«مرتجع بلا رد» (كله تنازلاً) سليم حتى لعميل نقدي')
+}
+
+/* ═══ 2) allocationOf — التوافق مع splitRefund ═══ */
+{
+  const a = allocationOf(300, 'cash', 100, 250)
+  const s = splitRefund(300, 'cash', 100, 250)
+  assert.deepEqual(a, { cashMinor: s.cashMinor, creditMinor: s.creditMinor, storeCreditMinor: 0, waivedMinor: 0 })
+  ok('allocationOf(cash) يطابق splitRefund بالضبط')
+
+  const b = allocationOf(300, 'store_credit', 0, 0)
+  assert.deepEqual(b, { cashMinor: 0, creditMinor: 0, storeCreditMinor: 300, waivedMinor: 0 })
+  ok('allocationOf(store_credit) كله رصيداً')
+
+  assert.throws(() => allocationOf(300, 'custom', 0, 0), /allocation/)
+  ok('allocationOf(custom) يرمي — التوزيع الحر يتطلب allocation صريحاً')
+}
+
+/* ═══ 3) buildReturnEntryAlloc — القيود ═══ */
+{
+  const totals = { taxBaseMinor: 300, taxMinor: 0, totalMinor: 300, netMinor: 300, cogsMinor: 180, subtotalMinor: 300, discountMinor: 0 }
+  // تنازل كامل
+  const e1 = buildReturnEntryAlloc(totals, { cashMinor: 0, creditMinor: 0, storeCreditMinor: 0, waivedMinor: 300 }, '1101', 0)
+  assert.ok(e1.some((l) => l.accountCode === '4110' && l.credit === 300))
+  assert.ok(!e1.some((l) => l.accountCode === '1101'))
+  const bal1 = e1.reduce((a, l) => a + l.debit - l.credit, 0)
+  assert.equal(bal1, 0)
+  ok('تنازل كامل: 4110 دائن 300، لا خزينة، قيد متوازن')
+
+  // مزيج رباعي مع ضريبة وتالف
+  const totals2 = { taxBaseMinor: 300, taxMinor: 42, totalMinor: 342, netMinor: 342, cogsMinor: 180, subtotalMinor: 342, discountMinor: 0 }
+  const e2 = buildReturnEntryAlloc(totals2, { cashMinor: 100, creditMinor: 150, storeCreditMinor: 50, waivedMinor: 42 }, '1102', 60)
+  assert.ok(e2.some((l) => l.accountCode === '1102' && l.credit === 100))
+  const c1104 = e2.filter((l) => l.accountCode === '1104').reduce((a, l) => a + l.credit, 0)
+  assert.equal(c1104, 200) // 150 خصم + 50 رصيد
+  assert.ok(e2.some((l) => l.accountCode === '4110' && l.credit === 42))
+  assert.ok(e2.some((l) => l.accountCode === '5111' && l.debit === 60))
+  assert.ok(e2.some((l) => l.accountCode === '1103' && l.debit === 120))
+  assert.equal(e2.reduce((a, l) => a + l.debit - l.credit, 0), 0)
+  ok('مزيج رباعي + ضريبة + تالف: كل الأطراف صحيحة والقيد متوازن')
+
+  assert.throws(() => buildReturnEntryAlloc(totals, { cashMinor: 100, creditMinor: 0, storeCreditMinor: 0, waivedMinor: 100 }, '1101', 0), /لا يساوي/)
+  ok('مجموع توزيع مخالف يرمي خطأ')
+}
+
+/* ═══ 4) postSaleReturn refund='custom' — تكامل ═══ */
+const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
+const st = () => useDataStore.getState()
+
+// صنف وعميل (توقيع Item الكامل — حقول ناقصة = مخزون صفري صامت)
+st().addItem({
+  nameAr: 'صنف حر', sku: '', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [],
+  costMinor: 600, stockQty: 50, priceMinor: 1000, minQty: 0, trackExpiry: false, trackSerial: false,
+  warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true,
+})
+const item = st().items.at(-1)
+st().addCustomer({ nameAr: 'عميل الحرية', phone: '', taxNumber: '', address: '', notes: '' })
+const cust = st().customers.at(-1)
+const line = (qty) => ({ itemId: item.id, nameAr: item.nameAr, qty, unitPriceMinor: 1000, unitCostMinor: 600, discountPercent: 0, soldByWeight: false })
+
+/* 4-أ: فاتورة نقدية + مرتجع بلا رد (كله تنازلاً) */
+{
+  const sale = st().postSale({ lines: [line(4)], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101' })
+  const stockBefore = st().items.find((i) => i.id === item.id).stockQty
+  const ret = st().postSaleReturn({
+    saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 2, condition: 'resellable' }],
+    refund: 'custom', allocation: { cashMinor: 0, creditMinor: 0, storeCreditMinor: 0, waivedMinor: 2000 },
+    reason: 'عميل تنازل', reasonCode: 'other',
+  })
+  assert.equal(ret.waivedRefundMinor, 2000)
+  assert.equal(ret.cashRefundMinor, 0)
+  const entry = st().journal.find((e) => e.id === ret.journalEntryId)
+  assert.ok(entry.lines.some((l) => l.accountCode === '4110' && l.credit === 2000))
+  assert.ok(!entry.lines.some((l) => l.accountCode === '1101'))
+  assert.equal(entry.lines.reduce((a, l) => a + l.debit - l.credit, 0), 0)
+  assert.equal(st().items.find((i) => i.id === item.id).stockQty, stockBefore + 2)
+  ok('تكامل: مرتجع بلا رد — 4110 دائن، لا نقدية، البضاعة عادت للمخزون')
+}
+
+/* 4-ب: دفع مجزأ + مزيج ثلاثي (نقدي + ذمم + تنازل) */
+{
+  const sale = st().postSale({ lines: [line(5)], customerId: cust.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101', paidMinor: 2000 })
+  // القيمة 5000: مدفوع 2000، مفتوح 3000. مرتجع 3 قطع = 3000
+  const ret = st().postSaleReturn({
+    saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 3, condition: 'resellable' }],
+    refund: 'custom', allocation: { cashMinor: 1000, creditMinor: 1500, storeCreditMinor: 0, waivedMinor: 500 },
+    reason: 'تسوية ودية', reasonCode: 'price_dispute',
+  })
+  assert.equal(ret.cashRefundMinor, 1000)
+  assert.equal(ret.creditRefundMinor, 1500)
+  assert.equal(ret.waivedRefundMinor, 500)
+  const entry = st().journal.find((e) => e.id === ret.journalEntryId)
+  assert.ok(entry.lines.some((l) => l.accountCode === '1101' && l.credit === 1000))
+  assert.ok(entry.lines.some((l) => l.accountCode === '1104' && l.credit === 1500))
+  assert.ok(entry.lines.some((l) => l.accountCode === '4110' && l.credit === 500))
+  ok('تكامل: مزيج نقدي+ذمم+تنازل على دفع مجزأ — القيد مفصل صحيح')
+
+  // 4-ج: تجاوز السقوف يرمي — المحصَّل المتبقي 1000 فقط (دفع 2000 ورُدّ 1000 نقداً)
+  assert.throws(() => st().postSaleReturn({
+    saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 2, condition: 'resellable' }],
+    refund: 'custom', allocation: { cashMinor: 2000, creditMinor: 0, storeCreditMinor: 0, waivedMinor: 0 },
+    reason: 'تجاوز', reasonCode: 'other',
+  }), /يتجاوز المُحصَّل/)
+  ok('تكامل: نقدي 2000 فوق المحصَّل المتبقي (1000) يُرفض')
+
+  assert.throws(() => st().postSaleReturn({
+    saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable' }],
+    refund: 'custom',
+    reason: 'بلا توزيع', reasonCode: 'other',
+  }), /allocation/)
+  ok('تكامل: custom بلا allocation يُرفض')
+}
+
+/* 4-د: التوافق الخلفي — الأنماط الثلاثة القديمة كما هي */
+{
+  const sale = st().postSale({ lines: [line(2)], customerId: cust.id, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101' })
+  const ret = st().postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable' }], refund: 'cash', reason: 'قديم', reasonCode: 'other' })
+  assert.equal(ret.cashRefundMinor, 1000)
+  assert.equal(ret.creditRefundMinor, 0)
+  assert.equal(ret.waivedRefundMinor, undefined)
+  ok('توافق خلفي: refund=cash يعمل كما كان بلا حقول جديدة')
+
+  const ret2 = st().postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable' }], refund: 'store_credit', reason: 'رصيد', reasonCode: 'other' })
+  assert.equal(ret2.creditRefundMinor, 1000)
+  assert.equal(ret2.storeCreditRefundMinor, 1000)
+  const entry2 = st().journal.find((e) => e.id === ret2.journalEntryId)
+  assert.ok(entry2.lines.some((l) => l.accountCode === '1104' && l.credit === 1000))
+  ok('توافق خلفي: store_credit → 1104 + الحقل الجديد storeCreditRefundMinor مفصّل')
+}
+
+/* ═══ 5) الشروحات ═══ */
+{
+  assert.ok(COMMON_GUIDES.length >= 8)
+  ok(`الموضوعات العامة: ${COMMON_GUIDES.length} موضوعات (مرتجعات كاملة التغطية)`)
+
+  for (const a of ACTIVITY_TEMPLATES) {
+    const topics = guidesForActivity(a.id)
+    assert.ok(topics.length >= COMMON_GUIDES.length, `نشاط ${a.id} بلا شروحات`)
+  }
+  ok(`كل الأنشطة (${ACTIVITY_TEMPLATES.length}) لها شروحات — العامة على الأقل`)
+
+  const withOwn = Object.keys(ACTIVITY_GUIDES)
+  assert.ok(withOwn.length >= 14, `أنشطة بموضوعات خاصة: ${withOwn.length}`)
+  ok(`${withOwn.length} نشاطاً له موضوع مرتجعات خاص به`)
+
+  const lab = guidesForActivity('lab')
+  assert.equal(lab[0].id, 'lab_refunds') // موضوع النشاط أولاً
+  ok('موضوع النشاط يتصدر القائمة قبل العامة')
+
+  const hits = searchGuides(guidesForActivity('grocery'), 'تالف')
+  assert.ok(hits.length >= 2)
+  assert.equal(searchGuides(guidesForActivity('grocery'), 'كلمة-غير-موجودة-إطلاقاً').length, 0)
+  ok('البحث في الشروحات يعمل (إيجاباً وسلباً)')
+
+  // كل فقرة غير فارغة وكل موضوع له 2+ فقرات
+  for (const t of [...COMMON_GUIDES, ...Object.values(ACTIVITY_GUIDES).flat()]) {
+    assert.ok(t.paragraphsAr.length >= 2, `موضوع ${t.id} فقير`)
+    assert.ok(t.paragraphsAr.every((p) => p.trim().length > 20), `فقرة قصيرة في ${t.id}`)
+  }
+  ok('كل الموضوعات غنية: فقرتان+ وكل فقرة شرح حقيقي')
+}
+
+/* ═══ 6) فحص UI نصي ═══ */
+{
+  const srp = readFileSync(join(root, 'src/ui/pages/SaleReturnsPage.tsx'), 'utf8')
+  for (const marker of ["'custom'", 'توزيع حر', 'validateRefundAllocation', 'allocationOf', 'waivedMinor', 'مرتجع بلا رد', 'customWaived', 'allocErrors']) {
+    assert.ok(srp.includes(marker), `SaleReturnsPage يفتقد: ${marker}`)
+  }
+  ok('SaleReturnsPage: خيار التوزيع الحر الرباعي كامل الأسلاك')
+
+  const gp = readFileSync(join(root, 'src/ui/pages/GuidesPage.tsx'), 'utf8')
+  for (const marker of ['guidesForActivity', 'searchGuides', 'setup.activityId']) {
+    assert.ok(gp.includes(marker), `GuidesPage يفتقد: ${marker}`)
+  }
+  ok('GuidesPage موجودة وموصولة بنواة الشروحات وبنشاط الحساب')
+
+  const nav = readFileSync(join(root, 'src/ui/navCatalog.tsx'), 'utf8')
+  assert.ok(nav.includes('/settings/guides'))
+  const app = readFileSync(join(root, 'src/App.tsx'), 'utf8')
+  assert.ok(app.includes('GuidesPage') && app.includes('/settings/guides'))
+  const perms = readFileSync(join(root, 'src/core/permissions.ts'), 'utf8')
+  assert.ok(perms.includes("'/settings/guides', perm: null"))
+  ok('التوجيه + القائمة + الصلاحيات (للجميع) موصولة للشروحات')
+}
+
+/* ═══ 7) استكمالات الجولة الثانية: الاستبدال سطر-بسطر + بنود النقلات/الإيجار/العيادة ═══ */
+{
+  // postExchange بreturnLineSpecs: قطعة تالفة تُستبدل — لا تعود للمخزون وتذهب للهالك
+  const sale = st().postSale({ lines: [line(2)], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101' })
+  const stockBefore = st().items.find((i) => i.id === item.id).stockQty
+  const doc = st().postExchange({
+    originalSaleId: sale.id,
+    returnLineSpecs: [{ lineIndex: 0, qty: 1, condition: 'damaged' }],
+    newLines: [line(1)],
+    notes: 'استبدال تالف بسليم',
+  })
+  assert.equal(doc.netMinor, 0) // نفس السعر — تبادل متكافئ
+  const ret = st().saleReturns.find((r) => r.id === doc.returnId)
+  assert.equal(ret.lines[0].condition, 'damaged')
+  assert.equal(ret.lines[0].saleLineIndex, 0)
+  const entry = st().journal.find((e) => e.id === ret.journalEntryId)
+  assert.ok(entry.lines.some((l) => l.accountCode === '5111' && l.debit === 600))
+  assert.ok(!entry.lines.some((l) => l.accountCode === '1103'))
+  // المخزون: التالف لم يعد (−0) والبيع الجديد خصم 1 ⇒ صافي −1
+  assert.equal(st().items.find((i) => i.id === item.id).stockQty, stockBefore - 1)
+  ok('postExchange بلاين-سبيكس: التالف للهالك لا للمخزون، والمستند متكافئ الصافي')
+
+  // التوافق الخلفي: qtyByItem القديمة ما زالت تعمل
+  const sale2 = st().postSale({ lines: [line(1)], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101' })
+  const doc2 = st().postExchange({ originalSaleId: sale2.id, returnQtyByItem: new Map([[item.id, 1]]), newLines: [line(1)], notes: '' })
+  assert.equal(doc2.netMinor, 0)
+  ok('postExchange التوافق الخلفي: qtyByItem القديمة تعمل')
+
+  // فحص UI نصي: ExchangePage سطر-بسطر بحالة
+  const exp = readFileSync(join(root, 'src/ui/pages/ExchangePage.tsx'), 'utf8')
+  for (const marker of ['remainingByLine', 'returnLineSpecs', 'retConds', "condition: retConds[idx] ?? 'resellable'", 'تالف']) {
+    assert.ok(exp.includes(marker), `ExchangePage يفتقد: ${marker}`)
+  }
+  ok('ExchangePage: مُرقّاة لسطر-بسطر بحالة سليم/تالف')
+
+  // النقلات/الإيجار/العيادة: refundableItems موصولة
+  const trips = readFileSync(join(root, 'src/ui/pages/TripsPage.tsx'), 'utf8')
+  assert.ok(trips.includes('refundableItems') && trips.includes("key: 'base'") && trips.includes("source === 'customer'"))
+  ok('TripsPage: بنود الاسترداد (نولون + مصاريف على العميل)')
+  const rental = readFileSync(join(root, 'src/ui/pages/RentalContractsPage.tsx'), 'utf8')
+  assert.ok(rental.includes('refundableItems') && rental.includes("key: 'rent'") && rental.includes("key: 'extra'"))
+  ok('RentalContractsPage: بنود الاسترداد (إيجار + تسوية تجاوز)')
+  const clinic = readFileSync(join(root, 'src/ui/pages/ClinicPages.tsx'), 'utf8')
+  assert.ok(clinic.includes('refundableItems') && clinic.includes("key: 'fee'"))
+  ok('ClinicPages: بند أتعاب الزيارة قابل للاختيار')
+}
+
+/* ═══ 8) إصلاحات المراجعة الاحترافية: التالف لا يدخل أرصدة المخازن ولا كارت الصنف ═══ */
+{
+  const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
+  const { buildItemLedger } = await import(join(root, 'src/core/itemLedger.ts'))
+
+  // buildWarehouseDocs: مرتجع فيه سطر سليم وسطر تالف — السليم فقط يعود لمخزن الفاتورة
+  const docs = buildWarehouseDocs(
+    [],
+    [{ id: 1, warehouseId: 2, lines: [{ itemId: 7, qty: 5 }] }],
+    [{ saleId: 1, lines: [{ itemId: 7, qty: 2, condition: 'resellable' }, { itemId: 7, qty: 1, condition: 'damaged' }] }],
+    [],
+  )
+  const retDoc = docs.find((d) => d.lines.some((l) => l.qtyDelta > 0))
+  assert.equal(retDoc.lines.length, 1)
+  assert.equal(retDoc.lines[0].qtyDelta, 2)
+  ok('buildWarehouseDocs: التالف لا يدخل مخزن الفاتورة (السليم فقط +2)')
+
+  // مرتجع كله تالف ⇒ لا مستند عودة إطلاقاً
+  const docs2 = buildWarehouseDocs([], [{ id: 1, warehouseId: 2, lines: [{ itemId: 7, qty: 5 }] }],
+    [{ saleId: 1, lines: [{ itemId: 7, qty: 3, condition: 'damaged' }] }], [])
+  assert.equal(docs2.filter((d) => d.lines.some((l) => l.qtyDelta > 0)).length, 0)
+  ok('buildWarehouseDocs: مرتجع كله تالف = لا عودة لأي مخزن')
+
+  // computeWarehouseStock متسق: الرئيسي = الإجمالي − الفرعي دائماً
+  const stock = computeWarehouseStock(
+    [{ id: 7, stockQty: 7 }],
+    [{ id: 1, isMain: true }, { id: 2, isMain: false }],
+    [{ fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 7, qty: 5 }] }],
+    docs,
+  )
+  assert.equal(stock.get(2).get(7), 2) // 5 − 5 مبيعة + 2 سليم
+  assert.equal(stock.get(1).get(7), 5) // 7 − 2
+  ok('computeWarehouseStock: الرئيسي + الفرعي = الإجمالي (لا رصيد وهمي من التالف)')
+
+  // كارت الصنف: التالف سطر توثيقي بلا وارد
+  const led = buildItemLedger({
+    itemId: 7, openingQty: 10,
+    purchases: [], purchaseReturns: [],
+    sales: [{ invoiceNumber: 'S-1', date: '2026-01-01', lines: [{ itemId: 7, qty: 3, unitPriceMinor: 100, discountPercent: 0 }] }],
+    saleReturns: [{ returnNumber: 'R-1', date: '2026-01-02', lines: [
+      { itemId: 7, qty: 1, unitPriceMinor: 100, condition: 'resellable' },
+      { itemId: 7, qty: 2, unitPriceMinor: 100, condition: 'damaged' },
+    ] }],
+    stocktakes: [], productionOrders: [], materialRequisitions: [],
+  })
+  assert.equal(led.closingQty, 8) // 10 − 3 + 1 (التالفان لا يعودان)
+  assert.ok(led.rows.some((r) => r.note.includes('هالك') && r.inQty === 0))
+  ok('كارت الصنف: الرصيد الختامي 8 والتالف سطر توثيقي «هالك» بلا وارد')
+
+  // عدّ الدرج في repo يتبع خزينة الرد الفعلية (r.treasury أولاً)
+  const repoSrc = readFileSync(join(root, 'src/data/repo.ts'), 'utf8')
+  assert.ok(repoSrc.includes('treasuryKind: kindOf(r.treasury ?? state.sales.find((s) => s.id === r.saleId)?.treasury)'))
+  ok('settleShiftVariance: عدّ الدرج يتبع خزينة الرد الفعلية لا خزينة البيع')
+}
+
+/* ═══ 9) أثر المرتجع على خطط الأقساط (reduceSchedule) ═══ */
+{
+  const { reduceSchedule, buildSchedule } = await import(join(root, 'src/core/installments.ts'))
+  // جدول 10 أقساط × 100
+  const items = buildSchedule({ totalMinor: 1000, downPaymentMinor: 0, count: 10, intervalMonths: 1, firstDueDate: '2026-01-01' })
+  const red = reduceSchedule(items, 250)
+  assert.equal(red.appliedMinor, 250)
+  assert.equal(red.unappliedMinor, 0)
+  // الخفض من الآخر: القسطان 10 و9 صفر (100+100)، القسط 8 = 50
+  assert.equal(red.items[9].amountMinor, 0)
+  assert.equal(red.items[8].amountMinor, 0)
+  assert.equal(red.items[7].amountMinor, 50)
+  assert.equal(red.items[6].amountMinor, 100)
+  assert.equal(red.items.reduce((a, i) => a + i.amountMinor, 0), 750)
+  ok('reduceSchedule: الخفض من آخر الأقساط غير المسددة والمجموع مضبوط')
+
+  // تكامل: فاتورة آجلة بخطة أقساط + مرتجع على الحساب ⇒ الجدول يتقلص
+  const sale = st().postSale({ lines: [line(10)], customerId: cust.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101', paidMinor: 0 })
+  st().createInstallmentPlan({ customerId: cust.id, saleId: sale.id, totalMinor: 10000, downPaymentMinor: 0, count: 5, intervalMonths: 1, firstDueDate: '2026-10-01', treasury: '1101', notes: '' })
+  const plan0 = st().installmentPlans.at(-1)
+  assert.equal(plan0.items.reduce((a, i) => a + i.amountMinor, 0), 10000)
+  const ret = st().postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 3, condition: 'resellable' }], refund: 'credit', reason: 'قسّط', reasonCode: 'other' })
+  assert.equal(ret.creditRefundMinor, 3000)
+  const plan1 = st().installmentPlans.find((pl) => pl.id === plan0.id)
+  assert.equal(plan1.items.reduce((a, i) => a + i.amountMinor, 0), 7000)
+  assert.equal(plan1.totalMinor, 7000)
+  ok('تكامل: مرتجع على الحساب يقلّص جدول أقساط الفاتورة تلقائياً (10000→7000)')
+
+  // مرتجع نقدي لا يمس الجدول (الذمة لم تنخفض)
+  const ret2 = st().postSaleReturn({ saleId: sale.id, lineSpecs: [{ lineIndex: 0, qty: 1, condition: 'resellable' }], refund: 'custom', allocation: { cashMinor: 0, creditMinor: 0, storeCreditMinor: 0, waivedMinor: 1000 }, reason: 'تنازل', reasonCode: 'other' })
+  assert.equal(ret2.waivedRefundMinor, 1000)
+  const plan2 = st().installmentPlans.find((pl) => pl.id === plan0.id)
+  assert.equal(plan2.totalMinor, 7000)
+  ok('التنازل لا يقلّص الجدول (الذمة لم تنخفض) — التمييز صحيح')
+}
+
+console.log(`\n✅ verify_refund_freedom_guides: ${pass}/${pass} فحصاً نجح`)

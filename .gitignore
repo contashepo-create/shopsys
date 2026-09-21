@@ -1,0 +1,4 @@
+
+# أسرار الترخيص — لا تُرفع أبداً
+*.private_key*
+license_private_key.txt
