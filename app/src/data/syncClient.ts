@@ -52,8 +52,26 @@ const headers = (c: SyncConfig) => ({
   'X-Store-Access-Token': c.accessToken,
 })
 
-const restUrl = (c: SyncConfig) =>
-  `${c.url.trim().replace(/\/$/, '')}/rest/v1/${SUPABASE_STORES_TABLE}`
+const apiBase = (c: SyncConfig) => c.url.trim().replace(/\/$/, '')
+const restUrl = (c: SyncConfig) => `${apiBase(c)}/rest/v1/${SUPABASE_STORES_TABLE}`
+
+/** تدوير ذري لاعتماد RLS؛ يبقى القديم صالحاً 24 ساعة كي تنتقل بقية الأجهزة. */
+export async function rotateStoreAccessToken(c: SyncConfig, newToken: string): Promise<string> {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(newToken) || newToken === c.accessToken) {
+    throw new Error('اعتماد التدوير الجديد غير صالح أو مطابق للحالي')
+  }
+  const res = await fetch(`${apiBase(c)}/rest/v1/rpc/rotate_store_access_token`, {
+    method: 'POST',
+    headers: { ...headers(c), 'X-New-Store-Access-Token': newToken },
+    body: JSON.stringify({ p_store_id: c.storeId }),
+    signal: AbortSignal.timeout(15000),
+  })
+  if (res.status === 401 || res.status === 403) throw new Error('رُفض اعتماد المتجر الحالي — لا يمكن التدوير')
+  if (!res.ok) throw new Error(`تعذر تدوير اعتماد المتجر (${res.status})`)
+  const expiresAt = await res.json() as unknown
+  if (typeof expiresAt !== 'string') throw new Error('استجابة تدوير الاعتماد غير صالحة')
+  return expiresAt
+}
 
 interface RawRow {
   store_id: string

@@ -8,7 +8,7 @@ import { useMemo, useState } from 'react'
 import { CloudUpload, Lock, RefreshCw, CheckCircle2, ShieldCheck, Copy, PlugZap, History, Download, Undo2 } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { validateSyncConfig, fetchRemote, generateStoreAccessToken } from '../../data/syncClient.ts'
+import { validateSyncConfig, fetchRemote, generateStoreAccessToken, rotateStoreAccessToken } from '../../data/syncClient.ts'
 import { runSyncCycle, listConflictSnapshots, getConflictSnapshotData, restoreConflictSnapshot } from '../../data/syncRunner.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { deriveArchitectureMode, MODE_LABELS } from '../../core/architecture.ts'
@@ -162,6 +162,22 @@ export function SyncPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
+  const rotateAccess = async () => {
+    if (!window.confirm('سيُنشأ اعتماد جديد. يبقى القديم صالحاً 24 ساعة فقط لتحديث بقية الأجهزة. بعد النجاح نزّل ملف ربط جديداً فوراً. متابعة؟')) return
+    const current = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
+    const errors = validateSyncConfig(current)
+    if (errors.length) return toast.show(errors[0], 'error')
+    const next = generateStoreAccessToken()
+    setBusy('rotate')
+    try {
+      const expiresAt = await rotateStoreAccessToken(current, next)
+      setAccessToken(next)
+      updateSync({ accessToken: next })
+      toast.show(`تم التدوير ✅ — الاعتماد القديم ينتهي ${expiresAt.slice(0, 16).replace('T', ' ')}. صدّر ملف ربط جديداً الآن.`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+    finally { setBusy(null) }
+  }
+
   const importPairing = () => {
     const input = document.createElement('input')
     input.type = 'file'; input.accept = '.tksync,text/plain'
@@ -236,6 +252,7 @@ export function SyncPage() {
             <div className="flex gap-2">
               <input value={accessToken} onChange={(e) => setAccessToken(e.target.value.trim())} type="password" className={inputCls} dir="ltr" />
               <Btn variant="soft" onClick={() => setAccessToken(generateStoreAccessToken())}>توليد</Btn>
+              {sync.accessToken && <Btn variant="ghost" onClick={rotateAccess} disabled={busy === 'rotate'}>{busy === 'rotate' ? 'يدوّر…' : 'تدوير آمن'}</Btn>}
             </div>
           </Field>
         </div>
