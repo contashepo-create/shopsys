@@ -33,14 +33,17 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Dependency audit
+      - name: Production dependency audit
         run: npm audit --omit=dev --audit-level=high
+
+      - name: Build-tool dependency audit
+        run: npm audit --audit-level=high
 
       - name: TypeScript and production build
         run: npm run build
 
       - name: Lint application source
-        run: npx oxlint src
+        run: npm run lint:src
 
       - name: Browser-like integration tests
         run: npm run test:e2e
