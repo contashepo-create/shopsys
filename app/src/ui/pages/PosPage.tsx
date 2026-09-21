@@ -805,6 +805,22 @@ export function PosPage() {
                         )
                       })()}
                     </div>
+                    {/* مخزن السطر: عدم وجود قيمة صريحة يعني وراثة مخزن رأس الفاتورة. */}
+                    {warehouses.length > 1 && (
+                      <select
+                        value={l.warehouseId ?? ''}
+                        onChange={(e) => setCart((current) => current.map((line, index) => (
+                          index === i ? { ...line, warehouseId: e.target.value === '' ? null : Number(e.target.value) } : line
+                        )))}
+                        title="اختر مخزناً لهذا السطر، أو اتركه يتبع مخزن الفاتورة"
+                        className="mt-1 text-[10px] font-bold rounded-md border border-amber-200 dark:border-amber-800 bg-amber-500/[0.06] px-1.5 py-0.5 text-amber-700 dark:text-amber-300 outline-none max-w-full"
+                      >
+                        <option value="">🏬 مخزن الفاتورة — {warehouses.find((w) => w.id === (saleWarehouseId ?? defaultSaleWarehouseId))?.nameAr ?? 'الرئيسي'}</option>
+                        {warehouses.map((warehouse) => (
+                          <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}{warehouse.isMain ? ' (الرئيسي)' : ''}</option>
+                        ))}
+                      </select>
+                    )}
                     {/* سيريالات القطع المعيّنة — حذف السيريال يحذف قطعته من السلة */}
                     {l.serials && l.serials.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
