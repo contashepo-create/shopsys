@@ -21,5 +21,17 @@ const afterReturn = computeWarehouseStock(items, warehouses, transfers, buildWar
 ok('المرتجع يعيد الصنف إلى مخزن سطر الأصل', afterReturn.get(2).get(2) === 3)
 ok('المرتجع لا يعيده إلى مخزن رأس الفاتورة', afterReturn.get(1).get(2) === 5)
 
+// نفس الصنف موزع على مخزنين ومرتجعان متتاليان: يجب ألا يبدأ التوزيع من السطر الأول كل مرة.
+const splitSale = [{ id: 20, warehouseId: 1, lines: [
+  { itemId: 1, qty: 2, warehouseId: 1 },
+  { itemId: 1, qty: 3, warehouseId: 2 },
+] }]
+const splitReturns = [
+  { saleId: 20, lines: [{ itemId: 1, qty: 2, condition: 'resellable' }] },
+  { saleId: 20, lines: [{ itemId: 1, qty: 1, condition: 'resellable' }] },
+]
+const returnDocs = buildWarehouseDocs([], splitSale, splitReturns).filter((doc) => doc.lines[0].qtyDelta > 0)
+ok('المرتجعات المتتالية تستهلك سطور الأصل تراكمياً', returnDocs.some((doc) => doc.warehouseId === 2 && doc.lines[0].qtyDelta === 1))
+
 console.log(`\nPASS=${pass} FAIL=${fail}`)
 if (fail) process.exit(1)
