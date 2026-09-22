@@ -231,7 +231,7 @@ export function VouchersPage() {
       <Modal open={open} onClose={() => setOpen(false)} title={kind === 'receipt' ? '⬇️ سند قبض — نقدية داخلة' : '⬆️ سند صرف — نقدية خارجة'}>
         <div className="space-y-4">
           <Field label="إلى/من الخزينة أو البنك" hint="كل الخزائن والبنوك المسجلة — أضف المزيد من شاشة الخزائن">
-            <TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} />
+            <TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} operation={kind} />
           </Field>
           <Field label={kind === 'receipt' ? 'مصدر النقدية (الحساب المقابل)' : 'وجهة النقدية (الحساب المقابل)'}>
             <select value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0) }} className={inputCls}>

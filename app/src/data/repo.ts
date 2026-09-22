@@ -45,6 +45,7 @@ import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/servi
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
 import { fullCoa } from '../core/treasury.ts'
+import { validateTreasuryAccess, validateTreasuryTransfer } from '../core/treasuryAccess.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, reduceSchedule, type InstallmentItem } from '../core/installments.ts'
@@ -3843,6 +3844,15 @@ export const useDataStore = create<DataState>()(
         }
         if (args.partyKind === 'customer' && args.partyId != null && !state.customers.some((c) => c.id === args.partyId)) throw new Error('العميل غير موجود — سجّله أولاً')
         if (args.partyKind === 'supplier' && args.partyId != null && !state.suppliers.some((s) => s.id === args.partyId)) throw new Error('المورد غير موجود — سجّله أولاً')
+
+        // حارس مركزي: إخفاء الخيارات في الواجهة لا يكفي. المالك (currentUserId=null)
+        // غير مقيّد، والمستخدم القديم بلا grants متوافق مؤقتاً حتى يضبطه المدير.
+        const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+        const accessErrors = args.kind === 'transfer'
+          ? validateTreasuryTransfer(activeUser?.treasuryAccess, args.treasury, args.counterAccountCode, args.amountMinor + (args.feeMinor ?? 0))
+          : validateTreasuryAccess(activeUser?.treasuryAccess, args.treasury, args.kind, args.amountMinor)
+        if (accessErrors.length) throw new Error(accessErrors.join(' — '))
+
         // القيد حسب نوع السند — كله عبر دوال النواة المتوازنة بنيوياً
         const entryLines =
           args.kind === 'receipt'
