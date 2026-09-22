@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildWarehouseDocs, computeWarehouseStock } from '../src/core/transfers.ts'
+import { buildReturnLinesPerLine } from '../src/core/returns.ts'
 
 const warehouses = [{ id: 1, isMain: true }, { id: 2, isMain: false }]
 const items = [{ id: 7, stockQty: 12 }]
@@ -25,6 +26,19 @@ describe('بيع متعدد المخازن على مستوى السطر', () => 
     const docs = buildWarehouseDocs([], sales, returns)
     expect(docs.some((doc) => doc.warehouseId === 2 && doc.lines[0].qtyDelta === 1)).toBe(true)
     expect(docs.some((doc) => doc.warehouseId === 1 && doc.lines[0].qtyDelta > 0)).toBe(false)
+  })
+
+  it('يسمح باستقبال المرتجع السليم في مخزن مختلف لكل سطر', () => {
+    const saleLines = [{
+      itemId: 7, nameAr: 'صنف', qty: 2, unitPriceMinor: 100, unitCostMinor: 60,
+      discountPercent: 0, warehouseId: 1,
+    }]
+    const returned = buildReturnLinesPerLine(saleLines, [], [
+      { lineIndex: 0, qty: 1, condition: 'resellable', warehouseId: 2 },
+    ])
+    expect(returned[0].warehouseId).toBe(2)
+    const docs = buildWarehouseDocs([], [{ id: 9, warehouseId: 1, lines: saleLines }], [{ saleId: 9, lines: returned }])
+    expect(docs.some((doc) => doc.warehouseId === 2 && doc.lines[0].qtyDelta === 1)).toBe(true)
   })
 
   it('يوزع الرصيد الإجمالي الحالي وفق مستندات مخزن السطر', () => {

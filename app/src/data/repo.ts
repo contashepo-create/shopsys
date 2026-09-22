@@ -2958,6 +2958,10 @@ export const useDataStore = create<DataState>()(
         // 1) بناء سطور المرتجع بنفس أسعار وخصومات الأصل، مع منع تجاوز المتبقي —
         //    النمط العالمي: سطر بسطر بحالته (lineSpecs)؛ التوافق الخلفي: qtyByItem
         const priorLines = state.saleReturns.filter((r) => r.saleId === sale.id).flatMap((r) => r.lines)
+        const invalidReturnWarehouse = args.lineSpecs?.find(
+          (spec) => spec.condition === 'resellable' && spec.warehouseId != null && !state.warehouses.some((warehouse) => warehouse.id === spec.warehouseId),
+        )
+        if (invalidReturnWarehouse) throw new Error(`مخزن استقبال المرتجع غير موجود (${invalidReturnWarehouse.warehouseId})`)
         const rawLines: ReturnLine[] = args.lineSpecs?.length
           ? buildReturnLinesPerLine(sale.lines, priorLines, args.lineSpecs)
           : buildReturnLines(sale.lines, priorLines, args.qtyByItem ?? new Map())

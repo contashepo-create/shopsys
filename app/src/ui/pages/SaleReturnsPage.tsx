@@ -28,12 +28,14 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 interface WizardLine {
   qty: string
   condition: ReturnCondition
+  /** null/undefined = مخزن سطر البيع الأصلي */
+  warehouseId?: number | null
 }
 
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, journal, treasuries, postSaleReturn, clientSettlements } = useDataStore()
+  const { sales, saleReturns, customers, journal, treasuries, warehouses, postSaleReturn, clientSettlements } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -94,7 +96,7 @@ export function SaleReturnsPage() {
     for (const [idxStr, w] of Object.entries(wiz)) {
       const idx = Number(idxStr)
       const q = Number(w.qty)
-      if (q > 0) out.push({ lineIndex: idx, qty: q, condition: w.condition })
+      if (q > 0) out.push({ lineIndex: idx, qty: q, condition: w.condition, warehouseId: w.warehouseId ?? sale.lines[idx]?.warehouseId ?? sale.warehouseId ?? null })
     }
     return out
   }, [sale, wiz])
@@ -365,7 +367,7 @@ export function SaleReturnsPage() {
                     <th className="px-3 py-2">سعر/خصم</th>
                     <th className="px-3 py-2">المتبقي</th>
                     <th className="px-3 py-2 w-24">كمية الإرجاع</th>
-                    <th className="px-3 py-2 w-40">حالة البضاعة</th>
+                    <th className="px-3 py-2 w-40">الحالة ومستودع الاستلام</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -386,7 +388,7 @@ export function SaleReturnsPage() {
                         <td className="px-3 py-2">
                           <input
                             value={w?.qty ?? ''}
-                            onChange={(e) => setWiz((prev) => ({ ...prev, [idx]: { qty: e.target.value.replace(/[^\d.]/g, ''), condition: prev[idx]?.condition ?? 'resellable' } }))}
+                            onChange={(e) => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: e.target.value.replace(/[^\d.]/g, ''), condition: prev[idx]?.condition ?? 'resellable' } }))}
                             placeholder="0"
                             inputMode="decimal" autoComplete="off"
                             title={l.soldByWeight ? 'صنف وزني ⚖️ — يقبل كسوراً مثل 1.75' : 'الكمية المرتجعة'}
@@ -397,16 +399,37 @@ export function SaleReturnsPage() {
                         <td className="px-3 py-2">
                           <div className="flex gap-1">
                             <button
-                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { qty: prev[idx]?.qty ?? '', condition: 'resellable' } }))}
+                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: 'resellable' } }))}
                               disabled={rem <= 0}
                               className={`flex-1 px-1.5 py-1.5 rounded-lg text-[10.5px] font-bold border transition-all disabled:opacity-30 ${(w?.condition ?? 'resellable') === 'resellable' ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
                             >✅ سليم</button>
                             <button
-                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { qty: prev[idx]?.qty ?? '', condition: 'damaged' } }))}
+                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: 'damaged' } }))}
                               disabled={rem <= 0}
                               className={`flex-1 px-1.5 py-1.5 rounded-lg text-[10.5px] font-bold border transition-all disabled:opacity-30 ${w?.condition === 'damaged' ? 'border-rose-500/50 bg-rose-500/10 text-rose-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
                             >🗑️ تالف</button>
                           </div>
+                          <select
+                            value={w?.warehouseId ?? l.warehouseId ?? sale.warehouseId ?? ''}
+                            onChange={(e) => setWiz((prev) => ({
+                              ...prev,
+                              [idx]: {
+                                ...prev[idx],
+                                qty: prev[idx]?.qty ?? '',
+                                condition: prev[idx]?.condition ?? 'resellable',
+                                warehouseId: e.target.value === '' ? null : Number(e.target.value),
+                              },
+                            }))}
+                            disabled={rem <= 0 || w?.condition === 'damaged'}
+                            title={w?.condition === 'damaged' ? 'الصنف التالف لا يدخل أي مستودع' : 'المستودع الذي سيستقبل الكمية السليمة'}
+                            className="mt-1.5 w-full rounded-lg border border-amber-200 dark:border-amber-800 bg-transparent px-1.5 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 disabled:opacity-40"
+                          >
+                            {warehouses.map((warehouse) => (
+                              <option key={warehouse.id} value={warehouse.id}>
+                                🏬 {warehouse.nameAr}{warehouse.id === (l.warehouseId ?? sale.warehouseId) ? ' (الأصلي)' : ''}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                       </tr>
                     )
