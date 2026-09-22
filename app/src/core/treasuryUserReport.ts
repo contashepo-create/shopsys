@@ -38,3 +38,16 @@ export function summarizeTreasuryByUser(
   }
   return [...summaries.values()].sort((a, b) => b.operationsCount - a.operationsCount || a.userName.localeCompare(b.userName, 'ar'))
 }
+
+function csvCell(value: string | number): string {
+  const text = String(value)
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
+}
+
+/** CSV UTF-8 قابل للفتح في برامج الجداول؛ القيم المالية تبقى minor units بلا فقد دقة. */
+export function treasuryUserSummaryCsv(rows: TreasuryUserSummary[]): string {
+  const header = ['المستخدم', 'عدد العمليات', 'المقبوضات (وحدة صغرى)', 'المدفوعات (وحدة صغرى)', 'الصافي (وحدة صغرى)']
+  return `\uFEFF${[header, ...rows.map((row) => [row.userName, row.operationsCount, row.receiptsMinor, row.paymentsMinor, row.netMinor])]
+    .map((row) => row.map(csvCell).join(','))
+    .join('\n')}`
+}

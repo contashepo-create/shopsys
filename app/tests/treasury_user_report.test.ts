@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { summarizeTreasuryByUser } from '../src/core/treasuryUserReport.ts'
+import { summarizeTreasuryByUser, treasuryUserSummaryCsv } from '../src/core/treasuryUserReport.ts'
 
 const journal = [
   { id: 1, date: '2026-09-20', createdBy: 'أحمد', sourceType: 'sale', lines: [{ accountCode: '1101', debit: 1000, credit: 0 }] },
@@ -20,5 +20,11 @@ describe('تقرير حركة الخزائن حسب المستخدم', () => {
   it('يدعم نطاق التاريخ', () => {
     const rows = summarizeTreasuryByUser(journal, ['1101'], '2026-09-21', '2026-09-21')
     expect(rows).toEqual([{ userName: 'أحمد', receiptsMinor: 0, paymentsMinor: 300, netMinor: -300, operationsCount: 1 }])
+  })
+  it('يصدر CSV عربي ببصمة UTF-8 وهروب صحيح', () => {
+    const csv = treasuryUserSummaryCsv([{ userName: 'أحمد، "الصباح"', receiptsMinor: 100, paymentsMinor: 20, netMinor: 80, operationsCount: 2 }])
+    expect(csv.startsWith('\uFEFF')).toBe(true)
+    expect(csv).toContain('"أحمد، ""الصباح"""')
+    expect(csv).toContain(',100,20,80')
   })
 })

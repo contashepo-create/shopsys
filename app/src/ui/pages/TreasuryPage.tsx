@@ -13,7 +13,7 @@ import type { TreasuryDef } from '../../core/treasury.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { summarizeTreasuryByUser } from '../../core/treasuryUserReport.ts'
+import { summarizeTreasuryByUser, treasuryUserSummaryCsv } from '../../core/treasuryUserReport.ts'
 import { allowedTreasuryCodes } from '../../core/treasuryAccess.ts'
 
 interface Move { date: string; description: string; inMinor: number; outMinor: number; balance: number; entryId: number }
@@ -123,6 +123,15 @@ export function TreasuryPage() {
   }
 
   const stmt = statement ? balances.get(statement) : null
+  const exportUserCashCsv = () => {
+    const blob = new Blob([treasuryUserSummaryCsv(userCashSummary)], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `treasury-users-${cashReportFrom || 'all'}-${cashReportTo || 'all'}.csv`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="space-y-5">
@@ -186,6 +195,7 @@ export function TreasuryPage() {
             <span className="font-extrabold text-sm flex-1">حركة النقدية حسب المستخدم</span>
             <label className="text-[10px] text-slate-400">من <input type="date" value={cashReportFrom} onChange={(e) => setCashReportFrom(e.target.value)} className="mr-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1" /></label>
             <label className="text-[10px] text-slate-400">إلى <input type="date" value={cashReportTo} onChange={(e) => setCashReportTo(e.target.value)} className="mr-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1" /></label>
+            <button onClick={exportUserCashCsv} disabled={!userCashSummary.length} className="text-[10px] font-bold px-2 py-1 rounded-lg border border-emerald-500/30 text-emerald-600 disabled:opacity-30">تصدير CSV</button>
           </div>
           <table className="w-full text-[12px]">
             <thead><tr className="text-right text-slate-400"><th className="px-4 py-2">المستخدم</th><th>العمليات</th><th>قبض</th><th>صرف</th><th>الصافي</th></tr></thead>
