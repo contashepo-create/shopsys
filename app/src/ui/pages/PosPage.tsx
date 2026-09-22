@@ -5,7 +5,7 @@
  * - كل فاتورة تولّد قيداً محاسبياً متوازناً تلقائياً (القرار 9)
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift } from 'lucide-react'
+import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift, CreditCard } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -54,7 +54,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, appUsers, currentUserId, promotions, getPromotionCartLines } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, recordPaymentTerminalTransaction } = useDataStore()
   // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
   const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
   const openShift = currentOpenShift(shifts)
@@ -87,7 +87,9 @@ export function PosPage() {
   // فتح وردية من الكاشير مباشرة (سياسة «لا بيع بلا وردية» — نمط Toast/Square)
   const [shiftOpenModal, setShiftOpenModal] = useState(false)
   const [shiftOpeningCash, setShiftOpeningCash] = useState('')
-  const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [payment, setPayment] = useState<'cash' | 'credit' | 'terminal'>('cash')
+  const [paymentTerminalId, setPaymentTerminalId] = useState('')
+  const activePaymentTerminals = paymentTerminals.filter((row) => row.status === 'active')
   const [customerId, setCustomerId] = useState<number | null>(null)
   // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
   const activePriceListId = useMemo(() => {
@@ -449,22 +451,25 @@ export function PosPage() {
     if (!cart.length) return
     try {
       // مجزأ فعلاً (جزء نقدي + جزء آجل) أو آجل بالكامل ⇒ عميل إلزامي
-      const isSplitOrCredit = payment === 'credit' || creditRemainder > 0
+      const isSplitOrCredit = payment === 'credit' || (payment === 'cash' && creditRemainder > 0)
+      const selectedTerminal = payment === 'terminal' ? activePaymentTerminals.find((row) => row.id === paymentTerminalId) : null
+      if (payment === 'terminal' && !selectedTerminal) throw new Error('اختر ماكينة دفع نشطة')
       const sale = postSale({
         lines: cart,
         customerId: isSplitOrCredit ? customerId : null,
-        payment: payment === 'cash' && creditRemainder > 0 ? 'credit' : payment,
+        payment: payment === 'credit' || (payment === 'cash' && creditRemainder > 0) ? 'credit' : 'cash',
         invoiceDiscountPercent: invoiceDiscount,
         taxPercent: countryVatPercent,
         taxInclusive: setup.taxInclusive,
-        treasury,
-        paidMinor: payment === 'credit' ? 0 : paidCashMinor,
+        treasury: selectedTerminal?.settlementAccountCode ?? treasury,
+        paidMinor: payment === 'credit' ? 0 : payment === 'terminal' ? (totals?.totalMinor ?? 0) : paidCashMinor,
         expiryOverrideBy: expiryOverrideBy ?? null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
         priceFloorOverrideBy: priceFloorOverrideBy ?? null,
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
         warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
       })
+      if (selectedTerminal) recordPaymentTerminalTransaction({ id: crypto.randomUUID(), idempotencyKey: `sale:${sale.id}:terminal:${selectedTerminal.id}`, kind: 'charge', terminalId: selectedTerminal.id, branchId: selectedTerminal.branchId, userId: currentUserId ?? 0, documentId: String(sale.id), amountMinor: sale.totals.totalMinor, providerReference: `LOCAL-${sale.invoiceNumber}`, occurredAt: sale.date })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
       setCart([]); setQtyDrafts({})
@@ -1012,13 +1017,14 @@ export function PosPage() {
               <div className="text-[12px] text-slate-400">المبلغ المستحق</div>
               <div className="font-black text-3xl text-emerald-600 dark:text-emerald-400 mt-1">{fmt(totals.totalMinor)} {cur.symbol}</div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <button
                 onClick={() => { setPayment('cash'); if (totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals)) }}
                 className={`p-4 rounded-2xl border-2 font-bold transition-all duration-200 hover:scale-[1.02] ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
               >
                 <Banknote size={22} className="mx-auto mb-1" /> نقدي / مجزأ
               </button>
+              <button onClick={() => { setPayment('terminal'); setPaidCash('0'); setPaymentTerminalId((current) => current || activePaymentTerminals[0]?.id || '') }} disabled={!activePaymentTerminals.length} className={`p-4 rounded-2xl border-2 font-bold transition-all ${payment === 'terminal' ? 'border-sky-500 bg-sky-500/10 text-sky-700' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}><CreditCard size={22} className="mx-auto mb-1"/>بطاقة</button>
               <button
                 onClick={() => { setPayment('credit'); setPaidCash('0') }}
                 disabled={customers.length === 0}
@@ -1027,6 +1033,8 @@ export function PosPage() {
                 <UserRound size={22} className="mx-auto mb-1" /> آجل بالكامل {customers.length === 0 && '(أضف عملاء)'}
               </button>
             </div>
+
+            {payment === 'terminal' && <div><div className="text-[11px] font-bold mb-1">ماكينة الدفع</div><select className={inputCls} value={paymentTerminalId} onChange={(e) => setPaymentTerminalId(e.target.value)}><option value="">اختر الماكينة</option>{activePaymentTerminals.map((row) => <option key={row.id} value={row.id}>{row.nameAr} · {row.code}</option>)}</select></div>}
 
             {payment === 'cash' && (
               <>
