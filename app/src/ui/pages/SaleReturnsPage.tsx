@@ -35,7 +35,7 @@ interface WizardLine {
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, journal, treasuries, warehouses, postSaleReturn, clientSettlements } = useDataStore()
+  const { sales, saleReturns, customers, journal, treasuries, warehouses, postSaleReturn, clientSettlements, paymentTerminalTransactions, recordPaymentTerminalTransaction, currentUserId } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -50,6 +50,7 @@ export function SaleReturnsPage() {
   const [wiz, setWiz] = useState<Record<number, WizardLine>>({}) // بمفتاح فهرس السطر
   const [refund, setRefund] = useState<'cash' | 'credit' | 'store_credit' | 'custom'>('cash')
   const [refundTreasury, setRefundTreasury] = useState('')
+  const [terminalRefundReference, setTerminalRefundReference] = useState('')
   /** التوزيع الحر الرباعي (refund='custom') — نصوص المبالغ كما يكتبها المستخدم */
   const [customCash, setCustomCash] = useState('')
   const [customCredit, setCustomCredit] = useState('')
@@ -60,6 +61,7 @@ export function SaleReturnsPage() {
   const [viewing, setViewing] = useState<SaleReturn | null>(null)
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
+  const originalTerminalCharge = sale ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentId === String(sale.id)) : undefined
 
   /** المتبقي القابل للإرجاع لكل سطر من الفاتورة المختارة */
   const remaining = useMemo(() => {
@@ -74,7 +76,7 @@ export function SaleReturnsPage() {
   }, [sales, pickQuery])
 
   const resetWizard = () => {
-    setStep(0); setSale(null); setWiz({}); setRefund('cash'); setRefundTreasury('')
+    setStep(0); setSale(null); setWiz({}); setRefund('cash'); setRefundTreasury(''); setTerminalRefundReference('')
     setCustomCash(''); setCustomCredit(''); setCustomStore(''); setCustomWaived('')
     setReasonCode('changed_mind'); setReason(''); setPickQuery('')
   }
@@ -158,6 +160,7 @@ export function SaleReturnsPage() {
   const approval = useSupervisorApproval()
   const submit = () => {
     if (!sale || !specs.length || !preview || preview.allocErrors.length > 0) return
+    if (originalTerminalCharge && preview.alloc.cashMinor > 0 && !terminalRefundReference.trim()) { toast.show('أدخل مرجع رد ماكينة الدفع', 'error'); return }
     approval.request((approvedBy) => {
       try {
         const ret = postSaleReturn({
@@ -170,6 +173,7 @@ export function SaleReturnsPage() {
           treasury: refundTreasury || undefined,
           approvedBy,
         })
+        if (originalTerminalCharge && preview.alloc.cashMinor > 0) recordPaymentTerminalTransaction({ id: crypto.randomUUID(), idempotencyKey: `sale-return:${ret.id}:terminal:${originalTerminalCharge.terminalId}`, kind: 'refund', terminalId: originalTerminalCharge.terminalId, branchId: originalTerminalCharge.branchId, userId: currentUserId ?? 0, documentId: String(ret.id), amountMinor: preview.alloc.cashMinor, providerReference: terminalRefundReference.trim(), occurredAt: ret.date, originalTransactionId: originalTerminalCharge.id, cardLast4: originalTerminalCharge.cardLast4 })
         toast.show(`تم المرتجع ${ret.returnNumber} — تولد القيد العاكس ✓${approvedBy ? ` (اعتمده «${approvedBy}»)` : ''}${ret.crossShiftNote ? ` — ${ret.crossShiftNote}` : ''}`)
         closeWizard()
         setViewing(ret)
@@ -549,6 +553,7 @@ export function SaleReturnsPage() {
                     <div className="pt-1 space-y-1.5">
                       <div className="text-[10.5px] font-bold text-slate-500">وجهة الجزء النقدي:</div>
                       <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} operation="refund" compact />
+                      {originalTerminalCharge && <input className={inputCls} value={terminalRefundReference} onChange={(e) => setTerminalRefundReference(e.target.value)} placeholder="مرجع رد ماكينة الدفع *"/>}
                     </div>
                   )}
                 </div>
@@ -559,6 +564,7 @@ export function SaleReturnsPage() {
                   <div className="text-[11.5px] font-bold text-emerald-700 dark:text-emerald-400">وجهة الرد: درج نقدي أو بنك/محفظة (تحويل للعميل)</div>
                   <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} operation="refund" compact />
                   <p className="text-[10.5px] text-slate-400">الافتراضي: نفس خزينة البيع الأصلية «{treasuries.find((t) => t.code === (sale.treasury ?? '1101'))?.nameAr ?? 'الخزينة الرئيسية'}» — اختر بنكاً لو الرد تحويلاً.</p>
+                  {originalTerminalCharge && <div><div className="text-[10.5px] font-bold text-sky-600">مرجع رد ماكينة الدفع *</div><input className={inputCls} value={terminalRefundReference} onChange={(e) => setTerminalRefundReference(e.target.value)} placeholder="رقم عملية الرد من الماكينة"/><p className="text-[10px] text-slate-400">سيُرد المبلغ على الماكينة الأصلية نفسها.</p></div>}
                 </div>
               )}
               {refund === 'store_credit' && (
