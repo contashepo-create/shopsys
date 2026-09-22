@@ -9,6 +9,8 @@
  *    sanitizeText — إزالة محارف التحكم ووسوم HTML ومحارف الحقن، وقصّ الطول.
  */
 
+import type { UserTreasuryAccess } from './treasuryAccess.ts'
+
 export interface AuditEvent {
   id: number
   at: string // ISO
@@ -222,6 +224,8 @@ export interface AppUser {
   /** استثناءات فردية (البند 4 — لكل موظف): ممنوح فوق الدور / محجوب رغم الدور */
   extraPerms?: string[]
   deniedPerms?: string[]
+  /** خزائن/بنوك المستخدم وعملياتها؛ undefined = سجل قديم غير مقيّد مؤقتاً. */
+  treasuryAccess?: UserTreasuryAccess
   /**
    * ربط الحساب بسجل الموظف (طلب المالك): المستخدم يجب أن يكون موظفاً مسجلاً
    * أولاً ببياناته المالية والوظيفية — فتُخصم عليه السلف/العجوزات وتُربط وردياته.

@@ -5,17 +5,24 @@
  */
 import { useDataStore } from '../../data/repo.ts'
 import { treasuryLabel } from '../../core/treasury.ts'
+import { allowedTreasuryCodes, type TreasuryOperation } from '../../core/treasuryAccess.ts'
 import { inputCls } from './ui.tsx'
 
 export function TreasuryPicker({
-  value, onChange, disabled, compact,
+  value, onChange, disabled, compact, operation,
 }: {
   value: string
   onChange: (code: string) => void
   disabled?: boolean
   compact?: boolean
+  /** عند تحديدها تُخفى الحسابات غير الممنوحة للمستخدم الحالي لهذه العملية. */
+  operation?: TreasuryOperation
 }) {
-  const treasuries = useDataStore((s) => s.treasuries)
+  const { treasuries: allTreasuries, appUsers, currentUserId } = useDataStore()
+  const currentUser = appUsers.find((user) => user.id === currentUserId)
+  const allowed = operation ? allowedTreasuryCodes(currentUser?.treasuryAccess, operation) : null
+  const treasuries = allowed == null ? allTreasuries : allTreasuries.filter((treasury) => allowed.includes(treasury.code))
+  if (treasuries.length === 0) return <div className="text-[11px] font-bold text-rose-500">لا توجد خزينة/بنك مسموح لهذه العملية</div>
   // قائمة قصيرة (2-3) ⇒ أزرار واضحة؛ أطول ⇒ قائمة منسدلة
   if (treasuries.length <= 3 && !compact) {
     return (

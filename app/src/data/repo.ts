@@ -1229,7 +1229,7 @@ interface DataState {
    * initialPin يُعرض للمدير حتى يغيّره الموظف عند أول دخول (mustChangePin).
    */
   addAppUser: (u: { nameAr: string; roleId: string; pinHash: string; employeeId?: number | null; phone?: string; email?: string; initialPin?: string | null; mustChangePin?: boolean }) => AppUser
-  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms' | 'employeeId' | 'phone' | 'email' | 'mustChangePin' | 'initialPin'>>) => void
+  updateAppUser: (id: number, patch: Partial<Pick<AppUser, 'nameAr' | 'roleId' | 'pinHash' | 'active' | 'extraPerms' | 'deniedPerms' | 'employeeId' | 'phone' | 'email' | 'mustChangePin' | 'initialPin' | 'treasuryAccess'>>) => void
   /** الموظف يغيّر رقمه بنفسه (أول دخول الإجباري): يمسح initialPin فلا يعود أحد يعرفه */
   changeOwnPin: (userId: number, newPinHash: string) => void
   removeAppUser: (id: number) => void
