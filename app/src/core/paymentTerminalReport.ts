@@ -1,5 +1,17 @@
 import type { PaymentTerminalTransaction } from './paymentTerminalTransactions.ts'
+import type { PaymentTerminalSettlement } from './paymentTerminalSettlement.ts'
 export interface TerminalReportRow { terminalId: string; branchId: string; userId: number; chargeMinor: number; refundMinor: number; voidMinor: number; netMinor: number; transactionCount: number }
+export interface TerminalReconciliationRow { terminalId: string; unsettledCount: number; unsettledNetMinor: number; settledCount: number }
+export function summarizeTerminalReconciliation(transactions: PaymentTerminalTransaction[], settlements: PaymentTerminalSettlement[]): TerminalReconciliationRow[] {
+  const settled = new Set(settlements.flatMap((row) => row.transactionIds)); const rows = new Map<string, TerminalReconciliationRow>()
+  for (const transaction of transactions) {
+    const row = rows.get(transaction.terminalId) ?? { terminalId: transaction.terminalId, unsettledCount: 0, unsettledNetMinor: 0, settledCount: 0 }
+    if (settled.has(transaction.id)) row.settledCount++
+    else { row.unsettledCount++; row.unsettledNetMinor += transaction.kind === 'charge' ? transaction.amountMinor : -transaction.amountMinor }
+    rows.set(transaction.terminalId, row)
+  }
+  return [...rows.values()].sort((a, b) => a.terminalId.localeCompare(b.terminalId))
+}
 const csvCell = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`
 export function terminalReportCsv(rows: TerminalReportRow[]): string {
   const header = ['معرف الماكينة', 'معرف الفرع', 'معرف المستخدم', 'التحصيل minor', 'الرد minor', 'الإلغاء minor', 'الصافي minor', 'عدد العمليات']
