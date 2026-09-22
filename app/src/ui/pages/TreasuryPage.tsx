@@ -37,6 +37,8 @@ export function TreasuryPage() {
   const [fee, setFee] = useState('') // مصروف التحويل — رسوم بنكية/عمولة (طلب المالك)
   const [desc, setDesc] = useState('')
   const [statement, setStatement] = useState<string | null>(null)
+  const [cashReportFrom, setCashReportFrom] = useState('')
+  const [cashReportTo, setCashReportTo] = useState('')
   // إضافة/تعديل خزينة — نموذج احترافي كامل (طلب المالك)
   const [editOpen, setEditOpen] = useState(false)
   const [editCode, setEditCode] = useState<string | null>(null)
@@ -65,8 +67,8 @@ export function TreasuryPage() {
     return map
   }, [journal, treasuries])
   const userCashSummary = useMemo(
-    () => summarizeTreasuryByUser(journal, visibleTreasuries.map((treasury) => treasury.code)),
-    [journal, visibleTreasuries],
+    () => summarizeTreasuryByUser(journal, visibleTreasuries.map((treasury) => treasury.code), cashReportFrom || undefined, cashReportTo || undefined),
+    [journal, visibleTreasuries, cashReportFrom, cashReportTo],
   )
 
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? code
@@ -178,12 +180,19 @@ export function TreasuryPage() {
         })}
       </div>
 
-      {userCashSummary.length > 0 && (
+      {visibleTreasuries.length > 0 && (
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
-          <div className="px-4 py-3 font-extrabold text-sm border-b border-slate-100 dark:border-slate-800">حركة النقدية حسب المستخدم</div>
+          <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 flex-wrap">
+            <span className="font-extrabold text-sm flex-1">حركة النقدية حسب المستخدم</span>
+            <label className="text-[10px] text-slate-400">من <input type="date" value={cashReportFrom} onChange={(e) => setCashReportFrom(e.target.value)} className="mr-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1" /></label>
+            <label className="text-[10px] text-slate-400">إلى <input type="date" value={cashReportTo} onChange={(e) => setCashReportTo(e.target.value)} className="mr-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1" /></label>
+          </div>
           <table className="w-full text-[12px]">
             <thead><tr className="text-right text-slate-400"><th className="px-4 py-2">المستخدم</th><th>العمليات</th><th>قبض</th><th>صرف</th><th>الصافي</th></tr></thead>
-            <tbody>{userCashSummary.map((row) => <tr key={row.userName} className="border-t border-slate-50 dark:border-slate-800"><td className="px-4 py-2 font-bold">{row.userName}</td><td>{row.operationsCount}</td><td className="text-emerald-600">{fmt(row.receiptsMinor)}</td><td className="text-rose-500">{fmt(row.paymentsMinor)}</td><td className="font-black">{fmt(row.netMinor)}</td></tr>)}</tbody>
+            <tbody>
+              {userCashSummary.map((row) => <tr key={row.userName} className="border-t border-slate-50 dark:border-slate-800"><td className="px-4 py-2 font-bold">{row.userName}</td><td>{row.operationsCount}</td><td className="text-emerald-600">{fmt(row.receiptsMinor)}</td><td className="text-rose-500">{fmt(row.paymentsMinor)}</td><td className="font-black">{fmt(row.netMinor)}</td></tr>)}
+              {userCashSummary.length === 0 && <tr><td colSpan={5} className="p-5 text-center text-slate-400">لا توجد حركات في النطاق المحدد</td></tr>}
+            </tbody>
           </table>
         </div>
       )}
