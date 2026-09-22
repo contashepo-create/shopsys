@@ -55,6 +55,8 @@ import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
+import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
+import { validateTerminalTransaction, type PaymentTerminalTransaction } from '../core/paymentTerminalTransactions.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
 import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
@@ -1047,6 +1049,8 @@ interface DataState {
   warehouses: Warehouse[]
   /** الفروع الحقيقية (سد فجوة التدقيق): فرع = مخزن + خزينة + هوية — فارغة = وضع الفرع الواحد */
   branches: Branch[]
+  paymentTerminals: PaymentTerminal[]
+  paymentTerminalTransactions: PaymentTerminalTransaction[]
   treasuries: TreasuryDef[] // الخزائن والبنوك المتعددة (طلب المالك)
   customers: Customer[]
   suppliers: Supplier[]
@@ -1481,6 +1485,10 @@ interface DataState {
   updateBranch: (id: number, patch: Partial<Omit<Branch, 'id' | 'isMain'>>) => void
   /** حذف فرع (فك الربط التنظيمي فقط — المخزن والخزينة وتاريخهما باقيان) */
   removeBranch: (id: number) => void
+  addPaymentTerminal: (terminal: PaymentTerminal) => void
+  updatePaymentTerminal: (id: string, patch: Partial<Omit<PaymentTerminal, 'id'>>) => void
+  removePaymentTerminal: (id: string) => void
+  recordPaymentTerminalTransaction: (transaction: PaymentTerminalTransaction) => void
   /** إضافة خزينة/بنك جديد — يفتح له حساب دفتري تلقائياً (1121+) + بيانات احترافية اختيارية */
   addTreasury: (nameAr: string, kind: 'cash' | 'bank', extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => TreasuryDef
   renameTreasury: (code: string, nameAr: string, extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => void
@@ -2178,6 +2186,8 @@ export const useDataStore = create<DataState>()(
       categories: [],
       warehouses: [],
       branches: [],
+      paymentTerminals: [],
+      paymentTerminalTransactions: [],
       treasuries: DEFAULT_TREASURIES,
       customers: [],
       suppliers: [],
@@ -4971,6 +4981,38 @@ export const useDataStore = create<DataState>()(
         const rest = state.branches.filter((x) => x.id !== id)
         // حذف آخر فرع غير الرئيسي يعيد وضع الفرع الواحد (الرئيسي وحده بلا معنى)
         set({ branches: rest.length === 1 && rest[0].isMain ? [] : rest })
+      },
+
+      addPaymentTerminal: (terminal) => {
+        const state = get()
+        const errors = validatePaymentTerminal(terminal, state.paymentTerminals)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (!state.branches.some((branch) => String(branch.id) === terminal.branchId && branch.active)) throw new Error('فرع ماكينة الدفع غير موجود أو غير نشط')
+        if (!state.treasuries.some((account) => account.code === terminal.settlementAccountCode)) throw new Error('حساب تسوية ماكينة الدفع غير موجود')
+        set({ paymentTerminals: [...state.paymentTerminals, terminal] })
+      },
+      updatePaymentTerminal: (id, patch) => {
+        const state = get(); const current = state.paymentTerminals.find((row) => row.id === id)
+        if (!current) throw new Error('ماكينة الدفع غير موجودة')
+        const next = { ...current, ...patch }
+        const errors = validatePaymentTerminal(next, state.paymentTerminals)
+        if (errors.length) throw new Error(errors.join(' — '))
+        set({ paymentTerminals: state.paymentTerminals.map((row) => row.id === id ? next : row) })
+      },
+      removePaymentTerminal: (id) => {
+        const state = get()
+        if (state.paymentTerminalTransactions.some((row) => row.terminalId === id)) throw new Error('لا يمكن حذف ماكينة لها عمليات؛ أوقفها بدلاً من ذلك')
+        set({ paymentTerminals: state.paymentTerminals.filter((row) => row.id !== id) })
+      },
+      recordPaymentTerminalTransaction: (transaction) => {
+        const state = get(); const terminal = state.paymentTerminals.find((row) => row.id === transaction.terminalId)
+        if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+        if (terminal.branchId !== transaction.branchId) throw new Error('فرع العملية لا يطابق فرع ماكينة الدفع')
+        if (state.paymentTerminalTransactions.some((row) => row.id === transaction.id || row.idempotencyKey === transaction.idempotencyKey)) throw new Error('عملية الدفع مسجلة مسبقاً')
+        const original = transaction.originalTransactionId ? state.paymentTerminalTransactions.find((row) => row.id === transaction.originalTransactionId) : undefined
+        const errors = validateTerminalTransaction(transaction, original)
+        if (errors.length) throw new Error(errors.join(' — '))
+        set({ paymentTerminalTransactions: [...state.paymentTerminalTransactions, transaction] })
       },
 
       addTreasury: (nameAr, kind, extra) => {
@@ -9745,6 +9787,8 @@ export const useDataStore = create<DataState>()(
           priceLists: s.priceLists ?? [],
           promotions: s.promotions ?? [], // الإصدار 19: العروض الترويجية/الباقات
           branches: s.branches ?? [], // الإصدار 20: الفروع الحقيقية (فرع = مخزن + خزينة)
+          paymentTerminals: s.paymentTerminals ?? [],
+          paymentTerminalTransactions: s.paymentTerminalTransactions ?? [],
           priceListEntries: s.priceListEntries ?? [],
           custodyFiles: s.custodyFiles ?? [],
           custodyTxs: s.custodyTxs ?? [],
