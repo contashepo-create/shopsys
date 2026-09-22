@@ -17,8 +17,10 @@ import {
 } from '../../core/realestate.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
+const emptyTerminalPayment = (): TerminalPaymentDraft => ({ terminalId: '', providerReference: '', cardLast4: '' })
 
 function useCur() {
   const { setup } = useAppStore()
@@ -317,7 +319,7 @@ export function PropertiesPage() {
 
 /* ─────────────────────────── عقود الإيجار ─────────────────────────── */
 export function LeasesPage() {
-  const { properties, propertyUnits, leases, customers, employees, addLease, collectLeaseInstallment, endLease, addStaffCommission } = useDataStore()
+  const { properties, propertyUnits, leases, customers, employees, paymentTerminals, addLease, collectLeaseInstallment, endLease, addStaffCommission } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
   const todayIso = new Date().toISOString().slice(0, 10)
@@ -367,12 +369,15 @@ export function LeasesPage() {
   /* تحصيل */
   const [collectFor, setCollectFor] = useState<Lease | null>(null)
   const [colTreasury, setColTreasury] = useState('1101')
+  const [colTerminal, setColTerminal] = useState<TerminalPaymentDraft>(emptyTerminalPayment)
   const collect = (seq: number) => {
     if (!collectFor) return
     try {
-      const r = collectLeaseInstallment({ leaseId: collectFor.id, seq, treasury: colTreasury })
+      const terminal = paymentTerminals.find((row) => row.id === colTerminal.terminalId)
+      if (terminal && !colTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
+      const r = collectLeaseInstallment({ leaseId: collectFor.id, seq, treasury: terminal?.settlementAccountCode ?? colTreasury, terminalPayment: terminal ? { terminalId: terminal.id, providerReference: colTerminal.providerReference.trim(), cardLast4: colTerminal.cardLast4 || undefined } : undefined })
       toast.show(`حُصل ${fmt(r.paidMinor)}${r.commissionMinor > 0 ? ` — سعي المكتب ${fmt(r.commissionMinor)} ونصيب المالك ${fmt(r.ownerShareMinor)}` : ''} ✅`)
-      setCollectFor((c) => (c ? useDataStore.getState().leases.find((l) => l.id === c.id) ?? null : null))
+      setCollectFor((c) => (c ? useDataStore.getState().leases.find((l) => l.id === c.id) ?? null : null)); setColTerminal(emptyTerminalPayment())
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -512,7 +517,8 @@ export function LeasesPage() {
       <Modal open={!!collectFor} onClose={() => setCollectFor(null)} title={collectFor ? `تحصيل — ${collectFor.contractNumber} (${collectFor.tenantName})` : ''} wide>
         {collectFor && (
           <div className="space-y-3">
-            <TreasuryPicker value={colTreasury} onChange={setColTreasury} />
+            <TerminalPaymentPicker value={colTerminal} onChange={setColTerminal} />
+            {!colTerminal.terminalId && <TreasuryPicker value={colTreasury} onChange={setColTreasury} />}
             <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <table className="w-full text-[12px]">
                 <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
