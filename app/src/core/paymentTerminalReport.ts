@@ -1,5 +1,12 @@
 import type { PaymentTerminalTransaction } from './paymentTerminalTransactions.ts'
 export interface TerminalReportRow { terminalId: string; branchId: string; userId: number; chargeMinor: number; refundMinor: number; voidMinor: number; netMinor: number; transactionCount: number }
+const csvCell = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`
+export function terminalReportCsv(rows: TerminalReportRow[]): string {
+  const header = ['معرف الماكينة', 'معرف الفرع', 'معرف المستخدم', 'التحصيل minor', 'الرد minor', 'الإلغاء minor', 'الصافي minor', 'عدد العمليات']
+  const body = rows.map((row) => [row.terminalId, row.branchId, row.userId, row.chargeMinor, row.refundMinor, row.voidMinor, row.netMinor, row.transactionCount].map(csvCell).join(','))
+  return `\uFEFF${[header.map(csvCell).join(','), ...body].join('\r\n')}`
+}
+
 export function summarizeTerminalTransactions(transactions: PaymentTerminalTransaction[], from?: string, to?: string): TerminalReportRow[] {
   const rows = new Map<string, TerminalReportRow>()
   for (const transaction of transactions) {
