@@ -1601,6 +1601,8 @@ interface DataState {
     driverCommissionMinor?: number
     /** تجاوز حد ائتمان العميل بموافقة مدير */
     creditLimitOverrideBy?: string | null
+    /** تحصيل بطاقة للنقلة (كامل أو جزئي) يُحفظ مع المستند والقيد. */
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
   }) => Trip
   /** إجمالي غير المسوى لسائق */
   getDriverDueBalance: (driverId: number) => number
@@ -5860,7 +5862,20 @@ export const useDataStore = create<DataState>()(
             journalEntryId: entryId,
           }]
         }
-        set({ trips: [...state.trips, trip], journal: newJournal, driverDues: newDues, custodyTxs: newCustodyTxs })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          const paidNow = args.paidMinor ?? (args.input.payment === 'cash' ? totals.grandMinor : 0)
+          if (paidNow <= 0) throw new Error('تحصيل الماكينة يتطلب مبلغاً محصلاً الآن')
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          if (terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('حساب تحصيل النقلة لا يطابق حساب الماكينة')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', paidNow)
+          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `logistics-trip:${tripId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: 'logistics_trip', documentId: String(tripId), amountMinor: paidNow, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
+          const terminalErrors = validateTerminalTransaction(terminalTransaction); if (terminalErrors.length) throw new Error(terminalErrors.join(' — '))
+        }
+        set({ trips: [...state.trips, trip], journal: newJournal, driverDues: newDues, custodyTxs: newCustodyTxs, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return trip
       },
       getDriverDueBalance: (driverId) => {
