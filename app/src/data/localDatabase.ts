@@ -6,7 +6,9 @@ export interface LocalDatabase {
 }
 /** محاكي معاملات محلي مطابق لعقد SQLite/Electron؛ يُستخدم في الاختبارات والمتصفح حتى توصيل native adapter. */
 export class MemoryLocalDatabase implements LocalDatabase {
-  constructor(private read: () => unknown, private write: (value: unknown) => void) {}
+  private readonly read: () => unknown
+  private readonly write: (value: unknown) => void
+  constructor(read: () => unknown, write: (value: unknown) => void) { this.read = read; this.write = write }
   transaction<T>(work: () => T): T {
     const before = this.snapshot()
     try { return work() } catch (error) { this.restore(before); throw error }
