@@ -1,5 +1,10 @@
 export type TerminalTransactionKind = 'charge' | 'refund' | 'void'
-export interface PaymentTerminalTransaction { id: string; idempotencyKey: string; kind: TerminalTransactionKind; terminalId: string; branchId: string; userId: number; documentId: string; amountMinor: number; providerReference: string; occurredAt: string; originalTransactionId?: string; cardLast4?: string }
+/** نوع المصدر يمنع تصادم المعرّفات بين فاتورة 1 ونقلة 1 ومستخلص 1. */
+export type TerminalDocumentType = 'sale' | 'sale_return' | 'restaurant_order' | 'logistics_trip' | 'project_extract' | 'client_collection' | 'installment' | 'rental' | 'clinic' | 'lab' | 'insurance_claim' | 'maintenance' | 'laundry' | 'wallet_service' | 'other'
+export interface PaymentTerminalTransaction { id: string; idempotencyKey: string; kind: TerminalTransactionKind; terminalId: string; branchId: string; userId: number; documentType?: TerminalDocumentType; documentId: string; amountMinor: number; providerReference: string; occurredAt: string; originalTransactionId?: string; cardLast4?: string }
+export function terminalDocumentKey(transaction: Pick<PaymentTerminalTransaction, 'documentType' | 'documentId'>): string {
+  return `${transaction.documentType ?? 'sale'}:${transaction.documentId}`
+}
 export function remainingRefundableMinor(original: PaymentTerminalTransaction, transactions: PaymentTerminalTransaction[]): number {
   const consumed = transactions.filter((row) => row.originalTransactionId === original.id && (row.kind === 'refund' || row.kind === 'void')).reduce((sum, row) => sum + row.amountMinor, 0)
   return Math.max(0, original.amountMinor - consumed)

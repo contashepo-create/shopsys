@@ -2981,7 +2981,7 @@ export const useDataStore = create<DataState>()(
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
           if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', totals.totalMinor)
-          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `sale:${saleId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentId: String(saleId), amountMinor: totals.totalMinor, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
+          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `sale:${saleId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: 'sale', documentId: String(saleId), amountMinor: totals.totalMinor, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
           const errors = validateTerminalTransaction(terminalTransaction); if (errors.length) throw new Error(errors.join(' — '))
         }
         set({
@@ -3186,7 +3186,7 @@ export const useDataStore = create<DataState>()(
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference && row.kind === 'refund')) throw new Error('مرجع رد مزود الدفع مستخدم مسبقاً')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
           if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', alloc.cashMinor)
-          terminalRefund = { id: crypto.randomUUID(), idempotencyKey: `sale-return:${returnId}:terminal:${original.terminalId}`, kind: 'refund', terminalId: original.terminalId, branchId: original.branchId, userId: state.currentUserId ?? 0, documentId: String(returnId), amountMinor: alloc.cashMinor, providerReference: args.terminalRefund.providerReference.trim(), occurredAt: now, originalTransactionId: original.id, cardLast4: original.cardLast4 }
+          terminalRefund = { id: crypto.randomUUID(), idempotencyKey: `sale-return:${returnId}:terminal:${original.terminalId}`, kind: 'refund', terminalId: original.terminalId, branchId: original.branchId, userId: state.currentUserId ?? 0, documentType: 'sale_return', documentId: String(returnId), amountMinor: alloc.cashMinor, providerReference: args.terminalRefund.providerReference.trim(), occurredAt: now, originalTransactionId: original.id, cardLast4: original.cardLast4 }
           const errors = validateTerminalTransaction(terminalRefund, original); if (errors.length) throw new Error(errors.join(' — '))
         }
         set({
