@@ -21,6 +21,15 @@ export function parseProviderStatementCsv(csv: string): ProviderStatementRow[] {
   })
 }
 
+export interface ReconciliationSummary { matchedCount: number; exceptionCount: number; statementNetMinor: number; localNetMinor: number; differenceMinor: number; canClose: boolean }
+export function summarizeReconciliation(matches: readonly ProviderMatch[]): ReconciliationSummary {
+  const matchedCount = matches.filter((row) => row.status === 'matched').length
+  const exceptionCount = matches.length - matchedCount
+  const statementNetMinor = matches.reduce((sum, row) => sum + (row.status === 'duplicate_statement' ? 0 : row.statementAmountMinor ?? 0), 0)
+  const localNetMinor = matches.reduce((sum, row) => sum + (row.localAmountMinor ?? 0), 0)
+  return { matchedCount, exceptionCount, statementNetMinor, localNetMinor, differenceMinor: statementNetMinor - localNetMinor, canClose: exceptionCount === 0 && statementNetMinor === localNetMinor }
+}
+
 export function reconcileProviderStatement(terminalId: string, rows: ProviderStatementRow[], transactions: PaymentTerminalTransaction[]): ProviderMatch[] {
   const local = transactions.filter((row) => row.terminalId === terminalId)
   const seen = new Set<string>()
