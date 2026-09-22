@@ -12,6 +12,24 @@ export interface UserTreasuryAccess {
   defaultTreasuryCode?: string | null
 }
 
+export function validateUserTreasuryAccess(access: UserTreasuryAccess, existingCodes: string[]): string[] {
+  const errors: string[] = []
+  const grants = access.grants ?? []
+  const seen = new Set<string>()
+  for (const grant of grants) {
+    if (!existingCodes.includes(grant.treasuryCode)) errors.push(`الخزينة/البنك ${grant.treasuryCode} غير موجود`)
+    if (seen.has(grant.treasuryCode)) errors.push(`الخزينة/البنك ${grant.treasuryCode} مكرر`)
+    seen.add(grant.treasuryCode)
+    if (grant.operations.length === 0) errors.push(`لا توجد عملية ممنوحة على ${grant.treasuryCode}`)
+    if (new Set(grant.operations).size !== grant.operations.length) errors.push(`عمليات ${grant.treasuryCode} تحتوي تكراراً`)
+    if (grant.maxAmountMinor != null && (!Number.isInteger(grant.maxAmountMinor) || grant.maxAmountMinor < 0)) errors.push(`حد ${grant.treasuryCode} غير صالح`)
+  }
+  if (access.defaultTreasuryCode && !grants.some((grant) => grant.treasuryCode === access.defaultTreasuryCode)) {
+    errors.push('الخزينة الافتراضية ليست ضمن خزائن المستخدم')
+  }
+  return errors
+}
+
 export function allowedTreasuryCodes(access: UserTreasuryAccess | null | undefined, operation: TreasuryOperation): string[] | null {
   if (!access?.grants) return null // مستخدم قديم: توافق خلفي حتى يضبطه المدير
   return access.grants.filter((grant) => grant.operations.includes(operation)).map((grant) => grant.treasuryCode)

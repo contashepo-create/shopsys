@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { allowedTreasuryCodes, effectiveDefaultTreasury, validateTreasuryAccess, validateTreasuryTransfer } from '../src/core/treasuryAccess.ts'
+import { allowedTreasuryCodes, effectiveDefaultTreasury, validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryAccess } from '../src/core/treasuryAccess.ts'
 
 const access = {
   defaultTreasuryCode: '1101',
@@ -26,5 +26,14 @@ describe('صلاحيات خزائن المستخدم', () => {
     expect(effectiveDefaultTreasury(access, 'receipt', 'bank')).toBe('1101')
     expect(validateTreasuryAccess(undefined, 'bank', 'payment', 999)).toEqual([])
     expect(allowedTreasuryCodes(undefined, 'receipt')).toBeNull()
+  })
+  it('يرفض إعدادات مكررة أو حساباً وافتراضياً غير موجودين', () => {
+    const errors = validateUserTreasuryAccess({ defaultTreasuryCode: 'missing', grants: [
+      { treasuryCode: '1101', operations: ['receipt'] },
+      { treasuryCode: '1101', operations: ['payment'], maxAmountMinor: -1 },
+    ] }, ['1101'])
+    expect(errors.some((error) => error.includes('مكرر'))).toBe(true)
+    expect(errors.some((error) => error.includes('الافتراضية'))).toBe(true)
+    expect(errors.some((error) => error.includes('غير صالح'))).toBe(true)
   })
 })
