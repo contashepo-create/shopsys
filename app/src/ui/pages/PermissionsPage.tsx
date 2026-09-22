@@ -5,7 +5,7 @@
  *   كل ما يفعله كل مستخدم يُسجل باسمه في سجل النشاطات (يراه المالك فقط).
  */
 import { useMemo, useState } from 'react'
-import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound, Landmark } from 'lucide-react'
+import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound, Landmark, CreditCard } from 'lucide-react'
 import { rolesWithOverrides, visibleRolesForModules, permissionsForModules, permissionSectionsForModules } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -20,7 +20,7 @@ import { Btn, Field, inputCls, Modal, useToast, PinInput } from '../components/u
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
-  const { appUsers, currentUserId, treasuries, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useDataStore()
+  const { appUsers, currentUserId, treasuries, paymentTerminals, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
   const setup = useAppStore.getState().setup
   const currencyDecimals = Number((setup.countryCode && getCountry(setup.countryCode)?.currency.decimals) ?? 2)
@@ -52,6 +52,7 @@ export function PermissionsPage() {
   // 🔄 تغيير دور مستخدم قائم (ترقية كاشير لمشرف بضغطة — فجوة سُدت بمراجعة المالك)
   const [roleFor, setRoleFor] = useState<number | null>(null)
   const [treasuryFor, setTreasuryFor] = useState<number | null>(null)
+  const [terminalFor, setTerminalFor] = useState<number | null>(null)
   const [ePin, setEPin] = useState('')
   const [ePin2, setEPin2] = useState('')
   const openResets = pinResetRequests.filter((r) => r.status === 'open')
@@ -345,6 +346,7 @@ export function PermissionsPage() {
                   title="تخصيص الخزائن والبنوك والعمليات لهذا المستخدم"
                   className="p-1.5 rounded-lg text-slate-300 hover:text-emerald-500 hover:bg-emerald-500/10 transition-colors"
                 ><Landmark size={13} /></button>
+                <button onClick={() => setTerminalFor(u.id)} title="تخصيص ماكينات الدفع" className="p-1.5 rounded-lg text-slate-300 hover:text-sky-500 hover:bg-sky-500/10 transition-colors"><CreditCard size={13} /></button>
                 <button
                   onClick={() => setPinFor(u.id)}
                   title="إعادة تعيين الرقم السري لهذا المستخدم"
@@ -493,6 +495,15 @@ export function PermissionsPage() {
             <Btn onClick={saveNewRole} disabled={!newRoleName.trim()}>إنشاء الدور</Btn>
           </div>
         </div>
+      </Modal>
+
+      <Modal open={terminalFor != null} onClose={() => setTerminalFor(null)} title={`💳 ماكينات المستخدم — ${appUsers.find((u) => u.id === terminalFor)?.nameAr ?? ''}`} wide>
+        {(() => {
+          const user = appUsers.find((u) => u.id === terminalFor); if (!user) return null
+          const access = user.paymentTerminalAccess
+          const save = (grants: NonNullable<typeof access>['grants'], defaultTerminalId?: string) => { try { updateAppUser(user.id, { paymentTerminalAccess: { grants, defaultTerminalId } }) } catch (error) { toast.show((error as Error).message, 'error') } }
+          return <div className="space-y-3"><div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => save([])}>منع الكل</Btn><Btn onClick={() => save(paymentTerminals.map((terminal) => ({ terminalId: terminal.id, operations: ['charge', 'refund', 'void', 'settle', 'view_totals'] })), paymentTerminals[0]?.id)}>منح الكل</Btn></div>{paymentTerminals.map((terminal) => { const grant = access?.grants.find((row) => row.terminalId === terminal.id); return <div key={terminal.id} className="rounded-xl border p-3 space-y-2"><div className="flex gap-2"><b className="flex-1">{terminal.nameAr} · {terminal.code}</b><input type="radio" aria-label="افتراضية" checked={access?.defaultTerminalId === terminal.id} disabled={!grant} onChange={() => save(access?.grants ?? [], terminal.id)}/></div><div className="grid grid-cols-5 gap-1">{(['charge','refund','void','settle','view_totals'] as const).map((operation) => <label key={operation} className="text-[10px]"><input type="checkbox" checked={grant?.operations.includes(operation) ?? false} onChange={() => { const grants = access?.grants ?? []; const operations = grant?.operations ?? []; const nextOps = operations.includes(operation) ? operations.filter((item) => item !== operation) : [...operations, operation]; const next = [...grants.filter((row) => row.terminalId !== terminal.id), ...(nextOps.length ? [{ terminalId: terminal.id, operations: nextOps, maxAmountMinor: grant?.maxAmountMinor }] : [])]; save(next, access?.defaultTerminalId === terminal.id && !nextOps.length ? next[0]?.terminalId : (access?.defaultTerminalId ?? next[0]?.terminalId)) }} /> {operation}</label>)}</div></div>})}{!paymentTerminals.length && <div className="text-center text-slate-400">لا توجد ماكينات مسجلة</div>}<div className="text-left"><Btn onClick={() => setTerminalFor(null)}>تم</Btn></div></div>
+        })()}
       </Modal>
 
       {/* خزائن المستخدم: allowlist صريحة + افتراضي + عمليات مستقلة */}
