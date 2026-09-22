@@ -5,19 +5,20 @@
  *   كل ما يفعله كل مستخدم يُسجل باسمه في سجل النشاطات (يراه المالك فقط).
  */
 import { useMemo, useState } from 'react'
-import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound } from 'lucide-react'
+import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound, Landmark } from 'lucide-react'
 import { rolesWithOverrides, visibleRolesForModules, permissionsForModules, permissionSectionsForModules } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/auth.ts'
 import { hashPin, suggestRoleForJobTitle, matchesOwnerIdentity, findUserByIdentifier } from '../../core/audit.ts'
 import { updateSavedLoginPin } from '../../data/savedLogin.ts'
+import type { TreasuryOperation } from '../../core/treasuryAccess.ts'
 import { Btn, Field, inputCls, Modal, useToast, PinInput } from '../components/ui.tsx'
 
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
-  const { appUsers, currentUserId, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useDataStore()
+  const { appUsers, currentUserId, treasuries, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
   const setup = useAppStore.getState().setup
   const allRoles = rolesWithOverrides(roleOverrides, customRoles, setup.activityId)
@@ -47,6 +48,7 @@ export function PermissionsPage() {
   const [newRoleBase, setNewRoleBase] = useState(firstAssignableRole) // أول دور معروض لهذا النشاط
   // 🔄 تغيير دور مستخدم قائم (ترقية كاشير لمشرف بضغطة — فجوة سُدت بمراجعة المالك)
   const [roleFor, setRoleFor] = useState<number | null>(null)
+  const [treasuryFor, setTreasuryFor] = useState<number | null>(null)
   const [ePin, setEPin] = useState('')
   const [ePin2, setEPin2] = useState('')
   const openResets = pinResetRequests.filter((r) => r.status === 'open')
@@ -336,6 +338,11 @@ export function PermissionsPage() {
                 {u.mustChangePin && !u.initialPin && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-bold">لم يغيّر رقمه بعد</span>}
                 {currentUserId === u.id && <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-600 font-bold">نشط الآن</span>}
                 <button
+                  onClick={() => setTreasuryFor(u.id)}
+                  title="تخصيص الخزائن والبنوك والعمليات لهذا المستخدم"
+                  className="p-1.5 rounded-lg text-slate-300 hover:text-emerald-500 hover:bg-emerald-500/10 transition-colors"
+                ><Landmark size={13} /></button>
+                <button
                   onClick={() => setPinFor(u.id)}
                   title="إعادة تعيين الرقم السري لهذا المستخدم"
                   className="p-1.5 rounded-lg text-slate-300 hover:text-amber-500 hover:bg-amber-500/10 transition-colors"
@@ -483,6 +490,55 @@ export function PermissionsPage() {
             <Btn onClick={saveNewRole} disabled={!newRoleName.trim()}>إنشاء الدور</Btn>
           </div>
         </div>
+      </Modal>
+
+      {/* خزائن المستخدم: allowlist صريحة + افتراضي + عمليات مستقلة */}
+      <Modal open={treasuryFor != null} onClose={() => setTreasuryFor(null)} title={`🏦 خزائن المستخدم — ${appUsers.find((u) => u.id === treasuryFor)?.nameAr ?? ''}`} wide>
+        {(() => {
+          const user = appUsers.find((u) => u.id === treasuryFor)
+          if (!user) return null
+          const operations: { id: TreasuryOperation; label: string }[] = [
+            { id: 'view_balance', label: 'عرض الرصيد' }, { id: 'receipt', label: 'قبض' },
+            { id: 'payment', label: 'صرف' }, { id: 'refund', label: 'رد نقدي' },
+            { id: 'transfer_from', label: 'تحويل منه' }, { id: 'transfer_to', label: 'تحويل إليه' },
+          ]
+          const grants = user.treasuryAccess?.grants
+          const save = (next: typeof grants, defaultCode = user.treasuryAccess?.defaultTreasuryCode ?? null) =>
+            updateAppUser(user.id, { treasuryAccess: { grants: next ?? [], defaultTreasuryCode: defaultCode } })
+          return (
+            <div className="space-y-3">
+              {grants === undefined && <div className="p-3 rounded-xl bg-amber-500/10 text-amber-700 text-[11px]">هذا مستخدم قديم غير مقيّد حالياً. اختر «منح الكل» أو فعّل الحسابات المطلوبة؛ بعد الحفظ تصبح القائمة ملزمة.</div>}
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => save([])}>منع الكل</Btn>
+                <Btn onClick={() => save(treasuries.map((t) => ({ treasuryCode: t.code, operations: operations.map((o) => o.id) })), treasuries[0]?.code ?? null)}>منح الكل</Btn>
+              </div>
+              {treasuries.map((treasury) => {
+                const grant = grants?.find((g) => g.treasuryCode === treasury.code)
+                return (
+                  <div key={treasury.code} className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <b className="flex-1 text-sm">{treasury.nameAr}</b>
+                      <label className="text-[10px] flex items-center gap-1"><input type="radio" checked={user.treasuryAccess?.defaultTreasuryCode === treasury.code} onChange={() => save(grants ?? [], treasury.code)} /> افتراضية</label>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {operations.map((operation) => {
+                        const checked = grant?.operations.includes(operation.id) ?? false
+                        return <label key={operation.id} className="text-[10px] flex items-center gap-1 p-1.5 rounded-lg bg-slate-50 dark:bg-slate-800"><input type="checkbox" checked={checked} onChange={() => {
+                          const base = grants ?? []
+                          const ops = grant?.operations ?? []
+                          const nextOps = checked ? ops.filter((id) => id !== operation.id) : [...ops, operation.id]
+                          const next = [...base.filter((g) => g.treasuryCode !== treasury.code), ...(nextOps.length ? [{ treasuryCode: treasury.code, operations: nextOps }] : [])]
+                          save(next, user.treasuryAccess?.defaultTreasuryCode ?? (nextOps.length ? treasury.code : null))
+                        }} /> {operation.label}</label>
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+              <div className="flex justify-end"><Btn onClick={() => setTreasuryFor(null)}>تم</Btn></div>
+            </div>
+          )
+        })()}
       </Modal>
 
       {/* 🔄 تغيير دور مستخدم قائم — ترقية كاشير لمشرف بضغطة (مراجعة المالك) */}
