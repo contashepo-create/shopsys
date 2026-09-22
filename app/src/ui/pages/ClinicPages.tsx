@@ -25,6 +25,7 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderPrescriptionHtml, parsePrescriptionText } from '../print/printPrescription.ts'
 import { renderPatientRecordHtml } from '../print/printPatientRecord.ts'
@@ -214,7 +215,7 @@ function RxLineEditor({ line, index, onChange, onRemove }: { line: RxLine; index
 
 export function ClinicPatientsPage() {
   const {
-    clinicPatients, clinicVisits, treatmentPlans, journal, customers, patientAttachments,
+    clinicPatients, clinicVisits, treatmentPlans, journal, customers, patientAttachments, paymentTerminals, appUsers, currentUserId,
     addClinicPatient, updateClinicPatient, addClinicVisit, addTreatmentPlan, collectFromPatient, getPatientBalance,
     addPatientAttachment, removePatientAttachment, addCustomer, refundClinicVisit,
   } = useDataStore()
@@ -423,12 +424,18 @@ export function ClinicPatientsPage() {
   /* تحصيل */
   const [collectAmount, setCollectAmount] = useState('')
   const [collectTreasury, setCollectTreasury] = useState('1101')
+  const [collectTerminalId, setCollectTerminalId] = useState('')
+  const [collectTerminalRef, setCollectTerminalRef] = useState('')
+  const [collectLast4, setCollectLast4] = useState('')
+  const collectTerminals = eligiblePaymentTerminals(paymentTerminals, appUsers.find((user) => user.id === currentUserId), 'charge')
   const doCollect = () => {
     if (!liveFile) return
     try {
-      collectFromPatient(liveFile.id, toMinor(collectAmount, cur.decimals), collectTreasury)
+      const terminal = collectTerminals.find((row) => row.id === collectTerminalId)
+      if (collectTerminalId && !collectTerminalRef.trim()) throw new Error('مرجع إيصال الماكينة مطلوب')
+      collectFromPatient(liveFile.id, toMinor(collectAmount, cur.decimals), terminal?.settlementAccountCode ?? collectTreasury, terminal ? { terminalId: terminal.id, providerReference: collectTerminalRef.trim(), cardLast4: collectLast4 || undefined } : undefined)
       toast.show('حُصّل المبلغ بقيد متوازن ✅')
-      setCollectAmount('')
+      setCollectAmount(''); setCollectTerminalRef(''); setCollectLast4('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -550,7 +557,9 @@ export function ClinicPatientsPage() {
               {fileBalance > 0 && (
                 <div className="flex gap-1 items-center">
                   <input value={collectAmount} onChange={(e) => setCollectAmount(e.target.value)} inputMode="decimal" className={`${inputCls} !w-40`} placeholder="المبلغ المحصل" />
-                  <TreasuryPicker value={collectTreasury} onChange={setCollectTreasury} compact />
+                  <select value={collectTerminalId} onChange={(e) => setCollectTerminalId(e.target.value)} className={`${inputCls} !w-40`}><option value="">نقدي/بنك</option>{collectTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select>
+                  {!collectTerminalId && <TreasuryPicker value={collectTreasury} onChange={setCollectTreasury} compact />}
+                  {collectTerminalId && <><input value={collectTerminalRef} onChange={(e) => setCollectTerminalRef(e.target.value)} className={`${inputCls} !w-32`} placeholder="مرجع الماكينة"/><input value={collectLast4} onChange={(e) => setCollectLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={`${inputCls} !w-24`} placeholder="آخر 4"/></>}
                   <Btn variant="ghost" onClick={doCollect} disabled={!collectAmount}><Banknote className="w-4 h-4" /> تحصيل</Btn>
                 </div>
               )}

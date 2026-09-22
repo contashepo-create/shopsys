@@ -1872,7 +1872,7 @@ interface DataState {
   }) => ClinicVisit
   addTreatmentPlan: (args: { patientId: number; title: string; totalSessions: number; totalFeeMinor: number }) => TreatmentPlan
   /** تحصيل متأخرات مريض بقيد 1101 ← 1104 */
-  collectFromPatient: (patientId: number, amountMinor: number, treasury?: string) => ClinicCollection
+  collectFromPatient: (patientId: number, amountMinor: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => ClinicCollection
   /** رصيد المريض الحالي (المتبقي عليه) */
   getPatientBalance: (patientId: number) => number
   addAppointment: (a: Omit<ClinicAppointment, 'id' | 'done'>) => ClinicAppointment
@@ -8309,7 +8309,7 @@ export const useDataStore = create<DataState>()(
         set({ treatmentPlans: [...state.treatmentPlans, plan] })
         return plan
       },
-      collectFromPatient: (patientId, amountMinor, treasury = '1101') => {
+      collectFromPatient: (patientId, amountMinor, treasury = '1101', terminalPayment) => {
         const state = get()
         const patient = state.clinicPatients.find((p) => p.id === patientId)
         if (!patient) throw new Error('المريض غير مسجل')
@@ -8326,7 +8326,17 @@ export const useDataStore = create<DataState>()(
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const collection: ClinicCollection = { id, patientId, date: now, amountMinor, journalEntryId: entryId }
-        set({ clinicCollections: [...state.clinicCollections, collection], journal: [...state.journal, entry] })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (terminalPayment) {
+          const terminal = state.paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
+          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          if (terminal.settlementAccountCode !== treasury) throw new Error('حساب تحصيل المريض لا يطابق حساب الماكينة')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === terminalPayment.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', amountMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'clinic', documentId: id, amountMinor, providerReference: terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: terminalPayment.cardLast4 })
+        }
+        set({ clinicCollections: [...state.clinicCollections, collection], journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return collection
       },
       getPatientBalance: (patientId) => {
