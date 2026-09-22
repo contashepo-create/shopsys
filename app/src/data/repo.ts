@@ -1972,7 +1972,7 @@ interface DataState {
   addExternalCommission: (args: { direction: CommissionDirection; partyId: number; amountMinor: number; description: string }) => ExternalCommission
   /** تحصيل من عمولة خارجية: خزينة / 1112 */
   /** تسوية عمولة: تحصيل (لي) أو دفع (عليّ) من الخزينة/البنك المختار */
-  collectExternalCommission: (args: { commissionId: number; amountMinor: number; treasury: TreasuryAccount }) => ExternalCommission
+  collectExternalCommission: (args: { commissionId: number; amountMinor: number; treasury: TreasuryAccount; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ExternalCommission
   /* ─── عمولات الموظفين (طلب المالك): مربوطة بالعمليات، مصروف لحظة الاستحقاق، تُصرف منفردة أو مع الراتب ─── */
   /** استحقاق عمولة موظف عن عملية: 5117/2116 — تدخل ربحية الفترة فوراً */
   addStaffCommission: (args: { employeeId: number; source: StaffCommissionSource; sourceId: number | null; description: string; amountMinor: number }) => StaffCommission
@@ -9071,7 +9071,17 @@ export const useDataStore = create<DataState>()(
           ...com, collectedMinor: com.collectedMinor + args.amountMinor,
           collections: [...com.collections, { id: com.collections.length + 1, date: now, amountMinor: args.amountMinor, treasury: args.treasury, journalEntryId: entryId }],
         }
-        set({ externalCommissions: state.externalCommissions.map((c) => (c.id === com.id ? updated : c)), journal: [...state.journal, entry] })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          if (!earned) throw new Error('الماكينة للتحصيل الوارد فقط؛ سداد العمولة عملية دفع خارجة')
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== args.treasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', args.amountMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'external_commission', documentId: `${com.id}:${com.collections.length + 1}`, amountMinor: args.amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
+        set({ externalCommissions: state.externalCommissions.map((c) => (c.id === com.id ? updated : c)), journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return updated
       },
 

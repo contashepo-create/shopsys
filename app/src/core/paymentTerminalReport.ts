@@ -1,7 +1,7 @@
 import type { PaymentTerminalTransaction } from './paymentTerminalTransactions.ts'
 import type { PaymentTerminalSettlement } from './paymentTerminalSettlement.ts'
 export interface TerminalReportRow { terminalId: string; branchId: string; userId: number; chargeMinor: number; refundMinor: number; voidMinor: number; netMinor: number; transactionCount: number }
-export const TERMINAL_DOCUMENT_LABELS: Record<string, string> = { sale: 'فواتير البيع', sale_return: 'مرتجعات البيع', restaurant_order: 'المطاعم', logistics_trip: 'النقل واللوجستيات', project_extract: 'مستخلصات المقاولات', client_collection: 'تحصيلات العملاء', installment: 'الأقساط', rental: 'الإيجارات', clinic: 'العيادات', lab: 'المعامل', insurance_claim: 'مطالبات التأمين', maintenance: 'الصيانة', laundry: 'المغاسل', wallet_service: 'خدمات المحافظ', other: 'أخرى' }
+export const TERMINAL_DOCUMENT_LABELS: Record<string, string> = { sale: 'فواتير البيع', sale_return: 'مرتجعات البيع', restaurant_order: 'المطاعم', logistics_trip: 'النقل واللوجستيات', project_extract: 'مستخلصات المقاولات', client_collection: 'تحصيلات العملاء', installment: 'الأقساط', rental: 'الإيجارات', clinic: 'العيادات', lab: 'المعامل', insurance_claim: 'مطالبات التأمين', maintenance: 'الصيانة', laundry: 'المغاسل', wallet_service: 'خدمات المحافظ', external_commission: 'عمولات خارجية محصلة', other: 'أخرى' }
 export function terminalDocumentLabel(type: string): string { return TERMINAL_DOCUMENT_LABELS[type] ?? type }
 export interface TerminalActivityRow { documentType: string; chargeMinor: number; refundMinor: number; voidMinor: number; netMinor: number; transactionCount: number }
 export interface TerminalReconciliationRow { terminalId: string; unsettledCount: number; unsettledNetMinor: number; settledCount: number }
