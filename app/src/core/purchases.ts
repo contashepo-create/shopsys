@@ -122,6 +122,16 @@ export interface PurchaseReturnLine {
   landedUnitCostMinor: Minor // تكلفة الوحدة النهائية من فاتورة الشراء الأصلية
   /** سعر الوحدة في فاتورة المورد (قبل المصاريف) — undefined = سجل قديم (يعامل كالمحمل) */
   unitPriceMinor?: Minor
+  /** فهرس سطر فاتورة الشراء الأصلية — undefined لسجل قديم مجمع بالصنف */
+  purchaseLineIndex?: number
+  /** المخزن الذي خرج منه المرتجع؛ يثبت عند الترحيل */
+  warehouseId?: number | null
+}
+
+export interface PurchaseReturnLineSpec {
+  lineIndex: number
+  qty: number
+  warehouseId?: number | null
 }
 
 /** سطر من فاتورة الشراء الأصلية كما تحتاجه حسابات المرتجع */
@@ -130,6 +140,7 @@ export interface OriginalPurchaseLine {
   qty: number
   landedUnitCostMinor: Minor
   unitPriceMinor?: Minor
+  warehouseId?: number | null
 }
 
 /** المتبقي القابل للإرجاع لكل صنف (المشترى − مجموع المرتجعات السابقة على نفس الفاتورة) */
@@ -178,6 +189,62 @@ export function buildPurchaseReturnLines(
       throw new RangeError(`«${name}»: المخزون الحالي ${info.stockQty} فقط — لا يمكن إرجاع بضاعة بيعت بالفعل`)
     }
     out.push({ itemId, nameAr: name, qty: wanted, landedUnitCostMinor: avgLanded, unitPriceMinor: avgPrice })
+  }
+  if (!out.length) throw new RangeError('لا كميات للإرجاع')
+  return out
+}
+
+/** المتبقي لكل سطر أصلي، مع توزيع السجلات القديمة المجمعة بالصنف بالترتيب. */
+export function remainingPurchaseByLine(
+  purchaseLines: OriginalPurchaseLine[],
+  priorReturnLines: Pick<PurchaseReturnLine, 'itemId' | 'qty' | 'purchaseLineIndex'>[],
+): number[] {
+  const remaining = purchaseLines.map((line) => line.qty)
+  for (const returned of priorReturnLines) {
+    if (returned.purchaseLineIndex !== undefined && purchaseLines[returned.purchaseLineIndex]?.itemId === returned.itemId) {
+      remaining[returned.purchaseLineIndex] = Math.round((remaining[returned.purchaseLineIndex] - returned.qty) * 1000) / 1000
+      continue
+    }
+    let left = returned.qty
+    for (let index = 0; index < purchaseLines.length && left > 1e-9; index++) {
+      if (purchaseLines[index].itemId !== returned.itemId || remaining[index] <= 0) continue
+      const take = Math.min(left, remaining[index])
+      remaining[index] = Math.round((remaining[index] - take) * 1000) / 1000
+      left = Math.round((left - take) * 1000) / 1000
+    }
+  }
+  return remaining
+}
+
+/** بناء مرتجع شراء سطراً بسطر دون خلط سعرين أو مخزنين للصنف نفسه. */
+export function buildPurchaseReturnLinesPerLine(
+  purchaseLines: OriginalPurchaseLine[],
+  priorReturnLines: PurchaseReturnLine[],
+  specs: PurchaseReturnLineSpec[],
+  itemName: (itemId: number) => string,
+): PurchaseReturnLine[] {
+  const remaining = remainingPurchaseByLine(purchaseLines, priorReturnLines)
+  const seen = new Set<number>()
+  const out: PurchaseReturnLine[] = []
+  for (const spec of specs) {
+    if (spec.qty <= 0) continue
+    const source = purchaseLines[spec.lineIndex]
+    if (!source) throw new RangeError(`سطر شراء غير موجود (#${spec.lineIndex + 1})`)
+    if (seen.has(spec.lineIndex)) throw new RangeError(`سطر الشراء #${spec.lineIndex + 1} مكرر`)
+    seen.add(spec.lineIndex)
+    const canReturn = remaining[spec.lineIndex]
+    if (spec.qty > canReturn + 1e-9) {
+      throw new RangeError(`«${itemName(source.itemId)}» (سطر ${spec.lineIndex + 1}): المطلوب ${spec.qty} والمتبقي ${canReturn}`)
+    }
+    out.push({
+      itemId: source.itemId,
+      nameAr: itemName(source.itemId),
+      qty: Math.round(spec.qty * 1000) / 1000,
+      landedUnitCostMinor: source.landedUnitCostMinor,
+      unitPriceMinor: source.unitPriceMinor,
+      purchaseLineIndex: spec.lineIndex,
+      warehouseId: spec.warehouseId ?? source.warehouseId ?? null,
+    })
   }
   if (!out.length) throw new RangeError('لا كميات للإرجاع')
   return out
