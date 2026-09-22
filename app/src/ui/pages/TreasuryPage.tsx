@@ -13,6 +13,7 @@ import type { TreasuryDef } from '../../core/treasury.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { summarizeTreasuryByUser } from '../../core/treasuryUserReport.ts'
 
 interface Move { date: string; description: string; inMinor: number; outMinor: number; balance: number; entryId: number }
 
@@ -57,6 +58,10 @@ export function TreasuryPage() {
     }
     return map
   }, [journal, treasuries])
+  const userCashSummary = useMemo(
+    () => summarizeTreasuryByUser(journal, treasuries.map((treasury) => treasury.code)),
+    [journal, treasuries],
+  )
 
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? code
 
@@ -166,6 +171,16 @@ export function TreasuryPage() {
           )
         })}
       </div>
+
+      {userCashSummary.length > 0 && (
+        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+          <div className="px-4 py-3 font-extrabold text-sm border-b border-slate-100 dark:border-slate-800">حركة النقدية حسب المستخدم</div>
+          <table className="w-full text-[12px]">
+            <thead><tr className="text-right text-slate-400"><th className="px-4 py-2">المستخدم</th><th>العمليات</th><th>قبض</th><th>صرف</th><th>الصافي</th></tr></thead>
+            <tbody>{userCashSummary.map((row) => <tr key={row.userName} className="border-t border-slate-50 dark:border-slate-800"><td className="px-4 py-2 font-bold">{row.userName}</td><td>{row.operationsCount}</td><td className="text-emerald-600">{fmt(row.receiptsMinor)}</td><td className="text-rose-500">{fmt(row.paymentsMinor)}</td><td className="font-black">{fmt(row.netMinor)}</td></tr>)}</tbody>
+          </table>
+        </div>
+      )}
 
       {/* إضافة / تعديل خزينة — نموذج احترافي بمستوى البرامج العالمية (طلب المالك) */}
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title={editCode ? '✏️ تعديل خزينة / بنك' : '🏦 خزينة / بنك جديد'} wide>
