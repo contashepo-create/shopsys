@@ -15,6 +15,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
+import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 
 const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
   paid: { label: 'مدفوع', cls: 'text-emerald-600 bg-emerald-500/10' },
@@ -25,7 +26,7 @@ const STATUS_BADGE: Record<string, { label: string; cls: string }> = {
 }
 
 export function InstallmentsPage() {
-  const { installmentPlans, customers, journal, createInstallmentPlan, payInstallment } = useDataStore()
+  const { installmentPlans, customers, journal, paymentTerminals, appUsers, currentUserId, createInstallmentPlan, payInstallment } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -105,6 +106,10 @@ export function InstallmentsPage() {
   const [viewing, setViewing] = useState<InstallmentPlan | null>(null)
   const [payAmount, setPayAmount] = useState('')
   const [payTreasury, setPayTreasury] = useState<TreasuryAccount>('1101')
+  const [terminalId, setTerminalId] = useState('')
+  const [terminalReference, setTerminalReference] = useState('')
+  const [cardLast4, setCardLast4] = useState('')
+  const availableTerminals = eligiblePaymentTerminals(paymentTerminals, appUsers.find((user) => user.id === currentUserId), 'charge')
   // اقرأ النسخة الحية من المخزن (بعد السداد يتغير المرجع)
   const livePlan = viewing ? installmentPlans.find((p) => p.id === viewing.id) ?? null : null
   const liveProgress = livePlan ? planProgress(livePlan.items, today) : null
@@ -116,9 +121,11 @@ export function InstallmentsPage() {
     if (!livePlan) return
     try {
       const amount = toMinor(payAmount, cur.decimals)
-      payInstallment(livePlan.id, amount, payTreasury)
+      const terminal = availableTerminals.find((row) => row.id === terminalId)
+      if (terminalId && !terminalReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
+      payInstallment(livePlan.id, amount, (terminal?.settlementAccountCode ?? payTreasury) as TreasuryAccount, terminal ? { terminalId: terminal.id, providerReference: terminalReference.trim(), cardLast4: cardLast4 || undefined } : undefined)
       toast.show(`حُصِّل ${fmt(amount)} ${cur.symbol} وتولّد قيد التحصيل ✅`)
-      setPayAmount('')
+      setPayAmount(''); setTerminalReference(''); setCardLast4('')
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
 
@@ -334,7 +341,9 @@ export function InstallmentsPage() {
                 <div className="flex items-center gap-2 font-extrabold text-emerald-600 text-[13px]"><HandCoins size={16} /> تحصيل دفعة</div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} />
-                  <TreasuryPicker value={payTreasury} onChange={setPayTreasury} compact />
+                  <select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select>
+                  {!terminalId && <TreasuryPicker value={payTreasury} onChange={setPayTreasury} compact />}
+                  {terminalId && <><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls} placeholder="مرجع الماكينة *"/><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls} placeholder="آخر 4 أرقام"/></>}
                   <Btn onClick={pay} disabled={!payAmount.trim()}>💾 تحصيل وتوليد القيد</Btn>
                 </div>
                 {liveProgress.nextDue && (

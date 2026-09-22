@@ -57,6 +57,7 @@ import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTo
 import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
 import { remainingRefundableMinor, validateTerminalTransaction, type PaymentTerminalTransaction, type TerminalDocumentType } from '../core/paymentTerminalTransactions.ts'
+import { buildTerminalCharge } from '../core/paymentTerminalCharge.ts'
 import { assertTerminalOperation, validateTerminalAccess } from '../core/paymentTerminalAccess.ts'
 import { calculateTerminalSettlement, netSettlementTransactions, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
@@ -1578,7 +1579,7 @@ interface DataState {
     creditLimitOverrideBy?: string | null
   }) => InstallmentPlan
   /** سداد دفعة على خطة: توزَّع على الأقساط الأقدم أولاً + قيد تحصيل متوازن */
-  payInstallment: (planId: number, amountMinor: number, treasury: TreasuryAccount) => InstallmentPlan
+  payInstallment: (planId: number, amountMinor: number, treasury: TreasuryAccount, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => InstallmentPlan
   addVehicle: (v: Omit<Vehicle, 'id'>) => void
   updateVehicle: (id: number, patch: Partial<Vehicle>) => void
   removeVehicle: (id: number) => void
@@ -5708,7 +5709,7 @@ export const useDataStore = create<DataState>()(
         return plan
       },
 
-      payInstallment: (planId, amountMinor, treasury) => {
+      payInstallment: (planId, amountMinor, treasury, terminalPayment) => {
         const state = get()
         const plan = state.installmentPlans.find((p) => p.id === planId)
         if (!plan) throw new Error('خطة الأقساط غير موجودة')
@@ -5738,9 +5739,20 @@ export const useDataStore = create<DataState>()(
           reversesEntryId: null,
         }
         const updated: InstallmentPlan = { ...plan, items }
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (terminalPayment) {
+          const terminal = state.paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
+          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          if (terminal.settlementAccountCode !== treasury) throw new Error('حساب سداد القسط لا يطابق حساب الماكينة')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === terminalPayment.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', amountMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'installment', documentId: plan.id, amountMinor, providerReference: terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: terminalPayment.cardLast4 })
+        }
         set({
           installmentPlans: state.installmentPlans.map((p) => (p.id === planId ? updated : p)),
           journal: [...state.journal, entry],
+          ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
         return updated
       },
