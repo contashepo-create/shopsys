@@ -12,6 +12,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import type { TreasuryDef } from '../../core/treasury.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 
 interface Move { date: string; description: string; inMinor: number; outMinor: number; balance: number; entryId: number }
 
@@ -235,14 +236,10 @@ export function TreasuryPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Field label="من">
-              <select value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls}>
-                {treasuries.map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
-              </select>
+              <TreasuryPicker value={from} onChange={setFrom} operation="transfer_from" compact />
             </Field>
             <Field label="إلى">
-              <select value={to} onChange={(e) => setTo(e.target.value)} className={inputCls}>
-                {treasuries.filter((t) => t.code !== from).map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
-              </select>
+              <TreasuryPicker value={to} onChange={setTo} operation="transfer_to" compact />
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
