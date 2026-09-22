@@ -14,6 +14,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { APPROVAL_ACTION_LABELS, type ApprovalAction, type IssueLineInput } from '../../core/projectOps.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
 
@@ -180,7 +181,7 @@ export function MaterialIssuesPage() {
 /* ═══════════════ تحصيلات العملاء FIFO ═══════════════ */
 
 export function ClientCollectionsPage() {
-  const { customers, clientSettlements, getOpenClientInvoices, receiveClientPayment } = useDataStore()
+  const { customers, clientSettlements, paymentTerminals, appUsers, currentUserId, getOpenClientInvoices, receiveClientPayment } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -188,6 +189,10 @@ export function ClientCollectionsPage() {
   const [customerId, setCustomerId] = useState('')
   const [amount, setAmount] = useState('')
   const [treasury, setTreasury] = useState('1101')
+  const [terminalId, setTerminalId] = useState('')
+  const [terminalReference, setTerminalReference] = useState('')
+  const [cardLast4, setCardLast4] = useState('')
+  const availableTerminals = eligiblePaymentTerminals(paymentTerminals, appUsers.find((user) => user.id === currentUserId), 'charge')
   const [specific, setSpecific] = useState(false)
   const [specificKey, setSpecificKey] = useState('')
   const [notes, setNotes] = useState('')
@@ -197,16 +202,19 @@ export function ClientCollectionsPage() {
 
   const collect = () => {
     try {
+      const terminal = availableTerminals.find((row) => row.id === terminalId)
+      if (terminalId && !terminalReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const r = receiveClientPayment({
         customerId: Number(customerId),
         amountMinor: toMinor(amount, cur.decimals),
-        treasury,
+        treasury: terminal?.settlementAccountCode ?? treasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalReference.trim(), cardLast4: cardLast4 || undefined } : undefined,
         specificDocKey: specific && specificKey ? specificKey : null,
         notes: notes.trim(),
       })
       const applied = r.allocations.map((a) => `${a.docLabel}: ${fmt(a.appliedMinor)}`).join('، ')
       toast.show(`${r.settlementNumber} ✅ ${applied}${r.unallocatedMinor > 0 ? ` + ${fmt(r.unallocatedMinor)} تحت الحساب` : ''}`)
-      setAmount(''); setNotes(''); setSpecificKey(''); setSpecific(false)
+      setAmount(''); setNotes(''); setSpecificKey(''); setSpecific(false); setTerminalReference(''); setCardLast4('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -231,7 +239,9 @@ export function ClientCollectionsPage() {
           <Field label={`المبلغ المحصَّل (${cur.symbol}) *`}>
             <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className={inputCls} />
           </Field>
-          <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} /></Field>
+          <Field label="طريقة التحصيل"><select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select></Field>
+          {!terminalId && <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} /></Field>}
+          {terminalId && <><Field label="مرجع إيصال الماكينة *"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls}/></Field></>}
         </div>
 
         {customerId && (

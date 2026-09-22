@@ -1772,7 +1772,7 @@ interface DataState {
   /** الفواتير المفتوحة لعميل (بيع آجل + مستخلصات مشاريعه الآجلة) بعد التحصيلات والمرتجعات */
   getOpenClientInvoices: (customerId: number) => OpenInvoice[]
   /** تحصيل من عميل على مستوى الحساب: FIFO افتراضياً أو مطابقة فاتورة محددة اختيارياً */
-  receiveClientPayment: (args: { customerId: number; amountMinor: number; treasury: string; specificDocKey?: string | null; notes?: string }) => { settlementNumber: string; allocations: FifoAllocation[]; unallocatedMinor: number }
+  receiveClientPayment: (args: { customerId: number; amountMinor: number; treasury: string; specificDocKey?: string | null; notes?: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => { settlementNumber: string; allocations: FifoAllocation[]; unallocatedMinor: number }
   /** دفعة مقدمة لمقاول باطن: 1111 ← خزينة (تُسترد من شهاداته) */
   addSubAdvance: (args: { contractId: number; amountMinor: number; treasury: string }) => SubAdvance
   /** رصيد الدفعات المقدمة غير المستردة لعقد باطن */
@@ -7676,7 +7676,18 @@ export const useDataStore = create<DataState>()(
           amountMinor: args.amountMinor, treasury: args.treasury,
           allocations, unallocatedMinor, notes: args.notes ?? '', journalEntryId: entryId,
         }
-        set({ clientSettlements: [...state.clientSettlements, settlement], journal: [...state.journal, entry] })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          if (terminal.settlementAccountCode !== args.treasury) throw new Error('حساب التحصيل لا يطابق حساب الماكينة')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', args.amountMinor)
+          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `client-collection:${id}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: 'client_collection', documentId: String(id), amountMinor: args.amountMinor, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
+          const terminalErrors = validateTerminalTransaction(terminalTransaction); if (terminalErrors.length) throw new Error(terminalErrors.join(' — '))
+        }
+        set({ clientSettlements: [...state.clientSettlements, settlement], journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return { settlementNumber, allocations, unallocatedMinor }
       },
 
