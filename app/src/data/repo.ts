@@ -5011,6 +5011,8 @@ export const useDataStore = create<DataState>()(
       removePaymentTerminal: (id) => {
         const state = get()
         if (state.paymentTerminalTransactions.some((row) => row.terminalId === id)) throw new Error('لا يمكن حذف ماكينة لها عمليات؛ أوقفها بدلاً من ذلك')
+        const assigned = state.appUsers.filter((user) => user.active && user.paymentTerminalAccess?.grants.some((grant) => grant.terminalId === id)).map((user) => user.nameAr)
+        if (assigned.length) throw new Error(`لا يمكن حذف ماكينة مخصصة لمستخدم نشط: ${assigned.join('، ')}`)
         set({ paymentTerminals: state.paymentTerminals.filter((row) => row.id !== id) })
       },
       recordPaymentTerminalTransaction: (transaction) => {
