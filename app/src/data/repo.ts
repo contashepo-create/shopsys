@@ -1492,7 +1492,7 @@ interface DataState {
   updatePaymentTerminal: (id: string, patch: Partial<Omit<PaymentTerminal, 'id'>>) => void
   removePaymentTerminal: (id: string) => void
   recordPaymentTerminalTransaction: (transaction: PaymentTerminalTransaction) => void
-  recordPaymentTerminalSettlement: (settlement: Omit<PaymentTerminalSettlement, 'differenceMinor'>) => void
+  recordPaymentTerminalSettlement: (settlement: Omit<PaymentTerminalSettlement, 'differenceMinor' | 'journalEntryId'>) => void
   /** إضافة خزينة/بنك جديد — يفتح له حساب دفتري تلقائياً (1121+) + بيانات احترافية اختيارية */
   addTreasury: (nameAr: string, kind: 'cash' | 'bank', extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => TreasuryDef
   renameTreasury: (code: string, nameAr: string, extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => void
@@ -5037,7 +5037,19 @@ export const useDataStore = create<DataState>()(
         const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
         if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, input.terminalId, 'settle', input.grossMinor)
         const calculated = calculateTerminalSettlement(input)
-        set({ paymentTerminalSettlements: [...state.paymentTerminalSettlements, { ...input, differenceMinor: calculated.differenceMinor }] })
+        if (!state.treasuries.some((row) => row.code === input.bankAccountCode)) throw new Error('حساب البنك المستلم غير موجود')
+        const lines: JournalLine[] = [
+          { accountCode: input.bankAccountCode, debit: input.depositedMinor, credit: 0, note: 'صافي تسوية ماكينة دفع' },
+          ...(input.feeMinor ? [{ accountCode: '5113', debit: input.feeMinor, credit: 0, note: 'عمولة مزود الدفع' }] : []),
+          ...(input.feeTaxMinor ? [{ accountCode: '5113', debit: input.feeTaxMinor, credit: 0, note: 'ضريبة عمولة مزود الدفع' }] : []),
+          ...(calculated.differenceMinor < 0 ? [{ accountCode: '5112', debit: -calculated.differenceMinor, credit: 0, note: 'عجز تسوية ماكينة' }] : []),
+          { accountCode: terminal.settlementAccountCode, debit: 0, credit: input.grossMinor, note: 'إقفال تحصيلات الماكينة قيد التسوية' },
+          ...(calculated.differenceMinor > 0 ? [{ accountCode: '5112', debit: 0, credit: calculated.differenceMinor, note: 'زيادة تسوية ماكينة' }] : []),
+        ]
+        assertBalanced(lines)
+        const journalEntryId = nextId(state.journal); const actor = activeUser?.nameAr ?? 'المالك'
+        const entry: JournalEntry = { id: journalEntryId, entryNumber: journalEntryId, date: input.settledAt, description: `تسوية ماكينة ${terminal.nameAr}`, sourceType: 'manual', sourceId: null, lines, createdBy: actor, createdAt: input.settledAt, reversedByEntryId: null, reversesEntryId: null }
+        set({ journal: [...state.journal, entry], paymentTerminalSettlements: [...state.paymentTerminalSettlements, { ...input, differenceMinor: calculated.differenceMinor, journalEntryId }] })
       },
 
       addTreasury: (nameAr, kind, extra) => {
