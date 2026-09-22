@@ -1,5 +1,10 @@
 export type TerminalTransactionKind = 'charge' | 'refund' | 'void'
 export interface PaymentTerminalTransaction { id: string; idempotencyKey: string; kind: TerminalTransactionKind; terminalId: string; branchId: string; userId: number; documentId: string; amountMinor: number; providerReference: string; occurredAt: string; originalTransactionId?: string; cardLast4?: string }
+export function remainingRefundableMinor(original: PaymentTerminalTransaction, transactions: PaymentTerminalTransaction[]): number {
+  const consumed = transactions.filter((row) => row.originalTransactionId === original.id && (row.kind === 'refund' || row.kind === 'void')).reduce((sum, row) => sum + row.amountMinor, 0)
+  return Math.max(0, original.amountMinor - consumed)
+}
+
 export function validateTerminalTransaction(transaction: PaymentTerminalTransaction, original?: PaymentTerminalTransaction): string[] {
   const errors: string[] = []
   if (!transaction.id.trim() || !transaction.idempotencyKey.trim()) errors.push('معرف العملية ومفتاح منع التكرار مطلوبان')

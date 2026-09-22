@@ -56,7 +56,7 @@ import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliv
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
-import { validateTerminalTransaction, type PaymentTerminalTransaction } from '../core/paymentTerminalTransactions.ts'
+import { remainingRefundableMinor, validateTerminalTransaction, type PaymentTerminalTransaction } from '../core/paymentTerminalTransactions.ts'
 import { assertTerminalOperation, validateTerminalAccess } from '../core/paymentTerminalAccess.ts'
 import { calculateTerminalSettlement, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
@@ -5021,6 +5021,7 @@ export const useDataStore = create<DataState>()(
         const original = transaction.originalTransactionId ? state.paymentTerminalTransactions.find((row) => row.id === transaction.originalTransactionId) : undefined
         const errors = validateTerminalTransaction(transaction, original)
         if (errors.length) throw new Error(errors.join(' — '))
+        if (original && transaction.amountMinor > remainingRefundableMinor(original, state.paymentTerminalTransactions)) throw new Error('إجمالي الردود والإلغاءات يتجاوز المتبقي من عملية التحصيل')
         const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
         if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, transaction.terminalId, transaction.kind, transaction.amountMinor)
         set({ paymentTerminalTransactions: [...state.paymentTerminalTransactions, transaction] })
