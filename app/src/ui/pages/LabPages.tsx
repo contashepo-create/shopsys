@@ -21,6 +21,7 @@ import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 function useCur() {
@@ -619,7 +620,7 @@ export function LabPatientsPage() {
 /* ═══════════════ 4) الأطباء المُحيلون ═══════════════ */
 
 export function LabReferrersPage() {
-  const { labReferrers, labOrders, addLabReferrer, payReferrerCommissions, insuranceProviders, insuranceClaims, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims } = useDataStore()
+  const { labReferrers, labOrders, paymentTerminals, addLabReferrer, payReferrerCommissions, insuranceProviders, insuranceClaims, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -665,10 +666,13 @@ export function LabReferrersPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
   const [claimTreasury, setClaimTreasury] = useState('1101')
+  const [claimTerminal, setClaimTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const doSettleClaims = (id: number, name: string) => {
     try {
-      const r = settleInsuranceClaims(id, claimTreasury)
-      toast.show(`حُصلت مطالبات ${name}: ${fmt(r.total)} عن ${r.count} مطالبة ✅`)
+      const terminal = paymentTerminals.find((row) => row.id === claimTerminal.terminalId)
+      if (terminal && !claimTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
+      const r = settleInsuranceClaims(id, terminal?.settlementAccountCode ?? claimTreasury, terminal ? { terminalId: terminal.id, providerReference: claimTerminal.providerReference.trim(), cardLast4: claimTerminal.cardLast4 || undefined } : undefined)
+      toast.show(`حُصلت مطالبات ${name}: ${fmt(r.total)} عن ${r.count} مطالبة ✅`); setClaimTerminal({ terminalId: '', providerReference: '', cardLast4: '' })
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
   const doPayout = () => {
@@ -796,7 +800,7 @@ export function LabReferrersPage() {
       <div className="flex items-center justify-between pt-2">
         <h2 className="font-black flex items-center gap-2">🏥 جهات التأمين والتعاقد</h2>
         <div className="flex items-center gap-2">
-          {insuranceProviders.length > 0 && <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1">التحصيل إلى: <TreasuryPicker value={claimTreasury} onChange={setClaimTreasury} compact /></span>}
+          {insuranceProviders.length > 0 && <div className="space-y-1"><TerminalPaymentPicker value={claimTerminal} onChange={setClaimTerminal}/>{!claimTerminal.terminalId && <TreasuryPicker value={claimTreasury} onChange={setClaimTreasury} compact />}</div>}
           <Btn variant="soft" onClick={() => setInsOpen(true)}><Plus className="w-4 h-4" /> جهة جديدة</Btn>
         </div>
       </div>

@@ -1621,7 +1621,7 @@ interface DataState {
   /** رصيد مطالبات جهة غير محصلة */
   getClaimBalance: (providerId: number) => number
   /** تحصيل كل مطالبات جهة دفعة واحدة */
-  settleInsuranceClaims: (providerId: number, treasury?: string) => { total: number; count: number }
+  settleInsuranceClaims: (providerId: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => { total: number; count: number }
 
   // ————— مصفوفة المتغيرات لون×مقاس (ملابس) —————
   /** تعيين رصيد تركيبة — التحقق: من ألوان/مقاسات الصنف، والمجموع ≤ رصيد الصنف */
@@ -6089,7 +6089,7 @@ export const useDataStore = create<DataState>()(
       getClaimBalance: (providerId) => {
         return get().insuranceClaims.filter((c) => c.providerId === providerId && !c.settled).reduce((s2, c) => s2 + c.claimMinor, 0)
       },
-      settleInsuranceClaims: (providerId, treasury = '1101') => {
+      settleInsuranceClaims: (providerId, treasury = '1101', terminalPayment) => {
         const state = get()
         const provider = state.insuranceProviders.find((p) => p.id === providerId)
         if (!provider) throw new Error('الجهة غير موجودة')
@@ -6104,9 +6104,20 @@ export const useDataStore = create<DataState>()(
           sourceType: 'claim_settlement', sourceId: providerId, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (terminalPayment) {
+          const terminal = state.paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
+          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          if (terminal.settlementAccountCode !== treasury) throw new Error('حساب تحصيل المطالبات لا يطابق حساب الماكينة')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === terminalPayment.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', total)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'insurance_claim', documentId: `${providerId}:${entryId}`, amountMinor: total, providerReference: terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: terminalPayment.cardLast4 })
+        }
         set({
           insuranceClaims: state.insuranceClaims.map((c) => (c.providerId === providerId && !c.settled ? { ...c, settled: true, settlementEntryId: entryId } : c)),
           journal: [...state.journal, entry],
+          ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
         return { total, count: unsettled.length }
       },
