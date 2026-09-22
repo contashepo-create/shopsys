@@ -215,7 +215,7 @@ function RxLineEditor({ line, index, onChange, onRemove }: { line: RxLine; index
 
 export function ClinicPatientsPage() {
   const {
-    clinicPatients, clinicVisits, treatmentPlans, journal, customers, patientAttachments, paymentTerminals, appUsers, currentUserId,
+    clinicPatients, clinicVisits, treatmentPlans, journal, customers, patientAttachments, paymentTerminals, paymentTerminalTransactions, appUsers, currentUserId,
     addClinicPatient, updateClinicPatient, addClinicVisit, addTreatmentPlan, collectFromPatient, getPatientBalance,
     addPatientAttachment, removePatientAttachment, addCustomer, refundClinicVisit,
   } = useDataStore()
@@ -679,6 +679,7 @@ export function ClinicPatientsPage() {
             refundedMinor={refundingVisit.refundedMinor ?? 0}
             currencySymbol={cur.symbol}
             fmt={fmt}
+            terminalOriginal={(() => { const xs = paymentTerminalTransactions.filter((row) => row.kind === 'charge' && row.documentType === 'clinic' && row.documentId === String(refundingVisit.patientId)); const x = xs[xs.length - 1]; return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
             allowCredit={true}
             creditLabel="حساب المريض"
             refundableItems={[
@@ -687,7 +688,9 @@ export function ClinicPatientsPage() {
             hint="كشف ملغي أو تنازل عن أتعاب: يعكس الإيراد وحصة الضريبة — «على حساب المريض» يخفض مديونيته إن وُجدت."
             onSubmit={(a) => {
               try {
-                const u = refundClinicVisit({ visitId: refundingVisit.id, amountMinor: a.amountMinor, mode: a.mode === 'cash' ? 'cash' : 'patient_credit', treasury: a.treasury, reason: a.reason, approvedBy: a.approvedBy })
+                const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
+                const terminalAccount = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode : undefined
+                const u = refundClinicVisit({ visitId: refundingVisit.id, amountMinor: a.amountMinor, mode: a.mode === 'cash' ? 'cash' : 'patient_credit', treasury: terminalAccount ?? a.treasury, reason: a.reason, approvedBy: a.approvedBy, terminalRefund: a.terminalRefund })
                 setRefundingVisit(null)
                 toast.show(`سُجل مرتجع الزيارة ${u.visitNumber} وتولد القيد العاكس ✅`)
               } catch (err) { toast.show((err as Error).message, 'error') }

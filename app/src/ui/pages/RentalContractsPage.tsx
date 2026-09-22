@@ -24,7 +24,7 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 
 export function RentalContractsPage() {
-  const { rentalContracts, equipment, customers, journal, paymentTerminals, openRental, closeRental, refundRental } = useDataStore()
+  const { rentalContracts, equipment, customers, journal, paymentTerminals, paymentTerminalTransactions, openRental, closeRental, refundRental } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -473,6 +473,7 @@ export function RentalContractsPage() {
               refundedMinor={viewing.refundedMinor ?? 0}
               currencySymbol={cur.symbol}
               fmt={fmt}
+              terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'rental' && row.documentId === `equipment:${viewing.id}`); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
               allowCredit={viewing.customerId != null}
               refundableItems={[
                 { key: 'rent', label: `إيجار ${viewing.days} × ${fmt(viewing.dailyRateMinor)} — ${viewing.equipmentName}`, valueMinor: viewing.totals.rentMinor, qty: viewing.days },
@@ -481,7 +482,9 @@ export function RentalContractsPage() {
               hint="خصم تعويضي على الإيجار (عطل المعدة/إنهاء مبكر): يعكس الإيراد وحصة الضريبة — التأمين له مساره عند إقفال العقد."
               onSubmit={(a) => {
                 try {
-                  const u = refundRental({ contractId: viewing.id, ...a })
+                  const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
+                  const treasury = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
+                  const u = refundRental({ contractId: viewing.id, ...a, treasury })
                   setViewing(u)
                   toast.show(`سُجل مرتجع الإيجار ${u.contractNumber} وتولد القيد العاكس ✅`)
                 } catch (err) { toast.show((err as Error).message, 'error') }

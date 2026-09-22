@@ -49,7 +49,7 @@ const TEST_STEP: Record<TestStatus, { label: string; next: TestStatus | null; ne
 /* ═══════════════ 1) الطلبات والنتائج ═══════════════ */
 
 export function LabOrdersPage() {
-  const { labOrders, labPatients, labReferrers, labTests, journal, paymentTerminals, registerLabOrder, advanceLabTest, refundLabOrder, insuranceProviders, registerInsuredLabOrder } = useDataStore()
+  const { labOrders, labPatients, labReferrers, labTests, journal, paymentTerminals, paymentTerminalTransactions, registerLabOrder, advanceLabTest, refundLabOrder, insuranceProviders, registerInsuredLabOrder } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useCur()
   const toast = useToast()
@@ -357,12 +357,15 @@ export function LabOrdersPage() {
               refundedMinor={viewing.refundedMinor ?? 0}
               currencySymbol={cur.symbol}
               fmt={fmt}
+              terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'lab' && row.documentId === String(viewing.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
               allowCredit={viewing.payment === 'credit' || labPatients.find((pt) => pt.id === viewing.patientId)?.linkedCustomerId != null}
               hint="فحص أُلغي أو أُعيدت العينة؟ اختر الفحوصات الملغاة — يعكس الإيراد وحصة الضريبة، وعمولة المُحيل غير المصروفة تُعكس بنفس النسبة تلقائياً."
               refundableItems={viewing.tests.map((t, ti) => ({ key: `test:${ti}`, label: `${t.nameAr} (${t.code})`, valueMinor: t.priceMinor }))}
               onSubmit={(a) => {
                 try {
-                  const u = refundLabOrder({ orderId: viewing.id, ...a })
+                  const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
+                  const treasury = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
+                  const u = refundLabOrder({ orderId: viewing.id, ...a, treasury })
                   setViewing(u)
                   toast.show(`سُجل مرتجع التحاليل ${u.orderNumber} وتولد القيد العاكس ✅`)
                 } catch (err) { toast.show((err as Error).message, 'error') }

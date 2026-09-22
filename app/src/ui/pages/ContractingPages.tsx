@@ -24,7 +24,7 @@ import { printHtml } from '../print/printReceipt.ts'
 
 export function ProjectsPage() {
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems, paymentTerminals,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems, paymentTerminals, paymentTerminalTransactions,
     addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission,
@@ -101,6 +101,7 @@ export function ProjectsPage() {
   const [exDesc, setExDesc] = useState('')
   const [exPayment, setExPayment] = useState<'cash' | 'credit'>('credit')
   const [exTreasury, setExTreasury] = useState('1101')
+  const [exTerminal, setExTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [exVat, setExVat] = useState(true)
   const [exRecovery, setExRecovery] = useState('')
   /* المستخلص البندي (AccFlex): نسب تنفيذ تراكمية لكل بند BOQ — قيمة الشريحة تُحسب تلقائياً */
@@ -135,11 +136,14 @@ export function ProjectsPage() {
               return b ? l.newProgressPercent > b.progressPercent : false
             })
         : undefined
+      const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
+      if (terminal && !exTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const ex = addProjectExtract({
         projectId: extractFor.id,
         grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
         extractLines: linesInput,
-        vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
+        vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: terminal?.settlementAccountCode ?? exTreasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: exTerminal.providerReference.trim(), cardLast4: exTerminal.cardLast4 || undefined } : undefined,
         advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
         isFinal: exFinal,
@@ -237,6 +241,7 @@ export function ProjectsPage() {
 
   const [releaseFor, setReleaseFor] = useState<Project | null>(null)
   const [releaseTreasury, setReleaseTreasury] = useState('1101')
+  const [releaseTerminal, setReleaseTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
 
   /* دفعة مقدمة من العميل */
   const [advanceFor, setAdvanceFor] = useState<Project | null>(null)
@@ -271,7 +276,9 @@ export function ProjectsPage() {
   const doRelease = () => {
     if (!releaseFor) return
     try {
-      const r = releaseRetention(releaseFor.id, releaseTreasury)
+      const terminal = paymentTerminals.find((row) => row.id === releaseTerminal.terminalId)
+      if (terminal && !releaseTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
+      const r = releaseRetention(releaseFor.id, terminal?.settlementAccountCode ?? releaseTreasury, terminal ? { terminalId: terminal.id, providerReference: releaseTerminal.providerReference.trim(), cardLast4: releaseTerminal.cardLast4 || undefined } : undefined)
       toast.show(`أُفرج عن محتجزات ${fmt(r.amount)} ${cur.symbol} وأُقفل المشروع 🎉`)
       setReleaseFor(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -509,7 +516,7 @@ export function ProjectsPage() {
                     </button>
                   ))}
                 </div>
-                {exPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={exTreasury} onChange={setExTreasury} compact /></div>}
+                {exPayment === 'cash' && <div className="mt-2 space-y-2"><TerminalPaymentPicker value={exTerminal} onChange={setExTerminal}/>{!exTerminal.terminalId && <TreasuryPicker value={exTreasury} onChange={setExTreasury} compact />}</div>}
               </Field>
               <Field label="الضريبة">
                 <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
@@ -712,7 +719,7 @@ export function ProjectsPage() {
             <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
               سيُحصَّل المحتجز المتبقي {fmt(getProjectProfit(releaseFor.id).retentionHeldMinor)} {cur.symbol} ويُقفل المشروع نهائياً.
             </div>
-            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={releaseTreasury} onChange={setReleaseTreasury} compact /></Field>
+            <Field label="طريقة التحصيل"><div className="space-y-2"><TerminalPaymentPicker value={releaseTerminal} onChange={setReleaseTerminal}/>{!releaseTerminal.terminalId && <TreasuryPicker value={releaseTreasury} onChange={setReleaseTreasury} compact />}</div></Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setReleaseFor(null)}>إلغاء</Btn>
               <Btn onClick={doRelease}>🏁 تحصيل وإقفال</Btn>
@@ -729,11 +736,14 @@ export function ProjectsPage() {
             refundedMinor={refundingExtract.refundedMinor ?? 0}
             currencySymbol={cur.symbol}
             fmt={fmt}
+            terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(refundingExtract.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
             allowCredit={true}
             hint="رفض المالك/الاستشاري جزءاً من الأعمال بعد اعتماد المستخلص: يعكس الإيراد وحصة الضريبة — «على الحساب» يخفض ذمة الجهة المالكة."
             onSubmit={(a) => {
               try {
-                const u = refundProjectExtract({ extractId: refundingExtract.id, ...a })
+                const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
+                const treasury = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
+                const u = refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury })
                 setRefundingExtract(null)
                 toast.show(`سُجل إشعار دائن على ${u.extractNumber} وتولد القيد العاكس ✅`)
               } catch (err) { toast.show((err as Error).message, 'error') }

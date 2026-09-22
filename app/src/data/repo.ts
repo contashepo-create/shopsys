@@ -1712,7 +1712,7 @@ interface DataState {
   /** ملخص ملف عهدة (تعزيزات/منصرف/زيادة/متبقٍ) من حركاته */
   getCustodySummary: (fileId: number) => CustodySummary
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
-  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean }) => ProjectExtract
+  addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
   addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number }) => ProjectCost
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
@@ -1741,7 +1741,7 @@ interface DataState {
   /** تقرير انحرافات الموازنة عن الفعلي لكل فئة */
   getProjectBudgetVariance: (projectId: number) => { rows: BudgetVarianceRow[]; totalBudgetMinor: number; totalActualMinor: number }
   /** الإفراج عن كل المحتجزات المتبقية عند التسليم: 1101 ← 1105 + إقفال المشروع */
-  releaseRetention: (projectId: number, treasury?: string) => { amount: number }
+  releaseRetention: (projectId: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => { amount: number }
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
   getProjectProfit: (projectId: number) => ProjectProfit
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
@@ -2015,13 +2015,13 @@ interface DataState {
   /** مرتجع نقلة (خصم/تعويض للعميل بعد الترحيل): يعكس 4102+2102 نسبياً — مصاريف النقلة تبقى (تكبدناها فعلاً) */
   refundTrip: (args: { tripId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => Trip
   /** مرتجع طلب تحاليل: يعكس 4102+2102 نسبياً + يعكس عمولة المُحيل غير المدفوعة بنفس النسبة */
-  refundLabOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => LabOrder
+  refundLabOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => LabOrder
   /** مرتجع زيارة عيادة (كشف ملغي/مبلغ تنازل عنه): يعكس 4102+2102 نسبياً — الآجل يخصم من ذمة المريض أولاً */
-  refundClinicVisit: (args: { visitId: number; amountMinor: number; mode: 'cash' | 'patient_credit'; treasury?: string; reason: string; approvedBy?: string }) => ClinicVisit
+  refundClinicVisit: (args: { visitId: number; amountMinor: number; mode: 'cash' | 'patient_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ClinicVisit
   /** مرتجع عقد إيجار (خصم تعويضي): يعكس 4102+2102 نسبياً — التأمين له مساره في إقفال العقد */
-  refundRental: (args: { contractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => RentalContract
+  refundRental: (args: { contractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => RentalContract
   /** إشعار دائن على مستخلص (رفض المالك/الاستشاري جزءاً من الأعمال بعد الاعتماد): يعكس 4102+2102 نسبياً */
-  refundProjectExtract: (args: { extractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => ProjectExtract
+  refundProjectExtract: (args: { extractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ProjectExtract
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
   /** إهلاك تلقائي (طلب المالك): يرحّل كل الأشهر المتأخرة دفعة واحدة بلا تدخل — يُستدعى عند فتح البرنامج. يعيد عدد القيود المرحّلة */
@@ -4287,6 +4287,7 @@ export const useDataStore = create<DataState>()(
         }
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة غير موجودة')
+        if (state.paymentTerminalTransactions.some((row) => row.kind === 'charge' && row.documentType === 'sale' && row.documentId === String(sale.id))) throw new Error('لا يمكن تعديل فاتورة محصلة بالماكينة؛ استخدم مرتجعاً مرتبطاً بالأصل ثم أصدر فاتورة جديدة')
         if (!args.lines.length) throw new Error('الفاتورة المعدلة بلا أصناف')
         // موانع السلامة المحاسبية: مستندات لاحقة بُنيت على الفاتورة
         const blocks = saleEditBlocks({
@@ -6909,7 +6910,17 @@ export const useDataStore = create<DataState>()(
           toRecover -= take
           return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
         })
-        set({ projectExtracts: [...state.projectExtracts, extract], clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry] })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          if (args.payment !== 'cash') throw new Error('الماكينة متاحة للمستخلص المحصل فقط')
+          const amountMinor = Math.max(totals.dueMinor - recovery, 0)
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', amountMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: String(id), amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
+        set({ projectExtracts: [...state.projectExtracts, extract], clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return extract
       },
       /* موازنة تكاليف المشروع بالفئات (نمط pro-acc): تُدخل مرة وتقارن بالفعلي أولاً بأول */
@@ -7236,7 +7247,7 @@ export const useDataStore = create<DataState>()(
         set({ projectCosts: [...state.projectCosts, cost], journal: [...state.journal, entry], custodyTxs })
         return cost
       },
-      releaseRetention: (projectId, treasury = '1101') => {
+      releaseRetention: (projectId, treasury = '1101', terminalPaymentInput) => {
         const state = get()
         const project = state.projects.find((p) => p.id === projectId)
         if (!project) throw new Error('المشروع غير موجود')
@@ -7253,10 +7264,19 @@ export const useDataStore = create<DataState>()(
           sourceType: 'retention_release', sourceId: id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (terminalPaymentInput) {
+          const terminal = state.paymentTerminals.find((row) => row.id === terminalPaymentInput.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== treasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === terminalPaymentInput.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', remaining)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: `retention:${id}`, amountMinor: remaining, providerReference: terminalPaymentInput.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: terminalPaymentInput.cardLast4 })
+        }
         set({
           retentionReleases: [...state.retentionReleases, { id, projectId, date: now, amountMinor: remaining, journalEntryId: entryId }],
           journal: [...state.journal, entry],
           projects: state.projects.map((p) => (p.id === projectId ? { ...p, status: 'completed' as const } : p)),
+          ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
         return { amount: remaining }
       },
@@ -9456,6 +9476,9 @@ export const useDataStore = create<DataState>()(
           if (args.mode !== 'cash') throw new Error('رد الماكينة متاح للرد النقدي فقط')
           const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'laundry' && row.documentId === String(order.id))
           if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          if (args.mode !== 'cash') throw new Error('رد تحصيل الماكينة يجب أن يكون عبر الماكينة')
+          const originalTerminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
+          if (!originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
           const terminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
           if (!terminal || args.treasury !== terminal.settlementAccountCode) throw new Error('رد الماكينة يجب أن يستخدم حساب التحصيل الأصلي')
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim() && row.kind === 'refund')) throw new Error('مرجع رد المزود مستخدم مسبقاً')
@@ -9534,6 +9557,9 @@ export const useDataStore = create<DataState>()(
           if (args.mode !== 'cash') throw new Error('رد الماكينة متاح للرد النقدي فقط')
           const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'maintenance' && row.documentId === String(ticket.id))
           if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          if (args.mode !== 'cash') throw new Error('رد تحصيل الماكينة يجب أن يكون عبر الماكينة')
+          const originalTerminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
+          if (!originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
           const terminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
           if (!terminal || args.treasury !== terminal.settlementAccountCode) throw new Error('رد الماكينة يجب أن يستخدم حساب التحصيل الأصلي')
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim() && row.kind === 'refund')) throw new Error('مرجع رد المزود مستخدم مسبقاً')
@@ -9647,7 +9673,18 @@ export const useDataStore = create<DataState>()(
         const updatedClaims = providerShare > 0 && claim
           ? state.insuranceClaims.map((c) => (c.id === claim.id ? { ...c, claimMinor: c.claimMinor - providerShare, reversedMinor: (c.reversedMinor ?? 0) + providerShare } : c))
           : state.insuranceClaims
-        set({ labOrders: state.labOrders.map((o) => (o.id === order.id ? updated : o)), insuranceClaims: updatedClaims, journal: [...state.journal, entry] })
+        let terminalRefund: PaymentTerminalTransaction | null = null
+        if (args.terminalRefund) {
+          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'lab' && row.documentId === String(order.id))
+          if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          if (args.mode !== 'cash') throw new Error('رد تحصيل الماكينة يجب أن يكون عبر الماكينة')
+          const originalTerminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
+          if (!originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
+          if (state.paymentTerminalTransactions.some((row) => row.kind === 'refund' && row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim())) throw new Error('مرجع رد المزود مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
+          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${order.id}:refund:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
+        }
+        set({ labOrders: state.labOrders.map((o) => (o.id === order.id ? updated : o)), insuranceClaims: updatedClaims, journal: [...state.journal, entry], ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
       },
 
@@ -9680,7 +9717,18 @@ export const useDataStore = create<DataState>()(
           refundedTaxMinor: (visit.refundedTaxMinor ?? 0) + built.taxShareMinor,
           refunds: [...(visit.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode === 'cash' ? 'cash' : 'customer_credit', reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
-        set({ clinicVisits: state.clinicVisits.map((v) => (v.id === visit.id ? updated : v)), journal: [...state.journal, entry] })
+        let terminalRefund: PaymentTerminalTransaction | null = null
+        if (args.terminalRefund) {
+          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'clinic' && row.documentId === String(visit.patientId))
+          if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          if (args.mode !== 'cash') throw new Error('رد تحصيل الماكينة يجب أن يكون عبر الماكينة')
+          const originalTerminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
+          if (!originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
+          if (state.paymentTerminalTransactions.some((row) => row.kind === 'refund' && row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim())) throw new Error('مرجع رد المزود مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
+          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${visit.id}:refund:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
+        }
+        set({ clinicVisits: state.clinicVisits.map((v) => (v.id === visit.id ? updated : v)), journal: [...state.journal, entry], ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
       },
 
@@ -9717,7 +9765,18 @@ export const useDataStore = create<DataState>()(
           refundedTaxMinor: (contract.refundedTaxMinor ?? 0) + built.taxShareMinor,
           refunds: [...(contract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
-        set({ rentalContracts: state.rentalContracts.map((c) => (c.id === contract.id ? updated : c)), journal: [...state.journal, entry] })
+        let terminalRefund: PaymentTerminalTransaction | null = null
+        if (args.terminalRefund) {
+          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'rental' && row.documentId === `equipment:${contract.id}`)
+          if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          if (args.mode !== 'cash') throw new Error('رد تحصيل الماكينة يجب أن يكون عبر الماكينة')
+          const originalTerminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
+          if (!originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
+          if (state.paymentTerminalTransactions.some((row) => row.kind === 'refund' && row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim())) throw new Error('مرجع رد المزود مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
+          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `equipment:${contract.id}:refund:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
+        }
+        set({ rentalContracts: state.rentalContracts.map((c) => (c.id === contract.id ? updated : c)), journal: [...state.journal, entry], ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
       },
 
@@ -9752,7 +9811,18 @@ export const useDataStore = create<DataState>()(
           refundedTaxMinor: (extract.refundedTaxMinor ?? 0) + built.taxShareMinor,
           refunds: [...(extract.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
-        set({ projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? updated : e)), journal: [...state.journal, entry] })
+        let terminalRefund: PaymentTerminalTransaction | null = null
+        if (args.terminalRefund) {
+          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(extract.id))
+          if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          if (args.mode !== 'cash') throw new Error('رد تحصيل الماكينة يجب أن يكون عبر الماكينة')
+          const originalTerminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
+          if (!originalTerminal || originalTerminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('يجب رد المبلغ على حساب تسوية الماكينة الأصلية')
+          if (state.paymentTerminalTransactions.some((row) => row.kind === 'refund' && row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim())) throw new Error('مرجع رد المزود مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
+          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${extract.id}:refund:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
+        }
+        set({ projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? updated : e)), journal: [...state.journal, entry], ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
       },
 
