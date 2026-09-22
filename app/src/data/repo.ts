@@ -58,6 +58,7 @@ import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
 import { remainingRefundableMinor, validateTerminalTransaction, type PaymentTerminalTransaction, type TerminalDocumentType } from '../core/paymentTerminalTransactions.ts'
 import { buildTerminalCharge } from '../core/paymentTerminalCharge.ts'
+import { buildTerminalRefund } from '../core/paymentTerminalRefund.ts'
 import { assertTerminalOperation, validateTerminalAccess } from '../core/paymentTerminalAccess.ts'
 import { calculateTerminalSettlement, netSettlementTransactions, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
@@ -2005,9 +2006,9 @@ interface DataState {
    * يعكس الإيراد 4102 وحصة الضريبة 2102 النسبية، ويرد نقداً أو يودِع في حساب العميل.
    * لا مخزون يتحرك (خدمة). تراكمي بسقف إجمالي الأمر المُسلَّم.
    */
-  refundLaundryOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => LaundryOrder
+  refundLaundryOrder: (args: { orderId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => LaundryOrder
   /** مرتجع خدمة صيانة بعد التسليم: يعكس 4102+2102 نسبياً — القطع المركبة لها مرتجع بيع مستقل إن أعيدت */
-  refundMaintenanceTicket: (args: { ticketId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; returnParts?: { itemId: number; qty: number }[] }) => MaintenanceTicket
+  refundMaintenanceTicket: (args: { ticketId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; returnParts?: { itemId: number; qty: number }[]; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => MaintenanceTicket
   /** مرتجع نقلة (خصم/تعويض للعميل بعد الترحيل): يعكس 4102+2102 نسبياً — مصاريف النقلة تبقى (تكبدناها فعلاً) */
   refundTrip: (args: { tripId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string }) => Trip
   /** مرتجع طلب تحاليل: يعكس 4102+2102 نسبياً + يعكس عمولة المُحيل غير المدفوعة بنفس النسبة */
@@ -9392,7 +9393,18 @@ export const useDataStore = create<DataState>()(
           refundedTaxMinor: (order.refundedTaxMinor ?? 0) + built.taxShareMinor,
           refunds: [...(order.refunds ?? []), { date: now.slice(0, 10), amountMinor: args.amountMinor, taxShareMinor: built.taxShareMinor, mode: args.mode, reason: args.reason, journalEntryId: entryId, ...approvalStamp(get(), args.approvedBy) }],
         }
-        set({ laundryOrders: state.laundryOrders.map((o) => (o.id === order.id ? updated : o)), journal: [...state.journal, entry] })
+        let terminalRefund: PaymentTerminalTransaction | null = null
+        if (args.terminalRefund) {
+          if (args.mode !== 'cash') throw new Error('رد الماكينة متاح للرد النقدي فقط')
+          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'laundry' && row.documentId === String(order.id))
+          if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          const terminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
+          if (!terminal || args.treasury !== terminal.settlementAccountCode) throw new Error('رد الماكينة يجب أن يستخدم حساب التحصيل الأصلي')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim() && row.kind === 'refund')) throw new Error('مرجع رد المزود مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
+          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${order.id}:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
+        }
+        set({ laundryOrders: state.laundryOrders.map((o) => (o.id === order.id ? updated : o)), journal: [...state.journal, entry], ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
       },
 
@@ -9459,7 +9471,18 @@ export const useDataStore = create<DataState>()(
               return { ...it, stockQty: newQty, costMinor: newQty > 0 ? Math.round(newValue / newQty) : it.costMinor }
             })
           : state.items
-        set({ tickets: state.tickets.map((t) => (t.id === ticket.id ? updated : t)), journal: [...state.journal, entry], items: updatedItems })
+        let terminalRefund: PaymentTerminalTransaction | null = null
+        if (args.terminalRefund) {
+          if (args.mode !== 'cash') throw new Error('رد الماكينة متاح للرد النقدي فقط')
+          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentType === 'maintenance' && row.documentId === String(ticket.id))
+          if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          const terminal = state.paymentTerminals.find((row) => row.id === original.terminalId)
+          if (!terminal || args.treasury !== terminal.settlementAccountCode) throw new Error('رد الماكينة يجب أن يستخدم حساب التحصيل الأصلي')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference.trim() && row.kind === 'refund')) throw new Error('مرجع رد المزود مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', args.amountMinor)
+          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${ticket.id}:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalRefund.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
+        }
+        set({ tickets: state.tickets.map((t) => (t.id === ticket.id ? updated : t)), journal: [...state.journal, entry], items: updatedItems, ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}) })
         return updated
       },
 

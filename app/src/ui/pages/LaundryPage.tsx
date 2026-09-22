@@ -31,7 +31,7 @@ const STATUS_STYLE: Record<LaundryStatus, string> = {
 interface DraftLine { desc: string; service: LaundryService; qty: string; price: string }
 
 export function LaundryPage() {
-  const { laundryOrders, customers, journal, paymentTerminals, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
+  const { laundryOrders, customers, journal, paymentTerminals, paymentTerminalTransactions, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
   const { setup, reportPrint, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -88,6 +88,7 @@ export function LaundryPage() {
   /* ─── عرض/تسليم/إلغاء ─── */
   const [viewingId, setViewingId] = useState<number | null>(null)
   const viewing = viewingId != null ? laundryOrders.find((o) => o.id === viewingId) : null
+  const viewingTerminalCharge = viewing ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'laundry' && row.documentId === String(viewing.id)) : undefined
   const [deliverTreasury, setDeliverTreasury] = useState('1101')
   const [deliverTerminal, setDeliverTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const viewingEntries = viewing
@@ -369,10 +370,11 @@ export function LaundryPage() {
                 allowCredit={viewing.customerId != null}
                 creditLabel="حساب العميل"
                 hint="عميل غير راضٍ؟ اختر القطع المتضررة (بقع لم تُزل/قطعة تالفة) — يعكس الإيراد وحصة الضريبة بقيد تلقائي، لا مخزون يتحرك."
+                terminalOriginal={viewingTerminalCharge ? { transactionId: viewingTerminalCharge.id, terminalName: paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.nameAr ?? viewingTerminalCharge.terminalId } : undefined}
                 refundableItems={viewing.lines.map((l, li) => ({ key: `line:${li}`, label: `${l.desc} — ${LAUNDRY_SERVICE_LABELS[l.service]?.nameAr ?? l.service}`, valueMinor: Math.round(l.qty * l.unitPriceMinor), qty: l.qty }))}
                 onSubmit={(a) => {
                   try {
-                    const u = refundLaundryOrder({ orderId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: a.treasury, reason: a.reason, approvedBy: a.approvedBy })
+                    const u = refundLaundryOrder({ orderId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: viewingTerminalCharge ? (paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.settlementAccountCode ?? a.treasury) : a.treasury, reason: a.reason, approvedBy: a.approvedBy, terminalRefund: a.terminalRefund })
                     toast.show(`سُجل مرتجع خدمة ${u.orderNumber} بقيمة ${fmt(a.amountMinor)} ${cur.symbol} وتولد القيد العاكس ✅`)
                   } catch (err) { toast.show((err as Error).message, 'error') }
                 }}

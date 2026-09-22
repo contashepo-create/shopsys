@@ -34,7 +34,7 @@ interface DraftPart { itemId: string; qty: string; unitPrice: string }
 interface DraftService { serviceId: string; nameAr: string; qty: string; unitPrice: string; unitCost: string }
 
 export function MaintenancePage() {
-  const { tickets, customers, items, journal, paymentTerminals, openTicket, setTicketStatus, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService } = useDataStore()
+  const { tickets, customers, items, journal, paymentTerminals, paymentTerminalTransactions, openTicket, setTicketStatus, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -218,6 +218,7 @@ export function MaintenancePage() {
 
   /* ─── عرض ─── */
   const [viewing, setViewing] = useState<MaintenanceTicket | null>(null)
+  const viewingTerminalCharge = viewing ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'maintenance' && row.documentId === String(viewing.id)) : undefined
   const viewEntry = viewing?.journalEntryId != null ? journal.find((e) => e.id === viewing.journalEntryId) : null
 
   /* ─── تقرير ─── */
@@ -627,6 +628,7 @@ export function MaintenancePage() {
                 fmt={fmt}
                 allowCredit={viewing.customerId != null}
                 hint="عميل غير راضٍ؟ اختر ما يُرد: أجر الفني، خدمات، أو قطع غيار — القطعة السليمة المختارة تعود للمخزون بتكلفتها تلقائياً."
+                terminalOriginal={viewingTerminalCharge ? { transactionId: viewingTerminalCharge.id, terminalName: paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.nameAr ?? viewingTerminalCharge.terminalId } : undefined}
                 refundableItems={[
                   ...(viewing.totals.laborMinor > 0 ? [{ key: 'labor', label: 'أجر الفني (المصنعية)', valueMinor: viewing.totals.laborMinor }] : []),
                   ...(viewing.services ?? []).map((s, si) => ({ key: `svc:${si}`, label: s.nameAr, valueMinor: Math.round(s.qty * s.unitPriceMinor), qty: s.qty })),
@@ -647,7 +649,7 @@ export function MaintenancePage() {
                         return { itemId: p.itemId, qty: p.qty - returned }
                       })
                       .filter((rp) => rp.qty > 0)
-                    const u = refundMaintenanceTicket({ ticketId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: a.treasury, reason: a.reason, approvedBy: a.approvedBy, returnParts })
+                    const u = refundMaintenanceTicket({ ticketId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: viewingTerminalCharge ? (paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.settlementAccountCode ?? a.treasury) : a.treasury, reason: a.reason, approvedBy: a.approvedBy, returnParts, terminalRefund: a.terminalRefund })
                     setViewing(u)
                     toast.show(`سُجل مرتجع خدمة ${u.ticketNumber} وتولد القيد العاكس ✅${returnParts.length ? ' — عادت القطع للمخزون 📦' : ''}`)
                   } catch (err) { toast.show((err as Error).message, 'error') }
