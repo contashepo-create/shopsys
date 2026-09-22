@@ -58,6 +58,7 @@ import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
 import { validateTerminalTransaction, type PaymentTerminalTransaction } from '../core/paymentTerminalTransactions.ts'
 import { assertTerminalOperation, validateTerminalAccess } from '../core/paymentTerminalAccess.ts'
+import { calculateTerminalSettlement, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
 import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
@@ -1052,6 +1053,7 @@ interface DataState {
   branches: Branch[]
   paymentTerminals: PaymentTerminal[]
   paymentTerminalTransactions: PaymentTerminalTransaction[]
+  paymentTerminalSettlements: PaymentTerminalSettlement[]
   treasuries: TreasuryDef[] // الخزائن والبنوك المتعددة (طلب المالك)
   customers: Customer[]
   suppliers: Supplier[]
@@ -1490,6 +1492,7 @@ interface DataState {
   updatePaymentTerminal: (id: string, patch: Partial<Omit<PaymentTerminal, 'id'>>) => void
   removePaymentTerminal: (id: string) => void
   recordPaymentTerminalTransaction: (transaction: PaymentTerminalTransaction) => void
+  recordPaymentTerminalSettlement: (settlement: Omit<PaymentTerminalSettlement, 'differenceMinor'>) => void
   /** إضافة خزينة/بنك جديد — يفتح له حساب دفتري تلقائياً (1121+) + بيانات احترافية اختيارية */
   addTreasury: (nameAr: string, kind: 'cash' | 'bank', extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => TreasuryDef
   renameTreasury: (code: string, nameAr: string, extra?: Partial<Omit<TreasuryDef, 'code' | 'nameAr' | 'kind' | 'isDefault'>>) => void
@@ -2189,6 +2192,7 @@ export const useDataStore = create<DataState>()(
       branches: [],
       paymentTerminals: [],
       paymentTerminalTransactions: [],
+      paymentTerminalSettlements: [],
       treasuries: DEFAULT_TREASURIES,
       customers: [],
       suppliers: [],
@@ -5020,6 +5024,20 @@ export const useDataStore = create<DataState>()(
         const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
         if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, transaction.terminalId, transaction.kind, transaction.amountMinor)
         set({ paymentTerminalTransactions: [...state.paymentTerminalTransactions, transaction] })
+      },
+      recordPaymentTerminalSettlement: (input) => {
+        const state = get(); const terminal = state.paymentTerminals.find((row) => row.id === input.terminalId)
+        if (!terminal) throw new Error('ماكينة الدفع غير موجودة')
+        if (state.paymentTerminalSettlements.some((row) => row.id === input.id)) throw new Error('التسوية مسجلة مسبقاً')
+        const linkErrors = validateSettlementTransactions(input.transactionIds); if (linkErrors.length) throw new Error(linkErrors.join(' — '))
+        const alreadySettled = new Set(state.paymentTerminalSettlements.flatMap((row) => row.transactionIds))
+        if (input.transactionIds.some((id) => alreadySettled.has(id))) throw new Error('إحدى العمليات مسواة مسبقاً')
+        const transactions = input.transactionIds.map((id) => state.paymentTerminalTransactions.find((row) => row.id === id))
+        if (transactions.some((row) => !row || row.terminalId !== input.terminalId)) throw new Error('عمليات التسوية لا تخص الماكينة المحددة')
+        const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+        if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, input.terminalId, 'settle', input.grossMinor)
+        const calculated = calculateTerminalSettlement(input)
+        set({ paymentTerminalSettlements: [...state.paymentTerminalSettlements, { ...input, differenceMinor: calculated.differenceMinor }] })
       },
 
       addTreasury: (nameAr, kind, extra) => {
@@ -9796,6 +9814,7 @@ export const useDataStore = create<DataState>()(
           branches: s.branches ?? [], // الإصدار 20: الفروع الحقيقية (فرع = مخزن + خزينة)
           paymentTerminals: s.paymentTerminals ?? [],
           paymentTerminalTransactions: s.paymentTerminalTransactions ?? [],
+          paymentTerminalSettlements: s.paymentTerminalSettlements ?? [],
           priceListEntries: s.priceListEntries ?? [],
           custodyFiles: s.custodyFiles ?? [],
           custodyTxs: s.custodyTxs ?? [],

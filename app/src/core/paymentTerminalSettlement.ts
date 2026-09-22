@@ -1,4 +1,5 @@
 export interface TerminalSettlementInput { grossMinor: number; feeMinor: number; feeTaxMinor: number; depositedMinor: number }
+export interface PaymentTerminalSettlement extends TerminalSettlementInput { id: string; terminalId: string; bankAccountCode: string; transactionIds: string[]; settledAt: string; userId: number; differenceMinor: number }
 export interface TerminalSettlementBreakdown extends TerminalSettlementInput { differenceMinor: number; balanced: boolean }
 export function calculateTerminalSettlement(input: TerminalSettlementInput): TerminalSettlementBreakdown {
   for (const [name, value] of Object.entries(input)) if (!Number.isSafeInteger(value) || value < 0) throw new Error(`قيمة ${name} في التسوية غير صالحة`)
