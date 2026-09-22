@@ -1049,7 +1049,7 @@ export function PosPage() {
                 </div>
                 <div>
                   <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5">إلى أي خزينة/بنك؟</div>
-                  <TreasuryPicker value={treasury} onChange={setTreasury} />
+                  <TreasuryPicker value={treasury} onChange={setTreasury} operation="receipt" />
                 </div>
               </>
             )}

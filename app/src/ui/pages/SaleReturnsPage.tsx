@@ -548,7 +548,7 @@ export function SaleReturnsPage() {
                   {preview.alloc.cashMinor > 0 && (
                     <div className="pt-1 space-y-1.5">
                       <div className="text-[10.5px] font-bold text-slate-500">وجهة الجزء النقدي:</div>
-                      <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} compact />
+                      <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} operation="refund" compact />
                     </div>
                   )}
                 </div>
@@ -557,7 +557,7 @@ export function SaleReturnsPage() {
               {refund === 'cash' && (
                 <div className="p-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.03] space-y-2">
                   <div className="text-[11.5px] font-bold text-emerald-700 dark:text-emerald-400">وجهة الرد: درج نقدي أو بنك/محفظة (تحويل للعميل)</div>
-                  <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} compact />
+                  <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} operation="refund" compact />
                   <p className="text-[10.5px] text-slate-400">الافتراضي: نفس خزينة البيع الأصلية «{treasuries.find((t) => t.code === (sale.treasury ?? '1101'))?.nameAr ?? 'الخزينة الرئيسية'}» — اختر بنكاً لو الرد تحويلاً.</p>
                 </div>
               )}

@@ -2862,6 +2862,12 @@ export const useDataStore = create<DataState>()(
         const totals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
         // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
         const paidM = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
+        if (paidM > 0) {
+          const treasuryCode = args.treasury ?? '1101'
+          const user = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
+          const errors = validateTreasuryAccess(user?.treasuryAccess, treasuryCode, 'receipt', paidM)
+          if (errors.length) throw new Error(errors.join(' — '))
+        }
         if (paidM < totals.totalMinor && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
@@ -3008,6 +3014,11 @@ export const useDataStore = create<DataState>()(
         // الرد النقدي من نفس خزينة البيع الأصلية (فواتير قديمة بلا خزينة → الرئيسية)
         // وجهة الرد النقدي: اختيار صريح (درج آخر/بنك «تحويل») وإلا خزينة البيع الأصلية
         const refundTreasury = args.treasury ?? sale.treasury ?? '1101'
+        if (alloc.cashMinor > 0) {
+          const user = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
+          const errors = validateTreasuryAccess(user?.treasuryAccess, refundTreasury, 'refund', alloc.cashMinor)
+          if (errors.length) throw new Error(errors.join(' — '))
+        }
         const entryLines = buildReturnEntryAlloc(totals, alloc, refundTreasury, damagedCost)
         const returnId = nextId(state.saleReturns)
         const entryId = nextId(state.journal)
