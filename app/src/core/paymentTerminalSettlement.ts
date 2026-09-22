@@ -8,6 +8,9 @@ export function calculateTerminalSettlement(input: TerminalSettlementInput): Ter
   const differenceMinor = input.depositedMinor - expectedDeposit
   return { ...input, differenceMinor, balanced: differenceMinor === 0 }
 }
+export function netSettlementTransactions(transactions: { kind: 'charge' | 'refund' | 'void'; amountMinor: number }[]): number {
+  return transactions.reduce((sum, row) => sum + (row.kind === 'charge' ? row.amountMinor : -row.amountMinor), 0)
+}
 export function validateSettlementTransactions(transactionIds: string[]): string[] {
   const errors: string[] = []
   if (!transactionIds.length) errors.push('تسوية الماكينة بلا عمليات')

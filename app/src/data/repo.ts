@@ -58,7 +58,7 @@ import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
 import { remainingRefundableMinor, validateTerminalTransaction, type PaymentTerminalTransaction } from '../core/paymentTerminalTransactions.ts'
 import { assertTerminalOperation, validateTerminalAccess } from '../core/paymentTerminalAccess.ts'
-import { calculateTerminalSettlement, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
+import { calculateTerminalSettlement, netSettlementTransactions, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
 import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
@@ -5043,6 +5043,9 @@ export const useDataStore = create<DataState>()(
         if (input.transactionIds.some((id) => alreadySettled.has(id))) throw new Error('إحدى العمليات مسواة مسبقاً')
         const transactions = input.transactionIds.map((id) => state.paymentTerminalTransactions.find((row) => row.id === id))
         if (transactions.some((row) => !row || row.terminalId !== input.terminalId)) throw new Error('عمليات التسوية لا تخص الماكينة المحددة')
+        const actualGross = netSettlementTransactions(transactions.map((row) => row!))
+        if (actualGross !== input.grossMinor) throw new Error('إجمالي التسوية لا يطابق صافي العمليات المحددة')
+        if (transactions.some((row) => row!.occurredAt > input.settledAt)) throw new Error('لا يمكن تسوية عملية بتاريخ لاحق لتاريخ الدفعة')
         const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
         if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, input.terminalId, 'settle', input.grossMinor)
         const calculated = calculateTerminalSettlement(input)
