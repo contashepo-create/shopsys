@@ -15,6 +15,7 @@ import {
 } from '../../core/laundry.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderReportShell } from '../../core/reportPrint.ts'
@@ -30,7 +31,7 @@ const STATUS_STYLE: Record<LaundryStatus, string> = {
 interface DraftLine { desc: string; service: LaundryService; qty: string; price: string }
 
 export function LaundryPage() {
-  const { laundryOrders, customers, journal, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
+  const { laundryOrders, customers, journal, paymentTerminals, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
   const { setup, reportPrint, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -88,6 +89,7 @@ export function LaundryPage() {
   const [viewingId, setViewingId] = useState<number | null>(null)
   const viewing = viewingId != null ? laundryOrders.find((o) => o.id === viewingId) : null
   const [deliverTreasury, setDeliverTreasury] = useState('1101')
+  const [deliverTerminal, setDeliverTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const viewingEntries = viewing
     ? journal.filter((e) => [viewing.prepaidEntryId, viewing.deliverEntryId, viewing.cancelEntryId, ...(viewing.refunds ?? []).map((r) => r.journalEntryId)].includes(e.id))
     : []
@@ -96,7 +98,9 @@ export function LaundryPage() {
   const move = (o: LaundryOrder, to: LaundryStatus) => {
     try {
       if (to === 'delivered') {
-        const u = deliverLaundryOrder({ orderId: o.id, treasury: deliverTreasury as '1101' })
+        const terminal = paymentTerminals.find((row) => row.id === deliverTerminal.terminalId)
+        if (terminal && !deliverTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
+        const u = deliverLaundryOrder({ orderId: o.id, treasury: (terminal?.settlementAccountCode ?? deliverTreasury) as '1101', terminalPayment: terminal ? { terminalId: terminal.id, providerReference: deliverTerminal.providerReference.trim(), cardLast4: deliverTerminal.cardLast4 || undefined } : undefined })
         toast.show(`سُلِّم ${u.orderNumber} وتولد قيد الإيراد — المحصَّل ${fmt(u.grandMinor - u.prepaidMinor)} ${cur.symbol} ✅`)
         setViewingId(u.id)
       } else if (to === 'cancelled') {
@@ -335,7 +339,7 @@ export function LaundryPage() {
               <div className="space-y-2">
                 {LAUNDRY_TRANSITIONS[viewing.status].includes('delivered') && (
                   <Field label="التحصيل في" hint={`المتبقي المتوقع ${fmt(Math.max(0, viewing.totalMinor - viewing.prepaidMinor))} ${cur.symbol} + الضريبة إن كانت مضافة`}>
-                    <TreasuryPicker value={deliverTreasury} onChange={setDeliverTreasury} compact />
+                    <div className="space-y-2"><TerminalPaymentPicker value={deliverTerminal} onChange={setDeliverTerminal}/>{!deliverTerminal.terminalId && <TreasuryPicker value={deliverTreasury} onChange={setDeliverTreasury} compact />}</div>
                   </Field>
                 )}
                 <div className="flex flex-wrap gap-2">

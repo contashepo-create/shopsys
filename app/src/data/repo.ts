@@ -1996,7 +1996,7 @@ interface DataState {
   /** نقل حالة أمر الغسيل (بلا قيد — القيود عند التسليم/الإلغاء فقط) */
   setLaundryStatus: (orderId: number, status: LaundryStatus) => LaundryOrder
   /** تسليم الأمر: تحقق الإيراد — خزينة (المتبقي) + 2109 (العربون) ← 4103 + 2102 */
-  deliverLaundryOrder: (args: { orderId: number; treasury?: TreasuryAccount }) => LaundryOrder
+  deliverLaundryOrder: (args: { orderId: number; treasury?: TreasuryAccount; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => LaundryOrder
   /** إلغاء الأمر: لو عليه عربون يُرد بقيد 2109 ← خزينة */
   cancelLaundryOrder: (orderId: number) => LaundryOrder
   /**
@@ -9290,7 +9290,19 @@ export const useDataStore = create<DataState>()(
           grandMinor: built.grandMinor, taxMinor: built.taxMinor,
           statusHistory: [...order.statusHistory, { status: 'delivered', at: now }],
         }
-        set({ laundryOrders: state.laundryOrders.map((o) => (o.id === order.id ? updated : o)), journal: [...state.journal, entry] })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          const collectedNow = built.grandMinor - order.prepaidMinor
+          if (collectedNow <= 0) throw new Error('لا يوجد مبلغ متبقٍ للتحصيل على الماكينة')
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          if (terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('حساب تحصيل المغسلة لا يطابق حساب الماكينة')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', collectedNow)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'laundry', documentId: order.id, amountMinor: collectedNow, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
+        set({ laundryOrders: state.laundryOrders.map((o) => (o.id === order.id ? updated : o)), journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return updated
       },
 
