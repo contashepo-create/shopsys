@@ -4992,6 +4992,8 @@ export const useDataStore = create<DataState>()(
         if (t.code === '1101' || t.code === '1102') throw new Error('الخزينة الرئيسية والبنك الرئيسي لا يُحذفان')
         const hasMoves = state.journal.some((e) => e.lines.some((l) => l.accountCode === code))
         if (hasMoves) throw new Error(`«${t.nameAr}» عليها حركة في اليومية — لا تُحذف حفاظاً على التوازن`)
+        const assignedUsers = state.appUsers.filter((user) => user.active && user.treasuryAccess?.grants?.some((grant) => grant.treasuryCode === code))
+        if (assignedUsers.length) throw new Error(`«${t.nameAr}» مخصصة لمستخدمين (${assignedUsers.map((user) => user.nameAr).join('، ')}) — أزل التخصيص أولاً`)
         set({ treasuries: state.treasuries.filter((x) => x.code !== code) })
       },
       removeWarehouse: (id) => {
