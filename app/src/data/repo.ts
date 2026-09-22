@@ -4576,11 +4576,15 @@ export const useDataStore = create<DataState>()(
           const errors = validateUserTreasuryAccess(patch.treasuryAccess, state.treasuries.map((treasury) => treasury.code))
           if (errors.length) throw new Error(errors.join(' — '))
         }
-        set({
-          appUsers: state.appUsers.map((u) => (u.id === id
-            ? { ...u, ...patch, ...(patch.nameAr !== undefined ? { nameAr: sanitizeText(patch.nameAr, 60) || u.nameAr } : {}) }
-            : u)),
-        })
+        const nextUsers = state.appUsers.map((u) => (u.id === id
+          ? { ...u, ...patch, ...(patch.nameAr !== undefined ? { nameAr: sanitizeText(patch.nameAr, 60) || u.nameAr } : {}) }
+          : u))
+        const treasuryAudit = patch.treasuryAccess ? appendAudit(state.auditLog, [{
+          at: new Date().toISOString(), user: activeUserName(state), kind: 'edit',
+          title: `تعديل صلاحيات خزائن المستخدم «${user.nameAr}» (${patch.treasuryAccess.grants?.length ?? 0} حساب)`,
+          refKey: `user:${user.id}:treasury_access`,
+        }]) : state.auditLog
+        set({ appUsers: nextUsers, auditLog: treasuryAudit })
       },
       setRolePermissions: (roleId, permissions) => {
         // دور المالك محمي بنيوياً — أي محاولة تعديل تُرفض (صفر تجاوز)
