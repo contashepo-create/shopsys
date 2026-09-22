@@ -14,6 +14,7 @@ import { COST_KIND_LABELS, CHANGE_ORDER_STATUS_LABELS, type CostKind } from '../
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -23,7 +24,7 @@ import { printHtml } from '../print/printReceipt.ts'
 
 export function ProjectsPage() {
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems, paymentTerminals,
     addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission,
@@ -241,10 +242,13 @@ export function ProjectsPage() {
   const [advanceFor, setAdvanceFor] = useState<Project | null>(null)
   const [advAmount, setAdvAmount] = useState('')
   const [advTreasury, setAdvTreasury] = useState('1101')
+  const [advTerminal, setAdvTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const saveAdvance = () => {
     if (!advanceFor) return
     try {
-      receiveClientAdvance({ projectId: advanceFor.id, amountMinor: toMinor(advAmount, cur.decimals), treasury: advTreasury })
+      const terminal = paymentTerminals.find((row) => row.id === advTerminal.terminalId)
+      if (terminal && !advTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
+      receiveClientAdvance({ projectId: advanceFor.id, amountMinor: toMinor(advAmount, cur.decimals), treasury: terminal?.settlementAccountCode ?? advTreasury, terminalPayment: terminal ? { terminalId: terminal.id, providerReference: advTerminal.providerReference.trim(), cardLast4: advTerminal.cardLast4 || undefined } : undefined })
       toast.show('سُجلت الدفعة المقدمة كالتزام 2109 — تُسترد من المستخلصات ✅')
       setAdvanceFor(null); setAdvAmount('')
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -651,7 +655,7 @@ export function ProjectsPage() {
               {getAdvanceBalance(advanceFor.id) > 0 && <> الرصيد الحالي: <b>{fmt(getAdvanceBalance(advanceFor.id))}</b></>}
             </div>
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={advTreasury} onChange={setAdvTreasury} /></Field>
+            <Field label="طريقة التحصيل"><div className="space-y-2"><TerminalPaymentPicker value={advTerminal} onChange={setAdvTerminal}/>{!advTerminal.terminalId && <TreasuryPicker value={advTreasury} onChange={setAdvTreasury} />}</div></Field>
             <Btn onClick={saveAdvance} className="w-full" disabled={!advAmount}>استلام الدفعة</Btn>
           </div>
         )}

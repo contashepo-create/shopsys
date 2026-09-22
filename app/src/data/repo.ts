@@ -1751,7 +1751,7 @@ interface DataState {
   addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number }) => ChangeOrder
   setChangeOrderStatus: (id: number, status: 'approved' | 'invoiced' | 'rejected') => void
   /** دفعة مقدمة من عميل المشروع: نقدية ← 2109 (التزام حتى تنفيذ الأعمال) */
-  receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string }) => void
+  receiveClientAdvance: (args: { projectId: number; amountMinor: number; treasury: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => void
   /** رصيد الدفعات المقدمة غير المستردة لمشروع */
   getAdvanceBalance: (projectId: number) => number
   addSubContract: (args: Omit<SubContract, 'id' | 'contractNumber' | 'status' | 'supplierId' | 'taxWithholdPercent' | 'boqItemIds' | 'advanceRecoveryPercent' | 'progressPercent'> & { supplierId?: number | null; taxWithholdPercent?: number; boqItemIds?: number[]; advanceRecoveryPercent?: number }) => SubContract
@@ -7350,9 +7350,18 @@ export const useDataStore = create<DataState>()(
           sourceType: 'client_advance', sourceId: project.id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== args.treasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', args.amountMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'project_extract', documentId: `advance:${project.id}:${entryId}`, amountMinor: args.amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
         set({
           clientAdvances: [...state.clientAdvances, { id: nextId(state.clientAdvances), projectId: project.id, date: now.slice(0, 10), amountMinor: args.amountMinor, recoveredMinor: 0, journalEntryId: entryId }],
           journal: [...state.journal, entry],
+          ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
       },
       getAdvanceBalance: (projectId) => {
