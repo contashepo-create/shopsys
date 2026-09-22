@@ -35,7 +35,7 @@ interface WizardLine {
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, journal, treasuries, warehouses, postSaleReturn, clientSettlements, paymentTerminalTransactions, recordPaymentTerminalTransaction, currentUserId } = useDataStore()
+  const { sales, saleReturns, customers, journal, treasuries, warehouses, postSaleReturn, clientSettlements, paymentTerminalTransactions } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -170,10 +170,10 @@ export function SaleReturnsPage() {
           ...(refund === 'custom' && preview ? { allocation: preview.alloc } : {}),
           reason: reason.trim() || returnReasonName(reasonCode),
           reasonCode,
-          treasury: refundTreasury || undefined,
+          treasury: originalTerminalCharge ? (sale.treasury ?? undefined) : (refundTreasury || undefined),
           approvedBy,
+          ...(originalTerminalCharge && preview.alloc.cashMinor > 0 ? { terminalRefund: { originalTransactionId: originalTerminalCharge.id, providerReference: terminalRefundReference.trim() } } : {}),
         })
-        if (originalTerminalCharge && preview.alloc.cashMinor > 0) recordPaymentTerminalTransaction({ id: crypto.randomUUID(), idempotencyKey: `sale-return:${ret.id}:terminal:${originalTerminalCharge.terminalId}`, kind: 'refund', terminalId: originalTerminalCharge.terminalId, branchId: originalTerminalCharge.branchId, userId: currentUserId ?? 0, documentId: String(ret.id), amountMinor: preview.alloc.cashMinor, providerReference: terminalRefundReference.trim(), occurredAt: ret.date, originalTransactionId: originalTerminalCharge.id, cardLast4: originalTerminalCharge.cardLast4 })
         toast.show(`تم المرتجع ${ret.returnNumber} — تولد القيد العاكس ✓${approvedBy ? ` (اعتمده «${approvedBy}»)` : ''}${ret.crossShiftNote ? ` — ${ret.crossShiftNote}` : ''}`)
         closeWizard()
         setViewing(ret)
@@ -552,7 +552,7 @@ export function SaleReturnsPage() {
                   {preview.alloc.cashMinor > 0 && (
                     <div className="pt-1 space-y-1.5">
                       <div className="text-[10.5px] font-bold text-slate-500">وجهة الجزء النقدي:</div>
-                      <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} operation="refund" compact />
+                      {originalTerminalCharge ? <div className="p-2 rounded-xl bg-sky-500/10 text-sky-700 text-xs">الجزء النقدي يعود إلى ماكينة البيع الأصلية.</div> : <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} operation="refund" compact />}
                       {originalTerminalCharge && <input className={inputCls} value={terminalRefundReference} onChange={(e) => setTerminalRefundReference(e.target.value)} placeholder="مرجع رد ماكينة الدفع *"/>}
                     </div>
                   )}
@@ -562,7 +562,7 @@ export function SaleReturnsPage() {
               {refund === 'cash' && (
                 <div className="p-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.03] space-y-2">
                   <div className="text-[11.5px] font-bold text-emerald-700 dark:text-emerald-400">وجهة الرد: درج نقدي أو بنك/محفظة (تحويل للعميل)</div>
-                  <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} operation="refund" compact />
+                  {originalTerminalCharge ? <div className="p-2 rounded-xl bg-sky-500/10 text-sky-700 text-xs font-bold">الرد على ماكينة البيع الأصلية وحسابها نفسه</div> : <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} operation="refund" compact />}
                   <p className="text-[10.5px] text-slate-400">الافتراضي: نفس خزينة البيع الأصلية «{treasuries.find((t) => t.code === (sale.treasury ?? '1101'))?.nameAr ?? 'الخزينة الرئيسية'}» — اختر بنكاً لو الرد تحويلاً.</p>
                   {originalTerminalCharge && <div><div className="text-[10.5px] font-bold text-sky-600">مرجع رد ماكينة الدفع *</div><input className={inputCls} value={terminalRefundReference} onChange={(e) => setTerminalRefundReference(e.target.value)} placeholder="رقم عملية الرد من الماكينة"/><p className="text-[10px] text-slate-400">سيُرد المبلغ على الماكينة الأصلية نفسها.</p></div>}
                 </div>

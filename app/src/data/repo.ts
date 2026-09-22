@@ -1301,6 +1301,8 @@ interface DataState {
     creditLimitOverrideBy?: string | null
     /** تجاوز الحد الأدنى لسعر البيع بموافقة مدير (نمط DEXEF/الأمين) */
     priceFloorOverrideBy?: string | null
+    /** تحصيل ماكينة يُحفظ ذرياً مع الفاتورة؛ لا تمرر documentId/amount/user من الواجهة. */
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -1326,6 +1328,8 @@ interface DataState {
     treasury?: string
     /** موافقة المشرف (نمط POS العالمي): اسم المعتمد — يُسجل على المستند والتدقيق */
     approvedBy?: string
+    /** رد ماكينة يُحفظ ذرياً مع المرتجع ويُربط بتحصيل الفاتورة الأصلي. */
+    terminalRefund?: { originalTransactionId: string; providerReference: string }
   }) => SaleReturn
   /**
    * مصروف لاحق على فاتورة شراء مرحّلة (Landed Cost Voucher — طلب المالك):
@@ -2967,8 +2971,22 @@ export const useDataStore = create<DataState>()(
             })
           : state.variantStocks
 
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          if (terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('حساب تحصيل الفاتورة لا يطابق حساب الماكينة')
+          const saleBranch = state.branches.find((branch) => branch.warehouseId === effectiveSaleWarehouseId)
+          if (saleBranch && terminal.branchId !== String(saleBranch.id)) throw new Error('ماكينة الدفع لا تتبع فرع الفاتورة')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', totals.totalMinor)
+          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `sale:${saleId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentId: String(saleId), amountMinor: totals.totalMinor, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
+          const errors = validateTerminalTransaction(terminalTransaction); if (errors.length) throw new Error(errors.join(' — '))
+        }
         set({
           sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems,
+          ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
           batches: workingBatches, serials: updatedSerials, variantStocks: updatedVariants,
           // إضافة نقاط الولاء المكتسبة لرصيد العميل (0 = برنامج معطل أو عميل نقدي)
           ...(earned > 0 ? { customers: state.customers.map((c) => (c.id === args.customerId ? { ...c, loyaltyPoints: (c.loyaltyPoints ?? 0) + earned } : c)) } : {}),
@@ -3159,6 +3177,18 @@ export const useDataStore = create<DataState>()(
         const auditTitle = `مرتجع مبيعات ${returnNumber} (${(totals.totalMinor / 100).toFixed(2)})` +
           (ret.approvedBy && ret.approvedBy !== requesterName ? ` — اعتمده «${ret.approvedBy}»` : '') +
           (shiftCtx.crossShift ? ` — ${shiftCtx.noteAr}` : '') + planNote
+        let terminalRefund: PaymentTerminalTransaction | null = null
+        if (args.terminalRefund) {
+          if (alloc.cashMinor <= 0) throw new Error('لا تُسجل عملية ماكينة لمرتجع بلا رد نقدي')
+          const original = state.paymentTerminalTransactions.find((row) => row.id === args.terminalRefund!.originalTransactionId && row.kind === 'charge' && row.documentId === String(sale.id))
+          if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود لهذه الفاتورة')
+          if (alloc.cashMinor > remainingRefundableMinor(original, state.paymentTerminalTransactions)) throw new Error('إجمالي ردود الماكينة يتجاوز المتبقي من التحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === original.terminalId && row.providerReference === args.terminalRefund!.providerReference && row.kind === 'refund')) throw new Error('مرجع رد مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', alloc.cashMinor)
+          terminalRefund = { id: crypto.randomUUID(), idempotencyKey: `sale-return:${returnId}:terminal:${original.terminalId}`, kind: 'refund', terminalId: original.terminalId, branchId: original.branchId, userId: state.currentUserId ?? 0, documentId: String(returnId), amountMinor: alloc.cashMinor, providerReference: args.terminalRefund.providerReference.trim(), occurredAt: now, originalTransactionId: original.id, cardLast4: original.cardLast4 }
+          const errors = validateTerminalTransaction(terminalRefund, original); if (errors.length) throw new Error(errors.join(' — '))
+        }
         set({
           saleReturns: [...state.saleReturns, ret],
           journal: [...state.journal, entry],
@@ -3166,6 +3196,7 @@ export const useDataStore = create<DataState>()(
           serials: updatedSerials,
           variantStocks: updatedVariantStocks,
           installmentPlans: updatedPlans,
+          ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}),
           auditLog: appendAudit(state.auditLog, [{ at: now, user: requesterName, kind: 'doc', title: auditTitle }]),
         })
         return ret
@@ -5045,6 +5076,7 @@ export const useDataStore = create<DataState>()(
         if (transactions.some((row) => !row || row.terminalId !== input.terminalId)) throw new Error('عمليات التسوية لا تخص الماكينة المحددة')
         const actualGross = netSettlementTransactions(transactions.map((row) => row!))
         if (actualGross !== input.grossMinor) throw new Error('إجمالي التسوية لا يطابق صافي العمليات المحددة')
+        if (actualGross <= 0) throw new Error('صافي العمليات غير موجب — اضمم الردود إلى تحصيلات لاحقة قبل التسوية')
         if (transactions.some((row) => row!.occurredAt > input.settledAt)) throw new Error('لا يمكن تسوية عملية بتاريخ لاحق لتاريخ الدفعة')
         const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
         if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, input.terminalId, 'settle', input.grossMinor)

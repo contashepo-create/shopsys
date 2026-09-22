@@ -5,6 +5,7 @@ const tx: PaymentTerminalTransaction = { id: 'p1', idempotencyKey: 'k1', kind: '
 describe('مطابقة كشف مزود الدفع', () => {
  it('يطابق المرجع والمبلغ', () => expect(reconcileProviderStatement('t1', [{ providerReference: 'R1', amountMinor: 1000 }], [tx])[0].status).toBe('matched'))
  it('يكشف المرجع المفقود محلياً', () => expect(reconcileProviderStatement('t1', [{ providerReference: 'R2', amountMinor: 1000 }], [tx])[0].status).toBe('missing_local'))
+ it('يكشف العملية المحلية الغائبة عن كشف المزود', () => expect(reconcileProviderStatement('t1', [], [tx])[0]).toMatchObject({ status: 'missing_statement', providerReference: 'R1', localAmountMinor: 1000 }))
  it('يكشف اختلاف المبلغ', () => expect(reconcileProviderStatement('t1', [{ providerReference: 'R1', amountMinor: 900 }], [tx])[0]).toMatchObject({ status: 'amount_mismatch', localAmountMinor: 1000 }))
  it('يكشف تكرار المرجع في الكشف', () => expect(reconcileProviderStatement('t1', [{ providerReference: 'R1', amountMinor: 1000 }, { providerReference: 'R1', amountMinor: 1000 }], [tx])[1].status).toBe('duplicate_statement'))
  it('يقارن الرد بقيمة سالبة', () => expect(reconcileProviderStatement('t1', [{ providerReference: 'RR', amountMinor: -200 }], [{ ...tx, id: 'r1', kind: 'refund', providerReference: 'RR', amountMinor: 200 }])[0].status).toBe('matched'))

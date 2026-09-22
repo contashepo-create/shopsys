@@ -1,6 +1,6 @@
 import type { PaymentTerminalTransaction } from './paymentTerminalTransactions.ts'
 export interface ProviderStatementRow { providerReference: string; amountMinor: number; occurredAt?: string }
-export interface ProviderMatch { providerReference: string; status: 'matched' | 'missing_local' | 'amount_mismatch' | 'duplicate_statement'; statementAmountMinor: number; localAmountMinor?: number }
+export interface ProviderMatch { providerReference: string; status: 'matched' | 'missing_local' | 'missing_statement' | 'amount_mismatch' | 'duplicate_statement'; statementAmountMinor?: number; localAmountMinor?: number }
 function parseCsvLine(line: string): string[] {
   const cells: string[] = []; let cell = ''; let quoted = false
   for (let index = 0; index < line.length; index++) { const char = line[index]; if (char === '"') { if (quoted && line[index + 1] === '"') { cell += '"'; index++ } else quoted = !quoted } else if (char === ',' && !quoted) { cells.push(cell.trim()); cell = '' } else cell += char }
@@ -24,7 +24,7 @@ export function parseProviderStatementCsv(csv: string): ProviderStatementRow[] {
 export function reconcileProviderStatement(terminalId: string, rows: ProviderStatementRow[], transactions: PaymentTerminalTransaction[]): ProviderMatch[] {
   const local = transactions.filter((row) => row.terminalId === terminalId)
   const seen = new Set<string>()
-  return rows.map((row) => {
+  const matches: ProviderMatch[] = rows.map((row) => {
     if (!row.providerReference.trim() || !Number.isSafeInteger(row.amountMinor)) throw new Error('صف كشف مزود الدفع غير صالح')
     if (seen.has(row.providerReference)) return { providerReference: row.providerReference, status: 'duplicate_statement', statementAmountMinor: row.amountMinor }
     seen.add(row.providerReference)
@@ -33,4 +33,6 @@ export function reconcileProviderStatement(terminalId: string, rows: ProviderSta
     const signedLocal = transaction.kind === 'charge' ? transaction.amountMinor : -transaction.amountMinor
     return { providerReference: row.providerReference, status: signedLocal === row.amountMinor ? 'matched' : 'amount_mismatch', statementAmountMinor: row.amountMinor, localAmountMinor: signedLocal }
   })
+  for (const transaction of local) if (!seen.has(transaction.providerReference)) matches.push({ providerReference: transaction.providerReference, status: 'missing_statement', localAmountMinor: transaction.kind === 'charge' ? transaction.amountMinor : -transaction.amountMinor })
+  return matches
 }

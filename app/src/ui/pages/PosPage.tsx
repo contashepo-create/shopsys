@@ -54,7 +54,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, recordPaymentTerminalTransaction } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals } = useDataStore()
   // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
   const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
   const openShift = currentOpenShift(shifts)
@@ -479,8 +479,8 @@ export function PosPage() {
         priceFloorOverrideBy: priceFloorOverrideBy ?? null,
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
         warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
+        ...(selectedTerminal ? { terminalPayment: { terminalId: selectedTerminal.id, providerReference: terminalReference.trim(), ...(terminalCardLast4 ? { cardLast4: terminalCardLast4 } : {}) } } : {}),
       })
-      if (selectedTerminal) recordPaymentTerminalTransaction({ id: crypto.randomUUID(), idempotencyKey: `sale:${sale.id}:terminal:${selectedTerminal.id}`, kind: 'charge', terminalId: selectedTerminal.id, branchId: selectedTerminal.branchId, userId: currentUserId ?? 0, documentId: String(sale.id), amountMinor: sale.totals.totalMinor, providerReference: terminalReference.trim(), occurredAt: sale.date, cardLast4: terminalCardLast4 || undefined })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
       setCart([]); setQtyDrafts({})
