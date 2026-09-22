@@ -5018,6 +5018,7 @@ export const useDataStore = create<DataState>()(
         if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
         if (terminal.branchId !== transaction.branchId) throw new Error('فرع العملية لا يطابق فرع ماكينة الدفع')
         if (state.paymentTerminalTransactions.some((row) => row.id === transaction.id || row.idempotencyKey === transaction.idempotencyKey)) throw new Error('عملية الدفع مسجلة مسبقاً')
+        if (state.paymentTerminalTransactions.some((row) => row.terminalId === transaction.terminalId && row.providerReference === transaction.providerReference && row.kind === transaction.kind)) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
         const original = transaction.originalTransactionId ? state.paymentTerminalTransactions.find((row) => row.id === transaction.originalTransactionId) : undefined
         const errors = validateTerminalTransaction(transaction, original)
         if (errors.length) throw new Error(errors.join(' — '))
