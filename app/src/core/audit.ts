@@ -10,6 +10,7 @@
  */
 
 import type { UserTreasuryAccess } from './treasuryAccess.ts'
+import type { PaymentTerminalAccess } from './paymentTerminalAccess.ts'
 
 export interface AuditEvent {
   id: number
@@ -226,6 +227,8 @@ export interface AppUser {
   deniedPerms?: string[]
   /** خزائن/بنوك المستخدم وعملياتها؛ undefined = سجل قديم غير مقيّد مؤقتاً. */
   treasuryAccess?: UserTreasuryAccess
+  /** ماكينات الدفع وعملياتها؛ undefined = مستخدم قديم غير مقيد مؤقتاً. */
+  paymentTerminalAccess?: PaymentTerminalAccess
   /**
    * ربط الحساب بسجل الموظف (طلب المالك): المستخدم يجب أن يكون موظفاً مسجلاً
    * أولاً ببياناته المالية والوظيفية — فتُخصم عليه السلف/العجوزات وتُربط وردياته.

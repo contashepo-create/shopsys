@@ -57,6 +57,7 @@ import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTo
 import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
 import { validateTerminalTransaction, type PaymentTerminalTransaction } from '../core/paymentTerminalTransactions.ts'
+import { assertTerminalOperation } from '../core/paymentTerminalAccess.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
 import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
@@ -5012,6 +5013,8 @@ export const useDataStore = create<DataState>()(
         const original = transaction.originalTransactionId ? state.paymentTerminalTransactions.find((row) => row.id === transaction.originalTransactionId) : undefined
         const errors = validateTerminalTransaction(transaction, original)
         if (errors.length) throw new Error(errors.join(' — '))
+        const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+        if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, transaction.terminalId, transaction.kind, transaction.amountMinor)
         set({ paymentTerminalTransactions: [...state.paymentTerminalTransactions, transaction] })
       },
 
