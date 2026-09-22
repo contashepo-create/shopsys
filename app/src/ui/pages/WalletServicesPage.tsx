@@ -15,10 +15,11 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function WalletServicesPage() {
-  const { walletOps, customers, journal, postWalletService, returnWalletService } = useDataStore()
+  const { walletOps, customers, journal, paymentTerminals, postWalletService, returnWalletService } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const approval = useSupervisorApproval() // موافقة المشرف على مرتجع خدمة المحافظ
@@ -38,6 +39,7 @@ export function WalletServicesPage() {
   const [customerId, setCustomerId] = useState(0)
   const [funding, setFunding] = useState('1101')
   const [receive, setReceive] = useState('1101')
+  const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [taxable, setTaxable] = useState(false) // أغلب خدمات المحافظ معفاة — اختياري حسب بلد/نشاط
   const [notes, setNotes] = useState('')
 
@@ -50,6 +52,8 @@ export function WalletServicesPage() {
 
   const save = (creditLimitOverrideBy?: string) => {
     try {
+      const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
+      if (terminal && !terminalPayment.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const chargeMinor = toMinor(charge || '0', cur.decimals)
       const op = postWalletService({
         type, provider, targetPhone,
@@ -58,7 +62,8 @@ export function WalletServicesPage() {
         paidMinor: paid === '' ? chargeMinor : toMinor(paid || '0', cur.decimals),
         customerId: customerId || null,
         fundingTreasury: funding,
-        receiveTreasury: receive,
+        receiveTreasury: terminal?.settlementAccountCode ?? receive,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
         vatPercent: taxable ? setup.vatPercent : 0,
         notes,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
@@ -186,7 +191,7 @@ export function WalletServicesPage() {
               <TreasuryPicker value={funding} onChange={setFunding} compact />
             </Field>
             <Field label="مكان استلام مبلغ العميل" hint="قد يختلف عن التمويل: كاش بالدرج وتحويل من إنستاباي">
-              <TreasuryPicker value={receive} onChange={setReceive} compact />
+              <div className="space-y-2"><TerminalPaymentPicker value={terminalPayment} onChange={setTerminalPayment}/>{!terminalPayment.terminalId && <TreasuryPicker value={receive} onChange={setReceive} compact />}</div>
             </Field>
             <Field label={`المدفوع الآن (${cur.symbol})`} hint="اتركه فارغاً = محصَّل بالكامل؛ الباقي دين على العميل">
               <input value={paid} onChange={(e) => setPaid(e.target.value)} className={inputCls} dir="ltr" placeholder="الكل" />

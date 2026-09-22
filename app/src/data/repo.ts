@@ -1889,6 +1889,7 @@ interface DataState {
     buyerCustomerId?: number | null
     /** تجاوز حد ائتمان المشتري بموافقة مدير */
     creditLimitOverrideBy?: string | null
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
   }) => Car
   /** تحويل سيارة للتأجير: تُنشأ كمعدة في وحدة الإيجار وتُربط بها */
   moveCarToRental: (carId: number, dailyRateMinor: number, monthlyRateMinor: number) => void
@@ -1941,7 +1942,7 @@ interface DataState {
   addMaintenanceService: (input: { nameAr: string; costMinor: number; priceMinor: number }) => MaintenanceService
   updateMaintenanceService: (id: number, patch: Partial<Omit<MaintenanceService, 'id'>>) => void
   /** خدمة محافظ/دفع إلكتروني (نمط mobileshop): الربح = المحصَّل − المدفوع للمزوّد، قيد متوازن فوري */
-  postWalletService: (input: WalletServiceInput & { date?: string; creditLimitOverrideBy?: string | null }) => WalletServiceOp
+  postWalletService: (input: WalletServiceInput & { date?: string; creditLimitOverrideBy?: string | null; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => WalletServiceOp
   /** مرتجع خدمة محافظ: قيد عاكس كامل + وسم العملية returned */
   returnWalletService: (opId: number, reason: string, approvedBy?: string) => WalletServiceOp
   /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
@@ -8467,7 +8468,17 @@ export const useDataStore = create<DataState>()(
           buyerCustomerId: args.buyerCustomerId ?? null,
           salePayment: args.payment, saleTotalMinor: totals.totalMinor,
         }
-        set({ cars: state.cars.map((c) => (c.id === car.id ? updated : c)), journal: [...state.journal, entry] })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          if (args.payment !== 'cash') throw new Error('الماكينة متاحة للبيع المحصل فقط')
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', totals.totalMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'car_sale', documentId: car.id, amountMinor: totals.totalMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
+        set({ cars: state.cars.map((c) => (c.id === car.id ? updated : c)), journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return updated
       },
       moveCarToRental: (carId, dailyRateMinor, monthlyRateMinor) => {
@@ -8808,7 +8819,17 @@ export const useDataStore = create<DataState>()(
           totals, status: 'done', journalEntryId: entryId, returnEntryId: null,
           notes: sanitizeText(input.notes, 300),
         }
-        set({ walletOps: [...state.walletOps, op], journal: [...state.journal, entry] })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (input.terminalPayment) {
+          if (input.paidMinor <= 0) throw new Error('لا يوجد مبلغ محصل لتسجيله على الماكينة')
+          const terminal = state.paymentTerminals.find((row) => row.id === input.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== input.receiveTreasury) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === input.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', input.paidMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'wallet_service', documentId: opId, amountMinor: input.paidMinor, providerReference: input.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: input.terminalPayment.cardLast4 })
+        }
+        set({ walletOps: [...state.walletOps, op], journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return op
       },
 

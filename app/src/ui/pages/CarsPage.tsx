@@ -15,6 +15,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderCarSaleContractHtml } from '../print/printCarSale.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -26,7 +27,7 @@ const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
 }
 
 export function CarsPage() {
-  const { cars, journal, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, employees, addStaffCommission } = useDataStore()
+  const { cars, journal, paymentTerminals, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, employees, addStaffCommission } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -122,6 +123,7 @@ export function CarsPage() {
   const [sellVat, setSellVat] = useState(false)
   const [sellPayment, setSellPayment] = useState<'cash' | 'credit'>('cash')
   const [sellTreasury, setSellTreasury] = useState('1101')
+  const [sellTerminal, setSellTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   // عمولة موظف عن البيع (تعميم — أمر المالك): مصروف مربوط بالسيارة يدخل ربحيتها
   const [commEmpId, setCommEmpId] = useState('')
   const [commAmount, setCommAmount] = useState('')
@@ -131,9 +133,12 @@ export function CarsPage() {
   const doSell = (creditLimitOverrideBy?: string) => {
     if (!sellFor) return
     try {
+      const terminal = paymentTerminals.find((row) => row.id === sellTerminal.terminalId)
+      if (terminal && !sellTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const c = sellCar({
         carId: sellFor.id, priceMinor: toMinor(price, cur.decimals),
-        vatPercent: sellVat ? setup.vatPercent : 0, payment: sellPayment, buyerName: buyer.trim(), treasury: sellTreasury,
+        vatPercent: sellVat ? setup.vatPercent : 0, payment: sellPayment, buyerName: buyer.trim(), treasury: terminal?.settlementAccountCode ?? sellTreasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: sellTerminal.providerReference.trim(), cardLast4: sellTerminal.cardLast4 || undefined } : undefined,
         buyerCustomerId: buyerCustomerId || null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
@@ -359,7 +364,7 @@ export function CarsPage() {
                     </button>
                   ))}
                 </div>
-                {sellPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={sellTreasury} onChange={setSellTreasury} compact /></div>}
+                {sellPayment === 'cash' && <div className="mt-2 space-y-2"><TerminalPaymentPicker value={sellTerminal} onChange={setSellTerminal}/>{!sellTerminal.terminalId && <TreasuryPicker value={sellTreasury} onChange={setSellTreasury} compact />}</div>}
               </Field>
               <Field label="الضريبة">
                 <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
