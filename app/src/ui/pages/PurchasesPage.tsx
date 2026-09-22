@@ -1032,7 +1032,7 @@ export function PurchasesPage() {
                 <input value={editPaid} onChange={(e) => setEditPaid(e.target.value)} className={inputCls} dir="ltr" />
               </Field>
               <Field label="خزينة الدفع">
-                <TreasuryPicker value={editTreasury} onChange={setEditTreasury} compact />
+                <TreasuryPicker value={editTreasury} onChange={setEditTreasury} operation="payment" compact />
               </Field>
             </div>
 

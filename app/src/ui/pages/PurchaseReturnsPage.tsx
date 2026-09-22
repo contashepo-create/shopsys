@@ -271,7 +271,7 @@ export function PurchaseReturnsPage() {
                 className={`p-3 rounded-2xl border-2 font-bold text-sm transition-all disabled:opacity-40 ${refund === 'debt' ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
               >📉 تخفيض دين المورد {unpaidDebt > 0 ? `(المتبقي ${fmt(unpaidDebt)})` : '(مسددة بالكامل)'}</button>
             </div>
-            {refund === 'cash' && <TreasuryPicker value={treasury} onChange={setTreasury} compact />}
+            {refund === 'cash' && <TreasuryPicker value={treasury} onChange={setTreasury} operation="receipt" compact />}
 
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="سبب الإرجاع (اختياري): تالف، غير مطابق للمواصفات…" className={inputCls} />
 

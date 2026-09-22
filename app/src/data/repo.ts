@@ -2349,6 +2349,11 @@ export const useDataStore = create<DataState>()(
           if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
         }
         if (!Number.isInteger(inv.paidMinor) || inv.paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
+        const purchaseUser = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
+        if (inv.paidMinor > 0 && inv.custodyFileId == null) {
+          const errors = validateTreasuryAccess(purchaseUser?.treasuryAccess, inv.treasury ?? '1101', 'payment', inv.paidMinor)
+          if (errors.length) throw new Error(errors.join(' — '))
+        }
         // تحقق تواريخ الصلاحية للأصناف المتتبَّعة (القرار 5) قبل أي كتابة
         for (const l of inv.lines) {
           const item = state.items.find((it) => it.id === l.itemId)
@@ -2390,6 +2395,8 @@ export const useDataStore = create<DataState>()(
           if (paidBy === 'treasury') {
             const acc = e.payAccount || '1101'
             if (!state.treasuries.some((t) => t.code === acc)) throw new Error(`خزينة مصروف «${e.nameAr}» غير موجودة`)
+            const errors = validateTreasuryAccess(purchaseUser?.treasuryAccess, acc, 'payment', e.amountMinor)
+            if (errors.length) throw new Error(errors.join(' — '))
             expensePayments.push({ account: acc, amountMinor: e.amountMinor, note: `${e.nameAr} — مدفوع من ${state.treasuries.find((t) => t.code === acc)?.nameAr ?? acc}` })
           } else if (paidBy === 'custody') {
             if (e.custodyFileId == null) throw new Error(`حدد ملف العهدة الذي دفع مصروف «${e.nameAr}»`)
@@ -3222,7 +3229,13 @@ export const useDataStore = create<DataState>()(
             throw new Error(`قيمة المرتجع أكبر من دين الفاتورة المتبقي (${unpaid}) — اختر الاسترداد النقدي`)
           }
         }
-        // 2) القيد المتوازن
+        // 2) القيد المتوازن — الاسترداد النقدي من المورد «قبض» في خزينة المستخدم.
+        if (args.refund === 'cash') {
+          const treasuryCode = args.treasury ?? '1101'
+          const user = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
+          const errors = validateTreasuryAccess(user?.treasuryAccess, treasuryCode, 'receipt', supplierValue + inputVatShare)
+          if (errors.length) throw new Error(errors.join(' — '))
+        }
         const entryLines = buildPurchaseReturnEntry(total, args.refund, args.treasury ?? '1101', inputVatShare, supplierValue)
         const returnId = nextId(state.purchaseReturns)
         const entryId = nextId(state.journal)
