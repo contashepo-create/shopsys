@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildPurchaseReturnLinesPerLine, remainingPurchaseByLine } from '../src/core/purchases.ts'
+import { buildWarehouseDocs } from '../src/core/transfers.ts'
 
 const lines = [
   { itemId: 1, qty: 2, landedUnitCostMinor: 110, unitPriceMinor: 100, warehouseId: 1 },
@@ -26,5 +27,14 @@ describe('مرتجع الشراء سطراً بسطر', () => {
 
   it('يرفض تجاوز السطر حتى لو للصنف رصيد في سطر آخر', () => {
     expect(() => buildPurchaseReturnLinesPerLine(lines, [], [{ lineIndex: 0, qty: 2.5 }], () => 'صنف')).toThrow('المتبقي 2')
+  })
+
+  it('يسجل خروج المرتجع من المخزن المختار لا مخزن رأس الشراء', () => {
+    const returned = buildPurchaseReturnLinesPerLine(lines, [], [{ lineIndex: 0, qty: 1, warehouseId: 2 }], () => 'صنف')
+    const docs = buildWarehouseDocs(
+      [{ id: 11, warehouseId: 1, lines }], [], [],
+      [{ purchaseId: 11, lines: returned }],
+    )
+    expect(docs.some((doc) => doc.warehouseId === 2 && doc.lines[0].qtyDelta === -1)).toBe(true)
   })
 })

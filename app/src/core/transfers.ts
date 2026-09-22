@@ -117,7 +117,7 @@ export function buildWarehouseDocs(
   purchases: { id?: number; projectId?: number | null; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
   sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
   saleReturns: { saleId: number; lines: { itemId: number; qty: number; condition?: string; saleLineIndex?: number; warehouseId?: number | null }[] }[] = [],
-  purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number }[] }[] = [],
+  purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number; purchaseLineIndex?: number; warehouseId?: number | null }[] }[] = [],
 ): WarehouseDoc[] {
   const docs: WarehouseDoc[] = []
   const pushLineDoc = (warehouseId: number | null | undefined, itemId: number, qtyDelta: number) => {
@@ -169,16 +169,20 @@ export function buildWarehouseDocs(
     if (!purchase) continue
     for (const retLine of r.lines) {
       let left = retLine.qty
-      for (let i = 0; i < purchase.lines.length && left > 1e-9; i++) {
+      const indexes = retLine.purchaseLineIndex == null
+        ? purchase.lines.map((_, index) => index)
+        : [retLine.purchaseLineIndex]
+      for (const i of indexes) {
+        if (left <= 1e-9) break
         const pl = purchase.lines[i]
-        if (pl.itemId !== retLine.itemId) continue
+        if (!pl || pl.itemId !== retLine.itemId) continue
         const key = `${purchase.id ?? 0}:${i}`
         const can = remainingPurchaseLineQty.get(key) ?? 0
         if (can <= 0) continue
         const take = Math.min(left, can)
         remainingPurchaseLineQty.set(key, Math.round((can - take) * 1000) / 1000)
         left = Math.round((left - take) * 1000) / 1000
-        pushLineDoc(pl.warehouseId ?? purchase.warehouseId ?? null, retLine.itemId, -take)
+        pushLineDoc(retLine.warehouseId ?? pl.warehouseId ?? purchase.warehouseId ?? null, retLine.itemId, -take)
       }
     }
   }

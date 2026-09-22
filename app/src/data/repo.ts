@@ -26,7 +26,7 @@ import {
 } from '../core/auth.ts'
 import { validateConsumption, buildConsumptionEntry, consumptionTotalMinor, INTERNAL_USE_ACCOUNT } from '../core/consumption.ts'
 import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, type WalletServiceInput, type WalletServiceType, type WalletProvider, type WalletServiceTotals } from '../core/walletServices.ts'
-import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, type PurchaseReturnLine, type ExpensePaymentCredit } from '../core/purchases.ts'
+import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, buildPurchaseReturnLinesPerLine, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, type PurchaseReturnLine, type PurchaseReturnLineSpec, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
 import { validateProcessing, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
@@ -1343,7 +1343,9 @@ interface DataState {
    */
   postPurchaseReturn: (args: {
     purchaseId: number
-    qtyByItem: Map<number, number>
+    /** توافق قديم: تجميع بالصنف؛ المسار الجديد lineSpecs يحفظ السطر والمخزن. */
+    qtyByItem?: Map<number, number>
+    lineSpecs?: PurchaseReturnLineSpec[]
     refund: 'cash' | 'debt'
     reason: string
     treasury?: string
@@ -3146,13 +3148,40 @@ export const useDataStore = create<DataState>()(
         }
         // 1) سطور المرتجع بتكلفة الوحدة النهائية — بلا تجاوز للمتبقي ولا للمخزون
         const prior = state.purchaseReturns.filter((r) => r.purchaseId === purchase.id).flatMap((r) => r.lines)
-        const lines = buildPurchaseReturnLines(
-          purchase.lines, prior, args.qtyByItem,
-          (id) => {
-            const it = state.items.find((x) => x.id === id)
-            return it ? { nameAr: it.nameAr, stockQty: it.stockQty ?? 0 } : undefined
-          },
-        )
+        const itemName = (id: number) => state.items.find((item) => item.id === id)?.nameAr ?? `#${id}`
+        const lines = args.lineSpecs?.length
+          ? buildPurchaseReturnLinesPerLine(purchase.lines, prior, args.lineSpecs, itemName)
+          : buildPurchaseReturnLines(
+              purchase.lines, prior, args.qtyByItem ?? new Map(),
+              (id) => {
+                const it = state.items.find((x) => x.id === id)
+                return it ? { nameAr: it.nameAr, stockQty: it.stockQty ?? 0 } : undefined
+              },
+            )
+
+        // فحص الرصيد في مخزن الإخراج الفعلي لكل سطر قبل أي قيد أو كتابة.
+        if (args.lineSpecs?.length) {
+          const warehouseStock = computeWarehouseStock(
+            state.items, state.warehouses, state.transfers,
+            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns),
+          )
+          const needed = new Map<string, number>()
+          for (const line of lines) {
+            if (line.warehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === line.warehouseId)) {
+              throw new Error(`مخزن إخراج مرتجع الشراء غير موجود (${line.warehouseId ?? 'غير محدد'})`)
+            }
+            const key = `${line.warehouseId}:${line.itemId}`
+            needed.set(key, (needed.get(key) ?? 0) + line.qty)
+          }
+          for (const [key, qty] of needed) {
+            const [warehouseId, itemId] = key.split(':').map(Number)
+            const available = warehouseStock.get(warehouseId)?.get(itemId) ?? 0
+            if (Math.round(qty * 1000) > Math.round(available * 1000)) {
+              const warehouse = state.warehouses.find((candidate) => candidate.id === warehouseId)
+              throw new Error(`مخزون غير كافٍ — «${itemName(itemId)}» في مخزن «${warehouse?.nameAr ?? warehouseId}»: متاح ${available} ومطلوب ${qty}`)
+            }
+          }
+        }
         const total = purchaseReturnTotal(lines)
         // G4: المسترد من المورد = سعر فاتورته فقط (قبل المصاريف الموزعة) —
         // نصيب الشحن/الجمارك الموزع على البضاعة المرتجعة خسارة محققة (5111) لا يستردها المورد

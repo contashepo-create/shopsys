@@ -10,7 +10,7 @@ import { useDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../d
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { remainingPurchasable } from '../../core/purchases.ts'
+import { remainingPurchaseByLine } from '../../core/purchases.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -20,7 +20,7 @@ import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 
 export function PurchaseReturnsPage() {
-  const { purchases, purchaseReturns, suppliers, items, journal, postPurchaseReturn } = useDataStore()
+  const { purchases, purchaseReturns, suppliers, items, warehouses, journal, postPurchaseReturn } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -30,6 +30,7 @@ export function PurchaseReturnsPage() {
   const [pickQuery, setPickQuery] = useState('')
   const [purchase, setPurchase] = useState<PurchaseInvoice | null>(null)
   const [qtys, setQtys] = useState<Record<number, string>>({})
+  const [returnWarehouses, setReturnWarehouses] = useState<Record<number, number>>({})
   const [refund, setRefund] = useState<'cash' | 'debt'>('cash')
   const [treasury, setTreasury] = useState('1101')
   const [reason, setReason] = useState('')
@@ -66,9 +67,9 @@ export function PurchaseReturnsPage() {
   const supplierName = (id: number) => suppliers.find((s) => s.id === id)?.nameAr ?? '—'
 
   const remaining = useMemo(() => {
-    if (!purchase) return new Map<number, number>()
+    if (!purchase) return [] as number[]
     const prior = purchaseReturns.filter((r) => r.purchaseId === purchase.id).flatMap((r) => r.lines)
-    return remainingPurchasable(purchase.lines, prior)
+    return remainingPurchaseByLine(purchase.lines, prior)
   }, [purchase, purchaseReturns])
 
   const pickable = useMemo(() => {
@@ -89,6 +90,7 @@ export function PurchaseReturnsPage() {
   const startReturn = (p: PurchaseInvoice) => {
     setPurchase(p)
     setQtys({})
+    setReturnWarehouses({})
     setRefund((p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor > 0 ? 'debt' : 'cash')
     setReason('')
     setPickOpen(false)
@@ -100,12 +102,15 @@ export function PurchaseReturnsPage() {
     if (!purchase) return
     approval.request((approvedBy) => {
     try {
-      const map = new Map<number, number>()
-      for (const [id, v] of Object.entries(qtys)) {
-        const n = Number(v)
-        if (n > 0) map.set(Number(id), n)
-      }
-      const ret = postPurchaseReturn({ purchaseId: purchase.id, qtyByItem: map, refund, reason: reason.trim(), treasury, approvedBy })
+      const lineSpecs = Object.entries(qtys).flatMap(([indexText, value]) => {
+        const lineIndex = Number(indexText)
+        const qty = Number(value)
+        if (!(qty > 0)) return []
+        const source = purchase.lines[lineIndex]
+        const warehouseId = returnWarehouses[lineIndex] ?? source?.warehouseId ?? purchase.warehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? null
+        return [{ lineIndex, qty, warehouseId }]
+      })
+      const ret = postPurchaseReturn({ purchaseId: purchase.id, lineSpecs, refund, reason: reason.trim(), treasury, approvedBy })
       toast.show(`تم مرتجع الشراء ${ret.returnNumber} — خرجت البضاعة وتولد القيد ✓`)
       setPurchase(null)
     } catch (e) {
@@ -220,26 +225,34 @@ export function PurchaseReturnsPage() {
                 </tr>
               </thead>
               <tbody>
-                {purchase.lines.map((l) => {
-                  const rem = remaining.get(l.itemId) ?? 0
-                  const stock = items.find((it) => it.id === l.itemId)?.stockQty ?? 0
-                  const max = Math.min(rem, stock)
+                {purchase.lines.map((l, lineIndex) => {
+                  const rem = remaining[lineIndex] ?? 0
+                  const selectedWarehouseId = returnWarehouses[lineIndex] ?? l.warehouseId ?? purchase.warehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? null
                   return (
-                    <tr key={l.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <tr key={lineIndex} className="border-b border-slate-50 dark:border-slate-800/50">
                       <td className="px-3 py-2 font-bold">{itemName(l.itemId)}</td>
                       <td className="px-3 py-2">{l.qty}</td>
                       <td className="px-3 py-2">{fmt(l.landedUnitCostMinor)}</td>
-                      <td className={`px-3 py-2 font-bold ${max > 0 ? 'text-cyan-600' : 'text-slate-300'}`}>
-                        {rem}{stock < rem && <span className="text-[10px] text-amber-500 mr-1">(المخزون {stock})</span>}
-                      </td>
-                      <td className="px-3 py-2">
+                      <td className={`px-3 py-2 font-bold ${rem > 0 ? 'text-cyan-600' : 'text-slate-300'}`}>{rem}</td>
+                      <td className="px-3 py-2 space-y-1">
                         <input
-                          value={qtys[l.itemId] ?? ''}
-                          onChange={(e) => setQtys((q) => ({ ...q, [l.itemId]: e.target.value }))}
+                          value={qtys[lineIndex] ?? ''}
+                          onChange={(e) => setQtys((q) => ({ ...q, [lineIndex]: e.target.value }))}
                           placeholder="0"
-                          disabled={max <= 0}
+                          disabled={rem <= 0}
                           className={`${inputCls} text-center py-1.5 disabled:opacity-40`}
                         />
+                        {warehouses.length > 0 && (
+                          <select
+                            value={selectedWarehouseId ?? ''}
+                            onChange={(e) => setReturnWarehouses((current) => ({ ...current, [lineIndex]: Number(e.target.value) }))}
+                            disabled={rem <= 0}
+                            title="المخزن الذي ستخرج منه البضاعة المرتجعة للمورد"
+                            className="w-full rounded-lg border border-amber-200 dark:border-amber-800 bg-transparent px-1 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300"
+                          >
+                            {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}{warehouse.id === (l.warehouseId ?? purchase.warehouseId) ? ' (مخزن الاستلام)' : ''}</option>)}
+                          </select>
+                        )}
                       </td>
                     </tr>
                   )
