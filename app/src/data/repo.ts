@@ -56,7 +56,7 @@ import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliv
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
-import { remainingRefundableMinor, validateTerminalTransaction, type PaymentTerminalTransaction } from '../core/paymentTerminalTransactions.ts'
+import { remainingRefundableMinor, validateTerminalTransaction, type PaymentTerminalTransaction, type TerminalDocumentType } from '../core/paymentTerminalTransactions.ts'
 import { assertTerminalOperation, validateTerminalAccess } from '../core/paymentTerminalAccess.ts'
 import { calculateTerminalSettlement, netSettlementTransactions, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
@@ -1302,7 +1302,7 @@ interface DataState {
     /** تجاوز الحد الأدنى لسعر البيع بموافقة مدير (نمط DEXEF/الأمين) */
     priceFloorOverrideBy?: string | null
     /** تحصيل ماكينة يُحفظ ذرياً مع الفاتورة؛ لا تمرر documentId/amount/user من الواجهة. */
-    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string; documentType?: TerminalDocumentType }
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -1426,6 +1426,8 @@ interface DataState {
     taxInclusive: boolean
     /** تجاوز حد ائتمان العميل (فوترة آجلة لعميل شركة تجاوز حده) */
     creditLimitOverrideBy?: string | null
+    /** تحصيل بطاقة أمر المطعم، يمر إلى فاتورة البيع الذرية. */
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string; documentType?: TerminalDocumentType }
   }) => SaleInvoice
   /** سند قبض/صرف/تحويل — يولّد قيده المتوازن فوراً */
   postVoucher: (args: {
@@ -2981,7 +2983,7 @@ export const useDataStore = create<DataState>()(
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
           if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', totals.totalMinor)
-          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `sale:${saleId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: 'sale', documentId: String(saleId), amountMinor: totals.totalMinor, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
+          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `sale:${saleId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: args.terminalPayment.documentType ?? 'sale', documentId: String(saleId), amountMinor: totals.totalMinor, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
           const errors = validateTerminalTransaction(terminalTransaction); if (errors.length) throw new Error(errors.join(' — '))
         }
         set({
@@ -3890,6 +3892,7 @@ export const useDataStore = create<DataState>()(
           treasury: args.treasury,
           paidMinor: args.paidMinor,
           creditLimitOverrideBy: args.creditLimitOverrideBy ?? null,
+          terminalPayment: args.terminalPayment ? { ...args.terminalPayment, documentType: 'restaurant_order' } : undefined,
         })
         set({
           restaurantOrders: get().restaurantOrders.map((o) =>

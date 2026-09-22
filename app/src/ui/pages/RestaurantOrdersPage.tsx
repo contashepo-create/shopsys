@@ -17,7 +17,7 @@ import { printHtml } from '../print/printReceipt.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 
 export function RestaurantOrdersPage() {
-  const { restaurantOrders, items, treasuries, openRestaurantOrder, setRestaurantOrderLines, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, getEffectivePrice } = useDataStore()
+  const { restaurantOrders, items, treasuries, paymentTerminals, appUsers, currentUserId, openRestaurantOrder, setRestaurantOrderLines, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, getEffectivePrice } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -34,9 +34,14 @@ export function RestaurantOrdersPage() {
   const [itemQuery, setItemQuery] = useState('')
   const [settleFor, setSettleFor] = useState<number | null>(null)
   const [payTreasury, setPayTreasury] = useState('1101')
+  const [terminalId, setTerminalId] = useState('')
+  const [terminalReference, setTerminalReference] = useState('')
+  const [cardLast4, setCardLast4] = useState('')
   const [svcPct, setSvcPct] = useState('')
   const [delFee, setDelFee] = useState('')
   const settleOrder = open.find((o) => o.id === settleFor) ?? null
+  const activeUser = appUsers.find((user) => user.id === currentUserId)
+  const availableTerminals = paymentTerminals.filter((terminal) => terminal.status === 'active' && (!activeUser || activeUser.roleId === 'owner' || !activeUser.paymentTerminalAccess || activeUser.paymentTerminalAccess.grants.some((grant) => grant.terminalId === terminal.id && grant.operations.includes('charge'))))
 
   /* تقسيم الفاتورة (فودكس/Toast): اختيار سطور تُفصل لأمر جديد يُفوتر مستقلاً */
   const [splitOpen, setSplitOpen] = useState(false)
@@ -100,10 +105,13 @@ export function RestaurantOrdersPage() {
   const settle = () => {
     if (!settleOrder) return
     try {
+      const terminal = availableTerminals.find((row) => row.id === terminalId)
+      if (terminalId && !terminalReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const sale = settleRestaurantOrder({
         orderId: settleOrder.id,
         payment: 'cash',
-        treasury: payTreasury as never,
+        treasury: (terminal?.settlementAccountCode ?? payTreasury) as never,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalReference.trim(), cardLast4: cardLast4 || undefined } : undefined,
         serviceChargePercent: Number(svcPct) || 0,
         deliveryFeeMinor: delFee.trim() ? toMinor(delFee, cur.decimals) : 0,
         taxPercent: setup.vatPercent,
@@ -112,7 +120,7 @@ export function RestaurantOrdersPage() {
       toast.show(`قُفل ${settleOrder.orderNumber} بالفاتورة ${sale.invoiceNumber} — ${fmt(sale.totals.totalMinor)} ${cur.symbol} ✓`)
       setSettleFor(null)
       if (activeId === settleOrder.id) setActiveId(null)
-      setSvcPct(''); setDelFee('')
+      setSvcPct(''); setDelFee(''); setTerminalId(''); setTerminalReference(''); setCardLast4('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -230,11 +238,18 @@ export function RestaurantOrdersPage() {
               {settleOrder.type === 'delivery' && (
                 <Field label={`رسوم توصيل (${cur.symbol})`}><input value={delFee} onChange={(e) => setDelFee(e.target.value)} className={inputCls} dir="ltr" placeholder="0" /></Field>
               )}
-              <Field label="الخزينة المستلمة">
+              <Field label="طريقة التحصيل">
+                <select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}>
+                  <option value="">💰 نقدي/بنك</option>
+                  {availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}
+                </select>
+              </Field>
+              {!terminalId && <Field label="الخزينة المستلمة">
                 <select value={payTreasury} onChange={(e) => setPayTreasury(e.target.value)} className={inputCls}>
                   {treasuries.map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
                 </select>
-              </Field>
+              </Field>}
+              {terminalId && <><Field label="مرجع إيصال الماكينة *"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" maxLength={4} className={inputCls}/></Field></>}
             </div>
             <p className="text-[11px] text-slate-400">الضريبة والوصفات وخصم الخامات كلها عبر فاتورة الكاشير نفسها — قيد واحد متوازن.</p>
             <Btn onClick={settle} className="w-full">قفل الأمر وإصدار الفاتورة</Btn>
