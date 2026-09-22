@@ -729,3 +729,4 @@ git push origin "$(git branch --show-current)"
 ### 11.10 سجل تنفيذ منظومة الفواتير العالمية
 
 - **INV-0.1 دورة الحياة (2026-09-22):** أضيفت نواة domain خالصة `core/documentLifecycle.ts` للحالات draft/approved/posted/partially_reversed/reversed/voided. تمنع تعديل/إلغاء المرحّل، ولا تسجل عكساً دون مستند مرتبط، وتتحقق من idempotency key. لا تربطها بـlocalStorage؛ دمجها القادم عبر Repository ثم SQLite. اختبارات القواعد في `tests/document_lifecycle.test.ts`.
+- **INV-0.2 metadata وعقد التخزين (2026-09-22):** أضيف `core/commercialDocument.ts` للحقول المشتركة والتحقق وقراءة السجلات القديمة (وجود journalEntryId ⇒ posted)، ونموذج audit event. أضيف `data/commercialDocumentRepository.ts` كعقد async ذري بنتيجة created/duplicate؛ تنفيذ Desktop يجب أن يفرض UNIQUE(idempotency_key) ومعاملة SQLite واحدة للمستند والقيد والمخزون. لا تنفذ منع التكرار بفحص ذاكرة ثم كتابة منفصلة.
