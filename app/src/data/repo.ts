@@ -1724,7 +1724,7 @@ interface DataState {
   /** عقد إيجار: يولّد جدول الأقساط ويقبض التأمين (2103) ويشغل الوحدة */
   addLease: (args: { propertyId: number; unitId: number; tenantName: string; tenantId?: number | null; startDate: string; months: number; frequency: RentFrequency; totalRentMinor: number; depositMinor: number; ejarNumber?: string; treasury?: string }) => Lease
   /** تحصيل قسط إيجار: مملوك → 4113، مدار → 2115 نصيب المالك + 4114 سعي (نمط الوسيط) */
-  collectLeaseInstallment: (args: { leaseId: number; seq: number; amountMinor?: number; vatOnRent?: boolean; treasury?: string }) => { paidMinor: number; commissionMinor: number; ownerShareMinor: number }
+  collectLeaseInstallment: (args: { leaseId: number; seq: number; amountMinor?: number; vatOnRent?: boolean; treasury?: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => { paidMinor: number; commissionMinor: number; ownerShareMinor: number }
   /** سداد المتجمع لمالك عقار مدار: 2115 ← نقدية */
   payPropertyOwner: (args: { propertyId: number; amountMinor: number; treasury?: string }) => void
   /** رصيد مستحق مالك عقار مدار (تحصيلات ناقص سداداته) */
@@ -7030,13 +7030,20 @@ export const useDataStore = create<DataState>()(
         const ownerTxns = ownerShareMinor > 0
           ? [...state.ownerTxns, { id: nextId(state.ownerTxns), propertyId: property.id, kind: 'collection' as const, amountMinor: ownerShareMinor, date: now.slice(0, 10), note: label, journalEntryId: entryId }]
           : state.ownerTxns
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          if (terminal.settlementAccountCode !== treasury) throw new Error('حساب تحصيل الإيجار لا يطابق حساب الماكينة')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', amount)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'rental', documentId: `${lease.id}:${inst.seq}`, amountMinor: amount, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
         set({
-          leases: state.leases.map((l) => l.id === lease.id ? {
-            ...l,
-            installments: l.installments.map((i) => (i.seq === inst.seq ? { ...i, paidMinor: i.paidMinor + amount, paidAt: i.paidMinor + amount >= i.amountMinor ? now.slice(0, 10) : i.paidAt } : i)),
-          } : l),
-          ownerTxns,
-          journal: [...state.journal, entry],
+          leases: state.leases.map((l) => l.id === lease.id ? { ...l, installments: l.installments.map((i) => (i.seq === inst.seq ? { ...i, paidMinor: i.paidMinor + amount, paidAt: i.paidMinor + amount >= i.amountMinor ? now.slice(0, 10) : i.paidAt } : i)) } : l),
+          ownerTxns, journal: [...state.journal, entry],
+          ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
         return { paidMinor: amount, commissionMinor, ownerShareMinor }
       },
