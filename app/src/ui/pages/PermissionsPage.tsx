@@ -13,6 +13,8 @@ import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/au
 import { hashPin, suggestRoleForJobTitle, matchesOwnerIdentity, findUserByIdentifier } from '../../core/audit.ts'
 import { updateSavedLoginPin } from '../../data/savedLogin.ts'
 import type { TreasuryOperation } from '../../core/treasuryAccess.ts'
+import { getCountry } from '../../core/countries.ts'
+import { toMinor } from '../../core/money.ts'
 import { Btn, Field, inputCls, Modal, useToast, PinInput } from '../components/ui.tsx'
 
 export function PermissionsPage() {
@@ -21,6 +23,7 @@ export function PermissionsPage() {
   const { appUsers, currentUserId, treasuries, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
   const setup = useAppStore.getState().setup
+  const currencyDecimals = Number((setup.countryCode && getCountry(setup.countryCode)?.currency.decimals) ?? 2)
   const allRoles = rolesWithOverrides(roleOverrides, customRoles, setup.activityId)
   // فلترة حسب النشاط (أمر المالك): «كاشير» لا يظهر لنشاط بلا كاشير،
   // والصلاحيات المعروضة = العامة + ما تخص وحدات النشاط المفعلة فقط
@@ -536,6 +539,20 @@ export function PermissionsPage() {
                         }} /> {operation.label}</label>
                       })}
                     </div>
+                    {grant && (
+                      <label className="flex items-center gap-2 text-[10px] text-slate-500">
+                        حد العملية (0 = بلا حد)
+                        <input
+                          type="number" min="0" step="0.01"
+                          value={grant.maxAmountMinor ? grant.maxAmountMinor / (10 ** currencyDecimals) : ''}
+                          onChange={(event) => {
+                            const maxAmountMinor = event.target.value ? toMinor(event.target.value, currencyDecimals) : null
+                            save((grants ?? []).map((item) => item.treasuryCode === treasury.code ? { ...item, maxAmountMinor } : item))
+                          }}
+                          className={`${inputCls} !py-1 !w-32`}
+                        />
+                      </label>
+                    )}
                   </div>
                 )
               })}
