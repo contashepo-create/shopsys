@@ -49,7 +49,7 @@ const TEST_STEP: Record<TestStatus, { label: string; next: TestStatus | null; ne
 /* ═══════════════ 1) الطلبات والنتائج ═══════════════ */
 
 export function LabOrdersPage() {
-  const { labOrders, labPatients, labReferrers, labTests, journal, registerLabOrder, advanceLabTest, refundLabOrder, insuranceProviders, registerInsuredLabOrder } = useDataStore()
+  const { labOrders, labPatients, labReferrers, labTests, journal, paymentTerminals, registerLabOrder, advanceLabTest, refundLabOrder, insuranceProviders, registerInsuredLabOrder } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useCur()
   const toast = useToast()
@@ -63,6 +63,7 @@ export function LabOrdersPage() {
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [insuranceId, setInsuranceId] = useState('') // '' = بلا تغطية
   const [treasury, setTreasury] = useState('1101')
+  const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [discount, setDiscount] = useState('0')
   const [withVat, setWithVat] = useState(false)
   const [notes, setNotes] = useState('')
@@ -82,6 +83,9 @@ export function LabOrdersPage() {
   const creditApproval = useSupervisorApproval('sales.credit.override')
   const save = (creditLimitOverrideBy?: string) => {
     try {
+      const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
+      if (terminal && !terminalPayment.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
+      const terminalInput = terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined
       const o = insuranceId
         ? registerInsuredLabOrder({
             patientId: Number(patientId),
@@ -90,7 +94,8 @@ export function LabOrdersPage() {
             providerId: Number(insuranceId),
             vatPercent: withVat ? setup.vatPercent : 0,
             notes: notes.trim(),
-            treasury,
+            treasury: terminal?.settlementAccountCode ?? treasury,
+            terminalPayment: terminalInput,
           })
         : registerLabOrder({
             patientId: Number(patientId),
@@ -100,7 +105,8 @@ export function LabOrdersPage() {
             discountPercent: Number(discount) || 0,
             vatPercent: withVat ? setup.vatPercent : 0,
             notes: notes.trim(),
-            treasury,
+            treasury: terminal?.settlementAccountCode ?? treasury,
+            terminalPayment: terminalInput,
             creditLimitOverrideBy: creditLimitOverrideBy ?? null,
           })
       toast.show(`سُجل الطلب ${o.orderNumber} بقيد متوازن${o.commissionMinor > 0 ? ` + استحقاق عمولة ${fmt(o.commissionMinor)}` : ''} ✅`)
@@ -240,7 +246,7 @@ export function LabOrdersPage() {
                   </button>
                 ))}
               </div>
-              {payment === 'cash' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
+              {(payment === 'cash' || insuranceId) && <div className="mt-2 space-y-2"><TerminalPaymentPicker value={terminalPayment} onChange={setTerminalPayment}/>{!terminalPayment.terminalId && <TreasuryPicker value={treasury} onChange={setTreasury} compact />}</div>}
             </Field>
             <Field label="خصم ٪"><input value={discount} onChange={(e) => setDiscount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="الضريبة">

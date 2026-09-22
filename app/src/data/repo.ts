@@ -1618,7 +1618,7 @@ interface DataState {
   /** بيع كاشير بتغطية: نصيب المريض نقداً + نصيب الجهة مطالبة 1110 (مع التكلفة) */
   postInsuredSale: (args: { lines: CartLine[]; providerId: number; taxPercent: number; taxInclusive: boolean; treasury?: string }) => { patientShareMinor: number; providerShareMinor: number }
   /** طلب معمل بتغطية: نفس المنطق على إيراد 4106 بلا تكلفة بضاعة */
-  registerInsuredLabOrder: (args: { patientId: number; referrerId: number | null; testIds: number[]; providerId: number; vatPercent: number; notes?: string; treasury?: string }) => LabOrder
+  registerInsuredLabOrder: (args: { patientId: number; referrerId: number | null; testIds: number[]; providerId: number; vatPercent: number; notes?: string; treasury?: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => LabOrder
   /** رصيد مطالبات جهة غير محصلة */
   getClaimBalance: (providerId: number) => number
   /** تحصيل كل مطالبات جهة دفعة واحدة */
@@ -1687,6 +1687,7 @@ interface DataState {
     treasury?: string
     /** تجاوز حد ائتمان العميل المرتبط بالمريض بموافقة مدير */
     creditLimitOverrideBy?: string | null
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
   }) => LabOrder
   /** تقدُّم فحص في دورته: سحب العينة ← نتيجة (بقيمة) ← اعتماد. انتقالات مشروعة فقط */
   advanceLabTest: (orderId: number, testId: number, to: TestStatus, resultValue?: string) => LabOrder
@@ -6088,7 +6089,16 @@ export const useDataStore = create<DataState>()(
           date: now.slice(0, 10), totalMinor: totals.totalMinor, claimMinor: providerShareMinor,
           settled: false, settlementEntryId: null,
         }
-        set({ labOrders: [...state.labOrders, order], insuranceClaims: [...state.insuranceClaims, claim], journal })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          if (patientShareMinor <= 0) throw new Error('لا توجد حصة مريض محصلة على الماكينة')
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', patientShareMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'lab', documentId: String(orderId), amountMinor: patientShareMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
+        set({ labOrders: [...state.labOrders, order], insuranceClaims: [...state.insuranceClaims, claim], journal, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return order
       },
       getClaimBalance: (providerId) => {
@@ -6519,7 +6529,16 @@ export const useDataStore = create<DataState>()(
           commissionMinor, commissionEntryId, commissionPaid: false, commissionPayoutEntryId: null,
           notes: args.notes,
         }
-        set({ labOrders: [...state.labOrders, order], journal })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          if (args.payment !== 'cash') throw new Error('الماكينة متاحة للطلب المحصل فقط')
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', totals.totalMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'lab', documentId: String(orderId), amountMinor: totals.totalMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
+        set({ labOrders: [...state.labOrders, order], journal, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return order
       },
       advanceLabTest: (orderId, testId, to, resultValue) => {
