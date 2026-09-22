@@ -207,11 +207,15 @@ export function CarsPage() {
   const [cgBuyerCustomerId, setCgBuyerCustomerId] = useState(0)
   const [cgPayment, setCgPayment] = useState<'cash' | 'credit'>('cash')
   const [cgTreasury, setCgTreasury] = useState('1101')
+  const [cgTerminal, setCgTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const doSellConsignment = (creditLimitOverrideBy?: string) => {
     if (!cgSellCar) return
     try {
+      const terminal = paymentTerminals.find((row) => row.id === cgTerminal.terminalId)
+      if (terminal && !cgTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const sold = sellConsignmentCar({
-        id: cgSellCar.id, salePriceMinor: toMinor(cgSalePrice, cur.decimals), payment: cgPayment, buyerName: cgBuyer.trim(), treasury: cgTreasury,
+        id: cgSellCar.id, salePriceMinor: toMinor(cgSalePrice, cur.decimals), payment: cgPayment, buyerName: cgBuyer.trim(), treasury: terminal?.settlementAccountCode ?? cgTreasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: cgTerminal.providerReference.trim(), cardLast4: cgTerminal.cardLast4 || undefined } : undefined,
         buyerCustomerId: cgBuyerCustomerId || null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
@@ -540,7 +544,7 @@ export function CarsPage() {
                   ))}
                 </div>
               </Field>
-              {cgPayment === 'cash' && <Field label="إلى"><TreasuryPicker value={cgTreasury} onChange={setCgTreasury} compact /></Field>}
+              {cgPayment === 'cash' && <div className="space-y-2"><TerminalPaymentPicker value={cgTerminal} onChange={setCgTerminal}/>{!cgTerminal.terminalId && <TreasuryPicker value={cgTreasury} onChange={setCgTreasury} compact />}</div>}
             </div>
             {cgSalePrice && toMinor(cgSalePrice, cur.decimals) >= cgSellCar.ownerNetMinor && (
               <div className="rounded-xl bg-violet-500/10 border border-violet-500/30 p-3 text-[12px] font-bold text-violet-700 dark:text-violet-300">

@@ -1903,6 +1903,7 @@ interface DataState {
     /** مشترٍ من سجل العملاء — إلزامي للبيع الآجل */
     buyerCustomerId?: number | null
     creditLimitOverrideBy?: string | null
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
   }) => ConsignmentCar
   /** سداد صافي المالك: 2110 / خزينة — يقفل الملف */
   payConsignmentOwner: (id: number, treasury?: string) => void
@@ -1945,7 +1946,7 @@ interface DataState {
   /** خدمة محافظ/دفع إلكتروني (نمط mobileshop): الربح = المحصَّل − المدفوع للمزوّد، قيد متوازن فوري */
   postWalletService: (input: WalletServiceInput & { date?: string; creditLimitOverrideBy?: string | null; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => WalletServiceOp
   /** مرتجع خدمة محافظ: قيد عاكس كامل + وسم العملية returned */
-  returnWalletService: (opId: number, reason: string, approvedBy?: string) => WalletServiceOp
+  returnWalletService: (opId: number, reason: string, approvedBy?: string, terminalRefund?: { originalTransactionId: string; providerReference: string }) => WalletServiceOp
   /** ترحيل تحويل مخزني: تحقق ضد رصيد المخزن المصدر — بلا قيد (حركة داخلية) */
   postTransfer: (args: { fromWarehouseId: number; toWarehouseId: number; lines: TransferLine[]; notes: string }) => StockTransfer
   /** اقتناء أصل ثابت: قيد 1201 / 1101 + 2101 وترقيم FA-#### */
@@ -8561,7 +8562,16 @@ export const useDataStore = create<DataState>()(
           salePayment: args.payment,
           saleEntryId: entryId, soldAt: now,
         }
-        set({ consignmentCars: state.consignmentCars.map((c) => (c.id === car.id ? updated : c)), journal: [...state.journal, entry] })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          if (args.payment !== 'cash') throw new Error('الماكينة متاحة للبيع المحصل فقط')
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', args.salePriceMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'car_sale', documentId: `consignment:${car.id}`, amountMinor: args.salePriceMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
+        set({ consignmentCars: state.consignmentCars.map((c) => (c.id === car.id ? updated : c)), journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return updated
       },
       payConsignmentOwner: (id, treasury = '1101') => {
@@ -8834,7 +8844,7 @@ export const useDataStore = create<DataState>()(
         return op
       },
 
-      returnWalletService: (opId, reason, approvedBy) => {
+      returnWalletService: (opId, reason, approvedBy, terminalRefundInput) => {
         const state = get()
         const op = state.walletOps.find((o) => o.id === opId)
         if (!op) throw new Error('العملية غير موجودة')
@@ -8852,10 +8862,19 @@ export const useDataStore = create<DataState>()(
         }
         const stamp = approvalStamp(state, approvedBy)
         const updated: WalletServiceOp = { ...op, status: 'returned', returnEntryId: entryId, approvedBy: stamp.approvedBy, requestedBy: stamp.requestedBy }
+        let terminalRefund: PaymentTerminalTransaction | null = null
+        if (terminalRefundInput) {
+          const original = state.paymentTerminalTransactions.find((row) => row.id === terminalRefundInput.originalTransactionId && row.kind === 'charge' && row.documentType === 'wallet_service' && row.documentId === String(op.id))
+          if (!original) throw new Error('تحصيل الماكينة الأصلي غير موجود')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === original.terminalId && row.providerReference === terminalRefundInput.providerReference.trim() && row.kind === 'refund')) throw new Error('مرجع رد المزود مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, original.terminalId, 'refund', op.paidMinor)
+          terminalRefund = buildTerminalRefund(original, state.paymentTerminalTransactions, { documentId: `${op.id}:${entryId}`, amountMinor: op.paidMinor, providerReference: terminalRefundInput.providerReference, occurredAt: now, userId: state.currentUserId ?? 0 })
+        }
         set({
           walletOps: state.walletOps.map((o) => (o.id === opId ? updated : o)),
           journal: [...state.journal.map((e) => (e.id === orig.id ? { ...e, reversedByEntryId: entryId } : e)), entry],
           auditLog: appendAudit(state.auditLog, [{ at: now, user: stamp.requestedBy, kind: 'doc', title: `مرتجع خدمة محافظ ${op.opNumber}` + (stamp.approvedBy !== stamp.requestedBy ? ` — اعتمده «${stamp.approvedBy}»` : '') }]),
+          ...(terminalRefund ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalRefund] } : {}),
         })
         return updated
       },

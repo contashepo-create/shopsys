@@ -19,7 +19,7 @@ import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function WalletServicesPage() {
-  const { walletOps, customers, journal, paymentTerminals, postWalletService, returnWalletService } = useDataStore()
+  const { walletOps, customers, journal, paymentTerminals, paymentTerminalTransactions, postWalletService, returnWalletService } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const approval = useSupervisorApproval() // موافقة المشرف على مرتجع خدمة المحافظ
@@ -76,12 +76,17 @@ export function WalletServicesPage() {
     }
   }
 
-  const doReturn = (op: WalletServiceOp) => approval.request((approvedBy) => {
+  const doReturn = (op: WalletServiceOp) => {
+    const originalTerminal = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'wallet_service' && row.documentId === String(op.id))
+    const refundReference = originalTerminal ? window.prompt('أدخل مرجع refund من إيصال ماكينة الدفع')?.trim() : undefined
+    if (originalTerminal && !refundReference) return
+    approval.request((approvedBy) => {
     try {
-      returnWalletService(op.id, 'مرتجع من الشاشة', approvedBy)
+      returnWalletService(op.id, 'مرتجع من الشاشة', approvedBy, originalTerminal ? { originalTransactionId: originalTerminal.id, providerReference: refundReference! } : undefined)
       toast.show(`ارتجعت ${op.opNumber} بقيد عاكس كامل ✓${approvedBy ? ` (اعتمده «${approvedBy}»)` : ''}`)
     } catch (e) { toast.show((e as Error).message, 'error') }
-  })
+    })
+  }
 
   const typeName = (t: string) => WALLET_SERVICE_TYPES.find((x) => x.id === t)?.nameAr ?? t
   const providerName = (p: string) => WALLET_PROVIDERS.find((x) => x.id === p)?.nameAr ?? p
