@@ -89,6 +89,8 @@ export function PosPage() {
   const [shiftOpeningCash, setShiftOpeningCash] = useState('')
   const [payment, setPayment] = useState<'cash' | 'credit' | 'terminal'>('cash')
   const [paymentTerminalId, setPaymentTerminalId] = useState('')
+  const [terminalReference, setTerminalReference] = useState('')
+  const [terminalCardLast4, setTerminalCardLast4] = useState('')
   const [customerId, setCustomerId] = useState<number | null>(null)
   // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
   const activePriceListId = useMemo(() => {
@@ -461,6 +463,8 @@ export function PosPage() {
       const isSplitOrCredit = payment === 'credit' || (payment === 'cash' && creditRemainder > 0)
       const selectedTerminal = payment === 'terminal' ? activePaymentTerminals.find((row) => row.id === paymentTerminalId) : null
       if (payment === 'terminal' && !selectedTerminal) throw new Error('اختر ماكينة دفع نشطة')
+      if (payment === 'terminal' && !terminalReference.trim()) throw new Error('أدخل رقم مرجع إيصال ماكينة الدفع')
+      if (terminalCardLast4 && !/^\d{4}$/.test(terminalCardLast4)) throw new Error('آخر أربعة أرقام يجب أن تكون 4 أرقام')
       const sale = postSale({
         lines: cart,
         customerId: isSplitOrCredit ? customerId : null,
@@ -476,7 +480,7 @@ export function PosPage() {
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
         warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
       })
-      if (selectedTerminal) recordPaymentTerminalTransaction({ id: crypto.randomUUID(), idempotencyKey: `sale:${sale.id}:terminal:${selectedTerminal.id}`, kind: 'charge', terminalId: selectedTerminal.id, branchId: selectedTerminal.branchId, userId: currentUserId ?? 0, documentId: String(sale.id), amountMinor: sale.totals.totalMinor, providerReference: `LOCAL-${sale.invoiceNumber}`, occurredAt: sale.date })
+      if (selectedTerminal) recordPaymentTerminalTransaction({ id: crypto.randomUUID(), idempotencyKey: `sale:${sale.id}:terminal:${selectedTerminal.id}`, kind: 'charge', terminalId: selectedTerminal.id, branchId: selectedTerminal.branchId, userId: currentUserId ?? 0, documentId: String(sale.id), amountMinor: sale.totals.totalMinor, providerReference: terminalReference.trim(), occurredAt: sale.date, cardLast4: terminalCardLast4 || undefined })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
       setCart([]); setQtyDrafts({})
@@ -484,6 +488,7 @@ export function PosPage() {
       setInvoiceDiscount(0)
       setPayOpen(false)
       setPayment('cash')
+      setPaymentTerminalId(''); setTerminalReference(''); setTerminalCardLast4('')
       setCustomerId(null)
       setPaidCash('')
       setExpiredBlock(null)
@@ -1041,7 +1046,7 @@ export function PosPage() {
               </button>
             </div>
 
-            {payment === 'terminal' && <div><div className="text-[11px] font-bold mb-1">ماكينة الدفع</div><select className={inputCls} value={paymentTerminalId} onChange={(e) => setPaymentTerminalId(e.target.value)}><option value="">اختر الماكينة</option>{activePaymentTerminals.map((row) => <option key={row.id} value={row.id}>{row.nameAr} · {row.code}</option>)}</select></div>}
+            {payment === 'terminal' && <div className="space-y-3"><div><div className="text-[11px] font-bold mb-1">ماكينة الدفع</div><select className={inputCls} value={paymentTerminalId} onChange={(e) => setPaymentTerminalId(e.target.value)}><option value="">اختر الماكينة</option>{activePaymentTerminals.map((row) => <option key={row.id} value={row.id}>{row.nameAr} · {row.code}</option>)}</select></div><div className="grid grid-cols-2 gap-2"><div><div className="text-[11px] font-bold mb-1">مرجع إيصال الماكينة *</div><input className={inputCls} value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} placeholder="رقم العملية"/></div><div><div className="text-[11px] font-bold mb-1">آخر 4 أرقام (اختياري)</div><input className={inputCls} inputMode="numeric" maxLength={4} value={terminalCardLast4} onChange={(e) => setTerminalCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="1234"/></div></div><p className="text-[10px] text-slate-400">لا يُخزن رقم البطاقة الكامل أو CVV.</p></div>}
 
             {payment === 'cash' && (
               <>
