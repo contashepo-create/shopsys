@@ -206,6 +206,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'vouchers', nameAr: 'سندات قبض وصرف', icon: Landmark, path: '/accounting/vouchers' },
       { id: 'cheques', nameAr: 'الشيكات', icon: Banknote, path: '/accounting/cheques' },
       { id: 'treasury', nameAr: 'الخزائن والبنوك', icon: PiggyBank, path: '/accounting/treasury' },
+      { id: 'payment-terminals', nameAr: 'ماكينات الدفع', icon: CreditCard, path: '/accounting/payment-terminals' },
       { id: 'assets', nameAr: 'الأصول والإهلاك', icon: TrendingDown, path: '/accounting/assets' },
       { id: 'ext-commissions', nameAr: 'العمولات (لي وعليّ)', icon: HandCoins, path: '/accounting/external-commissions' },
       { id: 'opening', nameAr: 'الأرصدة الافتتاحية', icon: Scale, path: '/accounting/opening-balances' },

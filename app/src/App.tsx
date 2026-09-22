@@ -45,6 +45,7 @@ import { CoaPage } from './ui/pages/CoaPage.tsx'
 import { TrialBalancePage } from './ui/pages/TrialBalancePage.tsx'
 import { VouchersPage } from './ui/pages/VouchersPage.tsx'
 import { TreasuryPage } from './ui/pages/TreasuryPage.tsx'
+import { PaymentTerminalsPage } from './ui/pages/PaymentTerminalsPage.tsx'
 import { ChequesPage } from './ui/pages/ChequesPage.tsx'
 import { EinvoicePage } from './ui/pages/EinvoicePage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
@@ -219,6 +220,7 @@ function Shell() {
         <Route path="/accounting/trial-balance" element={<TrialBalancePage />} />
         <Route path="/accounting/vouchers" element={<VouchersPage />} />
         <Route path="/accounting/treasury" element={<TreasuryPage />} />
+        <Route path="/accounting/payment-terminals" element={<PaymentTerminalsPage />} />
         <Route path="/accounting/cheques" element={<ChequesPage />} />
         <Route path="/accounting/assets" element={<AssetsPage />} />
         <Route path="/accounting/external-commissions" element={<ExternalCommissionsPage />} />
