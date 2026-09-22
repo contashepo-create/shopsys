@@ -14,11 +14,17 @@ import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { summarizeTreasuryByUser } from '../../core/treasuryUserReport.ts'
+import { allowedTreasuryCodes } from '../../core/treasuryAccess.ts'
 
 interface Move { date: string; description: string; inMinor: number; outMinor: number; balance: number; entryId: number }
 
 export function TreasuryPage() {
-  const { journal, treasuries, postVoucher, addTreasury, renameTreasury, removeTreasury } = useDataStore()
+  const { journal, treasuries, appUsers, currentUserId, postVoucher, addTreasury, renameTreasury, removeTreasury } = useDataStore()
+  const activeUser = appUsers.find((user) => user.id === currentUserId)
+  const visibleTreasuries = useMemo(() => {
+    const visibleCodes = allowedTreasuryCodes(activeUser?.treasuryAccess, 'view_balance')
+    return visibleCodes == null ? treasuries : treasuries.filter((treasury) => visibleCodes.includes(treasury.code))
+  }, [activeUser?.treasuryAccess, treasuries])
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -59,8 +65,8 @@ export function TreasuryPage() {
     return map
   }, [journal, treasuries])
   const userCashSummary = useMemo(
-    () => summarizeTreasuryByUser(journal, treasuries.map((treasury) => treasury.code)),
-    [journal, treasuries],
+    () => summarizeTreasuryByUser(journal, visibleTreasuries.map((treasury) => treasury.code)),
+    [journal, visibleTreasuries],
   )
 
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? code
@@ -130,7 +136,7 @@ export function TreasuryPage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-        {treasuries.map((t, i) => {
+        {visibleTreasuries.map((t, i) => {
           const acc = balances.get(t.code) ?? { balance: 0, moves: [] }
           const Icon = t.kind === 'cash' ? PiggyBank : Landmark
           const color = t.kind === 'cash' ? 'from-emerald-500 to-teal-500' : 'from-sky-500 to-cyan-500'
