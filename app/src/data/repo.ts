@@ -4603,7 +4603,12 @@ export const useDataStore = create<DataState>()(
           title: `تعديل صلاحيات خزائن المستخدم «${user.nameAr}» (${patch.treasuryAccess.grants?.length ?? 0} حساب)`,
           refKey: `user:${user.id}:treasury_access`,
         }]) : state.auditLog
-        set({ appUsers: nextUsers, auditLog: treasuryAudit })
+        const accessAudit = patch.paymentTerminalAccess ? appendAudit(treasuryAudit, [{
+          at: new Date().toISOString(), user: activeUserName(state), kind: 'edit',
+          title: `تعديل صلاحيات ماكينات المستخدم «${user.nameAr}» (${patch.paymentTerminalAccess.grants.length} ماكينة)`,
+          refKey: `user:${user.id}:payment_terminal_access`,
+        }]) : treasuryAudit
+        set({ appUsers: nextUsers, auditLog: accessAudit })
       },
       setRolePermissions: (roleId, permissions) => {
         // دور المالك محمي بنيوياً — أي محاولة تعديل تُرفض (صفر تجاوز)
