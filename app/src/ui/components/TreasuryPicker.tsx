@@ -3,6 +3,7 @@
  * يظهر في كل عملية نقدية: بيع، شراء، سندات، أقساط، رواتب، مصروفات…
  * يعرض كل الخزائن والبنوك المسجلة مهما كان عددها.
  */
+import { useEffect } from 'react'
 import { useDataStore } from '../../data/repo.ts'
 import { treasuryLabel } from '../../core/treasury.ts'
 import { allowedTreasuryCodes, type TreasuryOperation } from '../../core/treasuryAccess.ts'
@@ -22,6 +23,12 @@ export function TreasuryPicker({
   const currentUser = appUsers.find((user) => user.id === currentUserId)
   const allowed = operation ? allowedTreasuryCodes(currentUser?.treasuryAccess, operation) : null
   const treasuries = allowed == null ? allTreasuries : allTreasuries.filter((treasury) => allowed.includes(treasury.code))
+  const preferred = currentUser?.treasuryAccess?.defaultTreasuryCode
+  const effectiveFallback = treasuries.some((treasury) => treasury.code === preferred) ? preferred! : treasuries[0]?.code
+  const valueAllowed = treasuries.some((treasury) => treasury.code === value)
+  useEffect(() => {
+    if (effectiveFallback && !valueAllowed) onChange(effectiveFallback)
+  }, [effectiveFallback, onChange, valueAllowed])
   if (treasuries.length === 0) return <div className="text-[11px] font-bold text-rose-500">لا توجد خزينة/بنك مسموح لهذه العملية</div>
   // قائمة قصيرة (2-3) ⇒ أزرار واضحة؛ أطول ⇒ قائمة منسدلة
   if (treasuries.length <= 3 && !compact) {
