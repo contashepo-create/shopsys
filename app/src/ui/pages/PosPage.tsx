@@ -54,7 +54,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, recordPaymentTerminalTransaction } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, recordPaymentTerminalTransaction } = useDataStore()
   // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
   const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
   const openShift = currentOpenShift(shifts)
@@ -89,7 +89,6 @@ export function PosPage() {
   const [shiftOpeningCash, setShiftOpeningCash] = useState('')
   const [payment, setPayment] = useState<'cash' | 'credit' | 'terminal'>('cash')
   const [paymentTerminalId, setPaymentTerminalId] = useState('')
-  const activePaymentTerminals = paymentTerminals.filter((row) => row.status === 'active')
   const [customerId, setCustomerId] = useState<number | null>(null)
   // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
   const activePriceListId = useMemo(() => {
@@ -427,6 +426,14 @@ export function PosPage() {
   // تجاوز بيع منتهي الصلاحية بموافقة المدير (القرار 8) — يُسجَّل اسمه على الفاتورة
   /* مخزن البيع أعلى الفاتورة — لا اختيار مبهم: يبدأ بالمخزن الافتراضي أو الرئيسي */
   const [saleWarehouseId, setSaleWarehouseId] = useState<number | null>(defaultSaleWarehouseId)
+  const activeUser = appUsers.find((user) => user.id === currentUserId)
+  const saleBranchId = branches.find((branch) => branch.warehouseId === (saleWarehouseId ?? defaultSaleWarehouseId))?.id
+  const activePaymentTerminals = paymentTerminals.filter((terminal) => {
+    if (terminal.status !== 'active') return false
+    if (saleBranchId != null && terminal.branchId !== String(saleBranchId)) return false
+    if (!activeUser || activeUser.roleId === 'owner' || !activeUser.paymentTerminalAccess) return true
+    return activeUser.paymentTerminalAccess.grants.some((grant) => grant.terminalId === terminal.id && grant.operations.includes('charge'))
+  })
   const [expiredBlock, setExpiredBlock] = useState<string[] | null>(null)
   // ترقية القرار 8 لنمط POS العالمي: تجاوز الصلاحية برقم مشرف سري موثق
   // (لا مجرد كتابة اسم) — المالك/المخول بـsales.expiry.override يمر مباشرة
