@@ -1647,6 +1647,7 @@ interface DataState {
     treasury?: string
     /** تجاوز حد ائتمان العميل بموافقة مدير */
     creditLimitOverrideBy?: string | null
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
   }) => RentalContract
   /**
    * إقفال عقد: ردّ التأمين نقداً مع خصم اختياري يُعترف به إيراداً (4104).
@@ -6224,7 +6225,17 @@ export const useDataStore = create<DataState>()(
           notes: args.notes,
         }
 
-        set({ rentalContracts: [...state.rentalContracts, contract], journal: [...state.journal, entry] })
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (args.terminalPayment) {
+          if (totals.collectCashMinor <= 0) throw new Error('لا يوجد مبلغ محصل لتسجيله على الماكينة')
+          const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active' || terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('ماكينة الدفع أو حسابها غير صالح للتحصيل')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', totals.collectCashMinor)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'rental', documentId: `equipment:${contractId}`, amountMinor: totals.collectCashMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+        }
+        set({ rentalContracts: [...state.rentalContracts, contract], journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return contract
       },
       closeRental: (contractId, deductMinor, usage, treasury = '1101') => {

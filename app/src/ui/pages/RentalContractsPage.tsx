@@ -18,12 +18,13 @@ import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 
 export function RentalContractsPage() {
-  const { rentalContracts, equipment, customers, journal, openRental, closeRental, refundRental } = useDataStore()
+  const { rentalContracts, equipment, customers, journal, paymentTerminals, openRental, closeRental, refundRental } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -71,6 +72,7 @@ export function RentalContractsPage() {
   const [deposit, setDeposit] = useState('')
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [treasury, setTreasury] = useState('1101')
+  const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [withVat, setWithVat] = useState(false)
   const [notes, setNotes] = useState('')
   // ترقية القرار 25: نوع العقد الزمني + قراءة عدّاد التسليم للساعي
@@ -122,6 +124,8 @@ export function RentalContractsPage() {
   const creditApproval = useSupervisorApproval('sales.credit.override')
   const save = (creditLimitOverrideBy?: string) => {
     try {
+      const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
+      if (terminal && !terminalPayment.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const c = openRental({
         customerId: customerId ? Number(customerId) : null,
         equipmentId: equipmentId ? Number(equipmentId) : null,
@@ -129,7 +133,8 @@ export function RentalContractsPage() {
         notes: notes.trim(),
         rateType,
         startReading: rateType === 'hourly' && startReading.trim() !== '' ? Number(startReading) : null,
-        treasury,
+        treasury: terminal?.settlementAccountCode ?? treasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`فُتح العقد ${c.contractNumber} — يُقبض الآن ${fmt(c.totals.collectCashMinor)} ${cur.symbol} ✅`)
@@ -374,7 +379,7 @@ export function RentalContractsPage() {
                 <input value={startReading} onChange={(e) => setStartReading(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} placeholder="0" />
               </Field>
             )}
-            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>
+            {payment === 'cash' && <Field label="طريقة التحصيل"><div className="space-y-2"><TerminalPaymentPicker value={terminalPayment} onChange={setTerminalPayment}/>{!terminalPayment.terminalId && <TreasuryPicker value={treasury} onChange={setTreasury} compact />}</div></Field>}
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يُقبض نقداً ويُردّ عند الإقفال — لا يدخل الإيراد">
               <input value={deposit} onChange={(e) => setDeposit(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
             </Field>
