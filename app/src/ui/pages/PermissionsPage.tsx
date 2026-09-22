@@ -503,13 +503,15 @@ export function PermissionsPage() {
             { id: 'transfer_from', label: 'تحويل منه' }, { id: 'transfer_to', label: 'تحويل إليه' },
           ]
           const grants = user.treasuryAccess?.grants
-          const save = (next: typeof grants, defaultCode = user.treasuryAccess?.defaultTreasuryCode ?? null) =>
-            updateAppUser(user.id, { treasuryAccess: { grants: next ?? [], defaultTreasuryCode: defaultCode } })
+          const save = (next: typeof grants, defaultCode = user.treasuryAccess?.defaultTreasuryCode ?? null) => {
+            try { updateAppUser(user.id, { treasuryAccess: { grants: next ?? [], defaultTreasuryCode: defaultCode } }) }
+            catch (error) { toast.show((error as Error).message, 'error') }
+          }
           return (
             <div className="space-y-3">
               {grants === undefined && <div className="p-3 rounded-xl bg-amber-500/10 text-amber-700 text-[11px]">هذا مستخدم قديم غير مقيّد حالياً. اختر «منح الكل» أو فعّل الحسابات المطلوبة؛ بعد الحفظ تصبح القائمة ملزمة.</div>}
               <div className="flex justify-end gap-2">
-                <Btn variant="ghost" onClick={() => save([])}>منع الكل</Btn>
+                <Btn variant="ghost" onClick={() => save([], null)}>منع الكل</Btn>
                 <Btn onClick={() => save(treasuries.map((t) => ({ treasuryCode: t.code, operations: operations.map((o) => o.id) })), treasuries[0]?.code ?? null)}>منح الكل</Btn>
               </div>
               {treasuries.map((treasury) => {
@@ -528,7 +530,9 @@ export function PermissionsPage() {
                           const ops = grant?.operations ?? []
                           const nextOps = checked ? ops.filter((id) => id !== operation.id) : [...ops, operation.id]
                           const next = [...base.filter((g) => g.treasuryCode !== treasury.code), ...(nextOps.length ? [{ treasuryCode: treasury.code, operations: nextOps }] : [])]
-                          save(next, user.treasuryAccess?.defaultTreasuryCode ?? (nextOps.length ? treasury.code : null))
+                          const oldDefault = user.treasuryAccess?.defaultTreasuryCode ?? null
+                          const nextDefault = oldDefault === treasury.code && nextOps.length === 0 ? (next[0]?.treasuryCode ?? null) : (oldDefault ?? (nextOps.length ? treasury.code : null))
+                          save(next, nextDefault)
                         }} /> {operation.label}</label>
                       })}
                     </div>

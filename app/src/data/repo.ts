@@ -45,7 +45,7 @@ import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/servi
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
 import { fullCoa } from '../core/treasury.ts'
-import { validateTreasuryAccess, validateTreasuryTransfer } from '../core/treasuryAccess.ts'
+import { validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryAccess } from '../core/treasuryAccess.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, reduceSchedule, type InstallmentItem } from '../core/installments.ts'
@@ -4571,6 +4571,10 @@ export const useDataStore = create<DataState>()(
         if (patch.roleId && patch.roleId !== user.roleId) {
           const knownRoles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
           if (!knownRoles.some((r) => r.id === patch.roleId)) throw new Error('الدور المحدد غير موجود — اختر دوراً من قائمة الأدوار')
+        }
+        if (patch.treasuryAccess) {
+          const errors = validateUserTreasuryAccess(patch.treasuryAccess, state.treasuries.map((treasury) => treasury.code))
+          if (errors.length) throw new Error(errors.join(' — '))
         }
         set({
           appUsers: state.appUsers.map((u) => (u.id === id
