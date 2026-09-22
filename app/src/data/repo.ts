@@ -1935,6 +1935,7 @@ interface DataState {
     treasury?: string
     /** تجاوز حد ائتمان العميل بموافقة مدير — الآجل الخدمي دين كالبيع */
     creditLimitOverrideBy?: string | null
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
   }) => MaintenanceTicket
   /** كتالوج خدمات الصيانة (الأمر 23): إضافة/تعديل/تعطيل — التكلفة سرية لا تُطبع للعميل */
   addMaintenanceService: (input: { nameAr: string; costMinor: number; priceMinor: number }) => MaintenanceService
@@ -8742,11 +8743,21 @@ export const useDataStore = create<DataState>()(
           journalEntryId: entryId,
           deliveredAt: now,
         }
+        let terminalTransaction: PaymentTerminalTransaction | null = null
+        if (input.terminalPayment) {
+          const collectedNow = Math.max(0, totals.paidMinor - ticketPrepaid)
+          if (collectedNow <= 0) throw new Error('لا يوجد مبلغ محصل الآن لتسجيله على الماكينة')
+          const terminal = state.paymentTerminals.find((row) => row.id === input.terminalPayment!.terminalId)
+          if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          if (terminal.settlementAccountCode !== (input.treasury ?? '1101')) throw new Error('حساب تحصيل الصيانة لا يطابق حساب الماكينة')
+          if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === input.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً')
+          const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', collectedNow)
+          terminalTransaction = buildTerminalCharge({ terminal, documentType: 'maintenance', documentId: ticket.id, amountMinor: collectedNow, providerReference: input.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: input.terminalPayment.cardLast4 })
+        }
         set({
-          tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)),
-          journal: [...state.journal, entry],
-          items,
-          batches: ticketBatches,
+          tickets: state.tickets.map((t) => (t.id === ticketId ? updated : t)), journal: [...state.journal, entry], items, batches: ticketBatches,
+          ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
         })
         return updated
       },
