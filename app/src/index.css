@@ -162,3 +162,21 @@ html.dark { color-scheme: dark; }
 .glass {
   backdrop-filter: blur(12px);
 }
+
+/* محررات الفواتير: إدخال رقمي يدوي بلا أسهم المتصفح */
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
+
+/* كثافة عملية تستجيب للشاشات الصغيرة دون قص الحقول أو شريط الإجراءات */
+.invoice-editor { width: 100%; max-width: 100vw; overflow-x: clip; font-size: 0.875rem; }
+.invoice-editor section { border-radius: 0.75rem; }
+.invoice-editor input, .invoice-editor select, .invoice-editor textarea { padding: 0.45rem 0.65rem; min-height: 2.15rem; font-size: 0.78rem; }
+.invoice-editor th, .invoice-editor td { padding: 0.4rem 0.5rem; }
+@media (max-width: 767px) {
+  .invoice-editor { font-size: 0.8rem; }
+  .invoice-editor header { position: static; padding-block: 0.5rem; }
+  .invoice-editor header h1 { font-size: 1rem; }
+  .invoice-editor section { padding: 0.65rem; }
+  .invoice-editor .fixed.bottom-0 { flex-wrap: wrap; padding: 0.5rem; }
+}

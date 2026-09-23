@@ -3029,6 +3029,10 @@ export const useDataStore = create<DataState>()(
         // 2.7) تثبيت تكلفة السطر على المتوسط المرجح لحظة الترحيل (لا لحظة الإضافة للسلة):
         // لو رُحّلت فاتورة شراء أثناء وجود الصنف في السلة تغيّر المتوسط —
         // فيجب أن يخرج قيد التكلفة (5101/1103) بنفس متوسط لحظة البيع وإلا انفصل الدفتر عن المخزون
+        for (const line of saleLines) {
+          if (!Number.isFinite(line.qty) || line.qty <= 0) throw new Error('كمية البيع يجب أن تكون رقماً موجباً')
+          if (!Number.isInteger(line.unitPriceMinor) || line.unitPriceMinor < 0) throw new Error('سعر البيع لا يمكن أن يكون سالباً')
+        }
         const costedLines = saleLines.map((l) => {
           // صنف خدمة: لا تكلفة بضاعة — الإيراد كامل بلا قيد 5101/1103
           if (isServiceItem(l.itemId)) return l.unitCostMinor === 0 ? l : { ...l, unitCostMinor: 0 }
@@ -4555,6 +4559,10 @@ export const useDataStore = create<DataState>()(
         }
         // ③ تثبيت تكلفة السطور الجديدة على المتوسط بعد الإعادة (لا متوسط لحظة الإدخال)
         // G7: تكلفة السطر بوحدته المختارة = متوسط الوحدة الأساسية × معامل الوحدة
+        for (const line of args.lines) {
+          if (!Number.isFinite(line.qty) || line.qty <= 0) throw new Error('كمية البيع يجب أن تكون رقماً موجباً')
+          if (!Number.isInteger(line.unitPriceMinor) || line.unitPriceMinor < 0) throw new Error('سعر البيع لا يمكن أن يكون سالباً')
+        }
         const costedLines = args.lines.map((l) => {
           const cur = stockAfterRestore.get(l.itemId)
           return cur && Number.isInteger(cur.costMinor) ? { ...l, unitCostMinor: Math.round(cur.costMinor * (l.unitFactor ?? 1)) } : l
