@@ -563,7 +563,7 @@ export function PosPage() {
   return (
     <div className="pos-workspace flex flex-col gap-2 h-[calc(100vh-6.5rem)]">
       {/* ═══ يمين: الأصناف والبحث ═══ */}
-      <div className="flex flex-col gap-2 shrink-0">
+      <div className="relative flex flex-col gap-2 shrink-0">
         <div className="anim-up relative">
           <ScanBarcode size={17} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-brand-500" />
           <input
@@ -591,6 +591,11 @@ export function PosPage() {
           </div>
         )}
 
+        {query.trim() && filtered.length > 0 && (
+          <div className="absolute z-30 top-14 right-0 left-0 max-h-52 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-card-dark shadow-xl p-1">
+            {filtered.slice(0, 8).map((item) => <button key={item.id} type="button" onClick={()=>{addToCart(item.id);setQuery('');searchRef.current?.focus()}} className="w-full flex justify-between gap-3 px-3 py-2 rounded-lg hover:bg-emerald-500/10 text-xs"><span className="font-bold">{item.nameAr}</span><span className="text-slate-400">{item.sku||item.barcodes?.[0]||''} · {fmt(item.priceMinor)}</span></button>)}
+          </div>
+        )}
         <div className="text-[10px] text-slate-400 px-1">اكتب اسم الصنف أو امسح الباركود ثم اضغط Enter — لا توجد بطاقات تشغل مساحة الفاتورة.</div>
       </div>
 
