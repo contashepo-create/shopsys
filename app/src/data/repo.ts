@@ -2488,6 +2488,7 @@ export const useDataStore = create<DataState>()(
           if (expense.paidBy === 'payable' && !expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة لمصروف «${expense.nameAr}»`)
         }
         if (!Number.isInteger(inv.paidMinor) || inv.paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
+        if (inv.dueDate && inv.dueDate < inv.date) throw new Error('تاريخ استحقاق المورد لا يسبق تاريخ الفاتورة')
         const purchaseUser = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
         if (inv.paidMinor > 0 && inv.custodyFileId == null) {
           const errors = validateTreasuryAccess(purchaseUser?.treasuryAccess, inv.treasury ?? '1101', 'payment', inv.paidMinor)
