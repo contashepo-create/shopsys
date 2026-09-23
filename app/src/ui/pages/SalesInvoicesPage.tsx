@@ -180,6 +180,7 @@ export function SalesInvoicesPage() {
       settings: receipt,
     })
     if (qrDataUrl) model.qrDataUrl = qrDataUrl
+    if (s.customerReference || s.dueDate) model.footerText = `${s.customerReference ? `مرجع العميل: ${s.customerReference}` : ''}${s.customerReference && s.dueDate ? ' — ' : ''}${s.dueDate ? `الاستحقاق: ${s.dueDate}` : ''}${receipt.footerText ? ' — ' + receipt.footerText : ''}`
     printHtml(template === 'thermal' ? renderReceiptHtml(model, cur, receipt) : renderInvoiceA4Html(model, cur, receipt, template))
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${template.toUpperCase()} ${s.invoiceNumber} للطباعة 📄`)
   }
