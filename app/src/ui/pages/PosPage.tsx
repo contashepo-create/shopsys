@@ -614,7 +614,7 @@ export function PosPage() {
                       out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-emerald-400/60 hover:bg-emerald-500/[0.04]'
                     }`}
                   >
-                    <span className="flex-1 font-bold text-[13px] text-slate-800 dark:text-white truncate">{it.nameAr}</span>
+                    <span className="flex-1 font-bold text-[11px] text-slate-800 dark:text-white truncate">{it.nameAr}</span>
                     {it.sku && <span className="text-[10px] text-slate-400 font-mono shrink-0" dir="ltr">{it.sku}</span>}
                     <span className={`text-[10px] font-bold shrink-0 w-16 text-center ${out ? 'text-rose-500' : 'text-slate-400'}`}>{out ? 'نفد' : `${it.stockQty ?? 0} ${it.baseUnit}`}</span>
                     <span className="font-black text-emerald-600 dark:text-emerald-400 text-[13px] shrink-0 w-20 text-left" dir="ltr">{fmt(it.priceMinor)}</span>
@@ -637,7 +637,7 @@ export function PosPage() {
                     }`}
                   >
                     <div className="absolute -left-2 -top-2 text-4xl opacity-15 transition-transform duration-300 group-hover:scale-125 group-hover:rotate-6 select-none">🍽️</div>
-                    <div className="font-black text-[14px] text-slate-800 dark:text-white leading-snug line-clamp-2 relative">{it.nameAr}</div>
+                    <div className="font-black text-[12px] text-slate-800 dark:text-white leading-snug line-clamp-2 relative">{it.nameAr}</div>
                     <div className="flex items-center justify-between mt-3 relative">
                       <span className="font-black text-orange-600 dark:text-orange-400 text-base">{fmt(it.priceMinor)}</span>
                       {out && <span className="text-[10px] font-bold text-rose-500">نفد</span>}
@@ -660,7 +660,7 @@ export function PosPage() {
                       out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-sky-400/60'
                     }`}
                   >
-                    <div className="font-bold text-[13px] text-slate-800 dark:text-white leading-tight line-clamp-2">{it.nameAr}</div>
+                    <div className="font-bold text-[11px] text-slate-800 dark:text-white leading-tight line-clamp-2">{it.nameAr}</div>
                     <div className="flex flex-wrap items-center gap-1.5 mt-2">
                       {it.sku && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono" dir="ltr">{it.sku}</span>}
                       {it.trackSerial && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 font-bold">سيريال</span>}
@@ -923,7 +923,7 @@ export function PosPage() {
                   />
                   {/* إجمالي السطر */}
                   <div className="text-left">
-                    <div className="font-black text-[14px] text-slate-800 dark:text-white">
+                    <div className="font-black text-[12px] text-slate-800 dark:text-white">
                       {fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}
                     </div>
                     {l.discountPercent > 0 && (
