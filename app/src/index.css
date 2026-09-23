@@ -180,3 +180,13 @@ input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
   .invoice-editor section { padding: 0.65rem; }
   .invoice-editor .fixed.bottom-0 { flex-wrap: wrap; padding: 0.5rem; }
 }
+.sidebar-collapsed > div:first-of-type > div,
+.sidebar-collapsed nav > a > span:last-child,
+.sidebar-collapsed nav > div > button > span:nth-of-type(2),
+.sidebar-collapsed nav > div > button > svg:last-child,
+.sidebar-collapsed nav > div > div,
+.sidebar-collapsed > div:last-child { display: none; }
+.sidebar-collapsed nav { padding-inline: .45rem; }
+.sidebar-collapsed nav > a, .sidebar-collapsed nav > div > button { justify-content: center; padding-inline: .35rem; }
+.sidebar-collapsed > div:first-of-type { justify-content: center; padding-inline: .35rem; }
+.sidebar-collapsed > div:first-of-type img { width: 2rem; height: 2rem; }

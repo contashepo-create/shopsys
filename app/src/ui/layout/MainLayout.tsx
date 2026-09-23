@@ -1,16 +1,13 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Sidebar } from './Sidebar.tsx'
+import { TopNavigation } from './TopNavigation.tsx'
 import { Header } from './Header.tsx'
+import { useAppStore } from '../../stores/app.store.ts'
 
 export function MainLayout({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="flex min-h-screen" dir="rtl">
-      {/* الشريط الجانبي على اليمين — أول عنصر في RTL */}
-      <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0">
-        <Header title={title} />
-        <main className="flex-1 p-6">{children}</main>
-      </div>
-    </div>
-  )
+  const navigationMode = useAppStore((s) => s.appearance.navigationMode)
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('shopsys-sidebar-collapsed') === '1')
+  const toggle = () => setCollapsed((value) => { const next = !value; localStorage.setItem('shopsys-sidebar-collapsed', next ? '1' : '0'); return next })
+  if (navigationMode === 'topbar') return <div className="min-h-screen" dir="rtl"><TopNavigation/><Header title={title}/><main className="p-4 lg:p-6">{children}</main></div>
+  return <div className="flex min-h-screen" dir="rtl"><Sidebar collapsed={collapsed} onToggle={toggle}/><div className="flex-1 flex flex-col min-w-0"><Header title={title}/><main className="flex-1 p-4 lg:p-6">{children}</main></div></div>
 }
