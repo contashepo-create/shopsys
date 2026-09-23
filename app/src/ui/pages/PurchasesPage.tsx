@@ -364,10 +364,11 @@ export function PurchasesPage() {
     <div className="space-y-4">
       {advancedInvoiceDrafts.filter(d=>d.kind==='purchase').length>0&&<div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 flex flex-wrap items-center justify-between gap-2"><div><b>مسودات مشتريات محفوظة: {advancedInvoiceDrafts.filter(d=>d.kind==='purchase').length}</b><div className="text-xs text-slate-500">يمكن استعادة أحدث مسودة من المحرر المتقدم دون أي أثر محاسبي</div></div><div className="flex gap-2"><Btn variant="ghost" onClick={()=>navigate('/purchases/invoices/new')}>الانتقال للمحرر</Btn><Btn variant="ghost" onClick={()=>{advancedInvoiceDrafts.filter(d=>d.kind==='purchase').forEach(d=>deleteAdvancedInvoiceDraft(d.id));toast.show('حُذفت مسودات المشتريات')}}>حذف الكل</Btn></div></div>}
       <div className="anim-up flex items-center justify-between">
-        <p className="text-[12px] text-slate-400 max-w-lg leading-relaxed">
+        <div><p className="text-[12px] text-slate-400 max-w-lg leading-relaxed">
           💡 الترحيل يوزع مصاريف الشراء على الأصناف (حسب القيمة أو الكمية لكل مصروف) ثم يحدّث
           تكلفة كل صنف <b>بالمتوسط المرجح المتحرك</b> ويزيد رصيد المخزون.
         </p>
+        {purchaseExpensePayables.some(p=>p.status!=='paid')&&<div className="text-[11px] font-bold text-violet-600 mt-1">استحقاقات جهات أخرى: {purchaseExpensePayables.filter(p=>p.status!=='paid').length} · متبقي {fmt(purchaseExpensePayables.filter(p=>p.status!=='paid').reduce((s,p)=>s+p.amountMinor-p.paidMinor,0))}</div>}</div>
         <div className="flex gap-2"><Btn variant="ghost" onClick={openNew} disabled={items.length === 0 || suppliers.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> إدخال سريع</span></Btn><Btn onClick={() => navigate('/purchases/invoices/new')} disabled={items.length === 0 || suppliers.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة مشتريات متقدمة</span></Btn></div>
       </div>
 
