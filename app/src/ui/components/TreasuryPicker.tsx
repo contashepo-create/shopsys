@@ -54,9 +54,16 @@ export function TreasuryPicker({
   }
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={inputCls}>
-      {treasuries.map((t) => (
-        <option key={t.code} value={t.code}>{treasuryLabel(t)}</option>
-      ))}
+      {treasuries.filter((t) => !t.parentCode).map((parent) => {
+        const children = treasuries.filter((t) => t.parentCode === parent.code)
+        return children.length ? (
+          <optgroup key={parent.code} label={treasuryLabel(parent)}>
+            <option value={parent.code}>{treasuryLabel(parent)} — الرئيسي</option>
+            {children.map((child) => <option key={child.code} value={child.code}>↳ {treasuryLabel(child)}</option>)}
+          </optgroup>
+        ) : <option key={parent.code} value={parent.code}>{treasuryLabel(parent)}</option>
+      })}
+      {treasuries.filter((t) => t.parentCode && !treasuries.some((p) => p.code === t.parentCode)).map((t) => <option key={t.code} value={t.code}>{treasuryLabel(t)}</option>)}
     </select>
   )
 }
