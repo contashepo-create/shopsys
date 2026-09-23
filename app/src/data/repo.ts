@@ -44,6 +44,7 @@ import { validateLaundryOrder, laundryTotal, buildLaundryPrepaidEntry, buildLaun
 import { buildServiceRefundEntry, type ServiceRefundRecord } from '../core/serviceRefund.ts'
 import { validateCommissionParty, buildEarnedAccrualEntry, buildEarnedCollectEntry, buildOwedAccrualEntry, buildOwedPayEntry, type CommissionParty, type CommissionDirection } from '../core/commissions.ts'
 import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommissionPayout, buildStaffCommissionCancel, unpaidCommissionsMinor, type StaffCommission, type StaffCommissionSource } from '../core/staffCommissions.ts'
+import { proportionalCommissionReturnMinor } from '../core/invoiceCommissions.ts'
 import { fullCoa } from '../core/treasury.ts'
 import { validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryAccess } from '../core/treasuryAccess.ts'
 import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
@@ -3241,6 +3242,27 @@ export const useDataStore = create<DataState>()(
           ...(shiftCtx.crossShift ? { crossShiftNote: shiftCtx.noteAr } : {}),
         }
 
+        // تسوية عمولات الفاتورة بنسبة هذا المرتجع: غير المصروف يعكس الاستحقاق،
+        // والمصروف فعلاً يتحول إلى خصم موظف قابل للتسوية في الراتب.
+        let adjustedCommissions = state.staffCommissions
+        const commissionAdjustmentEntries: JournalEntry[] = []
+        let returnDeductions = state.employeeDeductions
+        for (const commission of state.staffCommissions.filter((row) => row.source === 'sale' && row.sourceId === sale.id && row.status !== 'cancelled')) {
+          const originalAmount = commission.originalAmountMinor ?? commission.amountMinor + (commission.returnAdjustedMinor ?? 0)
+          const adjustment = proportionalCommissionReturnMinor(originalAmount, commission.returnAdjustedMinor ?? 0, totals.totalMinor, sale.totals.totalMinor)
+          if (adjustment <= 0) continue
+          if (commission.status === 'accrued') {
+            const employeeName = state.employees.find((employee) => employee.id === commission.employeeId)?.nameAr ?? `موظف #${commission.employeeId}`
+            const adjustmentEntryId = entryId + 1 + commissionAdjustmentEntries.length
+            commissionAdjustmentEntries.push({ id: adjustmentEntryId, entryNumber: adjustmentEntryId, date: now.slice(0, 10), description: `تسوية عمولة ${commission.code} بسبب المرتجع ${returnNumber}`, sourceType: 'staff_commission', sourceId: commission.id, lines: buildStaffCommissionCancel(adjustment, employeeName, `تخفيض نسبي بسبب المرتجع ${returnNumber}`), createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null })
+            adjustedCommissions = adjustedCommissions.map((row) => row.id === commission.id ? { ...row, originalAmountMinor: originalAmount, returnAdjustedMinor: (row.returnAdjustedMinor ?? 0) + adjustment, amountMinor: row.amountMinor - adjustment, ...(row.amountMinor === adjustment ? { status: 'cancelled' as const, cancelEntryId: adjustmentEntryId, cancelReason: `مرتجع ${returnNumber}` } : {}) } : row)
+          } else if (commission.status === 'paid') {
+            const deductionId = nextId(returnDeductions)
+            returnDeductions = [...returnDeductions, { id: deductionId, dedNumber: `DED-${String(deductionId).padStart(4, '0')}`, employeeId: commission.employeeId, date: now.slice(0, 10), amountMinor: adjustment, recoveredMinor: 0, reason: `تسوية عمولة بعد المرتجع ${returnNumber}`, notes: `عن ${commission.code} وفاتورة ${sale.invoiceNumber}` }]
+            adjustedCommissions = adjustedCommissions.map((row) => row.id === commission.id ? { ...row, originalAmountMinor: originalAmount, returnAdjustedMinor: (row.returnAdjustedMinor ?? 0) + adjustment } : row)
+          }
+        }
+
         // 4) عودة البضاعة للمخزون بتكلفة بيعها التاريخية (نفس قيمة القيد 1103 مدين)
         //    مع إعادة حساب المتوسط المرجح بالقيمة — وإلا انفصل رصيد المخزون الدفتري
         //    عن قيمته الفعلية (كمية × متوسط) وتراكم الانحراف مع كل مرتجع
@@ -3315,7 +3337,9 @@ export const useDataStore = create<DataState>()(
         }
         set({
           saleReturns: [...state.saleReturns, ret],
-          journal: [...state.journal, entry],
+          journal: [...state.journal, entry, ...commissionAdjustmentEntries],
+          staffCommissions: adjustedCommissions,
+          employeeDeductions: returnDeductions,
           items: updatedItems,
           serials: updatedSerials,
           variantStocks: updatedVariantStocks,
