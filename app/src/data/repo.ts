@@ -1884,7 +1884,7 @@ interface DataState {
   /** تكلفة وحدة الناتج بالمتوسط المرجح الحالي للخامات */
   getRecipeUnitCost: (recipeId: number) => number
   /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
-  postProduction: (args: { recipeId: number; batches: number; treasury?: string; expenses?: ProductionExpense[]; notes?: string }) => ProductionOrder
+  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number }[]; treasury?: string; expenses?: ProductionExpense[]; notes?: string }) => ProductionOrder
   /**
    * أمر تجهيز/تفكيك (جزارة 🥩/تمور 🌴): خام واحد → نواتج متعددة.
    * توزيع (تكلفة الخام + المصاريف) على النواتج بنسبة قيمها البيعية بالقرش،
@@ -8235,26 +8235,35 @@ export const useDataStore = create<DataState>()(
       },
       postProduction: (args) => {
         const state = get()
-        const recipe = state.recipes.find((r) => r.id === args.recipeId)
-        if (!recipe) throw new Error('الوصفة غير موجودة')
-        if (recipe.mode !== 'prepped') throw new Error('أوامر الإنتاج للوصفات «إنتاج مسبق» فقط — أطباق الطلب تُخصم خاماتها عند البيع تلقائياً')
-        if (!recipe.isActive) throw new Error('الوصفة معطلة')
-        if (!Number.isInteger(args.batches) || args.batches <= 0) throw new Error('عدد التشغيلات يجب أن يكون عدداً صحيحاً موجباً')
-        // فحص توافر الخامات (كميات التشغيلة × عدد التشغيلات)
+        const recipe = args.recipeId != null ? state.recipes.find((r) => r.id === args.recipeId) : undefined
+        if (args.recipeId != null && !recipe) throw new Error('الوصفة غير موجودة')
+        if (recipe && recipe.mode !== 'prepped') throw new Error('أوامر الإنتاج للوصفات «إنتاج مسبق» فقط')
+        if (recipe && !recipe.isActive) throw new Error('الوصفة معطلة')
+        const direct = !recipe
+        const batches = direct ? 1 : (args.batches ?? 0)
+        if (!direct && (!Number.isInteger(batches) || batches <= 0)) throw new Error('عدد التشغيلات يجب أن يكون عدداً صحيحاً موجباً')
+        const productItemId = direct ? (args.productItemId ?? 0) : recipe.productItemId
+        const ingredients = direct ? (args.ingredients ?? []) : recipe.ingredients.map((ing) => ({ itemId: ing.itemId, qty: ing.qty * batches }))
+        const producedQty = direct ? (args.producedQty ?? 0) : recipe.yieldQty * batches
+        if (!state.items.some((item) => item.id === productItemId && item.isActive)) throw new Error('اختر صنفاً ناتجاً مسجلاً ونشطاً في المخزون')
+        if (!(producedQty > 0)) throw new Error('كمية المنتج الناتج يجب أن تكون أكبر من صفر')
+        if (!ingredients.length) throw new Error('أضف خامة واحدة على الأقل')
+        const seenIngredients = new Set<number>()
         const shortages: string[] = []
-        for (const ing of recipe.ingredients) {
+        for (const ing of ingredients) {
           const item = state.items.find((it) => it.id === ing.itemId)
-          const needed = ing.qty * args.batches
-          if (!item) throw new Error('مكوّن غير موجود')
-          if ((item.stockQty ?? 0) < needed) shortages.push(`«${item.nameAr}»: متاح ${item.stockQty ?? 0} ومطلوب ${needed}`)
+          if (!item) throw new Error('خامة غير موجودة')
+          if (ing.itemId === productItemId) throw new Error('لا يمكن أن يكون المنتج الناتج خامة لنفسه')
+          if (seenIngredients.has(ing.itemId)) throw new Error(`الخامة «${item.nameAr}» مكررة`)
+          seenIngredients.add(ing.itemId)
+          if (!(ing.qty > 0)) throw new Error(`كمية «${item.nameAr}» يجب أن تكون أكبر من صفر`)
+          if ((item.stockQty ?? 0) < ing.qty) shortages.push(`«${item.nameAr}»: متاح ${item.stockQty ?? 0} ومطلوب ${ing.qty}`)
         }
         if (shortages.length) throw new Error(`خامات غير كافية — ${shortages.join('، ')}`)
-        const costOf = (id: number) => state.items.find((it) => it.id === id)?.costMinor ?? 0
-        const ingredientsCost = recipeIngredientsCostMinor(recipe, costOf) * args.batches
-        const overhead = recipe.overheadMinor * args.batches
+        const ingredientsCost = ingredients.reduce((sum, ing) => sum + Math.round(ing.qty * (state.items.find((item) => item.id === ing.itemId)?.costMinor ?? 0)), 0)
+        const overhead = recipe ? recipe.overheadMinor * batches : 0
         const productionExpenses = args.expenses ?? []
         const detailedOverhead = productionExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
-        const producedQty = recipe.yieldQty * args.batches
         const treasury = args.treasury ?? '1101'
         const productionUser = state.appUsers.find((user) => user.id === state.currentUserId)
         for (const expense of productionExpenses) {
@@ -8268,7 +8277,7 @@ export const useDataStore = create<DataState>()(
         const entryId = nextId(state.journal)
         const orderId = nextId(state.productionOrders)
         const orderNumber = `PRD-${String(orderId).padStart(4, '0')}`
-        const product = state.items.find((it) => it.id === recipe.productItemId)
+        const product = state.items.find((it) => it.id === productItemId)
         if (!product) throw new Error('الصنف الناتج غير موجود')
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
@@ -8278,19 +8287,19 @@ export const useDataStore = create<DataState>()(
         }
         const order: ProductionOrder = {
           id: orderId, orderNumber, refCode: makeUniqueRefCode('PRD', now, usedRefCodes(state)),
-          date: now, recipeId: recipe.id, productItemId: recipe.productItemId,
-          batches: args.batches, producedQty, ingredientsCostMinor: ingredientsCost,
+          date: now, recipeId: recipe?.id ?? 0, productItemId,
+          batches, producedQty, ingredientsCostMinor: ingredientsCost,
           overheadMinor: overhead + detailedOverhead, overheadItems: productionExpenses, totalCostMinor: ingredientsCost + overhead + detailedOverhead,
           treasury: overhead + detailedOverhead > 0 ? treasury : null, journalEntryId: entryId, notes: args.notes ?? '',
         }
         // خصم الخامات + إدخال الناتج بمتوسط مرجح جديد (قيمة قديمة + تكلفة الإنتاج)
         const consumed = new Map<number, number>()
-        for (const ing of recipe.ingredients) consumed.set(ing.itemId, ing.qty * args.batches)
+        for (const ing of ingredients) consumed.set(ing.itemId, ing.qty)
         const updatedItems = state.items.map((it) => {
           if (consumed.has(it.id)) {
             return { ...it, stockQty: Math.round(((it.stockQty ?? 0) - consumed.get(it.id)!) * 1000) / 1000 }
           }
-          if (it.id === recipe.productItemId) {
+          if (it.id === productItemId) {
             const oldQty = it.stockQty ?? 0
             const newQty = oldQty + producedQty
             const newValue = Math.round(oldQty * it.costMinor) + ingredientsCost + overhead + detailedOverhead
