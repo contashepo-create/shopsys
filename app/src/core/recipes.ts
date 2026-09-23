@@ -113,6 +113,8 @@ export interface ProductionOrder {
   batches: number
   producedQty: number // batches × yieldQty
   ingredientsCostMinor: Minor
+  /** لقطة الخامات الفعلية وتكلفتها وقت الترحيل للتدقيق والطباعة */
+  ingredientItems?: { itemId: number; qty: number; unitCostMinor: Minor; totalCostMinor: Minor }[]
   overheadMinor: Minor
   overheadItems?: ProductionExpense[]
   totalCostMinor: Minor

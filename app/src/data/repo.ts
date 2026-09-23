@@ -1884,7 +1884,7 @@ interface DataState {
   /** تكلفة وحدة الناتج بالمتوسط المرجح الحالي للخامات */
   getRecipeUnitCost: (recipeId: number) => number
   /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
-  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number }[]; treasury?: string; expenses?: ProductionExpense[]; notes?: string }) => ProductionOrder
+  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number }[]; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string }) => ProductionOrder
   /**
    * أمر تجهيز/تفكيك (جزارة 🥩/تمور 🌴): خام واحد → نواتج متعددة.
    * توزيع (تكلفة الخام + المصاريف) على النواتج بنسبة قيمها البيعية بالقرش،
@@ -8274,21 +8274,24 @@ export const useDataStore = create<DataState>()(
         }
         const lines = buildProductionEntry(ingredientsCost, overhead, treasury, productionExpenses)
         const now = new Date().toISOString()
+        const productionDate = args.date || now.slice(0, 10)
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(productionDate)) throw new Error('تاريخ التصنيع غير صالح')
         const entryId = nextId(state.journal)
         const orderId = nextId(state.productionOrders)
         const orderNumber = `PRD-${String(orderId).padStart(4, '0')}`
         const product = state.items.find((it) => it.id === productItemId)
         if (!product) throw new Error('الصنف الناتج غير موجود')
         const entry: JournalEntry = {
-          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          id: entryId, entryNumber: entryId, date: productionDate,
           description: `أمر إنتاج ${orderNumber} — ${product.nameAr} (${producedQty})`,
           sourceType: 'production', sourceId: orderId, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const order: ProductionOrder = {
           id: orderId, orderNumber, refCode: makeUniqueRefCode('PRD', now, usedRefCodes(state)),
-          date: now, recipeId: recipe?.id ?? 0, productItemId,
+          date: `${productionDate}T00:00:00.000Z`, recipeId: recipe?.id ?? 0, productItemId,
           batches, producedQty, ingredientsCostMinor: ingredientsCost,
+          ingredientItems: ingredients.map((ingredient) => { const unitCostMinor = state.items.find((item) => item.id === ingredient.itemId)?.costMinor ?? 0; return { ...ingredient, unitCostMinor, totalCostMinor: Math.round(ingredient.qty * unitCostMinor) } }),
           overheadMinor: overhead + detailedOverhead, overheadItems: productionExpenses, totalCostMinor: ingredientsCost + overhead + detailedOverhead,
           treasury: overhead + detailedOverhead > 0 ? treasury : null, journalEntryId: entryId, notes: args.notes ?? '',
         }

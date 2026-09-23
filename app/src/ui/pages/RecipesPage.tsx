@@ -12,7 +12,7 @@ type MaterialRow = { id: string; itemId: number; query: string; qty: string; uni
 type Tab = 'materials' | 'expenses'
 
 export function RecipesPage() {
-  const { items, productionOrders, customAccounts, addCustomAccount, postProduction } = useDataStore()
+  const { items, productionOrders, recipes, customAccounts, addCustomAccount, addRecipe, postProduction } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
@@ -25,6 +25,9 @@ export function RecipesPage() {
   const [expenses, setExpenses] = useState<ProductionExpense[]>([])
   const [treasury] = useState('1101')
   const [notes, setNotes] = useState('')
+  const [productionDate, setProductionDate] = useState(new Date().toISOString().slice(0, 10))
+  const [strictBalance, setStrictBalance] = useState(true)
+  const [varianceReason, setVarianceReason] = useState('')
   const [quickOpen, setQuickOpen] = useState(false)
   const [quickCode, setQuickCode] = useState('')
   const [quickName, setQuickName] = useState('')
@@ -64,13 +67,33 @@ export function RecipesPage() {
       toast.show(`أُضيف «${account.nameAr}» واختير كمصروف تصنيع ✓`)
     } catch (error) { toast.show((error as Error).message, 'error') }
   }
+  const loadRecipe = (recipeId: number) => {
+    const recipe = recipes.find((row) => row.id === recipeId)
+    if (!recipe) return
+    const outputItem = items.find((item) => item.id === recipe.productItemId)
+    setProductId(recipe.productItemId); setOutputQty(String(recipe.yieldQty)); setOutputUnitFactor(1)
+    setMaterials(recipe.ingredients.map((ingredient) => { const item = items.find((candidate) => candidate.id === ingredient.itemId); return { id: crypto.randomUUID(), itemId: ingredient.itemId, query: itemToken(ingredient.itemId), qty: String(ingredient.qty), unitFactor: 1, unitName: item?.baseUnit ?? '' } }))
+    setNotes(recipe.notes); setTab('materials'); toast.show(`تم تحميل تركيبة ${outputItem?.nameAr ?? ''} — عدّل الكميات ثم رحّل`)
+  }
+  const saveAsRecipe = () => {
+    try {
+      const ingredients = materials.filter((row) => row.itemId && Number(row.qty) > 0).map((row) => ({ itemId: row.itemId, qty: Number(row.qty) * row.unitFactor }))
+      addRecipe({ productItemId: productId, mode: 'prepped', yieldQty: output, ingredients, overheadMinor: 0, isActive: true, notes })
+      toast.show('حُفظت التركيبة للاستخدام المتكرر ✓')
+    } catch (error) { toast.show((error as Error).message, 'error') }
+  }
+  const exportOrders = () => {
+    const headers=['الأمر','التاريخ','المنتج','الكمية','تكلفة الخامات','المصروفات','الإجمالي'];const values=productionOrders.map(order=>[order.orderNumber,order.date.slice(0,10),items.find(item=>item.id===order.productItemId)?.nameAr??'',order.producedQty,fmt(order.ingredientsCostMinor),fmt(order.overheadMinor),fmt(order.totalCostMinor)]);const esc=(v:unknown)=>`"${String(v??'').replaceAll('"','""')}"`;const csv='\ufeff'+[headers,...values].map(row=>row.map(esc).join(',')).join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const anchor=document.createElement('a');anchor.href=url;anchor.download='production-orders.csv';anchor.click();URL.revokeObjectURL(url)
+  }
   const reset = () => {
-    setProductId(0); setOutputQty(''); setOutputUnitFactor(1); setMaterials([{ id: crypto.randomUUID(), itemId: 0, query: '', qty: '', unitFactor: 1, unitName: '' }]); setExpenses([]); setNotes(''); setTab('materials')
+    setProductId(0); setOutputQty(''); setOutputUnitFactor(1); setMaterials([{ id: crypto.randomUUID(), itemId: 0, query: '', qty: '', unitFactor: 1, unitName: '' }]); setExpenses([]); setNotes(''); setVarianceReason(''); setProductionDate(new Date().toISOString().slice(0, 10)); setTab('materials')
   }
   const submit = () => {
     try {
+      if (strictBalance && Math.abs(variance) > 0.0001) throw new Error('إجمالي الخامات يجب أن يساوي كمية الناتج — عطّل المطابقة الصارمة فقط عند وجود هالك أو تغير وزن')
+      if (!strictBalance && Math.abs(variance) > 0.0001 && !varianceReason.trim()) throw new Error('اكتب سبب فرق الوزن/الهالك قبل الترحيل')
       const ingredientRows = materials.filter((row) => row.itemId && Number(row.qty) > 0).map((row) => ({ itemId: row.itemId, qty: Number(row.qty) * row.unitFactor }))
-      const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, treasury, notes })
+      const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, treasury, date: productionDate, notes: [notes, varianceReason && `سبب فرق الكمية: ${varianceReason}`].filter(Boolean).join(' — ') })
       toast.show(`تم ترحيل ${order.orderNumber} وإضافة ${order.producedQty} ${product?.baseUnit ?? 'وحدة'} للمخزون ✓`)
       reset()
     } catch (error) { toast.show((error as Error).message, 'error') }
@@ -88,6 +111,7 @@ export function RecipesPage() {
         <Field label="الكمية المطلوب تصنيعها *"><input className={inputCls} inputMode="decimal" value={outputQty} onChange={(event) => setOutputQty(event.target.value)} placeholder="مثال: 3" /></Field>
         <Field label="وحدة الناتج"><select className={inputCls} value={outputUnitFactor} onChange={(e)=>setOutputUnitFactor(Number(e.target.value))} disabled={!product}><option value={1}>{product?.baseUnit??'الوحدة الأساسية'}</option>{product?.extraUnits.map(unit=><option key={unit.nameAr} value={unit.factor}>{unit.nameAr} × {unit.factor}</option>)}</select></Field>
       </div>
+      <div className="mt-3 grid md:grid-cols-[180px_1fr_auto] gap-2 items-end"><Field label="تاريخ التصنيع"><input type="date" className={inputCls} value={productionDate} onChange={(e)=>setProductionDate(e.target.value)}/></Field><Field label="تحميل تركيبة محفوظة"><select className={inputCls} value="" onChange={(e)=>{loadRecipe(Number(e.target.value));e.target.value=''}}><option value="">اختر تركيبة سابقة…</option>{recipes.filter(recipe=>recipe.mode==='prepped'&&recipe.isActive).map(recipe=><option key={recipe.id} value={recipe.id}>{items.find(item=>item.id===recipe.productItemId)?.nameAr} — ناتج {recipe.yieldQty}</option>)}</select></Field><Btn variant="ghost" onClick={saveAsRecipe} disabled={!productId||output<=0||!materials.some(row=>row.itemId)}>حفظ كتركيبة</Btn></div>
     </header>
 
     <div className="h-px bg-gradient-to-l from-transparent via-amber-500/60 to-transparent" />
@@ -127,9 +151,10 @@ export function RecipesPage() {
       <div className={`rounded-xl border p-3 ${Math.abs(variance) < 0.0001 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-amber-500/10 border-amber-500/30'}`}><div className="text-[10px] text-slate-400">فرق الكمية</div><b className="flex items-center gap-1">{Math.abs(variance) < 0.0001 ? <CheckCircle2 size={15}/> : <AlertTriangle size={15}/>} {variance}</b><div className="text-[9px] text-slate-400">يُسمح بالفرق للهالك أو تغير الوزن</div></div>
       <div className="rounded-xl border p-3"><div className="text-[10px] text-slate-400">التكلفة / تكلفة الوحدة</div><b>{fmt(totalCost)} / {fmt(unitCost)}</b></div>
     </section>
+    <div className="rounded-xl border p-3 flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={strictBalance} onChange={(e)=>setStrictBalance(e.target.checked)}/> مطابقة صارمة: الداخل = الخارج</label>{!strictBalance&&Math.abs(variance)>0.0001&&<input className={`${inputCls} flex-1`} value={varianceReason} onChange={(e)=>setVarianceReason(e.target.value)} placeholder="سبب فرق الوزن أو الهالك (إجباري)"/>}</div>
     <Field label="ملاحظات أمر التصنيع"><input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="رقم التشغيلة، الوردية، سبب فرق الوزن…"/></Field>
     <div className="fixed bottom-0 left-0 right-0 z-20 bg-white/95 dark:bg-card-dark/95 border-t p-3 flex justify-between items-center"><span className="text-xs text-slate-500">خامات {fmt(materialCost)} + مصروفات {fmt(expenseTotal)} = <b>{fmt(totalCost)}</b></span><Btn onClick={submit} disabled={!productId || output <= 0 || !materials.some((row) => row.itemId && Number(row.qty) > 0)}><Factory size={16}/> ترحيل عملية التصنيع</Btn></div>
 
-    {productionOrders.length > 0 && <details className="rounded-xl border p-3"><summary className="cursor-pointer font-bold text-sm">آخر أوامر التصنيع ({productionOrders.length})</summary><div className="mt-2 space-y-1">{[...productionOrders].reverse().slice(0, 10).map((order) => <div key={order.id} className="grid grid-cols-4 text-xs border-t py-2"><b>{order.orderNumber}</b><span>{items.find((item) => item.id === order.productItemId)?.nameAr}</span><span>{order.producedQty}</span><span>{fmt(order.totalCostMinor)}</span></div>)}</div></details>}
+    {productionOrders.length > 0 && <details className="rounded-xl border p-3"><summary className="cursor-pointer font-bold text-sm">آخر أوامر التصنيع ({productionOrders.length})</summary><div className="flex justify-end"><Btn variant="ghost" onClick={exportOrders}>تصدير Excel</Btn></div><div className="mt-2 space-y-1">{[...productionOrders].reverse().slice(0, 10).map((order) => <div key={order.id} className="grid grid-cols-4 text-xs border-t py-2"><b>{order.orderNumber}</b><span>{items.find((item) => item.id === order.productItemId)?.nameAr}</span><span>{order.producedQty}</span><span>{fmt(order.totalCostMinor)}</span></div>)}</div></details>}
   </div>
 }
