@@ -40,7 +40,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, customers, suppliers, purchases, customAccounts, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars } = useDataStore()
+  const { vouchers, journal, treasuries, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -53,6 +53,9 @@ export function VouchersPage() {
   const [counter, setCounter] = useState('')
   const [amount, setAmount] = useState('')
   const [desc, setDesc] = useState('')
+  const [quickAccountOpen, setQuickAccountOpen] = useState(false)
+  const [quickAccountCode, setQuickAccountCode] = useState('')
+  const [quickAccountName, setQuickAccountName] = useState('')
   const [partyId, setPartyId] = useState(0) // العميل (قبض 1104) أو المورد (صرف 2101) — يغذي كشف الحساب
   const [purchaseId, setPurchaseId] = useState(0) // فاتورة الشراء عند «مصروف على فاتورة شراء»
   const [expMethod, setExpMethod] = useState<'value' | 'qty'>('qty') // توزيع مصروف الفاتورة
@@ -123,6 +126,13 @@ export function VouchersPage() {
 
   // خروج النقدية (سند صرف) عملية حساسة — اعتماد مشرف؛ القبض إدخال أموال يمر مباشرة
   const paymentApproval = useSupervisorApproval('trs.payment.approve')
+  const addQuickAccount = () => {
+    try {
+      const account = addCustomAccount({ code: quickAccountCode.trim(), nameAr: quickAccountName.trim(), parentCode: kind === 'payment' ? '5' : '4' })
+      setCounter(account.code); setQuickAccountOpen(false); setQuickAccountCode(''); setQuickAccountName('')
+      toast.show(`أُضيف الحساب «${account.nameAr}» إلى شجرة الحسابات واختير للسند ✓`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
   const save = () => {
     if (kind === 'payment') { paymentApproval.request(() => doSave()); return }
     doSave()
@@ -239,6 +249,8 @@ export function VouchersPage() {
               {counters.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
             </select>
           </Field>
+          <button type="button" onClick={()=>setQuickAccountOpen(!quickAccountOpen)} className="text-[11px] font-bold text-brand-600 hover:underline">+ إضافة بند {kind==='payment'?'مصروف':'إيراد'} جديد</button>
+          {quickAccountOpen&&<div className="grid grid-cols-[110px_1fr_auto] gap-2 rounded-xl border border-brand-500/20 bg-brand-500/5 p-2"><input className={inputCls} value={quickAccountCode} onChange={e=>setQuickAccountCode(e.target.value)} placeholder={kind==='payment'?'51xx':'41xx'} dir="ltr"/><input className={inputCls} value={quickAccountName} onChange={e=>setQuickAccountName(e.target.value)} placeholder="اسم البند"/><Btn onClick={addQuickAccount} disabled={!quickAccountCode.trim()||!quickAccountName.trim()}>إضافة</Btn></div>}
           {needsParty && (
             <Field label={kind === 'receipt' ? 'أي عميل؟ *' : 'أي مورد؟ *'} hint="يظهر السند في كشف حسابه">
               <select value={partyId} onChange={(e) => setPartyId(Number(e.target.value))} className={inputCls}>
