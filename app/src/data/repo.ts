@@ -1543,6 +1543,8 @@ interface DataState {
     customerReference?: string
     dueDate?: string
     notes?: string
+    customerCharges?: DocumentCharge[]
+    internalExpenses?: InternalExpense[]
     reason: string
     /** الفاتورة الإلكترونية مفعلة بمفتاح الترخيص؟ — تُمرر من الواجهة وتُرفض العملية لو true */
     einvoiceActive: boolean
@@ -4562,7 +4564,9 @@ export const useDataStore = create<DataState>()(
           ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
           : deriveTaxConfig(sale.totals)
         const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, taxPercent, taxInclusive)
-        const customerCharges = sale.customerCharges ?? []
+        const customerCharges = args.customerCharges ?? sale.customerCharges ?? []
+        const chargeErrors = validateDocumentCharges(customerCharges)
+        if (chargeErrors.length) throw new Error(chargeErrors.join(' — '))
         const chargeNet = customerCharges.reduce((sum, charge) => sum + charge.amountMinor, 0)
         const chargeTax = customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * taxPercent / 100), 0)
         const totals = { ...baseTotals, netMinor: baseTotals.netMinor + chargeNet, taxBaseMinor: baseTotals.taxBaseMinor + customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: baseTotals.taxMinor + chargeTax, totalMinor: baseTotals.totalMinor + chargeNet + chargeTax }
@@ -4589,7 +4593,8 @@ export const useDataStore = create<DataState>()(
           }
         }
         const newEntryLines = buildSaleEntry(totals, args.payment, args.treasury, paidM)
-        newEntryLines.push(...buildInternalExpenseLines(sale.internalExpenses ?? [], args.treasury))
+        const internalExpenses = args.internalExpenses ?? sale.internalExpenses ?? []
+        newEntryLines.push(...buildInternalExpenseLines(internalExpenses, args.treasury))
         assertBalanced(newEntryLines)
         const now = new Date().toISOString()
 
@@ -4639,6 +4644,8 @@ export const useDataStore = create<DataState>()(
           customerReference: args.customerReference?.trim() || undefined,
           dueDate: args.dueDate || undefined,
           notes: args.notes?.trim() || undefined,
+          customerCharges,
+          internalExpenses,
           totals,
           journalEntryId: newEntryId,
           editHistory: [

@@ -8,6 +8,8 @@ import { useMemo, useState } from 'react'
 import { Eye, BookOpenText, Printer, FileText, Pencil, FileMinus2, FilePlus2, Trash2, History, HandCoins } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
+import type { DocumentCharge } from '../../core/documentCharges.ts'
+import type { InternalExpense } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -56,6 +58,8 @@ export function SalesInvoicesPage() {
   const [editCustomerReference, setEditCustomerReference] = useState('')
   const [editDueDate, setEditDueDate] = useState('')
   const [editNotes, setEditNotes] = useState('')
+  const [editCustomerCharges, setEditCustomerCharges] = useState<DocumentCharge[]>([])
+  const [editInternalExpenses, setEditInternalExpenses] = useState<InternalExpense[]>([])
   const [editReason, setEditReason] = useState('')
   const [editAddItemId, setEditAddItemId] = useState(0)
 
@@ -107,6 +111,8 @@ export function SalesInvoicesPage() {
     setEditCustomerReference(s.customerReference ?? '')
     setEditDueDate(s.dueDate ?? '')
     setEditNotes(s.notes ?? '')
+    setEditCustomerCharges(s.customerCharges ?? [])
+    setEditInternalExpenses(s.internalExpenses ?? [])
     setEditReason('')
     setEditAddItemId(0)
   }
@@ -119,11 +125,11 @@ export function SalesInvoicesPage() {
       ? { taxPercent: editing.taxPercent, taxInclusive: editing.taxInclusive ?? true }
       : deriveTaxConfig(editing.totals)
     const base = computeTotals(editLines, editDiscount, taxPercent, taxInclusive)
-    const charges = editing.customerCharges ?? []
+    const charges = editCustomerCharges
     const chargeNet = charges.reduce((sum, charge) => sum + charge.amountMinor, 0)
     const chargeTax = charges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * taxPercent / 100), 0)
     return { ...base, netMinor: base.netMinor + chargeNet, taxBaseMinor: base.taxBaseMinor + charges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: base.taxMinor + chargeTax, totalMinor: base.totalMinor + chargeNet + chargeTax }
-  }, [editing, editLines, editDiscount])
+  }, [editing, editLines, editDiscount, editCustomerCharges])
 
   const saveEdit = (creditLimitOverrideBy?: string) => {
     if (!editing || !editTotals) return
@@ -141,6 +147,8 @@ export function SalesInvoicesPage() {
         customerReference: editCustomerReference,
         dueDate: editDueDate,
         notes: editNotes,
+        customerCharges: editCustomerCharges,
+        internalExpenses: editInternalExpenses,
         reason: editReason.trim(),
         einvoiceActive,
         allowNegativeStock: setup.allowNegativeStock,
@@ -488,6 +496,10 @@ export function SalesInvoicesPage() {
               <Field label="مرجع العميل"><input value={editCustomerReference} onChange={(e)=>setEditCustomerReference(e.target.value)} className={inputCls}/></Field>
               <Field label="تاريخ الاستحقاق"><input type="date" value={editDueDate} onChange={(e)=>setEditDueDate(e.target.value)} className={inputCls}/></Field>
             </div>
+            {(editCustomerCharges.length > 0 || editInternalExpenses.length > 0) && <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
+              {editCustomerCharges.map((charge, i) => <Field key={`c-${i}`} label={`إضافة على العميل: ${charge.nameAr}`}><input type="number" min="0" step="0.01" value={charge.amountMinor / 10 ** cur.decimals} onChange={(e)=>setEditCustomerCharges(editCustomerCharges.map((x, xi)=>xi===i ? {...x, amountMinor: toMinor(e.target.value, cur.decimals)} : x))} className={inputCls}/></Field>)}
+              {editInternalExpenses.map((expense, i) => <Field key={`e-${i}`} label={`مصروف المنشأة: ${expense.label}`}><input type="number" min="0" step="0.01" value={expense.amountMinor / 10 ** cur.decimals} onChange={(e)=>setEditInternalExpenses(editInternalExpenses.map((x, xi)=>xi===i ? {...x, amountMinor: toMinor(e.target.value, cur.decimals)} : x))} className={inputCls}/></Field>)}
+            </div>}
             <Field label="ملاحظات داخلية"><textarea value={editNotes} onChange={(e)=>setEditNotes(e.target.value)} className={inputCls}/></Field>
 
             <Field label="سبب التعديل" hint="يُحفظ في سجل التدقيق ووصف القيد العاكس">
