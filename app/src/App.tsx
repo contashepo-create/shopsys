@@ -191,6 +191,9 @@ function Shell() {
         <Route path="/purchases/invoices/new" element={<AdvancedPurchaseInvoicePage />} />
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
         <Route path="/parties/employees" element={<EmployeesPage />} />
+        <Route path="/parties/payroll" element={<EmployeesPage initialTab="payroll" />} />
+        <Route path="/parties/employee-advances" element={<EmployeesPage initialTab="advances" />} />
+        <Route path="/parties/employee-deductions" element={<EmployeesPage initialTab="deductions" />} />
         <Route path="/parties/installments" element={<InstallmentsPage />} />
         <Route path="/maintenance/tickets" element={<MaintenancePage />} />
         <Route path="/laundry/orders" element={<LaundryPage />} />

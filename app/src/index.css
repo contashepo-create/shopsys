@@ -190,3 +190,6 @@ input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
 .sidebar-collapsed nav > a, .sidebar-collapsed nav > div > button { justify-content: center; padding-inline: .35rem; }
 .sidebar-collapsed > div:first-of-type { justify-content: center; padding-inline: .35rem; }
 .sidebar-collapsed > div:first-of-type img { width: 2rem; height: 2rem; }
+/* في نمط القوائم العلوية لا يتراكب رأس الصفحة مع شريط الأقسام */
+.top-navigation-layout > header { position: relative; top: auto; z-index: 20; background-color: rgb(255 255 255); }
+.dark .top-navigation-layout > header { background-color: rgb(15 23 42); }

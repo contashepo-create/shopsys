@@ -147,6 +147,9 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/purchases/suppliers', perm: 'pur.supplier.manage' },
   { prefix: '/purchases', perm: 'pur.invoice.create' },
   { prefix: '/parties/employees', perm: 'party.employee.manage' },
+  { prefix: '/parties/payroll', perm: 'party.employee.manage' },
+  { prefix: '/parties/employee-advances', perm: 'party.employee.manage' },
+  { prefix: '/parties/employee-deductions', perm: 'party.employee.manage' },
   { prefix: '/parties/custody', perm: 'party.employee.manage' },
   { prefix: '/parties', perm: 'party.customer.manage' },
   // شاشات النشاط التخصصي (صيانة/رحلات/معمل/عيادة/مقاولات/سيارات/محافظ/تأجير)

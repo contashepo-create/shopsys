@@ -79,7 +79,7 @@ interface DraftLine {
   payCommissions: boolean
 }
 
-export function EmployeesPage() {
+export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions' }) {
   const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
@@ -95,7 +95,7 @@ export function EmployeesPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const toMajor = (m: number) => (m ? String(m / 10 ** cur.decimals) : '')
 
-  const [tab, setTab] = useState<'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions'>('staff')
+  const [tab, setTab] = useState<'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions'>(initialTab)
 
   /* ─── تبويب العمولات (طلب المالك): مربوطة بالعمليات وتُصرف منفردة أو مع الراتب ─── */
   const [comOpen, setComOpen] = useState(false)

@@ -8,6 +8,6 @@ export function MainLayout({ title, children }: { title: string; children: React
   const navigationMode = useAppStore((s) => s.appearance.navigationMode)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('shopsys-sidebar-collapsed') === '1')
   const toggle = () => setCollapsed((value) => { const next = !value; localStorage.setItem('shopsys-sidebar-collapsed', next ? '1' : '0'); return next })
-  if (navigationMode === 'topbar') return <div className="min-h-screen" dir="rtl"><TopNavigation/><Header title={title}/><main className="p-4 lg:p-6">{children}</main></div>
+  if (navigationMode === 'topbar') return <div className="top-navigation-layout min-h-screen" dir="rtl"><TopNavigation/><Header title={title}/><main className="p-4 lg:p-6">{children}</main></div>
   return <div className="flex min-h-screen" dir="rtl"><Sidebar collapsed={collapsed} onToggle={toggle}/><div className="flex-1 flex flex-col min-w-0"><Header title={title}/><main className="flex-1 p-4 lg:p-6">{children}</main></div></div>
 }
