@@ -12,6 +12,8 @@
 export interface StockBatch {
   id: number
   itemId: number
+  /** المخزن الفعلي للدفعة؛ undefined لسجلات قديمة قبل التتبع المخزني */
+  warehouseId?: number | null
   /** رقم التشغيلة/الدفعة التجاري الظاهر للمستخدم؛ مستقل عن id الداخلي */
   lotNumber?: string | null
   expiryDate: string | null // YYYY-MM-DD — null = بلا تاريخ معروف (مرتجع مثلاً)
@@ -64,9 +66,9 @@ export interface FefoPlan {
 const round3 = (n: number) => Math.round(n * 1000) / 1000
 
 /** خطة صرف FEFO لكمية من صنف — لا تعدّل شيئاً، تُخطط فقط */
-export function planFefo(batches: StockBatch[], itemId: number, qty: number, today: string): FefoPlan {
+export function planFefo(batches: StockBatch[], itemId: number, qty: number, today: string, warehouseId?: number | null): FefoPlan {
   const day = today.slice(0, 10)
-  const mine = sortFefo(batches.filter((b) => b.itemId === itemId && b.qty > 0))
+  const mine = sortFefo(batches.filter((b) => b.itemId === itemId && b.qty > 0 && (warehouseId == null || b.warehouseId == null || b.warehouseId === warehouseId)))
   const allocations: FefoAllocation[] = []
   let remaining = qty
   for (const b of mine) {

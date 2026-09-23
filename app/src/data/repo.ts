@@ -2719,6 +2719,7 @@ export const useDataStore = create<DataState>()(
           newBatches.push({
             id: batchId++,
             itemId: l.itemId,
+            warehouseId: l.warehouseId ?? inv.warehouseId ?? null,
             expiryDate: l.expiryDate ?? null,
             qty: l.qty,
             purchaseId: purchaseId,
@@ -4836,7 +4837,7 @@ export const useDataStore = create<DataState>()(
           const item = state.items.find((it) => it.id === l.itemId)
           const oldBatch = state.batches.find((b) => b.purchaseId === inv.id && b.itemId === l.itemId)
           if (!item?.trackExpiry) continue
-          newBatches.push({ id: nextBatchId++, itemId: l.itemId, expiryDate: oldBatch?.expiryDate ?? null, qty: l.qty, purchaseId: inv.id, receivedAt: now })
+          newBatches.push({ id: nextBatchId++, itemId: l.itemId, warehouseId: inv.warehouseId ?? oldBatch?.warehouseId ?? null, expiryDate: oldBatch?.expiryDate ?? null, qty: l.qty, purchaseId: inv.id, receivedAt: now })
         }
 
         const updatedInv: PurchaseInvoice = {
@@ -8323,11 +8324,11 @@ export const useDataStore = create<DataState>()(
         let prodBatches = state.batches
         for (const [ingId, qty] of consumed) {
           if (!state.items.find((it) => it.id === ingId)?.trackExpiry) continue
-          const plan = planFefo(prodBatches, ingId, qty, productionDate)
+          const plan = planFefo(prodBatches, ingId, qty, productionDate, ingredientWarehouseId)
           if (plan.touchesExpired) throw new Error(`لا يمكن تصنيع المنتج بخامة منتهية الصلاحية: ${state.items.find((item) => item.id === ingId)?.nameAr ?? ingId}`)
           prodBatches = applyFefo(prodBatches, plan)
         }
-        if (product.trackExpiry) prodBatches = [...prodBatches, { id: nextId(prodBatches), itemId: product.id, lotNumber: outputLotNumber, expiryDate: args.outputExpiryDate ?? null, qty: producedQty, purchaseId: null, receivedAt: `${productionDate}T00:00:00.000Z` }]
+        if (product.trackExpiry) prodBatches = [...prodBatches, { id: nextId(prodBatches), itemId: product.id, warehouseId: outputWarehouseId, lotNumber: outputLotNumber, expiryDate: args.outputExpiryDate ?? null, qty: producedQty, purchaseId: null, receivedAt: `${productionDate}T00:00:00.000Z` }]
         set({ items: updatedItems, batches: prodBatches, productionOrders: [...state.productionOrders, order], journal: [...state.journal, entry] })
         return order
       },
