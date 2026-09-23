@@ -36,6 +36,7 @@ export function SalesInvoicesPage() {
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [viewing, setViewing] = useState<SaleInvoice | null>(null)
+  const [today] = useState(() => new Date().toISOString().slice(0, 10))
 
   // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة بمفتاح المطور ⇒ لا تعديل — إشعارات فقط
   const lic = useMemo(
@@ -226,6 +227,7 @@ export function SalesInvoicesPage() {
               <th className="px-4 py-3 font-bold">الدفع</th>
               <th className="px-4 py-3 font-bold">الأصناف</th>
               <th className="px-4 py-3 font-bold">الإجمالي</th>
+              <th className="px-4 py-3 font-bold">الاستحقاق</th>
               <th className="px-4 py-3 font-bold">الربحية الداخلية</th>
               <th className="px-4 py-3 font-bold">القيد</th>
               <th className="px-4 py-3 font-bold"></th>
@@ -249,6 +251,7 @@ export function SalesInvoicesPage() {
                 </td>
                 <td className="px-4 py-3 text-slate-500">{s.lines.length}</td>
                 <td className="px-4 py-3 font-black text-emerald-600 dark:text-emerald-400">{fmt(s.totals.totalMinor)}</td>
+                <td className="px-4 py-3">{(s.paidMinor??0)>=s.totals.totalMinor?<span className="text-emerald-600 font-bold">محصلة</span>:s.dueDate?<span className={s.dueDate<today?'text-rose-600 font-bold':'text-amber-600'}>{s.dueDate<today?'متأخرة':s.dueDate}</span>:<span className="text-slate-400">غير محدد</span>}</td>
                 <td className={`px-4 py-3 font-bold ${profitabilityOf(s).profit < 0 ? 'text-rose-600' : 'text-sky-600'}`} title={`تكلفة ${fmt(profitabilityOf(s).cogs)} · مصروف داخلي ${fmt(profitabilityOf(s).internal)} · عمولات ${fmt(profitabilityOf(s).commissions)}`}>{fmt(profitabilityOf(s).profit)}</td>
                 <td className="px-4 py-3">
                   <span className="text-[11px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-bold flex items-center gap-1 w-fit">
