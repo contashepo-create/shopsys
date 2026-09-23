@@ -12,6 +12,8 @@
 export interface StockBatch {
   id: number
   itemId: number
+  /** رقم التشغيلة/الدفعة التجاري الظاهر للمستخدم؛ مستقل عن id الداخلي */
+  lotNumber?: string | null
   expiryDate: string | null // YYYY-MM-DD — null = بلا تاريخ معروف (مرتجع مثلاً)
   qty: number // المتبقي من الدفعة
   purchaseId: number | null // فاتورة الشراء المنشئة (null = مرتجع/افتتاحي)
