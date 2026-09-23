@@ -112,6 +112,7 @@ export interface ProductionOrder {
   /** عدد التشغيلات (المضاعِف) */
   batches: number
   producedQty: number // batches × yieldQty
+  outputExpiryDate?: string | null
   ingredientsCostMinor: Minor
   /** لقطة الخامات الفعلية وتكلفتها وقت الترحيل للتدقيق والطباعة */
   ingredientItems?: { itemId: number; qty: number; unitCostMinor: Minor; totalCostMinor: Minor }[]

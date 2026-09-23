@@ -25,6 +25,7 @@ export function RecipesPage() {
   const [expenses, setExpenses] = useState<ProductionExpense[]>([])
   const [treasury] = useState('1101')
   const [notes, setNotes] = useState('')
+  const [outputExpiryDate, setOutputExpiryDate] = useState('')
   const [productionDate, setProductionDate] = useState(new Date().toISOString().slice(0, 10))
   const [strictBalance, setStrictBalance] = useState(true)
   const [varianceReason, setVarianceReason] = useState('')
@@ -86,14 +87,14 @@ export function RecipesPage() {
     const headers=['الأمر','التاريخ','المنتج','الكمية','تكلفة الخامات','المصروفات','الإجمالي'];const values=productionOrders.map(order=>[order.orderNumber,order.date.slice(0,10),items.find(item=>item.id===order.productItemId)?.nameAr??'',order.producedQty,fmt(order.ingredientsCostMinor),fmt(order.overheadMinor),fmt(order.totalCostMinor)]);const esc=(v:unknown)=>`"${String(v??'').replaceAll('"','""')}"`;const csv='\ufeff'+[headers,...values].map(row=>row.map(esc).join(',')).join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const anchor=document.createElement('a');anchor.href=url;anchor.download='production-orders.csv';anchor.click();URL.revokeObjectURL(url)
   }
   const reset = () => {
-    setProductId(0); setOutputQty(''); setOutputUnitFactor(1); setMaterials([{ id: crypto.randomUUID(), itemId: 0, query: '', qty: '', unitFactor: 1, unitName: '' }]); setExpenses([]); setNotes(''); setVarianceReason(''); setProductionDate(new Date().toISOString().slice(0, 10)); setTab('materials')
+    setProductId(0); setOutputQty(''); setOutputUnitFactor(1); setOutputExpiryDate(''); setMaterials([{ id: crypto.randomUUID(), itemId: 0, query: '', qty: '', unitFactor: 1, unitName: '' }]); setExpenses([]); setNotes(''); setVarianceReason(''); setProductionDate(new Date().toISOString().slice(0, 10)); setTab('materials')
   }
   const submit = () => {
     try {
       if (strictBalance && Math.abs(variance) > 0.0001) throw new Error('إجمالي الخامات يجب أن يساوي كمية الناتج — عطّل المطابقة الصارمة فقط عند وجود هالك أو تغير وزن')
       if (!strictBalance && Math.abs(variance) > 0.0001 && !varianceReason.trim()) throw new Error('اكتب سبب فرق الوزن/الهالك قبل الترحيل')
       const ingredientRows = materials.filter((row) => row.itemId && Number(row.qty) > 0).map((row) => ({ itemId: row.itemId, qty: Number(row.qty) * row.unitFactor }))
-      const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, treasury, date: productionDate, notes: [notes, varianceReason && `سبب فرق الكمية: ${varianceReason}`].filter(Boolean).join(' — ') })
+      const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, treasury, date: productionDate, outputExpiryDate: outputExpiryDate || null, notes: [notes, varianceReason && `سبب فرق الكمية: ${varianceReason}`].filter(Boolean).join(' — ') })
       toast.show(`تم ترحيل ${order.orderNumber} وإضافة ${order.producedQty} ${product?.baseUnit ?? 'وحدة'} للمخزون ✓`)
       reset()
     } catch (error) { toast.show((error as Error).message, 'error') }
@@ -104,7 +105,7 @@ export function RecipesPage() {
       <div className="flex items-center gap-2 mb-3"><Factory className="text-amber-600"/><div><h1 className="font-black text-lg">عملية تصنيع جديدة</h1><p className="text-[11px] text-slate-500">حدد المنتج والكمية الناتجة، ثم أدخل الخامات الفعلية والمصروفات</p></div></div>
       <div className="grid md:grid-cols-[1fr_180px_130px] gap-3 items-end">
         <Field label="الصنف المطلوب إنتاجه *" hint="يجب أن يكون مسجلاً في الأصناف والمخزون">
-          <select className={inputCls} value={productId} onChange={(event) => { setProductId(Number(event.target.value)); setOutputUnitFactor(1) }}>
+          <select className={inputCls} value={productId} onChange={(event) => { setProductId(Number(event.target.value)); setOutputUnitFactor(1); setOutputExpiryDate('') }}>
             <option value={0}>اختر المنتج النهائي…</option>{activeItems.map((item) => <option key={item.id} value={item.id}>{item.sku ? `${item.sku} — ` : ''}{item.nameAr}</option>)}
           </select>
         </Field>
@@ -153,7 +154,7 @@ export function RecipesPage() {
     </section>
     <div className="rounded-xl border p-3 flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={strictBalance} onChange={(e)=>setStrictBalance(e.target.checked)}/> مطابقة صارمة: الداخل = الخارج</label>{!strictBalance&&Math.abs(variance)>0.0001&&<input className={`${inputCls} flex-1`} value={varianceReason} onChange={(e)=>setVarianceReason(e.target.value)} placeholder="سبب فرق الوزن أو الهالك (إجباري)"/>}</div>
     <Field label="ملاحظات أمر التصنيع"><input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="رقم التشغيلة، الوردية، سبب فرق الوزن…"/></Field>
-    <div className="fixed bottom-0 left-0 right-0 z-20 bg-white/95 dark:bg-card-dark/95 border-t p-3 flex justify-between items-center"><span className="text-xs text-slate-500">خامات {fmt(materialCost)} + مصروفات {fmt(expenseTotal)} = <b>{fmt(totalCost)}</b></span><Btn onClick={submit} disabled={!productId || output <= 0 || !materials.some((row) => row.itemId && Number(row.qty) > 0)}><Factory size={16}/> ترحيل عملية التصنيع</Btn></div>
+    <div className="fixed bottom-0 left-0 right-0 z-20 bg-white/95 dark:bg-card-dark/95 border-t p-3 flex justify-between items-center"><span className="text-xs text-slate-500">خامات {fmt(materialCost)} + مصروفات {fmt(expenseTotal)} = <b>{fmt(totalCost)}</b></span><Btn onClick={submit} disabled={!productId || output <= 0 || (!!product?.trackExpiry && !outputExpiryDate) || !materials.some((row) => row.itemId && Number(row.qty) > 0)}><Factory size={16}/> ترحيل عملية التصنيع</Btn></div>
 
     {productionOrders.length > 0 && <details className="rounded-xl border p-3"><summary className="cursor-pointer font-bold text-sm">آخر أوامر التصنيع ({productionOrders.length})</summary><div className="flex justify-end"><Btn variant="ghost" onClick={exportOrders}>تصدير Excel</Btn></div><div className="mt-2 space-y-1">{[...productionOrders].reverse().slice(0, 10).map((order) => <div key={order.id} className="grid grid-cols-4 text-xs border-t py-2"><b>{order.orderNumber}</b><span>{items.find((item) => item.id === order.productItemId)?.nameAr}</span><span>{order.producedQty}</span><span>{fmt(order.totalCostMinor)}</span></div>)}</div></details>}
   </div>

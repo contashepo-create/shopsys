@@ -1884,7 +1884,7 @@ interface DataState {
   /** تكلفة وحدة الناتج بالمتوسط المرجح الحالي للخامات */
   getRecipeUnitCost: (recipeId: number) => number
   /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
-  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number }[]; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string }) => ProductionOrder
+  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number }[]; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string; outputExpiryDate?: string | null }) => ProductionOrder
   /**
    * أمر تجهيز/تفكيك (جزارة 🥩/تمور 🌴): خام واحد → نواتج متعددة.
    * توزيع (تكلفة الخام + المصاريف) على النواتج بنسبة قيمها البيعية بالقرش،
@@ -8281,6 +8281,8 @@ export const useDataStore = create<DataState>()(
         const orderNumber = `PRD-${String(orderId).padStart(4, '0')}`
         const product = state.items.find((it) => it.id === productItemId)
         if (!product) throw new Error('الصنف الناتج غير موجود')
+        if (product.trackExpiry && (!args.outputExpiryDate || !isValidExpiryDate(args.outputExpiryDate))) throw new Error('المنتج الناتج يتتبع الصلاحية — أدخل تاريخ انتهاء صحيحاً')
+        if (args.outputExpiryDate && args.outputExpiryDate < productionDate) throw new Error('تاريخ انتهاء المنتج لا يسبق تاريخ التصنيع')
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: productionDate,
           description: `أمر إنتاج ${orderNumber} — ${product.nameAr} (${producedQty})`,
@@ -8290,7 +8292,7 @@ export const useDataStore = create<DataState>()(
         const order: ProductionOrder = {
           id: orderId, orderNumber, refCode: makeUniqueRefCode('PRD', now, usedRefCodes(state)),
           date: `${productionDate}T00:00:00.000Z`, recipeId: recipe?.id ?? 0, productItemId,
-          batches, producedQty, ingredientsCostMinor: ingredientsCost,
+          batches, producedQty, outputExpiryDate: args.outputExpiryDate ?? null, ingredientsCostMinor: ingredientsCost,
           ingredientItems: ingredients.map((ingredient) => { const unitCostMinor = state.items.find((item) => item.id === ingredient.itemId)?.costMinor ?? 0; return { ...ingredient, unitCostMinor, totalCostMinor: Math.round(ingredient.qty * unitCostMinor) } }),
           overheadMinor: overhead + detailedOverhead, overheadItems: productionExpenses, totalCostMinor: ingredientsCost + overhead + detailedOverhead,
           treasury: overhead + detailedOverhead > 0 ? treasury : null, journalEntryId: entryId, notes: args.notes ?? '',
@@ -8315,9 +8317,11 @@ export const useDataStore = create<DataState>()(
         let prodBatches = state.batches
         for (const [ingId, qty] of consumed) {
           if (!state.items.find((it) => it.id === ingId)?.trackExpiry) continue
-          const plan = planFefo(prodBatches, ingId, qty, now.slice(0, 10))
+          const plan = planFefo(prodBatches, ingId, qty, productionDate)
+          if (plan.touchesExpired) throw new Error(`لا يمكن تصنيع المنتج بخامة منتهية الصلاحية: ${state.items.find((item) => item.id === ingId)?.nameAr ?? ingId}`)
           prodBatches = applyFefo(prodBatches, plan)
         }
+        if (product.trackExpiry) prodBatches = [...prodBatches, { id: nextId(prodBatches), itemId: product.id, expiryDate: args.outputExpiryDate ?? null, qty: producedQty, purchaseId: null, receivedAt: `${productionDate}T00:00:00.000Z` }]
         set({ items: updatedItems, batches: prodBatches, productionOrders: [...state.productionOrders, order], journal: [...state.journal, entry] })
         return order
       },
