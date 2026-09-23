@@ -44,6 +44,8 @@ export function TreasuryPage() {
   const [editCode, setEditCode] = useState<string | null>(null)
   const [tName, setTName] = useState('')
   const [tKind, setTKind] = useState<'cash' | 'bank'>('cash')
+  const [tChannel, setTChannel] = useState<'bank_account' | 'wallet'>('bank_account')
+  const [tParentCode, setTParentCode] = useState('')
   const [tAlias, setTAlias] = useState('')
   const [tAccountNumber, setTAccountNumber] = useState('')
   const [tIban, setTIban] = useState('')
@@ -99,7 +101,7 @@ export function TreasuryPage() {
   }
 
   const fillForm = (t?: TreasuryDef) => {
-    setTName(t?.nameAr ?? ''); setTKind(t?.kind ?? 'cash')
+    setTName(t?.nameAr ?? ''); setTKind(t?.kind ?? 'cash'); setTChannel(t?.channel ?? 'bank_account'); setTParentCode(t?.parentCode ?? '')
     setTAlias(t?.aliasAr ?? ''); setTAccountNumber(t?.accountNumber ?? '')
     setTIban(t?.iban ?? ''); setTBranch(t?.branch ?? '')
     setTHolder(t?.holderName ?? ''); setTSwift(t?.swift ?? ''); setTNotes(t?.notes ?? '')
@@ -109,7 +111,7 @@ export function TreasuryPage() {
   const saveTreasury = () => {
     try {
       const extra = {
-        aliasAr: tAlias.trim(), accountNumber: tAccountNumber.trim(), iban: tIban.trim(),
+        aliasAr: tAlias.trim(), parentCode: tKind === 'bank' ? (tParentCode || null) : null, channel: tKind === 'bank' ? tChannel : undefined, accountNumber: tAccountNumber.trim(), iban: tIban.trim(),
         branch: tBranch.trim(), holderName: tHolder.trim(), swift: tSwift.trim(), notes: tNotes.trim(),
       }
       if (editCode) { renameTreasury(editCode, tName, extra); toast.show('حُفظت بيانات الخزينة/البنك ✓') }
@@ -236,6 +238,8 @@ export function TreasuryPage() {
             <div className="p-4 rounded-2xl bg-cyan-500/5 border border-cyan-500/20 space-y-3">
               <div className="text-[12px] font-bold text-cyan-700 dark:text-cyan-400">🏛️ البيانات البنكية <span className="font-normal text-slate-400">(كلها اختيارية — تُطبع في المستندات وتفيد المطابقات)</span></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="نوع القناة"><select value={tChannel} onChange={(e)=>setTChannel(e.target.value as 'bank_account'|'wallet')} className={inputCls}><option value="bank_account">حساب/فرع بنكي</option><option value="wallet">محفظة إلكترونية</option></select></Field>
+                <Field label="تابع لبنك رئيسي" hint="اختياري — لإنشاء فروع أو محافظ داخل بنك"><select value={tParentCode} onChange={(e)=>setTParentCode(e.target.value)} className={inputCls}><option value="">حساب مستقل</option>{treasuries.filter(t=>t.kind==='bank'&&t.code!==editCode&&!t.parentCode).map(t=><option key={t.code} value={t.code}>{t.nameAr}</option>)}</select></Field>
                 <Field label="رقم الحساب">
                   <input value={tAccountNumber} onChange={(e) => setTAccountNumber(e.target.value)} className={inputCls} dir="ltr" placeholder="1234567890" />
                 </Field>

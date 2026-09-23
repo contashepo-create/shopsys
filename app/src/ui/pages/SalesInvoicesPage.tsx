@@ -5,7 +5,7 @@
  *   مع تفعيلها: يظهر بدلاً منه زرا «إشعار دائن» (مرتجع) و«إشعار مدين» (فاتورة إضافية).
  */
 import { useMemo, useState } from 'react'
-import { Eye, BookOpenText, Printer, FileText, Pencil, FileMinus2, FilePlus2, Trash2, History, HandCoins } from 'lucide-react'
+import { Eye, BookOpenText, Printer, Pencil, FileMinus2, FilePlus2, Trash2, History, HandCoins } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
 import type { DocumentCharge } from '../../core/documentCharges.ts'
@@ -13,12 +13,12 @@ import type { InternalExpense } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { buildReceiptModel } from '../../core/receipt.ts'
+import { buildReceiptModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
 import { effectiveVatPercent } from '../../core/items.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
-import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
-import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
+import { printModelWithTemplate } from '../print/printDoc.ts'
+import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, electronicInvoiceLockActive, saleEditBlocks } from '../../core/invoiceEdit.ts'
@@ -38,6 +38,7 @@ export function SalesInvoicesPage() {
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [viewing, setViewing] = useState<SaleInvoice | null>(null)
+  const [printTarget, setPrintTarget] = useState<SaleInvoice | null>(null)
   const [today] = useState(() => new Date().toISOString().slice(0, 10))
 
   // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة بمفتاح المطور ⇒ لا تعديل — إشعارات فقط
@@ -175,7 +176,7 @@ export function SalesInvoicesPage() {
       s.invoiceNumber.includes(q) || (s.refCode ?? '').includes(ref))
   }, [sales, query])
 
-  const printInvoice = async (s: SaleInvoice, template: 'thermal' | 'a4' | 'a5') => {
+  const printInvoice = async (s: SaleInvoice, template: InvoiceTemplate) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
     const qrDataUrl = await maybeZatcaQr({
       featureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
@@ -202,7 +203,7 @@ export function SalesInvoicesPage() {
     })
     if (qrDataUrl) model.qrDataUrl = qrDataUrl
     if (s.customerReference || s.dueDate) model.footerText = `${s.customerReference ? `مرجع العميل: ${s.customerReference}` : ''}${s.customerReference && s.dueDate ? ' — ' : ''}${s.dueDate ? `الاستحقاق: ${s.dueDate}` : ''}${receipt.footerText ? ' — ' + receipt.footerText : ''}`
-    printHtml(template === 'thermal' ? renderReceiptHtml(model, cur, receipt) : renderInvoiceA4Html(model, cur, receipt, template))
+    printModelWithTemplate(model, cur, receipt, template)
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${template.toUpperCase()} ${s.invoiceNumber} للطباعة 📄`)
   }
 
@@ -295,14 +296,8 @@ export function SalesInvoicesPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-left whitespace-nowrap">
-                  <button onClick={() => printInvoice(s, 'thermal')} title="طباعة إيصال حراري" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all duration-200 hover:scale-110">
-                    <Printer size={15} />
-                  </button>
-                  <button onClick={() => printInvoice(s, 'a4')} title="طباعة فاتورة A4 احترافية" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all duration-200 hover:scale-110">
-                    <FileText size={15} />
-                  </button>
-                  <button onClick={() => printInvoice(s, 'a5')} title="طباعة فاتورة A5 (نصف ورقة)" className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all duration-200 hover:scale-110 text-[10px] font-black leading-none">
-                    A5
+                  <button onClick={() => setPrintTarget(s)} title="طباعة / تغيير القالب" className="p-1.5 rounded-md text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-colors">
+                    <Printer size={14} />
                   </button>
                   {policy.canEdit ? (
                     /* تعديل متاح — الفاتورة الإلكترونية غير مفعلة (سياسة المالك) */
@@ -564,6 +559,7 @@ export function SalesInvoicesPage() {
           </div>
         )}
       </Modal>
+      <PrintTemplateModal open={!!printTarget} onClose={()=>setPrintTarget(null)} defaultTemplate={receipt.defaultTemplate} title="طباعة الفاتورة" onPrint={(template)=>{if(printTarget)void printInvoice(printTarget,template)}}/>
       {editApproval.dialog}
       {creditApproval.dialog}
     </div>
