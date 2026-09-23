@@ -5,7 +5,7 @@
  *   مع تفعيلها: يظهر بدلاً منه زرا «إشعار دائن» (مرتجع) و«إشعار مدين» (فاتورة إضافية).
  */
 import { useMemo, useState } from 'react'
-import { Eye, BookOpenText, Printer, Pencil, FileMinus2, FilePlus2, Trash2, History, HandCoins } from 'lucide-react'
+import { Eye, BookOpenText, Printer, Pencil, FileMinus2, FilePlus2, FileSpreadsheet, Trash2, History, HandCoins } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
 import type { DocumentCharge } from '../../core/documentCharges.ts'
@@ -207,11 +207,15 @@ export function SalesInvoicesPage() {
     toast.show(template === 'thermal' ? `أُرسل إيصال ${s.invoiceNumber} للطباعة 🖨️` : `أُرسلت فاتورة ${template.toUpperCase()} ${s.invoiceNumber} للطباعة 📄`)
   }
 
+  const exportSales = () => {
+    const headers=['رقم الفاتورة','التاريخ','العميل','الإجمالي','المدفوع','المتبقي','طريقة الدفع'];const values=filtered.map(s=>[s.invoiceNumber,s.date.slice(0,10),s.customerId?customers.find(c=>c.id===s.customerId)?.nameAr??'':'عميل نقدي',fmt(s.totals.totalMinor),fmt(s.paidMinor??(s.payment==='cash'?s.totals.totalMinor:0)),fmt(s.totals.totalMinor-(s.paidMinor??(s.payment==='cash'?s.totals.totalMinor:0))),s.payment==='cash'?'نقدي':'آجل']);const esc=(v:unknown)=>`"${String(v??'').replaceAll('"','""')}"`;const csv='\ufeff'+[headers,...values].map(r=>r.map(esc).join(',')).join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='sales-invoices.csv';a.click();URL.revokeObjectURL(url);toast.show('تم تصدير فواتير المبيعات إلى Excel ✓')
+  }
+
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
 
   if (sales.length === 0) {
     return (
-      <div className="space-y-4">{advancedInvoiceDrafts.filter(d=>d.kind==='sale').length>0&&<DraftBanner/>}<div className="flex justify-end"><Btn onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn></div><div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800"><EmptyState icon="🧾" title="لا فواتير مبيعات بعد" sub="أنشئ فاتورة متقدمة أو استخدم الكاشير للبيع السريع" /></div></div>
+      <div className="space-y-4">{advancedInvoiceDrafts.filter(d=>d.kind==='sale').length>0&&<DraftBanner/>}<div className="flex justify-end"><Btn variant="ghost" onClick={exportSales}><FileSpreadsheet size={15}/> Excel</Btn><Btn onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn></div><div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800"><EmptyState icon="🧾" title="لا فواتير مبيعات بعد" sub="أنشئ فاتورة متقدمة أو استخدم الكاشير للبيع السريع" /></div></div>
     )
   }
 
@@ -246,6 +250,7 @@ export function SalesInvoicesPage() {
     <div className="space-y-4">
       <DraftBanner/>
       <div className="anim-up flex flex-wrap items-center gap-2">
+        <Btn variant="ghost" onClick={exportSales}><FileSpreadsheet size={15}/> Excel</Btn>
         <Btn onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn>
         <input
           value={query}
