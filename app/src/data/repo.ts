@@ -3075,6 +3075,14 @@ export const useDataStore = create<DataState>()(
         }
         const entryLines = args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM)
         const internalExpenses = args.internalExpenses ?? []
+        for (const expense of internalExpenses.filter((row) => row.settlement === 'paid_now')) {
+          const payoutTreasury = expense.treasury ?? args.treasury ?? '1101'
+          if (!state.treasuries.some((row) => row.code === payoutTreasury)) throw new Error(`خزينة المصروف الداخلي غير موجودة (${payoutTreasury})`)
+          const payout = expense.taxTreatment === 'exclusive' ? expense.amountMinor + Math.round(expense.amountMinor * expense.taxPercent / 100) : expense.amountMinor
+          const user = state.appUsers.find((row) => row.id === state.currentUserId)
+          const errors = validateTreasuryAccess(user?.treasuryAccess, payoutTreasury, 'payment', payout)
+          if (errors.length) throw new Error(errors.join(' — '))
+        }
         entryLines.push(...buildInternalExpenseLines(internalExpenses, args.treasury ?? '1101'))
         assertBalanced(entryLines)
         const saleId = nextId(state.sales)
