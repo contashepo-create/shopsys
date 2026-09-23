@@ -170,6 +170,7 @@ export function TreasuryPage() {
                       {t.nameAr} <span className="text-[9px] opacity-60">#{t.code}</span>
                       {t.aliasAr && <span className="mr-1 text-[10px] text-slate-300 dark:text-slate-500">· {t.aliasAr}</span>}
                     </div>
+                    {t.kind === 'bank' && <div className="text-[9.5px] text-sky-500 font-bold">{t.channel === 'wallet' ? '📱 محفظة إلكترونية' : '🏦 حساب/فرع بنكي'}{t.parentCode ? ` · تابع لـ ${treasuries.find((parent) => parent.code === t.parentCode)?.nameAr ?? t.parentCode}` : ''}</div>}
                     {t.accountNumber && <div className="text-[9.5px] text-slate-300 dark:text-slate-500 font-mono" dir="ltr">{t.accountNumber}</div>}
                     <div className={`font-black text-2xl ${acc.balance < 0 ? 'text-rose-500' : 'text-slate-800 dark:text-white'}`}>
                       {fmt(acc.balance)} <span className="text-xs">{cur.symbol}</span>
