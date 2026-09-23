@@ -220,6 +220,17 @@ export function SalesInvoicesPage() {
     return <div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 flex flex-wrap items-center justify-between gap-2"><div><b>مسودات مبيعات محفوظة: {drafts.length}</b><div className="text-xs text-slate-500">الأحدث: {drafts[0].name} · {new Date(drafts[0].updatedAt).toLocaleString('ar-EG')}</div></div><div className="flex gap-2"><Btn variant="ghost" onClick={()=>navigate('/sales/invoices/new')}>الانتقال للمحرر</Btn><Btn variant="ghost" onClick={()=>{drafts.forEach(d=>deleteAdvancedInvoiceDraft(d.id));toast.show('حُذفت مسودات المبيعات')}}>حذف الكل</Btn></div></div>
   }
 
+  const returnStateOf = (sale: SaleInvoice): 'none' | 'partial' | 'full' => {
+    const returns = saleReturns.filter((row) => row.saleId === sale.id)
+    if (!returns.length) return 'none'
+    const returned = new Map<number, number>()
+    for (const ret of returns) for (const line of ret.lines) {
+      const index = line.saleLineIndex ?? sale.lines.findIndex((source) => source.itemId === line.itemId)
+      if (index >= 0) returned.set(index, (returned.get(index) ?? 0) + line.qty)
+    }
+    return sale.lines.every((line, index) => (returned.get(index) ?? 0) >= line.qty) ? 'full' : 'partial'
+  }
+
   const profitabilityOf = (sale: SaleInvoice) => {
     const cogs = sale.lines.reduce((sum, line) => sum + Math.round(line.qty * line.unitCostMinor), 0)
     const internal = (sale.internalExpenses ?? []).filter((expense) => expense.affectsProfit).reduce((sum, expense) => sum + expense.amountMinor, 0)
@@ -260,9 +271,9 @@ export function SalesInvoicesPage() {
           </thead>
           <tbody>
             {filtered.map((s, i) => (
-              <tr key={s.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/[0.04] transition-colors duration-150">
+              <tr key={s.id} style={{ animationDelay: `${i * 30}ms` }} className={`anim-in border-b transition-colors duration-150 ${returnStateOf(s)==='full'?'bg-rose-500/12 border-rose-300 dark:bg-rose-950/35':returnStateOf(s)==='partial'?'bg-amber-500/12 border-amber-300 dark:bg-amber-950/30':'border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/[0.04]'}`}>
                 <td className="px-4 py-3">
-                  <div className="font-bold text-slate-800 dark:text-white">{s.invoiceNumber}</div>
+                  <div className="font-bold text-slate-800 dark:text-white flex items-center gap-1.5">{s.invoiceNumber}{returnStateOf(s)!=='none'&&<span className={`text-[9px] px-1.5 py-0.5 rounded-full ${returnStateOf(s)==='full'?'bg-rose-600 text-white':'bg-amber-500 text-white'}`}>{returnStateOf(s)==='full'?'مرتجع كلي':'مرتجع جزئي'}</span>}</div>
                   {s.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{s.refCode}</div>}
                   <div className="text-[11px] text-slate-400">{s.date.slice(0, 16).replace('T', ' ')}</div>
                 </td>

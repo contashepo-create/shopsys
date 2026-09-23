@@ -193,3 +193,14 @@ input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
 /* في نمط القوائم العلوية لا يتراكب رأس الصفحة مع شريط الأقسام */
 .top-navigation-layout > header { position: relative; top: auto; z-index: 20; background-color: rgb(255 255 255); }
 .dark .top-navigation-layout > header { background-color: rgb(15 23 42); }
+
+/* كثافة شاشة الكاشير: أكبر مساحة للسلة والأصناف وأقل كروم بصري */
+.pos-workspace { font-size: .8rem; }
+.pos-workspace input, .pos-workspace select, .pos-workspace textarea { min-height: 1.9rem; padding-top: .3rem; padding-bottom: .3rem; font-size: .75rem; }
+.pos-workspace .rounded-2xl { border-radius: .65rem; }
+.pos-workspace button { line-height: 1.15; }
+@media (min-width: 1024px) {
+  .pos-workspace { grid-template-columns: minmax(0, 2fr) minmax(31rem, 3fr); }
+  .pos-workspace > div:first-child { grid-column: 2; }
+  .pos-workspace > div:last-child { grid-column: 1; grid-row: 1; }
+}

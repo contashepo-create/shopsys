@@ -561,7 +561,7 @@ export function PosPage() {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 h-[calc(100vh-8.5rem)]">
+    <div className="pos-workspace grid grid-cols-1 lg:grid-cols-5 gap-2 h-[calc(100vh-6.5rem)]">
       {/* ═══ يمين: الأصناف والبحث ═══ */}
       <div className="lg:col-span-3 flex flex-col gap-3 min-h-0">
         <div className="anim-up relative">
