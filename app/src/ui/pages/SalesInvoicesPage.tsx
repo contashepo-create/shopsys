@@ -203,7 +203,10 @@ export function SalesInvoicesPage() {
     const cogs = sale.lines.reduce((sum, line) => sum + Math.round(line.qty * line.unitCostMinor), 0)
     const internal = (sale.internalExpenses ?? []).filter((expense) => expense.affectsProfit).reduce((sum, expense) => sum + expense.amountMinor, 0)
     const commissions = staffCommissions.filter((commission) => commission.source === 'sale' && commission.sourceId === sale.id && commission.status !== 'cancelled').reduce((sum, commission) => sum + commission.amountMinor, 0)
-    return { cogs, internal, commissions, profit: sale.totals.netMinor - cogs - internal - commissions }
+    const returns = saleReturns.filter((ret) => ret.saleId === sale.id)
+    const returnedRevenue = returns.reduce((sum, ret) => sum + ret.totals.netMinor, 0)
+    const returnedCogs = returns.reduce((sum, ret) => sum + ret.totals.cogsMinor, 0)
+    return { cogs: cogs - returnedCogs, internal, commissions, profit: sale.totals.netMinor - returnedRevenue - (cogs - returnedCogs) - internal - commissions }
   }
 
   return (
