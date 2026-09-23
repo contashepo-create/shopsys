@@ -3161,7 +3161,7 @@ export const useDataStore = create<DataState>()(
         if (args.terminalPayment) {
           const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
           if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
-          const terminalAmount = args.paymentAllocations?.find((allocation) => allocation.accountCode === terminal.settlementAccountCode)?.amountMinor ?? paidM
+          const terminalAmount = args.paymentAllocations?.find((allocation) => allocation.accountCode === terminal.settlementAccountCode && allocation.note?.startsWith('ماكينة'))?.amountMinor ?? (!args.paymentAllocations?.length ? paidM : 0)
           if (terminalAmount <= 0) throw new Error('لا يوجد مبلغ محصل لتسجيله على الماكينة')
           if (!args.paymentAllocations?.length && terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('حساب تحصيل الفاتورة لا يطابق حساب الماكينة')
           const saleBranch = state.branches.find((branch) => branch.warehouseId === effectiveSaleWarehouseId)
