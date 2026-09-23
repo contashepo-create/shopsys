@@ -850,6 +850,7 @@ export interface PurchaseInvoice {
   supplierInvoiceNumber?: string
   purchaseOrderNumber?: string
   receiptStatus?: 'pending' | 'partial' | 'received'
+  dueDate?: string
   date: string
   lines: PurchaseLine[]
   expenses: PurchaseExpense[]
@@ -1316,6 +1317,7 @@ interface DataState {
     supplierInvoiceNumber?: string
     purchaseOrderNumber?: string
     receiptStatus?: 'pending' | 'partial' | 'received'
+    dueDate?: string
     date: string
     lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
@@ -2629,6 +2631,7 @@ export const useDataStore = create<DataState>()(
           supplierInvoiceNumber: supplierDocument || undefined,
           purchaseOrderNumber: inv.purchaseOrderNumber?.trim() || undefined,
           receiptStatus: inv.receiptStatus ?? 'received',
+          dueDate: inv.dueDate || undefined,
           date: inv.date,
           lines: landed.map((l, i) => ({
             itemId: l.itemId,

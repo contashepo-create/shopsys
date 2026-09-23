@@ -48,6 +48,7 @@ export function PurchasesPage() {
   const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, treasuries, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt } = useAppStore()
   const navigate = useNavigate()
+  const [today] = useState(() => new Date().toISOString().slice(0, 10))
 
   // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة ⇒ لا تعديل — إشعار مدين على المورد
   const lic = useMemo(
@@ -81,7 +82,7 @@ export function PurchasesPage() {
   const [printTarget, setPrintTarget] = useState<PurchaseInvoice | null>(null)
   const [payableAmount, setPayableAmount] = useState('')
   const [payableTreasury, setPayableTreasury] = useState('1101')
-  const settleExpensePayable = (id: number, remaining: number) => { try { const amount = payableAmount.trim() ? toMinor(payableAmount, cur.decimals) : remaining; settlePurchaseExpensePayable({ payableId: id, amountMinor: amount, treasury: payableTreasury, date: new Date().toISOString().slice(0,10) }); setPayableAmount(''); toast.show('تم سداد الاستحقاق وإنشاء سند الصرف والقيد ✓') } catch (error) { toast.show((error as Error).message, 'error') } }
+  const settleExpensePayable = (id: number, remaining: number) => { try { const amount = payableAmount.trim() ? toMinor(payableAmount, cur.decimals) : remaining; settlePurchaseExpensePayable({ payableId: id, amountMinor: amount, treasury: payableTreasury, date: today }); setPayableAmount(''); toast.show('تم سداد الاستحقاق وإنشاء سند الصرف والقيد ✓') } catch (error) { toast.show((error as Error).message, 'error') } }
 
   /** نموذج طباعة فاتورة الشراء: سطور بسعر المورد + إبراز المصاريف المحملة */
   const printPurchase = (inv: PurchaseInvoice, template: Parameters<typeof printModelWithTemplate>[3]) => {
@@ -392,6 +393,7 @@ export function PurchasesPage() {
                 <th className="px-4 py-3 font-bold">المصاريف</th>
                 <th className="px-4 py-3 font-bold">الإجمالي</th>
                 <th className="px-4 py-3 font-bold">المدفوع</th>
+                <th className="px-4 py-3 font-bold">الاستحقاق</th>
                 <th className="px-4 py-3 font-bold"></th>
               </tr>
             </thead>
@@ -419,6 +421,7 @@ export function PurchasesPage() {
                       {fmt(p.paidMinor)}
                     </span>
                   </td>
+                  <td className="px-4 py-3">{p.paidMinor >= (p.supplierDueMinor ?? p.grandTotalMinor) ? <span className="text-emerald-600 font-bold">مدفوعة</span> : p.dueDate ? <span className={p.dueDate < today ? 'text-rose-600 font-bold' : 'text-amber-600 font-bold'}>{p.dueDate < today ? 'متأخرة' : p.dueDate}</span> : <span className="text-slate-400">غير محدد</span>}</td>
                   <td className="px-4 py-3 text-left whitespace-nowrap">
                     {editPolicy.canEdit ? (
                       /* تعديل متاح — الفاتورة الإلكترونية غير مفعلة (سياسة المالك) */
