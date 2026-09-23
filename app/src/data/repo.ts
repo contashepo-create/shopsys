@@ -807,9 +807,14 @@ export interface PurchaseExpense {
    * treasury = دفعته أنا من خزينة/بنك (payAccount)
    * custody  = دفعه موظف من عهدته (custodyFileId)
    */
-  paidBy?: 'supplier' | 'treasury' | 'custody'
+  paidBy?: 'supplier' | 'treasury' | 'custody' | 'payable'
   payAccount?: string | null // كود الخزينة/البنك عند paidBy=treasury
   custodyFileId?: number | null // ملف العهدة عند paidBy=custody
+  /** inventory يرفع تكلفة المخزون، period مصروف فترة مرتبط بالفاتورة فقط */
+  costTreatment?: 'inventory' | 'period'
+  /** حساب مصروف الفترة، وحساب الاستحقاق عند paidBy=payable */
+  accountCode?: string
+  payableAccountCode?: string
   /** مصروف لاحق أُضيف بعد ترحيل الفاتورة (Landed Cost Voucher) */
   late?: boolean
   date?: string
@@ -2413,9 +2418,11 @@ export const useDataStore = create<DataState>()(
         const costLines: CostLine[] = inv.lines.map((l) => ({
           itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
         }))
-        const landed = computeLandedCosts(costLines, inv.expenses as ExpenseInput[])
+        const landedExpenses = inv.expenses.filter((expense) => (expense.costTreatment ?? 'inventory') === 'inventory')
+        const periodExpenses = inv.expenses.filter((expense) => expense.costTreatment === 'period')
+        const landed = computeLandedCosts(costLines, landedExpenses as ExpenseInput[])
         const goodsTotal = landed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
-        const expensesTotal = inv.expenses.reduce((a, e) => a + e.amountMinor, 0)
+        const expensesTotal = landedExpenses.reduce((a, e) => a + e.amountMinor, 0)
         const grandTotal = goodsTotal + expensesTotal
 
         // مصادر دفع المصاريف (طلب المالك): كل مصروف يحدد من دفعه —
@@ -2423,7 +2430,7 @@ export const useDataStore = create<DataState>()(
         // ما دفعتُه بنفسي لا يدخل دين المورد أبداً.
         const expensePayments: ExpensePaymentCredit[] = []
         const expenseCustodyNeeds = new Map<number, number>() // fileId → إجمالي المطلوب من عهدته
-        for (const e of inv.expenses) {
+        for (const e of landedExpenses) {
           const paidBy = e.paidBy ?? 'supplier'
           if (e.amountMinor <= 0) continue
           if (paidBy === 'treasury') {
@@ -2432,11 +2439,17 @@ export const useDataStore = create<DataState>()(
             const errors = validateTreasuryAccess(purchaseUser?.treasuryAccess, acc, 'payment', e.amountMinor)
             if (errors.length) throw new Error(errors.join(' — '))
             expensePayments.push({ account: acc, amountMinor: e.amountMinor, note: `${e.nameAr} — مدفوع من ${state.treasuries.find((t) => t.code === acc)?.nameAr ?? acc}` })
+          } else if (paidBy === 'payable') {
+            expensePayments.push({ account: e.payableAccountCode ?? '2117', amountMinor: e.amountMinor, note: `${e.nameAr} — مصروف شراء مستحق لجهة أخرى` })
           } else if (paidBy === 'custody') {
             if (e.custodyFileId == null) throw new Error(`حدد ملف العهدة الذي دفع مصروف «${e.nameAr}»`)
             expenseCustodyNeeds.set(e.custodyFileId, (expenseCustodyNeeds.get(e.custodyFileId) ?? 0) + e.amountMinor)
             expensePayments.push({ account: CUSTODY_ACCOUNT, amountMinor: e.amountMinor, note: `${e.nameAr} — مدفوع من عهدة موظف` })
           }
+        }
+        for (const expense of periodExpenses) if (expense.paidBy === 'custody') {
+          if (expense.custodyFileId == null) throw new Error(`حدد ملف العهدة الذي دفع مصروف «${expense.nameAr}»`)
+          expenseCustodyNeeds.set(expense.custodyFileId, (expenseCustodyNeeds.get(expense.custodyFileId) ?? 0) + expense.amountMinor)
         }
         const expensesPaidDirect = expensePayments.reduce((a, e) => a + e.amountMinor, 0)
         // T1: ضريبة مدخلات قابلة للخصم — تُفحص مبكراً وتدخل مستحق المورد (يقبضها ليوردها للدولة)
@@ -2490,6 +2503,16 @@ export const useDataStore = create<DataState>()(
           expensePayments,
           inputVatMinor,
         })
+        const periodExpenseLines = buildInternalExpenseLines(periodExpenses.map((expense) => ({
+          id: crypto.randomUUID(), label: expense.nameAr, amountMinor: expense.amountMinor,
+          accountCode: expense.accountCode ?? '5108',
+          settlement: (expense.paidBy ?? 'supplier') === 'treasury' || expense.paidBy === 'custody' ? 'paid_now' as const : 'payable_later' as const,
+          treasury: expense.paidBy === 'custody' ? CUSTODY_ACCOUNT : (expense.payAccount ?? inv.treasury ?? '1101'),
+          payableAccountCode: expense.paidBy === 'supplier' ? '2101' : (expense.payableAccountCode ?? '2117'),
+          taxTreatment: 'exempt' as const, taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' as const,
+        })), inv.treasury ?? '1101')
+        entryLines.push(...periodExpenseLines)
+        assertBalanced(entryLines)
         const purchaseId = nextId(state.purchases)
         const entryId = nextId(state.journal)
         const invoiceNumber = `P-${String(purchaseId).padStart(4, '0')}`
