@@ -52,6 +52,7 @@ import { buildSchedule, applyPayment, planProgress, reduceSchedule, type Install
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
 import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
 import { makeUniqueRefCode } from '../core/refcode.ts'
+import { validateDocumentCharges, type DocumentCharge } from '../core/documentCharges.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
@@ -996,6 +997,8 @@ export interface SaleInvoice {
   taxInclusive?: boolean
   /** مصروفات داخلية مرتبطة بالفاتورة، لا تظهر للعميل ولا تزيد إجماليه */
   internalExpenses?: InternalExpense[]
+  /** إضافات يتحملها العميل؛ منفصلة تماماً عن المصروفات الداخلية */
+  customerCharges?: DocumentCharge[]
 }
 
 /** مرتجع مبيعات — دائماً مربوط بفاتورته الأصلية وبقيده العاكس */
@@ -1334,6 +1337,7 @@ interface DataState {
     /** تحصيل ماكينة يُحفظ ذرياً مع الفاتورة؛ لا تمرر documentId/amount/user من الواجهة. */
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string; documentType?: TerminalDocumentType }
     internalExpenses?: InternalExpense[]
+    customerCharges?: DocumentCharge[]
     staffCommission?: { employeeId: number; amountMinor: number; description?: string }
   }) => SaleInvoice
   /**
@@ -2959,7 +2963,14 @@ export const useDataStore = create<DataState>()(
           const expected = Math.round((current as number) * (l.unitFactor ?? 1))
           return expected !== l.unitCostMinor ? { ...l, unitCostMinor: expected } : l
         })
-        const totals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
+        const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
+        const customerCharges = args.customerCharges ?? []
+        const chargeErrors = validateDocumentCharges(customerCharges)
+        if (chargeErrors.length) throw new Error(chargeErrors.join(' — '))
+        if (customerCharges.some((charge) => charge.kind === 'discount')) throw new Error('خصم الإضافات غير مدعوم هنا؛ استخدم الخصم العام أو خصم السطر')
+        const chargeNet = customerCharges.reduce((sum, charge) => sum + charge.amountMinor, 0)
+        const chargeTax = customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * args.taxPercent / 100), 0)
+        const totals = { ...baseTotals, netMinor: baseTotals.netMinor + chargeNet, taxBaseMinor: baseTotals.taxBaseMinor + customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: baseTotals.taxMinor + chargeTax, totalMinor: baseTotals.totalMinor + chargeNet + chargeTax }
         // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
         const paidM = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
         if (paidM > 0) {
@@ -3027,6 +3038,7 @@ export const useDataStore = create<DataState>()(
           taxPercent: args.taxPercent, // G1: تثبيت المعاملة الضريبية على المستند
           taxInclusive: args.taxInclusive,
           internalExpenses,
+          customerCharges,
         }
 
         let commission: StaffCommission | null = null
