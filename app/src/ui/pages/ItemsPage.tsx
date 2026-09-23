@@ -906,7 +906,7 @@ function ItemForm({
               const f = new Set(cat?.features ?? [])
               p({
                 categoryId: Number(e.target.value),
-                trackExpiry: f.has('expiry_batches'),
+                trackExpiry: draft.trackExpiry,
                 trackSerial: f.has('serial_warranty'),
                 soldByWeight: f.has('weight_scale'),
               })

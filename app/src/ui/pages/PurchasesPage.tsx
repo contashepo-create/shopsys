@@ -385,7 +385,7 @@ export function PurchasesPage() {
           تكلفة كل صنف <b>بالمتوسط المرجح المتحرك</b> ويزيد رصيد المخزون.
         </p>
         {purchaseExpensePayables.some(p=>p.status!=='paid')&&<div className="text-[11px] font-bold text-violet-600 mt-1">استحقاقات جهات أخرى: {purchaseExpensePayables.filter(p=>p.status!=='paid').length} · متبقي {fmt(purchaseExpensePayables.filter(p=>p.status!=='paid').reduce((s,p)=>s+p.amountMinor-p.paidMinor,0))}</div>}</div>
-        <div className="flex gap-2"><Btn variant="ghost" onClick={openNew} disabled={items.length === 0 || suppliers.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> إدخال سريع</span></Btn><Btn onClick={() => navigate('/purchases/invoices/new')} disabled={items.length === 0 || suppliers.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة مشتريات متقدمة</span></Btn></div>
+        <div className="flex gap-2"><Btn variant="ghost" onClick={openNew} disabled={items.length === 0 || suppliers.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> إدخال سريع</span></Btn><Btn onClick={() => navigate('/purchases/invoices/new')} disabled={items.length === 0 || suppliers.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة شراء</span></Btn></div>
       </div>
 
       {(items.length === 0 || suppliers.length === 0) && (

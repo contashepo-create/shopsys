@@ -251,7 +251,7 @@ export function draftFromCategory(cat: Category | undefined, sku: string): ItemD
     stockQty: 0,
     priceMinor: 0,
     minQty: 0,
-    trackExpiry: f.has('expiry_batches'),
+    trackExpiry: false,
     trackSerial: f.has('serial_warranty'),
     warrantyMonths: f.has('serial_warranty') ? 12 : 0,
     soldByWeight: f.has('weight_scale'),
