@@ -15,7 +15,6 @@ import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
-import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
@@ -55,8 +54,6 @@ function saveHeldCarts(held: HeldCart[]) {
 
 export function PosPage() {
   const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals } = useDataStore()
-  // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
-  const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint } = useAppStore()
   const toast = useToast()
@@ -561,9 +558,9 @@ export function PosPage() {
   }
 
   return (
-    <div className="pos-workspace grid grid-cols-1 lg:grid-cols-5 gap-2 h-[calc(100vh-6.5rem)]">
+    <div className="pos-workspace flex flex-col gap-2 h-[calc(100vh-6.5rem)]">
       {/* ═══ يمين: الأصناف والبحث ═══ */}
-      <div className="lg:col-span-3 flex flex-col gap-3 min-h-0">
+      <div className="flex flex-col gap-2 shrink-0">
         <div className="anim-up relative">
           <ScanBarcode size={17} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-brand-500" />
           <input
@@ -591,96 +588,11 @@ export function PosPage() {
           </div>
         )}
 
-        {/* شبكة الأصناف */}
-        <div className="flex-1 overflow-y-auto rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-3">
-          {sellable.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-8">
-              <div className="text-4xl mb-2">📦</div>
-              <div className="font-bold text-slate-600 dark:text-slate-300">لا أصناف للبيع بعد</div>
-              <div className="text-xs text-slate-400 mt-1">أضف أصنافك من المخزون ← الأصناف، واشترِ بضاعة من المشتريات ليعمل الكاشير بتكلفة حقيقية</div>
-            </div>
-          ) : (
-            posLayout === 'fast_list' ? (
-            /* ⚡ قائمة سريعة كثيفة (بقالة/صيدلية/مغسلة): صفوف رفيعة — أسرع مسح بصري مع الباركود */
-            <div className="space-y-1">
-              {filtered.map((it, i) => {
-                const out = (it.stockQty ?? 0) <= 0
-                return (
-                  <button
-                    key={it.id}
-                    onClick={() => addToCart(it.id)}
-                    style={{ animationDelay: `${i * 12}ms` }}
-                    className={`anim-in w-full flex items-center gap-3 text-right px-3 py-2 rounded-lg border transition-all duration-150 active:scale-[0.99] ${
-                      out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-emerald-400/60 hover:bg-emerald-500/[0.04]'
-                    }`}
-                  >
-                    <span className="flex-1 font-bold text-[11px] text-slate-800 dark:text-white truncate">{it.nameAr}</span>
-                    {it.sku && <span className="text-[10px] text-slate-400 font-mono shrink-0" dir="ltr">{it.sku}</span>}
-                    <span className={`text-[10px] font-bold shrink-0 w-16 text-center ${out ? 'text-rose-500' : 'text-slate-400'}`}>{out ? 'نفد' : `${it.stockQty ?? 0} ${it.baseUnit}`}</span>
-                    <span className="font-black text-emerald-600 dark:text-emerald-400 text-[13px] shrink-0 w-20 text-left" dir="ltr">{fmt(it.priceMinor)}</span>
-                  </button>
-                )
-              })}
-            </div>
-            ) : posLayout === 'visual_grid' ? (
-            /* 🍽️ شبكة بصرية كبيرة (مطعم/كافيه/ملابس): بطاقات ضخمة سهلة اللمس */
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {filtered.map((it, i) => {
-                const out = (it.stockQty ?? 0) <= 0
-                return (
-                  <button
-                    key={it.id}
-                    onClick={() => addToCart(it.id)}
-                    style={{ animationDelay: `${i * 25}ms` }}
-                    className={`anim-in group relative text-right p-4 pt-5 rounded-2xl border-2 min-h-[7rem] flex flex-col justify-between transition-all duration-200 hover:scale-[1.04] hover:shadow-xl active:scale-95 overflow-hidden ${
-                      out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-orange-400/60 bg-gradient-to-br from-transparent to-orange-500/[0.04]'
-                    }`}
-                  >
-                    <div className="absolute -left-2 -top-2 text-4xl opacity-15 transition-transform duration-300 group-hover:scale-125 group-hover:rotate-6 select-none">🍽️</div>
-                    <div className="font-black text-[12px] text-slate-800 dark:text-white leading-snug line-clamp-2 relative">{it.nameAr}</div>
-                    <div className="flex items-center justify-between mt-3 relative">
-                      <span className="font-black text-orange-600 dark:text-orange-400 text-base">{fmt(it.priceMinor)}</span>
-                      {out && <span className="text-[10px] font-bold text-rose-500">نفد</span>}
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-            ) : (
-            /* 📱 بطاقات تفصيلية (موبايل/إلكترونيات/قطع غيار/مجوهرات/سيارات): SKU وضمان وسيريال ظاهرة */
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
-              {filtered.map((it, i) => {
-                const out = (it.stockQty ?? 0) <= 0
-                return (
-                  <button
-                    key={it.id}
-                    onClick={() => addToCart(it.id)}
-                    style={{ animationDelay: `${i * 20}ms` }}
-                    className={`anim-in text-right p-3.5 rounded-xl border-2 transition-all duration-200 hover:scale-[1.02] hover:shadow-lg active:scale-95 ${
-                      out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-sky-400/60'
-                    }`}
-                  >
-                    <div className="font-bold text-[11px] text-slate-800 dark:text-white leading-tight line-clamp-2">{it.nameAr}</div>
-                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                      {it.sku && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono" dir="ltr">{it.sku}</span>}
-                      {it.trackSerial && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 font-bold">سيريال</span>}
-                      {it.warrantyMonths > 0 && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-bold">ضمان {it.warrantyMonths} شهر</span>}
-                    </div>
-                    <div className="flex items-center justify-between mt-2.5">
-                      <span className="font-black text-sky-600 dark:text-sky-400 text-sm">{fmt(it.priceMinor)}</span>
-                      <span className={`text-[10px] font-bold ${out ? 'text-rose-500' : 'text-slate-400'}`}>{out ? 'نفد' : `متاح ${it.stockQty ?? 0}`}</span>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-            )
-          )}
-        </div>
+        <div className="text-[10px] text-slate-400 px-1">اكتب اسم الصنف أو امسح الباركود ثم اضغط Enter — لا توجد بطاقات تشغل مساحة الفاتورة.</div>
       </div>
 
       {/* ═══ يسار: السلة ═══ */}
-      <div className="lg:col-span-2 flex flex-col rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden anim-up" style={{ animationDelay: '80ms' }}>
+      <div className="flex-1 min-h-0 flex flex-col rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden anim-up" style={{ animationDelay: '80ms' }}>
         <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
           <span className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
             <ShoppingCart size={17} className="text-emerald-500" /> السلة ({cart.length})
@@ -734,34 +646,17 @@ export function PosPage() {
             </button>
           </div>
         </div>
-        {/* شريط قالب الطباعة الحصري — فوق الفاتورة (طلب المالك): تفعيل خيار يلغي الآخرين،
-            تجاوز مؤقت للجلسة لا يغيّر إعدادات الطباعة الدائمة، ومتاح للكاشير بلا صلاحيات */}
-        <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
-          <div className="flex items-center gap-1.5 pt-1">
-            <span className="text-[10px] font-bold text-slate-400 shrink-0">🖨️ طباعة:</span>
-            <div className="flex-1 grid grid-cols-3 gap-1">
-              {INVOICE_TEMPLATE_OPTIONS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setPosTemplate(t.id)}
-                  title={`${t.label} — ${t.sub}${t.id === posTemplate ? ' (مفعّل)' : ''}`}
-                  className={`flex items-center justify-center gap-1 py-1.5 rounded-lg border-2 text-[10.5px] font-bold transition-all ${posTemplate === t.id ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-emerald-400/40'}`}
-                >
-                  <span className={`inline-block w-3 h-3 rounded border ${posTemplate === t.id ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 dark:border-slate-600'}`}>
-                    {posTemplate === t.id && <span className="block text-white text-[8px] leading-3 text-center">✓</span>}
-                  </span>
-                  {t.label}
-                </button>
-              ))}
+        {/* خيارات الطباعة مخفية وتظهر فقط عند طلب تغيير القالب */}
+        <div className="px-4 py-1.5 border-b border-slate-100 dark:border-slate-800 flex justify-end">
+          <details className="relative group">
+            <summary className="list-none cursor-pointer inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+              <Printer size={12}/> {INVOICE_TEMPLATE_OPTIONS.find(t=>t.id===posTemplate)?.label ?? 'قالب الطباعة'}
+            </summary>
+            <div className="absolute left-0 top-full z-30 mt-1 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-card-dark p-1.5 shadow-xl">
+              {INVOICE_TEMPLATE_OPTIONS.map(t=><button key={t.id} onClick={(e)=>{setPosTemplate(t.id);(e.currentTarget.closest('details') as HTMLDetailsElement)?.removeAttribute('open')}} className={`w-full text-right px-2 py-1.5 rounded-lg text-[11px] ${posTemplate===t.id?'bg-emerald-500/10 text-emerald-600 font-bold':'hover:bg-slate-100 dark:hover:bg-slate-800'}`}>{t.label}<span className="block text-[9px] text-slate-400">{t.sub}</span></button>)}
+              <button onClick={()=>setQuickPrintOpen(true)} className="w-full text-right px-2 py-1.5 mt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500"><Settings2 size={11} className="inline ml-1"/>إعدادات إضافية</button>
             </div>
-            <button
-              onClick={() => setQuickPrintOpen(true)}
-              title="خيارات طباعة سريعة"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors shrink-0"
-            >
-              <Settings2 size={15} />
-            </button>
-          </div>
+          </details>
         </div>
 
         {/* min-h-0 (لا 16rem): القيمة الإجبارية كانت تدفع شريط الدفع خارج الإطار المقصوص فيختفي الزر (بلاغ المالك) */}
