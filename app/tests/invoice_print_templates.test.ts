@@ -7,7 +7,7 @@ const model: ReceiptModel = {
   dateLabel: '2026-09-23', customerName: 'عميل', paymentLabel: 'نقدي',
   rows: [{ nameAr: 'صنف', qtyLabel: '2', unitPriceMinor: 1000, totalMinor: 2000, discountPercent: 0, vatPercent: 14, serials: [] }],
   itemCount: 1, totalQty: 2, grossMinor: 2000, discountMinor: 0, taxBaseMinor: 2000, taxMinor: 280,
-  taxLabel: 'ضريبة 14٪', totalMinor: 2280, paidMinor: 2280, remainingMinor: 0,
+  taxLabel: 'ضريبة 14٪', totalMinor: 2280, paidMinor: 2280, remainingMinor: 0, footerText: '',
 }
 const cur = { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: 'جنيه' }
 
