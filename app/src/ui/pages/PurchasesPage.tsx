@@ -188,7 +188,7 @@ export function PurchasesPage() {
     [editLines, cur.decimals],
   )
 
-  const editExpenseTotal = useMemo(() => editExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0), [editExpenses])
+  const editExpenseTotal = useMemo(() => editExpenses.filter((expense) => (expense.costTreatment ?? 'inventory') === 'inventory').reduce((sum, expense) => sum + expense.amountMinor, 0), [editExpenses])
 
   const saveInvoiceEdit = () => {
     if (!editing) return

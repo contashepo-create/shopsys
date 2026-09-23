@@ -4749,6 +4749,9 @@ export const useDataStore = create<DataState>()(
         // N1 (المراجعة الثانية): ض.ق.م المدخلات المسجلة على الفاتورة تُحفظ في القيد المعاد بناؤه —
         // وإلا اختفى مدين 2102 بصمت واختل مستحق المورد
         const keptInputVat = inv.inputVatMinor ?? 0
+        const periodExpenseTotal = periodExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
+        const editedSupplierDue = grandTotal + keptInputVat + periodExpenseTotal
+        if (args.dueDate && args.paidMinor >= editedSupplierDue) throw new Error('الفاتورة مسددة بالكامل ولا تحتاج تاريخ استحقاق')
         const newEntryLines = buildPurchaseEntryV2({
           inventoryAccount: '1103',
           inventoryNote: 'بضاعة واردة بتكلفتها الكاملة (فاتورة معدلة)',
@@ -4818,7 +4821,7 @@ export const useDataStore = create<DataState>()(
           goodsTotalMinor: goodsTotal,
           expensesTotalMinor: expensesTotal,
           grandTotalMinor: grandTotal,
-          supplierDueMinor: grandTotal + keptInputVat + periodExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0), // N1: مستحق المورد يشمل ضريبة المدخلات المحفوظة
+          supplierDueMinor: editedSupplierDue, // يشمل ضريبة المدخلات ومصروفات الفترة على المورد
           paidMinor: args.paidMinor,
           treasury: args.treasury,
           supplierInvoiceNumber: args.supplierInvoiceNumber?.trim() || undefined,
