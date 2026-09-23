@@ -406,6 +406,7 @@ export function PurchasesPage() {
                     {p.supplierInvoiceNumber&&<div className="text-[10px] text-violet-600">فاتورة المورد: {p.supplierInvoiceNumber}</div>}
                     {p.purchaseOrderNumber&&<div className="text-[10px] text-slate-500">أمر شراء: {p.purchaseOrderNumber}</div>}
                     <div className="text-[11px] text-slate-400">{p.date}</div>
+                    {p.receiptStatus&&<div className={`text-[10px] font-bold ${p.receiptStatus==='partial'?'text-amber-600':p.receiptStatus==='received'?'text-emerald-600':'text-slate-500'}`}>{p.receiptStatus==='partial'?'استلام جزئي':p.receiptStatus==='received'?'مستلمة':'بانتظار الاستلام'}</div>}
                     {warehouses.length > 1 && (
                       <div className="text-[10.5px] text-slate-400">مخزن: {purchaseWarehouseLabel(p)}</div>
                     )}
@@ -835,7 +836,7 @@ export function PurchasesPage() {
                   <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                     <td className="px-3 py-2 font-bold">{items.find((it) => it.id === l.itemId)?.nameAr ?? `#${l.itemId}`}</td>
                     {warehouses.length > 1 && <td className="px-3 py-2 text-slate-500">{warehouses.find((w) => w.id === (l.warehouseId ?? viewing.warehouseId ?? warehouses.find((ww) => ww.isMain)?.id))?.nameAr ?? '—'}</td>}
-                    <td className="px-3 py-2">{l.qty}</td>
+                    <td className="px-3 py-2">{l.qty}{l.orderedQty!=null&&<div className="text-[10px] text-slate-400">مطلوب {l.orderedQty}{(l.rejectedQty??0)>0?` · مرفوض ${l.rejectedQty}`:''}</div>}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
                     <td className="px-3 py-2 text-sky-600 font-bold">{l.vatPercent != null ? (l.vatPercent > 0 ? `${l.vatPercent}٪ · ${fmt(l.inputVatMinor ?? 0)}` : 'معفى') : '—'}</td>
                     <td className="px-3 py-2 text-amber-600">{fmt(l.expenseShareMinor)}</td>
