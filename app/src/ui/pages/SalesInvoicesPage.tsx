@@ -327,6 +327,7 @@ export function SalesInvoicesPage() {
             <div className="flex gap-4 text-[13px] font-bold flex-wrap">
               {(viewing.customerCharges ?? []).map((charge,index)=><span key={index}>{charge.nameAr}: <b>{fmt(charge.amountMinor)}</b>{charge.taxable?' (خاضع)':' (غير خاضع)'}</span>)}
               {(viewing.paymentAllocations??[]).map((allocation,index)=><span key={`pay-${index}`} className="text-sky-600">{allocation.note??allocation.accountCode}: {fmt(allocation.amountMinor)}</span>)}
+              {viewing.approvedBy&&<span className="text-violet-600">اعتماد المصروف/العمولة: {viewing.approvedBy}</span>}
               <span>الإجمالي: <b className="text-emerald-600">{fmt(viewing.totals.totalMinor)}</b></span>
               {viewing.totals.discountMinor > 0 && <span className="text-rose-500">الخصم: {fmt(viewing.totals.discountMinor)}</span>}
               {viewing.totals.taxMinor > 0 && <span className="text-slate-500">الضريبة: {fmt(viewing.totals.taxMinor)}</span>}
