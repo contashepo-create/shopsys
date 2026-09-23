@@ -84,7 +84,8 @@ export function VouchersPage() {
       ...customAccounts.filter((a) => a.rootType === 'expenses').map((a) => ({ code: a.code, label: `${a.nameAr} (حساب مخصص)` })),
     ]
   }, [kind, customAccounts, setup.modules])
-  const listed = useMemo(() => [...vouchers].filter((v) => v.kind !== 'transfer').reverse(), [vouchers])
+  const [filterFrom,setFilterFrom]=useState(''),[filterTo,setFilterTo]=useState(''),[filterQuery,setFilterQuery]=useState('')
+  const listed = useMemo(() => {const q=filterQuery.trim().toLowerCase();return [...vouchers].filter((v) => v.kind !== 'transfer'&&(!filterFrom||v.date.slice(0,10)>=filterFrom)&&(!filterTo||v.date.slice(0,10)<=filterTo)&&(!q||v.voucherNumber.toLowerCase().includes(q)||v.description.toLowerCase().includes(q))).reverse()}, [vouchers,filterFrom,filterTo,filterQuery])
 
   /** الرصيد الحي للطرف المختار (أمر التعديل: يظهر تحت العميل/المورد قبل الحفظ) */
   const liveBalance = useMemo(() => {
@@ -176,21 +177,27 @@ export function VouchersPage() {
   }
 
   const exportVouchers = () => {
-    const rows = [['الرقم','التاريخ','النوع','الخزينة','الحساب المقابل','البيان','المبلغ'],...vouchers.map(v=>[v.voucherNumber,v.date.slice(0,10),v.kind==='receipt'?'قبض':'صرف',v.treasury,nameOf(v.counterAccountCode),v.description,fmt(v.amountMinor)])]
+    const rows = [['الرقم','التاريخ','النوع','الخزينة','الحساب المقابل','البيان','المبلغ'],...listed.map(v=>[v.voucherNumber,v.date.slice(0,10),v.kind==='receipt'?'قبض':'صرف',v.treasury,nameOf(v.counterAccountCode),v.description,fmt(v.amountMinor)])]
     const csv='\ufeff'+rows.map(r=>r.map(x=>`"${String(x).replaceAll('"','""')}"`).join(',')).join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='vouchers.csv';a.click();URL.revokeObjectURL(url)
   }
-  const printVouchers = () => printHtml(`<html dir="rtl"><head><meta charset="utf-8"><style>body{font-family:Arial;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:6px}</style></head><body><h2>سجل سندات القبض والصرف</h2><table><tr><th>الرقم</th><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المبلغ</th></tr>${vouchers.map(v=>`<tr><td>${v.voucherNumber}</td><td>${v.date.slice(0,10)}</td><td>${v.kind==='receipt'?'قبض':'صرف'}</td><td>${v.description}</td><td>${fmt(v.amountMinor)}</td></tr>`).join('')}</table></body></html>`)
+  const printVouchers = () => printHtml(`<html dir="rtl"><head><meta charset="utf-8"><style>body{font-family:Arial;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:6px}</style></head><body><h2>سجل سندات القبض والصرف</h2><table><tr><th>الرقم</th><th>التاريخ</th><th>النوع</th><th>البيان</th><th>المبلغ</th></tr>${listed.map(v=>`<tr><td>${v.voucherNumber}</td><td>${v.date.slice(0,10)}</td><td>${v.kind==='receipt'?'قبض':'صرف'}</td><td>${v.description}</td><td>${fmt(v.amountMinor)}</td></tr>`).join('')}</table></body></html>`)
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between anim-up flex-wrap gap-2">
         <div className="text-sm text-slate-500">كل سند يولّد قيداً متوازناً فوراً — لا نقدية تتحرك خارج الدفاتر</div>
-        <div className="flex gap-2"><Btn variant="ghost" onClick={exportVouchers} disabled={!vouchers.length}><FileSpreadsheet size={14}/> Excel</Btn><Btn variant="ghost" onClick={printVouchers} disabled={!vouchers.length}><Printer size={14}/> طباعة</Btn>
+        <div className="flex gap-2"><Btn variant="ghost" onClick={exportVouchers} disabled={!listed.length}><FileSpreadsheet size={14}/> Excel</Btn><Btn variant="ghost" onClick={printVouchers} disabled={!listed.length}><Printer size={14}/> طباعة</Btn>
           <Btn onClick={() => openNew('receipt')}><ArrowDownCircle size={15} /> سند قبض</Btn>
           <Btn variant="ghost" onClick={() => openNew('payment')} className="!text-rose-600 border-2 border-rose-500/30 hover:!bg-rose-500/5">
             <ArrowUpCircle size={15} /> سند صرف
           </Btn>
         </div>
+      </div>
+
+      <div className="grid sm:grid-cols-3 gap-2 rounded-xl border p-2 bg-white dark:bg-card-dark">
+        <input className={inputCls} value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} placeholder="بحث بالرقم أو البيان" />
+        <input type="date" className={inputCls} value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)} />
+        <input type="date" className={inputCls} value={filterTo} onChange={(e) => setFilterTo(e.target.value)} />
       </div>
 
       {listed.length === 0 ? (
