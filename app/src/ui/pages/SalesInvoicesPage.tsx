@@ -191,6 +191,13 @@ export function SalesInvoicesPage() {
     )
   }
 
+  const profitabilityOf = (sale: SaleInvoice) => {
+    const cogs = sale.lines.reduce((sum, line) => sum + Math.round(line.qty * line.unitCostMinor), 0)
+    const internal = (sale.internalExpenses ?? []).filter((expense) => expense.affectsProfit).reduce((sum, expense) => sum + expense.amountMinor, 0)
+    const commissions = staffCommissions.filter((commission) => commission.source === 'sale' && commission.sourceId === sale.id && commission.status !== 'cancelled').reduce((sum, commission) => sum + commission.amountMinor, 0)
+    return { cogs, internal, commissions, profit: sale.totals.netMinor - cogs - internal - commissions }
+  }
+
   return (
     <div className="space-y-4">
       <div className="anim-up flex flex-wrap items-center gap-2">
@@ -212,6 +219,7 @@ export function SalesInvoicesPage() {
               <th className="px-4 py-3 font-bold">الدفع</th>
               <th className="px-4 py-3 font-bold">الأصناف</th>
               <th className="px-4 py-3 font-bold">الإجمالي</th>
+              <th className="px-4 py-3 font-bold">الربحية الداخلية</th>
               <th className="px-4 py-3 font-bold">القيد</th>
               <th className="px-4 py-3 font-bold"></th>
             </tr>
@@ -234,6 +242,7 @@ export function SalesInvoicesPage() {
                 </td>
                 <td className="px-4 py-3 text-slate-500">{s.lines.length}</td>
                 <td className="px-4 py-3 font-black text-emerald-600 dark:text-emerald-400">{fmt(s.totals.totalMinor)}</td>
+                <td className={`px-4 py-3 font-bold ${profitabilityOf(s).profit < 0 ? 'text-rose-600' : 'text-sky-600'}`} title={`تكلفة ${fmt(profitabilityOf(s).cogs)} · مصروف داخلي ${fmt(profitabilityOf(s).internal)} · عمولات ${fmt(profitabilityOf(s).commissions)}`}>{fmt(profitabilityOf(s).profit)}</td>
                 <td className="px-4 py-3">
                   <span className="text-[11px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-bold flex items-center gap-1 w-fit">
                     <BookOpenText size={11} /> قيد #{s.journalEntryId}
