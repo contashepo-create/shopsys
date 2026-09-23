@@ -950,6 +950,16 @@ export interface EmployeeAdvance {
   journalEntryId: number
 }
 
+/** مسودة محرر فاتورة متقدمة — تحفظ محلياً داخل مخزن التطبيق وتنتقل مع النسخ الاحتياطي. */
+export interface AdvancedInvoiceDraft {
+  id: string
+  kind: 'sale' | 'purchase'
+  name: string
+  payload: string
+  createdAt: string
+  updatedAt: string
+}
+
 /* ─── فواتير البيع (الكاشير) ─── */
 export interface SaleInvoice {
   id: number
@@ -1173,6 +1183,9 @@ interface DataState {
   employeeDeductions: EmployeeDeduction[] // جزاءات/خصومات مسجلة تُخصم من المسيرات (كامل/جزء/تأجيل)
   advanceRepayments: AdvanceRepayment[] // سدادات نقدية للسلف خارج المسير
   sales: SaleInvoice[]
+  advancedInvoiceDrafts: AdvancedInvoiceDraft[]
+  upsertAdvancedInvoiceDraft: (draft: Omit<AdvancedInvoiceDraft, 'createdAt' | 'updatedAt'> & { createdAt?: string }) => AdvancedInvoiceDraft
+  deleteAdvancedInvoiceDraft: (id: string) => void
   saleReturns: SaleReturn[]
   shifts: Shift[]
   journal: JournalEntry[] // دفتر اليومية — Append-Only (القرار 9)
@@ -2313,6 +2326,16 @@ export const useDataStore = create<DataState>()(
       employeeDeductions: [],
       advanceRepayments: [],
       sales: [],
+      advancedInvoiceDrafts: [],
+      upsertAdvancedInvoiceDraft: (input) => {
+        const state = get()
+        const now = new Date().toISOString()
+        const existing = state.advancedInvoiceDrafts.find((draft) => draft.id === input.id)
+        const draft: AdvancedInvoiceDraft = { ...input, createdAt: existing?.createdAt ?? input.createdAt ?? now, updatedAt: now }
+        set({ advancedInvoiceDrafts: [...state.advancedInvoiceDrafts.filter((row) => row.id !== draft.id), draft] })
+        return draft
+      },
+      deleteAdvancedInvoiceDraft: (id) => set((state) => ({ advancedInvoiceDrafts: state.advancedInvoiceDrafts.filter((draft) => draft.id !== id) })),
       saleReturns: [],
       shifts: [],
       journal: [],
