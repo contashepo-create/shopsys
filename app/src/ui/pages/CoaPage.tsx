@@ -53,6 +53,8 @@ export function CoaPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [statementAccount, setStatementAccount] = useState<Account | null>(null)
+  const [statementFrom, setStatementFrom] = useState('')
+  const [statementTo, setStatementTo] = useState('')
 
   /** أرصدة كل الحسابات — التجميعي يجمع أبناءه تنازلياً */
   const balances = useMemo(() => {
@@ -88,11 +90,11 @@ export function CoaPage() {
   const statementRows = useMemo(() => {
     if (!statementAccount) return []
     let balance = 0
-    return journal.flatMap((entry) => entry.lines.filter((line) => line.accountCode === statementAccount.code).map((line) => {
+    return journal.filter(entry=>(!statementFrom||entry.date.slice(0,10)>=statementFrom)&&(!statementTo||entry.date.slice(0,10)<=statementTo)).flatMap((entry) => entry.lines.filter((line) => line.accountCode === statementAccount.code).map((line) => {
       balance += statementAccount.rootType === 'assets' || statementAccount.rootType === 'expenses' ? line.debit - line.credit : line.credit - line.debit
       return { date: entry.date.slice(0, 10), number: entry.entryNumber, description: entry.description, debit: line.debit, credit: line.credit, balance }
     }))
-  }, [journal, statementAccount])
+  }, [journal, statementAccount, statementFrom, statementTo])
   const exportStatement = () => {
     if (!statementAccount) return
     const esc = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`
@@ -202,7 +204,7 @@ export function CoaPage() {
 
 
       <Modal open={!!statementAccount} onClose={()=>setStatementAccount(null)} title={`كشف حركة — ${statementAccount?.nameAr??''}`}>
-        <div className="space-y-3"><div className="flex justify-between items-center"><span className="text-xs text-slate-500">{statementRows.length} حركة · الرصيد {fmt(statementRows.at(-1)?.balance??0)}</span><div className="flex gap-2"><Btn variant="ghost" onClick={exportStatement}><FileSpreadsheet size={14}/> Excel CSV</Btn><Btn variant="ghost" onClick={printStatement}><Printer size={14}/> طباعة</Btn></div></div><div className="max-h-[55vh] overflow-auto"><table className="w-full text-xs"><thead className="sticky top-0 bg-white dark:bg-card-dark"><tr><th className="p-2">التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>{statementRows.map((r,i)=><tr key={`${r.number}-${i}`} className="border-t dark:border-slate-800"><td className="p-2">{r.date}</td><td>#{r.number}</td><td>{r.description}</td><td>{fmt(r.debit)}</td><td>{fmt(r.credit)}</td><td className="font-bold">{fmt(r.balance)}</td></tr>)}</tbody></table></div></div>
+        <div className="space-y-3"><div className="grid grid-cols-2 gap-2"><Field label="من"><input type="date" className={inputCls} value={statementFrom} onChange={e=>setStatementFrom(e.target.value)}/></Field><Field label="إلى"><input type="date" className={inputCls} value={statementTo} onChange={e=>setStatementTo(e.target.value)}/></Field></div><div className="flex justify-between items-center"><span className="text-xs text-slate-500">{statementRows.length} حركة · الرصيد {fmt(statementRows.at(-1)?.balance??0)}</span><div className="flex gap-2"><Btn variant="ghost" onClick={exportStatement}><FileSpreadsheet size={14}/> Excel CSV</Btn><Btn variant="ghost" onClick={printStatement}><Printer size={14}/> طباعة</Btn></div></div><div className="max-h-[55vh] overflow-auto"><table className="w-full text-xs"><thead className="sticky top-0 bg-white dark:bg-card-dark"><tr><th className="p-2">التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>{statementRows.map((r,i)=><tr key={`${r.number}-${i}`} className="border-t dark:border-slate-800"><td className="p-2">{r.date}</td><td>#{r.number}</td><td>{r.description}</td><td>{fmt(r.debit)}</td><td>{fmt(r.credit)}</td><td className="font-bold">{fmt(r.balance)}</td></tr>)}</tbody></table></div></div>
       </Modal>
 
       {/* إضافة حساب مخصص */}
