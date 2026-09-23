@@ -216,6 +216,8 @@ export interface Trip {
   fromLoc: string
   toLoc: string
   qty: number
+  orderedQty?: number
+  rejectedQty?: number
   unitPriceMinor: number
   payment: 'cash' | 'credit'
   /** التحصيل الجزئي (إصلاح المالك): المحصَّل نقداً الآن — الباقي دين 1104. غيابه = حسب payment */
@@ -1315,7 +1317,7 @@ interface DataState {
     purchaseOrderNumber?: string
     receiptStatus?: 'pending' | 'partial' | 'received'
     date: string
-    lines: { itemId: number; qty: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string }[]
+    lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
     paidMinor: number
     treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه (افتراضياً الرئيسية)
@@ -2461,7 +2463,9 @@ export const useDataStore = create<DataState>()(
           if (!state.items.some((it) => it.id === l.itemId)) throw new Error(`صنف غير موجود بالمخزون (#${l.itemId})`)
         }
         for (const l of inv.lines) {
-          if (!Number.isFinite(l.qty) || l.qty <= 0) throw new Error('كل كمية يجب أن تكون رقماً موجباً')
+          if (!Number.isFinite(l.qty) || l.qty <= 0) throw new Error('كل كمية مستلمة يجب أن تكون رقماً موجباً')
+          if (l.rejectedQty != null && (!Number.isFinite(l.rejectedQty) || l.rejectedQty < 0)) throw new Error('الكمية المرفوضة غير صالحة')
+          if (l.orderedQty != null && (!Number.isFinite(l.orderedQty) || l.orderedQty < l.qty + (l.rejectedQty ?? 0))) throw new Error('الكمية المطلوبة لا تقل عن المستلم والمرفوض')
           if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
         }
         for (const expense of inv.expenses) {
@@ -2629,6 +2633,8 @@ export const useDataStore = create<DataState>()(
           lines: landed.map((l, i) => ({
             itemId: l.itemId,
             qty: l.qty,
+            orderedQty: inv.lines[i]?.orderedQty,
+            rejectedQty: inv.lines[i]?.rejectedQty,
             unitPriceMinor: l.unitPriceMinor,
             expenseShareMinor: l.expenseShareMinor,
             landedUnitCostMinor: l.landedUnitCostMinor,
