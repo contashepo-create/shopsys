@@ -216,8 +216,6 @@ export interface Trip {
   fromLoc: string
   toLoc: string
   qty: number
-  orderedQty?: number
-  rejectedQty?: number
   unitPriceMinor: number
   payment: 'cash' | 'credit'
   /** التحصيل الجزئي (إصلاح المالك): المحصَّل نقداً الآن — الباقي دين 1104. غيابه = حسب payment */
@@ -790,6 +788,8 @@ export interface PayrollRun {
 export interface PurchaseLine {
   itemId: number
   qty: number
+  orderedQty?: number
+  rejectedQty?: number
   unitPriceMinor: number // سعر الوحدة قبل المصاريف
   expenseShareMinor: number // نصيب السطر من المصاريف (يُحسب)
   landedUnitCostMinor: number // التكلفة النهائية للوحدة (يُحسب)
