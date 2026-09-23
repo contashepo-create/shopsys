@@ -55,6 +55,13 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
+    id: 'feed_trade', nameAr: 'تجارة الأعلاف والحبوب', icon: '🌾',
+    description: 'أعلاف وحبوب بالوزن والجوال والطن، تشغيلات وصلاحيات وقوائم أسعار جملة',
+    features: ['expiry_batches', 'weight_scale', 'multi_unit', 'price_lists'],
+    modules: ['pos', 'inventory', 'purchases'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'a4',
+  },
+  {
     id: 'mobile', nameAr: 'موبايلات وصيانة', icon: '📱',
     description: 'سيريال/IMEI وضمان، وحدة صيانة كاملة',
     features: ['serial_warranty', 'variants'],

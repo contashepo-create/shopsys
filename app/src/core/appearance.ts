@@ -74,6 +74,7 @@ export const ACCENTS: AccentPalette[] = [
  */
 export const ACTIVITY_ACCENTS: Record<string, string> = {
   grocery: 'emerald', // طزاجة الأغذية
+  feed_trade: 'date_palm', // أعلاف وحبوب بطابع زراعي
   mobile: 'sky', // تقني هادئ
   clothing: 'fuchsia', // أزياء وحيوية
   pharmacy: 'teal', // طبي مطمئن

@@ -6,13 +6,14 @@
  */
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Pencil, Trash2, Phone, UserRound, ChevronDown, FileBadge, Wallet, BookOpenText, Eye, BadgeCheck, BadgeX, Landmark, FileSpreadsheet, HandCoins } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
 import type { PartyExtended } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { matchesPartyCode } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
+import { toCsv } from '../../core/security.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
 import { STAFF_COMMISSION_SOURCE_LABELS, STAFF_COMMISSION_STATUS_LABELS, type StaffCommissionSource } from '../../core/staffCommissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -95,7 +96,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const fmt = (m: number) => formatMinor(m, cur, false)
   const toMajor = (m: number) => (m ? String(m / 10 ** cur.decimals) : '')
 
-  const [tab, setTab] = useState<'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions'>(initialTab)
+  const tab = initialTab
 
   /* ─── تبويب العمولات (طلب المالك): مربوطة بالعمليات وتُصرف منفردة أو مع الراتب ─── */
   const [comOpen, setComOpen] = useState(false)
@@ -309,19 +310,21 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const listedRuns = useMemo(() => [...payrollRuns].reverse(), [payrollRuns])
   const empName = (id: number) => employees.find((e) => e.id === id)?.nameAr ?? `موظف #${id}`
 
-  const tabCls = (t: 'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions') =>
-    `px-4 py-2 rounded-xl text-[13px] font-bold transition-all ${tab === t ? 'bg-brand-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`
+
+
+  const sectionMeta = {
+    staff: ['الموظفون', employees], payroll: ['المرتبات', payrollRuns], advances: ['سلف الموظفين', employeeAdvances],
+    deductions: ['الخصومات والجزاءات', employeeDeductions], commissions: ['عمولات الموظفين', staffCommissions],
+  } as const
+  const exportSection = () => {
+    const [name, rows] = sectionMeta[tab]
+    const blob = new Blob([toCsv(rows as unknown as Record<string, unknown>[])], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${name}.csv`; a.click(); URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="space-y-4">
-      <div className="anim-up flex items-center gap-2">
-        <button onClick={() => setTab('staff')} className={tabCls('staff')}><UserRound size={14} className="inline -mt-0.5 me-1" /> الموظفون ({employees.length})</button>
-        <button onClick={() => setTab('payroll')} className={tabCls('payroll')}><Wallet size={14} className="inline -mt-0.5 me-1" /> مسيرات الرواتب ({payrollRuns.length})</button>
-        <button onClick={() => setTab('advances')} className={tabCls('advances')}><Landmark size={14} className="inline -mt-0.5 me-1" /> السلف ({employeeAdvances.length})</button>
-        <button onClick={() => setTab('deductions')} className={tabCls('deductions')}><BadgeX size={14} className="inline -mt-0.5 me-1" /> الخصومات والجزاءات ({employeeDeductions.length})</button>
-        <button onClick={() => setTab('commissions')} className={tabCls('commissions')}><HandCoins size={14} className="inline -mt-0.5 me-1" /> العمولات ({staffCommissions.length})</button>
-      </div>
-
+      <div className="flex items-center justify-between"><h1 className="text-xl font-black">{sectionMeta[tab][0]}</h1><Btn variant="ghost" onClick={exportSection}><Download size={14}/> تصدير Excel</Btn></div>
       {tab === 'advances' && (
         <>
           <div className="anim-up flex items-center justify-between flex-wrap gap-2">

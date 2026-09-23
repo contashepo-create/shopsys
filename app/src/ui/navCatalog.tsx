@@ -118,6 +118,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'payroll', nameAr: 'المرتبات', icon: Banknote, path: '/parties/payroll' },
       { id: 'employee-advances', nameAr: 'سلف الموظفين', icon: HandCoins, path: '/parties/employee-advances' },
       { id: 'employee-deductions', nameAr: 'الخصومات والجزاءات', icon: Percent, path: '/parties/employee-deductions' },
+      { id: 'employee-commissions', nameAr: 'عمولات الموظفين', icon: HandCoins, path: '/parties/employee-commissions' },
       { id: 'custody', nameAr: 'ملفات عهد الموظفين', icon: Wallet2, path: '/parties/custody' },
       { id: 'installments', nameAr: 'الأقساط', icon: CreditCard, path: '/parties/installments', module: 'installments' },
     ],
