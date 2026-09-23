@@ -229,8 +229,8 @@ export function PurchaseReturnsPage() {
                   const rem = remaining[lineIndex] ?? 0
                   const selectedWarehouseId = returnWarehouses[lineIndex] ?? l.warehouseId ?? purchase.warehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? null
                   return (
-                    <tr key={lineIndex} className="border-b border-slate-50 dark:border-slate-800/50">
-                      <td className="px-3 py-2 font-bold">{itemName(l.itemId)}</td>
+                    <tr key={lineIndex} data-entry-row className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td tabIndex={0} className="px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-brand-500/40">{itemName(l.itemId)}</td>
                       <td className="px-3 py-2">{l.qty}</td>
                       <td className="px-3 py-2">{fmt(l.landedUnitCostMinor)}</td>
                       <td className={`px-3 py-2 font-bold ${rem > 0 ? 'text-cyan-600' : 'text-slate-300'}`}>{rem}</td>
@@ -238,6 +238,7 @@ export function PurchaseReturnsPage() {
                         <input
                           value={qtys[lineIndex] ?? ''}
                           onChange={(e) => setQtys((q) => ({ ...q, [lineIndex]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget.closest('tr')?.nextElementSibling?.querySelector<HTMLElement>('td[tabindex="0"]'))?.focus() } }}
                           placeholder="0"
                           disabled={rem <= 0}
                           className={`${inputCls} text-center py-1.5 disabled:opacity-40`}

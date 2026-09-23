@@ -110,9 +110,12 @@ export function PosPage() {
   const [treasury, setTreasury] = useState('1101')
   const [lastInvoice, setLastInvoice] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const qtyRefs = useRef<Record<number, HTMLInputElement | null>>({})
+  const priceRefs = useRef<Record<number, HTMLInputElement | null>>({})
+  const [searchIndex, setSearchIndex] = useState(0)
 
   // التركيز الدائم على البحث — سلوك كاشير حقيقي (القارئ يكتب ثم Enter)
-  useEffect(() => { searchRef.current?.focus() }, [cart.length])
+  useEffect(() => { if (cart.length) qtyRefs.current[cart.length - 1]?.focus(); else searchRef.current?.focus() }, [cart.length])
 
   // F9 = فتح الدفع مباشرة (الاختصار المكتوب على الزر يعمل فعلاً)
   useEffect(() => {
@@ -569,8 +572,8 @@ export function PosPage() {
           <input
             ref={searchRef}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && onSearchEnter()}
+            onChange={(e) => { setQuery(e.target.value); setSearchIndex(0) }}
+            onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex((i) => Math.min(filtered.slice(0, 8).length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = filtered[searchIndex] ?? filtered[0]; if (selected) { addToCart(selected.id); setQuery('') } else onSearchEnter() } }}
             placeholder="F2 بحث · امسح الباركود أو اكتب الاسم · Enter إضافة · F8 نقدي · F9 دفع"
             className={`${inputCls} pr-10 py-3 text-base border-brand-300 dark:border-brand-700 shadow-sm`}
           />
@@ -593,7 +596,7 @@ export function PosPage() {
 
         {query.trim() && filtered.length > 0 && (
           <div className="absolute z-30 top-14 right-0 left-0 max-h-52 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-card-dark shadow-xl p-1">
-            {filtered.slice(0, 8).map((item) => <button key={item.id} type="button" onClick={()=>{addToCart(item.id);setQuery('');searchRef.current?.focus()}} className="w-full flex justify-between gap-3 px-3 py-2 rounded-lg hover:bg-emerald-500/10 text-xs"><span className="font-bold">{item.nameAr}</span><span className="text-slate-400">{item.sku||item.barcodes?.[0]||''} · {fmt(item.priceMinor)}</span></button>)}
+            {filtered.slice(0, 8).map((item, index) => <button key={item.id} type="button" onClick={()=>{addToCart(item.id);setQuery('');searchRef.current?.focus()}} className={`w-full flex justify-between gap-3 px-3 py-2 rounded-lg text-xs ${index === searchIndex ? 'bg-emerald-500/15 ring-1 ring-emerald-500/40' : 'hover:bg-emerald-500/10'}`}><span className="font-bold">{item.nameAr}</span><span className="text-slate-400">{item.sku||item.barcodes?.[0]||''} · {fmt(item.priceMinor)}</span></button>)}
           </div>
         )}
         <div className="text-[10px] text-slate-400 px-1">اكتب اسم الصنف أو امسح الباركود ثم اضغط Enter — لا توجد بطاقات تشغل مساحة الفاتورة.</div>
@@ -692,16 +695,17 @@ export function PosPage() {
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {/* رأس أعمدة السلة */}
-              <div className="grid grid-cols-[1fr_7.3rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
+              <div className="grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
                 <span>الصنف</span>
                 <span className="text-center">الكمية</span>
+                <span className="text-center">السعر</span>
                 <span className="text-center" title="النسبة الفعلية لكل سطر: نسبة البلد تلقائياً أو استثناء الصنف إن كان معفى">ضريبة</span>
                 <span className="text-center">خصم ٪</span>
                 <span className="text-left">الإجمالي</span>
                 <span></span>
               </div>
               {cart.map((l, i) => (
-                <div key={i} className="anim-pop grid grid-cols-[1fr_7.3rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-3 hover:bg-emerald-500/[0.03] transition-colors duration-150">
+                <div key={i} data-entry-row className="anim-pop entry-grid grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-3 hover:bg-emerald-500/[0.03] transition-colors duration-150">
                   {/* الصنف: الاسم + سعر الوحدة */}
                   <div className="min-w-0">
                     <div className="font-bold text-[13px] text-slate-800 dark:text-white truncate leading-snug">
@@ -783,6 +787,7 @@ export function PosPage() {
                       className="w-8 h-full text-slate-500 font-bold hover:bg-rose-500/10 hover:text-rose-500 transition-colors"
                     >−</button>
                     <input
+                      ref={(node) => { qtyRefs.current[i] = node }}
                       value={qtyDrafts[i] ?? String(l.qty)}
                       inputMode="decimal"
                       onChange={(e) => {
@@ -795,6 +800,7 @@ export function PosPage() {
                       }}
                       onBlur={() => setQtyDrafts((d) => { const n = { ...d }; delete n[i]; return n })}
                       onFocus={(e) => e.target.select()}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); priceRefs.current[i]?.focus(); priceRefs.current[i]?.select() } }}
                       className="w-full h-full text-center text-[13px] font-black bg-transparent text-slate-800 dark:text-white outline-none"
                     />
                     <button
@@ -803,6 +809,7 @@ export function PosPage() {
                     >+</button>
                   </div>
                   )}
+                  <input ref={(node) => { priceRefs.current[i] = node }} value={String(l.unitPriceMinor / 10 ** cur.decimals)} inputMode="decimal" onFocus={(e) => e.target.select()} onChange={(e) => { const raw = e.target.value; if (!/^\d*\.?\d*$/.test(raw)) return; try { const value = Math.max(0, toMinor(raw || '0', cur.decimals)); setCart((current) => current.map((line, index) => index === i ? { ...line, unitPriceMinor: value } : line)) } catch { /* قيمة انتقالية */ } }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select() } }} className="h-9 text-center font-bold bg-transparent border border-slate-200 dark:border-slate-700 outline-none" aria-label={`سعر ${l.nameAr}`}/>
                   {/* ضريبة السطر — تلقائية من بلد المنشأة أو استثناء الصنف (معفى/نسبة خاصة) */}
                   <div
                     title={`نسبة الضريبة لهذا السطر: ${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪ — ${country?.nameAr ?? 'حسب بلد المنشأة'}`}

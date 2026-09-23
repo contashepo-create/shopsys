@@ -379,9 +379,9 @@ export function SaleReturnsPage() {
                     const rem = remaining[idx] ?? 0
                     const w = wiz[idx]
                     return (
-                      <tr key={idx} className={`border-b border-slate-50 dark:border-slate-800/50 ${Number(w?.qty) > 0 ? 'bg-rose-500/[0.03]' : ''}`}>
+                      <tr key={idx} data-entry-row className={`border-b border-slate-50 dark:border-slate-800/50 ${Number(w?.qty) > 0 ? 'bg-rose-500/[0.03]' : ''}`}>
                         <td className="px-3 py-2 text-slate-400 text-[11px]">{idx + 1}</td>
-                        <td className="px-3 py-2 font-bold">
+                        <td tabIndex={0} className="px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-brand-500/40">
                           {l.soldByWeight && '⚖️ '}{l.nameAr}
                           {(l.variantColor || l.variantSize) && <span className="text-[10px] text-fuchsia-500 mr-1">({[l.variantColor, l.variantSize].filter(Boolean).join('/')})</span>}
                           {l.unitLabel && <span className="text-[10px] text-sky-500 mr-1">[{l.unitLabel}]</span>}
@@ -393,6 +393,7 @@ export function SaleReturnsPage() {
                           <input
                             value={w?.qty ?? ''}
                             onChange={(e) => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: e.target.value.replace(/[^\d.]/g, ''), condition: prev[idx]?.condition ?? 'resellable' } }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget.closest('tr')?.nextElementSibling?.querySelector<HTMLElement>('td[tabindex="0"]'))?.focus() } }}
                             placeholder="0"
                             inputMode="decimal" autoComplete="off"
                             title={l.soldByWeight ? 'صنف وزني ⚖️ — يقبل كسوراً مثل 1.75' : 'الكمية المرتجعة'}
