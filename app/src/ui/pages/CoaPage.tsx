@@ -90,10 +90,11 @@ export function CoaPage() {
 
   const statementRows = useMemo(() => {
     if (!statementAccount) return []
-    let balance = 0
+    const natural = (debit: number, credit: number) => statementAccount.rootType === 'assets' || statementAccount.rootType === 'expenses' ? debit - credit : credit - debit
+    let balance = journal.filter((entry) => statementFrom && entry.date.slice(0, 10) < statementFrom).flatMap((entry) => entry.lines).filter((line) => line.accountCode === statementAccount.code).reduce((sum, line) => sum + natural(line.debit, line.credit), 0)
     const q=statementQuery.trim().toLowerCase()
     return journal.filter(entry=>(!statementFrom||entry.date.slice(0,10)>=statementFrom)&&(!statementTo||entry.date.slice(0,10)<=statementTo)&&(!q||entry.description.toLowerCase().includes(q)||String(entry.entryNumber).includes(q))).flatMap((entry) => entry.lines.filter((line) => line.accountCode === statementAccount.code).map((line) => {
-      balance += statementAccount.rootType === 'assets' || statementAccount.rootType === 'expenses' ? line.debit - line.credit : line.credit - line.debit
+      balance += natural(line.debit, line.credit)
       return { date: entry.date.slice(0, 10), number: entry.entryNumber, description: entry.description, debit: line.debit, credit: line.credit, balance }
     }))
   }, [journal, statementAccount, statementFrom, statementTo, statementQuery])
