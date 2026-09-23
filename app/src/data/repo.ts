@@ -4510,6 +4510,7 @@ export const useDataStore = create<DataState>()(
         }
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة غير موجودة')
+        if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
         if (state.paymentTerminalTransactions.some((row) => row.kind === 'charge' && row.documentType === 'sale' && row.documentId === String(sale.id))) throw new Error('لا يمكن تعديل فاتورة محصلة بالماكينة؛ استخدم مرتجعاً مرتبطاً بالأصل ثم أصدر فاتورة جديدة')
         if (!args.lines.length) throw new Error('الفاتورة المعدلة بلا أصناف')
         // موانع السلامة المحاسبية: مستندات لاحقة بُنيت على الفاتورة
@@ -4686,6 +4687,7 @@ export const useDataStore = create<DataState>()(
         }
         const inv = state.purchases.find((p) => p.id === args.purchaseId)
         if (!inv) throw new Error('فاتورة الشراء غير موجودة')
+        if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
         const supplierDocument = args.supplierInvoiceNumber?.trim()
         if (supplierDocument && state.purchases.some((row) => row.id !== inv.id && row.supplierId === inv.supplierId && row.supplierInvoiceNumber === supplierDocument)) throw new Error('رقم فاتورة المورد مسجل مسبقاً لهذا المورد')
         if (args.dueDate && args.dueDate < inv.date) throw new Error('تاريخ الاستحقاق لا يسبق تاريخ فاتورة المورد')

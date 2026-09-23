@@ -518,7 +518,7 @@ export function SalesInvoicesPage() {
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setEditing(null)}>إلغاء</Btn>
-              <Btn onClick={saveEdit} disabled={!editLines.length || editLines.some((l) => l.qty <= 0)}>💾 حفظ التعديل</Btn>
+              <Btn onClick={saveEdit} disabled={!editReason.trim() || !editLines.length || editLines.some((l) => l.qty <= 0)}>💾 حفظ التعديل</Btn>
             </div>
           </div>
         )}
