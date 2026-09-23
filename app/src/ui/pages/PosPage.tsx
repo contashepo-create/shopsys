@@ -117,12 +117,15 @@ export function PosPage() {
   // F9 = فتح الدفع مباشرة (الاختصار المكتوب على الزر يعمل فعلاً)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'F9') {
+      if (e.key === 'F2') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); return }
+      if (e.key === 'Escape') { setPayOpen(false); setQuickPrintOpen(false); searchRef.current?.focus(); return }
+      if (e.key === 'F8' || e.key === 'F9') {
         e.preventDefault()
         if (!cart.length) return
-        // F9 يحترم سياسة الورديات أيضاً
+        // F8 تحصيل نقدي سريع، وF9 فتح الدفع مع احترام سياسة الورديات
         const st = useAppStore.getState().setup
         if (st.requireOpenShiftForSales && !currentOpenShift(useDataStore.getState().shifts)) { setShiftOpenModal(true); return }
+        if (e.key === 'F8') setPayment('cash')
         setPayOpen(true)
       }
     }
@@ -568,7 +571,7 @@ export function PosPage() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && onSearchEnter()}
-            placeholder="امسح الباركود أو ابحث بالاسم… (Enter يضيف فوراً)"
+            placeholder="F2 بحث · امسح الباركود أو اكتب الاسم · Enter إضافة · F8 نقدي · F9 دفع"
             className={`${inputCls} pr-10 py-3 text-base border-brand-300 dark:border-brand-700 shadow-sm`}
           />
         </div>
