@@ -138,6 +138,7 @@ export const STANDARD_COA: Account[] = [
   { code: '2114', nameAr: 'عمولات مستحقة للغير', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'commissions_payable_others' },
   { code: '2115', nameAr: 'مستحق لملاك العقارات المدارة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'property_owners_payable' },
   { code: '2116', nameAr: 'عمولات موظفين مستحقة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'staff_commissions_payable' },
+  { code: '2117', nameAr: 'مصروفات داخلية مستحقة', rootType: 'liabilities', parentCode: '2', isPostable: true, systemKey: 'internal_expenses_payable' },
   { code: '3', nameAr: 'حقوق الملكية', rootType: 'equity', parentCode: null, isPostable: false },
   { code: '3101', nameAr: 'رأس المال', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'capital' },
   { code: '3102', nameAr: 'أرباح مرحّلة', rootType: 'equity', parentCode: '3', isPostable: true, systemKey: 'retained_earnings' },

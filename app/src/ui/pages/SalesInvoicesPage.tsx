@@ -187,15 +187,14 @@ export function SalesInvoicesPage() {
 
   if (sales.length === 0) {
     return (
-      <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
-        <EmptyState icon="🧾" title="لا فواتير مبيعات بعد" sub="افتح شاشة البيع (الكاشير) وابدأ أول فاتورة — سيتولد قيدها تلقائياً" />
-      </div>
+      <div className="space-y-4"><div className="flex justify-end"><Btn onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn></div><div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800"><EmptyState icon="🧾" title="لا فواتير مبيعات بعد" sub="أنشئ فاتورة متقدمة أو استخدم الكاشير للبيع السريع" /></div></div>
     )
   }
 
   return (
     <div className="space-y-4">
-      <div className="anim-up flex items-center gap-2">
+      <div className="anim-up flex flex-wrap items-center gap-2">
+        <Btn onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}

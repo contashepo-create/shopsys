@@ -1,4 +1,4 @@
-import{describe,expect,it}from'vitest';import{allocateLandedCost,applyDefaultWarehouse,computeAdvancedTotals,inventoryWarnings,type AdvancedInvoiceLine,type InternalExpense}from'../src/core/advancedInvoice.ts';
+import{describe,expect,it}from'vitest';import{allocateLandedCost,applyDefaultWarehouse,buildInternalExpenseLines,computeAdvancedTotals,inventoryWarnings,type AdvancedInvoiceLine,type InternalExpense}from'../src/core/advancedInvoice.ts';
 const lines:AdvancedInvoiceLine[]=[{id:'a',itemId:1,description:'أ',warehouseId:1,warehouseSource:'default',qty:2,unitPriceMinor:10000,lineDiscountMinor:1000,taxPercent:14,availableQty:1},{id:'b',itemId:2,description:'ب',warehouseId:2,warehouseSource:'manual',qty:1,unitPriceMinor:5000,lineDiscountMinor:0,taxPercent:14,availableQty:3}];
 const expense:InternalExpense={id:'e',label:'تحميل',amountMinor:500,accountCode:'5101',settlement:'payable_later',taxTreatment:'exempt',taxPercent:0,affectsProfit:true,landedCostAllocation:'value'};
 describe('الفاتورة المتقدمة',()=>{
@@ -6,6 +6,7 @@ it('يرتب الإجماليات ويفصل مصروف المنشأة عن فا
 it('يجعل الإضافة الضريبية ديناميكية',()=>{const exempt=computeAdvancedTotals({lines:[],invoiceDiscountMinor:0,charges:[{id:'x',label:'شحن',amountMinor:500,taxTreatment:'exempt',taxPercent:14}],expenses:[]});const taxable=computeAdvancedTotals({lines:[],invoiceDiscountMinor:0,charges:[{id:'x',label:'شحن',amountMinor:500,taxTreatment:'exclusive',taxPercent:14}],expenses:[]});expect(exempt.taxMinor).toBe(0);expect(taxable.taxMinor).toBe(70)})
 it('يغير المخزن الافتراضي ولا يمس السطر اليدوي',()=>expect(applyDefaultWarehouse(lines,9).map(l=>l.warehouseId)).toEqual([9,2]))
 it('يمنع السالب أو يحذر حسب السياسة',()=>{expect(inventoryWarnings(lines,false)[0].severity).toBe('error');expect(inventoryWarnings(lines,true)[0]).toMatchObject({severity:'warning',message:'سيصبح الرصيد -1'})})
+it('يثبت المصروف المدفوع أو المستحق بقيد متوازن ولا يحمله على العميل',()=>{const payable=buildInternalExpenseLines([expense]);expect(payable).toEqual([{accountCode:'5101',debit:500,credit:0,note:'مصروف داخلي — تحميل'},{accountCode:'2117',debit:0,credit:500,note:'مصروف مستحق — تحميل'}]);const paid=buildInternalExpenseLines([{...expense,settlement:'paid_now',treasury:'1102',taxTreatment:'exclusive',taxPercent:14}]);expect(paid.reduce((s,l)=>s+l.debit,0)).toBe(570);expect(paid.reduce((s,l)=>s+l.credit,0)).toBe(570)})
 it('يوزع تكلفة الشراء المحملة بلا فرق تقريب',()=>{const a=allocateLandedCost(expense,lines);expect(Object.values(a).reduce((s,v)=>s+v,0)).toBe(500);expect(a.a).toBeGreaterThan(a.b)})
 it('يدعم التوزيع اليدوي ويتحقق من مجموعه',()=>{expect(()=>allocateLandedCost({...expense,landedCostAllocation:'manual',manualAllocations:{a:100,b:100}},lines)).toThrow('لا يساوي')})
 })

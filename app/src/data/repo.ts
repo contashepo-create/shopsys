@@ -59,6 +59,7 @@ import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTe
 import { remainingRefundableMinor, validateTerminalTransaction, type PaymentTerminalTransaction, type TerminalDocumentType } from '../core/paymentTerminalTransactions.ts'
 import { buildTerminalCharge } from '../core/paymentTerminalCharge.ts'
 import { buildTerminalRefund } from '../core/paymentTerminalRefund.ts'
+import { buildInternalExpenseLines, type InternalExpense } from '../core/advancedInvoice.ts'
 import { assertTerminalOperation, validateTerminalAccess } from '../core/paymentTerminalAccess.ts'
 import { calculateTerminalSettlement, netSettlementTransactions, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
@@ -974,6 +975,8 @@ export interface SaleInvoice {
    */
   taxPercent?: number
   taxInclusive?: boolean
+  /** مصروفات داخلية مرتبطة بالفاتورة، لا تظهر للعميل ولا تزيد إجماليه */
+  internalExpenses?: InternalExpense[]
 }
 
 /** مرتجع مبيعات — دائماً مربوط بفاتورته الأصلية وبقيده العاكس */
@@ -1305,6 +1308,7 @@ interface DataState {
     priceFloorOverrideBy?: string | null
     /** تحصيل ماكينة يُحفظ ذرياً مع الفاتورة؛ لا تمرر documentId/amount/user من الواجهة. */
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string; documentType?: TerminalDocumentType }
+    internalExpenses?: InternalExpense[]
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -2921,6 +2925,9 @@ export const useDataStore = create<DataState>()(
           }
         }
         const entryLines = buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM)
+        const internalExpenses = args.internalExpenses ?? []
+        entryLines.push(...buildInternalExpenseLines(internalExpenses, args.treasury ?? '1101'))
+        assertBalanced(entryLines)
         const saleId = nextId(state.sales)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -2960,6 +2967,7 @@ export const useDataStore = create<DataState>()(
           warehouseId: effectiveSaleWarehouseId,
           taxPercent: args.taxPercent, // G1: تثبيت المعاملة الضريبية على المستند
           taxInclusive: args.taxInclusive,
+          internalExpenses,
         }
 
         // كسب نقاط الولاء لعميل مسجل (نمط Lightspeed Pay+Earn — تقريب لأسفل، لا أنصاف)
@@ -2986,13 +2994,14 @@ export const useDataStore = create<DataState>()(
         if (args.terminalPayment) {
           const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
           if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+          if (paidM <= 0) throw new Error('لا يوجد مبلغ محصل لتسجيله على الماكينة')
           if (terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('حساب تحصيل الفاتورة لا يطابق حساب الماكينة')
           const saleBranch = state.branches.find((branch) => branch.warehouseId === effectiveSaleWarehouseId)
           if (saleBranch && terminal.branchId !== String(saleBranch.id)) throw new Error('ماكينة الدفع لا تتبع فرع الفاتورة')
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
-          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', totals.totalMinor)
-          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `sale:${saleId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: args.terminalPayment.documentType ?? 'sale', documentId: String(saleId), amountMinor: totals.totalMinor, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', paidM)
+          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `sale:${saleId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: args.terminalPayment.documentType ?? 'sale', documentId: String(saleId), amountMinor: paidM, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
           const errors = validateTerminalTransaction(terminalTransaction); if (errors.length) throw new Error(errors.join(' — '))
         }
         set({
