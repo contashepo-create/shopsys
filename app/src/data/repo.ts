@@ -1884,7 +1884,7 @@ interface DataState {
   /** تكلفة وحدة الناتج بالمتوسط المرجح الحالي للخامات */
   getRecipeUnitCost: (recipeId: number) => number
   /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
-  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number }[]; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string; outputExpiryDate?: string | null }) => ProductionOrder
+  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number }[]; warehouseId?: number | null; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string; outputExpiryDate?: string | null }) => ProductionOrder
   /**
    * أمر تجهيز/تفكيك (جزارة 🥩/تمور 🌴): خام واحد → نواتج متعددة.
    * توزيع (تكلفة الخام + المصاريف) على النواتج بنسبة قيمها البيعية بالقرش،
@@ -2968,7 +2968,7 @@ export const useDataStore = create<DataState>()(
         if (!args.allowNegativeStock) {
           const warehouseStock = computeWarehouseStock(
             state.items, state.warehouses, state.transfers,
-            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns),
+            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders),
           )
           const needsByWarehouse = new Map<number, Map<number, number>>()
           for (const line of saleLines) {
@@ -3484,7 +3484,7 @@ export const useDataStore = create<DataState>()(
         if (args.lineSpecs?.length) {
           const warehouseStock = computeWarehouseStock(
             state.items, state.warehouses, state.transfers,
-            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns),
+            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders),
           )
           const needed = new Map<string, number>()
           for (const line of lines) {
@@ -8243,6 +8243,10 @@ export const useDataStore = create<DataState>()(
         const batches = direct ? 1 : (args.batches ?? 0)
         if (!direct && (!Number.isInteger(batches) || batches <= 0)) throw new Error('عدد التشغيلات يجب أن يكون عدداً صحيحاً موجباً')
         const productItemId = direct ? (args.productItemId ?? 0) : recipe.productItemId
+        const warehouseId = args.warehouseId ?? state.warehouses.find((warehouse) => warehouse.isMain)?.id ?? state.warehouses[0]?.id ?? null
+        if (warehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === warehouseId)) throw new Error('اختر مخزن تصنيع صحيحاً')
+        const warehouseStock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders))
+        const availableInWarehouse = (itemId: number) => warehouseStock.get(warehouseId)?.get(itemId) ?? 0
         const ingredients = direct ? (args.ingredients ?? []) : recipe.ingredients.map((ing) => ({ itemId: ing.itemId, qty: ing.qty * batches }))
         const producedQty = direct ? (args.producedQty ?? 0) : recipe.yieldQty * batches
         if (!state.items.some((item) => item.id === productItemId && item.isActive)) throw new Error('اختر صنفاً ناتجاً مسجلاً ونشطاً في المخزون')
@@ -8257,7 +8261,7 @@ export const useDataStore = create<DataState>()(
           if (seenIngredients.has(ing.itemId)) throw new Error(`الخامة «${item.nameAr}» مكررة`)
           seenIngredients.add(ing.itemId)
           if (!(ing.qty > 0)) throw new Error(`كمية «${item.nameAr}» يجب أن تكون أكبر من صفر`)
-          if ((item.stockQty ?? 0) < ing.qty) shortages.push(`«${item.nameAr}»: متاح ${item.stockQty ?? 0} ومطلوب ${ing.qty}`)
+          if (availableInWarehouse(item.id) < ing.qty) shortages.push(`«${item.nameAr}»: متاح في المخزن ${availableInWarehouse(item.id)} ومطلوب ${ing.qty}`)
         }
         if (shortages.length) throw new Error(`خامات غير كافية — ${shortages.join('، ')}`)
         const ingredientsCost = ingredients.reduce((sum, ing) => sum + Math.round(ing.qty * (state.items.find((item) => item.id === ing.itemId)?.costMinor ?? 0)), 0)
@@ -8291,7 +8295,7 @@ export const useDataStore = create<DataState>()(
         }
         const order: ProductionOrder = {
           id: orderId, orderNumber, refCode: makeUniqueRefCode('PRD', now, usedRefCodes(state)),
-          date: `${productionDate}T00:00:00.000Z`, recipeId: recipe?.id ?? 0, productItemId,
+          date: `${productionDate}T00:00:00.000Z`, recipeId: recipe?.id ?? 0, productItemId, warehouseId,
           batches, producedQty, outputExpiryDate: args.outputExpiryDate ?? null, ingredientsCostMinor: ingredientsCost,
           ingredientItems: ingredients.map((ingredient) => { const unitCostMinor = state.items.find((item) => item.id === ingredient.itemId)?.costMinor ?? 0; return { ...ingredient, unitCostMinor, totalCostMinor: Math.round(ingredient.qty * unitCostMinor) } }),
           overheadMinor: overhead + detailedOverhead, overheadItems: productionExpenses, totalCostMinor: ingredientsCost + overhead + detailedOverhead,
@@ -9269,7 +9273,7 @@ export const useDataStore = create<DataState>()(
         if (!state.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود')
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
-        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns))
+        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders))
         const sourceMap = stock.get(args.fromWarehouseId)
         const errors = validateTransfer(
           { fromWarehouseId: args.fromWarehouseId, toWarehouseId: args.toWarehouseId, lines: args.lines },

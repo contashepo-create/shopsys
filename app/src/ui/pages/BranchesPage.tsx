@@ -20,7 +20,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 export function BranchesPage() {
   const {
     branches, warehouses, treasuries, addBranch, updateBranch, removeBranch,
-    sales, saleReturns, purchases, purchaseReturns, transfers, items, journal,
+    sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders,
   } = useDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
@@ -43,7 +43,7 @@ export function BranchesPage() {
         accountBalances.set(l.accountCode, (accountBalances.get(l.accountCode) ?? 0) + l.debit - l.credit)
       }
     }
-    const warehouseStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns))
+    const warehouseStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders))
     return compareBranches({
       branches,
       sales,

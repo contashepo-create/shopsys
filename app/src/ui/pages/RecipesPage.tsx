@@ -7,17 +7,21 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import type { ProductionExpense } from '../../core/recipes.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { buildWarehouseDocs, computeWarehouseStock } from '../../core/transfers.ts'
 
 type MaterialRow = { id: string; itemId: number; query: string; qty: string; unitFactor: number; unitName: string }
 type Tab = 'materials' | 'expenses'
 
 export function RecipesPage() {
-  const { items, productionOrders, recipes, customAccounts, addCustomAccount, addRecipe, postProduction } = useDataStore()
+  const { items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, recipes, customAccounts, addCustomAccount, addRecipe, postProduction } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
   const activeItems = useMemo(() => items.filter((item) => item.isActive), [items])
+  const warehouseStock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders])
+  const warehouseQty = (itemId: number) => warehouseStock.get(warehouseId)?.get(itemId) ?? 0
   const [productId, setProductId] = useState(0)
+  const [warehouseId, setWarehouseId] = useState<number>(() => setup.defaultWarehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? warehouses[0]?.id ?? 0)
   const [outputQty, setOutputQty] = useState('')
   const [outputUnitFactor, setOutputUnitFactor] = useState(1)
   const [tab, setTab] = useState<Tab>('materials')
@@ -94,7 +98,7 @@ export function RecipesPage() {
       if (strictBalance && Math.abs(variance) > 0.0001) throw new Error('إجمالي الخامات يجب أن يساوي كمية الناتج — عطّل المطابقة الصارمة فقط عند وجود هالك أو تغير وزن')
       if (!strictBalance && Math.abs(variance) > 0.0001 && !varianceReason.trim()) throw new Error('اكتب سبب فرق الوزن/الهالك قبل الترحيل')
       const ingredientRows = materials.filter((row) => row.itemId && Number(row.qty) > 0).map((row) => ({ itemId: row.itemId, qty: Number(row.qty) * row.unitFactor }))
-      const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, treasury, date: productionDate, outputExpiryDate: outputExpiryDate || null, notes: [notes, varianceReason && `سبب فرق الكمية: ${varianceReason}`].filter(Boolean).join(' — ') })
+      const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, treasury, warehouseId, date: productionDate, outputExpiryDate: outputExpiryDate || null, notes: [notes, varianceReason && `سبب فرق الكمية: ${varianceReason}`].filter(Boolean).join(' — ') })
       toast.show(`تم ترحيل ${order.orderNumber} وإضافة ${order.producedQty} ${product?.baseUnit ?? 'وحدة'} للمخزون ✓`)
       reset()
     } catch (error) { toast.show((error as Error).message, 'error') }
@@ -103,12 +107,13 @@ export function RecipesPage() {
   return <div className="space-y-3 pb-20" dir="rtl">
     <header className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-card-dark p-4">
       <div className="flex items-center gap-2 mb-3"><Factory className="text-amber-600"/><div><h1 className="font-black text-lg">عملية تصنيع جديدة</h1><p className="text-[11px] text-slate-500">حدد المنتج والكمية الناتجة، ثم أدخل الخامات الفعلية والمصروفات</p></div></div>
-      <div className="grid md:grid-cols-[1fr_180px_130px] gap-3 items-end">
+      <div className="grid md:grid-cols-[1fr_180px_150px_130px] gap-3 items-end">
         <Field label="الصنف المطلوب إنتاجه *" hint="يجب أن يكون مسجلاً في الأصناف والمخزون">
           <select className={inputCls} value={productId} onChange={(event) => { setProductId(Number(event.target.value)); setOutputUnitFactor(1); setOutputExpiryDate('') }}>
             <option value={0}>اختر المنتج النهائي…</option>{activeItems.map((item) => <option key={item.id} value={item.id}>{item.sku ? `${item.sku} — ` : ''}{item.nameAr}</option>)}
           </select>
         </Field>
+        <Field label="مخزن التصنيع *"><select className={inputCls} value={warehouseId} onChange={(e)=>setWarehouseId(Number(e.target.value))}>{warehouses.map(warehouse=><option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</select></Field>
         <Field label="الكمية المطلوب تصنيعها *"><input className={inputCls} inputMode="decimal" value={outputQty} onChange={(event) => setOutputQty(event.target.value)} placeholder="مثال: 3" /></Field>
         <Field label="وحدة الناتج"><select className={inputCls} value={outputUnitFactor} onChange={(e)=>setOutputUnitFactor(Number(e.target.value))} disabled={!product}><option value={1}>{product?.baseUnit??'الوحدة الأساسية'}</option>{product?.extraUnits.map(unit=><option key={unit.nameAr} value={unit.factor}>{unit.nameAr} × {unit.factor}</option>)}</select></Field>
       </div>
@@ -131,7 +136,7 @@ export function RecipesPage() {
           return <div key={row.id} className="grid grid-cols-[110px_1fr_130px_120px_110px_36px] gap-2 items-center rounded-xl border border-slate-100 dark:border-slate-800 p-2">
             <div className="font-mono text-xs text-slate-500">{item?.sku || item?.barcodes?.[0] || item?.id || '—'}</div>
             <input list="manufacturing-items" className={inputCls} value={row.query} onChange={(event) => patchMaterial(row.id, { query: event.target.value })} onBlur={(event) => { const found = resolveItem(event.target.value); if (found) patchMaterial(row.id, { itemId: found.id, query: itemToken(found.id), unitFactor: 1, unitName: found.baseUnit }) }} placeholder="اكتب الاسم أو الكود أو امسح الباركود" />
-            <div className={`text-xs font-bold ${(item?.stockQty ?? 0) < (Number(row.qty) || 0) * row.unitFactor ? 'text-rose-600' : 'text-emerald-600'}`}>{item ? `${item.stockQty ?? 0} ${item.baseUnit}` : '—'}</div>
+            <div className={`text-xs font-bold ${warehouseQty(item?.id ?? 0) < (Number(row.qty) || 0) * row.unitFactor ? 'text-rose-600' : 'text-emerald-600'}`}>{item ? `${warehouseQty(item.id)} ${item.baseUnit}` : '—'}</div>
             <select className={inputCls} value={row.unitFactor} disabled={!item} onChange={(e)=>{const factor=Number(e.target.value);const unit=item?.extraUnits.find(candidate=>candidate.factor===factor);patchMaterial(row.id,{unitFactor:factor,unitName:unit?.nameAr??item?.baseUnit??''})}}><option value={1}>{item?.baseUnit??'الوحدة'}</option>{item?.extraUnits.map(unit=><option key={unit.nameAr} value={unit.factor}>{unit.nameAr}</option>)}</select>
             <input className={inputCls} inputMode="decimal" value={row.qty} onChange={(event) => patchMaterial(row.id, { qty: event.target.value })} placeholder="0" />
             <button onClick={() => setMaterials((rows) => rows.filter((candidate) => candidate.id !== row.id))} className="text-rose-500"><Trash2 size={15}/></button>

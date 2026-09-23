@@ -109,6 +109,7 @@ export interface ProductionOrder {
   date: string
   recipeId: number
   productItemId: number
+  warehouseId?: number | null
   /** عدد التشغيلات (المضاعِف) */
   batches: number
   producedQty: number // batches × yieldQty
