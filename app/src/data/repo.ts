@@ -14,7 +14,7 @@ import { priceFloorViolations, PriceFloorError } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
-import { computeTotals, buildSaleEntry, baseQty, exceedsCreditLimit, CreditLimitError, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
+import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
@@ -978,6 +978,7 @@ export interface SaleInvoice {
   payment: PaymentMethod
   paidMinor?: number // المدفوع نقداً (الدفع المجزأ) — undefined للفواتير القديمة = حسب payment
   treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
+  paymentAllocations?: { accountCode: string; amountMinor: number; note?: string }[]
   lines: CartLine[]
   invoiceDiscountPercent: number
   totals: CartTotals
@@ -1328,6 +1329,7 @@ interface DataState {
     taxInclusive: boolean
     treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
     paidMinor?: number // الدفع المجزأ: المدفوع نقداً الآن والباقي آجل (طلب المالك)
+    paymentAllocations?: { accountCode: string; amountMinor: number; note?: string }[]
     expiryOverrideBy?: string | null
     allowNegativeStock?: boolean
     /** المخزن المختار أعلى الفاتورة (الأمر 8) — null = غير محدد */
@@ -2980,12 +2982,16 @@ export const useDataStore = create<DataState>()(
         const chargeTax = customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * args.taxPercent / 100), 0)
         const totals = { ...baseTotals, netMinor: baseTotals.netMinor + chargeNet, taxBaseMinor: baseTotals.taxBaseMinor + customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: baseTotals.taxMinor + chargeTax, totalMinor: baseTotals.totalMinor + chargeNet + chargeTax }
         // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
-        const paidM = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
+        const allocationPaid = args.paymentAllocations?.reduce((sum, allocation) => sum + allocation.amountMinor, 0)
+        const paidM = allocationPaid ?? args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
         if (paidM > 0) {
-          const treasuryCode = args.treasury ?? '1101'
+          const checks = args.paymentAllocations?.length ? args.paymentAllocations : [{ accountCode: args.treasury ?? '1101', amountMinor: paidM }]
           const user = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
-          const errors = validateTreasuryAccess(user?.treasuryAccess, treasuryCode, 'receipt', paidM)
-          if (errors.length) throw new Error(errors.join(' — '))
+          for (const allocation of checks) {
+            if (!state.treasuries.some((treasury) => treasury.code === allocation.accountCode)) throw new Error(`حساب التحصيل غير موجود (${allocation.accountCode})`)
+            const errors = validateTreasuryAccess(user?.treasuryAccess, allocation.accountCode, 'receipt', allocation.amountMinor)
+            if (errors.length) throw new Error(errors.join(' — '))
+          }
         }
         if (paidM < totals.totalMinor && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
@@ -3002,7 +3008,7 @@ export const useDataStore = create<DataState>()(
             }
           }
         }
-        const entryLines = buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM)
+        const entryLines = args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM)
         const internalExpenses = args.internalExpenses ?? []
         entryLines.push(...buildInternalExpenseLines(internalExpenses, args.treasury ?? '1101'))
         assertBalanced(entryLines)
@@ -3035,6 +3041,7 @@ export const useDataStore = create<DataState>()(
           payment: args.payment,
           paidMinor: paidM,
           treasury: args.treasury ?? '1101',
+          paymentAllocations: args.paymentAllocations,
           lines: costedLines,
           invoiceDiscountPercent: args.invoiceDiscountPercent,
           totals,
@@ -3089,14 +3096,15 @@ export const useDataStore = create<DataState>()(
         if (args.terminalPayment) {
           const terminal = state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId)
           if (!terminal || terminal.status !== 'active') throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
-          if (paidM <= 0) throw new Error('لا يوجد مبلغ محصل لتسجيله على الماكينة')
-          if (terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('حساب تحصيل الفاتورة لا يطابق حساب الماكينة')
+          const terminalAmount = args.paymentAllocations?.find((allocation) => allocation.accountCode === terminal.settlementAccountCode)?.amountMinor ?? paidM
+          if (terminalAmount <= 0) throw new Error('لا يوجد مبلغ محصل لتسجيله على الماكينة')
+          if (!args.paymentAllocations?.length && terminal.settlementAccountCode !== (args.treasury ?? '1101')) throw new Error('حساب تحصيل الفاتورة لا يطابق حساب الماكينة')
           const saleBranch = state.branches.find((branch) => branch.warehouseId === effectiveSaleWarehouseId)
           if (saleBranch && terminal.branchId !== String(saleBranch.id)) throw new Error('ماكينة الدفع لا تتبع فرع الفاتورة')
           if (state.paymentTerminalTransactions.some((row) => row.terminalId === terminal.id && row.providerReference === args.terminalPayment!.providerReference && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
-          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', paidM)
-          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `sale:${saleId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: args.terminalPayment.documentType ?? 'sale', documentId: String(saleId), amountMinor: paidM, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
+          if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', terminalAmount)
+          terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `sale:${saleId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: args.terminalPayment.documentType ?? 'sale', documentId: String(saleId), amountMinor: terminalAmount, providerReference: args.terminalPayment.providerReference.trim(), occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
           const errors = validateTerminalTransaction(terminalTransaction); if (errors.length) throw new Error(errors.join(' — '))
         }
         set({

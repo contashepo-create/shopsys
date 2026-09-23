@@ -197,6 +197,33 @@ export function checkStock(
  *   دائن: المخزون (بالتكلفة)
  * يتحقق التوازن بنيوياً قبل الإرجاع — UnbalancedEntryError إن اختل.
  */
+export interface SalePaymentAllocation { accountCode: string; amountMinor: number; note?: string }
+
+/** قيد بيع بتحصيل مختلط بين عدة خزائن/بنوك/ماكينات والباقي ذمم. */
+export function buildSaleEntryWithAllocations(totals: CartTotals, allocations: SalePaymentAllocation[]): JournalLine[] {
+  if (!allocations.length) return buildSaleEntry(totals, 'credit', '1101', 0)
+  const seen = new Set<string>()
+  let paid = 0
+  const lines: JournalLine[] = allocations.map((allocation) => {
+    if (!allocation.accountCode.trim()) throw new RangeError('حساب وسيلة التحصيل مطلوب')
+    if (!Number.isInteger(allocation.amountMinor) || allocation.amountMinor <= 0) throw new RangeError('قيمة وسيلة التحصيل غير صالحة')
+    const key = `${allocation.accountCode}:${allocation.note ?? ''}`
+    if (seen.has(key)) throw new RangeError('وسيلة التحصيل مكررة')
+    seen.add(key); paid += allocation.amountMinor
+    return { accountCode: allocation.accountCode, debit: allocation.amountMinor, credit: 0, note: allocation.note ?? 'تحصيل فاتورة' }
+  })
+  if (paid > totals.totalMinor) throw new RangeError('إجمالي التحصيل أكبر من إجمالي الفاتورة')
+  if (paid < totals.totalMinor) lines.push({ accountCode: '1104', debit: totals.totalMinor - paid, credit: 0, note: 'ذمم عملاء' })
+  lines.push({ accountCode: '4101', debit: 0, credit: totals.taxBaseMinor, note: 'مبيعات' })
+  if (totals.taxMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: totals.taxMinor, note: 'ض.ق.م مستحقة' })
+  if (totals.cogsMinor > 0) {
+    lines.push({ accountCode: '5101', debit: totals.cogsMinor, credit: 0, note: 'تكلفة مبيعات' })
+    lines.push({ accountCode: '1103', debit: 0, credit: totals.cogsMinor, note: 'مخزون' })
+  }
+  assertBalanced(lines)
+  return lines
+}
+
 export function buildSaleEntry(
   totals: CartTotals,
   payment: PaymentMethod,
