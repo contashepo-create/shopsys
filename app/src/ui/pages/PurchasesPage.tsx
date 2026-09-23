@@ -102,7 +102,7 @@ export function PurchasesPage() {
       totalMinor: inv.grandTotalMinor,
       paidMinor: inv.paidMinor,
       settings: receipt,
-      extraFooter: inv.expensesTotalMinor > 0 ? `بضاعة ${fmt(inv.goodsTotalMinor)} + مصاريف ${fmt(inv.expensesTotalMinor)}` : undefined,
+      extraFooter: [`${inv.supplierInvoiceNumber ? `فاتورة المورد ${inv.supplierInvoiceNumber}` : ''}${inv.purchaseOrderNumber ? ` · أمر شراء ${inv.purchaseOrderNumber}` : ''}${inv.dueDate ? ` · استحقاق ${inv.dueDate}` : ''}`, inv.expensesTotalMinor > 0 ? `بضاعة ${fmt(inv.goodsTotalMinor)} + مصاريف ${fmt(inv.expensesTotalMinor)}` : ''].filter(Boolean).join(' — ') || undefined,
     })
     printModelWithTemplate(model, cur, receipt, template)
     toast.show(`أُرسلت فاتورة الشراء ${inv.invoiceNumber} للطباعة 🖨️`)
@@ -403,6 +403,8 @@ export function PurchasesPage() {
                   <td className="px-4 py-3">
                     <div className="font-bold text-slate-800 dark:text-white">{p.invoiceNumber}</div>
                     {p.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{p.refCode}</div>}
+                    {p.supplierInvoiceNumber&&<div className="text-[10px] text-violet-600">فاتورة المورد: {p.supplierInvoiceNumber}</div>}
+                    {p.purchaseOrderNumber&&<div className="text-[10px] text-slate-500">أمر شراء: {p.purchaseOrderNumber}</div>}
                     <div className="text-[11px] text-slate-400">{p.date}</div>
                     {warehouses.length > 1 && (
                       <div className="text-[10.5px] text-slate-400">مخزن: {purchaseWarehouseLabel(p)}</div>
