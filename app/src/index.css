@@ -213,3 +213,42 @@ input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
   .pos-workspace > div:first-child { grid-column: 2; }
   .pos-workspace > div:last-child { grid-column: 1; grid-row: 1; }
 }
+
+/* حقول موحّدة احترافياً في كل الأنشطة: input وselect بنفس القياس تماماً. */
+input:not([type='checkbox']):not([type='radio']):not([type='range']),
+select,
+button[role='combobox'] {
+  box-sizing: border-box;
+  min-height: 2.625rem;
+}
+select { line-height: 1.25rem; }
+
+/* صفوف الإدخال الجدولية: خلايا متلاصقة وحدود موحدة بلا فراغات مربكة. */
+.entry-grid { gap: 0 !important; overflow: hidden; padding: 0 !important; }
+.entry-grid > input,
+.entry-grid > select,
+.entry-grid > button[role='combobox'] {
+  height: 2.625rem;
+  min-height: 2.625rem;
+  border-radius: 0;
+  border-width: 1px;
+  margin-inline-start: -1px;
+}
+.entry-grid > :first-child { margin-inline-start: 0; border-start-start-radius: .7rem; border-end-start-radius: .7rem; }
+.entry-grid > :last-child { border-start-end-radius: .7rem; border-end-end-radius: .7rem; }
+.entry-grid > div { min-height: 2.625rem; display: flex; align-items: center; padding-inline: .65rem; border-inline-start: 1px solid rgb(226 232 240); }
+.dark .entry-grid > div { border-color: rgb(51 65 85); }
+
+/* محررات الفواتير والجداول في جميع الأنشطة تتصرف كشبكة إدخال واحدة. */
+.invoice-editor table { border-collapse: separate; border-spacing: 0; }
+.invoice-editor td:has(> input),
+.invoice-editor td:has(> select) { padding: 0 !important; }
+.invoice-editor td > input,
+.invoice-editor td > select {
+  height: 2.5rem;
+  min-height: 2.5rem;
+  border-radius: 0;
+  border-width: 1px;
+}
+.invoice-editor tr:focus-within { background: rgb(99 102 241 / .055); }
+.dark .invoice-editor tr:focus-within { background: rgb(129 140 248 / .08); }

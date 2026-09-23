@@ -13,6 +13,13 @@ describe('التحكم بلوحة المفاتيح', () => {
     fireEvent.keyDown(second, { key: 'Enter', shiftKey: true }); expect(document.activeElement).toBe(first)
   })
 
+  it('ينقل الأسهم رأسياً بين خلايا العمود نفسه في صفوف الإدخال', () => {
+    const view = render(<MemoryRouter><main><KeyboardNavigation/><div><div data-entry-row><input aria-label="r1c1"/><input aria-label="r1c2"/></div><div data-entry-row><input aria-label="r2c1"/><input aria-label="r2c2"/></div></div></main></MemoryRouter>)
+    const first = view.getByLabelText('r1c2'), below = view.getByLabelText('r2c2')
+    first.focus(); fireEvent.keyDown(first, { key: 'ArrowDown' }); expect(document.activeElement).toBe(below)
+    fireEvent.keyDown(below, { key: 'ArrowUp' }); expect(document.activeElement).toBe(first)
+  })
+
   it('يفتح F3 فاتورة شراء جديدة من قسم المشتريات', () => {
     const view = render(<MemoryRouter initialEntries={['/purchases/invoices']}><KeyboardNavigation/><Routes><Route path="*" element={<Path/>}/></Routes></MemoryRouter>)
     fireEvent.keyDown(document, { key: 'F3' })
