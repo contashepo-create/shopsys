@@ -363,9 +363,7 @@ export function PurchasesPage() {
           💡 الترحيل يوزع مصاريف الشراء على الأصناف (حسب القيمة أو الكمية لكل مصروف) ثم يحدّث
           تكلفة كل صنف <b>بالمتوسط المرجح المتحرك</b> ويزيد رصيد المخزون.
         </p>
-        <Btn onClick={openNew} disabled={items.length === 0 || suppliers.length === 0}>
-          <span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة شراء</span>
-        </Btn>
+        <div className="flex gap-2"><Btn variant="ghost" onClick={openNew} disabled={items.length === 0 || suppliers.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> إدخال سريع</span></Btn><Btn onClick={() => navigate('/purchases/invoices/new')} disabled={items.length === 0 || suppliers.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة مشتريات متقدمة</span></Btn></div>
       </div>
 
       {(items.length === 0 || suppliers.length === 0) && (

@@ -29,6 +29,7 @@ import { WarehousesPage } from './ui/pages/WarehousesPage.tsx'
 import { BranchesPage } from './ui/pages/BranchesPage.tsx'
 import { CustomersPage, SuppliersPage } from './ui/pages/PartiesPages.tsx'
 import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
+import { AdvancedPurchaseInvoicePage } from './ui/pages/AdvancedPurchaseInvoicePage.tsx'
 import { PurchaseReturnsPage } from './ui/pages/PurchaseReturnsPage.tsx'
 import { StocktakePage } from './ui/pages/StocktakePage.tsx'
 import { RecipesPage } from './ui/pages/RecipesPage.tsx'
@@ -187,6 +188,7 @@ function Shell() {
         <Route path="/inventory/processing" element={<ProcessingPage />} />
         <Route path="/inventory/jewelry" element={<JewelryPage />} />
         <Route path="/purchases/invoices" element={<PurchasesPage />} />
+        <Route path="/purchases/invoices/new" element={<AdvancedPurchaseInvoicePage />} />
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
         <Route path="/parties/employees" element={<EmployeesPage />} />
         <Route path="/parties/installments" element={<InstallmentsPage />} />
