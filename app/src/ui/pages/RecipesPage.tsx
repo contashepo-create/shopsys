@@ -8,7 +8,7 @@ import type { ProductionExpense } from '../../core/recipes.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 
-type MaterialRow = { id: string; itemId: number; query: string; qty: string }
+type MaterialRow = { id: string; itemId: number; query: string; qty: string; unitFactor: number; unitName: string }
 type Tab = 'materials' | 'expenses'
 
 export function RecipesPage() {
@@ -19,8 +19,9 @@ export function RecipesPage() {
   const activeItems = useMemo(() => items.filter((item) => item.isActive), [items])
   const [productId, setProductId] = useState(0)
   const [outputQty, setOutputQty] = useState('')
+  const [outputUnitFactor, setOutputUnitFactor] = useState(1)
   const [tab, setTab] = useState<Tab>('materials')
-  const [materials, setMaterials] = useState<MaterialRow[]>([{ id: crypto.randomUUID(), itemId: 0, query: '', qty: '' }])
+  const [materials, setMaterials] = useState<MaterialRow[]>([{ id: crypto.randomUUID(), itemId: 0, query: '', qty: '', unitFactor: 1, unitName: '' }])
   const [expenses, setExpenses] = useState<ProductionExpense[]>([])
   const [treasury] = useState('1101')
   const [notes, setNotes] = useState('')
@@ -29,12 +30,12 @@ export function RecipesPage() {
   const [quickName, setQuickName] = useState('')
 
   const product = activeItems.find((item) => item.id === productId)
-  const totalInputQty = materials.reduce((sum, row) => sum + (Number(row.qty) || 0), 0)
-  const output = Number(outputQty) || 0
+  const totalInputQty = materials.reduce((sum, row) => sum + (Number(row.qty) || 0) * row.unitFactor, 0)
+  const output = (Number(outputQty) || 0) * outputUnitFactor
   const variance = output - totalInputQty
   const materialCost = materials.reduce((sum, row) => {
     const item = items.find((candidate) => candidate.id === row.itemId)
-    return sum + Math.round((Number(row.qty) || 0) * (item?.costMinor ?? 0))
+    return sum + Math.round((Number(row.qty) || 0) * row.unitFactor * (item?.costMinor ?? 0))
   }, 0)
   const expenseTotal = expenses.reduce((sum, row) => sum + row.amountMinor, 0)
   const totalCost = materialCost + expenseTotal
@@ -53,7 +54,7 @@ export function RecipesPage() {
     return activeItems.find((item) => item.id !== productId && [String(item.id), item.sku, ...(item.barcodes ?? []), item.nameAr, itemToken(item.id)].filter(Boolean).some((value) => String(value).toLowerCase() === normalized))
   }
   const patchMaterial = (id: string, patch: Partial<MaterialRow>) => setMaterials((rows) => rows.map((row) => row.id === id ? { ...row, ...patch } : row))
-  const addMaterial = () => setMaterials((rows) => [...rows, { id: crypto.randomUUID(), itemId: 0, query: '', qty: '' }])
+  const addMaterial = () => setMaterials((rows) => [...rows, { id: crypto.randomUUID(), itemId: 0, query: '', qty: '', unitFactor: 1, unitName: '' }])
   const addExpense = () => setExpenses((rows) => [...rows, { id: crypto.randomUUID(), label: '', accountCode: expenseAccounts[0]?.code ?? '5108', amountMinor: 0, treasury }])
   const addQuickAccount = () => {
     try {
@@ -64,11 +65,11 @@ export function RecipesPage() {
     } catch (error) { toast.show((error as Error).message, 'error') }
   }
   const reset = () => {
-    setProductId(0); setOutputQty(''); setMaterials([{ id: crypto.randomUUID(), itemId: 0, query: '', qty: '' }]); setExpenses([]); setNotes(''); setTab('materials')
+    setProductId(0); setOutputQty(''); setOutputUnitFactor(1); setMaterials([{ id: crypto.randomUUID(), itemId: 0, query: '', qty: '', unitFactor: 1, unitName: '' }]); setExpenses([]); setNotes(''); setTab('materials')
   }
   const submit = () => {
     try {
-      const ingredientRows = materials.filter((row) => row.itemId && Number(row.qty) > 0).map((row) => ({ itemId: row.itemId, qty: Number(row.qty) }))
+      const ingredientRows = materials.filter((row) => row.itemId && Number(row.qty) > 0).map((row) => ({ itemId: row.itemId, qty: Number(row.qty) * row.unitFactor }))
       const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, treasury, notes })
       toast.show(`تم ترحيل ${order.orderNumber} وإضافة ${order.producedQty} ${product?.baseUnit ?? 'وحدة'} للمخزون ✓`)
       reset()
@@ -80,12 +81,12 @@ export function RecipesPage() {
       <div className="flex items-center gap-2 mb-3"><Factory className="text-amber-600"/><div><h1 className="font-black text-lg">عملية تصنيع جديدة</h1><p className="text-[11px] text-slate-500">حدد المنتج والكمية الناتجة، ثم أدخل الخامات الفعلية والمصروفات</p></div></div>
       <div className="grid md:grid-cols-[1fr_180px_130px] gap-3 items-end">
         <Field label="الصنف المطلوب إنتاجه *" hint="يجب أن يكون مسجلاً في الأصناف والمخزون">
-          <select className={inputCls} value={productId} onChange={(event) => setProductId(Number(event.target.value))}>
+          <select className={inputCls} value={productId} onChange={(event) => { setProductId(Number(event.target.value)); setOutputUnitFactor(1) }}>
             <option value={0}>اختر المنتج النهائي…</option>{activeItems.map((item) => <option key={item.id} value={item.id}>{item.sku ? `${item.sku} — ` : ''}{item.nameAr}</option>)}
           </select>
         </Field>
         <Field label="الكمية المطلوب تصنيعها *"><input className={inputCls} inputMode="decimal" value={outputQty} onChange={(event) => setOutputQty(event.target.value)} placeholder="مثال: 3" /></Field>
-        <div className="rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-2.5"><div className="text-[10px] text-slate-500">وحدة الناتج</div><b>{product?.baseUnit ?? '—'}</b></div>
+        <Field label="وحدة الناتج"><select className={inputCls} value={outputUnitFactor} onChange={(e)=>setOutputUnitFactor(Number(e.target.value))} disabled={!product}><option value={1}>{product?.baseUnit??'الوحدة الأساسية'}</option>{product?.extraUnits.map(unit=><option key={unit.nameAr} value={unit.factor}>{unit.nameAr} × {unit.factor}</option>)}</select></Field>
       </div>
     </header>
 
@@ -98,14 +99,15 @@ export function RecipesPage() {
       </div>
 
       {tab === 'materials' ? <div className="p-4 space-y-3">
-        <div className="grid grid-cols-[125px_1fr_150px_110px_36px] gap-2 px-2 text-[10px] font-bold text-slate-400"><span>كود الصنف</span><span>اسم الخام / بحث</span><span>المتاح</span><span>الكمية</span><span/></div>
+        <div className="grid grid-cols-[110px_1fr_130px_120px_110px_36px] gap-2 px-2 text-[10px] font-bold text-slate-400"><span>كود الصنف</span><span>اسم الخام / بحث</span><span>المتاح</span><span>الوحدة</span><span>الكمية</span><span/></div>
         <datalist id="manufacturing-items">{activeItems.filter((item) => item.id !== productId).map((item) => <option key={item.id} value={itemToken(item.id)} />)}</datalist>
         {materials.map((row) => {
           const item = items.find((candidate) => candidate.id === row.itemId)
-          return <div key={row.id} className="grid grid-cols-[125px_1fr_150px_110px_36px] gap-2 items-center rounded-xl border border-slate-100 dark:border-slate-800 p-2">
+          return <div key={row.id} className="grid grid-cols-[110px_1fr_130px_120px_110px_36px] gap-2 items-center rounded-xl border border-slate-100 dark:border-slate-800 p-2">
             <div className="font-mono text-xs text-slate-500">{item?.sku || item?.barcodes?.[0] || item?.id || '—'}</div>
-            <input list="manufacturing-items" className={inputCls} value={row.query} onChange={(event) => patchMaterial(row.id, { query: event.target.value })} onBlur={(event) => { const found = resolveItem(event.target.value); if (found) patchMaterial(row.id, { itemId: found.id, query: itemToken(found.id) }) }} placeholder="اكتب الاسم أو الكود أو امسح الباركود" />
-            <div className={`text-xs font-bold ${(item?.stockQty ?? 0) < (Number(row.qty) || 0) ? 'text-rose-600' : 'text-emerald-600'}`}>{item ? `${item.stockQty ?? 0} ${item.baseUnit}` : '—'}</div>
+            <input list="manufacturing-items" className={inputCls} value={row.query} onChange={(event) => patchMaterial(row.id, { query: event.target.value })} onBlur={(event) => { const found = resolveItem(event.target.value); if (found) patchMaterial(row.id, { itemId: found.id, query: itemToken(found.id), unitFactor: 1, unitName: found.baseUnit }) }} placeholder="اكتب الاسم أو الكود أو امسح الباركود" />
+            <div className={`text-xs font-bold ${(item?.stockQty ?? 0) < (Number(row.qty) || 0) * row.unitFactor ? 'text-rose-600' : 'text-emerald-600'}`}>{item ? `${item.stockQty ?? 0} ${item.baseUnit}` : '—'}</div>
+            <select className={inputCls} value={row.unitFactor} disabled={!item} onChange={(e)=>{const factor=Number(e.target.value);const unit=item?.extraUnits.find(candidate=>candidate.factor===factor);patchMaterial(row.id,{unitFactor:factor,unitName:unit?.nameAr??item?.baseUnit??''})}}><option value={1}>{item?.baseUnit??'الوحدة'}</option>{item?.extraUnits.map(unit=><option key={unit.nameAr} value={unit.factor}>{unit.nameAr}</option>)}</select>
             <input className={inputCls} inputMode="decimal" value={row.qty} onChange={(event) => patchMaterial(row.id, { qty: event.target.value })} placeholder="0" />
             <button onClick={() => setMaterials((rows) => rows.filter((candidate) => candidate.id !== row.id))} className="text-rose-500"><Trash2 size={15}/></button>
           </div>
@@ -120,8 +122,8 @@ export function RecipesPage() {
     </section>
 
     <section className="grid md:grid-cols-4 gap-2">
-      <div className="rounded-xl border p-3"><div className="text-[10px] text-slate-400">إجمالي كمية الخامات</div><b className="text-lg">{totalInputQty}</b></div>
-      <div className="rounded-xl border p-3"><div className="text-[10px] text-slate-400">كمية الناتج</div><b className="text-lg">{output}</b></div>
+      <div className="rounded-xl border p-3"><div className="text-[10px] text-slate-400">إجمالي كمية الخامات</div><b className="text-lg">{totalInputQty} <small>{product?.baseUnit??''}</small></b></div>
+      <div className="rounded-xl border p-3"><div className="text-[10px] text-slate-400">كمية الناتج</div><b className="text-lg">{output} <small>{product?.baseUnit??''}</small></b></div>
       <div className={`rounded-xl border p-3 ${Math.abs(variance) < 0.0001 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-amber-500/10 border-amber-500/30'}`}><div className="text-[10px] text-slate-400">فرق الكمية</div><b className="flex items-center gap-1">{Math.abs(variance) < 0.0001 ? <CheckCircle2 size={15}/> : <AlertTriangle size={15}/>} {variance}</b><div className="text-[9px] text-slate-400">يُسمح بالفرق للهالك أو تغير الوزن</div></div>
       <div className="rounded-xl border p-3"><div className="text-[10px] text-slate-400">التكلفة / تكلفة الوحدة</div><b>{fmt(totalCost)} / {fmt(unitCost)}</b></div>
     </section>
