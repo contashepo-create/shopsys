@@ -826,6 +826,10 @@ export interface PurchaseInvoice {
   /** الرقم المرجعي الفريد للتتبع — PUR-YYMMDD-XXXXXC (يُطبع ويُبحث به) */
   refCode: string
   supplierId: number
+  /** رقم مستند المورد الخارجي ومراجع دورة التوريد */
+  supplierInvoiceNumber?: string
+  purchaseOrderNumber?: string
+  receiptStatus?: 'pending' | 'partial' | 'received'
   date: string
   lines: PurchaseLine[]
   expenses: PurchaseExpense[]
@@ -1284,6 +1288,9 @@ interface DataState {
    */
   postPurchase: (inv: {
     supplierId: number
+    supplierInvoiceNumber?: string
+    purchaseOrderNumber?: string
+    receiptStatus?: 'pending' | 'partial' | 'received'
     date: string
     lines: { itemId: number; qty: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
@@ -2402,6 +2409,8 @@ export const useDataStore = create<DataState>()(
         if (!inv.lines.length) throw new Error('الفاتورة بلا أصناف')
         // P1 (مراجعة المشتريات): المورد يجب أن يكون مسجلاً — دين 2101 بلا مورد حقيقي يفسد كشوف الموردين
         if (!state.suppliers.some((s) => s.id === inv.supplierId)) throw new Error('المورد غير موجود — سجّله أولاً من «المشتريات ← الموردون»')
+        const supplierDocument = inv.supplierInvoiceNumber?.trim()
+        if (supplierDocument && state.purchases.some((purchase) => purchase.supplierId === inv.supplierId && purchase.supplierInvoiceNumber === supplierDocument)) throw new Error('رقم فاتورة المورد مسجل مسبقاً لهذا المورد')
         // P1: الخزينة/البنك المدفوع منه يجب أن يكون موجوداً (خزائن المصاريف كانت تُفحص والرئيسية لا)
         if (inv.treasury && !state.treasuries.some((t) => t.code === inv.treasury)) throw new Error('الخزينة/البنك المدفوع منه غير موجود')
         for (const l of inv.lines) {
@@ -2565,6 +2574,9 @@ export const useDataStore = create<DataState>()(
           invoiceNumber,
           refCode,
           supplierId: inv.supplierId,
+          supplierInvoiceNumber: supplierDocument || undefined,
+          purchaseOrderNumber: inv.purchaseOrderNumber?.trim() || undefined,
+          receiptStatus: inv.receiptStatus ?? 'received',
           date: inv.date,
           lines: landed.map((l, i) => ({
             itemId: l.itemId,
