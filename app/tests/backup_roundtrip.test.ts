@@ -1,2 +1,19 @@
-import{describe,expect,it}from'vitest';import{buildBackup,parseBackup,summarizeBackup}from'../src/core/backup.ts';
-describe('النسخ والاستعادة من منظور المستخدم',()=>{it('يعيد جميع بيانات سنة مالية بلا فقد',()=>{const state={state:{items:[{id:1}],sales:[{id:1}],purchases:[{id:1}],journal:[{id:1},{id:2}],customers:[{id:1}]},version:7};const app={fiscalYears:[{id:1,status:'closed'},{id:2,status:'open'}]};const file=buildBackup({appState:app,storeState:state,appDataVersion:7,shopName:'اختبار',now:'2026-01-01T00:00:00Z'});const restored=parseBackup(JSON.stringify(file));expect(restored.data).toEqual({app,store:state});expect(summarizeBackup(restored)).toMatchObject({items:1,sales:1,purchases:1,journalEntries:2,customers:1})});it('يرفض أي تعديل بعد التنزيل',()=>{const file=buildBackup({appState:{},storeState:{balance:10},appDataVersion:1,shopName:'x'});const raw=JSON.stringify(file).replace('10','11');expect(()=>parseBackup(raw)).toThrow('تالف')})})
+import { describe, expect, it } from 'vitest'
+import { buildBackup, parseBackup, summarizeBackup } from '../src/core/backup.ts'
+
+describe('النسخ والاستعادة من منظور المستخدم', () => {
+  it('يعيد جميع بيانات سنة مالية بلا فقد', () => {
+    const state = { state: { items: [{ id: 1 }], sales: [{ id: 1 }], purchases: [{ id: 1 }], journal: [{ id: 1 }, { id: 2 }], customers: [{ id: 1 }] }, version: 7 }
+    const app = { fiscalYears: [{ id: 1, status: 'closed' }, { id: 2, status: 'open' }] }
+    const file = buildBackup({ appState: app, storeState: state, appDataVersion: 7, shopName: 'اختبار', now: '2026-01-01T00:00:00Z' })
+    const restored = parseBackup(JSON.stringify(file))
+    expect(restored.data).toEqual({ app, store: state })
+    expect(summarizeBackup(restored)).toMatchObject({ items: 1, sales: 1, purchases: 1, journalEntries: 2, customers: 1 })
+  })
+
+  it('يرفض أي تعديل بعد التنزيل', () => {
+    const file = buildBackup({ appState: {}, storeState: { balance: 10 }, appDataVersion: 1, shopName: 'x', now: '2026-01-01T00:00:00Z' })
+    const tampered = { ...file, data: { ...file.data, store: { balance: 11 } } }
+    expect(() => parseBackup(JSON.stringify(tampered))).toThrow('تالف')
+  })
+})
