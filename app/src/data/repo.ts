@@ -824,6 +824,20 @@ export interface PurchaseExpense {
   date?: string
 }
 
+export interface PurchaseExpensePayable {
+  id: number
+  purchaseId: number
+  expenseIndex: number
+  beneficiaryName: string
+  description: string
+  amountMinor: number
+  paidMinor: number
+  payableAccountCode: string
+  status: 'open' | 'partial' | 'paid'
+  createdAt: string
+  settlementEntryIds: number[]
+}
+
 export interface PurchaseInvoice {
   id: number
   invoiceNumber: string
@@ -1174,6 +1188,8 @@ interface DataState {
   serials: SerialUnit[] // وحدات السيريال/IMEI والضمان (نمط موبايل شوب)
   cheques: Cheque[] // أوراق القبض والدفع (الشيكات)
   purchases: PurchaseInvoice[]
+  purchaseExpensePayables: PurchaseExpensePayable[]
+  settlePurchaseExpensePayable: (args: { payableId: number; amountMinor: number; treasury: TreasuryAccount; date: string }) => PurchaseExpensePayable
   purchaseReturns: PurchaseReturn[]
   stocktakes: Stocktake[]
   /** مستندات الإتلاف (هالك وتوالف) — 5111/1103 */
@@ -2330,6 +2346,23 @@ export const useDataStore = create<DataState>()(
       serials: [],
       cheques: [],
       purchases: [],
+      purchaseExpensePayables: [],
+      settlePurchaseExpensePayable: (args) => {
+        const state = get()
+        const payable = state.purchaseExpensePayables.find((row) => row.id === args.payableId)
+        if (!payable) throw new Error('استحقاق المصروف غير موجود')
+        const remaining = payable.amountMinor - payable.paidMinor
+        if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0 || args.amountMinor > remaining) throw new Error('مبلغ سداد الاستحقاق غير صالح')
+        if (!state.treasuries.some((row) => row.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود')
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = { id: entryId, entryNumber: entryId, date: args.date, description: `سداد مصروف مستحق — ${payable.beneficiaryName}: ${payable.description}`, sourceType: 'payment_voucher', sourceId: payable.id, lines: [{ accountCode: payable.payableAccountCode, debit: args.amountMinor, credit: 0, note: `إقفال استحقاق ${payable.beneficiaryName}` }, { accountCode: args.treasury, debit: 0, credit: args.amountMinor, note: 'سداد مصروف مستحق' }], createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null }
+        assertBalanced(entry.lines)
+        const paidMinor = payable.paidMinor + args.amountMinor
+        const updated = { ...payable, paidMinor, status: paidMinor === payable.amountMinor ? 'paid' as const : 'partial' as const, settlementEntryIds: [...payable.settlementEntryIds, entryId] }
+        set({ purchaseExpensePayables: state.purchaseExpensePayables.map((row) => row.id === payable.id ? updated : row), journal: [...state.journal, entry] })
+        return updated
+      },
       purchaseReturns: [],
       stocktakes: [],
       wastages: [],
@@ -2702,8 +2735,12 @@ export const useDataStore = create<DataState>()(
             journalEntryId: entryId,
           }]
         }
+        const createdPayables: PurchaseExpensePayable[] = inv.expenses.flatMap((expense, expenseIndex) => expense.paidBy === 'payable' && expense.amountMinor > 0 ? [{ id: nextId(state.purchaseExpensePayables) + expenseIndex, purchaseId, expenseIndex, beneficiaryName: expense.beneficiaryName!.trim(), description: expense.nameAr, amountMinor: expense.amountMinor, paidMinor: 0, payableAccountCode: expense.payableAccountCode ?? '2117', status: 'open' as const, createdAt: nowIso, settlementEntryIds: [] }] : [])
+        // أعد ترقيم الفجوات الناتجة عن سطور غير مستحقة لضمان معرفات فريدة متتابعة.
+        createdPayables.forEach((payable, index) => { payable.id = nextId(state.purchaseExpensePayables) + index })
         set({
           purchases: [...state.purchases, invoice],
+          purchaseExpensePayables: [...state.purchaseExpensePayables, ...createdPayables],
           journal: [...state.journal, entry],
           items: updatedItems,
           batches: newBatches.length ? [...state.batches, ...newBatches] : state.batches,

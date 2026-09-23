@@ -45,7 +45,7 @@ const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'ش�
 const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', method: 'qty', paidBy: 'supplier', payAccount: '1101', custodyFileId: null }
 
 export function PurchasesPage() {
-  const { items, suppliers, purchases, journal, projects, treasuries, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
+  const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, treasuries, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt } = useAppStore()
   const navigate = useNavigate()
 
@@ -79,6 +79,9 @@ export function PurchasesPage() {
   const [viewing, setViewing] = useState<PurchaseInvoice | null>(null)
   // طباعة فاتورة الشراء بقوالب الكاشير الثلاثة (طلب المالك)
   const [printTarget, setPrintTarget] = useState<PurchaseInvoice | null>(null)
+  const [payableAmount, setPayableAmount] = useState('')
+  const [payableTreasury, setPayableTreasury] = useState('1101')
+  const settleExpensePayable = (id: number, remaining: number) => { try { const amount = payableAmount.trim() ? toMinor(payableAmount, cur.decimals) : remaining; settlePurchaseExpensePayable({ payableId: id, amountMinor: amount, treasury: payableTreasury, date: new Date().toISOString().slice(0,10) }); setPayableAmount(''); toast.show('تم سداد الاستحقاق وإنشاء سند الصرف والقيد ✓') } catch (error) { toast.show((error as Error).message, 'error') } }
 
   /** نموذج طباعة فاتورة الشراء: سطور بسعر المورد + إبراز المصاريف المحملة */
   const printPurchase = (inv: PurchaseInvoice, template: Parameters<typeof printModelWithTemplate>[3]) => {
@@ -847,6 +850,7 @@ export function PurchasesPage() {
                 ))}
               </div>
             )}
+            {purchaseExpensePayables.filter(p=>p.purchaseId===viewing.id&&p.status!=='paid').map(payable=>{const remaining=payable.amountMinor-payable.paidMinor;return <div key={payable.id} className="p-3 rounded-xl border border-violet-400/30 bg-violet-500/5 grid md:grid-cols-4 gap-2 items-end"><div><b>{payable.beneficiaryName}</b><div className="text-xs text-slate-500">{payable.description} · متبقي {fmt(remaining)}</div></div><input className={inputCls} value={payableAmount} onChange={e=>setPayableAmount(e.target.value)} placeholder={`كامل ${fmt(remaining)}`}/><TreasuryPicker value={payableTreasury} onChange={setPayableTreasury}/><Btn onClick={()=>settleExpensePayable(payable.id,remaining)}>سند صرف وإقفال</Btn></div>})}
             <div className="flex flex-wrap gap-5 font-bold">
               <span>البضاعة: {fmt(viewing.goodsTotalMinor)}</span>
               <span className="text-amber-600">المصاريف: {fmt(viewing.expensesTotalMinor)}</span>
