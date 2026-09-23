@@ -1022,6 +1022,9 @@ export interface SaleInvoice {
   internalExpenses?: InternalExpense[]
   /** إضافات يتحملها العميل؛ منفصلة تماماً عن المصروفات الداخلية */
   customerCharges?: DocumentCharge[]
+  customerReference?: string
+  dueDate?: string
+  notes?: string
 }
 
 /** مرتجع مبيعات — دائماً مربوط بفاتورته الأصلية وبقيده العاكس */
@@ -1367,6 +1370,9 @@ interface DataState {
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string; documentType?: TerminalDocumentType }
     internalExpenses?: InternalExpense[]
     customerCharges?: DocumentCharge[]
+    customerReference?: string
+    dueDate?: string
+    notes?: string
     staffCommission?: { employeeId: number; amountMinor: number; description?: string }
     /** تقسيم العمولة على أكثر من موظف داخل نفس عملية الترحيل */
     staffCommissions?: { employeeId: number; amountMinor: number; description?: string }[]
@@ -3107,6 +3113,9 @@ export const useDataStore = create<DataState>()(
           taxInclusive: args.taxInclusive,
           internalExpenses,
           customerCharges,
+          customerReference: args.customerReference?.trim() || undefined,
+          dueDate: args.dueDate || undefined,
+          notes: args.notes?.trim() || undefined,
         }
 
         const commissionInputs = [...(args.staffCommissions ?? []), ...(args.staffCommission ? [args.staffCommission] : [])].filter((row) => row.amountMinor > 0)
