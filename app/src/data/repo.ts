@@ -969,7 +969,7 @@ export interface EmployeeAdvance {
   /** المسترد حتى الآن من مسيرات الرواتب — المتبقي = amountMinor − recoveredMinor */
   recoveredMinor: number
   /** مصدرها: سلفة نقدية عادية أو عجز تسوية عهدة (طلب المالك) */
-  source: 'cash' | 'custody_shortage' | 'opening'
+  source: 'cash' | 'custody_shortage' | 'opening' | 'sale_collection'
   custodyFileId: number | null // لو كان مصدرها عجز عهدة
   treasury: TreasuryAccount
   notes: string
@@ -997,7 +997,7 @@ export interface SaleInvoice {
   payment: PaymentMethod
   paidMinor?: number // المدفوع نقداً (الدفع المجزأ) — undefined للفواتير القديمة = حسب payment
   treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
-  paymentAllocations?: { accountCode: string; amountMinor: number; note?: string }[]
+  paymentAllocations?: { accountCode: string; amountMinor: number; note?: string; employeeId?: number }[]
   lines: CartLine[]
   invoiceDiscountPercent: number
   totals: CartTotals
@@ -1356,7 +1356,7 @@ interface DataState {
     taxInclusive: boolean
     treasury?: TreasuryAccount // الخزينة/البنك الذي استلم النقدية
     paidMinor?: number // الدفع المجزأ: المدفوع نقداً الآن والباقي آجل (طلب المالك)
-    paymentAllocations?: { accountCode: string; amountMinor: number; note?: string }[]
+    paymentAllocations?: { accountCode: string; amountMinor: number; note?: string; employeeId?: number }[]
     expiryOverrideBy?: string | null
     allowNegativeStock?: boolean
     /** المخزن المختار أعلى الفاتورة (الأمر 8) — null = غير محدد */
@@ -3064,6 +3064,10 @@ export const useDataStore = create<DataState>()(
           const checks = args.paymentAllocations?.length ? args.paymentAllocations : [{ accountCode: args.treasury ?? '1101', amountMinor: paidM }]
           const user = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
           for (const allocation of checks) {
+            if (allocation.accountCode === '1107') {
+              if (!allocation.employeeId || !state.employees.some((employee) => employee.id === allocation.employeeId && employee.active)) throw new Error('اختر موظفاً نشطاً للتحصيل على حسابه')
+              continue
+            }
             if (!state.treasuries.some((treasury) => treasury.code === allocation.accountCode)) throw new Error(`حساب التحصيل غير موجود (${allocation.accountCode})`)
             const errors = validateTreasuryAccess(user?.treasuryAccess, allocation.accountCode, 'receipt', allocation.amountMinor)
             if (errors.length) throw new Error(errors.join(' — '))
@@ -3147,6 +3151,8 @@ export const useDataStore = create<DataState>()(
           notes: args.notes?.trim() || undefined,
         }
 
+        const employeeCollections: EmployeeAdvance[] = (args.paymentAllocations ?? []).filter((row) => row.accountCode === '1107' && row.employeeId).map((row, index) => ({ id: nextId(state.employeeAdvances) + index, advanceNumber: `ADV-${String(nextId(state.employeeAdvances) + index).padStart(4, '0')}`, employeeId: row.employeeId!, date: now.slice(0, 10), amountMinor: row.amountMinor, recoveredMinor: 0, source: 'sale_collection', custodyFileId: null, treasury: (args.treasury ?? '1101') as TreasuryAccount, notes: `تحصيل فاتورة ${invoiceNumber} على حساب الموظف`, journalEntryId: entryId }))
+
         const commissionInputs = [...(args.staffCommissions ?? []), ...(args.staffCommission ? [args.staffCommission] : [])].filter((row) => row.amountMinor > 0)
         const commissions: StaffCommission[] = []
         const commissionEntries: JournalEntry[] = []
@@ -3200,6 +3206,7 @@ export const useDataStore = create<DataState>()(
         }
         set({
           sales: [...state.sales, sale], journal: [...state.journal, entry, ...commissionEntries], items: updatedItems,
+          ...(employeeCollections.length ? { employeeAdvances: [...state.employeeAdvances, ...employeeCollections] } : {}),
           ...(commissions.length ? { staffCommissions: [...state.staffCommissions, ...commissions] } : {}),
           ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
           batches: workingBatches, serials: updatedSerials, variantStocks: updatedVariants,
