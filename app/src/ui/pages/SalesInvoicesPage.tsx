@@ -27,7 +27,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { normalizeRefQuery } from '../../core/refcode.ts'
 
 export function SalesInvoicesPage() {
-  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, shifts, editSale, employees, staffCommissions, addStaffCommission } = useDataStore()
+  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, staffCommissions, addStaffCommission } = useDataStore()
   const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -187,8 +187,14 @@ export function SalesInvoicesPage() {
 
   if (sales.length === 0) {
     return (
-      <div className="space-y-4"><div className="flex justify-end"><Btn onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn></div><div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800"><EmptyState icon="🧾" title="لا فواتير مبيعات بعد" sub="أنشئ فاتورة متقدمة أو استخدم الكاشير للبيع السريع" /></div></div>
+      <div className="space-y-4">{advancedInvoiceDrafts.filter(d=>d.kind==='sale').length>0&&<DraftBanner/>}<div className="flex justify-end"><Btn onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn></div><div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800"><EmptyState icon="🧾" title="لا فواتير مبيعات بعد" sub="أنشئ فاتورة متقدمة أو استخدم الكاشير للبيع السريع" /></div></div>
     )
+  }
+
+  function DraftBanner() {
+    const drafts = advancedInvoiceDrafts.filter((draft) => draft.kind === 'sale').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    if (!drafts.length) return null
+    return <div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 flex flex-wrap items-center justify-between gap-2"><div><b>مسودات مبيعات محفوظة: {drafts.length}</b><div className="text-xs text-slate-500">الأحدث: {drafts[0].name} · {new Date(drafts[0].updatedAt).toLocaleString('ar-EG')}</div></div><div className="flex gap-2"><Btn variant="ghost" onClick={()=>navigate('/sales/invoices/new')}>الانتقال للمحرر</Btn><Btn variant="ghost" onClick={()=>{drafts.forEach(d=>deleteAdvancedInvoiceDraft(d.id));toast.show('حُذفت مسودات المبيعات')}}>حذف الكل</Btn></div></div>
   }
 
   const profitabilityOf = (sale: SaleInvoice) => {
@@ -200,6 +206,7 @@ export function SalesInvoicesPage() {
 
   return (
     <div className="space-y-4">
+      <DraftBanner/>
       <div className="anim-up flex flex-wrap items-center gap-2">
         <Btn onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn>
         <input
