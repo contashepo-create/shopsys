@@ -1314,6 +1314,7 @@ interface DataState {
     /** تحصيل ماكينة يُحفظ ذرياً مع الفاتورة؛ لا تمرر documentId/amount/user من الواجهة. */
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string; documentType?: TerminalDocumentType }
     internalExpenses?: InternalExpense[]
+    staffCommission?: { employeeId: number; amountMinor: number; description?: string }
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -2993,6 +2994,21 @@ export const useDataStore = create<DataState>()(
           internalExpenses,
         }
 
+        let commission: StaffCommission | null = null
+        let commissionEntry: JournalEntry | null = null
+        if (args.staffCommission && args.staffCommission.amountMinor > 0) {
+          const employee = state.employees.find((row) => row.id === args.staffCommission!.employeeId && row.active)
+          if (!employee) throw new Error('موظف العمولة غير موجود أو غير نشط')
+          const errors = validateStaffCommission({ employeeId: employee.id, amountMinor: args.staffCommission.amountMinor, description: args.staffCommission.description || `عمولة فاتورة ${invoiceNumber}` })
+          if (errors.length) throw new Error(errors.join(' — '))
+          const commissionId = nextId(state.staffCommissions)
+          const commissionEntryId = entryId + 1
+          const code = `SCM-${String(commissionId).padStart(4, '0')}`
+          const description = args.staffCommission.description?.trim() || `عمولة فاتورة ${invoiceNumber}`
+          commissionEntry = { id: commissionEntryId, entryNumber: commissionEntryId, date: now.slice(0, 10), description: `استحقاق عمولة ${code} — ${employee.nameAr}`, sourceType: 'staff_commission', sourceId: commissionId, lines: buildStaffCommissionAccrual(args.staffCommission.amountMinor, employee.nameAr, description), createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null }
+          commission = { id: commissionId, code, employeeId: employee.id, source: 'sale', sourceId: saleId, description, amountMinor: args.staffCommission.amountMinor, date: now.slice(0, 10), status: 'accrued', accrualEntryId: commissionEntryId, payoutEntryId: null, payoutMode: null, cancelEntryId: null, cancelReason: '', createdBy: activeUserName(get()), createdAt: now }
+        }
+
         // كسب نقاط الولاء لعميل مسجل (نمط Lightspeed Pay+Earn — تقريب لأسفل، لا أنصاف)
         const loyaltySettings = readLoyaltySettings()
         const decimals = readCurrencyDecimals()
@@ -3028,7 +3044,8 @@ export const useDataStore = create<DataState>()(
           const errors = validateTerminalTransaction(terminalTransaction); if (errors.length) throw new Error(errors.join(' — '))
         }
         set({
-          sales: [...state.sales, sale], journal: [...state.journal, entry], items: updatedItems,
+          sales: [...state.sales, sale], journal: [...state.journal, entry, ...(commissionEntry ? [commissionEntry] : [])], items: updatedItems,
+          ...(commission ? { staffCommissions: [...state.staffCommissions, commission] } : {}),
           ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
           batches: workingBatches, serials: updatedSerials, variantStocks: updatedVariants,
           // إضافة نقاط الولاء المكتسبة لرصيد العميل (0 = برنامج معطل أو عميل نقدي)
