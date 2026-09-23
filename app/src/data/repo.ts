@@ -851,6 +851,7 @@ export interface PurchaseInvoice {
   purchaseOrderNumber?: string
   receiptStatus?: 'pending' | 'partial' | 'received'
   dueDate?: string
+  approvedBy?: string | null
   date: string
   lines: PurchaseLine[]
   expenses: PurchaseExpense[]
@@ -1004,6 +1005,7 @@ export interface SaleInvoice {
   expiryOverrideBy: string | null // من وافق على تجاوز الصلاحية (القرار 8)
   /** من اعتمد تجاوز حد ائتمان العميل (نمط SAP B1) — null = لم يتجاوز */
   creditLimitOverrideBy?: string | null
+  approvedBy?: string | null
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
   /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
@@ -1318,6 +1320,7 @@ interface DataState {
     purchaseOrderNumber?: string
     receiptStatus?: 'pending' | 'partial' | 'received'
     dueDate?: string
+    approvedBy?: string | null
     date: string
     lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
@@ -1357,6 +1360,7 @@ interface DataState {
     warehouseId?: number | null
     /** تجاوز حد ائتمان العميل بموافقة مدير (نمط SAP B1) — اسم المعتمد يُسجل على الفاتورة */
     creditLimitOverrideBy?: string | null
+    approvedBy?: string | null
     /** تجاوز الحد الأدنى لسعر البيع بموافقة مدير (نمط DEXEF/الأمين) */
     priceFloorOverrideBy?: string | null
     /** تحصيل ماكينة يُحفظ ذرياً مع الفاتورة؛ لا تمرر documentId/amount/user من الواجهة. */
@@ -2632,6 +2636,7 @@ export const useDataStore = create<DataState>()(
           purchaseOrderNumber: inv.purchaseOrderNumber?.trim() || undefined,
           receiptStatus: inv.receiptStatus ?? 'received',
           dueDate: inv.dueDate || undefined,
+          approvedBy: inv.approvedBy ?? null,
           date: inv.date,
           lines: landed.map((l, i) => ({
             itemId: l.itemId,
@@ -3095,6 +3100,7 @@ export const useDataStore = create<DataState>()(
           journalEntryId: entryId,
           expiryOverrideBy: args.expiryOverrideBy ?? null,
           creditLimitOverrideBy: args.creditLimitOverrideBy ?? null,
+          approvedBy: args.approvedBy ?? null,
           shiftId: currentOpenShift(state.shifts)?.id ?? null,
           warehouseId: effectiveSaleWarehouseId,
           taxPercent: args.taxPercent, // G1: تثبيت المعاملة الضريبية على المستند
