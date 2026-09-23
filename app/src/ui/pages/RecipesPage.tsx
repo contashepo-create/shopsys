@@ -14,7 +14,7 @@ import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 
 export function RecipesPage() {
-  const { items, recipes, productionOrders, customAccounts, addRecipe, updateRecipe, toggleRecipe, removeRecipe, postProduction } = useDataStore()
+  const { items, recipes, productionOrders, customAccounts, addCustomAccount, addRecipe, updateRecipe, toggleRecipe, removeRecipe, postProduction } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -66,7 +66,18 @@ export function RecipesPage() {
   const [batches, setBatches] = useState('1')
   const [prodTreasury, setProdTreasury] = useState('1101')
   const [prodExpenses, setProdExpenses] = useState<ProductionExpense[]>([])
+  const [quickExpenseOpen, setQuickExpenseOpen] = useState(false)
+  const [quickExpenseCode, setQuickExpenseCode] = useState('')
+  const [quickExpenseName, setQuickExpenseName] = useState('')
   const expenseAccounts = [{ code: '5102', nameAr: 'أجور مباشرة' }, { code: '5103', nameAr: 'مصاريف تشغيل' }, { code: '5108', nameAr: 'مصروفات عمومية' }, ...customAccounts.filter((a) => a.rootType === 'expenses').map((a) => ({ code: a.code, nameAr: a.nameAr }))]
+  const addQuickExpenseAccount = () => {
+    try {
+      const account = addCustomAccount({ code: quickExpenseCode.trim(), nameAr: quickExpenseName.trim(), parentCode: '5' })
+      setProdExpenses((rows) => rows.map((row, index) => index === rows.length - 1 ? { ...row, accountCode: account.code } : row))
+      setQuickExpenseCode(''); setQuickExpenseName(''); setQuickExpenseOpen(false)
+      toast.show(`أُضيف حساب المصروف «${account.nameAr}» واختير للبند ✓`)
+    } catch (error) { toast.show((error as Error).message, 'error') }
+  }
   const runProduction = () => {
     if (!prodFor) return
     try {
@@ -237,7 +248,8 @@ export function RecipesPage() {
             <Field label="عدد التشغيلات"><input value={batches} onChange={(e) => setBatches(e.target.value)} inputMode="numeric" className={inputCls} /></Field>
             {prodFor.overheadMinor > 0 && <Field label="مصدر مصاريف التشغيل"><TreasuryPicker value={prodTreasury} onChange={setProdTreasury} /></Field>}
             <div className="rounded-xl border p-3 space-y-2">
-              <div className="flex items-center justify-between"><b className="text-xs">مصروفات التصنيع الإضافية</b><Btn variant="ghost" onClick={()=>setProdExpenses([...prodExpenses,{id:crypto.randomUUID(),label:'',amountMinor:0,accountCode:expenseAccounts[0]?.code??'5108',treasury:prodTreasury}])}><Plus size={13}/> إضافة بند</Btn></div>
+              <div className="flex items-center justify-between"><b className="text-xs">مصروفات التصنيع الإضافية</b><div className="flex gap-1"><button type="button" onClick={()=>setQuickExpenseOpen(!quickExpenseOpen)} className="text-[10px] font-bold text-brand-600">+ نوع مصروف</button><Btn variant="ghost" onClick={()=>setProdExpenses([...prodExpenses,{id:crypto.randomUUID(),label:'',amountMinor:0,accountCode:expenseAccounts[0]?.code??'5108',treasury:prodTreasury}])}><Plus size={13}/> إضافة بند</Btn></div></div>
+              {quickExpenseOpen&&<div className="grid grid-cols-[100px_1fr_auto] gap-2"><input className={inputCls} value={quickExpenseCode} onChange={e=>setQuickExpenseCode(e.target.value)} placeholder="5xxx"/><input className={inputCls} value={quickExpenseName} onChange={e=>setQuickExpenseName(e.target.value)} placeholder="اسم نوع المصروف"/><Btn onClick={addQuickExpenseAccount} disabled={!quickExpenseCode||!quickExpenseName}>إضافة</Btn></div>}
               {prodExpenses.map((expense,index)=><div key={expense.id} className="grid grid-cols-[1fr_1fr_100px_32px] gap-1.5"><input className={inputCls} value={expense.label} onChange={e=>setProdExpenses(prodExpenses.map((x,i)=>i===index?{...x,label:e.target.value}:x))} placeholder="البيان"/><select className={inputCls} value={expense.accountCode} onChange={e=>setProdExpenses(prodExpenses.map((x,i)=>i===index?{...x,accountCode:e.target.value}:x))}>{expenseAccounts.map(a=><option key={a.code} value={a.code}>{a.nameAr}</option>)}</select><input className={inputCls} inputMode="decimal" value={expense.amountMinor?expense.amountMinor/10**cur.decimals:''} onChange={e=>setProdExpenses(prodExpenses.map((x,i)=>i===index?{...x,amountMinor:Math.max(0,Math.round(Number(e.target.value||0)*10**cur.decimals))}:x))} placeholder="المبلغ"/><button onClick={()=>setProdExpenses(prodExpenses.filter((_,i)=>i!==index))}><Trash2 size={14}/></button></div>)}
               {prodExpenses.length>0&&<Field label="خزينة المصروفات"><TreasuryPicker value={prodTreasury} onChange={(code)=>{setProdTreasury(code);setProdExpenses(prodExpenses.map(x=>({...x,treasury:code})))}}/></Field>}
             </div>
