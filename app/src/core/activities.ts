@@ -58,7 +58,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     id: 'feed_trade', nameAr: 'تجارة الأعلاف والحبوب', icon: '🌾',
     description: 'أعلاف وحبوب بالوزن والجوال والطن، تشغيلات وصلاحيات وقوائم أسعار جملة',
     features: ['expiry_batches', 'weight_scale', 'multi_unit', 'price_lists'],
-    modules: ['pos', 'inventory', 'purchases'],
+    modules: ['pos', 'inventory', 'purchases', 'recipes'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'a4',
   },
   {
