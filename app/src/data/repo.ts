@@ -2368,6 +2368,9 @@ export const useDataStore = create<DataState>()(
         const remaining = payable.amountMinor - payable.paidMinor
         if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0 || args.amountMinor > remaining) throw new Error('مبلغ سداد الاستحقاق غير صالح')
         if (!state.treasuries.some((row) => row.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود')
+        const activeUser = state.appUsers.find((user) => user.id === state.currentUserId)
+        const accessErrors = validateTreasuryAccess(activeUser?.treasuryAccess, args.treasury, 'payment', args.amountMinor)
+        if (accessErrors.length) throw new Error(accessErrors.join(' — '))
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
         const entry: JournalEntry = { id: entryId, entryNumber: entryId, date: args.date, description: `سداد مصروف مستحق — ${payable.beneficiaryName}: ${payable.description}`, sourceType: 'payment_voucher', sourceId: payable.id, lines: [{ accountCode: payable.payableAccountCode, debit: args.amountMinor, credit: 0, note: `إقفال استحقاق ${payable.beneficiaryName}` }, { accountCode: args.treasury, debit: 0, credit: args.amountMinor, note: 'سداد مصروف مستحق' }], createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null }
