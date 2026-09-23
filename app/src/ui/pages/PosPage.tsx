@@ -385,7 +385,7 @@ export function PosPage() {
   const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number }) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
     const qrDataUrl = await maybeZatcaQr({
-      featureActive: hasFeature(licState, 'einvoice_sa'),
+      featureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
       printEnabled: einvoice.printZatcaQr,
       sellerName: setup.shopName,
       vatNumber: einvoice.taxNumber,

@@ -14,7 +14,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
 import { effectiveVatPercent } from '../../core/items.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { invoiceEditPolicy } from '../../core/invoiceEdit.ts'
+import { invoiceEditPolicy, electronicInvoiceLockActive } from '../../core/invoiceEdit.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
@@ -46,7 +46,7 @@ const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', m
 
 export function PurchasesPage() {
   const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, treasuries, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
-  const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt } = useAppStore()
+  const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt, einvoice } = useAppStore()
   const navigate = useNavigate()
   const [today] = useState(() => new Date().toISOString().slice(0, 10))
 
@@ -55,7 +55,7 @@ export function PurchasesPage() {
     () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
     [activatedPayload, trialStartedAt, lastSeenAt],
   )
-  const einvoiceActive = hasFeature(lic, 'einvoice_sa') || hasFeature(lic, 'einvoice_eg')
+  const einvoiceActive = electronicInvoiceLockActive({ licensed: hasFeature(lic, 'einvoice_sa') || hasFeature(lic, 'einvoice_eg'), enabled: einvoice.enabled === true, taxNumber: einvoice.taxNumber })
   const editPolicy = invoiceEditPolicy({ einvoiceActive })
   const openCustodyFiles = custodyFiles.filter((f) => f.status === 'open')
   const toast = useToast()

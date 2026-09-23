@@ -2563,7 +2563,8 @@ export const useDataStore = create<DataState>()(
         const inputVatMinor = inv.inputVatMinor ?? linesInputVatMinor
         if (!Number.isInteger(inputVatMinor) || inputVatMinor < 0) throw new Error('ضريبة المدخلات لا تكون سالبة')
         // مستحق المورد = البضاعة + ضريبة المدخلات + المصاريف المحملة على حسابه فقط
-        const supplierDue = grandTotal + inputVatMinor - expensesPaidDirect
+        const supplierPeriodExpenses = periodExpenses.filter((expense) => (expense.paidBy ?? 'supplier') === 'supplier').reduce((sum, expense) => sum + expense.amountMinor, 0)
+        const supplierDue = grandTotal + inputVatMinor - expensesPaidDirect + supplierPeriodExpenses
 
         // مصدر دفع البضاعة: خزينة/بنك أو ملف عهدة موظف (طلب المالك) — العهدة تُفحص قبل أي كتابة
         let custodyFile: CustodyFile | null = null
@@ -4553,7 +4554,11 @@ export const useDataStore = create<DataState>()(
         const { taxPercent, taxInclusive } = sale.taxPercent !== undefined
           ? { taxPercent: sale.taxPercent, taxInclusive: sale.taxInclusive ?? true }
           : deriveTaxConfig(sale.totals)
-        const totals = computeTotals(costedLines, args.invoiceDiscountPercent, taxPercent, taxInclusive)
+        const baseTotals = computeTotals(costedLines, args.invoiceDiscountPercent, taxPercent, taxInclusive)
+        const customerCharges = sale.customerCharges ?? []
+        const chargeNet = customerCharges.reduce((sum, charge) => sum + charge.amountMinor, 0)
+        const chargeTax = customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * taxPercent / 100), 0)
+        const totals = { ...baseTotals, netMinor: baseTotals.netMinor + chargeNet, taxBaseMinor: baseTotals.taxBaseMinor + customerCharges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: baseTotals.taxMinor + chargeTax, totalMinor: baseTotals.totalMinor + chargeNet + chargeTax }
         const paidM = args.paidMinor
         if (!Number.isInteger(paidM) || paidM < 0) throw new Error('المدفوع لا يكون سالباً')
         if (paidM > totals.totalMinor) throw new Error('المدفوع أكبر من إجمالي الفاتورة المعدلة')
@@ -4575,6 +4580,8 @@ export const useDataStore = create<DataState>()(
           }
         }
         const newEntryLines = buildSaleEntry(totals, args.payment, args.treasury, paidM)
+        newEntryLines.push(...buildInternalExpenseLines(sale.internalExpenses ?? [], args.treasury))
+        assertBalanced(newEntryLines)
         const now = new Date().toISOString()
 
         // ⑤ قيد عكس القيد القديم + القيد الجديد (سجل تدقيق كامل — لا حذف أبداً)
@@ -4691,9 +4698,11 @@ export const useDataStore = create<DataState>()(
 
         // ② الفاتورة الجديدة: تكاليف محملة + قيد V2 (مصاريف على المورد فقط هنا)
         const costLines: CostLine[] = args.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor }))
-        const landed = computeLandedCosts(costLines, args.expenses as ExpenseInput[])
+        const landedExpenses = args.expenses.filter((expense) => (expense.costTreatment ?? 'inventory') === 'inventory')
+        const periodExpenses = args.expenses.filter((expense) => expense.costTreatment === 'period')
+        const landed = computeLandedCosts(costLines, landedExpenses as ExpenseInput[])
         const goodsTotal = landed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
-        const expensesTotal = args.expenses.reduce((a, e) => a + e.amountMinor, 0)
+        const expensesTotal = landedExpenses.reduce((a, e) => a + e.amountMinor, 0)
         const grandTotal = goodsTotal + expensesTotal
         if (!Number.isInteger(args.paidMinor) || args.paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
         // N1 (المراجعة الثانية): ض.ق.م المدخلات المسجلة على الفاتورة تُحفظ في القيد المعاد بناؤه —
@@ -4708,6 +4717,8 @@ export const useDataStore = create<DataState>()(
           expensePayments: [],
           inputVatMinor: keptInputVat,
         })
+        newEntryLines.push(...buildInternalExpenseLines(periodExpenses.map((expense) => ({ id: crypto.randomUUID(), label: expense.nameAr, amountMinor: expense.amountMinor, accountCode: expense.accountCode ?? '5108', settlement: 'payable_later' as const, payableAccountCode: '2101', taxTreatment: 'exempt' as const, taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' as const })), args.treasury))
+        assertBalanced(newEntryLines)
         const now = new Date().toISOString()
 
         // ③ عكس القيد القديم + قيد جديد
@@ -4766,7 +4777,7 @@ export const useDataStore = create<DataState>()(
           goodsTotalMinor: goodsTotal,
           expensesTotalMinor: expensesTotal,
           grandTotalMinor: grandTotal,
-          supplierDueMinor: grandTotal + keptInputVat, // N1: مستحق المورد يشمل ضريبة المدخلات المحفوظة
+          supplierDueMinor: grandTotal + keptInputVat + periodExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0), // N1: مستحق المورد يشمل ضريبة المدخلات المحفوظة
           paidMinor: args.paidMinor,
           treasury: args.treasury,
           journalEntryId: newEntryId,

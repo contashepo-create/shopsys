@@ -19,7 +19,7 @@ import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { invoiceEditPolicy, saleEditBlocks } from '../../core/invoiceEdit.ts'
+import { invoiceEditPolicy, electronicInvoiceLockActive, saleEditBlocks } from '../../core/invoiceEdit.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { Modal, EmptyState, useToast, inputCls, Btn, Field } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -43,7 +43,7 @@ export function SalesInvoicesPage() {
     () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
     [activatedPayload, trialStartedAt, lastSeenAt],
   )
-  const einvoiceActive = hasFeature(lic, 'einvoice_sa') || hasFeature(lic, 'einvoice_eg')
+  const einvoiceActive = electronicInvoiceLockActive({ licensed: hasFeature(lic, 'einvoice_sa') || hasFeature(lic, 'einvoice_eg'), enabled: einvoice.enabled === true, taxNumber: einvoice.taxNumber })
   const policy = invoiceEditPolicy({ einvoiceActive })
 
   /* ─── حالة نافذة التعديل ─── */
@@ -112,7 +112,11 @@ export function SalesInvoicesPage() {
     const { taxPercent, taxInclusive } = editing.taxPercent !== undefined
       ? { taxPercent: editing.taxPercent, taxInclusive: editing.taxInclusive ?? true }
       : deriveTaxConfig(editing.totals)
-    return computeTotals(editLines, editDiscount, taxPercent, taxInclusive)
+    const base = computeTotals(editLines, editDiscount, taxPercent, taxInclusive)
+    const charges = editing.customerCharges ?? []
+    const chargeNet = charges.reduce((sum, charge) => sum + charge.amountMinor, 0)
+    const chargeTax = charges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + Math.round(charge.amountMinor * taxPercent / 100), 0)
+    return { ...base, netMinor: base.netMinor + chargeNet, taxBaseMinor: base.taxBaseMinor + charges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: base.taxMinor + chargeTax, totalMinor: base.totalMinor + chargeNet + chargeTax }
   }, [editing, editLines, editDiscount])
 
   const saveEdit = (creditLimitOverrideBy?: string) => {
@@ -157,7 +161,7 @@ export function SalesInvoicesPage() {
   const printInvoice = async (s: SaleInvoice, template: 'thermal' | 'a4' | 'a5') => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
     const qrDataUrl = await maybeZatcaQr({
-      featureActive: hasFeature(licState, 'einvoice_sa'),
+      featureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
       printEnabled: einvoice.printZatcaQr,
       sellerName: setup.shopName,
       vatNumber: einvoice.taxNumber,
