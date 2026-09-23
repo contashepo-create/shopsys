@@ -99,7 +99,8 @@ export interface ProductionExpense {
   amountMinor: Minor
   /** حساب المصروف المرجعي للتصنيف والتحليل؛ التكلفة تُرسمل على المنتج عند الترحيل */
   accountCode: string
-  treasury: string
+  /** حساب الاستحقاق الذي يُسوّى لاحقاً بسند صرف، وليس خزينة وقت التصنيع */
+  payableAccountCode?: '2117' | '2104'
 }
 
 export interface ProductionOrder {
@@ -125,18 +126,18 @@ export interface ProductionOrder {
   notes: string
 }
 
-/** قيد أمر الإنتاج — تحويل داخل المخزون + مصاريف تشغيل من الخزينة */
-export function buildProductionEntry(ingredientsCostMinor: Minor, overheadMinor: Minor, treasury: string, expenses: ProductionExpense[] = []): JournalLine[] {
+/** قيد أمر الإنتاج — المصروفات تُحمّل على المنتج وتُثبت استحقاقاً بلا دفع نقدي فوري. */
+export function buildProductionEntry(ingredientsCostMinor: Minor, overheadMinor: Minor, _legacyTreasury: string, expenses: ProductionExpense[] = []): JournalLine[] {
   const detailedTotal = expenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
   const totalOverhead = overheadMinor + detailedTotal
   const lines: JournalLine[] = [
     { accountCode: '1103', debit: ingredientsCostMinor + totalOverhead, credit: 0, note: 'منتج تام داخل للمخزون' },
     { accountCode: '1103', debit: 0, credit: ingredientsCostMinor, note: 'خامات مستهلكة في الإنتاج' },
   ]
-  if (overheadMinor > 0) lines.push({ accountCode: treasury, debit: 0, credit: overheadMinor, note: 'مصاريف تشغيل الوصفة' })
+  if (overheadMinor > 0) lines.push({ accountCode: '2117', debit: 0, credit: overheadMinor, note: 'مصاريف تشغيل وصفة مستحقة — تسدد لاحقاً بسند صرف' })
   for (const expense of expenses) {
     if (!Number.isInteger(expense.amountMinor) || expense.amountMinor <= 0) throw new Error('مبلغ مصروف التصنيع يجب أن يكون موجباً')
-    lines.push({ accountCode: expense.treasury, debit: 0, credit: expense.amountMinor, note: `مصروف تصنيع: ${expense.label} (${expense.accountCode})` })
+    lines.push({ accountCode: expense.payableAccountCode ?? '2117', debit: 0, credit: expense.amountMinor, note: `مصروف تصنيع مستحق: ${expense.label} (${expense.accountCode})` })
   }
   assertBalanced(lines)
   return lines

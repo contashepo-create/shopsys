@@ -8269,12 +8269,9 @@ export const useDataStore = create<DataState>()(
         const productionExpenses = args.expenses ?? []
         const detailedOverhead = productionExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
         const treasury = args.treasury ?? '1101'
-        const productionUser = state.appUsers.find((user) => user.id === state.currentUserId)
         for (const expense of productionExpenses) {
           if (!expense.label.trim() || !expense.accountCode.startsWith('5')) throw new Error('مصروف التصنيع يحتاج اسماً وحساب مصروفات صحيحاً')
-          if (!state.treasuries.some((row) => row.code === expense.treasury)) throw new Error(`خزينة مصروف التصنيع غير موجودة (${expense.treasury})`)
-          const accessErrors = validateTreasuryAccess(productionUser?.treasuryAccess, expense.treasury, 'payment', expense.amountMinor)
-          if (accessErrors.length) throw new Error(accessErrors.join(' — '))
+          if (expense.payableAccountCode && !['2117', '2104'].includes(expense.payableAccountCode)) throw new Error('حساب استحقاق مصروف التصنيع غير صالح')
         }
         const lines = buildProductionEntry(ingredientsCost, overhead, treasury, productionExpenses)
         const now = new Date().toISOString()
@@ -8299,7 +8296,7 @@ export const useDataStore = create<DataState>()(
           batches, producedQty, outputExpiryDate: args.outputExpiryDate ?? null, ingredientsCostMinor: ingredientsCost,
           ingredientItems: ingredients.map((ingredient) => { const unitCostMinor = state.items.find((item) => item.id === ingredient.itemId)?.costMinor ?? 0; return { ...ingredient, unitCostMinor, totalCostMinor: Math.round(ingredient.qty * unitCostMinor) } }),
           overheadMinor: overhead + detailedOverhead, overheadItems: productionExpenses, totalCostMinor: ingredientsCost + overhead + detailedOverhead,
-          treasury: overhead + detailedOverhead > 0 ? treasury : null, journalEntryId: entryId, notes: args.notes ?? '',
+          treasury: null, journalEntryId: entryId, notes: args.notes ?? '',
         }
         // خصم الخامات + إدخال الناتج بمتوسط مرجح جديد (قيمة قديمة + تكلفة الإنتاج)
         const consumed = new Map<number, number>()

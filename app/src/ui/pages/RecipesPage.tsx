@@ -6,7 +6,6 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import type { ProductionExpense } from '../../core/recipes.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
-import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { buildWarehouseDocs, computeWarehouseStock } from '../../core/transfers.ts'
 
 type MaterialRow = { id: string; itemId: number; code: string; query: string; qty: string; unitFactor: number; unitName: string }
@@ -27,7 +26,6 @@ export function RecipesPage() {
   const [tab, setTab] = useState<Tab>('materials')
   const [materials, setMaterials] = useState<MaterialRow[]>([{ id: crypto.randomUUID(), itemId: 0, code: '', query: '', qty: '', unitFactor: 1, unitName: '' }])
   const [expenses, setExpenses] = useState<ProductionExpense[]>([])
-  const [treasury] = useState('1101')
   const [notes, setNotes] = useState('')
   const [outputExpiryDate, setOutputExpiryDate] = useState('')
   const [productionDate, setProductionDate] = useState(new Date().toISOString().slice(0, 10))
@@ -81,12 +79,12 @@ export function RecipesPage() {
     setMaterials((rows) => [...rows, { id, itemId: 0, code: '', query: '', qty: '', unitFactor: 1, unitName: '' }])
     requestAnimationFrame(() => codeRefs.current[id]?.focus())
   }
-  const addExpense = () => setExpenses((rows) => [...rows, { id: crypto.randomUUID(), label: '', accountCode: expenseAccounts[0]?.code ?? '5108', amountMinor: 0, treasury }])
+  const addExpense = () => setExpenses((rows) => [...rows, { id: crypto.randomUUID(), label: '', accountCode: expenseAccounts[0]?.code ?? '5108', amountMinor: 0, payableAccountCode: '2117' }])
   const addQuickAccount = () => {
     try {
       const account = addCustomAccount({ code: quickCode, nameAr: quickName, parentCode: '5' })
       setQuickCode(''); setQuickName(''); setQuickOpen(false)
-      setExpenses((rows) => [...rows, { id: crypto.randomUUID(), label: account.nameAr, accountCode: account.code, amountMinor: 0, treasury }])
+      setExpenses((rows) => [...rows, { id: crypto.randomUUID(), label: account.nameAr, accountCode: account.code, amountMinor: 0, payableAccountCode: '2117' }])
       toast.show(`أُضيف «${account.nameAr}» واختير كمصروف تصنيع ✓`)
     } catch (error) { toast.show((error as Error).message, 'error') }
   }
@@ -116,7 +114,7 @@ export function RecipesPage() {
       if (strictBalance && Math.abs(variance) > 0.0001) throw new Error('إجمالي الخامات يجب أن يساوي كمية الناتج — عطّل المطابقة الصارمة فقط عند وجود هالك أو تغير وزن')
       if (!strictBalance && Math.abs(variance) > 0.0001 && !varianceReason.trim()) throw new Error('اكتب سبب فرق الوزن/الهالك قبل الترحيل')
       const ingredientRows = materials.filter((row) => row.itemId && Number(row.qty) > 0).map((row) => ({ itemId: row.itemId, qty: Number(row.qty) * row.unitFactor }))
-      const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, treasury, warehouseId, date: productionDate, outputExpiryDate: outputExpiryDate || null, notes: [notes, varianceReason && `سبب فرق الكمية: ${varianceReason}`].filter(Boolean).join(' — ') })
+      const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, warehouseId, date: productionDate, outputExpiryDate: outputExpiryDate || null, notes: [notes, varianceReason && `سبب فرق الكمية: ${varianceReason}`].filter(Boolean).join(' — ') })
       toast.show(`تم ترحيل ${order.orderNumber} وإضافة ${order.producedQty} ${product?.baseUnit ?? 'وحدة'} للمخزون ✓`)
       reset()
     } catch (error) { toast.show((error as Error).message, 'error') }
@@ -161,9 +159,9 @@ export function RecipesPage() {
         })}
         <Btn variant="ghost" onClick={addMaterialAndFocus}><Plus size={15}/> إضافة خامة</Btn>
       </div> : <div className="p-4 space-y-3">
-        <div className="flex justify-between items-center"><div><b>المصروفات المحملة على المنتج</b><p className="text-[10px] text-slate-500">عمالة، كهرباء، تشغيل، تعبئة أو أي مصروف مخصص</p></div><div className="flex gap-2"><Btn variant="ghost" onClick={() => setQuickOpen(!quickOpen)}>+ نوع مصروف جديد</Btn><Btn onClick={addExpense}><Plus size={14}/> إضافة مصروف</Btn></div></div>
+        <div className="flex justify-between items-center"><div><b>المصروفات المحملة على المنتج</b><p className="text-[10px] text-slate-500">أكياس تعبئة، عمالة أسبوعية أو تشغيل — تُثبت مستحقة ولا تُدفع من أمر التصنيع</p></div><div className="flex gap-2"><Btn variant="ghost" onClick={() => setQuickOpen(!quickOpen)}>+ نوع مصروف جديد</Btn><Btn onClick={addExpense}><Plus size={14}/> إضافة مصروف</Btn></div></div>
         {quickOpen && <div className="grid grid-cols-[120px_1fr_auto] gap-2 rounded-xl bg-sky-500/5 border border-sky-500/20 p-2"><input className={inputCls} value={quickCode} onChange={(e) => setQuickCode(e.target.value)} placeholder="5xxx"/><input className={inputCls} value={quickName} onChange={(e) => setQuickName(e.target.value)} placeholder="اسم المصروف"/><Btn onClick={addQuickAccount} disabled={!quickCode || !quickName}>حفظ وإضافة</Btn></div>}
-        {expenses.map((expense, index) => <div key={expense.id} className="grid md:grid-cols-[1fr_1fr_140px_1fr_36px] gap-2 items-center rounded-xl border p-2"><input className={inputCls} value={expense.label} onChange={(e) => setExpenses(expenses.map((row, i) => i === index ? { ...row, label: e.target.value } : row))} placeholder="البيان"/><select className={inputCls} value={expense.accountCode} onChange={(e) => setExpenses(expenses.map((row, i) => i === index ? { ...row, accountCode: e.target.value } : row))}>{expenseAccounts.map((account) => <option key={account.code} value={account.code}>{account.code} — {account.nameAr}</option>)}</select><input className={inputCls} inputMode="decimal" value={expense.amountMinor ? expense.amountMinor / 10 ** cur.decimals : ''} onChange={(e) => setExpenses(expenses.map((row, i) => i === index ? { ...row, amountMinor: Math.max(0, toMinor(e.target.value || '0', cur.decimals)) } : row))} placeholder="المبلغ"/><TreasuryPicker compact operation="payment" value={expense.treasury} onChange={(code) => setExpenses(expenses.map((row, i) => i === index ? { ...row, treasury: code } : row))}/><button onClick={() => setExpenses(expenses.filter((_, i) => i !== index))} className="text-rose-500"><Trash2 size={15}/></button></div>)}
+        {expenses.map((expense, index) => <div key={expense.id} className="grid md:grid-cols-[1fr_1fr_140px_1fr_36px] gap-2 items-center rounded-xl border p-2"><input className={inputCls} value={expense.label} onChange={(e) => setExpenses(expenses.map((row, i) => i === index ? { ...row, label: e.target.value } : row))} placeholder="البيان"/><select className={inputCls} value={expense.accountCode} onChange={(e) => setExpenses(expenses.map((row, i) => i === index ? { ...row, accountCode: e.target.value } : row))}>{expenseAccounts.map((account) => <option key={account.code} value={account.code}>{account.code} — {account.nameAr}</option>)}</select><input className={inputCls} inputMode="decimal" value={expense.amountMinor ? expense.amountMinor / 10 ** cur.decimals : ''} onChange={(e) => setExpenses(expenses.map((row, i) => i === index ? { ...row, amountMinor: Math.max(0, toMinor(e.target.value || '0', cur.decimals)) } : row))} placeholder="المبلغ"/><select className={inputCls} value={expense.payableAccountCode ?? '2117'} onChange={(e) => setExpenses(expenses.map((row, i) => i === index ? { ...row, payableAccountCode: e.target.value as '2117' | '2104' } : row))}><option value="2117">مصروف تصنيع مستحق</option><option value="2104">أجور عمالة مستحقة</option></select><button onClick={() => setExpenses(expenses.filter((_, i) => i !== index))} className="text-rose-500"><Trash2 size={15}/></button></div>)}
         {!expenses.length && <div className="py-16 text-center text-sm text-slate-400">لا توجد مصروفات تصنيع — يمكن الترحيل بالخامات فقط</div>}
       </div>}
     </section>
