@@ -3057,6 +3057,9 @@ export const useDataStore = create<DataState>()(
         if (paidM < totals.totalMinor && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
+        const postingDate = new Date().toISOString().slice(0, 10)
+        if (args.dueDate && args.dueDate < postingDate) throw new Error('تاريخ استحقاق البيع لا يسبق تاريخ الترحيل')
+        if (args.dueDate && paidM >= totals.totalMinor) throw new Error('لا حاجة لتاريخ استحقاق لفاتورة محصلة بالكامل')
         // حارس حد الائتمان (مراجعة المبيعات — نمط SAP B1/أودو): البيع الآجل لعميل له حد
         // يُفحص لحظة الترحيل — رصيده + الآجل الجديد ≤ حده، والتجاوز بموافقة مدير مسجلة
         const newCredit = totals.totalMinor - paidM
