@@ -56,6 +56,8 @@ export function buildPurchaseEntryV2(args: {
   grandTotalMinor: Minor // بضاعة + كل المصاريف (تدخل التكلفة دائماً)
   paidMinor: Minor // المدفوع من مستحق المورد
   payAccount: string // خزينة/بنك أو 1108 عهدة
+  /** توزيع سداد المورد على عدة خزائن/بنوك/محافظ؛ غيابه يحافظ على المصدر الواحد القديم */
+  paymentCredits?: ExpensePaymentCredit[]
   expensePayments: ExpensePaymentCredit[] // المصاريف المدفوعة مباشرة
   /**
    * ض.ق.م المدخلات القابلة للخصم (سد فجوة T1 — للمنشآت المسجلة ضريبياً):
@@ -65,7 +67,9 @@ export function buildPurchaseEntryV2(args: {
    */
   inputVatMinor?: Minor
 }): JournalLine[] {
-  const { grandTotalMinor, paidMinor, expensePayments } = args
+  const { grandTotalMinor, expensePayments } = args
+  const paymentCredits = args.paymentCredits ?? (args.paidMinor > 0 ? [{ account: args.payAccount, amountMinor: args.paidMinor, note: 'مدفوع للمورد' }] : [])
+  const paidMinor = paymentCredits.reduce((sum, payment) => sum + payment.amountMinor, 0)
   const inputVat = args.inputVatMinor ?? 0
   if (!Number.isInteger(grandTotalMinor) || grandTotalMinor <= 0) throw new RangeError('إجمالي الفاتورة يجب أن يكون موجباً')
   if (!Number.isInteger(paidMinor) || paidMinor < 0) throw new RangeError('المدفوع لا يكون سالباً')
@@ -83,7 +87,10 @@ export function buildPurchaseEntryV2(args: {
     { accountCode: args.inventoryAccount, debit: grandTotalMinor, credit: 0, note: args.inventoryNote },
   ]
   if (inputVat > 0) lines.push({ accountCode: '2102', debit: inputVat, credit: 0, note: 'ض.ق.م مدخلات قابلة للخصم' })
-  if (paidMinor > 0) lines.push({ accountCode: args.payAccount, debit: 0, credit: paidMinor, note: 'مدفوع للمورد' })
+  for (const payment of paymentCredits) {
+    if (!Number.isInteger(payment.amountMinor) || payment.amountMinor <= 0) throw new RangeError('قيمة وسيلة سداد المورد غير صالحة')
+    lines.push({ accountCode: payment.account, debit: 0, credit: payment.amountMinor, note: payment.note || 'مدفوع للمورد' })
+  }
   for (const e of expensePayments) lines.push({ accountCode: e.account, debit: 0, credit: e.amountMinor, note: e.note })
   if (remaining > 0) lines.push({ accountCode: '2101', debit: 0, credit: remaining, note: 'دين للمورد' })
   assertBalanced(lines)

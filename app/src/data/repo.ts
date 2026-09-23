@@ -865,6 +865,7 @@ export interface PurchaseInvoice {
    */
   supplierDueMinor?: number
   paidMinor: number
+  paymentAllocations?: { accountCode: string; amountMinor: number; note?: string }[]
   treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه
   custodyFileId?: number | null // دُفعت من ملف عهدة موظف (طلب المالك)
   projectId?: number | null // مربوطة بمشروع مقاولات
@@ -1328,6 +1329,7 @@ interface DataState {
     lines: { itemId: number; qty: number; orderedQty?: number; rejectedQty?: number; unitPriceMinor: number; vatPercent?: number; inputVatMinor?: number; warehouseId?: number | null; expiryDate?: string | null; serialsRaw?: string }[]
     expenses: PurchaseExpense[]
     paidMinor: number
+    paymentAllocations?: { accountCode: string; amountMinor: number; note?: string }[]
     treasury?: TreasuryAccount // الخزينة/البنك الذي دُفع منه (افتراضياً الرئيسية)
     /** الدفع من ملف عهدة موظف بدل الخزينة (طلب المالك) — يخصم من عهدته ويظهر في ملفه */
     custodyFileId?: number | null
@@ -2497,11 +2499,18 @@ export const useDataStore = create<DataState>()(
           if (expense.paidBy === 'payable' && !expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة لمصروف «${expense.nameAr}»`)
         }
         if (!Number.isInteger(inv.paidMinor) || inv.paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
+        const allocatedPaid = inv.paymentAllocations?.reduce((sum, row) => sum + row.amountMinor, 0)
+        if (allocatedPaid != null && allocatedPaid !== inv.paidMinor) throw new Error('إجمالي وسائل السداد لا يطابق المدفوع')
         if (inv.dueDate && inv.dueDate < inv.date) throw new Error('تاريخ استحقاق المورد لا يسبق تاريخ الفاتورة')
         const purchaseUser = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
         if (inv.paidMinor > 0 && inv.custodyFileId == null) {
-          const errors = validateTreasuryAccess(purchaseUser?.treasuryAccess, inv.treasury ?? '1101', 'payment', inv.paidMinor)
-          if (errors.length) throw new Error(errors.join(' — '))
+          const payments = inv.paymentAllocations?.length ? inv.paymentAllocations : [{ accountCode: inv.treasury ?? '1101', amountMinor: inv.paidMinor }]
+          for (const payment of payments) {
+            if (!Number.isInteger(payment.amountMinor) || payment.amountMinor <= 0) throw new Error('مبلغ وسيلة السداد غير صالح')
+            if (!state.treasuries.some((treasury) => treasury.code === payment.accountCode)) throw new Error(`حساب السداد غير موجود (${payment.accountCode})`)
+            const errors = validateTreasuryAccess(purchaseUser?.treasuryAccess, payment.accountCode, 'payment', payment.amountMinor)
+            if (errors.length) throw new Error(errors.join(' — '))
+          }
         }
         // تحقق تواريخ الصلاحية للأصناف المتتبَّعة (القرار 5) قبل أي كتابة
         for (const l of inv.lines) {
@@ -2611,6 +2620,7 @@ export const useDataStore = create<DataState>()(
           grandTotalMinor: grandTotal,
           paidMinor: inv.paidMinor,
           payAccount,
+          paymentCredits: inv.paymentAllocations?.map((payment) => ({ account: payment.accountCode, amountMinor: payment.amountMinor, note: payment.note ?? 'سداد مورد' })),
           expensePayments,
           inputVatMinor,
         })
@@ -2676,6 +2686,7 @@ export const useDataStore = create<DataState>()(
           grandTotalMinor: grandTotal,
           supplierDueMinor: supplierDue,
           paidMinor: inv.paidMinor,
+          paymentAllocations: inv.paymentAllocations,
           treasury: custodyFile ? undefined : (inv.treasury ?? '1101'),
           custodyFileId: custodyFile?.id ?? null,
           projectId: inv.projectId ?? null,
