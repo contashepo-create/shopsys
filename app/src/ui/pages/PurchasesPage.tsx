@@ -7,7 +7,7 @@
 import { useMemo, useState } from 'react'
 import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer, MoreHorizontal } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { useDataStore, type PurchaseInvoice } from '../../data/repo.ts'
+import { useDataStore, type PurchaseInvoice, type PurchaseExpense } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
@@ -162,6 +162,7 @@ export function PurchasesPage() {
   const [editPurchaseOrderNumber, setEditPurchaseOrderNumber] = useState('')
   const [editDueDate, setEditDueDate] = useState('')
   const [editNotes, setEditNotes] = useState('')
+  const [editExpenses, setEditExpenses] = useState<PurchaseExpense[]>([])
   const [editReason, setEditReason] = useState('')
   const [editAddItemId, setEditAddItemId] = useState(0)
 
@@ -177,6 +178,7 @@ export function PurchasesPage() {
     setEditPurchaseOrderNumber(p.purchaseOrderNumber ?? '')
     setEditDueDate(p.dueDate ?? '')
     setEditNotes(p.notes ?? '')
+    setEditExpenses(p.expenses.map((expense) => ({ ...expense })))
     setEditReason('')
     setEditAddItemId(0)
   }
@@ -186,13 +188,15 @@ export function PurchasesPage() {
     [editLines, cur.decimals],
   )
 
+  const editExpenseTotal = useMemo(() => editExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0), [editExpenses])
+
   const saveInvoiceEdit = () => {
     if (!editing) return
     try {
       const updated = editPurchase({
         purchaseId: editing.id,
         lines: editLines.map((l) => ({ itemId: l.itemId, qty: Number(l.qty) || 0, unitPriceMinor: toMinor(l.unitPrice || '0', cur.decimals) })),
-        expenses: editing.expenses, // المصاريف (على حساب المورد) تبقى وتُعاد توزيعها على السطور الجديدة
+        expenses: editExpenses,
         paidMinor: toMinor(editPaid || '0', cur.decimals),
         treasury: editTreasury,
         supplierInvoiceNumber: editSupplierInvoiceNumber,
@@ -1044,9 +1048,13 @@ export function PurchasesPage() {
               </div>
             </div>
 
-            {editing.expenses.length > 0 && (
-              <div className="text-[11px] text-slate-400 p-2.5 rounded-xl bg-slate-500/5 border border-slate-200 dark:border-slate-700">
-                🚛 مصاريف الفاتورة ({fmt(editing.expensesTotalMinor)}) تبقى كما هي وتُعاد قسمتها على السطور الجديدة بنفس طريقة التوزيع.
+            {editExpenses.length > 0 && (
+              <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-500/5 border border-slate-200 dark:border-slate-700">
+                {editExpenses.map((expense, i) => (
+                  <Field key={`${expense.nameAr}-${i}`} label={`${expense.nameAr} · ${expense.costTreatment === 'period' ? 'مصروف فترة' : 'تكلفة مخزون'}`} hint={expense.paidBy === 'supplier' ? 'على حساب المورد' : expense.paidBy === 'custody' ? 'من العهدة' : 'مدفوع من الخزينة'}>
+                    <input type="number" min="0" step="0.01" value={expense.amountMinor / 10 ** cur.decimals} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, amountMinor: toMinor(e.target.value, cur.decimals) } : row))} className={inputCls} dir="ltr" />
+                  </Field>
+                ))}
               </div>
             )}
 
@@ -1069,9 +1077,9 @@ export function PurchasesPage() {
 
             <div className="flex items-center justify-between p-3 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
               <div className="text-[12px] text-slate-500">
-                بضاعة جديدة {fmt(editGoodsTotal)} + مصاريف {fmt(editing.expensesTotalMinor)} — كان الإجمالي {fmt(editing.grandTotalMinor)}
+                بضاعة جديدة {fmt(editGoodsTotal)} + مصاريف {fmt(editExpenseTotal)} — كان الإجمالي {fmt(editing.grandTotalMinor)}
               </div>
-              <div className="font-black text-xl text-emerald-600">{fmt(editGoodsTotal + editing.expensesTotalMinor)} {cur.symbol}</div>
+              <div className="font-black text-xl text-emerald-600">{fmt(editGoodsTotal + editExpenseTotal)} {cur.symbol}</div>
             </div>
 
             <div className="flex justify-end gap-2">
