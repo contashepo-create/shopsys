@@ -4592,8 +4592,21 @@ export const useDataStore = create<DataState>()(
             }
           }
         }
+        const user = state.appUsers.find((row) => row.id === state.currentUserId)
+        if (paidM > 0) {
+          if (!state.treasuries.some((row) => row.code === args.treasury)) throw new Error(`خزينة التحصيل غير موجودة (${args.treasury})`)
+          const receiptErrors = validateTreasuryAccess(user?.treasuryAccess, args.treasury, 'receipt', paidM)
+          if (receiptErrors.length) throw new Error(receiptErrors.join(' — '))
+        }
         const newEntryLines = buildSaleEntry(totals, args.payment, args.treasury, paidM)
         const internalExpenses = args.internalExpenses ?? sale.internalExpenses ?? []
+        for (const expense of internalExpenses.filter((row) => row.settlement === 'paid_now')) {
+          const payoutTreasury = expense.treasury ?? args.treasury
+          if (!state.treasuries.some((row) => row.code === payoutTreasury)) throw new Error(`خزينة المصروف الداخلي غير موجودة (${payoutTreasury})`)
+          const payout = expense.taxTreatment === 'exclusive' ? expense.amountMinor + Math.round(expense.amountMinor * expense.taxPercent / 100) : expense.amountMinor
+          const paymentErrors = validateTreasuryAccess(user?.treasuryAccess, payoutTreasury, 'payment', payout)
+          if (paymentErrors.length) throw new Error(paymentErrors.join(' — '))
+        }
         newEntryLines.push(...buildInternalExpenseLines(internalExpenses, args.treasury))
         assertBalanced(newEntryLines)
         const now = new Date().toISOString()
@@ -4727,6 +4740,12 @@ export const useDataStore = create<DataState>()(
         const expensesTotal = landedExpenses.reduce((a, e) => a + e.amountMinor, 0)
         const grandTotal = goodsTotal + expensesTotal
         if (!Number.isInteger(args.paidMinor) || args.paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
+        if (args.paidMinor > 0) {
+          if (!state.treasuries.some((row) => row.code === args.treasury)) throw new Error(`خزينة الدفع غير موجودة (${args.treasury})`)
+          const user = state.appUsers.find((row) => row.id === state.currentUserId)
+          const accessErrors = validateTreasuryAccess(user?.treasuryAccess, args.treasury, 'payment', args.paidMinor)
+          if (accessErrors.length) throw new Error(accessErrors.join(' — '))
+        }
         // N1 (المراجعة الثانية): ض.ق.م المدخلات المسجلة على الفاتورة تُحفظ في القيد المعاد بناؤه —
         // وإلا اختفى مدين 2102 بصمت واختل مستحق المورد
         const keptInputVat = inv.inputVatMinor ?? 0
