@@ -1884,7 +1884,7 @@ interface DataState {
   /** تكلفة وحدة الناتج بالمتوسط المرجح الحالي للخامات */
   getRecipeUnitCost: (recipeId: number) => number
   /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
-  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number }[]; warehouseId?: number | null; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string; outputExpiryDate?: string | null; outputLotNumber?: string | null }) => ProductionOrder
+  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number }[]; warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string; outputExpiryDate?: string | null; outputLotNumber?: string | null }) => ProductionOrder
   /**
    * أمر تجهيز/تفكيك (جزارة 🥩/تمور 🌴): خام واحد → نواتج متعددة.
    * توزيع (تكلفة الخام + المصاريف) على النواتج بنسبة قيمها البيعية بالقرش،
@@ -8243,10 +8243,13 @@ export const useDataStore = create<DataState>()(
         const batches = direct ? 1 : (args.batches ?? 0)
         if (!direct && (!Number.isInteger(batches) || batches <= 0)) throw new Error('عدد التشغيلات يجب أن يكون عدداً صحيحاً موجباً')
         const productItemId = direct ? (args.productItemId ?? 0) : recipe.productItemId
-        const warehouseId = args.warehouseId ?? state.warehouses.find((warehouse) => warehouse.isMain)?.id ?? state.warehouses[0]?.id ?? null
-        if (warehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === warehouseId)) throw new Error('اختر مخزن تصنيع صحيحاً')
+        const legacyWarehouseId = args.warehouseId ?? state.warehouses.find((warehouse) => warehouse.isMain)?.id ?? state.warehouses[0]?.id ?? null
+        const ingredientWarehouseId = args.ingredientWarehouseId ?? legacyWarehouseId
+        const outputWarehouseId = args.outputWarehouseId ?? legacyWarehouseId
+        if (ingredientWarehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === ingredientWarehouseId)) throw new Error('اختر مخزن صرف خامات صحيحاً')
+        if (outputWarehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === outputWarehouseId)) throw new Error('اختر مخزن استلام ناتج صحيحاً')
         const warehouseStock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders))
-        const availableInWarehouse = (itemId: number) => warehouseStock.get(warehouseId)?.get(itemId) ?? 0
+        const availableInWarehouse = (itemId: number) => warehouseStock.get(ingredientWarehouseId)?.get(itemId) ?? 0
         const ingredients = direct ? (args.ingredients ?? []) : recipe.ingredients.map((ing) => ({ itemId: ing.itemId, qty: ing.qty * batches }))
         const producedQty = direct ? (args.producedQty ?? 0) : recipe.yieldQty * batches
         if (!state.items.some((item) => item.id === productItemId && item.isActive)) throw new Error('اختر صنفاً ناتجاً مسجلاً ونشطاً في المخزون')
@@ -8294,7 +8297,7 @@ export const useDataStore = create<DataState>()(
         }
         const order: ProductionOrder = {
           id: orderId, orderNumber, refCode: makeUniqueRefCode('PRD', now, usedRefCodes(state)),
-          date: `${productionDate}T00:00:00.000Z`, recipeId: recipe?.id ?? 0, productItemId, warehouseId,
+          date: `${productionDate}T00:00:00.000Z`, recipeId: recipe?.id ?? 0, productItemId, warehouseId: ingredientWarehouseId, ingredientWarehouseId, outputWarehouseId,
           batches, producedQty, outputExpiryDate: args.outputExpiryDate ?? null, outputLotNumber, ingredientsCostMinor: ingredientsCost,
           ingredientItems: ingredients.map((ingredient) => { const unitCostMinor = state.items.find((item) => item.id === ingredient.itemId)?.costMinor ?? 0; return { ...ingredient, unitCostMinor, totalCostMinor: Math.round(ingredient.qty * unitCostMinor) } }),
           overheadMinor: overhead + detailedOverhead, overheadItems: productionExpenses, totalCostMinor: ingredientsCost + overhead + detailedOverhead,

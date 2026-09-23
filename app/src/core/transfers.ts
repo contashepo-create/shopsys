@@ -118,7 +118,7 @@ export function buildWarehouseDocs(
   sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
   saleReturns: { saleId: number; lines: { itemId: number; qty: number; condition?: string; saleLineIndex?: number; warehouseId?: number | null }[] }[] = [],
   purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number; purchaseLineIndex?: number; warehouseId?: number | null }[] }[] = [],
-  productionOrders: { warehouseId?: number | null; productItemId: number; producedQty: number; ingredientItems?: { itemId: number; qty: number }[] }[] = [],
+  productionOrders: { warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; productItemId: number; producedQty: number; ingredientItems?: { itemId: number; qty: number }[] }[] = [],
 ): WarehouseDoc[] {
   const docs: WarehouseDoc[] = []
   const pushLineDoc = (warehouseId: number | null | undefined, itemId: number, qtyDelta: number) => {
@@ -163,8 +163,8 @@ export function buildWarehouseDocs(
 
   // التصنيع حركة داخل المخزن المحدد: خامات سالبة ومنتج نهائي موجب.
   for (const order of productionOrders) {
-    pushLineDoc(order.warehouseId ?? null, order.productItemId, order.producedQty)
-    for (const ingredient of order.ingredientItems ?? []) pushLineDoc(order.warehouseId ?? null, ingredient.itemId, -ingredient.qty)
+    pushLineDoc(order.outputWarehouseId ?? order.warehouseId ?? null, order.productItemId, order.producedQty)
+    for (const ingredient of order.ingredientItems ?? []) pushLineDoc(order.ingredientWarehouseId ?? order.warehouseId ?? null, ingredient.itemId, -ingredient.qty)
   }
 
   const purchaseById = new Map(purchases.filter((p) => p.id != null && p.projectId == null).map((p) => [p.id!, p]))

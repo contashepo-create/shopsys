@@ -111,6 +111,8 @@ export interface ProductionOrder {
   recipeId: number
   productItemId: number
   warehouseId?: number | null
+  ingredientWarehouseId?: number | null
+  outputWarehouseId?: number | null
   /** عدد التشغيلات (المضاعِف) */
   batches: number
   producedQty: number // batches × yieldQty
