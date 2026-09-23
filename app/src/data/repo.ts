@@ -816,6 +816,8 @@ export interface PurchaseExpense {
   /** حساب مصروف الفترة، وحساب الاستحقاق عند paidBy=payable */
   accountCode?: string
   payableAccountCode?: string
+  /** الجهة صاحبة الاستحقاق؛ يسمح بعدة أطراف في الفاتورة عبر سطور مستقلة */
+  beneficiaryName?: string
   /** مصروف لاحق أُضيف بعد ترحيل الفاتورة (Landed Cost Voucher) */
   late?: boolean
   date?: string
@@ -2426,6 +2428,10 @@ export const useDataStore = create<DataState>()(
           if (!Number.isFinite(l.qty) || l.qty <= 0) throw new Error('كل كمية يجب أن تكون رقماً موجباً')
           if (!Number.isInteger(l.unitPriceMinor) || l.unitPriceMinor < 0) throw new Error('سعر شراء غير صالح')
         }
+        for (const expense of inv.expenses) {
+          if (!expense.nameAr.trim() || !Number.isInteger(expense.amountMinor) || expense.amountMinor < 0) throw new Error('بيانات مصروف الشراء غير صالحة')
+          if (expense.paidBy === 'payable' && !expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة لمصروف «${expense.nameAr}»`)
+        }
         if (!Number.isInteger(inv.paidMinor) || inv.paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
         const purchaseUser = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
         if (inv.paidMinor > 0 && inv.custodyFileId == null) {
@@ -2479,7 +2485,7 @@ export const useDataStore = create<DataState>()(
             if (errors.length) throw new Error(errors.join(' — '))
             expensePayments.push({ account: acc, amountMinor: e.amountMinor, note: `${e.nameAr} — مدفوع من ${state.treasuries.find((t) => t.code === acc)?.nameAr ?? acc}` })
           } else if (paidBy === 'payable') {
-            expensePayments.push({ account: e.payableAccountCode ?? '2117', amountMinor: e.amountMinor, note: `${e.nameAr} — مصروف شراء مستحق لجهة أخرى` })
+            expensePayments.push({ account: e.payableAccountCode ?? '2117', amountMinor: e.amountMinor, note: `${e.nameAr} — مستحق لـ ${e.beneficiaryName?.trim() || 'جهة أخرى'}` })
           } else if (paidBy === 'custody') {
             if (e.custodyFileId == null) throw new Error(`حدد ملف العهدة الذي دفع مصروف «${e.nameAr}»`)
             expenseCustodyNeeds.set(e.custodyFileId, (expenseCustodyNeeds.get(e.custodyFileId) ?? 0) + e.amountMinor)
@@ -2543,7 +2549,7 @@ export const useDataStore = create<DataState>()(
           inputVatMinor,
         })
         const periodExpenseLines = buildInternalExpenseLines(periodExpenses.map((expense) => ({
-          id: crypto.randomUUID(), label: expense.nameAr, amountMinor: expense.amountMinor,
+          id: crypto.randomUUID(), label: `${expense.nameAr}${expense.beneficiaryName ? ` — ${expense.beneficiaryName}` : ''}`, amountMinor: expense.amountMinor,
           accountCode: expense.accountCode ?? '5108',
           settlement: (expense.paidBy ?? 'supplier') === 'treasury' || expense.paidBy === 'custody' ? 'paid_now' as const : 'payable_later' as const,
           treasury: expense.paidBy === 'custody' ? CUSTODY_ACCOUNT : (expense.payAccount ?? inv.treasury ?? '1101'),
