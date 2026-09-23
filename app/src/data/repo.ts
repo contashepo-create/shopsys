@@ -1557,6 +1557,10 @@ interface DataState {
     expenses: PurchaseExpense[]
     paidMinor: number
     treasury: TreasuryAccount
+    supplierInvoiceNumber?: string
+    purchaseOrderNumber?: string
+    dueDate?: string
+    notes?: string
     reason: string
     einvoiceActive: boolean
   }) => PurchaseInvoice
@@ -4662,6 +4666,9 @@ export const useDataStore = create<DataState>()(
         }
         const inv = state.purchases.find((p) => p.id === args.purchaseId)
         if (!inv) throw new Error('فاتورة الشراء غير موجودة')
+        const supplierDocument = args.supplierInvoiceNumber?.trim()
+        if (supplierDocument && state.purchases.some((row) => row.id !== inv.id && row.supplierId === inv.supplierId && row.supplierInvoiceNumber === supplierDocument)) throw new Error('رقم فاتورة المورد مسجل مسبقاً لهذا المورد')
+        if (args.dueDate && args.dueDate < inv.date) throw new Error('تاريخ الاستحقاق لا يسبق تاريخ فاتورة المورد')
         if (!args.lines.length) throw new Error('الفاتورة المعدلة بلا أصناف')
         if (inv.journalEntryId == null) throw new Error('فاتورة قديمة بلا قيد — لا تُعدَّل')
         for (const l of args.lines) {
@@ -4788,6 +4795,10 @@ export const useDataStore = create<DataState>()(
           supplierDueMinor: grandTotal + keptInputVat + periodExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0), // N1: مستحق المورد يشمل ضريبة المدخلات المحفوظة
           paidMinor: args.paidMinor,
           treasury: args.treasury,
+          supplierInvoiceNumber: args.supplierInvoiceNumber?.trim() || undefined,
+          purchaseOrderNumber: args.purchaseOrderNumber?.trim() || undefined,
+          dueDate: args.dueDate || undefined,
+          notes: args.notes?.trim() || '',
           journalEntryId: newEntryId,
           editHistory: [
             ...(inv.editHistory ?? []),

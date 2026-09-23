@@ -158,6 +158,10 @@ export function PurchasesPage() {
   const [editLines, setEditLines] = useState<{ itemId: number; qty: string; unitPrice: string }[]>([])
   const [editPaid, setEditPaid] = useState('')
   const [editTreasury, setEditTreasury] = useState('1101')
+  const [editSupplierInvoiceNumber, setEditSupplierInvoiceNumber] = useState('')
+  const [editPurchaseOrderNumber, setEditPurchaseOrderNumber] = useState('')
+  const [editDueDate, setEditDueDate] = useState('')
+  const [editNotes, setEditNotes] = useState('')
   const [editReason, setEditReason] = useState('')
   const [editAddItemId, setEditAddItemId] = useState(0)
 
@@ -169,6 +173,10 @@ export function PurchasesPage() {
     setEditLines(p.lines.map((l) => ({ itemId: l.itemId, qty: String(l.qty), unitPrice: String(l.unitPriceMinor / 10 ** cur.decimals) })))
     setEditPaid(String(p.paidMinor / 10 ** cur.decimals))
     setEditTreasury(p.treasury ?? '1101')
+    setEditSupplierInvoiceNumber(p.supplierInvoiceNumber ?? '')
+    setEditPurchaseOrderNumber(p.purchaseOrderNumber ?? '')
+    setEditDueDate(p.dueDate ?? '')
+    setEditNotes(p.notes ?? '')
     setEditReason('')
     setEditAddItemId(0)
   }
@@ -187,6 +195,10 @@ export function PurchasesPage() {
         expenses: editing.expenses, // المصاريف (على حساب المورد) تبقى وتُعاد توزيعها على السطور الجديدة
         paidMinor: toMinor(editPaid || '0', cur.decimals),
         treasury: editTreasury,
+        supplierInvoiceNumber: editSupplierInvoiceNumber,
+        purchaseOrderNumber: editPurchaseOrderNumber,
+        dueDate: editDueDate,
+        notes: editNotes,
         reason: editReason.trim(),
         einvoiceActive,
       })
@@ -1045,7 +1057,11 @@ export function PurchasesPage() {
               <Field label="خزينة الدفع">
                 <TreasuryPicker value={editTreasury} onChange={setEditTreasury} operation="payment" compact />
               </Field>
+              <Field label="رقم فاتورة المورد"><input value={editSupplierInvoiceNumber} onChange={(e)=>setEditSupplierInvoiceNumber(e.target.value)} className={inputCls}/></Field>
+              <Field label="رقم أمر الشراء"><input value={editPurchaseOrderNumber} onChange={(e)=>setEditPurchaseOrderNumber(e.target.value)} className={inputCls}/></Field>
+              <Field label="تاريخ الاستحقاق"><input type="date" min={editing.date} value={editDueDate} onChange={(e)=>setEditDueDate(e.target.value)} className={inputCls}/></Field>
             </div>
+            <Field label="ملاحظات داخلية"><textarea value={editNotes} onChange={(e)=>setEditNotes(e.target.value)} className={inputCls}/></Field>
 
             <Field label="سبب التعديل" hint="يُحفظ في سجل التدقيق ووصف القيد العاكس">
               <input value={editReason} onChange={(e) => setEditReason(e.target.value)} className={inputCls} placeholder="كمية خاطئة، سعر مورد مصحح…" />
