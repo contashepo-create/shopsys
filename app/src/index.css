@@ -163,6 +163,15 @@ html.dark { color-scheme: dark; }
   backdrop-filter: blur(12px);
 }
 
+
+/* شبكة نماذج موحّدة: العناوين وعناصر الإدخال تحترم السطر نفسه مهما طال النص. */
+.form-field { display: flex; min-width: 0; height: 100%; flex-direction: column; }
+.form-field > label { display: flex; min-height: 2.25rem; align-items: end; line-height: 1.15rem; }
+.form-field > input, .form-field > select, .form-field > textarea, .form-field > div { flex-shrink: 0; }
+.form-field > p { min-height: 1rem; }
+.form-row { align-items: start !important; }
+@media (max-width: 767px) { .form-field > label { min-height: auto; } }
+
 /* محررات الفواتير: إدخال رقمي يدوي بلا أسهم المتصفح */
 input[type='number']::-webkit-inner-spin-button,
 input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

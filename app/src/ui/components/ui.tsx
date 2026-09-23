@@ -33,7 +33,7 @@ export function Field({
   label, children, hint,
 }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <div>
+    <div className="form-field">
       <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">{label}</label>
       {children}
       {hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
