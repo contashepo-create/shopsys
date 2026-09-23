@@ -53,6 +53,9 @@ export function SalesInvoicesPage() {
   const [editPaid, setEditPaid] = useState('')
   const [editTreasury, setEditTreasury] = useState('1101')
   const [editDiscount, setEditDiscount] = useState(0)
+  const [editCustomerReference, setEditCustomerReference] = useState('')
+  const [editDueDate, setEditDueDate] = useState('')
+  const [editNotes, setEditNotes] = useState('')
   const [editReason, setEditReason] = useState('')
   const [editAddItemId, setEditAddItemId] = useState(0)
 
@@ -101,6 +104,9 @@ export function SalesInvoicesPage() {
     setEditPaid(String((s.paidMinor ?? (s.payment === 'cash' ? s.totals.totalMinor : 0)) / 10 ** cur.decimals))
     setEditTreasury(s.treasury ?? '1101')
     setEditDiscount(s.invoiceDiscountPercent)
+    setEditCustomerReference(s.customerReference ?? '')
+    setEditDueDate(s.dueDate ?? '')
+    setEditNotes(s.notes ?? '')
     setEditReason('')
     setEditAddItemId(0)
   }
@@ -132,6 +138,9 @@ export function SalesInvoicesPage() {
         paidMinor: Math.min(paidMinor, editTotals.totalMinor),
         treasury: editTreasury,
         invoiceDiscountPercent: editDiscount,
+        customerReference: editCustomerReference,
+        dueDate: editDueDate,
+        notes: editNotes,
         reason: editReason.trim(),
         einvoiceActive,
         allowNegativeStock: setup.allowNegativeStock,
@@ -476,7 +485,10 @@ export function SalesInvoicesPage() {
               <Field label="خزينة التحصيل">
                 <TreasuryPicker value={editTreasury} onChange={setEditTreasury} compact />
               </Field>
+              <Field label="مرجع العميل"><input value={editCustomerReference} onChange={(e)=>setEditCustomerReference(e.target.value)} className={inputCls}/></Field>
+              <Field label="تاريخ الاستحقاق"><input type="date" value={editDueDate} onChange={(e)=>setEditDueDate(e.target.value)} className={inputCls}/></Field>
             </div>
+            <Field label="ملاحظات داخلية"><textarea value={editNotes} onChange={(e)=>setEditNotes(e.target.value)} className={inputCls}/></Field>
 
             <Field label="سبب التعديل" hint="يُحفظ في سجل التدقيق ووصف القيد العاكس">
               <input value={editReason} onChange={(e) => setEditReason(e.target.value)} className={inputCls} placeholder="خطأ في الكمية، سعر خاطئ…" />

@@ -1540,6 +1540,9 @@ interface DataState {
     paidMinor: number
     treasury: TreasuryAccount
     invoiceDiscountPercent: number
+    customerReference?: string
+    dueDate?: string
+    notes?: string
     reason: string
     /** الفاتورة الإلكترونية مفعلة بمفتاح الترخيص؟ — تُمرر من الواجهة وتُرفض العملية لو true */
     einvoiceActive: boolean
@@ -4565,6 +4568,8 @@ export const useDataStore = create<DataState>()(
         if (paidM < totals.totalMinor && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
+        if (args.dueDate && args.dueDate < new Date().toISOString().slice(0, 10)) throw new Error('تاريخ الاستحقاق لا يسبق تاريخ التعديل')
+        if (args.dueDate && paidM >= totals.totalMinor) throw new Error('الفاتورة محصلة بالكامل ولا تحتاج تاريخ استحقاق')
         // حارس حد الائتمان (المراجعة التراجعية): التعديل قد يرفع الجزء الآجل —
         // الفحص على صافي الزيادة: (رصيد العميل − آجل الفاتورة القديم) + الآجل الجديد ≤ الحد
         const newCreditPart = totals.totalMinor - paidM
@@ -4627,6 +4632,9 @@ export const useDataStore = create<DataState>()(
           treasury: args.treasury,
           lines: costedLines,
           invoiceDiscountPercent: args.invoiceDiscountPercent,
+          customerReference: args.customerReference?.trim() || undefined,
+          dueDate: args.dueDate || undefined,
+          notes: args.notes?.trim() || undefined,
           totals,
           journalEntryId: newEntryId,
           editHistory: [
