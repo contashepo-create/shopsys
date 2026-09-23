@@ -215,7 +215,7 @@ export function SalesInvoicesPage() {
 
   if (sales.length === 0) {
     return (
-      <div className="space-y-4">{advancedInvoiceDrafts.filter(d=>d.kind==='sale').length>0&&<DraftBanner/>}<div className="flex justify-end"><Btn variant="ghost" onClick={exportSales}><FileSpreadsheet size={15}/> Excel</Btn><Btn onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn></div><div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800"><EmptyState icon="🧾" title="لا فواتير مبيعات بعد" sub="أنشئ فاتورة متقدمة أو استخدم الكاشير للبيع السريع" /></div></div>
+      <div className="space-y-4">{advancedInvoiceDrafts.filter(d=>d.kind==='sale').length>0&&<DraftBanner/>}<div className="flex justify-end"><Btn variant="ghost" onClick={exportSales}><FileSpreadsheet size={15}/> Excel</Btn><Btn shortcut="F3" onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn></div><div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800"><EmptyState icon="🧾" title="لا فواتير مبيعات بعد" sub="أنشئ فاتورة متقدمة أو استخدم الكاشير للبيع السريع" /></div></div>
     )
   }
 
@@ -251,7 +251,7 @@ export function SalesInvoicesPage() {
       <DraftBanner/>
       <div className="anim-up flex flex-wrap items-center gap-2">
         <Btn variant="ghost" onClick={exportSales}><FileSpreadsheet size={15}/> Excel</Btn>
-        <Btn onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn>
+        <Btn shortcut="F3" onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}

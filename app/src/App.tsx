@@ -99,6 +99,7 @@ import { TelegramPage } from './ui/pages/TelegramPage.tsx'
 import { AssetsPage } from './ui/pages/AssetsPage.tsx'
 import { ExternalCommissionsPage } from './ui/pages/ExternalCommissionsPage.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
+import { KeyboardNavigation } from './ui/components/KeyboardNavigation.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
 
 function usePageTitle(): string {
@@ -166,6 +167,7 @@ function Shell() {
 
   return (
     <MainLayout title={title}>
+      <KeyboardNavigation />
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/settings/permissions" element={<PermissionsPage />} />

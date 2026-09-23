@@ -6,10 +6,11 @@ import { create } from 'zustand'
 import { PIN_MAX_LENGTH } from '../../core/auth.ts'
 
 export function Btn({
-  children, onClick, variant = 'primary', disabled, type = 'button', className = '',
+  children, onClick, variant = 'primary', disabled, type = 'button', className = '', shortcut,
 }: {
   children: ReactNode; onClick?: () => void; disabled?: boolean
   variant?: 'primary' | 'ghost' | 'danger' | 'soft'; type?: 'button' | 'submit'; className?: string
+  shortcut?: string
 }) {
   const styles = {
     primary: 'text-white bg-gradient-to-l from-brand-600 to-fuchsia-600 shadow-lg shadow-brand-500/25 hover:shadow-xl',
@@ -24,7 +25,8 @@ export function Btn({
       disabled={disabled}
       className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 hover:scale-[1.03] active:scale-95 disabled:opacity-40 disabled:pointer-events-none ${styles[variant]} ${className}`}
     >
-      {children}
+      <span className="flex items-center justify-center gap-1.5">{children}</span>
+      {shortcut && <kbd className="block mt-0.5 text-[9px] leading-none opacity-70 font-mono">{shortcut}</kbd>}
     </button>
   )
 }
