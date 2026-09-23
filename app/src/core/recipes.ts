@@ -93,6 +93,15 @@ export function recipeUnitCostMinor(recipe: Recipe, costOf: (itemId: number) => 
   return Math.round((ingredients + recipe.overheadMinor) / recipe.yieldQty)
 }
 
+export interface ProductionExpense {
+  id: string
+  label: string
+  amountMinor: Minor
+  /** حساب المصروف المرجعي للتصنيف والتحليل؛ التكلفة تُرسمل على المنتج عند الترحيل */
+  accountCode: string
+  treasury: string
+}
+
 export interface ProductionOrder {
   id: number
   orderNumber: string // PRD-0001
@@ -105,6 +114,7 @@ export interface ProductionOrder {
   producedQty: number // batches × yieldQty
   ingredientsCostMinor: Minor
   overheadMinor: Minor
+  overheadItems?: ProductionExpense[]
   totalCostMinor: Minor
   treasury: string | null // مصدر مصاريف التشغيل إن وجدت
   journalEntryId: number
@@ -112,13 +122,17 @@ export interface ProductionOrder {
 }
 
 /** قيد أمر الإنتاج — تحويل داخل المخزون + مصاريف تشغيل من الخزينة */
-export function buildProductionEntry(ingredientsCostMinor: Minor, overheadMinor: Minor, treasury: string): JournalLine[] {
+export function buildProductionEntry(ingredientsCostMinor: Minor, overheadMinor: Minor, treasury: string, expenses: ProductionExpense[] = []): JournalLine[] {
+  const detailedTotal = expenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
+  const totalOverhead = overheadMinor + detailedTotal
   const lines: JournalLine[] = [
-    { accountCode: '1103', debit: ingredientsCostMinor + overheadMinor, credit: 0, note: 'منتج تام داخل للمخزون' },
+    { accountCode: '1103', debit: ingredientsCostMinor + totalOverhead, credit: 0, note: 'منتج تام داخل للمخزون' },
     { accountCode: '1103', debit: 0, credit: ingredientsCostMinor, note: 'خامات مستهلكة في الإنتاج' },
   ]
-  if (overheadMinor > 0) {
-    lines.push({ accountCode: treasury, debit: 0, credit: overheadMinor, note: 'مصاريف تشغيل الإنتاج' })
+  if (overheadMinor > 0) lines.push({ accountCode: treasury, debit: 0, credit: overheadMinor, note: 'مصاريف تشغيل الوصفة' })
+  for (const expense of expenses) {
+    if (!Number.isInteger(expense.amountMinor) || expense.amountMinor <= 0) throw new Error('مبلغ مصروف التصنيع يجب أن يكون موجباً')
+    lines.push({ accountCode: expense.treasury, debit: 0, credit: expense.amountMinor, note: `مصروف تصنيع: ${expense.label} (${expense.accountCode})` })
   }
   assertBalanced(lines)
   return lines

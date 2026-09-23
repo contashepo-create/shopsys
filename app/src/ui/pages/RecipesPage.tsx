@@ -9,12 +9,12 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { RECIPE_MODE_LABELS, recipeUnitCostMinor, type RecipeMode, type RecipeIngredient, type Recipe } from '../../core/recipes.ts'
+import { RECIPE_MODE_LABELS, recipeUnitCostMinor, type RecipeMode, type RecipeIngredient, type Recipe, type ProductionExpense } from '../../core/recipes.ts'
 import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 
 export function RecipesPage() {
-  const { items, recipes, productionOrders, addRecipe, updateRecipe, toggleRecipe, removeRecipe, postProduction } = useDataStore()
+  const { items, recipes, productionOrders, customAccounts, addRecipe, updateRecipe, toggleRecipe, removeRecipe, postProduction } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -65,12 +65,14 @@ export function RecipesPage() {
   const [prodFor, setProdFor] = useState<Recipe | null>(null)
   const [batches, setBatches] = useState('1')
   const [prodTreasury, setProdTreasury] = useState('1101')
+  const [prodExpenses, setProdExpenses] = useState<ProductionExpense[]>([])
+  const expenseAccounts = [{ code: '5102', nameAr: 'أجور مباشرة' }, { code: '5103', nameAr: 'مصاريف تشغيل' }, { code: '5108', nameAr: 'مصروفات عمومية' }, ...customAccounts.filter((a) => a.rootType === 'expenses').map((a) => ({ code: a.code, nameAr: a.nameAr }))]
   const runProduction = () => {
     if (!prodFor) return
     try {
-      const o = postProduction({ recipeId: prodFor.id, batches: Number(batches), treasury: prodTreasury })
+      const o = postProduction({ recipeId: prodFor.id, batches: Number(batches), treasury: prodTreasury, expenses: prodExpenses })
       toast.show(`رُحّل ${o.orderNumber}: أُنتج ${o.producedQty} بتكلفة ${fmt(o.totalCostMinor)} ✅`)
-      setProdFor(null); setBatches('1')
+      setProdFor(null); setBatches('1'); setProdExpenses([])
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -128,7 +130,7 @@ export function RecipesPage() {
                   </div>
                   <div className="flex gap-1">
                     {r.mode === 'prepped' && r.isActive && (
-                      <button onClick={() => setProdFor(r)} title="أمر إنتاج" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Factory className="w-4 h-4" /></button>
+                      <button onClick={() => { setProdFor(r); setProdExpenses([]) }} title="أمر إنتاج" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Factory className="w-4 h-4" /></button>
                     )}
                     <button onClick={() => openEdit(r)} title="تعديل" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Pencil className="w-4 h-4" /></button>
                     <button onClick={() => toggleRecipe(r.id)} title={r.isActive ? 'تعطيل' : 'تفعيل'} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Power className="w-4 h-4" /></button>
@@ -234,9 +236,14 @@ export function RecipesPage() {
             </div>
             <Field label="عدد التشغيلات"><input value={batches} onChange={(e) => setBatches(e.target.value)} inputMode="numeric" className={inputCls} /></Field>
             {prodFor.overheadMinor > 0 && <Field label="مصدر مصاريف التشغيل"><TreasuryPicker value={prodTreasury} onChange={setProdTreasury} /></Field>}
+            <div className="rounded-xl border p-3 space-y-2">
+              <div className="flex items-center justify-between"><b className="text-xs">مصروفات التصنيع الإضافية</b><Btn variant="ghost" onClick={()=>setProdExpenses([...prodExpenses,{id:crypto.randomUUID(),label:'',amountMinor:0,accountCode:expenseAccounts[0]?.code??'5108',treasury:prodTreasury}])}><Plus size={13}/> إضافة بند</Btn></div>
+              {prodExpenses.map((expense,index)=><div key={expense.id} className="grid grid-cols-[1fr_1fr_100px_32px] gap-1.5"><input className={inputCls} value={expense.label} onChange={e=>setProdExpenses(prodExpenses.map((x,i)=>i===index?{...x,label:e.target.value}:x))} placeholder="البيان"/><select className={inputCls} value={expense.accountCode} onChange={e=>setProdExpenses(prodExpenses.map((x,i)=>i===index?{...x,accountCode:e.target.value}:x))}>{expenseAccounts.map(a=><option key={a.code} value={a.code}>{a.nameAr}</option>)}</select><input className={inputCls} inputMode="decimal" value={expense.amountMinor?expense.amountMinor/10**cur.decimals:''} onChange={e=>setProdExpenses(prodExpenses.map((x,i)=>i===index?{...x,amountMinor:Math.max(0,Math.round(Number(e.target.value||0)*10**cur.decimals))}:x))} placeholder="المبلغ"/><button onClick={()=>setProdExpenses(prodExpenses.filter((_,i)=>i!==index))}><Trash2 size={14}/></button></div>)}
+              {prodExpenses.length>0&&<Field label="خزينة المصروفات"><TreasuryPicker value={prodTreasury} onChange={(code)=>{setProdTreasury(code);setProdExpenses(prodExpenses.map(x=>({...x,treasury:code})))}}/></Field>}
+            </div>
             {Number(batches) > 0 && (
               <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3 text-[12px] font-bold text-emerald-700 dark:text-emerald-300">
-                سينتج {prodFor.yieldQty * Number(batches)} وحدة بتكلفة إجمالية {fmt((recipeUnitCostMinor(prodFor, costOf)) * prodFor.yieldQty * Number(batches))} تقريباً
+                سينتج {prodFor.yieldQty * Number(batches)} وحدة بتكلفة إجمالية {fmt((recipeUnitCostMinor(prodFor, costOf)) * prodFor.yieldQty * Number(batches) + prodExpenses.reduce((sum,e)=>sum+e.amountMinor,0))} تقريباً
               </div>
             )}
             <Btn onClick={runProduction} className="w-full" disabled={!(Number(batches) > 0)}>ترحيل أمر الإنتاج</Btn>

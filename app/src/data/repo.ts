@@ -28,7 +28,7 @@ import { validateConsumption, buildConsumptionEntry, consumptionTotalMinor, INTE
 import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, type WalletServiceInput, type WalletServiceType, type WalletProvider, type WalletServiceTotals } from '../core/walletServices.ts'
 import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, buildPurchaseReturnLinesPerLine, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, type PurchaseReturnLine, type PurchaseReturnLineSpec, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
-import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder } from '../core/recipes.ts'
+import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder, type ProductionExpense } from '../core/recipes.ts'
 import { validateProcessing, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
 import { validatePriceList, resolvePrice, type PriceList, type PriceListEntry } from '../core/priceLists.ts'
@@ -1882,7 +1882,7 @@ interface DataState {
   /** تكلفة وحدة الناتج بالمتوسط المرجح الحالي للخامات */
   getRecipeUnitCost: (recipeId: number) => number
   /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
-  postProduction: (args: { recipeId: number; batches: number; treasury?: string; notes?: string }) => ProductionOrder
+  postProduction: (args: { recipeId: number; batches: number; treasury?: string; expenses?: ProductionExpense[]; notes?: string }) => ProductionOrder
   /**
    * أمر تجهيز/تفكيك (جزارة 🥩/تمور 🌴): خام واحد → نواتج متعددة.
    * توزيع (تكلفة الخام + المصاريف) على النواتج بنسبة قيمها البيعية بالقرش،
@@ -8234,9 +8234,18 @@ export const useDataStore = create<DataState>()(
         const costOf = (id: number) => state.items.find((it) => it.id === id)?.costMinor ?? 0
         const ingredientsCost = recipeIngredientsCostMinor(recipe, costOf) * args.batches
         const overhead = recipe.overheadMinor * args.batches
+        const productionExpenses = args.expenses ?? []
+        const detailedOverhead = productionExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
         const producedQty = recipe.yieldQty * args.batches
         const treasury = args.treasury ?? '1101'
-        const lines = buildProductionEntry(ingredientsCost, overhead, treasury)
+        const productionUser = state.appUsers.find((user) => user.id === state.currentUserId)
+        for (const expense of productionExpenses) {
+          if (!expense.label.trim() || !expense.accountCode.startsWith('5')) throw new Error('مصروف التصنيع يحتاج اسماً وحساب مصروفات صحيحاً')
+          if (!state.treasuries.some((row) => row.code === expense.treasury)) throw new Error(`خزينة مصروف التصنيع غير موجودة (${expense.treasury})`)
+          const accessErrors = validateTreasuryAccess(productionUser?.treasuryAccess, expense.treasury, 'payment', expense.amountMinor)
+          if (accessErrors.length) throw new Error(accessErrors.join(' — '))
+        }
+        const lines = buildProductionEntry(ingredientsCost, overhead, treasury, productionExpenses)
         const now = new Date().toISOString()
         const entryId = nextId(state.journal)
         const orderId = nextId(state.productionOrders)
@@ -8253,8 +8262,8 @@ export const useDataStore = create<DataState>()(
           id: orderId, orderNumber, refCode: makeUniqueRefCode('PRD', now, usedRefCodes(state)),
           date: now, recipeId: recipe.id, productItemId: recipe.productItemId,
           batches: args.batches, producedQty, ingredientsCostMinor: ingredientsCost,
-          overheadMinor: overhead, totalCostMinor: ingredientsCost + overhead,
-          treasury: overhead > 0 ? treasury : null, journalEntryId: entryId, notes: args.notes ?? '',
+          overheadMinor: overhead + detailedOverhead, overheadItems: productionExpenses, totalCostMinor: ingredientsCost + overhead + detailedOverhead,
+          treasury: overhead + detailedOverhead > 0 ? treasury : null, journalEntryId: entryId, notes: args.notes ?? '',
         }
         // خصم الخامات + إدخال الناتج بمتوسط مرجح جديد (قيمة قديمة + تكلفة الإنتاج)
         const consumed = new Map<number, number>()
@@ -8266,7 +8275,7 @@ export const useDataStore = create<DataState>()(
           if (it.id === recipe.productItemId) {
             const oldQty = it.stockQty ?? 0
             const newQty = oldQty + producedQty
-            const newValue = Math.round(oldQty * it.costMinor) + ingredientsCost + overhead
+            const newValue = Math.round(oldQty * it.costMinor) + ingredientsCost + overhead + detailedOverhead
             return { ...it, stockQty: newQty, costMinor: Math.round(newValue / newQty) }
           }
           return it
