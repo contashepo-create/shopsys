@@ -53,6 +53,7 @@ import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
 import { InstallmentsPage } from './ui/pages/InstallmentsPage.tsx'
 import { ReportsPage } from './ui/pages/ReportsPage.tsx'
+import { NasqPage } from './ui/pages/NasqPage.tsx'
 import { StatementsPage } from './ui/pages/StatementsPage.tsx'
 import { LicensePage } from './ui/pages/LicensePage.tsx'
 import { BackupPage } from './ui/pages/BackupPage.tsx'
@@ -226,6 +227,7 @@ function Shell() {
         <Route path="/accounting/external-commissions" element={<ExternalCommissionsPage />} />
         <Route path="/branches" element={<BranchesPage />} />
         <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/reports/nasq" element={<NasqPage />} />
         <Route path="/reports/statements" element={<StatementsPage />} />
         <Route path="/settings/printing" element={<PrintSettingsPage />} />
         <Route path="/settings/backup" element={<BackupPage />} />
