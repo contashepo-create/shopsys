@@ -5,8 +5,8 @@
  *   كل ما يفعله كل مستخدم يُسجل باسمه في سجل النشاطات (يراه المالك فقط).
  */
 import { useMemo, useState } from 'react'
-import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound, Landmark, CreditCard } from 'lucide-react'
-import { rolesWithOverrides, visibleRolesForModules, permissionsForModules, permissionSectionsForModules } from '../../core/permissions.ts'
+import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound, Landmark, CreditCard, Pencil } from 'lucide-react'
+import { crudMatrixForModules, rolesWithOverrides, visibleRolesForModules, permissionsForModules, permissionSectionsForModules, type CrudOperation } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/auth.ts'
@@ -20,7 +20,7 @@ import { Btn, Field, inputCls, Modal, useToast, PinInput } from '../components/u
 export function PermissionsPage() {
   const [activeRoleId, setActiveRoleId] = useState('')
   const [openSections, setOpenSections] = useState<Set<string>>(new Set(['sales']))
-  const { appUsers, currentUserId, treasuries, paymentTerminals, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useDataStore()
+  const { appUsers, currentUserId, treasuries, paymentTerminals, addAppUser, removeAppUser, updateAppUser, roleOverrides, customRoles, addCustomRole, renameCustomRole, removeCustomRole, setRolePermissions, setUserPermExceptions, ownerPinHash, setOwnerPin, pinResetRequests, resolvePinReset, employees, ownerProfile } = useDataStore()
   // الأدوار محفوظة دائماً (البند 4): التعديلات في المخزن لا تضيع عند التحديث — والمالك محمي
   const setup = useAppStore.getState().setup
   const currencyDecimals = Number((setup.countryCode && getCountry(setup.countryCode)?.currency.decimals) ?? 2)
@@ -30,6 +30,7 @@ export function PermissionsPage() {
   const roles = visibleRolesForModules(allRoles, setup.modules)
   const PERMISSIONS = permissionsForModules(setup.modules)
   const PERMISSION_SECTIONS = permissionSectionsForModules(setup.modules)
+  const CRUD_ROWS = crudMatrixForModules(setup.modules)
   const toast = useToast()
   const [userModal, setUserModal] = useState(false)
   // استثناءات فردية (البند 4 — لكل موظف): منح فوق الدور أو حجب رغم الدور
@@ -45,10 +46,12 @@ export function PermissionsPage() {
   const [oPin, setOPin] = useState('')
   const [oPin2, setOPin2] = useState('')
   const [pinFor, setPinFor] = useState<number | null>(null)
-  // ➕ دور مخصص جديد (نمط Square «Create permission set»)
+  // ➕ فئة موظفين جديدة (نمط Square «Create permission set»)
   const [roleModal, setRoleModal] = useState(false)
   const [newRoleName, setNewRoleName] = useState('')
   const [newRoleBase, setNewRoleBase] = useState(firstAssignableRole) // أول دور معروض لهذا النشاط
+  const [renameRoleId, setRenameRoleId] = useState<string | null>(null)
+  const [renameRoleName, setRenameRoleName] = useState('')
   // 🔄 تغيير دور مستخدم قائم (ترقية كاشير لمشرف بضغطة — فجوة سُدت بمراجعة المالك)
   const [roleFor, setRoleFor] = useState<number | null>(null)
   const [treasuryFor, setTreasuryFor] = useState<number | null>(null)
@@ -140,14 +143,28 @@ export function PermissionsPage() {
     setRolePermissions(activeRoleId, next)
   }
 
+  const toggleCrudAction = (permissionIds: string[]) => {
+    if (isOwner || permissionIds.length === 0) return
+    const enabled = permissionIds.every((permissionId) => activeRole.permissions.includes(permissionId))
+    const next = enabled
+      ? activeRole.permissions.filter((permissionId) => !permissionIds.includes(permissionId))
+      : [...new Set([...activeRole.permissions, ...permissionIds])]
+    setRolePermissions(activeRoleId, next)
+  }
+
+  const crudLabels: Record<CrudOperation, string> = { create: 'إنشاء', read: 'عرض', update: 'تعديل', delete: 'حذف / عكس' }
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
       {/* قائمة الأدوار */}
       <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 h-fit">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="font-extrabold text-slate-800 dark:text-white text-sm">الأدوار</h3>
+          <div>
+            <h3 className="font-extrabold text-slate-800 dark:text-white text-sm">فئات الموظفين</h3>
+            <p className="text-[10px] text-slate-400 mt-0.5">الفئة تحدد صلاحيات الموظف، وليست حساب الدخول أو رقمه السري</p>
+          </div>
           <button onClick={() => setRoleModal(true)} className="flex items-center gap-1 text-[11px] font-bold text-brand-600 dark:text-brand-400 hover:bg-brand-500/10 px-2 py-1 rounded-lg transition-colors duration-200">
-            <Plus size={13} /> دور جديد
+            <Plus size={13} /> فئة جديدة
           </button>
         </div>
         <div className="space-y-1">
@@ -164,14 +181,24 @@ export function PermissionsPage() {
               {r.isOwner ? <Crown size={15} className="text-amber-500" /> : <ShieldCheck size={15} className="opacity-60" />}
               <span className="flex-1 text-right">{r.nameAr}</span>
               {!r.isSystem && (
-                <span
-                  role="button"
-                  title="حذف الدور المخصص (يُرفض لو معيّن على مستخدم نشط)"
-                  onClick={(e) => { e.stopPropagation(); try { if (activeRoleId === r.id) setActiveRoleId('cashier'); removeCustomRole(r.id); toast.show(`حُذف دور «${r.nameAr}»`) } catch (err) { toast.show((err as Error).message, 'error') } }}
-                  className="p-1 rounded-md text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
-                >
-                  <UserX size={12} />
-                </span>
+                <>
+                  <span
+                    role="button"
+                    title="إعادة تسمية الفئة"
+                    onClick={(e) => { e.stopPropagation(); setRenameRoleId(r.id); setRenameRoleName(r.nameAr) }}
+                    className="p-1 rounded-md text-slate-300 hover:text-brand-500 hover:bg-brand-500/10 transition-colors"
+                  >
+                    <Pencil size={12} />
+                  </span>
+                  <span
+                    role="button"
+                    title="حذف الفئة (يُرفض لو معيّنة على مستخدم نشط)"
+                    onClick={(e) => { e.stopPropagation(); try { if (activeRoleId === r.id) setActiveRoleId('cashier'); removeCustomRole(r.id); toast.show(`حُذفت فئة «${r.nameAr}»`) } catch (err) { toast.show((err as Error).message, 'error') } }}
+                    className="p-1 rounded-md text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                  >
+                    <UserX size={12} />
+                  </span>
+                </>
               )}
               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400">
                 {r.isOwner ? 'الكل' : r.permissions.length}
@@ -191,6 +218,51 @@ export function PermissionsPage() {
             </div>
           </div>
         )}
+
+        {/* مصفوفة CRUD — اختصار عملي لتحديد إنشاء/عرض/تعديل/حذف لكل شاشة */}
+        <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal size={16} className="text-brand-500" />
+              <h3 className="font-extrabold text-sm text-slate-800 dark:text-white">مصفوفة الصلاحيات — Create / Read / Update / Delete</h3>
+            </div>
+            <p className="text-[10.5px] text-slate-400 mt-1 leading-relaxed">
+              كل خلية تغيّر صلاحيات فعلية مرتبطة بالشاشة. «حذف / عكس» يستخدم الإجراء الآمن المتاح للوحدة، والشرطة تعني أن العملية غير موجودة بطبيعتها.
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[620px] text-[11px]">
+              <thead className="bg-slate-50 dark:bg-slate-900/40 text-slate-500">
+                <tr>
+                  <th className="text-right px-4 py-2 font-bold">الشاشة / الوحدة</th>
+                  {(Object.keys(crudLabels) as CrudOperation[]).map((operation) => <th key={operation} className="px-2 py-2 font-bold text-center">{crudLabels[operation]}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {CRUD_ROWS.map((row) => (
+                  <tr key={row.id} className="border-t border-slate-100 dark:border-slate-800">
+                    <td className="px-4 py-2.5 font-semibold text-slate-700 dark:text-slate-200">{row.nameAr}</td>
+                    {(Object.keys(crudLabels) as CrudOperation[]).map((operation) => {
+                      const permissionIds = row.permissions[operation]
+                      const available = permissionIds.length > 0
+                      const checked = available && permissionIds.every((permissionId) => permSet.has(permissionId))
+                      return (
+                        <td key={operation} className="px-2 py-2 text-center">
+                          {available ? (
+                            <label className={`inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg border ${isOwner ? 'opacity-60' : 'cursor-pointer hover:border-brand-400'} ${checked ? 'border-emerald-500/30 bg-emerald-500/8 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`} title={permissionIds.join(' + ')}>
+                              <input type="checkbox" checked={checked} disabled={isOwner} onChange={() => toggleCrudAction(permissionIds)} className="w-3.5 h-3.5 rounded accent-brand-600" />
+                              <span>{checked ? 'مفعلة' : '—'}</span>
+                            </label>
+                          ) : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
         {PERMISSION_SECTIONS.map((section, i) => {
           const sectionPerms = PERMISSIONS.filter((p) => p.section === section.id)
@@ -493,17 +565,18 @@ export function PermissionsPage() {
         })()}
       </Modal>
 
-      {/* ➕ دور مخصص جديد (نمط Square «Create permission set» / Toast custom jobs) */}
-      <Modal open={roleModal} onClose={() => { setRoleModal(false); setNewRoleName('') }} title="🛡️ دور جديد">
+      {/* ➕ فئة موظفين جديدة — الحساب والرقم السري يظلان في إعدادات المستخدمين فقط */}
+      <Modal open={roleModal} onClose={() => { setRoleModal(false); setNewRoleName('') }} title="🛡️ فئة موظفين جديدة">
         <div className="space-y-4">
           <p className="text-[11.5px] text-slate-500 dark:text-slate-400 leading-relaxed bg-sky-500/5 rounded-xl p-3">
-            أنشئ دوراً باسمك أنت — «مشرف مساء»، «أمين مخزن»، «مشرفة صالة»… يبدأ بنسخة من صلاحيات
-            دور موجود ثم تعدّلها بالتشيك بوكس بحرية. أي موظف تعيّنه على هذا الدور يرث صلاحياته فوراً.
+            أنشئ فئة باسمك أنت — «مشرف مساء»، «أمين مخزن»، «مشرفة صالة»… تبدأ بنسخة من صلاحيات
+            فئة موجودة ثم تعدّلها بالتشيك بوكس أو بمصفوفة CRUD بحرية. أي موظف تعيّنه على هذه الفئة يرث صلاحياتها فوراً.
+            إنشاء الحساب والرقم السري لا يتم هنا؛ يبقى داخل إعدادات المستخدمين.
           </p>
-          <Field label="اسم الدور *">
+          <Field label="اسم الفئة *">
             <input value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} className={inputCls} placeholder="مثال: مشرف وردية المساء" autoFocus autoComplete="off" />
           </Field>
-          <Field label="ابدأ بصلاحيات دور" hint="نسخة أولية تعدّلها بعد الإنشاء — اختر الأقرب لما تريد">
+          <Field label="ابدأ بصلاحيات فئة" hint="نسخة أولية تعدّلها بعد الإنشاء — اختر الأقرب لما تريد">
             <select value={newRoleBase} onChange={(e) => setNewRoleBase(e.target.value)} className={inputCls}>
               {roles.filter((r) => !r.isOwner).map((r) => <option key={r.id} value={r.id}>{r.nameAr} ({r.permissions.length} صلاحية)</option>)}
               <option value="">— فارغ تماماً (أضف كل صلاحية بنفسك) —</option>
@@ -511,7 +584,26 @@ export function PermissionsPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => { setRoleModal(false); setNewRoleName('') }}>إلغاء</Btn>
-            <Btn onClick={saveNewRole} disabled={!newRoleName.trim()}>إنشاء الدور</Btn>
+            <Btn onClick={saveNewRole} disabled={!newRoleName.trim()}>إنشاء الفئة</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={renameRoleId != null} onClose={() => { setRenameRoleId(null); setRenameRoleName('') }} title="✏️ إعادة تسمية فئة الموظفين">
+        <div className="space-y-4">
+          <Field label="اسم الفئة *">
+            <input value={renameRoleName} onChange={(e) => setRenameRoleName(e.target.value)} className={inputCls} autoFocus autoComplete="off" />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => { setRenameRoleId(null); setRenameRoleName('') }}>إلغاء</Btn>
+            <Btn onClick={() => {
+              if (!renameRoleId) return
+              try {
+                renameCustomRole(renameRoleId, renameRoleName)
+                setRenameRoleId(null); setRenameRoleName('')
+                toast.show('تم تحديث اسم الفئة ✅')
+              } catch (error) { toast.show((error as Error).message, 'error') }
+            }} disabled={!renameRoleName.trim()}>حفظ الاسم</Btn>
           </div>
         </div>
       </Modal>

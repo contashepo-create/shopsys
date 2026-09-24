@@ -52,6 +52,7 @@ export const PERMISSION_MODULE_MAP: Record<string, string[]> = {
     'maintenance', 'laundry', 'wallet_services', 'equipment_rental', 'logistics',
     'lab', 'contracting', 'clinic', 'cars', 'realestate', 'recipes', 'processing', 'jewelry', 'installments',
   ],
+  'rep.fleet': ['logistics', 'cars'],
 }
 
 /** الصلاحيات الظاهرة لنشاطٍ وحداته modules — العامة + المرتبطة بوحدة مفعلة */
@@ -108,6 +109,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'acc.fiscal.close', nameAr: 'إقفال السنة المالية', section: 'accounting', sensitive: true },
   // التقارير
   { id: 'rep.sales', nameAr: 'تقارير المبيعات', section: 'reports' },
+  { id: 'rep.fleet', nameAr: 'تقارير الأسطول ومراكز تكلفة السيارات', section: 'reports' },
   { id: 'rep.profit', nameAr: 'تقارير الربحية', section: 'reports', sensitive: true },
   { id: 'rep.financial', nameAr: 'القوائم المالية', section: 'reports', sensitive: true },
   // الإعدادات
@@ -117,6 +119,90 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'set.backup', nameAr: 'النسخ الاحتياطي', section: 'settings', sensitive: true },
   { id: 'set.audit.view', nameAr: 'عرض سجل التدقيق', section: 'settings', sensitive: true },
 ]
+
+/**
+ * مصفوفة CRUD المرئية لفئات الموظفين.
+ * كل خلية تشير إلى صلاحية فعلية مستخدمة في التطبيق؛ لا توجد صلاحيات شكلية
+ * لا يقرأها الحارس. بعض الوحدات لا تملك عملية معينة بطبيعتها، لذلك تعرض
+ * الخلية «غير متاحة» بدلاً من منح صلاحية مضللة (مثل حذف تقرير مالي).
+ */
+export type CrudOperation = 'create' | 'read' | 'update' | 'delete'
+
+export interface CrudMatrixRow {
+  id: string
+  nameAr: string
+  section: string
+  requiredModules?: string[]
+  permissions: Record<CrudOperation, string[]>
+}
+
+export const CRUD_MATRIX: CrudMatrixRow[] = [
+  {
+    id: 'sales', nameAr: 'المبيعات والفواتير', section: 'sales', requiredModules: ['pos'],
+    permissions: {
+      create: ['sales.invoice.create'], read: ['sales.pos.open'], update: ['sales.price.edit'], delete: ['sales.return.create'],
+    },
+  },
+  {
+    id: 'inventory', nameAr: 'الأصناف والمخزون', section: 'inventory', requiredModules: ['inventory'],
+    permissions: {
+      create: ['inv.item.manage'], read: ['inv.view'], update: ['inv.item.manage'], delete: ['inv.adjust'],
+    },
+  },
+  {
+    id: 'purchases', nameAr: 'المشتريات والموردون', section: 'purchases', requiredModules: ['purchases'],
+    permissions: {
+      create: ['pur.invoice.create'], read: ['pur.invoice.create'], update: ['pur.invoice.edit'], delete: ['pur.return.create'],
+    },
+  },
+  {
+    id: 'customers', nameAr: 'العملاء وكشوفهم', section: 'parties',
+    permissions: {
+      create: ['party.customer.manage'], read: ['party.customer.statement'], update: ['party.customer.manage'], delete: ['party.customer.manage'],
+    },
+  },
+  {
+    id: 'employees', nameAr: 'الموظفون والرواتب', section: 'parties',
+    permissions: {
+      create: ['party.employee.manage'], read: ['party.employee.manage'], update: ['party.employee.manage'], delete: ['party.employee.manage'],
+    },
+  },
+  {
+    id: 'suppliers', nameAr: 'الموردون', section: 'purchases', requiredModules: ['purchases'],
+    permissions: {
+      create: ['pur.supplier.manage'], read: ['pur.supplier.manage'], update: ['pur.supplier.manage'], delete: ['pur.supplier.manage'],
+    },
+  },
+  {
+    id: 'accounting', nameAr: 'الحسابات والسندات', section: 'accounting',
+    permissions: {
+      create: ['acc.vouchers'], read: ['acc.journal.view'], update: ['acc.journal.manual'], delete: ['acc.journal.reverse'],
+    },
+  },
+  {
+    id: 'reports', nameAr: 'التقارير', section: 'reports',
+    permissions: {
+      create: [], read: ['rep.sales'], update: [], delete: [],
+    },
+  },
+  {
+    id: 'fleet', nameAr: 'الأسطول ومراكز تكلفة السيارات', section: 'reports', requiredModules: ['logistics', 'cars'],
+    permissions: {
+      create: ['ops.activity.use'], read: ['rep.fleet'], update: ['ops.activity.use'], delete: [],
+    },
+  },
+  {
+    id: 'settings', nameAr: 'المستخدمون والإعدادات', section: 'settings',
+    permissions: {
+      create: ['set.users'], read: ['set.users'], update: ['set.users'], delete: ['set.users'],
+    },
+  },
+]
+
+/** صفوف CRUD المتاحة للنشاط الحالي — العامة + ما يخص وحدة مفعلة. */
+export function crudMatrixForModules(modules: readonly string[]): CrudMatrixRow[] {
+  return CRUD_MATRIX.filter((row) => !row.requiredModules || row.requiredModules.some((module) => modules.includes(module)))
+}
 
 /* ─── فرض الصلاحيات (البند 4 — صفر تجاوز): خريطة مسار → صلاحية ─── */
 
@@ -158,6 +244,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/laundry', perm: 'ops.activity.use' },
   { prefix: '/wallets', perm: 'ops.activity.use' },
   { prefix: '/rental', perm: 'ops.activity.use' },
+  { prefix: '/logistics/fleet', perm: 'rep.fleet' },
   { prefix: '/logistics', perm: 'ops.activity.use' },
   { prefix: '/lab', perm: 'ops.activity.use' },
   { prefix: '/contracting', perm: 'ops.activity.use' },
@@ -368,7 +455,7 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
   logistics: [
     {
       id: 'fleet_coordinator', nameAr: 'منسق أسطول ورحلات', isSystem: true,
-      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers', 'rep.sales'],
+      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers', 'rep.sales', 'rep.fleet'],
     },
   ],
   cars: [
