@@ -43,6 +43,25 @@ describe('التحكم بلوحة المفاتيح', () => {
     expect(background).toBe(0)
   })
 
+  it('لا يختار F9 صفاً عشوائياً عند وجود عمليات متعددة، ويعمل داخل الصف المركّز', () => {
+    let first = 0, second = 0
+    const view = render(<MemoryRouter><KeyboardNavigation/><div data-entry-row><input aria-label="row-one"/><button onClick={() => first++}>سند صرف وإقفال <kbd>F9</kbd></button></div><div data-entry-row><input aria-label="row-two"/><button onClick={() => second++}>سند صرف وإقفال <kbd>F9</kbd></button></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(first).toBe(0)
+    expect(second).toBe(0)
+    view.getByLabelText('row-two').focus()
+    fireEvent.keyDown(view.getByLabelText('row-two'), { key: 'F9' })
+    expect(first).toBe(0)
+    expect(second).toBe(1)
+  })
+
+  it('يقبل تكرار زر F9 لنفس العملية أعلى وأسفل النموذج', () => {
+    let posted = 0
+    render(<MemoryRouter><KeyboardNavigation/><button onClick={() => posted++}>اعتماد وترحيل <kbd>F9</kbd></button><button onClick={() => posted++}>اعتماد وترحيل <kbd>F9</kbd></button></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(posted).toBe(1)
+  })
+
   it('يفتح F3 فاتورة شراء جديدة من قسم المشتريات', () => {
     const view = render(<MemoryRouter initialEntries={['/purchases/invoices']}><KeyboardNavigation/><Routes><Route path="*" element={<Path/>}/></Routes></MemoryRouter>)
     fireEvent.keyDown(document, { key: 'F3' })

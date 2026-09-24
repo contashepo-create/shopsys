@@ -8,6 +8,29 @@ function visible(element: HTMLElement) {
   return !element.closest('[hidden]') && style.display !== 'none' && style.visibility !== 'hidden' && element.getAttribute('aria-hidden') !== 'true'
 }
 
+/**
+ * يختار زر اختصار واحداً فقط:
+ * - تكرار الزر نفسه أعلى/أسفل النموذج مقبول (نفس النص = نفس العملية).
+ * - أزرار صفوف متعددة لا تُختار عشوائياً؛ يجب أن يكون التركيز داخل الصف.
+ */
+function selectShortcutButton(candidates: HTMLButtonElement[]): HTMLButtonElement | null {
+  if (!candidates.length) return null
+  const active = document.activeElement as HTMLElement | null
+  const activeRow = active?.closest('tr,[data-entry-row]')
+  if (activeRow) {
+    candidates = candidates.filter((candidate) => activeRow.contains(candidate))
+    if (!candidates.length) return null
+  } else if (candidates.some((candidate) => candidate.closest('tr,[data-entry-row]'))) {
+    return null
+  }
+  const unique = new Map<string, HTMLButtonElement>()
+  for (const candidate of candidates) {
+    const label = (candidate.textContent ?? '').replace(/F[89]/g, '').replace(/\s+/g, ' ').trim()
+    if (!unique.has(label)) unique.set(label, candidate)
+  }
+  return unique.size === 1 ? unique.values().next().value ?? null : null
+}
+
 /** تحكم شامل بلا ماوس: Enter للحقل التالي، Shift+Enter للسابق، وF3 لفاتورة جديدة. */
 export function KeyboardNavigation() {
   const navigate = useNavigate()
@@ -26,16 +49,19 @@ export function KeyboardNavigation() {
       if ((event.key === 'F8' || event.key === 'F9') && !pathname.startsWith('/sales/pos')) {
         const words = event.key === 'F8'
           ? ['حفظ مسودة', 'حفظ كمسودة']
-          : ['اعتماد', 'ترحيل', 'دفع', 'تحصيل', 'صرف', 'تسليم', 'تسجيل وتوليد', 'تأكيد وطباعة', 'حفظ وترحيل', 'حفظ واعتماد']
+          : ['اعتماد', 'ترحيل', 'دفع', 'تحصيل', 'صرف', 'تسليم', 'تسجيل', 'حفظ', 'إنشاء', 'إقفال', 'تنفيذ', 'تأكيد وطباعة', 'حفظ وترحيل', 'حفظ واعتماد']
         // The modal is portaled after the page. Limit shortcut lookup to the topmost
         // open dialog so a background page action cannot win while a form is open.
         const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter((dialog) => visible(dialog))
         const shortcutScope: ParentNode = dialogs.at(-1) ?? document
         const candidates = [...shortcutScope.querySelectorAll<HTMLButtonElement>('button')].filter((candidate) => visible(candidate))
-        const button = event.key === 'F9'
-          ? candidates.find((candidate) => (candidate.textContent ?? '').includes('F9') && !(candidate.textContent ?? '').includes('مسودة'))
-            ?? candidates.find((candidate) => words.some((word) => (candidate.textContent ?? '').includes(word)) && !(candidate.textContent ?? '').includes('مسودة'))
-          : candidates.find((candidate) => words.some((word) => (candidate.textContent ?? '').includes(word)))
+        const actionCandidates = candidates.filter((candidate) => {
+          const text = candidate.textContent ?? ''
+          return event.key === 'F9'
+            ? (text.includes('F9') || words.some((word) => text.includes(word))) && !text.includes('مسودة')
+            : words.some((word) => text.includes(word))
+        })
+        const button = selectShortcutButton(actionCandidates)
         if (button) { event.preventDefault(); button.click() }
         return
       }
