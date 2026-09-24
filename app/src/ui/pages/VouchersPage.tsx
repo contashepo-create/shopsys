@@ -143,6 +143,10 @@ export function VouchersPage() {
   // سداد عميل (1104) في القبض أو سداد مورد (2101) في الصرف ⇒ نطلب تحديد الطرف
   const needsParty = (kind === 'receipt' && counter === '1104') || (kind === 'payment' && counter === '2101')
   const isPurchaseExpense = kind === 'payment' && counter === PURCHASE_EXPENSE_CODE
+  const isCustomExpense = kind === 'payment' && customAccounts.some((account) => account.code === counter && account.rootType === 'expenses')
+  // ربط السيارة خاص بمصروفات التشغيل/المصروفات المستحقة فقط، وليس بسداد
+  // مورد أو راتب أو مسحوبات. مصروف فاتورة الشراء له حقله المستقل أدناه.
+  const canLinkVehicle = kind === 'payment' && !isPurchaseExpense && (counter === '5108' || counter === '2117' || isCustomExpense)
 
   // خروج النقدية (سند صرف) عملية حساسة — اعتماد مشرف؛ القبض إدخال أموال يمر مباشرة
   const paymentApproval = useSupervisorApproval('trs.payment.approve')
@@ -190,8 +194,8 @@ export function VouchersPage() {
         description: desc.trim(),
         partyKind: needsParty ? (kind === 'receipt' ? 'customer' : 'supplier') : null,
         partyId: needsParty ? partyId : null,
-        vehicleId: kind === 'payment' ? vehicleId : null,
-        vehicleCostCategory: kind === 'payment' && vehicleId != null ? vehicleCostCategory : undefined,
+        vehicleId: canLinkVehicle ? vehicleId : null,
+        vehicleCostCategory: canLinkVehicle && vehicleId != null ? vehicleCostCategory : undefined,
       })
       toast.show(`تم ${kind === 'receipt' ? 'سند القبض' : 'سند الصرف'} ${v.voucherNumber} — تولد قيده تلقائياً ✓`)
       setOpen(false)
@@ -328,9 +332,9 @@ export function VouchersPage() {
               </div>
             )
           })()}
-          {kind === 'payment' && !isPurchaseExpense && (
+          {canLinkVehicle && (
             <div className="grid sm:grid-cols-2 gap-2 rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 p-3">
-              <Field label="مركز تكلفة المركبة (اختياري)" hint="يظهر سند الدفع في كشف وربحية السيارة">
+              <Field label="مركز تكلفة المركبة (اختياري)" hint="يظهر فقط مع مصروفات التشغيل/المصروفات المستحقة، وليس مع سداد المورد أو الراتب">
                 <select value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
                   <option value="">بدون مركبة</option>
                   {vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber} — {vehicle.vehicleType}</option>)}
