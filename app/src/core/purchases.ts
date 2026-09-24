@@ -9,6 +9,32 @@
 import type { Minor } from './money.ts'
 import type { JournalLine } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
+import type { BusinessTaxPolicy } from './taxRegistration.ts'
+
+export interface PurchaseExpenseTaxInput {
+  amountMinor: Minor
+  taxTreatment?: 'exempt' | 'exclusive' | 'inclusive'
+  taxPercent?: number
+}
+
+/** يفصل مبلغ الدفع عن التكلفة وضريبة المدخلات وفق صفة المنشأة. */
+export function purchaseExpenseTaxParts(expense: PurchaseExpenseTaxInput, policy: BusinessTaxPolicy): { baseMinor: Minor; taxMinor: Minor; recoverableTaxMinor: Minor; costMinor: Minor; payableMinor: Minor } {
+  if (!Number.isSafeInteger(expense.amountMinor) || expense.amountMinor < 0) throw new Error('قيمة مصروف الشراء غير صالحة')
+  const treatment = expense.taxTreatment ?? 'exempt'
+  const rate = treatment === 'exempt' ? 0 : Math.max(0, expense.taxPercent ?? policy.effectivePercent)
+  if (!Number.isFinite(rate) || rate > 100) throw new Error('نسبة ضريبة المصروف يجب أن تكون بين 0 و100')
+  let baseMinor = expense.amountMinor
+  let taxMinor = 0
+  if (treatment === 'exclusive') taxMinor = Math.round(baseMinor * rate / 100)
+  else if (treatment === 'inclusive' && rate > 0) {
+    baseMinor = Math.round(expense.amountMinor / (1 + rate / 100))
+    taxMinor = expense.amountMinor - baseMinor
+  }
+  const payableMinor = treatment === 'exclusive' ? expense.amountMinor + taxMinor : expense.amountMinor
+  const recoverableTaxMinor = policy.canRecoverInputTax ? taxMinor : 0
+  const costMinor = baseMinor + (taxMinor - recoverableTaxMinor)
+  return { baseMinor, taxMinor, recoverableTaxMinor, costMinor, payableMinor }
+}
 
 /**
  * قيد فاتورة الشراء:

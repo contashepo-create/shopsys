@@ -804,6 +804,10 @@ export interface PurchaseLine {
 export interface PurchaseExpense {
   nameAr: string // نولون، جمارك، تأمين... (نص حر + اقتراحات)
   amountMinor: number
+  /** المعاملة الضريبية مستقلة لكل مصروف؛ الافتراضي معفى */
+  taxTreatment?: 'exempt' | 'exclusive' | 'inclusive'
+  /** لقطة نسبة الضريبة وقت المستند؛ غيابها يستخدم سياسة المنشأة في واجهة الإدخال */
+  taxPercent?: number
   method: 'value' | 'qty'
   /**
    * من دفع هذا المصروف؟ (طلب المالك — ليس إجبارياً على حساب المورد):
