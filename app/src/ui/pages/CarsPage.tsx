@@ -313,7 +313,7 @@ export function CarsPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!make.trim() || !model.trim() || !plate.trim() || !cost}>شراء وقيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!make.trim() || !model.trim() || !plate.trim() || !cost}>شراء وقيد</Btn>
           </div>
         </div>
       </Modal>
@@ -336,7 +336,7 @@ export function CarsPage() {
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setPrepFor(null)}>إلغاء</Btn>
-              <Btn onClick={savePrep} disabled={!prepAmount}>رسملة التكلفة</Btn>
+              <Btn onClick={savePrep} shortcut="F9" disabled={!prepAmount}>رسملة التكلفة</Btn>
             </div>
           </div>
         )}
@@ -388,7 +388,7 @@ export function CarsPage() {
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSellFor(null)}>إلغاء</Btn>
-              <Btn onClick={doSell} disabled={!price || (!!commEmpId && !commAmount.trim())}>بيع وقيد الربحية</Btn>
+              <Btn onClick={doSell} shortcut="F9" disabled={!price || (!!commEmpId && !commAmount.trim())}>بيع وقيد الربحية</Btn>
             </div>
           </div>
         )}
@@ -407,7 +407,7 @@ export function CarsPage() {
             </div>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setRentFor(null)}>إلغاء</Btn>
-              <Btn onClick={doRent} disabled={!dailyRate && !monthlyRate}>تحويل للتأجير</Btn>
+              <Btn onClick={doRent} shortcut="F9" disabled={!dailyRate && !monthlyRate}>تحويل للتأجير</Btn>
             </div>
           </div>
         )}
@@ -516,7 +516,7 @@ export function CarsPage() {
               عمولتك المتوقعة: {fmt(toMinor(cgAsk, cur.decimals) - toMinor(cgNet, cur.decimals))}
             </div>
           )}
-          <Btn onClick={saveConsignment} className="w-full" disabled={!cgMake.trim() || !cgModel.trim() || !cgPlate.trim() || !cgOwner.trim() || !cgNet || !cgAsk}>تسجيل الأمانة</Btn>
+          <Btn onClick={saveConsignment} shortcut="F9" className="w-full" disabled={!cgMake.trim() || !cgModel.trim() || !cgPlate.trim() || !cgOwner.trim() || !cgNet || !cgAsk}>تسجيل الأمانة</Btn>
         </div>
       </Modal>
 
@@ -551,7 +551,7 @@ export function CarsPage() {
                 📒 القيد: {cgPayment === 'cash' ? 'الخزينة' : 'العملاء'} {fmt(toMinor(cgSalePrice, cur.decimals))} / مستحق المالك {fmt(cgSellCar.ownerNetMinor)} + عمولتك {fmt(toMinor(cgSalePrice, cur.decimals) - cgSellCar.ownerNetMinor)}
               </div>
             )}
-            <Btn onClick={doSellConsignment} className="w-full" disabled={!cgSalePrice}>بيع وقيد العمولة</Btn>
+            <Btn onClick={doSellConsignment} shortcut="F9" className="w-full" disabled={!cgSalePrice}>بيع وقيد العمولة</Btn>
           </div>
         )}
       </Modal>

@@ -801,7 +801,7 @@ export function ClinicPatientsPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setVisitOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveVisit} disabled={!vFee}>تسجيل الزيارة وقيدها</Btn>
+            <Btn onClick={saveVisit} shortcut="F9" disabled={!vFee}>تسجيل الزيارة وقيدها</Btn>
           </div>
         </div>
       </Modal>

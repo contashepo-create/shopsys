@@ -564,7 +564,7 @@ export function BondsPage() {
             </Field>
             <Field label="تاريخ الانتهاء"><input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={inputCls} /></Field>
           </div>
-          <Btn onClick={save} className="w-full">إصدار الخطاب</Btn>
+          <Btn onClick={save} shortcut="F9" className="w-full">إصدار الخطاب</Btn>
         </div>
       </Modal>
     </div>
@@ -688,7 +688,7 @@ export function DailyWorkersPage() {
             <Field label="التاريخ"><input type="date" value={recDate} onChange={(e) => setRecDate(e.target.value)} className={inputCls} /></Field>
             <Field label="عدد الأيام" hint="نصف يوم = 0.5"><input value={recDays} onChange={(e) => setRecDays(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
-          <Btn onClick={saveRecord} className="w-full">تسجيل</Btn>
+          <Btn onClick={saveRecord} shortcut="F9" className="w-full">تسجيل</Btn>
         </div>
       </Modal>
     </div>

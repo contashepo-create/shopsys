@@ -224,7 +224,7 @@ export function ShiftsPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpenModal(false)}>إلغاء</Btn>
-            <Btn onClick={doOpen}>🔓 فتح الوردية</Btn>
+            <Btn onClick={doOpen} shortcut="F9">🔓 فتح الوردية</Btn>
           </div>
         </div>
       </Modal>
@@ -244,7 +244,7 @@ export function ShiftsPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setCloseModal(false)}>إلغاء</Btn>
-            <Btn onClick={doClose}>🔒 إقفال الوردية</Btn>
+            <Btn onClick={doClose} shortcut="F9">🔒 إقفال الوردية</Btn>
           </div>
         </div>
       </Modal>
@@ -307,7 +307,7 @@ export function ShiftsPage() {
                       setSettleShift(null)
                     } catch (err) { toast.show((err as Error).message, 'error') }
                   })}
-                >
+                shortcut="F9">
                   ⚖️ تنفيذ التسوية
                 </Btn>
               </div>

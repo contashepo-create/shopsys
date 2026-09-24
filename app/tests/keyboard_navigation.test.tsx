@@ -35,6 +35,14 @@ describe('التحكم بلوحة المفاتيح', () => {
     fireEvent.keyDown(document, { key: 'F8' }); expect(draft).toBe(1)
   })
 
+  it('يفضل F9 زر العملية داخل النافذة المفتوحة على زر الصفحة الخلفية', () => {
+    let background = 0, modal = 0
+    render(<MemoryRouter><KeyboardNavigation/><button onClick={() => background++}>اعتماد وترحيل</button><div role="dialog" aria-modal="true"><button onClick={() => modal++}>اعتماد وترحيل <kbd>F9</kbd></button></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(modal).toBe(1)
+    expect(background).toBe(0)
+  })
+
   it('يفتح F3 فاتورة شراء جديدة من قسم المشتريات', () => {
     const view = render(<MemoryRouter initialEntries={['/purchases/invoices']}><KeyboardNavigation/><Routes><Route path="*" element={<Path/>}/></Routes></MemoryRouter>)
     fireEvent.keyDown(document, { key: 'F3' })

@@ -265,7 +265,7 @@ export function ChequesPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!chequeNumber.trim() || (!partyId && !partyName.trim()) || !amount.trim() || !dueDate}>💾 تسجيل الشيك</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!chequeNumber.trim() || (!partyId && !partyName.trim()) || !amount.trim() || !dueDate}>💾 تسجيل الشيك</Btn>
           </div>
         </div>
       </Modal>

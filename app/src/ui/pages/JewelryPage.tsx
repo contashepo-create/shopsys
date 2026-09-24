@@ -322,7 +322,7 @@ export function JewelryPage() {
               {scrapMode === 'sell' && ' — التكلفة تُستهلك من أقدم دفعات الكسر (FIFO) والفرق ربح/خسارة ظاهرة'}
             </div>
           )}
-          <Btn onClick={saveScrap} className="w-full" disabled={!scWeight || !scPrice}>{scrapMode === 'buy' ? 'شراء وقيد' : 'بيع وقيد'}</Btn>
+          <Btn onClick={saveScrap} shortcut="F9" className="w-full" disabled={!scWeight || !scPrice}>{scrapMode === 'buy' ? 'شراء وقيد' : 'بيع وقيد'}</Btn>
         </div>
       </Modal>
 
@@ -361,7 +361,7 @@ export function JewelryPage() {
               {tradePreview.netMinor === 0 ? ' مقايضة متكافئة' : tradePreview.netMinor > 0 ? ` العميل يدفع ${fmt(tradePreview.netMinor)}` : ` نرد للعميل ${fmt(-tradePreview.netMinor)}`}
             </div>
           )}
-          <Btn onClick={saveTrade} className="w-full" disabled={!tradeItem || !(Number(trWeight) > 0) || !trGramPrice.trim()}>ترحيل المقايضة</Btn>
+          <Btn onClick={saveTrade} shortcut="F9" className="w-full" disabled={!tradeItem || !(Number(trWeight) > 0) || !trGramPrice.trim()}>ترحيل المقايضة</Btn>
         </div>
       </Modal>
 

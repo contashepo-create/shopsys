@@ -284,7 +284,7 @@ export function RestaurantOrdersPage() {
               <span className="text-slate-500">المفصول: {splitSel.length} من {active.lines.length}</span>
               <span className="text-orange-600">{fmt(active.lines.filter((_, i) => splitSel.includes(i)).reduce((s, l) => s + Math.round(l.unitPriceMinor * l.qty), 0))} {cur.symbol}</span>
             </div>
-            <Btn onClick={doSplit} className="w-full" disabled={splitSel.length === 0 || splitSel.length === active.lines.length}>
+            <Btn onClick={doSplit} shortcut="F9" className="w-full" disabled={splitSel.length === 0 || splitSel.length === active.lines.length}>
               <Scissors size={14} /> فصل المحدد لفاتورة مستقلة
             </Btn>
           </div>

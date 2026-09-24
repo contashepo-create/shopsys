@@ -242,7 +242,7 @@ export function ExchangePage() {
               {treasuries.map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
             </select>
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={`${inputCls} flex-1 min-w-48`} placeholder="ملاحظات (اختياري)…" />
-            <Btn onClick={submit} disabled={returnValue <= 0 || newLines.length === 0}>ترحيل الاستبدال</Btn>
+            <Btn onClick={submit} shortcut="F9" disabled={returnValue <= 0 || newLines.length === 0}>ترحيل الاستبدال</Btn>
           </div>
         </div>
       )}

@@ -529,7 +529,7 @@ export function SalesInvoicesPage() {
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setEditing(null)}>إلغاء</Btn>
-              <Btn onClick={saveEdit} disabled={!editReason.trim() || !editLines.length || editLines.some((l) => l.qty <= 0)}>💾 حفظ التعديل</Btn>
+              <Btn onClick={saveEdit} shortcut="F9" disabled={!editReason.trim() || !editLines.length || editLines.some((l) => l.qty <= 0)}>💾 حفظ التعديل</Btn>
             </div>
           </div>
         )}
@@ -559,7 +559,7 @@ export function SalesInvoicesPage() {
             </div>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setCommFor(null)}>إغلاق</Btn>
-              <Btn onClick={saveInvoiceCommission} disabled={!commEmpId || !commAmount.trim()}>💾 استحقاق العمولة</Btn>
+              <Btn onClick={saveInvoiceCommission} shortcut="F9" disabled={!commEmpId || !commAmount.trim()}>💾 استحقاق العمولة</Btn>
             </div>
           </div>
         )}

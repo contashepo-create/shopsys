@@ -323,7 +323,7 @@ export function JournalPage() {
           <input value={revReason} onChange={(e) => setRevReason(e.target.value)} placeholder="سبب العكس (اختياري): خطأ إدخال…" className={inputCls} />
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setReversing(null)}>إلغاء</Btn>
-            <Btn onClick={doReverse}><Undo2 size={14} /> تأكيد العكس</Btn>
+            <Btn onClick={doReverse} shortcut="F9"><Undo2 size={14} /> تأكيد العكس</Btn>
           </div>
         </div>
       </Modal>
@@ -423,7 +423,7 @@ function ManualEntryModal({
 
         <div className="flex justify-end gap-2">
           <Btn variant="ghost" onClick={onClose}>إلغاء</Btn>
-          <Btn onClick={onSave} disabled={errors.length > 0}>💾 حفظ القيد</Btn>
+          <Btn onClick={onSave} shortcut="F9" disabled={errors.length > 0}>💾 حفظ القيد</Btn>
         </div>
       </div>
     </Modal>

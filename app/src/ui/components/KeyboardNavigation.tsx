@@ -27,7 +27,11 @@ export function KeyboardNavigation() {
         const words = event.key === 'F8'
           ? ['حفظ مسودة', 'حفظ كمسودة']
           : ['اعتماد', 'ترحيل', 'دفع', 'تحصيل', 'صرف', 'تسليم', 'تسجيل وتوليد', 'تأكيد وطباعة', 'حفظ وترحيل', 'حفظ واعتماد']
-        const candidates = [...document.querySelectorAll<HTMLButtonElement>('button')].filter((candidate) => visible(candidate))
+        // The modal is portaled after the page. Limit shortcut lookup to the topmost
+        // open dialog so a background page action cannot win while a form is open.
+        const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter((dialog) => visible(dialog))
+        const shortcutScope: ParentNode = dialogs.at(-1) ?? document
+        const candidates = [...shortcutScope.querySelectorAll<HTMLButtonElement>('button')].filter((candidate) => visible(candidate))
         const button = event.key === 'F9'
           ? candidates.find((candidate) => (candidate.textContent ?? '').includes('F9') && !(candidate.textContent ?? '').includes('مسودة'))
             ?? candidates.find((candidate) => words.some((word) => (candidate.textContent ?? '').includes(word)) && !(candidate.textContent ?? '').includes('مسودة'))

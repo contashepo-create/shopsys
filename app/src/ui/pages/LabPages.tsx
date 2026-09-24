@@ -270,7 +270,7 @@ export function LabOrdersPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!patientId || !selected.length}>تسجيل الطلب وإنشاء القيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!patientId || !selected.length}>تسجيل الطلب وإنشاء القيد</Btn>
           </div>
         </div>
       </Modal>

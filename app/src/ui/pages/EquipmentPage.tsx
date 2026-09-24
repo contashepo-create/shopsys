@@ -312,7 +312,7 @@ export function EquipmentPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setShiftFor(null)}>إلغاء</Btn>
-            <Btn onClick={saveShift} disabled={!opName.trim() || !shiftEnd}>💾 تسجيل الوردية</Btn>
+            <Btn onClick={saveShift} shortcut="F9" disabled={!opName.trim() || !shiftEnd}>💾 تسجيل الوردية</Btn>
           </div>
         </div>
       </Modal>
