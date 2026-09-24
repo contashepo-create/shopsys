@@ -108,7 +108,7 @@ export function ReportsPage() {
   const [expSource, setExpSource] = useState('')
   const expFilter = useMemo(() => ({ from: period.from, to: period.to, sourceType: expSource || undefined }), [period, expSource])
   const expSummary = useMemo(() => expensesSummary(journal, expFilter, accountName, customExpenseCodes), [journal, expFilter, customExpenseCodes])
-  const costCenterExpenses = useMemo(() => invoiceExpensesByCostCenter(sales, { from: period.from, to: period.to, projectId: costProject === 'all' ? 'all' : costProject === 'none' ? null : Number(costProject), settlement: costSettlement }), [sales, period])
+  const costCenterExpenses = useMemo(() => invoiceExpensesByCostCenter(sales, { from: period.from, to: period.to, projectId: costProject === 'all' ? 'all' : costProject === 'none' ? null : Number(costProject), settlement: costSettlement }), [sales, period, costProject, costSettlement])
   const expDetail = useMemo(
     () => expenseDetails(journal, { ...expFilter, accountCode: expAccount || undefined }, customExpenseCodes),
     [journal, expFilter, expAccount, customExpenseCodes],
@@ -138,6 +138,14 @@ export function ReportsPage() {
       settings: reportPrint,
       bodyHtml: body,
     }))
+  }
+
+  const printCostCenterExpenses = () => {
+    const esc = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const projectName = (id: number | null) => id == null ? 'بدون مركز تكلفة' : projects.find((project) => project.id === id)?.nameAr ?? `مشروع #${id}`
+    const body = `<table><thead><tr><th>مركز التكلفة</th><th>الحركات</th><th>مدفوع</th><th>مستحق</th><th>الإجمالي</th></tr></thead><tbody>${costCenterExpenses.rows.map((row) => `<tr><td>${esc(projectName(row.projectId))}</td><td class="num">${row.txCount}</td><td class="num">${fmt(row.paidMinor)}</td><td class="num">${fmt(row.accruedMinor)}</td><td class="num">${fmt(row.totalMinor)}</td></tr>`).join('')}<tr class="total"><td colspan="4">الإجمالي</td><td class="num">${fmt(costCenterExpenses.totalMinor)}</td></tr></tbody></table>`
+    const { reportPrint, receipt } = useAppStore.getState()
+    printHtml(renderReportShell({ title: 'تحليل مصروفات الفواتير حسب مركز التكلفة', subtitle: `الفترة ${period.from} → ${period.to} · ${costSettlement === 'paid_now' ? 'مدفوع' : costSettlement === 'payable_later' ? 'مستحق' : 'كل حالات السداد'}`, companyName: setup.shopName || '', logoDataUrl: receipt.logoDataUrl, settings: reportPrint, bodyHtml: body }))
   }
 
   const custName = (id: number) => customers.find((c) => c.id === id)?.nameAr ?? `عميل #${id}`
@@ -611,7 +619,7 @@ export function ReportsPage() {
           <div className={`${card} overflow-hidden`}>
             <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between">
               <div><b>تحليل مصروفات الفواتير حسب مركز التكلفة</b><div className="text-[10px] text-slate-400">المدفوع والمستحق المرتبطان بالفاتورة والربحية</div></div>
-              <div className="flex gap-2 items-center"><select className={inputCls} value={costProject} onChange={(e) => setCostProject(e.target.value)}><option value="all">كل المراكز</option><option value="none">بدون مركز</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.nameAr}</option>)}</select><select className={inputCls} value={costSettlement} onChange={(e) => setCostSettlement(e.target.value as typeof costSettlement)}><option value="all">كل الحالات</option><option value="paid_now">مدفوع</option><option value="payable_later">مستحق</option></select><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={() => { const csv = costCenterExpensesCsv(costCenterExpenses.rows, (id) => id == null ? 'بدون مركز تكلفة' : projects.find((project) => project.id === id)?.nameAr ?? `مشروع #${id}`); const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'cost-center-expenses.csv'; link.click(); URL.revokeObjectURL(url) }}>Excel/CSV</button><b className="text-rose-500">{fmt(costCenterExpenses.totalMinor)}</b></div>
+              <div className="flex gap-2 items-center"><select className={inputCls} value={costProject} onChange={(e) => setCostProject(e.target.value)}><option value="all">كل المراكز</option><option value="none">بدون مركز</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.nameAr}</option>)}</select><select className={inputCls} value={costSettlement} onChange={(e) => setCostSettlement(e.target.value as typeof costSettlement)}><option value="all">كل الحالات</option><option value="paid_now">مدفوع</option><option value="payable_later">مستحق</option></select><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={printCostCenterExpenses}><Printer size={13} className="inline me-1"/>طباعة</button><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={() => { const csv = costCenterExpensesCsv(costCenterExpenses.rows, (id) => id == null ? 'بدون مركز تكلفة' : projects.find((project) => project.id === id)?.nameAr ?? `مشروع #${id}`); const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'cost-center-expenses.csv'; link.click(); URL.revokeObjectURL(url) }}>Excel/CSV</button><b className="text-rose-500">{fmt(costCenterExpenses.totalMinor)}</b></div>
             </div>
             {costCenterExpenses.rows.length ? <table className="w-full text-[12.5px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">مركز التكلفة</th><th>الحركات</th><th>مدفوع</th><th>مستحق</th><th>الإجمالي</th></tr></thead><tbody>{costCenterExpenses.rows.map((row) => <tr key={row.projectId ?? 'none'} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{row.projectId == null ? 'بدون مركز تكلفة' : projects.find((project) => project.id === row.projectId)?.nameAr ?? `مشروع #${row.projectId}`}</td><td>{row.txCount}</td><td className="text-emerald-600">{fmt(row.paidMinor)}</td><td className="text-amber-600">{fmt(row.accruedMinor)}</td><td className="font-black text-rose-500">{fmt(row.totalMinor)}</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد مصروفات فواتير مرتبطة بالفترة</div>}
           </div>
