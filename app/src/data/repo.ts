@@ -3055,10 +3055,16 @@ export const useDataStore = create<DataState>()(
         // 0) ثبّت مخزن كل سطر لحظة الترحيل. السطر يعلو على مخزن الرأس،
         // والفواتير القديمة/الطلبات التي لا ترسله ترث مخزن الرأس ثم الرئيسي.
         const mainWarehouseId = state.warehouses.find((w) => w.isMain)?.id ?? state.warehouses[0]?.id ?? null
+        const hasWarehouses = state.warehouses.length > 0
         const effectiveSaleWarehouseId = args.warehouseId ?? mainWarehouseId
-        if (effectiveSaleWarehouseId == null) throw new Error('لا يوجد مخزن متاح لترحيل البيع')
+        // التوافق مع الحسابات القديمة والأنشطة التي لا تستخدم المخازن: إن لم توجد
+        // مخازن أصلاً يبقى البيع على رصيد الصنف العام، ولا نخترع مخزناً وهمياً.
+        // أما عند وجود أي مخزن فاختياره إلزامي حتى لا تختلط أرصدة الفروع.
+        if (hasWarehouses && effectiveSaleWarehouseId == null) throw new Error('لا يوجد مخزن متاح لترحيل البيع')
         const saleLines = args.lines.map((line) => ({ ...line, warehouseId: line.warehouseId ?? effectiveSaleWarehouseId }))
-        const unknownWarehouse = saleLines.find((line) => !state.warehouses.some((warehouse) => warehouse.id === line.warehouseId))
+        const unknownWarehouse = hasWarehouses
+          ? saleLines.find((line) => !state.warehouses.some((warehouse) => warehouse.id === line.warehouseId))
+          : undefined
         if (unknownWarehouse) throw new Error(`مخزن سطر الصنف غير موجود (${unknownWarehouse.warehouseId})`)
 
         // وصفات «يُجهَّز عند الطلب» (مطاعم): الطبق بلا مخزون —
@@ -3083,11 +3089,25 @@ export const useDataStore = create<DataState>()(
         }
         // 1) فحص المخزون في المخزن الفعلي لكل سطر (وعلى خامات الوصفة داخله).
         if (!args.allowNegativeStock) {
-          const warehouseStock = computeWarehouseStock(
-            state.items, state.warehouses, state.transfers,
-            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
-          )
-          const needsByWarehouse = new Map<number, Map<number, number>>()
+          // قبل إنشاء المخازن كان الرصيد محفوظاً على الصنف مباشرة. حافظ على
+          // فحص هذا المسار حتى تعمل الحسابات القديمة واختبارات المتغيرات دون
+          // تخفيف حارس الرصيد عند استخدام المخازن الحديثة.
+          if (!hasWarehouses) {
+            const shortages = [...stockNeeds.entries()].flatMap(([itemId, needed]) => {
+              const item = state.items.find((candidate) => candidate.id === itemId)
+              const available = item?.stockQty ?? 0
+              return item && Math.round(available * 1000) < Math.round(needed * 1000)
+                ? [`«${item.nameAr}»: متاح ${available} ومطلوب ${needed}`]
+                : []
+            })
+            if (shortages.length) throw new Error(`مخزون غير كافٍ — ${shortages.join('، ')}`)
+          }
+          if (hasWarehouses) {
+            const warehouseStock = computeWarehouseStock(
+              state.items, state.warehouses, state.transfers,
+              buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+            )
+            const needsByWarehouse = new Map<number, Map<number, number>>()
           for (const line of saleLines) {
             if (isServiceItem(line.itemId)) continue
             const lineNeeds = explodeIngredientNeeds(new Map([[line.itemId, baseQty(line)]]), recipeOf)
@@ -3107,7 +3127,8 @@ export const useDataStore = create<DataState>()(
               }
             }
           }
-          if (shortages.length) throw new Error(`مخزون غير كافٍ — ${shortages.join('، ')}`)
+            if (shortages.length) throw new Error(`مخزون غير كافٍ — ${shortages.join('، ')}`)
+          }
         }
         // 2) دفعات الصلاحية FEFO (القراران 5 و8): تخطيط الصرف وحظر المنتهي بلا تجاوز مدير
         const now0 = new Date().toISOString()
