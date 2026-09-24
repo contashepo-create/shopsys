@@ -21,8 +21,12 @@ const schemaStatements = [
 ]
 
 function migrateDatabase() {
+  // journal_mode لا يُغيّر داخل transaction في SQLite؛ طبّق PRAGMA أولاً.
+  db.pragma('foreign_keys = ON')
+  db.pragma('journal_mode = WAL')
+  db.pragma('synchronous = NORMAL')
   db.transaction(() => {
-    for (const statement of schemaStatements) db.prepare(statement).run()
+    for (const statement of schemaStatements.slice(3)) db.prepare(statement).run()
     db.prepare('INSERT INTO schema_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run('schema_version', String(SCHEMA_VERSION))
   })()
 }
