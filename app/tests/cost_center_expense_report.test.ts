@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { costCenterExpensesCsv, expenseDetailsCsv, expenseSummaryCsv, invoiceExpensesByCostCenter } from '../src/core/expenseReports.ts'
+import { costCenterExpensesCsv, expenseDetailsCsv, expenseSummaryCsv, invoiceExpenseCategoriesCsv, invoiceExpensesByCategory, invoiceExpensesByCostCenter } from '../src/core/expenseReports.ts'
 
 describe('تحليل مصروفات الفواتير حسب مركز التكلفة', () => {
   it('يفصل المدفوع عن المستحق ويجمع غير المرتبط', () => {
@@ -19,6 +19,17 @@ describe('تحليل مصروفات الفواتير حسب مركز التكل�
     expect(report.rows[0]).toMatchObject({ paidMinor: 0, accruedMinor: 500 })
     expect(costCenterExpensesCsv(report.rows, () => 'مشروع, خاص')).toContain('\"مشروع, خاص\"')
   })
+  it('يحلل الأنواع والعمولات والضريبة والمراكز وحالة السداد', () => {
+    const report = invoiceExpensesByCategory([{ date: '2026-09-24', internalExpenses: [
+      { label: 'عمولة', accountCode: '5201', projectId: 4, amountMinor: 1000, settlement: 'paid_now', taxTreatment: 'exclusive', taxPercent: 14 },
+      { label: 'عمولة', accountCode: '5201', projectId: 5, amountMinor: 500, settlement: 'payable_later', taxTreatment: 'inclusive', taxPercent: 14 },
+    ] }], {})
+    expect(report.totalMinor).toBe(1500)
+    expect(report.taxMinor).toBe(201)
+    expect(report.rows[0]).toMatchObject({ label: 'عمولة', paidMinor: 1000, accruedMinor: 500, txCount: 2, costCenterCount: 2 })
+    expect(invoiceExpenseCategoriesCsv(report.rows)).toContain('عمولة')
+  })
+
   it('يصدر تقريري المصروفات المجمع والتفصيلي مع اقتباس آمن', () => {
     expect(expenseSummaryCsv([{ accountCode: '5101', accountName: 'شحن, ونقل', totalMinor: 100, txCount: 1, sharePercent: 100 }])).toContain('"شحن, ونقل"')
     expect(expenseDetailsCsv([{ entryId: 1, entryNumber: 4, date: '2026-09-24', description: 'مصروف "خاص"', sourceType: 'sale', amountMinor: 100, accountCode: '5101' }])).toContain('"مصروف ""خاص"""')

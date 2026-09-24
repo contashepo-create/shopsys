@@ -127,6 +127,48 @@ export function expenseDetailsCsv(rows: (ExpenseTxRow & { accountCode: string })
   return ['القيد,التاريخ,الكود,البيان,المصدر,المبلغ', ...rows.map((row) => [row.entryNumber, row.date, row.accountCode, row.description, row.sourceType, row.amountMinor].map(quote).join(','))].join('\n')
 }
 
+export interface InvoiceExpenseCategoryRow {
+  label: string
+  accountCode: string
+  totalMinor: Minor
+  paidMinor: Minor
+  accruedMinor: Minor
+  taxMinor: Minor
+  txCount: number
+  costCenterCount: number
+}
+
+/** تحليل تشغيلي حسب نوع المصروف، ويشمل العمولات والضريبة وحالة الاستحقاق. */
+export function invoiceExpensesByCategory(
+  documents: { date: string; internalExpenses?: { label: string; accountCode: string; projectId?: number | null; amountMinor: Minor; settlement: 'paid_now' | 'payable_later'; taxTreatment?: 'exempt' | 'exclusive' | 'inclusive'; taxPercent?: number }[] }[],
+  filter: ExpenseReportFilter,
+): { rows: InvoiceExpenseCategoryRow[]; totalMinor: Minor; taxMinor: Minor } {
+  const grouped = new Map<string, InvoiceExpenseCategoryRow & { centers: Set<number> }>()
+  for (const document of documents) {
+    if (!inPeriod(document.date, filter)) continue
+    for (const expense of document.internalExpenses ?? []) {
+      const key = `${expense.accountCode}\u0000${expense.label}`
+      const row = grouped.get(key) ?? { label: expense.label, accountCode: expense.accountCode, totalMinor: 0, paidMinor: 0, accruedMinor: 0, taxMinor: 0, txCount: 0, costCenterCount: 0, centers: new Set<number>() }
+      const rate = Math.max(0, expense.taxPercent ?? 0)
+      const tax = expense.taxTreatment === 'exclusive' ? Math.round(expense.amountMinor * rate / 100) : expense.taxTreatment === 'inclusive' && rate > 0 ? expense.amountMinor - Math.round(expense.amountMinor / (1 + rate / 100)) : 0
+      row.totalMinor += expense.amountMinor
+      row.taxMinor += tax
+      if (expense.settlement === 'paid_now') row.paidMinor += expense.amountMinor
+      else row.accruedMinor += expense.amountMinor
+      if (expense.projectId != null) row.centers.add(expense.projectId)
+      row.txCount++
+      grouped.set(key, row)
+    }
+  }
+  const rows = [...grouped.values()].map(({ centers, ...row }) => ({ ...row, costCenterCount: centers.size })).sort((a, b) => b.totalMinor - a.totalMinor)
+  return { rows, totalMinor: rows.reduce((sum, row) => sum + row.totalMinor, 0), taxMinor: rows.reduce((sum, row) => sum + row.taxMinor, 0) }
+}
+
+export function invoiceExpenseCategoriesCsv(rows: InvoiceExpenseCategoryRow[]): string {
+  const quote = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`
+  return ['النوع,الحساب,الحركات,مراكز التكلفة,مدفوع,مستحق,الضريبة,الإجمالي', ...rows.map((row) => [row.label, row.accountCode, row.txCount, row.costCenterCount, row.paidMinor, row.accruedMinor, row.taxMinor, row.totalMinor].map(quote).join(','))].join('\n')
+}
+
 /** التقرير التفصيلي: حركات بند واحد حركة حركة (أو كل البنود لو بلا accountCode) */
 export function expenseDetails(
   journal: JournalEntry[],
