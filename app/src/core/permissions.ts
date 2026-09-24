@@ -303,6 +303,8 @@ export const DEFAULT_ROLES: Role[] = [
       'acc.journal.view', 'acc.journal.manual', 'acc.journal.reverse', 'acc.coa.manage',
       'acc.vouchers', 'acc.fiscal.close',
       'rep.sales', 'rep.profit', 'rep.financial',
+      // المحاسب الذي ينفذ سياقاً يحتاج وردية يستطيع فتحها من شاشة الورديات
+      'sales.shift.close',
     ],
   },
 ]
@@ -423,7 +425,7 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
     {
       // الحلاق/الخبيرة — يسجل خدماته فقط، الخصومات بموافقة
       id: 'stylist', nameAr: 'حلاق / خبيرة تجميل', isSystem: true,
-      permissions: ['sales.pos.open', 'sales.invoice.create', 'party.customer.manage'],
+      permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.shift.close', 'party.customer.manage'],
     },
   ],
   bakery: [
@@ -481,7 +483,7 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
     {
       // صايغ أول — يسعّر بحسب جرام اليوم لكن التكلفة والخصومات للمالك
       id: 'goldsmith', nameAr: 'صايغ أول', isSystem: true,
-      permissions: ['sales.pos.open', 'sales.invoice.create', 'ops.activity.use', 'inv.view', 'party.customer.manage'],
+      permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.shift.close', 'ops.activity.use', 'inv.view', 'party.customer.manage'],
     },
   ],
 }

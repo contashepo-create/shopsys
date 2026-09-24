@@ -18,7 +18,8 @@ import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, 
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
-import { currentOpenShift } from '../../core/shifts.ts'
+import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
+import { isInvoiceFirst } from '../../core/activities.ts'
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
@@ -60,6 +61,13 @@ export function PosPage() {
   const country = setup.countryCode ? getCountry(setup.countryCode) : null
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  const activeUser = appUsers.find((user) => user.id === currentUserId)
+  const shiftPolicy = salesShiftPolicy({
+    roleId: activeUser?.roleId,
+    isOwner: currentUserId == null || activeUser?.roleId === 'owner',
+    requireOpenShiftForSales: setup.requireOpenShiftForSales,
+    invoiceFirst: isInvoiceFirst(setup.activityId),
+  })
   const mainWarehouseId = warehouses.find((w) => w.isMain)?.id ?? warehouses[0]?.id ?? null
   const defaultSaleWarehouseId = setup.defaultWarehouseId ?? mainWarehouseId
   const itemVatPercent = (itemId: number) => effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, countryVatPercent)
@@ -126,16 +134,15 @@ export function PosPage() {
       if (e.key === 'F8' || e.key === 'F9') {
         e.preventDefault()
         if (!cart.length) return
-        // F8 تحصيل نقدي سريع، وF9 فتح الدفع مع احترام سياسة الورديات
-        const st = useAppStore.getState().setup
-        if (st.requireOpenShiftForSales && !currentOpenShift(useDataStore.getState().shifts)) { setShiftOpenModal(true); return }
+        // F8 تحصيل نقدي سريع، وF9 فتح الدفع مع احترام سياسة المستخدم/الدور
+        if (shiftPolicy.required && !currentOpenShift(useDataStore.getState().shifts)) { setShiftOpenModal(true); return }
         if (e.key === 'F8') setPayment('cash')
         setPayOpen(true)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [cart.length])
+  }, [cart.length, shiftPolicy.required])
 
   const sellable = useMemo(() => items.filter((it) => it.isActive), [items])
 
@@ -432,7 +439,6 @@ export function PosPage() {
   // تجاوز بيع منتهي الصلاحية بموافقة المدير (القرار 8) — يُسجَّل اسمه على الفاتورة
   /* مخزن البيع أعلى الفاتورة — لا اختيار مبهم: يبدأ بالمخزن الافتراضي أو الرئيسي */
   const [saleWarehouseId, setSaleWarehouseId] = useState<number | null>(defaultSaleWarehouseId)
-  const activeUser = appUsers.find((user) => user.id === currentUserId)
   const saleBranchId = branches.find((branch) => branch.warehouseId === (saleWarehouseId ?? defaultSaleWarehouseId))?.id
   const activePaymentTerminals = paymentTerminals.filter((terminal) => {
     if (terminal.status !== 'active') return false
@@ -613,10 +619,10 @@ export function PosPage() {
             ) : (
               <button
                 onClick={() => setShiftOpenModal(true)}
-                title={setup.requireOpenShiftForSales ? 'البيع موقوف حتى تُفتح وردية — اضغط لفتحها الآن' : 'الفواتير ستُسجل خارج وردية — اضغط لفتح وردية'}
-                className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-all hover:scale-105 ${setup.requireOpenShiftForSales ? 'bg-rose-500/10 text-rose-600 border border-rose-500/30 animate-pulse' : 'bg-slate-400/10 text-slate-400'}`}
+                title={shiftPolicy.required ? `${shiftPolicy.messageAr} — اضغط لفتحها الآن` : shiftPolicy.messageAr}
+                className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-all hover:scale-105 ${shiftPolicy.required ? 'bg-rose-500/10 text-rose-600 border border-rose-500/30 animate-pulse' : shiftPolicy.hintOnly ? 'bg-amber-500/10 text-amber-600 border border-amber-500/30' : 'bg-slate-400/10 text-slate-400'}`}
               >
-                {setup.requireOpenShiftForSales ? '⛔ افتح وردية أولاً' : 'بلا وردية — فتح؟'}
+                {shiftPolicy.hintOnly ? '💡 وردية اختيارية' : shiftPolicy.required ? '⛔ افتح وردية أولاً' : 'بلا وردية'}
               </button>
             )}
           </span>
@@ -885,7 +891,7 @@ export function PosPage() {
           <button
             onClick={() => {
               // سياسة الورديات: وجّه لفتح الوردية بدل مودال الدفع (رسالة قبل الرفض)
-              if (setup.requireOpenShiftForSales && !openShift) { setShiftOpenModal(true); return }
+              if (shiftPolicy.required && !openShift) { setShiftOpenModal(true); return }
               setPayOpen(true)
             }}
             disabled={!totals}

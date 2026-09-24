@@ -92,6 +92,55 @@ export function currentOpenShift(shifts: Shift[]): Shift | null {
   return shifts.find((s) => s.status === 'open') ?? null
 }
 
+/**
+ * سياسة الوردية في سياق البيع/الدفع.
+ *
+ * الإعداد العام يظل سياسة الكاشير: المالك الرئيسي يرى تلميحاً فقط،
+ * والكاشير يُمنع أو يُسمح له بحسب الإعداد. أما أي دور موظف آخر ينفذ
+ * نشاطاً يحتاج وردية فيُطلب منه فتحها حتى لو عطّل المالك مفتاح الكاشير.
+ * أنشطة «الفاتورة أولاً» خارج هذا السياق ولا تحتاج وردية.
+ */
+export interface SalesShiftPolicyInput {
+  roleId: string | null | undefined
+  isOwner: boolean
+  requireOpenShiftForSales: boolean
+  invoiceFirst: boolean
+}
+
+export interface SalesShiftPolicy {
+  required: boolean
+  hintOnly: boolean
+  messageAr: string
+}
+
+export function salesShiftPolicy(input: SalesShiftPolicyInput): SalesShiftPolicy {
+  if (input.invoiceFirst) {
+    return { required: false, hintOnly: false, messageAr: '' }
+  }
+  if (input.isOwner) {
+    return {
+      required: false,
+      hintOnly: true,
+      messageAr: 'الوردية اختيارية للمالك الرئيسي — افتحها إن أردت ربط النقدية بعهدة وردية',
+    }
+  }
+  if (input.roleId === 'cashier') {
+    const required = input.requireOpenShiftForSales
+    return {
+      required,
+      hintOnly: !required,
+      messageAr: required
+        ? 'لا يمكن للكاشير إتمام البيع أو الدفع قبل فتح وردية مفتوحة'
+        : 'سياسة الكاشير تسمح بالبيع والدفع بلا وردية مفتوحة',
+    }
+  }
+  return {
+    required: true,
+    hintOnly: false,
+    messageAr: 'لا يمكن لهذا المستخدم إتمام العملية قبل فتح وردية مرتبطة بدوره وسياق عمله',
+  }
+}
+
 /* ─── تسوية عجز/زيادة الوردية (طلب المالك) ─── */
 
 export interface VarianceEntryLine {

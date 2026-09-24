@@ -47,7 +47,7 @@ import { validateStaffCommission, buildStaffCommissionAccrual, buildStaffCommiss
 import { proportionalCommissionReturnMinor } from '../core/invoiceCommissions.ts'
 import { fullCoa } from '../core/treasury.ts'
 import { validateTreasuryAccess, validateTreasuryTransfer, validateUserTreasuryAccess } from '../core/treasuryAccess.ts'
-import { validateOpenShift, currentOpenShift, summarizeShift, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
+import { validateOpenShift, currentOpenShift, summarizeShift, salesShiftPolicy, buildVarianceExpenseEntry, buildVarianceAdvanceEntry, type Shift } from '../core/shifts.ts'
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, reduceSchedule, type InstallmentItem } from '../core/installments.ts'
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
@@ -2255,18 +2255,19 @@ function readCurrencyDecimals(): number {
   return 2
 }
 
-function shiftRequiredForSales(): boolean {
+function salesShiftPolicyForState(state: Pick<DataState, 'appUsers' | 'currentUserId'>) {
+  let setup: { activityId?: string | null; requireOpenShiftForSales?: boolean } | undefined
   try {
     const raw = localStorage.getItem('shopsys-app')
-    if (raw) {
-      const setup = JSON.parse(raw)?.state?.setup
-      // أنشطة «الفاتورة أولاً» (تجارة جملة/مصنع/خدمات): شاشة الورديات مخفية عنها
-      // أصلاً — فرض الوردية عليها يسد فواتيرها بمأزق لا مخرج منه (فحص المراجعة)
-      if (isInvoiceFirst(setup?.activityId ?? null)) return false
-      return setup?.requireOpenShiftForSales !== false
-    }
-  } catch { /* الافتراضي: إلزامي */ }
-  return true
+    setup = raw ? JSON.parse(raw)?.state?.setup : undefined
+  } catch { /* الافتراضي الآمن أدناه */ }
+  const activeUser = state.appUsers.find((user) => user.id === state.currentUserId) ?? null
+  return salesShiftPolicy({
+    roleId: activeUser?.roleId,
+    isOwner: state.currentUserId == null || activeUser?.roleId === 'owner',
+    requireOpenShiftForSales: setup?.requireOpenShiftForSales !== false,
+    invoiceFirst: isInvoiceFirst(setup?.activityId ?? null),
+  })
 }
 
 function assertTreasuryNotNegative(
@@ -3034,9 +3035,11 @@ export const useDataStore = create<DataState>()(
 
       postSale: (args) => {
         const state = get()
-        // سياسة الورديات: بيع بلا وردية مفتوحة مرفوض ما دام الإعداد إلزامياً
-        if (shiftRequiredForSales() && !currentOpenShift(state.shifts)) {
-          throw new Error('لا توجد وردية مفتوحة — افتح وردية أولاً من زر «فتح وردية» أعلى شاشة الكاشير، أو عطّل الإلزام من الإعدادات العامة')
+        // سياسة الورديات مرتبطة بالمستخدم الفعلي: المالك تلميح فقط، والكاشير حسب
+        // إعداد الكاشير، وبقية الأدوار ملزمة في سياق البيع. نفس القرار تستخدمه الواجهة.
+        const shiftPolicy = salesShiftPolicyForState(state)
+        if (shiftPolicy.required && !currentOpenShift(state.shifts)) {
+          throw new Error(`لا توجد وردية مفتوحة — ${shiftPolicy.messageAr}`)
         }
         // 0) ثبّت مخزن كل سطر لحظة الترحيل. السطر يعلو على مخزن الرأس،
         // والفواتير القديمة/الطلبات التي لا ترسله ترث مخزن الرأس ثم الرئيسي.
