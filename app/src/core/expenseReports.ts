@@ -221,11 +221,21 @@ export function costCenterBudgetReport(
   journal: JournalEntry[],
   filter: ExpenseReportFilter,
   customExpenseCodes: ReadonlySet<string>,
+  centers: { id: number; parentId?: number | null }[] = [],
 ): CostCenterBudgetReportRow[] {
+  const children = new Map<number, number[]>()
+  for (const center of centers) if (center.parentId != null) children.set(center.parentId, [...(children.get(center.parentId) ?? []), center.id])
+  const includedCenters = (rootId: number) => {
+    const ids = new Set([rootId])
+    const queue = [rootId]
+    while (queue.length) for (const childId of children.get(queue.shift()!) ?? []) { if (!ids.has(childId)) { ids.add(childId); queue.push(childId) } }
+    return ids
+  }
   return budgets.filter((budget) => (!filter.from || budget.to >= filter.from) && (!filter.to || budget.from <= filter.to)).map((budget) => {
+    const budgetCenters = includedCenters(budget.costCenterId)
     const actualMinor = journal.reduce((sum, entry) => {
       if (entry.date.slice(0, 10) < budget.from || entry.date.slice(0, 10) > budget.to || !inPeriod(entry.date, filter)) return sum
-      return sum + entry.lines.filter((line) => line.costCenterId === budget.costCenterId && isExpenseCode(line.accountCode, customExpenseCodes)).reduce((lineSum, line) => lineSum + line.debit - line.credit, 0)
+      return sum + entry.lines.filter((line) => line.costCenterId != null && budgetCenters.has(line.costCenterId) && isExpenseCode(line.accountCode, customExpenseCodes)).reduce((lineSum, line) => lineSum + line.debit - line.credit, 0)
     }, 0)
     return { ...budget, actualMinor, varianceMinor: budget.amountMinor - actualMinor, utilizationPercent: budget.amountMinor > 0 ? Math.round(actualMinor / budget.amountMinor * 1000) / 10 : 0 }
   }).sort((a, b) => a.from.localeCompare(b.from) || a.costCenterId - b.costCenterId)

@@ -113,7 +113,7 @@ export function ReportsPage() {
   const costCenterExpenses = useMemo(() => invoiceExpensesByCostCenter(invoiceExpenseDocuments, { from: period.from, to: period.to, costCenterId: costCenter === 'all' ? 'all' : costCenter === 'none' ? null : Number(costCenter), projectId: costProject === 'all' ? 'all' : costProject === 'none' ? null : Number(costProject), settlement: costSettlement }), [invoiceExpenseDocuments, period, costCenter, costProject, costSettlement])
   const expenseCategories = useMemo(() => invoiceExpensesByCategory(invoiceExpenseDocuments, { from: period.from, to: period.to }), [invoiceExpenseDocuments, period])
   const journalCostCenterExpenses = useMemo(() => journalExpensesByCostCenter(journal, { from: period.from, to: period.to, costCenterId: costCenter === 'all' ? 'all' : costCenter === 'none' ? null : Number(costCenter) }, customExpenseCodes), [journal, period, costCenter, customExpenseCodes])
-  const costCenterBudgetsReport = useMemo(() => costCenterBudgetReport(costCenterBudgets, journal, { from: period.from, to: period.to }, customExpenseCodes), [costCenterBudgets, journal, period, customExpenseCodes])
+  const costCenterBudgetsReport = useMemo(() => costCenterBudgetReport(costCenterBudgets, journal, { from: period.from, to: period.to }, customExpenseCodes, costCenters), [costCenterBudgets, journal, period, customExpenseCodes])
   const expDetail = useMemo(
     () => expenseDetails(journal, { ...expFilter, accountCode: expAccount || undefined }, customExpenseCodes),
     [journal, expFilter, expAccount, customExpenseCodes],

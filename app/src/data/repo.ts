@@ -4582,6 +4582,7 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const errors = validateManualEntry(args.lines, [...fullCoa(STANDARD_COA, state.treasuries), ...customAsAccounts(state.customAccounts)])
         if (errors.length) throw new Error(errors.join('، '))
+        if (args.lines.some((line) => line.costCenterId != null && !state.costCenters.some((center) => center.id === line.costCenterId && center.isActive))) throw new Error('كل مراكز التكلفة العامة في القيد اليدوي يجب أن تكون موجودة ونشطة')
         // حارس الفترة المقفلة (منهجية Closing Date العالمية): لا قيود بأثر رجعي في سنة مقفلة
         if (args.date) {
           const closed = dateInClosedYear(args.date, useAppStore.getState().fiscalYears)
