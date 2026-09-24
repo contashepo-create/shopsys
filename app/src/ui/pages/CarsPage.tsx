@@ -135,7 +135,6 @@ export function CarsPage() {
     if (!sellFor) return
     try {
       const terminal = paymentTerminals.find((row) => row.id === sellTerminal.terminalId)
-      if (terminal && !sellTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const c = sellCar({
         carId: sellFor.id, priceMinor: toMinor(price, cur.decimals),
         vatPercent: sellVat ? setup.vatPercent : 0, payment: sellPayment, buyerName: buyer.trim(), treasury: terminal?.settlementAccountCode ?? sellTreasury,
@@ -213,7 +212,6 @@ export function CarsPage() {
     if (!cgSellCar) return
     try {
       const terminal = paymentTerminals.find((row) => row.id === cgTerminal.terminalId)
-      if (terminal && !cgTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const sold = sellConsignmentCar({
         id: cgSellCar.id, salePriceMinor: toMinor(cgSalePrice, cur.decimals), payment: cgPayment, buyerName: cgBuyer.trim(), treasury: terminal?.settlementAccountCode ?? cgTreasury,
         terminalPayment: terminal ? { terminalId: terminal.id, providerReference: cgTerminal.providerReference.trim(), cardLast4: cgTerminal.cardLast4 || undefined } : undefined,

@@ -101,7 +101,6 @@ export function LaundryPage() {
     try {
       if (to === 'delivered') {
         const terminal = paymentTerminals.find((row) => row.id === deliverTerminal.terminalId)
-        if (terminal && !deliverTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
         const u = deliverLaundryOrder({ orderId: o.id, treasury: (terminal?.settlementAccountCode ?? deliverTreasury) as '1101', terminalPayment: terminal ? { terminalId: terminal.id, providerReference: deliverTerminal.providerReference.trim(), cardLast4: deliverTerminal.cardLast4 || undefined } : undefined })
         toast.show(`سُلِّم ${u.orderNumber} وتولد قيد الإيراد — المحصَّل ${fmt(u.grandMinor - u.prepaidMinor)} ${cur.symbol} ✅`)
         setViewingId(u.id)

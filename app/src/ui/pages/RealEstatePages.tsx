@@ -375,7 +375,6 @@ export function LeasesPage() {
     if (!collectFor) return
     try {
       const terminal = paymentTerminals.find((row) => row.id === colTerminal.terminalId)
-      if (terminal && !colTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const r = collectLeaseInstallment({ leaseId: collectFor.id, seq, treasury: terminal?.settlementAccountCode ?? colTreasury, terminalPayment: terminal ? { terminalId: terminal.id, providerReference: colTerminal.providerReference.trim(), cardLast4: colTerminal.cardLast4 || undefined } : undefined })
       toast.show(`حُصل ${fmt(r.paidMinor)}${r.commissionMinor > 0 ? ` — سعي المكتب ${fmt(r.commissionMinor)} ونصيب المالك ${fmt(r.ownerShareMinor)}` : ''} ✅`)
       setCollectFor((c) => (c ? useDataStore.getState().leases.find((l) => l.id === c.id) ?? null : null)); setColTerminal(emptyTerminalPayment())

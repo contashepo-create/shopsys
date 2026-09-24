@@ -203,7 +203,6 @@ export function ClientCollectionsPage() {
   const collect = () => {
     try {
       const terminal = availableTerminals.find((row) => row.id === terminalId)
-      if (terminalId && !terminalReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const r = receiveClientPayment({
         customerId: Number(customerId),
         amountMinor: toMinor(amount, cur.decimals),
@@ -241,7 +240,7 @@ export function ClientCollectionsPage() {
           </Field>
           <Field label="طريقة التحصيل"><select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select></Field>
           {!terminalId && <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} /></Field>}
-          {terminalId && <><Field label="مرجع إيصال الماكينة *"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls}/></Field></>}
+          {terminalId && <><Field label="مرجع إيصال الماكينة (اختياري)"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls}/></Field></>}
         </div>
 
         {customerId && (

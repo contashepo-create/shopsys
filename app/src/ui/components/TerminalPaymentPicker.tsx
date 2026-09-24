@@ -12,6 +12,6 @@ export function TerminalPaymentPicker({ value, onChange, allowCash = true }: { v
       {allowCash && <option value="">نقدي/بنك</option>}
       {terminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}
     </select>
-    {value.terminalId && <><input aria-label="مرجع ماكينة الدفع" className={inputCls} value={value.providerReference} onChange={(event) => patch({ providerReference: event.target.value })} placeholder="مرجع الماكينة *"/><input aria-label="آخر أربعة أرقام" className={inputCls} value={value.cardLast4} onChange={(event) => patch({ cardLast4: event.target.value.replace(/\D/g, '').slice(0, 4) })} placeholder="آخر 4 أرقام" inputMode="numeric" maxLength={4}/></>}
+    {value.terminalId && <><input aria-label="مرجع ماكينة الدفع" className={inputCls} value={value.providerReference} onChange={(event) => patch({ providerReference: event.target.value })} placeholder="مرجع الماكينة (اختياري)"/><input aria-label="آخر أربعة أرقام" className={inputCls} value={value.cardLast4} onChange={(event) => patch({ cardLast4: event.target.value.replace(/\D/g, '').slice(0, 4) })} placeholder="آخر 4 أرقام (اختياري)" inputMode="numeric" maxLength={4}/></>}
   </div>
 }

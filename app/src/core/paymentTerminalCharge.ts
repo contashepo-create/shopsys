@@ -25,7 +25,8 @@ export function buildTerminalCharge(input: TerminalChargeInput): PaymentTerminal
     documentType: input.documentType,
     documentId: String(input.documentId),
     amountMinor: input.amountMinor,
-    providerReference: input.providerReference.trim(),
+    // المرجع الذي يدخله المستخدم اختياري؛ يبقى معرف الحركة الداخلي هو الضامن للتمييز.
+    providerReference: input.providerReference.trim() || `AUTO-${crypto.randomUUID()}`,
     occurredAt: input.occurredAt,
     cardLast4: input.cardLast4,
   }

@@ -67,7 +67,6 @@ export function ExternalCommissionsPage() {
     if (!settling) return
     try {
       const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
-      if (terminal && !terminalPayment.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const u = collectExternalCommission({
         commissionId: settling.id,
         amountMinor: toMinor(settleAmount || '0', cur.decimals),

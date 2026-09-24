@@ -128,7 +128,6 @@ export function TripsPage() {
   const save = (creditLimitOverrideBy?: string) => {
     try {
       const terminal = availableTerminals.find((row) => row.id === terminalId)
-      if (terminalId && !terminalReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const trip = postTrip({
         customerId: customerId ? Number(customerId) : null,
         vehicleId: vehicleId ? Number(vehicleId) : null,
@@ -366,7 +365,7 @@ export function TripsPage() {
             {payment === 'cash' && (<>
               <Field label="طريقة التحصيل"><select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select></Field>
               {!terminalId && <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>}
-              {terminalId && <><Field label="مرجع إيصال الماكينة *"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls}/></Field></>}
+              {terminalId && <><Field label="مرجع إيصال الماكينة (اختياري)"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls}/></Field></>}
             </>)}
             <Field label={`المحصَّل الآن (${cur.symbol}) — اختياري`} hint="اتركه فارغاً = حسب طريقة التحصيل. مبلغ جزئي = الباقي ديناً على العميل">
               <input value={paidNow} onChange={(e) => setPaidNow(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={payment === 'cash' ? 'الكل' : '0'} />

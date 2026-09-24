@@ -183,7 +183,6 @@ export function MaintenancePage() {
     if (!delivering) return
     try {
       const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
-      if (terminal && !terminalPayment.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const t = deliverTicket(delivering.id, {
         laborMinor: toM(labor),
         parts: parts.filter((p) => p.itemId).map((p) => ({ itemId: Number(p.itemId), qty: Number(p.qty) || 0, unitPriceMinor: toM(p.unitPrice) })),

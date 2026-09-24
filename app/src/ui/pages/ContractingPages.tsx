@@ -137,7 +137,6 @@ export function ProjectsPage() {
             })
         : undefined
       const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
-      if (terminal && !exTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const ex = addProjectExtract({
         projectId: extractFor.id,
         grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
@@ -252,7 +251,6 @@ export function ProjectsPage() {
     if (!advanceFor) return
     try {
       const terminal = paymentTerminals.find((row) => row.id === advTerminal.terminalId)
-      if (terminal && !advTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       receiveClientAdvance({ projectId: advanceFor.id, amountMinor: toMinor(advAmount, cur.decimals), treasury: terminal?.settlementAccountCode ?? advTreasury, terminalPayment: terminal ? { terminalId: terminal.id, providerReference: advTerminal.providerReference.trim(), cardLast4: advTerminal.cardLast4 || undefined } : undefined })
       toast.show('سُجلت الدفعة المقدمة كالتزام 2109 — تُسترد من المستخلصات ✅')
       setAdvanceFor(null); setAdvAmount('')
@@ -277,7 +275,6 @@ export function ProjectsPage() {
     if (!releaseFor) return
     try {
       const terminal = paymentTerminals.find((row) => row.id === releaseTerminal.terminalId)
-      if (terminal && !releaseTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const r = releaseRetention(releaseFor.id, terminal?.settlementAccountCode ?? releaseTreasury, terminal ? { terminalId: terminal.id, providerReference: releaseTerminal.providerReference.trim(), cardLast4: releaseTerminal.cardLast4 || undefined } : undefined)
       toast.show(`أُفرج عن محتجزات ${fmt(r.amount)} ${cur.symbol} وأُقفل المشروع 🎉`)
       setReleaseFor(null)

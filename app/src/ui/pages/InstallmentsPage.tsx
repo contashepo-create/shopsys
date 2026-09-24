@@ -122,7 +122,6 @@ export function InstallmentsPage() {
     try {
       const amount = toMinor(payAmount, cur.decimals)
       const terminal = availableTerminals.find((row) => row.id === terminalId)
-      if (terminalId && !terminalReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       payInstallment(livePlan.id, amount, (terminal?.settlementAccountCode ?? payTreasury) as TreasuryAccount, terminal ? { terminalId: terminal.id, providerReference: terminalReference.trim(), cardLast4: cardLast4 || undefined } : undefined)
       toast.show(`حُصِّل ${fmt(amount)} ${cur.symbol} وتولّد قيد التحصيل ✅`)
       setPayAmount(''); setTerminalReference(''); setCardLast4('')
@@ -343,7 +342,7 @@ export function InstallmentsPage() {
                   <input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} />
                   <select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select>
                   {!terminalId && <TreasuryPicker value={payTreasury} onChange={setPayTreasury} compact />}
-                  {terminalId && <><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls} placeholder="مرجع الماكينة *"/><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls} placeholder="آخر 4 أرقام"/></>}
+                  {terminalId && <><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls} placeholder="مرجع الماكينة (اختياري)"/><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls} placeholder="آخر 4 أرقام (اختياري)"/></>}
                   <Btn onClick={pay} shortcut="F9" disabled={!payAmount.trim()}>💾 تحصيل وتوليد القيد</Btn>
                 </div>
                 {liveProgress.nextDue && (

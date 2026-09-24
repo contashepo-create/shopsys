@@ -26,7 +26,7 @@ export function ServiceRefundBox(props: {
   creditLabel?: string
   /** ملاحظة سياق تحت العنوان (اختياري) */
   hint?: string
-  /** تحصيل ماكينة أصلي؛ عند الرد النقدي يفرض مرجع رد المزود ويرسله للـRepository. */
+  /** تحصيل ماكينة أصلي؛ عند الرد النقدي يمكن تسجيل مرجع رد المزود إن توفر. */
   terminalOriginal?: { transactionId: string; terminalName: string }
   /**
    * بنود المستند القابلة للرد (فحوصات/بنود غسيل/خدمات/قطع) — النمط العالمي:
@@ -164,7 +164,7 @@ export function ServiceRefundBox(props: {
         <p className="text-[11px] text-amber-600 dark:text-amber-400">🔐 سيُطلب رقم مشرف أو المالك لاعتماد هذا المرتجع.</p>
       )}
       <div className="flex justify-end">
-        <Btn onClick={submit} disabled={effectiveAmount <= 0 || (mode === 'cash' && !!props.terminalOriginal && !terminalRefundReference.trim())}>↩️ تنفيذ المرتجع</Btn>
+        <Btn onClick={submit} disabled={effectiveAmount <= 0}>↩️ تنفيذ المرتجع</Btn>
       </div>
       {approval.dialog}
     </div>

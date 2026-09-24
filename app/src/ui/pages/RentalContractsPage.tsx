@@ -126,7 +126,6 @@ export function RentalContractsPage() {
   const save = (creditLimitOverrideBy?: string) => {
     try {
       const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
-      if (terminal && !terminalPayment.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const c = openRental({
         customerId: customerId ? Number(customerId) : null,
         equipmentId: equipmentId ? Number(equipmentId) : null,

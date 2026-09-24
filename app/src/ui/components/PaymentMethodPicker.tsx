@@ -95,8 +95,8 @@ export function PaymentMethodPicker({
       </select>
       {value.terminalPayment.terminalId && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <input aria-label="مرجع ماكينة الدفع" className={inputCls} value={value.terminalPayment.providerReference} onChange={(event) => onChange({ ...value, terminalPayment: { ...value.terminalPayment, providerReference: event.target.value } })} placeholder="مرجع الماكينة *" />
-          <input aria-label="آخر أربعة أرقام" className={inputCls} value={value.terminalPayment.cardLast4} onChange={(event) => onChange({ ...value, terminalPayment: { ...value.terminalPayment, cardLast4: event.target.value.replace(/\D/g, '').slice(0, 4) } })} placeholder="آخر 4 أرقام" inputMode="numeric" maxLength={4} />
+          <input aria-label="مرجع ماكينة الدفع" className={inputCls} value={value.terminalPayment.providerReference} onChange={(event) => onChange({ ...value, terminalPayment: { ...value.terminalPayment, providerReference: event.target.value } })} placeholder="مرجع الماكينة (اختياري)" />
+          <input aria-label="آخر أربعة أرقام" className={inputCls} value={value.terminalPayment.cardLast4} onChange={(event) => onChange({ ...value, terminalPayment: { ...value.terminalPayment, cardLast4: event.target.value.replace(/\D/g, '').slice(0, 4) } })} placeholder="آخر 4 أرقام (اختياري)" inputMode="numeric" maxLength={4} />
         </div>
       )}
     </div>

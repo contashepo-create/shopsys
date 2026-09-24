@@ -54,7 +54,6 @@ export function WalletServicesPage() {
   const save = (creditLimitOverrideBy?: string) => {
     try {
       const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
-      if (terminal && !terminalPayment.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const chargeMinor = toMinor(charge || '0', cur.decimals)
       const op = postWalletService({
         type, provider, targetPhone,

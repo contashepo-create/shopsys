@@ -17,7 +17,6 @@ export function validateTerminalTransaction(transaction: PaymentTerminalTransact
   // branchId الفارغ يعني وضع الفرع الواحد، أما عند تعدد الفروع فيفرضه
   // Repository بمطابقة الماكينة والعملية قبل الحفظ.
   if (!Number.isSafeInteger(transaction.amountMinor) || transaction.amountMinor <= 0) errors.push('مبلغ عملية الدفع غير صالح')
-  if (!transaction.providerReference.trim()) errors.push('مرجع مزود الدفع مطلوب')
   if (!Number.isFinite(Date.parse(transaction.occurredAt))) errors.push('وقت عملية الدفع غير صالح')
   if (transaction.cardLast4 && !/^\d{4}$/.test(transaction.cardLast4)) errors.push('آخر أربعة أرقام من البطاقة غير صالحة')
   if (transaction.kind !== 'charge') {

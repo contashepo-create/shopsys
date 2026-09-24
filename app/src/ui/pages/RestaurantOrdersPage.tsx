@@ -106,7 +106,6 @@ export function RestaurantOrdersPage() {
     if (!settleOrder) return
     try {
       const terminal = availableTerminals.find((row) => row.id === terminalId)
-      if (terminalId && !terminalReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const sale = settleRestaurantOrder({
         orderId: settleOrder.id,
         payment: 'cash',
@@ -249,7 +248,7 @@ export function RestaurantOrdersPage() {
                   {treasuries.map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
                 </select>
               </Field>}
-              {terminalId && <><Field label="مرجع إيصال الماكينة *"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" maxLength={4} className={inputCls}/></Field></>}
+              {terminalId && <><Field label="مرجع إيصال الماكينة (اختياري)"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" maxLength={4} className={inputCls}/></Field></>}
             </div>
             <p className="text-[11px] text-slate-400">الضريبة والوصفات وخصم الخامات كلها عبر فاتورة الكاشير نفسها — قيد واحد متوازن.</p>
             <Btn onClick={settle} shortcut="F9" className="w-full">قفل الأمر وإصدار الفاتورة</Btn>

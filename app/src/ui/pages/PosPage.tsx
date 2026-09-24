@@ -474,7 +474,6 @@ export function PosPage() {
       const isSplitOrCredit = payment === 'credit' || (payment === 'cash' && creditRemainder > 0)
       const selectedTerminal = payment === 'terminal' ? activePaymentTerminals.find((row) => row.id === paymentTerminalId) : null
       if (payment === 'terminal' && !selectedTerminal) throw new Error('اختر ماكينة دفع نشطة')
-      if (payment === 'terminal' && !terminalReference.trim()) throw new Error('أدخل رقم مرجع إيصال ماكينة الدفع')
       if (terminalCardLast4 && !/^\d{4}$/.test(terminalCardLast4)) throw new Error('آخر أربعة أرقام يجب أن تكون 4 أرقام')
       const sale = postSale({
         lines: cart,

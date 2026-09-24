@@ -85,7 +85,6 @@ export function LabOrdersPage() {
   const save = (creditLimitOverrideBy?: string) => {
     try {
       const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
-      if (terminal && !terminalPayment.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const terminalInput = terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined
       const o = insuranceId
         ? registerInsuredLabOrder({
@@ -680,7 +679,6 @@ export function LabReferrersPage() {
   const doSettleClaims = (id: number, name: string) => {
     try {
       const terminal = paymentTerminals.find((row) => row.id === claimTerminal.terminalId)
-      if (terminal && !claimTerminal.providerReference.trim()) throw new Error('مرجع إيصال ماكينة الدفع مطلوب')
       const r = settleInsuranceClaims(id, terminal?.settlementAccountCode ?? claimTreasury, terminal ? { terminalId: terminal.id, providerReference: claimTerminal.providerReference.trim(), cardLast4: claimTerminal.cardLast4 || undefined } : undefined)
       toast.show(`حُصلت مطالبات ${name}: ${fmt(r.total)} عن ${r.count} مطالبة ✅`); setClaimTerminal({ terminalId: '', providerReference: '', cardLast4: '' })
     } catch (e) { toast.show((e as Error).message, 'error') }
