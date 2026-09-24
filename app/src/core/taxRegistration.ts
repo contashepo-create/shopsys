@@ -18,3 +18,20 @@ export function taxEnabled(policy: TaxRegistrationPolicy): boolean {
   if (errors.length) throw new Error(errors.join('، '))
   return policy.status === 'registered'
 }
+
+export type BusinessTaxStatus = 'registered' | 'exempt' | 'zero_rated'
+export interface BusinessTaxPolicy {
+  status: BusinessTaxStatus
+  configuredPercent: number
+  effectivePercent: number
+  canRecoverInputTax: boolean
+  disclosureAr: string
+}
+/** يفصل صفة المنشأة عن النسبة؛ فالمسجل بنسبة صفر ليس منشأة معفاة. */
+export function resolveBusinessTax(status: BusinessTaxStatus | undefined, configuredPercent: number): BusinessTaxPolicy {
+  if (!Number.isFinite(configuredPercent) || configuredPercent < 0 || configuredPercent > 100) throw new Error('نسبة الضريبة يجب أن تكون بين 0 و100')
+  const normalized = status ?? (configuredPercent > 0 ? 'registered' : 'zero_rated')
+  if (normalized === 'exempt') return { status: normalized, configuredPercent, effectivePercent: 0, canRecoverInputTax: false, disclosureAr: 'المنشأة معفاة ضريبياً' }
+  if (normalized === 'zero_rated') return { status: normalized, configuredPercent, effectivePercent: 0, canRecoverInputTax: true, disclosureAr: 'المنشأة مسجلة ضريبياً بنسبة صفر' }
+  return { status: normalized, configuredPercent, effectivePercent: configuredPercent, canRecoverInputTax: true, disclosureAr: configuredPercent === 0 ? 'المنشأة مسجلة ضريبياً بنسبة صفر' : `المنشأة مسجلة ضريبياً — النسبة ${configuredPercent}٪` }
+}

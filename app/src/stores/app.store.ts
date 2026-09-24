@@ -32,6 +32,8 @@ interface SetupState {
   modules: BusinessModule[]
   taxInclusive: boolean
   vatPercent: number
+  /** الصفة القانونية منفصلة عن النسبة: المسجل بنسبة صفر ليس معفى */
+  taxRegistrationStatus?: 'registered' | 'exempt' | 'zero_rated'
   accountingMode: 'simple' | 'full'
   /** السماح بالرصيد السالب في الخزائن والبنوك (طلب المالك — الافتراضي: ممنوع) */
   allowNegativeTreasury: boolean
@@ -194,6 +196,7 @@ export const useAppStore = create<AppState>()(
         modules: [],
         taxInclusive: true,
         vatPercent: 14,
+        taxRegistrationStatus: 'registered',
         accountingMode: 'simple',
         allowNegativeTreasury: false,
         allowNegativeStock: false,

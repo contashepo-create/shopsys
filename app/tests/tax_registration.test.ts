@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { taxEnabled, validateTaxRegistration } from '../src/core/taxRegistration.ts'
-describe('حالة التسجيل الضريبي', () => {
- it('يسمح لمنشأة غير مسجلة في دولة ضريبية', () => expect(taxEnabled({ status: 'not_registered', countryCode: 'EG' })).toBe(false))
- it('يتطلب رقماً للمنشأة المسجلة', () => expect(validateTaxRegistration({ status: 'registered', countryCode: 'EG' })).toContain('رقم التسجيل الضريبي مطلوب للمنشأة المسجلة'))
- it('يرفض رقم التسجيل عند عدم التسجيل', () => expect(validateTaxRegistration({ status: 'not_registered', countryCode: 'SA', registrationNumber: '123' })).toContain('لا يحفظ رقم ضريبي لمنشأة غير مسجلة'))
- it('يقبل تسجيلاً كاملاً', () => expect(taxEnabled({ status: 'registered', countryCode: 'EG', registrationNumber: '123456789', effectiveFrom: '2026-01-01' })).toBe(true))
+import { resolveBusinessTax } from '../src/core/taxRegistration.ts'
+
+describe('صفة تسجيل المنشأة الضريبية', () => {
+  it('يستخدم النسبة المسجلة للمنشأة المسجلة فقط', () => {
+    expect(resolveBusinessTax('registered', 14)).toMatchObject({ effectivePercent: 14, canRecoverInputTax: true })
+  })
+  it('يفصل المسجل بنسبة صفر عن المعفى', () => {
+    expect(resolveBusinessTax('zero_rated', 14)).toMatchObject({ effectivePercent: 0, canRecoverInputTax: true })
+    expect(resolveBusinessTax('exempt', 14)).toMatchObject({ effectivePercent: 0, canRecoverInputTax: false })
+    expect(resolveBusinessTax('registered', 0).disclosureAr).toContain('مسجلة')
+  })
+  it('يرفض النسب غير المنطقية', () => {
+    expect(() => resolveBusinessTax('registered', -1)).toThrow(/بين 0 و100/)
+  })
 })

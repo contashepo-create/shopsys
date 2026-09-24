@@ -10,6 +10,7 @@ import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES } from '../../core/activities.ts'
 import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, type FiscalYear } from '../../core/fiscal.ts'
 import { formatMinor } from '../../core/money.ts'
+import { resolveBusinessTax, type BusinessTaxStatus } from '../../core/taxRegistration.ts'
 import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 import { accountName } from './accountNames.ts'
 
@@ -21,6 +22,7 @@ export function GeneralSettingsPage() {
   const activity = ACTIVITY_TEMPLATES.find((a) => a.id === setup.activityId)
   const [vat, setVat] = useState(String(setup.vatPercent))
   const [taxInclusive, setTaxInclusive] = useState(setup.taxInclusive)
+  const [taxStatus, setTaxStatus] = useState<BusinessTaxStatus>(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
@@ -66,7 +68,7 @@ export function GeneralSettingsPage() {
 
   const saveTax = () => {
     useAppStore.setState((s) => ({
-      setup: { ...s.setup, vatPercent: Number(vat) || 0, taxInclusive },
+      setup: { ...s.setup, vatPercent: Number(vat) || 0, taxInclusive, taxRegistrationStatus: taxStatus },
     }))
     toast.show('تم حفظ إعدادات الضريبة')
   }
@@ -121,8 +123,9 @@ export function GeneralSettingsPage() {
           <Percent size={17} className="text-emerald-500" /> الضريبة ({country?.taxName ?? 'ضريبة القيمة المضافة'})
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="حالة تسجيل المنشأة"><select className={inputCls} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as BusinessTaxStatus)}><option value="registered">مسجلة ضريبياً</option><option value="zero_rated">مسجلة ضريبياً بنسبة صفر</option><option value="exempt">منشأة معفاة</option></select></Field>
           <Field label="النسبة ٪" hint="قابلة للتعديل دائماً — الضرائب تتغير بقرارات حكومية">
-            <input value={vat} onChange={(e) => setVat(e.target.value)} type="number" min={0} max={50} className={inputCls} />
+            <input value={taxStatus === 'registered' ? vat : '0'} onChange={(e) => setVat(e.target.value)} disabled={taxStatus !== 'registered'} type="number" min={0} max={50} className={inputCls} />
           </Field>
           <Field label="طريقة الاحتساب في الأسعار (القرار 6)">
             <div className="flex gap-2">
@@ -142,7 +145,7 @@ export function GeneralSettingsPage() {
             </div>
           </Field>
         </div>
-        <div className="flex justify-end mt-4"><Btn onClick={saveTax}>حفظ إعدادات الضريبة</Btn></div>
+        <div className="mt-3 text-xs text-slate-500">{resolveBusinessTax(taxStatus, Number(vat) || 0).disclosureAr} — ضريبة المدخلات {resolveBusinessTax(taxStatus, Number(vat) || 0).canRecoverInputTax ? 'قابلة للمعالجة حسب المستند' : 'لا تُسترد وتدخل التكلفة'}</div><div className="flex justify-end mt-4"><Btn onClick={saveTax}>حفظ إعدادات الضريبة</Btn></div>
       </section>
 
       {/* الأرصدة السالبة (طلب المالك) — النظام كله يحترم هذين المفتاحين */}
