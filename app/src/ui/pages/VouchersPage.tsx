@@ -51,7 +51,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, vehicles } = useDataStore()
+  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, vehicles } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -75,6 +75,7 @@ export function VouchersPage() {
   const [expBeneficiary, setExpBeneficiary] = useState('')
   const [expPayableAccount, setExpPayableAccount] = useState('2117')
   const [vehicleId, setVehicleId] = useState<number | null>(null)
+  const [costCenterId, setCostCenterId] = useState<number | null>(null)
   const [vehicleCostCategory, setVehicleCostCategory] = useState('maintenance')
   const [viewing, setViewing] = useState<Voucher | null>(null)
 
@@ -140,6 +141,7 @@ export function VouchersPage() {
     setExpBeneficiary('')
     setExpPayableAccount('2117')
     setVehicleId(null)
+    setCostCenterId(null)
     setVehicleCostCategory('maintenance')
     setOpen(true)
   }
@@ -152,6 +154,7 @@ export function VouchersPage() {
   // ربط السيارة خاص بمصروفات التشغيل/المصروفات المستحقة فقط، وليس بسداد
   // مورد أو راتب أو مسحوبات. مصروف فاتورة الشراء له حقله المستقل أدناه.
   const canLinkVehicle = kind === 'payment' && !isPurchaseExpense && (counter === '5108' || counter === '2117' || isCustomExpense)
+  const canLinkCostCenter = kind === 'payment' && !isPurchaseExpense && (counter.startsWith('5') || isCustomExpense)
 
   // خروج النقدية (سند صرف) عملية حساسة — اعتماد مشرف؛ القبض إدخال أموال يمر مباشرة
   const paymentApproval = useSupervisorApproval('trs.payment.approve')
@@ -183,6 +186,7 @@ export function VouchersPage() {
           payAccount: expPaidBy === 'treasury' ? treasury : null,
           beneficiaryName: expPaidBy === 'payable' ? expBeneficiary.trim() : null,
           payableAccountCode: expPaidBy === 'payable' ? expPayableAccount : null,
+          costCenterId,
           vehicleId,
           category: vehicleId != null ? vehicleCostCategory : undefined,
           date: new Date().toISOString().slice(0, 10),
@@ -199,6 +203,7 @@ export function VouchersPage() {
         description: desc.trim(),
         partyKind: needsParty ? (kind === 'receipt' ? 'customer' : 'supplier') : null,
         partyId: needsParty ? partyId : null,
+        costCenterId: canLinkCostCenter ? costCenterId : null,
         vehicleId: canLinkVehicle ? vehicleId : null,
         vehicleCostCategory: canLinkVehicle && vehicleId != null ? vehicleCostCategory : undefined,
         terminalPayment: kind === 'receipt' && selectedTerminal ? { terminalId: selectedTerminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
@@ -345,8 +350,14 @@ export function VouchersPage() {
               </div>
             )
           })()}
+          {canLinkCostCenter && !canLinkVehicle && <Field label="مركز التكلفة العام (اختياري)"><select value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className={inputCls}><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</select></Field>}
           {canLinkVehicle && (
-            <div className="grid sm:grid-cols-2 gap-2 rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 p-3">
+            <div className="grid sm:grid-cols-3 gap-2 rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 p-3">
+              <Field label="مركز التكلفة العام (اختياري)">
+                <select value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
+                  <option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}
+                </select>
+              </Field>
               <Field label="مركز تكلفة المركبة (اختياري)" hint="يظهر فقط مع مصروفات التشغيل/المصروفات المستحقة، وليس مع سداد المورد أو الراتب">
                 <select value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
                   <option value="">بدون مركبة</option>
@@ -377,7 +388,12 @@ export function VouchersPage() {
                   <Field label="حساب الاستحقاق"><select value={expPayableAccount} onChange={(e) => setExpPayableAccount(e.target.value)} className={inputCls}><option value="2117">مصاريف مستحقة (2117)</option><option value="2101">الموردون (2101)</option></select></Field>
                 </div>
               )}
-              <div className="grid sm:grid-cols-2 gap-2">
+              <div className="grid sm:grid-cols-3 gap-2">
+                <Field label="مركز التكلفة العام (اختياري)">
+                  <select value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
+                    <option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}
+                  </select>
+                </Field>
                 <Field label="مركز تكلفة السيارة (اختياري)" hint="سيظهر التحميل ضمن ربحية مركبة الأسطول؛ سيارات المعرض منفصلة">
                   <select value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
                     <option value="">بدون مركبة</option>

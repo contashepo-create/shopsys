@@ -76,6 +76,9 @@ export function expensesSummary(
 }
 
 export interface CostCenterExpenseRow {
+  /** المركز العام — مستقل عن المشروع ومركز تكلفة المركبة */
+  costCenterId?: number | null
+  /** مشروع المقاولات القديم/التشغيلي، ويمكن أن يظهر مع المركز العام معاً */
   projectId: number | null
   totalMinor: Minor
   paidMinor: Minor
@@ -83,38 +86,46 @@ export interface CostCenterExpenseRow {
   txCount: number
 }
 
-/** تحليل المصروفات الداخلية المرتبطة بالفواتير حسب مركز التكلفة وحالة السداد. */
+/** تحليل المصروفات الداخلية المرتبطة بالفواتير حسب المركز العام/المشروع وحالة السداد. */
 export interface CostCenterExpenseFilter extends ExpenseReportFilter {
+  costCenterId?: number | null | 'all'
   projectId?: number | null | 'all'
   settlement?: 'paid_now' | 'payable_later' | 'all'
 }
 
 export function invoiceExpensesByCostCenter(
-  documents: { date: string; internalExpenses?: { projectId?: number | null; amountMinor: Minor; settlement: 'paid_now' | 'payable_later' }[] }[],
+  documents: { date: string; internalExpenses?: { costCenterId?: number | null; projectId?: number | null; amountMinor: Minor; settlement: 'paid_now' | 'payable_later' }[] }[],
   filter: CostCenterExpenseFilter,
 ): { rows: CostCenterExpenseRow[]; totalMinor: Minor } {
-  const grouped = new Map<number | null, CostCenterExpenseRow>()
+  const grouped = new Map<string, CostCenterExpenseRow>()
   for (const document of documents) {
     if (!inPeriod(document.date, filter)) continue
     for (const expense of document.internalExpenses ?? []) {
+      const costCenterId = expense.costCenterId ?? null
       const projectId = expense.projectId ?? null
+      if (filter.costCenterId !== undefined && filter.costCenterId !== 'all' && costCenterId !== filter.costCenterId) continue
       if (filter.projectId !== undefined && filter.projectId !== 'all' && projectId !== filter.projectId) continue
       if (filter.settlement && filter.settlement !== 'all' && expense.settlement !== filter.settlement) continue
-      const row = grouped.get(projectId) ?? { projectId, totalMinor: 0, paidMinor: 0, accruedMinor: 0, txCount: 0 }
+      const key = `${costCenterId ?? 'none'}:${projectId ?? 'none'}`
+      let row = grouped.get(key)
+      if (!row) {
+        row = { projectId, totalMinor: 0, paidMinor: 0, accruedMinor: 0, txCount: 0 }
+        if (costCenterId != null) row.costCenterId = costCenterId
+      }
       row.totalMinor += expense.amountMinor
       if (expense.settlement === 'paid_now') row.paidMinor += expense.amountMinor
       else row.accruedMinor += expense.amountMinor
       row.txCount++
-      grouped.set(projectId, row)
+      grouped.set(key, row)
     }
   }
   const rows = [...grouped.values()].sort((a, b) => b.totalMinor - a.totalMinor)
   return { rows, totalMinor: rows.reduce((sum, row) => sum + row.totalMinor, 0) }
 }
 
-export function costCenterExpensesCsv(rows: CostCenterExpenseRow[], projectName: (id: number | null) => string): string {
+export function costCenterExpensesCsv(rows: CostCenterExpenseRow[], projectName: (id: number | null) => string, costCenterName: (id: number | null) => string = () => ''): string {
   const quote = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`
-  return ['مركز التكلفة,عدد الحركات,مدفوع,مستحق,الإجمالي', ...rows.map((row) => [projectName(row.projectId), row.txCount, row.paidMinor, row.accruedMinor, row.totalMinor].map(quote).join(','))].join('\n')
+  return ['مركز التكلفة العام,المشروع,عدد الحركات,مدفوع,مستحق,الإجمالي', ...rows.map((row) => [costCenterName(row.costCenterId ?? null) || 'بدون مركز عام', projectName(row.projectId), row.txCount, row.paidMinor, row.accruedMinor, row.totalMinor].map(quote).join(','))].join('\n')
 }
 
 export function expenseSummaryCsv(rows: ExpenseAccountRow[]): string {
@@ -140,22 +151,23 @@ export interface InvoiceExpenseCategoryRow {
 
 /** تحليل تشغيلي حسب نوع المصروف، ويشمل العمولات والضريبة وحالة الاستحقاق. */
 export function invoiceExpensesByCategory(
-  documents: { date: string; internalExpenses?: { label: string; accountCode: string; projectId?: number | null; amountMinor: Minor; settlement: 'paid_now' | 'payable_later'; taxTreatment?: 'exempt' | 'exclusive' | 'inclusive'; taxPercent?: number }[] }[],
+  documents: { date: string; internalExpenses?: { label: string; accountCode: string; costCenterId?: number | null; projectId?: number | null; amountMinor: Minor; settlement: 'paid_now' | 'payable_later'; taxTreatment?: 'exempt' | 'exclusive' | 'inclusive'; taxPercent?: number }[] }[],
   filter: ExpenseReportFilter,
 ): { rows: InvoiceExpenseCategoryRow[]; totalMinor: Minor; taxMinor: Minor } {
-  const grouped = new Map<string, InvoiceExpenseCategoryRow & { centers: Set<number> }>()
+  const grouped = new Map<string, InvoiceExpenseCategoryRow & { centers: Set<string> }>()
   for (const document of documents) {
     if (!inPeriod(document.date, filter)) continue
     for (const expense of document.internalExpenses ?? []) {
       const key = `${expense.accountCode}\u0000${expense.label}`
-      const row = grouped.get(key) ?? { label: expense.label, accountCode: expense.accountCode, totalMinor: 0, paidMinor: 0, accruedMinor: 0, taxMinor: 0, txCount: 0, costCenterCount: 0, centers: new Set<number>() }
+      const row = grouped.get(key) ?? { label: expense.label, accountCode: expense.accountCode, totalMinor: 0, paidMinor: 0, accruedMinor: 0, taxMinor: 0, txCount: 0, costCenterCount: 0, centers: new Set<string>() }
       const rate = Math.max(0, expense.taxPercent ?? 0)
       const tax = expense.taxTreatment === 'exclusive' ? Math.round(expense.amountMinor * rate / 100) : expense.taxTreatment === 'inclusive' && rate > 0 ? expense.amountMinor - Math.round(expense.amountMinor / (1 + rate / 100)) : 0
       row.totalMinor += expense.amountMinor
       row.taxMinor += tax
       if (expense.settlement === 'paid_now') row.paidMinor += expense.amountMinor
       else row.accruedMinor += expense.amountMinor
-      if (expense.projectId != null) row.centers.add(expense.projectId)
+      if (expense.projectId != null) row.centers.add(`project:${expense.projectId}`)
+      if (expense.costCenterId != null) row.centers.add(`general:${expense.costCenterId}`)
       row.txCount++
       grouped.set(key, row)
     }

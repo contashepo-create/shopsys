@@ -231,6 +231,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'settings', nameAr: 'الإعدادات', icon: Settings, color: 'slate',
     children: [
       { id: 'general', nameAr: 'عامة (بلد/عملة/ضريبة)', icon: Percent, path: '/settings/general' },
+      { id: 'cost-centers', nameAr: 'مراكز التكلفة وبنود المصروف', icon: Calculator, path: '/settings/cost-centers' },
       { id: 'profile', nameAr: 'حسابي (بياناتي ورقمي السري)', icon: UserCircle2, path: '/settings/profile' },
       { id: 'permissions', nameAr: 'المستخدمون والصلاحيات', icon: ShieldCheck, path: '/settings/permissions' },
       { id: 'audit', nameAr: 'سجل النشاطات (للمالك)', icon: ScrollText, path: '/settings/audit' },
