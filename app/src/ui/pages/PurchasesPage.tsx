@@ -41,14 +41,16 @@ interface DraftExpense {
   custodyFileId: number | null // ملف عهدة عند paidBy=custody
   beneficiaryName: string // الجهة عند paidBy=payable
   payableAccountCode: string // حساب الالتزام عند paidBy=payable
+  accountCode: string // حساب المصروف
+  costCenterId: number | null // مركز التكلفة العام
   vehicleId: number | null // مركز تكلفة مركبة الأسطول
 }
 
 const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'شحن وتفريغ', 'تحميل وتنزيل', 'عمولة مشتريات', 'رسوم بنكية', 'أخرى']
-const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', method: 'qty', paidBy: 'supplier', payAccount: '1101', custodyFileId: null, beneficiaryName: '', payableAccountCode: '2117', vehicleId: null }
+const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', method: 'qty', paidBy: 'supplier', payAccount: '1101', custodyFileId: null, beneficiaryName: '', payableAccountCode: '2117', accountCode: '5108', costCenterId: null, vehicleId: null }
 
 export function PurchasesPage() {
-  const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, treasuries, vehicles, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
+  const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, costCenters, expenseTemplates, treasuries, vehicles, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt, einvoice } = useAppStore()
   const navigate = useNavigate()
   const [today] = useState(() => new Date().toISOString().slice(0, 10))
@@ -157,6 +159,7 @@ export function PurchasesPage() {
   const [latePayableName, setLatePayableName] = useState('')
   const [latePayableAccount, setLatePayableAccount] = useState('2117')
   const [lateVehicleId, setLateVehicleId] = useState<number | null>(null)
+  const [lateCostCenterId, setLateCostCenterId] = useState<number | null>(null)
   const [latePayAccount, setLatePayAccount] = useState('1101')
   const [lateCustodyId, setLateCustodyId] = useState<number | null>(null)
 
@@ -233,11 +236,12 @@ export function PurchasesPage() {
         custodyFileId: latePaidBy === 'custody' ? lateCustodyId : null,
         beneficiaryName: latePaidBy === 'payable' ? latePayableName : null,
         payableAccountCode: latePaidBy === 'payable' ? latePayableAccount : null,
+        costCenterId: lateCostCenterId,
         vehicleId: lateVehicleId,
         date: new Date().toISOString().slice(0, 10),
       })
       setViewing(updated)
-      setLateName(''); setLateAmount(''); setLatePayableName(''); setLateVehicleId(null)
+      setLateName(''); setLateAmount(''); setLatePayableName(''); setLateVehicleId(null); setLateCostCenterId(null)
       toast.show('سُجّل المصروف — توزع على الأصناف وتحدثت تكلفتها وتولد قيده ✓')
     } catch (e) {
       toast.show((e as Error).message, 'error')
@@ -376,6 +380,8 @@ export function PurchasesPage() {
           custodyFileId: e.paidBy === 'custody' ? e.custodyFileId : null,
           beneficiaryName: e.paidBy === 'payable' ? e.beneficiaryName.trim() : undefined,
           payableAccountCode: e.paidBy === 'payable' ? e.payableAccountCode : undefined,
+          accountCode: e.accountCode,
+          costCenterId: e.costCenterId,
           vehicleId: e.vehicleId,
         })),
       paidMinor: paid ? toMinor(paid, cur.decimals) : 0,
@@ -699,6 +705,7 @@ export function PurchasesPage() {
                         placeholder="نولون، جمارك، شحن…"
                         className={inputCls}
                       />
+                      {expenseTemplates.some((row) => row.isActive) && <select className={`${inputCls} mt-1.5`} value="" onChange={(ev) => { const selected = expenseTemplates.find((row) => row.id === Number(ev.target.value)); if (selected) setExpenses((arr) => arr.map((x, j) => j === i ? { ...x, nameAr: selected.nameAr, accountCode: selected.accountCode } : x)) }}><option value="">اختيار بند محفوظ…</option>{expenseTemplates.filter((row) => row.isActive).map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}</select>}
                       <div className="flex flex-wrap gap-1 mt-1.5">
                         {EXPENSE_PRESETS.map((p2) => (
                           <button
@@ -730,6 +737,12 @@ export function PurchasesPage() {
                           </button>
                         ))}
                       </div>
+                    </Field>
+                    <Field label="مركز التكلفة العام" hint="مستقل عن المشروع وعن مركز تكلفة المركبة">
+                      <select value={e.costCenterId ?? ''} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, costCenterId: ev.target.value ? Number(ev.target.value) : null } : x)))} className={inputCls}>
+                        <option value="">بدون مركز عام</option>
+                        {costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}
+                      </select>
                     </Field>
                     <Field label="مركز تكلفة المركبة" hint="اختياري — يظهر كتحميل/إيراد داخلي في ربحية مركبة الأسطول">
                       <select value={e.vehicleId ?? ''} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, vehicleId: ev.target.value ? Number(ev.target.value) : null } : x)))} className={inputCls}>
@@ -980,6 +993,10 @@ export function PurchasesPage() {
                     </select>
                   </>
                 )}
+                <select value={lateCostCenterId ?? ''} onChange={(e) => setLateCostCenterId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-48`} title="مركز التكلفة العام">
+                  <option value="">بدون مركز عام</option>
+                  {costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}
+                </select>
                 <select value={lateVehicleId ?? ''} onChange={(e) => setLateVehicleId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-48`} title="مركز تكلفة السيارة">
                   <option value="">🚚 بدون مركز تكلفة مركبة</option>
                   {vehicles.map((v) => <option key={v.id} value={v.id}>🚚 {v.plateNumber} — {v.vehicleType}</option>)}
@@ -1095,6 +1112,7 @@ export function PurchasesPage() {
                 {editExpenses.map((expense, i) => (
                   <Field key={`${expense.nameAr}-${i}`} label={`${expense.nameAr} · ${expense.costTreatment === 'period' ? 'مصروف فترة' : 'تكلفة مخزون'}`} hint={expense.paidBy === 'supplier' ? 'على حساب المورد' : expense.paidBy === 'custody' ? 'من العهدة' : expense.paidBy === 'payable' ? `مستحق لـ ${expense.beneficiaryName ?? 'جهة'}` : 'مدفوع من الخزينة'}>
                     <input type="number" min="0" step="0.01" value={expense.amountMinor / 10 ** cur.decimals} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, amountMinor: toMinor(e.target.value, cur.decimals) } : row))} className={inputCls} dir="ltr" />
+                    <select aria-label="مركز التكلفة العام لمصروف الشراء" value={expense.costCenterId ?? ''} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, costCenterId: e.target.value ? Number(e.target.value) : null } : row))} className={inputCls}><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</select>
                   </Field>
                 ))}
               </div>
