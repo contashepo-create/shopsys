@@ -28,6 +28,8 @@ export interface JournalLine {
   debit: Minor
   credit: Minor
   note?: string
+  /** مركز التكلفة العام على سطر المصروف؛ لا يخلط مع مركز تكلفة المركبة */
+  costCenterId?: number | null
 }
 
 export type SourceType =

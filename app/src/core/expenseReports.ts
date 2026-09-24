@@ -176,6 +176,38 @@ export function invoiceExpensesByCategory(
   return { rows, totalMinor: rows.reduce((sum, row) => sum + row.totalMinor, 0), taxMinor: rows.reduce((sum, row) => sum + row.taxMinor, 0) }
 }
 
+
+export interface JournalCostCenterExpenseRow {
+  costCenterId: number
+  accountCode: string
+  totalMinor: Minor
+  txCount: number
+}
+
+/** قيود المصروفات التي تحمل وسم مركز عام فعلياً، بما فيها الأنشطة خارج الفواتير. */
+export function journalExpensesByCostCenter(
+  journal: JournalEntry[],
+  filter: ExpenseReportFilter & { costCenterId?: number | null | 'all' },
+  customExpenseCodes: ReadonlySet<string>,
+): { rows: JournalCostCenterExpenseRow[]; totalMinor: Minor } {
+  const grouped = new Map<string, JournalCostCenterExpenseRow>()
+  for (const entry of journal) {
+    if (!inPeriod(entry.date, filter)) continue
+    if (filter.sourceType && entry.sourceType !== filter.sourceType) continue
+    for (const line of entry.lines) {
+      if (line.costCenterId == null || !isExpenseCode(line.accountCode, customExpenseCodes)) continue
+      if (filter.costCenterId !== undefined && filter.costCenterId !== 'all' && line.costCenterId !== filter.costCenterId) continue
+      const key = `${line.costCenterId}:${line.accountCode}`
+      const row = grouped.get(key) ?? { costCenterId: line.costCenterId, accountCode: line.accountCode, totalMinor: 0, txCount: 0 }
+      row.totalMinor += line.debit - line.credit
+      row.txCount++
+      grouped.set(key, row)
+    }
+  }
+  const rows = [...grouped.values()].sort((a, b) => b.totalMinor - a.totalMinor)
+  return { rows, totalMinor: rows.reduce((sum, row) => sum + row.totalMinor, 0) }
+}
+
 export function invoiceExpenseCategoriesCsv(rows: InvoiceExpenseCategoryRow[]): string {
   const quote = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`
   return ['النوع,الحساب,الحركات,مراكز التكلفة,مدفوع,مستحق,الضريبة,الإجمالي', ...rows.map((row) => [row.label, row.accountCode, row.txCount, row.costCenterCount, row.paidMinor, row.accruedMinor, row.taxMinor, row.totalMinor].map(quote).join(','))].join('\n')

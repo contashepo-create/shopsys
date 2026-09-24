@@ -2778,6 +2778,7 @@ export const useDataStore = create<DataState>()(
           settlement: (expense.paidBy ?? 'supplier') === 'treasury' || expense.paidBy === 'custody' ? 'paid_now' as const : 'payable_later' as const,
           treasury: expense.paidBy === 'custody' ? CUSTODY_ACCOUNT : (expense.payAccount ?? inv.treasury ?? '1101'),
           payableAccountCode: expense.paidBy === 'supplier' ? '2101' : (expense.payableAccountCode ?? '2117'),
+          costCenterId: expense.costCenterId ?? null,
           taxTreatment: inv.purchaseExpenseTaxRecoverable ? (expense.taxTreatment ?? 'exempt') : 'exempt' as const, taxPercent: expense.taxPercent ?? 0, affectsProfit: true, landedCostAllocation: 'none' as const,
         })), inv.treasury ?? '1101')
         entryLines.push(...periodExpenseLines)
@@ -4403,6 +4404,8 @@ export const useDataStore = create<DataState>()(
         if (args.partyKind === 'customer' && args.partyId != null && !state.customers.some((c) => c.id === args.partyId)) throw new Error('العميل غير موجود — سجّله أولاً')
         if (args.partyKind === 'supplier' && args.partyId != null && !state.suppliers.some((s) => s.id === args.partyId)) throw new Error('المورد غير موجود — سجّله أولاً')
         if (args.costCenterId != null && !state.costCenters.some((center) => center.id === args.costCenterId && center.isActive)) throw new Error('مركز التكلفة العام غير موجود أو غير نشط')
+        if (args.costCenterId != null && args.kind !== 'payment') throw new Error('مركز التكلفة العام في السندات مرتبط بمصروفات الصرف فقط')
+        if (args.costCenterId != null && args.kind === 'payment' && !args.counterAccountCode.startsWith('5') && !state.customAccounts.some((account) => account.code === args.counterAccountCode && account.rootType === 'expenses')) throw new Error('مركز التكلفة العام لا يرتبط إلا بحساب مصروف')
         if (args.vehicleId != null && !state.vehicles.some((vehicle) => vehicle.id === args.vehicleId)) throw new Error('مركبة مركز التكلفة غير موجودة')
         if (args.vehicleId != null && args.kind !== 'payment') throw new Error('مركز تكلفة المركبة متاح لسندات الصرف فقط')
 
@@ -4418,12 +4421,13 @@ export const useDataStore = create<DataState>()(
         }
 
         // القيد حسب نوع السند — كله عبر دوال النواة المتوازنة بنيوياً
-        const entryLines =
+        const baseEntryLines =
           args.kind === 'receipt'
             ? buildReceiptVoucherEntry(args.treasury, args.counterAccountCode, args.amountMinor, args.description)
             : args.kind === 'payment'
               ? buildPaymentVoucherEntry(args.treasury, args.counterAccountCode, args.amountMinor, args.description)
               : buildTransferEntry(args.treasury, args.counterAccountCode as TreasuryAccount, args.amountMinor, args.description, args.feeMinor ?? 0)
+        const entryLines = args.costCenterId == null ? baseEntryLines : baseEntryLines.map((line) => line.debit > 0 && line.accountCode === args.counterAccountCode ? { ...line, costCenterId: args.costCenterId } : line)
 
         const voucherId = nextId(state.vouchers)
         const entryId = nextId(state.journal)
@@ -5041,7 +5045,7 @@ export const useDataStore = create<DataState>()(
           expensePayments: [],
           inputVatMinor: keptInputVat,
         })
-        newEntryLines.push(...buildInternalExpenseLines(periodExpenses.map((expense) => ({ id: crypto.randomUUID(), label: expense.nameAr, amountMinor: expense.amountMinor, accountCode: expense.accountCode ?? '5108', settlement: 'payable_later' as const, payableAccountCode: '2101', taxTreatment: 'exempt' as const, taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' as const })), args.treasury))
+        newEntryLines.push(...buildInternalExpenseLines(periodExpenses.map((expense) => ({ id: crypto.randomUUID(), label: expense.nameAr, amountMinor: expense.amountMinor, accountCode: expense.accountCode ?? '5108', settlement: 'payable_later' as const, payableAccountCode: '2101', costCenterId: expense.costCenterId ?? null, taxTreatment: 'exempt' as const, taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' as const })), args.treasury))
         assertBalanced(newEntryLines)
         const now = new Date().toISOString()
 
