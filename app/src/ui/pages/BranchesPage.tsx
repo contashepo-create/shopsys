@@ -20,7 +20,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 export function BranchesPage() {
   const {
     branches, warehouses, treasuries, addBranch, updateBranch, removeBranch,
-    sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders,
+    sales, saleReturns, purchases, purchaseReturns, transfers, items, journal, productionOrders, processingOrders,
   } = useDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
@@ -43,7 +43,7 @@ export function BranchesPage() {
         accountBalances.set(l.accountCode, (accountBalances.get(l.accountCode) ?? 0) + l.debit - l.credit)
       }
     }
-    const warehouseStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders))
+    const warehouseStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders))
     return compareBranches({
       branches,
       sales,
@@ -53,7 +53,7 @@ export function BranchesPage() {
       warehouseStock,
       itemCostById: new Map(items.map((it) => [it.id, it.costMinor])),
     })
-  }, [branches, sales, saleReturns, purchases, purchaseReturns, transfers, items, warehouses, journal])
+  }, [branches, sales, saleReturns, purchases, purchaseReturns, transfers, items, warehouses, journal, productionOrders, processingOrders])
 
   /* ─── إنشاء/تعديل فرع ─── */
   const [open, setOpen] = useState(false)

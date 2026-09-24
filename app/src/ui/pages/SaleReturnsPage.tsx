@@ -659,7 +659,7 @@ export function SaleReturnsPage() {
                 التالي <ChevronLeft size={14} />
               </Btn>
             ) : (
-              <Btn onClick={submit} disabled={!preview}>↩️ تأكيد وترحيل المرتجع</Btn>
+              <Btn onClick={submit} shortcut="F9" disabled={!preview}>↩️ تأكيد وترحيل المرتجع</Btn>
             )}
           </div>
         </div>

@@ -365,7 +365,7 @@ export function SubcontractorsPage() {
                 <input value={certRecovery} onChange={(e) => setCertRecovery(e.target.value)} inputMode="decimal" className={inputCls} />
               </Field>
             )}
-            <Btn onClick={saveCert} className="w-full" disabled={certMode === 'percent' ? !certPercent : !certAmount}>اعتماد الشهادة</Btn>
+            <Btn onClick={saveCert} shortcut="F9" className="w-full" disabled={certMode === 'percent' ? !certPercent : !certAmount}>اعتماد الشهادة</Btn>
           </div>
         )}
       </Modal>
@@ -376,7 +376,7 @@ export function SubcontractorsPage() {
             <div className="text-[12px] text-slate-500">مستحقه الآن: <b className="text-rose-500">{fmt(stats(payFor).dueNow)}</b> (صافي الشهادات − المدفوع)</div>
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={payTreasury} onChange={setPayTreasury} /></Field>
-            <Btn onClick={savePay} className="w-full">صرف الدفعة</Btn>
+            <Btn onClick={savePay} shortcut="F9" className="w-full">صرف الدفعة</Btn>
           </div>
         )}
       </Modal>
@@ -390,7 +390,7 @@ export function SubcontractorsPage() {
             </div>
             <Field label={`قيمة الدفعة المقدمة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={advTreasury} onChange={setAdvTreasury} /></Field>
-            <Btn onClick={saveAdvance} className="w-full">صرف الدفعة المقدمة</Btn>
+            <Btn onClick={saveAdvance} shortcut="F9" className="w-full">صرف الدفعة المقدمة</Btn>
           </div>
         )}
       </Modal>

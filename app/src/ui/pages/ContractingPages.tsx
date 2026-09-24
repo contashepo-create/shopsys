@@ -539,7 +539,7 @@ export function ProjectsPage() {
             </label>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setExtractFor(null)}>إلغاء</Btn>
-              <Btn onClick={saveExtract} disabled={exMode === 'lines' ? exLinesPreview.grossMinor <= 0 : !exGross}>تسجيل المستخلص وقيده</Btn>
+              <Btn onClick={saveExtract} shortcut="F9" disabled={exMode === 'lines' ? exLinesPreview.grossMinor <= 0 : !exGross}>تسجيل المستخلص وقيده</Btn>
             </div>
           </div>
         )}
@@ -578,7 +578,7 @@ export function ProjectsPage() {
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setCostFor(null)}>إلغاء</Btn>
-              <Btn onClick={saveCost} disabled={!costAmount}>تسجيل التكلفة</Btn>
+              <Btn onClick={saveCost} shortcut="F9" disabled={!costAmount}>تسجيل التكلفة</Btn>
             </div>
           </div>
         )}
@@ -663,7 +663,7 @@ export function ProjectsPage() {
             </div>
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="طريقة التحصيل"><div className="space-y-2"><TerminalPaymentPicker value={advTerminal} onChange={setAdvTerminal}/>{!advTerminal.terminalId && <TreasuryPicker value={advTreasury} onChange={setAdvTreasury} />}</div></Field>
-            <Btn onClick={saveAdvance} className="w-full" disabled={!advAmount}>استلام الدفعة</Btn>
+            <Btn onClick={saveAdvance} shortcut="F9" className="w-full" disabled={!advAmount}>استلام الدفعة</Btn>
           </div>
         )}
       </Modal>
@@ -722,7 +722,7 @@ export function ProjectsPage() {
             <Field label="طريقة التحصيل"><div className="space-y-2"><TerminalPaymentPicker value={releaseTerminal} onChange={setReleaseTerminal}/>{!releaseTerminal.terminalId && <TreasuryPicker value={releaseTreasury} onChange={setReleaseTreasury} compact />}</div></Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setReleaseFor(null)}>إلغاء</Btn>
-              <Btn onClick={doRelease}>🏁 تحصيل وإقفال</Btn>
+              <Btn onClick={doRelease} shortcut="F9">🏁 تحصيل وإقفال</Btn>
             </div>
           </div>
         )}
@@ -774,7 +774,7 @@ export function ProjectsPage() {
             </div>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setCommFor(null)}>إغلاق</Btn>
-              <Btn onClick={saveProjectCommission} disabled={!commEmpId || !commAmount.trim()}>💾 استحقاق العمولة</Btn>
+              <Btn onClick={saveProjectCommission} shortcut="F9" disabled={!commEmpId || !commAmount.trim()}>💾 استحقاق العمولة</Btn>
             </div>
           </div>
         )}

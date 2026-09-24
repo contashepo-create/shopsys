@@ -405,7 +405,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Field label="إلى أي خزينة؟"><TreasuryPicker value={repayTreasury} onChange={setRepayTreasury} /></Field>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setRepayOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveRepayment} disabled={!repayEmployeeId || !repayAmount.trim()}>💾 تسجيل السداد</Btn>
+                <Btn onClick={saveRepayment} shortcut="F9" disabled={!repayEmployeeId || !repayAmount.trim()}>💾 تسجيل السداد</Btn>
               </div>
             </div>
           </Modal>
@@ -427,7 +427,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </Field>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setAdvOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveAdvance} disabled={!advEmployeeId || !advAmount.trim()}>💾 صرف السلفة</Btn>
+                <Btn onClick={saveAdvance} shortcut="F9" disabled={!advEmployeeId || !advAmount.trim()}>💾 صرف السلفة</Btn>
               </div>
             </div>
           </Modal>
@@ -524,7 +524,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setDedOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveDeduction} disabled={!dedEmployeeId || !dedAmount.trim() || !dedReason.trim()}>💾 تسجيل الخصم</Btn>
+                <Btn onClick={saveDeduction} shortcut="F9" disabled={!dedEmployeeId || !dedAmount.trim() || !dedReason.trim()}>💾 تسجيل الخصم</Btn>
               </div>
             </div>
           </Modal>
@@ -650,7 +650,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setComOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveCommission} disabled={!comEmployeeId || !comAmount.trim() || !comDesc.trim()}>💾 استحقاق العمولة</Btn>
+                <Btn onClick={saveCommission} shortcut="F9" disabled={!comEmployeeId || !comAmount.trim() || !comDesc.trim()}>💾 استحقاق العمولة</Btn>
               </div>
             </div>
           </Modal>
@@ -953,7 +953,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setRunOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveRun} disabled={draft.length === 0 || draftTotals.net <= 0}>💾 ترحيل المسير وتوليد القيد</Btn>
+            <Btn onClick={saveRun} shortcut="F9" disabled={draft.length === 0 || draftTotals.net <= 0}>💾 ترحيل المسير وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>

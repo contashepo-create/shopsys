@@ -344,7 +344,7 @@ export function InstallmentsPage() {
                   <select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select>
                   {!terminalId && <TreasuryPicker value={payTreasury} onChange={setPayTreasury} compact />}
                   {terminalId && <><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls} placeholder="مرجع الماكينة *"/><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls} placeholder="آخر 4 أرقام"/></>}
-                  <Btn onClick={pay} disabled={!payAmount.trim()}>💾 تحصيل وتوليد القيد</Btn>
+                  <Btn onClick={pay} shortcut="F9" disabled={!payAmount.trim()}>💾 تحصيل وتوليد القيد</Btn>
                 </div>
                 {liveProgress.nextDue && (
                   <button onClick={() => setPayAmount(String((liveProgress.nextDue!.amountMinor - liveProgress.nextDue!.paidMinor) / 10 ** cur.decimals))} className="text-[11px] text-emerald-600 font-bold hover:underline">

@@ -28,11 +28,11 @@ describe('التحكم بلوحة المفاتيح', () => {
     fireEvent.keyDown(second, { key: 'ArrowUp' }); expect(document.activeElement).toBe(first)
   })
 
-  it('يخصص F9 للمسودة وF8 للترحيل خارج الكاشير', () => {
+  it('يخصص F9 للترحيل وF8 للمسودة خارج الكاشير', () => {
     let draft = 0, posted = 0
     render(<MemoryRouter initialEntries={['/purchases/invoices/new']}><KeyboardNavigation/><button onClick={() => draft++}>حفظ مسودة</button><button onClick={() => posted++}>اعتماد وترحيل</button></MemoryRouter>)
-    fireEvent.keyDown(document, { key: 'F9' }); expect(draft).toBe(1); expect(posted).toBe(0)
-    fireEvent.keyDown(document, { key: 'F8' }); expect(posted).toBe(1)
+    fireEvent.keyDown(document, { key: 'F9' }); expect(posted).toBe(1); expect(draft).toBe(0)
+    fireEvent.keyDown(document, { key: 'F8' }); expect(draft).toBe(1)
   })
 
   it('يفتح F3 فاتورة شراء جديدة من قسم المشتريات', () => {

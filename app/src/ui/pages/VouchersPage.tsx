@@ -335,7 +335,7 @@ export function VouchersPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!counter || !amount.trim() || (needsParty && !partyId) || (isPurchaseExpense && (!purchaseId || !desc.trim()))}>💾 حفظ السند</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!counter || !amount.trim() || (needsParty && !partyId) || (isPurchaseExpense && (!purchaseId || !desc.trim()))}>💾 حفظ السند</Btn>
           </div>
         </div>
       </Modal>

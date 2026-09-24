@@ -808,7 +808,7 @@ export function PurchasesPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!preview || !supplierId}>🚀 ترحيل الفاتورة</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!preview || !supplierId}>🚀 ترحيل الفاتورة</Btn>
           </div>
         </div>
       </Modal>
@@ -874,7 +874,7 @@ export function PurchasesPage() {
               </div>
             )}
             {viewing.approvedBy&&<div className="text-xs font-bold text-violet-600">اعتماد المصروفات الحساسة: {viewing.approvedBy}</div>}
-            {purchaseExpensePayables.filter(p=>p.purchaseId===viewing.id&&p.status!=='paid').map(payable=>{const remaining=payable.amountMinor-payable.paidMinor;return <div key={payable.id} className="p-3 rounded-xl border border-violet-400/30 bg-violet-500/5 grid md:grid-cols-4 gap-2 items-end"><div><b>{payable.beneficiaryName}</b><div className="text-xs text-slate-500">{payable.description} · متبقي {fmt(remaining)}</div></div><input className={inputCls} value={payableAmount} onChange={e=>setPayableAmount(e.target.value)} placeholder={`كامل ${fmt(remaining)}`}/><TreasuryPicker value={payableTreasury} onChange={setPayableTreasury}/><Btn onClick={()=>settleExpensePayable(payable.id,remaining)}>سند صرف وإقفال</Btn></div>})}
+            {purchaseExpensePayables.filter(p=>p.purchaseId===viewing.id&&p.status!=='paid').map(payable=>{const remaining=payable.amountMinor-payable.paidMinor;return <div key={payable.id} className="p-3 rounded-xl border border-violet-400/30 bg-violet-500/5 grid md:grid-cols-4 gap-2 items-end"><div><b>{payable.beneficiaryName}</b><div className="text-xs text-slate-500">{payable.description} · متبقي {fmt(remaining)}</div></div><input className={inputCls} value={payableAmount} onChange={e=>setPayableAmount(e.target.value)} placeholder={`كامل ${fmt(remaining)}`}/><TreasuryPicker value={payableTreasury} onChange={setPayableTreasury}/><Btn onClick={()=>settleExpensePayable(payable.id,remaining)} shortcut="F9">سند صرف وإقفال</Btn></div>})}
             <div className="flex flex-wrap gap-5 font-bold">
               <span>البضاعة: {fmt(viewing.goodsTotalMinor)}</span>
               <span className="text-amber-600">المصاريف: {fmt(viewing.expensesTotalMinor)}</span>
@@ -942,7 +942,7 @@ export function PurchasesPage() {
                     ))}
                   </select>
                 )}
-                <Btn variant="soft" onClick={saveLateExpense} disabled={!lateName.trim() || !(Number(lateAmount) > 0)}>➕ تسجيل المصروف</Btn>
+                <Btn variant="soft" onClick={saveLateExpense} shortcut="F9" disabled={!lateName.trim() || !(Number(lateAmount) > 0)}>➕ تسجيل المصروف</Btn>
               </div>
             </div>
 
@@ -1084,7 +1084,7 @@ export function PurchasesPage() {
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setEditing(null)}>إلغاء</Btn>
-              <Btn onClick={saveInvoiceEdit} disabled={!editReason.trim() || !editLines.length || editLines.some((l) => !(Number(l.qty) > 0))}>💾 حفظ التعديل</Btn>
+              <Btn onClick={saveInvoiceEdit} shortcut="F9" disabled={!editReason.trim() || !editLines.length || editLines.some((l) => !(Number(l.qty) > 0))}>💾 حفظ التعديل</Btn>
             </div>
           </div>
         )}

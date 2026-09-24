@@ -271,7 +271,7 @@ export function CustomersPage() {
             )}
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setRedeeming(null)}>إلغاء</Btn>
-              <Btn onClick={doRedeem} disabled={!(Number(redeemPts) > 0)}>🎁 استبدال وتوليد القيد</Btn>
+              <Btn onClick={doRedeem} shortcut="F9" disabled={!(Number(redeemPts) > 0)}>🎁 استبدال وتوليد القيد</Btn>
             </div>
           </div>
         )}

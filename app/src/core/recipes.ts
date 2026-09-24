@@ -120,7 +120,7 @@ export interface ProductionOrder {
   outputLotNumber?: string | null
   ingredientsCostMinor: Minor
   /** لقطة الخامات الفعلية وتكلفتها وقت الترحيل للتدقيق والطباعة */
-  ingredientItems?: { itemId: number; qty: number; unitCostMinor: Minor; totalCostMinor: Minor }[]
+  ingredientItems?: { itemId: number; qty: number; warehouseId?: number | null; unitCostMinor: Minor; totalCostMinor: Minor }[]
   overheadMinor: Minor
   overheadItems?: ProductionExpense[]
   totalCostMinor: Minor

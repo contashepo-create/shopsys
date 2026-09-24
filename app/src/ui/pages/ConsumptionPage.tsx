@@ -203,7 +203,7 @@ export function ConsumptionPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save}>📦 ترحيل الصرف وتوليد القيد</Btn>
+            <Btn onClick={save} shortcut="F9">📦 ترحيل الصرف وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>

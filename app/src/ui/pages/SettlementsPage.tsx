@@ -154,7 +154,7 @@ export function SettlementsPage() {
           <Field label="سبب التسوية" hint="إلزامي — يظهر في القيد وسجل المراجعة">
             <input value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls} placeholder="مثال: جرد نهاية الشهر / اتفاق مع العميل على خصم…" />
           </Field>
-          <Btn onClick={submit} disabled={!refId || actualMinor == null || !reason.trim()} className="w-full">ترحيل التسوية</Btn>
+          <Btn onClick={submit} shortcut="F9" disabled={!refId || actualMinor == null || !reason.trim()} className="w-full">ترحيل التسوية</Btn>
         </div>
 
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">

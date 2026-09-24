@@ -62,7 +62,7 @@ export function ItemsPage() {
   }, [categories])
 
   const warehouseStock = useMemo(
-    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders)),
+    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)),
     [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns],
   )
   const stockInWarehouse = useCallback((warehouseId: number, itemId: number) => warehouseStock.get(warehouseId)?.get(itemId) ?? 0, [warehouseStock])
@@ -724,7 +724,7 @@ export function ItemsPage() {
               </div>
               {/* أمر التعديل: تفصيل الرصيد بكل مخزن داخل معاينة الصنف */}
               {warehouses.length > 1 && (() => {
-                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders))
+                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders))
                 return (
                   <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
                     <div className="px-4 py-2 text-[11.5px] font-black text-slate-500 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">🏬 الرصيد بكل مخزن</div>

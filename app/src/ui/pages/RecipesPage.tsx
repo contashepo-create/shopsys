@@ -8,21 +8,22 @@ import type { ProductionExpense } from '../../core/recipes.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { buildWarehouseDocs, computeWarehouseStock } from '../../core/transfers.ts'
 
-type MaterialRow = { id: string; itemId: number; code: string; query: string; qty: string; unitFactor: number; unitName: string }
+type MaterialRow = { id: string; itemId: number; code: string; query: string; qty: string; unitFactor: number; unitName: string; warehouseId?: number | null }
 type Tab = 'materials' | 'expenses'
 
 export function RecipesPage() {
-  const { items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, recipes, customAccounts, addCustomAccount, addRecipe, postProduction } = useDataStore()
+  const { items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, recipes, customAccounts, addCustomAccount, addRecipe, postProduction } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
   const activeItems = useMemo(() => items.filter((item) => item.isActive), [items])
-  const warehouseStock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders])
-  const warehouseQty = (itemId: number) => warehouseStock.get(ingredientWarehouseId)?.get(itemId) ?? 0
+  const warehouseStock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders])
   const [creating, setCreating] = useState(false)
   const [productId, setProductId] = useState(0)
   const [ingredientWarehouseId, setIngredientWarehouseId] = useState<number>(() => setup.defaultWarehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? warehouses[0]?.id ?? 0)
   const [outputWarehouseId, setOutputWarehouseId] = useState<number>(() => setup.defaultWarehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? warehouses[0]?.id ?? 0)
+  const warehouseQty = (itemId: number, warehouseId = ingredientWarehouseId) => warehouseId ? (warehouseStock.get(warehouseId)?.get(itemId) ?? 0) : warehouses.reduce((total, warehouse) => total + (warehouseStock.get(warehouse.id)?.get(itemId) ?? 0), 0)
+  const materialGrid = ingredientWarehouseId === 0 ? 'grid-cols-[110px_minmax(180px,1fr)_150px_130px_120px_110px_36px]' : 'grid-cols-[110px_minmax(180px,1fr)_130px_120px_110px_36px]'
   const [outputQty, setOutputQty] = useState('')
   const [outputUnitFactor, setOutputUnitFactor] = useState(1)
   const [tab, setTab] = useState<Tab>('materials')
@@ -33,6 +34,7 @@ export function RecipesPage() {
   const [outputLotNumber, setOutputLotNumber] = useState('')
   const [productionDate, setProductionDate] = useState(new Date().toISOString().slice(0, 10))
   const [strictBalance, setStrictBalance] = useState(true)
+  const [allowNegativeIngredients, setAllowNegativeIngredients] = useState(() => localStorage.getItem('shopsys:manufacturing:allow-negative-stock') === 'true')
   const [varianceReason, setVarianceReason] = useState('')
   const [quickOpen, setQuickOpen] = useState(false)
   const [quickCode, setQuickCode] = useState('')
@@ -69,6 +71,10 @@ export function RecipesPage() {
     return activeItems.find((item) => item.id !== productId && [String(item.id), item.sku, ...(item.barcodes ?? []), item.nameAr, itemToken(item.id)].filter(Boolean).some((value) => String(value).toLowerCase() === normalized))
   }
   const patchMaterial = (id: string, patch: Partial<MaterialRow>) => setMaterials((rows) => rows.map((row) => row.id === id ? { ...row, ...patch } : row))
+  const changeIngredientWarehouse = (warehouseId: number) => {
+    setIngredientWarehouseId(warehouseId)
+    if (warehouseId !== 0) setMaterials((rows) => rows.map((row) => ({ ...row, warehouseId: null })))
+  }
   const chooseMaterial = (rowId: string, itemId: number) => {
     const item = items.find((candidate) => candidate.id === itemId)
     if (!item) return
@@ -96,7 +102,7 @@ export function RecipesPage() {
     if (!recipe) return
     const outputItem = items.find((item) => item.id === recipe.productItemId)
     setProductId(recipe.productItemId); setOutputQty(String(recipe.yieldQty)); setOutputUnitFactor(1)
-    setMaterials(recipe.ingredients.map((ingredient) => { const item = items.find((candidate) => candidate.id === ingredient.itemId); return { id: crypto.randomUUID(), itemId: ingredient.itemId, code: item?.sku || item?.barcodes?.[0] || String(item?.id ?? ''), query: itemToken(ingredient.itemId), qty: String(ingredient.qty), unitFactor: 1, unitName: item?.baseUnit ?? '' } }))
+    setMaterials(recipe.ingredients.map((ingredient) => { const item = items.find((candidate) => candidate.id === ingredient.itemId); return { id: crypto.randomUUID(), itemId: ingredient.itemId, code: item?.sku || item?.barcodes?.[0] || String(item?.id ?? ''), query: itemToken(ingredient.itemId), qty: String(ingredient.qty), unitFactor: 1, unitName: item?.baseUnit ?? '', warehouseId: ingredientWarehouseId || null } }))
     setNotes(recipe.notes); setTab('materials'); toast.show(`تم تحميل تركيبة ${outputItem?.nameAr ?? ''} — عدّل الكميات ثم رحّل`)
   }
   const saveAsRecipe = () => {
@@ -116,8 +122,8 @@ export function RecipesPage() {
     try {
       if (strictBalance && Math.abs(variance) > 0.0001) throw new Error('إجمالي الخامات يجب أن يساوي كمية الناتج — عطّل المطابقة الصارمة فقط عند وجود هالك أو تغير وزن')
       if (!strictBalance && Math.abs(variance) > 0.0001 && !varianceReason.trim()) throw new Error('اكتب سبب فرق الوزن/الهالك قبل الترحيل')
-      const ingredientRows = materials.filter((row) => row.itemId && Number(row.qty) > 0).map((row) => ({ itemId: row.itemId, qty: Number(row.qty) * row.unitFactor }))
-      const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, ingredientWarehouseId, outputWarehouseId, date: productionDate, outputExpiryDate: outputExpiryDate || null, outputLotNumber: outputLotNumber || null, notes: [notes, varianceReason && `سبب فرق الكمية: ${varianceReason}`].filter(Boolean).join(' — ') })
+      const ingredientRows = materials.filter((row) => row.itemId && Number(row.qty) > 0).map((row) => ({ itemId: row.itemId, qty: Number(row.qty) * row.unitFactor, warehouseId: row.warehouseId ?? (ingredientWarehouseId || null) }))
+      const order = postProduction({ productItemId: productId, producedQty: output, ingredients: ingredientRows, expenses, allowNegativeIngredients, ingredientWarehouseId: ingredientWarehouseId || null, outputWarehouseId, date: productionDate, outputExpiryDate: outputExpiryDate || null, outputLotNumber: outputLotNumber || null, notes: [notes, varianceReason && `سبب فرق الكمية: ${varianceReason}`].filter(Boolean).join(' — ') })
       toast.show(`تم ترحيل ${order.orderNumber} وإضافة ${order.producedQty} ${product?.baseUnit ?? 'وحدة'} للمخزون ✓`)
       reset(); setCreating(false)
     } catch (error) { toast.show((error as Error).message, 'error') }
@@ -137,7 +143,7 @@ export function RecipesPage() {
             <option value={0}>اختر المنتج النهائي…</option>{activeItems.map((item) => <option key={item.id} value={item.id}>{item.sku ? `${item.sku} — ` : ''}{item.nameAr}</option>)}
           </select>
         </Field>
-        <Field label="مخزن صرف الخامات *"><select className={inputCls} value={ingredientWarehouseId} onChange={(e)=>setIngredientWarehouseId(Number(e.target.value))}>{warehouses.map(warehouse=><option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</select></Field><Field label="مخزن استلام الناتج *"><select className={inputCls} value={outputWarehouseId} onChange={(e)=>setOutputWarehouseId(Number(e.target.value))}>{warehouses.map(warehouse=><option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</select></Field>
+        <Field label="مخزن صرف الخامات *"><select className={inputCls} value={ingredientWarehouseId} onChange={(e)=>changeIngredientWarehouse(Number(e.target.value))}><option value={0}>كل المخازن — اختيار لكل خامة</option>{warehouses.map(warehouse=><option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</select></Field><Field label="مخزن استلام الناتج *"><select className={inputCls} value={outputWarehouseId} onChange={(e)=>setOutputWarehouseId(Number(e.target.value))}>{warehouses.map(warehouse=><option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</select></Field>
         <Field label="الكمية المطلوب تصنيعها *"><input className={inputCls} inputMode="decimal" value={outputQty} onChange={(event) => setOutputQty(event.target.value)} placeholder="مثال: 3" /></Field>
         <Field label="وحدة الناتج"><select className={inputCls} value={outputUnitFactor} onChange={(e)=>setOutputUnitFactor(Number(e.target.value))} disabled={!product}><option value={1}>{product?.baseUnit??'الوحدة الأساسية'}</option>{product?.extraUnits.map(unit=><option key={unit.nameAr} value={unit.factor}>{unit.nameAr} × {unit.factor}</option>)}</select></Field>
       </div>
@@ -153,13 +159,13 @@ export function RecipesPage() {
       </div>
 
       {tab === 'materials' ? <div className="p-4 space-y-3">
-        <div className="grid grid-cols-[110px_1fr_130px_120px_110px_36px] gap-2 px-2 text-[10px] font-bold text-slate-400"><span>كود الصنف</span><span>اسم الخام / بحث</span><span>المتاح</span><span>الوحدة</span><span>الكمية</span><span/></div>
+        <div className={`grid ${materialGrid} gap-2 px-2 text-[10px] font-bold text-slate-400`}><span>كود الصنف</span><span>اسم الخام / بحث</span>{ingredientWarehouseId===0&&<span>مخزن الصرف</span>}<span>المتاح</span><span>الوحدة</span><span>الكمية</span><span/></div>
                 {materials.map((row) => {
           const item = items.find((candidate) => candidate.id === row.itemId)
-          return <div key={row.id} data-entry-row className="entry-grid grid grid-cols-[110px_1fr_130px_120px_110px_36px] items-center rounded-xl border border-slate-100 dark:border-slate-800 p-2">
+          return <div key={row.id} data-entry-row className={`entry-grid grid ${materialGrid} items-center rounded-xl border border-slate-100 dark:border-slate-800 p-2`}>
             <input ref={(node) => { codeRefs.current[row.id] = node }} className={inputCls} value={row.code} onChange={(event) => { const value = event.target.value; patchMaterial(row.id, { code: value }); if (value.trim()) openMaterialPicker(row.id, value) }} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const found = resolveItem(event.currentTarget.value); if (found) patchMaterial(row.id, { itemId: found.id, code: found.sku || found.barcodes?.[0] || String(found.id), query: itemToken(found.id), unitFactor: 1, unitName: found.baseUnit }); requestAnimationFrame(() => itemRefs.current[row.id]?.focus()) }} placeholder="الكود" />
             <input ref={(node) => { itemRefs.current[row.id] = node }} className={inputCls} value={row.query} onChange={(event) => { const value = event.target.value; patchMaterial(row.id, { query: value, itemId: 0 }); if (value.trim()) openMaterialPicker(row.id, value) }} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const found = resolveItem(event.currentTarget.value); if (found) chooseMaterial(row.id, found.id); else openMaterialPicker(row.id, event.currentTarget.value) }} placeholder="اكتب الاسم ثم Enter للاختيار" />
-            <div className={`text-xs font-bold ${warehouseQty(item?.id ?? 0) < (Number(row.qty) || 0) * row.unitFactor ? 'text-rose-600' : 'text-emerald-600'}`}>{item ? `${warehouseQty(item.id)} ${item.baseUnit}` : '—'}</div>
+            {ingredientWarehouseId===0&&<select data-arrows-native="true" className={inputCls} value={row.warehouseId??''} onChange={(e)=>patchMaterial(row.id,{warehouseId:Number(e.target.value)||null})}><option value="">اختر المخزن</option>{warehouses.map(warehouse=><option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</select>}<div className={`text-xs font-bold ${warehouseQty(item?.id ?? 0, row.warehouseId ?? ingredientWarehouseId) < (Number(row.qty) || 0) * row.unitFactor ? 'text-rose-600' : 'text-emerald-600'}`}>{item ? `${warehouseQty(item.id, row.warehouseId ?? ingredientWarehouseId)} ${item.baseUnit}` : '—'}</div>
             <select className={inputCls} value={row.unitFactor} disabled={!item} onChange={(e)=>{const factor=Number(e.target.value);const unit=item?.extraUnits.find(candidate=>candidate.factor===factor);patchMaterial(row.id,{unitFactor:factor,unitName:unit?.nameAr??item?.baseUnit??''})}}><option value={1}>{item?.baseUnit??'الوحدة'}</option>{item?.extraUnits.map(unit=><option key={unit.nameAr} value={unit.factor}>{unit.nameAr}</option>)}</select>
             <input ref={(node) => { qtyRefs.current[row.id] = node }} className={inputCls} inputMode="decimal" value={row.qty} onChange={(event) => patchMaterial(row.id, { qty: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addMaterialAndFocus() } }} placeholder="0" />
             <button onClick={() => setMaterials((rows) => rows.filter((candidate) => candidate.id !== row.id))} className="text-rose-500"><Trash2 size={15}/></button>
@@ -180,10 +186,10 @@ export function RecipesPage() {
       <div className={`rounded-xl border p-3 ${Math.abs(variance) < 0.0001 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-amber-500/10 border-amber-500/30'}`}><div className="text-[10px] text-slate-400">فرق الكمية</div><b className="flex items-center gap-1">{Math.abs(variance) < 0.0001 ? <CheckCircle2 size={15}/> : <AlertTriangle size={15}/>} {variance}</b><div className="text-[9px] text-slate-400">يُسمح بالفرق للهالك أو تغير الوزن</div></div>
       <div className="rounded-xl border p-3"><div className="text-[10px] text-slate-400">التكلفة / تكلفة الوحدة</div><b>{fmt(totalCost)} / {fmt(unitCost)}</b></div>
     </section>
-    <div className="rounded-xl border p-3 flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={strictBalance} onChange={(e)=>setStrictBalance(e.target.checked)}/> مطابقة صارمة: الداخل = الخارج</label>{!strictBalance&&Math.abs(variance)>0.0001&&<input className={`${inputCls} flex-1`} value={varianceReason} onChange={(e)=>setVarianceReason(e.target.value)} placeholder="سبب فرق الوزن أو الهالك (إجباري)"/>}</div>
+    <div className="rounded-xl border p-3 flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={strictBalance} onChange={(e)=>setStrictBalance(e.target.checked)}/> مطابقة صارمة: الداخل = الخارج</label><label className="flex items-center gap-2 text-xs font-bold"><input type="checkbox" checked={allowNegativeIngredients} onChange={(e)=>{setAllowNegativeIngredients(e.target.checked);localStorage.setItem('shopsys:manufacturing:allow-negative-stock',String(e.target.checked))}}/> السماح بصرف خامات برصيد سالب</label>{!strictBalance&&Math.abs(variance)>0.0001&&<input className={`${inputCls} flex-1`} value={varianceReason} onChange={(e)=>setVarianceReason(e.target.value)} placeholder="سبب فرق الوزن أو الهالك (إجباري)"/>}</div>
     <Field label="ملاحظات أمر التصنيع"><input className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="رقم التشغيلة، الوردية، سبب فرق الوزن…"/></Field>
     {pickerRowId && <div className="fixed inset-0 z-50 bg-slate-950/55 p-4 flex items-center justify-center" onMouseDown={() => setPickerRowId(null)}><div className="w-full max-w-2xl max-h-[75vh] overflow-hidden rounded-2xl bg-white dark:bg-card-dark shadow-2xl border" onMouseDown={(event) => event.stopPropagation()}><div className="p-4 border-b"><b>اختيار خامة للتصنيع</b><input autoFocus className={`${inputCls} mt-3`} value={pickerSearch} onChange={(event) => { setPickerSearch(event.target.value); setPickerIndex(0) }} onKeyDown={(event) => { const matches = activeItems.filter((candidate) => candidate.id !== productId && [candidate.nameAr, candidate.sku, ...(candidate.barcodes ?? [])].join(' ').toLowerCase().includes(pickerSearch.trim().toLowerCase())); if (event.key === 'ArrowDown') { event.preventDefault(); setPickerIndex((index) => Math.min(matches.length - 1, index + 1)) } else if (event.key === 'ArrowUp') { event.preventDefault(); setPickerIndex((index) => Math.max(0, index - 1)) } else if (event.key === 'Enter') { event.preventDefault(); const selected = matches[pickerIndex] ?? matches[0]; if (selected) chooseMaterial(pickerRowId, selected.id) } else if (event.key === 'Escape') { event.preventDefault(); setPickerRowId(null) } }} placeholder="ابحث بالاسم أو الكود أو الباركود ثم Enter"/></div><div className="max-h-[52vh] overflow-auto p-2">{activeItems.filter((candidate) => candidate.id !== productId && [candidate.nameAr, candidate.sku, ...(candidate.barcodes ?? [])].join(' ').toLowerCase().includes(pickerSearch.trim().toLowerCase())).map((candidate, index) => <button key={candidate.id} onClick={() => chooseMaterial(pickerRowId, candidate.id)} className={`w-full grid grid-cols-[110px_1fr_120px] gap-3 text-right p-3 rounded-xl focus:outline-none ${index === pickerIndex ? 'bg-amber-500/15 ring-2 ring-amber-500/40' : 'hover:bg-amber-500/10'}`}><span className="font-mono text-xs">{candidate.sku || candidate.barcodes?.[0] || candidate.id}</span><b>{candidate.nameAr}</b><span className="text-xs text-slate-500">متاح {warehouseQty(candidate.id)}</span></button>)}</div></div></div>}
-    <div className="fixed bottom-0 left-0 right-0 z-20 bg-white/95 dark:bg-card-dark/95 border-t p-3 flex justify-between items-center"><span className="text-xs text-slate-500">خامات {fmt(materialCost)} + مصروفات {fmt(expenseTotal)} = <b>{fmt(totalCost)}</b></span><Btn onClick={submit} disabled={!productId || output <= 0 || (!!product?.trackExpiry && !outputExpiryDate) || !materials.some((row) => row.itemId && Number(row.qty) > 0)}><Factory size={16}/> ترحيل عملية التصنيع</Btn></div>
+    <div className="fixed bottom-0 left-0 right-0 z-20 bg-white/95 dark:bg-card-dark/95 border-t p-3 flex justify-between items-center"><span className="text-xs text-slate-500">خامات {fmt(materialCost)} + مصروفات {fmt(expenseTotal)} = <b>{fmt(totalCost)}</b></span><Btn onClick={submit} shortcut="F9" disabled={!productId || output <= 0 || (!!product?.trackExpiry && !outputExpiryDate) || !materials.some((row) => row.itemId && Number(row.qty) > 0)}><Factory size={16}/> ترحيل عملية التصنيع</Btn></div>
 
 
   </div>

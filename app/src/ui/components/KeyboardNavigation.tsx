@@ -24,8 +24,14 @@ export function KeyboardNavigation() {
       if (event.key === 'F4') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:focus-party')); return }
       if (event.key === 'F5') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:focus-item')); return }
       if ((event.key === 'F8' || event.key === 'F9') && !pathname.startsWith('/sales/pos')) {
-        const words = event.key === 'F9' ? ['حفظ مسودة', 'حفظ كمسودة'] : ['اعتماد وترحيل', 'ترحيل فاتورة', 'ترحيل وتحصيل']
-        const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find((candidate) => visible(candidate) && words.some((word) => candidate.textContent?.includes(word)))
+        const words = event.key === 'F8'
+          ? ['حفظ مسودة', 'حفظ كمسودة']
+          : ['اعتماد', 'ترحيل', 'دفع', 'تحصيل', 'صرف', 'تسليم', 'تسجيل وتوليد', 'تأكيد وطباعة', 'حفظ وترحيل', 'حفظ واعتماد']
+        const candidates = [...document.querySelectorAll<HTMLButtonElement>('button')].filter((candidate) => visible(candidate))
+        const button = event.key === 'F9'
+          ? candidates.find((candidate) => (candidate.textContent ?? '').includes('F9') && !(candidate.textContent ?? '').includes('مسودة'))
+            ?? candidates.find((candidate) => words.some((word) => (candidate.textContent ?? '').includes(word)) && !(candidate.textContent ?? '').includes('مسودة'))
+          : candidates.find((candidate) => words.some((word) => (candidate.textContent ?? '').includes(word)))
         if (button) { event.preventDefault(); button.click() }
         return
       }
@@ -78,5 +84,5 @@ export function KeyboardNavigation() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [navigate, pathname])
 
-  return helpOpen ? <div className="fixed inset-0 z-[100] bg-slate-950/60 flex items-center justify-center p-4" onMouseDown={() => setHelpOpen(false)}><div role="dialog" className="w-full max-w-lg rounded-2xl border bg-white dark:bg-card-dark p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex justify-between"><h2 className="font-black text-lg">اختصارات لوحة المفاتيح</h2><button onClick={() => setHelpOpen(false)}>Esc</button></div><div className="grid grid-cols-2 gap-2 mt-4 text-sm">{[['F2','بحث سريع'],['F3','فاتورة جديدة'],['F4','بحث عميل/مورد'],['F5','بحث صنف'],['F6','طباعة'],['F7','تصدير Excel'],['F8','اعتماد/ترحيل الفاتورة أو تحصيل الكاشير'],['F9','حفظ مسودة أو الدفع بالكاشير'],['F10','الخصم'],['F11','ملء الشاشة'],['F12','دليل الاختصارات']].map(([key,label])=><div key={key} className="flex items-center gap-2 rounded-lg bg-slate-500/10 p-2"><kbd className="font-mono font-black text-brand-600">{key}</kbd><span>{label}</span></div>)}</div></div></div> : null
+  return helpOpen ? <div className="fixed inset-0 z-[100] bg-slate-950/60 flex items-center justify-center p-4" onMouseDown={() => setHelpOpen(false)}><div role="dialog" className="w-full max-w-lg rounded-2xl border bg-white dark:bg-card-dark p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex justify-between"><h2 className="font-black text-lg">اختصارات لوحة المفاتيح</h2><button onClick={() => setHelpOpen(false)}>Esc</button></div><div className="grid grid-cols-2 gap-2 mt-4 text-sm">{[['F2','بحث سريع'],['F3','فاتورة جديدة'],['F4','بحث عميل/مورد'],['F5','بحث صنف'],['F6','طباعة'],['F7','تصدير Excel'],['F8','حفظ مسودة'],['F9','ترحيل/اعتماد/دفع العملية'],['F10','الخصم'],['F11','ملء الشاشة'],['F12','دليل الاختصارات']].map(([key,label])=><div key={key} className="flex items-center gap-2 rounded-lg bg-slate-500/10 p-2"><kbd className="font-mono font-black text-brand-600">{key}</kbd><span>{label}</span></div>)}</div></div></div> : null
 }

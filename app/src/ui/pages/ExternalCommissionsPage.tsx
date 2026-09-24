@@ -315,7 +315,7 @@ export function ExternalCommissionsPage() {
           </div>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveCommission} disabled={!partyId || !amount.trim()}>💾 تسجيل واستحقاق</Btn>
+            <Btn onClick={saveCommission} shortcut="F9" disabled={!partyId || !amount.trim()}>💾 تسجيل واستحقاق</Btn>
           </div>
         </div>
       </Modal>
@@ -331,7 +331,7 @@ export function ExternalCommissionsPage() {
             {(!terminalPayment.terminalId || direction !== 'earned') && <Field label={direction === 'earned' ? 'يدخل في' : 'يُدفع من'}><TreasuryPicker value={treasury} onChange={setTreasury} /></Field>}
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSettleId(null)}>إلغاء</Btn>
-              <Btn onClick={settle} disabled={!settleAmount.trim()}>{direction === 'earned' ? '💰 تحصيل' : '📤 دفع'} وقيد</Btn>
+              <Btn onClick={settle} shortcut="F9" disabled={!settleAmount.trim()}>{direction === 'earned' ? '💰 تحصيل' : '📤 دفع'} وقيد</Btn>
             </div>
           </div>
         )}

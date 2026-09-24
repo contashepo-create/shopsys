@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ItemQuickPicker, PartyQuickPicker } from '../src/ui/components/KeyboardPickers.tsx'
@@ -48,6 +48,17 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onChange).toHaveBeenCalledWith(11)
     expect(onConfirm).toHaveBeenCalledOnce()
+  })
+
+  it('يركز العميل تلقائياً وينقل Enter بعد الاختيار إلى بحث الصنف', async () => {
+    const onChange = vi.fn()
+    const view = render(<><PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={0} onChange={onChange} cashLabel="عميل نقدي" label="العميل" onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} autoFocus/><ItemQuickPicker items={items} onPick={() => undefined}/></>)
+    const party = view.getByLabelText('العميل')
+    await waitFor(() => expect(document.activeElement).toBe(party))
+    fireEvent.change(party, { target: { value: 'أحمد' } })
+    fireEvent.keyDown(party, { key: 'Enter' })
+    await waitFor(() => expect(document.activeElement).toBe(view.getByPlaceholderText(/اكتب كود أو اسم/)))
+    expect(onChange).toHaveBeenCalledWith(10)
   })
 
   it('يفتح منتقي الصنف عبر F5 ويبدل دليل الاختصارات عبر F12', () => {

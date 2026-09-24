@@ -411,7 +411,7 @@ export function RentalContractsPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!equipmentName.trim() || !dailyRate.trim()}>💾 فتح العقد وتوليد القيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!equipmentName.trim() || !dailyRate.trim()}>💾 فتح العقد وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>
@@ -451,7 +451,7 @@ export function RentalContractsPage() {
             <Field label="خزينة التسوية (ردّ التأمين / تحصيل التجاوز)"><TreasuryPicker value={closeTreasury} onChange={setCloseTreasury} compact /></Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setClosing(null)}>إلغاء</Btn>
-              <Btn onClick={doClose}>🔒 إقفال العقد</Btn>
+              <Btn onClick={doClose} shortcut="F9">🔒 إقفال العقد</Btn>
             </div>
           </div>
         )}

@@ -799,7 +799,7 @@ export function LabReferrersPage() {
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={payoutTreasury} onChange={setPayoutTreasury} compact /></Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setPayoutFor(null)}>إلغاء</Btn>
-              <Btn onClick={doPayout}>💸 صرف الآن</Btn>
+              <Btn onClick={doPayout} shortcut="F9">💸 صرف الآن</Btn>
             </div>
           </div>
         )}

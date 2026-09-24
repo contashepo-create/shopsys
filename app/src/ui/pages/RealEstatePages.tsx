@@ -254,7 +254,7 @@ export function PropertiesPage() {
             <div className="text-[12px] text-slate-500">مستحقه الآن: <b className="text-rose-500">{fmt(getOwnerBalance(payFor.id))}</b> (تحصيلاته − سداداته − صيانة على حسابه)</div>
             <Field label={`المبلغ (${cur.symbol})`}><input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <TreasuryPicker value={payTreasury} onChange={setPayTreasury} />
-            <Btn onClick={savePayout} className="w-full" disabled={!payAmount}>سداد وقيد 2115 ← الخزينة</Btn>
+            <Btn onClick={savePayout} shortcut="F9" className="w-full" disabled={!payAmount}>سداد وقيد 2115 ← الخزينة</Btn>
           </div>
         )}
       </Modal>
@@ -279,7 +279,7 @@ export function PropertiesPage() {
               </Field>
             )}
             <TreasuryPicker value={mTreasury} onChange={setMTreasury} />
-            <Btn onClick={saveMaint} className="w-full" disabled={!mAmount || mUnitId === ''}>تسجيل الصيانة وقيدها</Btn>
+            <Btn onClick={saveMaint} shortcut="F9" className="w-full" disabled={!mAmount || mUnitId === ''}>تسجيل الصيانة وقيدها</Btn>
           </div>
         )}
       </Modal>
@@ -309,7 +309,7 @@ export function PropertiesPage() {
                 <input value={sCommAmount} onChange={(e) => setSCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!sCommEmpId} />
               </div>
             </Field>
-            <Btn onClick={saveSale} className="w-full" disabled={!sPrice || (!!sCommEmpId && !sCommAmount.trim())}>بيع وقيد الربح</Btn>
+            <Btn onClick={saveSale} shortcut="F9" className="w-full" disabled={!sPrice || (!!sCommEmpId && !sCommAmount.trim())}>بيع وقيد الربح</Btn>
           </div>
         )}
       </Modal>
@@ -508,7 +508,7 @@ export function LeasesPage() {
           {deposit && <TreasuryPicker value={leaseTreasury} onChange={setLeaseTreasury} />}
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveLease} disabled={!tenant.trim() || !totalRent || unitId === ''}>إنشاء العقد وتوليد الأقساط</Btn>
+            <Btn onClick={saveLease} shortcut="F9" disabled={!tenant.trim() || !totalRent || unitId === ''}>إنشاء العقد وتوليد الأقساط</Btn>
           </div>
         </div>
       </Modal>
@@ -566,7 +566,7 @@ export function LeasesPage() {
               <input type="checkbox" checked={endEvicted} onChange={(e) => setEndEvicted(e.target.checked)} className="accent-rose-600" />
               <span className="text-[12px] font-bold text-rose-600 dark:text-rose-400">إخلاء (إنهاء قسري) — يُعلَّم العقد «مُخلى»</span>
             </label>
-            <Btn onClick={saveEnd} className="w-full">إنهاء العقد وتسوية التأمين</Btn>
+            <Btn onClick={saveEnd} shortcut="F9" className="w-full">إنهاء العقد وتسوية التأمين</Btn>
           </div>
         )}
       </Modal>

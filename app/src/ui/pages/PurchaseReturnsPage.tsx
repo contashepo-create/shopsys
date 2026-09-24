@@ -279,7 +279,7 @@ export function PurchaseReturnsPage() {
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setPurchase(null)}>إلغاء</Btn>
-              <Btn onClick={submit} disabled={!anyQty}>📤 تنفيذ المرتجع</Btn>
+              <Btn onClick={submit} shortcut="F9" disabled={!anyQty}>📤 تنفيذ المرتجع</Btn>
             </div>
           </div>
         )}

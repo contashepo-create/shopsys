@@ -305,7 +305,7 @@ export function TreasuryPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setTransferOpen(false)}>إلغاء</Btn>
-            <Btn onClick={doTransfer} disabled={!amount.trim() || from === to}>↔️ تنفيذ التحويل</Btn>
+            <Btn onClick={doTransfer} shortcut="F9" disabled={!amount.trim() || from === to}>↔️ تنفيذ التحويل</Btn>
           </div>
         </div>
       </Modal>

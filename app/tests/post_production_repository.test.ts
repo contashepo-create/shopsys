@@ -46,4 +46,23 @@ describe('postProduction — مسار المستودع المباشر', () => {
     useDataStore.setState({ transfers: [{ id: 1, transferNumber: 'TR-1', date: '2026-09-24', fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 1, qty: 8 }], status: 'posted', notes: '' }] as never })
     expect(() => useDataStore.getState().postProduction({ productItemId: 2, producedQty: 3, ingredients: [{ itemId: 1, qty: 3 }], ingredientWarehouseId: 1, outputWarehouseId: 2, date: '2026-09-24', outputExpiryDate: '2027-01-01' })).toThrow(/خامات غير كافية/)
   })
+
+  it('يقبل مخزناً مختلفاً لكل خامة عند اختيار كل المخازن', () => {
+    useDataStore.setState({ transfers: [{ id: 1, transferNumber: 'TR-1', date: '2026-09-24', fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 1, qty: 8 }], status: 'posted', notes: '' }] as never })
+    const order = useDataStore.getState().postProduction({ productItemId: 2, producedQty: 4, ingredients: [{ itemId: 1, qty: 4, warehouseId: 2 }], ingredientWarehouseId: null, outputWarehouseId: 1, date: '2026-09-24', outputExpiryDate: '2027-01-01' })
+    expect(order.ingredientItems?.[0]).toMatchObject({ itemId: 1, warehouseId: 2, qty: 4 })
+  })
+
+  it('يسمح بخامة سالبة فقط عند تفعيل إعداد التصنيع', () => {
+    useDataStore.setState({ transfers: [{ id: 1, transferNumber: 'TR-1', date: '2026-09-24', fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 1, qty: 8 }], status: 'posted', notes: '' }] as never })
+    expect(() => useDataStore.getState().postProduction({ productItemId: 2, producedQty: 3, ingredients: [{ itemId: 1, qty: 3, warehouseId: 1 }], ingredientWarehouseId: null, outputWarehouseId: 2, date: '2026-09-24', outputExpiryDate: '2027-01-01' })).toThrow(/خامات غير كافية/)
+    const order = useDataStore.getState().postProduction({ productItemId: 2, producedQty: 3, ingredients: [{ itemId: 1, qty: 3, warehouseId: 1 }], allowNegativeIngredients: true, ingredientWarehouseId: null, outputWarehouseId: 2, date: '2026-09-24', outputExpiryDate: '2027-01-01' })
+    expect(order.ingredientItems?.[0]).toMatchObject({ warehouseId: 1, qty: 3 })
+  })
+
+  it('يعمم مخزن الصرف والمخزن المستلم على أوامر التجهيز', () => {
+    useDataStore.setState({ transfers: [{ id: 1, transferNumber: 'TR-1', date: '2026-09-24', fromWarehouseId: 1, toWarehouseId: 2, lines: [{ itemId: 1, qty: 8 }], status: 'posted', notes: '' }] as never })
+    const order = useDataStore.getState().postProcessing({ kind: 'butcher', sourceItemId: 1, sourceQty: 3, sourceWarehouseId: 2, outputWarehouseId: 1, outputs: [{ itemId: 2, qty: 3 }], overheadMinor: 0 })
+    expect(order).toMatchObject({ sourceWarehouseId: 2, outputWarehouseId: 1 })
+  })
 })

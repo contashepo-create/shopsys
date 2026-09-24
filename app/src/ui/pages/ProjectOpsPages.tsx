@@ -170,7 +170,7 @@ export function MaterialIssuesPage() {
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} placeholder="صبّة القواعد — بلوك أ…" /></Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!projectId || !issuedBy || !receivedBy || lines.every((l) => !l.itemId)}>📦 صرف المواد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!projectId || !issuedBy || !receivedBy || lines.every((l) => !l.itemId)}>📦 صرف المواد</Btn>
           </div>
         </div>
       </Modal>
@@ -285,7 +285,7 @@ export function ClientCollectionsPage() {
         )}
 
         <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
-        <Btn onClick={collect} disabled={!customerId || !amount} className="w-full">💰 تحصيل وتوزيع تلقائي</Btn>
+        <Btn onClick={collect} shortcut="F9" disabled={!customerId || !amount} className="w-full">💰 تحصيل وتوزيع تلقائي</Btn>
       </div>
 
       {clientSettlements.length > 0 && (

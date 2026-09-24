@@ -252,7 +252,7 @@ export function RestaurantOrdersPage() {
               {terminalId && <><Field label="مرجع إيصال الماكينة *"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" maxLength={4} className={inputCls}/></Field></>}
             </div>
             <p className="text-[11px] text-slate-400">الضريبة والوصفات وخصم الخامات كلها عبر فاتورة الكاشير نفسها — قيد واحد متوازن.</p>
-            <Btn onClick={settle} className="w-full">قفل الأمر وإصدار الفاتورة</Btn>
+            <Btn onClick={settle} shortcut="F9" className="w-full">قفل الأمر وإصدار الفاتورة</Btn>
           </div>
         )}
       </Modal>

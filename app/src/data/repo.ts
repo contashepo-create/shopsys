@@ -1890,7 +1890,7 @@ interface DataState {
   /** تكلفة وحدة الناتج بالمتوسط المرجح الحالي للخامات */
   getRecipeUnitCost: (recipeId: number) => number
   /** أمر إنتاج مسبق: يستهلك الخامات ويُدخل الناتج للمخزون بمتوسط مرجح جديد */
-  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number }[]; warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string; outputExpiryDate?: string | null; outputLotNumber?: string | null }) => ProductionOrder
+  postProduction: (args: { recipeId?: number; batches?: number; productItemId?: number; producedQty?: number; ingredients?: { itemId: number; qty: number; warehouseId?: number | null }[]; allowNegativeIngredients?: boolean; warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; treasury?: string; expenses?: ProductionExpense[]; notes?: string; date?: string; outputExpiryDate?: string | null; outputLotNumber?: string | null }) => ProductionOrder
   /**
    * أمر تجهيز/تفكيك (جزارة 🥩/تمور 🌴): خام واحد → نواتج متعددة.
    * توزيع (تكلفة الخام + المصاريف) على النواتج بنسبة قيمها البيعية بالقرش،
@@ -2980,7 +2980,7 @@ export const useDataStore = create<DataState>()(
         if (!args.allowNegativeStock) {
           const warehouseStock = computeWarehouseStock(
             state.items, state.warehouses, state.transfers,
-            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders),
+            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
           )
           const needsByWarehouse = new Map<number, Map<number, number>>()
           for (const line of saleLines) {
@@ -3496,7 +3496,7 @@ export const useDataStore = create<DataState>()(
         if (args.lineSpecs?.length) {
           const warehouseStock = computeWarehouseStock(
             state.items, state.warehouses, state.transfers,
-            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders),
+            buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
           )
           const needed = new Map<string, number>()
           for (const line of lines) {
@@ -8256,13 +8256,13 @@ export const useDataStore = create<DataState>()(
         if (!direct && (!Number.isInteger(batches) || batches <= 0)) throw new Error('عدد التشغيلات يجب أن يكون عدداً صحيحاً موجباً')
         const productItemId = direct ? (args.productItemId ?? 0) : recipe.productItemId
         const legacyWarehouseId = args.warehouseId ?? state.warehouses.find((warehouse) => warehouse.isMain)?.id ?? state.warehouses[0]?.id ?? null
-        const ingredientWarehouseId = args.ingredientWarehouseId ?? legacyWarehouseId
+        const ingredientWarehouseId = Object.prototype.hasOwnProperty.call(args, 'ingredientWarehouseId') ? (args.ingredientWarehouseId ?? null) : legacyWarehouseId
         const outputWarehouseId = args.outputWarehouseId ?? legacyWarehouseId
-        if (ingredientWarehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === ingredientWarehouseId)) throw new Error('اختر مخزن صرف خامات صحيحاً')
+        if (ingredientWarehouseId != null && !state.warehouses.some((warehouse) => warehouse.id === ingredientWarehouseId)) throw new Error('اختر مخزن صرف خامات صحيحاً')
         if (outputWarehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === outputWarehouseId)) throw new Error('اختر مخزن استلام ناتج صحيحاً')
-        const warehouseStock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders))
-        const availableInWarehouse = (itemId: number) => warehouseStock.get(ingredientWarehouseId)?.get(itemId) ?? 0
-        const ingredients = direct ? (args.ingredients ?? []) : recipe.ingredients.map((ing) => ({ itemId: ing.itemId, qty: ing.qty * batches }))
+        const warehouseStock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
+        const availableInWarehouse = (itemId: number, warehouseId: number | null) => warehouseStock.get(warehouseId ?? -1)?.get(itemId) ?? 0
+        const ingredients: { itemId: number; qty: number; warehouseId?: number | null }[] = direct ? (args.ingredients ?? []) : recipe.ingredients.map((ing) => ({ itemId: ing.itemId, qty: ing.qty * batches, warehouseId: ingredientWarehouseId }))
         const producedQty = direct ? (args.producedQty ?? 0) : recipe.yieldQty * batches
         if (!state.items.some((item) => item.id === productItemId && item.isActive)) throw new Error('اختر صنفاً ناتجاً مسجلاً ونشطاً في المخزون')
         if (!(producedQty > 0)) throw new Error('كمية المنتج الناتج يجب أن تكون أكبر من صفر')
@@ -8276,7 +8276,9 @@ export const useDataStore = create<DataState>()(
           if (seenIngredients.has(ing.itemId)) throw new Error(`الخامة «${item.nameAr}» مكررة`)
           seenIngredients.add(ing.itemId)
           if (!(ing.qty > 0)) throw new Error(`كمية «${item.nameAr}» يجب أن تكون أكبر من صفر`)
-          if (availableInWarehouse(item.id) < ing.qty) shortages.push(`«${item.nameAr}»: متاح في المخزن ${availableInWarehouse(item.id)} ومطلوب ${ing.qty}`)
+          const sourceWarehouseId = ing.warehouseId ?? ingredientWarehouseId
+          if (sourceWarehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === sourceWarehouseId)) throw new Error(`حدد مخزن صرف «${item.nameAr}»`)
+          if (!args.allowNegativeIngredients && availableInWarehouse(item.id, sourceWarehouseId) < ing.qty) shortages.push(`«${item.nameAr}»: متاح في المخزن ${availableInWarehouse(item.id, sourceWarehouseId)} ومطلوب ${ing.qty}`)
         }
         if (shortages.length) throw new Error(`خامات غير كافية — ${shortages.join('، ')}`)
         const ingredientsCost = ingredients.reduce((sum, ing) => sum + Math.round(ing.qty * (state.items.find((item) => item.id === ing.itemId)?.costMinor ?? 0)), 0)
@@ -8311,7 +8313,7 @@ export const useDataStore = create<DataState>()(
           id: orderId, orderNumber, refCode: makeUniqueRefCode('PRD', now, usedRefCodes(state)),
           date: `${productionDate}T00:00:00.000Z`, recipeId: recipe?.id ?? 0, productItemId, warehouseId: ingredientWarehouseId, ingredientWarehouseId, outputWarehouseId,
           batches, producedQty, outputExpiryDate: args.outputExpiryDate ?? null, outputLotNumber, ingredientsCostMinor: ingredientsCost,
-          ingredientItems: ingredients.map((ingredient) => { const unitCostMinor = state.items.find((item) => item.id === ingredient.itemId)?.costMinor ?? 0; return { ...ingredient, unitCostMinor, totalCostMinor: Math.round(ingredient.qty * unitCostMinor) } }),
+          ingredientItems: ingredients.map((ingredient) => { const unitCostMinor = state.items.find((item) => item.id === ingredient.itemId)?.costMinor ?? 0; return { ...ingredient, warehouseId: ingredient.warehouseId ?? ingredientWarehouseId, unitCostMinor, totalCostMinor: Math.round(ingredient.qty * unitCostMinor) } }),
           overheadMinor: overhead + detailedOverhead, overheadItems: productionExpenses, totalCostMinor: ingredientsCost + overhead + detailedOverhead,
           treasury: null, journalEntryId: entryId, notes: args.notes ?? '',
         }
@@ -8335,7 +8337,7 @@ export const useDataStore = create<DataState>()(
         let prodBatches = state.batches
         for (const [ingId, qty] of consumed) {
           if (!state.items.find((it) => it.id === ingId)?.trackExpiry) continue
-          const plan = planFefo(prodBatches, ingId, qty, productionDate, ingredientWarehouseId)
+          const plan = planFefo(prodBatches, ingId, qty, productionDate, ingredients.find((row) => row.itemId === ingId)?.warehouseId ?? ingredientWarehouseId)
           if (plan.touchesExpired) throw new Error(`لا يمكن تصنيع المنتج بخامة منتهية الصلاحية: ${state.items.find((item) => item.id === ingId)?.nameAr ?? ingId}`)
           prodBatches = applyFefo(prodBatches, plan)
         }
@@ -8355,8 +8357,20 @@ export const useDataStore = create<DataState>()(
         for (const o of args.outputs) {
           if (!state.items.some((it) => it.id === o.itemId)) throw new Error('صنف ناتج غير موجود — أضفه في الأصناف أولاً')
         }
-        if ((source.stockQty ?? 0) < args.sourceQty) {
-          throw new Error(`رصيد الخام «${source.nameAr}» لا يكفي — متاح ${source.stockQty ?? 0} ومطلوب ${args.sourceQty}`)
+        const legacyWarehouseId = state.warehouses.find((warehouse) => warehouse.isMain)?.id ?? state.warehouses[0]?.id ?? null
+        const sourceWarehouseId = args.sourceWarehouseId ?? legacyWarehouseId
+        const outputWarehouseId = args.outputWarehouseId ?? sourceWarehouseId
+        if (sourceWarehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === sourceWarehouseId)) throw new Error('اختر مخزن صرف الخام الصحيح')
+        if (outputWarehouseId == null || !state.warehouses.some((warehouse) => warehouse.id === outputWarehouseId)) throw new Error('اختر مخزن استلام الناتج الصحيح')
+        const warehouseStock = computeWarehouseStock(
+          state.items,
+          state.warehouses,
+          state.transfers,
+          buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders),
+        )
+        const availableSource = warehouseStock.get(sourceWarehouseId)?.get(source.id) ?? 0
+        if (!args.allowNegativeSource && availableSource < args.sourceQty) {
+          throw new Error(`رصيد الخام «${source.nameAr}» في المخزن «${state.warehouses.find((warehouse) => warehouse.id === sourceWarehouseId)?.nameAr ?? sourceWarehouseId}» لا يكفي — متاح ${availableSource} ومطلوب ${args.sourceQty}`)
         }
         const treasury = args.treasury ?? '1101'
         if (args.overheadMinor > 0 && !state.treasuries.some((t) => t.code === treasury)) {
@@ -8382,6 +8396,7 @@ export const useDataStore = create<DataState>()(
         const order: ProcessingOrder = {
           id: orderId, orderNumber, refCode: makeUniqueRefCode(prefix, now, usedRefCodes(state)),
           date: now, kind: args.kind, sourceItemId: args.sourceItemId, sourceQty: args.sourceQty,
+          sourceWarehouseId, outputWarehouseId,
           sourceCostMinor: sourceCost, overheadMinor: args.overheadMinor,
           treasury: args.overheadMinor > 0 ? treasury : null,
           outputs, wasteQty: args.wasteQty ?? 0,
@@ -8394,7 +8409,7 @@ export const useDataStore = create<DataState>()(
         // وهمية تولد تنبيهات كاذبة. التجهيز يقبل حتى المنتهي (قرار المشغل — كالصرف الداخلي)
         let procBatches = state.batches
         if (source.trackExpiry) {
-          procBatches = applyFefo(procBatches, planFefo(procBatches, source.id, args.sourceQty, now))
+          procBatches = applyFefo(procBatches, planFefo(procBatches, source.id, args.sourceQty, now, sourceWarehouseId))
         }
         const outMap = new Map(outputs.map((o) => [o.itemId, o]))
         const updatedItems2 = state.items.map((it) => {
@@ -9287,7 +9302,7 @@ export const useDataStore = create<DataState>()(
         if (!state.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود')
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
-        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders))
+        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.productionOrders, state.processingOrders))
         const sourceMap = stock.get(args.fromWarehouseId)
         const errors = validateTransfer(
           { fromWarehouseId: args.fromWarehouseId, toWarehouseId: args.toWarehouseId, lines: args.lines },
