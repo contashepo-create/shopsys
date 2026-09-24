@@ -18,6 +18,18 @@ describe('ماكينة الدفع في Repository', () => {
     expect(useDataStore.getState().paymentTerminalTransactions[0].branchId).toBe('')
   })
 
+  it('يسجل سند القبض على الماكينة مع حركة charge ذرّية', () => {
+    useDataStore.getState().addPaymentTerminal(terminal)
+    const voucher = useDataStore.getState().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '4103', amountMinor: 1000, description: 'تحصيل بطاقة', terminalPayment: { terminalId: terminal.id, providerReference: 'REF-VOUCHER-1' } })
+    expect(voucher.kind).toBe('receipt')
+    expect(useDataStore.getState().paymentTerminalTransactions[0]).toMatchObject({ terminalId: terminal.id, documentType: 'receipt_voucher', kind: 'charge', amountMinor: 1000 })
+  })
+
+  it('لا يحول سند الصرف إلى refund ماكينة بلا مستند أصلي', () => {
+    useDataStore.getState().addPaymentTerminal(terminal)
+    expect(() => useDataStore.getState().postVoucher({ kind: 'payment', treasury: '1101', counterAccountCode: '5108', amountMinor: 1000, description: 'صرف', terminalPayment: { terminalId: terminal.id, providerReference: 'REF-VOUCHER-2' } })).toThrow(/مخصصة لسندات القبض/)
+  })
+
   it('يرفض ماكينة بلا فرع عند وجود فروع فعلية', () => {
     useDataStore.setState({ branches: [{ id: 1, nameAr: 'الرئيسي', isMain: true, warehouseId: 1, treasuryCode: '1101', active: true }] })
     expect(() => useDataStore.getState().addPaymentTerminal(terminal)).toThrow(/فرع ماكينة الدفع/)

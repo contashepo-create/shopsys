@@ -1565,6 +1565,8 @@ interface DataState {
     vehicleId?: number | null
     /** نوع مصروف مركز التكلفة في التقارير: صيانة/وقود/قطع غيار… */
     vehicleCostCategory?: string
+    /** تحصيل وارد عبر ماكينة: يُحفظ charge مع السند والقيد ذَرّياً. */
+    terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
     /** مصروف التحويل بين الخزائن (رسوم بنكية) — يخرج من المصدر ويقيد 5108 (طلب المالك) */
     feeMinor?: number
   }) => Voucher
@@ -4296,6 +4298,12 @@ export const useDataStore = create<DataState>()(
 
       postVoucher: (args) => {
         const state = get()
+        // ماكينة الدفع مسار قبض وارد فقط؛ الصرف الخارجي ليس refund لماكينة بلا أصل.
+        if (args.terminalPayment && args.kind !== 'receipt') throw new Error('ماكينة الدفع مخصصة لسندات القبض؛ رد الماكينة يتم من المستند الأصلي')
+        const terminal = args.terminalPayment ? state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId) : undefined
+        if (args.terminalPayment && (!terminal || terminal.status !== 'active')) throw new Error('ماكينة الدفع غير موجودة أو غير نشطة')
+        if (args.terminalPayment && terminal!.settlementAccountCode !== args.treasury) throw new Error('حساب سند القبض لا يطابق حساب تسوية الماكينة')
+        if (args.terminalPayment && state.paymentTerminalTransactions.some((row) => row.terminalId === terminal!.id && row.providerReference === args.terminalPayment!.providerReference.trim() && row.kind === 'charge')) throw new Error('مرجع مزود الدفع مستخدم مسبقاً على هذه الماكينة')
         // T1 (مراجعة الخزينة): فحوص ما قبل الكتابة — كانت خزينة/حساب/طرف أشباح تمر
         if (!state.treasuries.some((t) => t.code === args.treasury)) throw new Error('الخزينة/البنك غير موجود — أضفه من «الخزينة والبنوك» أولاً')
         const accountExists = (code: string) =>
@@ -4319,6 +4327,9 @@ export const useDataStore = create<DataState>()(
           ? validateTreasuryTransfer(activeUser?.treasuryAccess, args.treasury, args.counterAccountCode, args.amountMinor + (args.feeMinor ?? 0))
           : validateTreasuryAccess(activeUser?.treasuryAccess, args.treasury, args.kind, args.amountMinor)
         if (accessErrors.length) throw new Error(accessErrors.join(' — '))
+        if (terminal && args.terminalPayment && activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) {
+          assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', args.amountMinor)
+        }
 
         // القيد حسب نوع السند — كله عبر دوال النواة المتوازنة بنيوياً
         const entryLines =
@@ -4334,6 +4345,9 @@ export const useDataStore = create<DataState>()(
         const prefix = args.kind === 'receipt' ? 'RV' : args.kind === 'payment' ? 'PV' : 'TV'
         const voucherNumber = `${prefix}-${String(voucherId).padStart(4, '0')}`
         const kindAr = args.kind === 'receipt' ? 'سند قبض' : args.kind === 'payment' ? 'سند صرف' : 'تحويل خزينة'
+        const terminalTransaction = terminal && args.terminalPayment
+          ? buildTerminalCharge({ terminal, documentType: 'receipt_voucher', documentId: voucherNumber, amountMinor: args.amountMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
+          : null
 
         const entry: JournalEntry = {
           id: entryId,
@@ -4396,7 +4410,7 @@ export const useDataStore = create<DataState>()(
               purchaseId: null, payableId: null, journalEntryId: entryId, settlementEntryIds: [],
             }]
           : state.vehicleCostEntries
-        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry], clinicCollections, vehicleCostEntries })
+        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return voucher
       },
 

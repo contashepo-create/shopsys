@@ -14,6 +14,7 @@ import type { TreasuryAccount } from '../../core/accounting.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { customerStatement, supplierStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -49,7 +50,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, vehicles } = useDataStore()
+  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, vehicles } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -59,6 +60,7 @@ export function VouchersPage() {
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState<'receipt' | 'payment'>('receipt')
   const [treasury, setTreasury] = useState<TreasuryAccount>('1101')
+  const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [counter, setCounter] = useState('')
   const [amount, setAmount] = useState('')
   const [desc, setDesc] = useState('')
@@ -126,6 +128,7 @@ export function VouchersPage() {
   const openNew = (k: 'receipt' | 'payment') => {
     setKind(k)
     setTreasury('1101')
+    setTerminalPayment({ terminalId: '', providerReference: '', cardLast4: '' })
     setCounter('')
     setAmount('')
     setDesc('')
@@ -144,6 +147,7 @@ export function VouchersPage() {
   const needsParty = (kind === 'receipt' && counter === '1104') || (kind === 'payment' && counter === '2101')
   const isPurchaseExpense = kind === 'payment' && counter === PURCHASE_EXPENSE_CODE
   const isCustomExpense = kind === 'payment' && customAccounts.some((account) => account.code === counter && account.rootType === 'expenses')
+  const selectedTerminal = terminalPayment.terminalId ? paymentTerminals.find((terminal) => terminal.id === terminalPayment.terminalId) : undefined
   // ربط السيارة خاص بمصروفات التشغيل/المصروفات المستحقة فقط، وليس بسداد
   // مورد أو راتب أو مسحوبات. مصروف فاتورة الشراء له حقله المستقل أدناه.
   const canLinkVehicle = kind === 'payment' && !isPurchaseExpense && (counter === '5108' || counter === '2117' || isCustomExpense)
@@ -188,7 +192,7 @@ export function VouchersPage() {
       }
       const v = postVoucher({
         kind,
-        treasury,
+        treasury: selectedTerminal?.settlementAccountCode ?? treasury,
         counterAccountCode: counter,
         amountMinor: toMinor(amount || '0', cur.decimals),
         description: desc.trim(),
@@ -196,6 +200,7 @@ export function VouchersPage() {
         partyId: needsParty ? partyId : null,
         vehicleId: canLinkVehicle ? vehicleId : null,
         vehicleCostCategory: canLinkVehicle && vehicleId != null ? vehicleCostCategory : undefined,
+        terminalPayment: kind === 'receipt' && selectedTerminal ? { terminalId: selectedTerminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
       })
       toast.show(`تم ${kind === 'receipt' ? 'سند القبض' : 'سند الصرف'} ${v.voucherNumber} — تولد قيده تلقائياً ✓`)
       setOpen(false)
@@ -283,9 +288,16 @@ export function VouchersPage() {
       <Modal open={open} onClose={() => setOpen(false)} title={kind === 'receipt' ? '⬇️ سند قبض — نقدية داخلة' : isPurchaseExpense && expPaidBy === 'payable' ? '🧾 إثبات مصروف مستحق — بلا حركة خزينة' : '⬆️ سند صرف — نقدية خارجة'}>
         <div className="space-y-4">
           {!(isPurchaseExpense && expPaidBy === 'payable') && (
-            <Field label="إلى/من الخزينة أو البنك" hint="كل الخزائن والبنوك المسجلة — أضف المزيد من شاشة الخزائن">
-              <TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} operation={kind} />
-            </Field>
+            kind === 'receipt' ? <>
+              <Field label="طريقة القبض" hint="اختر نقدية/بنك أو ماكينة دفع نشطة ومسموحة لك">
+                <TerminalPaymentPicker value={terminalPayment} onChange={setTerminalPayment} />
+              </Field>
+              {selectedTerminal ? <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-[11px] text-sky-800">سيُسجل القبض على حساب تسوية «{selectedTerminal.nameAr}» وتُحفظ حركة الماكينة مع السند والقيد.</div> : <Field label="الخزينة أو البنك"><TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} operation="receipt" /></Field>}
+            </> : <>
+              <Field label="من الخزينة أو البنك" hint="السداد الخارجي يتم من خزينة/بنك؛ رد ماكينة الدفع يُنفذ من المستند الأصلي المرتبط بها">
+                <TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} operation="payment" />
+              </Field>
+            </>
           )}
           <Field label={kind === 'receipt' ? 'مصدر النقدية (الحساب المقابل)' : 'وجهة النقدية (الحساب المقابل)'}>
             <select value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0) }} className={inputCls}>
