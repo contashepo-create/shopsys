@@ -75,6 +75,36 @@ export function expensesSummary(
   return { rows, grandTotalMinor, txCount: rows.reduce((a, r) => a + r.txCount, 0) }
 }
 
+export interface CostCenterExpenseRow {
+  projectId: number | null
+  totalMinor: Minor
+  paidMinor: Minor
+  accruedMinor: Minor
+  txCount: number
+}
+
+/** تحليل المصروفات الداخلية المرتبطة بالفواتير حسب مركز التكلفة وحالة السداد. */
+export function invoiceExpensesByCostCenter(
+  documents: { date: string; internalExpenses?: { projectId?: number | null; amountMinor: Minor; settlement: 'paid_now' | 'payable_later' }[] }[],
+  filter: ExpenseReportFilter,
+): { rows: CostCenterExpenseRow[]; totalMinor: Minor } {
+  const grouped = new Map<number | null, CostCenterExpenseRow>()
+  for (const document of documents) {
+    if (!inPeriod(document.date, filter)) continue
+    for (const expense of document.internalExpenses ?? []) {
+      const projectId = expense.projectId ?? null
+      const row = grouped.get(projectId) ?? { projectId, totalMinor: 0, paidMinor: 0, accruedMinor: 0, txCount: 0 }
+      row.totalMinor += expense.amountMinor
+      if (expense.settlement === 'paid_now') row.paidMinor += expense.amountMinor
+      else row.accruedMinor += expense.amountMinor
+      row.txCount++
+      grouped.set(projectId, row)
+    }
+  }
+  const rows = [...grouped.values()].sort((a, b) => b.totalMinor - a.totalMinor)
+  return { rows, totalMinor: rows.reduce((sum, row) => sum + row.totalMinor, 0) }
+}
+
 /** التقرير التفصيلي: حركات بند واحد حركة حركة (أو كل البنود لو بلا accountCode) */
 export function expenseDetails(
   journal: JournalEntry[],

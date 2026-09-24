@@ -15,7 +15,7 @@ import {
 } from '../../core/reports.ts'
 import { expiryAlerts } from '../../core/batches.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
-import { expensesSummary, expenseDetails } from '../../core/expenseReports.ts'
+import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter } from '../../core/expenseReports.ts'
 import { accountName } from './accountNames.ts'
 import { inputCls } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
@@ -35,7 +35,7 @@ const EXP_SOURCE_LABELS: Record<string, string> = {
 }
 
 export function ReportsPage() {
-  const { sales, saleReturns, items, customers, suppliers, batches, journal, customAccounts } = useDataStore()
+  const { sales, saleReturns, items, customers, suppliers, batches, journal, customAccounts, projects } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -106,6 +106,7 @@ export function ReportsPage() {
   const [expSource, setExpSource] = useState('')
   const expFilter = useMemo(() => ({ from: period.from, to: period.to, sourceType: expSource || undefined }), [period, expSource])
   const expSummary = useMemo(() => expensesSummary(journal, expFilter, accountName, customExpenseCodes), [journal, expFilter, customExpenseCodes])
+  const costCenterExpenses = useMemo(() => invoiceExpensesByCostCenter(sales, { from: period.from, to: period.to }), [sales, period])
   const expDetail = useMemo(
     () => expenseDetails(journal, { ...expFilter, accountCode: expAccount || undefined }, customExpenseCodes),
     [journal, expFilter, expAccount, customExpenseCodes],
@@ -598,6 +599,13 @@ export function ReportsPage() {
               )}
             </div>
           )}
+          <div className={`${card} overflow-hidden`}>
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between">
+              <div><b>تحليل مصروفات الفواتير حسب مركز التكلفة</b><div className="text-[10px] text-slate-400">المدفوع والمستحق المرتبطان بالفاتورة والربحية</div></div>
+              <b className="text-rose-500">{fmt(costCenterExpenses.totalMinor)}</b>
+            </div>
+            {costCenterExpenses.rows.length ? <table className="w-full text-[12.5px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">مركز التكلفة</th><th>الحركات</th><th>مدفوع</th><th>مستحق</th><th>الإجمالي</th></tr></thead><tbody>{costCenterExpenses.rows.map((row) => <tr key={row.projectId ?? 'none'} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{row.projectId == null ? 'بدون مركز تكلفة' : projects.find((project) => project.id === row.projectId)?.nameAr ?? `مشروع #${row.projectId}`}</td><td>{row.txCount}</td><td className="text-emerald-600">{fmt(row.paidMinor)}</td><td className="text-amber-600">{fmt(row.accruedMinor)}</td><td className="font-black text-rose-500">{fmt(row.totalMinor)}</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد مصروفات فواتير مرتبطة بالفترة</div>}
+          </div>
         </div>
       )}
 
