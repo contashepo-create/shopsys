@@ -6,17 +6,30 @@
 import { useMemo, useState } from 'react'
 import { Plus, Truck, Pencil, Trash2, UserRound, Route } from 'lucide-react'
 import { useDataStore, type Vehicle } from '../../data/repo.ts'
+import { useAppStore } from '../../stores/app.store.ts'
+import { getCountry } from '../../core/countries.ts'
+import { formatMinor } from '../../core/money.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
 const VEHICLE_TYPES = ['تريلا', 'قلاب', 'دينا', 'سطحة', 'براد', 'صهريج', 'أخرى']
 
 export function FleetPage() {
-  const { vehicles, employees, trips, addVehicle, updateVehicle, removeVehicle } = useDataStore()
+  const { vehicles, employees, trips, vehicleCostEntries, addVehicle, updateVehicle, removeVehicle } = useDataStore()
+  const { setup } = useAppStore()
+  const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const fmt = (m: number) => formatMinor(m, cur, false)
   const toast = useToast()
 
   const drivers = useMemo(() => employees.filter((e) => e.active), [employees])
   const driverName = (id: number | null) => (id == null ? '—' : employees.find((e) => e.id === id)?.nameAr ?? '—')
   const tripCount = (vid: number) => trips.filter((t) => t.vehicleId === vid).length
+  const vehicleReport = (vid: number) => {
+    const tripRevenue = trips.filter((t) => t.vehicleId === vid).reduce((sum, trip) => sum + trip.totals.revenueMinor, 0)
+    const entries = vehicleCostEntries.filter((entry) => entry.vehicleId === vid)
+    const internalRevenue = entries.filter((entry) => entry.kind === 'internal_revenue').reduce((sum, entry) => sum + entry.amountMinor, 0)
+    const costs = entries.filter((entry) => entry.kind === 'cost').reduce((sum, entry) => sum + entry.amountMinor, 0)
+    return { tripRevenue, internalRevenue, costs, profit: tripRevenue + internalRevenue - costs, entries }
+  }
 
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Vehicle | null>(null)
@@ -81,8 +94,28 @@ export function FleetPage() {
                 <span className="flex items-center gap-1 text-slate-500"><UserRound size={12} /> {driverName(v.defaultDriverId)}</span>
                 <span className="flex items-center gap-1 text-fuchsia-600 font-bold"><Route size={12} /> {tripCount(v.id)} نقلة</span>
               </div>
+              {(() => { const report = vehicleReport(v.id); return (
+                <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-1.5 text-[11px]">
+                  <div className="flex justify-between"><span className="text-slate-400">إيراد النقل + تحميلات الفواتير</span><b className="text-emerald-600">{fmt(report.tripRevenue + report.internalRevenue)}</b></div>
+                  <div className="flex justify-between"><span className="text-slate-400">تكاليف صيانة/تشغيل مسجلة</span><b className="text-rose-500">{fmt(report.costs)}</b></div>
+                  <div className="flex justify-between font-black"><span>صافي مركز التكلفة</span><b className={report.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}>{fmt(report.profit)}</b></div>
+                  {report.entries.some((entry) => entry.status !== 'paid') && <div className="text-[10px] text-violet-600">استحقاقات غير مسددة: {fmt(report.entries.filter((entry) => entry.status !== 'paid').reduce((sum, entry) => sum + entry.amountMinor, 0))}</div>}
+                </div>
+              ) })()}
             </div>
           ))}
+        </div>
+      )}
+
+      {vehicleCostEntries.length > 0 && (
+        <div className="rounded-2xl bg-white dark:bg-card-dark border border-violet-500/20 p-4 text-[11.5px]">
+          <div className="font-black text-violet-700 dark:text-violet-300">دفتر مركز تكلفة الأسطول</div>
+          <div className="mt-1 text-slate-500">مصروف الشراء المرتبط بالمركبة يظهر كتحميل/إيراد داخلي هنا، وتكلفة الصيانة من سند الصرف تظهر كتدفق مستقل؛ لا تُنشئ هذه الشاشة قيد إيراد عام وهمياً.</div>
+          <div className="mt-2 grid sm:grid-cols-3 gap-2">
+            {vehicleCostEntries.slice(-6).reverse().map((entry) => (
+              <div key={entry.id} className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-2"><b>{vehicles.find((v) => v.id === entry.vehicleId)?.plateNumber ?? '—'}</b> · {entry.kind === 'internal_revenue' ? 'تحميل فاتورة' : 'مصروف تشغيل'}<div className="text-slate-400">{entry.description} · {fmt(entry.amountMinor)} · {entry.status === 'paid' ? 'مسدد' : 'مستحق'}</div></div>
+            ))}
+          </div>
         </div>
       )}
 

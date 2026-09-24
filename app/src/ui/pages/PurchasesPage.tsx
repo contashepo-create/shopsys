@@ -36,16 +36,19 @@ interface DraftExpense {
   amount: string
   method: 'value' | 'qty'
   // من دفع المصروف؟ (طلب المالك) — ليس إجبارياً على حساب المورد:
-  paidBy: 'supplier' | 'treasury' | 'custody'
+  paidBy: 'supplier' | 'treasury' | 'custody' | 'payable'
   payAccount: string // خزينة/بنك عند paidBy=treasury
   custodyFileId: number | null // ملف عهدة عند paidBy=custody
+  beneficiaryName: string // الجهة عند paidBy=payable
+  payableAccountCode: string // حساب الالتزام عند paidBy=payable
+  vehicleId: number | null // مركز تكلفة مركبة الأسطول
 }
 
 const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'شحن وتفريغ', 'تحميل وتنزيل', 'عمولة مشتريات', 'رسوم بنكية', 'أخرى']
-const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', method: 'qty', paidBy: 'supplier', payAccount: '1101', custodyFileId: null }
+const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', method: 'qty', paidBy: 'supplier', payAccount: '1101', custodyFileId: null, beneficiaryName: '', payableAccountCode: '2117', vehicleId: null }
 
 export function PurchasesPage() {
-  const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, treasuries, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
+  const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, treasuries, vehicles, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt, einvoice } = useAppStore()
   const navigate = useNavigate()
   const [today] = useState(() => new Date().toISOString().slice(0, 10))
@@ -149,7 +152,10 @@ export function PurchasesPage() {
   const [lateName, setLateName] = useState('')
   const [lateAmount, setLateAmount] = useState('')
   const [lateMethod, setLateMethod] = useState<'value' | 'qty'>('qty')
-  const [latePaidBy, setLatePaidBy] = useState<'supplier' | 'treasury' | 'custody'>('supplier')
+  const [latePaidBy, setLatePaidBy] = useState<'supplier' | 'treasury' | 'custody' | 'payable'>('supplier')
+  const [latePayableName, setLatePayableName] = useState('')
+  const [latePayableAccount, setLatePayableAccount] = useState('2117')
+  const [lateVehicleId, setLateVehicleId] = useState<number | null>(null)
   const [latePayAccount, setLatePayAccount] = useState('1101')
   const [lateCustodyId, setLateCustodyId] = useState<number | null>(null)
 
@@ -224,10 +230,13 @@ export function PurchasesPage() {
         paidBy: latePaidBy,
         payAccount: latePaidBy === 'treasury' ? latePayAccount : null,
         custodyFileId: latePaidBy === 'custody' ? lateCustodyId : null,
+        beneficiaryName: latePaidBy === 'payable' ? latePayableName : null,
+        payableAccountCode: latePaidBy === 'payable' ? latePayableAccount : null,
+        vehicleId: lateVehicleId,
         date: new Date().toISOString().slice(0, 10),
       })
       setViewing(updated)
-      setLateName(''); setLateAmount('')
+      setLateName(''); setLateAmount(''); setLatePayableName(''); setLateVehicleId(null)
       toast.show('سُجّل المصروف — توزع على الأصناف وتحدثت تكلفتها وتولد قيده ✓')
     } catch (e) {
       toast.show((e as Error).message, 'error')
@@ -360,6 +369,9 @@ export function PurchasesPage() {
           paidBy: e.paidBy,
           payAccount: e.paidBy === 'treasury' ? e.payAccount : null,
           custodyFileId: e.paidBy === 'custody' ? e.custodyFileId : null,
+          beneficiaryName: e.paidBy === 'payable' ? e.beneficiaryName.trim() : undefined,
+          payableAccountCode: e.paidBy === 'payable' ? e.payableAccountCode : undefined,
+          vehicleId: e.vehicleId,
         })),
       paidMinor: paid ? toMinor(paid, cur.decimals) : 0,
       treasury: paySource.kind === 'treasury' ? paySource.treasury : undefined,
@@ -714,6 +726,12 @@ export function PurchasesPage() {
                         ))}
                       </div>
                     </Field>
+                    <Field label="مركز تكلفة المركبة" hint="اختياري — يظهر كتحميل/إيراد داخلي في ربحية مركبة الأسطول">
+                      <select value={e.vehicleId ?? ''} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, vehicleId: ev.target.value ? Number(ev.target.value) : null } : x)))} className={inputCls}>
+                        <option value="">بدون مركبة</option>
+                        {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plateNumber} — {v.vehicleType}</option>)}
+                      </select>
+                    </Field>
                     <button onClick={() => setExpenses((arr) => arr.filter((_, j) => j !== i))} className="p-2 mb-1 text-slate-300 hover:text-rose-500 transition-colors justify-self-center">
                       <Trash2 size={15} />
                     </button>
@@ -722,7 +740,7 @@ export function PurchasesPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[11px] font-bold text-slate-500">من دفعه؟</span>
                     <div className="flex rounded-xl overflow-hidden border-2 border-slate-200 dark:border-slate-700">
-                      {([['supplier', '🚛 على حساب المورد'], ['treasury', '🏦 دفعتُه من خزينة/بنك'], ['custody', '🤝 من عهدة موظف']] as const).map(([m, label]) => (
+                      {([['supplier', '🚛 على حساب المورد'], ['treasury', '🏦 دفعتُه من خزينة/بنك'], ['custody', '🤝 من عهدة موظف'], ['payable', '🧾 مستحق لاحقاً']] as const).map(([m, label]) => (
                         <button
                           key={m}
                           onClick={() => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, paidBy: m, custodyFileId: m === 'custody' ? (openCustodyFiles[0]?.id ?? null) : null } : x)))}
@@ -754,6 +772,15 @@ export function PurchasesPage() {
                           <option key={f.id} value={f.id}>{f.fileNumber} — {employees.find((x) => x.id === f.employeeId)?.nameAr ?? '—'}</option>
                         ))}
                       </select>
+                    )}
+                    {e.paidBy === 'payable' && (
+                      <>
+                        <input value={e.beneficiaryName} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, beneficiaryName: ev.target.value } : x)))} className={`${inputCls} !w-auto min-w-48`} placeholder="اسم الجهة المستحقة" />
+                        <select value={e.payableAccountCode} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, payableAccountCode: ev.target.value } : x)))} className={`${inputCls} !w-auto min-w-40`}>
+                          <option value="2117">مصاريف مستحقة (2117)</option>
+                          <option value="2101">الموردون (2101)</option>
+                        </select>
+                      </>
                     )}
                     {e.paidBy !== 'supplier' && (
                       <span className="text-[10.5px] text-emerald-600 dark:text-emerald-400 font-bold">✓ لن يُضاف لدين المورد</span>
@@ -867,7 +894,7 @@ export function PurchasesPage() {
                 {viewing.expenses.map((e, i) => (
                   <span key={i} className="text-[11px] px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 font-bold">
                     {e.nameAr}: {fmt(e.amountMinor)} ({e.method === 'qty' ? 'بالكمية' : 'بالقيمة'}
-                    {(e.paidBy ?? 'supplier') === 'supplier' ? ' · على المورد' : (e.paidBy === 'custody' ? ' · من عهدة' : ` · من ${treasuries.find((t) => t.code === e.payAccount)?.nameAr ?? 'خزينة'}`)}
+                    {(e.paidBy ?? 'supplier') === 'supplier' ? ' · على المورد' : (e.paidBy === 'custody' ? ' · من عهدة' : e.paidBy === 'payable' ? ` · مستحق لـ ${e.beneficiaryName ?? 'جهة'}` : ` · من ${treasuries.find((t) => t.code === e.payAccount)?.nameAr ?? 'خزينة'}`)}
                     {e.late ? ' · لاحق' : ''})
                   </span>
                 ))}
@@ -921,7 +948,7 @@ export function PurchasesPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[11px] font-bold text-slate-500">من دفعه؟</span>
                 <div className="flex rounded-xl overflow-hidden border-2 border-slate-200 dark:border-slate-700">
-                  {([['supplier', '🚛 على حساب المورد'], ['treasury', '🏦 خزينة/بنك'], ['custody', '🤝 عهدة موظف']] as const).map(([m, label]) => (
+                  {([['supplier', '🚛 على حساب المورد'], ['treasury', '🏦 خزينة/بنك'], ['custody', '🤝 عهدة موظف'], ['payable', '🧾 مستحق لاحقاً']] as const).map(([m, label]) => (
                     <button key={m}
                       onClick={() => { setLatePaidBy(m); if (m === 'custody') setLateCustodyId(openCustodyFiles[0]?.id ?? null) }}
                       disabled={m === 'custody' && openCustodyFiles.length === 0}
@@ -942,7 +969,20 @@ export function PurchasesPage() {
                     ))}
                   </select>
                 )}
-                <Btn variant="soft" onClick={saveLateExpense} shortcut="F9" disabled={!lateName.trim() || !(Number(lateAmount) > 0)}>➕ تسجيل المصروف</Btn>
+                {latePaidBy === 'payable' && (
+                  <>
+                    <input value={latePayableName} onChange={(e) => setLatePayableName(e.target.value)} className={`${inputCls} !w-auto min-w-48`} placeholder="اسم الجهة المستحقة" />
+                    <select value={latePayableAccount} onChange={(e) => setLatePayableAccount(e.target.value)} className={`${inputCls} !w-auto min-w-40`}>
+                      <option value="2117">مصاريف مستحقة (2117)</option>
+                      <option value="2101">الموردون (2101)</option>
+                    </select>
+                  </>
+                )}
+                <select value={lateVehicleId ?? ''} onChange={(e) => setLateVehicleId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-48`} title="مركز تكلفة السيارة">
+                  <option value="">🚚 بدون مركز تكلفة مركبة</option>
+                  {vehicles.map((v) => <option key={v.id} value={v.id}>🚚 {v.plateNumber} — {v.vehicleType}</option>)}
+                </select>
+                <Btn variant="soft" onClick={saveLateExpense} shortcut="F9" disabled={!lateName.trim() || !(Number(lateAmount) > 0) || (latePaidBy === 'payable' && !latePayableName.trim())}>➕ تسجيل المصروف</Btn>
               </div>
             </div>
 
@@ -1051,7 +1091,7 @@ export function PurchasesPage() {
             {editExpenses.length > 0 && (
               <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-500/5 border border-slate-200 dark:border-slate-700">
                 {editExpenses.map((expense, i) => (
-                  <Field key={`${expense.nameAr}-${i}`} label={`${expense.nameAr} · ${expense.costTreatment === 'period' ? 'مصروف فترة' : 'تكلفة مخزون'}`} hint={expense.paidBy === 'supplier' ? 'على حساب المورد' : expense.paidBy === 'custody' ? 'من العهدة' : 'مدفوع من الخزينة'}>
+                  <Field key={`${expense.nameAr}-${i}`} label={`${expense.nameAr} · ${expense.costTreatment === 'period' ? 'مصروف فترة' : 'تكلفة مخزون'}`} hint={expense.paidBy === 'supplier' ? 'على حساب المورد' : expense.paidBy === 'custody' ? 'من العهدة' : expense.paidBy === 'payable' ? `مستحق لـ ${expense.beneficiaryName ?? 'جهة'}` : 'مدفوع من الخزينة'}>
                     <input type="number" min="0" step="0.01" value={expense.amountMinor / 10 ** cur.decimals} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, amountMinor: toMinor(e.target.value, cur.decimals) } : row))} className={inputCls} dir="ltr" />
                   </Field>
                 ))}

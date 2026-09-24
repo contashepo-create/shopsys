@@ -38,7 +38,7 @@
 
 - **4 طبقات جاهزة للـElectron** (core نقي / data / ui / منصة). **المثبّت NSIS/Electron مؤجل حتى يطلبه المالك صراحة.**
 - كل المبالغ **أعداد صحيحة بالوحدة الصغرى (minors/مليمات)** — لا كسور عشرية في الحسابات أبداً.
-- البيانات في localStorage مشفرة عبر `secureStorage.ts`، `DATA_VERSION = 9` مع ترحيل بافتراضات `?? []` لكل مصفوفة جديدة.
+- البيانات في localStorage مشفرة عبر `secureStorage.ts`، `DATA_VERSION = 21` مع ترحيل بافتراضات `?? []` لكل مصفوفة جديدة.
 - الترخيص Ed25519 مربوط بـdeviceId + النشاط، ويُحرق عند مسح قاعدة البيانات أو تغيير النشاط. تجربة 14 يوماً. المفتاح العام: `fBHN_qnQPMzYrgYRTYndwwsZUEWfXCASFQHl4G0Td9g`.
 - إصدار مفتاح: `SHOPSYS_PRIVATE_KEY=... node scripts/license_tool.mjs issue --device X --plan pro --days 365 --activity pharmacy`.
 
@@ -140,6 +140,9 @@ const S = () => useDataStore.getState()
 
 ### 6.3 المشتريات
 - postPurchase: `{supplierId, date, lines:[{itemId,qty,unitPriceMinor,expiryDate}], expenses, paidMinor, treasury, notes}` — مصاريف الشحنة (نقل/جمارك) تُوزع على الأصناف landed cost بالقيمة أو الكمية (اختيار لكل مصروف)، والمتوسط المرجح يُحدَّث. مرتجع شراء بسعر التكلفة المحملة.
+- **الاستحقاق ومركز تكلفة الأسطول (الإصدار 21)**: مصروف الشراء يمكن إثباته `paidBy: 'payable'` مع `beneficiaryName` و`payableAccountCode` بلا دفع فوري. ينشئ ذلك قيد تكلفة/استحقاق وسجل `PurchaseExpensePayable` مستقل؛ السداد لاحقاً عبر `settlePurchaseExpensePayable` يقيد 2117/الخزينة ولا يكرر التكلفة. هذا المسار متاح للمصروف اللاحق في `PurchasesPage` و`VouchersPage` وللمحرر المتقدم.
+- عند اختيار `vehicleId` (مركبة أسطول `Vehicle`، لا `Car` الخاصة بالمعرض) ينشأ `vehicleCostEntries`: المصروف المرتبط بفاتورة الشراء يظهر كتَحميل/إيراد داخلي في ربحية المركبة ويدخل في تكلفة الأصناف، أما سند الصرف المرتبط بالمركبة فيظهر كتكلفة تشغيل مستقلة. لا تُنشأ حركة إيراد عامة وهمية في الأستاذ.
+- **فحص الميزة**: `scripts/verify_purchase_expense_payable_vehicle.mjs` يغطي عدم تحريك الخزينة، إنشاء الاستحقاق، السداد المستقل، ربط السيارة، وصيانة السيارة.
 
 ### 6.4 الأطراف
 - عملاء/موردون: **كل الحقول اختيارية** لكنها تشمل حقول الفاتورة السعودية (رقم ضريبي، سجل، عنوان وطني…). حد ائتمان، كشوف حساب، أعمار ديون.
@@ -237,7 +240,7 @@ const S = () => useDataStore.getState()
 - DATA_VERSION=10 (ترحيل كل الحقول الجديدة). سكربت التحقق: verify_project_ops.mjs (60 اختباراً).
 
 ### 6.19 مصادر دفع مصاريف الشراء + المصروف اللاحق (طلب المالك)
-- `PurchaseExpense` صار يحمل `paidBy: 'supplier'|'treasury'|'custody'` (+`payAccount`/`custodyFileId`/`late`). الافتراضي `supplier` = توافق خلفي كامل، بلا ترقية DATA_VERSION.
+- `PurchaseExpense` صار يحمل `paidBy: 'supplier'|'treasury'|'custody'|'payable'` (+`payAccount`/`custodyFileId`/`beneficiaryName`/`payableAccountCode`/`vehicleId`/`late`). الافتراضي `supplier` = توافق خلفي كامل؛ الإصدار 21 أضاف دفتر `vehicleCostEntries` وترحيل الاستحقاقات.
 - `PurchaseInvoice.supplierDueMinor` = بضاعة + مصاريف على حساب المورد فقط؛ كل مستهلكي رصيد المورد (Dashboard/reports.supplierBalances/statements.supplierStatement/PurchaseReturnsPage/repo مرتجعات debt) يستخدمون `p.supplierDueMinor ?? p.grandTotalMinor`.
 - `buildPurchaseEntryV2` في core/purchases.ts: مدين 1103 أو 5110 بالإجمالي، دائن (مصدر دفع البضاعة + كل مصروف مدفوع مباشرة على حسابه + 2101 بالباقي). سقف `paidMinor` هو مستحق المورد لا الإجمالي.
 - `addLatePurchaseExpense` في repo: مصروف بعد الترحيل → يوزَّع على سطور الفاتورة، نصيب المتبقي بالمخزون → 1103 + رفع متوسط التكلفة، نصيب المَبيع → 5101، فاتورة مشروع → 5110 كلها؛ الدائن مورد/خزينة/عهدة. يُستدعى من عرض الفاتورة (PurchasesPage) ومن سند الصرف (VouchersPage عبر خيار `__purchase_expense__`).

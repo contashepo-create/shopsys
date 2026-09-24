@@ -825,6 +825,8 @@ export interface PurchaseExpense {
   payableAccountCode?: string
   /** الجهة صاحبة الاستحقاق؛ يسمح بعدة أطراف في الفاتورة عبر سطور مستقلة */
   beneficiaryName?: string
+  /** مركز تكلفة مركبة الأسطول؛ لا يُستخدم لسيارات المعرض */
+  vehicleId?: number | null
   /** مصروف لاحق أُضيف بعد ترحيل الفاتورة (Landed Cost Voucher) */
   late?: boolean
   date?: string
@@ -841,6 +843,32 @@ export interface PurchaseExpensePayable {
   payableAccountCode: string
   status: 'open' | 'partial' | 'paid'
   createdAt: string
+  settlementEntryIds: number[]
+  /** السيارة التي حُمّلت عليها التكلفة، إن وُجدت */
+  vehicleId?: number | null
+  /** حركة مركز التكلفة التي ستتحول لحالة مسددة مع السداد */
+  vehicleCostEntryId?: number | null
+}
+
+/**
+ * دفتر فرعي لمركز تكلفة مركبات الأسطول.
+ *
+ * مصروف النولون المرتبط بفاتورة شراء يُسجل كـ«تحميل/إيراد داخلي» للمركبة
+ * وفي الوقت نفسه يدخل في landed cost للأصناف. لا نُنشئ إيراداً عاماً وهمياً في
+ * الأستاذ؛ التقرير التشغيلي للمركبة هو الذي يعرضه. أما الصيانة المدفوعة بسند
+ * صرف فتُسجل كـ«تكلفة» مستقلة.
+ */
+export interface VehicleCostCenterEntry {
+  id: number
+  vehicleId: number
+  date: string
+  kind: 'internal_revenue' | 'cost'
+  amountMinor: number
+  description: string
+  status: 'accrued' | 'partial' | 'paid'
+  purchaseId?: number | null
+  payableId?: number | null
+  journalEntryId: number | null
   settlementEntryIds: number[]
 }
 
@@ -930,6 +958,8 @@ export interface Voucher {
   // ربط السند بطرفه — يغذي كشوف حساب العميل/المورد (طلب المالك)
   partyKind?: 'customer' | 'supplier' | null
   partyId?: number | null
+  /** مركز تكلفة مركبة الأسطول عند سند صرف مصروف صيانة/تشغيل */
+  vehicleId?: number | null
 }
 
 /**
@@ -1119,6 +1149,8 @@ interface DataState {
   payrollRuns: PayrollRun[]
   installmentPlans: InstallmentPlan[]
   vehicles: Vehicle[]
+  /** دفتر تكاليف/تحميلات مركبات الأسطول (منفصل عن سيارات المعرض) */
+  vehicleCostEntries: VehicleCostCenterEntry[]
   trips: Trip[]
   equipment: Equipment[]
   rentalContracts: RentalContract[]
@@ -1418,16 +1450,19 @@ interface DataState {
    * 1) توزَّع على أصناف الفاتورة (قيمة/كمية) وترفع تكلفتها بالمتوسط المرجح
    * 2) نصيب الكمية المتبقية بالمخزون → 1103، ونصيب ما بيع بالفعل → 5101
    *    (فاتورة المشروع: كله → 5110 تكاليف المشروع)
-   * 3) الدائن حسب من دفع: مورد (2101) أو خزينة/بنك أو عهدة موظف (1108)
+   * 3) الدائن حسب من دفع: مورد (2101) أو خزينة/بنك أو عهدة موظف (1108) أو استحقاق جهة (2117) بلا دفع فوري
    */
   addLatePurchaseExpense: (args: {
     purchaseId: number
     nameAr: string
     amountMinor: number
     method: 'value' | 'qty'
-    paidBy: 'supplier' | 'treasury' | 'custody'
+    paidBy: 'supplier' | 'treasury' | 'custody' | 'payable'
     payAccount?: string | null
     custodyFileId?: number | null
+    beneficiaryName?: string | null
+    payableAccountCode?: string | null
+    vehicleId?: number | null
     date: string
   }) => PurchaseInvoice
   /**
@@ -1519,6 +1554,8 @@ interface DataState {
     description: string
     partyKind?: 'customer' | 'supplier' | null
     partyId?: number | null
+    /** مركز تكلفة مركبة الأسطول عند سند صرف مصروف صيانة/تشغيل */
+    vehicleId?: number | null
     /** مصروف التحويل بين الخزائن (رسوم بنكية) — يخرج من المصدر ويقيد 5108 (طلب المالك) */
     feeMinor?: number
   }) => Voucher
@@ -2178,7 +2215,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 20 // 18: تسجيل الدخول الفعلي + الصرف الداخلي — 19: العروض الترويجية/الباقات — 20: الفروع الحقيقية
+export const DATA_VERSION = 21 // 18: تسجيل الدخول الفعلي + الصرف الداخلي — 19: العروض الترويجية/الباقات — 20: الفروع الحقيقية — 21: استحقاقات مصروفات الشراء ومراكز تكلفة مركبات الأسطول
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -2303,6 +2340,7 @@ export const useDataStore = create<DataState>()(
       payrollRuns: [],
       installmentPlans: [],
       vehicles: [],
+      vehicleCostEntries: [],
       trips: [],
       equipment: [],
       rentalContracts: [],
@@ -2394,7 +2432,10 @@ export const useDataStore = create<DataState>()(
         assertBalanced(entry.lines)
         const paidMinor = payable.paidMinor + args.amountMinor
         const updated = { ...payable, paidMinor, status: paidMinor === payable.amountMinor ? 'paid' as const : 'partial' as const, settlementEntryIds: [...payable.settlementEntryIds, entryId] }
-        set({ purchaseExpensePayables: state.purchaseExpensePayables.map((row) => row.id === payable.id ? updated : row), journal: [...state.journal, entry] })
+        const vehicleCostEntries = state.vehicleCostEntries.map((row) => row.payableId === payable.id
+          ? { ...row, status: paidMinor === payable.amountMinor ? 'paid' as const : 'partial' as const, settlementEntryIds: [...row.settlementEntryIds, entryId] }
+          : row)
+        set({ purchaseExpensePayables: state.purchaseExpensePayables.map((row) => row.id === payable.id ? updated : row), vehicleCostEntries, journal: [...state.journal, entry] })
         return updated
       },
       purchaseReturns: [],
@@ -2502,7 +2543,12 @@ export const useDataStore = create<DataState>()(
         }
         for (const expense of inv.expenses) {
           if (!expense.nameAr.trim() || !Number.isInteger(expense.amountMinor) || expense.amountMinor < 0) throw new Error('بيانات مصروف الشراء غير صالحة')
-          if (expense.paidBy === 'payable' && !expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة لمصروف «${expense.nameAr}»`)
+          if (expense.paidBy === 'payable') {
+            if (!expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة لمصروف «${expense.nameAr}»`)
+            const payableCode = expense.payableAccountCode ?? '2117'
+            const payableAccount = STANDARD_COA.find((account) => account.code === payableCode) ?? state.customAccounts.find((account) => account.code === payableCode)
+            if (!payableAccount || payableAccount.rootType !== 'liabilities' || (payableAccount as { isPostable?: boolean }).isPostable === false) throw new Error(`حساب الاستحقاق لمصروف «${expense.nameAr}» يجب أن يكون حساب التزام قابلاً للترحيل`)
+          }
         }
         if (!Number.isInteger(inv.paidMinor) || inv.paidMinor < 0) throw new Error('المدفوع لا يكون سالباً')
         const allocatedPaid = inv.paymentAllocations?.reduce((sum, row) => sum + row.amountMinor, 0)
@@ -2792,12 +2838,28 @@ export const useDataStore = create<DataState>()(
             journalEntryId: entryId,
           }]
         }
-        const createdPayables: PurchaseExpensePayable[] = inv.expenses.flatMap((expense, expenseIndex) => expense.paidBy === 'payable' && expense.amountMinor > 0 ? [{ id: nextId(state.purchaseExpensePayables) + expenseIndex, purchaseId, expenseIndex, beneficiaryName: expense.beneficiaryName!.trim(), description: expense.nameAr, amountMinor: expense.amountMinor, paidMinor: 0, payableAccountCode: expense.payableAccountCode ?? '2117', status: 'open' as const, createdAt: nowIso, settlementEntryIds: [] }] : [])
+        const createdPayables: PurchaseExpensePayable[] = inv.expenses.flatMap((expense, expenseIndex) => expense.paidBy === 'payable' && expense.amountMinor > 0 ? [{ id: nextId(state.purchaseExpensePayables) + expenseIndex, purchaseId, expenseIndex, beneficiaryName: expense.beneficiaryName!.trim(), description: expense.nameAr, amountMinor: expense.amountMinor, paidMinor: 0, payableAccountCode: expense.payableAccountCode ?? '2117', status: 'open' as const, createdAt: nowIso, settlementEntryIds: [], vehicleId: expense.vehicleId ?? null, vehicleCostEntryId: null }] : [])
         // أعد ترقيم الفجوات الناتجة عن سطور غير مستحقة لضمان معرفات فريدة متتابعة.
         createdPayables.forEach((payable, index) => { payable.id = nextId(state.purchaseExpensePayables) + index })
+        const createdVehicleCostEntries: VehicleCostCenterEntry[] = inv.expenses.flatMap((expense, expenseIndex) => {
+          if (expense.vehicleId == null || expense.amountMinor <= 0) return []
+          if (!state.vehicles.some((vehicle) => vehicle.id === expense.vehicleId)) throw new Error('مركبة مركز التكلفة غير موجودة')
+          const payable = createdPayables.find((row) => row.expenseIndex === expenseIndex)
+          return [{
+            id: nextId(state.vehicleCostEntries) + expenseIndex,
+            vehicleId: expense.vehicleId, date: inv.date, kind: 'internal_revenue' as const, amountMinor: expense.amountMinor,
+            description: `${expense.nameAr} — فاتورة شراء ${invoiceNumber}`, status: expense.paidBy === 'treasury' || expense.paidBy === 'custody' ? 'paid' as const : 'accrued' as const,
+            purchaseId, payableId: payable?.id ?? null, journalEntryId: entryId, settlementEntryIds: [],
+          }]
+        })
+        const linkedPayables = createdPayables.map((payable) => ({
+          ...payable,
+          vehicleCostEntryId: createdVehicleCostEntries.find((row) => row.payableId === payable.id)?.id ?? null,
+        }))
         set({
           purchases: [...state.purchases, invoice],
-          purchaseExpensePayables: [...state.purchaseExpensePayables, ...createdPayables],
+          purchaseExpensePayables: [...state.purchaseExpensePayables, ...linkedPayables],
+          vehicleCostEntries: [...state.vehicleCostEntries, ...createdVehicleCostEntries],
           journal: [...state.journal, entry],
           items: updatedItems,
           batches: newBatches.length ? [...state.batches, ...newBatches] : state.batches,
@@ -2819,7 +2881,9 @@ export const useDataStore = create<DataState>()(
         const costLines: CostLine[] = purchase.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor }))
         const shares = allocateExpense(costLines, { nameAr: args.nameAr, amountMinor: args.amountMinor, method: args.method })
 
-        // 2) الدائن حسب من دفع (طلب المالك): مورد / خزينة / عهدة — مع فحوصها قبل أي كتابة
+        // 2) الدائن حسب من دفع: مورد / خزينة / عهدة / استحقاق جهة.
+        // الاستحقاق يثبت التكلفة الآن ولا يحرك أي خزينة؛ السداد له مسار مستقل أدناه.
+        if (args.vehicleId != null && !state.vehicles.some((vehicle) => vehicle.id === args.vehicleId)) throw new Error('مركبة مركز التكلفة غير موجودة')
         let creditAccount: string
         let creditNote: string
         let custodyFile: CustodyFile | null = null
@@ -2831,7 +2895,13 @@ export const useDataStore = create<DataState>()(
           if (!state.treasuries.some((t) => t.code === acc)) throw new Error('الخزينة/البنك غير موجود')
           creditAccount = acc
           creditNote = `${args.nameAr} مدفوع من ${state.treasuries.find((t) => t.code === acc)?.nameAr ?? acc}`
-        } else {
+        } else if (args.paidBy === 'payable') {
+          if (!args.beneficiaryName?.trim()) throw new Error('حدد الجهة المستحقة للمصروف')
+          creditAccount = args.payableAccountCode || '2117'
+          const payableAccount = STANDARD_COA.find((account) => account.code === creditAccount) ?? state.customAccounts.find((account) => account.code === creditAccount)
+          if (!payableAccount || payableAccount.rootType !== 'liabilities' || (payableAccount as { isPostable?: boolean }).isPostable === false) throw new Error('حساب الاستحقاق غير موجود أو ليس حساب التزام قابلاً للترحيل')
+          creditNote = `${args.nameAr} — مستحق لـ ${args.beneficiaryName.trim()}`
+        } else if (args.paidBy === 'custody') {
           if (args.custodyFileId == null) throw new Error('حدد ملف العهدة الذي دفع المصروف')
           custodyFile = state.custodyFiles.find((f) => f.id === args.custodyFileId) ?? null
           if (!custodyFile) throw new Error('ملف العهدة غير موجود')
@@ -2840,6 +2910,8 @@ export const useDataStore = create<DataState>()(
           if (args.amountMinor > remaining) throw new Error(`المبلغ أكبر من متبقي العهدة (${remaining})`)
           creditAccount = CUSTODY_ACCOUNT
           creditNote = `${args.nameAr} مدفوع من عهدة ${custodyFile.fileNumber}`
+        } else {
+          throw new Error('طريقة إثبات المصروف غير صالحة')
         }
 
         // 3) المدين: فاتورة مشروع → 5110 كلها؛ فاتورة عادية → نصيب المتبقي بالمخزون 1103
@@ -2903,6 +2975,9 @@ export const useDataStore = create<DataState>()(
             nameAr: args.nameAr, amountMinor: args.amountMinor, method: args.method,
             paidBy: args.paidBy, payAccount: args.paidBy === 'treasury' ? (args.payAccount || '1101') : null,
             custodyFileId: args.paidBy === 'custody' ? (args.custodyFileId ?? null) : null,
+            beneficiaryName: args.paidBy === 'payable' ? args.beneficiaryName!.trim() : undefined,
+            payableAccountCode: args.paidBy === 'payable' ? (args.payableAccountCode || '2117') : undefined,
+            vehicleId: args.vehicleId ?? null,
             late: true, date: args.date,
           }],
           expensesTotalMinor: purchase.expensesTotalMinor + args.amountMinor,
@@ -2931,8 +3006,24 @@ export const useDataStore = create<DataState>()(
           }]
         }
 
+        const expenseIndex = purchase.expenses.length
+        const payableId = args.paidBy === 'payable' ? nextId(state.purchaseExpensePayables) : null
+        const vehicleCostEntryId = args.vehicleId != null ? nextId(state.vehicleCostEntries) : null
+        const payable: PurchaseExpensePayable | null = payableId == null ? null : {
+          id: payableId, purchaseId: purchase.id, expenseIndex, beneficiaryName: args.beneficiaryName!.trim(), description: args.nameAr,
+          amountMinor: args.amountMinor, paidMinor: 0, payableAccountCode: args.payableAccountCode || '2117', status: 'open',
+          createdAt: nowIso, settlementEntryIds: [], vehicleId: args.vehicleId ?? null, vehicleCostEntryId,
+        }
+        const vehicleCostEntry: VehicleCostCenterEntry | null = args.vehicleId == null ? null : {
+          id: vehicleCostEntryId!, vehicleId: args.vehicleId, date: args.date, kind: 'internal_revenue', amountMinor: args.amountMinor,
+          description: `${args.nameAr} — مصروف لاحق على فاتورة ${purchase.invoiceNumber}`,
+          status: args.paidBy === 'treasury' || args.paidBy === 'custody' ? 'paid' : 'accrued', purchaseId: purchase.id,
+          payableId, journalEntryId: entryId, settlementEntryIds: [],
+        }
         set({
           purchases: state.purchases.map((p) => (p.id === purchase.id ? updatedInvoice : p)),
+          purchaseExpensePayables: payable ? [...state.purchaseExpensePayables, payable] : state.purchaseExpensePayables,
+          vehicleCostEntries: vehicleCostEntry ? [...state.vehicleCostEntries, vehicleCostEntry] : state.vehicleCostEntries,
           journal: [...state.journal, entry],
           items: itemsAfter,
           custodyTxs,
@@ -4183,6 +4274,8 @@ export const useDataStore = create<DataState>()(
         }
         if (args.partyKind === 'customer' && args.partyId != null && !state.customers.some((c) => c.id === args.partyId)) throw new Error('العميل غير موجود — سجّله أولاً')
         if (args.partyKind === 'supplier' && args.partyId != null && !state.suppliers.some((s) => s.id === args.partyId)) throw new Error('المورد غير موجود — سجّله أولاً')
+        if (args.vehicleId != null && !state.vehicles.some((vehicle) => vehicle.id === args.vehicleId)) throw new Error('مركبة مركز التكلفة غير موجودة')
+        if (args.vehicleId != null && args.kind !== 'payment') throw new Error('مركز تكلفة المركبة متاح لسندات الصرف فقط')
 
         // حارس مركزي: إخفاء الخيارات في الواجهة لا يكفي. المالك (currentUserId=null)
         // غير مقيّد، والمستخدم القديم بلا grants متوافق مؤقتاً حتى يضبطه المدير.
@@ -4233,6 +4326,7 @@ export const useDataStore = create<DataState>()(
           journalEntryId: entryId,
           partyKind: args.partyKind ?? null,
           partyId: args.partyId ?? null,
+          vehicleId: args.vehicleId ?? null,
         }
 
         // ═══ إصلاح المالك: «المبالغ في الملف غير مطابقة لكشف الحساب» ═══
@@ -4260,7 +4354,14 @@ export const useDataStore = create<DataState>()(
           }
         }
 
-        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry], clinicCollections })
+        const vehicleCostEntries = args.kind === 'payment' && args.vehicleId != null
+          ? [...state.vehicleCostEntries, {
+              id: nextId(state.vehicleCostEntries), vehicleId: args.vehicleId, date: now.slice(0, 10), kind: 'cost' as const,
+              amountMinor: args.amountMinor, description: args.description || 'مصروف مركبة', status: 'paid' as const,
+              purchaseId: null, payableId: null, journalEntryId: entryId, settlementEntryIds: [],
+            }]
+          : state.vehicleCostEntries
+        set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry], clinicCollections, vehicleCostEntries })
         return voucher
       },
 
@@ -10430,6 +10531,7 @@ export const useDataStore = create<DataState>()(
           advanceRepayments: s.advanceRepayments ?? [],
           installmentPlans: s.installmentPlans ?? [],
           vehicles: s.vehicles ?? [],
+          vehicleCostEntries: s.vehicleCostEntries ?? [],
           trips: s.trips ?? [],
           // ترقية القرار 25: معدات قديمة تحصل على حقول العدّاد والأسعار الجديدة
           equipment: (s.equipment ?? []).map((e) => ({

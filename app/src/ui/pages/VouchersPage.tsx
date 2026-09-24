@@ -42,7 +42,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars } = useDataStore()
+  const { vouchers, journal, treasuries, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, vehicles } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -61,6 +61,10 @@ export function VouchersPage() {
   const [partyId, setPartyId] = useState(0) // العميل (قبض 1104) أو المورد (صرف 2101) — يغذي كشف الحساب
   const [purchaseId, setPurchaseId] = useState(0) // فاتورة الشراء عند «مصروف على فاتورة شراء»
   const [expMethod, setExpMethod] = useState<'value' | 'qty'>('qty') // توزيع مصروف الفاتورة
+  const [expPaidBy, setExpPaidBy] = useState<'treasury' | 'payable'>('treasury')
+  const [expBeneficiary, setExpBeneficiary] = useState('')
+  const [expPayableAccount, setExpPayableAccount] = useState('2117')
+  const [vehicleId, setVehicleId] = useState<number | null>(null)
   const [viewing, setViewing] = useState<Voucher | null>(null)
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
@@ -120,6 +124,10 @@ export function VouchersPage() {
     setPartyId(0)
     setPurchaseId(0)
     setExpMethod('qty')
+    setExpPaidBy('treasury')
+    setExpBeneficiary('')
+    setExpPayableAccount('2117')
+    setVehicleId(null)
     setOpen(true)
   }
 
@@ -137,7 +145,7 @@ export function VouchersPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
   const save = () => {
-    if (kind === 'payment') { paymentApproval.request(() => doSave()); return }
+    if (kind === 'payment' && !(isPurchaseExpense && expPaidBy === 'payable')) { paymentApproval.request(() => doSave()); return }
     doSave()
   }
   const doSave = () => {
@@ -153,8 +161,11 @@ export function VouchersPage() {
           nameAr: desc.trim(),
           amountMinor: toMinor(amount || '0', cur.decimals),
           method: expMethod,
-          paidBy: 'treasury',
-          payAccount: treasury,
+          paidBy: expPaidBy,
+          payAccount: expPaidBy === 'treasury' ? treasury : null,
+          beneficiaryName: expPaidBy === 'payable' ? expBeneficiary.trim() : null,
+          payableAccountCode: expPaidBy === 'payable' ? expPayableAccount : null,
+          vehicleId,
           date: new Date().toISOString().slice(0, 10),
         })
         toast.show(`سُجّل المصروف على الفاتورة ${updated.invoiceNumber} — توزع على أصنافها وتحدثت تكلفتها ✓`)
@@ -253,11 +264,13 @@ export function VouchersPage() {
       )}
 
       {/* سند جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title={kind === 'receipt' ? '⬇️ سند قبض — نقدية داخلة' : '⬆️ سند صرف — نقدية خارجة'}>
+      <Modal open={open} onClose={() => setOpen(false)} title={kind === 'receipt' ? '⬇️ سند قبض — نقدية داخلة' : isPurchaseExpense && expPaidBy === 'payable' ? '🧾 إثبات مصروف مستحق — بلا حركة خزينة' : '⬆️ سند صرف — نقدية خارجة'}>
         <div className="space-y-4">
-          <Field label="إلى/من الخزينة أو البنك" hint="كل الخزائن والبنوك المسجلة — أضف المزيد من شاشة الخزائن">
-            <TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} operation={kind} />
-          </Field>
+          {!(isPurchaseExpense && expPaidBy === 'payable') && (
+            <Field label="إلى/من الخزينة أو البنك" hint="كل الخزائن والبنوك المسجلة — أضف المزيد من شاشة الخزائن">
+              <TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} operation={kind} />
+            </Field>
+          )}
           <Field label={kind === 'receipt' ? 'مصدر النقدية (الحساب المقابل)' : 'وجهة النقدية (الحساب المقابل)'}>
             <select value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0) }} className={inputCls}>
               <option value="">اختر…</option>
@@ -305,7 +318,26 @@ export function VouchersPage() {
           })()}
           {isPurchaseExpense && (
             <>
-              <Field label="أي فاتورة شراء؟ *" hint="المصروف يوزَّع على أصنافها ويرفع تكلفتها بالمتوسط المرجح — لن يُضاف لدين المورد">
+              <Field label="طريقة إثبات مصروف الفاتورة" hint="الإثبات كمستحق لا ينشئ حركة خزينة؛ يمكنك السداد لاحقاً من الاستحقاقات">
+                <div className="flex rounded-xl overflow-hidden border-2 border-slate-200 dark:border-slate-700 w-fit">
+                  {([['treasury', '💵 مدفوع الآن'], ['payable', '🧾 مستحق لاحقاً']] as const).map(([mode, label]) => (
+                    <button key={mode} type="button" onClick={() => setExpPaidBy(mode)} className={`px-4 py-2 text-[11px] font-bold ${expPaidBy === mode ? 'bg-sky-500 text-white' : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>{label}</button>
+                  ))}
+                </div>
+              </Field>
+              {expPaidBy === 'payable' && (
+                <div className="grid sm:grid-cols-2 gap-2">
+                  <Field label="الجهة المستحقة *"><input value={expBeneficiary} onChange={(e) => setExpBeneficiary(e.target.value)} className={inputCls} placeholder="شركة النقل / الجمارك…" /></Field>
+                  <Field label="حساب الاستحقاق"><select value={expPayableAccount} onChange={(e) => setExpPayableAccount(e.target.value)} className={inputCls}><option value="2117">مصاريف مستحقة (2117)</option><option value="2101">الموردون (2101)</option></select></Field>
+                </div>
+              )}
+              <Field label="مركز تكلفة السيارة (اختياري)" hint="سيظهر التحميل ضمن ربحية مركبة الأسطول؛ سيارات المعرض منفصلة">
+                <select value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
+                  <option value="">بدون مركبة</option>
+                  {vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber} — {vehicle.vehicleType}</option>)}
+                </select>
+              </Field>
+              <Field label="أي فاتورة شراء؟ *" hint="المصروف يوزَّع على أصنافها ويرفع تكلفتها بالمتوسط المرجح؛ اختر مدفوعاً أو مستحقاً بلا دفع فوري">
                 <select value={purchaseId} onChange={(e) => setPurchaseId(Number(e.target.value))} className={inputCls}>
                   <option value={0}>اختر…</option>
                   {[...purchases].reverse().slice(0, 50).map((p) => (
@@ -335,7 +367,7 @@ export function VouchersPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} shortcut="F9" disabled={!counter || !amount.trim() || (needsParty && !partyId) || (isPurchaseExpense && (!purchaseId || !desc.trim()))}>💾 حفظ السند</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!counter || !amount.trim() || (needsParty && !partyId) || (isPurchaseExpense && (!purchaseId || !desc.trim() || (expPaidBy === 'payable' && !expBeneficiary.trim())))}>💾 حفظ السند</Btn>
           </div>
         </div>
       </Modal>
