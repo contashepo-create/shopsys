@@ -26,7 +26,7 @@ import {
 } from '../core/auth.ts'
 import { validateConsumption, buildConsumptionEntry, consumptionTotalMinor, INTERNAL_USE_ACCOUNT } from '../core/consumption.ts'
 import { validateWalletService, computeWalletTotals, buildWalletServiceEntry, type WalletServiceInput, type WalletServiceType, type WalletProvider, type WalletServiceTotals } from '../core/walletServices.ts'
-import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, buildPurchaseReturnLinesPerLine, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, type PurchaseReturnLine, type PurchaseReturnLineSpec, type ExpensePaymentCredit } from '../core/purchases.ts'
+import { buildPurchaseEntryV2, buildLateExpenseEntry, buildPurchaseReturnLines, buildPurchaseReturnLinesPerLine, purchaseReturnTotal, purchaseReturnSupplierValue, buildPurchaseReturnEntry, purchaseExpenseTaxParts, type PurchaseReturnLine, type PurchaseReturnLineSpec, type ExpensePaymentCredit } from '../core/purchases.ts'
 import { computeStocktake, buildAdjustmentEntry, type CountInput, type StocktakeResult } from '../core/stocktake.ts'
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder, type ProductionExpense } from '../core/recipes.ts'
 import { validateProcessing, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
@@ -1346,6 +1346,8 @@ interface DataState {
      * فتُخصم من ضريبة المخرجات، ولا تدخل تكلفة المخزون. 0/غياب = ضمن التكلفة.
      */
     inputVatMinor?: number
+    /** هل ضريبة مصروفات الشراء قابلة للاسترداد حسب صفة المنشأة */
+    purchaseExpenseTaxRecoverable?: boolean
     notes: string
   }) => PurchaseInvoice
   /**
@@ -2541,8 +2543,11 @@ export const useDataStore = create<DataState>()(
         const costLines: CostLine[] = inv.lines.map((l) => ({
           itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
         }))
-        const landedExpenses = inv.expenses.filter((expense) => (expense.costTreatment ?? 'inventory') === 'inventory')
+        const expensePolicy = { status: 'registered' as const, configuredPercent: 0, effectivePercent: 0, canRecoverInputTax: inv.purchaseExpenseTaxRecoverable ?? true, disclosureAr: '' }
+        const landedExpensesOriginal = inv.expenses.filter((expense) => (expense.costTreatment ?? 'inventory') === 'inventory')
         const periodExpenses = inv.expenses.filter((expense) => expense.costTreatment === 'period')
+        const expenseParts = new Map(inv.expenses.map((expense) => [expense, purchaseExpenseTaxParts(expense, expensePolicy)]))
+        const landedExpenses = landedExpensesOriginal.map((expense) => ({ ...expense, amountMinor: expenseParts.get(expense)!.costMinor }))
         const landed = computeLandedCosts(costLines, landedExpenses as ExpenseInput[])
         const goodsTotal = landed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
         const expensesTotal = landedExpenses.reduce((a, e) => a + e.amountMinor, 0)
@@ -2553,21 +2558,22 @@ export const useDataStore = create<DataState>()(
         // ما دفعتُه بنفسي لا يدخل دين المورد أبداً.
         const expensePayments: ExpensePaymentCredit[] = []
         const expenseCustodyNeeds = new Map<number, number>() // fileId → إجمالي المطلوب من عهدته
-        for (const e of landedExpenses) {
+        for (const e of landedExpensesOriginal) {
           const paidBy = e.paidBy ?? 'supplier'
-          if (e.amountMinor <= 0) continue
+          const payableAmount = expenseParts.get(e)!.payableMinor
+          if (payableAmount <= 0) continue
           if (paidBy === 'treasury') {
             const acc = e.payAccount || '1101'
             if (!state.treasuries.some((t) => t.code === acc)) throw new Error(`خزينة مصروف «${e.nameAr}» غير موجودة`)
-            const errors = validateTreasuryAccess(purchaseUser?.treasuryAccess, acc, 'payment', e.amountMinor)
+            const errors = validateTreasuryAccess(purchaseUser?.treasuryAccess, acc, 'payment', payableAmount)
             if (errors.length) throw new Error(errors.join(' — '))
-            expensePayments.push({ account: acc, amountMinor: e.amountMinor, note: `${e.nameAr} — مدفوع من ${state.treasuries.find((t) => t.code === acc)?.nameAr ?? acc}` })
+            expensePayments.push({ account: acc, amountMinor: payableAmount, note: `${e.nameAr} — مدفوع من ${state.treasuries.find((t) => t.code === acc)?.nameAr ?? acc}` })
           } else if (paidBy === 'payable') {
-            expensePayments.push({ account: e.payableAccountCode ?? '2117', amountMinor: e.amountMinor, note: `${e.nameAr} — مستحق لـ ${e.beneficiaryName?.trim() || 'جهة أخرى'}` })
+            expensePayments.push({ account: e.payableAccountCode ?? '2117', amountMinor: payableAmount, note: `${e.nameAr} — مستحق لـ ${e.beneficiaryName?.trim() || 'جهة أخرى'}` })
           } else if (paidBy === 'custody') {
             if (e.custodyFileId == null) throw new Error(`حدد ملف العهدة الذي دفع مصروف «${e.nameAr}»`)
-            expenseCustodyNeeds.set(e.custodyFileId, (expenseCustodyNeeds.get(e.custodyFileId) ?? 0) + e.amountMinor)
-            expensePayments.push({ account: CUSTODY_ACCOUNT, amountMinor: e.amountMinor, note: `${e.nameAr} — مدفوع من عهدة موظف` })
+            expenseCustodyNeeds.set(e.custodyFileId, (expenseCustodyNeeds.get(e.custodyFileId) ?? 0) + payableAmount)
+            expensePayments.push({ account: CUSTODY_ACCOUNT, amountMinor: payableAmount, note: `${e.nameAr} — مدفوع من عهدة موظف` })
           }
         }
         for (const expense of periodExpenses) if (expense.paidBy === 'custody') {
@@ -2582,7 +2588,8 @@ export const useDataStore = create<DataState>()(
           if (l.vatPercent == null) return sum
           return sum + Math.round((l.qty * l.unitPriceMinor * Math.max(0, l.vatPercent)) / 100)
         }, 0)
-        const inputVatMinor = inv.inputVatMinor ?? linesInputVatMinor
+        const expenseInputVatMinor = inv.expenses.reduce((sum, expense) => sum + expenseParts.get(expense)!.recoverableTaxMinor, 0)
+        const inputVatMinor = (inv.inputVatMinor ?? linesInputVatMinor) + expenseInputVatMinor
         if (!Number.isInteger(inputVatMinor) || inputVatMinor < 0) throw new Error('ضريبة المدخلات لا تكون سالبة')
         // مستحق المورد = البضاعة + ضريبة المدخلات + المصاريف المحملة على حسابه فقط
         const supplierPeriodExpenses = periodExpenses.filter((expense) => (expense.paidBy ?? 'supplier') === 'supplier').reduce((sum, expense) => sum + expense.amountMinor, 0)
@@ -2634,7 +2641,7 @@ export const useDataStore = create<DataState>()(
           settlement: (expense.paidBy ?? 'supplier') === 'treasury' || expense.paidBy === 'custody' ? 'paid_now' as const : 'payable_later' as const,
           treasury: expense.paidBy === 'custody' ? CUSTODY_ACCOUNT : (expense.payAccount ?? inv.treasury ?? '1101'),
           payableAccountCode: expense.paidBy === 'supplier' ? '2101' : (expense.payableAccountCode ?? '2117'),
-          taxTreatment: 'exempt' as const, taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' as const,
+          taxTreatment: inv.purchaseExpenseTaxRecoverable ? (expense.taxTreatment ?? 'exempt') : 'exempt' as const, taxPercent: expense.taxPercent ?? 0, affectsProfit: true, landedCostAllocation: 'none' as const,
         })), inv.treasury ?? '1101')
         entryLines.push(...periodExpenseLines)
         assertBalanced(entryLines)
