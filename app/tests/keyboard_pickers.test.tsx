@@ -39,14 +39,15 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
   })
 
   it('يفتح منتقي الطرف عبر F4 ويختار العميل بالأسهم وEnter', () => {
-    const onChange = vi.fn()
-    const view = render(<MemoryRouter><KeyboardNavigation/><PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد', phone: '010' }, { id: 11, nameAr: 'منى', phone: '011' }]} value={0} onChange={onChange} cashLabel="عميل نقدي" label="العميل"/></MemoryRouter>)
+    const onChange = vi.fn(), onConfirm = vi.fn()
+    const view = render(<MemoryRouter><KeyboardNavigation/><PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد', phone: '010' }, { id: 11, nameAr: 'منى', phone: '011' }]} value={0} onChange={onChange} cashLabel="عميل نقدي" label="العميل" onConfirm={onConfirm}/></MemoryRouter>)
     const input = view.getByLabelText('العميل')
     fireEvent.keyDown(document, { key: 'F4' })
     expect(document.activeElement).toBe(input)
     fireEvent.keyDown(input, { key: 'ArrowDown' })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onChange).toHaveBeenCalledWith(11)
+    expect(onConfirm).toHaveBeenCalledOnce()
   })
 
   it('يفتح منتقي الصنف عبر F5 ويبدل دليل الاختصارات عبر F12', () => {
