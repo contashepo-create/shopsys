@@ -1,9 +1,10 @@
-import { fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { KeyboardNavigation } from '../src/ui/components/KeyboardNavigation.tsx'
 
 function Path() { return <span data-testid="path">{useLocation().pathname}</span> }
+afterEach(cleanup)
 
 describe('التحكم بلوحة المفاتيح', () => {
   it('ينقل Enter إلى الحقل التالي وShift+Enter إلى السابق', () => {
@@ -25,6 +26,13 @@ describe('التحكم بلوحة المفاتيح', () => {
     const first = view.getByLabelText('code1'), second = view.getByLabelText('code2')
     first.focus(); fireEvent.keyDown(first, { key: 'ArrowDown' }); expect(document.activeElement).toBe(second)
     fireEvent.keyDown(second, { key: 'ArrowUp' }); expect(document.activeElement).toBe(first)
+  })
+
+  it('يخصص F9 للمسودة وF8 للترحيل خارج الكاشير', () => {
+    let draft = 0, posted = 0
+    render(<MemoryRouter initialEntries={['/purchases/invoices/new']}><KeyboardNavigation/><button onClick={() => draft++}>حفظ مسودة</button><button onClick={() => posted++}>اعتماد وترحيل</button></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' }); expect(draft).toBe(1); expect(posted).toBe(0)
+    fireEvent.keyDown(document, { key: 'F8' }); expect(posted).toBe(1)
   })
 
   it('يفتح F3 فاتورة شراء جديدة من قسم المشتريات', () => {
