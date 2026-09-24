@@ -28,6 +28,13 @@ const RECEIPT_COUNTERS = [
 ]
 /** كود خاص: مصروف على فاتورة شراء — يوزَّع على أصنافها ويرفع تكلفتها (طلب المالك) */
 const PURCHASE_EXPENSE_CODE = '__purchase_expense__'
+const VEHICLE_COST_CATEGORIES = [
+  ['maintenance', 'صيانة'],
+  ['fuel', 'وقود'],
+  ['parts', 'قطع غيار'],
+  ['tolls', 'نولون/رسوم طريق'],
+  ['other', 'أخرى'],
+] as const
 const PAYMENT_COUNTERS = [
   { code: '2101', label: 'سداد لمورد (تخفيض ديننا له)' },
   { code: PURCHASE_EXPENSE_CODE, label: 'مصروف على فاتورة شراء (نولون/جمارك… يرفع تكلفة أصنافها)' },
@@ -65,6 +72,7 @@ export function VouchersPage() {
   const [expBeneficiary, setExpBeneficiary] = useState('')
   const [expPayableAccount, setExpPayableAccount] = useState('2117')
   const [vehicleId, setVehicleId] = useState<number | null>(null)
+  const [vehicleCostCategory, setVehicleCostCategory] = useState('maintenance')
   const [viewing, setViewing] = useState<Voucher | null>(null)
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
@@ -128,6 +136,7 @@ export function VouchersPage() {
     setExpBeneficiary('')
     setExpPayableAccount('2117')
     setVehicleId(null)
+    setVehicleCostCategory('maintenance')
     setOpen(true)
   }
 
@@ -166,6 +175,7 @@ export function VouchersPage() {
           beneficiaryName: expPaidBy === 'payable' ? expBeneficiary.trim() : null,
           payableAccountCode: expPaidBy === 'payable' ? expPayableAccount : null,
           vehicleId,
+          category: vehicleId != null ? vehicleCostCategory : undefined,
           date: new Date().toISOString().slice(0, 10),
         })
         toast.show(`سُجّل المصروف على الفاتورة ${updated.invoiceNumber} — توزع على أصنافها وتحدثت تكلفتها ✓`)
@@ -180,6 +190,8 @@ export function VouchersPage() {
         description: desc.trim(),
         partyKind: needsParty ? (kind === 'receipt' ? 'customer' : 'supplier') : null,
         partyId: needsParty ? partyId : null,
+        vehicleId: kind === 'payment' ? vehicleId : null,
+        vehicleCostCategory: kind === 'payment' && vehicleId != null ? vehicleCostCategory : undefined,
       })
       toast.show(`تم ${kind === 'receipt' ? 'سند القبض' : 'سند الصرف'} ${v.voucherNumber} — تولد قيده تلقائياً ✓`)
       setOpen(false)
@@ -316,6 +328,23 @@ export function VouchersPage() {
               </div>
             )
           })()}
+          {kind === 'payment' && !isPurchaseExpense && (
+            <div className="grid sm:grid-cols-2 gap-2 rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 p-3">
+              <Field label="مركز تكلفة المركبة (اختياري)" hint="يظهر سند الدفع في كشف وربحية السيارة">
+                <select value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
+                  <option value="">بدون مركبة</option>
+                  {vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber} — {vehicle.vehicleType}</option>)}
+                </select>
+              </Field>
+              {vehicleId != null && (
+                <Field label="نوع مصروف السيارة">
+                  <select value={vehicleCostCategory} onChange={(e) => setVehicleCostCategory(e.target.value)} className={inputCls}>
+                    {VEHICLE_COST_CATEGORIES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+                  </select>
+                </Field>
+              )}
+            </div>
+          )}
           {isPurchaseExpense && (
             <>
               <Field label="طريقة إثبات مصروف الفاتورة" hint="الإثبات كمستحق لا ينشئ حركة خزينة؛ يمكنك السداد لاحقاً من الاستحقاقات">
@@ -331,12 +360,21 @@ export function VouchersPage() {
                   <Field label="حساب الاستحقاق"><select value={expPayableAccount} onChange={(e) => setExpPayableAccount(e.target.value)} className={inputCls}><option value="2117">مصاريف مستحقة (2117)</option><option value="2101">الموردون (2101)</option></select></Field>
                 </div>
               )}
-              <Field label="مركز تكلفة السيارة (اختياري)" hint="سيظهر التحميل ضمن ربحية مركبة الأسطول؛ سيارات المعرض منفصلة">
-                <select value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
-                  <option value="">بدون مركبة</option>
-                  {vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber} — {vehicle.vehicleType}</option>)}
-                </select>
-              </Field>
+              <div className="grid sm:grid-cols-2 gap-2">
+                <Field label="مركز تكلفة السيارة (اختياري)" hint="سيظهر التحميل ضمن ربحية مركبة الأسطول؛ سيارات المعرض منفصلة">
+                  <select value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
+                    <option value="">بدون مركبة</option>
+                    {vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber} — {vehicle.vehicleType}</option>)}
+                  </select>
+                </Field>
+                {vehicleId != null && (
+                  <Field label="نوع مصروف السيارة">
+                    <select value={vehicleCostCategory} onChange={(e) => setVehicleCostCategory(e.target.value)} className={inputCls}>
+                      {VEHICLE_COST_CATEGORIES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+                    </select>
+                  </Field>
+                )}
+              </div>
               <Field label="أي فاتورة شراء؟ *" hint="المصروف يوزَّع على أصنافها ويرفع تكلفتها بالمتوسط المرجح؛ اختر مدفوعاً أو مستحقاً بلا دفع فوري">
                 <select value={purchaseId} onChange={(e) => setPurchaseId(Number(e.target.value))} className={inputCls}>
                   <option value={0}>اختر…</option>

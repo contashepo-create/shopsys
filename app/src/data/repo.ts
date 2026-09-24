@@ -829,6 +829,8 @@ export interface PurchaseExpense {
   beneficiaryName?: string
   /** مركز تكلفة مركبة الأسطول؛ لا يُستخدم لسيارات المعرض */
   vehicleId?: number | null
+  /** التصنيف التشغيلي للتقارير (نولون/صيانة/وقود/قطع غيار…) */
+  category?: string
   /** مصروف لاحق أُضيف بعد ترحيل الفاتورة (Landed Cost Voucher) */
   late?: boolean
   date?: string
@@ -867,6 +869,8 @@ export interface VehicleCostCenterEntry {
   kind: 'internal_revenue' | 'cost'
   amountMinor: number
   description: string
+  /** تصنيف تشغيلي للتقارير: صيانة/وقود/قطع غيار/نولون… */
+  category?: string
   status: 'accrued' | 'partial' | 'paid'
   purchaseId?: number | null
   payableId?: number | null
@@ -1465,6 +1469,7 @@ interface DataState {
     beneficiaryName?: string | null
     payableAccountCode?: string | null
     vehicleId?: number | null
+    category?: string
     date: string
   }) => PurchaseInvoice
   /**
@@ -1558,6 +1563,8 @@ interface DataState {
     partyId?: number | null
     /** مركز تكلفة مركبة الأسطول عند سند صرف مصروف صيانة/تشغيل */
     vehicleId?: number | null
+    /** نوع مصروف مركز التكلفة في التقارير: صيانة/وقود/قطع غيار… */
+    vehicleCostCategory?: string
     /** مصروف التحويل بين الخزائن (رسوم بنكية) — يخرج من المصدر ويقيد 5108 (طلب المالك) */
     feeMinor?: number
   }) => Voucher
@@ -2852,7 +2859,7 @@ export const useDataStore = create<DataState>()(
           return [{
             id: nextId(state.vehicleCostEntries) + expenseIndex,
             vehicleId: expense.vehicleId, date: inv.date, kind: 'internal_revenue' as const, amountMinor: expense.amountMinor,
-            description: `${expense.nameAr} — فاتورة شراء ${invoiceNumber}`, status: expense.paidBy === 'treasury' || expense.paidBy === 'custody' ? 'paid' as const : 'accrued' as const,
+            description: `${expense.nameAr} — فاتورة شراء ${invoiceNumber}`, category: expense.category ?? expense.nameAr, status: expense.paidBy === 'treasury' || expense.paidBy === 'custody' ? 'paid' as const : 'accrued' as const,
             purchaseId, payableId: payable?.id ?? null, journalEntryId: entryId, settlementEntryIds: [],
           }]
         })
@@ -3020,7 +3027,8 @@ export const useDataStore = create<DataState>()(
         }
         const vehicleCostEntry: VehicleCostCenterEntry | null = args.vehicleId == null ? null : {
           id: vehicleCostEntryId!, vehicleId: args.vehicleId, date: args.date, kind: 'internal_revenue', amountMinor: args.amountMinor,
-          description: `${args.nameAr} — مصروف لاحق على فاتورة ${purchase.invoiceNumber}`,
+            description: `${args.nameAr} — مصروف لاحق على فاتورة ${purchase.invoiceNumber}`,
+          category: args.category ?? args.nameAr,
           status: args.paidBy === 'treasury' || args.paidBy === 'custody' ? 'paid' : 'accrued', purchaseId: purchase.id,
           payableId, journalEntryId: entryId, settlementEntryIds: [],
         }
@@ -4363,7 +4371,7 @@ export const useDataStore = create<DataState>()(
         const vehicleCostEntries = args.kind === 'payment' && args.vehicleId != null
           ? [...state.vehicleCostEntries, {
               id: nextId(state.vehicleCostEntries), vehicleId: args.vehicleId, date: now.slice(0, 10), kind: 'cost' as const,
-              amountMinor: args.amountMinor, description: args.description || 'مصروف مركبة', status: 'paid' as const,
+              amountMinor: args.amountMinor, description: args.description || 'مصروف مركبة', category: args.vehicleCostCategory ?? args.description ?? 'other', status: 'paid' as const,
               purchaseId: null, payableId: null, journalEntryId: entryId, settlementEntryIds: [],
             }]
           : state.vehicleCostEntries
