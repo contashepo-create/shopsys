@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { invoiceExpensesByCostCenter } from '../src/core/expenseReports.ts'
+import { costCenterExpensesCsv, invoiceExpensesByCostCenter } from '../src/core/expenseReports.ts'
 
 describe('تحليل مصروفات الفواتير حسب مركز التكلفة', () => {
   it('يفصل المدفوع عن المستحق ويجمع غير المرتبط', () => {
@@ -11,5 +11,12 @@ describe('تحليل مصروفات الفواتير حسب مركز التكل�
     expect(report.totalMinor).toBe(1750)
     expect(report.rows[0]).toEqual({ projectId: 7, totalMinor: 1500, paidMinor: 1000, accruedMinor: 500, txCount: 2 })
     expect(report.rows[1]).toMatchObject({ projectId: null, totalMinor: 250 })
+  })
+  it('يرشح المركز وحالة السداد ويصدر CSV آمناً', () => {
+    const docs = [{ date: '2026-09-10', internalExpenses: [{ projectId: 7, amountMinor: 1000, settlement: 'paid_now' as const }, { projectId: 7, amountMinor: 500, settlement: 'payable_later' as const }, { projectId: null, amountMinor: 200, settlement: 'paid_now' as const }] }]
+    const report = invoiceExpensesByCostCenter(docs, { projectId: 7, settlement: 'payable_later' })
+    expect(report.totalMinor).toBe(500)
+    expect(report.rows[0]).toMatchObject({ paidMinor: 0, accruedMinor: 500 })
+    expect(costCenterExpensesCsv(report.rows, () => 'مشروع, خاص')).toContain('\"مشروع, خاص\"')
   })
 })

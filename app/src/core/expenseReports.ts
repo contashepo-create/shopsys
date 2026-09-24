@@ -84,15 +84,22 @@ export interface CostCenterExpenseRow {
 }
 
 /** تحليل المصروفات الداخلية المرتبطة بالفواتير حسب مركز التكلفة وحالة السداد. */
+export interface CostCenterExpenseFilter extends ExpenseReportFilter {
+  projectId?: number | null | 'all'
+  settlement?: 'paid_now' | 'payable_later' | 'all'
+}
+
 export function invoiceExpensesByCostCenter(
   documents: { date: string; internalExpenses?: { projectId?: number | null; amountMinor: Minor; settlement: 'paid_now' | 'payable_later' }[] }[],
-  filter: ExpenseReportFilter,
+  filter: CostCenterExpenseFilter,
 ): { rows: CostCenterExpenseRow[]; totalMinor: Minor } {
   const grouped = new Map<number | null, CostCenterExpenseRow>()
   for (const document of documents) {
     if (!inPeriod(document.date, filter)) continue
     for (const expense of document.internalExpenses ?? []) {
       const projectId = expense.projectId ?? null
+      if (filter.projectId !== undefined && filter.projectId !== 'all' && projectId !== filter.projectId) continue
+      if (filter.settlement && filter.settlement !== 'all' && expense.settlement !== filter.settlement) continue
       const row = grouped.get(projectId) ?? { projectId, totalMinor: 0, paidMinor: 0, accruedMinor: 0, txCount: 0 }
       row.totalMinor += expense.amountMinor
       if (expense.settlement === 'paid_now') row.paidMinor += expense.amountMinor
@@ -103,6 +110,11 @@ export function invoiceExpensesByCostCenter(
   }
   const rows = [...grouped.values()].sort((a, b) => b.totalMinor - a.totalMinor)
   return { rows, totalMinor: rows.reduce((sum, row) => sum + row.totalMinor, 0) }
+}
+
+export function costCenterExpensesCsv(rows: CostCenterExpenseRow[], projectName: (id: number | null) => string): string {
+  const quote = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`
+  return ['مركز التكلفة,عدد الحركات,مدفوع,مستحق,الإجمالي', ...rows.map((row) => [projectName(row.projectId), row.txCount, row.paidMinor, row.accruedMinor, row.totalMinor].map(quote).join(','))].join('\n')
 }
 
 /** التقرير التفصيلي: حركات بند واحد حركة حركة (أو كل البنود لو بلا accountCode) */
