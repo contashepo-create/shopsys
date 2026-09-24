@@ -8,6 +8,7 @@ describe('عمليات ماكينة الدفع', () => {
   expect(terminalDocumentKey({ documentId: '1' })).toBe('sale:1')
  })
  it('يثبت الماكينة والفرع والمستخدم والمستند', () => expect(validateTerminalTransaction(charge)).toEqual([]))
+ it('يقبل معاملة بلا فرع في وضع الفرع الواحد', () => expect(validateTerminalTransaction({ ...charge, branchId: '' })).toEqual([]))
  it('يقبل رداً جزئياً مرتبطاً بالأصل', () => expect(validateTerminalTransaction({ ...charge, id: 'r1', idempotencyKey: 'k2', kind: 'refund', amountMinor: 2000, originalTransactionId: 'p1' }, charge)).toEqual([]))
  it('يرفض رداً من ماكينة أخرى أو أكبر من الأصل', () => expect(validateTerminalTransaction({ ...charge, id: 'r1', kind: 'refund', terminalId: 't2', amountMinor: 11000, originalTransactionId: 'p1' }, charge)).toContain('الرد أو الإلغاء يخالف ماكينة أو مبلغ العملية الأصلية'))
  it('لا يسمح بتخزين أكثر من آخر أربعة أرقام', () => expect(validateTerminalTransaction({ ...charge, cardLast4: '4111111111111111' })).toContain('آخر أربعة أرقام من البطاقة غير صالحة'))

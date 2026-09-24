@@ -5491,9 +5491,9 @@ export const useDataStore = create<DataState>()(
 
       addPaymentTerminal: (terminal) => {
         const state = get()
-        const errors = validatePaymentTerminal(terminal, state.paymentTerminals)
+        const errors = validatePaymentTerminal(terminal, state.paymentTerminals, state.branches.length > 0)
         if (errors.length) throw new Error(errors.join(' — '))
-        if (!state.branches.some((branch) => String(branch.id) === terminal.branchId && branch.active)) throw new Error('فرع ماكينة الدفع غير موجود أو غير نشط')
+        if (state.branches.length > 0 && !state.branches.some((branch) => String(branch.id) === terminal.branchId && branch.active)) throw new Error('فرع ماكينة الدفع غير موجود أو غير نشط')
         if (!state.treasuries.some((account) => account.code === terminal.settlementAccountCode)) throw new Error('حساب تسوية ماكينة الدفع غير موجود')
         set({ paymentTerminals: [...state.paymentTerminals, terminal] })
       },
@@ -5501,8 +5501,10 @@ export const useDataStore = create<DataState>()(
         const state = get(); const current = state.paymentTerminals.find((row) => row.id === id)
         if (!current) throw new Error('ماكينة الدفع غير موجودة')
         const next = { ...current, ...patch }
-        const errors = validatePaymentTerminal(next, state.paymentTerminals)
+        const errors = validatePaymentTerminal(next, state.paymentTerminals, state.branches.length > 0)
         if (errors.length) throw new Error(errors.join(' — '))
+        if (state.branches.length > 0 && !state.branches.some((branch) => String(branch.id) === next.branchId && branch.active)) throw new Error('فرع ماكينة الدفع غير موجود أو غير نشط')
+        if (!state.treasuries.some((account) => account.code === next.settlementAccountCode)) throw new Error('حساب تسوية ماكينة الدفع غير موجود')
         set({ paymentTerminals: state.paymentTerminals.map((row) => row.id === id ? next : row) })
       },
       removePaymentTerminal: (id) => {

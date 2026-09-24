@@ -13,7 +13,9 @@ export function remainingRefundableMinor(original: PaymentTerminalTransaction, t
 export function validateTerminalTransaction(transaction: PaymentTerminalTransaction, original?: PaymentTerminalTransaction): string[] {
   const errors: string[] = []
   if (!transaction.id.trim() || !transaction.idempotencyKey.trim()) errors.push('معرف العملية ومفتاح منع التكرار مطلوبان')
-  if (!transaction.terminalId.trim() || !transaction.branchId.trim() || !transaction.documentId.trim()) errors.push('الماكينة والفرع والمستند مطلوبة')
+  if (!transaction.terminalId.trim() || !transaction.documentId.trim()) errors.push('الماكينة والمستند مطلوبان')
+  // branchId الفارغ يعني وضع الفرع الواحد، أما عند تعدد الفروع فيفرضه
+  // Repository بمطابقة الماكينة والعملية قبل الحفظ.
   if (!Number.isSafeInteger(transaction.amountMinor) || transaction.amountMinor <= 0) errors.push('مبلغ عملية الدفع غير صالح')
   if (!transaction.providerReference.trim()) errors.push('مرجع مزود الدفع مطلوب')
   if (!Number.isFinite(Date.parse(transaction.occurredAt))) errors.push('وقت عملية الدفع غير صالح')
