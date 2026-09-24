@@ -15,7 +15,7 @@ import {
 } from '../../core/reports.ts'
 import { expiryAlerts } from '../../core/batches.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
-import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
+import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
 import { accountName } from './accountNames.ts'
 import { inputCls } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
@@ -35,7 +35,7 @@ const EXP_SOURCE_LABELS: Record<string, string> = {
 }
 
 export function ReportsPage() {
-  const { sales, saleReturns, purchases, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters } = useDataStore()
+  const { sales, saleReturns, purchases, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -113,6 +113,7 @@ export function ReportsPage() {
   const costCenterExpenses = useMemo(() => invoiceExpensesByCostCenter(invoiceExpenseDocuments, { from: period.from, to: period.to, costCenterId: costCenter === 'all' ? 'all' : costCenter === 'none' ? null : Number(costCenter), projectId: costProject === 'all' ? 'all' : costProject === 'none' ? null : Number(costProject), settlement: costSettlement }), [invoiceExpenseDocuments, period, costCenter, costProject, costSettlement])
   const expenseCategories = useMemo(() => invoiceExpensesByCategory(invoiceExpenseDocuments, { from: period.from, to: period.to }), [invoiceExpenseDocuments, period])
   const journalCostCenterExpenses = useMemo(() => journalExpensesByCostCenter(journal, { from: period.from, to: period.to, costCenterId: costCenter === 'all' ? 'all' : costCenter === 'none' ? null : Number(costCenter) }, customExpenseCodes), [journal, period, costCenter, customExpenseCodes])
+  const costCenterBudgetsReport = useMemo(() => costCenterBudgetReport(costCenterBudgets, journal, { from: period.from, to: period.to }, customExpenseCodes), [costCenterBudgets, journal, period, customExpenseCodes])
   const expDetail = useMemo(
     () => expenseDetails(journal, { ...expFilter, accountCode: expAccount || undefined }, customExpenseCodes),
     [journal, expFilter, expAccount, customExpenseCodes],
@@ -638,6 +639,10 @@ export function ReportsPage() {
           <div className={`${card} overflow-hidden`}>
             <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center"><div><b>قيود المصروفات الموسومة بالمراكز العامة</b><div className="text-[10px] text-slate-400">يشمل القيود المرحّلة من المصروفات والأنشطة خارج الفواتير</div></div><b className="text-rose-500">{fmt(journalCostCenterExpenses.totalMinor)}</b></div>
             {journalCostCenterExpenses.rows.length ? <table className="w-full text-[12px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">المركز العام</th><th>الحساب</th><th>الحركات</th><th>الإجمالي</th></tr></thead><tbody>{journalCostCenterExpenses.rows.map((row) => <tr key={`${row.costCenterId}:${row.accountCode}`} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{costCenters.find((center) => center.id === row.costCenterId)?.nameAr ?? `مركز #${row.costCenterId}`}</td><td className="font-mono">{row.accountCode}</td><td>{row.txCount}</td><td className="font-black text-rose-500">{fmt(row.totalMinor)}</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد قيود موسومة بمركز عام في الفترة</div>}
+          </div>
+          <div className={`${card} overflow-hidden`}>
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800"><b>موازنة المركز مقابل الفعلي</b><div className="text-[10px] text-slate-400">المصروف الفعلي مأخوذ من سطور القيود الموسومة بالمركز ضمن الفترة المحددة</div></div>
+            {costCenterBudgetsReport.length ? <table className="w-full text-[12px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">المركز</th><th>الفترة</th><th>الموازنة</th><th>الفعلي</th><th>الانحراف</th><th>الاستخدام</th></tr></thead><tbody>{costCenterBudgetsReport.map((row) => <tr key={row.id} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{costCenters.find(center => center.id === row.costCenterId)?.nameAr ?? `مركز #${row.costCenterId}`}</td><td>{row.from} → {row.to}</td><td>{fmt(row.amountMinor)}</td><td className="text-rose-500">{fmt(row.actualMinor)}</td><td className={row.varianceMinor < 0 ? 'text-rose-500 font-black' : 'text-emerald-600 font-black'}>{fmt(row.varianceMinor)}</td><td>{row.utilizationPercent}%</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد موازنات للمراكز في الفترة</div>}
           </div>
           <div className={`${card} overflow-hidden`}>
             <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center"><div><b>تحليل أنواع مصروفات الفواتير</b><div className="text-[10px] text-slate-400">يشمل العمولات والضريبة وحالة السداد وعدد مراكز التكلفة</div></div><div className="flex gap-2 items-center"><span className="text-xs text-slate-500">ضريبة {fmt(expenseCategories.taxMinor)}</span><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={printExpenseCategories}><Printer size={13} className="inline me-1"/>طباعة</button><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={() => { const csv = invoiceExpenseCategoriesCsv(expenseCategories.rows); const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'invoice-expense-categories.csv'; link.click(); URL.revokeObjectURL(url) }}>Excel/CSV</button><b className="text-rose-500">{fmt(expenseCategories.totalMinor)}</b></div></div>

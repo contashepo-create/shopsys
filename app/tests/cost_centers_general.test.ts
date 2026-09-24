@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { validateCostCenter } from '../src/core/costCenters.ts'
+import { allocateJournalLine } from '../src/core/ledger.ts'
 import { validateExpenseTemplate } from '../src/core/expenseCatalog.ts'
-import { invoiceExpensesByCostCenter, journalExpensesByCostCenter } from '../src/core/expenseReports.ts'
+import { invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport } from '../src/core/expenseReports.ts'
 import { buildInternalExpenseLines } from '../src/core/advancedInvoice.ts'
 import { useDataStore } from '../src/data/repo.ts'
 
@@ -46,5 +47,19 @@ describe('المراكز العامة وبنود المصروف القابلة �
     const report = journalExpensesByCostCenter([{ id: 1, entryNumber: 1, date: '2026-09-25', description: 'مصروف', sourceType: 'payment_voucher', sourceId: 1, lines, createdBy: 'المالك', createdAt: '2026-09-25T00:00:00Z', reversedByEntryId: null, reversesEntryId: null }], { from: '2026-09-01', to: '2026-09-30' }, new Set())
     expect(report).toMatchObject({ totalMinor: 1000 })
     expect(report.rows[0]).toMatchObject({ costCenterId: 3, accountCode: '5108', txCount: 1 })
+  })
+
+  it('يدعم شجرة المراكز وموازنتها وتوزيع السطر دون فقد مليم', () => {
+    const root = useDataStore.getState().addCostCenter({ code: 'OPS', nameAr: 'تشغيل' })
+    const child = useDataStore.getState().addCostCenter({ code: 'OPS-1', nameAr: 'فرع 1', parentId: root.id })
+    expect(useDataStore.getState().costCenters.find(center => center.id === child.id)?.parentId).toBe(root.id)
+    expect(() => useDataStore.getState().updateCostCenter(root.id, { parentId: child.id })).toThrow('دورة')
+    const budget = useDataStore.getState().addCostCenterBudget({ costCenterId: child.id, from: '2026-09-01', to: '2026-09-30', amountMinor: 1000, notes: '' })
+    const line = { accountCode: '5108', debit: 100, credit: 0, note: 'توزيع' }
+    const split = allocateJournalLine(line, [{ costCenterId: root.id, weight: 1 }, { costCenterId: child.id, weight: 2 }])
+    expect(split.map(row => row.debit)).toEqual([33, 67])
+    expect(split.reduce((sum, row) => sum + row.debit, 0)).toBe(100)
+    const entry = { id: 8, entryNumber: 8, date: '2026-09-10', description: 'مصروف', sourceType: 'manual' as const, sourceId: 8, lines: [{ ...split[1], debit: 100 }], createdBy: 'المالك', createdAt: '2026-09-10T00:00:00Z', reversedByEntryId: null, reversesEntryId: null }
+    expect(costCenterBudgetReport([budget], [entry], { from: '2026-09-01', to: '2026-09-30' }, new Set())[0]).toMatchObject({ actualMinor: 100, varianceMinor: 900 })
   })
 })

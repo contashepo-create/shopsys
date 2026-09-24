@@ -105,7 +105,7 @@ import { validateRxLines, validateAttachment, migrateFreeHistory, EMPTY_VITALS, 
 import { validateCar, buildCarPurchaseEntry, buildCarPrepEntry, computeCarSale, buildCarSaleEntry, buildConsignmentSaleEntry, buildConsignmentPayoutEntry, type CarInput, type CarPurpose, type CarStatus } from '../core/cars.ts'
 import { validateCheque, assertTransition, buildChequeReceiveEntry, buildChequeCollectEntry, buildChequeBounceEntry, buildChequeIssueEntry, buildChequeClearEntry, buildChequeCancelEntry, type Cheque, type ChequeStatus } from '../core/cheques.ts'
 import { DEFAULT_TREASURIES, nextTreasuryCode, validateTreasury, type TreasuryDef } from '../core/treasury.ts'
-import { validateCostCenter, type CostCenter } from '../core/costCenters.ts'
+import { validateCostCenter, validateCostCenterBudget, type CostCenter, type CostCenterBudget } from '../core/costCenters.ts'
 import { validateExpenseTemplate, type ExpenseTemplate } from '../core/expenseCatalog.ts'
 import type { JournalEntry } from '../core/ledger.ts'
 
@@ -1161,6 +1161,7 @@ interface DataState {
   treasuries: TreasuryDef[] // الخزائن والبنوك المتعددة (طلب المالك)
   /** مراكز التكلفة العامة — مستقلة عن المشاريع ومراكز تكلفة المركبات */
   costCenters: CostCenter[]
+  costCenterBudgets: CostCenterBudget[]
   expenseTemplates: ExpenseTemplate[]
   customers: Customer[]
   suppliers: Supplier[]
@@ -1367,9 +1368,12 @@ interface DataState {
   addCategory: (nameAr: string, features: ItemFeature[], parentId?: number | null) => void
   updateCategory: (id: number, patch: Partial<Category>) => void
   removeCategory: (id: number) => void
-  addCostCenter: (input: { code: string; nameAr: string; notes?: string }) => CostCenter
-  updateCostCenter: (id: number, patch: Partial<Pick<CostCenter, 'code' | 'nameAr' | 'isActive' | 'notes'>>) => void
+  addCostCenter: (input: { code: string; nameAr: string; parentId?: number | null; notes?: string }) => CostCenter
+  updateCostCenter: (id: number, patch: Partial<Pick<CostCenter, 'code' | 'nameAr' | 'parentId' | 'isActive' | 'notes'>>) => void
   removeCostCenter: (id: number) => void
+  addCostCenterBudget: (input: Omit<CostCenterBudget, 'id'>) => CostCenterBudget
+  updateCostCenterBudget: (id: number, patch: Partial<Omit<CostCenterBudget, 'id'>>) => void
+  removeCostCenterBudget: (id: number) => void
   addExpenseTemplate: (input: Omit<ExpenseTemplate, 'id' | 'isActive'> & { isActive?: boolean }) => ExpenseTemplate
   updateExpenseTemplate: (id: number, patch: Partial<Omit<ExpenseTemplate, 'id'>>) => void
   removeExpenseTemplate: (id: number) => void
@@ -2249,7 +2253,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 23 // 18: تسجيل الدخول الفعلي + الصرف الداخلي — 19: العروض الترويجية/الباقات — 20: الفروع الحقيقية — 21: استحقاقات مصروفات الشراء ومراكز تكلفة مركبات الأسطول — 22: مراكز التكلفة العامة — 23: بنود المصروف القابلة لإعادة الاستخدام
+export const DATA_VERSION = 24 // 18: تسجيل الدخول الفعلي + الصرف الداخلي — 19: العروض الترويجية/الباقات — 20: الفروع الحقيقية — 21: استحقاقات مصروفات الشراء ومراكز تكلفة مركبات الأسطول — 22: مراكز التكلفة العامة — 23: بنود المصروف القابلة لإعادة الاستخدام — 24: شجرة وموازنات المراكز العامة
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -2371,6 +2375,7 @@ export const useDataStore = create<DataState>()(
       paymentTerminalSettlements: [],
       treasuries: DEFAULT_TREASURIES,
       costCenters: [],
+      costCenterBudgets: [],
       expenseTemplates: [],
       customers: [],
       suppliers: [],
@@ -2562,7 +2567,7 @@ export const useDataStore = create<DataState>()(
 
       addCostCenter: (input) => {
         const state = get()
-        const normalized = { code: input.code.trim().toUpperCase(), nameAr: input.nameAr.trim() }
+        const normalized = { code: input.code.trim().toUpperCase(), nameAr: input.nameAr.trim(), parentId: input.parentId ?? null }
         const errors = validateCostCenter(normalized, state.costCenters)
         if (errors.length) throw new Error(errors.join(' — '))
         const center: CostCenter = { id: nextId(state.costCenters), ...normalized, isActive: true, notes: input.notes?.trim() ?? '' }
@@ -2573,7 +2578,7 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const current = state.costCenters.find((center) => center.id === id)
         if (!current) throw new Error('مركز التكلفة غير موجود')
-        const next = { ...current, ...patch, code: (patch.code ?? current.code).trim().toUpperCase(), nameAr: (patch.nameAr ?? current.nameAr).trim(), notes: patch.notes === undefined ? current.notes : patch.notes.trim() }
+        const next = { ...current, ...patch, parentId: patch.parentId === undefined ? (current.parentId ?? null) : patch.parentId, code: (patch.code ?? current.code).trim().toUpperCase(), nameAr: (patch.nameAr ?? current.nameAr).trim(), notes: patch.notes === undefined ? current.notes : patch.notes.trim() }
         const errors = validateCostCenter(next, state.costCenters, id)
         if (errors.length) throw new Error(errors.join(' — '))
         set({ costCenters: state.costCenters.map((center) => center.id === id ? next : center) })
@@ -2587,8 +2592,30 @@ export const useDataStore = create<DataState>()(
           || state.saleReturns.some((ret) => ret.costCenterIds?.includes(id))
           || state.purchaseReturns.some((ret) => ret.costCenterIds?.includes(id))
         if (used) throw new Error('مركز التكلفة مستخدم في مستندات؛ عطّله بدلاً من حذفه')
+        if (state.costCenters.some((center) => center.parentId === id)) throw new Error('المركز له مراكز فرعية؛ انقلها أو احذفها أولاً')
+        if (state.costCenterBudgets.some((budget) => budget.costCenterId === id)) throw new Error('المركز له موازنات؛ احذفها أو عطّله بدلاً من الحذف')
         set({ costCenters: state.costCenters.filter((center) => center.id !== id) })
       },
+      addCostCenterBudget: (input) => {
+        const state = get()
+        const errors = validateCostCenterBudget(input, state.costCenters, input.costCenterId)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (state.costCenterBudgets.some((budget) => budget.costCenterId === input.costCenterId && budget.from === input.from && budget.to === input.to)) throw new Error('توجد موازنة للفترة نفسها على هذا المركز')
+        const budget: CostCenterBudget = { id: nextId(state.costCenterBudgets), ...input, notes: input.notes.trim() }
+        set({ costCenterBudgets: [...state.costCenterBudgets, budget] })
+        return budget
+      },
+      updateCostCenterBudget: (id, patch) => {
+        const state = get()
+        const current = state.costCenterBudgets.find((budget) => budget.id === id)
+        if (!current) throw new Error('الموازنة غير موجودة')
+        const next = { ...current, ...patch, notes: patch.notes === undefined ? current.notes : patch.notes.trim() }
+        const errors = validateCostCenterBudget(next, state.costCenters, next.costCenterId)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (state.costCenterBudgets.some((budget) => budget.id !== id && budget.costCenterId === next.costCenterId && budget.from === next.from && budget.to === next.to)) throw new Error('توجد موازنة للفترة نفسها على هذا المركز')
+        set({ costCenterBudgets: state.costCenterBudgets.map((budget) => budget.id === id ? next : budget) })
+      },
+      removeCostCenterBudget: (id) => set((state) => ({ costCenterBudgets: state.costCenterBudgets.filter((budget) => budget.id !== id) })),
       addExpenseTemplate: (input) => {
         const state = get()
         const normalized = { ...input, code: input.code.trim().toUpperCase(), nameAr: input.nameAr.trim(), accountCode: input.accountCode.trim(), notes: input.notes.trim(), isActive: input.isActive ?? true }
@@ -10651,7 +10678,8 @@ export const useDataStore = create<DataState>()(
           consumptions: s.consumptions ?? [],
           // ترحيل الخزائن المتعددة: الحسابات القديمة تحصل على الافتراضيتين
           treasuries: s.treasuries && s.treasuries.length > 0 ? s.treasuries : DEFAULT_TREASURIES,
-          costCenters: (s.costCenters ?? []).map((center) => ({ ...center, code: center.code ?? `CC-${String(center.id).padStart(4, '0')}`, nameAr: center.nameAr ?? 'مركز تكلفة', isActive: center.isActive ?? true, notes: center.notes ?? '' })),
+          costCenters: (s.costCenters ?? []).map((center) => ({ ...center, code: center.code ?? `CC-${String(center.id).padStart(4, '0')}`, nameAr: center.nameAr ?? 'مركز تكلفة', parentId: center.parentId ?? null, isActive: center.isActive ?? true, notes: center.notes ?? '' })),
+          costCenterBudgets: (s.costCenterBudgets ?? []).map((budget) => ({ ...budget, notes: budget.notes ?? '' })),
           expenseTemplates: (s.expenseTemplates ?? []).map((row) => ({ ...row, code: row.code ?? `EXP-${String(row.id).padStart(4, '0')}`, nameAr: row.nameAr ?? 'مصروف', accountCode: row.accountCode ?? '5108', taxTreatment: row.taxTreatment ?? 'exempt', taxPercent: row.taxPercent ?? 0, settlement: row.settlement ?? 'payable_later', affectsProfit: row.affectsProfit ?? true, landedCostAllocation: row.landedCostAllocation ?? 'none', isActive: row.isActive ?? true, notes: row.notes ?? '' })),
           categories: (s.categories ?? []).map((c) => ({ ...c, parentId: c.parentId ?? null })),
           // الأكواد المرجعية (الإصدار 9): فواتير قديمة بلا refCode تحصل على كود فريد فوراً

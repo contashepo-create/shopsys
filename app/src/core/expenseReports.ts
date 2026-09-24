@@ -6,6 +6,7 @@
  */
 import type { Minor } from './money.ts'
 import type { JournalEntry } from './ledger.ts'
+import type { CostCenterBudget } from './costCenters.ts'
 
 export interface ExpenseAccountRow {
   accountCode: string
@@ -206,6 +207,28 @@ export function journalExpensesByCostCenter(
   }
   const rows = [...grouped.values()].sort((a, b) => b.totalMinor - a.totalMinor)
   return { rows, totalMinor: rows.reduce((sum, row) => sum + row.totalMinor, 0) }
+}
+
+export interface CostCenterBudgetReportRow extends CostCenterBudget {
+  actualMinor: Minor
+  varianceMinor: Minor
+  utilizationPercent: number
+}
+
+/** مقارنة موازنة المركز بالمصروف الفعلي من سطور القيود الموسومة. */
+export function costCenterBudgetReport(
+  budgets: CostCenterBudget[],
+  journal: JournalEntry[],
+  filter: ExpenseReportFilter,
+  customExpenseCodes: ReadonlySet<string>,
+): CostCenterBudgetReportRow[] {
+  return budgets.filter((budget) => (!filter.from || budget.to >= filter.from) && (!filter.to || budget.from <= filter.to)).map((budget) => {
+    const actualMinor = journal.reduce((sum, entry) => {
+      if (entry.date.slice(0, 10) < budget.from || entry.date.slice(0, 10) > budget.to || !inPeriod(entry.date, filter)) return sum
+      return sum + entry.lines.filter((line) => line.costCenterId === budget.costCenterId && isExpenseCode(line.accountCode, customExpenseCodes)).reduce((lineSum, line) => lineSum + line.debit - line.credit, 0)
+    }, 0)
+    return { ...budget, actualMinor, varianceMinor: budget.amountMinor - actualMinor, utilizationPercent: budget.amountMinor > 0 ? Math.round(actualMinor / budget.amountMinor * 1000) / 10 : 0 }
+  }).sort((a, b) => a.from.localeCompare(b.from) || a.costCenterId - b.costCenterId)
 }
 
 export function invoiceExpenseCategoriesCsv(rows: InvoiceExpenseCategoryRow[]): string {

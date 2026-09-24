@@ -32,6 +32,26 @@ export interface JournalLine {
   costCenterId?: number | null
 }
 
+export interface CostCenterAllocationWeight {
+  costCenterId: number
+  weight: number
+}
+
+/** يوزع قيمة سطر واحد على مراكز متعددة بالباقي الأكبر دون فقد أصغر وحدة عملة. */
+export function allocateJournalLine(line: JournalLine, weights: CostCenterAllocationWeight[]): JournalLine[] {
+  const amount = line.debit > 0 ? line.debit : line.credit
+  if (!Number.isInteger(amount) || amount < 0 || (line.debit > 0 && line.credit > 0)) throw new RangeError('سطر القيد المراد توزيعه غير صالح')
+  if (!weights.length || weights.some((item) => !Number.isInteger(item.costCenterId) || !Number.isFinite(item.weight) || item.weight <= 0)) throw new RangeError('أوزان توزيع مركز التكلفة غير صالحة')
+  const totalWeight = weights.reduce((sum, item) => sum + item.weight, 0)
+  const raw = weights.map((item) => amount * item.weight / totalWeight)
+  const floors = raw.map(Math.floor)
+  let remainder = amount - floors.reduce((sum, value) => sum + value, 0)
+  const order = raw.map((value, index) => ({ index, fraction: value - floors[index] })).sort((a, b) => b.fraction - a.fraction || a.index - b.index)
+  const shares = [...floors]
+  for (let i = 0; i < remainder; i++) shares[order[i].index]++
+  return shares.map((share, index) => ({ ...line, debit: line.debit > 0 ? share : 0, credit: line.credit > 0 ? share : 0, costCenterId: weights[index].costCenterId }))
+}
+
 export type SourceType =
   | 'sale' | 'sale_return' | 'purchase' | 'purchase_return'
   | 'wallet_service'
