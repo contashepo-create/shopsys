@@ -15,7 +15,7 @@ import {
 } from '../../core/reports.ts'
 import { expiryAlerts } from '../../core/batches.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
-import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, costCenterExpensesCsv } from '../../core/expenseReports.ts'
+import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv } from '../../core/expenseReports.ts'
 import { accountName } from './accountNames.ts'
 import { inputCls } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
@@ -114,6 +114,12 @@ export function ReportsPage() {
     [journal, expFilter, expAccount, customExpenseCodes],
   )
   const expSources = useMemo(() => [...new Set(journal.flatMap((e) => e.lines.some((l) => l.accountCode.startsWith('5') || customExpenseCodes.has(l.accountCode)) ? [e.sourceType] : []))], [journal, customExpenseCodes])
+  const exportExpenses = () => {
+    const csv = expAccount ? expenseDetailsCsv(expDetail.rows) : expenseSummaryCsv(expSummary.rows)
+    const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a'); link.href = url; link.download = expAccount ? `expenses-${expAccount}.csv` : 'expenses-summary.csv'; link.click(); URL.revokeObjectURL(url)
+  }
+
   const printExpenses = () => {
     const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     const { reportPrint, receipt } = useAppStore.getState()
@@ -518,6 +524,7 @@ export function ReportsPage() {
                 <div className="text-[10px] font-bold text-slate-400">إجمالي مصروفات الفترة</div>
                 <div className="font-black text-lg text-rose-500">{fmt(expSummary.grandTotalMinor)} {cur.symbol}</div>
               </div>
+              <button onClick={exportExpenses} className="px-3 py-2 rounded-xl text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-emerald-600 transition-all">Excel/CSV</button>
               <button onClick={printExpenses} className="px-3 py-2 rounded-xl text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-sky-600 transition-all flex items-center gap-1.5">
                 <Printer size={13} /> طباعة التقرير
               </button>

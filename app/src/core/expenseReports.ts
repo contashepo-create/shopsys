@@ -117,6 +117,16 @@ export function costCenterExpensesCsv(rows: CostCenterExpenseRow[], projectName:
   return ['مركز التكلفة,عدد الحركات,مدفوع,مستحق,الإجمالي', ...rows.map((row) => [projectName(row.projectId), row.txCount, row.paidMinor, row.accruedMinor, row.totalMinor].map(quote).join(','))].join('\n')
 }
 
+export function expenseSummaryCsv(rows: ExpenseAccountRow[]): string {
+  const quote = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`
+  return ['الكود,البند,عدد الحركات,النسبة,الإجمالي', ...rows.map((row) => [row.accountCode, row.accountName, row.txCount, `${row.sharePercent}%`, row.totalMinor].map(quote).join(','))].join('\n')
+}
+
+export function expenseDetailsCsv(rows: (ExpenseTxRow & { accountCode: string })[]): string {
+  const quote = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`
+  return ['القيد,التاريخ,الكود,البيان,المصدر,المبلغ', ...rows.map((row) => [row.entryNumber, row.date, row.accountCode, row.description, row.sourceType, row.amountMinor].map(quote).join(','))].join('\n')
+}
+
 /** التقرير التفصيلي: حركات بند واحد حركة حركة (أو كل البنود لو بلا accountCode) */
 export function expenseDetails(
   journal: JournalEntry[],
