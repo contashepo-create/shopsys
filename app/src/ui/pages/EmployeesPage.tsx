@@ -8,6 +8,8 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
+import { rolesWithOverrides, visibleRolesForModules } from '../../core/permissions.ts'
+import { suggestRoleForJobTitle } from '../../core/audit.ts'
 import type { PartyExtended } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
@@ -81,7 +83,7 @@ interface DraftLine {
 }
 
 export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions' }) {
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -97,6 +99,10 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const toMajor = (m: number) => (m ? String(m / 10 ** cur.decimals) : '')
 
   const tab = initialTab
+  const roleOptions = useMemo(
+    () => visibleRolesForModules(rolesWithOverrides(roleOverrides, customRoles, setup.activityId), setup.modules).filter((role) => !role.isOwner),
+    [roleOverrides, customRoles, setup.activityId, setup.modules],
+  )
 
   /* ─── تبويب العمولات (طلب المالك): مربوطة بالعمليات وتُصرف منفردة أو مع الراتب ─── */
   const [comOpen, setComOpen] = useState(false)
@@ -184,6 +190,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [jobTitle, setJobTitle] = useState('')
+  const [roleId, setRoleId] = useState('')
   const [hireDate, setHireDate] = useState('')
   const [baseSalary, setBaseSalary] = useState('')
   const [allowances, setAllowances] = useState('')
@@ -197,11 +204,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   )
 
   const openNew = () => {
-    setEditing(null); setName(''); setPhone(''); setJobTitle(''); setHireDate(new Date().toISOString().slice(0, 10))
+    setEditing(null); setName(''); setPhone(''); setJobTitle(''); setRoleId(roleOptions[0]?.id ?? 'accountant'); setHireDate(new Date().toISOString().slice(0, 10))
     setBaseSalary(''); setAllowances(''); setActive(true); setNotes(''); setExt(EMPTY_EXTENDED); setOpen(true)
   }
   const openEdit = (e: Employee) => {
-    setEditing(e); setName(e.nameAr); setPhone(e.phone); setJobTitle(e.jobTitle); setHireDate(e.hireDate)
+    const suggestedRole = e.roleId ?? suggestRoleForJobTitle(e.jobTitle)
+    setEditing(e); setName(e.nameAr); setPhone(e.phone); setJobTitle(e.jobTitle); setRoleId(roleOptions.some((role) => role.id === suggestedRole) ? suggestedRole : (roleOptions[0]?.id ?? 'accountant')); setHireDate(e.hireDate)
     setBaseSalary(toMajor(e.baseSalaryMinor)); setAllowances(toMajor(e.allowancesMinor)); setActive(e.active); setNotes(e.notes)
     setExt({
       taxNumber: e.taxNumber, commercialReg: e.commercialReg, email: e.email, address: e.address,
@@ -212,7 +220,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const save = () => {
     if (!name.trim()) return
     const data = {
-      nameAr: name.trim(), phone: phone.trim(), jobTitle: jobTitle.trim(), hireDate,
+      nameAr: name.trim(), phone: phone.trim(), jobTitle: jobTitle.trim(), roleId: roleId || null, hireDate,
       baseSalaryMinor: baseSalary ? toMinor(baseSalary, cur.decimals) : 0,
       allowancesMinor: allowances ? toMinor(allowances, cur.decimals) : 0,
       active, notes: notes.trim(),
@@ -698,6 +706,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
                     <th className="px-4 py-3 text-right font-bold">الموظف</th>
                     <th className="px-4 py-3 text-right font-bold">الوظيفة</th>
+                    <th className="px-4 py-3 text-right font-bold">الفئة / الصلاحية</th>
                     <th className="px-4 py-3 text-right font-bold">الهاتف</th>
                     <th className="px-4 py-3 text-right font-bold">الأساسي + البدلات</th>
                     <th className="px-4 py-3 text-right font-bold">الحالة</th>
@@ -709,6 +718,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     <tr key={e.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                       <td className="px-4 py-3 font-bold text-slate-700 dark:text-slate-200">{e.nameAr}</td>
                       <td className="px-4 py-3 text-slate-500">{e.jobTitle || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500">{roleOptions.find((role) => role.id === e.roleId)?.nameAr ?? e.roleId ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-500" dir="ltr">{e.phone ? <span className="flex items-center gap-1 justify-end"><Phone size={11} />{e.phone}</span> : '—'}</td>
                       <td className="px-4 py-3 font-bold">{fmt(e.baseSalaryMinor + e.allowancesMinor)} {cur.symbol}</td>
                       <td className="px-4 py-3">
@@ -794,6 +804,11 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
             </Field>
             <Field label="المسمى الوظيفي">
               <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className={inputCls} placeholder="كاشير، بائع، محاسب…" />
+            </Field>
+            <Field label="الفئة / الدور التشغيلي *" hint="يحدد صلاحيات حساب الدخول تلقائياً عند إنشائه من الإعدادات — لا ينشئ حساباً أو رقماً سرياً هنا">
+              <select value={roleId} onChange={(e) => setRoleId(e.target.value)} className={inputCls}>
+                {roleOptions.map((role) => <option key={role.id} value={role.id}>{role.nameAr}</option>)}
+              </select>
             </Field>
             <Field label="تاريخ التعيين">
               <input type="date" value={hireDate} onChange={(e) => setHireDate(e.target.value)} className={inputCls} dir="ltr" />

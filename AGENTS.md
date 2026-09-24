@@ -155,6 +155,7 @@ const S = () => useDataStore.getState()
 
 ### 6.6 الموظفون والرواتب
 - موظفون، سلف (grantEmployeeAdvance من خزينة/بنك) **تُخصم على شهور بمبلغ يختاره المستخدم شهرياً** مع عرض الإجمالي/المتبقي/السبب في مسير الرواتب.
+- **تصنيف الموظف والدور (2026-09-24):** نموذج الموظف في `EmployeesPage.tsx` يحفظ `Employee.roleId` كفئة/دور تشغيلي من كتالوج الصلاحيات، ويعرضه في سجل الموظفين. لا ينشئ النموذج حساب دخول أو رقماً سرياً؛ ذلك يظل في `PermissionsPage.tsx` من الإعدادات، التي تختار الموظف وتستعمل فئته لاقتراح الدور. عند تعديل الفئة، يحدّث `repo.ts` دور حساب الدخول المرتبط تلقائياً، مع منع إسناد دور المالك. الفحص: `scripts/verify_employee_role_classification.mjs`.
 - postPayroll: `{month:'YYYY-MM', payMode:'cash'|'accrual', treasury, notes, lines:[{employeeId, baseMinor, allowancesMinor, overtimeMinor, deductionsMinor, advancesMinor}]}` — الدفع من خزينة/بنك/عهدة.
 - **عهد ملفات كاملة** (نموذج pro-acc): ملف عهدة يُفتح بتمويل، مصروفات منه بتصنيفات، تسوية بفائض (2107) أو عجز، وكل معاملات المقاولات/الرواتب يمكن صرفها من عهدة.
 

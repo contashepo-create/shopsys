@@ -164,6 +164,8 @@ export interface Employee extends PartyExtended {
   nameAr: string
   phone: string
   jobTitle: string // المسمى الوظيفي
+  /** التصنيف/الدور التشغيلي؛ يحدد صلاحيات حساب الدخول عند إنشائه من الإعدادات */
+  roleId?: string | null
   hireDate: string // تاريخ التعيين YYYY-MM-DD
   baseSalaryMinor: number // الراتب الأساسي الشهري
   allowancesMinor: number // بدلات شهرية ثابتة
@@ -5634,19 +5636,37 @@ export const useDataStore = create<DataState>()(
 
       addEmployee: (e) => {
         // مراجعة الموظفين: اسم فارغ ومكرر كانا يمران من المستودع
+        const state = get()
         const nameAr = e.nameAr.trim()
         if (!nameAr) throw new Error('اسم الموظف مطلوب')
-        if (get().employees.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف مسجل بنفس الاسم «${nameAr}»`)
-        set((s) => ({ employees: [...s.employees, { ...e, nameAr, id: nextId(s.employees) }] }))
+        if (state.employees.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف مسجل بنفس الاسم «${nameAr}»`)
+        if (e.roleId != null) {
+          const role = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId).find((r) => r.id === e.roleId)
+          if (!role || role.isOwner) throw new Error('تصنيف الموظف غير صالح — اختر دوراً موظفاً من القائمة')
+        }
+        set((s) => ({ employees: [...s.employees, { ...e, roleId: e.roleId ?? null, nameAr, id: nextId(s.employees) }] }))
       },
       updateEmployee: (id, patch) => {
+        const state = get()
         if (patch.nameAr !== undefined) {
           const nameAr = patch.nameAr.trim()
           if (!nameAr) throw new Error('اسم الموظف مطلوب')
-          if (get().employees.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف آخر بنفس الاسم «${nameAr}»`)
+          if (state.employees.some((x) => x.id !== id && x.nameAr.trim() === nameAr)) throw new Error(`يوجد موظف آخر بنفس الاسم «${nameAr}»`)
           patch = { ...patch, nameAr }
         }
-        set((s) => ({ employees: s.employees.map((x) => (x.id === id ? { ...x, ...patch } : x)) }))
+        if (patch.roleId !== undefined && patch.roleId != null) {
+          const role = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId).find((r) => r.id === patch.roleId)
+          if (!role || role.isOwner) throw new Error('تصنيف الموظف غير صالح — اختر دوراً موظفاً من القائمة')
+        }
+        const linkedUser = state.appUsers.find((user) => user.active && user.employeeId === id)
+        set((s) => ({
+          employees: s.employees.map((x) => (x.id === id ? { ...x, ...patch } : x)),
+          // إذا كان له حساب دخول موجود، يظل إنشاء الحساب/الرقم من الإعدادات،
+          // لكن التصنيف الجديد يحدّث دوره وصلاحياته تلقائياً.
+          ...(linkedUser && patch.roleId !== undefined && patch.roleId != null
+            ? { appUsers: s.appUsers.map((user) => (user.id === linkedUser.id ? { ...user, roleId: patch.roleId! } : user)) }
+            : {}),
+        }))
       },
       removeEmployee: (id) => {
         const s = get()

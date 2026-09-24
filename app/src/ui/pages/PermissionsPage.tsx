@@ -618,14 +618,15 @@ export function PermissionsPage() {
             (راتب/بدلات/هاتف) — فتُخصم عليه السلف وعجوزات الورديات وتُربط وردياته باسمه.
             ثم فعّل حساب دخوله من هنا برقم مبدئي <b>سيُجبر على تغييره عند أول دخول</b>.
           </p>
-          <Field label="الموظف *" hint="غير موجود؟ أضفه من شاشة الموظفين أولاً — وظيفته تقترح دوره تلقائياً">
+          <Field label="الموظف *" hint="غير موجود؟ أضفه من شاشة الموظفين أولاً — فئته الوظيفية تقترح دوره وصلاحياته تلقائياً">
             <select
               value={uEmployeeId}
               onChange={(e) => {
                 const id = Number(e.target.value)
                 setUEmployeeId(id)
                 const emp = employees.find((x) => x.id === id)
-                if (emp?.jobTitle) setURole(suggestRoleForJobTitle(emp.jobTitle))
+                if (emp?.roleId) setURole(emp.roleId)
+                else if (emp?.jobTitle) setURole(suggestRoleForJobTitle(emp.jobTitle))
               }}
               className={inputCls}
             >
@@ -635,7 +636,7 @@ export function PermissionsPage() {
                 .map((e) => <option key={e.id} value={e.id}>{e.nameAr}{e.jobTitle ? ` — ${e.jobTitle}` : ''}</option>)}
             </select>
           </Field>
-          <Field label="الدور" hint="اقتُرح تلقائياً من وظيفته — يمكنك تعديله">
+          <Field label="الدور" hint="اقتُرح تلقائياً من فئة الموظف — يمكنك مراجعته من الإعدادات قبل إنشاء الحساب">
             <select value={uRole} onChange={(e) => setURole(e.target.value)} className={inputCls}>
               {roles.filter((r) => !r.isOwner).map((r) => <option key={r.id} value={r.id}>{r.nameAr}</option>)}
             </select>
