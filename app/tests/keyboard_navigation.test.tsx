@@ -20,6 +20,13 @@ describe('التحكم بلوحة المفاتيح', () => {
     fireEvent.keyDown(below, { key: 'ArrowUp' }); expect(document.activeElement).toBe(first)
   })
 
+  it('ينقل الأسهم بين خلايا كود الصنف القابلة للتركيز', () => {
+    const view = render(<MemoryRouter><main><KeyboardNavigation/><div><div data-entry-row><span tabIndex={0} aria-label="code1">A</span></div><div data-entry-row><span tabIndex={0} aria-label="code2">B</span></div></div></main></MemoryRouter>)
+    const first = view.getByLabelText('code1'), second = view.getByLabelText('code2')
+    first.focus(); fireEvent.keyDown(first, { key: 'ArrowDown' }); expect(document.activeElement).toBe(second)
+    fireEvent.keyDown(second, { key: 'ArrowUp' }); expect(document.activeElement).toBe(first)
+  })
+
   it('يفتح F3 فاتورة شراء جديدة من قسم المشتريات', () => {
     const view = render(<MemoryRouter initialEntries={['/purchases/invoices']}><KeyboardNavigation/><Routes><Route path="*" element={<Path/>}/></Routes></MemoryRouter>)
     fireEvent.keyDown(document, { key: 'F3' })

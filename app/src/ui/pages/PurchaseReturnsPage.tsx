@@ -244,7 +244,7 @@ export function PurchaseReturnsPage() {
                           disabled={rem <= 0}
                           className={`${inputCls} text-center py-1.5 disabled:opacity-40`}
                         />
-                        {warehouses.length > 0 && (
+                        {warehouses.length > 0 && (l.warehouseId ?? purchase.warehouseId) == null && (
                           <select
                             value={selectedWarehouseId ?? ''}
                             onChange={(e) => setReturnWarehouses((current) => ({ ...current, [lineIndex]: Number(e.target.value) }))}

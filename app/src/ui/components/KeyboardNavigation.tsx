@@ -43,7 +43,7 @@ export function KeyboardNavigation() {
         search?.focus(); search?.select()
         return
       }
-      if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && target instanceof HTMLInputElement && !target.closest('[data-arrows-native="true"]')) {
+      if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && (target instanceof HTMLInputElement || target.hasAttribute('tabindex')) && !target.closest('[data-arrows-native="true"]')) {
         const row = target.closest('tr,[data-entry-row]')
         const parent = row?.parentElement
         if (row && parent) {
