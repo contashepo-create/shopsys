@@ -116,6 +116,7 @@ export function PosPage() {
 
   // التركيز الدائم على البحث — سلوك كاشير حقيقي (القارئ يكتب ثم Enter)
   useEffect(() => { if (cart.length) qtyRefs.current[cart.length - 1]?.focus(); else searchRef.current?.focus() }, [cart.length])
+  useEffect(() => { const focusItem = () => { searchRef.current?.focus(); searchRef.current?.select() }; window.addEventListener('shopsys:focus-item', focusItem); return () => window.removeEventListener('shopsys:focus-item', focusItem) }, [])
 
   // F9 = فتح الدفع مباشرة (الاختصار المكتوب على الزر يعمل فعلاً)
   useEffect(() => {

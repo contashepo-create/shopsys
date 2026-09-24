@@ -46,6 +46,7 @@ export function SaleReturnsPage() {
   const [wizardOpen, setWizardOpen] = useState(false)
   const [step, setStep] = useState(0)
   const [pickQuery, setPickQuery] = useState('')
+  const [pickIndex, setPickIndex] = useState(0)
   const [sale, setSale] = useState<SaleInvoice | null>(null)
   const [wiz, setWiz] = useState<Record<number, WizardLine>>({}) // بمفتاح فهرس السطر
   const [refund, setRefund] = useState<'cash' | 'credit' | 'store_credit' | 'custom'>('cash')
@@ -337,11 +338,11 @@ export function SaleReturnsPage() {
             <div className="space-y-3 anim-pop">
               <div className="relative">
                 <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input value={pickQuery} onChange={(e) => setPickQuery(e.target.value)} placeholder="رقم الفاتورة S-0001 أو الكود المرجعي…" className={`${inputCls} pr-9`} autoFocus />
+                <input value={pickQuery} onChange={(e) => { setPickQuery(e.target.value); setPickIndex(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setPickIndex((i) => Math.min(pickable.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setPickIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = pickable[pickIndex] ?? pickable[0]; if (selected) startWithSale(selected) } else if (e.key === 'Escape') closeWizard() }} placeholder="رقم الفاتورة S-0001 أو الكود المرجعي…" className={`${inputCls} pr-9`} autoFocus data-enter-native="true" />
               </div>
               <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-                {pickable.map((s) => (
-                  <button key={s.id} onClick={() => startWithSale(s)} className={`w-full text-right px-3 py-2.5 transition-colors flex items-center justify-between gap-2 ${sale?.id === s.id ? 'bg-rose-500/10' : 'hover:bg-rose-500/5'}`}>
+                {pickable.map((s, rowIndex) => (
+                  <button key={s.id} onClick={() => startWithSale(s)} className={`w-full text-right px-3 py-2.5 transition-colors flex items-center justify-between gap-2 ${rowIndex === pickIndex ? 'bg-rose-500/10 ring-1 ring-inset ring-rose-500/30' : 'hover:bg-rose-500/5'}`}>
                     <span>
                       <b className="text-slate-800 dark:text-white">{s.invoiceNumber}</b>
                       {s.refCode && <span className="text-[10px] font-mono text-sky-600 dark:text-sky-400 mr-2" dir="ltr">{s.refCode}</span>}

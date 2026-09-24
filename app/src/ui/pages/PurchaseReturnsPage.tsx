@@ -28,6 +28,7 @@ export function PurchaseReturnsPage() {
 
   const [pickOpen, setPickOpen] = useState(false)
   const [pickQuery, setPickQuery] = useState('')
+  const [pickIndex, setPickIndex] = useState(0)
   const [purchase, setPurchase] = useState<PurchaseInvoice | null>(null)
   const [qtys, setQtys] = useState<Record<number, string>>({})
   const [returnWarehouses, setReturnWarehouses] = useState<Record<number, number>>({})
@@ -192,11 +193,11 @@ export function PurchaseReturnsPage() {
         <div className="space-y-3">
           <div className="relative">
             <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input value={pickQuery} onChange={(e) => setPickQuery(e.target.value)} placeholder="رقم الفاتورة… P-0001" className={`${inputCls} pr-9`} autoFocus />
+            <input value={pickQuery} onChange={(e) => { setPickQuery(e.target.value); setPickIndex(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setPickIndex((i) => Math.min(pickable.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setPickIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = pickable[pickIndex] ?? pickable[0]; if (selected) startReturn(selected) } else if (e.key === 'Escape') setPickOpen(false) }} placeholder="رقم الفاتورة… P-0001" className={`${inputCls} pr-9`} autoFocus data-enter-native="true" />
           </div>
           <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-            {pickable.map((p) => (
-              <button key={p.id} onClick={() => startReturn(p)} className="w-full text-right px-3 py-2.5 hover:bg-cyan-500/5 transition-colors flex items-center justify-between gap-2">
+            {pickable.map((p, rowIndex) => (
+              <button key={p.id} onClick={() => startReturn(p)} className={`w-full text-right px-3 py-2.5 transition-colors flex items-center justify-between gap-2 ${rowIndex === pickIndex ? 'bg-cyan-500/10 ring-1 ring-inset ring-cyan-500/30' : 'hover:bg-cyan-500/5'}`}>
                 <span>
                   <b className="text-slate-800 dark:text-white">{p.invoiceNumber}</b>
                   {p.refCode && <span className="text-[10px] font-mono text-sky-600 dark:text-sky-400 mr-2" dir="ltr">{p.refCode}</span>}
