@@ -13,8 +13,8 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, CHANGE_ORDER_STATUS_LABELS, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
-import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -516,7 +516,7 @@ export function ProjectsPage() {
                     </button>
                   ))}
                 </div>
-                {exPayment === 'cash' && <div className="mt-2 space-y-2"><TerminalPaymentPicker value={exTerminal} onChange={setExTerminal}/>{!exTerminal.terminalId && <TreasuryPicker value={exTreasury} onChange={setExTreasury} compact />}</div>}
+                {exPayment === 'cash' && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury:exTreasury,terminalPayment:exTerminal}} onChange={value=>{setExTreasury(value.treasury);setExTerminal(value.terminalPayment)}} operation="receipt"/></div>}
               </Field>
               <Field label="الضريبة">
                 <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
@@ -662,7 +662,7 @@ export function ProjectsPage() {
               {getAdvanceBalance(advanceFor.id) > 0 && <> الرصيد الحالي: <b>{fmt(getAdvanceBalance(advanceFor.id))}</b></>}
             </div>
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            <Field label="طريقة التحصيل"><div className="space-y-2"><TerminalPaymentPicker value={advTerminal} onChange={setAdvTerminal}/>{!advTerminal.terminalId && <TreasuryPicker value={advTreasury} onChange={setAdvTreasury} />}</div></Field>
+            <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury:advTreasury,terminalPayment:advTerminal}} onChange={value=>{setAdvTreasury(value.treasury);setAdvTerminal(value.terminalPayment)}} operation="receipt"/></div></Field>
             <Btn onClick={saveAdvance} shortcut="F9" className="w-full" disabled={!advAmount}>استلام الدفعة</Btn>
           </div>
         )}
@@ -719,7 +719,7 @@ export function ProjectsPage() {
             <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
               سيُحصَّل المحتجز المتبقي {fmt(getProjectProfit(releaseFor.id).retentionHeldMinor)} {cur.symbol} ويُقفل المشروع نهائياً.
             </div>
-            <Field label="طريقة التحصيل"><div className="space-y-2"><TerminalPaymentPicker value={releaseTerminal} onChange={setReleaseTerminal}/>{!releaseTerminal.terminalId && <TreasuryPicker value={releaseTreasury} onChange={setReleaseTreasury} compact />}</div></Field>
+            <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury:releaseTreasury,terminalPayment:releaseTerminal}} onChange={value=>{setReleaseTreasury(value.treasury);setReleaseTerminal(value.terminalPayment)}} operation="receipt"/></div></Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setReleaseFor(null)}>إلغاء</Btn>
               <Btn onClick={doRelease} shortcut="F9">🏁 تحصيل وإقفال</Btn>

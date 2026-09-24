@@ -19,7 +19,8 @@ import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 const STATUS_COLORS: Record<TicketStatus, string> = {
@@ -470,7 +471,7 @@ export function MaintenancePage() {
                   <button onClick={() => setPayment('cash')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>نقدي</button>
                   <button onClick={() => setPayment('credit')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'credit' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>آجل</button>
                 </div>
-                {payment === 'cash' && <div className="mt-2 space-y-2"><TerminalPaymentPicker value={terminalPayment} onChange={setTerminalPayment}/>{!terminalPayment.terminalId && <TreasuryPicker value={treasury} onChange={setTreasury} compact />}</div>}
+                {payment === 'cash' && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div>}
                 {payment === 'cash' && (
                   <input
                     value={paidNow}

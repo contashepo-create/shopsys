@@ -15,7 +15,8 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderCarSaleContractHtml } from '../print/printCarSale.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -368,7 +369,7 @@ export function CarsPage() {
                     </button>
                   ))}
                 </div>
-                {sellPayment === 'cash' && <div className="mt-2 space-y-2"><TerminalPaymentPicker value={sellTerminal} onChange={setSellTerminal}/>{!sellTerminal.terminalId && <TreasuryPicker value={sellTreasury} onChange={setSellTreasury} compact />}</div>}
+                {sellPayment === 'cash' && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury:sellTreasury,terminalPayment:sellTerminal}} onChange={value=>{setSellTreasury(value.treasury);setSellTerminal(value.terminalPayment)}} operation="receipt"/></div>}
               </Field>
               <Field label="الضريبة">
                 <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
@@ -544,7 +545,7 @@ export function CarsPage() {
                   ))}
                 </div>
               </Field>
-              {cgPayment === 'cash' && <div className="space-y-2"><TerminalPaymentPicker value={cgTerminal} onChange={setCgTerminal}/>{!cgTerminal.terminalId && <TreasuryPicker value={cgTreasury} onChange={setCgTreasury} compact />}</div>}
+              {cgPayment === 'cash' && <div className="space-y-2"><PaymentMethodPicker value={{treasury:cgTreasury,terminalPayment:cgTerminal}} onChange={value=>{setCgTreasury(value.treasury);setCgTerminal(value.terminalPayment)}} operation="receipt"/></div>}
             </div>
             {cgSalePrice && toMinor(cgSalePrice, cur.decimals) >= cgSellCar.ownerNetMinor && (
               <div className="rounded-xl bg-violet-500/10 border border-violet-500/30 p-3 text-[12px] font-bold text-violet-700 dark:text-violet-300">

@@ -47,7 +47,7 @@ export function PurchaseReturnsPage() {
       invoiceNumber: r.returnNumber,
       refCode: r.refCode ?? '',
       dateIso: r.date,
-      partyLabel: orig ? (suppliers.find((sp) => sp.id === orig.supplierId)?.nameAr ?? `مورد #${orig.supplierId}`) : 'مورد؟',
+      partyLabel: orig ? supplierName(orig.supplierId) : 'مورد؟',
       paymentLabel: r.refund === 'cash' ? 'استرداد نقدي' : 'تخفيض من دين المورد',
       rows: r.lines.map((l) => ({
         nameAr: l.nameAr,
@@ -65,7 +65,7 @@ export function PurchaseReturnsPage() {
   }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
-  const supplierName = (id: number) => suppliers.find((s) => s.id === id)?.nameAr ?? '—'
+  const supplierName = (id: number) => id === 0 ? 'شراء نقدي — بدون مورد' : suppliers.find((s) => s.id === id)?.nameAr ?? `مورد #${id}`
 
   const remaining = useMemo(() => {
     if (!purchase) return [] as number[]

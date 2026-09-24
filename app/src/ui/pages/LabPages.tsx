@@ -21,7 +21,8 @@ import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 function useCur() {
@@ -246,7 +247,7 @@ export function LabOrdersPage() {
                   </button>
                 ))}
               </div>
-              {(payment === 'cash' || insuranceId) && <div className="mt-2 space-y-2"><TerminalPaymentPicker value={terminalPayment} onChange={setTerminalPayment}/>{!terminalPayment.terminalId && <TreasuryPicker value={treasury} onChange={setTreasury} compact />}</div>}
+              {(payment === 'cash' || insuranceId) && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div>}
             </Field>
             <Field label="خصم ٪"><input value={discount} onChange={(e) => setDiscount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="الضريبة">
@@ -809,7 +810,7 @@ export function LabReferrersPage() {
       <div className="flex items-center justify-between pt-2">
         <h2 className="font-black flex items-center gap-2">🏥 جهات التأمين والتعاقد</h2>
         <div className="flex items-center gap-2">
-          {insuranceProviders.length > 0 && <div className="space-y-1"><TerminalPaymentPicker value={claimTerminal} onChange={setClaimTerminal}/>{!claimTerminal.terminalId && <TreasuryPicker value={claimTreasury} onChange={setClaimTreasury} compact />}</div>}
+          {insuranceProviders.length > 0 && <div className="space-y-1"><PaymentMethodPicker value={{treasury:claimTreasury,terminalPayment:claimTerminal}} onChange={value=>{setClaimTreasury(value.treasury);setClaimTerminal(value.terminalPayment)}} operation="receipt"/></div>}
           <Btn variant="soft" onClick={() => setInsOpen(true)}><Plus className="w-4 h-4" /> جهة جديدة</Btn>
         </div>
       </div>

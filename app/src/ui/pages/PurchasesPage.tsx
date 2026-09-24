@@ -72,6 +72,7 @@ export function PurchasesPage() {
     itemId, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), warehouseId: defaultPurchaseWarehouseId, ...patch,
   })
   const fmt = (m: number) => formatMinor(m, cur, false)
+  const supplierLabel = (id: number) => id === 0 ? 'شراء نقدي — بدون مورد' : suppliers.find((supplier) => supplier.id === id)?.nameAr ?? `مورد #${id}`
 
   const purchaseWarehouseLabel = (p: PurchaseInvoice) => {
     if (p.warehouseId != null) return warehouses.find((w) => w.id === p.warehouseId)?.nameAr ?? '—'
@@ -94,7 +95,7 @@ export function PurchasesPage() {
       invoiceNumber: inv.invoiceNumber,
       refCode: inv.refCode ?? '',
       dateIso: inv.date,
-      partyLabel: suppliers.find((sp) => sp.id === inv.supplierId)?.nameAr ?? `مورد #${inv.supplierId}`,
+      partyLabel: supplierLabel(inv.supplierId),
       paymentLabel: inv.paidMinor >= (inv.supplierDueMinor ?? inv.grandTotalMinor) ? 'مدفوعة بالكامل' : inv.paidMinor > 0 ? 'مدفوعة جزئياً' : 'آجلة',
       rows: inv.lines.map((l) => ({
         nameAr: items.find((it) => it.id === l.itemId)?.nameAr ?? `صنف #${l.itemId}`,
@@ -244,7 +245,7 @@ export function PurchasesPage() {
   }
 
   const openNew = () => {
-    setSupplierId(suppliers[0]?.id ?? 0)
+    setSupplierId(0)
     setLines([makeDraftLine()])
     setExpenses([])
     setPaid('')
@@ -335,7 +336,11 @@ export function PurchasesPage() {
   }, [lines, expenses, cur.decimals, inputVatMinor])
 
   const save = () => {
-    if (!preview || !supplierId) return
+    if (!preview || supplierId < 0) return
+    if (supplierId === 0 && toMinor(paid || '0', cur.decimals) !== preview.supplierDue) {
+      toast.show(`الشراء النقدي يجب سداده بالكامل: ${fmt(preview.supplierDue)}`, 'error')
+      return
+    }
     try {
     // P2 (مراجعة المشتريات): المطابقة بالترتيب لا بالبحث — سطران بنفس الصنف والكمية
     // كانا يأخذان صلاحية/سيريالات السطر الأول معاً (computeLandedCosts يحفظ الترتيب)
@@ -397,13 +402,12 @@ export function PurchasesPage() {
           تكلفة كل صنف <b>بالمتوسط المرجح المتحرك</b> ويزيد رصيد المخزون.
         </p>
         {purchaseExpensePayables.some(p=>p.status!=='paid')&&<div className="text-[11px] font-bold text-violet-600 mt-1">استحقاقات جهات أخرى: {purchaseExpensePayables.filter(p=>p.status!=='paid').length} · متبقي {fmt(purchaseExpensePayables.filter(p=>p.status!=='paid').reduce((s,p)=>s+p.amountMinor-p.paidMinor,0))}</div>}</div>
-        <div className="flex gap-2"><Btn variant="ghost" onClick={openNew} disabled={items.length === 0 || suppliers.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> إدخال سريع</span></Btn><Btn shortcut="F3" onClick={() => navigate('/purchases/invoices/new')} disabled={items.length === 0 || suppliers.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة شراء</span></Btn></div>
+        <div className="flex gap-2"><Btn variant="ghost" onClick={openNew} disabled={items.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> إدخال سريع</span></Btn><Btn shortcut="F3" onClick={() => navigate('/purchases/invoices/new')} disabled={items.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة شراء</span></Btn></div>
       </div>
 
-      {(items.length === 0 || suppliers.length === 0) && (
+      {items.length === 0 && (
         <div className="anim-pop p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-[12px] font-bold text-amber-700 dark:text-amber-400">
-          ⚠️ تحتاج أولاً: {items.length === 0 ? 'إضافة أصناف (المخزون ← الأصناف)' : ''} {items.length === 0 && suppliers.length === 0 ? ' + ' : ''}
-          {suppliers.length === 0 ? 'إضافة مورد (المشتريات ← الموردون)' : ''}
+          ⚠️ تحتاج أولاً: {items.length === 0 ? 'إضافة أصناف (المخزون ← الأصناف)' : ''}
         </div>
       )}
 
@@ -440,7 +444,7 @@ export function PurchasesPage() {
                       <div className="text-[10.5px] text-slate-400">مخزن: {purchaseWarehouseLabel(p)}</div>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{suppliers.find((s) => s.id === p.supplierId)?.nameAr ?? '—'}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{supplierLabel(p.supplierId)}</td>
                   <td className="px-4 py-3">{fmt(p.goodsTotalMinor)}</td>
                   <td className="px-4 py-3">
                     {p.expensesTotalMinor > 0
@@ -483,8 +487,9 @@ export function PurchasesPage() {
       <Modal open={open} onClose={() => setOpen(false)} title="فاتورة شراء جديدة" wide>
         <div className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Field label="المورد *">
+            <Field label="المورد (اختياري)">
               <select value={supplierId} onChange={(e) => setSupplierId(Number(e.target.value))} className={inputCls}>
+                <option value={0}>💵 شراء نقدي — بدون مورد</option>
                 {suppliers.map((s) => <option key={s.id} value={s.id}>{s.nameAr}</option>)}
               </select>
             </Field>
@@ -754,13 +759,12 @@ export function PurchasesPage() {
                       ))}
                     </div>
                     {e.paidBy === 'treasury' && (
-                      <select
+                      <TreasuryPicker
                         value={e.payAccount}
-                        onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, payAccount: ev.target.value } : x)))}
-                        className={`${inputCls} !w-auto min-w-44`}
-                      >
-                        {treasuries.map((t) => <option key={t.code} value={t.code}>{t.nameAr}</option>)}
-                      </select>
+                        onChange={(code) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, payAccount: code } : x)))}
+                        operation="payment"
+                        compact
+                      />
                     )}
                     {e.paidBy === 'custody' && (
                       <select
@@ -835,7 +839,7 @@ export function PurchasesPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} shortcut="F9" disabled={!preview || !supplierId}>🚀 ترحيل الفاتورة</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!preview || supplierId < 0}>🚀 ترحيل الفاتورة</Btn>
           </div>
         </div>
       </Modal>
@@ -866,7 +870,7 @@ export function PurchasesPage() {
           <div className="space-y-4 text-sm">
             <div className="flex gap-4 text-[12px] text-slate-500">
               <span>📅 {viewing.date}</span>
-              <span>🚛 {suppliers.find((s) => s.id === viewing.supplierId)?.nameAr}</span>
+              <span>🚛 {supplierLabel(viewing.supplierId)}</span>
             </div>
             <table className="w-full text-[13px]">
               <thead>
@@ -958,9 +962,7 @@ export function PurchasesPage() {
                   ))}
                 </div>
                 {latePaidBy === 'treasury' && (
-                  <select value={latePayAccount} onChange={(e) => setLatePayAccount(e.target.value)} className={`${inputCls} !w-auto min-w-44`}>
-                    {treasuries.map((t) => <option key={t.code} value={t.code}>{t.nameAr}</option>)}
-                  </select>
+                  <TreasuryPicker value={latePayAccount} onChange={setLatePayAccount} operation="payment" compact />
                 )}
                 {latePaidBy === 'custody' && (
                   <select value={lateCustodyId ?? ''} onChange={(e) => setLateCustodyId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-52`}>

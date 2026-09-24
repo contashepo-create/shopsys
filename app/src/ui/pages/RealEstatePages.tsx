@@ -17,7 +17,8 @@ import {
 } from '../../core/realestate.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
 const emptyTerminalPayment = (): TerminalPaymentDraft => ({ terminalId: '', providerReference: '', cardLast4: '' })
@@ -517,8 +518,7 @@ export function LeasesPage() {
       <Modal open={!!collectFor} onClose={() => setCollectFor(null)} title={collectFor ? `تحصيل — ${collectFor.contractNumber} (${collectFor.tenantName})` : ''} wide>
         {collectFor && (
           <div className="space-y-3">
-            <TerminalPaymentPicker value={colTerminal} onChange={setColTerminal} />
-            {!colTerminal.terminalId && <TreasuryPicker value={colTreasury} onChange={setColTreasury} />}
+            <PaymentMethodPicker value={{treasury:colTreasury,terminalPayment:colTerminal}} onChange={value=>{setColTreasury(value.treasury);setColTerminal(value.terminalPayment)}} operation="receipt"/>
             <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <table className="w-full text-[12px]">
                 <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">

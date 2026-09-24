@@ -15,7 +15,8 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 export function WalletServicesPage() {
@@ -196,7 +197,7 @@ export function WalletServicesPage() {
               <TreasuryPicker value={funding} onChange={setFunding} compact />
             </Field>
             <Field label="مكان استلام مبلغ العميل" hint="قد يختلف عن التمويل: كاش بالدرج وتحويل من إنستاباي">
-              <div className="space-y-2"><TerminalPaymentPicker value={terminalPayment} onChange={setTerminalPayment}/>{!terminalPayment.terminalId && <TreasuryPicker value={receive} onChange={setReceive} compact />}</div>
+              <div className="space-y-2"><PaymentMethodPicker value={{treasury:receive,terminalPayment}} onChange={value=>{setReceive(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div>
             </Field>
             <Field label={`المدفوع الآن (${cur.symbol})`} hint="اتركه فارغاً = محصَّل بالكامل؛ الباقي دين على العميل">
               <input value={paid} onChange={(e) => setPaid(e.target.value)} className={inputCls} dir="ltr" placeholder="الكل" />

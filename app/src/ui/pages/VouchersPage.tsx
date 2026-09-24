@@ -14,7 +14,8 @@ import type { TreasuryAccount } from '../../core/accounting.ts'
 import { Btn, Modal, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { customerStatement, supplierStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -289,10 +290,10 @@ export function VouchersPage() {
         <div className="space-y-4">
           {!(isPurchaseExpense && expPaidBy === 'payable') && (
             kind === 'receipt' ? <>
-              <Field label="طريقة القبض" hint="اختر نقدية/بنك أو ماكينة دفع نشطة ومسموحة لك">
-                <TerminalPaymentPicker value={terminalPayment} onChange={setTerminalPayment} />
+              <Field label="طريقة القبض" hint="اختر نقدية أو بنكاً أو محفظة أو ماكينة دفع من قائمة واحدة">
+                <PaymentMethodPicker value={{ treasury, terminalPayment }} onChange={(value) => { setTreasury(value.treasury); setTerminalPayment(value.terminalPayment) }} operation="receipt" />
               </Field>
-              {selectedTerminal ? <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-[11px] text-sky-800">سيُسجل القبض على حساب تسوية «{selectedTerminal.nameAr}» وتُحفظ حركة الماكينة مع السند والقيد.</div> : <Field label="الخزينة أو البنك"><TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} operation="receipt" /></Field>}
+              {selectedTerminal && <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-[11px] text-sky-800">سيُسجل القبض على حساب تسوية «{selectedTerminal.nameAr}» وتُحفظ حركة الماكينة مع السند والقيد.</div>}
             </> : <>
               <Field label="من الخزينة أو البنك" hint="السداد الخارجي يتم من خزينة/بنك؛ رد ماكينة الدفع يُنفذ من المستند الأصلي المرتبط بها">
                 <TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} operation="payment" />

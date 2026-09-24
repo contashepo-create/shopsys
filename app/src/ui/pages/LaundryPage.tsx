@@ -15,7 +15,8 @@ import {
 } from '../../core/laundry.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderReportShell } from '../../core/reportPrint.ts'
@@ -340,7 +341,7 @@ export function LaundryPage() {
               <div className="space-y-2">
                 {LAUNDRY_TRANSITIONS[viewing.status].includes('delivered') && (
                   <Field label="التحصيل في" hint={`المتبقي المتوقع ${fmt(Math.max(0, viewing.totalMinor - viewing.prepaidMinor))} ${cur.symbol} + الضريبة إن كانت مضافة`}>
-                    <div className="space-y-2"><TerminalPaymentPicker value={deliverTerminal} onChange={setDeliverTerminal}/>{!deliverTerminal.terminalId && <TreasuryPicker value={deliverTreasury} onChange={setDeliverTreasury} compact />}</div>
+                    <div className="space-y-2"><PaymentMethodPicker value={{treasury:deliverTreasury,terminalPayment:deliverTerminal}} onChange={value=>{setDeliverTreasury(value.treasury);setDeliverTerminal(value.terminalPayment)}} operation="receipt"/></div>
                   </Field>
                 )}
                 <div className="flex flex-wrap gap-2">

@@ -5,7 +5,7 @@
  * - كل فاتورة تولّد قيداً محاسبياً متوازناً تلقائياً (القرار 9)
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift, CreditCard } from 'lucide-react'
+import { Banknote, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -27,7 +27,7 @@ import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
-import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { toMinor } from '../../core/money.ts'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
@@ -947,24 +947,23 @@ export function PosPage() {
               <div className="text-[12px] text-slate-400">المبلغ المستحق</div>
               <div className="font-black text-3xl text-emerald-600 dark:text-emerald-400 mt-1">{fmt(totals.totalMinor)} {cur.symbol}</div>
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                onClick={() => { setPayment('cash'); if (totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals)) }}
-                className={`p-4 rounded-2xl border-2 font-bold transition-all duration-200 hover:scale-[1.02] ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
-              >
-                <Banknote size={22} className="mx-auto mb-1" /> نقدي / مجزأ
-              </button>
-              <button onClick={() => { setPayment('terminal'); setPaidCash('0'); setPaymentTerminalId((current) => current || activePaymentTerminals[0]?.id || '') }} disabled={!activePaymentTerminals.length} className={`p-4 rounded-2xl border-2 font-bold transition-all ${payment === 'terminal' ? 'border-sky-500 bg-sky-500/10 text-sky-700' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}><CreditCard size={22} className="mx-auto mb-1"/>بطاقة</button>
-              <button
-                onClick={() => { setPayment('credit'); setPaidCash('0') }}
-                disabled={customers.length === 0}
-                className={`p-4 rounded-2xl border-2 font-bold transition-all duration-200 hover:scale-[1.02] disabled:opacity-40 ${payment === 'credit' ? 'border-violet-500/60 bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
-              >
-                <UserRound size={22} className="mx-auto mb-1" /> آجل بالكامل {customers.length === 0 && '(أضف عملاء)'}
-              </button>
-            </div>
-
-            {payment === 'terminal' && <div className="space-y-3"><div><div className="text-[11px] font-bold mb-1">ماكينة الدفع</div><select className={inputCls} value={paymentTerminalId} onChange={(e) => setPaymentTerminalId(e.target.value)}><option value="">اختر الماكينة</option>{activePaymentTerminals.map((row) => <option key={row.id} value={row.id}>{row.nameAr} · {row.code}</option>)}</select></div><div className="grid grid-cols-2 gap-2"><div><div className="text-[11px] font-bold mb-1">مرجع إيصال الماكينة *</div><input className={inputCls} value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} placeholder="رقم العملية"/></div><div><div className="text-[11px] font-bold mb-1">آخر 4 أرقام (اختياري)</div><input className={inputCls} inputMode="numeric" maxLength={4} value={terminalCardLast4} onChange={(e) => setTerminalCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="1234"/></div></div><p className="text-[10px] text-slate-400">لا يُخزن رقم البطاقة الكامل أو CVV.</p></div>}
+            <PaymentMethodPicker
+              value={{ kind: payment === 'credit' ? 'credit' : undefined, treasury, terminalPayment: { terminalId: paymentTerminalId, providerReference: terminalReference, cardLast4: terminalCardLast4 } }}
+              onChange={(value) => {
+                const nextPayment = value.kind === 'credit' ? 'credit' : value.terminalPayment.terminalId ? 'terminal' : 'cash'
+                setPayment(nextPayment)
+                setTreasury(value.treasury)
+                setPaymentTerminalId(value.terminalPayment.terminalId)
+                setTerminalReference(value.terminalPayment.providerReference)
+                setTerminalCardLast4(value.terminalPayment.cardLast4)
+                if (nextPayment === 'terminal') setPaidCash('0')
+                else if (nextPayment === 'cash' && totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals))
+                else setPaidCash('0')
+              }}
+              operation="receipt"
+              allowCredit={customers.length > 0}
+              terminalOptions={activePaymentTerminals}
+            />
 
             {payment === 'cash' && (
               <>
@@ -984,10 +983,6 @@ export function PosPage() {
                       {fmt(creditRemainder)}
                     </div>
                   </div>
-                </div>
-                <div>
-                  <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5">إلى أي خزينة/بنك؟</div>
-                  <TreasuryPicker value={treasury} onChange={setTreasury} operation="receipt" />
                 </div>
               </>
             )}

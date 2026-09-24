@@ -30,30 +30,10 @@ export function TreasuryPicker({
     if (effectiveFallback && !valueAllowed) onChange(effectiveFallback)
   }, [effectiveFallback, onChange, valueAllowed])
   if (treasuries.length === 0) return <div className="text-[11px] font-bold text-rose-500">لا توجد خزينة/بنك مسموح لهذه العملية</div>
-  // قائمة قصيرة (2-3) ⇒ أزرار واضحة؛ أطول ⇒ قائمة منسدلة
-  if (treasuries.length <= 3 && !compact) {
-    return (
-      <div className={`grid gap-2 ${treasuries.length === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
-        {treasuries.map((t) => (
-          <button
-            key={t.code}
-            type="button"
-            disabled={disabled}
-            onClick={() => onChange(t.code)}
-            className={`p-2.5 rounded-xl border-2 text-[12px] font-bold transition-all disabled:opacity-40 ${
-              value === t.code
-                ? 'border-sky-500/60 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-sky-300'
-            }`}
-          >
-            {treasuryLabel(t)}
-          </button>
-        ))}
-      </div>
-    )
-  }
+  // توحيد تجربة الدفع: حتى القائمة القصيرة تبقى قائمة منسدلة، لتظهر
+  // النقدي والبنك والمحفظة والفروع/الحسابات التابعة في مكان واحد بلا أزرار متجاورة.
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={inputCls}>
+    <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={`${inputCls} ${compact ? 'text-sm' : ''}`}>
       {treasuries.filter((t) => !t.parentCode).map((parent) => {
         const children = treasuries.filter((t) => t.parentCode === parent.code)
         return children.length ? (

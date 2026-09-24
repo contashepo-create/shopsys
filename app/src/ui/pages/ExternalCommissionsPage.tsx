@@ -14,7 +14,8 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { COMMISSION_DIRECTION_LABELS, commissionsByParty, type CommissionDirection } from '../../core/commissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
-import { TerminalPaymentPicker, type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { accountName } from './accountNames.ts'
 
 export function ExternalCommissionsPage() {
@@ -327,8 +328,7 @@ export function ExternalCommissionsPage() {
             <Field label={`المبلغ (المتبقي ${fmt(settling.amountMinor - settling.collectedMinor)} ${cur.symbol})`}>
               <input value={settleAmount} onChange={(e) => setSettleAmount(e.target.value)} className={inputCls} dir="ltr" autoFocus />
             </Field>
-            {direction === 'earned' && <TerminalPaymentPicker value={terminalPayment} onChange={setTerminalPayment}/>}
-            {(!terminalPayment.terminalId || direction !== 'earned') && <Field label={direction === 'earned' ? 'يدخل في' : 'يُدفع من'}><TreasuryPicker value={treasury} onChange={setTreasury} /></Field>}
+            {direction === 'earned' ? <Field label="يدخل في"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></Field> : <Field label="يُدفع من"><TreasuryPicker value={treasury} onChange={setTreasury} operation="payment" /></Field>}
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSettleId(null)}>إلغاء</Btn>
               <Btn onClick={settle} shortcut="F9" disabled={!settleAmount.trim()}>{direction === 'earned' ? '💰 تحصيل' : '📤 دفع'} وقيد</Btn>

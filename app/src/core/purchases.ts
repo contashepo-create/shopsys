@@ -84,6 +84,8 @@ export function buildPurchaseEntryV2(args: {
   payAccount: string // خزينة/بنك أو 1108 عهدة
   /** توزيع سداد المورد على عدة خزائن/بنوك/محافظ؛ غيابه يحافظ على المصدر الواحد القديم */
   paymentCredits?: ExpensePaymentCredit[]
+  /** شراء نقدي بلا مورد: يجب أن يساوي السداد كامل المستحق ولا ينشئ دائن 2101 */
+  cashPurchase?: boolean
   expensePayments: ExpensePaymentCredit[] // المصاريف المدفوعة مباشرة
   /**
    * ض.ق.م المدخلات القابلة للخصم (سد فجوة T1 — للمنشآت المسجلة ضريبياً):
@@ -108,6 +110,7 @@ export function buildPurchaseEntryV2(args: {
   const supplierDue = grandTotalMinor + inputVat - expensesPaidDirect
   if (supplierDue < 0) throw new RangeError('المصاريف المدفوعة مباشرة أكبر من إجمالي الفاتورة')
   if (paidMinor > supplierDue) throw new RangeError('المدفوع أكبر من مستحق المورد (البضاعة + الضريبة + المصاريف المحملة على حسابه)')
+  if (args.cashPurchase && paidMinor !== supplierDue) throw new RangeError('الشراء النقدي يجب سداده بالكامل ولا ينشئ ديناً على مورد')
   const remaining = supplierDue - paidMinor
   const lines: JournalLine[] = [
     { accountCode: args.inventoryAccount, debit: grandTotalMinor, credit: 0, note: args.inventoryNote },

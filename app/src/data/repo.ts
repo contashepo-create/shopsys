@@ -1361,6 +1361,7 @@ interface DataState {
    * 3) يزيد رصيد المخزون
    */
   postPurchase: (inv: {
+    /** صفر = شراء نقدي بلا مورد؛ لا يُنشأ مورد افتراضي ولا دين مورد */
     supplierId: number
     supplierInvoiceNumber?: string
     purchaseOrderNumber?: string
@@ -2539,10 +2540,12 @@ export const useDataStore = create<DataState>()(
         const state = get()
         // تحقق صارم قبل أي كتابة: سطور موجودة وكميات وأسعار سليمة (حماية من إفساد المخزون)
         if (!inv.lines.length) throw new Error('الفاتورة بلا أصناف')
-        // P1 (مراجعة المشتريات): المورد يجب أن يكون مسجلاً — دين 2101 بلا مورد حقيقي يفسد كشوف الموردين
-        if (!state.suppliers.some((s) => s.id === inv.supplierId)) throw new Error('المورد غير موجود — سجّله أولاً من «المشتريات ← الموردون»')
+        // الشراء النقدي الحقيقي يحمل supplierId=0: لا يُجبر المستخدم على إنشاء مورد وهمي،
+        // ولا يظهر كدين مورد في الكشوف. كل رقم موجب يظل بحاجة إلى مورد مسجل.
+        const cashPurchase = inv.supplierId === 0
+        if (!cashPurchase && !state.suppliers.some((s) => s.id === inv.supplierId)) throw new Error('المورد غير موجود — سجّله أولاً من «المشتريات ← الموردون»')
         const supplierDocument = inv.supplierInvoiceNumber?.trim()
-        if (supplierDocument && state.purchases.some((purchase) => purchase.supplierId === inv.supplierId && purchase.supplierInvoiceNumber === supplierDocument)) throw new Error('رقم فاتورة المورد مسجل مسبقاً لهذا المورد')
+        if (!cashPurchase && supplierDocument && state.purchases.some((purchase) => purchase.supplierId === inv.supplierId && purchase.supplierInvoiceNumber === supplierDocument)) throw new Error('رقم فاتورة المورد مسجل مسبقاً لهذا المورد')
         // P1: الخزينة/البنك المدفوع منه يجب أن يكون موجوداً (خزائن المصاريف كانت تُفحص والرئيسية لا)
         if (inv.treasury && !state.treasuries.some((t) => t.code === inv.treasury)) throw new Error('الخزينة/البنك المدفوع منه غير موجود')
         for (const l of inv.lines) {
@@ -2691,6 +2694,7 @@ export const useDataStore = create<DataState>()(
           paidMinor: inv.paidMinor,
           payAccount,
           paymentCredits: inv.paymentAllocations?.map((payment) => ({ account: payment.accountCode, amountMinor: payment.amountMinor, note: payment.note ?? 'سداد مورد' })),
+          cashPurchase,
           expensePayments,
           inputVatMinor,
         })
