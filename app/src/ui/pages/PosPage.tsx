@@ -66,6 +66,7 @@ export function PosPage() {
     roleId: activeUser?.roleId,
     isOwner: currentUserId == null || activeUser?.roleId === 'owner',
     requireOpenShiftForSales: setup.requireOpenShiftForSales,
+    userOverride: activeUser?.requireOpenShiftForSales,
     invoiceFirst: isInvoiceFirst(setup.activityId),
   })
   const mainWarehouseId = warehouses.find((w) => w.isMain)?.id ?? warehouses[0]?.id ?? null

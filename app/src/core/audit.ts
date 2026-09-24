@@ -225,6 +225,11 @@ export interface AppUser {
   /** استثناءات فردية (البند 4 — لكل موظف): ممنوح فوق الدور / محجوب رغم الدور */
   extraPerms?: string[]
   deniedPerms?: string[]
+  /**
+   * سياسة الوردية لهذا المستخدم: true = إجبار، false = إعفاء، undefined = الافتراضي
+   * (الكاشير يتبع إعداد الكاشير العام، وبقية الأدوار غير مجبرة افتراضياً).
+   */
+  requireOpenShiftForSales?: boolean
   /** خزائن/بنوك المستخدم وعملياتها؛ undefined = سجل قديم غير مقيّد مؤقتاً. */
   treasuryAccess?: UserTreasuryAccess
   /** ماكينات الدفع وعملياتها؛ undefined = مستخدم قديم غير مقيد مؤقتاً. */

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * فحص سياسة الورديات بحسب الدور والسياق:
- * المالك تلميح فقط، الكاشير حسب مفتاحه، وبقية الأدوار ملزمة،
- * مع بقاء أنشطة «الفاتورة أولاً» خارج سياسة الوردية.
+ * المالك تلميح فقط، الكاشير حسب مفتاحه، وبقية الأدوار اختيارية افتراضياً،
+ * مع override فردي للإجبار/الإعفاء وبقاء أنشطة «الفاتورة أولاً» خارج السياسة.
  * التشغيل: node --experimental-strip-types scripts/verify_shift_role_policy.mjs
  */
 import assert from 'node:assert/strict'
@@ -11,10 +11,11 @@ import { rolesWithOverrides } from '../src/core/permissions.ts'
 
 let pass = 0
 const ok = (message) => { pass++; console.log(`  ✓ ${message}`) }
-const policy = (roleId, requireOpenShiftForSales, invoiceFirst = false) => salesShiftPolicy({
+const policy = (roleId, requireOpenShiftForSales, invoiceFirst = false, userOverride) => salesShiftPolicy({
   roleId,
   isOwner: roleId === 'owner' || roleId == null,
   requireOpenShiftForSales,
+  userOverride,
   invoiceFirst,
 })
 
@@ -37,10 +38,12 @@ ok('الكاشير يتبع مفتاح سياسة الكاشير عند تعطي
 
 for (const roleId of ['senior_seller', 'branch_manager', 'accountant', 'stylist', 'goldsmith']) {
   const result = policy(roleId, false)
-  assert.equal(result.required, true, `${roleId}: الدور غير المالك ملزم حتى عند تعطيل مفتاح الكاشير`)
-  assert.equal(result.hintOnly, false, `${roleId}: ليس تلميحاً فقط`)
+  assert.equal(result.required, false, `${roleId}: غير مجبر افتراضياً`)
+  assert.equal(result.hintOnly, true, `${roleId}: تظهر له حرية فتح الوردية`)
+  assert.equal(policy(roleId, false, false, true).required, true, `${roleId}: يمكن إجباره من الصلاحيات`)
+  assert.equal(policy(roleId, false, false, false).required, false, `${roleId}: يمكن إعفاؤه صراحةً من الصلاحيات`)
 }
-ok('المدير والمحاسب وبقية الأدوار الموظفة ملزمون في سياق البيع')
+ok('المدير والمحاسب وبقية الأدوار اختيارية افتراضياً مع override فردي')
 
 const invoiceFirst = policy('branch_manager', true, true)
 assert.equal(invoiceFirst.required, false)
@@ -81,9 +84,17 @@ const shift = S().openShift('كاشير الاختبار', 0)
 const sale = S().postSale(saleArgs)
 assert.equal(sale.shiftId, shift.id)
 ok('postSale يربط بيع الكاشير بالوردية المفتوحة')
+S().closeShift(sale.totals.totalMinor)
+useDataStore.setState({ appUsers: [{ id: 8, nameAr: 'مدير الاختبار', roleId: 'branch_manager', pinHash: 'hash', active: true }], currentUserId: 8 })
+const managerSale = S().postSale(saleArgs)
+assert.equal(managerSale.shiftId, null)
+ok('المدير غير مجبر افتراضياً ويستطيع بيعاً آجلاً/كبيراً بلا وردية')
+useDataStore.setState({ appUsers: [{ id: 8, nameAr: 'مدير الاختبار', roleId: 'branch_manager', pinHash: 'hash', active: true, requireOpenShiftForSales: true }], currentUserId: 8 })
+assert.throws(() => S().postSale(saleArgs), /مفعّل له الإجبار/, 'override الإجبار يحمي المدير بلا وردية')
+ok('يمكن إجبار المدير فردياً من الصلاحيات')
 useDataStore.setState({ appUsers: [], currentUserId: null })
 const ownerSale = S().postSale(saleArgs)
-assert.equal(ownerSale.shiftId, shift.id)
-ok('المالك لا يُمنع عند وجود وردية، والبيع يستفيد من ربطها تلقائياً')
+assert.equal(ownerSale.shiftId, null)
+ok('المالك لا يُمنع حتى بلا وردية')
 
 console.log(`\n✅ سياسة الورديات: ${pass} محطات — خضراء\n`)

@@ -95,15 +95,16 @@ export function currentOpenShift(shifts: Shift[]): Shift | null {
 /**
  * سياسة الوردية في سياق البيع/الدفع.
  *
- * الإعداد العام يظل سياسة الكاشير: المالك الرئيسي يرى تلميحاً فقط،
- * والكاشير يُمنع أو يُسمح له بحسب الإعداد. أما أي دور موظف آخر ينفذ
- * نشاطاً يحتاج وردية فيُطلب منه فتحها حتى لو عطّل المالك مفتاح الكاشير.
- * أنشطة «الفاتورة أولاً» خارج هذا السياق ولا تحتاج وردية.
+ * المالك الرئيسي يرى تلميحاً فقط. المستخدم له override فردي يمكنه إجباره
+ * أو إعفاءه، وإذا لم يوجد override يتبع الكاشير الإعداد العام، بينما بقية
+ * الأدوار غير مجبرة افتراضياً حتى يستطيع المحاسب/المدير تسجيل بيع آجل أو كبير
+ * وتحصيله مباشرة من خزينته. أنشطة «الفاتورة أولاً» خارج هذا السياق.
  */
 export interface SalesShiftPolicyInput {
   roleId: string | null | undefined
   isOwner: boolean
   requireOpenShiftForSales: boolean
+  userOverride?: boolean | null
   invoiceFirst: boolean
 }
 
@@ -124,6 +125,15 @@ export function salesShiftPolicy(input: SalesShiftPolicyInput): SalesShiftPolicy
       messageAr: 'الوردية اختيارية للمالك الرئيسي — افتحها إن أردت ربط النقدية بعهدة وردية',
     }
   }
+  if (input.userOverride != null) {
+    return {
+      required: input.userOverride,
+      hintOnly: !input.userOverride,
+      messageAr: input.userOverride
+        ? 'لا يمكن لهذا المستخدم إتمام البيع أو الدفع قبل فتح وردية مفتوحة — هذا المستخدم مفعّل له الإجبار من الصلاحيات'
+        : 'هذا المستخدم غير مجبر على فتح وردية — يمكنه البيع أو الدفع مباشرة من خزينته',
+    }
+  }
   if (input.roleId === 'cashier') {
     const required = input.requireOpenShiftForSales
     return {
@@ -131,13 +141,13 @@ export function salesShiftPolicy(input: SalesShiftPolicyInput): SalesShiftPolicy
       hintOnly: !required,
       messageAr: required
         ? 'لا يمكن للكاشير إتمام البيع أو الدفع قبل فتح وردية مفتوحة'
-        : 'سياسة الكاشير تسمح بالبيع والدفع بلا وردية مفتوحة',
+        : 'سياسة الكاشير العامة تسمح بالبيع والدفع بلا وردية مفتوحة',
     }
   }
   return {
-    required: true,
-    hintOnly: false,
-    messageAr: 'لا يمكن لهذا المستخدم إتمام العملية قبل فتح وردية مرتبطة بدوره وسياق عمله',
+    required: false,
+    hintOnly: true,
+    messageAr: 'هذا المستخدم غير مجبر افتراضياً على فتح وردية — يمكن تفعيل الإجبار له من شاشة الصلاحيات',
   }
 }
 

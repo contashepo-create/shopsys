@@ -57,6 +57,7 @@ export function Header({ title }: { title: string }) {
     roleId: activeUser?.roleId,
     isOwner: currentUserId == null || activeUser?.roleId === 'owner',
     requireOpenShiftForSales: setup.requireOpenShiftForSales,
+    userOverride: activeUser?.requireOpenShiftForSales,
     invoiceFirst: isInvoiceFirst(setup.activityId),
   })
   const openShift = currentOpenShift(shifts)

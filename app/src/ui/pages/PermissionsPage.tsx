@@ -342,6 +342,25 @@ export function PermissionsPage() {
                 {u.mustChangePin && !u.initialPin && <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 font-bold">لم يغيّر رقمه بعد</span>}
                 {currentUserId === u.id && <span className="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-600 font-bold">نشط الآن</span>}
                 <button
+                  onClick={() => {
+                    try {
+                      updateAppUser(u.id, { requireOpenShiftForSales: u.requireOpenShiftForSales === true ? false : true })
+                      toast.show(u.requireOpenShiftForSales === true ? `أُلغي إجبار الوردية عن «${u.nameAr}»` : `فُعّل إجبار الوردية على «${u.nameAr}» ✓`)
+                    } catch (err) { toast.show((err as Error).message, 'error') }
+                  }}
+                  title="تحديد هل يُجبر هذا المستخدم على فتح وردية قبل البيع أو الدفع — مستقل عن الدور والإعداد العام"
+                  className={`text-[10px] px-2 py-1 rounded-lg font-bold transition-colors ${u.requireOpenShiftForSales === true ? 'bg-rose-500/10 text-rose-600 hover:bg-rose-500/20' : u.requireOpenShiftForSales === false ? 'bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-brand-500/10 hover:text-brand-600'}`}
+                >
+                  {u.requireOpenShiftForSales === true ? '⛔ وردية إجبارية' : u.requireOpenShiftForSales === false ? '✓ وردية اختيارية' : '↔ وردية تلقائية'}
+                </button>
+                {u.requireOpenShiftForSales !== undefined && (
+                  <button
+                    onClick={() => { try { updateAppUser(u.id, { requireOpenShiftForSales: undefined }); toast.show(`أعيدت سياسة وردية «${u.nameAr}» للوضع التلقائي`) } catch (err) { toast.show((err as Error).message, 'error') } }}
+                    title="إلغاء الاستثناء والعودة لسياسة الدور/الإعداد العام"
+                    className="text-[9px] px-1.5 py-1 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10"
+                  >تلقائي</button>
+                )}
+                <button
                   onClick={() => setTreasuryFor(u.id)}
                   title="تخصيص الخزائن والبنوك والعمليات لهذا المستخدم"
                   className="p-1.5 rounded-lg text-slate-300 hover:text-emerald-500 hover:bg-emerald-500/10 transition-colors"

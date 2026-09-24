@@ -193,8 +193,8 @@ export function GeneralSettingsPage() {
           <ShieldAlert size={17} className="text-violet-500" /> سياسة الورديات
         </h3>
         <p className="text-[11.5px] text-slate-400 mb-4">
-          هذا المفتاح يحدد سياسة الكاشير فقط: عند تفعيله لا يستطيع الكاشير البيع أو الدفع قبل فتح وردية.
-          المالك الرئيسي يحصل على تلميح ولا يُمنع، بينما الأدوار الموظفة الأخرى تُلزم بالوردية عندما يتطلبها سياق العمل.
+          هذا المفتاح يحدد السياسة الافتراضية للكاشير فقط: عند تفعيله لا يستطيع الكاشير البيع أو الدفع قبل فتح وردية.
+          المالك الرئيسي غير مجبر، وبقية المستخدمين غير مجبرين افتراضياً ويمكن تحديد كل مستخدم من شاشة الصلاحيات.
         </p>
         {(() => {
           const on = setup.requireOpenShiftForSales
@@ -202,7 +202,7 @@ export function GeneralSettingsPage() {
             <button
               onClick={() => {
                 useAppStore.setState((s) => ({ setup: { ...s.setup, requireOpenShiftForSales: !s.setup.requireOpenShiftForSales } }))
-                toast.show(!on ? 'أصبح فتح الوردية إلزامياً للكاشير قبل البيع والدفع ✓' : '⚠️ سُمح للكاشير بالبيع بلا وردية — الأدوار الأخرى تظل خاضعة لسياق الوردية')
+                toast.show(!on ? 'أصبح فتح الوردية إلزامياً افتراضياً للكاشير قبل البيع والدفع ✓' : '⚠️ سُمح للكاشير بالبيع بلا وردية — يمكنك إجبار أي مستخدم منفرداً من شاشة الصلاحيات')
               }}
               className={`w-full sm:w-auto text-right p-4 rounded-2xl border-2 transition-all duration-200 hover:scale-[1.01] ${
                 on ? 'border-violet-500/50 bg-violet-500/10' : 'border-amber-500/50 bg-amber-500/10'
