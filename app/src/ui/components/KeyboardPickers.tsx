@@ -17,6 +17,12 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
   const [open, setOpen] = useState(false)
   const [index, setIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const close = (event: PointerEvent) => { if (!pickerRef.current?.contains(event.target as Node)) setOpen(false) }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [])
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return items.slice(0, 30)
@@ -31,7 +37,7 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
     if (!item) return
     onPick(item.id); setQuery(''); setOpen(false); setIndex(0)
   }
-  return <div className="relative" data-enter-native="true">
+  return <div ref={pickerRef} className="relative" data-enter-native="true">
     <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-500"/>
     <input ref={inputRef} className={`${inputCls} pr-9`} value={query} placeholder={placeholder} onFocus={() => setOpen(true)} onChange={(event) => { setQuery(event.target.value); setIndex(0); setOpen(true) }} onKeyDown={(event) => {
       if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((value) => Math.min(matches.length - 1, value + 1)) }
@@ -49,8 +55,14 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
   const [open, setOpen] = useState(false)
   const [index, setIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const close = (event: PointerEvent) => { if (!pickerRef.current?.contains(event.target as Node)) setOpen(false) }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [])
   const selected = parties.find((party) => party.id === value)
   const matches = useMemo(() => { const q=query.trim().toLowerCase(); return parties.filter(p=>!q||`${p.nameAr} ${p.phone??''}`.toLowerCase().includes(q)).slice(0,30) },[parties,query])
   useEffect(() => { const focus=()=>{inputRef.current?.focus();inputRef.current?.select();setOpen(true)};window.addEventListener('shopsys:focus-party',focus);if(autoFocus) requestAnimationFrame(focus);return()=>window.removeEventListener('shopsys:focus-party',focus) },[autoFocus])
-  return <div className="relative" data-enter-native="true"><input ref={inputRef} className={inputCls} value={open?query:(selected?.nameAr??cashLabel)} aria-label={label} onFocus={()=>{setQuery('');setOpen(true)}} onChange={e=>{setQuery(e.target.value);setIndex(0);setOpen(true)}} onKeyDown={e=>{if(e.key==='ArrowDown'){e.preventDefault();setIndex(i=>Math.min(matches.length-1,i+1))}else if(e.key==='ArrowUp'){e.preventDefault();setIndex(i=>Math.max(0,i-1))}else if(e.key==='Enter'){e.preventDefault();const p=matches[index]??matches[0];if(p)onChange(p.id);else onChange(value);setOpen(false);onConfirm?.()}else if(e.key==='Escape'){e.preventDefault();setOpen(false)}}}/>{open&&<div className="absolute z-50 mt-1 w-full max-h-64 overflow-auto rounded-xl border bg-white dark:bg-card-dark shadow-2xl p-1"><button type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{onChange(value===-1?-1:0);setOpen(false);onConfirm?.()}} className="w-full p-2 text-right rounded-lg hover:bg-slate-500/10 font-bold">{cashLabel}</button>{matches.map((p,i)=><button type="button" key={p.id} onMouseDown={e=>e.preventDefault()} onClick={()=>{onChange(p.id);setOpen(false);onConfirm?.()}} className={`w-full flex justify-between p-2 rounded-lg ${i===index?'bg-brand-500/15':'hover:bg-slate-500/10'}`}><b>{p.nameAr}</b><span className="text-xs text-slate-500">{p.phone}</span></button>)}</div>}</div>
+  return <div ref={pickerRef} className="relative" data-enter-native="true"><input ref={inputRef} className={inputCls} value={open?query:(selected?.nameAr??cashLabel)} aria-label={label} onFocus={()=>{setQuery('');setOpen(true)}} onChange={e=>{setQuery(e.target.value);setIndex(0);setOpen(true)}} onKeyDown={e=>{if(e.key==='ArrowDown'){e.preventDefault();setIndex(i=>Math.min(matches.length-1,i+1))}else if(e.key==='ArrowUp'){e.preventDefault();setIndex(i=>Math.max(0,i-1))}else if(e.key==='Enter'){e.preventDefault();if(value===-1&&!query.trim()){onChange(-1);setOpen(false);onConfirm?.();return}const p=matches[index]??matches[0];if(p)onChange(p.id);else onChange(value);setOpen(false);onConfirm?.()}else if(e.key==='Escape'){e.preventDefault();setOpen(false)}}}/>{open&&<div className="absolute z-50 mt-1 w-full max-h-64 overflow-auto rounded-xl border bg-white dark:bg-card-dark shadow-2xl p-1"><button type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>{onChange(value===-1?-1:0);setOpen(false);onConfirm?.()}} className="w-full p-2 text-right rounded-lg hover:bg-slate-500/10 font-bold">{cashLabel}</button>{matches.map((p,i)=><button type="button" key={p.id} onMouseDown={e=>e.preventDefault()} onClick={()=>{onChange(p.id);setOpen(false);onConfirm?.()}} className={`w-full flex justify-between p-2 rounded-lg ${i===index?'bg-brand-500/15':'hover:bg-slate-500/10'}`}><b>{p.nameAr}</b><span className="text-xs text-slate-500">{p.phone}</span></button>)}</div>}</div>
 }

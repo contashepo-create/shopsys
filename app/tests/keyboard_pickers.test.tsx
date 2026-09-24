@@ -61,6 +61,32 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     expect(onChange).toHaveBeenCalledWith(10)
   })
 
+  it('يغلق قائمة الصنف عند النقر خارجها', () => {
+    const view = render(<ItemQuickPicker items={items} onPick={() => undefined}/>)
+    const input = view.getByPlaceholderText(/اكتب كود أو اسم/)
+    fireEvent.focus(input)
+    expect(view.getByText('سكر أبيض')).toBeTruthy()
+    fireEvent.pointerDown(document.body)
+    expect(view.queryByText('سكر أبيض')).toBeNull()
+  })
+
+  it('يؤكد مورد نقدي بالـ Enter وينقل التركيز إلى بحث الصنف', async () => {
+    const onChange = vi.fn()
+    const view = render(<><PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={-1} onChange={onChange} cashLabel="مورد نقدي" label="المورد" onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} autoFocus/><ItemQuickPicker items={items} onPick={() => undefined}/></>)
+    await waitFor(() => expect(document.activeElement).toBe(view.getByLabelText('المورد')))
+    fireEvent.keyDown(view.getByLabelText('المورد'), { key: 'Enter' })
+    await waitFor(() => expect(document.activeElement).toBe(view.getByPlaceholderText(/اكتب كود أو اسم/)))
+    expect(onChange).toHaveBeenCalledWith(-1)
+  })
+
+  it('يفتح بحث الصنف تلقائياً بعد اختيار عميل نقدي', async () => {
+    const view = render(<><PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={0} onChange={() => undefined} cashLabel="عميل نقدي" label="العميل" onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} autoFocus/><ItemQuickPicker items={items} onPick={() => undefined}/></>)
+    await waitFor(() => expect(document.activeElement).toBe(view.getByLabelText('العميل')))
+    fireEvent.click(view.getByText('عميل نقدي'))
+    await waitFor(() => expect(document.activeElement).toBe(view.getByPlaceholderText(/اكتب كود أو اسم/)))
+    expect(view.getByText('سكر أبيض')).toBeTruthy()
+  })
+
   it('يفتح منتقي الصنف عبر F5 ويبدل دليل الاختصارات عبر F12', () => {
     const view = render(<MemoryRouter><KeyboardNavigation/><ItemQuickPicker items={items} onPick={() => undefined}/></MemoryRouter>)
     const input = view.getByPlaceholderText(/اكتب كود أو اسم/)
