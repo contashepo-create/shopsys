@@ -1,5 +1,7 @@
-import { BadgeCheck, CalendarDays, CircleDollarSign, FileCheck2, FileText, Keyboard, PackageSearch, Printer, Save, Search, Store } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { ArrowRight, BadgeCheck, CalendarDays, CircleDollarSign, FileCheck2, FileText, Keyboard, PackageSearch, Printer, Save, Search, Store } from 'lucide-react'
+import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
+import { useAppStore } from '../../stores/app.store.ts'
 import { Btn } from './ui.tsx'
 
 type InvoicePOSFrameProps = {
@@ -47,6 +49,23 @@ export function InvoicePOSFrame({
   const sale = kind === 'sale'
   const partyWord = sale ? 'العميل' : 'المورد'
   const invoicePath = sale ? '/sales/invoices/new' : '/purchases/invoices/new'
+  const { sync, receipt, autoPrintAfterSale } = useAppStore()
+  const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
+  useEffect(() => {
+    const on = () => setBrowserOnline(true)
+    const off = () => setBrowserOnline(false)
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  }, [])
+  const connectivity = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
+  const connectivityInfo = CONNECTIVITY_LABELS[connectivity]
+  const browserPrintAvailable = typeof window !== 'undefined' && typeof window.print === 'function'
+  const autoPrintEnabled = sale && autoPrintAfterSale
+  const printerLabel = browserPrintAvailable
+    ? (autoPrintEnabled ? 'متاحة · تلقائية مفعّلة' : `متاحة · ${receipt.defaultTemplate}`)
+    : 'غير متاحة في هذا المتصفح'
+  const printerTone = browserPrintAvailable ? 'ok' : 'danger'
 
   return (
     <div className={`invoice-pos-root invoice-editor invoice-pos-${kind}`} dir="rtl">
@@ -61,7 +80,7 @@ export function InvoicePOSFrame({
             <span><Store size={14} /> {activityLabel}</span>
             <span>الفرع: <b>{branchLabel}</b></span>
             <span>المستخدم: <b>{userLabel}</b></span>
-            <span className="invoice-reference-online"><i /> متصل · تخزين محلي</span>
+            <span className={`invoice-reference-online invoice-reference-online-${connectivityInfo.tone}`} title={connectivityInfo.nameAr}><i /> {connectivityInfo.icon} {connectivityInfo.nameAr}</span>
           </div>
         </div>
         <div className="invoice-reference-mainnav">
@@ -87,6 +106,7 @@ export function InvoicePOSFrame({
 
       <aside className="invoice-reference-sidebar">
         <div>
+          <button className="invoice-reference-sidebar-back" type="button" onClick={onBack}><ArrowRight size={15} /><span>العودة إلى قسم {sale ? 'المبيعات' : 'المشتريات'}</span></button>
           <div className="invoice-reference-sidebar-title">لوحات التحكم والتشغيل</div>
           <nav>
             <button className="active" type="button" onClick={() => onNavigate(invoicePath)}><span>نقطة البيع الرئيسية</span><b>POS</b></button>
@@ -97,10 +117,11 @@ export function InvoicePOSFrame({
           </nav>
         </div>
         <div className="invoice-reference-device-card">
-          <b>حالة الجهاز</b>
-          <span><i /> قاعدة البيانات المحلية <strong>جاهزة</strong></span>
-          <span><i /> قارئ الباركود <strong>جاهز</strong></span>
-          <span><i /> الطابعة <strong>متصلة</strong></span>
+          <b>الحالة الفعلية للجهاز</b>
+          <span className="invoice-device-status-ok"><i /> التخزين المحلي <strong>نشط</strong></span>
+          <span className="invoice-device-status-ok"><i /> إدخال الباركود <strong>من الحقل</strong></span>
+          <span className={`invoice-device-status-${printerTone}`}><i /> الطباعة <strong>{printerLabel}</strong></span>
+          <small>لا يمكن للمتصفح إثبات اتصال طابعة فعلية؛ الإرسال يتم إلى طابعة النظام الافتراضية.</small>
         </div>
       </aside>
 
@@ -115,7 +136,7 @@ export function InvoicePOSFrame({
             <div className="invoice-reference-meta-card"><CircleDollarSign size={18} /><span><small>العملة</small><strong>{currencyLabel}</strong></span></div>
             <div className="invoice-reference-state-card"><BadgeCheck size={16} /><span>مسودة قيد التحرير</span></div>
             <div className="invoice-reference-top-actions">
-              <Btn variant="ghost" onClick={onBack}>رجوع</Btn>
+              <Btn variant="ghost" onClick={onBack}><ArrowRight size={14} /> العودة للقسم</Btn>
               <Btn variant="ghost" onClick={onPartySearch} shortcut="F2"><Search size={14} /> {partyWord}</Btn>
               <Btn variant="ghost" onClick={onItemSearch} shortcut="F5"><PackageSearch size={14} /> صنف</Btn>
               <Btn variant="ghost" onClick={onRestoreDraft}>استعادة</Btn>
@@ -140,7 +161,7 @@ export function InvoicePOSFrame({
         </main>
       </div>
 
-      <footer className="invoice-reference-statusbar"><span><i /> التخزين المحلي: جاهز</span><span><i /> المزامنة: تعمل عند الاتصال</span><span>TAHAKAM ERP · {sale ? 'فاتورة مبيعات' : 'فاتورة مشتريات'}</span></footer>
+      <footer className="invoice-reference-statusbar"><span className={`invoice-reference-status-${connectivityInfo.tone}`}><i /> {connectivityInfo.nameAr}</span><span><i /> الطباعة: {browserPrintAvailable ? (autoPrintEnabled ? 'تلقائية' : 'يدوية') : 'غير متاحة'}</span><span>TAHAKAM ERP · {sale ? 'فاتورة مبيعات' : 'فاتورة مشتريات'}</span></footer>
     </div>
   )
 }

@@ -114,16 +114,22 @@ export function InvoiceLinesTable({
     const next = value === '' || value === '-' || value === '.' || value === '-.' ? 0 : Math.min(100, Math.max(0, Number(value) || 0))
     onPatch(line.key, { [field]: next })
   }
+  const linesValueMinor = lines.reduce((sum, line) => sum + Math.round(line.qty * line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)), 0)
 
   return (
     <section className="invoice-lines-panel min-w-0 overflow-visible border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-card-dark">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-l from-slate-500/10 to-transparent p-3 dark:border-slate-700">
-        <div>
+      <div className="invoice-lines-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-l from-slate-500/10 to-transparent p-3 dark:border-slate-700">
+        <div className="invoice-lines-toolbar-title">
           <div className="text-[11px] font-bold text-slate-400">بنود الفاتورة</div>
           <h2 className="text-sm font-black">الأصناف والكميات والأسعار</h2>
         </div>
+        <div className="invoice-lines-kpis">
+          <span className="invoice-lines-count">{lines.length} بند</span>
+          <span className="invoice-lines-value" dir="ltr">{fmt(linesValueMinor)} {currencySymbol}</span>
+          <span className="invoice-lines-value-label">قيمة البنود الحالية</span>
+        </div>
         <div className="flex w-full items-center gap-2 sm:w-auto">
-          <span className="shrink-0 rounded-full bg-brand-500/10 px-2.5 py-1 text-[10px] font-black text-brand-700 dark:text-brand-300">{lines.length} بند</span>
+          {showPicker && <span className="invoice-lines-search-label">إضافة صنف</span>}
           {showPicker && <div className="min-w-0 flex-1 sm:w-80 sm:flex-none">
             <ItemQuickPicker
               items={items.filter((item) => kind === 'purchase' || item.isActive !== false)}
@@ -141,6 +147,7 @@ export function InvoiceLinesTable({
         <table className="invoice-lines-table w-full min-w-[900px] table-auto text-sm">
           <thead className="bg-slate-500/10">
             <tr className="text-right text-[11px] font-black text-slate-500 dark:text-slate-300">
+              <th className="w-10 p-3 text-center">م</th>
               <th className="p-3">كود الصنف</th>
               <th className="p-3">الصنف</th>
               {lineWarehouseMode && <th className="p-3">المخزن</th>}
@@ -151,17 +158,18 @@ export function InvoiceLinesTable({
               {kind === 'sale' && mode === 'profit' && canViewCost && <><th className="p-3">التكلفة</th><th className="p-3">الهامش</th></>}
               {kind === 'purchase' && mode === 'profit' && canViewCost && <th className="p-3">نصيبه من المصروفات</th>}
               <th className="p-3">الإجمالي</th>
-              <th className="w-10 p-3" />
+              <th className="w-16 p-3 text-center">إجراء</th>
             </tr>
           </thead>
           <tbody>
-            {lines.map((line) => {
+            {lines.map((line, lineIndex) => {
               const item = items.find((row) => row.id === line.itemId)
               const warning = warnings?.get(line.key)
               const belowCost = belowCostKeys?.has(line.key)
               const actualPrice = line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)
               return (
                 <tr key={line.key} data-entry-row className={`border-t border-slate-100 dark:border-slate-800 ${belowCost ? 'bg-amber-500/10' : warning?.severity === 'error' ? 'bg-rose-500/5' : warning ? 'bg-amber-500/5' : ''}`}>
+                  <td className="w-10 p-3 text-center font-mono text-xs font-black text-slate-400">{lineIndex + 1}</td>
                   <td tabIndex={0} className="min-w-[100px] p-3 font-mono text-xs font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40" dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>
                   <td className="min-w-[180px] p-3 align-top break-words">
                     <b>{line.nameAr || item?.nameAr}</b>

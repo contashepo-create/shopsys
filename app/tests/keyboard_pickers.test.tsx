@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ItemQuickPicker, PartyQuickPicker } from '../src/ui/components/KeyboardPickers.tsx'
+import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../src/ui/components/KeyboardPickers.tsx'
 import { KeyboardNavigation } from '../src/ui/components/KeyboardNavigation.tsx'
 
 afterEach(cleanup)
@@ -151,5 +151,17 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     expect(view.getAllByRole('dialog').some((dialog) => dialog.textContent?.includes('بحث صنف'))).toBe(true)
     fireEvent.keyDown(document, { key: 'F12' })
     expect(view.getAllByRole('dialog').some((dialog) => dialog.textContent?.includes('اختصارات'))).toBe(false)
+  })
+
+  it('بعد اعتماد النمط بـ Enter لا يعيد النمط الأول وينقل Enter التالي إلى العميل', () => {
+    const onChange = vi.fn()
+    const view = render(<MemoryRouter><KeyboardNavigation/><main><QuickSelect value="simple" onChange={onChange}><option value="simple">مبسط</option><option value="professional">احترافي</option></QuickSelect><input aria-label="العميل التالي" /></main></MemoryRouter>)
+    const mode = view.getByDisplayValue('مبسط')
+    fireEvent.focus(mode)
+    fireEvent.keyDown(mode, { key: 'ArrowDown' })
+    fireEvent.keyDown(mode, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith({ target: { value: 'professional' } })
+    fireEvent.keyDown(mode, { key: 'Enter' })
+    expect(document.activeElement).toBe(view.getByLabelText('العميل التالي'))
   })
 })
