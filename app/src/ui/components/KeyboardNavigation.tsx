@@ -65,11 +65,11 @@ export function KeyboardNavigation() {
         if (button) { event.preventDefault(); button.click() }
         return
       }
-      if (event.key === 'F6' || event.key === 'F7') {
-        const word = event.key === 'F6' ? 'طباعة' : 'Excel'
-        const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find((candidate) => visible(candidate) && candidate.textContent?.includes(word))
+      if (event.key === 'F6') {
+        const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find((candidate) => visible(candidate) && candidate.textContent?.includes('طباعة'))
         if (button) { event.preventDefault(); button.click() } return
       }
+      if (event.key === 'F7') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:focus-party')); return }
       if (event.key === 'F10') {
         const discount = [...document.querySelectorAll<HTMLInputElement>('input')].find((candidate) => visible(candidate) && ((candidate.placeholder ?? '').includes('خصم') || (candidate.getAttribute('aria-label') ?? '').includes('خصم')))
         if (discount) { event.preventDefault(); discount.focus(); discount.select() } return
@@ -114,5 +114,5 @@ export function KeyboardNavigation() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [navigate, pathname])
 
-  return helpOpen ? <div className="fixed inset-0 z-[100] bg-slate-950/60 flex items-center justify-center p-4" onMouseDown={() => setHelpOpen(false)}><div role="dialog" className="w-full max-w-lg rounded-2xl border bg-white dark:bg-card-dark p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex justify-between"><h2 className="font-black text-lg">اختصارات لوحة المفاتيح</h2><button onClick={() => setHelpOpen(false)}>Esc</button></div><div className="grid grid-cols-2 gap-2 mt-4 text-sm">{[['F2','بحث سريع'],['F3','فاتورة جديدة'],['F4','بحث عميل/مورد'],['F5','بحث صنف'],['F6','طباعة'],['F7','تصدير Excel'],['F8','حفظ مسودة'],['F9','ترحيل/اعتماد/دفع العملية'],['F10','الخصم'],['F11','ملء الشاشة'],['F12','دليل الاختصارات']].map(([key,label])=><div key={key} className="flex items-center gap-2 rounded-lg bg-slate-500/10 p-2"><kbd className="font-mono font-black text-brand-600">{key}</kbd><span>{label}</span></div>)}</div></div></div> : null
+  return helpOpen ? <div className="fixed inset-0 z-[100] bg-slate-950/60 flex items-center justify-center p-4" onMouseDown={() => setHelpOpen(false)}><div role="dialog" className="w-full max-w-lg rounded-2xl border bg-white dark:bg-card-dark p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex justify-between"><h2 className="font-black text-lg">اختصارات لوحة المفاتيح</h2><button onClick={() => setHelpOpen(false)}>Esc</button></div><div className="grid grid-cols-2 gap-2 mt-4 text-sm">{[['F2','بحث سريع'],['F3','فاتورة جديدة'],['F4','بحث عميل/مورد'],['F5','بحث صنف'],['F6','طباعة'],['F7','بحث عميل/مورد'],['F8','حفظ مسودة'],['F9','ترحيل/اعتماد/دفع العملية'],['F10','الخصم'],['F11','ملء الشاشة'],['F12','دليل الاختصارات']].map(([key,label])=><div key={key} className="flex items-center gap-2 rounded-lg bg-slate-500/10 p-2"><kbd className="font-mono font-black text-brand-600">{key}</kbd><span>{label}</span></div>)}</div></div></div> : null
 }

@@ -13,6 +13,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
 import { effectiveVatPercent } from '../../core/items.ts'
+import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, electronicInvoiceLockActive } from '../../core/invoiceEdit.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -23,7 +24,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
-import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
+import { ItemQuickPicker, PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 
 /**
  * سطر شراء (تدقيق المالك — الشراء بالكرتونة):
@@ -67,10 +68,11 @@ export function PurchasesPage() {
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : null
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
-  const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
+  const countryVatPercent = country?.vatPercent ?? taxPolicy.effectivePercent
   const mainWarehouseId = warehouses.find((w) => w.isMain)?.id ?? warehouses[0]?.id ?? null
   const defaultPurchaseWarehouseId = setup.defaultWarehouseId ?? mainWarehouseId
-  const itemVatPercent = (itemId: number) => effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, countryVatPercent)
+  const itemVatPercent = (itemId: number) => taxPolicy.effectivePercent === 0 ? 0 : effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, countryVatPercent)
   const makeDraftLine = (itemId: number = items[0]?.id ?? 0, patch: Partial<DraftLine> = {}): DraftLine => ({
     itemId, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), warehouseId: defaultPurchaseWarehouseId, ...patch,
   })
@@ -116,7 +118,7 @@ export function PurchasesPage() {
   }
   const [supplierId, setSupplierId] = useState(0)
   const [lines, setLines] = useState<DraftLine[]>([])
-  const firstItemRef = useRef<HTMLSelectElement>(null)
+  const firstItemRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     const focusItem = () => { firstItemRef.current?.focus() }
     window.addEventListener('shopsys:focus-item', focusItem)
@@ -293,7 +295,7 @@ export function PurchasesPage() {
       return Math.round(qty * unitPriceMinor)
     } catch { return 0 }
   }
-  const lineVatMinor = (l: DraftLine) => Math.round((lineGoodsMinor(l) * Math.max(0, l.vatPercent || 0)) / 100)
+  const lineVatMinor = (l: DraftLine) => taxPolicy.effectivePercent === 0 ? 0 : Math.round((lineGoodsMinor(l) * Math.max(0, l.vatPercent || 0)) / 100)
   const inputVatMinor = useMemo(
     () => lines.filter((l) => l.itemId && Number(l.qty) > 0).reduce((sum, l) => sum + lineVatMinor(l), 0),
     [lines, cur.decimals],
@@ -369,7 +371,7 @@ export function PurchasesPage() {
           itemId: l.itemId,
           qty: l.qty,
           unitPriceMinor: l.unitPriceMinor,
-          vatPercent: d?.vatPercent ?? 0,
+          vatPercent: taxPolicy.effectivePercent === 0 ? 0 : (d?.vatPercent ?? 0),
           inputVatMinor: d ? lineVatMinor(d) : 0,
           warehouseId: lineWarehouseMode ? (d?.warehouseId ?? null) : undefined,
           expiryDate: d?.expiryDate || null,
@@ -600,14 +602,15 @@ export function PurchasesPage() {
                 return (
                 <div key={i} className="anim-in">
                 <div className={`grid grid-cols-2 ${lineGridClass} gap-2 items-center`}>
-                  <select
-                    ref={i === 0 ? firstItemRef : undefined}
-                    value={l.itemId}
-                    onChange={(e) => { const nextId = Number(e.target.value); setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: nextId, unitName: '', vatPercent: itemVatPercent(nextId) } : x))) }}
-                    className={`${inputCls} col-span-2 sm:col-span-1`}
-                  >
-                    {items.map((it) => <option key={it.id} value={it.id}>{it.nameAr}{it.baseUnit ? ` (${it.baseUnit})` : ''}</option>)}
-                  </select>
+                  <div className="col-span-2 sm:col-span-1">
+                    <ItemQuickPicker
+                      items={items}
+                      inputElementRef={i === 0 ? firstItemRef : undefined}
+                      listenForShortcut={i === 0}
+                      onPick={(nextId) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: nextId, unitName: '', vatPercent: itemVatPercent(nextId) } : x)))}
+                      placeholder={lineItem?.nameAr ?? 'ابحث عن الصنف ثم Enter'}
+                    />
+                  </div>
                   {lineWarehouseMode && (
                     <select
                       value={l.warehouseId ?? ''}
@@ -644,10 +647,10 @@ export function PurchasesPage() {
                     type="number" min={0} placeholder={lineUnit ? `سعر ${lineUnit.nameAr}` : 'سعر الوحدة'} className={inputCls}
                   />
                   <div
-                    title={`ضريبة هذا البند تلقائياً حسب البلد/استثناء الصنف: ${l.vatPercent}٪`}
+                    title={`ضريبة هذا البند تلقائياً حسب البلد/استثناء الصنف: ${taxPolicy.effectivePercent === 0 ? 0 : l.vatPercent}٪`}
                     className="h-11 rounded-xl border-2 border-sky-200 dark:border-sky-800/70 bg-sky-500/[0.06] flex flex-col items-center justify-center text-center"
                   >
-                    <span className="text-[12px] font-black text-sky-700 dark:text-sky-300">{l.vatPercent > 0 ? `${l.vatPercent}٪` : 'معفى'}</span>
+                    <span className="text-[12px] font-black text-sky-700 dark:text-sky-300">{taxPolicy.effectivePercent > 0 && l.vatPercent > 0 ? `${l.vatPercent}٪` : 'معفى'}</span>
                     <span className="text-[9px] text-sky-500/80">{fmt(lineVatMinor(l))}</span>
                   </div>
                   {lineOptions.expiry && (lineItem?.trackExpiry ? (
@@ -1101,12 +1104,13 @@ export function PurchasesPage() {
               </table>
               {/* إضافة صنف للفاتورة المعدلة */}
               <div className="flex gap-2 p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
-                <select value={editAddItemId} onChange={(e) => setEditAddItemId(Number(e.target.value))} className={inputCls + ' !py-1.5 !text-[12px] flex-1'}>
-                  <option value={0}>— أضف صنفاً —</option>
-                  {items.filter((it) => it.isActive && !editLines.some((l) => l.itemId === it.id)).map((it) => (
-                    <option key={it.id} value={it.id}>{it.nameAr}</option>
-                  ))}
-                </select>
+                <div className="flex-1">
+                  <ItemQuickPicker
+                    items={items.filter((it) => it.isActive && !editLines.some((l) => l.itemId === it.id))}
+                    onPick={setEditAddItemId}
+                    placeholder="ابحث عن صنف لإضافته ثم Enter"
+                  />
+                </div>
                 <Btn
                   variant="ghost" className="border border-slate-200 dark:border-slate-700 !py-1.5"
                   disabled={!editAddItemId}

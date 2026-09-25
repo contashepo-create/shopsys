@@ -27,6 +27,7 @@ import { Modal, EmptyState, useToast, inputCls, Btn, Field } from '../components
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { normalizeRefQuery } from '../../core/refcode.ts'
+import { ItemQuickPicker, PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 
 export function SalesInvoicesPage() {
   const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission } = useDataStore()
@@ -467,12 +468,14 @@ export function SalesInvoicesPage() {
               </table>
               {/* إضافة صنف للفاتورة المعدلة */}
               <div className="flex gap-2 p-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
-                <select value={editAddItemId} onChange={(e) => setEditAddItemId(Number(e.target.value))} className={inputCls + ' !py-1.5 !text-[12px] flex-1'}>
-                  <option value={0}>— أضف صنفاً —</option>
-                  {items.filter((it) => it.isActive && !editLines.some((l) => l.itemId === it.id)).map((it) => (
-                    <option key={it.id} value={it.id}>{it.nameAr} · متاح {it.stockQty ?? 0}</option>
-                  ))}
-                </select>
+                <div className="flex-1">
+                  <ItemQuickPicker
+                    items={items.filter((it) => it.isActive && !editLines.some((l) => l.itemId === it.id))}
+                    onPick={setEditAddItemId}
+                    placeholder="ابحث عن صنف لإضافته ثم Enter"
+                    amountLabel={(it) => `متاح ${it.stockQty ?? 0}`}
+                  />
+                </div>
                 <Btn
                   variant="ghost" className="border border-slate-200 dark:border-slate-700 !py-1.5"
                   disabled={!editAddItemId}
@@ -490,10 +493,7 @@ export function SalesInvoicesPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="العميل" hint="أي جزء آجل يحتاج عميلاً مسجلاً">
-                <select value={editCustomerId ?? 0} onChange={(e) => setEditCustomerId(Number(e.target.value) || null)} className={inputCls}>
-                  <option value={0}>عميل نقدي</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                </select>
+                <PartyQuickPicker parties={customers} value={editCustomerId ?? 0} onChange={(id) => setEditCustomerId(id || null)} cashLabel="عميل نقدي" label="اختيار العميل" onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} />
               </Field>
               <Field label="خصم الفاتورة ٪">
                 <input value={editDiscount || ''} onChange={(e) => setEditDiscount(Math.min(100, Math.max(0, Number(e.target.value) || 0)))} className={inputCls} dir="ltr" placeholder="0" />
@@ -545,10 +545,14 @@ export function SalesInvoicesPage() {
               </div>
             ))}
             <Field label="الموظف *">
-              <select value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
-                <option value="">— اختر الموظف —</option>
-                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker
+                parties={employees.filter((e) => e.active)}
+                value={Number(commEmpId) || 0}
+                onChange={(id) => setCommEmpId(id ? String(id) : '')}
+                cashLabel="— اختر الموظف —"
+                label="اختيار الموظف"
+                showCash={false}
+              />
             </Field>
             <Field label={`مبلغ العمولة (${cur.symbol}) *`}>
               <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />

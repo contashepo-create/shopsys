@@ -15,6 +15,7 @@ import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
+import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
@@ -28,6 +29,7 @@ import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
+import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 import { toMinor } from '../../core/money.ts'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
@@ -60,7 +62,8 @@ export function PosPage() {
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : null
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
-  const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
+  const countryVatPercent = taxPolicy.effectivePercent === 0 ? 0 : (country?.vatPercent ?? taxPolicy.effectivePercent)
   const activeUser = appUsers.find((user) => user.id === currentUserId)
   const shiftPolicy = salesShiftPolicy({
     roleId: activeUser?.roleId,
@@ -71,7 +74,7 @@ export function PosPage() {
   })
   const mainWarehouseId = warehouses.find((w) => w.isMain)?.id ?? warehouses[0]?.id ?? null
   const defaultSaleWarehouseId = setup.defaultWarehouseId ?? mainWarehouseId
-  const itemVatPercent = (itemId: number) => effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, countryVatPercent)
+  const itemVatPercent = (itemId: number) => taxPolicy.effectivePercent === 0 ? 0 : effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, countryVatPercent)
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [query, setQuery] = useState('')
@@ -167,7 +170,7 @@ export function PosPage() {
       if (idx >= 0) return prev.map((l, i) => (i === idx ? { ...l, qty: l.qty + 1 } : l))
       return [...prev, {
         itemId: it.id, nameAr: `${it.nameAr} (${variantLabel(color, size)})`, qty: 1,
-        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: effectiveVatPercent(it, countryVatPercent),
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id),
         discountPercent: 0, soldByWeight: false, variantColor: color, variantSize: size,
       }]
     })
@@ -194,7 +197,7 @@ export function PosPage() {
       }
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr, qty: 1,
-        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, vatPercentOverride: effectiveVatPercent(it, countryVatPercent),
+        unitPriceMinor: it.priceMinor, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id),
         discountPercent: 0, soldByWeight: false, serials: [serial],
       }]
     })
@@ -240,7 +243,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: it.nameAr,
         qty: weightQty ?? (it.soldByWeight ? 0.5 : 1),
-        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: effectiveVatPercent(it, countryVatPercent),
+        unitPriceMinor: getEffectivePrice(it.id, activePriceListId), unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id),
         discountPercent: 0, soldByWeight: it.soldByWeight,
       }]
     })
@@ -254,7 +257,7 @@ export function PosPage() {
       if (!it) return l
       const basePrice = getEffectivePrice(it.id, activePriceListId)
       if (unitName === it.baseUnit) {
-        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: effectiveVatPercent(it, countryVatPercent), unitFactor: undefined, unitLabel: undefined }
+        return { ...l, nameAr: it.nameAr, unitPriceMinor: basePrice, unitCostMinor: it.costMinor, vatPercentOverride: itemVatPercent(it.id), unitFactor: undefined, unitLabel: undefined }
       }
       const u = it.extraUnits.find((x) => x.nameAr === unitName)
       if (!u) return l
@@ -262,7 +265,7 @@ export function PosPage() {
         ...l,
         nameAr: `${it.nameAr} (${u.nameAr})`,
         unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
-        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: effectiveVatPercent(it, countryVatPercent),
+        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id),
         unitFactor: u.factor,
         unitLabel: u.nameAr,
       }
@@ -281,7 +284,7 @@ export function PosPage() {
       return [...prev, {
         itemId: it.id, nameAr: `${it.nameAr} (${u.nameAr})`, qty: 1,
         unitPriceMinor: u.priceMinor ?? Math.round(basePrice * u.factor),
-        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: effectiveVatPercent(it, countryVatPercent),
+        unitCostMinor: Math.round(it.costMinor * u.factor), vatPercentOverride: itemVatPercent(it.id),
         discountPercent: 0, soldByWeight: false, unitFactor: u.factor, unitLabel: u.nameAr,
       }]
     })
@@ -638,18 +641,15 @@ export function PosPage() {
               </select>
             )}
             {customers.some((c) => c.priceListId != null) && (
-              <select
-                value={customerId ?? 0}
-                onChange={(e) => pickCustomer(Number(e.target.value) || null)}
-                title="اختيار العميل يسعّر السلة بقائمته (جملة/نصف جملة)"
-                className="text-[11px] font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1.5 max-w-[9rem]"
-              >
-                <option value={0}>تجزئة (بلا عميل)</option>
-                {customers.map((c) => {
-                  const ln = c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null
-                  return <option key={c.id} value={c.id}>{c.nameAr}{ln ? ` — ${ln}` : ''}</option>
-                })}
-              </select>
+              <div className="w-44" title="اختيار العميل يسعّر السلة بقائمته (جملة/نصف جملة)">
+                <PartyQuickPicker
+                  parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
+                  value={customerId ?? 0}
+                  onChange={pickCustomer}
+                  cashLabel="تجزئة (بلا عميل)"
+                  label="بحث العميل وقائمة الأسعار"
+                />
+              </div>
             )}
             {livePromotions.length > 0 && (
               <button onClick={() => setPromoPickOpen(true)} title="إضافة عرض/باقة للسلة" className="p-2 rounded-lg text-pink-500 hover:bg-pink-500/10 transition-all duration-200 hover:scale-110">
@@ -987,13 +987,14 @@ export function PosPage() {
             )}
 
             {(payment === 'credit' || creditRemainder > 0) && (
-              <select value={customerId ?? 0} onChange={(e) => pickCustomer(Number(e.target.value) || null)} className={inputCls}>
-                <option value={0}>اختر العميل (إلزامي للجزء الآجل)…</option>
-                {customers.map((c) => {
-                  const ln = c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null
-                  return <option key={c.id} value={c.id}>{c.nameAr}{ln ? ` — ${ln}` : ''}</option>
-                })}
-              </select>
+              <PartyQuickPicker
+                parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
+                value={customerId ?? 0}
+                onChange={pickCustomer}
+                cashLabel="اختر العميل (إلزامي للجزء الآجل)…"
+                label="بحث العميل للجزء الآجل"
+                showCash={false}
+              />
             )}
 
             <div className="text-[11px] text-slate-400 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 leading-relaxed">
