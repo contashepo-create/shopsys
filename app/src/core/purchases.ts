@@ -96,7 +96,7 @@ export function buildPurchaseEntryV2(args: {
   inputVatMinor?: Minor
 }): JournalLine[] {
   const { grandTotalMinor, expensePayments } = args
-  const paymentCredits = args.paymentCredits ?? (args.paidMinor > 0 ? [{ account: args.payAccount, amountMinor: args.paidMinor, note: 'مدفوع للمورد' }] : [])
+  const paymentCredits = args.paymentCredits?.length ? args.paymentCredits : (args.paidMinor > 0 ? [{ account: args.payAccount, amountMinor: args.paidMinor, note: 'مدفوع للمورد' }] : [])
   const paidMinor = paymentCredits.reduce((sum, payment) => sum + payment.amountMinor, 0)
   const inputVat = args.inputVatMinor ?? 0
   if (!Number.isInteger(grandTotalMinor) || grandTotalMinor <= 0) throw new RangeError('إجمالي الفاتورة يجب أن يكون موجباً')

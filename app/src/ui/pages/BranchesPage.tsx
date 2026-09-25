@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * شاشة الفروع (سد فجوة التدقيق — إدارة فروع حقيقية بمستوى البرامج العالمية):
  * - كل فرع = مخزنه الخاص + خزينته الخاصة + بياناته (عنوان/هاتف/مدير)
@@ -236,17 +237,17 @@ export function BranchesPage() {
           </Field>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="مخزن الفرع *" hint="لكل فرع مخزنه الخاص — أرصدته منفصلة">
-              <select value={whMode === 'new' ? 'new' : String(whMode)} onChange={(e) => setWhMode(e.target.value === 'new' ? 'new' : Number(e.target.value))} className={inputCls} disabled={!!editing && editing.isMain}>
+              <QuickSelect value={whMode === 'new' ? 'new' : String(whMode)} onChange={(e) => setWhMode(e.target.value === 'new' ? 'new' : Number(e.target.value))} className={inputCls} disabled={!!editing && editing.isMain}>
                 {!editing && <option value="new">➕ إنشاء مخزن جديد باسم الفرع تلقائياً</option>}
                 {freeWarehouses.map((w) => <option key={w.id} value={w.id}>{w.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="خزينة الفرع *" hint="كل نقدية الفرع عليها — رصيدها من الدفاتر">
-              <select value={trMode} onChange={(e) => setTrMode(e.target.value)} className={inputCls} disabled={!!editing && editing.isMain}>
+              <QuickSelect value={trMode} onChange={(e) => setTrMode(e.target.value)} className={inputCls} disabled={!!editing && editing.isMain}>
                 {!editing && <option value="new-cash">➕ إنشاء خزينة نقدية جديدة تلقائياً</option>}
                 {!editing && <option value="new-bank">➕ إنشاء حساب بنكي جديد تلقائياً</option>}
                 {freeTreasuries.map((t) => <option key={t.code} value={t.code}>{t.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="مدير الفرع"><input value={manager} onChange={(e) => setManager(e.target.value)} className={inputCls} /></Field>
             <Field label="هاتف الفرع"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>

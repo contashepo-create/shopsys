@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات أوامر التعديل — عمليات المشاريع المتقدمة:
  * MaterialIssuesPage — أذون صرف مواد (متوسط مرجح، صارف/مستلم إلزاميان، وحدات متعددة)
@@ -123,22 +124,22 @@ export function MaterialIssuesPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="المشروع *">
-              <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
+              <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
                 <option value="">— اختر —</option>
                 {projects.filter((p) => p.status !== 'completed').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="الصارف (أمين المخزن) *" hint="إلزامي من سجل الموظفين">
-              <select value={issuedBy} onChange={(e) => setIssuedBy(e.target.value)} className={inputCls}>
+              <QuickSelect value={issuedBy} onChange={(e) => setIssuedBy(e.target.value)} className={inputCls}>
                 <option value="">— اختر —</option>
                 {activeEmployees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}{e.jobTitle && ` (${e.jobTitle})`}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="المستلم (مهندس الموقع/المشرف) *" hint="إلزامي — لا يكون الصارف نفسه">
-              <select value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} className={inputCls}>
+              <QuickSelect value={receivedBy} onChange={(e) => setReceivedBy(e.target.value)} className={inputCls}>
                 <option value="">— اختر —</option>
                 {activeEmployees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}{e.jobTitle && ` (${e.jobTitle})`}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
 
@@ -152,14 +153,14 @@ export function MaterialIssuesPage() {
                 const it = items.find((x) => x.id === Number(l.itemId))
                 return (
                   <div key={i} className="anim-in grid grid-cols-[1fr_90px_130px_36px] gap-2 items-center">
-                    <select value={l.itemId} onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: e.target.value, unitAr: '' } : x)))} className={inputCls}>
+                    <QuickSelect value={l.itemId} onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: e.target.value, unitAr: '' } : x)))} className={inputCls}>
                       <option value="">— الصنف —</option>
                       {stockItems.map((x) => <option key={x.id} value={x.id}>{x.nameAr} (رصيد {x.stockQty} {x.baseUnit})</option>)}
-                    </select>
+                    </QuickSelect>
                     <input value={l.qty} onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" min={0} className={inputCls} />
-                    <select value={l.unitAr || (it?.baseUnit ?? '')} onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls} disabled={!l.itemId}>
+                    <QuickSelect value={l.unitAr || (it?.baseUnit ?? '')} onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls} disabled={!l.itemId}>
                       {unitsOf(l.itemId).map((u) => <option key={u} value={u}>{u}</option>)}
-                    </select>
+                    </QuickSelect>
                     <button onClick={() => setLines((arr) => arr.filter((_, j) => j !== i))} className="p-2 text-slate-300 hover:text-rose-500 transition-colors justify-self-center"><Trash2 size={15} /></button>
                   </div>
                 )
@@ -230,15 +231,15 @@ export function ClientCollectionsPage() {
       <div className={`anim-up ${card} p-4 space-y-4`}>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Field label="العميل *">
-            <select value={customerId} onChange={(e) => { setCustomerId(e.target.value); setSpecificKey('') }} className={inputCls}>
+            <QuickSelect value={customerId} onChange={(e) => { setCustomerId(e.target.value); setSpecificKey('') }} className={inputCls}>
               <option value="">— اختر —</option>
               {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <Field label={`المبلغ المحصَّل (${cur.symbol}) *`}>
             <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className={inputCls} />
           </Field>
-          <Field label="طريقة التحصيل"><select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select></Field>
+          <Field label="طريقة التحصيل"><QuickSelect value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</QuickSelect></Field>
           {!terminalId && <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} /></Field>}
           {terminalId && <><Field label="مرجع إيصال الماكينة (اختياري)"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls}/></Field></>}
         </div>
@@ -331,10 +332,10 @@ export function EvmDashboardPage() {
     <div className="space-y-4">
       <div className="anim-up flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-black flex items-center gap-2"><Gauge className="w-6 h-6 text-orange-500" /> القيمة المكتسبة EVM</h1>
-        <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className={`${inputCls} !w-64`}>
+        <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value)} className={`${inputCls} !w-64`}>
           <option value="">— اختر مشروعاً —</option>
           {projects.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-        </select>
+        </QuickSelect>
       </div>
       <div className="text-sm text-slate-500">
         مقارنة لحظية: الموازنة (التكلفة التقديرية للبنود) × الإنجاز مقابل التكلفة الفعلية المسجلة —
@@ -537,10 +538,10 @@ export function ApprovalsPage() {
             <div key={i} className="grid grid-cols-[24px_1fr_1fr_32px] gap-2 items-center">
               <span className="text-[12px] font-black text-slate-400 text-center">{i + 1}</span>
               <input value={s.roleAr} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, roleAr: e.target.value } : x)))} placeholder="مهندس الموقع…" className={inputCls} />
-              <select value={s.employeeId} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, employeeId: e.target.value } : x)))} className={inputCls}>
+              <QuickSelect value={s.employeeId} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, employeeId: e.target.value } : x)))} className={inputCls}>
                 <option value="">أي موظف بهذا الدور</option>
                 {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </select>
+              </QuickSelect>
               <button onClick={() => setSteps((arr) => arr.filter((_, j) => j !== i))} className="p-1.5 text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={14} /></button>
             </div>
           ))}
@@ -560,9 +561,9 @@ export function ApprovalsPage() {
       <Modal open={reqOpen} onClose={() => setReqOpen(false)} title="طلب اعتماد جديد">
         <div className="space-y-3">
           <Field label="الإجراء">
-            <select value={reqAction} onChange={(e) => setReqAction(e.target.value as ApprovalAction)} className={inputCls}>
+            <QuickSelect value={reqAction} onChange={(e) => setReqAction(e.target.value as ApprovalAction)} className={inputCls}>
               {ALL_ACTIONS.map((a) => <option key={a} value={a}>{APPROVAL_ACTION_LABELS[a]}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <Field label="الموضوع"><input value={reqSubject} onChange={(e) => setReqSubject(e.target.value)} className={inputCls} placeholder="صرف أسمنت لمشروع المخازن…" /></Field>
           <Field label="رقم المستند المرجعي" hint="معرف المشروع/العرض/عقد الباطن المعني — يجب أن يطابق عند التنفيذ">

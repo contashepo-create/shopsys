@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * سجل النشاطات (طلب المالك) — «من قام بكل شيء ومتى»:
  * يُبنى تلقائياً من كل كتابة في قاعدة البيانات (قيود، إضافات، حذف، تعديلات فواتير).
@@ -60,14 +61,14 @@ export function AuditLogPage() {
           <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ابحث في الأحداث…" className={inputCls + ' !pr-9'} />
         </div>
-        <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)} className={inputCls + ' !w-40'}>
+        <QuickSelect value={kindFilter} onChange={(e) => setKindFilter(e.target.value)} className={inputCls + ' !w-40'}>
           <option value="">كل الأنواع</option>
           {Object.entries(KIND_META).map(([k, m]) => <option key={k} value={k}>{m.icon} {m.label}</option>)}
-        </select>
-        <select value={userFilter} onChange={(e) => setUserFilter(e.target.value)} className={inputCls + ' !w-44'}>
+        </QuickSelect>
+        <QuickSelect value={userFilter} onChange={(e) => setUserFilter(e.target.value)} className={inputCls + ' !w-44'}>
           <option value="">كل المستخدمين</option>
           {users.map((u) => <option key={u} value={u}>{u}</option>)}
-        </select>
+        </QuickSelect>
         <span className="text-[11px] text-slate-400 font-bold">{auditLog.length} حدثاً محفوظاً (أحدث 3000)</span>
       </div>
 

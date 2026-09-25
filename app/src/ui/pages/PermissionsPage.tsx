@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * شاشة الصلاحيات — تشيك بوكس بجانب كل صلاحية (القرار 12)
  * أقسام قابلة للطي + "تحديد الكل" + دور المالك محمي (القرار 11)
@@ -577,10 +578,10 @@ export function PermissionsPage() {
             <input value={newRoleName} onChange={(e) => setNewRoleName(e.target.value)} className={inputCls} placeholder="مثال: مشرف وردية المساء" autoFocus autoComplete="off" />
           </Field>
           <Field label="ابدأ بصلاحيات فئة" hint="نسخة أولية تعدّلها بعد الإنشاء — اختر الأقرب لما تريد">
-            <select value={newRoleBase} onChange={(e) => setNewRoleBase(e.target.value)} className={inputCls}>
+            <QuickSelect value={newRoleBase} onChange={(e) => setNewRoleBase(e.target.value)} className={inputCls}>
               {roles.filter((r) => !r.isOwner).map((r) => <option key={r.id} value={r.id}>{r.nameAr} ({r.permissions.length} صلاحية)</option>)}
               <option value="">— فارغ تماماً (أضف كل صلاحية بنفسك) —</option>
-            </select>
+            </QuickSelect>
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => { setRoleModal(false); setNewRoleName('') }}>إلغاء</Btn>
@@ -730,7 +731,7 @@ export function PermissionsPage() {
             ثم فعّل حساب دخوله من هنا برقم مبدئي <b>سيُجبر على تغييره عند أول دخول</b>.
           </p>
           <Field label="الموظف *" hint="غير موجود؟ أضفه من شاشة الموظفين أولاً — فئته الوظيفية تقترح دوره وصلاحياته تلقائياً">
-            <select
+            <QuickSelect
               value={uEmployeeId}
               onChange={(e) => {
                 const id = Number(e.target.value)
@@ -745,12 +746,12 @@ export function PermissionsPage() {
               {employees
                 .filter((e) => e.active && !appUsers.some((u) => u.active && u.employeeId === e.id))
                 .map((e) => <option key={e.id} value={e.id}>{e.nameAr}{e.jobTitle ? ` — ${e.jobTitle}` : ''}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <Field label="الدور" hint="اقتُرح تلقائياً من فئة الموظف — يمكنك مراجعته من الإعدادات قبل إنشاء الحساب">
-            <select value={uRole} onChange={(e) => setURole(e.target.value)} className={inputCls}>
+            <QuickSelect value={uRole} onChange={(e) => setURole(e.target.value)} className={inputCls}>
               {roles.filter((r) => !r.isOwner).map((r) => <option key={r.id} value={r.id}>{r.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <Field label={`كلمة السر المبدئية (${PIN_MIN_LENGTH}–${PIN_MAX_LENGTH} خانة)`} hint="ستظهر لك في القائمة حتى يغيّرها الموظف بأول دخول — بعدها لا يعرفها أحد">
             <PinInput value={uPin} onChange={setUPin} placeholder="مثال: Ahmed@2026" name="tahakam-initial-pin" />

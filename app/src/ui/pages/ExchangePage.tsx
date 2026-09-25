@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الاستبدال (جولة مراجعة نشاط الملابس):
  * العميل يرجع قطعة (مقاس/لون) ويأخذ غيرها فوراً — عملية واحدة للكاشير:
@@ -237,10 +238,10 @@ export function ExchangePage() {
               <ArrowLeftRight size={15} />
               {preview.netMinor === 0 ? 'تبادل متكافئ — لا فرق' : preview.netMinor > 0 ? `العميل يدفع ${fmt(preview.netMinor)} ${cur.symbol}` : `نرد للعميل ${fmt(-preview.netMinor)} ${cur.symbol}`}
             </div>
-            <select value={treasury} onChange={(e) => setTreasury(e.target.value)} className={`${inputCls} !w-52`}>
+            <QuickSelect value={treasury} onChange={(e) => setTreasury(e.target.value)} className={`${inputCls} !w-52`}>
               <option value="">خزينة الفاتورة الأصلية</option>
               {treasuries.map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
-            </select>
+            </QuickSelect>
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={`${inputCls} flex-1 min-w-48`} placeholder="ملاحظات (اختياري)…" />
             <Btn onClick={submit} shortcut="F9" disabled={returnValue <= 0 || newLines.length === 0}>ترحيل الاستبدال</Btn>
           </div>

@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * عقود إيجار المعدات (المرحلة 6 — القرار 13):
  * فتح عقد (أيام × سعر يومي + تأمين مسترد + ضريبة فوق السعر) بقيد فتح
@@ -338,16 +339,16 @@ export function RentalContractsPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العميل">
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
+              <QuickSelect value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
                 <option value="">عميل نقدي</option>
                 {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="المعدة من السجل" hint="اختيارها يملأ الاسم والسعر اليومي تلقائياً">
-              <select value={equipmentId} onChange={(e) => pickEquipment(e.target.value)} className={inputCls}>
+              <QuickSelect value={equipmentId} onChange={(e) => pickEquipment(e.target.value)} className={inputCls}>
                 <option value="">— اكتب الاسم يدوياً —</option>
                 {equipment.map((eq) => <option key={eq.id} value={eq.id}>{eq.nameAr}{eq.code ? ` (${eq.code})` : ''}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="اسم المعدة *">
               <input value={equipmentName} onChange={(e) => setEquipmentName(e.target.value)} className={inputCls} placeholder="حفار كاتربيلر 320" />

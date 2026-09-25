@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * اليومية العامة — للوضع المحاسبي الكامل (القرار 10)
  * كل قيد مربوط بمستنده، وميزان تحقق حي أسفل الشاشة
@@ -222,22 +223,22 @@ export function JournalPage() {
             <input type="date" value={fTo} onChange={(e) => setFTo(e.target.value)} className={`${inputCls} mt-1`} dir="ltr" />
           </label>
           <label className="text-[11px] font-bold text-slate-400">نوع العملية
-            <select value={fSource} onChange={(e) => setFSource(e.target.value)} className={`${inputCls} mt-1`}>
+            <QuickSelect value={fSource} onChange={(e) => setFSource(e.target.value)} className={`${inputCls} mt-1`}>
               <option value="">الكل</option>
               {sourceTypes.map((t) => <option key={t} value={t}>{SOURCE_LABELS[t] ?? t}</option>)}
-            </select>
+            </QuickSelect>
           </label>
           <label className="text-[11px] font-bold text-slate-400">المستخدم
-            <select value={fUser} onChange={(e) => setFUser(e.target.value)} className={`${inputCls} mt-1`}>
+            <QuickSelect value={fUser} onChange={(e) => setFUser(e.target.value)} className={`${inputCls} mt-1`}>
               <option value="">الكل</option>
               {users.map((u) => <option key={u} value={u}>{u}</option>)}
-            </select>
+            </QuickSelect>
           </label>
           <label className="text-[11px] font-bold text-slate-400">الحساب
-            <select value={fAccount} onChange={(e) => setFAccount(e.target.value)} className={`${inputCls} mt-1`}>
+            <QuickSelect value={fAccount} onChange={(e) => setFAccount(e.target.value)} className={`${inputCls} mt-1`}>
               <option value="">الكل</option>
               {POSTABLE.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </label>
           <div className="flex gap-2">
             <input value={fText} onChange={(e) => setFText(e.target.value)} className={inputCls} placeholder="بحث بالبيان أو رقم القيد…" />
@@ -386,13 +387,13 @@ function ManualEntryModal({
                 className={`${inputCls} py-1.5 text-center text-[12px] font-mono ${l.accountCode && !postable.some((a) => a.code === l.accountCode) ? '!border-rose-400' : ''}`}
                 dir="ltr"
               />
-              <select value={l.accountCode} onChange={(e) => setLine(i, { accountCode: e.target.value })} className={`${inputCls} py-1.5 text-[13px]`}>
+              <QuickSelect value={l.accountCode} onChange={(e) => setLine(i, { accountCode: e.target.value })} className={`${inputCls} py-1.5 text-[13px]`}>
                 <option value="">اختر الحساب…</option>
                 {postable.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.nameAr}</option>)}
-              </select>
+              </QuickSelect>
               <input value={l.debit} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value.trim() ? '' : l.credit })} placeholder="0" className={`${inputCls} py-1.5 text-center`} dir="ltr" />
               <input value={l.credit} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value.trim() ? '' : l.debit })} placeholder="0" className={`${inputCls} py-1.5 text-center`} dir="ltr" />
-              <select value={l.costCenterId ?? ''} onChange={(e) => setLine(i, { costCenterId: e.target.value })} className={`${inputCls} py-1.5 text-[11px]`}><option value="">بدون مركز</option>{costCenters.filter(center => center.isActive).map(center => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</select>
+              <QuickSelect value={l.costCenterId ?? ''} onChange={(e) => setLine(i, { costCenterId: e.target.value })} className={`${inputCls} py-1.5 text-[11px]`}><option value="">بدون مركز</option>{costCenters.filter(center => center.isActive).map(center => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect>
               <button
                 onClick={() => setMLines((ls) => ls.filter((_, j) => j !== i))}
                 disabled={mLines.length <= 2}

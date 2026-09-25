@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * التسويات الشاملة (جولة مراجعة الموبايلات — نمط mobileshop):
  * مطابقة الدفاتر بالواقع: عدّ نقدية الخزائن، ومطابقة أرصدة العملاء والموردين —
@@ -128,10 +129,10 @@ export function SettlementsPage() {
       <div className="anim-up grid lg:grid-cols-2 gap-4">
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-3">
           <Field label={meta.nameAr}>
-            <select value={refId} onChange={(e) => { setRefId(e.target.value); setActual('') }} className={inputCls}>
+            <QuickSelect value={refId} onChange={(e) => { setRefId(e.target.value); setActual('') }} className={inputCls}>
               <option value="">— اختر —</option>
               {options.map((o) => <option key={o.id} value={o.id}>{o.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           {refId && bookMinor != null && (
             <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 px-4 py-3 flex items-center justify-between">

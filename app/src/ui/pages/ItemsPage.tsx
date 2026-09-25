@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * شاشة الأصناف — المرحلة 1 (محدَّثة بملاحظات المالك)
  * - أقسام رئيسية وفرعية (شجرة) مع وراثة الخصائص
@@ -375,17 +376,17 @@ export function ItemsPage() {
             className={`${inputCls} pr-10`}
           />
         </div>
-        <select value={catFilter} onChange={(e) => setCatFilter(Number(e.target.value))} className={`${inputCls} w-56`}>
+        <QuickSelect value={catFilter} onChange={(e) => setCatFilter(Number(e.target.value))} className={`${inputCls} w-56`}>
           <option value={0}>كل الأقسام</option>
           {orderedCats.map(({ cat, depth }) => (
             <option key={cat.id} value={cat.id}>{'\u00A0\u00A0'.repeat(depth)}{depth > 0 ? '↳ ' : ''}{cat.nameAr}</option>
           ))}
-        </select>
+        </QuickSelect>
         {warehouses.length > 1 && (
-          <select value={warehouseFilter} onChange={(e) => setWarehouseFilter(Number(e.target.value))} className={`${inputCls} w-56`} title="فلترة الأصناف حسب المخزن">
+          <QuickSelect value={warehouseFilter} onChange={(e) => setWarehouseFilter(Number(e.target.value))} className={`${inputCls} w-56`} title="فلترة الأصناف حسب المخزن">
             <option value={0}>كل المخازن</option>
             {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
-          </select>
+          </QuickSelect>
         )}
         <Btn variant="soft" onClick={openNewCategory}>
           <span className="flex items-center gap-1.5"><FolderPlus size={15} /> قسم جديد</span>
@@ -616,7 +617,7 @@ export function ItemsPage() {
               <input value={catName} onChange={(e) => setCatName(e.target.value)} placeholder="مثال: ألبان وأجبان" className={inputCls} autoFocus />
             </Field>
             <Field label="القسم الأب" hint="اتركه «رئيسي» أو اختر أباً ليصبح فرعياً">
-              <select
+              <QuickSelect
                 value={catParentId ?? 0}
                 onChange={(e) => onPickParent(Number(e.target.value) || null)}
                 className={inputCls}
@@ -627,7 +628,7 @@ export function ItemsPage() {
                   .map(({ cat, depth }) => (
                     <option key={cat.id} value={cat.id}>{'\u00A0\u00A0'.repeat(depth)}{depth > 0 ? '↳ ' : ''}{cat.nameAr}</option>
                   ))}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
           <Field label="خصائص القسم — تورَّث تلقائياً لأصنافه وأقسامه الفرعية الجديدة" hint="وكل صنف يستطيع تجاوزها لاحقاً (القرار 5)">
@@ -820,16 +821,16 @@ export function ItemsPage() {
                 <Field label="من تاريخ"><input type="date" value={ledgerFrom} onChange={(e) => setLedgerFrom(e.target.value)} className={inputCls} /></Field>
                 <Field label="إلى تاريخ"><input type="date" value={ledgerTo} onChange={(e) => setLedgerTo(e.target.value)} className={inputCls} /></Field>
                 <Field label="المخزن">
-                  <select value={ledgerWarehouseId} onChange={(e) => setLedgerWarehouseId(Number(e.target.value))} className={inputCls}>
+                  <QuickSelect value={ledgerWarehouseId} onChange={(e) => setLedgerWarehouseId(Number(e.target.value))} className={inputCls}>
                     <option value={0}>كل المخازن</option>
                     {warehouses.map((w) => <option key={w.id} value={w.id}>{w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
-                  </select>
+                  </QuickSelect>
                 </Field>
                 <Field label="المستخدم">
-                  <select value={ledgerUser} onChange={(e) => setLedgerUser(e.target.value)} className={inputCls}>
+                  <QuickSelect value={ledgerUser} onChange={(e) => setLedgerUser(e.target.value)} className={inputCls}>
                     <option value="">كل المستخدمين</option>
                     {ledgerUsers.map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
+                  </QuickSelect>
                 </Field>
                 <Btn variant="ghost" className="border border-slate-200 dark:border-slate-700" onClick={printItemCard}>
                   <Printer size={14} /> طباعة
@@ -963,7 +964,7 @@ function ItemForm({
           <input value={draft.nameAr} onChange={(e) => p({ nameAr: e.target.value })} placeholder="مثال: جبنة رومي قديمة" className={inputCls} autoFocus />
         </Field>
         <Field label="القسم (رئيسي أو فرعي)">
-          <select
+          <QuickSelect
             value={draft.categoryId}
             onChange={(e) => {
               const cat = categories.find((c) => c.id === Number(e.target.value))
@@ -980,7 +981,7 @@ function ItemForm({
             {orderedCats.map(({ cat, depth }) => (
               <option key={cat.id} value={cat.id}>{'\u00A0\u00A0'.repeat(depth)}{depth > 0 ? '↳ ' : ''}{cat.nameAr}</option>
             ))}
-          </select>
+          </QuickSelect>
         </Field>
         <Field label="الكود (SKU)">
           <input value={draft.sku} onChange={(e) => p({ sku: e.target.value })} className={inputCls} />
@@ -992,7 +993,7 @@ function ItemForm({
               <Btn variant="ghost" onClick={() => { setCustomUnit(false); p({ baseUnit: 'قطعة' }) }}>القائمة</Btn>
             </div>
           ) : (
-            <select
+            <QuickSelect
               value={draft.baseUnit}
               onChange={(e) => {
                 if (e.target.value === '__custom__') { setCustomUnit(true); p({ baseUnit: '' }) }
@@ -1006,7 +1007,7 @@ function ItemForm({
                 </optgroup>
               ))}
               <option value="__custom__">✏️ وحدة مخصصة…</option>
-            </select>
+            </QuickSelect>
           )}
         </Field>
         <Field
@@ -1102,7 +1103,7 @@ function ItemForm({
         <div className="mt-3">
           <Field label="🧾 ضريبة الصنف" hint="افتراضي = نسبة البلد العامة · معفى = 0% · مخصصة = نسبة خاصة بهذا الصنف فقط">
             <div className="flex gap-2 items-center">
-              <select
+              <QuickSelect
                 value={draft.vatOverride === null || draft.vatOverride === undefined ? 'default' : draft.vatOverride === 0 ? 'exempt' : 'custom'}
                 onChange={(e) => {
                   const v = e.target.value
@@ -1113,7 +1114,7 @@ function ItemForm({
                 <option value="default">يتبع النسبة العامة ({setup.vatPercent}%)</option>
                 <option value="exempt">معفى ضريبياً (0%)</option>
                 <option value="custom">نسبة مخصصة…</option>
-              </select>
+              </QuickSelect>
               {draft.vatOverride !== null && draft.vatOverride !== undefined && draft.vatOverride !== 0 && (
                 <input
                   type="number" min={0.1} max={100} step={0.5}
@@ -1151,12 +1152,12 @@ function ItemForm({
                 <input value={draft.fitment ?? ''} onChange={(e) => p({ fitment: e.target.value })} placeholder="مثال: لانسر 2013-2017، إلنترا CN7" className={inputCls} />
               </Field>
               <Field label="⭐ درجة القطعة">
-                <select value={draft.grade ?? ''} onChange={(e) => p({ grade: (e.target.value || undefined) as never })} className={inputCls}>
+                <QuickSelect value={draft.grade ?? ''} onChange={(e) => p({ grade: (e.target.value || undefined) as never })} className={inputCls}>
                   <option value="">— غير محدد —</option>
                   <option value="original">🟢 أصلي</option>
                   <option value="aftermarket">🔵 بديل تجاري</option>
                   <option value="used">🟠 مستعمل (استيراد)</option>
-                </select>
+                </QuickSelect>
               </Field>
             </div>
           </div>
@@ -1311,14 +1312,14 @@ function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>)
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
         <div>
           <div className="text-[10.5px] font-bold text-slate-400 mb-1">الوحدة الأكبر</div>
-          <select value={name} onChange={(e) => setName(e.target.value)} className={inputCls}>
+          <QuickSelect value={name} onChange={(e) => setName(e.target.value)} className={inputCls}>
             <option value="">اختر…</option>
             {UNIT_GROUPS.map((g) => (
               <optgroup key={g.nameAr} label={`${g.icon} ${g.nameAr}`}>
                 {g.units.filter((u) => u !== draft.baseUnit).map((u) => <option key={u} value={u}>{u}</option>)}
               </optgroup>
             ))}
-          </select>
+          </QuickSelect>
         </div>
         <div>
           <div className="text-[10.5px] font-bold text-slate-400 mb-1">تحتوي كم {draft.baseUnit || 'وحدة'}؟</div>

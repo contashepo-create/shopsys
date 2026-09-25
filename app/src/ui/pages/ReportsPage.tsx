@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * مركز التقارير (المرحلة 5) — كل الأرقام من المستندات المرحّلة وقيودها:
  * ملخص المبيعات والأرباح، مبيعات يومية (أعمدة)، أفضل الأصناف،
@@ -532,17 +533,17 @@ export function ReportsPage() {
           <div className={`${card} p-4 flex flex-wrap items-end gap-3`}>
             <div className="min-w-52">
               <div className="text-[10px] font-bold text-slate-400 mb-1">بند المصروف</div>
-              <select value={expAccount} onChange={(e) => setExpAccount(e.target.value)} className={inputCls}>
+              <QuickSelect value={expAccount} onChange={(e) => setExpAccount(e.target.value)} className={inputCls}>
                 <option value="">— كل البنود (تقرير مجمّع) —</option>
                 {expSummary.rows.map((r) => <option key={r.accountCode} value={r.accountCode}>{r.accountCode} — {r.accountName}</option>)}
-              </select>
+              </QuickSelect>
             </div>
             <div className="min-w-44">
               <div className="text-[10px] font-bold text-slate-400 mb-1">مصدر العملية</div>
-              <select value={expSource} onChange={(e) => setExpSource(e.target.value)} className={inputCls}>
+              <QuickSelect value={expSource} onChange={(e) => setExpSource(e.target.value)} className={inputCls}>
                 <option value="">الكل</option>
                 {expSources.map((st) => <option key={st} value={st}>{EXP_SOURCE_LABELS[st] ?? st}</option>)}
-              </select>
+              </QuickSelect>
             </div>
             <div className="ms-auto flex items-center gap-3">
               <div className="text-left">
@@ -636,7 +637,7 @@ export function ReportsPage() {
           <div className={`${card} overflow-hidden`}>
             <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between">
               <div><b>تحليل مصروفات الفواتير حسب مركز التكلفة</b><div className="text-[10px] text-slate-400">المدفوع والمستحق المرتبطان بالفاتورة والربحية</div></div>
-              <div className="flex gap-2 items-center"><select className={inputCls} value={costCenter} onChange={(e) => setCostCenter(e.target.value)}><option value="all">كل المراكز العامة</option><option value="none">بدون مركز عام</option>{costCenters.map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</select><select className={inputCls} value={costProject} onChange={(e) => setCostProject(e.target.value)}><option value="all">كل المشاريع</option><option value="none">بدون مشروع</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.nameAr}</option>)}</select><select className={inputCls} value={costSettlement} onChange={(e) => setCostSettlement(e.target.value as typeof costSettlement)}><option value="all">كل الحالات</option><option value="paid_now">مدفوع</option><option value="payable_later">مستحق</option></select><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={printCostCenterExpenses}><Printer size={13} className="inline me-1"/>طباعة</button><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={() => { const csv = costCenterExpensesCsv(costCenterExpenses.rows, (id) => id == null ? 'بدون مشروع' : projects.find((project) => project.id === id)?.nameAr ?? `مشروع #${id}`, (id) => id == null ? 'بدون مركز عام' : costCenters.find((center) => center.id === id)?.nameAr ?? `مركز #${id}`); const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'cost-center-expenses.csv'; link.click(); URL.revokeObjectURL(url) }}>Excel/CSV</button><b className="text-rose-500">{fmt(costCenterExpenses.totalMinor)}</b></div>
+              <div className="flex gap-2 items-center"><QuickSelect className={inputCls} value={costCenter} onChange={(e) => setCostCenter(e.target.value)}><option value="all">كل المراكز العامة</option><option value="none">بدون مركز عام</option>{costCenters.map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect><QuickSelect className={inputCls} value={costProject} onChange={(e) => setCostProject(e.target.value)}><option value="all">كل المشاريع</option><option value="none">بدون مشروع</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.nameAr}</option>)}</QuickSelect><QuickSelect className={inputCls} value={costSettlement} onChange={(e) => setCostSettlement(e.target.value as typeof costSettlement)}><option value="all">كل الحالات</option><option value="paid_now">مدفوع</option><option value="payable_later">مستحق</option></QuickSelect><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={printCostCenterExpenses}><Printer size={13} className="inline me-1"/>طباعة</button><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={() => { const csv = costCenterExpensesCsv(costCenterExpenses.rows, (id) => id == null ? 'بدون مشروع' : projects.find((project) => project.id === id)?.nameAr ?? `مشروع #${id}`, (id) => id == null ? 'بدون مركز عام' : costCenters.find((center) => center.id === id)?.nameAr ?? `مركز #${id}`); const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'cost-center-expenses.csv'; link.click(); URL.revokeObjectURL(url) }}>Excel/CSV</button><b className="text-rose-500">{fmt(costCenterExpenses.totalMinor)}</b></div>
             </div>
             {costCenterExpenses.rows.length ? <table className="w-full text-[12.5px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">المركز العام</th><th>المشروع</th><th>الحركات</th><th>مدفوع</th><th>مستحق</th><th>الإجمالي</th></tr></thead><tbody>{costCenterExpenses.rows.map((row) => <tr key={`${row.costCenterId ?? 'none'}:${row.projectId ?? 'none'}`} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{(row.costCenterId ?? null) == null ? 'بدون مركز عام' : costCenters.find((center) => center.id === row.costCenterId)?.nameAr ?? `مركز #${row.costCenterId}`}</td><td>{row.projectId == null ? '—' : projects.find((project) => project.id === row.projectId)?.nameAr ?? `مشروع #${row.projectId}`}</td><td>{row.txCount}</td><td className="text-emerald-600">{fmt(row.paidMinor)}</td><td className="text-amber-600">{fmt(row.accruedMinor)}</td><td className="font-black text-rose-500">{fmt(row.totalMinor)}</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد مصروفات فواتير مرتبطة بالفترة</div>}
           </div>

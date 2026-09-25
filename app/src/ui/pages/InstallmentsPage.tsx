@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الأقساط (المرحلة 5) — خطط أقساط للعملاء بتنبيهات استحقاق:
  * شريط تنبيهات (متأخر / يستحق خلال 7 أيام)، إنشاء خطة بجدول تلقائي
@@ -229,10 +230,10 @@ export function InstallmentsPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العميل *">
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
+              <QuickSelect value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
                 <option value="">اختر…</option>
                 {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label={`إجمالي المديونية (${cur.symbol}) *`} hint="أصل الذمة قائم من الفاتورة الآجلة — الخطة جدولة تحصيل">
               <input value={total} onChange={(e) => setTotal(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
@@ -340,7 +341,7 @@ export function InstallmentsPage() {
                 <div className="flex items-center gap-2 font-extrabold text-emerald-600 text-[13px]"><HandCoins size={16} /> تحصيل دفعة</div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} />
-                  <select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select>
+                  <QuickSelect value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</QuickSelect>
                   {!terminalId && <TreasuryPicker value={payTreasury} onChange={setPayTreasury} compact />}
                   {terminalId && <><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls} placeholder="مرجع الماكينة (اختياري)"/><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls} placeholder="آخر 4 أرقام (اختياري)"/></>}
                   <Btn onClick={pay} shortcut="F9" disabled={!payAmount.trim()}>💾 تحصيل وتوليد القيد</Btn>

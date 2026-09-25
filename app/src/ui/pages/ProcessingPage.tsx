@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * التقطيع والفرز والتعبئة (جزارة 🥩 / تمور 🌴)
  * ============================================
@@ -189,22 +190,22 @@ export function ProcessingPage() {
         <div className="space-y-3">
           <div className="grid md:grid-cols-4 gap-3">
             <Field label={`${L.sourceLabel} *`} hint="صنف الخام — تكلفته الحالية بالمتوسط المرجح ستدخل النواتج">
-              <select value={sourceId} onChange={(e) => setSourceId(e.target.value)} className={inputCls}>
+              <QuickSelect value={sourceId} onChange={(e) => setSourceId(e.target.value)} className={inputCls}>
                 <option value="">اختر…</option>
                 {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.nameAr} — إجمالي {it.stockQty ?? 0} {it.baseUnit}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="مخزن صرف الخام *">
-              <select value={sourceWarehouseId} onChange={(e) => setSourceWarehouseId(e.target.value)} className={inputCls}>
+              <QuickSelect value={sourceWarehouseId} onChange={(e) => setSourceWarehouseId(e.target.value)} className={inputCls}>
                 <option value="">اختر المخزن</option>
                 {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}{source ? ` — متاح ${warehouseStock.get(warehouse.id)?.get(source.id) ?? 0}` : ''}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="الكمية المستهلكة *" hint={source ? `متاح في المخزن: ${sourceAvailable} — تكلفة الوحدة ${fmt(source.costMinor)}` : undefined}>
               <input value={sourceQty} onChange={(e) => setSourceQty(e.target.value)} inputMode="decimal" className={inputCls} placeholder="مثال: 18.5" />
             </Field>
             <Field label="مخزن استلام النواتج *">
-              <select value={outputWarehouseId} onChange={(e) => setOutputWarehouseId(e.target.value)} className={inputCls}>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</select>
+              <QuickSelect value={outputWarehouseId} onChange={(e) => setOutputWarehouseId(e.target.value)} className={inputCls}>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect>
             </Field>
           </div>
 
@@ -212,10 +213,10 @@ export function ProcessingPage() {
             <div className="space-y-2">
               {outs.map((o, i) => (
                 <div key={i} className="flex gap-2">
-                  <select value={o.itemId} onChange={(e) => setOuts(outs.map((x, j) => (j === i ? { ...x, itemId: e.target.value } : x)))} className={`${inputCls} flex-1`}>
+                  <QuickSelect value={o.itemId} onChange={(e) => setOuts(outs.map((x, j) => (j === i ? { ...x, itemId: e.target.value } : x)))} className={`${inputCls} flex-1`}>
                     <option value="">الصنف الناتج…</option>
                     {items.filter((it) => it.isActive && String(it.id) !== sourceId).map((it) => <option key={it.id} value={it.id}>{it.nameAr} ({fmt(it.priceMinor)})</option>)}
-                  </select>
+                  </QuickSelect>
                   <input value={o.qty} onChange={(e) => setOuts(outs.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} inputMode="decimal" placeholder="الكمية" className={`${inputCls} w-28`} />
                   <button onClick={() => setOuts(outs.filter((_, j) => j !== i))} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10"><Trash2 className="w-4 h-4" /></button>
                 </div>

@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * ملفات عهد الموظفين — نظام متكامل (طلب المالك، مرجعية pro-acc):
  * فتح ملف (بلا قيد) ← تعزيزات من خزينة/بنك ← مصروفات وفواتير تُخصم منه
@@ -176,15 +177,15 @@ export function CustodyPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="الموظف *">
-              <select value={fEmployeeId} onChange={(e) => setFEmployeeId(Number(e.target.value))} className={inputCls}>
+              <QuickSelect value={fEmployeeId} onChange={(e) => setFEmployeeId(Number(e.target.value))} className={inputCls}>
                 {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="ربط بمشروع (اختياري)" hint="مصروفات الملف تدخل تكاليف المشروع تلقائياً">
-              <select value={fProjectId} onChange={(e) => setFProjectId(e.target.value)} className={inputCls}>
+              <QuickSelect value={fProjectId} onChange={(e) => setFProjectId(e.target.value)} className={inputCls}>
                 <option value="">— بلا مشروع —</option>
                 {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
           <Field label="سبب الملف *"><input value={fReason} onChange={(e) => setFReason(e.target.value)} className={inputCls} placeholder="عهدة موقع، مشتريات نثرية، تشغيل يومي…" autoFocus /></Field>
@@ -290,10 +291,10 @@ export function CustodyPage() {
             <div className="grid grid-cols-2 gap-3">
               <Field label={`المبلغ (${cur.symbol}) *`}><input value={expAmount} onChange={(e) => setExpAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
               <Field label="على مشروع؟" hint="يدخل تكاليفه وربحيته">
-                <select value={expProjectId} onChange={(e) => setExpProjectId(e.target.value)} className={inputCls}>
+                <QuickSelect value={expProjectId} onChange={(e) => setExpProjectId(e.target.value)} className={inputCls}>
                   <option value="">— بلا مشروع —</option>
                   {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-                </select>
+                </QuickSelect>
               </Field>
             </div>
             <Field label="بيان المصروف *"><input value={expDesc} onChange={(e) => setExpDesc(e.target.value)} className={inputCls} placeholder="مواد، مواصلات، إكراميات عمال…" /></Field>

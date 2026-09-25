@@ -29,7 +29,7 @@ import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
-import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect} from '../components/KeyboardPickers.tsx'
 import { toMinor } from '../../core/money.ts'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
@@ -631,14 +631,14 @@ export function PosPage() {
           </span>
           <div className="flex gap-1.5 items-center">
             {warehouses.length > 1 && (
-              <select
+              <QuickSelect
                 value={saleWarehouseId ?? defaultSaleWarehouseId ?? ''}
                 onChange={(e) => setSaleWarehouseId(e.target.value === '' ? defaultSaleWarehouseId : Number(e.target.value))}
                 title="المخزن الذي تُصرف منه هذه الفاتورة (الأمر 8)"
                 className="text-[11px] font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1.5 max-w-[8.5rem]"
               >
                 {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
-              </select>
+              </QuickSelect>
             )}
             {customers.some((c) => c.priceListId != null) && (
               <div className="w-44" title="اختيار العميل يسعّر السلة بقائمته (جملة/نصف جملة)">
@@ -725,20 +725,20 @@ export function PosPage() {
                         const it = items.find((x) => x.id === l.itemId)
                         if (!it || it.extraUnits.length === 0 || (l.serials && l.serials.length > 0)) return null
                         return (
-                          <select
+                          <QuickSelect
                             value={l.unitLabel ?? it.baseUnit}
                             onChange={(e) => setLineUnit(i, e.target.value)}
                             className="text-[10px] font-bold rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-1 py-0.5 text-fuchsia-600 outline-none"
                           >
                             <option value={it.baseUnit}>{it.baseUnit}</option>
                             {it.extraUnits.map((u) => <option key={u.nameAr} value={u.nameAr}>{u.nameAr} ×{u.factor}</option>)}
-                          </select>
+                          </QuickSelect>
                         )
                       })()}
                     </div>
                     {/* مخزن السطر: عدم وجود قيمة صريحة يعني وراثة مخزن رأس الفاتورة. */}
                     {warehouses.length > 1 && (
-                      <select
+                      <QuickSelect
                         value={l.warehouseId ?? ''}
                         onChange={(e) => setCart((current) => current.map((line, index) => (
                           index === i ? { ...line, warehouseId: e.target.value === '' ? null : Number(e.target.value) } : line
@@ -750,7 +750,7 @@ export function PosPage() {
                         {warehouses.map((warehouse) => (
                           <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}{warehouse.isMain ? ' (الرئيسي)' : ''}</option>
                         ))}
-                      </select>
+                      </QuickSelect>
                     )}
                     {/* سيريالات القطع المعيّنة — حذف السيريال يحذف قطعته من السلة */}
                     {l.serials && l.serials.length > 0 && (

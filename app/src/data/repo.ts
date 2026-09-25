@@ -2733,6 +2733,11 @@ export const useDataStore = create<DataState>()(
         const landedExpensesOriginal = inv.expenses.filter((expense) => (expense.costTreatment ?? 'inventory') === 'inventory')
         const periodExpenses = inv.expenses.filter((expense) => expense.costTreatment === 'period')
         const expenseParts = new Map(inv.expenses.map((expense) => [expense, purchaseExpenseTaxParts(expense, expensePolicy)]))
+        // المصروفات الداخلية تستخدم نفس مبلغ السداد الذي يظهر في القيد؛
+        // وعند كون المنشأة غير قابلة لاسترداد الضريبة تُعامل الضريبة كجزء من المبلغ المدخل (معفى في القيد الداخلي).
+        const expensePayableAmount = (expense: PurchaseExpense) => expense.costTreatment === 'period' && !expensePolicy.canRecoverInputTax
+          ? expense.amountMinor
+          : expenseParts.get(expense)!.payableMinor
         const landedExpenses = landedExpensesOriginal.map((expense) => ({ ...expense, amountMinor: expenseParts.get(expense)!.costMinor }))
         const landed = computeLandedCosts(costLines, landedExpenses as ExpenseInput[])
         const goodsTotal = landed.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor), 0)
@@ -2764,7 +2769,7 @@ export const useDataStore = create<DataState>()(
         }
         for (const expense of periodExpenses) if (expense.paidBy === 'custody') {
           if (expense.custodyFileId == null) throw new Error(`حدد ملف العهدة الذي دفع مصروف «${expense.nameAr}»`)
-          expenseCustodyNeeds.set(expense.custodyFileId, (expenseCustodyNeeds.get(expense.custodyFileId) ?? 0) + expense.amountMinor)
+          expenseCustodyNeeds.set(expense.custodyFileId, (expenseCustodyNeeds.get(expense.custodyFileId) ?? 0) + expensePayableAmount(expense))
         }
         const expensesPaidDirect = expensePayments.reduce((a, e) => a + e.amountMinor, 0)
         // T1: ضريبة مدخلات قابلة للخصم — تُفحص مبكراً وتدخل مستحق المورد (يقبضها ليوردها للدولة)
@@ -2774,11 +2779,11 @@ export const useDataStore = create<DataState>()(
           if (l.vatPercent == null) return sum
           return sum + Math.round((l.qty * l.unitPriceMinor * Math.max(0, l.vatPercent)) / 100)
         }, 0)
-        const expenseInputVatMinor = inv.expenses.reduce((sum, expense) => sum + expenseParts.get(expense)!.recoverableTaxMinor, 0)
+        const expenseInputVatMinor = landedExpensesOriginal.reduce((sum, expense) => sum + expenseParts.get(expense)!.recoverableTaxMinor, 0)
         const inputVatMinor = (inv.inputVatMinor ?? linesInputVatMinor) + expenseInputVatMinor
         if (!Number.isInteger(inputVatMinor) || inputVatMinor < 0) throw new Error('ضريبة المدخلات لا تكون سالبة')
         // مستحق المورد = البضاعة + ضريبة المدخلات + المصاريف المحملة على حسابه فقط
-        const supplierPeriodExpenses = periodExpenses.filter((expense) => (expense.paidBy ?? 'supplier') === 'supplier').reduce((sum, expense) => sum + expense.amountMinor, 0)
+        const supplierPeriodExpenses = periodExpenses.filter((expense) => (expense.paidBy ?? 'supplier') === 'supplier').reduce((sum, expense) => sum + expensePayableAmount(expense), 0)
         const supplierDue = grandTotal + inputVatMinor - expensesPaidDirect + supplierPeriodExpenses
 
         // مصدر دفع البضاعة: خزينة/بنك أو ملف عهدة موظف (طلب المالك) — العهدة تُفحص قبل أي كتابة
@@ -2964,7 +2969,7 @@ export const useDataStore = create<DataState>()(
           if ((e.paidBy ?? 'supplier') !== 'custody' || e.custodyFileId == null || e.amountMinor <= 0) continue
           custodyTxs = [...custodyTxs, {
             id: nextId(custodyTxs), fileId: e.custodyFileId, type: 'expense' as const,
-            date: inv.date, amountMinor: e.amountMinor, excessMinor: 0,
+            date: inv.date, amountMinor: expensePayableAmount(e), excessMinor: 0,
             description: `${e.nameAr} — فاتورة شراء ${invoiceNumber}`,
             treasury: null, projectId: inv.projectId ?? null, purchaseId, journalEntryId: entryId,
           }]
@@ -2980,7 +2985,7 @@ export const useDataStore = create<DataState>()(
             journalEntryId: entryId,
           }]
         }
-        const createdPayables: PurchaseExpensePayable[] = inv.expenses.flatMap((expense, expenseIndex) => expense.paidBy === 'payable' && expense.amountMinor > 0 ? [{ id: nextId(state.purchaseExpensePayables) + expenseIndex, purchaseId, expenseIndex, beneficiaryName: expense.beneficiaryName!.trim(), description: expense.nameAr, amountMinor: expense.amountMinor, paidMinor: 0, payableAccountCode: expense.payableAccountCode ?? '2117', status: 'open' as const, createdAt: nowIso, settlementEntryIds: [], vehicleId: expense.vehicleId ?? null, vehicleCostEntryId: null }] : [])
+        const createdPayables: PurchaseExpensePayable[] = inv.expenses.flatMap((expense, expenseIndex) => expense.paidBy === 'payable' && expense.amountMinor > 0 ? [{ id: nextId(state.purchaseExpensePayables) + expenseIndex, purchaseId, expenseIndex, beneficiaryName: expense.beneficiaryName!.trim(), description: expense.nameAr, amountMinor: expensePayableAmount(expense), paidMinor: 0, payableAccountCode: expense.payableAccountCode ?? '2117', status: 'open' as const, createdAt: nowIso, settlementEntryIds: [], vehicleId: expense.vehicleId ?? null, vehicleCostEntryId: null }] : [])
         // أعد ترقيم الفجوات الناتجة عن سطور غير مستحقة لضمان معرفات فريدة متتابعة.
         createdPayables.forEach((payable, index) => { payable.id = nextId(state.purchaseExpensePayables) + index })
         const createdVehicleCostEntries: VehicleCostCenterEntry[] = inv.expenses.flatMap((expense, expenseIndex) => {

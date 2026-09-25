@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * شجرة الحسابات (المرحلة 4) — عرض هرمي بالأرصدة الحية من دفتر الأستاذ.
  * الحسابات التجميعية تجمع أرصدة أبنائها، والورقية تقبل القيود.
@@ -218,10 +219,10 @@ export function CoaPage() {
             <b> القيد اليدوي واليومية وميزان المراجعة والتقارير المالية</b> — بلا فرض للشجرة القياسية.
           </div>
           <Field label="المجموعة الأم *">
-            <select value={nParent} onChange={(e) => setNParent(e.target.value)} className={inputCls}>
+            <QuickSelect value={nParent} onChange={(e) => setNParent(e.target.value)} className={inputCls}>
               <option value="">— اختر المجموعة —</option>
               {groups.map((g) => <option key={g.code} value={g.code}>{g.code} — {g.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <div className="grid grid-cols-[8rem_1fr] gap-3">
             <Field label="كود الحساب *" hint={nParent ? `يبدأ بـ ${nParent}` : '4-6 أرقام'}>

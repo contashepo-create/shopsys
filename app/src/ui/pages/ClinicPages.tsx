@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات العيادة — ترقية شاملة (طلب المالك):
  * • روشتة منظمة كالفاتورة: بند لكل دواء بجرعة (مرات/ساعات) ووجبات (1/2/3)
@@ -83,10 +84,10 @@ function HistoryEditor({ value, onChange }: { value: MedicalHistory; onChange: (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <Field label="فصيلة الدم">
-          <select value={value.bloodType} onChange={(e) => onChange({ ...value, bloodType: e.target.value })} className={inputCls}>
+          <QuickSelect value={value.bloodType} onChange={(e) => onChange({ ...value, bloodType: e.target.value })} className={inputCls}>
             <option value="">غير معروفة</option>
             {BLOOD_TYPES.map((b) => <option key={b} value={b}>{b}</option>)}
-          </select>
+          </QuickSelect>
         </Field>
         <Field label="التدخين">
           <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
@@ -144,9 +145,9 @@ function RxLineEditor({ line, index, onChange, onRemove }: { line: RxLine; index
         <span className="shrink-0 w-6 h-6 rounded-lg bg-cyan-600 text-white text-[11px] font-black flex items-center justify-center">{index + 1}</span>
         <input value={line.medication} onChange={(e) => onChange({ ...line, medication: e.target.value })} className={`${inputCls} flex-1 font-bold`} placeholder="اسم الدواء والتركيز — أموكسيسيللين 500 مجم" />
         <input value={line.formQty || ''} onChange={(e) => onChange({ ...line, formQty: Math.max(0, Number(e.target.value.replace(/\D/g, '')) || 0) })} inputMode="numeric" className={`${inputCls} !w-14 text-center`} placeholder="1" title="كم شريط/علبة" />
-        <select value={line.form} onChange={(e) => onChange({ ...line, form: e.target.value as DispenseForm })} className={`${inputCls} !w-24`}>
+        <QuickSelect value={line.form} onChange={(e) => onChange({ ...line, form: e.target.value as DispenseForm })} className={`${inputCls} !w-24`}>
           {(Object.keys(DISPENSE_FORMS) as DispenseForm[]).map((f) => <option key={f} value={f}>{DISPENSE_FORMS[f]}</option>)}
-        </select>
+        </QuickSelect>
         <button onClick={onRemove} title="حذف البند" className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors shrink-0"><Trash2 className="w-4 h-4" /></button>
       </div>
 
@@ -159,23 +160,23 @@ function RxLineEditor({ line, index, onChange, onRemove }: { line: RxLine; index
             className={`px-2 py-1.5 font-bold transition-colors ${doseMode === 'hours' ? 'bg-cyan-600 text-white' : 'text-slate-500'}`}>كل X ساعات</button>
         </div>
         {doseMode === 'times' ? (
-          <select value={line.timesPerDay} onChange={(e) => onChange({ ...line, timesPerDay: Number(e.target.value) })} className={`${inputCls} !w-28 !py-1.5`}>
+          <QuickSelect value={line.timesPerDay} onChange={(e) => onChange({ ...line, timesPerDay: Number(e.target.value) })} className={`${inputCls} !w-28 !py-1.5`}>
             {[1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n === 1 ? 'مرة واحدة' : n === 2 ? 'مرتين' : `${n} مرات`} يومياً</option>)}
-          </select>
+          </QuickSelect>
         ) : (
-          <select value={line.everyHours} onChange={(e) => onChange({ ...line, everyHours: Number(e.target.value) })} className={`${inputCls} !w-28 !py-1.5`}>
+          <QuickSelect value={line.everyHours} onChange={(e) => onChange({ ...line, everyHours: Number(e.target.value) })} className={`${inputCls} !w-28 !py-1.5`}>
             {[4, 6, 8, 12, 24].map((h) => <option key={h} value={h}>كل {h} ساعات</option>)}
-          </select>
+          </QuickSelect>
         )}
-        <select value={line.mealRelation} onChange={(e) => onChange({ ...line, mealRelation: e.target.value as MealRelation })} className={`${inputCls} !w-32 !py-1.5`}>
+        <QuickSelect value={line.mealRelation} onChange={(e) => onChange({ ...line, mealRelation: e.target.value as MealRelation })} className={`${inputCls} !w-32 !py-1.5`}>
           {(Object.keys(MEAL_RELATIONS) as MealRelation[]).map((m) => <option key={m} value={m}>{MEAL_RELATIONS[m]}</option>)}
-        </select>
+        </QuickSelect>
         {line.mealRelation !== 'none' && (
-          <select value={line.mealsCount} onChange={(e) => onChange({ ...line, mealsCount: Number(e.target.value) })} className={`${inputCls} !w-28 !py-1.5`} title="بعد وجبة أم وجبتين أم ثلاث">
+          <QuickSelect value={line.mealsCount} onChange={(e) => onChange({ ...line, mealsCount: Number(e.target.value) })} className={`${inputCls} !w-28 !py-1.5`} title="بعد وجبة أم وجبتين أم ثلاث">
             <option value={1}>وجبة واحدة</option>
             <option value={2}>وجبتان</option>
             <option value={3}>ثلاث وجبات</option>
-          </select>
+          </QuickSelect>
         )}
         <div className="flex items-center gap-1">
           <span className="text-slate-400 font-bold">المدة:</span>
@@ -557,7 +558,7 @@ export function ClinicPatientsPage() {
               {fileBalance > 0 && (
                 <div className="flex gap-1 items-center">
                   <input value={collectAmount} onChange={(e) => setCollectAmount(e.target.value)} inputMode="decimal" className={`${inputCls} !w-40`} placeholder="المبلغ المحصل" />
-                  <select value={collectTerminalId} onChange={(e) => setCollectTerminalId(e.target.value)} className={`${inputCls} !w-40`}><option value="">نقدي/بنك</option>{collectTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select>
+                  <QuickSelect value={collectTerminalId} onChange={(e) => setCollectTerminalId(e.target.value)} className={`${inputCls} !w-40`}><option value="">نقدي/بنك</option>{collectTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</QuickSelect>
                   {!collectTerminalId && <TreasuryPicker value={collectTreasury} onChange={setCollectTreasury} compact />}
                   {collectTerminalId && <><input value={collectTerminalRef} onChange={(e) => setCollectTerminalRef(e.target.value)} className={`${inputCls} !w-32`} placeholder="مرجع الماكينة"/><input value={collectLast4} onChange={(e) => setCollectLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={`${inputCls} !w-24`} placeholder="آخر 4"/></>}
                   <Btn variant="ghost" onClick={doCollect} disabled={!collectAmount}><Banknote className="w-4 h-4" /> تحصيل</Btn>
@@ -570,9 +571,9 @@ export function ClinicPatientsPage() {
               <div className="flex items-center justify-between">
                 <div className="font-bold text-[12px] text-slate-500 flex items-center gap-1.5"><Paperclip className="w-3.5 h-3.5" /> مستندات المريض ({fileAtts.length})</div>
                 <div className="flex items-center gap-1.5">
-                  <select value={attKind} onChange={(e) => setAttKind(e.target.value as AttachmentKind)} className={`${inputCls} !w-32 !py-1.5 !text-[11.5px]`}>
+                  <QuickSelect value={attKind} onChange={(e) => setAttKind(e.target.value as AttachmentKind)} className={`${inputCls} !w-32 !py-1.5 !text-[11.5px]`}>
                     {(Object.keys(ATTACHMENT_KINDS) as AttachmentKind[]).map((k) => <option key={k} value={k}>{ATTACHMENT_KINDS[k].icon} {ATTACHMENT_KINDS[k].nameAr}</option>)}
-                  </select>
+                  </QuickSelect>
                   <input ref={fileInputRef} type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => onPickFile(e.target.files?.[0] ?? null)} />
                   <Btn variant="ghost" className="!text-[11px] !py-1.5" onClick={() => fileInputRef.current?.click()}><Plus className="w-3.5 h-3.5" /> إرفاق صورة/PDF</Btn>
                 </div>
@@ -740,12 +741,12 @@ export function ClinicPatientsPage() {
           </Field>
           {filePlans.some((p) => p.doneSessions < p.totalSessions) && (
             <Field label="ضمن خطة علاج؟" hint="اختيار الخطة يملأ قيمة الجلسة تلقائياً">
-              <select value={vPlan} onChange={(e) => pickPlan(e.target.value)} className={inputCls}>
+              <QuickSelect value={vPlan} onChange={(e) => pickPlan(e.target.value)} className={inputCls}>
                 <option value="">زيارة مستقلة</option>
                 {filePlans.filter((p) => p.doneSessions < p.totalSessions).map((p) => (
                   <option key={p.id} value={p.id}>{p.title} — الجلسة {p.doneSessions + 1}/{p.totalSessions}</option>
                 ))}
-              </select>
+              </QuickSelect>
             </Field>
           )}
 
@@ -895,10 +896,10 @@ export function ClinicAppointmentsPage() {
       <Modal open={open} onClose={() => setOpen(false)} title="حجز موعد">
         <div className="space-y-3">
           <Field label="المريض *">
-            <select value={patientId} onChange={(e) => setPatientId(e.target.value)} className={inputCls}>
+            <QuickSelect value={patientId} onChange={(e) => setPatientId(e.target.value)} className={inputCls}>
               <option value="">— اختر —</option>
               {clinicPatients.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="التاريخ"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} /></Field>

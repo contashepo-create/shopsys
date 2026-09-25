@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * تخطيط المقاولات — نقلة AccFlex/pro-acc:
  * BudgetPage — موازنة فئات التكاليف لكل مشروع + تقرير انحراف حي (وفر/تحذير/تجاوز).
@@ -71,9 +72,9 @@ export function ProjectBudgetPage() {
           <p className="text-[12px] text-slate-500 mt-1">موازنة تقديرية لكل فئة تكلفة تُقارن بالفعلي أولاً بأول — تحذير عند 85٪ وتجاوز فوق 100٪</p>
         </div>
         <div className="flex items-center gap-2">
-          <select value={pid ?? ''} onChange={(e) => setProjectId(Number(e.target.value))} className={inputCls + ' !w-56'}>
+          <QuickSelect value={pid ?? ''} onChange={(e) => setProjectId(Number(e.target.value))} className={inputCls + ' !w-56'}>
             {open.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-          </select>
+          </QuickSelect>
           <Btn onClick={startEdit} disabled={!project}><Plus className="w-4 h-4" /> ضبط الموازنة</Btn>
         </div>
       </div>
@@ -203,9 +204,9 @@ export function ProjectTasksPage() {
           <p className="text-[12px] text-slate-500 mt-1">مهام بمدد وتقدم تراكمي على شريط زمني — المتأخرة عن اليوم بلا إنجاز تظهر بالأحمر</p>
         </div>
         <div className="flex items-center gap-2">
-          <select value={pid ?? ''} onChange={(e) => setProjectId(Number(e.target.value))} className={inputCls + ' !w-56'}>
+          <QuickSelect value={pid ?? ''} onChange={(e) => setProjectId(Number(e.target.value))} className={inputCls + ' !w-56'}>
             {open.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-          </select>
+          </QuickSelect>
           <Btn onClick={() => setAddOpen(true)} disabled={!project}><Plus className="w-4 h-4" /> مهمة جديدة</Btn>
         </div>
       </div>
@@ -254,10 +255,10 @@ export function ProjectTasksPage() {
           </div>
           {projBoq.length > 0 && (
             <Field label="ربط ببند BOQ (اختياري)" hint="للمتابعة فقط — نسبة البند تُحدَّث من المستخلصات">
-              <select value={tBoq} onChange={(e) => setTBoq(e.target.value === '' ? '' : Number(e.target.value))} className={inputCls}>
+              <QuickSelect value={tBoq} onChange={(e) => setTBoq(e.target.value === '' ? '' : Number(e.target.value))} className={inputCls}>
                 <option value="">بلا ربط</option>
                 {projBoq.map((b) => <option key={b.id} value={b.id}>{b.code} — {b.descriptionAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           )}
           <div className="flex justify-end gap-2">

@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * المغسلة (وحدة مستقلة — طلب المالك): أوامر غسيل بقطع مفصلة وخدمة لكل قطعة،
  * عربون عند الاستلام (2109 التزام)، وتحقق الإيراد عند التسليم (4103 + 2102).
@@ -220,10 +221,10 @@ export function LaundryPage() {
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="عميل مسجل (اختياري)">
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
+              <QuickSelect value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
                 <option value="">عميل نقدي عابر</option>
                 {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             {!customerId && (
               <Field label="اسم العميل">
@@ -248,11 +249,11 @@ export function LaundryPage() {
             {dLines.map((l, i) => (
               <div key={i} className="grid grid-cols-[1fr_9rem_4.5rem_6rem_2rem] gap-2 items-center px-3 py-2 border-t border-slate-100 dark:border-slate-800">
                 <input value={l.desc} onChange={(e) => setLine(i, { desc: e.target.value })} className={`${inputCls} py-1.5`} placeholder="قميص، بدلة، سجادة 2×3…" />
-                <select value={l.service} onChange={(e) => setLine(i, { service: e.target.value as LaundryService })} className={`${inputCls} py-1.5 text-[12px]`}>
+                <QuickSelect value={l.service} onChange={(e) => setLine(i, { service: e.target.value as LaundryService })} className={`${inputCls} py-1.5 text-[12px]`}>
                   {(Object.keys(LAUNDRY_SERVICE_LABELS) as LaundryService[]).map((sv) => (
                     <option key={sv} value={sv}>{LAUNDRY_SERVICE_LABELS[sv].icon} {LAUNDRY_SERVICE_LABELS[sv].nameAr}</option>
                   ))}
-                </select>
+                </QuickSelect>
                 <input value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} className={`${inputCls} py-1.5 text-center`} dir="ltr" />
                 <input value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} className={`${inputCls} py-1.5 text-center`} dir="ltr" placeholder="0" />
                 <button onClick={() => setDLines((ls) => ls.filter((_, j) => j !== i))} disabled={dLines.length <= 1} className="text-slate-300 hover:text-rose-500 disabled:opacity-30 transition-colors justify-self-center">

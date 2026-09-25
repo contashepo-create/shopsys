@@ -24,7 +24,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
-import { ItemQuickPicker, PartyQuickPicker } from '../components/KeyboardPickers.tsx'
+import { ItemQuickPicker, PartyQuickPicker, QuickSelect} from '../components/KeyboardPickers.tsx'
 
 /**
  * سطر شراء (تدقيق المالك — الشراء بالكرتونة):
@@ -522,22 +522,22 @@ export function PurchasesPage() {
           </div>
           {warehouses.length > 1 && (
             <Field label="مخزن الفاتورة" hint="اختر مخزناً واحداً للفاتورة كلها، أو «تحديد لكل سطر» إذا كانت البضاعة موزعة على أكثر من مخزن. لا يوجد مخزن مبهم.">
-              <select
+              <QuickSelect
                 value={warehouseId == null ? 'line' : String(warehouseId)}
                 onChange={(e) => setWarehouseId(e.target.value === 'line' ? null : Number(e.target.value))}
                 className={inputCls}
               >
                 {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
                 <option value="line">↳ تحديد المخزن لكل سطر</option>
-              </select>
+              </QuickSelect>
             </Field>
           )}
           {projects.some((p) => p.status === 'active') && (
             <Field label="ربط بمشروع مقاولات (اختياري)" hint="الفاتورة تدخل تكاليف المشروع وربحيته — ربحية المشروع تُحسب صافية من الضريبة: ض.ق.م المدخلات تُحسب تلقائياً من نسب السطور وتُعزل عن التكلفة">
-              <select value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
+              <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
                 <option value="">— بلا مشروع —</option>
                 {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           )}
 
@@ -612,7 +612,7 @@ export function PurchasesPage() {
                     />
                   </div>
                   {lineWarehouseMode && (
-                    <select
+                    <QuickSelect
                       value={l.warehouseId ?? ''}
                       onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, warehouseId: e.target.value ? Number(e.target.value) : null } : x)))}
                       className={inputCls}
@@ -620,11 +620,11 @@ export function PurchasesPage() {
                     >
                       <option value="">— اختر مخزناً —</option>
                       {warehouses.map((w) => <option key={w.id} value={w.id}>{w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
-                    </select>
+                    </QuickSelect>
                   )}
                   {/* وحدة الشراء (تدقيق المالك): أساسية أو كرتونة/علبة — الكمية والسعر بها والترحيل يفكها تلقائياً */}
                   {lineItem && lineItem.extraUnits.length > 0 ? (
-                    <select
+                    <QuickSelect
                       value={l.unitName}
                       onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitName: e.target.value } : x)))}
                       className={inputCls}
@@ -632,7 +632,7 @@ export function PurchasesPage() {
                     >
                       <option value="">{lineItem.baseUnit || 'أساسية'}</option>
                       {lineItem.extraUnits.map((u) => <option key={u.nameAr} value={u.nameAr}>{u.nameAr} ×{u.factor}</option>)}
-                    </select>
+                    </QuickSelect>
                   ) : (
                     <span className="hidden sm:block text-center text-[11px] text-slate-400">{lineItem?.baseUnit || '—'}</span>
                   )}
@@ -721,7 +721,7 @@ export function PurchasesPage() {
                         placeholder="نولون، جمارك، شحن…"
                         className={inputCls}
                       />
-                      {expenseTemplates.some((row) => row.isActive) && <select className={`${inputCls} mt-1.5`} value="" onChange={(ev) => { const selected = expenseTemplates.find((row) => row.id === Number(ev.target.value)); if (selected) setExpenses((arr) => arr.map((x, j) => j === i ? { ...x, nameAr: selected.nameAr, accountCode: selected.accountCode } : x)) }}><option value="">اختيار بند محفوظ…</option>{expenseTemplates.filter((row) => row.isActive).map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}</select>}
+                      {expenseTemplates.some((row) => row.isActive) && <QuickSelect className={`${inputCls} mt-1.5`} value="" onChange={(ev) => { const selected = expenseTemplates.find((row) => row.id === Number(ev.target.value)); if (selected) setExpenses((arr) => arr.map((x, j) => j === i ? { ...x, nameAr: selected.nameAr, accountCode: selected.accountCode } : x)) }}><option value="">اختيار بند محفوظ…</option>{expenseTemplates.filter((row) => row.isActive).map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}</QuickSelect>}
                       <div className="flex flex-wrap gap-1 mt-1.5">
                         {EXPENSE_PRESETS.map((p2) => (
                           <button
@@ -755,16 +755,16 @@ export function PurchasesPage() {
                       </div>
                     </Field>
                     <Field label="مركز التكلفة العام" hint="مستقل عن المشروع وعن مركز تكلفة المركبة">
-                      <select value={e.costCenterId ?? ''} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, costCenterId: ev.target.value ? Number(ev.target.value) : null } : x)))} className={inputCls}>
+                      <QuickSelect value={e.costCenterId ?? ''} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, costCenterId: ev.target.value ? Number(ev.target.value) : null } : x)))} className={inputCls}>
                         <option value="">بدون مركز عام</option>
                         {costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}
-                      </select>
+                      </QuickSelect>
                     </Field>
                     <Field label="مركز تكلفة المركبة" hint="اختياري — يظهر كتحميل/إيراد داخلي في ربحية مركبة الأسطول">
-                      <select value={e.vehicleId ?? ''} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, vehicleId: ev.target.value ? Number(ev.target.value) : null } : x)))} className={inputCls}>
+                      <QuickSelect value={e.vehicleId ?? ''} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, vehicleId: ev.target.value ? Number(ev.target.value) : null } : x)))} className={inputCls}>
                         <option value="">بدون مركبة</option>
                         {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plateNumber} — {v.vehicleType}</option>)}
-                      </select>
+                      </QuickSelect>
                     </Field>
                     <button onClick={() => setExpenses((arr) => arr.filter((_, j) => j !== i))} className="p-2 mb-1 text-slate-300 hover:text-rose-500 transition-colors justify-self-center">
                       <Trash2 size={15} />
@@ -796,7 +796,7 @@ export function PurchasesPage() {
                       />
                     )}
                     {e.paidBy === 'custody' && (
-                      <select
+                      <QuickSelect
                         value={e.custodyFileId ?? ''}
                         onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, custodyFileId: ev.target.value ? Number(ev.target.value) : null } : x)))}
                         className={`${inputCls} !w-auto min-w-52`}
@@ -804,15 +804,15 @@ export function PurchasesPage() {
                         {openCustodyFiles.map((f) => (
                           <option key={f.id} value={f.id}>{f.fileNumber} — {employees.find((x) => x.id === f.employeeId)?.nameAr ?? '—'}</option>
                         ))}
-                      </select>
+                      </QuickSelect>
                     )}
                     {e.paidBy === 'payable' && (
                       <>
                         <input value={e.beneficiaryName} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, beneficiaryName: ev.target.value } : x)))} className={`${inputCls} !w-auto min-w-48`} placeholder="اسم الجهة المستحقة" />
-                        <select value={e.payableAccountCode} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, payableAccountCode: ev.target.value } : x)))} className={`${inputCls} !w-auto min-w-40`}>
+                        <QuickSelect value={e.payableAccountCode} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, payableAccountCode: ev.target.value } : x)))} className={`${inputCls} !w-auto min-w-40`}>
                           <option value="2117">مصاريف مستحقة (2117)</option>
                           <option value="2101">الموردون (2101)</option>
-                        </select>
+                        </QuickSelect>
                       </>
                     )}
                     {e.paidBy !== 'supplier' && (
@@ -882,9 +882,9 @@ export function PurchasesPage() {
             <Field label={`سعر البيع (${cur.symbol})`}><input value={qPrice} onChange={(e) => setQPrice(e.target.value)} className={inputCls} dir="ltr" placeholder="0" /></Field>
           </div>
           <Field label="القسم" hint="بقية البيانات (وحدات/صلاحية/سيريال) تُستكمل لاحقاً من شاشة الأصناف">
-            <select value={qCat} onChange={(e) => setQCat(e.target.value)} className={inputCls}>
+            <QuickSelect value={qCat} onChange={(e) => setQCat(e.target.value)} className={inputCls}>
               {categories.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setQuickOpen(false)}>إلغاء</Btn>
@@ -994,29 +994,29 @@ export function PurchasesPage() {
                   <TreasuryPicker value={latePayAccount} onChange={setLatePayAccount} operation="payment" compact />
                 )}
                 {latePaidBy === 'custody' && (
-                  <select value={lateCustodyId ?? ''} onChange={(e) => setLateCustodyId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-52`}>
+                  <QuickSelect value={lateCustodyId ?? ''} onChange={(e) => setLateCustodyId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-52`}>
                     {openCustodyFiles.map((f) => (
                       <option key={f.id} value={f.id}>{f.fileNumber} — {employees.find((x) => x.id === f.employeeId)?.nameAr ?? '—'}</option>
                     ))}
-                  </select>
+                  </QuickSelect>
                 )}
                 {latePaidBy === 'payable' && (
                   <>
                     <input value={latePayableName} onChange={(e) => setLatePayableName(e.target.value)} className={`${inputCls} !w-auto min-w-48`} placeholder="اسم الجهة المستحقة" />
-                    <select value={latePayableAccount} onChange={(e) => setLatePayableAccount(e.target.value)} className={`${inputCls} !w-auto min-w-40`}>
+                    <QuickSelect value={latePayableAccount} onChange={(e) => setLatePayableAccount(e.target.value)} className={`${inputCls} !w-auto min-w-40`}>
                       <option value="2117">مصاريف مستحقة (2117)</option>
                       <option value="2101">الموردون (2101)</option>
-                    </select>
+                    </QuickSelect>
                   </>
                 )}
-                <select value={lateCostCenterId ?? ''} onChange={(e) => setLateCostCenterId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-48`} title="مركز التكلفة العام">
+                <QuickSelect value={lateCostCenterId ?? ''} onChange={(e) => setLateCostCenterId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-48`} title="مركز التكلفة العام">
                   <option value="">بدون مركز عام</option>
                   {costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}
-                </select>
-                <select value={lateVehicleId ?? ''} onChange={(e) => setLateVehicleId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-48`} title="مركز تكلفة السيارة">
+                </QuickSelect>
+                <QuickSelect value={lateVehicleId ?? ''} onChange={(e) => setLateVehicleId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-48`} title="مركز تكلفة السيارة">
                   <option value="">🚚 بدون مركز تكلفة مركبة</option>
                   {vehicles.map((v) => <option key={v.id} value={v.id}>🚚 {v.plateNumber} — {v.vehicleType}</option>)}
-                </select>
+                </QuickSelect>
                 <Btn variant="soft" onClick={saveLateExpense} shortcut="F9" disabled={!lateName.trim() || !(Number(lateAmount) > 0) || (latePaidBy === 'payable' && !latePayableName.trim())}>➕ تسجيل المصروف</Btn>
               </div>
             </div>
@@ -1129,7 +1129,7 @@ export function PurchasesPage() {
                 {editExpenses.map((expense, i) => (
                   <Field key={`${expense.nameAr}-${i}`} label={`${expense.nameAr} · ${expense.costTreatment === 'period' ? 'مصروف فترة' : 'تكلفة مخزون'}`} hint={expense.paidBy === 'supplier' ? 'على حساب المورد' : expense.paidBy === 'custody' ? 'من العهدة' : expense.paidBy === 'payable' ? `مستحق لـ ${expense.beneficiaryName ?? 'جهة'}` : 'مدفوع من الخزينة'}>
                     <input type="number" min="0" step="0.01" value={expense.amountMinor / 10 ** cur.decimals} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, amountMinor: toMinor(e.target.value, cur.decimals) } : row))} className={inputCls} dir="ltr" />
-                    <select aria-label="مركز التكلفة العام لمصروف الشراء" value={expense.costCenterId ?? ''} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, costCenterId: e.target.value ? Number(e.target.value) : null } : row))} className={inputCls}><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</select>
+                    <QuickSelect aria-label="مركز التكلفة العام لمصروف الشراء" value={expense.costCenterId ?? ''} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, costCenterId: e.target.value ? Number(e.target.value) : null } : row))} className={inputCls}><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect>
                   </Field>
                 ))}
               </div>

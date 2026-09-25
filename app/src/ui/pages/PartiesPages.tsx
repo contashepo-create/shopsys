@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * شاشتا العملاء والموردين — نمط موحّد
  * البيانات الموسعة كلها اختيارية (طلب المالك) لكنها جاهزة للفاتورة الضريبية
@@ -296,12 +297,12 @@ export function CustomersPage() {
               <input value={creditLimit} onChange={(e) => setCreditLimit(e.target.value)} type="number" min={0} className={inputCls} />
             </Field>
             <Field label="فئة الخصم / قائمة الأسعار" hint="تظهر أسعار هذه الفئة تلقائياً عند اختيار العميل في الكاشير">
-              <select value={priceListId ?? ''} onChange={(e) => setPriceListId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
+              <QuickSelect value={priceListId ?? ''} onChange={(e) => setPriceListId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
                 <option value="">بدون فئة — سعر قطاعي</option>
                 {priceLists.filter((list) => list.isActive || list.id === priceListId).map((list) => (
                   <option key={list.id} value={list.id}>{list.nameAr}{list.defaultDiscountPercent > 0 ? ` — خصم ${list.defaultDiscountPercent}٪` : ''}{!list.isActive ? ' (معطلة)' : ''}</option>
                 ))}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
           </div>

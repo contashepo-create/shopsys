@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * النقلات (المرحلة 6 — القرار 13، نمط logistics-web):
  * النقلة وحدة العمل: من/إلى × عدد × سعر، مصاريف بمصادر تمويل
@@ -296,22 +297,22 @@ export function TripsPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="العميل">
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
+              <QuickSelect value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
                 <option value="">عميل نقدي</option>
                 {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="المركبة">
-              <select value={vehicleId} onChange={(e) => pickVehicle(e.target.value)} className={inputCls}>
+              <QuickSelect value={vehicleId} onChange={(e) => pickVehicle(e.target.value)} className={inputCls}>
                 <option value="">بلا مركبة</option>
                 {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plateNumber} — {v.vehicleType}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="السائق">
-              <select value={driverId} onChange={(e) => setDriverId(e.target.value)} className={inputCls}>
+              <QuickSelect value={driverId} onChange={(e) => setDriverId(e.target.value)} className={inputCls}>
                 <option value="">بلا سائق</option>
                 {employees.filter((e) => e.active).map((d) => <option key={d.id} value={d.id}>{d.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label={`عمولة السائق (${cur.symbol})`} hint="تُستحق ولا تُدفع الآن — تسوى مجمعة">
               <input value={driverCommission} onChange={(e) => setDriverCommission(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0" disabled={!driverId} />
@@ -347,9 +348,9 @@ export function TripsPage() {
                 <input value={e.nameAr} onChange={(ev) => patchExpense(i, { nameAr: ev.target.value })} className={`${inputCls} !py-1.5 !text-[12px]`} placeholder="البيان" />
                 <input value={e.qty} onChange={(ev) => patchExpense(i, { qty: ev.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" />
                 <input value={e.unitAmount} onChange={(ev) => patchExpense(i, { unitAmount: ev.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" placeholder="القيمة" />
-                <select value={e.source} onChange={(ev) => patchExpense(i, { source: ev.target.value as TripExpenseSource })} className={`${inputCls} !py-1.5 !text-[11px]`}>
+                <QuickSelect value={e.source} onChange={(ev) => patchExpense(i, { source: ev.target.value as TripExpenseSource })} className={`${inputCls} !py-1.5 !text-[11px]`}>
                   {(Object.keys(EXPENSE_SOURCE_LABELS) as TripExpenseSource[]).map((s) => <option key={s} value={s}>{EXPENSE_SOURCE_LABELS[s]}</option>)}
-                </select>
+                </QuickSelect>
                 <button onClick={() => dropExpense(i)} className="p-1.5 rounded text-slate-300 hover:text-rose-500"><Trash2 size={13} /></button>
               </div>
             ))}
@@ -363,7 +364,7 @@ export function TripsPage() {
               </div>
             </Field>
             {payment === 'cash' && (<>
-              <Field label="طريقة التحصيل"><select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select></Field>
+              <Field label="طريقة التحصيل"><QuickSelect value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</QuickSelect></Field>
               {!terminalId && <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>}
               {terminalId && <><Field label="مرجع إيصال الماكينة (اختياري)"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls}/></Field></>}
             </>)}
@@ -372,14 +373,14 @@ export function TripsPage() {
             </Field>
             {expenses.some((e) => e.source === 'custody') && (
               <Field label="ملف العهدة (لمصاريف «من عهدة موظف»)">
-                <select value={custodyFileId} onChange={(e) => setCustodyFileId(e.target.value)} className={inputCls}>
+                <QuickSelect value={custodyFileId} onChange={(e) => setCustodyFileId(e.target.value)} className={inputCls}>
                   <option value="">— اختر الملف —</option>
                   {custodyFiles.filter((f) => f.status === 'open').map((f) => {
                     const emp = employees.find((x) => x.id === f.employeeId)?.nameAr ?? '—'
                     const remaining = summarizeCustody(custodyTxs.filter((t) => t.fileId === f.id)).remainingMinor
                     return <option key={f.id} value={f.id}>{f.fileNumber} — {emp} (متبقٍ {fmt(remaining)})</option>
                   })}
-                </select>
+                </QuickSelect>
               </Field>
             )}
             <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer self-end">

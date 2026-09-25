@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * خدمات المحافظ والدفع الإلكتروني (طلب المالك — نمط mobileshop حرفياً):
  * تحويل رصيد/دفع فواتير/شحن بمزوّدين، الربح = المحصَّل − المدفوع للمزوّد
@@ -179,9 +180,9 @@ export function WalletServicesPage() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="المزوّد">
-              <select value={provider} onChange={(e) => setProvider(e.target.value as WalletProvider)} className={inputCls}>
+              <QuickSelect value={provider} onChange={(e) => setProvider(e.target.value as WalletProvider)} className={inputCls}>
                 {WALLET_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="رقم الوجهة / المرجع">
               <input value={targetPhone} onChange={(e) => setTargetPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(setup.countryCode)} />
@@ -202,10 +203,10 @@ export function WalletServicesPage() {
               <input value={paid} onChange={(e) => setPaid(e.target.value)} className={inputCls} dir="ltr" placeholder="الكل" />
             </Field>
             <Field label="العميل" hint="إلزامي فقط لو جزء من المبلغ آجل">
-              <select value={customerId} onChange={(e) => setCustomerId(Number(e.target.value))} className={inputCls}>
+              <QuickSelect value={customerId} onChange={(e) => setCustomerId(Number(e.target.value))} className={inputCls}>
                 <option value={0}>عميل نقدي</option>
                 {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
           {setup.vatPercent > 0 && (

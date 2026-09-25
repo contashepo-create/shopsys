@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الأسطول والسائقون (المرحلة 6 — نمط logistics-web):
  * سجل المركبات مع سائق افتراضي، والسائقون من قسم الموظفين
@@ -95,9 +96,9 @@ export function FleetPage() {
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-2">
           <Field label="من تاريخ"><input type="date" value={reportFrom} onChange={(e) => setReportFrom(e.target.value)} className={inputCls} /></Field>
           <Field label="إلى تاريخ"><input type="date" value={reportTo} onChange={(e) => setReportTo(e.target.value)} className={inputCls} /></Field>
-          <Field label="السيارة"><select value={reportVehicleId} onChange={(e) => setReportVehicleId(e.target.value)} className={inputCls}><option value="">كل السيارات</option>{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber}</option>)}</select></Field>
-          <Field label="نوع الحركة"><select value={reportKind} onChange={(e) => setReportKind(e.target.value as VehicleReportKind)} className={inputCls}><option value="all">كل الحركات</option><option value="internal_revenue">نولون/تحميلات</option><option value="cost">مصروفات تشغيل</option></select></Field>
-          <Field label="نوع المصروف"><select value={reportCategory} onChange={(e) => setReportCategory(e.target.value)} className={inputCls}><option value="all">كل الأنواع</option>{reportCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select></Field>
+          <Field label="السيارة"><QuickSelect value={reportVehicleId} onChange={(e) => setReportVehicleId(e.target.value)} className={inputCls}><option value="">كل السيارات</option>{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber}</option>)}</QuickSelect></Field>
+          <Field label="نوع الحركة"><QuickSelect value={reportKind} onChange={(e) => setReportKind(e.target.value as VehicleReportKind)} className={inputCls}><option value="all">كل الحركات</option><option value="internal_revenue">نولون/تحميلات</option><option value="cost">مصروفات تشغيل</option></QuickSelect></Field>
+          <Field label="نوع المصروف"><QuickSelect value={reportCategory} onChange={(e) => setReportCategory(e.target.value)} className={inputCls}><option value="all">كل الأنواع</option>{reportCategories.map((category) => <option key={category} value={category}>{category}</option>)}</QuickSelect></Field>
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 text-[12px]">
           <div className="rounded-xl bg-emerald-500/10 p-3"><span className="text-slate-500">إجمالي الإيرادات</span><b className="block text-emerald-600 text-lg">{fmt(reportRows.reduce((sum, row) => sum + row.totalRevenueMinor, 0))}</b></div>
@@ -169,15 +170,15 @@ export function FleetPage() {
             <input value={plate} onChange={(e) => setPlate(e.target.value)} className={inputCls} dir="ltr" autoFocus placeholder="أ ب ج 1234" />
           </Field>
           <Field label="نوع المركبة">
-            <select value={vtype} onChange={(e) => setVtype(e.target.value)} className={inputCls}>
+            <QuickSelect value={vtype} onChange={(e) => setVtype(e.target.value)} className={inputCls}>
               {VEHICLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <Field label="السائق الافتراضي" hint="يُقترح تلقائياً عند تسجيل نقلة بهذه المركبة">
-            <select value={driverId} onChange={(e) => setDriverId(e.target.value)} className={inputCls}>
+            <QuickSelect value={driverId} onChange={(e) => setDriverId(e.target.value)} className={inputCls}>
               <option value="">بلا سائق افتراضي</option>
               {drivers.map((d) => <option key={d.id} value={d.id}>{d.nameAr}{d.jobTitle ? ` — ${d.jobTitle}` : ''}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <Field label="ملاحظات">
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />

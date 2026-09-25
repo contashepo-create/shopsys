@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * عروض الأسعار والمناقصات + عُهد المشاريع (طلب المالك — مرجعية pro-acc)
  * العرض مستند غير محاسبي ببنود أعمال؛ الفائز يتحول مشروعاً بضغطة.
@@ -189,10 +190,10 @@ export function QuotationsPage() {
             <Field label="عنوان الأعمال *"><input value={titleAr} onChange={(e) => setTitleAr(e.target.value)} className={inputCls} placeholder="تشطيب فيلا…" autoFocus /></Field>
             <Field label="العميل / الجهة *"><input value={clientName} onChange={(e) => setClientName(e.target.value)} className={inputCls} /></Field>
             <Field label="ربط بسجل عميل (إداري)" hint="للمتابعة فقط — لا يؤثر على رصيد العميل إطلاقاً؛ الذمة تنشأ من الفاتورة/المستخلص">
-              <select value={clientId} onChange={(e) => { setClientId(e.target.value); const c = customers.find((x) => x.id === Number(e.target.value)); if (c && !clientName.trim()) setClientName(c.nameAr) }} className={inputCls}>
+              <QuickSelect value={clientId} onChange={(e) => { setClientId(e.target.value); const c = customers.find((x) => x.id === Number(e.target.value)); if (c && !clientName.trim()) setClientName(c.nameAr) }} className={inputCls}>
                 <option value="">— بلا ربط —</option>
                 {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="ساري حتى"><input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label="احتمالية الفوز ٪" hint="أساس «القيمة المتوقعة» في ملخص المناقصات المقدمة">
@@ -222,9 +223,9 @@ export function QuotationsPage() {
                       <Field label="الوصف التفصيلي *"><input value={l.descriptionAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, descriptionAr: e.target.value } : x)))} placeholder="حفر حتى منسوب التأسيس مع نقل المخلفات…" className={inputCls} /></Field>
                       <Field label="الكمية *"><input value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" min={0} className={inputCls} dir="ltr" /></Field>
                       <Field label="الوحدة *">
-                        <select value={l.unitAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls}>
+                        <QuickSelect value={l.unitAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls}>
                           {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                        </select>
+                        </QuickSelect>
                       </Field>
                       <Field label={`سعر الوحدة (${cur.symbol}) *`}><input value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))} type="number" min={0} className={inputCls} dir="ltr" /></Field>
                       <Field label="تكلفة تقديرية/وحدة" hint=""><input value={l.estCost} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, estCost: e.target.value } : x)))} type="number" min={0} placeholder="للموازنة" className={inputCls} dir="ltr" /></Field>

@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * أوامر المطعم (جولة مراجعة نشاط المطعم — نمط Foodics):
  * شبكة طاولات وأوامر مفتوحة: افتح أمراً (صالة/تيك أواي/دليفري) ← أضف الأصناف
@@ -238,15 +239,15 @@ export function RestaurantOrdersPage() {
                 <Field label={`رسوم توصيل (${cur.symbol})`}><input value={delFee} onChange={(e) => setDelFee(e.target.value)} className={inputCls} dir="ltr" placeholder="0" /></Field>
               )}
               <Field label="طريقة التحصيل">
-                <select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}>
+                <QuickSelect value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}>
                   <option value="">💰 نقدي/بنك</option>
                   {availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}
-                </select>
+                </QuickSelect>
               </Field>
               {!terminalId && <Field label="الخزينة المستلمة">
-                <select value={payTreasury} onChange={(e) => setPayTreasury(e.target.value)} className={inputCls}>
+                <QuickSelect value={payTreasury} onChange={(e) => setPayTreasury(e.target.value)} className={inputCls}>
                   {treasuries.map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
-                </select>
+                </QuickSelect>
               </Field>}
               {terminalId && <><Field label="مرجع إيصال الماكينة (اختياري)"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" maxLength={4} className={inputCls}/></Field></>}
             </div>

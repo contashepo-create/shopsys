@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * كشوف الحساب (طلب المالك) — عميل / مورد / موظف
  * كل صف بتاريخه ومستنده والرصيد التراكمي، مع رصيد نهائي واضح وطباعة.
@@ -127,10 +128,10 @@ export function StatementsPage() {
       </div>
 
       <div className="anim-up flex items-center gap-3 flex-wrap" style={{ animationDelay: '60ms' }}>
-        <select value={partyId} onChange={(e) => setPartyId(Number(e.target.value))} className={`${inputCls} max-w-sm`}>
+        <QuickSelect value={partyId} onChange={(e) => setPartyId(Number(e.target.value))} className={`${inputCls} max-w-sm`}>
           <option value={0}>اختر {kind === 'customer' ? 'العميل' : kind === 'supplier' ? 'المورد' : 'الموظف'}…</option>
           {parties.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-        </select>
+        </QuickSelect>
         {partyId > 0 && rows.length > 0 && (
           <><Btn variant="ghost" onClick={print}><Printer size={15} /> طباعة الكشف</Btn><Btn variant="ghost" onClick={exportStatement}><FileSpreadsheet size={15} /> Excel</Btn></>
         )}

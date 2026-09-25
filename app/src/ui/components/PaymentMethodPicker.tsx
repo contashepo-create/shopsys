@@ -1,3 +1,4 @@
+import { QuickSelect } from './KeyboardPickers.tsx'
 import { useEffect, useMemo } from 'react'
 import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 import { allowedTreasuryCodes, type TreasuryOperation } from '../../core/treasuryAccess.ts'
@@ -73,7 +74,7 @@ export function PaymentMethodPicker({
 
   return (
     <div className="space-y-2">
-      <select aria-label="طريقة الدفع" value={selectedValue} onChange={(event) => selectMethod(event.target.value)} className={inputCls}>
+      <QuickSelect aria-label="طريقة الدفع" value={selectedValue} onChange={(event) => selectMethod(event.target.value)} className={inputCls}>
         <option value="">اختر طريقة الدفع…</option>
         {treasuries.length > 0 && (
           <optgroup label="خزينة / بنك / محفظة">
@@ -92,7 +93,7 @@ export function PaymentMethodPicker({
             {terminals.map((terminal) => <option key={terminal.id} value={`terminal:${terminal.id}`}>💳 {terminal.nameAr}</option>)}
           </optgroup>
         )}
-      </select>
+      </QuickSelect>
       {value.terminalPayment.terminalId && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <input aria-label="مرجع ماكينة الدفع" className={inputCls} value={value.terminalPayment.providerReference} onChange={(event) => onChange({ ...value, terminalPayment: { ...value.terminalPayment, providerReference: event.target.value } })} placeholder="مرجع الماكينة (اختياري)" />

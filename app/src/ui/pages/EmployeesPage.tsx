@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الموظفون والرواتب (المرحلة 5) — تبويبان:
  * 1) سجل الموظفين: نفس البيانات الموسعة الاختيارية للأطراف + بيانات التوظيف
@@ -398,9 +399,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           <Modal open={repayOpen} onClose={() => setRepayOpen(false)} title="💵 سداد نقدي لسلفة (خارج المسير)">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <select value={repayEmployeeId} onChange={(e) => setRepayEmployeeId(Number(e.target.value))} className={inputCls}>
+                <QuickSelect value={repayEmployeeId} onChange={(e) => setRepayEmployeeId(Number(e.target.value))} className={inputCls}>
                   {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                </QuickSelect>
               </Field>
               {repayEmployeeId > 0 && (
                 <div className="text-[12px] rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300 p-3 font-bold">
@@ -420,9 +421,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           <Modal open={advOpen} onClose={() => setAdvOpen(false)} title="💸 صرف سلفة لموظف">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <select value={advEmployeeId} onChange={(e) => setAdvEmployeeId(Number(e.target.value))} className={inputCls}>
+                <QuickSelect value={advEmployeeId} onChange={(e) => setAdvEmployeeId(Number(e.target.value))} className={inputCls}>
                   {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                </QuickSelect>
               </Field>
               <Field label={`المبلغ (${cur.symbol}) *`}>
                 <input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus />
@@ -513,9 +514,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           <Modal open={dedOpen} onClose={() => setDedOpen(false)} title="⚖️ تسجيل خصم / جزاء على موظف">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <select value={dedEmployeeId} onChange={(e) => setDedEmployeeId(Number(e.target.value))} className={inputCls}>
+                <QuickSelect value={dedEmployeeId} onChange={(e) => setDedEmployeeId(Number(e.target.value))} className={inputCls}>
                   {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                </QuickSelect>
               </Field>
               <Field label={`مبلغ الخصم (${cur.symbol}) *`}>
                 <input value={dedAmount} onChange={(e) => setDedAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
@@ -621,28 +622,28 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           <Modal open={comOpen} onClose={() => setComOpen(false)} title="🤝 استحقاق عمولة موظف عن عملية">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <select value={comEmployeeId} onChange={(e) => setComEmployeeId(Number(e.target.value))} className={inputCls}>
+                <QuickSelect value={comEmployeeId} onChange={(e) => setComEmployeeId(Number(e.target.value))} className={inputCls}>
                   {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                </QuickSelect>
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="نوع العملية *">
-                  <select value={comSource} onChange={(e) => { setComSource(e.target.value as StaffCommissionSource); setComSourceId('') }} className={inputCls}>
+                  <QuickSelect value={comSource} onChange={(e) => { setComSource(e.target.value as StaffCommissionSource); setComSourceId('') }} className={inputCls}>
                     {Object.entries(STAFF_COMMISSION_SOURCE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
+                  </QuickSelect>
                 </Field>
                 <Field label="المستند" hint="اختر المستند من قائمته — لا كتابة أرقام يدوية">
                   {comSource === 'manual' ? (
                     <input value="" className={inputCls} placeholder="— يدوية بلا مستند —" disabled />
                   ) : (
-                    <select value={comSourceId} onChange={(e) => setComSourceId(e.target.value)} className={inputCls}>
+                    <QuickSelect value={comSourceId} onChange={(e) => setComSourceId(e.target.value)} className={inputCls}>
                       <option value="">— اختر —</option>
                       {comSource === 'sale' && sales.slice(-80).reverse().map((x) => <option key={x.id} value={x.id}>{x.invoiceNumber} — {new Date(x.date).toLocaleDateString('ar-EG')}</option>)}
                       {comSource === 'car_sale' && cars.map((x) => <option key={x.id} value={x.id}>{x.make} {x.model} {x.year} — {x.plateOrVin}</option>)}
                       {comSource === 'project' && projects.map((x) => <option key={x.id} value={x.id}>{x.code} — {x.nameAr}</option>)}
                       {comSource === 'lease' && leases.map((x) => <option key={x.id} value={x.id}>{x.contractNumber} — {x.tenantName}</option>)}
                       {comSource === 'property_sale' && properties.map((x) => <option key={x.id} value={x.id}>{x.nameAr}</option>)}
-                    </select>
+                    </QuickSelect>
                   )}
                 </Field>
               </div>
@@ -806,9 +807,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className={inputCls} placeholder="كاشير، بائع، محاسب…" />
             </Field>
             <Field label="الفئة / الدور التشغيلي *" hint="يحدد صلاحيات حساب الدخول تلقائياً عند إنشائه من الإعدادات — لا ينشئ حساباً أو رقماً سرياً هنا">
-              <select value={roleId} onChange={(e) => setRoleId(e.target.value)} className={inputCls}>
+              <QuickSelect value={roleId} onChange={(e) => setRoleId(e.target.value)} className={inputCls}>
                 {roleOptions.map((role) => <option key={role.id} value={role.id}>{role.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="تاريخ التعيين">
               <input type="date" value={hireDate} onChange={(e) => setHireDate(e.target.value)} className={inputCls} dir="ltr" />

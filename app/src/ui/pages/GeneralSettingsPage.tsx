@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الإعدادات العامة — البلد والعملة والضريبة وطريقة الاحتساب
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
@@ -123,7 +124,7 @@ export function GeneralSettingsPage() {
           <Percent size={17} className="text-emerald-500" /> الضريبة ({country?.taxName ?? 'ضريبة القيمة المضافة'})
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="حالة تسجيل المنشأة"><select className={inputCls} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as BusinessTaxStatus)}><option value="registered">مسجلة ضريبياً</option><option value="zero_rated">مسجلة ضريبياً بنسبة صفر</option><option value="exempt">منشأة معفاة</option></select></Field>
+          <Field label="حالة تسجيل المنشأة"><QuickSelect className={inputCls} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as BusinessTaxStatus)}><option value="registered">مسجلة ضريبياً</option><option value="zero_rated">مسجلة ضريبياً بنسبة صفر</option><option value="exempt">منشأة معفاة</option></QuickSelect></Field>
           <Field label="النسبة ٪" hint="قابلة للتعديل دائماً — الضرائب تتغير بقرارات حكومية">
             <input value={taxStatus === 'registered' ? vat : '0'} onChange={(e) => setVat(e.target.value)} disabled={taxStatus !== 'registered'} type="number" min={0} max={50} className={inputCls} />
           </Field>
@@ -322,7 +323,7 @@ export function GeneralSettingsPage() {
           لا يوجد اختيار مبهم: اختر مخزناً محدداً، وفاتورة الشراء يمكنها التحديد لكل سطر عند الحاجة.
         </p>
         <div className="max-w-sm">
-          <select
+          <QuickSelect
             value={setup.defaultWarehouseId ?? warehouses.find((w) => w.isMain)?.id ?? ''}
             onChange={(e) => {
               const v = e.target.value === '' ? null : Number(e.target.value)
@@ -333,7 +334,7 @@ export function GeneralSettingsPage() {
           >
             {warehouses.length === 0 && <option value="">لا توجد مخازن</option>}
             {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
-          </select>
+          </QuickSelect>
         </div>
       </section>
 

@@ -26,6 +26,25 @@ const party = (nameAr: string) => ({ nameAr, phone: '', notes: '', taxNumber: ''
 
 const ui = (el: React.ReactElement) => render(<MemoryRouter>{el}<ToastHost /></MemoryRouter>)
 
+function openQuickByOptionText(text: string, occurrence = 0) {
+  let found = 0
+  for (const root of [...document.querySelectorAll('[data-quick-select]')]) {
+    const input = root.querySelector('input') as HTMLInputElement | null
+    if (!input) continue
+    fireEvent.focus(input)
+    if ([...root.querySelectorAll('[data-quick-option]')].some((option) => option.textContent?.includes(text))) {
+      if (found++ === occurrence) return root
+    }
+  }
+  throw new Error(`لم يُعثر على منتقٍ يحوي الخيار «${text}»`)
+}
+
+function chooseQuick(root: Element, value: string) {
+  const option = [...root.querySelectorAll('[data-quick-option]')].find((node) => node.getAttribute('data-value') === value)
+  expect(option, `لم يُعثر على خيار ${value}`).toBeTruthy()
+  fireEvent.click(option!)
+}
+
 beforeAll(() => {
   localStorage.clear()
   // إعداد مكتمل لنشاط المقاولات (مصر)
@@ -54,48 +73,44 @@ describe('تكامل الشاشات: المنسدلات تجلب أسماء وم
   it('شاشة المشاريع: منسدلة ربط العميل تعرض أسماء العملاء المسجلين فعلاً', async () => {
     const r = ui(<ProjectsPage />)
     fireEvent.click(r.getAllByText('مشروع جديد')[0])
-    // المنسدلة يجب أن تحتوي أسماء العملاء الحقيقية من القاعدة
-    const clientSelect = (await screen.findByText('— بلا ربط —')).closest('select')!
-    const options = within(clientSelect).getAllByRole('option').map((o) => o.textContent)
+    // المنتقي المنبثق يجب أن يحتوي أسماء العملاء الحقيقية من القاعدة
+    const clientSelect = openQuickByOptionText('شركة الدلتا للتطوير')
+    const options = [...clientSelect.querySelectorAll('[data-quick-option]')].map((o) => o.textContent)
     expect(options).toContain('شركة الدلتا للتطوير')
     expect(options).toContain('مؤسسة المنصورة الحديثة')
-    // اختيار عميل يملأ الاسم تلقائياً بربط إداري بالمعرف الصحيح
+    // القيمة الأجنبية الحقيقية محفوظة على زر الخيار
     const dalta = S().customers.find((c) => c.nameAr === 'شركة الدلتا للتطوير')!
-    const optionValues = within(clientSelect).getAllByRole('option').map((o) => (o as HTMLOptionElement).value)
-    expect(optionValues).toContain(String(dalta.id)) // المفتاح الأجنبي الحقيقي
+    expect([...clientSelect.querySelectorAll('[data-quick-option]')].some((o) => o.getAttribute('data-value') === String(dalta.id))).toBe(true)
     cleanup()
   })
 
   it('إذن صرف المواد: منسدلات الموظفين والأصناف برصيد حي، والإذن يُنشأ فعلاً وينقص المخزون', async () => {
     const r = ui(<MaterialIssuesPage />)
     fireEvent.click(r.getByText('إذن صرف'))
-    // منسدلة المشروع بالاسم الحقيقي
-    const projectSelect = (await screen.findAllByText('— اختر —'))[0].closest('select')!
-    expect(within(projectSelect).getAllByRole('option').some((o) => o.textContent!.includes('برج المنصورة'))).toBe(true)
-    // منسدلتا الصارف والمستلم من سجل الموظفين بالمسمى الوظيفي
-    const selects = document.querySelectorAll('select')
-    const issuerSelect = [...selects].find((s) => within(s).queryAllByRole('option').some((o) => o.textContent!.includes('حمدي أمين المخزن (أمين مخزن)')))
-    expect(issuerSelect, 'منسدلة الصارف تعرض الموظفين الحقيقيين بمسمياتهم').toBeTruthy()
-    // منسدلة الأصناف تعرض الرصيد الحي
-    const itemSelect = [...selects].find((s) => within(s).queryAllByRole('option').some((o) => o.textContent!.includes('أسمنت بورتلاندي (رصيد 80 شيكارة)')))
-    expect(itemSelect, 'منسدلة الأصناف تعرض الرصيد الفعلي').toBeTruthy()
-
+    // المنتقيات تعرض المشروع والأطراف والأصناف من السجل الحي
+    const projectSelect = openQuickByOptionText('برج المنصورة')
+    expect([...projectSelect.querySelectorAll('[data-quick-option]')].some((o) => o.textContent!.includes('برج المنصورة'))).toBe(true)
     // تنفيذ سير العمل كاملاً: اختيار وربط وحفظ ثم التحقق من أثر حقيقي في القاعدة
     const project = S().projects.find((p) => p.nameAr === 'برج المنصورة')!
     const issuer = S().employees.find((e) => e.nameAr.includes('حمدي'))!
     const receiver = S().employees.find((e) => e.nameAr.includes('وليد'))!
     const cement = S().items.find((i) => i.nameAr === 'أسمنت بورتلاندي')!
-    fireEvent.change(projectSelect, { target: { value: String(project.id) } })
-    fireEvent.change(issuerSelect!, { target: { value: String(issuer.id) } })
-    // منسدلة المستلم هي التي تحوي وليد وليست نفسها منسدلة الصارف
-    const receiverSelect = [...document.querySelectorAll('select')].filter((s) => within(s).queryAllByRole('option').some((o) => o.textContent!.includes('وليد'))).at(-1)!
-    fireEvent.change(receiverSelect, { target: { value: String(receiver.id) } })
-    fireEvent.change(itemSelect!, { target: { value: String(cement.id) } })
+    chooseQuick(projectSelect, String(project.id))
+    // بعد كل اختيار نعيد فتح المنتقي لأن React أعاد بناء الحقول.
+    const issuerSelect = openQuickByOptionText('حمدي أمين المخزن (أمين مخزن)')
+    expect(issuerSelect, 'منتقي الصارف يعرض الموظفين الحقيقيين بمسمياتهم').toBeTruthy()
+    chooseQuick(issuerSelect, String(issuer.id))
+    // منتقي المستلم هو الذي يحوي وليد وليس منتقي الصارف
+    const receiverSelect = openQuickByOptionText('وليد', 1)
+    chooseQuick(receiverSelect, String(receiver.id))
+    const itemSelect = openQuickByOptionText('أسمنت بورتلاندي (رصيد 80 شيكارة)')
+    expect(itemSelect, 'منتقي الأصناف يعرض الرصيد الفعلي').toBeTruthy()
+    chooseQuick(itemSelect, String(cement.id))
     const qtyInput = document.querySelector('input[type="number"]')!
     fireEvent.change(qtyInput, { target: { value: '2' } })
     // اختيار وحدة الطن (تحويل متعدد الوحدات)
-    const unitSelect = [...document.querySelectorAll('select')].find((s) => within(s).queryAllByRole('option').some((o) => o.textContent === 'طن'))!
-    fireEvent.change(unitSelect, { target: { value: 'طن' } })
+    const unitSelect = openQuickByOptionText('طن')
+    chooseQuick(unitSelect, 'طن')
     fireEvent.click(r.getByText('📦 صرف المواد'))
 
     const req = S().materialRequisitions.at(-1)!
@@ -114,8 +129,8 @@ describe('تكامل الشاشات: المنسدلات تجلب أسماء وم
 
     const r = ui(<ClientCollectionsPage />)
     const dalta = S().customers.find((c) => c.nameAr === 'شركة الدلتا للتطوير')!
-    const clientSelect = (await screen.findAllByText('— اختر —'))[0].closest('select')!
-    fireEvent.change(clientSelect, { target: { value: String(dalta.id) } })
+    const clientSelect = openQuickByOptionText('شركة الدلتا للتطوير')
+    chooseQuick(clientSelect, String(dalta.id))
     // المستند المفتوح يظهر برقمه الحقيقي
     expect(await screen.findByText(`مستخلص ${extract.extractNumber}`)).toBeTruthy()
     // تحصيل فعلي
@@ -132,8 +147,8 @@ describe('تكامل الشاشات: المنسدلات تجلب أسماء وم
   it('عقد الباطن: منسدلة الموردين تعرض المسجلين فعلاً', async () => {
     const r = ui(<SubcontractorsPage />)
     fireEvent.click(r.getByText('عقد باطن جديد'))
-    const supplierSelect = (await screen.findByText('— بلا ربط —')).closest('select')!
-    const opts = within(supplierSelect).getAllByRole('option').map((o) => o.textContent)
+    const supplierSelect = openQuickByOptionText('شركة أسمنت الدلتا')
+    const opts = [...supplierSelect.querySelectorAll('[data-quick-option]')].map((o) => o.textContent)
     expect(opts).toContain('شركة أسمنت الدلتا')
     cleanup()
   })

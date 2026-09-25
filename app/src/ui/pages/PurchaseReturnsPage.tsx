@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * مرتجعات الشراء (المرحلة 3) — عن فاتورة شراء أصلية:
  * تُقيَّم بالتكلفة النهائية للوحدة (بضاعة + نصيب مصاريف)، ولا تتجاوز
@@ -245,7 +246,7 @@ export function PurchaseReturnsPage() {
                           className={`${inputCls} text-center py-1.5 disabled:opacity-40`}
                         />
                         {warehouses.length > 0 && (l.warehouseId ?? purchase.warehouseId) == null && (
-                          <select
+                          <QuickSelect
                             value={selectedWarehouseId ?? ''}
                             onChange={(e) => setReturnWarehouses((current) => ({ ...current, [lineIndex]: Number(e.target.value) }))}
                             disabled={rem <= 0}
@@ -253,7 +254,7 @@ export function PurchaseReturnsPage() {
                             className="w-full rounded-lg border border-amber-200 dark:border-amber-800 bg-transparent px-1 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300"
                           >
                             {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}{warehouse.id === (l.warehouseId ?? purchase.warehouseId) ? ' (مخزن الاستلام)' : ''}</option>)}
-                          </select>
+                          </QuickSelect>
                         )}
                       </td>
                     </tr>

@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الصاغة — سعر الجرام اليومي + المصنعية + الكسر
  * السعر = الوزن × جرام العيار + المصنعية، ويعاد تسعير المحل كله بضغطة.
@@ -279,16 +280,16 @@ export function JewelryPage() {
       <Modal open={profileOpen} onClose={() => setProfileOpen(false)} title="الوصف الذهبي للصنف">
         <div className="space-y-3">
           <Field label="الصنف *">
-            <select value={profItem} onChange={(e) => setProfItem(e.target.value)} className={inputCls}>
+            <QuickSelect value={profItem} onChange={(e) => setProfItem(e.target.value)} className={inputCls}>
               <option value="">اختر…</option>
               {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <div className="grid grid-cols-3 gap-3">
             <Field label="العيار">
-              <select value={profKarat} onChange={(e) => setProfKarat(e.target.value as Karat)} className={inputCls}>
+              <QuickSelect value={profKarat} onChange={(e) => setProfKarat(e.target.value as Karat)} className={inputCls}>
                 {ALL_KARATS.map((k) => <option key={k} value={k}>{KARAT_LABELS[k]}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="الوزن (جم) *"><input value={profWeight} onChange={(e) => setProfWeight(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label={`المصنعية (${cur.symbol})`}><input value={profWork} onChange={(e) => setProfWork(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0" /></Field>
@@ -307,9 +308,9 @@ export function JewelryPage() {
         <div className="space-y-3">
           <div className="grid grid-cols-3 gap-3">
             <Field label="العيار">
-              <select value={scKarat} onChange={(e) => setScKarat(e.target.value as Karat)} className={inputCls}>
+              <QuickSelect value={scKarat} onChange={(e) => setScKarat(e.target.value as Karat)} className={inputCls}>
                 {ALL_KARATS.map((k) => <option key={k} value={k}>{KARAT_LABELS[k]}{scrapMode === 'sell' ? ` (${scrapByKarat.get(k)!.grams} جم)` : ''}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="الوزن (جم) *"><input value={scWeight} onChange={(e) => setScWeight(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label={`سعر الجرام (${cur.symbol}) *`}><input value={scPrice} onChange={(e) => setScPrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
@@ -334,22 +335,22 @@ export function JewelryPage() {
             <b> فاتورة بيع كاملة + لوط كسر FIFO</b> بمستند GTI واحد، والفرق النقدي فقط يتحرك بالخزينة.
           </p>
           <Field label="المشغول الجديد">
-            <select value={trItem} onChange={(e) => setTrItem(e.target.value)} className={inputCls}>
+            <QuickSelect value={trItem} onChange={(e) => setTrItem(e.target.value)} className={inputCls}>
               <option value="">— اختر —</option>
               {profiled.map(({ item }) => <option key={item!.id} value={item!.id}>{item!.nameAr} — {fmt(item!.priceMinor)}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <Field label="العميل (اختياري — لتوثيق اسم بائع الكسر)">
-            <select value={trCustomer} onChange={(e) => setTrCustomer(e.target.value)} className={inputCls}>
+            <QuickSelect value={trCustomer} onChange={(e) => setTrCustomer(e.target.value)} className={inputCls}>
               <option value="">عميل نقدي</option>
               {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <div className="grid grid-cols-3 gap-2">
             <Field label="عيار الكسر">
-              <select value={trKarat} onChange={(e) => setTrKarat(e.target.value as Karat)} className={inputCls}>
+              <QuickSelect value={trKarat} onChange={(e) => setTrKarat(e.target.value as Karat)} className={inputCls}>
                 {ALL_KARATS.map((k) => <option key={k} value={k}>{KARAT_LABELS[k]}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="وزن الكسر (جم)"><input value={trWeight} onChange={(e) => setTrWeight(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label={`سعر جرام الكسر (${cur.symbol})`}><input value={trGramPrice} onChange={(e) => setTrGramPrice(e.target.value)} className={inputCls} dir="ltr" /></Field>

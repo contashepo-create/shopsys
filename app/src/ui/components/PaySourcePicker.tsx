@@ -1,3 +1,4 @@
+import { QuickSelect } from './KeyboardPickers.tsx'
 /**
  * منتقي مصدر الدفع الموحّد (طلب المالك):
  * خزينة/بنك — أو ملف عهدة موظف مفتوح (يُخصم من عهدته ويظهر في ملفه).
@@ -47,7 +48,7 @@ export function PaySourcePicker({ value, onChange }: { value: PaySourceValue; on
 
   return (
     <div className="space-y-2">
-      <select
+      <QuickSelect
         aria-label="مصدر الدفع"
         value={value.kind === 'treasury' ? `treasury:${value.treasury}` : `custody:${value.custodyFileId ?? ''}`}
         onChange={(e) => {
@@ -75,7 +76,7 @@ export function PaySourcePicker({ value, onChange }: { value: PaySourceValue; on
             })}
           </optgroup>
         )}
-      </select>
+      </QuickSelect>
     </div>
   )
 }

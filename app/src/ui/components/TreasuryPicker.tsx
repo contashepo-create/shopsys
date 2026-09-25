@@ -1,3 +1,4 @@
+import { QuickSelect } from './KeyboardPickers.tsx'
 /**
  * منتقي الخزينة/البنك الموحّد (طلب المالك) —
  * يظهر في كل عملية نقدية: بيع، شراء، سندات، أقساط، رواتب، مصروفات…
@@ -33,7 +34,7 @@ export function TreasuryPicker({
   // توحيد تجربة الدفع: حتى القائمة القصيرة تبقى قائمة منسدلة، لتظهر
   // النقدي والبنك والمحفظة والفروع/الحسابات التابعة في مكان واحد بلا أزرار متجاورة.
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={`${inputCls} ${compact ? 'text-sm' : ''}`}>
+    <QuickSelect value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={`${inputCls} ${compact ? 'text-sm' : ''}`}>
       {treasuries.filter((t) => !t.parentCode).map((parent) => {
         const children = treasuries.filter((t) => t.parentCode === parent.code)
         return children.length ? (
@@ -44,6 +45,6 @@ export function TreasuryPicker({
         ) : <option key={parent.code} value={parent.code}>{treasuryLabel(parent)}</option>
       })}
       {treasuries.filter((t) => t.parentCode && !treasuries.some((p) => p.code === t.parentCode)).map((t) => <option key={t.code} value={t.code}>{treasuryLabel(t)}</option>)}
-    </select>
+    </QuickSelect>
   )
 }

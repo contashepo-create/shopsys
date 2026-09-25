@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات معمل التحاليل (القرار 26):
  * 1) LabOrdersPage — تسجيل طلب، دورة العينة (سحب ← نتيجة ← اعتماد)، طباعة تقرير A4
@@ -197,16 +198,16 @@ export function LabOrdersPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Field label="المريض *">
-              <select value={patientId} onChange={(e) => setPatientId(e.target.value)} className={inputCls}>
+              <QuickSelect value={patientId} onChange={(e) => setPatientId(e.target.value)} className={inputCls}>
                 <option value="">— اختر —</option>
                 {labPatients.map((p) => <option key={p.id} value={p.id}>{p.nameAr} {p.phone && `(${p.phone})`}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="الطبيب المُحيل (اختياري)" hint="تُستحق عمولته تلقائياً بقيد منفصل">
-              <select value={referrerId} onChange={(e) => setReferrerId(e.target.value)} className={inputCls}>
+              <QuickSelect value={referrerId} onChange={(e) => setReferrerId(e.target.value)} className={inputCls}>
                 <option value="">بدون إحالة</option>
                 {labReferrers.map((r) => <option key={r.id} value={r.id}>د. {r.nameAr} — {r.commissionPercent}٪</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
 
@@ -230,10 +231,10 @@ export function LabOrdersPage() {
 
           {insuranceProviders.some((pv) => pv.isActive) && (
             <Field label="تغطية تأمين / جهة تعاقد" hint="الجهة تتحمل نسبتها كمطالبة (1110) والمريض يدفع الباقي نقداً">
-              <select value={insuranceId} onChange={(e) => setInsuranceId(e.target.value)} className={inputCls}>
+              <QuickSelect value={insuranceId} onChange={(e) => setInsuranceId(e.target.value)} className={inputCls}>
                 <option value="">بلا تغطية (المريض يدفع كاملاً)</option>
                 {insuranceProviders.filter((pv) => pv.isActive).map((pv) => <option key={pv.id} value={pv.id}>{pv.nameAr} — تتحمل {pv.coveragePercent}٪</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           )}
           <div className="grid grid-cols-3 gap-3">
@@ -503,9 +504,9 @@ export function LabTestsPage() {
             <div className="space-y-2">
               {ranges.map((r, i) => (
                 <div key={i} className="grid grid-cols-8 gap-2 items-center">
-                  <select value={r.gender} onChange={(e) => setRange(i, { gender: e.target.value as RefRange['gender'] })} className={inputCls}>
+                  <QuickSelect value={r.gender} onChange={(e) => setRange(i, { gender: e.target.value as RefRange['gender'] })} className={inputCls}>
                     <option value="any">الجميع</option><option value="male">ذكور</option><option value="female">إناث</option>
-                  </select>
+                  </QuickSelect>
                   <input value={r.ageMinYears} onChange={(e) => setRange(i, { ageMinYears: Number(e.target.value) || 0 })} inputMode="numeric" className={inputCls} placeholder="من سن" />
                   <input value={r.ageMaxYears} onChange={(e) => setRange(i, { ageMaxYears: Number(e.target.value) || 999 })} inputMode="numeric" className={inputCls} placeholder="إلى سن" />
                   <input value={r.low ?? ''} onChange={(e) => setRange(i, { low: e.target.value === '' ? null : Number(e.target.value) })} inputMode="decimal" className={inputCls} placeholder="الأدنى" dir="ltr" />
@@ -581,7 +582,7 @@ export function LabPatientsPage() {
                   <td className="px-3 py-2.5 font-bold">{orderCount(p)}</td>
                   <td className="px-3 py-2.5">
                     {/* ربط بعميل مالي (إصلاح الترابط): طلباته الآجلة تدخل كشف حساب العميل */}
-                    <select
+                    <QuickSelect
                       value={p.linkedCustomerId ?? 0}
                       onChange={(e) => { updateLabPatient(p.id, { linkedCustomerId: Number(e.target.value) || null }); }}
                       className="text-[11px] rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-1 max-w-[130px]"
@@ -589,7 +590,7 @@ export function LabPatientsPage() {
                     >
                       <option value={0}>بلا ربط</option>
                       {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                    </select>
+                    </QuickSelect>
                   </td>
                   <td className="px-3 py-2.5 text-slate-500">{p.notes || '—'}</td>
                 </tr>

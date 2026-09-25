@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * مرتجعات المبيعات — معالج مراحل بالنمط العالمي (Shopify POS / Lightspeed / Square):
  * ① اختر الفاتورة الأصلية ← ② حدد البنود سطراً بسطر (كمية + حالة سليم/تالف + سبب موحد)
@@ -414,7 +415,7 @@ export function SaleReturnsPage() {
                               className={`flex-1 px-1.5 py-1.5 rounded-lg text-[10.5px] font-bold border transition-all disabled:opacity-30 ${w?.condition === 'damaged' ? 'border-rose-500/50 bg-rose-500/10 text-rose-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
                             >🗑️ تالف</button>
                           </div>
-                          <select
+                          <QuickSelect
                             value={w?.warehouseId ?? l.warehouseId ?? sale.warehouseId ?? ''}
                             onChange={(e) => setWiz((prev) => ({
                               ...prev,
@@ -434,7 +435,7 @@ export function SaleReturnsPage() {
                                 🏬 {warehouse.nameAr}{warehouse.id === (l.warehouseId ?? sale.warehouseId) ? ' (الأصلي)' : ''}
                               </option>
                             ))}
-                          </select>
+                          </QuickSelect>
                         </td>
                       </tr>
                     )
@@ -448,7 +449,7 @@ export function SaleReturnsPage() {
               )}
               {/* سبب الإرجاع الموحد + نص حر */}
               <div className="grid grid-cols-2 gap-2">
-                <select
+                <QuickSelect
                   value={reasonCode}
                   onChange={(e) => {
                     setReasonCode(e.target.value)
@@ -459,7 +460,7 @@ export function SaleReturnsPage() {
                   className={inputCls}
                 >
                   {RETURN_REASONS.map((r) => <option key={r.id} value={r.id}>{r.nameAr}</option>)}
-                </select>
+                </QuickSelect>
                 <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="تفاصيل إضافية (اختياري)…" className={inputCls} />
               </div>
             </div>

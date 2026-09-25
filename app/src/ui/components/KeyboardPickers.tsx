@@ -1,6 +1,75 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { Search } from 'lucide-react'
+import { Children, isValidElement, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { Search, ChevronDown } from 'lucide-react'
 import { inputCls } from './ui.tsx'
+
+type QuickChoice = { value: string; content: ReactNode; label: string; searchText: string }
+
+type QuickSelectProps = {
+  value?: string | number | null
+  onChange?: (event: { target: { value: string } }) => void
+  children?: ReactNode
+  className?: string
+  disabled?: boolean
+  title?: string
+  'aria-label'?: string
+  [attribute: string]: unknown
+}
+
+function flattenChoices(children: ReactNode): QuickChoice[] {
+  const choices: QuickChoice[] = []
+  Children.forEach(children, (child) => {
+    if (!isValidElement(child)) return
+    if (child.type === 'option') {
+      const props = child.props as { value?: string | number; children?: ReactNode }
+      const content = props.children ?? ''
+      const label = String(content).replace(/<[^>]+>/g, '')
+      choices.push({ value: String(props.value ?? ''), content, label, searchText: `${label} ${String(props.value ?? '')}`.toLowerCase() })
+      return
+    }
+    choices.push(...flattenChoices((child.props as { children?: ReactNode }).children))
+  })
+  return choices
+}
+
+/** بديل موحد للقائمة الأصلية: حقل كتابة وبحث واختيار Enter بلا قائمة HTML أصلية. */
+export function QuickSelect({ value, onChange, children, className, disabled = false, title, 'aria-label': ariaLabel }: QuickSelectProps) {
+  const choices = useMemo(() => flattenChoices(children), [children])
+  const selectedValue = String(value ?? '')
+  const selected = choices.find((choice) => choice.value === selectedValue) ?? choices[0]
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const [index, setIndex] = useState(0)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const matches = useMemo(() => {
+    const normalized = query.trim().toLowerCase()
+    return normalized ? choices.filter((choice) => choice.searchText.includes(normalized) || choice.value.toLowerCase().includes(normalized)) : choices
+  }, [choices, query])
+  useEffect(() => {
+    const close = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false) }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [])
+  const choose = (choice: QuickChoice | undefined) => {
+    if (!choice) return
+    onChange?.({ target: { value: choice.value } })
+    setQuery('')
+    setOpen(false)
+    setIndex(0)
+  }
+  return <div ref={rootRef} className="relative" title={title} data-enter-native="true" data-quick-select="true">
+    <div className="relative">
+      <input ref={inputRef} disabled={disabled} aria-label={ariaLabel} className={`${className ?? inputCls} pl-8`} value={open ? query : (selected?.label ?? '')} placeholder={selected ? undefined : 'اكتب للبحث ثم Enter'} onFocus={() => { setQuery(''); setOpen(true) }} onChange={(event) => { setQuery(event.target.value); setIndex(0); setOpen(true) }} onKeyDown={(event) => {
+        if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((current) => Math.min(Math.max(0, matches.length - 1), current + 1)) }
+        else if (event.key === 'ArrowUp') { event.preventDefault(); setIndex((current) => Math.max(0, current - 1)) }
+        else if (event.key === 'Enter') { event.preventDefault(); choose(matches[index] ?? matches[0]) }
+        else if (event.key === 'Escape') { event.preventDefault(); setOpen(false) }
+      }} />
+      <ChevronDown size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+    </div>
+    {open && <div className="absolute z-50 mt-1 w-full max-h-64 overflow-auto rounded-xl border bg-white dark:bg-card-dark shadow-2xl p-1">{matches.length ? matches.map((choice, row) => <button type="button" key={`${choice.value}:${row}`} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(choice)} className={`w-full p-2 text-right rounded-lg ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : 'hover:bg-slate-500/10'}`} data-quick-option="true" data-value={choice.value}>{choice.content}</button>) : <div className="p-3 text-center text-xs text-slate-400">لا توجد خيارات مطابقة</div>}</div>}
+  </div>
+}
 
 export type QuickItem = { id: number; nameAr: string; sku?: string; barcodes?: string[]; stockQty?: number; priceMinor?: number; costMinor?: number }
 
