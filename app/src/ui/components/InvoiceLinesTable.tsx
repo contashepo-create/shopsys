@@ -60,6 +60,7 @@ type Props = {
   onPrices?: (id: number) => void
   amountLabel?: (item: InvoiceLineItem) => string
   placeholder: string
+  showPicker?: boolean
 }
 
 const numberStyle = (value: number | string) => ({
@@ -83,7 +84,7 @@ function decimalDraft(value: string): string {
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
   canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys, belowCostNotice,
-  onPick, onPatch, onRemove, onEdit, onMovement, onPrices, amountLabel, placeholder,
+  onPick, onPatch, onRemove, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
@@ -123,7 +124,7 @@ export function InvoiceLinesTable({
         </div>
         <div className="flex w-full items-center gap-2 sm:w-auto">
           <span className="shrink-0 rounded-full bg-brand-500/10 px-2.5 py-1 text-[10px] font-black text-brand-700 dark:text-brand-300">{lines.length} بند</span>
-          <div className="min-w-0 flex-1 sm:w-80 sm:flex-none">
+          {showPicker && <div className="min-w-0 flex-1 sm:w-80 sm:flex-none">
             <ItemQuickPicker
               items={items.filter((item) => kind === 'purchase' || item.isActive !== false)}
               onPick={onPick}
@@ -133,7 +134,7 @@ export function InvoiceLinesTable({
               amountLabel={amountLabel}
               placeholder={placeholder}
             />
-          </div>
+          </div>}
         </div>
       </div>
       <div className="overflow-x-auto">

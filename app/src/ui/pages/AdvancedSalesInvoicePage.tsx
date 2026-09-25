@@ -4,6 +4,7 @@ import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
+import { getActivity } from '../../core/activities.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeTotals, type CartLine } from '../../core/pos.ts'
 import { buildReceiptModel, type InvoiceTemplate } from '../../core/receipt.ts'
@@ -19,7 +20,7 @@ import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissi
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { effectiveDefaultTreasury } from '../../core/treasuryAccess.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
-import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
+import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 import { InvoiceLinesTable } from '../components/InvoiceLinesTable.tsx'
 import { partyCode } from '../../core/partyCodes.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
@@ -30,7 +31,7 @@ type CommissionDraft={id:string;employeeId:number;basis:InvoiceCommissionBasis;v
 const modeNames:Record<InvoiceEditorMode,string>={simple:'مبسط',standard:'بيع مباشر',profit:'احترافي — ربحية',advanced:'احترافي — متقدم'}
 export function AdvancedSalesInvoicePage(){
  const nav=useNavigate(),toast=useToast();const {setup,receipt}=useAppStore();const cur=(setup.countryCode&&getCountry(setup.countryCode)?.currency)||{code:'EGP',symbol:'ج.م',decimals:2 as const,name:''};const taxPolicy=resolveBusinessTax(setup.taxRegistrationStatus,setup.vatPercent)
- const {items,customers,warehouses,treasuries,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,getEffectivePrice,getCustomerBalance}=useDataStore();const [draftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);const [mode,setMode]=useState<InvoiceEditorMode>('simple');const [customerId,setCustomerId]=useState(0);const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [customerReference,setCustomerReference]=useState(''),[dueDate,setDueDate]=useState(''),[notes,setNotes]=useState('');const [discount,setDiscount]=useState('0'),[discountAmount,setDiscountAmount]=useState('');const [paid,setPaid]=useState('');const paidTouched=useRef(false);const [terminalPaid,setTerminalPaid]=useState('');const [employeePaid,setEmployeePaid]=useState('');const [collectionEmployeeId,setCollectionEmployeeId]=useState(0);const [treasury,setTreasury]=useState(()=>effectiveDefaultTreasury(appUsers.find(u=>u.id===currentUserId)?.treasuryAccess,'receipt','1101'));const [terminal,setTerminal]=useState<TerminalPaymentDraft>({terminalId:'',providerReference:'',cardLast4:''});const [expenses,setExpenses]=useState<InternalExpense[]>([]);const [customerCharges,setCustomerCharges]=useState<DocumentCharge[]>([]);const [allowNegative,setAllowNegative]=useState(setup.allowNegativeStock);const [chargesOpen,setChargesOpen]=useState(false);const [internalExpensesOpen,setInternalExpensesOpen]=useState(false);const [printOpen,setPrintOpen]=useState(false);const [partyEditorOpen,setPartyEditorOpen]=useState(false)
+ const {items,customers,warehouses,branches,treasuries,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,getEffectivePrice,getCustomerBalance}=useDataStore();const [draftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);const [mode,setMode]=useState<InvoiceEditorMode>('simple');const [customerId,setCustomerId]=useState(0);const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [customerReference,setCustomerReference]=useState(''),[dueDate,setDueDate]=useState(''),[notes,setNotes]=useState('');const [discount,setDiscount]=useState('0'),[discountAmount,setDiscountAmount]=useState('');const [paid,setPaid]=useState('');const paidTouched=useRef(false);const [terminalPaid,setTerminalPaid]=useState('');const [employeePaid,setEmployeePaid]=useState('');const [collectionEmployeeId,setCollectionEmployeeId]=useState(0);const [treasury,setTreasury]=useState(()=>effectiveDefaultTreasury(appUsers.find(u=>u.id===currentUserId)?.treasuryAccess,'receipt','1101'));const [terminal,setTerminal]=useState<TerminalPaymentDraft>({terminalId:'',providerReference:'',cardLast4:''});const [expenses,setExpenses]=useState<InternalExpense[]>([]);const [customerCharges,setCustomerCharges]=useState<DocumentCharge[]>([]);const [allowNegative,setAllowNegative]=useState(setup.allowNegativeStock);const [chargesOpen,setChargesOpen]=useState(false);const [internalExpensesOpen,setInternalExpensesOpen]=useState(false);const [printOpen,setPrintOpen]=useState(false);const [partyEditorOpen,setPartyEditorOpen]=useState(false)
  const currentUser=appUsers.find(u=>u.id===currentUserId)??null;const canViewCost=effectivePermissionsFor(currentUser,rolesWithOverrides(roleOverrides,customRoles,setup.activityId)).has('inv.cost.view')
  const customerPriceListId=(id:number)=>customers.find(customer=>customer.id===id)?.priceListId??null
  const selectCustomer=(id:number)=>{setCustomerId(id);const listId=customerPriceListId(id);setLines(previous=>previous.map(line=>({...line,unitPriceMinor:getEffectivePrice(line.itemId,listId)})));if(id!==0&&!paidTouched.current){setPaid('');setTerminalPaid('')}}
@@ -55,6 +56,10 @@ export function AdvancedSalesInvoicePage(){
   modeLabel={modeNames[mode]}
   currencyLabel={`${cur.code} · ${cur.symbol}`}
   dateLabel={new Intl.DateTimeFormat('ar-EG', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date())}
+  branchLabel={branches.find(branch => branch.warehouseId === warehouseId)?.nameAr ?? branches.find(branch => branch.isMain)?.nameAr ?? 'وضع الفرع الواحد'}
+  userLabel={currentUser?.nameAr ?? setup.ownerName ?? 'المالك'}
+  activityLabel={getActivity(setup.activityId)?.nameAr ?? 'نشاط عام'}
+  itemEntry={<ItemQuickPicker items={items.filter(item => item.isActive !== false)} onPick={addItem} onEdit={id => goTo(`/inventory/items?edit=${id}`)} onMovement={id => goTo(`/inventory/items?card=${id}`)} onPrices={id => goTo(`/sales/price-lists?item=${id}`)} amountLabel={item => `متاح ${item.stockQty ?? 0} · ${formatMinor(item.priceMinor ?? 0, cur, false)}`} placeholder="امسح الباركود أو اكتب اسم الصنف / الكود السريع" />}
   headerFields={
    <>
     <Field label="نمط الفاتورة"><QuickSelect className={inputCls} value={mode} onChange={e=>setMode(e.target.value as InvoiceEditorMode)}>{Object.entries(modeNames).filter(([key])=>key!=='profit'||canViewCost).map(([k,v])=><option key={k} value={k}>{v}</option>)}</QuickSelect></Field>
@@ -65,6 +70,7 @@ export function AdvancedSalesInvoicePage(){
    </>
   }
   onBack={() => unsaved.requestClose(() => nav('/sales/invoices'))}
+  onNavigate={goTo}
   onPartySearch={() => window.dispatchEvent(new Event('shopsys:open-party'))}
   onItemSearch={() => window.dispatchEvent(new Event('shopsys:open-item'))}
   onSaveDraft={saveDraft}
@@ -99,6 +105,7 @@ export function AdvancedSalesInvoicePage(){
    onPrices={id => goTo(`/sales/price-lists?item=${id}`)}
    amountLabel={item => `متاح ${item.stockQty ?? 0} · قطاعي ${formatMinor(item.priceMinor ?? 0, cur, false)}`}
    placeholder="اكتب اسم الصنف أو الكود؛ ثم اختر بالسهم + Enter أو مرتين"
+   showPicker={false}
   />
   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/45">
    <div className="flex items-center gap-2"><span className="grid h-7 w-7 place-items-center rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300">＋</span><div><b className="text-xs">المصروفات</b><p className="text-[10px] text-slate-500">أضفها من الزر المناسب دون حجز مساحة كبيرة من الفاتورة.</p></div></div>
