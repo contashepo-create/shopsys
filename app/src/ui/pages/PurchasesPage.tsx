@@ -24,7 +24,8 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
-import { ItemQuickPicker, PartyQuickPicker, QuickSelect} from '../components/KeyboardPickers.tsx'
+import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
+import { partyCode } from '../../core/partyCodes.ts'
 import { PurchaseExpenseManager } from '../components/PurchaseExpenseManager.tsx'
 
 /**
@@ -55,7 +56,7 @@ interface DraftExpense {
 const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'شحن وتفريغ', 'تحميل وتنزيل', 'عمولة مشتريات', 'رسوم بنكية', 'أخرى']
 
 export function PurchasesPage() {
-  const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, costCenters, expenseTemplates, addExpenseTemplate, treasuries, vehicles, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
+  const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, costCenters, expenseTemplates, addExpenseTemplate, treasuries, vehicles, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase, getSupplierBalance } = useDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt, einvoice } = useAppStore()
   const navigate = useNavigate()
   const [today] = useState(() => new Date().toISOString().slice(0, 10))
@@ -81,7 +82,11 @@ export function PurchasesPage() {
     itemId, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), warehouseId: defaultPurchaseWarehouseId, ...patch,
   })
   const fmt = (m: number) => formatMinor(m, cur, false)
-  const supplierLabel = (id: number) => id === 0 ? 'شراء نقدي — بدون مورد' : suppliers.find((supplier) => supplier.id === id)?.nameAr ?? `مورد #${id}`
+  const supplierLabel = (id: number) => id === 0 ? 'مورد نقدي' : suppliers.find((supplier) => supplier.id === id)?.nameAr ?? `مورد #${id}`
+  const supplierPickerInfo = (party: { id: number; active?: boolean }) => {
+    const balance = getSupplierBalance(party.id)
+    return { code: partyCode('SUP', party.id), balance: `الرصيد ${fmt(Math.abs(balance))} ${cur.symbol} ${balance > 0 ? 'مستحق له' : balance < 0 ? 'لك عنده' : ''}` }
+  }
 
   const purchaseWarehouseLabel = (p: PurchaseInvoice) => {
     if (p.warehouseId != null) return warehouses.find((w) => w.id === p.warehouseId)?.nameAr ?? '—'
@@ -535,8 +540,9 @@ export function PurchasesPage() {
                 parties={suppliers}
                 value={supplierId}
                 onChange={setSupplierId}
-                cashLabel="💵 شراء نقدي — بدون مورد"
+                cashLabel="مورد نقدي"
                 label="بحث المورد — اكتب أول حرف ثم Enter"
+                partyInfo={supplierPickerInfo}
                 onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))}
                 autoFocus
               />

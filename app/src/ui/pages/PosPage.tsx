@@ -30,7 +30,8 @@ import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
-import { PartyQuickPicker, QuickSelect} from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
+import { partyCode } from '../../core/partyCodes.ts'
 import { toMinor } from '../../core/money.ts'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
@@ -57,7 +58,7 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint } = useAppStore()
   const toast = useToast()
@@ -121,6 +122,10 @@ export function PosPage() {
     const c = id == null ? null : customers.find((x) => x.id === id)
     const listId = c?.priceListId ?? null
     setCart((prev) => prev.map((l) => ({ ...l, unitPriceMinor: getEffectivePrice(l.itemId, listId) })))
+  }
+  const customerPickerInfo = (party: { id: number; active?: boolean }) => {
+    const balance = getCustomerBalance(party.id)
+    return { code: partyCode('CUS', party.id), balance: `الرصيد ${fmt(Math.abs(balance))} ${cur.symbol} ${balance > 0 ? 'عليه' : balance < 0 ? 'له' : ''}` }
   }
   // الدفع المجزأ (طلب المالك): المبلغ النقدي يتعبأ تلقائياً بالإجمالي ويقبل التعديل —
   // أقل من الإجمالي = الباقي آجل على العميل؛ 0 = آجل بالكامل
@@ -652,8 +657,10 @@ export function PosPage() {
                   parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
                   value={customerId ?? 0}
                   onChange={pickCustomer}
-                  cashLabel="تجزئة (بلا عميل)"
+                  cashLabel="عميل نقدي"
                   label="بحث العميل وقائمة الأسعار"
+                  partyInfo={customerPickerInfo}
+                  onConfirm={() => searchRef.current?.focus()}
                 />
               </div>
             )}
@@ -999,6 +1006,8 @@ export function PosPage() {
                 onChange={pickCustomer}
                 cashLabel="اختر العميل (إلزامي للجزء الآجل)…"
                 label="بحث العميل للجزء الآجل"
+                partyInfo={customerPickerInfo}
+                onConfirm={() => searchRef.current?.focus()}
                 showCash={false}
               />
             )}

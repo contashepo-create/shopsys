@@ -66,7 +66,7 @@ export function PurchaseReturnsPage() {
   }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
-  const supplierName = (id: number) => id === 0 ? 'شراء نقدي — بدون مورد' : suppliers.find((s) => s.id === id)?.nameAr ?? `مورد #${id}`
+  const supplierName = (id: number) => id === 0 ? 'مورد نقدي' : suppliers.find((s) => s.id === id)?.nameAr ?? `مورد #${id}`
 
   const remaining = useMemo(() => {
     if (!purchase) return [] as number[]

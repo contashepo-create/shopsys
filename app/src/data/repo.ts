@@ -140,6 +140,8 @@ export interface Customer extends PartyExtended {
   phone: string
   creditLimitMinor: number
   notes: string
+  /** حالة الحساب؛ لا يظهر «موقوف» في المنتقي إلا عند false */
+  active?: boolean
   /** قائمة الأسعار المربوطة (جملة/نصف جملة…) — null = تجزئة */
   priceListId?: number | null
   /** رصيد نقاط الولاء (نمط Lightspeed Loyalty) — يكسب من البيع ويستبدل برصيد دائن */

@@ -100,6 +100,18 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     expect(view.getByText('سكر أبيض')).toBeTruthy()
   })
 
+  it('يعرض كود الطرف ورصيده وحالته ويبحث بالكود من أول حرف', () => {
+    const view = render(<PartyQuickPicker parties={[{ id: 1, nameAr: 'عميل متوقف', active: false }, { id: 2, nameAr: 'عميل نشط', active: true }]} value={0} onChange={() => undefined} cashLabel="عميل نقدي" label="العميل" partyInfo={(party) => ({ code: `CUS-000${party.id}`, balance: `${party.id} ج.م`, status: party.active === false ? 'موقوف' : undefined })} />)
+    const input = view.getByLabelText('العميل')
+    fireEvent.focus(input)
+    expect(view.getByText('CUS-0001')).toBeTruthy()
+    expect(view.getByText('1 ج.م')).toBeTruthy()
+    expect(view.getByText('موقوف')).toBeTruthy()
+    fireEvent.change(input, { target: { value: 'CUS-0002' } })
+    expect(view.getByText('عميل نشط')).toBeTruthy()
+    expect(view.queryByText('موقوف')).toBeNull()
+  })
+
   it('يفتح منتقي الصنف عبر F5 ويبدل دليل الاختصارات عبر F12', () => {
     const view = render(<MemoryRouter><KeyboardNavigation/><ItemQuickPicker items={items} onPick={() => undefined}/></MemoryRouter>)
     const input = view.getByPlaceholderText(/اكتب كود أو اسم/)

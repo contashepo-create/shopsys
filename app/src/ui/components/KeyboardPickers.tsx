@@ -121,8 +121,9 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
   </div>
 }
 
-type Party = { id: number; nameAr: string; phone?: string }
-export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, onConfirm, autoFocus = false, cashValue, showCash = true }: { parties: Party[]; value: number; onChange: (id: number) => void; cashLabel: string; label: string; onConfirm?: () => void; autoFocus?: boolean; cashValue?: number; showCash?: boolean }) {
+type Party = { id: number; nameAr: string; phone?: string; active?: boolean }
+export type PartyPickerInfo = { code?: string; balance?: string }
+export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, onConfirm, autoFocus = false, cashValue, showCash = true, partyInfo }: { parties: Party[]; value: number; onChange: (id: number) => void; cashLabel: string; label: string; onConfirm?: () => void; autoFocus?: boolean; cashValue?: number; showCash?: boolean; partyInfo?: (party: Party) => PartyPickerInfo }) {
   const emptyValue = cashValue ?? (value === -1 ? -1 : 0)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -135,7 +136,18 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
     return () => document.removeEventListener('pointerdown', close)
   }, [])
   const selected = parties.find((party) => party.id === value)
-  const matches = useMemo(() => { const q=query.trim().toLowerCase(); return parties.filter(p=>!q||`${p.nameAr} ${p.phone??''}`.toLowerCase().includes(q)) },[parties,query])
+  const matches = useMemo(() => { const q=query.trim().toLowerCase(); return parties.filter((party) => { const info = partyInfo?.(party); return !q || `${party.nameAr} ${party.phone ?? ''} ${info?.code ?? ''}`.toLowerCase().includes(q) }) }, [parties, query, partyInfo])
   useEffect(() => { const focus=()=>{inputRef.current?.focus();inputRef.current?.select();setOpen(true)};window.addEventListener('shopsys:focus-party',focus);if(autoFocus) requestAnimationFrame(focus);return()=>window.removeEventListener('shopsys:focus-party',focus) },[autoFocus])
-  return <div ref={pickerRef} className="relative" data-enter-native="true"><input ref={inputRef} className={inputCls} value={open?query:(selected?.nameAr??cashLabel)} aria-label={label} onFocus={()=>{setQuery('');setOpen(true)}} onChange={e=>{setQuery(e.target.value);setIndex(0);setOpen(true)}} onKeyDown={e=>{if(e.key==='ArrowDown'){e.preventDefault();setIndex(i=>Math.min(matches.length-1,i+1))}else if(e.key==='ArrowUp'){e.preventDefault();setIndex(i=>Math.max(0,i-1))}else if(e.key==='Enter'){e.preventDefault();if(showCash&&value===emptyValue&&!query.trim()&&index===0){onChange(emptyValue);setOpen(false);onConfirm?.();return}const p=matches[index]??matches[0];if(p)onChange(p.id);else onChange(value);setOpen(false);onConfirm?.()}else if(e.key==='Escape'){e.preventDefault();setOpen(false)}}}/>{open&&<div className="absolute z-50 mt-1 w-full max-h-64 overflow-auto rounded-xl border bg-white dark:bg-card-dark shadow-2xl p-1">{showCash&&<button type="button" data-quick-option="true" data-value={String(emptyValue)} onMouseDown={e=>e.preventDefault()} onClick={()=>{onChange(emptyValue);setOpen(false);onConfirm?.()}} className="w-full p-2 text-right rounded-lg hover:bg-slate-500/10 font-bold">{cashLabel}</button>}{matches.map((p,i)=><button type="button" key={p.id} data-quick-option="true" data-value={String(p.id)} onMouseDown={e=>e.preventDefault()} onClick={()=>{onChange(p.id);setOpen(false);onConfirm?.()}} className={`w-full flex justify-between p-2 rounded-lg ${i===index?'bg-brand-500/15':'hover:bg-slate-500/10'}`}><b>{p.nameAr}</b><span className="text-xs text-slate-500">{p.phone}</span></button>)}</div>}</div>
+  const renderParty = (party: Party, row: number) => {
+    const info = partyInfo?.(party) ?? {}
+    const stopped = party.active === false ? 'موقوف' : undefined
+    return <button type="button" key={party.id} data-quick-option="true" data-value={String(party.id)} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(party.id); setOpen(false); onConfirm?.() }} className={`w-full p-2 text-right rounded-lg ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : 'hover:bg-slate-500/10'}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0"><div className="flex items-center gap-2"><b className="truncate">{party.nameAr}</b>{info.code && <span className="font-mono text-[10px] text-slate-400" dir="ltr">{info.code}</span>}</div>{party.phone && <span className="text-[10px] text-slate-500" dir="ltr">{party.phone}</span>}</div>
+        <div className="shrink-0 text-left text-[10px] font-bold">{info.balance && <div className="text-slate-500">{info.balance}</div>}{stopped && <div className="text-rose-600">{stopped}</div>}</div>
+      </div>
+    </button>
+  }
+  return <div ref={pickerRef} className="relative" data-enter-native="true"><input ref={inputRef} className={inputCls} value={open ? query : (selected?.nameAr ?? cashLabel)} aria-label={label} onFocus={() => { setQuery(''); setOpen(true) }} onChange={(event) => { setQuery(event.target.value); setIndex(0); setOpen(true) }} onKeyDown={(event) => { if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((current) => Math.min(matches.length - 1, current + 1)) } else if (event.key === 'ArrowUp') { event.preventDefault(); setIndex((current) => Math.max(0, current - 1)) } else if (event.key === 'Enter') { event.preventDefault(); if (showCash && value === emptyValue && !query.trim() && index === 0) { onChange(emptyValue); setOpen(false); onConfirm?.(); return } const party = matches[index] ?? matches[0]; if (party) onChange(party.id); else onChange(value); setOpen(false); onConfirm?.() } else if (event.key === 'Escape') { event.preventDefault(); setOpen(false) } }} />{open && <div className="absolute z-50 mt-1 w-full max-h-72 overflow-auto rounded-xl border bg-white dark:bg-card-dark shadow-2xl p-1">{showCash && <button type="button" data-quick-option="true" data-value={String(emptyValue)} onMouseDown={(event) => event.preventDefault()} onClick={() => { onChange(emptyValue); setOpen(false); onConfirm?.() }} className="w-full p-2 text-right rounded-lg hover:bg-slate-500/10 font-bold">{cashLabel}</button>}{matches.map(renderParty)}</div>}</div>
+
 }

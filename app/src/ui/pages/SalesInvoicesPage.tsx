@@ -27,10 +27,11 @@ import { Modal, EmptyState, useToast, inputCls, Btn, Field } from '../components
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { normalizeRefQuery } from '../../core/refcode.ts'
-import { ItemQuickPicker, PartyQuickPicker, QuickSelect} from '../components/KeyboardPickers.tsx'
+import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
+import { partyCode } from '../../core/partyCodes.ts'
 
 export function SalesInvoicesPage() {
-  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission } = useDataStore()
+  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance } = useDataStore()
   const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -38,6 +39,10 @@ export function SalesInvoicesPage() {
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
   const fmt = (m: number) => formatMinor(m, cur, false)
+  const customerPickerInfo = (party: { id: number; active?: boolean }) => {
+    const balance = getCustomerBalance(party.id)
+    return { code: partyCode('CUS', party.id), balance: `الرصيد ${fmt(Math.abs(balance))} ${cur.symbol} ${balance > 0 ? 'عليه' : balance < 0 ? 'له' : ''}` }
+  }
   const [viewing, setViewing] = useState<SaleInvoice | null>(null)
   const [printTarget, setPrintTarget] = useState<SaleInvoice | null>(null)
   const [today] = useState(() => new Date().toISOString().slice(0, 10))
@@ -494,7 +499,7 @@ export function SalesInvoicesPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="العميل" hint="أي جزء آجل يحتاج عميلاً مسجلاً">
-                <PartyQuickPicker parties={customers} value={editCustomerId ?? 0} onChange={(id) => setEditCustomerId(id || null)} cashLabel="عميل نقدي" label="اختيار العميل" onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} />
+                <PartyQuickPicker parties={customers} value={editCustomerId ?? 0} onChange={(id) => setEditCustomerId(id || null)} cashLabel="عميل نقدي" label="اختيار العميل" partyInfo={customerPickerInfo} onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} />
               </Field>
               <Field label="خصم الفاتورة ٪">
                 <input value={editDiscount || ''} onChange={(e) => setEditDiscount(Math.min(100, Math.max(0, Number(e.target.value) || 0)))} className={inputCls} dir="ltr" placeholder="0" />
