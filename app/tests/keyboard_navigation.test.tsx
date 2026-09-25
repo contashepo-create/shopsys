@@ -28,6 +28,18 @@ describe('التحكم بلوحة المفاتيح', () => {
     fireEvent.keyDown(second, { key: 'ArrowUp' }); expect(document.activeElement).toBe(first)
   })
 
+  it('يمنع الأسهم عند حدود جدول الفاتورة من تغيير حقل رقمي', () => {
+    const view = render(<MemoryRouter><main><KeyboardNavigation/><div><div data-entry-row><input aria-label="qty" type="number" value="7" readOnly /></div></div></main></MemoryRouter>)
+    const input = view.getByLabelText('qty')
+    input.focus()
+    for (const key of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      input.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
+    }
+    expect((input as HTMLInputElement).value).toBe('7')
+  })
+
   it('يخصص F9 للترحيل وF8 للمسودة خارج الكاشير', () => {
     let draft = 0, posted = 0
     render(<MemoryRouter initialEntries={['/purchases/invoices/new']}><KeyboardNavigation/><button onClick={() => draft++}>حفظ مسودة</button><button onClick={() => posted++}>اعتماد وترحيل</button></MemoryRouter>)
