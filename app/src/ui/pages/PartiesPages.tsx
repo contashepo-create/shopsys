@@ -16,6 +16,20 @@ import { supplierStatement, statementBalance } from '../../core/statements.ts'
 import { partyCode, matchesPartyCode, PARTY_CODE_LABELS } from '../../core/partyCodes.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
+type PartyView = 'cards' | 'list'
+function usePersistedPartyView(key: string): [PartyView, (view: PartyView) => void] {
+  const storageKey = `shopsys:party-view:${key}`
+  const [view, setViewState] = useState<PartyView>(() => {
+    if (typeof window === 'undefined') return 'list'
+    return window.localStorage.getItem(storageKey) === 'cards' ? 'cards' : 'list'
+  })
+  const setView = (next: PartyView) => {
+    setViewState(next)
+    window.localStorage.setItem(storageKey, next)
+  }
+  return [view, setView]
+}
+
 /** مبدّل عرض بطاقات/قائمة (طلب المالك) — مشترك بين العملاء والموردين */
 function ViewToggle({ view, setView }: { view: 'cards' | 'list'; setView: (v: 'cards' | 'list') => void }) {
   return (
@@ -100,7 +114,7 @@ export function CustomersPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [query, setQuery] = useState('')
-  const [view, setView] = useState<'cards' | 'list'>('cards')
+  const [view, setView] = usePersistedPartyView('customers')
 
   // رصيد كل عميل بجانب اسمه (طلب المالك) — الرصيد الموحّد من كل الأنشطة (إصلاح الترابط)
   const balances = useMemo(() => {
@@ -325,7 +339,7 @@ export function SuppliersPage() {
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [query, setQuery] = useState('')
-  const [view, setView] = useState<'cards' | 'list'>('cards')
+  const [view, setView] = usePersistedPartyView('suppliers')
 
   // رصيد كل مورد بجانب اسمه (طلب المالك) — موجب = مستحق له عندك
   const balances = useMemo(() => {

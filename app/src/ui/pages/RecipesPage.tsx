@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { ItemQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 import { useMemo, useRef, useState } from 'react'
 import { Factory, Plus, Trash2, WalletCards, Boxes, CheckCircle2, AlertTriangle, ArrowRight, FileSpreadsheet } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
@@ -140,9 +140,7 @@ export function RecipesPage() {
       <div className="flex items-center gap-2 mb-3"><button onClick={() => setCreating(false)} className="p-2 rounded-xl hover:bg-slate-500/10" title="العودة لسجل التصنيع"><ArrowRight size={18}/></button><Factory className="text-amber-600"/><div><h1 className="font-black text-lg">عملية تصنيع جديدة</h1><p className="text-[11px] text-slate-500">حدد المنتج والكمية الناتجة، ثم أدخل الخامات الفعلية والمصروفات</p></div></div>
       <div className="grid md:grid-cols-[1fr_170px_170px_150px_130px] gap-3 form-row">
         <Field label="الصنف المطلوب إنتاجه *" hint="يجب أن يكون مسجلاً في الأصناف والمخزون">
-          <QuickSelect className={inputCls} value={productId} onChange={(event) => { setProductId(Number(event.target.value)); setOutputUnitFactor(1); setOutputExpiryDate('') }}>
-            <option value={0}>اختر المنتج النهائي…</option>{activeItems.map((item) => <option key={item.id} value={item.id}>{item.sku ? `${item.sku} — ` : ''}{item.nameAr}</option>)}
-          </QuickSelect>
+          <ItemQuickPicker items={activeItems} onPick={(id) => { setProductId(id); setOutputUnitFactor(1); setOutputExpiryDate('') }} placeholder="ابحث عن المنتج النهائي ثم Enter" />
         </Field>
         <Field label="مخزن صرف الخامات *"><QuickSelect className={inputCls} value={ingredientWarehouseId} onChange={(e)=>changeIngredientWarehouse(Number(e.target.value))}><option value={0}>كل المخازن — اختيار لكل خامة</option>{warehouses.map(warehouse=><option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect></Field><Field label="مخزن استلام الناتج *"><QuickSelect className={inputCls} value={outputWarehouseId} onChange={(e)=>setOutputWarehouseId(Number(e.target.value))}>{warehouses.map(warehouse=><option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect></Field>
         <Field label="الكمية المطلوب تصنيعها *"><input className={inputCls} inputMode="decimal" value={outputQty} onChange={(event) => setOutputQty(event.target.value)} placeholder="مثال: 3" /></Field>

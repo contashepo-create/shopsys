@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * عقود إيجار المعدات (المرحلة 6 — القرار 13):
  * فتح عقد (أيام × سعر يومي + تأمين مسترد + ضريبة فوق السعر) بقيد فتح
@@ -339,10 +339,7 @@ export function RentalContractsPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العميل">
-              <QuickSelect value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
-                <option value="">عميل نقدي</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="عميل نقدي" label="بحث العميل" cashValue={0} />
             </Field>
             <Field label="المعدة من السجل" hint="اختيارها يملأ الاسم والسعر اليومي تلقائياً">
               <QuickSelect value={equipmentId} onChange={(e) => pickEquipment(e.target.value)} className={inputCls}>

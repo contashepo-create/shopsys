@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * ملفات عهد الموظفين — نظام متكامل (طلب المالك، مرجعية pro-acc):
  * فتح ملف (بلا قيد) ← تعزيزات من خزينة/بنك ← مصروفات وفواتير تُخصم منه
@@ -177,9 +177,7 @@ export function CustodyPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="الموظف *">
-              <QuickSelect value={fEmployeeId} onChange={(e) => setFEmployeeId(Number(e.target.value))} className={inputCls}>
-                {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={employees} value={fEmployeeId} onChange={setFEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
             </Field>
             <Field label="ربط بمشروع (اختياري)" hint="مصروفات الملف تدخل تكاليف المشروع تلقائياً">
               <QuickSelect value={fProjectId} onChange={(e) => setFProjectId(e.target.value)} className={inputCls}>

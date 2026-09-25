@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * أوامر الصيانة (المرحلة 6 — القرار 13):
  * تذكرة = جهاز + عطل بحالات (مستلَمة ← تحت الصيانة ← جاهزة ← مسلَّمة).
@@ -363,10 +363,7 @@ export function MaintenancePage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="عميل مسجل">
-              <QuickSelect value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
-                <option value="">— غير مسجل —</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="غير مسجل" label="بحث العميل" cashValue={0} />
             </Field>
             <Field label="أو اسم العميل" hint="عند عدم التسجيل">
               <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className={inputCls} disabled={!!customerId} />
@@ -430,10 +427,7 @@ export function MaintenancePage() {
               </div>
               {parts.map((p, i) => (
                 <div key={i} className="grid grid-cols-[1fr_60px_90px_28px] gap-1.5 items-center">
-                  <QuickSelect value={p.itemId} onChange={(e) => pickPartItem(i, e.target.value)} className={`${inputCls} !py-1.5 !text-[12px]`}>
-                    <option value="">— اختر الصنف —</option>
-                    {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.nameAr} (متاح {it.stockQty ?? 0})</option>)}
-                  </QuickSelect>
+                  <ItemQuickPicker items={items.filter((item) => item.isActive)} onPick={(id) => pickPartItem(i, String(id))} placeholder="ابحث عن قطعة ثم Enter" />
                   <input value={p.qty} onChange={(e) => patchPart(i, { qty: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" />
                   <input value={p.unitPrice} onChange={(e) => patchPart(i, { unitPrice: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" placeholder="السعر" />
                   <button onClick={() => dropPart(i)} className="p-1.5 rounded text-slate-300 hover:text-rose-500"><Trash2 size={13} /></button>

@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * سندات القبض والصرف (المرحلة 4) —
  * قبض: نقدية داخلة (سداد عميل، إيراد آخر، رأس مال…)
@@ -316,10 +316,7 @@ export function VouchersPage() {
           {quickAccountOpen&&<div className="grid grid-cols-[110px_1fr_auto] gap-2 rounded-xl border border-brand-500/20 bg-brand-500/5 p-2"><input className={inputCls} value={quickAccountCode} onChange={e=>setQuickAccountCode(e.target.value)} placeholder={kind==='payment'?'51xx':'41xx'} dir="ltr"/><input className={inputCls} value={quickAccountName} onChange={e=>setQuickAccountName(e.target.value)} placeholder="اسم البند"/><Btn onClick={addQuickAccount} disabled={!quickAccountCode.trim()||!quickAccountName.trim()}>إضافة</Btn></div>}
           {needsParty && (
             <Field label={kind === 'receipt' ? 'أي عميل؟ *' : 'أي مورد؟ *'} hint="يظهر السند في كشف حسابه">
-              <QuickSelect value={partyId} onChange={(e) => setPartyId(Number(e.target.value))} className={inputCls}>
-                <option value={0}>اختر…</option>
-                {(kind === 'receipt' ? customers : suppliers).map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={kind === 'receipt' ? customers : suppliers} value={partyId} onChange={setPartyId} cashLabel="اختر الطرف" label={kind === 'receipt' ? 'بحث العميل' : 'بحث المورد'} showCash={false} />
             </Field>
           )}
           {needsParty && partyId > 0 && liveBalance !== null && (
@@ -386,7 +383,7 @@ export function VouchersPage() {
               {expPaidBy === 'payable' && (
                 <div className="grid sm:grid-cols-2 gap-2">
                   <Field label="الجهة المستحقة *"><input value={expBeneficiary} onChange={(e) => setExpBeneficiary(e.target.value)} className={inputCls} placeholder="شركة النقل / الجمارك…" /></Field>
-                  <Field label="حساب الاستحقاق"><QuickSelect value={expPayableAccount} onChange={(e) => setExpPayableAccount(e.target.value)} className={inputCls}><option value="2117">مصاريف مستحقة (2117)</option><option value="2101">الموردون (2101)</option></QuickSelect></Field>
+                  <Field label="حساب الاستحقاق"><QuickSelect value={expPayableAccount} onChange={(e) => setExpPayableAccount(e.target.value)} className={inputCls}><option value="2117">مصاريف مستحقة (2117)</option></QuickSelect></Field>
                 </div>
               )}
               <div className="grid sm:grid-cols-3 gap-2">

@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * النقلات (المرحلة 6 — القرار 13، نمط logistics-web):
  * النقلة وحدة العمل: من/إلى × عدد × سعر، مصاريف بمصادر تمويل
@@ -297,10 +297,7 @@ export function TripsPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="العميل">
-              <QuickSelect value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
-                <option value="">عميل نقدي</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="عميل نقدي" label="بحث العميل" cashValue={0} />
             </Field>
             <Field label="المركبة">
               <QuickSelect value={vehicleId} onChange={(e) => pickVehicle(e.target.value)} className={inputCls}>
@@ -309,10 +306,7 @@ export function TripsPage() {
               </QuickSelect>
             </Field>
             <Field label="السائق">
-              <QuickSelect value={driverId} onChange={(e) => setDriverId(e.target.value)} className={inputCls}>
-                <option value="">بلا سائق</option>
-                {employees.filter((e) => e.active).map((d) => <option key={d.id} value={d.id}>{d.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={driverId ? Number(driverId) : 0} onChange={(id) => setDriverId(id ? String(id) : '')} cashLabel="بلا سائق" label="بحث السائق" cashValue={0} />
             </Field>
             <Field label={`عمولة السائق (${cur.symbol})`} hint="تُستحق ولا تُدفع الآن — تسوى مجمعة">
               <input value={driverCommission} onChange={(e) => setDriverCommission(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0" disabled={!driverId} />

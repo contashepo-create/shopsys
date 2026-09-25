@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الشيكات (أوراق القبض والدفع) — كل السيناريوهات العملية (طلب المالك):
  * وارد: من عميل مسجل أو بلا طرف (إيراد/حساب آخر) ← إيداع ← تحصيل في بنك أو خزينة / ارتداد
@@ -236,10 +236,7 @@ export function ChequesPage() {
             </Field>
           </div>
           <Field label={direction === 'incoming' ? 'العميل (يُخفَّض دينه فوراً)' : 'المورد (يُخفَّض ديننا له فوراً)'}>
-            <QuickSelect value={partyId} onChange={(e) => setPartyId(e.target.value)} className={inputCls}>
-              <option value="">— بلا طرف مسجل (شيك {direction === 'incoming' ? 'وارد لإيراد/حساب آخر' : 'مصروف/راتب/حساب آخر'}) —</option>
-              {parties.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-            </QuickSelect>
+            <PartyQuickPicker parties={parties} value={partyId ? Number(partyId) : 0} onChange={(id) => setPartyId(id ? String(id) : '')} cashLabel={`بلا طرف مسجل (شيك ${direction === 'incoming' ? 'وارد لإيراد/حساب آخر' : 'مصروف/راتب/حساب آخر'})`} label={direction === 'incoming' ? 'بحث العميل' : 'بحث المورد'} cashValue={0} />
           </Field>
           {!partyId && (
             <div className="grid grid-cols-2 gap-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-3">

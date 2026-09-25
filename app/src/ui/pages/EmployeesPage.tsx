@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الموظفون والرواتب (المرحلة 5) — تبويبان:
  * 1) سجل الموظفين: نفس البيانات الموسعة الاختيارية للأطراف + بيانات التوظيف
@@ -399,9 +399,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           <Modal open={repayOpen} onClose={() => setRepayOpen(false)} title="💵 سداد نقدي لسلفة (خارج المسير)">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <QuickSelect value={repayEmployeeId} onChange={(e) => setRepayEmployeeId(Number(e.target.value))} className={inputCls}>
-                  {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </QuickSelect>
+                <PartyQuickPicker parties={employees} value={repayEmployeeId} onChange={setRepayEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
               {repayEmployeeId > 0 && (
                 <div className="text-[12px] rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300 p-3 font-bold">
@@ -421,9 +419,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           <Modal open={advOpen} onClose={() => setAdvOpen(false)} title="💸 صرف سلفة لموظف">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <QuickSelect value={advEmployeeId} onChange={(e) => setAdvEmployeeId(Number(e.target.value))} className={inputCls}>
-                  {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </QuickSelect>
+                <PartyQuickPicker parties={employees} value={advEmployeeId} onChange={setAdvEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
               <Field label={`المبلغ (${cur.symbol}) *`}>
                 <input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus />
@@ -514,9 +510,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           <Modal open={dedOpen} onClose={() => setDedOpen(false)} title="⚖️ تسجيل خصم / جزاء على موظف">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <QuickSelect value={dedEmployeeId} onChange={(e) => setDedEmployeeId(Number(e.target.value))} className={inputCls}>
-                  {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </QuickSelect>
+                <PartyQuickPicker parties={employees} value={dedEmployeeId} onChange={setDedEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
               <Field label={`مبلغ الخصم (${cur.symbol}) *`}>
                 <input value={dedAmount} onChange={(e) => setDedAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
@@ -622,9 +616,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           <Modal open={comOpen} onClose={() => setComOpen(false)} title="🤝 استحقاق عمولة موظف عن عملية">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <QuickSelect value={comEmployeeId} onChange={(e) => setComEmployeeId(Number(e.target.value))} className={inputCls}>
-                  {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </QuickSelect>
+                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={comEmployeeId} onChange={setComEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="نوع العملية *">

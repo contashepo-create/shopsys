@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
  * ورديات الكاشير (استكمال المرحلة 2) —
  * فتح برصيد درج افتتاحي، وإقفال بعدّ النقدية الفعلية:
@@ -290,10 +290,7 @@ export function ShiftsPage() {
 
               {settleMode === 'advance' && v < 0 && (
                 <Field label="الموظف الذي يتحمل العجز *">
-                  <QuickSelect value={settleEmployeeId} onChange={(e) => setSettleEmployeeId(Number(e.target.value))} className={inputCls}>
-                    <option value={0}>— اختر الموظف —</option>
-                    {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}{e.jobTitle ? ` — ${e.jobTitle}` : ''}</option>)}
-                  </QuickSelect>
+                  <PartyQuickPicker parties={employees.filter((employee) => employee.active).map((employee) => ({ ...employee, nameAr: employee.jobTitle ? `${employee.nameAr} — ${employee.jobTitle}` : employee.nameAr }))} value={settleEmployeeId} onChange={setSettleEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
                 </Field>
               )}
 

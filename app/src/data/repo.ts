@@ -2730,6 +2730,10 @@ export const useDataStore = create<DataState>()(
           itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
         }))
         const expensePolicy = { status: 'registered' as const, configuredPercent: 0, effectivePercent: 0, canRecoverInputTax: inv.purchaseExpenseTaxRecoverable ?? true, disclosureAr: '' }
+        for (const expense of inv.expenses) {
+          if (expense.paidBy === 'payable' && !expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة للمصروف «${expense.nameAr}» — ليست المورد`)
+          if (expense.paidBy === 'payable' && expense.payableAccountCode === '2101') throw new Error(`مصروف «${expense.nameAr}» مستحق لجهة أخرى ولا يجوز تحميله على الموردين 2101`)
+        }
         const landedExpensesOriginal = inv.expenses.filter((expense) => (expense.costTreatment ?? 'inventory') === 'inventory')
         const periodExpenses = inv.expenses.filter((expense) => expense.costTreatment === 'period')
         const expenseParts = new Map(inv.expenses.map((expense) => [expense, purchaseExpenseTaxParts(expense, expensePolicy)]))
@@ -2760,6 +2764,7 @@ export const useDataStore = create<DataState>()(
             if (errors.length) throw new Error(errors.join(' — '))
             expensePayments.push({ account: acc, amountMinor: payableAmount, note: `${e.nameAr} — مدفوع من ${state.treasuries.find((t) => t.code === acc)?.nameAr ?? acc}` })
           } else if (paidBy === 'payable') {
+            if (e.payableAccountCode === '2101') throw new Error(`مصروف «${e.nameAr}» مستحق لجهة أخرى ولا يجوز تحميله على الموردين 2101`)
             expensePayments.push({ account: e.payableAccountCode ?? '2117', amountMinor: payableAmount, note: `${e.nameAr} — مستحق لـ ${e.beneficiaryName?.trim() || 'جهة أخرى'}` })
           } else if (paidBy === 'custody') {
             if (e.custodyFileId == null) throw new Error(`حدد ملف العهدة الذي دفع مصروف «${e.nameAr}»`)
@@ -3045,6 +3050,7 @@ export const useDataStore = create<DataState>()(
           creditNote = `${args.nameAr} مدفوع من ${state.treasuries.find((t) => t.code === acc)?.nameAr ?? acc}`
         } else if (args.paidBy === 'payable') {
           if (!args.beneficiaryName?.trim()) throw new Error('حدد الجهة المستحقة للمصروف')
+          if (args.payableAccountCode === '2101') throw new Error('مصروف مستحق لجهة أخرى لا يجوز تحميله على الموردين 2101')
           creditAccount = args.payableAccountCode || '2117'
           const payableAccount = STANDARD_COA.find((account) => account.code === creditAccount) ?? state.customAccounts.find((account) => account.code === creditAccount)
           if (!payableAccount || payableAccount.rootType !== 'liabilities' || (payableAccount as { isPostable?: boolean }).isPostable === false) throw new Error('حساب الاستحقاق غير موجود أو ليس حساب التزام قابلاً للترحيل')
@@ -3382,6 +3388,8 @@ export const useDataStore = create<DataState>()(
         const internalExpenses = args.internalExpenses ?? []
         for (const expense of internalExpenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
+          if (expense.settlement === 'payable_later' && !expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة للمصروف «${expense.label}» — ليست المورد`)
+          if (expense.settlement === 'payable_later' && expense.payableAccountCode === '2101') throw new Error(`مصروف «${expense.label}» مستحق لجهة أخرى ولا يجوز تحميله على الموردين 2101`)
         }
         for (const expense of internalExpenses.filter((row) => row.settlement === 'paid_now')) {
           const payoutTreasury = expense.treasury ?? args.treasury ?? '1101'
@@ -4938,6 +4946,8 @@ export const useDataStore = create<DataState>()(
         const internalExpenses = args.internalExpenses ?? sale.internalExpenses ?? []
         for (const expense of internalExpenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
+          if (expense.settlement === 'payable_later' && !expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة للمصروف «${expense.label}» — ليست المورد`)
+          if (expense.settlement === 'payable_later' && expense.payableAccountCode === '2101') throw new Error(`مصروف «${expense.label}» مستحق لجهة أخرى ولا يجوز تحميله على الموردين 2101`)
         }
         for (const expense of internalExpenses.filter((row) => row.settlement === 'paid_now')) {
           const payoutTreasury = expense.treasury ?? args.treasury
@@ -5101,7 +5111,7 @@ export const useDataStore = create<DataState>()(
           expensePayments: [],
           inputVatMinor: keptInputVat,
         })
-        newEntryLines.push(...buildInternalExpenseLines(periodExpenses.map((expense) => ({ id: crypto.randomUUID(), label: expense.nameAr, amountMinor: expense.amountMinor, accountCode: expense.accountCode ?? '5108', settlement: 'payable_later' as const, payableAccountCode: '2101', costCenterId: expense.costCenterId ?? null, taxTreatment: 'exempt' as const, taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' as const })), args.treasury))
+        newEntryLines.push(...buildInternalExpenseLines(periodExpenses.map((expense) => ({ id: crypto.randomUUID(), label: expense.nameAr, amountMinor: expense.amountMinor, accountCode: expense.accountCode ?? '5108', settlement: 'payable_later' as const, payableAccountCode: expense.payableAccountCode ?? '2117', costCenterId: expense.costCenterId ?? null, taxTreatment: 'exempt' as const, taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' as const })), args.treasury))
         assertBalanced(newEntryLines)
         const now = new Date().toISOString()
 

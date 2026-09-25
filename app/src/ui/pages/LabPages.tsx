@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات معمل التحاليل (القرار 26):
  * 1) LabOrdersPage — تسجيل طلب، دورة العينة (سحب ← نتيجة ← اعتماد)، طباعة تقرير A4
@@ -582,15 +582,14 @@ export function LabPatientsPage() {
                   <td className="px-3 py-2.5 font-bold">{orderCount(p)}</td>
                   <td className="px-3 py-2.5">
                     {/* ربط بعميل مالي (إصلاح الترابط): طلباته الآجلة تدخل كشف حساب العميل */}
-                    <QuickSelect
+                    <PartyQuickPicker
+                      parties={customers}
                       value={p.linkedCustomerId ?? 0}
-                      onChange={(e) => { updateLabPatient(p.id, { linkedCustomerId: Number(e.target.value) || null }); }}
-                      className="text-[11px] rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-1 max-w-[130px]"
-                      title="اربط المريض بعميل مالي — طلباته الآجلة تظهر في كشف حساب العميل"
-                    >
-                      <option value={0}>بلا ربط</option>
-                      {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                    </QuickSelect>
+                      onChange={(id) => updateLabPatient(p.id, { linkedCustomerId: id || null })}
+                      cashLabel="بلا ربط"
+                      label="ربط المريض بعميل مالي"
+                      cashValue={0}
+                    />
                   </td>
                   <td className="px-3 py-2.5 text-slate-500">{p.notes || '—'}</td>
                 </tr>

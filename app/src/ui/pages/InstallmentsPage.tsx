@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الأقساط (المرحلة 5) — خطط أقساط للعملاء بتنبيهات استحقاق:
  * شريط تنبيهات (متأخر / يستحق خلال 7 أيام)، إنشاء خطة بجدول تلقائي
@@ -230,10 +230,7 @@ export function InstallmentsPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العميل *">
-              <QuickSelect value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
-                <option value="">اختر…</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="عميل نقدي" label="بحث العميل" cashValue={0} />
             </Field>
             <Field label={`إجمالي المديونية (${cur.symbol}) *`} hint="أصل الذمة قائم من الفاتورة الآجلة — الخطة جدولة تحصيل">
               <input value={total} onChange={(e) => setTotal(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />

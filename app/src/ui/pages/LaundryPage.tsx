@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * المغسلة (وحدة مستقلة — طلب المالك): أوامر غسيل بقطع مفصلة وخدمة لكل قطعة،
  * عربون عند الاستلام (2109 التزام)، وتحقق الإيراد عند التسليم (4103 + 2102).
@@ -221,10 +221,7 @@ export function LaundryPage() {
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="عميل مسجل (اختياري)">
-              <QuickSelect value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
-                <option value="">عميل نقدي عابر</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="عميل نقدي عابر" label="بحث العميل" cashValue={0} />
             </Field>
             {!customerId && (
               <Field label="اسم العميل">

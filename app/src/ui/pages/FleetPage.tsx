@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الأسطول والسائقون (المرحلة 6 — نمط logistics-web):
  * سجل المركبات مع سائق افتراضي، والسائقون من قسم الموظفين
@@ -175,10 +175,7 @@ export function FleetPage() {
             </QuickSelect>
           </Field>
           <Field label="السائق الافتراضي" hint="يُقترح تلقائياً عند تسجيل نقلة بهذه المركبة">
-            <QuickSelect value={driverId} onChange={(e) => setDriverId(e.target.value)} className={inputCls}>
-              <option value="">بلا سائق افتراضي</option>
-              {drivers.map((d) => <option key={d.id} value={d.id}>{d.nameAr}{d.jobTitle ? ` — ${d.jobTitle}` : ''}</option>)}
-            </QuickSelect>
+            <PartyQuickPicker parties={drivers.map((driver) => ({ ...driver, nameAr: driver.jobTitle ? `${driver.nameAr} — ${driver.jobTitle}` : driver.nameAr }))} value={driverId ? Number(driverId) : 0} onChange={(id) => setDriverId(id ? String(id) : '')} cashLabel="بلا سائق افتراضي" label="بحث السائق" cashValue={0} />
           </Field>
           <Field label="ملاحظات">
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />

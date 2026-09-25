@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات نشاط العقارات (النشاط 21) — معايير سند/الوسيط/سمات السعودية:
  * - PropertiesPage: عقارات (مملوكة/مدارة بسعي) بوحدات، حسابات الملاك وسدادهم،
@@ -304,10 +304,7 @@ export function PropertiesPage() {
             </Field>
             <Field label="عمولة موظف (اختياري)" hint="الموظف الذي أتم الصفقة — مصروف مربوط بالبيع يدخل ربحيته">
               <div className="grid grid-cols-2 gap-2">
-                <QuickSelect value={sCommEmpId} onChange={(e) => setSCommEmpId(e.target.value)} className={inputCls}>
-                  <option value="">— بلا عمولة —</option>
-                  {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </QuickSelect>
+                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={sCommEmpId ? Number(sCommEmpId) : 0} onChange={(id) => setSCommEmpId(id ? String(id) : '')} cashLabel="بلا عمولة" label="بحث موظف العمولة" cashValue={0} />
                 <input value={sCommAmount} onChange={(e) => setSCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!sCommEmpId} />
               </div>
             </Field>
@@ -479,10 +476,7 @@ export function LeasesPage() {
             </Field>
             <Field label="اسم المستأجر *"><input value={tenant} onChange={(e) => setTenant(e.target.value)} className={inputCls} /></Field>
             <Field label="ربط بسجل عميل (إداري)">
-              <QuickSelect value={tenantId} onChange={(e) => setTenantId(e.target.value)} className={inputCls}>
-                <option value="">— بلا ربط —</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={customers} value={tenantId ? Number(tenantId) : 0} onChange={(id) => setTenantId(id ? String(id) : '')} cashLabel="بلا ربط" label="بحث المستأجر" cashValue={0} />
             </Field>
             <Field label="بداية العقد *"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label="المدة بالأشهر *"><input value={months} onChange={(e) => setMonths(e.target.value)} inputMode="numeric" className={inputCls} /></Field>
@@ -495,10 +489,7 @@ export function LeasesPage() {
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يقيد التزاماً (2103) ويُرد عند الإخلاء ناقص الأضرار"><input value={deposit} onChange={(e) => setDeposit(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="رقم توثيق منصة إيجار" hint="السعودية: رقم العقد الموثق في المنصة الحكومية"><input value={ejar} onChange={(e) => setEjar(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label="عمولة موظف (اختياري)" hint="الموظف الذي سوّق العقد — تُستحق مصروفاً مربوطاً به">
-              <QuickSelect value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
-                <option value="">— بلا عمولة —</option>
-                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={commEmpId ? Number(commEmpId) : 0} onChange={(id) => setCommEmpId(id ? String(id) : '')} cashLabel="بلا عمولة" label="بحث موظف العمولة" cashValue={0} />
             </Field>
             {commEmpId && (
               <Field label={`مبلغ العمولة (${cur.symbol}) *`} hint="تُصرف مع الراتب أو منفردة من «الموظفون ← العمولات»">

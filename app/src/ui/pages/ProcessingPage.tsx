@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { ItemQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * التقطيع والفرز والتعبئة (جزارة 🥩 / تمور 🌴)
  * ============================================
@@ -190,10 +190,7 @@ export function ProcessingPage() {
         <div className="space-y-3">
           <div className="grid md:grid-cols-4 gap-3">
             <Field label={`${L.sourceLabel} *`} hint="صنف الخام — تكلفته الحالية بالمتوسط المرجح ستدخل النواتج">
-              <QuickSelect value={sourceId} onChange={(e) => setSourceId(e.target.value)} className={inputCls}>
-                <option value="">اختر…</option>
-                {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.nameAr} — إجمالي {it.stockQty ?? 0} {it.baseUnit}</option>)}
-              </QuickSelect>
+              <ItemQuickPicker items={items.filter((item) => item.isActive)} onPick={(id) => setSourceId(String(id))} placeholder="ابحث عن الخام ثم Enter" />
             </Field>
             <Field label="مخزن صرف الخام *">
               <QuickSelect value={sourceWarehouseId} onChange={(e) => setSourceWarehouseId(e.target.value)} className={inputCls}>
@@ -213,10 +210,7 @@ export function ProcessingPage() {
             <div className="space-y-2">
               {outs.map((o, i) => (
                 <div key={i} className="flex gap-2">
-                  <QuickSelect value={o.itemId} onChange={(e) => setOuts(outs.map((x, j) => (j === i ? { ...x, itemId: e.target.value } : x)))} className={`${inputCls} flex-1`}>
-                    <option value="">الصنف الناتج…</option>
-                    {items.filter((it) => it.isActive && String(it.id) !== sourceId).map((it) => <option key={it.id} value={it.id}>{it.nameAr} ({fmt(it.priceMinor)})</option>)}
-                  </QuickSelect>
+                  <ItemQuickPicker items={items.filter((item) => item.isActive && String(item.id) !== sourceId)} onPick={(id) => setOuts(outs.map((row, j) => (j === i ? { ...row, itemId: String(id) } : row)))} placeholder="ابحث عن الناتج ثم Enter" />
                   <input value={o.qty} onChange={(e) => setOuts(outs.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} inputMode="decimal" placeholder="الكمية" className={`${inputCls} w-28`} />
                   <button onClick={() => setOuts(outs.filter((_, j) => j !== i))} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10"><Trash2 className="w-4 h-4" /></button>
                 </div>

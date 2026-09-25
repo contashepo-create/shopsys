@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الصاغة — سعر الجرام اليومي + المصنعية + الكسر
  * السعر = الوزن × جرام العيار + المصنعية، ويعاد تسعير المحل كله بضغطة.
@@ -280,10 +280,7 @@ export function JewelryPage() {
       <Modal open={profileOpen} onClose={() => setProfileOpen(false)} title="الوصف الذهبي للصنف">
         <div className="space-y-3">
           <Field label="الصنف *">
-            <QuickSelect value={profItem} onChange={(e) => setProfItem(e.target.value)} className={inputCls}>
-              <option value="">اختر…</option>
-              {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
-            </QuickSelect>
+            <ItemQuickPicker items={items.filter((item) => item.isActive)} onPick={(id) => setProfItem(String(id))} placeholder="اكتب اسم الصنف ثم Enter" />
           </Field>
           <div className="grid grid-cols-3 gap-3">
             <Field label="العيار">
@@ -341,10 +338,7 @@ export function JewelryPage() {
             </QuickSelect>
           </Field>
           <Field label="العميل (اختياري — لتوثيق اسم بائع الكسر)">
-            <QuickSelect value={trCustomer} onChange={(e) => setTrCustomer(e.target.value)} className={inputCls}>
-              <option value="">عميل نقدي</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-            </QuickSelect>
+            <PartyQuickPicker parties={customers} value={trCustomer ? Number(trCustomer) : 0} onChange={(id) => setTrCustomer(id ? String(id) : '')} cashLabel="عميل نقدي" label="بحث العميل" cashValue={0} />
           </Field>
           <div className="grid grid-cols-3 gap-2">
             <Field label="عيار الكسر">

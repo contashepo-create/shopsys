@@ -54,6 +54,23 @@ describe('ترحيل ضريبة مصروف الشراء في المستودع', 
     expect(entry.lines.filter(line => line.accountCode === directAccount).reduce((sum, line) => sum + line.credit, 0)).toBe(paidBy === 'treasury' ? 11140 : 1140)
   })
 
+  it('يربط مصروف نقل المركبة بمركز تكلفة المركبة ويثبت استحقاق جهة مستقلة', () => {
+    useDataStore.setState({ vehicles: [{ id: 44, plateNumber: 'د ب 44', vehicleType: 'نقل', defaultDriverId: null, notes: '' }] as never })
+    const purchase = useDataStore.getState().postPurchase({
+      supplierId: 801, date: '2026-09-24',
+      lines: [{ itemId: 901, qty: 1, unitPriceMinor: 10000, warehouseId: 1 }],
+      expenses: [{ nameAr: 'نقل المركبة', amountMinor: 1000, method: 'value', paidBy: 'payable', costTreatment: 'period', payableAccountCode: '2117', beneficiaryName: 'مالك المركبة', vehicleId: 44 }],
+      paidMinor: 10000, treasury: '1101', warehouseId: 1, inputVatMinor: 0, purchaseExpenseTaxRecoverable: true, notes: '',
+    })
+    const state = useDataStore.getState()
+    const entry = state.journal.find(row => row.id === purchase.journalEntryId)!
+    expect(entry.lines.reduce((sum, line) => sum + line.debit - line.credit, 0)).toBe(0)
+    expect(entry.lines.some(line => line.accountCode === '2101')).toBe(false)
+    expect(entry.lines.find(line => line.accountCode === '2117')?.credit).toBe(1000)
+    expect(state.vehicleCostEntries.find(row => row.purchaseId === purchase.id)).toMatchObject({ vehicleId: 44, amountMinor: 1000, status: 'accrued' })
+    expect(purchase.supplierDueMinor).toBe(10000)
+  })
+
   it('لا يكرر ضريبة مصروف الفترة: تظهر مرة في قيد المصروف ومرة واحدة في المدين', () => {
     const purchase = useDataStore.getState().postPurchase({
       supplierId: 801, date: '2026-09-24',

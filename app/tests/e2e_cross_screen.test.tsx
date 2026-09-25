@@ -28,7 +28,8 @@ const ui = (el: React.ReactElement) => render(<MemoryRouter>{el}<ToastHost /></M
 
 function openQuickByOptionText(text: string, occurrence = 0) {
   let found = 0
-  for (const root of [...document.querySelectorAll('[data-quick-select]')]) {
+  const roots = [...new Set([...document.querySelectorAll('[data-quick-select], [data-enter-native]')])]
+  for (const root of roots) {
     const input = root.querySelector('input') as HTMLInputElement | null
     if (!input) continue
     fireEvent.focus(input)

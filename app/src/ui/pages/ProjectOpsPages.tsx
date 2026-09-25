@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات أوامر التعديل — عمليات المشاريع المتقدمة:
  * MaterialIssuesPage — أذون صرف مواد (متوسط مرجح، صارف/مستلم إلزاميان، وحدات متعددة)
@@ -231,10 +231,7 @@ export function ClientCollectionsPage() {
       <div className={`anim-up ${card} p-4 space-y-4`}>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Field label="العميل *">
-            <QuickSelect value={customerId} onChange={(e) => { setCustomerId(e.target.value); setSpecificKey('') }} className={inputCls}>
-              <option value="">— اختر —</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-            </QuickSelect>
+            <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => { setCustomerId(id ? String(id) : ''); setSpecificKey('') }} cashLabel="اختر العميل" label="بحث العميل" cashValue={0} />
           </Field>
           <Field label={`المبلغ المحصَّل (${cur.symbol}) *`}>
             <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className={inputCls} />
@@ -538,10 +535,7 @@ export function ApprovalsPage() {
             <div key={i} className="grid grid-cols-[24px_1fr_1fr_32px] gap-2 items-center">
               <span className="text-[12px] font-black text-slate-400 text-center">{i + 1}</span>
               <input value={s.roleAr} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, roleAr: e.target.value } : x)))} placeholder="مهندس الموقع…" className={inputCls} />
-              <QuickSelect value={s.employeeId} onChange={(e) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, employeeId: e.target.value } : x)))} className={inputCls}>
-                <option value="">أي موظف بهذا الدور</option>
-                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={s.employeeId ? Number(s.employeeId) : 0} onChange={(id) => setSteps((arr) => arr.map((x, j) => (j === i ? { ...x, employeeId: id ? String(id) : '' } : x)))} cashLabel="أي موظف بهذا الدور" label="بحث الموظف" cashValue={0} />
               <button onClick={() => setSteps((arr) => arr.filter((_, j) => j !== i))} className="p-1.5 text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={14} /></button>
             </div>
           ))}

@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الأصول الثابتة والإهلاك (من مواصفة Easy Store):
  * اقتناء أصل بقيد (1201 / خزينة + موردون)، إهلاك شهري بالقسط الثابت
@@ -230,10 +230,7 @@ export function AssetsPage() {
             <div className="rounded-2xl border border-amber-500/25 bg-amber-500/5 p-3 space-y-3">
               <div className="text-[12px] font-black text-amber-700 dark:text-amber-400">دين آجل {fmt(remainingPreview)} {cur.symbol} — يُربط بمورد حقيقي وتتم متابعته وسداده</div>
               <Field label="المورد *" hint="غير موجود؟ سجّله أولاً من المشتريات ← الموردون">
-                <QuickSelect value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={inputCls}>
-                  <option value="">— اختر المورد —</option>
-                  {suppliers.map((sp) => <option key={sp.id} value={sp.id}>{sp.nameAr}</option>)}
-                </QuickSelect>
+                <PartyQuickPicker parties={suppliers} value={supplierId ? Number(supplierId) : 0} onChange={(id) => setSupplierId(String(id))} cashLabel="اكتب اسم المورد" label="بحث المورد" showCash={false} />
               </Field>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="عدد الأقساط" hint="فارغ أو 1 = دفعة واحدة">

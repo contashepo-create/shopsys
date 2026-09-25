@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
  * العمولات — قسمان بتبويبين لكل قسم (طلب المالك):
  * «عمولات لدى الغير (لي)»: إيراد 4112 يُثبت عند الاستحقاق (1112) ويُحصَّل من الخزينة/البنك
@@ -296,10 +296,7 @@ export function ExternalCommissionsPage() {
       <Modal open={open} onClose={() => setOpen(false)} title={`${dirMeta.icon} عمولة جديدة — ${dirMeta.nameAr}`}>
         <div className="space-y-3">
           <Field label="الشخص/الجهة (من السجل)" hint="غير موجود؟ سجّله أولاً من تبويب «الأشخاص المتعامل معهم»">
-            <QuickSelect value={partyId} onChange={(e) => setPartyId(e.target.value)} className={inputCls}>
-              <option value="">اختر…</option>
-              {commissionParties.map((p) => <option key={p.id} value={p.id}>{p.nameAr}{p.kind ? ` — ${p.kind}` : ''}</option>)}
-            </QuickSelect>
+            <PartyQuickPicker parties={commissionParties} value={partyId ? Number(partyId) : 0} onChange={(id) => setPartyId(id ? String(id) : '')} cashLabel="اختر الشخص/الجهة" label="بحث الشخص أو الجهة" showCash={false} />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label={`المبلغ (${cur.symbol})`}>

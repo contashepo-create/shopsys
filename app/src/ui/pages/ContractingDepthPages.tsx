@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * عمق المقاولات (مقارنة pro-acc والبرامج العالمية — طلب المالك):
  * - BoqPage: جداول الكميات مع نسب إنجاز بندية
@@ -319,10 +319,7 @@ export function SubcontractorsPage() {
               <input value={advPct} onChange={(e) => setAdvPct(e.target.value)} inputMode="numeric" className={inputCls} />
             </Field>
             <Field label="ربط بسجل مورد (اختياري)" hint="يوحّد مستحقاته في كشف حساب المورد">
-              <QuickSelect value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={inputCls}>
-                <option value="">— بلا ربط —</option>
-                {suppliers.map((su) => <option key={su.id} value={su.id}>{su.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={suppliers} value={supplierId ? Number(supplierId) : 0} onChange={(id) => setSupplierId(String(id))} cashLabel="بلا ربط" label="بحث المورد" showCash={false} />
             </Field>
           </div>
           {projectId !== '' && boqItems.filter((b) => b.projectId === projectId).length > 0 && (

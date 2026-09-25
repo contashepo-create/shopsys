@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
  * صفحة معرض السيارات (القرار 27):
  * كل سيارة بتكلفة شراء + تجهيزات مرسملة = تكلفة كاملة، فربحية البيع
@@ -352,10 +352,7 @@ export function CarsPage() {
             <div className="grid grid-cols-2 gap-3">
               <Field label={`سعر البيع (${cur.symbol}) *`}><input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
               <Field label={sellPayment === 'credit' ? 'المشتري من سجل العملاء *' : 'المشتري من سجل العملاء'} hint="الآجل يتطلبه — ذمته تظهر بكشف حسابه ويسري حده الائتماني">
-                <QuickSelect value={buyerCustomerId} onChange={(e) => setBuyerCustomerId(Number(e.target.value))} className={inputCls}>
-                  <option value={0}>— مشترٍ عابر (نقدي فقط) —</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                </QuickSelect>
+                <PartyQuickPicker parties={customers} value={buyerCustomerId} onChange={setBuyerCustomerId} cashLabel="مشترٍ عابر (نقدي فقط)" label="بحث المشتري" cashValue={0} />
               </Field>
             </div>
             {!buyerCustomerId && <Field label="اسم المشتري (حر — للعقد المطبوع)"><input value={buyer} onChange={(e) => setBuyer(e.target.value)} className={inputCls} /></Field>}
@@ -379,10 +376,7 @@ export function CarsPage() {
             </div>
             <Field label="عمولة موظف (اختياري)" hint="البائع الذي أتم الصفقة — مصروف مربوط بالسيارة يدخل ربحيتها">
               <div className="grid grid-cols-2 gap-2">
-                <QuickSelect value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
-                  <option value="">— بلا عمولة —</option>
-                  {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </QuickSelect>
+                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={commEmpId ? Number(commEmpId) : 0} onChange={(id) => setCommEmpId(id ? String(id) : '')} cashLabel="بلا عمولة" label="بحث موظف العمولة" cashValue={0} />
                 <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!commEmpId} />
               </div>
             </Field>
@@ -528,10 +522,7 @@ export function CarsPage() {
               <input value={cgSalePrice} onChange={(e) => setCgSalePrice(e.target.value)} inputMode="decimal" className={inputCls} />
             </Field>
             <Field label={cgPayment === 'credit' ? 'المشتري من سجل العملاء *' : 'المشتري من سجل العملاء'} hint="بيع الأمانة الآجل يتطلبه — الذمة على المشتري لا على مالك السيارة">
-              <QuickSelect value={cgBuyerCustomerId} onChange={(e) => setCgBuyerCustomerId(Number(e.target.value))} className={inputCls}>
-                <option value={0}>— مشترٍ عابر (نقدي فقط) —</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={customers} value={cgBuyerCustomerId} onChange={setCgBuyerCustomerId} cashLabel="مشترٍ عابر (نقدي فقط)" label="بحث المشتري" cashValue={0} />
             </Field>
             {!cgBuyerCustomerId && <Field label="اسم المشتري (حر — للإيصال)"><input value={cgBuyer} onChange={(e) => setCgBuyer(e.target.value)} className={inputCls} /></Field>}
             <div className="grid grid-cols-2 gap-3">

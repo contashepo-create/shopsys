@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات المقاولات (القرار 27):
  * ProjectsPage — مشروعات بمستخلصات (PRX) وتكاليف ببنود ومحتجزات وربحية
@@ -421,10 +421,7 @@ export function ProjectsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="اسم العميل / الجهة"><input value={clientName} onChange={(e) => setClientName(e.target.value)} className={inputCls} /></Field>
               <Field label="ربط بسجل عميل (إداري)" hint="للمتابعة والتحصيل فقط — لا يؤثر على رصيده؛ الذمة من المستخلص/الفاتورة">
-                <QuickSelect value={clientId} onChange={(e) => { setClientId(e.target.value); const c = customers.find((x) => x.id === Number(e.target.value)); if (c && !clientName.trim()) setClientName(c.nameAr) }} className={inputCls}>
-                  <option value="">— بلا ربط —</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                </QuickSelect>
+                <PartyQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = customers.find((x) => x.id === id); if (c && !clientName.trim()) setClientName(c.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />
               </Field>
             </div>
           </div>
@@ -435,10 +432,7 @@ export function ProjectsPage() {
               <Field label="تاريخ البدء"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} /></Field>
               <Field label="التسليم المتوقع"><input type="date" value={expectedEnd} onChange={(e) => setExpectedEnd(e.target.value)} className={inputCls} /></Field>
               <Field label="مدير المشروع" hint="من سجل الموظفين">
-                <QuickSelect value={managerId} onChange={(e) => setManagerId(e.target.value)} className={inputCls}>
-                  <option value="">— لاحقاً —</option>
-                  {employees.filter((em) => em.active).map((em) => <option key={em.id} value={em.id}>{em.nameAr}</option>)}
-                </QuickSelect>
+                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={managerId ? Number(managerId) : 0} onChange={(id) => setManagerId(id ? String(id) : '')} cashLabel="لاحقاً" label="بحث مدير المشروع" cashValue={0} />
               </Field>
               <Field label="موقع التنفيذ"><input value={location} onChange={(e) => setLocation(e.target.value)} className={inputCls} placeholder="المنصورة — حي الجامعة" /></Field>
               <Field label="وسوم (افصل بـ ،)"><input value={tags} onChange={(e) => setTags(e.target.value)} className={inputCls} placeholder="حكومي، تشطيبات" /></Field>
@@ -762,10 +756,7 @@ export function ProjectsPage() {
               </div>
             ))}
             <Field label="الموظف *">
-              <QuickSelect value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
-                <option value="">— اختر الموظف —</option>
-                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={commEmpId ? Number(commEmpId) : 0} onChange={(id) => setCommEmpId(id ? String(id) : '')} cashLabel="اختر الموظف" label="بحث الموظف" cashValue={0} />
             </Field>
             <Field label={`مبلغ العمولة (${cur.symbol}) *`}>
               <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />

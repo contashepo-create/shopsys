@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * خدمات المحافظ والدفع الإلكتروني (طلب المالك — نمط mobileshop حرفياً):
  * تحويل رصيد/دفع فواتير/شحن بمزوّدين، الربح = المحصَّل − المدفوع للمزوّد
@@ -203,10 +203,7 @@ export function WalletServicesPage() {
               <input value={paid} onChange={(e) => setPaid(e.target.value)} className={inputCls} dir="ltr" placeholder="الكل" />
             </Field>
             <Field label="العميل" hint="إلزامي فقط لو جزء من المبلغ آجل">
-              <QuickSelect value={customerId} onChange={(e) => setCustomerId(Number(e.target.value))} className={inputCls}>
-                <option value={0}>عميل نقدي</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </QuickSelect>
+              <PartyQuickPicker parties={customers} value={customerId} onChange={setCustomerId} cashLabel="عميل نقدي" label="بحث العميل" cashValue={0} />
             </Field>
           </div>
           {setup.vatPercent > 0 && (
