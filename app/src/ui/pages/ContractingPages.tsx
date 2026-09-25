@@ -24,7 +24,7 @@ import { printHtml } from '../print/printReceipt.ts'
 
 export function ProjectsPage() {
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems, paymentTerminals, paymentTerminalTransactions,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems, costCenters, paymentTerminals, paymentTerminalTransactions,
     addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission,
@@ -163,6 +163,7 @@ export function ProjectsPage() {
   const [costPayment, setCostPayment] = useState<'cash' | 'credit'>('cash')
   const [costPaySource, setCostPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [costVat, setCostVat] = useState('')
+  const [costCenterId, setCostCenterId] = useState<number | null>(null)
 
   const saveCost = () => {
     if (!costFor) return
@@ -173,9 +174,10 @@ export function ProjectsPage() {
         payment: costPayment, description: costDesc.trim(),
         treasury: costPaySource.kind === 'treasury' ? costPaySource.treasury : undefined,
         custodyFileId: costPayment === 'cash' && costPaySource.kind === 'custody' ? costPaySource.custodyFileId : null,
+        costCenterId,
       })
       toast.show('سُجلت التكلفة على المشروع بقيد متوازن ✅')
-      setCostFor(null); setCostAmount(''); setCostDesc(''); setCostVat('')
+      setCostFor(null); setCostAmount(''); setCostDesc(''); setCostVat(''); setCostCenterId(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -570,6 +572,7 @@ export function ProjectsPage() {
               </Field>
             </div>
             <Field label="الوصف"><input value={costDesc} onChange={(e) => setCostDesc(e.target.value)} className={inputCls} placeholder="حديد تسليح، أجور نجارين…" /></Field>
+            <Field label="مركز التكلفة العام (اختياري)" hint="يبقى المشروع منفصلاً ويمكن تحميل تكلفة المشروع على مركز عام لأغراض التقارير."><select value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className={inputCls}><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</select></Field>
             <Field label={`ض.ق.م مدخلات قابلة للخصم (${cur.symbol}) — اختياري`} hint="للمنشآت المسجلة ضريبياً: تُعزل عن تكلفة المشروع (المبلغ أعلاه صافٍ) فتبقى ربحية المشروع صافية من الضريبة تماماً — غير المسجل يتركها فارغة">
               <input value={costVat} onChange={(e) => setCostVat(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
             </Field>

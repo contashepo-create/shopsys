@@ -404,6 +404,8 @@ export interface ProjectExtract {
 export interface ProjectCost {
   id: number
   projectId: number
+  /** مركز التكلفة العام؛ يبقى projectId كربط مشروع مستقل */
+  costCenterId?: number | null
   date: string
   kind: CostKind
   description: string
@@ -1877,7 +1879,7 @@ interface DataState {
   /** مستخلص أعمال: قيد متوازن 1101|1104 + 1105 محتجز ← 4107 + 2102 */
   addProjectExtract: (args: { projectId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => ProjectExtract
   /** تكلفة على المشروع ببند: 5110 ← 1101|2101 */
-  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number }) => ProjectCost
+  addProjectCost: (args: { projectId: number; kind: CostKind; amountMinor: number; payment: 'cash' | 'credit'; description: string; treasury?: string; custodyFileId?: number | null; inputVatMinor?: number; costCenterId?: number | null }) => ProjectCost
   /** موازنة تكاليف المشروع بالفئات (نمط pro-acc) — تحل محل السابقة لنفس المشروع */
   setProjectBudget: (projectId: number, budgetLines: ProjectBudgetLine[]) => void
   /** مهمة جدول زمني للمشروع (جانت مبسط) */
@@ -7814,6 +7816,7 @@ export const useDataStore = create<DataState>()(
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا تكاليف جديدة عليه')
+        if (args.costCenterId != null && !state.costCenters.some((center) => center.id === args.costCenterId && center.isActive)) throw new Error('مركز التكلفة العام غير موجود أو غير نشط')
         // الدفع من عهدة موظف (طلب المالك): تُفحص وتُخصم من ملفه بدل الخزينة
         let custodyFile: CustodyFile | null = null
         if (args.payment === 'cash' && args.custodyFileId != null) {
@@ -7825,7 +7828,7 @@ export const useDataStore = create<DataState>()(
         }
         const payAccount = custodyFile ? CUSTODY_ACCOUNT : (args.treasury ?? '1101')
         // عزل الضريبة (طلب المالك): الصافي فقط يدخل 5110 وربحية المشروع — الضريبة على 2102
-        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr, payAccount, args.inputVatMinor ?? 0)
+        const lines = buildProjectCostEntry(args.amountMinor, args.payment, args.description || project.nameAr, payAccount, args.inputVatMinor ?? 0).map((line) => line.accountCode === '5110' && line.debit > 0 && args.costCenterId != null ? { ...line, costCenterId: args.costCenterId } : line)
         const now = new Date().toISOString()
         const id = nextId(state.projectCosts)
         const entryId = nextId(state.journal)
@@ -7836,7 +7839,7 @@ export const useDataStore = create<DataState>()(
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const cost: ProjectCost = {
-          id, projectId: project.id, date: now, kind: args.kind,
+          id, projectId: project.id, costCenterId: args.costCenterId ?? null, date: now, kind: args.kind,
           description: args.description, amountMinor: args.amountMinor, payment: args.payment, journalEntryId: entryId,
         }
         let custodyTxs = state.custodyTxs

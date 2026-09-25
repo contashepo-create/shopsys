@@ -61,6 +61,15 @@ describe('المراكز العامة وبنود المصروف القابلة �
     ]))
   })
 
+  it('يربط تكلفة مشروع المقاولات بالمركز العام مع إبقاء projectId منفصلاً', () => {
+    const center = useDataStore.getState().addCostCenter({ code: 'PRJ', nameAr: 'مركز المشاريع' })
+    const project = useDataStore.getState().addProject({ nameAr: 'مشروع اختبار', clientName: 'عميل اختبار', contractValueMinor: 10000, retentionPercent: 0, startDate: '2026-09-25', notes: '' })
+    const cost = useDataStore.getState().addProjectCost({ projectId: project.id, kind: 'materials', amountMinor: 1000, payment: 'credit', description: 'حديد', costCenterId: center.id })
+    expect(cost).toMatchObject({ projectId: project.id, costCenterId: center.id })
+    const entry = useDataStore.getState().journal.find(row => row.id === cost.journalEntryId)
+    expect(entry?.lines.find(line => line.accountCode === '5110')).toMatchObject({ costCenterId: center.id, debit: 1000 })
+  })
+
   it('يدعم شجرة المراكز وموازنتها وتوزيع السطر دون فقد مليم', () => {
     const root = useDataStore.getState().addCostCenter({ code: 'OPS', nameAr: 'تشغيل' })
     const child = useDataStore.getState().addCostCenter({ code: 'OPS-1', nameAr: 'فرع 1', parentId: root.id })
