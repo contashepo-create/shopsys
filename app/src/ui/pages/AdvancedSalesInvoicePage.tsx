@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, Pencil, Plus, Trash2, Save, FileCheck2, Printer } from 'lucide-react'
+import { Pencil, Plus, Trash2, Save, FileCheck2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -23,7 +23,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
 import { InvoiceLinesTable } from '../components/InvoiceLinesTable.tsx'
 import { partyCode } from '../../core/partyCodes.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
-import { InvoiceReferenceChrome } from '../components/InvoiceReferenceChrome.tsx'
+import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 
 type DraftLine=CartLine&{key:string;warehouseSource:'default'|'manual'}
 type CommissionDraft={id:string;employeeId:number;basis:InvoiceCommissionBasis;value:string}
@@ -51,24 +51,21 @@ export function AdvancedSalesInvoicePage(){
  const unsaved=useUnsavedChangesGuard(invoiceSignature);const goTo=(path:string)=>{guardNavigation(()=>nav(path))||nav(path)}
  const selectedCustomer=customers.find(customer=>customer.id===customerId)??null
  const selectedCustomerPriceList=selectedCustomer?.priceListId!=null?priceLists.find(list=>list.id===selectedCustomer.priceListId&&list.isActive)?.nameAr:null
- return <div className="invoice-editor invoice-reference-page mx-auto min-h-full space-y-4 bg-slate-50/30 px-2 pb-24 pt-2 dark:bg-slate-950/20" dir="rtl">
-  <header className="invoice-topbar sticky top-2 z-20 rounded-2xl border border-slate-200 bg-white shadow-md dark:border-slate-700 dark:bg-card-dark px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-   <div className="flex items-center gap-3 min-w-0"><button type="button" onClick={()=>unsaved.requestClose(()=>nav('/sales/invoices'))} className="shrink-0 rounded-xl border border-slate-200 dark:border-slate-700 p-2 text-slate-500 hover:text-brand-600 hover:border-brand-300 transition-colors" aria-label="العودة إلى فواتير المبيعات"><ArrowRight size={18}/></button><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h1 className="text-lg sm:text-xl font-black truncate">فاتورة مبيعات جديدة</h1><span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] font-black text-amber-700 dark:text-amber-300">مسودة جديدة</span></div><p className="text-[11px] text-slate-500 mt-0.5">أنشئ الفاتورة، راجع الإجمالي، ثم اعتمد الترحيل</p></div></div>
-   <div className="flex flex-wrap items-center gap-2"><Btn variant="ghost" onClick={()=>setPrintOpen(true)} shortcut="F6"><Printer size={15}/> طباعة</Btn><Btn variant="ghost" onClick={saveDraft} shortcut="F8"><Save size={15}/> حفظ مسودة</Btn><Btn onClick={save} shortcut="F9"><FileCheck2 size={16}/> اعتماد وترحيل</Btn></div>
-  </header>
-  <InvoiceReferenceChrome
-   kind="sale"
-   modeLabel={modeNames[mode]}
-   partyLabel={selectedCustomer?.nameAr ?? 'عميل نقدي'}
-   warehouseLabel={warehouses.find(warehouse => warehouse.id === warehouseId)?.nameAr ?? 'غير محدد'}
-   currencyLabel={`${cur.code} · ${cur.symbol}`}
-   dateLabel={new Intl.DateTimeFormat('ar-EG', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date())}
-   onPartySearch={() => window.dispatchEvent(new Event('shopsys:open-party'))}
-   onItemSearch={() => window.dispatchEvent(new Event('shopsys:open-item'))}
-   onSaveDraft={saveDraft}
-   onPrint={() => setPrintOpen(true)}
-   onPost={save}
-  />
+ return <InvoicePOSFrame
+  kind="sale"
+  modeLabel={modeNames[mode]}
+  partyLabel={selectedCustomer?.nameAr ?? 'عميل نقدي'}
+  warehouseLabel={warehouses.find(warehouse => warehouse.id === warehouseId)?.nameAr ?? 'غير محدد'}
+  currencyLabel={`${cur.code} · ${cur.symbol}`}
+  dateLabel={new Intl.DateTimeFormat('ar-EG', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date())}
+  onBack={() => unsaved.requestClose(() => nav('/sales/invoices'))}
+  onPartySearch={() => window.dispatchEvent(new Event('shopsys:open-party'))}
+  onItemSearch={() => window.dispatchEvent(new Event('shopsys:open-item'))}
+  onSaveDraft={saveDraft}
+  onRestoreDraft={restoreDraft}
+  onPrint={() => setPrintOpen(true)}
+  onPost={save}
+ >
   <section className="invoice-shell invoice-reference-shell overflow-visible rounded-b-2xl border-x border-b border-slate-300 bg-white shadow-lg dark:border-slate-700 dark:bg-card-dark">
   <section className="overflow-visible border-b border-sky-200 bg-sky-50/70 dark:border-sky-900/60 dark:bg-sky-950/20">
    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 px-4 py-3"><div><div className="text-[11px] font-bold text-slate-400">بيانات الفاتورة</div><h2 className="text-sm font-black">العميل والمخزن</h2></div><span className="rounded-full bg-slate-500/10 px-2.5 py-1 text-[10px] font-bold text-slate-500">{modeNames[mode]}</span></div>
@@ -146,6 +143,6 @@ export function AdvancedSalesInvoicePage(){
   {unsaved.prompt}
   <PrintTemplateModal open={printOpen} onClose={()=>setPrintOpen(false)} defaultTemplate={receipt.defaultTemplate} title="معاينة نسخة العميل" onPrint={printDraft}/>
   <div className="fixed bottom-0 left-0 right-0 z-20 border-t bg-white/95 dark:bg-card-dark/95 p-3 flex justify-end gap-2"><Btn variant="ghost" onClick={() => unsaved.requestClose(() => nav('/sales/invoices'))}>تراجع وإغلاق</Btn><Btn variant="ghost" onClick={restoreDraft}>استعادة آخر مسودة</Btn><Btn variant="ghost" onClick={saveDraft} shortcut="F8"><Save size={15}/> حفظ مسودة</Btn><Btn onClick={save} shortcut="F9"><FileCheck2 size={15}/> ترحيل وتحصيل</Btn></div>
- </div>
+ </InvoicePOSFrame>
  function Row({n,v,strong}:{n:string;v:number;strong?:boolean}){return <div className={`flex items-center justify-between gap-3 min-w-0 ${strong?'font-black text-base border-t pt-2':''}`}><span className="min-w-0 break-words">{n}</span><span className="shrink-0" dir="ltr">{formatMinor(v,cur,false)} {cur.symbol}</span></div>}
 }
