@@ -142,7 +142,7 @@ export function PrintSettingsPage() {
               </QuickSelect>
             </Field>
             <Field label="حجم الخط (نقطة)">
-              <input type="number" min={9} max={14} value={reportPrint.baseFontPt}
+              <input type="number" inputMode="decimal" step="any" min={9} max={14} value={reportPrint.baseFontPt}
                 onChange={(e) => updateReportPrint({ baseFontPt: Math.min(14, Math.max(9, Number(e.target.value) || 12)) })} className={inputCls} dir="ltr" />
             </Field>
             <Field label="لون العناوين">

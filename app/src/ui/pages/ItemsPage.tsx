@@ -945,8 +945,8 @@ function ItemForm({
   const moneyInput = (valueMinor: number, onChange: (m: number) => void, disabled = false) => (
     <div className="relative">
       <input
-        type="number"
-        step={decimals ? `0.${'0'.repeat(decimals - 1)}1` : '1'}
+        type="number" inputMode="decimal" step="any"
+
         min={0}
         disabled={disabled}
         defaultValue={valueMinor ? valueMinor / 10 ** decimals : ''}
@@ -1041,7 +1041,7 @@ function ItemForm({
         </Field>
         <Field label="حد إعادة الطلب" hint="عند وصول الرصيد إليه يظهر تنبيه نواقص">
           <input
-            type="number" min={0} defaultValue={draft.minQty || ''}
+            type="number" inputMode="decimal" step="any" min={0} defaultValue={draft.minQty || ''}
             onChange={(e) => p({ minQty: Number(e.target.value) || 0 })}
             className={inputCls} placeholder="0"
           />
@@ -1105,7 +1105,7 @@ function ItemForm({
           <div className="mt-3 anim-pop">
             <Field label="🛡️ مدة الضمان الافتراضية (بالأشهر)" hint="تُثبت على كل قطعة يوم بيعها — 0 = بلا ضمان">
               <input
-                type="number" min={0} max={120}
+                type="number" inputMode="decimal" step="any" min={0} max={120}
                 value={draft.warrantyMonths}
                 onChange={(e) => p({ warrantyMonths: Math.max(0, Math.min(120, Number(e.target.value) || 0)) })}
                 className={inputCls}
@@ -1132,7 +1132,7 @@ function ItemForm({
               </QuickSelect>
               {draft.vatOverride !== null && draft.vatOverride !== undefined && draft.vatOverride !== 0 && (
                 <input
-                  type="number" min={0.1} max={100} step={0.5}
+                  type="number" inputMode="decimal" step="any" min={0.1} max={100}
                   value={draft.vatOverride}
                   onChange={(e) => p({ vatOverride: Math.max(0.1, Math.min(100, Number(e.target.value) || 1)) })}
                   className={`${inputCls} !w-24`} dir="ltr"
@@ -1342,7 +1342,7 @@ function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>)
             value={factor}
             onChange={(e) => setFactor(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-            type="number" min={2} placeholder="مثال: 12" className={inputCls} dir="ltr"
+            type="number" inputMode="decimal" step="any" min={2} placeholder="مثال: 12" className={inputCls} dir="ltr"
           />
         </div>
         <Btn variant="soft" onClick={add} disabled={!valid}>+ إضافة</Btn>
@@ -1351,7 +1351,7 @@ function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>)
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
         <div>
           <div className="text-[10.5px] font-bold text-slate-400 mb-1">سعر بيع الـ{name.trim() || 'وحدة الأكبر'} (اختياري)</div>
-          <input value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} type="number" min={0} placeholder={`فارغ = ${f > 1 ? f : 'المعامل'} × سعر الـ${draft.baseUnit || 'وحدة'}`} className={inputCls} dir="ltr" />
+          <input value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} type="number" inputMode="decimal" step="any" min={0} placeholder={`فارغ = ${f > 1 ? f : 'المعامل'} × سعر الـ${draft.baseUnit || 'وحدة'}`} className={inputCls} dir="ltr" />
         </div>
         <div>
           <div className="text-[10.5px] font-bold text-slate-400 mb-1">باركود الـ{name.trim() || 'وحدة الأكبر'} (اختياري)</div>

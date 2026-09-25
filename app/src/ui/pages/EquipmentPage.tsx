@@ -256,7 +256,7 @@ export function EquipmentPage() {
               <input value={code} onChange={(e) => setCode(e.target.value)} className={inputCls} dir="ltr" placeholder="EQ-01" />
             </Field>
             <Field label="قراءة العدّاد الحالية (ساعة)">
-              <input value={meter} onChange={(e) => setMeter(e.target.value)} className={inputCls} dir="ltr" placeholder="0" type="number" min={0} step={0.1} />
+              <input value={meter} onChange={(e) => setMeter(e.target.value)} className={inputCls} dir="ltr" placeholder="0" type="number" inputMode="decimal" step="any" min={0} />
             </Field>
           </div>
           <div className="grid grid-cols-3 gap-3">
@@ -271,7 +271,7 @@ export function EquipmentPage() {
             </Field>
           </div>
           <Field label="صيانة وقائية كل (ساعة تشغيل)" hint="مثال: 250 — يظهر تنبيه وشريط اقتراب الخدمة. 0 = بلا خطة">
-            <input value={serviceEvery} onChange={(e) => setServiceEvery(e.target.value)} className={inputCls} dir="ltr" placeholder="0" type="number" min={0} />
+            <input value={serviceEvery} onChange={(e) => setServiceEvery(e.target.value)} className={inputCls} dir="ltr" placeholder="0" type="number" inputMode="decimal" step="any" min={0} />
           </Field>
           <Field label="ملاحظات">
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
@@ -296,10 +296,10 @@ export function EquipmentPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="قراءة العدّاد بداية الوردية" hint={`عدّاد المعدة الآن: ${shiftFor?.meterReading ?? 0}`}>
-              <input value={shiftStart} onChange={(e) => setShiftStart(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} />
+              <input value={shiftStart} onChange={(e) => setShiftStart(e.target.value)} className={inputCls} dir="ltr" type="number" inputMode="decimal" step="any" min={0} />
             </Field>
             <Field label="قراءة العدّاد نهاية الوردية">
-              <input value={shiftEnd} onChange={(e) => setShiftEnd(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} />
+              <input value={shiftEnd} onChange={(e) => setShiftEnd(e.target.value)} className={inputCls} dir="ltr" type="number" inputMode="decimal" step="any" min={0} />
             </Field>
           </div>
           {Number(shiftEnd) > Number(shiftStart) && (

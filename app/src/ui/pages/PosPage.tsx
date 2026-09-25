@@ -998,7 +998,7 @@ export function PosPage() {
                     <input
                       value={paidCash}
                       onChange={(e) => setPaidCash(e.target.value)}
-                      type="number" min={0} dir="ltr"
+                      type="number" inputMode="decimal" step="any" min={0} dir="ltr"
                       className={`${inputCls} text-center font-black text-lg`}
                     />
                   </div>

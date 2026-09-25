@@ -126,7 +126,7 @@ export function GeneralSettingsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="حالة تسجيل المنشأة"><QuickSelect className={inputCls} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as BusinessTaxStatus)}><option value="registered">مسجلة ضريبياً</option><option value="zero_rated">مسجلة ضريبياً بنسبة صفر</option><option value="exempt">منشأة معفاة</option></QuickSelect></Field>
           <Field label="النسبة ٪" hint="قابلة للتعديل دائماً — الضرائب تتغير بقرارات حكومية">
-            <input value={taxStatus === 'registered' ? vat : '0'} onChange={(e) => setVat(e.target.value)} disabled={taxStatus !== 'registered'} type="number" min={0} max={50} className={inputCls} />
+            <input value={taxStatus === 'registered' ? vat : '0'} onChange={(e) => setVat(e.target.value)} disabled={taxStatus !== 'registered'} type="number" inputMode="decimal" step="any" min={0} max={50} className={inputCls} />
           </Field>
           <Field label="طريقة الاحتساب في الأسعار (القرار 6)">
             <div className="flex gap-2">

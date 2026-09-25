@@ -137,7 +137,7 @@ export function BarcodeCenterPage() {
                       <td className="py-1.5 px-2 text-slate-500">{(it.priceMinor / 10 ** cur.decimals).toLocaleString('ar-EG')} {cur.symbol}</td>
                       <td className="py-1.5 px-2">
                         <input
-                          type="number" min={0} max={500}
+                          type="number" inputMode="decimal" step="any" min={0} max={500}
                           value={counts[it.id] ?? ''}
                           onChange={(e) => setCounts((c) => ({ ...c, [it.id]: e.target.value }))}
                           placeholder="0"

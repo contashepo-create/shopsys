@@ -218,14 +218,14 @@ export function QuotationsPage() {
                     <div className="grid grid-cols-2 lg:grid-cols-[130px_1fr_80px_100px_110px_110px] gap-2 items-end">
                       <Field label="اسم البند *"><input value={l.nameAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, nameAr: e.target.value } : x)))} placeholder="حفر وأساسات" className={inputCls} /></Field>
                       <Field label="الوصف التفصيلي *"><input value={l.descriptionAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, descriptionAr: e.target.value } : x)))} placeholder="حفر حتى منسوب التأسيس مع نقل المخلفات…" className={inputCls} /></Field>
-                      <Field label="الكمية *"><input value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" min={0} className={inputCls} dir="ltr" /></Field>
+                      <Field label="الكمية *"><input value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" /></Field>
                       <Field label="الوحدة *">
                         <QuickSelect value={l.unitAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls}>
                           {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
                         </QuickSelect>
                       </Field>
-                      <Field label={`سعر الوحدة (${cur.symbol}) *`}><input value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))} type="number" min={0} className={inputCls} dir="ltr" /></Field>
-                      <Field label="تكلفة تقديرية/وحدة" hint=""><input value={l.estCost} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, estCost: e.target.value } : x)))} type="number" min={0} placeholder="للموازنة" className={inputCls} dir="ltr" /></Field>
+                      <Field label={`سعر الوحدة (${cur.symbol}) *`}><input value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" /></Field>
+                      <Field label="تكلفة تقديرية/وحدة" hint=""><input value={l.estCost} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, estCost: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} placeholder="للموازنة" className={inputCls} dir="ltr" /></Field>
                     </div>
                     <div className="flex items-center justify-between mt-2">
                       <span className="text-[12px] font-black text-emerald-600 dark:text-emerald-400">إجمالي البند: {lineTotal > 0 ? `${fmt(lineTotal)} ${cur.symbol}` : '—'}</span>

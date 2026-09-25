@@ -16,7 +16,7 @@ import { effectiveVatPercent } from '../../core/items.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, electronicInvoiceLockActive } from '../../core/invoiceEdit.ts'
-import { Btn, Field, inputCls, Modal, useToast, EmptyState, useUnsavedChangesGuard, guardNavigation } from '../components/ui.tsx'
+import { Btn, DecimalInput, Field, inputCls, Modal, useToast, EmptyState, useUnsavedChangesGuard, guardNavigation } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -679,12 +679,12 @@ export function PurchasesPage() {
                   <input
                     value={l.qty}
                     onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))}
-                    type="number" min={0} placeholder={lineUnit ? `كم ${lineUnit.nameAr}؟` : 'الكمية'} className={inputCls}
+                    type="number" inputMode="decimal" step="any" min={0} placeholder={lineUnit ? `كم ${lineUnit.nameAr}؟` : 'الكمية'} className={inputCls}
                   />
                   <input
                     value={l.unitPrice}
                     onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))}
-                    type="number" min={0} placeholder={lineUnit ? `سعر ${lineUnit.nameAr}` : 'سعر الوحدة'} className={inputCls}
+                    type="number" inputMode="decimal" step="any" min={0} placeholder={lineUnit ? `سعر ${lineUnit.nameAr}` : 'سعر الوحدة'} className={inputCls}
                   />
                   <div
                     title={`ضريبة هذا البند تلقائياً حسب البلد/استثناء الصنف: ${taxPolicy.effectivePercent === 0 ? 0 : l.vatPercent}٪`}
@@ -803,7 +803,7 @@ export function PurchasesPage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
             <div className="rounded-2xl border-2 border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-card-dark space-y-3">
               <div><b>الدفع والتحصيل</b><p className="text-xs text-slate-500">حدد المدفوع الآن، والباقي يُسجل على المورد.</p></div>
-              <div className="grid sm:grid-cols-2 gap-3"><Field label={`المدفوع الآن (${cur.symbol})`}><input value={paid} onChange={(e) => setPaid(e.target.value)} type="number" min={0} className={inputCls} placeholder="0" /></Field><Field label="مصدر الدفع"><PaySourcePicker value={paySource} onChange={setPaySource} /></Field></div>
+              <div className="grid sm:grid-cols-2 gap-3"><Field label={`المدفوع الآن (${cur.symbol})`}><input value={paid} onChange={(e) => setPaid(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} placeholder="0" /></Field><Field label="مصدر الدفع"><PaySourcePicker value={paySource} onChange={setPaySource} /></Field></div>
               <div className="rounded-xl bg-slate-500/5 p-3 text-sm font-bold">المتبقي للمورد: <span className="text-brand-600">{preview ? fmt(preview.supplierDue - toMinor(paid || '0', cur.decimals)) : '—'} {cur.symbol}</span></div>
             </div>
             <div className="rounded-2xl border-2 border-brand-200 bg-brand-50/40 p-4 dark:border-brand-900/60 dark:bg-brand-950/20 space-y-2">
@@ -917,7 +917,7 @@ export function PurchasesPage() {
                   </QuickSelect>
                 </Field>
                 <Field label={`المبلغ (${cur.symbol})`}>
-                  <input value={lateAmount} onChange={(e) => setLateAmount(e.target.value)} type="number" min={0} placeholder="0" className={inputCls} />
+                  <input value={lateAmount} onChange={(e) => setLateAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} placeholder="0" className={inputCls} />
                 </Field>
                 <Field label="التوزيع">
                   <div className="flex rounded-xl overflow-hidden border-2 border-slate-200 dark:border-slate-700 w-fit">
@@ -1083,7 +1083,7 @@ onEdit={(id) => goTo(`/inventory/items?edit=${id}`)}
               <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-500/5 border border-slate-200 dark:border-slate-700">
                 {editExpenses.map((expense, i) => (
                   <Field key={`${expense.nameAr}-${i}`} label={`${expense.nameAr} · ${expense.costTreatment === 'period' ? 'مصروف فترة' : 'تكلفة مخزون'}`} hint={expense.paidBy === 'supplier' ? 'على حساب المورد' : expense.paidBy === 'custody' ? 'من العهدة' : expense.paidBy === 'payable' ? `مستحق لـ ${expense.beneficiaryName ?? 'جهة'}` : 'مدفوع من الخزينة'}>
-                    <input type="number" min="0" step="0.01" value={expense.amountMinor / 10 ** cur.decimals} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, amountMinor: toMinor(e.target.value, cur.decimals) } : row))} className={inputCls} dir="ltr" />
+                    <DecimalInput min="0" value={expense.amountMinor / 10 ** cur.decimals} onValueChange={(value) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, amountMinor: toMinor(value, cur.decimals) } : row))} className={inputCls} dir="ltr" />
                     <QuickSelect aria-label="مركز التكلفة العام لمصروف الشراء" value={expense.costCenterId ?? ''} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, costCenterId: e.target.value ? Number(e.target.value) : null } : row))} className={inputCls}><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect>
                   </Field>
                 ))}

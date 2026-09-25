@@ -1,5 +1,5 @@
 /** مكونات UI مشتركة — أزرار، مودال، حقول، توست */
-import { Children, isValidElement, useEffect, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { Children, isValidElement, useEffect, useRef, useState, type ChangeEvent, type FocusEvent, type InputHTMLAttributes, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Eye, EyeOff } from 'lucide-react'
 import { create } from 'zustand'
@@ -127,6 +127,48 @@ export function PinInput({
       </button>
     </div>
   )
+}
+
+function normalizeDecimalDraft(value: string): string {
+  const translated = value
+    .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
+    .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+    .replace(/[٫,]/g, '.')
+    .replace(/[^\d.-]/g, '')
+  const sign = translated.startsWith('-') ? '-' : ''
+  const unsigned = translated.replace(/-/g, '')
+  const dot = unsigned.indexOf('.')
+  if (dot < 0) return sign + unsigned
+  return sign + unsigned.slice(0, dot + 1) + unsigned.slice(dot + 1).replace(/\./g, '')
+}
+
+/**
+ * إدخال رقمي لا يفقد النقطة أثناء الكتابة. لا يحوّل القيمة إلى رقم في كل ضغطة؛
+ * لذلك تبقى حالات مثل `1.` و`١٫٥` قابلة للتحرير، بينما يقرر الحقل الأب نوع
+ * التخزين (كمية، نسبة، أو مبلغ بوحدة صغرى) عند الحاجة.
+ */
+export function DecimalInput({
+  value, onValueChange, onBlur, onFocus, ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'inputMode'> & {
+  value?: string | number | null
+  onValueChange: (value: string) => void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const displayValue = draft ?? (value == null ? '' : String(value))
+  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const normalized = normalizeDecimalDraft(event.currentTarget.value)
+    setDraft(normalized)
+    onValueChange(normalized)
+  }
+  const handleFocus = (event: FocusEvent<HTMLInputElement>) => {
+    setDraft(event.currentTarget.value)
+    onFocus?.(event)
+  }
+  const handleBlur = (event: FocusEvent<HTMLInputElement>) => {
+    onBlur?.(event)
+    setDraft(null)
+  }
+  return <input {...props} type="text" inputMode="decimal" value={displayValue} onFocus={handleFocus} onChange={handleChange} onBlur={handleBlur} />
 }
 
 export function Modal({

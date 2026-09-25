@@ -113,12 +113,12 @@ export function PartyQuickEditModal({ open, target, currencyDecimals, currencySy
           <Field label="الرمز البريدي"><input className={inputCls} value={form.postalCode} onChange={(e) => set('postalCode', e.target.value)} dir="ltr" /></Field>
           <Field label="رقم المبنى"><input className={inputCls} value={form.buildingNo} onChange={(e) => set('buildingNo', e.target.value)} dir="ltr" /></Field>
           {target?.kind === 'customer' ? <>
-            <Field label={`حد الائتمان (${currencySymbol})`}><input className={inputCls} type="number" min="0" value={form.creditLimit} onChange={(e) => set('creditLimit', e.target.value)} dir="ltr" /></Field>
+            <Field label={`حد الائتمان (${currencySymbol})`}><input className={inputCls} type="number" inputMode="decimal" step="any" min="0" value={form.creditLimit} onChange={(e) => set('creditLimit', e.target.value)} dir="ltr" /></Field>
             <Field label="قائمة الأسعار"><select className={inputCls} value={form.priceListId} onChange={(e) => set('priceListId', e.target.value)}><option value="">سعر قطاعي</option>{priceLists.filter((list) => list.isActive).map((list) => <option key={list.id} value={list.id}>{list.nameAr}</option>)}</select></Field>
           </> : <>
             <Field label="مسؤول التواصل"><input className={inputCls} value={form.contactPerson} onChange={(e) => set('contactPerson', e.target.value)} /></Field>
             <Field label="تصنيف المورد"><input className={inputCls} value={form.category} onChange={(e) => set('category', e.target.value)} /></Field>
-            <Field label="شروط السداد بالأيام"><input className={inputCls} type="number" min="0" value={form.paymentTermsDays} onChange={(e) => set('paymentTermsDays', e.target.value)} dir="ltr" /></Field>
+            <Field label="شروط السداد بالأيام"><input className={inputCls} type="number" inputMode="decimal" step="any" min="0" value={form.paymentTermsDays} onChange={(e) => set('paymentTermsDays', e.target.value)} dir="ltr" /></Field>
             <Field label="اسم البنك"><input className={inputCls} value={form.bankName} onChange={(e) => set('bankName', e.target.value)} /></Field>
             <Field label="IBAN"><input className={inputCls} value={form.iban} onChange={(e) => set('iban', e.target.value)} dir="ltr" /></Field>
           </>}

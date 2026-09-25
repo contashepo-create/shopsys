@@ -269,7 +269,7 @@ export function CustodyPage() {
       {/* تعزيز */}
       <Modal open={fundOpen} onClose={() => setFundOpen(false)} title={viewing ? `💰 تعزيز ${viewing.fileNumber}` : ''}>
         <div className="space-y-4">
-          <Field label={`المبلغ (${cur.symbol}) *`}><input value={fundAmount} onChange={(e) => setFundAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
+          <Field label={`المبلغ (${cur.symbol}) *`}><input value={fundAmount} onChange={(e) => setFundAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
           <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={fundTreasury} onChange={setFundTreasury} /></Field>
           <Field label="البيان"><input value={fundDesc} onChange={(e) => setFundDesc(e.target.value)} className={inputCls} placeholder="عهدة أسبوع، تشغيل موقع…" /></Field>
           <div className="flex justify-end gap-2">
@@ -287,7 +287,7 @@ export function CustodyPage() {
               <span className="text-slate-500">المتبقي بالعهدة</span><b>{fmt(viewSummary.remainingMinor)} {cur.symbol}</b>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label={`المبلغ (${cur.symbol}) *`}><input value={expAmount} onChange={(e) => setExpAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
+              <Field label={`المبلغ (${cur.symbol}) *`}><input value={expAmount} onChange={(e) => setExpAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
               <Field label="على مشروع؟" hint="يدخل تكاليفه وربحيته">
                 <QuickSelect value={expProjectId} onChange={(e) => setExpProjectId(e.target.value)} className={inputCls}>
                   <option value="">— بلا مشروع —</option>
@@ -316,7 +316,7 @@ export function CustodyPage() {
               <span className="text-slate-500">المتبقي بعهدة {empName(viewing.employeeId)}</span><b>{fmt(viewSummary.remainingMinor)} {cur.symbol}</b>
             </div>
             <Field label={`المرتجع نقداً (${cur.symbol})`} hint="ما يعيده الموظف فعلاً — الفرق يُسجَّل عجزاً">
-              <input value={returnAmount} onChange={(e) => setReturnAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus />
+              <input value={returnAmount} onChange={(e) => setReturnAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
             </Field>
             <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={settleTreasury} onChange={setSettleTreasury} compact /></Field>
             {returnAmount.trim() !== '' && (() => {

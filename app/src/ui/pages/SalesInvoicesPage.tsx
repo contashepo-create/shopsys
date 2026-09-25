@@ -23,7 +23,7 @@ import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, electronicInvoiceLockActive, saleEditBlocks } from '../../core/invoiceEdit.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
-import { Modal, EmptyState, useToast, inputCls, Btn, Field, useUnsavedChangesGuard, guardNavigation } from '../components/ui.tsx'
+import { DecimalInput, Modal, EmptyState, useToast, inputCls, Btn, Field, useUnsavedChangesGuard, guardNavigation } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { normalizeRefQuery } from '../../core/refcode.ts'
@@ -529,8 +529,8 @@ export function SalesInvoicesPage() {
               <Field label="تاريخ الاستحقاق"><input type="date" value={editDueDate} onChange={(e)=>setEditDueDate(e.target.value)} className={inputCls}/></Field>
             </div>
             {(editCustomerCharges.length > 0 || editInternalExpenses.length > 0) && <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700">
-              {editCustomerCharges.map((charge, i) => <Field key={`c-${i}`} label={`إضافة على العميل: ${charge.nameAr}`}><input type="number" min="0" step="0.01" value={charge.amountMinor / 10 ** cur.decimals} onChange={(e)=>setEditCustomerCharges(editCustomerCharges.map((x, xi)=>xi===i ? {...x, amountMinor: toMinor(e.target.value, cur.decimals)} : x))} className={inputCls}/></Field>)}
-              {editInternalExpenses.map((expense, i) => <div key={`e-${i}`} className="space-y-1"><Field label={`مصروف المنشأة: ${expense.label}`}><input type="number" min="0" step="0.01" value={expense.amountMinor / 10 ** cur.decimals} onChange={(e)=>setEditInternalExpenses(editInternalExpenses.map((x, xi)=>xi===i ? {...x, amountMinor: toMinor(e.target.value, cur.decimals)} : x))} className={inputCls}/></Field><QuickSelect aria-label="مركز التكلفة العام للمصروف" value={expense.costCenterId ?? ''} onChange={(e)=>setEditInternalExpenses(editInternalExpenses.map((x, xi)=>xi===i ? {...x, costCenterId: e.target.value ? Number(e.target.value) : null} : x))} className={inputCls}><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></div>)}
+              {editCustomerCharges.map((charge, i) => <Field key={`c-${i}`} label={`إضافة على العميل: ${charge.nameAr}`}><DecimalInput min="0" value={charge.amountMinor / 10 ** cur.decimals} onValueChange={(value)=>setEditCustomerCharges(editCustomerCharges.map((x, xi)=>xi===i ? {...x, amountMinor: toMinor(value, cur.decimals)} : x))} className={inputCls}/></Field>)}
+              {editInternalExpenses.map((expense, i) => <div key={`e-${i}`} className="space-y-1"><Field label={`مصروف المنشأة: ${expense.label}`}><DecimalInput min="0" value={expense.amountMinor / 10 ** cur.decimals} onValueChange={(value)=>setEditInternalExpenses(editInternalExpenses.map((x, xi)=>xi===i ? {...x, amountMinor: toMinor(value, cur.decimals)} : x))} className={inputCls}/></Field><QuickSelect aria-label="مركز التكلفة العام للمصروف" value={expense.costCenterId ?? ''} onChange={(e)=>setEditInternalExpenses(editInternalExpenses.map((x, xi)=>xi===i ? {...x, costCenterId: e.target.value ? Number(e.target.value) : null} : x))} className={inputCls}><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></div>)}
             </div>}
             <Field label="ملاحظات داخلية"><textarea value={editNotes} onChange={(e)=>setEditNotes(e.target.value)} className={inputCls}/></Field>
 

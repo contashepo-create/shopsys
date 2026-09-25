@@ -157,7 +157,7 @@ export function MaterialIssuesPage() {
                       <option value="">— الصنف —</option>
                       {stockItems.map((x) => <option key={x.id} value={x.id}>{x.nameAr} (رصيد {x.stockQty} {x.baseUnit})</option>)}
                     </QuickSelect>
-                    <input value={l.qty} onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" min={0} className={inputCls} />
+                    <input value={l.qty} onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} className={inputCls} />
                     <QuickSelect value={l.unitAr || (it?.baseUnit ?? '')} onChange={(e) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls} disabled={!l.itemId}>
                       {unitsOf(l.itemId).map((u) => <option key={u} value={u}>{u}</option>)}
                     </QuickSelect>

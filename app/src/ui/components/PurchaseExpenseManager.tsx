@@ -5,7 +5,7 @@ import type { CostCenter } from '../../core/costCenters.ts'
 import type { TreasuryDef } from '../../core/treasury.ts'
 import type { PurchaseExpense, Vehicle } from '../../data/repo.ts'
 import type { CustodyFile } from '../../core/custody.ts'
-import { Btn, Field, inputCls, Modal, useToast } from './ui.tsx'
+import { Btn, DecimalInput, Field, inputCls, Modal, useToast } from './ui.tsx'
 import { QuickSelect } from './KeyboardPickers.tsx'
 
 /**
@@ -148,7 +148,7 @@ export function PurchaseExpenseManager({
             <div className="mt-1 text-[10px] text-slate-500">حساب المصروف: <b>{expense.accountCode || '5108'}</b></div>
           </Field>
           <Field label="القيمة">
-            <input className={inputCls} type="number" min="0" inputMode="decimal" value={amountText(expense.amountMinor)} onChange={(event) => patch(index, { amountMinor: toMinor(event.target.value) })} placeholder="0" />
+            <DecimalInput className={inputCls} min="0" value={amountText(expense.amountMinor)} onValueChange={(value) => patch(index, { amountMinor: toMinor(value) })} placeholder="0" />
           </Field>
           <Field label="تحميل التكلفة">
             <QuickSelect className={inputCls} value={expense.costTreatment ?? 'inventory'} onChange={(event) => patch(index, { costTreatment: event.target.value as PurchaseExpense['costTreatment'] })}>
@@ -172,7 +172,7 @@ export function PurchaseExpenseManager({
             </QuickSelect>
           </Field>
           <Field label="نسبة الضريبة">
-            <input className={inputCls} type="number" min="0" max="100" disabled={!taxEnabled || expense.taxTreatment === 'exempt'} value={expense.taxTreatment === 'exempt' ? 0 : (expense.taxPercent ?? taxPercent)} onChange={(event) => patch(index, { taxPercent: Math.min(100, Math.max(0, Number(event.target.value) || 0)) })} />
+            <DecimalInput className={inputCls} min="0" max="100" disabled={!taxEnabled || expense.taxTreatment === 'exempt'} value={expense.taxTreatment === 'exempt' ? 0 : (expense.taxPercent ?? taxPercent)} onValueChange={(value) => patch(index, { taxPercent: Math.min(100, Math.max(0, Number(value) || 0)) })} />
           </Field>
           <Field label="مركز التكلفة العام">
             <QuickSelect className={inputCls} value={expense.costCenterId ?? ''} onChange={(event) => patch(index, { costCenterId: event.target.value ? Number(event.target.value) : null })}>

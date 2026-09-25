@@ -375,7 +375,7 @@ export function RentalContractsPage() {
             </div>
             {rateType === 'hourly' && (
               <Field label="قراءة العدّاد عند التسليم (Hour Meter) *" hint="ستُحاسب الساعات الفعلية من فرق القراءتين عند الإرجاع">
-                <input value={startReading} onChange={(e) => setStartReading(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} placeholder="0" />
+                <input value={startReading} onChange={(e) => setStartReading(e.target.value)} className={inputCls} dir="ltr" type="number" inputMode="decimal" step="any" min={0} placeholder="0" />
               </Field>
             )}
             {payment === 'cash' && <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div></Field>}
@@ -427,7 +427,7 @@ export function RentalContractsPage() {
             {/* تسوية الاستخدام الفعلي — ترقية القرار 25 */}
             {closing.rateType === 'hourly' ? (
               <Field label="قراءة العدّاد عند الإرجاع *" hint={`التسليم كان عند ${closing.startReading ?? 0} — المحجوز ${closing.days} ساعة، والتجاوز يُحاسب بقيد منفصل`}>
-                <input value={endReading} onChange={(e) => setEndReading(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} autoFocus />
+                <input value={endReading} onChange={(e) => setEndReading(e.target.value)} className={inputCls} dir="ltr" type="number" inputMode="decimal" step="any" min={0} autoFocus />
               </Field>
             ) : (
               <Field label="تاريخ الإرجاع الفعلي (اختياري)" hint={`المحجوز ${closing.days} ${closing.rateType === 'monthly' ? 'شهر' : 'يوم'} من ${closing.date.slice(0, 10)} — لو تأخر الإرجاع يُحاسَب التجاوز تلقائياً`}>

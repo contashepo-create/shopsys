@@ -376,7 +376,7 @@ export function VouchersPage() {
                   const remaining = invoice.dueMinor - invoice.settledMinor
                   return <div key={invoice.docKey} className="grid grid-cols-[1fr_120px] items-center gap-2 text-[11px]">
                     <span>{invoice.docLabel}<b className="block text-slate-500">متبقي {fmt(remaining)} {cur.symbol}</b></span>
-                    <input className={inputCls} type="number" min="0" step="1" inputMode="numeric" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="اتركه لـ FIFO" />
+                    <input className={inputCls} type="number" inputMode="decimal" step="any" min="0" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="اتركه لـ FIFO" />
                   </div>
                 })}
               </div>

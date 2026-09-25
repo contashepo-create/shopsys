@@ -422,7 +422,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                 <PartyQuickPicker parties={employees} value={advEmployeeId} onChange={setAdvEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
               <Field label={`المبلغ (${cur.symbol}) *`}>
-                <input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus />
+                <input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
               </Field>
               <Field label="من أي خزينة/بنك؟">
                 <TreasuryPicker value={advTreasury} onChange={setAdvTreasury} />

@@ -308,7 +308,7 @@ export function CustomersPage() {
             <Field label="اسم العميل *"><input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} autoFocus /></Field>
             <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} /></Field>
             <Field label={`حد الائتمان (${cur.symbol})`} hint="أقصى مديونية مسموحة للبيع الآجل — 0 = بلا حد">
-              <input value={creditLimit} onChange={(e) => setCreditLimit(e.target.value)} type="number" min={0} className={inputCls} />
+              <input value={creditLimit} onChange={(e) => setCreditLimit(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} />
             </Field>
             <Field label="فئة الخصم / قائمة الأسعار" hint="تظهر أسعار هذه الفئة تلقائياً عند اختيار العميل في الكاشير">
               <QuickSelect value={priceListId ?? ''} onChange={(e) => setPriceListId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
