@@ -39,6 +39,7 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
         result_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       )`,
+      `CREATE INDEX IF NOT EXISTS idx_idempotency_created_at ON idempotency_keys(created_at)`,
       `CREATE TABLE IF NOT EXISTS outbox_events (
         id TEXT PRIMARY KEY NOT NULL,
         aggregate_type TEXT NOT NULL,

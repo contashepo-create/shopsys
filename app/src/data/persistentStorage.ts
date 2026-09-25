@@ -7,6 +7,14 @@ type CachedSnapshot = {
   payloadJson: string | null
 }
 
+/** مفتاح ثابت لإعادة محاولة IPC بعد انقطاع الرد دون تكرار الحفظ. */
+export async function snapshotIdempotencyKey(storeName: string, expectedRevision: number, payloadJson: string): Promise<string> {
+  const data = new TextEncoder().encode(`${storeName}\u0000${expectedRevision}\u0000${payloadJson}`)
+  const digest = await crypto.subtle.digest('SHA-256', data)
+  const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `snapshot:${storeName}:${expectedRevision}:${hex}`
+}
+
 /**
  * تخزين Zustand المتوافق مع نسخة الويب ونسخة Electron.
  *
@@ -46,6 +54,7 @@ export class DesktopStateStorage implements StateStorage {
           storeName,
           expectedRevision: snapshot.revision,
           payloadJson: legacyPayload,
+          idempotencyKey: await snapshotIdempotencyKey(storeName, snapshot.revision, legacyPayload),
         })
         await this.legacyStorage.removeItem(storeName)
         const loaded: CachedSnapshot = { revision: migrated.revision, payloadJson: legacyPayload }
@@ -65,10 +74,12 @@ export class DesktopStateStorage implements StateStorage {
   setItem(name: string, value: string): Promise<void> {
     return this.enqueue(name, async () => {
       const current = await this.load(name)
+      const idempotencyKey = await snapshotIdempotencyKey(name, current.revision, value)
       const result = await this.database.saveSnapshot({
         storeName: name,
         expectedRevision: current.revision,
         payloadJson: value,
+        idempotencyKey,
       })
       this.snapshots.set(name, { revision: result.revision, payloadJson: value })
     })

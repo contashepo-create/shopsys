@@ -13,7 +13,7 @@ export interface DesktopSnapshot {
 
 export interface DesktopDatabaseBridge {
   getSnapshot(storeName: string): Promise<DesktopSnapshot>
-  saveSnapshot(input: { storeName: string; expectedRevision: number; payloadJson: string }): Promise<{ revision: number; updatedAt: string }>
+  saveSnapshot(input: { storeName: string; expectedRevision: number; payloadJson: string; idempotencyKey?: string }): Promise<{ revision: number; updatedAt: string; replayed?: boolean }>
   deleteSnapshot?(input: { storeName: string; expectedRevision: number }): Promise<{ revision: number; updatedAt: string }>
   integrityCheck(): Promise<{ ok: boolean; message: string }>
   schemaVersion(): Promise<number>

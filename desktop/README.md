@@ -24,6 +24,7 @@ cd desktop && npm run dev
 - ملف البيانات يحفظ في `app.getPath('userData')/shopsys.sqlite`، لا داخل مجلد المشروع.
 - SQLite تستخدم WAL وforeign keys ومعاملة واحدة للترحيل والحفظ.
 - الحفظ يحوي `expectedRevision` لمنع الكتابة فوق نسخة أحدث بصمت، والحذف له الحارس نفسه.
+- كل حفظ يمرر مفتاحاً ثابتاً لمنع التكرار؛ SQLite تعيد نتيجة الحفظ إذا أعيد طلب IPC بعد انقطاع الرد، وتحتفظ بآخر 256 مفتاحاً خاصاً باللقطات.
 - payload اللقطة يستخدم `safeStorage` عند توفر مخزن مفاتيح النظام، مع وسم صريح لحالة fallback في بيئات Linux التي لا توفر keyring.
 - التخزين المتصفح/الإلكترون موحد في `app/src/data/persistentStorage.ts`: خارج Electron = `secureStorage`، وداخله = SQLite عبر IPC مع طابور كتابة لكل مخزن.
 - عند وجود لقطة ويب قديمة، تُنسخ إلى SQLite بنجاح قبل حذفها؛ فشل SQLite لا يحذف الأصل.

@@ -9,6 +9,7 @@ describe('SQLite desktop schema contract', () => {
     expect(sqliteMigrationStatements()).toEqual(expect.arrayContaining([
       expect.stringContaining('CREATE TABLE IF NOT EXISTS store_state'),
       expect.stringContaining('CREATE TABLE IF NOT EXISTS outbox_events'),
+      expect.stringContaining('CREATE INDEX IF NOT EXISTS idx_idempotency_created_at'),
       expect.stringContaining('CREATE TABLE IF NOT EXISTS audit_events'),
     ]))
   })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DesktopStateStorage } from '../src/data/persistentStorage.ts'
+import { DesktopStateStorage, snapshotIdempotencyKey } from '../src/data/persistentStorage.ts'
 import type { DesktopDatabaseBridge, DesktopSnapshot } from '../src/data/desktopBridge.ts'
 
 function fakeDatabase() {
@@ -34,6 +34,13 @@ function fakeDatabase() {
 }
 
 describe('جسر تخزين Zustand إلى SQLite', () => {
+  it('ينشئ مفتاح منع تكرار ثابتاً يتغير مع الإصدار أو المحتوى', async () => {
+    const first = await snapshotIdempotencyKey('shopsys-data', 0, '{"a":1}')
+    expect(first).toBe(await snapshotIdempotencyKey('shopsys-data', 0, '{"a":1}'))
+    expect(first).not.toBe(await snapshotIdempotencyKey('shopsys-data', 1, '{"a":1}'))
+    expect(first).not.toBe(await snapshotIdempotencyKey('shopsys-data', 0, '{"a":2}'))
+  })
+
   it('يحفظ ويقرأ اللقطة بإصدار متزايد ويحذفها ذرياً', async () => {
     const { database, calls } = fakeDatabase()
     const storage = new DesktopStateStorage(database, null)
