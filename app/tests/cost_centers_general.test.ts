@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { validateCostCenter } from '../src/core/costCenters.ts'
 import { allocateJournalLine } from '../src/core/ledger.ts'
 import { validateExpenseTemplate } from '../src/core/expenseCatalog.ts'
-import { invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport } from '../src/core/expenseReports.ts'
+import { invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter } from '../src/core/expenseReports.ts'
 import { buildInternalExpenseLines } from '../src/core/advancedInvoice.ts'
 import { useDataStore } from '../src/data/repo.ts'
 
@@ -47,6 +47,18 @@ describe('المراكز العامة وبنود المصروف القابلة �
     const report = journalExpensesByCostCenter([{ id: 1, entryNumber: 1, date: '2026-09-25', description: 'مصروف', sourceType: 'payment_voucher', sourceId: 1, lines, createdBy: 'المالك', createdAt: '2026-09-25T00:00:00Z', reversedByEntryId: null, reversesEntryId: null }], { from: '2026-09-01', to: '2026-09-30' }, new Set())
     expect(report).toMatchObject({ totalMinor: 1000 })
     expect(report.rows[0]).toMatchObject({ costCenterId: 3, accountCode: '5108', txCount: 1 })
+  })
+
+  it('يحافظ على ارتباط المرتجع بالمركز الموروث دون خلطه بتقرير المصروفات', () => {
+    const rows = returnsByCostCenter([
+      { date: '2026-09-25', totalMinor: 800, costCenterIds: [3], kind: 'sale_return' },
+      { date: '2026-09-25', totalMinor: 200, costCenterIds: [3, 4], kind: 'purchase_return' },
+    ], { from: '2026-09-01', to: '2026-09-30' })
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ costCenterId: 3, kind: 'sale_return', totalMinor: 800, txCount: 1 }),
+      expect.objectContaining({ costCenterId: 3, kind: 'purchase_return', totalMinor: 200, txCount: 1 }),
+      expect.objectContaining({ costCenterId: 4, kind: 'purchase_return', totalMinor: 200, txCount: 1 }),
+    ]))
   })
 
   it('يدعم شجرة المراكز وموازنتها وتوزيع السطر دون فقد مليم', () => {

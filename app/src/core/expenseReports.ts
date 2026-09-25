@@ -185,6 +185,32 @@ export interface JournalCostCenterExpenseRow {
   txCount: number
 }
 
+export interface CostCenterReturnRow {
+  costCenterId: number
+  kind: 'sale_return' | 'purchase_return'
+  totalMinor: Minor
+  txCount: number
+}
+
+/** المرتجعات التي تحمل مراكز مرتبطة بالمستند الأصلي؛ تقرير ارتباط لا يخلطها بمصروفات الفترة. */
+export function returnsByCostCenter(
+  documents: { date: string; totalMinor: Minor; costCenterIds?: number[]; kind: CostCenterReturnRow['kind'] }[],
+  filter: ExpenseReportFilter,
+): CostCenterReturnRow[] {
+  const grouped = new Map<string, CostCenterReturnRow>()
+  for (const document of documents) {
+    if (!inPeriod(document.date, filter)) continue
+    for (const costCenterId of new Set(document.costCenterIds ?? [])) {
+      const key = `${costCenterId}:${document.kind}`
+      const row = grouped.get(key) ?? { costCenterId, kind: document.kind, totalMinor: 0, txCount: 0 }
+      row.totalMinor += document.totalMinor
+      row.txCount++
+      grouped.set(key, row)
+    }
+  }
+  return [...grouped.values()].sort((a, b) => b.totalMinor - a.totalMinor)
+}
+
 /** قيود المصروفات التي تحمل وسم مركز عام فعلياً، بما فيها الأنشطة خارج الفواتير. */
 export function journalExpensesByCostCenter(
   journal: JournalEntry[],
