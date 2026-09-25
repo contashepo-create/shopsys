@@ -2,17 +2,23 @@
  * الشريط الجانبي — على اليمين (RTL)، كل قسم رئيسي بلونه مع فروعه،
  * تأثيرات هوفر وانتقالات ناعمة (طلبات المالك).
  */
-import { useState } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { ChevronDown, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../../core/permissions.ts'
 import { labelFor } from '../../core/activityLabels.ts'
+import { guardNavigation } from '../components/ui.tsx'
 
 export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation()
+  const navigate = useNavigate()
+  const guardLink = (event: ReactMouseEvent<HTMLAnchorElement>, path: string) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    if (guardNavigation(() => navigate(path))) event.preventDefault()
+  }
   const { setup } = useAppStore()
   const [openSections, setOpenSections] = useState<Set<string>>(() => {
     // القسم الحاوي للمسار الحالي يبدأ مفتوحاً
@@ -90,6 +96,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
               <NavLink
                 key={sec.id}
                 to={child.path}
+                onClick={(event) => guardLink(event, child.path)}
                 style={{ animationDelay: `${i * 35}ms` }}
                 className={({ isActive }) =>
                   `anim-up group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
@@ -140,6 +147,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
                       <NavLink
                         key={child.id}
                         to={child.path}
+                        onClick={(event) => guardLink(event, child.path)}
                         className={({ isActive }) =>
                           `group flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 ${
                             isActive

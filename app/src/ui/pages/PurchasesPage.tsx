@@ -16,7 +16,7 @@ import { effectiveVatPercent } from '../../core/items.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, electronicInvoiceLockActive } from '../../core/invoiceEdit.ts'
-import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { Btn, Field, inputCls, Modal, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -27,6 +27,7 @@ import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 import { partyCode } from '../../core/partyCodes.ts'
 import { PurchaseExpenseManager } from '../components/PurchaseExpenseManager.tsx'
+import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 
 /**
  * سطر شراء (تدقيق المالك — الشراء بالكرتونة):
@@ -126,6 +127,7 @@ export function PurchasesPage() {
     toast.show(`أُرسلت فاتورة الشراء ${inv.invoiceNumber} للطباعة 🖨️`)
   }
   const [supplierId, setSupplierId] = useState(0)
+  const [partyEditorOpen, setPartyEditorOpen] = useState(false)
   const [lines, setLines] = useState<DraftLine[]>([])
   const firstItemRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -378,6 +380,10 @@ export function PurchasesPage() {
     }
   }, [lines, expenses, cur.decimals, inputVatMinor])
 
+  const invoiceSignature = JSON.stringify({ supplierId, lines, expenses, paid, paySource, warehouseId, projectId, notes, taxPolicy: taxPolicy.effectivePercent })
+  const unsaved = useUnsavedChangesGuard(invoiceSignature)
+  useEffect(() => { if (open) unsaved.markClean() }, [open])
+
   const save = () => {
     if (!preview || supplierId < 0) return
     if (supplierId === 0 && toMinor(paid || '0', cur.decimals) !== preview.supplierDue) {
@@ -436,6 +442,7 @@ export function PurchasesPage() {
       notes,
     })
     toast.show(`رُحّلت الفاتورة ${inv.invoiceNumber} — تحدثت تكلفة الأصناف بالمتوسط المرجح ✓`)
+    unsaved.markClean()
     setOpen(false)
     } catch (e) {
       toast.show((e as Error).message, 'error')
@@ -533,11 +540,11 @@ export function PurchasesPage() {
       )}
 
       {/* مودال فاتورة جديدة */}
-      <Modal open={open} onClose={() => setOpen(false)} title="فاتورة شراء جديدة" wide>
+      <Modal open={open} onClose={() => unsaved.requestClose(() => setOpen(false))} title="فاتورة شراء جديدة" wide>
         <div className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Field label="المورد (اختياري)">
-              <PartyQuickPicker
+              <div className="flex items-center gap-2"><div className="min-w-0 flex-1"><PartyQuickPicker
                 parties={suppliers}
                 value={supplierId}
                 onChange={setSupplierId}
@@ -546,7 +553,7 @@ export function PurchasesPage() {
                 partyInfo={supplierPickerInfo}
                 onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))}
                 autoFocus
-              />
+              /></div>{supplierId > 0 ? <button type="button" title="تعديل بيانات المورد" onClick={() => setPartyEditorOpen(true)} className="mt-0.5 rounded-lg border border-sky-300 p-2 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={15}/></button> : null}</div>
             </Field>
           </div>
           {warehouses.length > 1 && (
@@ -803,11 +810,14 @@ export function PurchasesPage() {
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
 
           <div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
+            <Btn variant="ghost" onClick={() => unsaved.requestClose(() => setOpen(false))}>تراجع وإغلاق</Btn>
             <Btn onClick={save} shortcut="F9" disabled={!preview || supplierId < 0}>🚀 ترحيل الفاتورة</Btn>
           </div>
         </div>
       </Modal>
+
+      {unsaved.prompt}
+      <PartyQuickEditModal open={partyEditorOpen} target={supplierId > 0 && suppliers.find((supplier) => supplier.id === supplierId) ? { kind: 'supplier', party: suppliers.find((supplier) => supplier.id === supplierId)! } : null} currencyDecimals={cur.decimals} currencySymbol={cur.symbol} onClose={() => setPartyEditorOpen(false)} />
 
       {/* ⚡ إضافة صنف سريعة داخل الفاتورة (الأمر 6) — التكلفة تتحدد من الفاتورة نفسها */}
       <Modal open={quickOpen} onClose={() => setQuickOpen(false)} title="⚡ صنف جديد سريع">

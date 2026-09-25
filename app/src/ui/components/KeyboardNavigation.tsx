@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { guardNavigation } from './ui.tsx'
 
 const selector = 'input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
@@ -41,7 +42,8 @@ export function KeyboardNavigation() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'F3') {
         event.preventDefault()
-        navigate(pathname.startsWith('/purchases') ? '/purchases/invoices/new' : '/sales/invoices/new')
+        const nextPath = pathname.startsWith('/purchases') ? '/purchases/invoices/new' : '/sales/invoices/new'
+        guardNavigation(() => navigate(nextPath)) || navigate(nextPath)
         return
       }
       if (event.key === 'F4') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:focus-party')); return }

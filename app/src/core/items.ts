@@ -125,7 +125,7 @@ export interface Item {
 export class PriceFloorError extends Error {
   itemNames: string[]
   constructor(itemNames: string[]) {
-    super(`سعر بيع تحت الحد الأدنى: ${itemNames.join('، ')} — يلزم اعتماد مدير`)
+    super(`سعر بيع أقل من التكلفة أو الحد الأدنى: ${itemNames.join('، ')} — يلزم اعتماد مدير`)
     this.name = 'PriceFloorError'
     this.itemNames = itemNames
   }
@@ -133,14 +133,14 @@ export class PriceFloorError extends Error {
 
 export function priceFloorViolations(
   lines: readonly { itemId: number; unitPriceMinor: Minor; unitFactor?: number; discountPercent: number }[],
-  items: readonly Pick<Item, 'id' | 'nameAr' | 'minSalePriceMinor'>[],
+  items: readonly Pick<Item, 'id' | 'nameAr' | 'minSalePriceMinor' | 'costMinor'>[],
 ): string[] {
   const bad: string[] = []
   for (const l of lines) {
     const it = items.find((x) => x.id === l.itemId)
-    const floor = it?.minSalePriceMinor ?? 0
+    const floor = Math.max(it?.minSalePriceMinor ?? 0, it?.costMinor ?? 0)
     if (!it || floor <= 0) continue
-    // السعر الفعلي بعد خصم السطر وبالوحدة الأساسية
+    // السعر الفعلي بعد خصم السطر وبالوحدة الأساسية؛ يحمي من البيع بأقل من التكلفة حتى لو لم يضبط المستخدم حداً خاصاً.
     const perBase = (l.unitPriceMinor * (1 - l.discountPercent / 100)) / (l.unitFactor ?? 1)
     if (perBase < floor - 0.5) bad.push(it.nameAr)
   }

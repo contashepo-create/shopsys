@@ -18,6 +18,7 @@ import { collectLeaseAlerts } from '../../core/realestate.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { isInvoiceFirst } from '../../core/activities.ts'
+import { guardNavigation } from '../components/ui.tsx'
 
 export function Header({ title }: { title: string }) {
   const { theme, toggleTheme, setup, setAccountingMode, sync } = useAppStore()
@@ -35,6 +36,7 @@ export function Header({ title }: { title: string }) {
   const connInfo = CONNECTIVITY_LABELS[conn]
   const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, tickets, laundryOrders, leases, shifts } = useDataStore()
   const navigate = useNavigate()
+  const goTo = (path: string) => { guardNavigation(() => navigate(path)) || navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -140,7 +142,7 @@ export function Header({ title }: { title: string }) {
       {/* حالة الوردية: قرارها مركزي حسب الدور، لا حسب كون الحساب مالكاً فقط */}
       {setup.modules.includes('pos') && !openShift && !isInvoiceFirst(setup.activityId) && (
         <button
-          onClick={() => navigate('/sales/shifts')}
+          onClick={() => goTo('/sales/shifts')}
           title={shiftPolicy.required ? shiftPolicy.messageAr : shiftPolicy.messageAr}
           className={`hidden sm:flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-full transition-all hover:scale-105 ${
             shiftPolicy.required
@@ -209,7 +211,7 @@ export function Header({ title }: { title: string }) {
                     key={n.id}
                     className="w-full flex items-start gap-1 px-2 py-2.5 border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                   >
-                    <button onClick={() => { setBellOpen(false); navigate(n.route) }} className="flex-1 text-right">
+                    <button onClick={() => { setBellOpen(false); goTo(n.route) }} className="flex-1 text-right">
                       <div className={`text-[12px] font-bold flex items-center gap-1.5 ${n.severity === 'danger' ? 'text-rose-600' : n.severity === 'warn' ? 'text-amber-600' : 'text-slate-700 dark:text-slate-200'}`}>
                         <span>{n.icon}</span> {n.title}
                       </div>
@@ -251,7 +253,7 @@ export function Header({ title }: { title: string }) {
             {activeUser ? `🛡️ ${activeUser.roleId}` : '👑 كل الصلاحيات'}
           </div>
         </div>
-        <button onClick={() => navigate('/settings/profile')} title="حسابي — بياناتي ورقمي السري" className="transition-transform hover:scale-110">
+        <button onClick={() => goTo('/settings/profile')} title="حسابي — بياناتي ورقمي السري" className="transition-transform hover:scale-110">
           {(() => {
             const av = activeUser ? activeUser.avatarDataUrl : ownerProfile.avatarDataUrl
             return av

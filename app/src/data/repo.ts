@@ -1648,6 +1648,8 @@ interface DataState {
     allowNegativeStock?: boolean
     /** تجاوز حد ائتمان العميل بموافقة مدير — التعديل قد يرفع الجزء الآجل فوق الحد */
     creditLimitOverrideBy?: string | null
+    /** تجاوز البيع بأقل من التكلفة/الحد الأدنى بموافقة مدير */
+    priceFloorOverrideBy?: string | null
   }) => SaleInvoice
   /** تعديل فاتورة شراء — نفس منهج editSale (عكس + إعادة ترحيل). يُرفض لو الفاتورة الإلكترونية مفعلة */
   editPurchase: (args: {
@@ -4954,6 +4956,8 @@ export const useDataStore = create<DataState>()(
           const cur = stockAfterRestore.get(l.itemId)
           return cur && Number.isInteger(cur.costMinor) ? { ...l, unitCostMinor: Math.round(cur.costMinor * (l.unitFactor ?? 1)) } : l
         })
+        const floorBad = priceFloorViolations(costedLines, state.items)
+        if (floorBad.length && !args.priceFloorOverrideBy) throw new PriceFloorError(floorBad)
         // ④ الإجماليات والقيد الجديد بنفس المعاملة الضريبية الأصلية
         // G1: المعاملة الضريبية المخزنة على الفاتورة أولاً (دقيقة مع الأصناف المعفاة المختلطة)
         const { taxPercent, taxInclusive } = sale.taxPercent !== undefined

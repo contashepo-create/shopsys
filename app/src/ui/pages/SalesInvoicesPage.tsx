@@ -4,7 +4,7 @@
  *   التعديل يعكس القيد القديم ويولد قيداً جديداً فلا يفسد الدفتر أبداً.
  *   مع تفعيلها: يظهر بدلاً منه زرا «إشعار دائن» (مرتجع) و«إشعار مدين» (فاتورة إضافية).
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Eye, BookOpenText, Printer, Pencil, FileMinus2, FilePlus2, FileSpreadsheet, Trash2, History, HandCoins } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
@@ -15,7 +15,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { buildReceiptModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
-import { effectiveVatPercent } from '../../core/items.ts'
+import { effectiveVatPercent, PriceFloorError } from '../../core/items.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
@@ -23,12 +23,13 @@ import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { invoiceEditPolicy, electronicInvoiceLockActive, saleEditBlocks } from '../../core/invoiceEdit.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
-import { Modal, EmptyState, useToast, inputCls, Btn, Field } from '../components/ui.tsx'
+import { Modal, EmptyState, useToast, inputCls, Btn, Field, useUnsavedChangesGuard } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { normalizeRefQuery } from '../../core/refcode.ts'
 import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 import { partyCode } from '../../core/partyCodes.ts'
+import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 
 export function SalesInvoicesPage() {
   const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance } = useDataStore()
@@ -65,6 +66,7 @@ export function SalesInvoicesPage() {
   const [editCustomerReference, setEditCustomerReference] = useState('')
   const [editDueDate, setEditDueDate] = useState('')
   const [editNotes, setEditNotes] = useState('')
+  const [partyEditorOpen, setPartyEditorOpen] = useState(false)
   const [editCustomerCharges, setEditCustomerCharges] = useState<DocumentCharge[]>([])
   const [editInternalExpenses, setEditInternalExpenses] = useState<InternalExpense[]>([])
   const [editReason, setEditReason] = useState('')
@@ -138,7 +140,11 @@ export function SalesInvoicesPage() {
     return { ...base, netMinor: base.netMinor + chargeNet, taxBaseMinor: base.taxBaseMinor + charges.filter((charge) => charge.taxable).reduce((sum, charge) => sum + charge.amountMinor, 0), taxMinor: base.taxMinor + chargeTax, totalMinor: base.totalMinor + chargeNet + chargeTax }
   }, [editing, editLines, editDiscount, editCustomerCharges])
 
-  const saveEdit = (creditLimitOverrideBy?: string) => {
+  const editSignature = JSON.stringify({ editingId: editing?.id ?? null, editLines, editCustomerId, editPaid, editTreasury, editDiscount, editCustomerReference, editDueDate, editNotes, editCustomerCharges, editInternalExpenses, editReason })
+  const unsavedEdit = useUnsavedChangesGuard(editSignature)
+  useEffect(() => { unsavedEdit.markClean() }, [editing?.id])
+
+  const saveEdit = (creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
     if (!editing || !editTotals) return
     try {
       const paidMinor = toMinor(editPaid || '0', cur.decimals)
@@ -160,10 +166,15 @@ export function SalesInvoicesPage() {
         einvoiceActive,
         allowNegativeStock: setup.allowNegativeStock,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
+        priceFloorOverrideBy: priceFloorOverrideBy ?? null,
       })
       toast.show(`عُدلت ${updated.invoiceNumber} — عُكس قيدها القديم وتولد قيد جديد صحيح ✓`)
       setEditing(null)
     } catch (e) {
+      if (e instanceof PriceFloorError) {
+        editApproval.request((by) => saveEdit(creditLimitOverrideBy, by ?? 'المشرف'))
+        return
+      }
       // التعديل رفع آجل العميل فوق حده — اعتماد مدير بصلاحية sales.credit.override
       if (e instanceof CreditLimitError) {
         creditApproval.request((by) => saveEdit(by ?? 'المشرف'))
@@ -415,7 +426,7 @@ export function SalesInvoicesPage() {
       </Modal>
 
       {/* ✏️ تعديل فاتورة (سياسة المالك: فقط عندما تكون الفاتورة الإلكترونية غير مفعلة) */}
-      <Modal open={!!editing} onClose={() => setEditing(null)} title={editing ? `✏️ تعديل ${editing.invoiceNumber}` : ''} wide>
+      <Modal open={!!editing} onClose={() => unsavedEdit.requestClose(() => setEditing(null))} title={editing ? `✏️ تعديل ${editing.invoiceNumber}` : ''} wide>
         {editing && (
           <div className="space-y-4">
             <p className="text-[11.5px] text-slate-400 leading-relaxed p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
@@ -499,7 +510,7 @@ export function SalesInvoicesPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="العميل" hint="أي جزء آجل يحتاج عميلاً مسجلاً">
-                <PartyQuickPicker parties={customers} value={editCustomerId ?? 0} onChange={(id) => setEditCustomerId(id || null)} cashLabel="عميل نقدي" label="اختيار العميل" partyInfo={customerPickerInfo} onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} />
+                <div className="flex items-center gap-2"><div className="min-w-0 flex-1"><PartyQuickPicker parties={customers} value={editCustomerId ?? 0} onChange={(id) => setEditCustomerId(id || null)} cashLabel="عميل نقدي" label="اختيار العميل" partyInfo={customerPickerInfo} onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} /></div>{editCustomerId ? <button type="button" title="تعديل بيانات العميل" onClick={() => setPartyEditorOpen(true)} className="mt-0.5 rounded-lg border border-sky-300 p-2 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={15}/></button> : null}</div>
               </Field>
               <Field label="خصم الفاتورة ٪">
                 <input value={editDiscount || ''} onChange={(e) => setEditDiscount(Math.min(100, Math.max(0, Number(e.target.value) || 0)))} className={inputCls} dir="ltr" placeholder="0" />
@@ -534,7 +545,7 @@ export function SalesInvoicesPage() {
             )}
 
             <div className="flex justify-end gap-2">
-              <Btn variant="ghost" onClick={() => setEditing(null)}>إلغاء</Btn>
+              <Btn variant="ghost" onClick={() => unsavedEdit.requestClose(() => setEditing(null))}>تراجع عن التعديل</Btn>
               <Btn onClick={saveEdit} shortcut="F9" disabled={!editReason.trim() || !editLines.length || editLines.some((l) => l.qty <= 0)}>💾 حفظ التعديل</Btn>
             </div>
           </div>
@@ -574,6 +585,8 @@ export function SalesInvoicesPage() {
           </div>
         )}
       </Modal>
+      {unsavedEdit.prompt}
+      <PartyQuickEditModal open={partyEditorOpen} target={editCustomerId && customers.find((customer) => customer.id === editCustomerId) ? { kind: 'customer', party: customers.find((customer) => customer.id === editCustomerId)! } : null} currencyDecimals={cur.decimals} currencySymbol={cur.symbol} onClose={() => setPartyEditorOpen(false)} />
       <PrintTemplateModal open={!!printTarget} onClose={()=>setPrintTarget(null)} defaultTemplate={receipt.defaultTemplate} title="طباعة الفاتورة" onPrint={(template)=>{if(printTarget)void printInvoice(printTarget,template)}}/>
       {editApproval.dialog}
       {creditApproval.dialog}

@@ -5,7 +5,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * المتبقي القابل للإرجاع ولا المخزون الحالي (لا إرجاع لبضاعة بيعت).
  * الاسترداد: نقدي من المورد أو تخفيض دينه.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { RotateCcw, Search, BookOpenText, Eye, Printer } from 'lucide-react'
 import { useDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -13,7 +13,8 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { remainingPurchaseByLine } from '../../core/purchases.ts'
 import { partyCode } from '../../core/partyCodes.ts'
-import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
+import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -41,6 +42,11 @@ export function PurchaseReturnsPage() {
   const [viewing, setViewing] = useState<PurchaseReturn | null>(null)
   // طباعة إشعار مرتجع الشراء بقوالب الكاشير الثلاثة (طلب المالك)
   const [printTarget, setPrintTarget] = useState<PurchaseReturn | null>(null)
+  const [partyEditorOpen, setPartyEditorOpen] = useState(false)
+  const returnSignature = JSON.stringify({ qtys, returnWarehouses, refund, treasury, reason })
+  const unsaved = useUnsavedChangesGuard(returnSignature)
+  useEffect(() => { unsaved.markClean() }, [purchase?.id])
+  const closePurchase = () => unsaved.requestClose(() => setPurchase(null))
 
   /** إشعار مدين للمورد: سطور بتكلفة الوحدة النهائية + المسترد نقداً/ديناً */
   const printPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
@@ -232,9 +238,10 @@ export function PurchaseReturnsPage() {
       </Modal>
 
       {/* نموذج المرتجع */}
-      <Modal open={!!purchase} onClose={() => setPurchase(null)} title={purchase ? `مرتجع عن فاتورة الشراء ${purchase.invoiceNumber}` : ''} wide>
+      <Modal open={!!purchase} onClose={closePurchase} title={purchase ? `مرتجع عن فاتورة الشراء ${purchase.invoiceNumber}` : ''} wide>
         {purchase && (
           <div className="space-y-4">
+            {purchase.supplierId > 0 && suppliers.find((row) => row.id === purchase.supplierId) && (() => { const supplier = suppliers.find((row) => row.id === purchase.supplierId)!; return <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50/60 px-3 py-2 text-xs dark:border-sky-900/60 dark:bg-sky-950/20"><div className="flex flex-wrap items-center gap-2"><b>{supplier.nameAr}</b><span className="font-mono text-slate-500" dir="ltr">{partyCode('SUP', supplier.id)}</span><span>الرصيد: {fmt(Math.abs(getSupplierBalance(supplier.id)))} {cur.symbol}</span>{supplier.address && <span className="text-slate-500">{supplier.address}</span>}</div><button type="button" title="تعديل بيانات المورد" onClick={() => setPartyEditorOpen(true)} className="rounded-lg border border-sky-300 p-1.5 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300">تعديل المورد</button></div> })()}
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
@@ -298,12 +305,20 @@ export function PurchaseReturnsPage() {
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="سبب الإرجاع (اختياري): تالف، غير مطابق للمواصفات…" className={inputCls} />
 
             <div className="flex justify-end gap-2">
-              <Btn variant="ghost" onClick={() => setPurchase(null)}>إلغاء</Btn>
+              <Btn variant="ghost" onClick={closePurchase}>تراجع عن المرتجع</Btn>
               <Btn onClick={submit} shortcut="F9" disabled={!anyQty}>📤 تنفيذ المرتجع</Btn>
             </div>
           </div>
         )}
       </Modal>
+      {unsaved.prompt}
+      <PartyQuickEditModal
+        open={partyEditorOpen}
+        target={purchase && purchase.supplierId > 0 ? (() => { const supplier = suppliers.find((row) => row.id === purchase.supplierId); return supplier ? { kind: 'supplier' as const, party: supplier } : null })() : null}
+        currencyDecimals={cur.decimals}
+        currencySymbol={cur.symbol}
+        onClose={() => setPartyEditorOpen(false)}
+      />
 
       {/* عرض مرتجع */}
       <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `المرتجع ${viewing.returnNumber}` : ''} wide>

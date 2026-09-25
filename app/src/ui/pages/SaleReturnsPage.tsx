@@ -6,9 +6,9 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * ← ④ مراجعة وتأكيد: ملخص المبالغ وتوزيع الرد قبل الترحيل.
  * المحاسبة: قيد عاكس متوازن — التالف يذهب لبند الهالك 5111 ولا يدخل المخزون.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { RotateCcw, Search, BookOpenText, Eye, Printer, ChevronRight, ChevronLeft, Repeat } from 'lucide-react'
+import { RotateCcw, Search, BookOpenText, Eye, Printer, ChevronRight, ChevronLeft, Repeat, Pencil } from 'lucide-react'
 import { useDataStore, type SaleInvoice, type SaleReturn } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -21,7 +21,8 @@ import { buildReceiptModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import type { InvoiceTemplate } from '../../core/receipt.ts'
-import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
+import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -63,9 +64,13 @@ export function SaleReturnsPage() {
   const [reasonCode, setReasonCode] = useState('changed_mind')
   const [reason, setReason] = useState('')
   const [viewing, setViewing] = useState<SaleReturn | null>(null)
+  const [partyEditorOpen, setPartyEditorOpen] = useState(false)
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
   const originalTerminalCharge = sale ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentId === String(sale.id)) : undefined
+  const returnSignature = JSON.stringify({ step, saleId: sale?.id ?? null, wiz, refund, refundTreasury, terminalRefundReference, customCash, customCredit, customStore, customWaived, reasonCode, reason })
+  const unsaved = useUnsavedChangesGuard(returnSignature)
+  useEffect(() => { unsaved.markClean() }, [sale?.id])
 
   /** المتبقي القابل للإرجاع لكل سطر من الفاتورة المختارة */
   const remaining = useMemo(() => {
@@ -90,7 +95,8 @@ export function SaleReturnsPage() {
     setReasonCode('changed_mind'); setReason(''); setPickQuery(''); setCustomerFilterId(0)
   }
   const openWizard = () => { resetWizard(); setWizardOpen(true) }
-  const closeWizard = () => { setWizardOpen(false); resetWizard() }
+  const discardWizard = () => { setWizardOpen(false); resetWizard() }
+  const closeWizard = () => { unsaved.requestClose(discardWizard) }
 
   const startWithSale = (s: SaleInvoice) => {
     setSale(s)
@@ -184,7 +190,7 @@ export function SaleReturnsPage() {
           ...(originalTerminalCharge && preview.alloc.cashMinor > 0 ? { terminalRefund: { originalTransactionId: originalTerminalCharge.id, providerReference: terminalRefundReference.trim() } } : {}),
         })
         toast.show(`تم المرتجع ${ret.returnNumber} — تولد القيد العاكس ✓${approvedBy ? ` (اعتمده «${approvedBy}»)` : ''}${ret.crossShiftNote ? ` — ${ret.crossShiftNote}` : ''}`)
-        closeWizard()
+        discardWizard()
         setViewing(ret)
       } catch (e) {
         toast.show((e as Error).message, 'error')
@@ -379,6 +385,7 @@ export function SaleReturnsPage() {
           {/* ② البنود سطراً بسطر: كمية + حالة */}
           {step === 1 && sale && (
             <div className="space-y-3 anim-pop">
+              {sale.customerId != null && sale.customerId > 0 && customers.find((row) => row.id === sale.customerId) && (() => { const customer = customers.find((row) => row.id === sale.customerId)!; return <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50/60 px-3 py-2 text-xs dark:border-sky-900/60 dark:bg-sky-950/20"><div className="flex flex-wrap items-center gap-2"><b>{customer.nameAr}</b><span className="font-mono text-slate-500" dir="ltr">{partyCode('CUS', customer.id)}</span><span>الرصيد: {fmt(Math.abs(getCustomerBalance(customer.id)))} {cur.symbol}</span>{customer.address && <span className="text-slate-500">{customer.address}</span>}</div><button type="button" title="تعديل بيانات العميل" onClick={() => setPartyEditorOpen(true)} className="inline-flex items-center gap-1 rounded-lg border border-sky-300 p-1.5 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={14}/> تعديل العميل</button></div> })()}
               <p className="text-[11.5px] text-slate-500 leading-relaxed">
                 حدد <b>كل سطر</b> على حدة — يمكن إرجاع بند واحد فقط أو جزء من كميته. البضاعة
                 <b className="text-emerald-600"> السليمة</b> تعود للمخزون؛ <b className="text-rose-500">التالفة</b> لا تدخل المخزون وتُقيَّد هالكاً (5111) تلقائياً.
@@ -685,6 +692,14 @@ export function SaleReturnsPage() {
         </div>
       </Modal>
       {approval.dialog}
+      {unsaved.prompt}
+      <PartyQuickEditModal
+        open={partyEditorOpen}
+        target={sale && sale.customerId != null && sale.customerId > 0 ? (() => { const customer = customers.find((row) => row.id === sale.customerId); return customer ? { kind: 'customer' as const, party: customer } : null })() : null}
+        currencyDecimals={cur.decimals}
+        currencySymbol={cur.symbol}
+        onClose={() => setPartyEditorOpen(false)}
+      />
 
       {/* عرض مرتجع */}
       <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `المرتجع ${viewing.returnNumber}` : ''} wide>

@@ -5,7 +5,7 @@
  * - كل فاتورة تولّد قيداً محاسبياً متوازناً تلقائياً (القرار 9)
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { Banknote, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift } from 'lucide-react'
+import { Banknote, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift, Pencil } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -27,12 +27,13 @@ import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
+import { Btn, Modal, Field, inputCls, useToast, useUnsavedChangesGuard } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 import { partyCode } from '../../core/partyCodes.ts'
 import { toMinor } from '../../core/money.ts'
+import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
 
@@ -108,6 +109,7 @@ export function PosPage() {
   const [terminalReference, setTerminalReference] = useState('')
   const [terminalCardLast4, setTerminalCardLast4] = useState('')
   const [customerId, setCustomerId] = useState<number | null>(null)
+  const [partyEditorOpen, setPartyEditorOpen] = useState(false)
   // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
   const activePriceListId = useMemo(() => {
     if (customerId == null) return null
@@ -136,6 +138,9 @@ export function PosPage() {
   const qtyRefs = useRef<Record<number, HTMLInputElement | null>>({})
   const priceRefs = useRef<Record<number, HTMLInputElement | null>>({})
   const [searchIndex, setSearchIndex] = useState(0)
+  const posSignature = JSON.stringify({ cart, qtyDrafts, invoiceDiscount, payment, paymentTerminalId, terminalReference, terminalCardLast4, customerId, paidCash, treasury })
+  const unsaved = useUnsavedChangesGuard(posSignature)
+  useEffect(() => { if (!cart.length) unsaved.markClean() }, [cart.length])
 
   // التركيز الدائم على البحث — سلوك كاشير حقيقي (القارئ يكتب ثم Enter)
   useEffect(() => { if (cart.length) qtyRefs.current[cart.length - 1]?.focus(); else searchRef.current?.focus() }, [cart.length])
@@ -652,16 +657,19 @@ export function PosPage() {
               </QuickSelect>
             )}
             {customers.some((c) => c.priceListId != null) && (
-              <div className="w-44" title="اختيار العميل يسعّر السلة بقائمته (جملة/نصف جملة)">
-                <PartyQuickPicker
-                  parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
-                  value={customerId ?? 0}
-                  onChange={pickCustomer}
-                  cashLabel="عميل نقدي"
-                  label="بحث العميل وقائمة الأسعار"
-                  partyInfo={customerPickerInfo}
-                  onConfirm={() => searchRef.current?.focus()}
-                />
+              <div className="flex items-center gap-1" title="اختيار العميل يسعّر السلة بقائمته (جملة/نصف جملة)">
+                <div className="w-44">
+                  <PartyQuickPicker
+                    parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
+                    value={customerId ?? 0}
+                    onChange={pickCustomer}
+                    cashLabel="عميل نقدي"
+                    label="بحث العميل وقائمة الأسعار"
+                    partyInfo={customerPickerInfo}
+                    onConfirm={() => searchRef.current?.focus()}
+                  />
+                </div>
+                {customerId ? <button type="button" title="تعديل بيانات العميل" onClick={() => setPartyEditorOpen(true)} className="rounded-lg border border-sky-300 p-1.5 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={14}/></button> : null}
               </div>
             )}
             {livePromotions.length > 0 && (
@@ -1000,16 +1008,19 @@ export function PosPage() {
             )}
 
             {(payment === 'credit' || creditRemainder > 0) && (
-              <PartyQuickPicker
-                parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
-                value={customerId ?? 0}
-                onChange={pickCustomer}
-                cashLabel="اختر العميل (إلزامي للجزء الآجل)…"
-                label="بحث العميل للجزء الآجل"
-                partyInfo={customerPickerInfo}
-                onConfirm={() => searchRef.current?.focus()}
-                showCash={false}
-              />
+              <div className="flex items-end gap-2">
+                <div className="min-w-0 flex-1"><PartyQuickPicker
+                  parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
+                  value={customerId ?? 0}
+                  onChange={pickCustomer}
+                  cashLabel="اختر العميل (إلزامي للجزء الآجل)…"
+                  label="بحث العميل للجزء الآجل"
+                  partyInfo={customerPickerInfo}
+                  onConfirm={() => searchRef.current?.focus()}
+                  showCash={false}
+                /></div>
+                {customerId ? <button type="button" title="تعديل بيانات العميل" onClick={() => setPartyEditorOpen(true)} className="mb-0.5 rounded-lg border border-sky-300 p-2 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={15}/></button> : null}
+              </div>
             )}
 
             <div className="text-[11px] text-slate-400 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 leading-relaxed">
@@ -1026,6 +1037,15 @@ export function PosPage() {
           </div>
         )}
       </Modal>
+
+      {unsaved.prompt}
+      <PartyQuickEditModal
+        open={partyEditorOpen}
+        target={customerId ? (() => { const customer = customers.find((row) => row.id === customerId); return customer ? { kind: 'customer' as const, party: customer } : null })() : null}
+        currencyDecimals={cur.decimals}
+        currencySymbol={cur.symbol}
+        onClose={() => setPartyEditorOpen(false)}
+      />
 
       {/* حظر بيع منتهي الصلاحية — تجاوز بموافقة المدير (القرار 8) */}
       <Modal open={!!expiredBlock} onClose={() => setExpiredBlock(null)} title="⛔ أصناف منتهية الصلاحية">
