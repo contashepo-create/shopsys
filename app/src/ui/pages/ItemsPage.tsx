@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * شاشة الأصناف — المرحلة 1 (محدَّثة بملاحظات المالك)
  * - أقسام رئيسية وفرعية (شجرة) مع وراثة الخصائص
@@ -19,6 +20,8 @@ import { FEATURE_LABELS, getActivity, type ItemFeature } from '../../core/activi
 import { buildItemsCsv, parseItemsCsv } from '../../core/itemsCsv.ts'
 import { UNIT_GROUPS } from '../../core/units.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { buildItemLedger } from '../../core/itemLedger.ts'
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { renderItemLedgerHtml } from '../print/printItemLedger.ts'
@@ -29,16 +32,24 @@ import { printHtml } from '../print/printReceipt.ts'
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
 export function ItemsPage() {
-  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers, journal } = useDataStore()
+  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers, journal, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
   const { setup, labelSettings } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const currentUser = appUsers.find((user) => user.id === currentUserId) ?? null
+  const itemDeletePermissions = useMemo(
+    () => effectivePermissionsFor(currentUser, rolesWithOverrides(roleOverrides, customRoles, setup.activityId)),
+    [currentUser, roleOverrides, customRoles, setup.activityId],
+  )
+  const canDeleteItems = currentUserId == null || currentUser?.roleId === 'owner' || itemDeletePermissions.has('inv.item.delete')
+  const deleteApproval = useSupervisorApproval('inv.item.delete', { forcePin: true })
 
   const [query, setQuery] = useState('')
   const [catFilter, setCatFilter] = useState<number | 0>(0)
   const [warehouseFilter, setWarehouseFilter] = useState<number | 0>(0)
   const [modal, setModal] = useState<'closed' | 'item' | 'category'>('closed')
+  const [deleteTarget, setDeleteTarget] = useState<Item | null>(null)
   const [editing, setEditing] = useState<Item | null>(null)
   const [draft, setDraft] = useState<ItemDraft | null>(null)
   const [errors, setErrors] = useState<string[]>([])
@@ -62,7 +73,7 @@ export function ItemsPage() {
   }, [categories])
 
   const warehouseStock = useMemo(
-    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns)),
+    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)),
     [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns],
   )
   const stockInWarehouse = useCallback((warehouseId: number, itemId: number) => warehouseStock.get(warehouseId)?.get(itemId) ?? 0, [warehouseStock])
@@ -150,8 +161,8 @@ export function ItemsPage() {
       ...ledgerInput,
       purchases: ledgerInput.purchases.map((p) => ({ ...p, lines: p.lines.filter((l) => (l.warehouseId ?? p.warehouseId ?? 0) === ledgerWarehouseId) })).filter((p) => p.lines.length),
       purchaseReturns: filterWarehouse(ledgerInput.purchaseReturns),
-      sales: filterWarehouse(ledgerInput.sales),
-      saleReturns: filterWarehouse(ledgerInput.saleReturns),
+      sales: ledgerInput.sales.map((sale) => ({ ...sale, lines: sale.lines.filter((line) => (line.warehouseId ?? sale.warehouseId ?? 0) === ledgerWarehouseId) })).filter((sale) => sale.lines.length),
+      saleReturns: ledgerInput.saleReturns.map((ret) => ({ ...ret, lines: ret.lines.filter((line) => (line.warehouseId ?? ret.warehouseId ?? 0) === ledgerWarehouseId) })).filter((ret) => ret.lines.length),
       stocktakes: filterWarehouse(ledgerInput.stocktakes),
       materialRequisitions: filterWarehouse(ledgerInput.materialRequisitions),
       transfers: (ledgerInput.transfers ?? []).filter((t) => t.fromWarehouseId === ledgerWarehouseId || t.toWarehouseId === ledgerWarehouseId),
@@ -216,6 +227,30 @@ export function ItemsPage() {
       toast.show(`تم إضافة «${draft.nameAr}»`)
     }
     setModal('closed')
+  }
+
+  const askDeleteItem = (item: Item) => {
+    if (!canDeleteItems) {
+      toast.show('لا تملك فئة موظفك صلاحية حذف الأصناف — اطلب من المالك منحها من شاشة الصلاحيات', 'error')
+      return
+    }
+    setDeleteTarget(item)
+  }
+
+  const confirmDeleteItem = () => {
+    const target = deleteTarget
+    if (!target) return
+    setDeleteTarget(null)
+    deleteApproval.request((approvedBy) => {
+      if (!approvedBy) {
+        toast.show('لم يتم اعتماد حذف الصنف', 'error')
+        return
+      }
+      try {
+        removeItem(target.id, { approvedBy })
+        toast.show(`تم حذف «${target.nameAr}»`)
+      } catch (e) { toast.show((e as Error).message, 'error') }
+    })
   }
 
   const openNewCategory = () => {
@@ -341,17 +376,17 @@ export function ItemsPage() {
             className={`${inputCls} pr-10`}
           />
         </div>
-        <select value={catFilter} onChange={(e) => setCatFilter(Number(e.target.value))} className={`${inputCls} w-56`}>
+        <QuickSelect value={catFilter} onChange={(e) => setCatFilter(Number(e.target.value))} className={`${inputCls} w-56`}>
           <option value={0}>كل الأقسام</option>
           {orderedCats.map(({ cat, depth }) => (
             <option key={cat.id} value={cat.id}>{'\u00A0\u00A0'.repeat(depth)}{depth > 0 ? '↳ ' : ''}{cat.nameAr}</option>
           ))}
-        </select>
+        </QuickSelect>
         {warehouses.length > 1 && (
-          <select value={warehouseFilter} onChange={(e) => setWarehouseFilter(Number(e.target.value))} className={`${inputCls} w-56`} title="فلترة الأصناف حسب المخزن">
+          <QuickSelect value={warehouseFilter} onChange={(e) => setWarehouseFilter(Number(e.target.value))} className={`${inputCls} w-56`} title="فلترة الأصناف حسب المخزن">
             <option value={0}>كل المخازن</option>
             {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
-          </select>
+          </QuickSelect>
         )}
         <Btn variant="soft" onClick={openNewCategory}>
           <span className="flex items-center gap-1.5"><FolderPlus size={15} /> قسم جديد</span>
@@ -511,13 +546,24 @@ export function ItemsPage() {
                         <button onClick={() => openEditItem(it)} title="تعديل بيانات الصنف" className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
                           <Pencil size={15} />
                         </button>
-                        <button
-                          onClick={() => { try { removeItem(it.id); toast.show(`تم حذف «${it.nameAr}»`) } catch (e) { toast.show((e as Error).message, 'error') } }}
-                          title="حذف الصنف — يُرفض إن كان له حركة أو رصيد (عطّله بدلاً من الحذف)"
-                          className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110"
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                        {canDeleteItems ? (
+                          <button
+                            onClick={() => askDeleteItem(it)}
+                            title="حذف الصنف — تأكيد ورقم سري مطلوبان"
+                            className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled
+                            title="حذف الأصناف متاح للمالك أو لفئة موظفين مُنحت صلاحية الحذف"
+                            className="p-2 rounded-lg text-slate-300 dark:text-slate-700 cursor-not-allowed"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -527,6 +573,24 @@ export function ItemsPage() {
           </table>
         </div>
       )}
+
+      {/* تأكيد حذف الصنف قبل فتح حوار الرقم السري */}
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="تأكيد حذف الصنف">
+        {deleteTarget && (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm leading-7">
+              <div className="font-black text-rose-700 dark:text-rose-300">سيتم حذف الصنف نهائياً من قائمة الأصناف.</div>
+              <div className="mt-1">الصنف: <b>{deleteTarget.nameAr}</b></div>
+              <div className="text-[12px] text-slate-500">لن يتم الحذف إذا كان للصنف حركة أو رصيد؛ استخدم التعطيل بدلاً من الحذف في هذه الحالة.</div>
+            </div>
+            <div className="text-[12px] text-slate-600 dark:text-slate-300">بعد المتابعة سيُطلب الرقم السري للمالك أو لموظف من فئة تملك صلاحية حذف الأصناف.</div>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setDeleteTarget(null)}>إلغاء</Btn>
+              <Btn variant="danger" onClick={confirmDeleteItem}>متابعة وطلب الرقم السري</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* مودال الصنف */}
       <Modal open={modal === 'item'} onClose={() => setModal('closed')} title={editing ? `تعديل: ${editing.nameAr}` : 'صنف جديد'} wide>
@@ -553,7 +617,7 @@ export function ItemsPage() {
               <input value={catName} onChange={(e) => setCatName(e.target.value)} placeholder="مثال: ألبان وأجبان" className={inputCls} autoFocus />
             </Field>
             <Field label="القسم الأب" hint="اتركه «رئيسي» أو اختر أباً ليصبح فرعياً">
-              <select
+              <QuickSelect
                 value={catParentId ?? 0}
                 onChange={(e) => onPickParent(Number(e.target.value) || null)}
                 className={inputCls}
@@ -564,7 +628,7 @@ export function ItemsPage() {
                   .map(({ cat, depth }) => (
                     <option key={cat.id} value={cat.id}>{'\u00A0\u00A0'.repeat(depth)}{depth > 0 ? '↳ ' : ''}{cat.nameAr}</option>
                   ))}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
           <Field label="خصائص القسم — تورَّث تلقائياً لأصنافه وأقسامه الفرعية الجديدة" hint="وكل صنف يستطيع تجاوزها لاحقاً (القرار 5)">
@@ -724,7 +788,7 @@ export function ItemsPage() {
               </div>
               {/* أمر التعديل: تفصيل الرصيد بكل مخزن داخل معاينة الصنف */}
               {warehouses.length > 1 && (() => {
-                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns))
+                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders))
                 return (
                   <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
                     <div className="px-4 py-2 text-[11.5px] font-black text-slate-500 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">🏬 الرصيد بكل مخزن</div>
@@ -757,16 +821,16 @@ export function ItemsPage() {
                 <Field label="من تاريخ"><input type="date" value={ledgerFrom} onChange={(e) => setLedgerFrom(e.target.value)} className={inputCls} /></Field>
                 <Field label="إلى تاريخ"><input type="date" value={ledgerTo} onChange={(e) => setLedgerTo(e.target.value)} className={inputCls} /></Field>
                 <Field label="المخزن">
-                  <select value={ledgerWarehouseId} onChange={(e) => setLedgerWarehouseId(Number(e.target.value))} className={inputCls}>
+                  <QuickSelect value={ledgerWarehouseId} onChange={(e) => setLedgerWarehouseId(Number(e.target.value))} className={inputCls}>
                     <option value={0}>كل المخازن</option>
                     {warehouses.map((w) => <option key={w.id} value={w.id}>{w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
-                  </select>
+                  </QuickSelect>
                 </Field>
                 <Field label="المستخدم">
-                  <select value={ledgerUser} onChange={(e) => setLedgerUser(e.target.value)} className={inputCls}>
+                  <QuickSelect value={ledgerUser} onChange={(e) => setLedgerUser(e.target.value)} className={inputCls}>
                     <option value="">كل المستخدمين</option>
                     {ledgerUsers.map((u) => <option key={u} value={u}>{u}</option>)}
-                  </select>
+                  </QuickSelect>
                 </Field>
                 <Btn variant="ghost" className="border border-slate-200 dark:border-slate-700" onClick={printItemCard}>
                   <Printer size={14} /> طباعة
@@ -819,6 +883,7 @@ export function ItemsPage() {
           )
         })()}
       </Modal>
+      {deleteApproval.dialog}
     </div>
   )
 }
@@ -899,14 +964,14 @@ function ItemForm({
           <input value={draft.nameAr} onChange={(e) => p({ nameAr: e.target.value })} placeholder="مثال: جبنة رومي قديمة" className={inputCls} autoFocus />
         </Field>
         <Field label="القسم (رئيسي أو فرعي)">
-          <select
+          <QuickSelect
             value={draft.categoryId}
             onChange={(e) => {
               const cat = categories.find((c) => c.id === Number(e.target.value))
               const f = new Set(cat?.features ?? [])
               p({
                 categoryId: Number(e.target.value),
-                trackExpiry: f.has('expiry_batches'),
+                trackExpiry: draft.trackExpiry,
                 trackSerial: f.has('serial_warranty'),
                 soldByWeight: f.has('weight_scale'),
               })
@@ -916,7 +981,7 @@ function ItemForm({
             {orderedCats.map(({ cat, depth }) => (
               <option key={cat.id} value={cat.id}>{'\u00A0\u00A0'.repeat(depth)}{depth > 0 ? '↳ ' : ''}{cat.nameAr}</option>
             ))}
-          </select>
+          </QuickSelect>
         </Field>
         <Field label="الكود (SKU)">
           <input value={draft.sku} onChange={(e) => p({ sku: e.target.value })} className={inputCls} />
@@ -928,7 +993,7 @@ function ItemForm({
               <Btn variant="ghost" onClick={() => { setCustomUnit(false); p({ baseUnit: 'قطعة' }) }}>القائمة</Btn>
             </div>
           ) : (
-            <select
+            <QuickSelect
               value={draft.baseUnit}
               onChange={(e) => {
                 if (e.target.value === '__custom__') { setCustomUnit(true); p({ baseUnit: '' }) }
@@ -942,7 +1007,7 @@ function ItemForm({
                 </optgroup>
               ))}
               <option value="__custom__">✏️ وحدة مخصصة…</option>
-            </select>
+            </QuickSelect>
           )}
         </Field>
         <Field
@@ -1038,7 +1103,7 @@ function ItemForm({
         <div className="mt-3">
           <Field label="🧾 ضريبة الصنف" hint="افتراضي = نسبة البلد العامة · معفى = 0% · مخصصة = نسبة خاصة بهذا الصنف فقط">
             <div className="flex gap-2 items-center">
-              <select
+              <QuickSelect
                 value={draft.vatOverride === null || draft.vatOverride === undefined ? 'default' : draft.vatOverride === 0 ? 'exempt' : 'custom'}
                 onChange={(e) => {
                   const v = e.target.value
@@ -1049,7 +1114,7 @@ function ItemForm({
                 <option value="default">يتبع النسبة العامة ({setup.vatPercent}%)</option>
                 <option value="exempt">معفى ضريبياً (0%)</option>
                 <option value="custom">نسبة مخصصة…</option>
-              </select>
+              </QuickSelect>
               {draft.vatOverride !== null && draft.vatOverride !== undefined && draft.vatOverride !== 0 && (
                 <input
                   type="number" min={0.1} max={100} step={0.5}
@@ -1087,12 +1152,12 @@ function ItemForm({
                 <input value={draft.fitment ?? ''} onChange={(e) => p({ fitment: e.target.value })} placeholder="مثال: لانسر 2013-2017، إلنترا CN7" className={inputCls} />
               </Field>
               <Field label="⭐ درجة القطعة">
-                <select value={draft.grade ?? ''} onChange={(e) => p({ grade: (e.target.value || undefined) as never })} className={inputCls}>
+                <QuickSelect value={draft.grade ?? ''} onChange={(e) => p({ grade: (e.target.value || undefined) as never })} className={inputCls}>
                   <option value="">— غير محدد —</option>
                   <option value="original">🟢 أصلي</option>
                   <option value="aftermarket">🔵 بديل تجاري</option>
                   <option value="used">🟠 مستعمل (استيراد)</option>
-                </select>
+                </QuickSelect>
               </Field>
             </div>
           </div>
@@ -1152,7 +1217,7 @@ function ItemForm({
 
       <div className="flex justify-end gap-2 pt-1">
         <Btn variant="ghost" onClick={onCancel}>إلغاء</Btn>
-        <Btn onClick={onSave}>💾 حفظ الصنف</Btn>
+        <Btn onClick={onSave} shortcut="F9">💾 حفظ الصنف</Btn>
       </div>
     </div>
   )
@@ -1247,14 +1312,14 @@ function UnitEditor({ draft, p }: { draft: ItemDraft; p: (x: Partial<ItemDraft>)
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end">
         <div>
           <div className="text-[10.5px] font-bold text-slate-400 mb-1">الوحدة الأكبر</div>
-          <select value={name} onChange={(e) => setName(e.target.value)} className={inputCls}>
+          <QuickSelect value={name} onChange={(e) => setName(e.target.value)} className={inputCls}>
             <option value="">اختر…</option>
             {UNIT_GROUPS.map((g) => (
               <optgroup key={g.nameAr} label={`${g.icon} ${g.nameAr}`}>
                 {g.units.filter((u) => u !== draft.baseUnit).map((u) => <option key={u} value={u}>{u}</option>)}
               </optgroup>
             ))}
-          </select>
+          </QuickSelect>
         </div>
         <div>
           <div className="text-[10.5px] font-bold text-slate-400 mb-1">تحتوي كم {draft.baseUnit || 'وحدة'}؟</div>

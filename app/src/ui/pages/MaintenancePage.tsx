@@ -1,3 +1,4 @@
+import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * أوامر الصيانة (المرحلة 6 — القرار 13):
  * تذكرة = جهاز + عطل بحالات (مستلَمة ← تحت الصيانة ← جاهزة ← مسلَّمة).
@@ -19,6 +20,8 @@ import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 const STATUS_COLORS: Record<TicketStatus, string> = {
@@ -33,7 +36,7 @@ interface DraftPart { itemId: string; qty: string; unitPrice: string }
 interface DraftService { serviceId: string; nameAr: string; qty: string; unitPrice: string; unitCost: string }
 
 export function MaintenancePage() {
-  const { tickets, customers, items, journal, openTicket, setTicketStatus, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService } = useDataStore()
+  const { tickets, customers, items, journal, paymentTerminals, paymentTerminalTransactions, openTicket, setTicketStatus, deliverTicket, refundMaintenanceTicket, maintenanceServices, addMaintenanceService, updateMaintenanceService } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -124,6 +127,7 @@ export function MaintenancePage() {
   const [parts, setParts] = useState<DraftPart[]>([])
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [treasury, setTreasury] = useState('1101')
+  const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [withVat, setWithVat] = useState(false)
   /* الأمر 23: خدمات من الكتالوج (تكلفة + سعر) + تحصيل مجزأ نقدي/آجل */
   const [svcLines, setSvcLines] = useState<DraftService[]>([])
@@ -131,7 +135,7 @@ export function MaintenancePage() {
   const startDeliver = (t: MaintenanceTicket) => {
     setDelivering(t)
     setLabor(t.estimateMinor > 0 ? formatMinor(t.estimateMinor, cur, false).replace(/,/g, '') : '')
-    setParts([]); setSvcLines([]); setPayment('cash'); setWithVat(false); setPaidNow('')
+    setParts([]); setSvcLines([]); setPayment('cash'); setWithVat(false); setPaidNow(''); setTerminalPayment({ terminalId: '', providerReference: '', cardLast4: '' })
   }
   const addSvc = () => setSvcLines((p) => [...p, { serviceId: '', nameAr: '', qty: '1', unitPrice: '', unitCost: '' }])
   const patchSvc = (i: number, patch: Partial<DraftService>) => setSvcLines((p) => p.map((x, j) => (j === i ? { ...x, ...patch } : x)))
@@ -179,6 +183,7 @@ export function MaintenancePage() {
   const doDeliver = (creditLimitOverrideBy?: string) => {
     if (!delivering) return
     try {
+      const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
       const t = deliverTicket(delivering.id, {
         laborMinor: toM(labor),
         parts: parts.filter((p) => p.itemId).map((p) => ({ itemId: Number(p.itemId), qty: Number(p.qty) || 0, unitPriceMinor: toM(p.unitPrice) })),
@@ -186,7 +191,8 @@ export function MaintenancePage() {
         payment,
         paidMinor: paidNow !== '' ? toM(paidNow) : undefined,
         vatPercent: withVat ? setup.vatPercent : 0,
-        treasury,
+        treasury: terminal?.settlementAccountCode ?? treasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`سُلِّمت ${t.ticketNumber} — المحصَّل ${fmt(t.totals!.paidMinor)} والباقي آجل ${fmt(t.totals!.creditMinor)} ${cur.symbol} ✅`)
@@ -213,6 +219,7 @@ export function MaintenancePage() {
 
   /* ─── عرض ─── */
   const [viewing, setViewing] = useState<MaintenanceTicket | null>(null)
+  const viewingTerminalCharge = viewing ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'maintenance' && row.documentId === String(viewing.id)) : undefined
   const viewEntry = viewing?.journalEntryId != null ? journal.find((e) => e.id === viewing.journalEntryId) : null
 
   /* ─── تقرير ─── */
@@ -356,10 +363,7 @@ export function MaintenancePage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="عميل مسجل">
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
-                <option value="">— غير مسجل —</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="غير مسجل" label="بحث العميل" cashValue={0} />
             </Field>
             <Field label="أو اسم العميل" hint="عند عدم التسجيل">
               <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className={inputCls} disabled={!!customerId} />
@@ -423,10 +427,7 @@ export function MaintenancePage() {
               </div>
               {parts.map((p, i) => (
                 <div key={i} className="grid grid-cols-[1fr_60px_90px_28px] gap-1.5 items-center">
-                  <select value={p.itemId} onChange={(e) => pickPartItem(i, e.target.value)} className={`${inputCls} !py-1.5 !text-[12px]`}>
-                    <option value="">— اختر الصنف —</option>
-                    {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.nameAr} (متاح {it.stockQty ?? 0})</option>)}
-                  </select>
+                  <ItemQuickPicker items={items.filter((item) => item.isActive)} onPick={(id) => pickPartItem(i, String(id))} placeholder="ابحث عن قطعة ثم Enter" />
                   <input value={p.qty} onChange={(e) => patchPart(i, { qty: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" />
                   <input value={p.unitPrice} onChange={(e) => patchPart(i, { unitPrice: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" placeholder="السعر" />
                   <button onClick={() => dropPart(i)} className="p-1.5 rounded text-slate-300 hover:text-rose-500"><Trash2 size={13} /></button>
@@ -443,10 +444,10 @@ export function MaintenancePage() {
               {svcLines.map((sv, i) => (
                 <div key={i} className="grid grid-cols-[1fr_60px_90px_90px_28px] gap-1.5 items-center">
                   {maintenanceServices.filter((x) => x.isActive).length > 0 && !sv.nameAr && !sv.serviceId ? (
-                    <select value={sv.serviceId} onChange={(e) => pickSvc(i, e.target.value)} className={`${inputCls} !py-1.5 !text-[12px]`}>
+                    <QuickSelect value={sv.serviceId} onChange={(e) => pickSvc(i, e.target.value)} className={`${inputCls} !py-1.5 !text-[12px]`}>
                       <option value="">— اختر الخدمة —</option>
                       {maintenanceServices.filter((x) => x.isActive).map((x) => <option key={x.id} value={x.id}>{x.nameAr}</option>)}
-                    </select>
+                    </QuickSelect>
                   ) : (
                     <input value={sv.nameAr} onChange={(e) => patchSvc(i, { nameAr: e.target.value, serviceId: '' })} className={`${inputCls} !py-1.5 !text-[12px]`} placeholder="اسم الخدمة (حر)" autoComplete="off" />
                   )}
@@ -464,7 +465,7 @@ export function MaintenancePage() {
                   <button onClick={() => setPayment('cash')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>نقدي</button>
                   <button onClick={() => setPayment('credit')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'credit' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>آجل</button>
                 </div>
-                {payment === 'cash' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
+                {payment === 'cash' && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div>}
                 {payment === 'cash' && (
                   <input
                     value={paidNow}
@@ -622,6 +623,7 @@ export function MaintenancePage() {
                 fmt={fmt}
                 allowCredit={viewing.customerId != null}
                 hint="عميل غير راضٍ؟ اختر ما يُرد: أجر الفني، خدمات، أو قطع غيار — القطعة السليمة المختارة تعود للمخزون بتكلفتها تلقائياً."
+                terminalOriginal={viewingTerminalCharge ? { transactionId: viewingTerminalCharge.id, terminalName: paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.nameAr ?? viewingTerminalCharge.terminalId } : undefined}
                 refundableItems={[
                   ...(viewing.totals.laborMinor > 0 ? [{ key: 'labor', label: 'أجر الفني (المصنعية)', valueMinor: viewing.totals.laborMinor }] : []),
                   ...(viewing.services ?? []).map((s, si) => ({ key: `svc:${si}`, label: s.nameAr, valueMinor: Math.round(s.qty * s.unitPriceMinor), qty: s.qty })),
@@ -642,7 +644,7 @@ export function MaintenancePage() {
                         return { itemId: p.itemId, qty: p.qty - returned }
                       })
                       .filter((rp) => rp.qty > 0)
-                    const u = refundMaintenanceTicket({ ticketId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: a.treasury, reason: a.reason, approvedBy: a.approvedBy, returnParts })
+                    const u = refundMaintenanceTicket({ ticketId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: viewingTerminalCharge ? (paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.settlementAccountCode ?? a.treasury) : a.treasury, reason: a.reason, approvedBy: a.approvedBy, returnParts, terminalRefund: a.terminalRefund })
                     setViewing(u)
                     toast.show(`سُجل مرتجع خدمة ${u.ticketNumber} وتولد القيد العاكس ✅${returnParts.length ? ' — عادت القطع للمخزون 📦' : ''}`)
                   } catch (err) { toast.show((err as Error).message, 'error') }

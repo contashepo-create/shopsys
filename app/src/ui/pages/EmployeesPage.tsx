@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الموظفون والرواتب (المرحلة 5) — تبويبان:
  * 1) سجل الموظفين: نفس البيانات الموسعة الاختيارية للأطراف + بيانات التوظيف
@@ -6,13 +7,16 @@
  */
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Pencil, Trash2, Phone, UserRound, ChevronDown, FileBadge, Wallet, BookOpenText, Eye, BadgeCheck, BadgeX, Landmark, FileSpreadsheet, HandCoins } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
+import { rolesWithOverrides, visibleRolesForModules } from '../../core/permissions.ts'
+import { suggestRoleForJobTitle } from '../../core/audit.ts'
 import type { PartyExtended } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { matchesPartyCode } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
+import { toCsv } from '../../core/security.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
 import { STAFF_COMMISSION_SOURCE_LABELS, STAFF_COMMISSION_STATUS_LABELS, type StaffCommissionSource } from '../../core/staffCommissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -79,8 +83,8 @@ interface DraftLine {
   payCommissions: boolean
 }
 
-export function EmployeesPage() {
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue } = useDataStore()
+export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions' }) {
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -95,7 +99,11 @@ export function EmployeesPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const toMajor = (m: number) => (m ? String(m / 10 ** cur.decimals) : '')
 
-  const [tab, setTab] = useState<'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions'>('staff')
+  const tab = initialTab
+  const roleOptions = useMemo(
+    () => visibleRolesForModules(rolesWithOverrides(roleOverrides, customRoles, setup.activityId), setup.modules).filter((role) => !role.isOwner),
+    [roleOverrides, customRoles, setup.activityId, setup.modules],
+  )
 
   /* ─── تبويب العمولات (طلب المالك): مربوطة بالعمليات وتُصرف منفردة أو مع الراتب ─── */
   const [comOpen, setComOpen] = useState(false)
@@ -183,6 +191,7 @@ export function EmployeesPage() {
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [jobTitle, setJobTitle] = useState('')
+  const [roleId, setRoleId] = useState('')
   const [hireDate, setHireDate] = useState('')
   const [baseSalary, setBaseSalary] = useState('')
   const [allowances, setAllowances] = useState('')
@@ -196,11 +205,12 @@ export function EmployeesPage() {
   )
 
   const openNew = () => {
-    setEditing(null); setName(''); setPhone(''); setJobTitle(''); setHireDate(new Date().toISOString().slice(0, 10))
+    setEditing(null); setName(''); setPhone(''); setJobTitle(''); setRoleId(roleOptions[0]?.id ?? 'accountant'); setHireDate(new Date().toISOString().slice(0, 10))
     setBaseSalary(''); setAllowances(''); setActive(true); setNotes(''); setExt(EMPTY_EXTENDED); setOpen(true)
   }
   const openEdit = (e: Employee) => {
-    setEditing(e); setName(e.nameAr); setPhone(e.phone); setJobTitle(e.jobTitle); setHireDate(e.hireDate)
+    const suggestedRole = e.roleId ?? suggestRoleForJobTitle(e.jobTitle)
+    setEditing(e); setName(e.nameAr); setPhone(e.phone); setJobTitle(e.jobTitle); setRoleId(roleOptions.some((role) => role.id === suggestedRole) ? suggestedRole : (roleOptions[0]?.id ?? 'accountant')); setHireDate(e.hireDate)
     setBaseSalary(toMajor(e.baseSalaryMinor)); setAllowances(toMajor(e.allowancesMinor)); setActive(e.active); setNotes(e.notes)
     setExt({
       taxNumber: e.taxNumber, commercialReg: e.commercialReg, email: e.email, address: e.address,
@@ -211,7 +221,7 @@ export function EmployeesPage() {
   const save = () => {
     if (!name.trim()) return
     const data = {
-      nameAr: name.trim(), phone: phone.trim(), jobTitle: jobTitle.trim(), hireDate,
+      nameAr: name.trim(), phone: phone.trim(), jobTitle: jobTitle.trim(), roleId: roleId || null, hireDate,
       baseSalaryMinor: baseSalary ? toMinor(baseSalary, cur.decimals) : 0,
       allowancesMinor: allowances ? toMinor(allowances, cur.decimals) : 0,
       active, notes: notes.trim(),
@@ -309,19 +319,21 @@ export function EmployeesPage() {
   const listedRuns = useMemo(() => [...payrollRuns].reverse(), [payrollRuns])
   const empName = (id: number) => employees.find((e) => e.id === id)?.nameAr ?? `موظف #${id}`
 
-  const tabCls = (t: 'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions') =>
-    `px-4 py-2 rounded-xl text-[13px] font-bold transition-all ${tab === t ? 'bg-brand-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`
+
+
+  const sectionMeta = {
+    staff: ['الموظفون', employees], payroll: ['المرتبات', payrollRuns], advances: ['سلف الموظفين', employeeAdvances],
+    deductions: ['الخصومات والجزاءات', employeeDeductions], commissions: ['عمولات الموظفين', staffCommissions],
+  } as const
+  const exportSection = () => {
+    const [name, rows] = sectionMeta[tab]
+    const blob = new Blob([toCsv(rows as unknown as Record<string, unknown>[])], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${name}.csv`; a.click(); URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="space-y-4">
-      <div className="anim-up flex items-center gap-2">
-        <button onClick={() => setTab('staff')} className={tabCls('staff')}><UserRound size={14} className="inline -mt-0.5 me-1" /> الموظفون ({employees.length})</button>
-        <button onClick={() => setTab('payroll')} className={tabCls('payroll')}><Wallet size={14} className="inline -mt-0.5 me-1" /> مسيرات الرواتب ({payrollRuns.length})</button>
-        <button onClick={() => setTab('advances')} className={tabCls('advances')}><Landmark size={14} className="inline -mt-0.5 me-1" /> السلف ({employeeAdvances.length})</button>
-        <button onClick={() => setTab('deductions')} className={tabCls('deductions')}><BadgeX size={14} className="inline -mt-0.5 me-1" /> الخصومات والجزاءات ({employeeDeductions.length})</button>
-        <button onClick={() => setTab('commissions')} className={tabCls('commissions')}><HandCoins size={14} className="inline -mt-0.5 me-1" /> العمولات ({staffCommissions.length})</button>
-      </div>
-
+      <div className="flex items-center justify-between"><h1 className="text-xl font-black">{sectionMeta[tab][0]}</h1><Btn variant="ghost" onClick={exportSection}><Download size={14}/> تصدير Excel</Btn></div>
       {tab === 'advances' && (
         <>
           <div className="anim-up flex items-center justify-between flex-wrap gap-2">
@@ -387,9 +399,7 @@ export function EmployeesPage() {
           <Modal open={repayOpen} onClose={() => setRepayOpen(false)} title="💵 سداد نقدي لسلفة (خارج المسير)">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <select value={repayEmployeeId} onChange={(e) => setRepayEmployeeId(Number(e.target.value))} className={inputCls}>
-                  {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                <PartyQuickPicker parties={employees} value={repayEmployeeId} onChange={setRepayEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
               {repayEmployeeId > 0 && (
                 <div className="text-[12px] rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300 p-3 font-bold">
@@ -402,16 +412,14 @@ export function EmployeesPage() {
               <Field label="إلى أي خزينة؟"><TreasuryPicker value={repayTreasury} onChange={setRepayTreasury} /></Field>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setRepayOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveRepayment} disabled={!repayEmployeeId || !repayAmount.trim()}>💾 تسجيل السداد</Btn>
+                <Btn onClick={saveRepayment} shortcut="F9" disabled={!repayEmployeeId || !repayAmount.trim()}>💾 تسجيل السداد</Btn>
               </div>
             </div>
           </Modal>
           <Modal open={advOpen} onClose={() => setAdvOpen(false)} title="💸 صرف سلفة لموظف">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <select value={advEmployeeId} onChange={(e) => setAdvEmployeeId(Number(e.target.value))} className={inputCls}>
-                  {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                <PartyQuickPicker parties={employees} value={advEmployeeId} onChange={setAdvEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
               <Field label={`المبلغ (${cur.symbol}) *`}>
                 <input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus />
@@ -424,7 +432,7 @@ export function EmployeesPage() {
               </Field>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setAdvOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveAdvance} disabled={!advEmployeeId || !advAmount.trim()}>💾 صرف السلفة</Btn>
+                <Btn onClick={saveAdvance} shortcut="F9" disabled={!advEmployeeId || !advAmount.trim()}>💾 صرف السلفة</Btn>
               </div>
             </div>
           </Modal>
@@ -502,9 +510,7 @@ export function EmployeesPage() {
           <Modal open={dedOpen} onClose={() => setDedOpen(false)} title="⚖️ تسجيل خصم / جزاء على موظف">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <select value={dedEmployeeId} onChange={(e) => setDedEmployeeId(Number(e.target.value))} className={inputCls}>
-                  {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                <PartyQuickPicker parties={employees} value={dedEmployeeId} onChange={setDedEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
               <Field label={`مبلغ الخصم (${cur.symbol}) *`}>
                 <input value={dedAmount} onChange={(e) => setDedAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
@@ -521,7 +527,7 @@ export function EmployeesPage() {
               </div>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setDedOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveDeduction} disabled={!dedEmployeeId || !dedAmount.trim() || !dedReason.trim()}>💾 تسجيل الخصم</Btn>
+                <Btn onClick={saveDeduction} shortcut="F9" disabled={!dedEmployeeId || !dedAmount.trim() || !dedReason.trim()}>💾 تسجيل الخصم</Btn>
               </div>
             </div>
           </Modal>
@@ -610,28 +616,26 @@ export function EmployeesPage() {
           <Modal open={comOpen} onClose={() => setComOpen(false)} title="🤝 استحقاق عمولة موظف عن عملية">
             <div className="space-y-4">
               <Field label="الموظف *">
-                <select value={comEmployeeId} onChange={(e) => setComEmployeeId(Number(e.target.value))} className={inputCls}>
-                  {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={comEmployeeId} onChange={setComEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="نوع العملية *">
-                  <select value={comSource} onChange={(e) => { setComSource(e.target.value as StaffCommissionSource); setComSourceId('') }} className={inputCls}>
+                  <QuickSelect value={comSource} onChange={(e) => { setComSource(e.target.value as StaffCommissionSource); setComSourceId('') }} className={inputCls}>
                     {Object.entries(STAFF_COMMISSION_SOURCE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
+                  </QuickSelect>
                 </Field>
                 <Field label="المستند" hint="اختر المستند من قائمته — لا كتابة أرقام يدوية">
                   {comSource === 'manual' ? (
                     <input value="" className={inputCls} placeholder="— يدوية بلا مستند —" disabled />
                   ) : (
-                    <select value={comSourceId} onChange={(e) => setComSourceId(e.target.value)} className={inputCls}>
+                    <QuickSelect value={comSourceId} onChange={(e) => setComSourceId(e.target.value)} className={inputCls}>
                       <option value="">— اختر —</option>
                       {comSource === 'sale' && sales.slice(-80).reverse().map((x) => <option key={x.id} value={x.id}>{x.invoiceNumber} — {new Date(x.date).toLocaleDateString('ar-EG')}</option>)}
                       {comSource === 'car_sale' && cars.map((x) => <option key={x.id} value={x.id}>{x.make} {x.model} {x.year} — {x.plateOrVin}</option>)}
                       {comSource === 'project' && projects.map((x) => <option key={x.id} value={x.id}>{x.code} — {x.nameAr}</option>)}
                       {comSource === 'lease' && leases.map((x) => <option key={x.id} value={x.id}>{x.contractNumber} — {x.tenantName}</option>)}
                       {comSource === 'property_sale' && properties.map((x) => <option key={x.id} value={x.id}>{x.nameAr}</option>)}
-                    </select>
+                    </QuickSelect>
                   )}
                 </Field>
               </div>
@@ -647,7 +651,7 @@ export function EmployeesPage() {
               </div>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setComOpen(false)}>إلغاء</Btn>
-                <Btn onClick={saveCommission} disabled={!comEmployeeId || !comAmount.trim() || !comDesc.trim()}>💾 استحقاق العمولة</Btn>
+                <Btn onClick={saveCommission} shortcut="F9" disabled={!comEmployeeId || !comAmount.trim() || !comDesc.trim()}>💾 استحقاق العمولة</Btn>
               </div>
             </div>
           </Modal>
@@ -695,6 +699,7 @@ export function EmployeesPage() {
                   <tr className="text-slate-400 text-[11px] border-b border-slate-100 dark:border-slate-800">
                     <th className="px-4 py-3 text-right font-bold">الموظف</th>
                     <th className="px-4 py-3 text-right font-bold">الوظيفة</th>
+                    <th className="px-4 py-3 text-right font-bold">الفئة / الصلاحية</th>
                     <th className="px-4 py-3 text-right font-bold">الهاتف</th>
                     <th className="px-4 py-3 text-right font-bold">الأساسي + البدلات</th>
                     <th className="px-4 py-3 text-right font-bold">الحالة</th>
@@ -706,6 +711,7 @@ export function EmployeesPage() {
                     <tr key={e.id} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                       <td className="px-4 py-3 font-bold text-slate-700 dark:text-slate-200">{e.nameAr}</td>
                       <td className="px-4 py-3 text-slate-500">{e.jobTitle || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500">{roleOptions.find((role) => role.id === e.roleId)?.nameAr ?? e.roleId ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-500" dir="ltr">{e.phone ? <span className="flex items-center gap-1 justify-end"><Phone size={11} />{e.phone}</span> : '—'}</td>
                       <td className="px-4 py-3 font-bold">{fmt(e.baseSalaryMinor + e.allowancesMinor)} {cur.symbol}</td>
                       <td className="px-4 py-3">
@@ -791,6 +797,11 @@ export function EmployeesPage() {
             </Field>
             <Field label="المسمى الوظيفي">
               <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className={inputCls} placeholder="كاشير، بائع، محاسب…" />
+            </Field>
+            <Field label="الفئة / الدور التشغيلي *" hint="يحدد صلاحيات حساب الدخول تلقائياً عند إنشائه من الإعدادات — لا ينشئ حساباً أو رقماً سرياً هنا">
+              <QuickSelect value={roleId} onChange={(e) => setRoleId(e.target.value)} className={inputCls}>
+                {roleOptions.map((role) => <option key={role.id} value={role.id}>{role.nameAr}</option>)}
+              </QuickSelect>
             </Field>
             <Field label="تاريخ التعيين">
               <input type="date" value={hireDate} onChange={(e) => setHireDate(e.target.value)} className={inputCls} dir="ltr" />
@@ -950,7 +961,7 @@ export function EmployeesPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setRunOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveRun} disabled={draft.length === 0 || draftTotals.net <= 0}>💾 ترحيل المسير وتوليد القيد</Btn>
+            <Btn onClick={saveRun} shortcut="F9" disabled={draft.length === 0 || draftTotals.net <= 0}>💾 ترحيل المسير وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>

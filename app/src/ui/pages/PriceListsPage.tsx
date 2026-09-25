@@ -4,7 +4,7 @@
  * والعميل المربوط بها يُسعَّر تلقائياً في الكاشير.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Tags, Power, Trash2, Users } from 'lucide-react'
+import { Plus, Tags, Power, Trash2, Users, Table2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -15,7 +15,7 @@ import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components
 export function PriceListsPage() {
   const {
     items, customers, priceLists, priceListEntries,
-    addPriceList, updatePriceList, togglePriceList, removePriceList,
+    addPriceList, updatePriceList, updateItem, togglePriceList, removePriceList,
     setPriceListEntry, setCustomerPriceList,
   } = useDataStore()
   const { setup } = useAppStore()
@@ -36,6 +36,45 @@ export function PriceListsPage() {
       if (editingId != null) { updatePriceList(editingId, name, Number(discount) || 0); toast.show('عُدلت القائمة ✅') }
       else { addPriceList(name, Number(discount) || 0); toast.show('أُنشئت القائمة — اربط بها عملاءها وحدد أسعارها الخاصة ✅') }
       setEditorOpen(false); setName(''); setDiscount(''); setEditingId(null)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  /* جدول موحد لكل الأصناف — يعرض التجزئة وكل فئات الخصم النشطة كأعمدة */
+  const [catalogOpen, setCatalogOpen] = useState(false)
+  const [catalogEditing, setCatalogEditing] = useState(false)
+  const [catalogFilter, setCatalogFilter] = useState('')
+  const activePriceLists = useMemo(() => priceLists.filter((list) => list.isActive), [priceLists])
+  const catalogItems = useMemo(() => {
+    const q = catalogFilter.trim().toLowerCase()
+    return items.filter((item) => !q || item.nameAr.toLowerCase().includes(q) || item.sku.toLowerCase().includes(q) || item.barcodes.some((barcode) => barcode.toLowerCase().includes(q)))
+  }, [items, catalogFilter])
+  const wholesaleList = priceLists.find((list) => /جمل[ةه]/.test(list.nameAr))
+  const activeWholesaleList = activePriceLists.find((list) => /جمل[ةه]/.test(list.nameAr))
+  const discountFor = (retailMinor: number, priceMinor: number) => retailMinor > 0 ? Math.round(((retailMinor - priceMinor) / retailMinor) * 1000) / 10 : 0
+  const saveCatalogRetailPrice = (itemId: number, rawValue: string) => {
+    const value = rawValue.trim()
+    try {
+      if (!value) throw new Error('السعر القطاعي مطلوب — لا تتركه فارغاً')
+      const priceMinor = toMinor(value, cur.decimals)
+      if (priceMinor < 0) throw new Error('السعر القطاعي لا يمكن أن يكون سالباً')
+      updateItem(itemId, { priceMinor })
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+  const saveCatalogPrice = (listId: number, itemId: number, rawValue: string) => {
+    const value = rawValue.trim()
+    try {
+      setPriceListEntry(listId, itemId, value ? toMinor(value, cur.decimals) : null)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+  const addWholesaleList = () => {
+    try {
+      if (wholesaleList && !wholesaleList.isActive) {
+        togglePriceList(wholesaleList.id)
+        toast.show('فُعّلت فئة «جملة» لتظهر في الجدول والعملاء ✅')
+      } else {
+        addPriceList('جملة', 0)
+        toast.show('أُضيفت فئة «جملة» — أدخل أسعارها الخاصة من جدول الأسعار ✅')
+      }
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -60,7 +99,12 @@ export function PriceListsPage() {
           <h1 className="text-xl font-black flex items-center gap-2"><Tags className="w-6 h-6 text-emerald-500" /> قوائم الأسعار</h1>
           <p className="text-[12px] text-slate-500 mt-1">جملة ونصف جملة وVIP — العميل المربوط بقائمة يُسعَّر تلقائياً في الكاشير</p>
         </div>
-        <Btn onClick={() => { setEditingId(null); setName(''); setDiscount(''); setEditorOpen(true) }}><Plus className="w-4 h-4" /> قائمة جديدة</Btn>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Btn variant="soft" onClick={() => { setCatalogFilter(''); setCatalogOpen(true) }}>
+            <Table2 className="w-4 h-4" /> جدول أسعار الأصناف
+          </Btn>
+          <Btn onClick={() => { setEditingId(null); setName(''); setDiscount(''); setEditorOpen(true) }}><Plus className="w-4 h-4" /> فئة خصم جديدة</Btn>
+        </div>
       </div>
 
       {priceLists.length === 0 ? (
@@ -94,6 +138,122 @@ export function PriceListsPage() {
           })}
         </div>
       )}
+
+      {/* جدول موحد: السعر القطاعي، سعر كل فئة، ونسبة الخصم الفعلية */}
+      <Modal open={catalogOpen} onClose={() => { setCatalogOpen(false); setCatalogEditing(false) }} title="جدول أسعار جميع الأصناف" wide>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              value={catalogFilter}
+              onChange={(e) => setCatalogFilter(e.target.value)}
+              placeholder="ابحث بالاسم أو الكود أو الباركود…"
+              className={`${inputCls} flex-1 min-w-56`}
+            />
+            <Btn
+              variant={catalogEditing ? 'danger' : 'soft'}
+              disabled={!activePriceLists.length}
+              onClick={() => setCatalogEditing((value) => !value)}
+            >
+              {catalogEditing ? 'إنهاء التعديل' : 'بدء التعديل'}
+            </Btn>
+            {!activeWholesaleList && (
+              <Btn variant="soft" onClick={addWholesaleList}><Plus className="w-4 h-4" /> {wholesaleList ? 'تفعيل فئة جملة' : 'إضافة فئة جملة'}</Btn>
+            )}
+            <Btn variant="ghost" onClick={() => { setCatalogOpen(false); setEditingId(null); setName(''); setDiscount(''); setEditorOpen(true) }}>
+              <Plus className="w-4 h-4" /> فئة أخرى
+            </Btn>
+          </div>
+          <div className="text-[11px] text-slate-500 rounded-xl bg-slate-500/5 px-3 py-2">
+            السعر القطاعي هو السعر الأساسي للصنف. كل فئة خصم نشطة تظهر بعمود للسعر وعمود للخصم؛ والسعر يتغير مباشرة عند تعديل فئة الأسعار.
+            {catalogEditing && <span className="block mt-1 font-bold text-amber-700 dark:text-amber-300">وضع التعديل مفتوح: اكتب السعر داخل أي خلية واضغط Enter أو اخرج من الخلية للحفظ. اتركها فارغة للعودة إلى الخصم الافتراضي.</span>}
+          </div>
+          {catalogItems.length === 0 ? (
+            <EmptyState icon="📦" title="لا أصناف مطابقة" sub="أضف أصنافاً أو غيّر كلمة البحث" />
+          ) : (
+            <div className="max-h-[60vh] overflow-auto rounded-2xl border border-slate-200 dark:border-slate-700">
+              <table className="min-w-max w-full text-[11px]">
+                <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800">
+                  <tr className="text-right text-slate-500 border-b border-slate-200 dark:border-slate-700">
+                    <th rowSpan={2} className="px-3 py-2.5 font-black sticky right-0 bg-slate-50 dark:bg-slate-800">الصنف</th>
+                    <th rowSpan={2} className="px-3 py-2.5 font-black">الكود</th>
+                    <th rowSpan={2} className="px-3 py-2.5 font-black text-emerald-600">السعر القطاعي</th>
+                    {activePriceLists.map((list) => (
+                      <th key={list.id} colSpan={2} className="px-3 py-2 font-black text-center border-r border-slate-200 dark:border-slate-700">
+                        <button
+                          type="button"
+                          onClick={() => { setCatalogOpen(false); setPricingFor(list.id); setItemFilter('') }}
+                          className="hover:text-emerald-600 transition-colors"
+                          title="فتح أسعار هذه الفئة"
+                        >{list.nameAr}</button>
+                      </th>
+                    ))}
+                  </tr>
+                  <tr className="text-[10px] text-slate-400 border-b border-slate-200 dark:border-slate-700">
+                    {activePriceLists.flatMap((list) => [
+                      <th key={`${list.id}-price`} className="px-3 py-1.5 text-center">السعر</th>,
+                      <th key={`${list.id}-discount`} className="px-3 py-1.5 text-center border-r border-slate-200 dark:border-slate-700">الخصم ٪</th>,
+                    ])}
+                  </tr>
+                </thead>
+                <tbody>
+                  {catalogItems.map((item) => (
+                    <tr key={item.id} className={`border-b border-slate-100 dark:border-slate-800/70 hover:bg-emerald-500/[0.04] ${!item.isActive ? 'opacity-50' : ''}`}>
+                      <td className="px-3 py-2 font-bold sticky right-0 bg-white dark:bg-card-dark">
+                        {item.nameAr}{!item.isActive && <span className="text-[9px] text-slate-400 mr-1">(غير نشط)</span>}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-slate-400" dir="ltr">{item.sku || '—'}</td>
+                      <td className="px-3 py-2 font-black text-emerald-600">
+                        {catalogEditing ? (
+                          <input
+                            key={`${item.id}-${item.priceMinor}`}
+                            defaultValue={String(item.priceMinor / 10 ** cur.decimals)}
+                            aria-label={`السعر القطاعي ${item.nameAr}`}
+                            inputMode="decimal"
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur() }
+                              if (event.key === 'Escape') { event.currentTarget.value = String(item.priceMinor / 10 ** cur.decimals); event.currentTarget.blur() }
+                            }}
+                            onBlur={(event) => saveCatalogRetailPrice(item.id, event.currentTarget.value)}
+                            className={`${inputCls} w-28 !px-2 !py-1 text-center text-[11px] font-black`}
+                          />
+                        ) : fmt(item.priceMinor)}
+                      </td>
+                      {activePriceLists.flatMap((list) => {
+                        const price = resolvePrice(item.id, item.priceMinor, list.id, priceLists, priceListEntries)
+                        const discountPercent = discountFor(item.priceMinor, price)
+                        const entry = priceListEntries.find((candidate) => candidate.listId === list.id && candidate.itemId === item.id)
+                        const hasSpecialPrice = !!entry
+                        return [
+                          <td key={`${list.id}-${item.id}-price`} className="px-3 py-2 text-center font-bold" title={hasSpecialPrice ? 'سعر خاص لهذا الصنف' : 'السعر محسوب من الخصم الافتراضي'}>
+                            {catalogEditing ? (
+                              <input
+                                key={`${list.id}-${item.id}-${entry?.priceMinor ?? 'default'}`}
+                                defaultValue={entry ? String(entry.priceMinor / 10 ** cur.decimals) : ''}
+                                placeholder={fmt(price)}
+                                aria-label={`سعر ${item.nameAr} في ${list.nameAr}`}
+                                inputMode="decimal"
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur() }
+                                  if (event.key === 'Escape') { event.currentTarget.value = entry ? String(entry.priceMinor / 10 ** cur.decimals) : ''; event.currentTarget.blur() }
+                                }}
+                                onBlur={(event) => saveCatalogPrice(list.id, item.id, event.currentTarget.value)}
+                                className={`${inputCls} w-28 !px-2 !py-1 text-center text-[11px]`}
+                              />
+                            ) : <>{fmt(price)}{hasSpecialPrice && <span className="text-[9px] text-sky-500 mr-1">★</span>}</>}
+                          </td>,
+                          <td key={`${list.id}-${item.id}-discount`} className="px-3 py-2 text-center border-r border-slate-100 dark:border-slate-800">{discountPercent > 0 ? `${discountPercent}٪` : discountPercent < 0 ? `زيادة ${Math.abs(discountPercent)}٪` : '—'}</td>,
+                        ]
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {!activePriceLists.length && <div className="text-center text-[11px] text-slate-400">لا توجد فئات خصم نشطة بعد. أضف «جملة» أو أي فئة أخرى لتظهر كأعمدة في الجدول.</div>}
+          <div className="text-[10px] text-slate-400">★ = سعر خاص للصنف. اترك سعر الصنف فارغاً في محرر الفئة ليُحسب تلقائياً من الخصم الافتراضي.</div>
+        </div>
+      </Modal>
 
       {/* نافذة إنشاء/تعديل */}
       <Modal open={editorOpen} onClose={() => setEditorOpen(false)} title={editingId != null ? 'تعديل القائمة' : 'قائمة أسعار جديدة'}>

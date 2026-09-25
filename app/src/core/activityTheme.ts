@@ -51,6 +51,7 @@ export interface ActivityTheme {
 
 export const ACTIVITY_THEMES: Record<string, ActivityTheme> = {
   grocery: { persona: 'fresh', posLayout: 'fast_list', heroEmoji: '🥬', heroLineAr: 'بضاعة طازجة وحساب مضبوط', widgets: ['expiry_soon', 'top_debtors'] },
+  feed_trade: { persona: 'oasis', posLayout: 'fast_list', heroEmoji: '🌾', heroLineAr: 'أوزان مضبوطة ومخزون أعلاف متابع', widgets: ['expiry_soon', 'top_debtors'] },
   pharmacy: { persona: 'clinical', posLayout: 'fast_list', heroEmoji: '💊', heroLineAr: 'دواء سليم وصلاحية مراقبة', widgets: ['expiry_soon', 'top_debtors'] },
   mobile: { persona: 'tech', posLayout: 'detail_cards', heroEmoji: '📱', heroLineAr: 'أجهزة وصيانة وسيريالات مضبوطة', widgets: ['open_tickets', 'top_debtors'] },
   electronics: { persona: 'tech', posLayout: 'detail_cards', heroEmoji: '🔌', heroLineAr: 'أجهزة موثوقة وضمانات موثقة', widgets: ['open_tickets', 'top_debtors'] },

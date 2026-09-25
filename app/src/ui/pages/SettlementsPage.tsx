@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * التسويات الشاملة (جولة مراجعة الموبايلات — نمط mobileshop):
  * مطابقة الدفاتر بالواقع: عدّ نقدية الخزائن، ومطابقة أرصدة العملاء والموردين —
@@ -128,10 +129,10 @@ export function SettlementsPage() {
       <div className="anim-up grid lg:grid-cols-2 gap-4">
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-3">
           <Field label={meta.nameAr}>
-            <select value={refId} onChange={(e) => { setRefId(e.target.value); setActual('') }} className={inputCls}>
-              <option value="">— اختر —</option>
+            {section === 'treasury' ? <QuickSelect value={refId} onChange={(e) => { setRefId(e.target.value); setActual('') }} className={inputCls}>
+              <option value="">— اختر الخزينة/البنك —</option>
               {options.map((o) => <option key={o.id} value={o.id}>{o.nameAr}</option>)}
-            </select>
+            </QuickSelect> : <PartyQuickPicker parties={section === 'customer' ? customers : suppliers} value={refId ? Number(refId) : 0} onChange={(id) => { setRefId(id ? String(id) : ''); setActual('') }} cashLabel="— اختر —" label={section === 'customer' ? 'بحث العميل' : 'بحث المورد'} showCash={false} />}
           </Field>
           {refId && bookMinor != null && (
             <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 px-4 py-3 flex items-center justify-between">
@@ -154,7 +155,7 @@ export function SettlementsPage() {
           <Field label="سبب التسوية" hint="إلزامي — يظهر في القيد وسجل المراجعة">
             <input value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls} placeholder="مثال: جرد نهاية الشهر / اتفاق مع العميل على خصم…" />
           </Field>
-          <Btn onClick={submit} disabled={!refId || actualMinor == null || !reason.trim()} className="w-full">ترحيل التسوية</Btn>
+          <Btn onClick={submit} shortcut="F9" disabled={!refId || actualMinor == null || !reason.trim()} className="w-full">ترحيل التسوية</Btn>
         </div>
 
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">

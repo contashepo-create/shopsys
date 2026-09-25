@@ -14,9 +14,16 @@ export function printModelWithTemplate(
   settings: ReceiptSettings,
   template: InvoiceTemplate,
 ): void {
+  const effectiveSettings: ReceiptSettings = template === 'delivery'
+    ? { ...settings, hidePrices: true, showDiscount: false, showTaxSummary: false, showWords: false, a4Style: 'classic' }
+    : template === 'compact'
+      ? { ...settings, a4Style: 'compact', showWords: false }
+      : template === 'tax'
+        ? { ...settings, showTaxSummary: true }
+        : settings
   printHtml(
     template === 'thermal'
-      ? renderReceiptHtml(model, cur, settings)
-      : renderInvoiceA4Html(model, cur, settings, template === 'a5' ? 'a5' : 'a4'),
+      ? renderReceiptHtml(model, cur, effectiveSettings)
+      : renderInvoiceA4Html(model, cur, effectiveSettings, template === 'a5' ? 'a5' : 'a4'),
   )
 }

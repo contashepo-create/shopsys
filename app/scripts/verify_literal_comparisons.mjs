@@ -60,6 +60,7 @@ for (const f of files) {
 }
 // أنواع MIME لفحوص File.type — ليست حقول حالة تجارية
 legal.add('application/pdf')
+for (const value of ['string', 'checkbox', 'radio', 'option']) legal.add(value)
 
 // ── 2) مسح كل المقارنات ──
 const compareRe = /\.(\w+)\s*[!=]==\s*'([^']+)'/g

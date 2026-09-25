@@ -19,6 +19,22 @@ export function BackupPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [pending, setPending] = useState<{ raw: string; summary: BackupSummary } | null>(null)
   const [confirmText, setConfirmText] = useState('')
+  const [lastVerification, setLastVerification] = useState<{ at: string; bytes: number } | null>(null)
+
+  const verifyRoundTrip = async () => {
+    try {
+      const appRaw = localStorage.getItem('shopsys-app')
+      const storeEnc = localStorage.getItem('shopsys-data')
+      const storeRaw = storeEnc == null ? null : await decryptForDevice(storeEnc)
+      if (!storeRaw) throw new Error('لا بيانات محلية لفحصها')
+      const backup = buildBackup({ appState: appRaw ? JSON.parse(appRaw) : null, storeState: JSON.parse(storeRaw), appDataVersion: DATA_VERSION, shopName: setup.shopName })
+      const serialized = JSON.stringify(backup)
+      const restored = parseBackup(serialized)
+      if (JSON.stringify(restored.data.store) !== JSON.stringify(backup.data.store)) throw new Error('فشل تطابق البيانات بعد الاستعادة التجريبية')
+      setLastVerification({ at: new Date().toISOString(), bytes: new Blob([serialized]).size })
+      toast.show('نجح فحص النسخ والاستعادة التجريبي دون تغيير بياناتك ✓')
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
 
   const download = async () => {
     try {
@@ -102,6 +118,8 @@ export function BackupPage() {
           <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="font-black text-lg">{counts.journal}</div><div className="text-slate-400">قيداً</div></div>
         </div>
         <Btn onClick={download} className="w-full"><Download size={15} /> تنزيل نسخة احتياطية الآن</Btn>
+        <Btn variant="ghost" onClick={() => { void verifyRoundTrip() }} className="w-full"><CheckCircle2 size={15}/> فحص استعادة تجريبي دون تغيير البيانات</Btn>
+        {lastVerification && <div className="rounded-xl bg-emerald-500/10 p-3 text-xs text-emerald-700">آخر فحص ناجح: {lastVerification.at.slice(0,16).replace('T',' ')} · حجم النسخة {lastVerification.bytes.toLocaleString('ar-EG')} بايت</div>}
       </div>
 
       {/* جدولة النسخ التلقائي (طلب المالك) — لقطة مشفرة على الجهاز حسب الفاصل المختار */}

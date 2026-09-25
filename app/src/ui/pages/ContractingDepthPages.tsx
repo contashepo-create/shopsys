@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * عمق المقاولات (مقارنة pro-acc والبرامج العالمية — طلب المالك):
  * - BoqPage: جداول الكميات مع نسب إنجاز بندية
@@ -59,10 +60,10 @@ export function BoqPage() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-xl font-black flex items-center gap-2"><ListChecks className="w-6 h-6 text-orange-500" /> جداول الكميات BOQ</h1>
         <div className="flex gap-2 items-center">
-          <select value={projectId} onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : '')} className={inputCls + ' min-w-52'}>
+          <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : '')} className={inputCls + ' min-w-52'}>
             <option value="">— اختر المشروع —</option>
             {projects.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-          </select>
+          </QuickSelect>
           <Btn onClick={() => setOpen(true)} disabled={projectId === ''}><Plus className="w-4 h-4" /> بند جديد</Btn>
         </div>
       </div>
@@ -297,10 +298,10 @@ export function SubcontractorsPage() {
       <Modal open={open} onClose={() => setOpen(false)} title="عقد مقاول باطن جديد">
         <div className="space-y-3">
           <Field label="المشروع">
-            <select value={projectId} onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : '')} className={inputCls}>
+            <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : '')} className={inputCls}>
               <option value="">— اختر —</option>
               {projects.filter((p) => p.status !== 'completed').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="اسم المقاول"><input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} /></Field>
@@ -318,10 +319,7 @@ export function SubcontractorsPage() {
               <input value={advPct} onChange={(e) => setAdvPct(e.target.value)} inputMode="numeric" className={inputCls} />
             </Field>
             <Field label="ربط بسجل مورد (اختياري)" hint="يوحّد مستحقاته في كشف حساب المورد">
-              <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} className={inputCls}>
-                <option value="">— بلا ربط —</option>
-                {suppliers.map((su) => <option key={su.id} value={su.id}>{su.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={suppliers} value={supplierId ? Number(supplierId) : 0} onChange={(id) => setSupplierId(String(id))} cashLabel="بلا ربط" label="بحث المورد" showCash={false} />
             </Field>
           </div>
           {projectId !== '' && boqItems.filter((b) => b.projectId === projectId).length > 0 && (
@@ -365,7 +363,7 @@ export function SubcontractorsPage() {
                 <input value={certRecovery} onChange={(e) => setCertRecovery(e.target.value)} inputMode="decimal" className={inputCls} />
               </Field>
             )}
-            <Btn onClick={saveCert} className="w-full" disabled={certMode === 'percent' ? !certPercent : !certAmount}>اعتماد الشهادة</Btn>
+            <Btn onClick={saveCert} shortcut="F9" className="w-full" disabled={certMode === 'percent' ? !certPercent : !certAmount}>اعتماد الشهادة</Btn>
           </div>
         )}
       </Modal>
@@ -376,7 +374,7 @@ export function SubcontractorsPage() {
             <div className="text-[12px] text-slate-500">مستحقه الآن: <b className="text-rose-500">{fmt(stats(payFor).dueNow)}</b> (صافي الشهادات − المدفوع)</div>
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={payTreasury} onChange={setPayTreasury} /></Field>
-            <Btn onClick={savePay} className="w-full">صرف الدفعة</Btn>
+            <Btn onClick={savePay} shortcut="F9" className="w-full">صرف الدفعة</Btn>
           </div>
         )}
       </Modal>
@@ -390,7 +388,7 @@ export function SubcontractorsPage() {
             </div>
             <Field label={`قيمة الدفعة المقدمة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={advTreasury} onChange={setAdvTreasury} /></Field>
-            <Btn onClick={saveAdvance} className="w-full">صرف الدفعة المقدمة</Btn>
+            <Btn onClick={saveAdvance} shortcut="F9" className="w-full">صرف الدفعة المقدمة</Btn>
           </div>
         )}
       </Modal>
@@ -537,18 +535,18 @@ export function BondsPage() {
           <div className="grid grid-cols-2 gap-3">
             <Field label="رقم الخطاب"><input value={bondNumber} onChange={(e) => setBondNumber(e.target.value)} className={inputCls} /></Field>
             <Field label="النوع">
-              <select value={type} onChange={(e) => setType(e.target.value as BondType)} className={inputCls}>
+              <QuickSelect value={type} onChange={(e) => setType(e.target.value as BondType)} className={inputCls}>
                 {Object.entries(BOND_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="الجهة المستفيدة"><input value={beneficiary} onChange={(e) => setBeneficiary(e.target.value)} className={inputCls} /></Field>
             <Field label="المشروع (اختياري)">
-              <select value={projectId} onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : '')} className={inputCls}>
+              <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : '')} className={inputCls}>
                 <option value="">عام (بلا مشروع)</option>
                 {projects.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
           <div className="grid grid-cols-3 gap-3">
@@ -558,13 +556,13 @@ export function BondsPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="البنك المصدر">
-              <select value={bank} onChange={(e) => setBank(e.target.value)} className={inputCls}>
+              <QuickSelect value={bank} onChange={(e) => setBank(e.target.value)} className={inputCls}>
                 {(banks.length ? banks : treasuries).map((t) => <option key={t.code} value={t.code}>{t.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="تاريخ الانتهاء"><input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={inputCls} /></Field>
           </div>
-          <Btn onClick={save} className="w-full">إصدار الخطاب</Btn>
+          <Btn onClick={save} shortcut="F9" className="w-full">إصدار الخطاب</Btn>
         </div>
       </Modal>
     </div>
@@ -679,16 +677,16 @@ export function DailyWorkersPage() {
       <Modal open={recFor != null} onClose={() => setRecFor(null)} title="تسجيل يوم عمل">
         <div className="space-y-3">
           <Field label="المشروع (اختياري)" hint="بلا مشروع = عمالة تشغيل عام — تُرحَّل مصروفاً عمومياً (5108) لا تكلفة مشروع">
-            <select value={recProject} onChange={(e) => setRecProject(e.target.value ? Number(e.target.value) : '')} className={inputCls}>
+            <QuickSelect value={recProject} onChange={(e) => setRecProject(e.target.value ? Number(e.target.value) : '')} className={inputCls}>
               <option value="">🏢 تشغيل عام (بلا مشروع)</option>
               {projects.filter((p) => p.status !== 'completed').map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="التاريخ"><input type="date" value={recDate} onChange={(e) => setRecDate(e.target.value)} className={inputCls} /></Field>
             <Field label="عدد الأيام" hint="نصف يوم = 0.5"><input value={recDays} onChange={(e) => setRecDays(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
-          <Btn onClick={saveRecord} className="w-full">تسجيل</Btn>
+          <Btn onClick={saveRecord} shortcut="F9" className="w-full">تسجيل</Btn>
         </div>
       </Modal>
     </div>

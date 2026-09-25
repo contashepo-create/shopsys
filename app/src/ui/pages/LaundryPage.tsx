@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * المغسلة (وحدة مستقلة — طلب المالك): أوامر غسيل بقطع مفصلة وخدمة لكل قطعة،
  * عربون عند الاستلام (2109 التزام)، وتحقق الإيراد عند التسليم (4103 + 2102).
@@ -15,6 +16,8 @@ import {
 } from '../../core/laundry.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderReportShell } from '../../core/reportPrint.ts'
@@ -30,7 +33,7 @@ const STATUS_STYLE: Record<LaundryStatus, string> = {
 interface DraftLine { desc: string; service: LaundryService; qty: string; price: string }
 
 export function LaundryPage() {
-  const { laundryOrders, customers, journal, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
+  const { laundryOrders, customers, journal, paymentTerminals, paymentTerminalTransactions, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
   const { setup, reportPrint, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -87,7 +90,9 @@ export function LaundryPage() {
   /* ─── عرض/تسليم/إلغاء ─── */
   const [viewingId, setViewingId] = useState<number | null>(null)
   const viewing = viewingId != null ? laundryOrders.find((o) => o.id === viewingId) : null
+  const viewingTerminalCharge = viewing ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'laundry' && row.documentId === String(viewing.id)) : undefined
   const [deliverTreasury, setDeliverTreasury] = useState('1101')
+  const [deliverTerminal, setDeliverTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const viewingEntries = viewing
     ? journal.filter((e) => [viewing.prepaidEntryId, viewing.deliverEntryId, viewing.cancelEntryId, ...(viewing.refunds ?? []).map((r) => r.journalEntryId)].includes(e.id))
     : []
@@ -96,7 +101,8 @@ export function LaundryPage() {
   const move = (o: LaundryOrder, to: LaundryStatus) => {
     try {
       if (to === 'delivered') {
-        const u = deliverLaundryOrder({ orderId: o.id, treasury: deliverTreasury as '1101' })
+        const terminal = paymentTerminals.find((row) => row.id === deliverTerminal.terminalId)
+        const u = deliverLaundryOrder({ orderId: o.id, treasury: (terminal?.settlementAccountCode ?? deliverTreasury) as '1101', terminalPayment: terminal ? { terminalId: terminal.id, providerReference: deliverTerminal.providerReference.trim(), cardLast4: deliverTerminal.cardLast4 || undefined } : undefined })
         toast.show(`سُلِّم ${u.orderNumber} وتولد قيد الإيراد — المحصَّل ${fmt(u.grandMinor - u.prepaidMinor)} ${cur.symbol} ✅`)
         setViewingId(u.id)
       } else if (to === 'cancelled') {
@@ -215,10 +221,7 @@ export function LaundryPage() {
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="عميل مسجل (اختياري)">
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
-                <option value="">عميل نقدي عابر</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="عميل نقدي عابر" label="بحث العميل" cashValue={0} />
             </Field>
             {!customerId && (
               <Field label="اسم العميل">
@@ -243,11 +246,11 @@ export function LaundryPage() {
             {dLines.map((l, i) => (
               <div key={i} className="grid grid-cols-[1fr_9rem_4.5rem_6rem_2rem] gap-2 items-center px-3 py-2 border-t border-slate-100 dark:border-slate-800">
                 <input value={l.desc} onChange={(e) => setLine(i, { desc: e.target.value })} className={`${inputCls} py-1.5`} placeholder="قميص، بدلة، سجادة 2×3…" />
-                <select value={l.service} onChange={(e) => setLine(i, { service: e.target.value as LaundryService })} className={`${inputCls} py-1.5 text-[12px]`}>
+                <QuickSelect value={l.service} onChange={(e) => setLine(i, { service: e.target.value as LaundryService })} className={`${inputCls} py-1.5 text-[12px]`}>
                   {(Object.keys(LAUNDRY_SERVICE_LABELS) as LaundryService[]).map((sv) => (
                     <option key={sv} value={sv}>{LAUNDRY_SERVICE_LABELS[sv].icon} {LAUNDRY_SERVICE_LABELS[sv].nameAr}</option>
                   ))}
-                </select>
+                </QuickSelect>
                 <input value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} className={`${inputCls} py-1.5 text-center`} dir="ltr" />
                 <input value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} className={`${inputCls} py-1.5 text-center`} dir="ltr" placeholder="0" />
                 <button onClick={() => setDLines((ls) => ls.filter((_, j) => j !== i))} disabled={dLines.length <= 1} className="text-slate-300 hover:text-rose-500 disabled:opacity-30 transition-colors justify-self-center">
@@ -335,7 +338,7 @@ export function LaundryPage() {
               <div className="space-y-2">
                 {LAUNDRY_TRANSITIONS[viewing.status].includes('delivered') && (
                   <Field label="التحصيل في" hint={`المتبقي المتوقع ${fmt(Math.max(0, viewing.totalMinor - viewing.prepaidMinor))} ${cur.symbol} + الضريبة إن كانت مضافة`}>
-                    <TreasuryPicker value={deliverTreasury} onChange={setDeliverTreasury} compact />
+                    <div className="space-y-2"><PaymentMethodPicker value={{treasury:deliverTreasury,terminalPayment:deliverTerminal}} onChange={value=>{setDeliverTreasury(value.treasury);setDeliverTerminal(value.terminalPayment)}} operation="receipt"/></div>
                   </Field>
                 )}
                 <div className="flex flex-wrap gap-2">
@@ -365,10 +368,11 @@ export function LaundryPage() {
                 allowCredit={viewing.customerId != null}
                 creditLabel="حساب العميل"
                 hint="عميل غير راضٍ؟ اختر القطع المتضررة (بقع لم تُزل/قطعة تالفة) — يعكس الإيراد وحصة الضريبة بقيد تلقائي، لا مخزون يتحرك."
+                terminalOriginal={viewingTerminalCharge ? { transactionId: viewingTerminalCharge.id, terminalName: paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.nameAr ?? viewingTerminalCharge.terminalId } : undefined}
                 refundableItems={viewing.lines.map((l, li) => ({ key: `line:${li}`, label: `${l.desc} — ${LAUNDRY_SERVICE_LABELS[l.service]?.nameAr ?? l.service}`, valueMinor: Math.round(l.qty * l.unitPriceMinor), qty: l.qty }))}
                 onSubmit={(a) => {
                   try {
-                    const u = refundLaundryOrder({ orderId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: a.treasury, reason: a.reason, approvedBy: a.approvedBy })
+                    const u = refundLaundryOrder({ orderId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: viewingTerminalCharge ? (paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.settlementAccountCode ?? a.treasury) : a.treasury, reason: a.reason, approvedBy: a.approvedBy, terminalRefund: a.terminalRefund })
                     toast.show(`سُجل مرتجع خدمة ${u.orderNumber} بقيمة ${fmt(a.amountMinor)} ${cur.symbol} وتولد القيد العاكس ✅`)
                   } catch (err) { toast.show((err as Error).message, 'error') }
                 }}

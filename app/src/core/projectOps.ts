@@ -164,6 +164,34 @@ export function allocateClientPayment(
   return { allocations, unallocatedMinor: rest }
 }
 
+/** يتحقق من توزيع يدوي على عدة فواتير قبل إنشاء القيد — لا يثق بالقيم القادمة من الواجهة. */
+export function validatePaymentAllocations(
+  amountMinor: Minor,
+  openInvoices: readonly OpenInvoice[],
+  requested: readonly FifoAllocation[],
+): { allocations: FifoAllocation[]; unallocatedMinor: Minor } {
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('مبلغ السداد يجب أن يكون موجباً')
+  const open = new Map(openInvoices.map((invoice) => [invoice.docKey, invoice]))
+  const seen = new Set<string>()
+  let allocated = 0
+  const allocations: FifoAllocation[] = []
+  for (const row of requested) {
+    const docKey = String(row.docKey ?? '')
+    const invoice = open.get(docKey)
+    const appliedMinor = Number(row.appliedMinor)
+    if (!invoice) throw new Error(`المستند ${docKey || 'غير محدد'} غير مفتوح أو لا يخص الطرف`)
+    if (seen.has(docKey)) throw new Error(`لا يجوز تكرار توزيع المستند ${docKey}`)
+    if (!Number.isInteger(appliedMinor) || appliedMinor <= 0) throw new Error(`قيمة توزيع ${docKey} يجب أن تكون موجبة بوحدة صحيحة`)
+    const remaining = invoice.dueMinor - invoice.settledMinor
+    if (appliedMinor > remaining) throw new Error(`توزيع ${docKey} أكبر من المتبقي (${remaining})`)
+    if (allocated + appliedMinor > amountMinor) throw new Error('مجموع توزيعات السداد أكبر من مبلغ العملية')
+    seen.add(docKey)
+    allocated += appliedMinor
+    allocations.push({ docKey, docLabel: invoice.docLabel, appliedMinor })
+  }
+  return { allocations, unallocatedMinor: amountMinor - allocated }
+}
+
 /** قيد التحصيل: خزينة/بنك مدين ← 1104 العملاء دائن (على مستوى الحساب العام) */
 export function buildClientReceiptEntry(amountMinor: Minor, treasury: string, label: string): JournalLine[] {
   if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('مبلغ التحصيل يجب أن يكون موجباً')

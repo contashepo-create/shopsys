@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات معمل التحاليل (القرار 26):
  * 1) LabOrdersPage — تسجيل طلب، دورة العينة (سحب ← نتيجة ← اعتماد)، طباعة تقرير A4
@@ -21,6 +22,8 @@ import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
 function useCur() {
@@ -48,7 +51,7 @@ const TEST_STEP: Record<TestStatus, { label: string; next: TestStatus | null; ne
 /* ═══════════════ 1) الطلبات والنتائج ═══════════════ */
 
 export function LabOrdersPage() {
-  const { labOrders, labPatients, labReferrers, labTests, journal, registerLabOrder, advanceLabTest, refundLabOrder, insuranceProviders, registerInsuredLabOrder } = useDataStore()
+  const { labOrders, labPatients, labReferrers, labTests, journal, paymentTerminals, paymentTerminalTransactions, registerLabOrder, advanceLabTest, refundLabOrder, insuranceProviders, registerInsuredLabOrder } = useDataStore()
   const { setup, receipt } = useAppStore()
   const cur = useCur()
   const toast = useToast()
@@ -62,6 +65,7 @@ export function LabOrdersPage() {
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [insuranceId, setInsuranceId] = useState('') // '' = بلا تغطية
   const [treasury, setTreasury] = useState('1101')
+  const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [discount, setDiscount] = useState('0')
   const [withVat, setWithVat] = useState(false)
   const [notes, setNotes] = useState('')
@@ -81,6 +85,8 @@ export function LabOrdersPage() {
   const creditApproval = useSupervisorApproval('sales.credit.override')
   const save = (creditLimitOverrideBy?: string) => {
     try {
+      const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
+      const terminalInput = terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined
       const o = insuranceId
         ? registerInsuredLabOrder({
             patientId: Number(patientId),
@@ -89,7 +95,8 @@ export function LabOrdersPage() {
             providerId: Number(insuranceId),
             vatPercent: withVat ? setup.vatPercent : 0,
             notes: notes.trim(),
-            treasury,
+            treasury: terminal?.settlementAccountCode ?? treasury,
+            terminalPayment: terminalInput,
           })
         : registerLabOrder({
             patientId: Number(patientId),
@@ -99,7 +106,8 @@ export function LabOrdersPage() {
             discountPercent: Number(discount) || 0,
             vatPercent: withVat ? setup.vatPercent : 0,
             notes: notes.trim(),
-            treasury,
+            treasury: terminal?.settlementAccountCode ?? treasury,
+            terminalPayment: terminalInput,
             creditLimitOverrideBy: creditLimitOverrideBy ?? null,
           })
       toast.show(`سُجل الطلب ${o.orderNumber} بقيد متوازن${o.commissionMinor > 0 ? ` + استحقاق عمولة ${fmt(o.commissionMinor)}` : ''} ✅`)
@@ -190,16 +198,16 @@ export function LabOrdersPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Field label="المريض *">
-              <select value={patientId} onChange={(e) => setPatientId(e.target.value)} className={inputCls}>
+              <QuickSelect value={patientId} onChange={(e) => setPatientId(e.target.value)} className={inputCls}>
                 <option value="">— اختر —</option>
                 {labPatients.map((p) => <option key={p.id} value={p.id}>{p.nameAr} {p.phone && `(${p.phone})`}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="الطبيب المُحيل (اختياري)" hint="تُستحق عمولته تلقائياً بقيد منفصل">
-              <select value={referrerId} onChange={(e) => setReferrerId(e.target.value)} className={inputCls}>
+              <QuickSelect value={referrerId} onChange={(e) => setReferrerId(e.target.value)} className={inputCls}>
                 <option value="">بدون إحالة</option>
                 {labReferrers.map((r) => <option key={r.id} value={r.id}>د. {r.nameAr} — {r.commissionPercent}٪</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
 
@@ -223,10 +231,10 @@ export function LabOrdersPage() {
 
           {insuranceProviders.some((pv) => pv.isActive) && (
             <Field label="تغطية تأمين / جهة تعاقد" hint="الجهة تتحمل نسبتها كمطالبة (1110) والمريض يدفع الباقي نقداً">
-              <select value={insuranceId} onChange={(e) => setInsuranceId(e.target.value)} className={inputCls}>
+              <QuickSelect value={insuranceId} onChange={(e) => setInsuranceId(e.target.value)} className={inputCls}>
                 <option value="">بلا تغطية (المريض يدفع كاملاً)</option>
                 {insuranceProviders.filter((pv) => pv.isActive).map((pv) => <option key={pv.id} value={pv.id}>{pv.nameAr} — تتحمل {pv.coveragePercent}٪</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           )}
           <div className="grid grid-cols-3 gap-3">
@@ -239,7 +247,7 @@ export function LabOrdersPage() {
                   </button>
                 ))}
               </div>
-              {payment === 'cash' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
+              {(payment === 'cash' || insuranceId) && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div>}
             </Field>
             <Field label="خصم ٪"><input value={discount} onChange={(e) => setDiscount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="الضريبة">
@@ -263,7 +271,7 @@ export function LabOrdersPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!patientId || !selected.length}>تسجيل الطلب وإنشاء القيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!patientId || !selected.length}>تسجيل الطلب وإنشاء القيد</Btn>
           </div>
         </div>
       </Modal>
@@ -350,12 +358,15 @@ export function LabOrdersPage() {
               refundedMinor={viewing.refundedMinor ?? 0}
               currencySymbol={cur.symbol}
               fmt={fmt}
+              terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'lab' && row.documentId === String(viewing.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
               allowCredit={viewing.payment === 'credit' || labPatients.find((pt) => pt.id === viewing.patientId)?.linkedCustomerId != null}
               hint="فحص أُلغي أو أُعيدت العينة؟ اختر الفحوصات الملغاة — يعكس الإيراد وحصة الضريبة، وعمولة المُحيل غير المصروفة تُعكس بنفس النسبة تلقائياً."
               refundableItems={viewing.tests.map((t, ti) => ({ key: `test:${ti}`, label: `${t.nameAr} (${t.code})`, valueMinor: t.priceMinor }))}
               onSubmit={(a) => {
                 try {
-                  const u = refundLabOrder({ orderId: viewing.id, ...a })
+                  const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
+                  const treasury = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
+                  const u = refundLabOrder({ orderId: viewing.id, ...a, treasury })
                   setViewing(u)
                   toast.show(`سُجل مرتجع التحاليل ${u.orderNumber} وتولد القيد العاكس ✅`)
                 } catch (err) { toast.show((err as Error).message, 'error') }
@@ -493,9 +504,9 @@ export function LabTestsPage() {
             <div className="space-y-2">
               {ranges.map((r, i) => (
                 <div key={i} className="grid grid-cols-8 gap-2 items-center">
-                  <select value={r.gender} onChange={(e) => setRange(i, { gender: e.target.value as RefRange['gender'] })} className={inputCls}>
+                  <QuickSelect value={r.gender} onChange={(e) => setRange(i, { gender: e.target.value as RefRange['gender'] })} className={inputCls}>
                     <option value="any">الجميع</option><option value="male">ذكور</option><option value="female">إناث</option>
-                  </select>
+                  </QuickSelect>
                   <input value={r.ageMinYears} onChange={(e) => setRange(i, { ageMinYears: Number(e.target.value) || 0 })} inputMode="numeric" className={inputCls} placeholder="من سن" />
                   <input value={r.ageMaxYears} onChange={(e) => setRange(i, { ageMaxYears: Number(e.target.value) || 999 })} inputMode="numeric" className={inputCls} placeholder="إلى سن" />
                   <input value={r.low ?? ''} onChange={(e) => setRange(i, { low: e.target.value === '' ? null : Number(e.target.value) })} inputMode="decimal" className={inputCls} placeholder="الأدنى" dir="ltr" />
@@ -571,15 +582,14 @@ export function LabPatientsPage() {
                   <td className="px-3 py-2.5 font-bold">{orderCount(p)}</td>
                   <td className="px-3 py-2.5">
                     {/* ربط بعميل مالي (إصلاح الترابط): طلباته الآجلة تدخل كشف حساب العميل */}
-                    <select
+                    <PartyQuickPicker
+                      parties={customers}
                       value={p.linkedCustomerId ?? 0}
-                      onChange={(e) => { updateLabPatient(p.id, { linkedCustomerId: Number(e.target.value) || null }); }}
-                      className="text-[11px] rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-1 max-w-[130px]"
-                      title="اربط المريض بعميل مالي — طلباته الآجلة تظهر في كشف حساب العميل"
-                    >
-                      <option value={0}>بلا ربط</option>
-                      {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                    </select>
+                      onChange={(id) => updateLabPatient(p.id, { linkedCustomerId: id || null })}
+                      cashLabel="بلا ربط"
+                      label="ربط المريض بعميل مالي"
+                      cashValue={0}
+                    />
                   </td>
                   <td className="px-3 py-2.5 text-slate-500">{p.notes || '—'}</td>
                 </tr>
@@ -619,7 +629,7 @@ export function LabPatientsPage() {
 /* ═══════════════ 4) الأطباء المُحيلون ═══════════════ */
 
 export function LabReferrersPage() {
-  const { labReferrers, labOrders, addLabReferrer, payReferrerCommissions, insuranceProviders, insuranceClaims, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims } = useDataStore()
+  const { labReferrers, labOrders, paymentTerminals, addLabReferrer, payReferrerCommissions, insuranceProviders, insuranceClaims, addInsuranceProvider, toggleInsuranceProvider, getClaimBalance, settleInsuranceClaims } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -665,10 +675,12 @@ export function LabReferrersPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
   const [claimTreasury, setClaimTreasury] = useState('1101')
+  const [claimTerminal, setClaimTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const doSettleClaims = (id: number, name: string) => {
     try {
-      const r = settleInsuranceClaims(id, claimTreasury)
-      toast.show(`حُصلت مطالبات ${name}: ${fmt(r.total)} عن ${r.count} مطالبة ✅`)
+      const terminal = paymentTerminals.find((row) => row.id === claimTerminal.terminalId)
+      const r = settleInsuranceClaims(id, terminal?.settlementAccountCode ?? claimTreasury, terminal ? { terminalId: terminal.id, providerReference: claimTerminal.providerReference.trim(), cardLast4: claimTerminal.cardLast4 || undefined } : undefined)
+      toast.show(`حُصلت مطالبات ${name}: ${fmt(r.total)} عن ${r.count} مطالبة ✅`); setClaimTerminal({ terminalId: '', providerReference: '', cardLast4: '' })
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
   const doPayout = () => {
@@ -786,7 +798,7 @@ export function LabReferrersPage() {
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={payoutTreasury} onChange={setPayoutTreasury} compact /></Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setPayoutFor(null)}>إلغاء</Btn>
-              <Btn onClick={doPayout}>💸 صرف الآن</Btn>
+              <Btn onClick={doPayout} shortcut="F9">💸 صرف الآن</Btn>
             </div>
           </div>
         )}
@@ -796,7 +808,7 @@ export function LabReferrersPage() {
       <div className="flex items-center justify-between pt-2">
         <h2 className="font-black flex items-center gap-2">🏥 جهات التأمين والتعاقد</h2>
         <div className="flex items-center gap-2">
-          {insuranceProviders.length > 0 && <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1">التحصيل إلى: <TreasuryPicker value={claimTreasury} onChange={setClaimTreasury} compact /></span>}
+          {insuranceProviders.length > 0 && <div className="space-y-1"><PaymentMethodPicker value={{treasury:claimTreasury,terminalPayment:claimTerminal}} onChange={value=>{setClaimTreasury(value.treasury);setClaimTerminal(value.terminalPayment)}} operation="receipt"/></div>}
           <Btn variant="soft" onClick={() => setInsOpen(true)}><Plus className="w-4 h-4" /> جهة جديدة</Btn>
         </div>
       </div>

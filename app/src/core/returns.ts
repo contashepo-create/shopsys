@@ -176,6 +176,8 @@ export interface ReturnLineSpec {
   lineIndex: number
   qty: number
   condition: ReturnCondition
+  /** مخزن استقبال المرتجع السليم؛ غيابه يعني مخزن سطر البيع الأصلي */
+  warehouseId?: number | null
 }
 
 /**
@@ -226,7 +228,14 @@ export function buildReturnLinesPerLine(
     if (spec.qty > can + 1e-9) {
       throw new RangeError(`«${srcName}» (سطر ${spec.lineIndex + 1}): المطلوب إرجاع ${spec.qty} والمتبقي القابل للإرجاع ${can}`)
     }
-    out.push({ ...src, qty: Math.round(spec.qty * 1000) / 1000, saleLineIndex: spec.lineIndex, condition: spec.condition })
+    out.push({
+      ...src,
+      qty: Math.round(spec.qty * 1000) / 1000,
+      saleLineIndex: spec.lineIndex,
+      condition: spec.condition,
+      // يسمح باستقبال المرتجع في مخزن مختلف، مع إبقاء مخزن الأصل افتراضياً.
+      warehouseId: spec.warehouseId ?? src.warehouseId ?? null,
+    })
   }
   if (!out.length) throw new RangeError('لا كميات للإرجاع')
   return out

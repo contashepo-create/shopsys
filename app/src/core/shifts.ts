@@ -92,6 +92,65 @@ export function currentOpenShift(shifts: Shift[]): Shift | null {
   return shifts.find((s) => s.status === 'open') ?? null
 }
 
+/**
+ * سياسة الوردية في سياق البيع/الدفع.
+ *
+ * المالك الرئيسي يرى تلميحاً فقط. المستخدم له override فردي يمكنه إجباره
+ * أو إعفاءه، وإذا لم يوجد override يتبع الكاشير الإعداد العام، بينما بقية
+ * الأدوار غير مجبرة افتراضياً حتى يستطيع المحاسب/المدير تسجيل بيع آجل أو كبير
+ * وتحصيله مباشرة من خزينته. أنشطة «الفاتورة أولاً» خارج هذا السياق.
+ */
+export interface SalesShiftPolicyInput {
+  roleId: string | null | undefined
+  isOwner: boolean
+  requireOpenShiftForSales: boolean
+  userOverride?: boolean | null
+  invoiceFirst: boolean
+}
+
+export interface SalesShiftPolicy {
+  required: boolean
+  hintOnly: boolean
+  messageAr: string
+}
+
+export function salesShiftPolicy(input: SalesShiftPolicyInput): SalesShiftPolicy {
+  if (input.invoiceFirst) {
+    return { required: false, hintOnly: false, messageAr: '' }
+  }
+  if (input.isOwner) {
+    return {
+      required: false,
+      hintOnly: true,
+      messageAr: 'الوردية اختيارية للمالك الرئيسي — افتحها إن أردت ربط النقدية بعهدة وردية',
+    }
+  }
+  if (input.userOverride != null) {
+    return {
+      required: input.userOverride,
+      hintOnly: !input.userOverride,
+      messageAr: input.userOverride
+        ? 'لا يمكن لهذا المستخدم إتمام البيع أو الدفع قبل فتح وردية مفتوحة — هذا المستخدم مفعّل له الإجبار من الصلاحيات'
+        : 'هذا المستخدم غير مجبر على فتح وردية — يمكنه البيع أو الدفع مباشرة من خزينته',
+    }
+  }
+  if (input.roleId === 'cashier') {
+    const required = input.requireOpenShiftForSales
+    return {
+      required,
+      hintOnly: !required,
+      messageAr: required
+        ? 'لا يمكن للكاشير إتمام البيع أو الدفع قبل فتح وردية مفتوحة'
+        : 'سياسة الكاشير العامة تسمح بالبيع والدفع بلا وردية مفتوحة',
+    }
+  }
+  return {
+    required: false,
+    hintOnly: true,
+    messageAr: 'هذا المستخدم غير مجبر افتراضياً على فتح وردية — يمكن تفعيل الإجبار له من شاشة الصلاحيات',
+  }
+}
+
 /* ─── تسوية عجز/زيادة الوردية (طلب المالك) ─── */
 
 export interface VarianceEntryLine {

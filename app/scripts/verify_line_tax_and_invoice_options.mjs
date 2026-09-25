@@ -26,7 +26,7 @@ const printA4 = read('src/ui/print/printInvoiceA4.ts')
 const printThermal = read('src/ui/print/printReceipt.ts')
 
 ok(pos.includes('countryVatPercent = country?.vatPercent ?? setup.vatPercent'), 'الكاشير يأخذ نسبة الضريبة من البلد لا من إدخال عام فقط')
-ok(pos.includes('vatPercentOverride: effectiveVatPercent(it, countryVatPercent)'), 'كل سطر كاشير يحصل على نسبته الفعلية عند الإضافة')
+ok(pos.includes('vatPercentOverride: itemVatPercent'), 'كل سطر كاشير يحصل على نسبته الفعلية عند الإضافة')
 ok(pos.includes('النسبة تظهر بجانب كل بند') && pos.includes('ضريبة السطر'), 'واجهة الكاشير تعرض الضريبة بجانب كل بند لا كحقل عام فقط')
 
 ok(pur.includes('countryVatPercent = country?.vatPercent ?? setup.vatPercent'), 'فاتورة الشراء تأخذ نسبة الضريبة من بلد المنشأة')

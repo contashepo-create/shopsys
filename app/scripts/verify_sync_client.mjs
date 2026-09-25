@@ -40,7 +40,10 @@ globalThis.fetch = async (url, init = {}) => {
 
 const { syncOnce, validateSyncConfig, encryptForSync } = await import('../src/data/syncClient.ts')
 
-const config = { url: 'https://demo.supabase.co', anonKey: 'x'.repeat(40), storeId: 'matgar-1', secret: 'sirr-mushtarak' }
+const config = {
+  url: 'https://demo.supabase.co', anonKey: 'x'.repeat(40), storeId: 'matgar-1',
+  secret: 'sirr-mushtarak-strong', accessToken: 'A'.repeat(43),
+}
 
 console.log('🧰 تحقق الإعدادات')
 ok('إعداد سليم يمر', validateSyncConfig(config).length === 0)

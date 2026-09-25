@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * إعدادات الطباعة (المرحلة 5) — تحكم كامل في الفاتورة:
  * القالب الافتراضي، أنماط A4 الأربعة (منقولة من logistics-web)، اللون الرئيسي،
@@ -131,14 +132,14 @@ export function PrintSettingsPage() {
           <p className="text-[11px] text-slate-400 -mt-2">تسري على كل مطبوعات التقارير: المالية، اليومية، كشوف الحساب، تقارير الأقسام — لا الفواتير فقط</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <Field label="الورق">
-              <select value={reportPrint.paper} onChange={(e) => updateReportPrint({ paper: e.target.value as 'A4' })} className={inputCls}>
+              <QuickSelect value={reportPrint.paper} onChange={(e) => updateReportPrint({ paper: e.target.value as 'A4' })} className={inputCls}>
                 <option value="A4">A4</option><option value="A5">A5</option><option value="letter">Letter</option>
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="الاتجاه">
-              <select value={reportPrint.orientation} onChange={(e) => updateReportPrint({ orientation: e.target.value as 'portrait' })} className={inputCls}>
+              <QuickSelect value={reportPrint.orientation} onChange={(e) => updateReportPrint({ orientation: e.target.value as 'portrait' })} className={inputCls}>
                 <option value="portrait">طولي</option><option value="landscape">عرضي</option>
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="حجم الخط (نقطة)">
               <input type="number" min={9} max={14} value={reportPrint.baseFontPt}
@@ -155,20 +156,20 @@ export function PrintSettingsPage() {
             </Field>
             {/* خيارات الشعار والقالب الأوسع (طلب المالك) */}
             <Field label="نمط الترويسة">
-              <select value={reportPrint.headerStyle ?? 'band'} onChange={(e) => updateReportPrint({ headerStyle: e.target.value as 'band' })} className={inputCls}>
+              <QuickSelect value={reportPrint.headerStyle ?? 'band'} onChange={(e) => updateReportPrint({ headerStyle: e.target.value as 'band' })} className={inputCls}>
                 <option value="band">شريط ملون متدرج (الأجمل)</option>
                 <option value="line">خط سفلي كلاسيكي</option>
-              </select>
+              </QuickSelect>
             </Field>
             <Field label={`ارتفاع الشعار: ${reportPrint.logoHeightMm ?? 18} مم`}>
               <input type="range" min={10} max={40} step={2} value={reportPrint.logoHeightMm ?? 18} onChange={(e) => updateReportPrint({ logoHeightMm: Number(e.target.value) })} className="w-full accent-violet-600" />
             </Field>
             <Field label="موضع الشعار">
-              <select value={reportPrint.logoPosition ?? 'end'} onChange={(e) => updateReportPrint({ logoPosition: e.target.value as 'end' })} className={inputCls}>
+              <QuickSelect value={reportPrint.logoPosition ?? 'end'} onChange={(e) => updateReportPrint({ logoPosition: e.target.value as 'end' })} className={inputCls}>
                 <option value="end">يسار الترويسة</option>
                 <option value="start">يمين الترويسة</option>
                 <option value="center">في المنتصف</option>
-              </select>
+              </QuickSelect>
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-2">

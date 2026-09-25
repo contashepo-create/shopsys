@@ -1,11 +1,11 @@
 /**
- * التحقق من دفعة المالك الثامنة (8 نقاط) على مستوى كل الأنشطة الـ18:
+ * التحقق من دفعة المالك الثامنة (8 نقاط) على مستوى كل الأنشطة الحالية:
  * ① باج إجبار تغيير الرقم أول دخول: login يرجع mustChangePin وبوابة App تحتجزه حتى التغيير
  * ② الدخول الموحد: لا زر مالك — matchesOwnerIdentity بالهوية الافتراضية والمخصصة + منع التصادم
  * ③ «حسابي»: changeMyPin (مالك وموظف) بتحقق الرقم الحالي + updateMyProfile بمنع التصادم
  * ⑤ تصفية الإشعارات بالصلاحيات: الكاشير لا يرى أقساطاً/شيكات/بلاغات — المحاسب يرى ماليّاته
  * ⑥ طباعة الشراء ومرتجعه بالقوالب الثلاثة (buildSimpleDocModel) — لكل نشاط
- * ⑦ سياسة «لا بيع بلا وردية»: مرفوض افتراضياً، يمر بعد فتح وردية، ويمر بلا وردية عند التعطيل — لكل نشاط
+ * ⑦ سياسة الوردية بحسب الدور: المالك تلميح فقط، والكاشير حسب الإعداد، وبقية الأدوار الملزمة — لكل نشاط
  * (④ نقل شريط الطباعة و⑧ مراجعة قسم الأدوار: تحقق بصري/قرائي — الأدوار مغطاة في batch_18)
  * تشغيل: node --experimental-strip-types scripts/verify_owner_batch8_points.mjs
  */
@@ -39,7 +39,7 @@ const { renderInvoiceA4Html } = await import(join(root, 'src/ui/print/printInvoi
 const { renderReceiptHtml } = await import(join(root, 'src/ui/print/printReceipt.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 28, `المتوقع 28 نشاطاً — الموجود ${ACTIVITIES.length}`)
+assert.equal(ACTIVITIES.length, 29, `المتوقع 29 نشاطاً — الموجود ${ACTIVITIES.length}`)
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 const cur = { code: 'EGP', symbol: 'ج.م', decimals: 2, name: '' }
 
@@ -148,11 +148,12 @@ let pass = 0
 for (const activityId of ACTIVITIES) {
   const tpl = ACTIVITY_TEMPLATES.find((a) => a.id === activityId)
 
-  // ── ⑦ الإلزام مفعّل: البيع بلا وردية مرفوض ثم يمر بعد الفتح ──
+  // ── ⑦ المالك الرئيسي: تلميح فقط؛ البيع بلا وردية يمر ثم يُربط عند فتحها ──
   mem.clear()
   mem.set('shopsys-app', appState(activityId, true))
   const { useDataStore } = await import(`${repoUrl}?b8=${activityId}`)
   const st = () => useDataStore.getState()
+  st().seed([])
 
   st().addItem({ nameAr: `صنف ${tpl.nameAr}`, sku: `B8-${activityId}`, barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 0, stockQty: 0, priceMinor: 100_00, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
   const item = st().items.at(-1)
@@ -170,14 +171,12 @@ for (const activityId of ACTIVITIES) {
     assert.equal(sale0.shiftId, null, `${activityId}: ⑦ فاتورة أولاً — بيع بلا وردية يمر وبلا ربط`)
     assertBalanced(st().journal.find((e) => e.id === sale0.journalEntryId).lines)
   } else {
-    assert.throws(
-      () => st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true }),
-      /وردية/,
-      `${activityId}: ⑦ البيع بلا وردية مرفوض والرسالة تشرح`,
-    )
-    const shift = st().openShift('كاشير', 100_00)
+    const ownerSale = st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true })
+    assert.equal(ownerSale.shiftId, null, `${activityId}: ⑦ المالك لا يُمنع عند غياب الوردية`)
+    assertBalanced(st().journal.find((e) => e.id === ownerSale.journalEntryId).lines)
+    const shift = st().openShift('المالك الرئيسي', 100_00)
     const sale = st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true })
-    assert.equal(sale.shiftId, shift.id, `${activityId}: ⑦ الفاتورة مربوطة بالوردية`)
+    assert.equal(sale.shiftId, shift.id, `${activityId}: ⑦ عند فتحها تُربط الفاتورة بالوردية`)
     assertBalanced(st().journal.find((e) => e.id === sale.journalEntryId).lines)
   }
 
@@ -235,5 +234,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✔ ${tpl.nameAr} (${activityId}) — ⑥ طباعة الشراء ومرتجعه ×3 قوالب + ⑦ سياسة الورديات`)
 }
 
-assert.equal(pass, 28, 'اكتمال الأنشطة الـ28')
-console.log(`\n✅ دفعة النقاط الثماني: الجزء العام (①②③⑤) + ${pass}/20 نشاطاً (⑥⑦) — كله سليم`)
+assert.equal(pass, 29, 'اكتمال الأنشطة الـ29')
+console.log(`\n✅ دفعة النقاط الثماني: الجزء العام (①②③⑤) + ${pass}/29 نشاطاً (⑥⑦) — كله سليم`)

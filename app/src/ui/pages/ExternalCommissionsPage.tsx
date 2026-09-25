@@ -1,3 +1,4 @@
+import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
  * العمولات — قسمان بتبويبين لكل قسم (طلب المالك):
  * «عمولات لدى الغير (لي)»: إيراد 4112 يُثبت عند الاستحقاق (1112) ويُحصَّل من الخزينة/البنك
@@ -14,11 +15,13 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { COMMISSION_DIRECTION_LABELS, commissionsByParty, type CommissionDirection } from '../../core/commissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { accountName } from './accountNames.ts'
 
 export function ExternalCommissionsPage() {
   const {
-    externalCommissions, commissionParties, journal, treasuries,
+    externalCommissions, commissionParties, journal, treasuries, paymentTerminals,
     addCommissionParty, updateCommissionParty, deleteCommissionParty,
     addExternalCommission, collectExternalCommission,
   } = useDataStore()
@@ -60,13 +63,16 @@ export function ExternalCommissionsPage() {
   const settling = settleId != null ? externalCommissions.find((c) => c.id === settleId) : null
   const [settleAmount, setSettleAmount] = useState('')
   const [treasury, setTreasury] = useState(treasuries[0]?.code ?? '1101')
+  const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const settle = () => {
     if (!settling) return
     try {
+      const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
       const u = collectExternalCommission({
         commissionId: settling.id,
         amountMinor: toMinor(settleAmount || '0', cur.decimals),
-        treasury: treasury as '1101',
+        treasury: (terminal?.settlementAccountCode ?? treasury) as '1101',
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
       })
       toast.show(direction === 'earned' ? `حُصِّل من ${u.partyName} ✓` : `سُدد لـ${u.partyName} ✓`)
       setSettleId(null)
@@ -290,10 +296,7 @@ export function ExternalCommissionsPage() {
       <Modal open={open} onClose={() => setOpen(false)} title={`${dirMeta.icon} عمولة جديدة — ${dirMeta.nameAr}`}>
         <div className="space-y-3">
           <Field label="الشخص/الجهة (من السجل)" hint="غير موجود؟ سجّله أولاً من تبويب «الأشخاص المتعامل معهم»">
-            <select value={partyId} onChange={(e) => setPartyId(e.target.value)} className={inputCls}>
-              <option value="">اختر…</option>
-              {commissionParties.map((p) => <option key={p.id} value={p.id}>{p.nameAr}{p.kind ? ` — ${p.kind}` : ''}</option>)}
-            </select>
+            <PartyQuickPicker parties={commissionParties} value={partyId ? Number(partyId) : 0} onChange={(id) => setPartyId(id ? String(id) : '')} cashLabel="اختر الشخص/الجهة" label="بحث الشخص أو الجهة" showCash={false} />
           </Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label={`المبلغ (${cur.symbol})`}>
@@ -310,7 +313,7 @@ export function ExternalCommissionsPage() {
           </div>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveCommission} disabled={!partyId || !amount.trim()}>💾 تسجيل واستحقاق</Btn>
+            <Btn onClick={saveCommission} shortcut="F9" disabled={!partyId || !amount.trim()}>💾 تسجيل واستحقاق</Btn>
           </div>
         </div>
       </Modal>
@@ -322,12 +325,10 @@ export function ExternalCommissionsPage() {
             <Field label={`المبلغ (المتبقي ${fmt(settling.amountMinor - settling.collectedMinor)} ${cur.symbol})`}>
               <input value={settleAmount} onChange={(e) => setSettleAmount(e.target.value)} className={inputCls} dir="ltr" autoFocus />
             </Field>
-            <Field label={direction === 'earned' ? 'يدخل في' : 'يُدفع من'}>
-              <TreasuryPicker value={treasury} onChange={setTreasury} />
-            </Field>
+            {direction === 'earned' ? <Field label="يدخل في"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></Field> : <Field label="يُدفع من"><TreasuryPicker value={treasury} onChange={setTreasury} operation="payment" /></Field>}
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSettleId(null)}>إلغاء</Btn>
-              <Btn onClick={settle} disabled={!settleAmount.trim()}>{direction === 'earned' ? '💰 تحصيل' : '📤 دفع'} وقيد</Btn>
+              <Btn onClick={settle} shortcut="F9" disabled={!settleAmount.trim()}>{direction === 'earned' ? '💰 تحصيل' : '📤 دفع'} وقيد</Btn>
             </div>
           </div>
         )}

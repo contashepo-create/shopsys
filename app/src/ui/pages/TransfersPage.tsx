@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * التحويلات المخزنية (استكمال المرحلة 3):
  * نقل كميات بين المخازن بمستند مرقّم TRF-#### — حركة داخلية بلا قيد
@@ -13,11 +14,11 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 interface DraftLine { itemId: string; qty: string }
 
 export function TransfersPage() {
-  const { transfers, warehouses, items, postTransfer, purchases, sales, saleReturns, purchaseReturns } = useDataStore()
+  const { transfers, warehouses, items, postTransfer, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders } = useDataStore()
   const toast = useToast()
   const whName = (id: number) => warehouses.find((w) => w.id === id)?.nameAr ?? '—'
 
-  const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns])
+  const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders])
 
   const [tab, setTab] = useState<'list' | 'balances'>('list')
 
@@ -159,16 +160,16 @@ export function TransfersPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Field label="من مخزن *">
-              <select value={fromId} onChange={(e) => setFromId(e.target.value)} className={inputCls}>
+              <QuickSelect value={fromId} onChange={(e) => setFromId(e.target.value)} className={inputCls}>
                 <option value="">— اختر —</option>
                 {warehouses.map((w) => <option key={w.id} value={w.id}>{w.nameAr}{w.isMain ? ' ★' : ''}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="إلى مخزن *">
-              <select value={toId} onChange={(e) => setToId(e.target.value)} className={inputCls}>
+              <QuickSelect value={toId} onChange={(e) => setToId(e.target.value)} className={inputCls}>
                 <option value="">— اختر —</option>
                 {warehouses.filter((w) => String(w.id) !== fromId).map((w) => <option key={w.id} value={w.id}>{w.nameAr}{w.isMain ? ' ★' : ''}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
 
@@ -179,10 +180,10 @@ export function TransfersPage() {
             </div>
             {lines.map((l, i) => (
               <div key={i} className="grid grid-cols-[1fr_80px_90px_28px] gap-1.5 items-center">
-                <select value={l.itemId} onChange={(e) => patchLine(i, { itemId: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px]`}>
+                <QuickSelect value={l.itemId} onChange={(e) => patchLine(i, { itemId: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px]`}>
                   <option value="">— اختر الصنف —</option>
                   {activeItems.map((it) => <option key={it.id} value={it.id}>{it.nameAr}</option>)}
-                </select>
+                </QuickSelect>
                 <input value={l.qty} onChange={(e) => patchLine(i, { qty: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" placeholder="الكمية" />
                 <div className="text-[10.5px] text-slate-400 text-center">
                   متاح: <b className={availableIn(fromId, l.itemId) > 0 ? 'text-emerald-600' : 'text-rose-500'}>{fromId && l.itemId ? availableIn(fromId, l.itemId) : '—'}</b>
@@ -198,7 +199,7 @@ export function TransfersPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!fromId || !toId || !lines.some((l) => l.itemId)}>💾 ترحيل التحويل</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!fromId || !toId || !lines.some((l) => l.itemId)}>💾 ترحيل التحويل</Btn>
           </div>
         </div>
       </Modal>

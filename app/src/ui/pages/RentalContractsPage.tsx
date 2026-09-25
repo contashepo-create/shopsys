@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * عقود إيجار المعدات (المرحلة 6 — القرار 13):
  * فتح عقد (أيام × سعر يومي + تأمين مسترد + ضريبة فوق السعر) بقيد فتح
@@ -18,12 +19,14 @@ import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 
 export function RentalContractsPage() {
-  const { rentalContracts, equipment, customers, journal, openRental, closeRental, refundRental } = useDataStore()
+  const { rentalContracts, equipment, customers, journal, paymentTerminals, paymentTerminalTransactions, openRental, closeRental, refundRental } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -71,6 +74,7 @@ export function RentalContractsPage() {
   const [deposit, setDeposit] = useState('')
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
   const [treasury, setTreasury] = useState('1101')
+  const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [withVat, setWithVat] = useState(false)
   const [notes, setNotes] = useState('')
   // ترقية القرار 25: نوع العقد الزمني + قراءة عدّاد التسليم للساعي
@@ -122,6 +126,7 @@ export function RentalContractsPage() {
   const creditApproval = useSupervisorApproval('sales.credit.override')
   const save = (creditLimitOverrideBy?: string) => {
     try {
+      const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
       const c = openRental({
         customerId: customerId ? Number(customerId) : null,
         equipmentId: equipmentId ? Number(equipmentId) : null,
@@ -129,7 +134,8 @@ export function RentalContractsPage() {
         notes: notes.trim(),
         rateType,
         startReading: rateType === 'hourly' && startReading.trim() !== '' ? Number(startReading) : null,
-        treasury,
+        treasury: terminal?.settlementAccountCode ?? treasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`فُتح العقد ${c.contractNumber} — يُقبض الآن ${fmt(c.totals.collectCashMinor)} ${cur.symbol} ✅`)
@@ -333,16 +339,13 @@ export function RentalContractsPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العميل">
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
-                <option value="">عميل نقدي</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="عميل نقدي" label="بحث العميل" cashValue={0} />
             </Field>
             <Field label="المعدة من السجل" hint="اختيارها يملأ الاسم والسعر اليومي تلقائياً">
-              <select value={equipmentId} onChange={(e) => pickEquipment(e.target.value)} className={inputCls}>
+              <QuickSelect value={equipmentId} onChange={(e) => pickEquipment(e.target.value)} className={inputCls}>
                 <option value="">— اكتب الاسم يدوياً —</option>
                 {equipment.map((eq) => <option key={eq.id} value={eq.id}>{eq.nameAr}{eq.code ? ` (${eq.code})` : ''}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="اسم المعدة *">
               <input value={equipmentName} onChange={(e) => setEquipmentName(e.target.value)} className={inputCls} placeholder="حفار كاتربيلر 320" />
@@ -374,7 +377,7 @@ export function RentalContractsPage() {
                 <input value={startReading} onChange={(e) => setStartReading(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} placeholder="0" />
               </Field>
             )}
-            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>
+            {payment === 'cash' && <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div></Field>}
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يُقبض نقداً ويُردّ عند الإقفال — لا يدخل الإيراد">
               <input value={deposit} onChange={(e) => setDeposit(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
             </Field>
@@ -406,7 +409,7 @@ export function RentalContractsPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!equipmentName.trim() || !dailyRate.trim()}>💾 فتح العقد وتوليد القيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!equipmentName.trim() || !dailyRate.trim()}>💾 فتح العقد وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>
@@ -446,7 +449,7 @@ export function RentalContractsPage() {
             <Field label="خزينة التسوية (ردّ التأمين / تحصيل التجاوز)"><TreasuryPicker value={closeTreasury} onChange={setCloseTreasury} compact /></Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setClosing(null)}>إلغاء</Btn>
-              <Btn onClick={doClose}>🔒 إقفال العقد</Btn>
+              <Btn onClick={doClose} shortcut="F9">🔒 إقفال العقد</Btn>
             </div>
           </div>
         )}
@@ -468,6 +471,7 @@ export function RentalContractsPage() {
               refundedMinor={viewing.refundedMinor ?? 0}
               currencySymbol={cur.symbol}
               fmt={fmt}
+              terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'rental' && row.documentId === `equipment:${viewing.id}`); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
               allowCredit={viewing.customerId != null}
               refundableItems={[
                 { key: 'rent', label: `إيجار ${viewing.days} × ${fmt(viewing.dailyRateMinor)} — ${viewing.equipmentName}`, valueMinor: viewing.totals.rentMinor, qty: viewing.days },
@@ -476,7 +480,9 @@ export function RentalContractsPage() {
               hint="خصم تعويضي على الإيجار (عطل المعدة/إنهاء مبكر): يعكس الإيراد وحصة الضريبة — التأمين له مساره عند إقفال العقد."
               onSubmit={(a) => {
                 try {
-                  const u = refundRental({ contractId: viewing.id, ...a })
+                  const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
+                  const treasury = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
+                  const u = refundRental({ contractId: viewing.id, ...a, treasury })
                   setViewing(u)
                   toast.show(`سُجل مرتجع الإيجار ${u.contractNumber} وتولد القيد العاكس ✅`)
                 } catch (err) { toast.show((err as Error).message, 'error') }

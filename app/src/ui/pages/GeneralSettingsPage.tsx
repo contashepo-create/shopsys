@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الإعدادات العامة — البلد والعملة والضريبة وطريقة الاحتساب
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
@@ -10,6 +11,7 @@ import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
 import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES } from '../../core/activities.ts'
 import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, type FiscalYear } from '../../core/fiscal.ts'
 import { formatMinor } from '../../core/money.ts'
+import { resolveBusinessTax, type BusinessTaxStatus } from '../../core/taxRegistration.ts'
 import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 import { accountName } from './accountNames.ts'
 
@@ -21,6 +23,7 @@ export function GeneralSettingsPage() {
   const activity = ACTIVITY_TEMPLATES.find((a) => a.id === setup.activityId)
   const [vat, setVat] = useState(String(setup.vatPercent))
   const [taxInclusive, setTaxInclusive] = useState(setup.taxInclusive)
+  const [taxStatus, setTaxStatus] = useState<BusinessTaxStatus>(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
 
@@ -66,7 +69,7 @@ export function GeneralSettingsPage() {
 
   const saveTax = () => {
     useAppStore.setState((s) => ({
-      setup: { ...s.setup, vatPercent: Number(vat) || 0, taxInclusive },
+      setup: { ...s.setup, vatPercent: Number(vat) || 0, taxInclusive, taxRegistrationStatus: taxStatus },
     }))
     toast.show('تم حفظ إعدادات الضريبة')
   }
@@ -121,8 +124,9 @@ export function GeneralSettingsPage() {
           <Percent size={17} className="text-emerald-500" /> الضريبة ({country?.taxName ?? 'ضريبة القيمة المضافة'})
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="حالة تسجيل المنشأة"><QuickSelect className={inputCls} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as BusinessTaxStatus)}><option value="registered">مسجلة ضريبياً</option><option value="zero_rated">مسجلة ضريبياً بنسبة صفر</option><option value="exempt">منشأة معفاة</option></QuickSelect></Field>
           <Field label="النسبة ٪" hint="قابلة للتعديل دائماً — الضرائب تتغير بقرارات حكومية">
-            <input value={vat} onChange={(e) => setVat(e.target.value)} type="number" min={0} max={50} className={inputCls} />
+            <input value={taxStatus === 'registered' ? vat : '0'} onChange={(e) => setVat(e.target.value)} disabled={taxStatus !== 'registered'} type="number" min={0} max={50} className={inputCls} />
           </Field>
           <Field label="طريقة الاحتساب في الأسعار (القرار 6)">
             <div className="flex gap-2">
@@ -142,7 +146,7 @@ export function GeneralSettingsPage() {
             </div>
           </Field>
         </div>
-        <div className="flex justify-end mt-4"><Btn onClick={saveTax}>حفظ إعدادات الضريبة</Btn></div>
+        <div className="mt-3 text-xs text-slate-500">{resolveBusinessTax(taxStatus, Number(vat) || 0).disclosureAr} — ضريبة المدخلات {resolveBusinessTax(taxStatus, Number(vat) || 0).canRecoverInputTax ? 'قابلة للمعالجة حسب المستند' : 'لا تُسترد وتدخل التكلفة'}</div><div className="flex justify-end mt-4"><Btn onClick={saveTax}>حفظ إعدادات الضريبة</Btn></div>
       </section>
 
       {/* الأرصدة السالبة (طلب المالك) — النظام كله يحترم هذين المفتاحين */}
@@ -190,8 +194,8 @@ export function GeneralSettingsPage() {
           <ShieldAlert size={17} className="text-violet-500" /> سياسة الورديات
         </h3>
         <p className="text-[11.5px] text-slate-400 mb-4">
-          النمط العالمي (Toast / Square): كل بيع يُربط بوردية مفتوحة كي يُحاسَب الكاشير على العجز
-          والزيادة عند الإقفال — بيع بلا وردية = نقدية بلا مسؤول عنها. عطّله فقط لو تعمل وحدك.
+          هذا المفتاح يحدد السياسة الافتراضية للكاشير فقط: عند تفعيله لا يستطيع الكاشير البيع أو الدفع قبل فتح وردية.
+          المالك الرئيسي غير مجبر، وبقية المستخدمين غير مجبرين افتراضياً ويمكن تحديد كل مستخدم من شاشة الصلاحيات.
         </p>
         {(() => {
           const on = setup.requireOpenShiftForSales
@@ -199,7 +203,7 @@ export function GeneralSettingsPage() {
             <button
               onClick={() => {
                 useAppStore.setState((s) => ({ setup: { ...s.setup, requireOpenShiftForSales: !s.setup.requireOpenShiftForSales } }))
-                toast.show(!on ? 'أصبح فتح الوردية إلزامياً قبل أي بيع ✓' : '⚠️ سُمح بالبيع بلا وردية — الفواتير ستُسجل «بلا وردية» ولن تدخل محاسبة الدرج')
+                toast.show(!on ? 'أصبح فتح الوردية إلزامياً افتراضياً للكاشير قبل البيع والدفع ✓' : '⚠️ سُمح للكاشير بالبيع بلا وردية — يمكنك إجبار أي مستخدم منفرداً من شاشة الصلاحيات')
               }}
               className={`w-full sm:w-auto text-right p-4 rounded-2xl border-2 transition-all duration-200 hover:scale-[1.01] ${
                 on ? 'border-violet-500/50 bg-violet-500/10' : 'border-amber-500/50 bg-amber-500/10'
@@ -207,16 +211,16 @@ export function GeneralSettingsPage() {
             >
               <div className="flex items-center justify-between gap-6">
                 <span className={`font-bold text-[13px] ${on ? 'text-violet-700 dark:text-violet-400' : 'text-amber-700 dark:text-amber-400'}`}>
-                  ⏱️ منع البيع بلا وردية مفتوحة
+                  ⏱️ منع الكاشير من البيع بلا وردية مفتوحة
                 </span>
                 <span className={`w-10 h-5.5 rounded-full p-0.5 transition-colors ${on ? 'bg-violet-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
                   <span className={`block w-4.5 h-4.5 rounded-full bg-white shadow transition-transform ${on ? '-translate-x-4.5' : ''}`} />
                 </span>
               </div>
               <div className="text-[11px] text-slate-400 mt-1.5">
-                عند التفعيل: شاشة الكاشير ترفض إتمام أي فاتورة حتى تُفتح وردية بعهدة افتتاحية
+                عند التفعيل: شاشة الكاشير ترفض إتمام البيع أو الدفع حتى تُفتح وردية بعهدة افتتاحية
               </div>
-              <div className={`text-[10.5px] font-bold mt-1 ${on ? 'text-violet-600' : 'text-amber-600'}`}>{on ? 'إلزامي (مُوصى به)' : 'غير إلزامي — البيع بلا وردية مسموح'}</div>
+              <div className={`text-[10.5px] font-bold mt-1 ${on ? 'text-violet-600' : 'text-amber-600'}`}>{on ? 'إلزامي للكاشير (مُوصى به)' : 'الكاشير بلا وردية مسموح — الأدوار الأخرى حسب سياقها'}</div>
             </button>
           )
         })()}
@@ -319,7 +323,7 @@ export function GeneralSettingsPage() {
           لا يوجد اختيار مبهم: اختر مخزناً محدداً، وفاتورة الشراء يمكنها التحديد لكل سطر عند الحاجة.
         </p>
         <div className="max-w-sm">
-          <select
+          <QuickSelect
             value={setup.defaultWarehouseId ?? warehouses.find((w) => w.isMain)?.id ?? ''}
             onChange={(e) => {
               const v = e.target.value === '' ? null : Number(e.target.value)
@@ -330,7 +334,7 @@ export function GeneralSettingsPage() {
           >
             {warehouses.length === 0 && <option value="">لا توجد مخازن</option>}
             {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
-          </select>
+          </QuickSelect>
         </div>
       </section>
 

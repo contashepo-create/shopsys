@@ -1,0 +1,65 @@
+name: Quality Gate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  application:
+    name: Build, lint and user journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build-tool dependency audit
+        run: npm audit --audit-level=high
+
+      - name: TypeScript and production build
+        run: npm run build
+
+      - name: Lint application source
+        run: npm run lint:src
+
+      - name: Browser-like integration tests
+        run: npm run test:e2e
+
+      - name: Business invariants and accounting journeys
+        shell: bash
+        run: |
+          failures=0
+          for file in scripts/verify_*.mjs; do
+            echo "::group::$file"
+            if ! node --experimental-strip-types "$file"; then
+              failures=$((failures + 1))
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$failures" -ne 0 ]; then
+            echo "Failed verification scripts: $failures"
+            exit 1
+          fi
