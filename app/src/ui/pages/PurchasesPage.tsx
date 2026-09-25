@@ -182,6 +182,7 @@ export function PurchasesPage() {
   const [notes, setNotes] = useState('')
   const [lineOptionsOpen, setLineOptionsOpen] = useState(false)
   const [lineOptions, setLineOptions] = useState({ expiry: false, serials: false })
+  const [expensesOpen, setExpensesOpen] = useState(false)
   const lineWarehouseMode = warehouses.length > 1 && warehouseId == null
   const lineGridClass = lineWarehouseMode
     ? (lineOptions.expiry ? 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_130px_36px]' : 'sm:grid-cols-[1fr_130px_100px_85px_115px_82px_36px]')
@@ -547,12 +548,6 @@ export function PurchasesPage() {
                 autoFocus
               />
             </Field>
-            <Field label={`المدفوع الآن (${cur.symbol})`} hint="الباقي يُسجَّل ديناً على حسابك عند المورد">
-              <input value={paid} onChange={(e) => setPaid(e.target.value)} type="number" min={0} className={inputCls} placeholder="0" />
-            </Field>
-            <Field label="مصدر الدفع" hint="خزينة/بنك — أو عهدة موظف تُخصم من ملفه">
-              <PaySourcePicker value={paySource} onChange={setPaySource} />
-            </Field>
           </div>
           {warehouses.length > 1 && (
             <Field label="مخزن الفاتورة" hint="اختر مخزناً واحداً للفاتورة كلها، أو «تحديد لكل سطر» إذا كانت البضاعة موزعة على أكثر من مخزن. لا يوجد مخزن مبهم.">
@@ -729,11 +724,14 @@ export function PurchasesPage() {
             </div>
           </div>
 
-          {/* محرر المصروف الموحد: القالب أولاً، ثم القيمة والسداد ومركز التكلفة */}
-          <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/20">
-            <div className="mb-2 text-[12px] font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
-              <TruckIcon size={14} /> مصاريف الشراء — تُوزَّع على الأصناف أو تُسجل كمصروف فترة
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div><b className="text-[12px] text-amber-700 dark:text-amber-400">مصاريف الفاتورة</b><p className="text-[10.5px] text-slate-500">تُوزَّع على الأصناف أو تُسجل كمصروف فترة — التفاصيل داخل النافذة.</p></div>
+              <Btn variant="soft" onClick={() => setExpensesOpen(true)}><Plus size={15}/> إضافة مصاريف {managedExpenses.length ? `(${managedExpenses.length})` : ''}</Btn>
             </div>
+            {managedExpenses.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{managedExpenses.map((expense, index) => <span key={index} className="rounded-lg bg-white/70 px-2 py-1 text-[11px] dark:bg-slate-900/40">{expense.nameAr}: {fmt(expense.amountMinor)} {expense.paidBy === 'payable' ? '· مستحق' : ''}</span>)}</div>}
+          </div>
+          <Modal open={expensesOpen} onClose={() => setExpensesOpen(false)} title="تفاصيل مصاريف الشراء" wide>
             <PurchaseExpenseManager
               expenses={managedExpenses}
               onChange={setManagedExpenses}
@@ -748,7 +746,8 @@ export function PurchasesPage() {
               taxEnabled={taxPolicy.canRecoverInputTax && effectiveCountryVatPercent > 0}
               defaultTreasury={paySource.kind === 'treasury' ? paySource.treasury : '1101'}
             />
-          </div>
+            <div className="flex justify-end mt-3"><Btn onClick={() => setExpensesOpen(false)}>تم</Btn></div>
+          </Modal>
 
           {/* معاينة التوزيع الحية */}
           {preview && (
@@ -790,6 +789,17 @@ export function PurchasesPage() {
             </div>
           )}
 
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
+            <div className="rounded-2xl border-2 border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-card-dark space-y-3">
+              <div><b>الدفع والتحصيل</b><p className="text-xs text-slate-500">حدد المدفوع الآن، والباقي يُسجل على المورد.</p></div>
+              <div className="grid sm:grid-cols-2 gap-3"><Field label={`المدفوع الآن (${cur.symbol})`}><input value={paid} onChange={(e) => setPaid(e.target.value)} type="number" min={0} className={inputCls} placeholder="0" /></Field><Field label="مصدر الدفع"><PaySourcePicker value={paySource} onChange={setPaySource} /></Field></div>
+              <div className="rounded-xl bg-slate-500/5 p-3 text-sm font-bold">المتبقي للمورد: <span className="text-brand-600">{preview ? fmt(preview.supplierDue - toMinor(paid || '0', cur.decimals)) : '—'} {cur.symbol}</span></div>
+            </div>
+            <div className="rounded-2xl border-2 border-brand-200 bg-brand-50/40 p-4 dark:border-brand-900/60 dark:bg-brand-950/20 space-y-2">
+              <b>إجمالي الفاتورة</b>
+              {preview ? <><div className="flex justify-between text-sm"><span>البضاعة والمصاريف</span><b>{fmt(preview.grand)} {cur.symbol}</b></div><div className="flex justify-between text-sm"><span>ضريبة المدخلات</span><b>{fmt(preview.inputVat)} {cur.symbol}</b></div><div className="border-t pt-2 flex justify-between font-black text-lg"><span>مستحق المورد</span><b>{fmt(preview.supplierDue)} {cur.symbol}</b></div></> : <div className="text-sm text-slate-400">أضف أصنافاً لعرض الإجمالي</div>}
+            </div>
+          </div>
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
 
           <div className="flex justify-end gap-2">

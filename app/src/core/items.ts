@@ -237,7 +237,7 @@ export function nextSku(existing: Item[]): string {
   return `ITM-${max + 1}`
 }
 
-/** الافتراضيات من خصائص القسم (الوراثة — القرار 5) */
+/** افتراضيات الصنف من خصائص القسم؛ الصلاحية استثناء اختياري لا يُورث تلقائياً. */
 export function draftFromCategory(cat: Category | undefined, sku: string): ItemDraft {
   const f = new Set(cat?.features ?? [])
   return {
@@ -251,7 +251,8 @@ export function draftFromCategory(cat: Category | undefined, sku: string): ItemD
     stockQty: 0,
     priceMinor: 0,
     minQty: 0,
-    trackExpiry: f.has('expiry_batches'),
+    // الصلاحية اختيار يدوي للصنف وليست افتراضاً للنشاط أو القسم.
+    trackExpiry: false,
     trackSerial: f.has('serial_warranty'),
     warrantyMonths: f.has('serial_warranty') ? 12 : 0,
     soldByWeight: f.has('weight_scale'),

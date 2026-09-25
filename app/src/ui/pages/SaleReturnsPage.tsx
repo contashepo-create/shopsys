@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * مرتجعات المبيعات — معالج مراحل بالنمط العالمي (Shopify POS / Lightspeed / Square):
  * ① اختر الفاتورة الأصلية ← ② حدد البنود سطراً بسطر (كمية + حالة سليم/تالف + سبب موحد)
@@ -15,12 +15,13 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { remainingByLine, returnCashRefundMinor, allocationOf, validateRefundAllocation, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition, type RefundAllocation } from '../../core/returns.ts'
 import { computeTotals } from '../../core/pos.ts'
+import { partyCode } from '../../core/partyCodes.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import type { InvoiceTemplate } from '../../core/receipt.ts'
-import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -36,7 +37,7 @@ interface WizardLine {
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions } = useDataStore()
+  const { sales, saleReturns, customers, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -48,6 +49,7 @@ export function SaleReturnsPage() {
   const [step, setStep] = useState(0)
   const [pickQuery, setPickQuery] = useState('')
   const [pickIndex, setPickIndex] = useState(0)
+  const [customerFilterId, setCustomerFilterId] = useState(0)
   const [sale, setSale] = useState<SaleInvoice | null>(null)
   const [wiz, setWiz] = useState<Record<number, WizardLine>>({}) // بمفتاح فهرس السطر
   const [refund, setRefund] = useState<'cash' | 'credit' | 'store_credit' | 'custom'>('cash')
@@ -72,15 +74,20 @@ export function SaleReturnsPage() {
     return remainingByLine(sale.lines, prior)
   }, [sale, saleReturns])
 
+  const customerPickerInfo = (party: { id: number; active?: boolean }) => {
+    const balance = getCustomerBalance(party.id)
+    return { code: partyCode('CUS', party.id), balance: `الرصيد ${fmt(Math.abs(balance))} ${cur.symbol}` }
+  }
+
   const pickable = useMemo(() => {
     const q = pickQuery.trim()
-    return [...sales].reverse().filter((s) => !q || s.invoiceNumber.includes(q) || (s.refCode ?? '').includes(q.toUpperCase())).slice(0, 20)
-  }, [sales, pickQuery])
+    return [...sales].reverse().filter((s) => (customerFilterId === 0 || s.customerId === customerFilterId) && (!q || s.invoiceNumber.includes(q) || (s.refCode ?? '').includes(q.toUpperCase()))).slice(0, 20)
+  }, [sales, pickQuery, customerFilterId])
 
   const resetWizard = () => {
     setStep(0); setSale(null); setWiz({}); setRefund('cash'); setRefundTreasury(''); setTerminalRefundReference('')
     setCustomCash(''); setCustomCredit(''); setCustomStore(''); setCustomWaived('')
-    setReasonCode('changed_mind'); setReason(''); setPickQuery('')
+    setReasonCode('changed_mind'); setReason(''); setPickQuery(''); setCustomerFilterId(0)
   }
   const openWizard = () => { resetWizard(); setWizardOpen(true) }
   const closeWizard = () => { setWizardOpen(false); resetWizard() }
@@ -337,9 +344,21 @@ export function SaleReturnsPage() {
           {/* ① اختيار الفاتورة */}
           {step === 0 && (
             <div className="space-y-3 anim-pop">
+              <Field label="تصفية حسب العميل (اختياري)">
+                <PartyQuickPicker
+                  parties={customers}
+                  value={customerFilterId}
+                  onChange={(id) => { setCustomerFilterId(id); setPickIndex(0) }}
+                  cashValue={0}
+                  cashLabel="كل العملاء"
+                  label="بحث العميل للمرتجع"
+                  partyInfo={customerPickerInfo}
+                  onConfirm={() => requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-return-invoice-search]')?.focus())}
+                />
+              </Field>
               <div className="relative">
                 <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input value={pickQuery} onChange={(e) => { setPickQuery(e.target.value); setPickIndex(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setPickIndex((i) => Math.min(pickable.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setPickIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = pickable[pickIndex] ?? pickable[0]; if (selected) startWithSale(selected) } else if (e.key === 'Escape') closeWizard() }} placeholder="رقم الفاتورة S-0001 أو الكود المرجعي…" className={`${inputCls} pr-9`} autoFocus data-enter-native="true" />
+                <input data-return-invoice-search value={pickQuery} onChange={(e) => { setPickQuery(e.target.value); setPickIndex(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setPickIndex((i) => Math.min(pickable.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setPickIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = pickable[pickIndex] ?? pickable[0]; if (selected) startWithSale(selected) } else if (e.key === 'Escape') closeWizard() }} placeholder="رقم الفاتورة S-0001 أو الكود المرجعي…" className={`${inputCls} pr-9`} autoFocus data-enter-native="true" />
               </div>
               <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
                 {pickable.map((s, rowIndex) => (

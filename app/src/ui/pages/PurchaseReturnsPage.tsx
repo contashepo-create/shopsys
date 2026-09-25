@@ -1,4 +1,4 @@
-import { QuickSelect } from '../components/KeyboardPickers.tsx'
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * مرتجعات الشراء (المرحلة 3) — عن فاتورة شراء أصلية:
  * تُقيَّم بالتكلفة النهائية للوحدة (بضاعة + نصيب مصاريف)، ولا تتجاوز
@@ -12,7 +12,8 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { remainingPurchaseByLine } from '../../core/purchases.ts'
-import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { partyCode } from '../../core/partyCodes.ts'
+import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -21,7 +22,7 @@ import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 
 export function PurchaseReturnsPage() {
-  const { purchases, purchaseReturns, suppliers, items, warehouses, journal, postPurchaseReturn } = useDataStore()
+  const { purchases, purchaseReturns, suppliers, items, warehouses, journal, postPurchaseReturn, getSupplierBalance } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -30,6 +31,7 @@ export function PurchaseReturnsPage() {
   const [pickOpen, setPickOpen] = useState(false)
   const [pickQuery, setPickQuery] = useState('')
   const [pickIndex, setPickIndex] = useState(0)
+  const [supplierFilterId, setSupplierFilterId] = useState(-2)
   const [purchase, setPurchase] = useState<PurchaseInvoice | null>(null)
   const [qtys, setQtys] = useState<Record<number, string>>({})
   const [returnWarehouses, setReturnWarehouses] = useState<Record<number, number>>({})
@@ -74,10 +76,15 @@ export function PurchaseReturnsPage() {
     return remainingPurchaseByLine(purchase.lines, prior)
   }, [purchase, purchaseReturns])
 
+  const supplierPickerInfo = (party: { id: number; active?: boolean }) => {
+    const balance = getSupplierBalance(party.id)
+    return { code: partyCode('SUP', party.id), balance: `الرصيد ${fmt(Math.abs(balance))} ${cur.symbol}` }
+  }
+
   const pickable = useMemo(() => {
     const q = pickQuery.trim()
-    return [...purchases].reverse().filter((p) => !q || p.invoiceNumber.includes(q) || (p.refCode ?? '').includes(q.toUpperCase())).slice(0, 20)
-  }, [purchases, pickQuery])
+    return [...purchases].reverse().filter((p) => (supplierFilterId === -2 || p.supplierId === supplierFilterId) && (!q || p.invoiceNumber.includes(q) || (p.refCode ?? '').includes(q.toUpperCase()))).slice(0, 20)
+  }, [purchases, pickQuery, supplierFilterId])
 
   /** الدين المتبقي غير المدفوع على الفاتورة المختارة (بعد مرتجعات الدين السابقة) */
   const unpaidDebt = useMemo(() => {
@@ -128,7 +135,7 @@ export function PurchaseReturnsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between anim-up">
         <div className="text-sm text-slate-500">يُرجَع للمورد بتكلفة الوحدة النهائية من فاتورته — ولا يُرجَع ما بيع بالفعل</div>
-        <Btn onClick={() => { setPickQuery(''); setPickOpen(true) }} disabled={purchases.length === 0}>
+        <Btn onClick={() => { setPickQuery(''); setSupplierFilterId(-2); setPickOpen(true) }} disabled={purchases.length === 0}>
           <RotateCcw size={15} /> مرتجع شراء جديد
         </Btn>
       </div>
@@ -192,9 +199,21 @@ export function PurchaseReturnsPage() {
       {/* اختيار فاتورة الشراء */}
       <Modal open={pickOpen} onClose={() => setPickOpen(false)} title="اختر فاتورة الشراء الأصلية">
         <div className="space-y-3">
+          <Field label="تصفية حسب المورد (اختياري)">
+            <PartyQuickPicker
+              parties={suppliers}
+              value={supplierFilterId}
+              onChange={(id) => { setSupplierFilterId(id); setPickIndex(0) }}
+              cashValue={-2}
+              cashLabel="كل الموردين"
+              label="بحث المورد للمرتجع"
+              partyInfo={supplierPickerInfo}
+              onConfirm={() => requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-return-purchase-search]')?.focus())}
+            />
+          </Field>
           <div className="relative">
             <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input value={pickQuery} onChange={(e) => { setPickQuery(e.target.value); setPickIndex(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setPickIndex((i) => Math.min(pickable.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setPickIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = pickable[pickIndex] ?? pickable[0]; if (selected) startReturn(selected) } else if (e.key === 'Escape') setPickOpen(false) }} placeholder="رقم الفاتورة… P-0001" className={`${inputCls} pr-9`} autoFocus data-enter-native="true" />
+            <input data-return-purchase-search value={pickQuery} onChange={(e) => { setPickQuery(e.target.value); setPickIndex(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setPickIndex((i) => Math.min(pickable.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setPickIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = pickable[pickIndex] ?? pickable[0]; if (selected) startReturn(selected) } else if (e.key === 'Escape') setPickOpen(false) }} placeholder="رقم الفاتورة… P-0001" className={`${inputCls} pr-9`} autoFocus data-enter-native="true" />
           </div>
           <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
             {pickable.map((p, rowIndex) => (
