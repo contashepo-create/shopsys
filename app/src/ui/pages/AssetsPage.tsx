@@ -258,7 +258,7 @@ export function AssetsPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!nameAr.trim() || !cost.trim()}>💾 تسجيل وتوليد القيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!nameAr.trim() || !cost.trim()}>💾 تسجيل وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>
@@ -358,7 +358,7 @@ export function AssetsPage() {
                   <Field label="الصرف من">
                     <TreasuryPicker value={payTreasury} onChange={setPayTreasury} compact />
                   </Field>
-                  <Btn onClick={doPay} disabled={!payAmount.trim()}>💸 سداد وتوليد القيد</Btn>
+                  <Btn onClick={doPay} shortcut="F9" disabled={!payAmount.trim()}>💸 سداد وتوليد القيد</Btn>
                 </div>
               </div>
             )}

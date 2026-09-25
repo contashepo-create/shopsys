@@ -15,6 +15,8 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderCarSaleContractHtml } from '../print/printCarSale.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -26,7 +28,7 @@ const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
 }
 
 export function CarsPage() {
-  const { cars, journal, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, employees, addStaffCommission } = useDataStore()
+  const { cars, journal, paymentTerminals, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, employees, addStaffCommission } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -122,6 +124,7 @@ export function CarsPage() {
   const [sellVat, setSellVat] = useState(false)
   const [sellPayment, setSellPayment] = useState<'cash' | 'credit'>('cash')
   const [sellTreasury, setSellTreasury] = useState('1101')
+  const [sellTerminal, setSellTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   // عمولة موظف عن البيع (تعميم — أمر المالك): مصروف مربوط بالسيارة يدخل ربحيتها
   const [commEmpId, setCommEmpId] = useState('')
   const [commAmount, setCommAmount] = useState('')
@@ -131,9 +134,11 @@ export function CarsPage() {
   const doSell = (creditLimitOverrideBy?: string) => {
     if (!sellFor) return
     try {
+      const terminal = paymentTerminals.find((row) => row.id === sellTerminal.terminalId)
       const c = sellCar({
         carId: sellFor.id, priceMinor: toMinor(price, cur.decimals),
-        vatPercent: sellVat ? setup.vatPercent : 0, payment: sellPayment, buyerName: buyer.trim(), treasury: sellTreasury,
+        vatPercent: sellVat ? setup.vatPercent : 0, payment: sellPayment, buyerName: buyer.trim(), treasury: terminal?.settlementAccountCode ?? sellTreasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: sellTerminal.providerReference.trim(), cardLast4: sellTerminal.cardLast4 || undefined } : undefined,
         buyerCustomerId: buyerCustomerId || null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
@@ -202,11 +207,14 @@ export function CarsPage() {
   const [cgBuyerCustomerId, setCgBuyerCustomerId] = useState(0)
   const [cgPayment, setCgPayment] = useState<'cash' | 'credit'>('cash')
   const [cgTreasury, setCgTreasury] = useState('1101')
+  const [cgTerminal, setCgTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const doSellConsignment = (creditLimitOverrideBy?: string) => {
     if (!cgSellCar) return
     try {
+      const terminal = paymentTerminals.find((row) => row.id === cgTerminal.terminalId)
       const sold = sellConsignmentCar({
-        id: cgSellCar.id, salePriceMinor: toMinor(cgSalePrice, cur.decimals), payment: cgPayment, buyerName: cgBuyer.trim(), treasury: cgTreasury,
+        id: cgSellCar.id, salePriceMinor: toMinor(cgSalePrice, cur.decimals), payment: cgPayment, buyerName: cgBuyer.trim(), treasury: terminal?.settlementAccountCode ?? cgTreasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: cgTerminal.providerReference.trim(), cardLast4: cgTerminal.cardLast4 || undefined } : undefined,
         buyerCustomerId: cgBuyerCustomerId || null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
@@ -304,7 +312,7 @@ export function CarsPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!make.trim() || !model.trim() || !plate.trim() || !cost}>شراء وقيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!make.trim() || !model.trim() || !plate.trim() || !cost}>شراء وقيد</Btn>
           </div>
         </div>
       </Modal>
@@ -327,7 +335,7 @@ export function CarsPage() {
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setPrepFor(null)}>إلغاء</Btn>
-              <Btn onClick={savePrep} disabled={!prepAmount}>رسملة التكلفة</Btn>
+              <Btn onClick={savePrep} shortcut="F9" disabled={!prepAmount}>رسملة التكلفة</Btn>
             </div>
           </div>
         )}
@@ -359,7 +367,7 @@ export function CarsPage() {
                     </button>
                   ))}
                 </div>
-                {sellPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={sellTreasury} onChange={setSellTreasury} compact /></div>}
+                {sellPayment === 'cash' && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury:sellTreasury,terminalPayment:sellTerminal}} onChange={value=>{setSellTreasury(value.treasury);setSellTerminal(value.terminalPayment)}} operation="receipt"/></div>}
               </Field>
               <Field label="الضريبة">
                 <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
@@ -379,7 +387,7 @@ export function CarsPage() {
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSellFor(null)}>إلغاء</Btn>
-              <Btn onClick={doSell} disabled={!price || (!!commEmpId && !commAmount.trim())}>بيع وقيد الربحية</Btn>
+              <Btn onClick={doSell} shortcut="F9" disabled={!price || (!!commEmpId && !commAmount.trim())}>بيع وقيد الربحية</Btn>
             </div>
           </div>
         )}
@@ -398,7 +406,7 @@ export function CarsPage() {
             </div>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setRentFor(null)}>إلغاء</Btn>
-              <Btn onClick={doRent} disabled={!dailyRate && !monthlyRate}>تحويل للتأجير</Btn>
+              <Btn onClick={doRent} shortcut="F9" disabled={!dailyRate && !monthlyRate}>تحويل للتأجير</Btn>
             </div>
           </div>
         )}
@@ -507,7 +515,7 @@ export function CarsPage() {
               عمولتك المتوقعة: {fmt(toMinor(cgAsk, cur.decimals) - toMinor(cgNet, cur.decimals))}
             </div>
           )}
-          <Btn onClick={saveConsignment} className="w-full" disabled={!cgMake.trim() || !cgModel.trim() || !cgPlate.trim() || !cgOwner.trim() || !cgNet || !cgAsk}>تسجيل الأمانة</Btn>
+          <Btn onClick={saveConsignment} shortcut="F9" className="w-full" disabled={!cgMake.trim() || !cgModel.trim() || !cgPlate.trim() || !cgOwner.trim() || !cgNet || !cgAsk}>تسجيل الأمانة</Btn>
         </div>
       </Modal>
 
@@ -535,14 +543,14 @@ export function CarsPage() {
                   ))}
                 </div>
               </Field>
-              {cgPayment === 'cash' && <Field label="إلى"><TreasuryPicker value={cgTreasury} onChange={setCgTreasury} compact /></Field>}
+              {cgPayment === 'cash' && <div className="space-y-2"><PaymentMethodPicker value={{treasury:cgTreasury,terminalPayment:cgTerminal}} onChange={value=>{setCgTreasury(value.treasury);setCgTerminal(value.terminalPayment)}} operation="receipt"/></div>}
             </div>
             {cgSalePrice && toMinor(cgSalePrice, cur.decimals) >= cgSellCar.ownerNetMinor && (
               <div className="rounded-xl bg-violet-500/10 border border-violet-500/30 p-3 text-[12px] font-bold text-violet-700 dark:text-violet-300">
                 📒 القيد: {cgPayment === 'cash' ? 'الخزينة' : 'العملاء'} {fmt(toMinor(cgSalePrice, cur.decimals))} / مستحق المالك {fmt(cgSellCar.ownerNetMinor)} + عمولتك {fmt(toMinor(cgSalePrice, cur.decimals) - cgSellCar.ownerNetMinor)}
               </div>
             )}
-            <Btn onClick={doSellConsignment} className="w-full" disabled={!cgSalePrice}>بيع وقيد العمولة</Btn>
+            <Btn onClick={doSellConsignment} shortcut="F9" className="w-full" disabled={!cgSalePrice}>بيع وقيد العمولة</Btn>
           </div>
         )}
       </Modal>

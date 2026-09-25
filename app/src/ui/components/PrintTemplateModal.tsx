@@ -21,22 +21,12 @@ export function PrintTemplateModal(props: {
   return (
     <Modal open={props.open} onClose={props.onClose} title={props.title ?? '🖨️ اختر قالب الطباعة'}>
       <div className="space-y-4">
-        <div className="grid grid-cols-3 gap-2">
-          {INVOICE_TEMPLATE_OPTIONS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setChosen(t.id)}
-              className={`p-3 rounded-2xl border-2 text-center transition-all hover:scale-[1.03] ${
-                active === t.id
-                  ? 'border-emerald-500/60 bg-emerald-500/10'
-                  : 'border-slate-200 dark:border-slate-700 hover:border-emerald-400/40'
-              }`}
-            >
-              <div className={`font-black text-[13px] ${active === t.id ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500'}`}>{t.label}</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">{t.sub}</div>
-            </button>
-          ))}
-        </div>
+        <label className="block text-[11px] font-bold text-slate-500">
+          القالب
+          <select value={active} onChange={(e) => setChosen(e.target.value as InvoiceTemplate)} className="mt-1 w-full px-2.5 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-card-dark text-xs font-bold">
+            {INVOICE_TEMPLATE_OPTIONS.map((t) => <option key={t.id} value={t.id}>{t.label} — {t.sub}</option>)}
+          </select>
+        </label>
         <p className="text-[10.5px] text-slate-400">
           الاختيار لهذه الطبعة فقط — القالب الدائم يُضبط من «الإعدادات ← الطباعة والفواتير».
         </p>

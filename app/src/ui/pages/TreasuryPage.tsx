@@ -12,11 +12,19 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import type { TreasuryDef } from '../../core/treasury.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { summarizeTreasuryByUser, treasuryUserSummaryCsv } from '../../core/treasuryUserReport.ts'
+import { allowedTreasuryCodes } from '../../core/treasuryAccess.ts'
 
 interface Move { date: string; description: string; inMinor: number; outMinor: number; balance: number; entryId: number }
 
 export function TreasuryPage() {
-  const { journal, treasuries, postVoucher, addTreasury, renameTreasury, removeTreasury } = useDataStore()
+  const { journal, treasuries, appUsers, currentUserId, postVoucher, addTreasury, renameTreasury, removeTreasury } = useDataStore()
+  const activeUser = appUsers.find((user) => user.id === currentUserId)
+  const visibleTreasuries = useMemo(() => {
+    const visibleCodes = allowedTreasuryCodes(activeUser?.treasuryAccess, 'view_balance')
+    return visibleCodes == null ? treasuries : treasuries.filter((treasury) => visibleCodes.includes(treasury.code))
+  }, [activeUser?.treasuryAccess, treasuries])
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -29,11 +37,15 @@ export function TreasuryPage() {
   const [fee, setFee] = useState('') // مصروف التحويل — رسوم بنكية/عمولة (طلب المالك)
   const [desc, setDesc] = useState('')
   const [statement, setStatement] = useState<string | null>(null)
+  const [cashReportFrom, setCashReportFrom] = useState('')
+  const [cashReportTo, setCashReportTo] = useState('')
   // إضافة/تعديل خزينة — نموذج احترافي كامل (طلب المالك)
   const [editOpen, setEditOpen] = useState(false)
   const [editCode, setEditCode] = useState<string | null>(null)
   const [tName, setTName] = useState('')
   const [tKind, setTKind] = useState<'cash' | 'bank'>('cash')
+  const [tChannel, setTChannel] = useState<'bank_account' | 'wallet'>('bank_account')
+  const [tParentCode, setTParentCode] = useState('')
   const [tAlias, setTAlias] = useState('')
   const [tAccountNumber, setTAccountNumber] = useState('')
   const [tIban, setTIban] = useState('')
@@ -56,6 +68,10 @@ export function TreasuryPage() {
     }
     return map
   }, [journal, treasuries])
+  const userCashSummary = useMemo(
+    () => summarizeTreasuryByUser(journal, visibleTreasuries.map((treasury) => treasury.code), cashReportFrom || undefined, cashReportTo || undefined),
+    [journal, visibleTreasuries, cashReportFrom, cashReportTo],
+  )
 
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? code
 
@@ -85,7 +101,7 @@ export function TreasuryPage() {
   }
 
   const fillForm = (t?: TreasuryDef) => {
-    setTName(t?.nameAr ?? ''); setTKind(t?.kind ?? 'cash')
+    setTName(t?.nameAr ?? ''); setTKind(t?.kind ?? 'cash'); setTChannel(t?.channel ?? 'bank_account'); setTParentCode(t?.parentCode ?? '')
     setTAlias(t?.aliasAr ?? ''); setTAccountNumber(t?.accountNumber ?? '')
     setTIban(t?.iban ?? ''); setTBranch(t?.branch ?? '')
     setTHolder(t?.holderName ?? ''); setTSwift(t?.swift ?? ''); setTNotes(t?.notes ?? '')
@@ -95,7 +111,7 @@ export function TreasuryPage() {
   const saveTreasury = () => {
     try {
       const extra = {
-        aliasAr: tAlias.trim(), accountNumber: tAccountNumber.trim(), iban: tIban.trim(),
+        aliasAr: tAlias.trim(), parentCode: tKind === 'bank' ? (tParentCode || null) : null, channel: tKind === 'bank' ? tChannel : undefined, accountNumber: tAccountNumber.trim(), iban: tIban.trim(),
         branch: tBranch.trim(), holderName: tHolder.trim(), swift: tSwift.trim(), notes: tNotes.trim(),
       }
       if (editCode) { renameTreasury(editCode, tName, extra); toast.show('حُفظت بيانات الخزينة/البنك ✓') }
@@ -109,6 +125,15 @@ export function TreasuryPage() {
   }
 
   const stmt = statement ? balances.get(statement) : null
+  const exportUserCashCsv = () => {
+    const blob = new Blob([treasuryUserSummaryCsv(userCashSummary)], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `treasury-users-${cashReportFrom || 'all'}-${cashReportTo || 'all'}.csv`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="space-y-5">
@@ -124,7 +149,7 @@ export function TreasuryPage() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-        {treasuries.map((t, i) => {
+        {visibleTreasuries.map((t, i) => {
           const acc = balances.get(t.code) ?? { balance: 0, moves: [] }
           const Icon = t.kind === 'cash' ? PiggyBank : Landmark
           const color = t.kind === 'cash' ? 'from-emerald-500 to-teal-500' : 'from-sky-500 to-cyan-500'
@@ -145,6 +170,7 @@ export function TreasuryPage() {
                       {t.nameAr} <span className="text-[9px] opacity-60">#{t.code}</span>
                       {t.aliasAr && <span className="mr-1 text-[10px] text-slate-300 dark:text-slate-500">· {t.aliasAr}</span>}
                     </div>
+                    {t.kind === 'bank' && <div className="text-[9.5px] text-sky-500 font-bold">{t.channel === 'wallet' ? '📱 محفظة إلكترونية' : '🏦 حساب/فرع بنكي'}{t.parentCode ? ` · تابع لـ ${treasuries.find((parent) => parent.code === t.parentCode)?.nameAr ?? t.parentCode}` : ''}</div>}
                     {t.accountNumber && <div className="text-[9.5px] text-slate-300 dark:text-slate-500 font-mono" dir="ltr">{t.accountNumber}</div>}
                     <div className={`font-black text-2xl ${acc.balance < 0 ? 'text-rose-500' : 'text-slate-800 dark:text-white'}`}>
                       {fmt(acc.balance)} <span className="text-xs">{cur.symbol}</span>
@@ -165,6 +191,24 @@ export function TreasuryPage() {
           )
         })}
       </div>
+
+      {visibleTreasuries.length > 0 && (
+        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 flex-wrap">
+            <span className="font-extrabold text-sm flex-1">حركة النقدية حسب المستخدم</span>
+            <label className="text-[10px] text-slate-400">من <input type="date" value={cashReportFrom} onChange={(e) => setCashReportFrom(e.target.value)} className="mr-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1" /></label>
+            <label className="text-[10px] text-slate-400">إلى <input type="date" value={cashReportTo} onChange={(e) => setCashReportTo(e.target.value)} className="mr-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-2 py-1" /></label>
+            <button onClick={exportUserCashCsv} disabled={!userCashSummary.length} className="text-[10px] font-bold px-2 py-1 rounded-lg border border-emerald-500/30 text-emerald-600 disabled:opacity-30">تصدير CSV</button>
+          </div>
+          <table className="w-full text-[12px]">
+            <thead><tr className="text-right text-slate-400"><th className="px-4 py-2">المستخدم</th><th>العمليات</th><th>قبض</th><th>صرف</th><th>الصافي</th></tr></thead>
+            <tbody>
+              {userCashSummary.map((row) => <tr key={row.userName} className="border-t border-slate-50 dark:border-slate-800"><td className="px-4 py-2 font-bold">{row.userName}</td><td>{row.operationsCount}</td><td className="text-emerald-600">{fmt(row.receiptsMinor)}</td><td className="text-rose-500">{fmt(row.paymentsMinor)}</td><td className="font-black">{fmt(row.netMinor)}</td></tr>)}
+              {userCashSummary.length === 0 && <tr><td colSpan={5} className="p-5 text-center text-slate-400">لا توجد حركات في النطاق المحدد</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* إضافة / تعديل خزينة — نموذج احترافي بمستوى البرامج العالمية (طلب المالك) */}
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title={editCode ? '✏️ تعديل خزينة / بنك' : '🏦 خزينة / بنك جديد'} wide>
@@ -195,6 +239,8 @@ export function TreasuryPage() {
             <div className="p-4 rounded-2xl bg-cyan-500/5 border border-cyan-500/20 space-y-3">
               <div className="text-[12px] font-bold text-cyan-700 dark:text-cyan-400">🏛️ البيانات البنكية <span className="font-normal text-slate-400">(كلها اختيارية — تُطبع في المستندات وتفيد المطابقات)</span></div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="نوع القناة"><select value={tChannel} onChange={(e)=>setTChannel(e.target.value as 'bank_account'|'wallet')} className={inputCls}><option value="bank_account">حساب/فرع بنكي</option><option value="wallet">محفظة إلكترونية</option></select></Field>
+                <Field label="تابع لبنك رئيسي" hint="اختياري — لإنشاء فروع أو محافظ داخل بنك"><select value={tParentCode} onChange={(e)=>setTParentCode(e.target.value)} className={inputCls}><option value="">حساب مستقل</option>{treasuries.filter(t=>t.kind==='bank'&&t.code!==editCode&&!t.parentCode).map(t=><option key={t.code} value={t.code}>{t.nameAr}</option>)}</select></Field>
                 <Field label="رقم الحساب">
                   <input value={tAccountNumber} onChange={(e) => setTAccountNumber(e.target.value)} className={inputCls} dir="ltr" placeholder="1234567890" />
                 </Field>
@@ -235,14 +281,10 @@ export function TreasuryPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <Field label="من">
-              <select value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls}>
-                {treasuries.map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
-              </select>
+              <TreasuryPicker value={from} onChange={setFrom} operation="transfer_from" compact />
             </Field>
             <Field label="إلى">
-              <select value={to} onChange={(e) => setTo(e.target.value)} className={inputCls}>
-                {treasuries.filter((t) => t.code !== from).map((t) => <option key={t.code} value={t.code}>{t.kind === 'cash' ? '💰' : '🏦'} {t.nameAr}</option>)}
-              </select>
+              <TreasuryPicker value={to} onChange={setTo} operation="transfer_to" compact />
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -263,7 +305,7 @@ export function TreasuryPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setTransferOpen(false)}>إلغاء</Btn>
-            <Btn onClick={doTransfer} disabled={!amount.trim() || from === to}>↔️ تنفيذ التحويل</Btn>
+            <Btn onClick={doTransfer} shortcut="F9" disabled={!amount.trim() || from === to}>↔️ تنفيذ التحويل</Btn>
           </div>
         </div>
       </Modal>

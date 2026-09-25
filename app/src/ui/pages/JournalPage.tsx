@@ -18,7 +18,7 @@ import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
-interface DraftLine { accountCode: string; debit: string; credit: string }
+interface DraftLine { accountCode: string; debit: string; credit: string; costCenterId?: string }
 
 /** تسميات مصادر القيود بالعربية — كل قيد مربوط بمستنده (القرار 9) */
 const SOURCE_LABELS: Record<string, string> = {
@@ -43,7 +43,7 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export function JournalPage() {
-  const { journal, treasuries, customAccounts, postManualEntry, reverseEntry } = useDataStore()
+  const { journal, treasuries, customAccounts, costCenters, postManualEntry, reverseEntry } = useDataStore()
   // الشجرة الكاملة تشمل الخزائن المخصصة — القيد اليدوي يستطيع استخدامها
   // الشجرة الكاملة = القياسية + خزائن المالك + حساباته المخصصة (الشجرة ليست مفروضة)
   // فلترة حسب النشاط (أمر المالك): القيد اليدوي لا يعرض حسابات نشاط آخر
@@ -144,6 +144,7 @@ export function JournalPage() {
         accountCode: l.accountCode,
         debit: l.debit.trim() ? toMinor(l.debit, cur.decimals) : 0,
         credit: l.credit.trim() ? toMinor(l.credit, cur.decimals) : 0,
+        costCenterId: l.costCenterId ? Number(l.costCenterId) : null,
       })),
     [mLines, cur.decimals],
   )
@@ -195,7 +196,7 @@ export function JournalPage() {
           open={manualOpen} onClose={() => setManualOpen(false)}
           mDesc={mDesc} setMDesc={setMDesc} mDate={mDate} setMDate={setMDate}
           mLines={mLines} setMLines={setMLines} errors={manualErrors} onSave={saveManual} fmt={fmt}
-          parsed={parsedLines} postable={POSTABLE}
+          parsed={parsedLines} postable={POSTABLE} costCenters={costCenters}
         />
       </div>
     )
@@ -323,7 +324,7 @@ export function JournalPage() {
           <input value={revReason} onChange={(e) => setRevReason(e.target.value)} placeholder="سبب العكس (اختياري): خطأ إدخال…" className={inputCls} />
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setReversing(null)}>إلغاء</Btn>
-            <Btn onClick={doReverse}><Undo2 size={14} /> تأكيد العكس</Btn>
+            <Btn onClick={doReverse} shortcut="F9"><Undo2 size={14} /> تأكيد العكس</Btn>
           </div>
         </div>
       </Modal>
@@ -332,7 +333,7 @@ export function JournalPage() {
         open={manualOpen} onClose={() => setManualOpen(false)}
         mDesc={mDesc} setMDesc={setMDesc} mDate={mDate} setMDate={setMDate}
         mLines={mLines} setMLines={setMLines} errors={manualErrors} onSave={saveManual} fmt={fmt}
-        parsed={parsedLines} postable={POSTABLE}
+        parsed={parsedLines} postable={POSTABLE} costCenters={costCenters}
       />
       {reverseApproval.dialog}
     </div>
@@ -341,9 +342,10 @@ export function JournalPage() {
 
 /** مودال القيد اليدوي — زر الحفظ معطل حتى يتوازن القيد (القرار 9) */
 function ManualEntryModal({
-  open, onClose, mDesc, setMDesc, mDate, setMDate, mLines, setMLines, errors, onSave, fmt, parsed, postable,
+  open, onClose, mDesc, setMDesc, mDate, setMDate, mLines, setMLines, errors, onSave, fmt, parsed, postable, costCenters,
 }: {
   postable: { code: string; nameAr: string }[]
+  costCenters: { id: number; code: string; nameAr: string; isActive: boolean }[]
   open: boolean
   onClose: () => void
   mDesc: string
@@ -371,11 +373,11 @@ function ManualEntryModal({
         </div>
 
         <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <div className="grid grid-cols-[4.5rem_1fr_7rem_7rem_2rem] gap-2 px-3 py-2 text-[10px] font-bold text-slate-400 bg-slate-50 dark:bg-slate-900/40">
-            <span className="text-center">الكود</span><span>الحساب</span><span className="text-center">مدين</span><span className="text-center">دائن</span><span></span>
+          <div className="grid grid-cols-[4.5rem_1fr_7rem_7rem_9rem_2rem] gap-2 px-3 py-2 text-[10px] font-bold text-slate-400 bg-slate-50 dark:bg-slate-900/40">
+            <span className="text-center">الكود</span><span>الحساب</span><span className="text-center">مدين</span><span className="text-center">دائن</span><span>المركز العام</span><span></span>
           </div>
           {mLines.map((l, i) => (
-            <div key={i} className="grid grid-cols-[4.5rem_1fr_7rem_7rem_2rem] gap-2 items-center px-3 py-2 border-t border-slate-100 dark:border-slate-800">
+            <div key={i} className="grid grid-cols-[4.5rem_1fr_7rem_7rem_9rem_2rem] gap-2 items-center px-3 py-2 border-t border-slate-100 dark:border-slate-800">
               {/* إدخال سريع بكود الحساب (طلب المالك) — اكتب 1101 وسيُختار فوراً */}
               <input
                 value={l.accountCode}
@@ -390,6 +392,7 @@ function ManualEntryModal({
               </select>
               <input value={l.debit} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value.trim() ? '' : l.credit })} placeholder="0" className={`${inputCls} py-1.5 text-center`} dir="ltr" />
               <input value={l.credit} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value.trim() ? '' : l.debit })} placeholder="0" className={`${inputCls} py-1.5 text-center`} dir="ltr" />
+              <select value={l.costCenterId ?? ''} onChange={(e) => setLine(i, { costCenterId: e.target.value })} className={`${inputCls} py-1.5 text-[11px]`}><option value="">بدون مركز</option>{costCenters.filter(center => center.isActive).map(center => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</select>
               <button
                 onClick={() => setMLines((ls) => ls.filter((_, j) => j !== i))}
                 disabled={mLines.length <= 2}
@@ -423,7 +426,7 @@ function ManualEntryModal({
 
         <div className="flex justify-end gap-2">
           <Btn variant="ghost" onClick={onClose}>إلغاء</Btn>
-          <Btn onClick={onSave} disabled={errors.length > 0}>💾 حفظ القيد</Btn>
+          <Btn onClick={onSave} shortcut="F9" disabled={errors.length > 0}>💾 حفظ القيد</Btn>
         </div>
       </div>
     </Modal>

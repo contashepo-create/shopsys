@@ -84,6 +84,16 @@ export function StatementsPage() {
 
   // إصلاح بلاغ المالك: كانت الطباعة عبر window.open فتحجبها المتصفحات —
   // الآن iframe مخفي (نفس آلية إيصال الكاشير) + قالب احترافي على نمط pro-acc
+  const exportStatement = () => {
+    const headers = ['التاريخ', 'المستند', meta.debitLabel, meta.creditLabel, 'الرصيد']
+    const values = rows.map((row) => [row.date.slice(0, 10), row.docLabel, fmt(row.debitMinor), fmt(row.creditMinor), fmt(row.balanceMinor)])
+    const escape = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`
+    const csv = '\ufeff' + [headers, ...values].map((row) => row.map(escape).join(',')).join('\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `statement-${kind}-${partyId}.csv`; anchor.click(); URL.revokeObjectURL(url)
+    toast.show('تم تصدير كشف الحساب إلى Excel ✓')
+  }
+
   const print = () => {
     printHtml(renderStatementHtml({
       shopName: setup.shopName || 'تَحَكَّم',
@@ -122,7 +132,7 @@ export function StatementsPage() {
           {parties.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
         </select>
         {partyId > 0 && rows.length > 0 && (
-          <Btn variant="ghost" onClick={print}><Printer size={15} /> طباعة الكشف</Btn>
+          <><Btn variant="ghost" onClick={print}><Printer size={15} /> طباعة الكشف</Btn><Btn variant="ghost" onClick={exportStatement}><FileSpreadsheet size={15} /> Excel</Btn></>
         )}
       </div>
 

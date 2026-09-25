@@ -365,7 +365,7 @@ export function SubcontractorsPage() {
                 <input value={certRecovery} onChange={(e) => setCertRecovery(e.target.value)} inputMode="decimal" className={inputCls} />
               </Field>
             )}
-            <Btn onClick={saveCert} className="w-full" disabled={certMode === 'percent' ? !certPercent : !certAmount}>اعتماد الشهادة</Btn>
+            <Btn onClick={saveCert} shortcut="F9" className="w-full" disabled={certMode === 'percent' ? !certPercent : !certAmount}>اعتماد الشهادة</Btn>
           </div>
         )}
       </Modal>
@@ -376,7 +376,7 @@ export function SubcontractorsPage() {
             <div className="text-[12px] text-slate-500">مستحقه الآن: <b className="text-rose-500">{fmt(stats(payFor).dueNow)}</b> (صافي الشهادات − المدفوع)</div>
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={payTreasury} onChange={setPayTreasury} /></Field>
-            <Btn onClick={savePay} className="w-full">صرف الدفعة</Btn>
+            <Btn onClick={savePay} shortcut="F9" className="w-full">صرف الدفعة</Btn>
           </div>
         )}
       </Modal>
@@ -390,7 +390,7 @@ export function SubcontractorsPage() {
             </div>
             <Field label={`قيمة الدفعة المقدمة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={advTreasury} onChange={setAdvTreasury} /></Field>
-            <Btn onClick={saveAdvance} className="w-full">صرف الدفعة المقدمة</Btn>
+            <Btn onClick={saveAdvance} shortcut="F9" className="w-full">صرف الدفعة المقدمة</Btn>
           </div>
         )}
       </Modal>
@@ -564,7 +564,7 @@ export function BondsPage() {
             </Field>
             <Field label="تاريخ الانتهاء"><input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={inputCls} /></Field>
           </div>
-          <Btn onClick={save} className="w-full">إصدار الخطاب</Btn>
+          <Btn onClick={save} shortcut="F9" className="w-full">إصدار الخطاب</Btn>
         </div>
       </Modal>
     </div>
@@ -688,7 +688,7 @@ export function DailyWorkersPage() {
             <Field label="التاريخ"><input type="date" value={recDate} onChange={(e) => setRecDate(e.target.value)} className={inputCls} /></Field>
             <Field label="عدد الأيام" hint="نصف يوم = 0.5"><input value={recDays} onChange={(e) => setRecDays(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
-          <Btn onClick={saveRecord} className="w-full">تسجيل</Btn>
+          <Btn onClick={saveRecord} shortcut="F9" className="w-full">تسجيل</Btn>
         </div>
       </Modal>
     </div>

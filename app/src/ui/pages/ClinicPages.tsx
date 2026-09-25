@@ -25,6 +25,7 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderPrescriptionHtml, parsePrescriptionText } from '../print/printPrescription.ts'
 import { renderPatientRecordHtml } from '../print/printPatientRecord.ts'
@@ -214,7 +215,7 @@ function RxLineEditor({ line, index, onChange, onRemove }: { line: RxLine; index
 
 export function ClinicPatientsPage() {
   const {
-    clinicPatients, clinicVisits, treatmentPlans, journal, customers, patientAttachments,
+    clinicPatients, clinicVisits, treatmentPlans, journal, customers, patientAttachments, paymentTerminals, paymentTerminalTransactions, appUsers, currentUserId,
     addClinicPatient, updateClinicPatient, addClinicVisit, addTreatmentPlan, collectFromPatient, getPatientBalance,
     addPatientAttachment, removePatientAttachment, addCustomer, refundClinicVisit,
   } = useDataStore()
@@ -423,12 +424,18 @@ export function ClinicPatientsPage() {
   /* تحصيل */
   const [collectAmount, setCollectAmount] = useState('')
   const [collectTreasury, setCollectTreasury] = useState('1101')
+  const [collectTerminalId, setCollectTerminalId] = useState('')
+  const [collectTerminalRef, setCollectTerminalRef] = useState('')
+  const [collectLast4, setCollectLast4] = useState('')
+  const collectTerminals = eligiblePaymentTerminals(paymentTerminals, appUsers.find((user) => user.id === currentUserId), 'charge')
   const doCollect = () => {
     if (!liveFile) return
     try {
-      collectFromPatient(liveFile.id, toMinor(collectAmount, cur.decimals), collectTreasury)
+      const terminal = collectTerminals.find((row) => row.id === collectTerminalId)
+      if (collectTerminalId && !collectTerminalRef.trim()) throw new Error('مرجع إيصال الماكينة مطلوب')
+      collectFromPatient(liveFile.id, toMinor(collectAmount, cur.decimals), terminal?.settlementAccountCode ?? collectTreasury, terminal ? { terminalId: terminal.id, providerReference: collectTerminalRef.trim(), cardLast4: collectLast4 || undefined } : undefined)
       toast.show('حُصّل المبلغ بقيد متوازن ✅')
-      setCollectAmount('')
+      setCollectAmount(''); setCollectTerminalRef(''); setCollectLast4('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -550,7 +557,9 @@ export function ClinicPatientsPage() {
               {fileBalance > 0 && (
                 <div className="flex gap-1 items-center">
                   <input value={collectAmount} onChange={(e) => setCollectAmount(e.target.value)} inputMode="decimal" className={`${inputCls} !w-40`} placeholder="المبلغ المحصل" />
-                  <TreasuryPicker value={collectTreasury} onChange={setCollectTreasury} compact />
+                  <select value={collectTerminalId} onChange={(e) => setCollectTerminalId(e.target.value)} className={`${inputCls} !w-40`}><option value="">نقدي/بنك</option>{collectTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select>
+                  {!collectTerminalId && <TreasuryPicker value={collectTreasury} onChange={setCollectTreasury} compact />}
+                  {collectTerminalId && <><input value={collectTerminalRef} onChange={(e) => setCollectTerminalRef(e.target.value)} className={`${inputCls} !w-32`} placeholder="مرجع الماكينة"/><input value={collectLast4} onChange={(e) => setCollectLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={`${inputCls} !w-24`} placeholder="آخر 4"/></>}
                   <Btn variant="ghost" onClick={doCollect} disabled={!collectAmount}><Banknote className="w-4 h-4" /> تحصيل</Btn>
                 </div>
               )}
@@ -670,6 +679,7 @@ export function ClinicPatientsPage() {
             refundedMinor={refundingVisit.refundedMinor ?? 0}
             currencySymbol={cur.symbol}
             fmt={fmt}
+            terminalOriginal={(() => { const xs = paymentTerminalTransactions.filter((row) => row.kind === 'charge' && row.documentType === 'clinic' && row.documentId === String(refundingVisit.patientId)); const x = xs[xs.length - 1]; return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
             allowCredit={true}
             creditLabel="حساب المريض"
             refundableItems={[
@@ -678,7 +688,9 @@ export function ClinicPatientsPage() {
             hint="كشف ملغي أو تنازل عن أتعاب: يعكس الإيراد وحصة الضريبة — «على حساب المريض» يخفض مديونيته إن وُجدت."
             onSubmit={(a) => {
               try {
-                const u = refundClinicVisit({ visitId: refundingVisit.id, amountMinor: a.amountMinor, mode: a.mode === 'cash' ? 'cash' : 'patient_credit', treasury: a.treasury, reason: a.reason, approvedBy: a.approvedBy })
+                const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
+                const terminalAccount = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode : undefined
+                const u = refundClinicVisit({ visitId: refundingVisit.id, amountMinor: a.amountMinor, mode: a.mode === 'cash' ? 'cash' : 'patient_credit', treasury: terminalAccount ?? a.treasury, reason: a.reason, approvedBy: a.approvedBy, terminalRefund: a.terminalRefund })
                 setRefundingVisit(null)
                 toast.show(`سُجل مرتجع الزيارة ${u.visitNumber} وتولد القيد العاكس ✅`)
               } catch (err) { toast.show((err as Error).message, 'error') }
@@ -789,7 +801,7 @@ export function ClinicPatientsPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setVisitOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveVisit} disabled={!vFee}>تسجيل الزيارة وقيدها</Btn>
+            <Btn onClick={saveVisit} shortcut="F9" disabled={!vFee}>تسجيل الزيارة وقيدها</Btn>
           </div>
         </div>
       </Modal>

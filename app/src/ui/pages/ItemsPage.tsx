@@ -62,7 +62,7 @@ export function ItemsPage() {
   }, [categories])
 
   const warehouseStock = useMemo(
-    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns)),
+    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)),
     [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns],
   )
   const stockInWarehouse = useCallback((warehouseId: number, itemId: number) => warehouseStock.get(warehouseId)?.get(itemId) ?? 0, [warehouseStock])
@@ -150,8 +150,8 @@ export function ItemsPage() {
       ...ledgerInput,
       purchases: ledgerInput.purchases.map((p) => ({ ...p, lines: p.lines.filter((l) => (l.warehouseId ?? p.warehouseId ?? 0) === ledgerWarehouseId) })).filter((p) => p.lines.length),
       purchaseReturns: filterWarehouse(ledgerInput.purchaseReturns),
-      sales: filterWarehouse(ledgerInput.sales),
-      saleReturns: filterWarehouse(ledgerInput.saleReturns),
+      sales: ledgerInput.sales.map((sale) => ({ ...sale, lines: sale.lines.filter((line) => (line.warehouseId ?? sale.warehouseId ?? 0) === ledgerWarehouseId) })).filter((sale) => sale.lines.length),
+      saleReturns: ledgerInput.saleReturns.map((ret) => ({ ...ret, lines: ret.lines.filter((line) => (line.warehouseId ?? ret.warehouseId ?? 0) === ledgerWarehouseId) })).filter((ret) => ret.lines.length),
       stocktakes: filterWarehouse(ledgerInput.stocktakes),
       materialRequisitions: filterWarehouse(ledgerInput.materialRequisitions),
       transfers: (ledgerInput.transfers ?? []).filter((t) => t.fromWarehouseId === ledgerWarehouseId || t.toWarehouseId === ledgerWarehouseId),
@@ -724,7 +724,7 @@ export function ItemsPage() {
               </div>
               {/* أمر التعديل: تفصيل الرصيد بكل مخزن داخل معاينة الصنف */}
               {warehouses.length > 1 && (() => {
-                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns))
+                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders))
                 return (
                   <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
                     <div className="px-4 py-2 text-[11.5px] font-black text-slate-500 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">🏬 الرصيد بكل مخزن</div>
@@ -906,7 +906,7 @@ function ItemForm({
               const f = new Set(cat?.features ?? [])
               p({
                 categoryId: Number(e.target.value),
-                trackExpiry: f.has('expiry_batches'),
+                trackExpiry: draft.trackExpiry,
                 trackSerial: f.has('serial_warranty'),
                 soldByWeight: f.has('weight_scale'),
               })

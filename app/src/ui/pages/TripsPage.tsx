@@ -21,6 +21,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderWaybillHtml } from '../print/printWaybill.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 
 interface DraftExpense {
   nameAr: string
@@ -30,7 +31,7 @@ interface DraftExpense {
 }
 
 export function TripsPage() {
-  const { trips, vehicles, employees, customers, journal, postTrip, refundTrip, driverDues, getDriverDueBalance, settleDriverDues, custodyFiles, custodyTxs } = useDataStore()
+  const { trips, vehicles, employees, customers, journal, paymentTerminals, appUsers, currentUserId, postTrip, refundTrip, driverDues, getDriverDueBalance, settleDriverDues, custodyFiles, custodyTxs } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -83,6 +84,10 @@ export function TripsPage() {
   const [paidNow, setPaidNow] = useState('') // التحصيل الجزئي: فارغ = حسب طريقة الدفع
   const [custodyFileId, setCustodyFileId] = useState('') // ملف عهدة مصاريف source='custody'
   const [treasury, setTreasury] = useState('1101')
+  const [terminalId, setTerminalId] = useState('')
+  const [terminalReference, setTerminalReference] = useState('')
+  const [cardLast4, setCardLast4] = useState('')
+  const availableTerminals = eligiblePaymentTerminals(paymentTerminals, appUsers.find((user) => user.id === currentUserId), 'charge')
   const [withVat, setWithVat] = useState(false)
   const [containers, setContainers] = useState('')
   const [expenses, setExpenses] = useState<DraftExpense[]>([])
@@ -91,7 +96,7 @@ export function TripsPage() {
   const openNew = () => {
     setCustomerId(''); setVehicleId(''); setDriverId(''); setFromLoc(''); setToLoc('')
     setQty('1'); setUnitPrice(''); setPayment('cash'); setPaidNow(''); setCustodyFileId(''); setWithVat(false)
-    setContainers(''); setExpenses([]); setNotes(''); setOpen(true)
+    setContainers(''); setExpenses([]); setNotes(''); setTerminalId(''); setTerminalReference(''); setCardLast4(''); setOpen(true)
   }
   const pickVehicle = (v: string) => {
     setVehicleId(v)
@@ -122,13 +127,15 @@ export function TripsPage() {
   const creditApproval = useSupervisorApproval('sales.credit.override')
   const save = (creditLimitOverrideBy?: string) => {
     try {
+      const terminal = availableTerminals.find((row) => row.id === terminalId)
       const trip = postTrip({
         customerId: customerId ? Number(customerId) : null,
         vehicleId: vehicleId ? Number(vehicleId) : null,
         driverId: driverId ? Number(driverId) : null,
         input: draftInput,
         notes: notes.trim(),
-        treasury,
+        treasury: terminal?.settlementAccountCode ?? treasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalReference.trim(), cardLast4: cardLast4 || undefined } : undefined,
         paidMinor: paidNow.trim() ? toMinor(paidNow, cur.decimals) : undefined,
         custodyFileId: custodyFileId ? Number(custodyFileId) : null,
         driverCommissionMinor: driverCommission && driverId ? toMinor(driverCommission, cur.decimals) : 0,
@@ -355,9 +362,11 @@ export function TripsPage() {
                 <button onClick={() => setPayment('credit')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'credit' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>آجل (على العميل)</button>
               </div>
             </Field>
-            {payment === 'cash' && (
-              <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>
-            )}
+            {payment === 'cash' && (<>
+              <Field label="طريقة التحصيل"><select value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</select></Field>
+              {!terminalId && <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>}
+              {terminalId && <><Field label="مرجع إيصال الماكينة (اختياري)"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls}/></Field></>}
+            </>)}
             <Field label={`المحصَّل الآن (${cur.symbol}) — اختياري`} hint="اتركه فارغاً = حسب طريقة التحصيل. مبلغ جزئي = الباقي ديناً على العميل">
               <input value={paidNow} onChange={(e) => setPaidNow(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={payment === 'cash' ? 'الكل' : '0'} />
             </Field>
@@ -394,7 +403,7 @@ export function TripsPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!fromLoc.trim() || !toLoc.trim() || !unitPrice.trim()}>💾 ترحيل النقلة وتوليد القيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!fromLoc.trim() || !toLoc.trim() || !unitPrice.trim()}>💾 ترحيل النقلة وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>

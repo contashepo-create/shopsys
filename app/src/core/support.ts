@@ -84,19 +84,31 @@ export function supportUrl(baseUrl: string, deviceId: string): string {
 
 /* ─── الجالبات (متسامحة مع الفشل — أوفلاين لا يكسر شيئاً) ─── */
 
-export async function fetchConversation(baseUrl: string, deviceId: string): Promise<SupportMessage[] | null> {
+function supportHeaders(token: string, json = false): Record<string, string> {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('اعتماد قناة الدعم غير صالح')
+  return {
+    Authorization: `Support ${token}`,
+    'X-Support-Protocol': '1',
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+  }
+}
+
+export async function fetchConversation(baseUrl: string, deviceId: string, token: string): Promise<SupportMessage[] | null> {
   try {
-    const res = await fetch(supportUrl(baseUrl, deviceId), { signal: AbortSignal.timeout(10_000) })
+    const res = await fetch(supportUrl(baseUrl, deviceId), {
+      headers: supportHeaders(token),
+      signal: AbortSignal.timeout(10_000),
+    })
     if (!res.ok) return null
     return parseConversation(await res.json())
   } catch { return null }
 }
 
-export async function sendSupportMessage(baseUrl: string, deviceId: string, payload: ClientSupportPayload): Promise<boolean> {
+export async function sendSupportMessage(baseUrl: string, deviceId: string, token: string, payload: ClientSupportPayload): Promise<boolean> {
   try {
     const res = await fetch(supportUrl(baseUrl, deviceId), {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: supportHeaders(token, true),
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15_000),
     })

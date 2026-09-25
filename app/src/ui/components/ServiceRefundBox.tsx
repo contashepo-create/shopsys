@@ -26,6 +26,8 @@ export function ServiceRefundBox(props: {
   creditLabel?: string
   /** ملاحظة سياق تحت العنوان (اختياري) */
   hint?: string
+  /** تحصيل ماكينة أصلي؛ عند الرد النقدي يمكن تسجيل مرجع رد المزود إن توفر. */
+  terminalOriginal?: { transactionId: string; terminalName: string }
   /**
    * بنود المستند القابلة للرد (فحوصات/بنود غسيل/خدمات/قطع) — النمط العالمي:
    * وجودها يفعّل وضع «اختر البنود»؛ غيابها يبقي المبلغ الحر فقط (مستند بلا بنود).
@@ -41,6 +43,7 @@ export function ServiceRefundBox(props: {
     selectedKeys?: string[]
     /** تكلفة القطع المخزنية المختارة (الصيانة) — لإرجاعها للمخزون */
     restockCostMinor?: number
+    terminalRefund?: { originalTransactionId: string; providerReference: string }
   }) => void
 }) {
   const hasItems = (props.refundableItems?.length ?? 0) > 0
@@ -50,6 +53,7 @@ export function ServiceRefundBox(props: {
   const [mode, setMode] = useState<'cash' | 'customer_credit'>('cash')
   const [treasury, setTreasury] = useState('1101')
   const [reason, setReason] = useState('')
+  const [terminalRefundReference, setTerminalRefundReference] = useState('')
   const approval = useSupervisorApproval()
   const remaining = props.grandMinor - props.refundedMinor
   const creditLabel = props.creditLabel ?? 'حساب العميل'
@@ -89,6 +93,7 @@ export function ServiceRefundBox(props: {
         approvedBy,
         selectedKeys: pickMode === 'items' ? selected : undefined,
         restockCostMinor: pickMode === 'items' ? itemized?.restockCostMinor : undefined,
+        terminalRefund: mode === 'cash' && props.terminalOriginal ? { originalTransactionId: props.terminalOriginal.transactionId, providerReference: terminalRefundReference.trim() } : undefined,
       }),
     )
 
@@ -154,11 +159,7 @@ export function ServiceRefundBox(props: {
           🏦 على {creditLabel} {!props.allowCredit && '(غير متاح)'}
         </button>
       </div>
-      {mode === 'cash' && (
-        <Field label="الرد من (درج نقدي أو بنك للتحويل)">
-          <TreasuryPicker value={treasury} onChange={setTreasury} compact />
-        </Field>
-      )}
+      {mode === 'cash' && (props.terminalOriginal ? <Field label={`مرجع رد الماكينة — ${props.terminalOriginal.terminalName}`}><input value={terminalRefundReference} onChange={(e) => setTerminalRefundReference(e.target.value)} className="w-full px-3 py-2 rounded-xl border bg-transparent" placeholder="مرجع refund من إيصال المزود"/></Field> : <Field label="الرد من (درج نقدي أو بنك للتحويل)"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>)}
       {approval.willAskPin && (
         <p className="text-[11px] text-amber-600 dark:text-amber-400">🔐 سيُطلب رقم مشرف أو المالك لاعتماد هذا المرتجع.</p>
       )}

@@ -18,9 +18,10 @@ import {
 } from '../../core/processing.ts'
 import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { buildWarehouseDocs, computeWarehouseStock } from '../../core/transfers.ts'
 
 export function ProcessingPage() {
-  const { items, processingOrders, postProcessing } = useDataStore()
+  const { items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders, postProcessing } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -29,6 +30,8 @@ export function ProcessingPage() {
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
   const nameOf = (id: number) => items.find((it) => it.id === id)?.nameAr ?? '؟'
+  const warehouseStock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders])
+  const mainWarehouseId = setup.defaultWarehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? warehouses[0]?.id ?? 0
 
   // نوع التجهيز من النشاط: التمور فرز، وكل ما عداها تقطيع (الجزارة الافتراضية)
   const kind: ProcessingKind = setup.activityId === 'dates' ? 'dates' : 'butcher'
@@ -40,6 +43,9 @@ export function ProcessingPage() {
   const [open, setOpen] = useState(false)
   const [sourceId, setSourceId] = useState('')
   const [sourceQty, setSourceQty] = useState('')
+  const [sourceWarehouseId, setSourceWarehouseId] = useState(String(mainWarehouseId))
+  const [outputWarehouseId, setOutputWarehouseId] = useState(String(mainWarehouseId))
+  const [allowNegativeSource, setAllowNegativeSource] = useState(() => localStorage.getItem('shopsys:manufacturing:allow-negative-stock') === 'true')
   const [outs, setOuts] = useState<{ itemId: string; qty: string }[]>([{ itemId: '', qty: '' }])
   const [waste, setWaste] = useState('')
   const [overhead, setOverhead] = useState('')
@@ -53,13 +59,14 @@ export function ProcessingPage() {
   const [season, setSeason] = useState('')
 
   const openNew = () => {
-    setSourceId(''); setSourceQty(''); setOuts([{ itemId: '', qty: '' }]); setWaste('')
+    setSourceId(''); setSourceQty(''); setSourceWarehouseId(String(mainWarehouseId)); setOutputWarehouseId(String(mainWarehouseId)); setOuts([{ itemId: '', qty: '' }]); setWaste('')
     setOverhead(''); setTreasury('1101'); setNotes('')
     setOrigin(isSA ? 'السعودية' : ''); setFacility(''); setHalal(''); setProdDate(''); setSeason('')
     setOpen(true)
   }
 
   const source = items.find((it) => String(it.id) === sourceId)
+  const sourceAvailable = source && sourceWarehouseId ? warehouseStock.get(Number(sourceWarehouseId))?.get(source.id) ?? 0 : 0
   const parsedOuts = outs.filter((o) => o.itemId && Number(o.qty) > 0).map((o) => ({ itemId: Number(o.itemId), qty: Number(o.qty) }))
   const outQtySum = parsedOuts.reduce((a, o) => a + o.qty, 0)
   const srcQtyNum = Number(sourceQty) || 0
@@ -76,7 +83,7 @@ export function ProcessingPage() {
   const run = () => {
     try {
       const order = postProcessing({
-        kind, sourceItemId: Number(sourceId), sourceQty: srcQtyNum,
+        kind, sourceItemId: Number(sourceId), sourceQty: srcQtyNum, sourceWarehouseId: Number(sourceWarehouseId) || null, outputWarehouseId: Number(outputWarehouseId) || null, allowNegativeSource,
         outputs: parsedOuts, overheadMinor, treasury,
         wasteQty: waste ? Number(waste) : 0,
         compliance: { originCountry: origin.trim(), facilityNo: facility.trim(), halalCert: halal.trim(), productionDate: prodDate, season: season.trim() },
@@ -180,15 +187,24 @@ export function ProcessingPage() {
       {/* نافذة أمر التجهيز */}
       <Modal open={open} onClose={() => setOpen(false)} title={`${L.icon} ${L.nameAr}`} wide>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label={`${L.sourceLabel} *`} hint="صنف الخام (ذبيحة/محصول) — تكلفته الحالية بالمتوسط المرجح ستدخل النواتج">
+          <div className="grid md:grid-cols-4 gap-3">
+            <Field label={`${L.sourceLabel} *`} hint="صنف الخام — تكلفته الحالية بالمتوسط المرجح ستدخل النواتج">
               <select value={sourceId} onChange={(e) => setSourceId(e.target.value)} className={inputCls}>
                 <option value="">اختر…</option>
-                {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.nameAr} — متاح {it.stockQty ?? 0} {it.baseUnit}</option>)}
+                {items.filter((it) => it.isActive).map((it) => <option key={it.id} value={it.id}>{it.nameAr} — إجمالي {it.stockQty ?? 0} {it.baseUnit}</option>)}
               </select>
             </Field>
-            <Field label="الكمية المستهلكة *" hint={source ? `تكلفة الوحدة الآن ${fmt(source.costMinor)}` : undefined}>
+            <Field label="مخزن صرف الخام *">
+              <select value={sourceWarehouseId} onChange={(e) => setSourceWarehouseId(e.target.value)} className={inputCls}>
+                <option value="">اختر المخزن</option>
+                {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}{source ? ` — متاح ${warehouseStock.get(warehouse.id)?.get(source.id) ?? 0}` : ''}</option>)}
+              </select>
+            </Field>
+            <Field label="الكمية المستهلكة *" hint={source ? `متاح في المخزن: ${sourceAvailable} — تكلفة الوحدة ${fmt(source.costMinor)}` : undefined}>
               <input value={sourceQty} onChange={(e) => setSourceQty(e.target.value)} inputMode="decimal" className={inputCls} placeholder="مثال: 18.5" />
+            </Field>
+            <Field label="مخزن استلام النواتج *">
+              <select value={outputWarehouseId} onChange={(e) => setOutputWarehouseId(e.target.value)} className={inputCls}>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</select>
             </Field>
           </div>
 
@@ -243,8 +259,9 @@ export function ProcessingPage() {
             </div>
           )}
 
+          <label className="flex items-center gap-2 text-xs font-bold rounded-xl border p-3"><input type="checkbox" checked={allowNegativeSource} onChange={(e) => { setAllowNegativeSource(e.target.checked); localStorage.setItem('shopsys:manufacturing:allow-negative-stock', String(e.target.checked)) }} /> السماح بصرف الخام برصيد سالب</label>
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
-          <Btn onClick={run} className="w-full" disabled={!sourceId || !(srcQtyNum > 0) || parsedOuts.length === 0}>ترحيل أمر التجهيز</Btn>
+          <Btn onClick={run} shortcut="F9" className="w-full" disabled={!sourceId || !sourceWarehouseId || !outputWarehouseId || !(srcQtyNum > 0) || parsedOuts.length === 0}>ترحيل أمر التجهيز</Btn>
         </div>
       </Modal>
     </div>

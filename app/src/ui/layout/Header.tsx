@@ -16,6 +16,8 @@ import { collectNotifications, visibleNotifications } from '../../core/notificat
 import { isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
 import { collectLeaseAlerts } from '../../core/realestate.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
+import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
+import { isInvoiceFirst } from '../../core/activities.ts'
 
 export function Header({ title }: { title: string }) {
   const { theme, toggleTheme, setup, setAccountingMode, sync } = useAppStore()
@@ -31,7 +33,7 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, tickets, laundryOrders, leases } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, tickets, laundryOrders, leases, shifts } = useDataStore()
   const navigate = useNavigate()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = useMemo(
@@ -51,6 +53,14 @@ export function Header({ title }: { title: string }) {
   }, [bellOpen])
 
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
+  const shiftPolicy = salesShiftPolicy({
+    roleId: activeUser?.roleId,
+    isOwner: currentUserId == null || activeUser?.roleId === 'owner',
+    requireOpenShiftForSales: setup.requireOpenShiftForSales,
+    userOverride: activeUser?.requireOpenShiftForSales,
+    invoiceFirst: isInvoiceFirst(setup.activityId),
+  })
+  const openShift = currentOpenShift(shifts)
   const authOn = authRequired(ownerPinHash, appUsers.filter((u) => u.active).length)
 
   const notifications = useMemo(
@@ -125,6 +135,21 @@ export function Header({ title }: { title: string }) {
         <span className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/70 px-3 py-1.5 rounded-full">
           {country.flag} {country.nameAr} · {country.currency.symbol}
         </span>
+      )}
+
+      {/* حالة الوردية: قرارها مركزي حسب الدور، لا حسب كون الحساب مالكاً فقط */}
+      {setup.modules.includes('pos') && !openShift && !isInvoiceFirst(setup.activityId) && (
+        <button
+          onClick={() => navigate('/sales/shifts')}
+          title={shiftPolicy.required ? shiftPolicy.messageAr : shiftPolicy.messageAr}
+          className={`hidden sm:flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-full transition-all hover:scale-105 ${
+            shiftPolicy.required
+              ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30 animate-pulse'
+              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+          }`}
+        >
+          {shiftPolicy.required ? '⛔ افتح وردية' : '💡 وردية اختيارية'}
+        </button>
       )}
 
       {/* مفتاح وضع المحاسبة (القرار 10) */}

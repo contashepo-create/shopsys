@@ -5,7 +5,7 @@
  * - كل فاتورة تولّد قيداً محاسبياً متوازناً تلقائياً (القرار 9)
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { Banknote, UserRound, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift } from 'lucide-react'
+import { Banknote, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -15,11 +15,11 @@ import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
-import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
-import { currentOpenShift } from '../../core/shifts.ts'
+import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
+import { isInvoiceFirst } from '../../core/activities.ts'
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
@@ -27,7 +27,7 @@ import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
-import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { toMinor } from '../../core/money.ts'
 
 interface HeldCart { id: number; label: string; lines: CartLine[]; discount: number }
@@ -54,15 +54,21 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, appUsers, currentUserId, promotions, getPromotionCartLines } = useDataStore()
-  // نمط عرض الأصناف حسب هوية النشاط (بند 11): شبكة صور / قائمة سريعة / بطاقات تفصيلية
-  const posLayout = themeForActivity(useAppStore.getState().setup.activityId).posLayout
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals } = useDataStore()
   const openShift = currentOpenShift(shifts)
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : null
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  const activeUser = appUsers.find((user) => user.id === currentUserId)
+  const shiftPolicy = salesShiftPolicy({
+    roleId: activeUser?.roleId,
+    isOwner: currentUserId == null || activeUser?.roleId === 'owner',
+    requireOpenShiftForSales: setup.requireOpenShiftForSales,
+    userOverride: activeUser?.requireOpenShiftForSales,
+    invoiceFirst: isInvoiceFirst(setup.activityId),
+  })
   const mainWarehouseId = warehouses.find((w) => w.isMain)?.id ?? warehouses[0]?.id ?? null
   const defaultSaleWarehouseId = setup.defaultWarehouseId ?? mainWarehouseId
   const itemVatPercent = (itemId: number) => effectiveVatPercent(items.find((x) => x.id === itemId) ?? { vatOverride: null }, countryVatPercent)
@@ -87,7 +93,10 @@ export function PosPage() {
   // فتح وردية من الكاشير مباشرة (سياسة «لا بيع بلا وردية» — نمط Toast/Square)
   const [shiftOpenModal, setShiftOpenModal] = useState(false)
   const [shiftOpeningCash, setShiftOpeningCash] = useState('')
-  const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [payment, setPayment] = useState<'cash' | 'credit' | 'terminal'>('cash')
+  const [paymentTerminalId, setPaymentTerminalId] = useState('')
+  const [terminalReference, setTerminalReference] = useState('')
+  const [terminalCardLast4, setTerminalCardLast4] = useState('')
   const [customerId, setCustomerId] = useState<number | null>(null)
   // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
   const activePriceListId = useMemo(() => {
@@ -110,25 +119,31 @@ export function PosPage() {
   const [treasury, setTreasury] = useState('1101')
   const [lastInvoice, setLastInvoice] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const qtyRefs = useRef<Record<number, HTMLInputElement | null>>({})
+  const priceRefs = useRef<Record<number, HTMLInputElement | null>>({})
+  const [searchIndex, setSearchIndex] = useState(0)
 
   // التركيز الدائم على البحث — سلوك كاشير حقيقي (القارئ يكتب ثم Enter)
-  useEffect(() => { searchRef.current?.focus() }, [cart.length])
+  useEffect(() => { if (cart.length) qtyRefs.current[cart.length - 1]?.focus(); else searchRef.current?.focus() }, [cart.length])
+  useEffect(() => { const focusItem = () => { searchRef.current?.focus(); searchRef.current?.select() }; window.addEventListener('shopsys:focus-item', focusItem); return () => window.removeEventListener('shopsys:focus-item', focusItem) }, [])
 
   // F9 = فتح الدفع مباشرة (الاختصار المكتوب على الزر يعمل فعلاً)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'F9') {
+      if (e.key === 'F2') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); return }
+      if (e.key === 'Escape') { setPayOpen(false); setQuickPrintOpen(false); searchRef.current?.focus(); return }
+      if (e.key === 'F8' || e.key === 'F9') {
         e.preventDefault()
         if (!cart.length) return
-        // F9 يحترم سياسة الورديات أيضاً
-        const st = useAppStore.getState().setup
-        if (st.requireOpenShiftForSales && !currentOpenShift(useDataStore.getState().shifts)) { setShiftOpenModal(true); return }
+        // F8 تحصيل نقدي سريع، وF9 فتح الدفع مع احترام سياسة المستخدم/الدور
+        if (shiftPolicy.required && !currentOpenShift(useDataStore.getState().shifts)) { setShiftOpenModal(true); return }
+        if (e.key === 'F8') setPayment('cash')
         setPayOpen(true)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [cart.length])
+  }, [cart.length, shiftPolicy.required])
 
   const sellable = useMemo(() => items.filter((it) => it.isActive), [items])
 
@@ -382,7 +397,7 @@ export function PosPage() {
   const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number }) => {
     const licState = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
     const qrDataUrl = await maybeZatcaQr({
-      featureActive: hasFeature(licState, 'einvoice_sa'),
+      featureActive: einvoice.enabled === true && hasFeature(licState, 'einvoice_sa'),
       printEnabled: einvoice.printZatcaQr,
       sellerName: setup.shopName,
       vatNumber: einvoice.taxNumber,
@@ -425,6 +440,13 @@ export function PosPage() {
   // تجاوز بيع منتهي الصلاحية بموافقة المدير (القرار 8) — يُسجَّل اسمه على الفاتورة
   /* مخزن البيع أعلى الفاتورة — لا اختيار مبهم: يبدأ بالمخزن الافتراضي أو الرئيسي */
   const [saleWarehouseId, setSaleWarehouseId] = useState<number | null>(defaultSaleWarehouseId)
+  const saleBranchId = branches.find((branch) => branch.warehouseId === (saleWarehouseId ?? defaultSaleWarehouseId))?.id
+  const activePaymentTerminals = paymentTerminals.filter((terminal) => {
+    if (terminal.status !== 'active') return false
+    if (saleBranchId != null && terminal.branchId !== String(saleBranchId)) return false
+    if (!activeUser || activeUser.roleId === 'owner' || !activeUser.paymentTerminalAccess) return true
+    return activeUser.paymentTerminalAccess.grants.some((grant) => grant.terminalId === terminal.id && grant.operations.includes('charge'))
+  })
   const [expiredBlock, setExpiredBlock] = useState<string[] | null>(null)
   // ترقية القرار 8 لنمط POS العالمي: تجاوز الصلاحية برقم مشرف سري موثق
   // (لا مجرد كتابة اسم) — المالك/المخول بـsales.expiry.override يمر مباشرة
@@ -449,21 +471,25 @@ export function PosPage() {
     if (!cart.length) return
     try {
       // مجزأ فعلاً (جزء نقدي + جزء آجل) أو آجل بالكامل ⇒ عميل إلزامي
-      const isSplitOrCredit = payment === 'credit' || creditRemainder > 0
+      const isSplitOrCredit = payment === 'credit' || (payment === 'cash' && creditRemainder > 0)
+      const selectedTerminal = payment === 'terminal' ? activePaymentTerminals.find((row) => row.id === paymentTerminalId) : null
+      if (payment === 'terminal' && !selectedTerminal) throw new Error('اختر ماكينة دفع نشطة')
+      if (terminalCardLast4 && !/^\d{4}$/.test(terminalCardLast4)) throw new Error('آخر أربعة أرقام يجب أن تكون 4 أرقام')
       const sale = postSale({
         lines: cart,
         customerId: isSplitOrCredit ? customerId : null,
-        payment: payment === 'cash' && creditRemainder > 0 ? 'credit' : payment,
+        payment: payment === 'credit' || (payment === 'cash' && creditRemainder > 0) ? 'credit' : 'cash',
         invoiceDiscountPercent: invoiceDiscount,
         taxPercent: countryVatPercent,
         taxInclusive: setup.taxInclusive,
-        treasury,
-        paidMinor: payment === 'credit' ? 0 : paidCashMinor,
+        treasury: selectedTerminal?.settlementAccountCode ?? treasury,
+        paidMinor: payment === 'credit' ? 0 : payment === 'terminal' ? (totals?.totalMinor ?? 0) : paidCashMinor,
         expiryOverrideBy: expiryOverrideBy ?? null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
         priceFloorOverrideBy: priceFloorOverrideBy ?? null,
         allowNegativeStock: setup.allowNegativeStock, // من الإعدادات العامة (طلب المالك)
         warehouseId: saleWarehouseId, // الأمر 8: المخزن المختار أعلى الفاتورة
+        ...(selectedTerminal ? { terminalPayment: { terminalId: selectedTerminal.id, providerReference: terminalReference.trim(), ...(terminalCardLast4 ? { cardLast4: terminalCardLast4 } : {}) } } : {}),
       })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
@@ -472,6 +498,7 @@ export function PosPage() {
       setInvoiceDiscount(0)
       setPayOpen(false)
       setPayment('cash')
+      setPaymentTerminalId(''); setTerminalReference(''); setTerminalCardLast4('')
       setCustomerId(null)
       setPaidCash('')
       setExpiredBlock(null)
@@ -544,17 +571,17 @@ export function PosPage() {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 h-[calc(100vh-8.5rem)]">
+    <div className="pos-workspace flex flex-col gap-2 h-[calc(100vh-6.5rem)]">
       {/* ═══ يمين: الأصناف والبحث ═══ */}
-      <div className="lg:col-span-3 flex flex-col gap-3 min-h-0">
+      <div className="relative flex flex-col gap-2 shrink-0">
         <div className="anim-up relative">
           <ScanBarcode size={17} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-brand-500" />
           <input
             ref={searchRef}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && onSearchEnter()}
-            placeholder="امسح الباركود أو ابحث بالاسم… (Enter يضيف فوراً)"
+            onChange={(e) => { setQuery(e.target.value); setSearchIndex(0) }}
+            onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex((i) => Math.min(filtered.slice(0, 8).length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = filtered[searchIndex] ?? filtered[0]; if (selected) { addToCart(selected.id); setQuery('') } else onSearchEnter() } }}
+            placeholder="F2 بحث · امسح الباركود أو اكتب الاسم · Enter إضافة · F8 نقدي · F9 دفع"
             className={`${inputCls} pr-10 py-3 text-base border-brand-300 dark:border-brand-700 shadow-sm`}
           />
         </div>
@@ -574,96 +601,16 @@ export function PosPage() {
           </div>
         )}
 
-        {/* شبكة الأصناف */}
-        <div className="flex-1 overflow-y-auto rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-3">
-          {sellable.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-8">
-              <div className="text-4xl mb-2">📦</div>
-              <div className="font-bold text-slate-600 dark:text-slate-300">لا أصناف للبيع بعد</div>
-              <div className="text-xs text-slate-400 mt-1">أضف أصنافك من المخزون ← الأصناف، واشترِ بضاعة من المشتريات ليعمل الكاشير بتكلفة حقيقية</div>
-            </div>
-          ) : (
-            posLayout === 'fast_list' ? (
-            /* ⚡ قائمة سريعة كثيفة (بقالة/صيدلية/مغسلة): صفوف رفيعة — أسرع مسح بصري مع الباركود */
-            <div className="space-y-1">
-              {filtered.map((it, i) => {
-                const out = (it.stockQty ?? 0) <= 0
-                return (
-                  <button
-                    key={it.id}
-                    onClick={() => addToCart(it.id)}
-                    style={{ animationDelay: `${i * 12}ms` }}
-                    className={`anim-in w-full flex items-center gap-3 text-right px-3 py-2 rounded-lg border transition-all duration-150 active:scale-[0.99] ${
-                      out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-emerald-400/60 hover:bg-emerald-500/[0.04]'
-                    }`}
-                  >
-                    <span className="flex-1 font-bold text-[13px] text-slate-800 dark:text-white truncate">{it.nameAr}</span>
-                    {it.sku && <span className="text-[10px] text-slate-400 font-mono shrink-0" dir="ltr">{it.sku}</span>}
-                    <span className={`text-[10px] font-bold shrink-0 w-16 text-center ${out ? 'text-rose-500' : 'text-slate-400'}`}>{out ? 'نفد' : `${it.stockQty ?? 0} ${it.baseUnit}`}</span>
-                    <span className="font-black text-emerald-600 dark:text-emerald-400 text-[13px] shrink-0 w-20 text-left" dir="ltr">{fmt(it.priceMinor)}</span>
-                  </button>
-                )
-              })}
-            </div>
-            ) : posLayout === 'visual_grid' ? (
-            /* 🍽️ شبكة بصرية كبيرة (مطعم/كافيه/ملابس): بطاقات ضخمة سهلة اللمس */
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {filtered.map((it, i) => {
-                const out = (it.stockQty ?? 0) <= 0
-                return (
-                  <button
-                    key={it.id}
-                    onClick={() => addToCart(it.id)}
-                    style={{ animationDelay: `${i * 25}ms` }}
-                    className={`anim-in group relative text-right p-4 pt-5 rounded-2xl border-2 min-h-[7rem] flex flex-col justify-between transition-all duration-200 hover:scale-[1.04] hover:shadow-xl active:scale-95 overflow-hidden ${
-                      out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-orange-400/60 bg-gradient-to-br from-transparent to-orange-500/[0.04]'
-                    }`}
-                  >
-                    <div className="absolute -left-2 -top-2 text-4xl opacity-15 transition-transform duration-300 group-hover:scale-125 group-hover:rotate-6 select-none">🍽️</div>
-                    <div className="font-black text-[14px] text-slate-800 dark:text-white leading-snug line-clamp-2 relative">{it.nameAr}</div>
-                    <div className="flex items-center justify-between mt-3 relative">
-                      <span className="font-black text-orange-600 dark:text-orange-400 text-base">{fmt(it.priceMinor)}</span>
-                      {out && <span className="text-[10px] font-bold text-rose-500">نفد</span>}
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-            ) : (
-            /* 📱 بطاقات تفصيلية (موبايل/إلكترونيات/قطع غيار/مجوهرات/سيارات): SKU وضمان وسيريال ظاهرة */
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
-              {filtered.map((it, i) => {
-                const out = (it.stockQty ?? 0) <= 0
-                return (
-                  <button
-                    key={it.id}
-                    onClick={() => addToCart(it.id)}
-                    style={{ animationDelay: `${i * 20}ms` }}
-                    className={`anim-in text-right p-3.5 rounded-xl border-2 transition-all duration-200 hover:scale-[1.02] hover:shadow-lg active:scale-95 ${
-                      out ? 'border-rose-200 dark:border-rose-900/40 opacity-70' : 'border-slate-100 dark:border-slate-800 hover:border-sky-400/60'
-                    }`}
-                  >
-                    <div className="font-bold text-[13px] text-slate-800 dark:text-white leading-tight line-clamp-2">{it.nameAr}</div>
-                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                      {it.sku && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono" dir="ltr">{it.sku}</span>}
-                      {it.trackSerial && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 font-bold">سيريال</span>}
-                      {it.warrantyMonths > 0 && <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-bold">ضمان {it.warrantyMonths} شهر</span>}
-                    </div>
-                    <div className="flex items-center justify-between mt-2.5">
-                      <span className="font-black text-sky-600 dark:text-sky-400 text-sm">{fmt(it.priceMinor)}</span>
-                      <span className={`text-[10px] font-bold ${out ? 'text-rose-500' : 'text-slate-400'}`}>{out ? 'نفد' : `متاح ${it.stockQty ?? 0}`}</span>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-            )
-          )}
-        </div>
+        {query.trim() && filtered.length > 0 && (
+          <div className="absolute z-30 top-14 right-0 left-0 max-h-52 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-card-dark shadow-xl p-1">
+            {filtered.slice(0, 8).map((item, index) => <button key={item.id} type="button" onClick={()=>{addToCart(item.id);setQuery('');searchRef.current?.focus()}} className={`w-full flex justify-between gap-3 px-3 py-2 rounded-lg text-xs ${index === searchIndex ? 'bg-emerald-500/15 ring-1 ring-emerald-500/40' : 'hover:bg-emerald-500/10'}`}><span className="font-bold">{item.nameAr}</span><span className="text-slate-400">{item.sku||item.barcodes?.[0]||''} · {fmt(item.priceMinor)}</span></button>)}
+          </div>
+        )}
+        <div className="text-[10px] text-slate-400 px-1">اكتب اسم الصنف أو امسح الباركود ثم اضغط Enter — لا توجد بطاقات تشغل مساحة الفاتورة.</div>
       </div>
 
       {/* ═══ يسار: السلة ═══ */}
-      <div className="lg:col-span-2 flex flex-col rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden anim-up" style={{ animationDelay: '80ms' }}>
+      <div className="flex-1 min-h-0 flex flex-col rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden anim-up" style={{ animationDelay: '80ms' }}>
         <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
           <span className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
             <ShoppingCart size={17} className="text-emerald-500" /> السلة ({cart.length})
@@ -672,10 +619,10 @@ export function PosPage() {
             ) : (
               <button
                 onClick={() => setShiftOpenModal(true)}
-                title={setup.requireOpenShiftForSales ? 'البيع موقوف حتى تُفتح وردية — اضغط لفتحها الآن' : 'الفواتير ستُسجل خارج وردية — اضغط لفتح وردية'}
-                className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-all hover:scale-105 ${setup.requireOpenShiftForSales ? 'bg-rose-500/10 text-rose-600 border border-rose-500/30 animate-pulse' : 'bg-slate-400/10 text-slate-400'}`}
+                title={shiftPolicy.required ? `${shiftPolicy.messageAr} — اضغط لفتحها الآن` : shiftPolicy.messageAr}
+                className={`text-[10px] px-2 py-0.5 rounded-full font-bold transition-all hover:scale-105 ${shiftPolicy.required ? 'bg-rose-500/10 text-rose-600 border border-rose-500/30 animate-pulse' : shiftPolicy.hintOnly ? 'bg-amber-500/10 text-amber-600 border border-amber-500/30' : 'bg-slate-400/10 text-slate-400'}`}
               >
-                {setup.requireOpenShiftForSales ? '⛔ افتح وردية أولاً' : 'بلا وردية — فتح؟'}
+                {shiftPolicy.hintOnly ? '💡 وردية اختيارية' : shiftPolicy.required ? '⛔ افتح وردية أولاً' : 'بلا وردية'}
               </button>
             )}
           </span>
@@ -717,34 +664,17 @@ export function PosPage() {
             </button>
           </div>
         </div>
-        {/* شريط قالب الطباعة الحصري — فوق الفاتورة (طلب المالك): تفعيل خيار يلغي الآخرين،
-            تجاوز مؤقت للجلسة لا يغيّر إعدادات الطباعة الدائمة، ومتاح للكاشير بلا صلاحيات */}
-        <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
-          <div className="flex items-center gap-1.5 pt-1">
-            <span className="text-[10px] font-bold text-slate-400 shrink-0">🖨️ طباعة:</span>
-            <div className="flex-1 grid grid-cols-3 gap-1">
-              {INVOICE_TEMPLATE_OPTIONS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setPosTemplate(t.id)}
-                  title={`${t.label} — ${t.sub}${t.id === posTemplate ? ' (مفعّل)' : ''}`}
-                  className={`flex items-center justify-center gap-1 py-1.5 rounded-lg border-2 text-[10.5px] font-bold transition-all ${posTemplate === t.id ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400 hover:border-emerald-400/40'}`}
-                >
-                  <span className={`inline-block w-3 h-3 rounded border ${posTemplate === t.id ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 dark:border-slate-600'}`}>
-                    {posTemplate === t.id && <span className="block text-white text-[8px] leading-3 text-center">✓</span>}
-                  </span>
-                  {t.label}
-                </button>
-              ))}
+        {/* خيارات الطباعة مخفية وتظهر فقط عند طلب تغيير القالب */}
+        <div className="px-4 py-1.5 border-b border-slate-100 dark:border-slate-800 flex justify-end">
+          <details className="relative group">
+            <summary className="list-none cursor-pointer inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+              <Printer size={12}/> {INVOICE_TEMPLATE_OPTIONS.find(t=>t.id===posTemplate)?.label ?? 'قالب الطباعة'}
+            </summary>
+            <div className="absolute left-0 top-full z-30 mt-1 w-48 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-card-dark p-1.5 shadow-xl">
+              {INVOICE_TEMPLATE_OPTIONS.map(t=><button key={t.id} onClick={(e)=>{setPosTemplate(t.id);(e.currentTarget.closest('details') as HTMLDetailsElement)?.removeAttribute('open')}} className={`w-full text-right px-2 py-1.5 rounded-lg text-[11px] ${posTemplate===t.id?'bg-emerald-500/10 text-emerald-600 font-bold':'hover:bg-slate-100 dark:hover:bg-slate-800'}`}>{t.label}<span className="block text-[9px] text-slate-400">{t.sub}</span></button>)}
+              <button onClick={()=>setQuickPrintOpen(true)} className="w-full text-right px-2 py-1.5 mt-1 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500"><Settings2 size={11} className="inline ml-1"/>إعدادات إضافية</button>
             </div>
-            <button
-              onClick={() => setQuickPrintOpen(true)}
-              title="خيارات طباعة سريعة"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors shrink-0"
-            >
-              <Settings2 size={15} />
-            </button>
-          </div>
+          </details>
         </div>
 
         {/* min-h-0 (لا 16rem): القيمة الإجبارية كانت تدفع شريط الدفع خارج الإطار المقصوص فيختفي الزر (بلاغ المالك) */}
@@ -772,16 +702,17 @@ export function PosPage() {
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {/* رأس أعمدة السلة */}
-              <div className="grid grid-cols-[1fr_7.3rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
+              <div className="grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
                 <span>الصنف</span>
                 <span className="text-center">الكمية</span>
+                <span className="text-center">السعر</span>
                 <span className="text-center" title="النسبة الفعلية لكل سطر: نسبة البلد تلقائياً أو استثناء الصنف إن كان معفى">ضريبة</span>
                 <span className="text-center">خصم ٪</span>
                 <span className="text-left">الإجمالي</span>
                 <span></span>
               </div>
               {cart.map((l, i) => (
-                <div key={i} className="anim-pop grid grid-cols-[1fr_7.3rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-3 hover:bg-emerald-500/[0.03] transition-colors duration-150">
+                <div key={i} data-entry-row className="anim-pop entry-grid grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-3 hover:bg-emerald-500/[0.03] transition-colors duration-150">
                   {/* الصنف: الاسم + سعر الوحدة */}
                   <div className="min-w-0">
                     <div className="font-bold text-[13px] text-slate-800 dark:text-white truncate leading-snug">
@@ -805,6 +736,22 @@ export function PosPage() {
                         )
                       })()}
                     </div>
+                    {/* مخزن السطر: عدم وجود قيمة صريحة يعني وراثة مخزن رأس الفاتورة. */}
+                    {warehouses.length > 1 && (
+                      <select
+                        value={l.warehouseId ?? ''}
+                        onChange={(e) => setCart((current) => current.map((line, index) => (
+                          index === i ? { ...line, warehouseId: e.target.value === '' ? null : Number(e.target.value) } : line
+                        )))}
+                        title="اختر مخزناً لهذا السطر، أو اتركه يتبع مخزن الفاتورة"
+                        className="mt-1 text-[10px] font-bold rounded-md border border-amber-200 dark:border-amber-800 bg-amber-500/[0.06] px-1.5 py-0.5 text-amber-700 dark:text-amber-300 outline-none max-w-full"
+                      >
+                        <option value="">🏬 مخزن الفاتورة — {warehouses.find((w) => w.id === (saleWarehouseId ?? defaultSaleWarehouseId))?.nameAr ?? 'الرئيسي'}</option>
+                        {warehouses.map((warehouse) => (
+                          <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}{warehouse.isMain ? ' (الرئيسي)' : ''}</option>
+                        ))}
+                      </select>
+                    )}
                     {/* سيريالات القطع المعيّنة — حذف السيريال يحذف قطعته من السلة */}
                     {l.serials && l.serials.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
@@ -847,6 +794,7 @@ export function PosPage() {
                       className="w-8 h-full text-slate-500 font-bold hover:bg-rose-500/10 hover:text-rose-500 transition-colors"
                     >−</button>
                     <input
+                      ref={(node) => { qtyRefs.current[i] = node }}
                       value={qtyDrafts[i] ?? String(l.qty)}
                       inputMode="decimal"
                       onChange={(e) => {
@@ -859,6 +807,7 @@ export function PosPage() {
                       }}
                       onBlur={() => setQtyDrafts((d) => { const n = { ...d }; delete n[i]; return n })}
                       onFocus={(e) => e.target.select()}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); priceRefs.current[i]?.focus(); priceRefs.current[i]?.select() } }}
                       className="w-full h-full text-center text-[13px] font-black bg-transparent text-slate-800 dark:text-white outline-none"
                     />
                     <button
@@ -867,6 +816,7 @@ export function PosPage() {
                     >+</button>
                   </div>
                   )}
+                  <input ref={(node) => { priceRefs.current[i] = node }} value={String(l.unitPriceMinor / 10 ** cur.decimals)} inputMode="decimal" onFocus={(e) => e.target.select()} onChange={(e) => { const raw = e.target.value; if (!/^\d*\.?\d*$/.test(raw)) return; try { const value = Math.max(0, toMinor(raw || '0', cur.decimals)); setCart((current) => current.map((line, index) => index === i ? { ...line, unitPriceMinor: value } : line)) } catch { /* قيمة انتقالية */ } }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select() } }} className="h-9 text-center font-bold bg-transparent border border-slate-200 dark:border-slate-700 outline-none" aria-label={`سعر ${l.nameAr}`}/>
                   {/* ضريبة السطر — تلقائية من بلد المنشأة أو استثناء الصنف (معفى/نسبة خاصة) */}
                   <div
                     title={`نسبة الضريبة لهذا السطر: ${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪ — ${country?.nameAr ?? 'حسب بلد المنشأة'}`}
@@ -890,7 +840,7 @@ export function PosPage() {
                   />
                   {/* إجمالي السطر */}
                   <div className="text-left">
-                    <div className="font-black text-[14px] text-slate-800 dark:text-white">
+                    <div className="font-black text-[12px] text-slate-800 dark:text-white">
                       {fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}
                     </div>
                     {l.discountPercent > 0 && (
@@ -941,7 +891,7 @@ export function PosPage() {
           <button
             onClick={() => {
               // سياسة الورديات: وجّه لفتح الوردية بدل مودال الدفع (رسالة قبل الرفض)
-              if (setup.requireOpenShiftForSales && !openShift) { setShiftOpenModal(true); return }
+              if (shiftPolicy.required && !openShift) { setShiftOpenModal(true); return }
               setPayOpen(true)
             }}
             disabled={!totals}
@@ -996,21 +946,23 @@ export function PosPage() {
               <div className="text-[12px] text-slate-400">المبلغ المستحق</div>
               <div className="font-black text-3xl text-emerald-600 dark:text-emerald-400 mt-1">{fmt(totals.totalMinor)} {cur.symbol}</div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => { setPayment('cash'); if (totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals)) }}
-                className={`p-4 rounded-2xl border-2 font-bold transition-all duration-200 hover:scale-[1.02] ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
-              >
-                <Banknote size={22} className="mx-auto mb-1" /> نقدي / مجزأ
-              </button>
-              <button
-                onClick={() => { setPayment('credit'); setPaidCash('0') }}
-                disabled={customers.length === 0}
-                className={`p-4 rounded-2xl border-2 font-bold transition-all duration-200 hover:scale-[1.02] disabled:opacity-40 ${payment === 'credit' ? 'border-violet-500/60 bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
-              >
-                <UserRound size={22} className="mx-auto mb-1" /> آجل بالكامل {customers.length === 0 && '(أضف عملاء)'}
-              </button>
-            </div>
+            <PaymentMethodPicker
+              value={{ kind: payment === 'credit' ? 'credit' : undefined, treasury, terminalPayment: { terminalId: paymentTerminalId, providerReference: terminalReference, cardLast4: terminalCardLast4 } }}
+              onChange={(value) => {
+                const nextPayment = value.kind === 'credit' ? 'credit' : value.terminalPayment.terminalId ? 'terminal' : 'cash'
+                setPayment(nextPayment)
+                setTreasury(value.treasury)
+                setPaymentTerminalId(value.terminalPayment.terminalId)
+                setTerminalReference(value.terminalPayment.providerReference)
+                setTerminalCardLast4(value.terminalPayment.cardLast4)
+                if (nextPayment === 'terminal') setPaidCash('0')
+                else if (nextPayment === 'cash' && totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals))
+                else setPaidCash('0')
+              }}
+              operation="receipt"
+              allowCredit={customers.length > 0}
+              terminalOptions={activePaymentTerminals}
+            />
 
             {payment === 'cash' && (
               <>
@@ -1030,10 +982,6 @@ export function PosPage() {
                       {fmt(creditRemainder)}
                     </div>
                   </div>
-                </div>
-                <div>
-                  <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5">إلى أي خزينة/بنك؟</div>
-                  <TreasuryPicker value={treasury} onChange={setTreasury} />
                 </div>
               </>
             )}

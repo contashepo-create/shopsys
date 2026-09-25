@@ -7,14 +7,14 @@
 import { useMemo, useState } from 'react'
 import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer, MoreHorizontal } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { useDataStore, type PurchaseInvoice } from '../../data/repo.ts'
+import { useDataStore, type PurchaseInvoice, type PurchaseExpense } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeLandedCosts } from '../../core/costing.ts'
 import { effectiveVatPercent } from '../../core/items.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { invoiceEditPolicy } from '../../core/invoiceEdit.ts'
+import { invoiceEditPolicy, electronicInvoiceLockActive } from '../../core/invoiceEdit.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
@@ -36,25 +36,31 @@ interface DraftExpense {
   amount: string
   method: 'value' | 'qty'
   // من دفع المصروف؟ (طلب المالك) — ليس إجبارياً على حساب المورد:
-  paidBy: 'supplier' | 'treasury' | 'custody'
+  paidBy: 'supplier' | 'treasury' | 'custody' | 'payable'
   payAccount: string // خزينة/بنك عند paidBy=treasury
   custodyFileId: number | null // ملف عهدة عند paidBy=custody
+  beneficiaryName: string // الجهة عند paidBy=payable
+  payableAccountCode: string // حساب الالتزام عند paidBy=payable
+  accountCode: string // حساب المصروف
+  costCenterId: number | null // مركز التكلفة العام
+  vehicleId: number | null // مركز تكلفة مركبة الأسطول
 }
 
 const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'شحن وتفريغ', 'تحميل وتنزيل', 'عمولة مشتريات', 'رسوم بنكية', 'أخرى']
-const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', method: 'qty', paidBy: 'supplier', payAccount: '1101', custodyFileId: null }
+const NEW_EXPENSE: DraftExpense = { nameAr: 'نولون / نقل', amount: '', method: 'qty', paidBy: 'supplier', payAccount: '1101', custodyFileId: null, beneficiaryName: '', payableAccountCode: '2117', accountCode: '5108', costCenterId: null, vehicleId: null }
 
 export function PurchasesPage() {
-  const { items, suppliers, purchases, journal, projects, treasuries, custodyFiles, employees, warehouses, categories, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
-  const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt } = useAppStore()
+  const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, costCenters, expenseTemplates, treasuries, vehicles, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase } = useDataStore()
+  const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt, einvoice } = useAppStore()
   const navigate = useNavigate()
+  const [today] = useState(() => new Date().toISOString().slice(0, 10))
 
   // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة ⇒ لا تعديل — إشعار مدين على المورد
   const lic = useMemo(
     () => evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() }),
     [activatedPayload, trialStartedAt, lastSeenAt],
   )
-  const einvoiceActive = hasFeature(lic, 'einvoice_sa') || hasFeature(lic, 'einvoice_eg')
+  const einvoiceActive = electronicInvoiceLockActive({ licensed: hasFeature(lic, 'einvoice_sa') || hasFeature(lic, 'einvoice_eg'), enabled: einvoice.enabled === true, taxNumber: einvoice.taxNumber })
   const editPolicy = invoiceEditPolicy({ einvoiceActive })
   const openCustodyFiles = custodyFiles.filter((f) => f.status === 'open')
   const toast = useToast()
@@ -68,6 +74,7 @@ export function PurchasesPage() {
     itemId, qty: '', unitPrice: '', expiryDate: '', serialsRaw: '', unitName: '', vatPercent: itemVatPercent(itemId), warehouseId: defaultPurchaseWarehouseId, ...patch,
   })
   const fmt = (m: number) => formatMinor(m, cur, false)
+  const supplierLabel = (id: number) => id === 0 ? 'شراء نقدي — بدون مورد' : suppliers.find((supplier) => supplier.id === id)?.nameAr ?? `مورد #${id}`
 
   const purchaseWarehouseLabel = (p: PurchaseInvoice) => {
     if (p.warehouseId != null) return warehouses.find((w) => w.id === p.warehouseId)?.nameAr ?? '—'
@@ -79,6 +86,9 @@ export function PurchasesPage() {
   const [viewing, setViewing] = useState<PurchaseInvoice | null>(null)
   // طباعة فاتورة الشراء بقوالب الكاشير الثلاثة (طلب المالك)
   const [printTarget, setPrintTarget] = useState<PurchaseInvoice | null>(null)
+  const [payableAmount, setPayableAmount] = useState('')
+  const [payableTreasury, setPayableTreasury] = useState('1101')
+  const settleExpensePayable = (id: number, remaining: number) => { try { const amount = payableAmount.trim() ? toMinor(payableAmount, cur.decimals) : remaining; settlePurchaseExpensePayable({ payableId: id, amountMinor: amount, treasury: payableTreasury, date: today }); setPayableAmount(''); toast.show('تم سداد الاستحقاق وإنشاء سند الصرف والقيد ✓') } catch (error) { toast.show((error as Error).message, 'error') } }
 
   /** نموذج طباعة فاتورة الشراء: سطور بسعر المورد + إبراز المصاريف المحملة */
   const printPurchase = (inv: PurchaseInvoice, template: Parameters<typeof printModelWithTemplate>[3]) => {
@@ -87,7 +97,7 @@ export function PurchasesPage() {
       invoiceNumber: inv.invoiceNumber,
       refCode: inv.refCode ?? '',
       dateIso: inv.date,
-      partyLabel: suppliers.find((sp) => sp.id === inv.supplierId)?.nameAr ?? `مورد #${inv.supplierId}`,
+      partyLabel: supplierLabel(inv.supplierId),
       paymentLabel: inv.paidMinor >= (inv.supplierDueMinor ?? inv.grandTotalMinor) ? 'مدفوعة بالكامل' : inv.paidMinor > 0 ? 'مدفوعة جزئياً' : 'آجلة',
       rows: inv.lines.map((l) => ({
         nameAr: items.find((it) => it.id === l.itemId)?.nameAr ?? `صنف #${l.itemId}`,
@@ -98,7 +108,7 @@ export function PurchasesPage() {
       totalMinor: inv.grandTotalMinor,
       paidMinor: inv.paidMinor,
       settings: receipt,
-      extraFooter: inv.expensesTotalMinor > 0 ? `بضاعة ${fmt(inv.goodsTotalMinor)} + مصاريف ${fmt(inv.expensesTotalMinor)}` : undefined,
+      extraFooter: [`${inv.supplierInvoiceNumber ? `فاتورة المورد ${inv.supplierInvoiceNumber}` : ''}${inv.purchaseOrderNumber ? ` · أمر شراء ${inv.purchaseOrderNumber}` : ''}${inv.dueDate ? ` · استحقاق ${inv.dueDate}` : ''}`, inv.expensesTotalMinor > 0 ? `بضاعة ${fmt(inv.goodsTotalMinor)} + مصاريف ${fmt(inv.expensesTotalMinor)}` : ''].filter(Boolean).join(' — ') || undefined,
     })
     printModelWithTemplate(model, cur, receipt, template)
     toast.show(`أُرسلت فاتورة الشراء ${inv.invoiceNumber} للطباعة 🖨️`)
@@ -145,7 +155,11 @@ export function PurchasesPage() {
   const [lateName, setLateName] = useState('')
   const [lateAmount, setLateAmount] = useState('')
   const [lateMethod, setLateMethod] = useState<'value' | 'qty'>('qty')
-  const [latePaidBy, setLatePaidBy] = useState<'supplier' | 'treasury' | 'custody'>('supplier')
+  const [latePaidBy, setLatePaidBy] = useState<'supplier' | 'treasury' | 'custody' | 'payable'>('supplier')
+  const [latePayableName, setLatePayableName] = useState('')
+  const [latePayableAccount, setLatePayableAccount] = useState('2117')
+  const [lateVehicleId, setLateVehicleId] = useState<number | null>(null)
+  const [lateCostCenterId, setLateCostCenterId] = useState<number | null>(null)
   const [latePayAccount, setLatePayAccount] = useState('1101')
   const [lateCustodyId, setLateCustodyId] = useState<number | null>(null)
 
@@ -154,6 +168,11 @@ export function PurchasesPage() {
   const [editLines, setEditLines] = useState<{ itemId: number; qty: string; unitPrice: string }[]>([])
   const [editPaid, setEditPaid] = useState('')
   const [editTreasury, setEditTreasury] = useState('1101')
+  const [editSupplierInvoiceNumber, setEditSupplierInvoiceNumber] = useState('')
+  const [editPurchaseOrderNumber, setEditPurchaseOrderNumber] = useState('')
+  const [editDueDate, setEditDueDate] = useState('')
+  const [editNotes, setEditNotes] = useState('')
+  const [editExpenses, setEditExpenses] = useState<PurchaseExpense[]>([])
   const [editReason, setEditReason] = useState('')
   const [editAddItemId, setEditAddItemId] = useState(0)
 
@@ -165,6 +184,11 @@ export function PurchasesPage() {
     setEditLines(p.lines.map((l) => ({ itemId: l.itemId, qty: String(l.qty), unitPrice: String(l.unitPriceMinor / 10 ** cur.decimals) })))
     setEditPaid(String(p.paidMinor / 10 ** cur.decimals))
     setEditTreasury(p.treasury ?? '1101')
+    setEditSupplierInvoiceNumber(p.supplierInvoiceNumber ?? '')
+    setEditPurchaseOrderNumber(p.purchaseOrderNumber ?? '')
+    setEditDueDate(p.dueDate ?? '')
+    setEditNotes(p.notes ?? '')
+    setEditExpenses(p.expenses.map((expense) => ({ ...expense })))
     setEditReason('')
     setEditAddItemId(0)
   }
@@ -174,15 +198,21 @@ export function PurchasesPage() {
     [editLines, cur.decimals],
   )
 
+  const editExpenseTotal = useMemo(() => editExpenses.filter((expense) => (expense.costTreatment ?? 'inventory') === 'inventory').reduce((sum, expense) => sum + expense.amountMinor, 0), [editExpenses])
+
   const saveInvoiceEdit = () => {
     if (!editing) return
     try {
       const updated = editPurchase({
         purchaseId: editing.id,
         lines: editLines.map((l) => ({ itemId: l.itemId, qty: Number(l.qty) || 0, unitPriceMinor: toMinor(l.unitPrice || '0', cur.decimals) })),
-        expenses: editing.expenses, // المصاريف (على حساب المورد) تبقى وتُعاد توزيعها على السطور الجديدة
+        expenses: editExpenses,
         paidMinor: toMinor(editPaid || '0', cur.decimals),
         treasury: editTreasury,
+        supplierInvoiceNumber: editSupplierInvoiceNumber,
+        purchaseOrderNumber: editPurchaseOrderNumber,
+        dueDate: editDueDate,
+        notes: editNotes,
         reason: editReason.trim(),
         einvoiceActive,
       })
@@ -204,10 +234,14 @@ export function PurchasesPage() {
         paidBy: latePaidBy,
         payAccount: latePaidBy === 'treasury' ? latePayAccount : null,
         custodyFileId: latePaidBy === 'custody' ? lateCustodyId : null,
+        beneficiaryName: latePaidBy === 'payable' ? latePayableName : null,
+        payableAccountCode: latePaidBy === 'payable' ? latePayableAccount : null,
+        costCenterId: lateCostCenterId,
+        vehicleId: lateVehicleId,
         date: new Date().toISOString().slice(0, 10),
       })
       setViewing(updated)
-      setLateName(''); setLateAmount('')
+      setLateName(''); setLateAmount(''); setLatePayableName(''); setLateVehicleId(null); setLateCostCenterId(null)
       toast.show('سُجّل المصروف — توزع على الأصناف وتحدثت تكلفتها وتولد قيده ✓')
     } catch (e) {
       toast.show((e as Error).message, 'error')
@@ -215,7 +249,7 @@ export function PurchasesPage() {
   }
 
   const openNew = () => {
-    setSupplierId(suppliers[0]?.id ?? 0)
+    setSupplierId(0)
     setLines([makeDraftLine()])
     setExpenses([])
     setPaid('')
@@ -306,7 +340,11 @@ export function PurchasesPage() {
   }, [lines, expenses, cur.decimals, inputVatMinor])
 
   const save = () => {
-    if (!preview || !supplierId) return
+    if (!preview || supplierId < 0) return
+    if (supplierId === 0 && toMinor(paid || '0', cur.decimals) !== preview.supplierDue) {
+      toast.show(`الشراء النقدي يجب سداده بالكامل: ${fmt(preview.supplierDue)}`, 'error')
+      return
+    }
     try {
     // P2 (مراجعة المشتريات): المطابقة بالترتيب لا بالبحث — سطران بنفس الصنف والكمية
     // كانا يأخذان صلاحية/سيريالات السطر الأول معاً (computeLandedCosts يحفظ الترتيب)
@@ -340,6 +378,11 @@ export function PurchasesPage() {
           paidBy: e.paidBy,
           payAccount: e.paidBy === 'treasury' ? e.payAccount : null,
           custodyFileId: e.paidBy === 'custody' ? e.custodyFileId : null,
+          beneficiaryName: e.paidBy === 'payable' ? e.beneficiaryName.trim() : undefined,
+          payableAccountCode: e.paidBy === 'payable' ? e.payableAccountCode : undefined,
+          accountCode: e.accountCode,
+          costCenterId: e.costCenterId,
+          vehicleId: e.vehicleId,
         })),
       paidMinor: paid ? toMinor(paid, cur.decimals) : 0,
       treasury: paySource.kind === 'treasury' ? paySource.treasury : undefined,
@@ -358,20 +401,19 @@ export function PurchasesPage() {
 
   return (
     <div className="space-y-4">
+      {advancedInvoiceDrafts.filter(d=>d.kind==='purchase').length>0&&<div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 flex flex-wrap items-center justify-between gap-2"><div><b>مسودات مشتريات محفوظة: {advancedInvoiceDrafts.filter(d=>d.kind==='purchase').length}</b><div className="text-xs text-slate-500">يمكن استعادة أحدث مسودة من المحرر المتقدم دون أي أثر محاسبي</div></div><div className="flex gap-2"><Btn variant="ghost" onClick={()=>navigate('/purchases/invoices/new')}>الانتقال للمحرر</Btn><Btn variant="ghost" onClick={()=>{advancedInvoiceDrafts.filter(d=>d.kind==='purchase').forEach(d=>deleteAdvancedInvoiceDraft(d.id));toast.show('حُذفت مسودات المشتريات')}}>حذف الكل</Btn></div></div>}
       <div className="anim-up flex items-center justify-between">
-        <p className="text-[12px] text-slate-400 max-w-lg leading-relaxed">
+        <div><p className="text-[12px] text-slate-400 max-w-lg leading-relaxed">
           💡 الترحيل يوزع مصاريف الشراء على الأصناف (حسب القيمة أو الكمية لكل مصروف) ثم يحدّث
           تكلفة كل صنف <b>بالمتوسط المرجح المتحرك</b> ويزيد رصيد المخزون.
         </p>
-        <Btn onClick={openNew} disabled={items.length === 0 || suppliers.length === 0}>
-          <span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة شراء</span>
-        </Btn>
+        {purchaseExpensePayables.some(p=>p.status!=='paid')&&<div className="text-[11px] font-bold text-violet-600 mt-1">استحقاقات جهات أخرى: {purchaseExpensePayables.filter(p=>p.status!=='paid').length} · متبقي {fmt(purchaseExpensePayables.filter(p=>p.status!=='paid').reduce((s,p)=>s+p.amountMinor-p.paidMinor,0))}</div>}</div>
+        <div className="flex gap-2"><Btn variant="ghost" onClick={openNew} disabled={items.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> إدخال سريع</span></Btn><Btn shortcut="F3" onClick={() => navigate('/purchases/invoices/new')} disabled={items.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة شراء</span></Btn></div>
       </div>
 
-      {(items.length === 0 || suppliers.length === 0) && (
+      {items.length === 0 && (
         <div className="anim-pop p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-[12px] font-bold text-amber-700 dark:text-amber-400">
-          ⚠️ تحتاج أولاً: {items.length === 0 ? 'إضافة أصناف (المخزون ← الأصناف)' : ''} {items.length === 0 && suppliers.length === 0 ? ' + ' : ''}
-          {suppliers.length === 0 ? 'إضافة مورد (المشتريات ← الموردون)' : ''}
+          ⚠️ تحتاج أولاً: {items.length === 0 ? 'إضافة أصناف (المخزون ← الأصناف)' : ''}
         </div>
       )}
 
@@ -390,6 +432,7 @@ export function PurchasesPage() {
                 <th className="px-4 py-3 font-bold">المصاريف</th>
                 <th className="px-4 py-3 font-bold">الإجمالي</th>
                 <th className="px-4 py-3 font-bold">المدفوع</th>
+                <th className="px-4 py-3 font-bold">الاستحقاق</th>
                 <th className="px-4 py-3 font-bold"></th>
               </tr>
             </thead>
@@ -399,12 +442,15 @@ export function PurchasesPage() {
                   <td className="px-4 py-3">
                     <div className="font-bold text-slate-800 dark:text-white">{p.invoiceNumber}</div>
                     {p.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{p.refCode}</div>}
+                    {p.supplierInvoiceNumber&&<div className="text-[10px] text-violet-600">فاتورة المورد: {p.supplierInvoiceNumber}</div>}
+                    {p.purchaseOrderNumber&&<div className="text-[10px] text-slate-500">أمر شراء: {p.purchaseOrderNumber}</div>}
                     <div className="text-[11px] text-slate-400">{p.date}</div>
+                    {p.receiptStatus&&<div className={`text-[10px] font-bold ${p.receiptStatus==='partial'?'text-amber-600':p.receiptStatus==='received'?'text-emerald-600':'text-slate-500'}`}>{p.receiptStatus==='partial'?'استلام جزئي':p.receiptStatus==='received'?'مستلمة':'بانتظار الاستلام'}</div>}
                     {warehouses.length > 1 && (
                       <div className="text-[10.5px] text-slate-400">مخزن: {purchaseWarehouseLabel(p)}</div>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{suppliers.find((s) => s.id === p.supplierId)?.nameAr ?? '—'}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{supplierLabel(p.supplierId)}</td>
                   <td className="px-4 py-3">{fmt(p.goodsTotalMinor)}</td>
                   <td className="px-4 py-3">
                     {p.expensesTotalMinor > 0
@@ -417,6 +463,7 @@ export function PurchasesPage() {
                       {fmt(p.paidMinor)}
                     </span>
                   </td>
+                  <td className="px-4 py-3">{p.paidMinor >= (p.supplierDueMinor ?? p.grandTotalMinor) ? <span className="text-emerald-600 font-bold">مدفوعة</span> : p.dueDate ? <span className={p.dueDate < today ? 'text-rose-600 font-bold' : 'text-amber-600 font-bold'}>{p.dueDate < today ? 'متأخرة' : p.dueDate}</span> : <span className="text-slate-400">غير محدد</span>}</td>
                   <td className="px-4 py-3 text-left whitespace-nowrap">
                     {editPolicy.canEdit ? (
                       /* تعديل متاح — الفاتورة الإلكترونية غير مفعلة (سياسة المالك) */
@@ -446,8 +493,9 @@ export function PurchasesPage() {
       <Modal open={open} onClose={() => setOpen(false)} title="فاتورة شراء جديدة" wide>
         <div className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Field label="المورد *">
+            <Field label="المورد (اختياري)">
               <select value={supplierId} onChange={(e) => setSupplierId(Number(e.target.value))} className={inputCls}>
+                <option value={0}>💵 شراء نقدي — بدون مورد</option>
                 {suppliers.map((s) => <option key={s.id} value={s.id}>{s.nameAr}</option>)}
               </select>
             </Field>
@@ -657,6 +705,7 @@ export function PurchasesPage() {
                         placeholder="نولون، جمارك، شحن…"
                         className={inputCls}
                       />
+                      {expenseTemplates.some((row) => row.isActive) && <select className={`${inputCls} mt-1.5`} value="" onChange={(ev) => { const selected = expenseTemplates.find((row) => row.id === Number(ev.target.value)); if (selected) setExpenses((arr) => arr.map((x, j) => j === i ? { ...x, nameAr: selected.nameAr, accountCode: selected.accountCode } : x)) }}><option value="">اختيار بند محفوظ…</option>{expenseTemplates.filter((row) => row.isActive).map((row) => <option key={row.id} value={row.id}>{row.code} — {row.nameAr}</option>)}</select>}
                       <div className="flex flex-wrap gap-1 mt-1.5">
                         {EXPENSE_PRESETS.map((p2) => (
                           <button
@@ -689,6 +738,18 @@ export function PurchasesPage() {
                         ))}
                       </div>
                     </Field>
+                    <Field label="مركز التكلفة العام" hint="مستقل عن المشروع وعن مركز تكلفة المركبة">
+                      <select value={e.costCenterId ?? ''} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, costCenterId: ev.target.value ? Number(ev.target.value) : null } : x)))} className={inputCls}>
+                        <option value="">بدون مركز عام</option>
+                        {costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="مركز تكلفة المركبة" hint="اختياري — يظهر كتحميل/إيراد داخلي في ربحية مركبة الأسطول">
+                      <select value={e.vehicleId ?? ''} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, vehicleId: ev.target.value ? Number(ev.target.value) : null } : x)))} className={inputCls}>
+                        <option value="">بدون مركبة</option>
+                        {vehicles.map((v) => <option key={v.id} value={v.id}>{v.plateNumber} — {v.vehicleType}</option>)}
+                      </select>
+                    </Field>
                     <button onClick={() => setExpenses((arr) => arr.filter((_, j) => j !== i))} className="p-2 mb-1 text-slate-300 hover:text-rose-500 transition-colors justify-self-center">
                       <Trash2 size={15} />
                     </button>
@@ -697,7 +758,7 @@ export function PurchasesPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[11px] font-bold text-slate-500">من دفعه؟</span>
                     <div className="flex rounded-xl overflow-hidden border-2 border-slate-200 dark:border-slate-700">
-                      {([['supplier', '🚛 على حساب المورد'], ['treasury', '🏦 دفعتُه من خزينة/بنك'], ['custody', '🤝 من عهدة موظف']] as const).map(([m, label]) => (
+                      {([['supplier', '🚛 على حساب المورد'], ['treasury', '🏦 دفعتُه من خزينة/بنك'], ['custody', '🤝 من عهدة موظف'], ['payable', '🧾 مستحق لاحقاً']] as const).map(([m, label]) => (
                         <button
                           key={m}
                           onClick={() => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, paidBy: m, custodyFileId: m === 'custody' ? (openCustodyFiles[0]?.id ?? null) : null } : x)))}
@@ -711,13 +772,12 @@ export function PurchasesPage() {
                       ))}
                     </div>
                     {e.paidBy === 'treasury' && (
-                      <select
+                      <TreasuryPicker
                         value={e.payAccount}
-                        onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, payAccount: ev.target.value } : x)))}
-                        className={`${inputCls} !w-auto min-w-44`}
-                      >
-                        {treasuries.map((t) => <option key={t.code} value={t.code}>{t.nameAr}</option>)}
-                      </select>
+                        onChange={(code) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, payAccount: code } : x)))}
+                        operation="payment"
+                        compact
+                      />
                     )}
                     {e.paidBy === 'custody' && (
                       <select
@@ -729,6 +789,15 @@ export function PurchasesPage() {
                           <option key={f.id} value={f.id}>{f.fileNumber} — {employees.find((x) => x.id === f.employeeId)?.nameAr ?? '—'}</option>
                         ))}
                       </select>
+                    )}
+                    {e.paidBy === 'payable' && (
+                      <>
+                        <input value={e.beneficiaryName} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, beneficiaryName: ev.target.value } : x)))} className={`${inputCls} !w-auto min-w-48`} placeholder="اسم الجهة المستحقة" />
+                        <select value={e.payableAccountCode} onChange={(ev) => setExpenses((arr) => arr.map((x, j) => (j === i ? { ...x, payableAccountCode: ev.target.value } : x)))} className={`${inputCls} !w-auto min-w-40`}>
+                          <option value="2117">مصاريف مستحقة (2117)</option>
+                          <option value="2101">الموردون (2101)</option>
+                        </select>
+                      </>
                     )}
                     {e.paidBy !== 'supplier' && (
                       <span className="text-[10.5px] text-emerald-600 dark:text-emerald-400 font-bold">✓ لن يُضاف لدين المورد</span>
@@ -783,7 +852,7 @@ export function PurchasesPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!preview || !supplierId}>🚀 ترحيل الفاتورة</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!preview || supplierId < 0}>🚀 ترحيل الفاتورة</Btn>
           </div>
         </div>
       </Modal>
@@ -814,7 +883,7 @@ export function PurchasesPage() {
           <div className="space-y-4 text-sm">
             <div className="flex gap-4 text-[12px] text-slate-500">
               <span>📅 {viewing.date}</span>
-              <span>🚛 {suppliers.find((s) => s.id === viewing.supplierId)?.nameAr}</span>
+              <span>🚛 {supplierLabel(viewing.supplierId)}</span>
             </div>
             <table className="w-full text-[13px]">
               <thead>
@@ -828,7 +897,7 @@ export function PurchasesPage() {
                   <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
                     <td className="px-3 py-2 font-bold">{items.find((it) => it.id === l.itemId)?.nameAr ?? `#${l.itemId}`}</td>
                     {warehouses.length > 1 && <td className="px-3 py-2 text-slate-500">{warehouses.find((w) => w.id === (l.warehouseId ?? viewing.warehouseId ?? warehouses.find((ww) => ww.isMain)?.id))?.nameAr ?? '—'}</td>}
-                    <td className="px-3 py-2">{l.qty}</td>
+                    <td className="px-3 py-2">{l.qty}{l.orderedQty!=null&&<div className="text-[10px] text-slate-400">مطلوب {l.orderedQty}{(l.rejectedQty??0)>0?` · مرفوض ${l.rejectedQty}`:''}</div>}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
                     <td className="px-3 py-2 text-sky-600 font-bold">{l.vatPercent != null ? (l.vatPercent > 0 ? `${l.vatPercent}٪ · ${fmt(l.inputVatMinor ?? 0)}` : 'معفى') : '—'}</td>
                     <td className="px-3 py-2 text-amber-600">{fmt(l.expenseShareMinor)}</td>
@@ -842,12 +911,14 @@ export function PurchasesPage() {
                 {viewing.expenses.map((e, i) => (
                   <span key={i} className="text-[11px] px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-600 font-bold">
                     {e.nameAr}: {fmt(e.amountMinor)} ({e.method === 'qty' ? 'بالكمية' : 'بالقيمة'}
-                    {(e.paidBy ?? 'supplier') === 'supplier' ? ' · على المورد' : (e.paidBy === 'custody' ? ' · من عهدة' : ` · من ${treasuries.find((t) => t.code === e.payAccount)?.nameAr ?? 'خزينة'}`)}
+                    {(e.paidBy ?? 'supplier') === 'supplier' ? ' · على المورد' : (e.paidBy === 'custody' ? ' · من عهدة' : e.paidBy === 'payable' ? ` · مستحق لـ ${e.beneficiaryName ?? 'جهة'}` : ` · من ${treasuries.find((t) => t.code === e.payAccount)?.nameAr ?? 'خزينة'}`)}
                     {e.late ? ' · لاحق' : ''})
                   </span>
                 ))}
               </div>
             )}
+            {viewing.approvedBy&&<div className="text-xs font-bold text-violet-600">اعتماد المصروفات الحساسة: {viewing.approvedBy}</div>}
+            {purchaseExpensePayables.filter(p=>p.purchaseId===viewing.id&&p.status!=='paid').map(payable=>{const remaining=payable.amountMinor-payable.paidMinor;return <div key={payable.id} className="p-3 rounded-xl border border-violet-400/30 bg-violet-500/5 grid md:grid-cols-4 gap-2 items-end"><div><b>{payable.beneficiaryName}</b><div className="text-xs text-slate-500">{payable.description} · متبقي {fmt(remaining)}</div></div><input className={inputCls} value={payableAmount} onChange={e=>setPayableAmount(e.target.value)} placeholder={`كامل ${fmt(remaining)}`}/><TreasuryPicker value={payableTreasury} onChange={setPayableTreasury}/><Btn onClick={()=>settleExpensePayable(payable.id,remaining)} shortcut="F9">سند صرف وإقفال</Btn></div>})}
             <div className="flex flex-wrap gap-5 font-bold">
               <span>البضاعة: {fmt(viewing.goodsTotalMinor)}</span>
               <span className="text-amber-600">المصاريف: {fmt(viewing.expensesTotalMinor)}</span>
@@ -894,7 +965,7 @@ export function PurchasesPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[11px] font-bold text-slate-500">من دفعه؟</span>
                 <div className="flex rounded-xl overflow-hidden border-2 border-slate-200 dark:border-slate-700">
-                  {([['supplier', '🚛 على حساب المورد'], ['treasury', '🏦 خزينة/بنك'], ['custody', '🤝 عهدة موظف']] as const).map(([m, label]) => (
+                  {([['supplier', '🚛 على حساب المورد'], ['treasury', '🏦 خزينة/بنك'], ['custody', '🤝 عهدة موظف'], ['payable', '🧾 مستحق لاحقاً']] as const).map(([m, label]) => (
                     <button key={m}
                       onClick={() => { setLatePaidBy(m); if (m === 'custody') setLateCustodyId(openCustodyFiles[0]?.id ?? null) }}
                       disabled={m === 'custody' && openCustodyFiles.length === 0}
@@ -904,9 +975,7 @@ export function PurchasesPage() {
                   ))}
                 </div>
                 {latePaidBy === 'treasury' && (
-                  <select value={latePayAccount} onChange={(e) => setLatePayAccount(e.target.value)} className={`${inputCls} !w-auto min-w-44`}>
-                    {treasuries.map((t) => <option key={t.code} value={t.code}>{t.nameAr}</option>)}
-                  </select>
+                  <TreasuryPicker value={latePayAccount} onChange={setLatePayAccount} operation="payment" compact />
                 )}
                 {latePaidBy === 'custody' && (
                   <select value={lateCustodyId ?? ''} onChange={(e) => setLateCustodyId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-52`}>
@@ -915,7 +984,24 @@ export function PurchasesPage() {
                     ))}
                   </select>
                 )}
-                <Btn variant="soft" onClick={saveLateExpense} disabled={!lateName.trim() || !(Number(lateAmount) > 0)}>➕ تسجيل المصروف</Btn>
+                {latePaidBy === 'payable' && (
+                  <>
+                    <input value={latePayableName} onChange={(e) => setLatePayableName(e.target.value)} className={`${inputCls} !w-auto min-w-48`} placeholder="اسم الجهة المستحقة" />
+                    <select value={latePayableAccount} onChange={(e) => setLatePayableAccount(e.target.value)} className={`${inputCls} !w-auto min-w-40`}>
+                      <option value="2117">مصاريف مستحقة (2117)</option>
+                      <option value="2101">الموردون (2101)</option>
+                    </select>
+                  </>
+                )}
+                <select value={lateCostCenterId ?? ''} onChange={(e) => setLateCostCenterId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-48`} title="مركز التكلفة العام">
+                  <option value="">بدون مركز عام</option>
+                  {costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}
+                </select>
+                <select value={lateVehicleId ?? ''} onChange={(e) => setLateVehicleId(e.target.value ? Number(e.target.value) : null)} className={`${inputCls} !w-auto min-w-48`} title="مركز تكلفة السيارة">
+                  <option value="">🚚 بدون مركز تكلفة مركبة</option>
+                  {vehicles.map((v) => <option key={v.id} value={v.id}>🚚 {v.plateNumber} — {v.vehicleType}</option>)}
+                </select>
+                <Btn variant="soft" onClick={saveLateExpense} shortcut="F9" disabled={!lateName.trim() || !(Number(lateAmount) > 0) || (latePaidBy === 'payable' && !latePayableName.trim())}>➕ تسجيل المصروف</Btn>
               </div>
             </div>
 
@@ -1021,9 +1107,14 @@ export function PurchasesPage() {
               </div>
             </div>
 
-            {editing.expenses.length > 0 && (
-              <div className="text-[11px] text-slate-400 p-2.5 rounded-xl bg-slate-500/5 border border-slate-200 dark:border-slate-700">
-                🚛 مصاريف الفاتورة ({fmt(editing.expensesTotalMinor)}) تبقى كما هي وتُعاد قسمتها على السطور الجديدة بنفس طريقة التوزيع.
+            {editExpenses.length > 0 && (
+              <div className="grid sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-500/5 border border-slate-200 dark:border-slate-700">
+                {editExpenses.map((expense, i) => (
+                  <Field key={`${expense.nameAr}-${i}`} label={`${expense.nameAr} · ${expense.costTreatment === 'period' ? 'مصروف فترة' : 'تكلفة مخزون'}`} hint={expense.paidBy === 'supplier' ? 'على حساب المورد' : expense.paidBy === 'custody' ? 'من العهدة' : expense.paidBy === 'payable' ? `مستحق لـ ${expense.beneficiaryName ?? 'جهة'}` : 'مدفوع من الخزينة'}>
+                    <input type="number" min="0" step="0.01" value={expense.amountMinor / 10 ** cur.decimals} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, amountMinor: toMinor(e.target.value, cur.decimals) } : row))} className={inputCls} dir="ltr" />
+                    <select aria-label="مركز التكلفة العام لمصروف الشراء" value={expense.costCenterId ?? ''} onChange={(e) => setEditExpenses(editExpenses.map((row, xi) => xi === i ? { ...row, costCenterId: e.target.value ? Number(e.target.value) : null } : row))} className={inputCls}><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</select>
+                  </Field>
+                ))}
               </div>
             )}
 
@@ -1032,9 +1123,13 @@ export function PurchasesPage() {
                 <input value={editPaid} onChange={(e) => setEditPaid(e.target.value)} className={inputCls} dir="ltr" />
               </Field>
               <Field label="خزينة الدفع">
-                <TreasuryPicker value={editTreasury} onChange={setEditTreasury} compact />
+                <TreasuryPicker value={editTreasury} onChange={setEditTreasury} operation="payment" compact />
               </Field>
+              <Field label="رقم فاتورة المورد"><input value={editSupplierInvoiceNumber} onChange={(e)=>setEditSupplierInvoiceNumber(e.target.value)} className={inputCls}/></Field>
+              <Field label="رقم أمر الشراء"><input value={editPurchaseOrderNumber} onChange={(e)=>setEditPurchaseOrderNumber(e.target.value)} className={inputCls}/></Field>
+              <Field label="تاريخ الاستحقاق"><input type="date" min={editing.date} value={editDueDate} onChange={(e)=>setEditDueDate(e.target.value)} className={inputCls}/></Field>
             </div>
+            <Field label="ملاحظات داخلية"><textarea value={editNotes} onChange={(e)=>setEditNotes(e.target.value)} className={inputCls}/></Field>
 
             <Field label="سبب التعديل" hint="يُحفظ في سجل التدقيق ووصف القيد العاكس">
               <input value={editReason} onChange={(e) => setEditReason(e.target.value)} className={inputCls} placeholder="كمية خاطئة، سعر مورد مصحح…" />
@@ -1042,14 +1137,14 @@ export function PurchasesPage() {
 
             <div className="flex items-center justify-between p-3 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
               <div className="text-[12px] text-slate-500">
-                بضاعة جديدة {fmt(editGoodsTotal)} + مصاريف {fmt(editing.expensesTotalMinor)} — كان الإجمالي {fmt(editing.grandTotalMinor)}
+                بضاعة جديدة {fmt(editGoodsTotal)} + مصاريف {fmt(editExpenseTotal)} — كان الإجمالي {fmt(editing.grandTotalMinor)}
               </div>
-              <div className="font-black text-xl text-emerald-600">{fmt(editGoodsTotal + editing.expensesTotalMinor)} {cur.symbol}</div>
+              <div className="font-black text-xl text-emerald-600">{fmt(editGoodsTotal + editExpenseTotal)} {cur.symbol}</div>
             </div>
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setEditing(null)}>إلغاء</Btn>
-              <Btn onClick={saveInvoiceEdit} disabled={!editLines.length || editLines.some((l) => !(Number(l.qty) > 0))}>💾 حفظ التعديل</Btn>
+              <Btn onClick={saveInvoiceEdit} shortcut="F9" disabled={!editReason.trim() || !editLines.length || editLines.some((l) => !(Number(l.qty) > 0))}>💾 حفظ التعديل</Btn>
             </div>
           </div>
         )}

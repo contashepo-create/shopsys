@@ -6,10 +6,11 @@ import { create } from 'zustand'
 import { PIN_MAX_LENGTH } from '../../core/auth.ts'
 
 export function Btn({
-  children, onClick, variant = 'primary', disabled, type = 'button', className = '',
+  children, onClick, variant = 'primary', disabled, type = 'button', className = '', shortcut,
 }: {
   children: ReactNode; onClick?: () => void; disabled?: boolean
   variant?: 'primary' | 'ghost' | 'danger' | 'soft'; type?: 'button' | 'submit'; className?: string
+  shortcut?: string
 }) {
   const styles = {
     primary: 'text-white bg-gradient-to-l from-brand-600 to-fuchsia-600 shadow-lg shadow-brand-500/25 hover:shadow-xl',
@@ -24,7 +25,8 @@ export function Btn({
       disabled={disabled}
       className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 hover:scale-[1.03] active:scale-95 disabled:opacity-40 disabled:pointer-events-none ${styles[variant]} ${className}`}
     >
-      {children}
+      <span className="flex items-center justify-center gap-1.5">{children}</span>
+      {shortcut && <kbd className="block mt-0.5 text-[9px] leading-none opacity-70 font-mono">{shortcut}</kbd>}
     </button>
   )
 }
@@ -33,7 +35,7 @@ export function Field({
   label, children, hint,
 }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <div>
+    <div className="form-field">
       <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">{label}</label>
       {children}
       {hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
@@ -111,7 +113,7 @@ export function Modal({
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" dir="rtl">
       {/* إصلاح الظل الغريب: الحركة كانت مزدوجة (حاوية + لوحة) فيومض الـ blur — الآن التعتيم يتحرك وحده بلا blur متحرك */}
       <div className="absolute inset-0 bg-slate-900/55 anim-in" onClick={onClose} />
-      <div className={`relative anim-pop w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto rounded-3xl bg-white dark:bg-card-dark shadow-2xl border border-slate-200 dark:border-slate-700`}>
+      <div role="dialog" aria-modal="true" className={`relative anim-pop w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto rounded-3xl bg-white dark:bg-card-dark shadow-2xl border border-slate-200 dark:border-slate-700`}>
         <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-white/90 dark:bg-card-dark/90 glass rounded-t-3xl">
           <h3 className="font-extrabold text-slate-800 dark:text-white">{title}</h3>
           <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-rose-500 transition-colors duration-200">

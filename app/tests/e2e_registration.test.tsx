@@ -132,8 +132,8 @@ describe('تسجيل حقيقي لكل نشاط + عزل الأقسام (Feature
     })
   }
 
-  it('كل قوالب الأنشطة الـ28 معرفة بوحدات غير فارغة وأيقونة وقالب فاتورة', () => {
-    expect(ACTIVITY_TEMPLATES.length).toBe(28)
+  it('كل قوالب الأنشطة الـ29 معرفة بوحدات غير فارغة وأيقونة وقالب فاتورة', () => {
+    expect(ACTIVITY_TEMPLATES.length).toBe(29)
     for (const a of ACTIVITY_TEMPLATES) {
       expect(a.modules.length, a.id).toBeGreaterThan(0)
       expect(a.nameAr.length).toBeGreaterThan(0)

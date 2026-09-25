@@ -9,7 +9,7 @@ import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.
 import { Btn, inputCls, useToast, Modal, EmptyState } from '../components/ui.tsx'
 
 export function WarehousesPage() {
-  const { warehouses, addWarehouse, removeWarehouse, items, categories, transfers, purchases, sales, saleReturns, purchaseReturns } = useDataStore()
+  const { warehouses, addWarehouse, removeWarehouse, items, categories, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const [name, setName] = useState('')
@@ -21,8 +21,8 @@ export function WarehousesPage() {
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const stock = useMemo(
-    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns)),
-    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns],
+    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)),
+    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders],
   )
   const selectedWarehouse = warehouses.find((w) => w.id === viewWarehouseId) ?? null
   const rows = useMemo(() => {

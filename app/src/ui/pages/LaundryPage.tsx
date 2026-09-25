@@ -15,6 +15,8 @@ import {
 } from '../../core/laundry.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderReportShell } from '../../core/reportPrint.ts'
@@ -30,7 +32,7 @@ const STATUS_STYLE: Record<LaundryStatus, string> = {
 interface DraftLine { desc: string; service: LaundryService; qty: string; price: string }
 
 export function LaundryPage() {
-  const { laundryOrders, customers, journal, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
+  const { laundryOrders, customers, journal, paymentTerminals, paymentTerminalTransactions, openLaundryOrder, setLaundryStatus, deliverLaundryOrder, cancelLaundryOrder, refundLaundryOrder, setLaundryRack } = useDataStore()
   const { setup, reportPrint, receipt } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -87,7 +89,9 @@ export function LaundryPage() {
   /* ─── عرض/تسليم/إلغاء ─── */
   const [viewingId, setViewingId] = useState<number | null>(null)
   const viewing = viewingId != null ? laundryOrders.find((o) => o.id === viewingId) : null
+  const viewingTerminalCharge = viewing ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'laundry' && row.documentId === String(viewing.id)) : undefined
   const [deliverTreasury, setDeliverTreasury] = useState('1101')
+  const [deliverTerminal, setDeliverTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const viewingEntries = viewing
     ? journal.filter((e) => [viewing.prepaidEntryId, viewing.deliverEntryId, viewing.cancelEntryId, ...(viewing.refunds ?? []).map((r) => r.journalEntryId)].includes(e.id))
     : []
@@ -96,7 +100,8 @@ export function LaundryPage() {
   const move = (o: LaundryOrder, to: LaundryStatus) => {
     try {
       if (to === 'delivered') {
-        const u = deliverLaundryOrder({ orderId: o.id, treasury: deliverTreasury as '1101' })
+        const terminal = paymentTerminals.find((row) => row.id === deliverTerminal.terminalId)
+        const u = deliverLaundryOrder({ orderId: o.id, treasury: (terminal?.settlementAccountCode ?? deliverTreasury) as '1101', terminalPayment: terminal ? { terminalId: terminal.id, providerReference: deliverTerminal.providerReference.trim(), cardLast4: deliverTerminal.cardLast4 || undefined } : undefined })
         toast.show(`سُلِّم ${u.orderNumber} وتولد قيد الإيراد — المحصَّل ${fmt(u.grandMinor - u.prepaidMinor)} ${cur.symbol} ✅`)
         setViewingId(u.id)
       } else if (to === 'cancelled') {
@@ -335,7 +340,7 @@ export function LaundryPage() {
               <div className="space-y-2">
                 {LAUNDRY_TRANSITIONS[viewing.status].includes('delivered') && (
                   <Field label="التحصيل في" hint={`المتبقي المتوقع ${fmt(Math.max(0, viewing.totalMinor - viewing.prepaidMinor))} ${cur.symbol} + الضريبة إن كانت مضافة`}>
-                    <TreasuryPicker value={deliverTreasury} onChange={setDeliverTreasury} compact />
+                    <div className="space-y-2"><PaymentMethodPicker value={{treasury:deliverTreasury,terminalPayment:deliverTerminal}} onChange={value=>{setDeliverTreasury(value.treasury);setDeliverTerminal(value.terminalPayment)}} operation="receipt"/></div>
                   </Field>
                 )}
                 <div className="flex flex-wrap gap-2">
@@ -365,10 +370,11 @@ export function LaundryPage() {
                 allowCredit={viewing.customerId != null}
                 creditLabel="حساب العميل"
                 hint="عميل غير راضٍ؟ اختر القطع المتضررة (بقع لم تُزل/قطعة تالفة) — يعكس الإيراد وحصة الضريبة بقيد تلقائي، لا مخزون يتحرك."
+                terminalOriginal={viewingTerminalCharge ? { transactionId: viewingTerminalCharge.id, terminalName: paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.nameAr ?? viewingTerminalCharge.terminalId } : undefined}
                 refundableItems={viewing.lines.map((l, li) => ({ key: `line:${li}`, label: `${l.desc} — ${LAUNDRY_SERVICE_LABELS[l.service]?.nameAr ?? l.service}`, valueMinor: Math.round(l.qty * l.unitPriceMinor), qty: l.qty }))}
                 onSubmit={(a) => {
                   try {
-                    const u = refundLaundryOrder({ orderId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: a.treasury, reason: a.reason, approvedBy: a.approvedBy })
+                    const u = refundLaundryOrder({ orderId: viewing.id, amountMinor: a.amountMinor, mode: a.mode, treasury: viewingTerminalCharge ? (paymentTerminals.find((row) => row.id === viewingTerminalCharge.terminalId)?.settlementAccountCode ?? a.treasury) : a.treasury, reason: a.reason, approvedBy: a.approvedBy, terminalRefund: a.terminalRefund })
                     toast.show(`سُجل مرتجع خدمة ${u.orderNumber} بقيمة ${fmt(a.amountMinor)} ${cur.symbol} وتولد القيد العاكس ✅`)
                   } catch (err) { toast.show((err as Error).message, 'error') }
                 }}

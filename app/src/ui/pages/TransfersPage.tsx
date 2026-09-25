@@ -13,11 +13,11 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 interface DraftLine { itemId: string; qty: string }
 
 export function TransfersPage() {
-  const { transfers, warehouses, items, postTransfer, purchases, sales, saleReturns, purchaseReturns } = useDataStore()
+  const { transfers, warehouses, items, postTransfer, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders } = useDataStore()
   const toast = useToast()
   const whName = (id: number) => warehouses.find((w) => w.id === id)?.nameAr ?? '—'
 
-  const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns])
+  const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders])
 
   const [tab, setTab] = useState<'list' | 'balances'>('list')
 
@@ -198,7 +198,7 @@ export function TransfersPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!fromId || !toId || !lines.some((l) => l.itemId)}>💾 ترحيل التحويل</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!fromId || !toId || !lines.some((l) => l.itemId)}>💾 ترحيل التحويل</Btn>
           </div>
         </div>
       </Modal>

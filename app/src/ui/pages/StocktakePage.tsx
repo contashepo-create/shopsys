@@ -111,7 +111,7 @@ export function StocktakePage() {
             </div>
             <div className="flex gap-2">
               <Btn variant="ghost" onClick={() => setSession(false)}>إلغاء الجلسة</Btn>
-              <Btn onClick={submit} disabled={!liveCounts.length}>✅ ترحيل الجرد</Btn>
+              <Btn onClick={submit} shortcut="F9" disabled={!liveCounts.length}>✅ ترحيل الجرد</Btn>
             </div>
           </div>
 

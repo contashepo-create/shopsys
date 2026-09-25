@@ -275,7 +275,7 @@ export function CustodyPage() {
           <Field label="البيان"><input value={fundDesc} onChange={(e) => setFundDesc(e.target.value)} className={inputCls} placeholder="عهدة أسبوع، تشغيل موقع…" /></Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setFundOpen(false)}>إلغاء</Btn>
-            <Btn onClick={doFund} disabled={!fundAmount.trim()}>💾 تعزيز وقيد</Btn>
+            <Btn onClick={doFund} shortcut="F9" disabled={!fundAmount.trim()}>💾 تعزيز وقيد</Btn>
           </div>
         </div>
       </Modal>
@@ -303,7 +303,7 @@ export function CustodyPage() {
             </label>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setExpOpen(false)}>إلغاء</Btn>
-              <Btn onClick={doExpense} disabled={!expAmount.trim() || !expDesc.trim()}>💾 تسجيل المصروف</Btn>
+              <Btn onClick={doExpense} shortcut="F9" disabled={!expAmount.trim() || !expDesc.trim()}>💾 تسجيل المصروف</Btn>
             </div>
           </div>
         )}
@@ -337,7 +337,7 @@ export function CustodyPage() {
             })()}
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSettleOpen(false)}>إلغاء</Btn>
-              <Btn onClick={doSettle} disabled={returnAmount.trim() === ''}>⚖️ تنفيذ التسوية والإغلاق</Btn>
+              <Btn onClick={doSettle} shortcut="F9" disabled={returnAmount.trim() === ''}>⚖️ تنفيذ التسوية والإغلاق</Btn>
             </div>
           </div>
         )}
