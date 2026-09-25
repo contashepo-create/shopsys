@@ -30,7 +30,7 @@ import { normalizeRefQuery } from '../../core/refcode.ts'
 import { ItemQuickPicker, PartyQuickPicker, QuickSelect} from '../components/KeyboardPickers.tsx'
 
 export function SalesInvoicesPage() {
-  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission } = useDataStore()
+  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission } = useDataStore()
   const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -86,7 +86,7 @@ export function SalesInvoicesPage() {
     hasReturns: saleReturns.some((r) => r.saleId === s.id),
     hasSoldSerials: serials.some((u) => u.saleId === s.id && u.status === 'sold'),
     hasInstallmentPlan: installmentPlans.some((p) => p.saleId === s.id),
-    hasSettlementAllocation: clientSettlements.some((st) => st.allocations.some((a) => a.docKey === `sale:${s.id}`)),
+    hasSettlementAllocation: clientSettlements.some((st) => st.allocations.some((a) => a.docKey === `sale:${s.id}`)) || vouchers.some((voucher) => voucher.allocations?.some((a) => a.docKey === `sale:${s.id}`)),
     shiftClosed: s.shiftId != null && shifts.some((sh) => sh.id === s.shiftId && sh.status === 'closed'),
   })
 

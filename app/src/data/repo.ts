@@ -94,7 +94,7 @@ import {
   type Property, type PropertyUnit, type Lease, type RentFrequency, type UnitStatus,
 } from '../core/realestate.ts'
 import {
-  buildIssueLine, buildMaterialIssueEntry, allocateClientPayment, buildClientReceiptEntry, computeProjectEvm,
+  buildIssueLine, buildMaterialIssueEntry, allocateClientPayment, validatePaymentAllocations, buildClientReceiptEntry, computeProjectEvm,
   validateApprovalFlow, applyApprovalDecision, APPROVAL_ACTION_LABELS,
   type MaterialRequisition, type MaterialIssueLine, type IssueLineInput, type StockMove,
   type OpenInvoice, type FifoAllocation, type EvmProjectResult,
@@ -976,6 +976,12 @@ export interface Voucher {
   costCenterId?: number | null
   /** مركز تكلفة مركبة الأسطول عند سند صرف مصروف صيانة/تشغيل */
   vehicleId?: number | null
+  /** توزيع قبض/سداد الطرف على عدة مستندات — يثبت كـFIFO تلقائياً إن غاب */
+  allocations?: FifoAllocation[]
+  /** المتبقي تحت الحساب بعد توزيع السند */
+  unallocatedMinor?: number
+  /** قيد العكس، إن عُكس السند من مسار التصحيح */
+  reversalEntryId?: number | null
 }
 
 /**
@@ -1596,6 +1602,8 @@ interface DataState {
     vehicleCostCategory?: string
     /** تحصيل وارد عبر ماكينة: يُحفظ charge مع السند والقيد ذَرّياً. */
     terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }
+    /** توزيع يدوي اختياري على فواتير الطرف؛ عند غيابه يوزع FIFO على المستندات المفتوحة. */
+    allocations?: FifoAllocation[]
     /** مصروف التحويل بين الخزائن (رسوم بنكية) — يخرج من المصدر ويقيد 5108 (طلب المالك) */
     feeMinor?: number
   }) => Voucher
@@ -1605,6 +1613,8 @@ interface DataState {
   postManualEntry: (args: { date: string; description: string; lines: JournalLine[] }) => JournalEntry
   /** عكس قيد موثق — التصحيح الوحيد المسموح (Append-Only) */
   reverseEntry: (entryId: number, reason: string) => JournalEntry
+  /** عكس سند قبض/صرف مع تحديث أثره في كشف الطرف وتخصيصاته */
+  reverseVoucher: (voucherId: number, reason: string) => Voucher
   /** فتح وردية كاشير برصيد درج افتتاحي — لا ورديتين مفتوحتين معاً */
   openShift: (openedBy: string, openingCashMinor: number) => Shift
   /** إقفال الوردية بالنقدية المعدودة — يظهر العجز/الزيادة في الملخص */
@@ -1940,6 +1950,8 @@ interface DataState {
   issueMaterials: (args: { projectId: number; issuedByEmployeeId: number; receivedByEmployeeId: number; lines: IssueLineInput[]; notes: string }) => MaterialRequisition
   /** الفواتير المفتوحة لعميل (بيع آجل + مستخلصات مشاريعه الآجلة) بعد التحصيلات والمرتجعات */
   getOpenClientInvoices: (customerId: number) => OpenInvoice[]
+  /** فواتير المورد المفتوحة بعد المدفوعات الأولية وتوزيعات سندات الصرف */
+  getOpenSupplierInvoices: (supplierId: number) => OpenInvoice[]
   /** تحصيل من عميل على مستوى الحساب: FIFO افتراضياً أو مطابقة فاتورة محددة اختيارياً */
   receiveClientPayment: (args: { customerId: number; amountMinor: number; treasury: string; specificDocKey?: string | null; notes?: string; terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string } }) => { settlementNumber: string; allocations: FifoAllocation[]; unallocatedMinor: number }
   /** دفعة مقدمة لمقاول باطن: 1111 ← خزينة (تُسترد من شهاداته) */
@@ -4466,6 +4478,21 @@ export const useDataStore = create<DataState>()(
         }
         if (args.partyKind === 'customer' && args.partyId != null && !state.customers.some((c) => c.id === args.partyId)) throw new Error('العميل غير موجود — سجّله أولاً')
         if (args.partyKind === 'supplier' && args.partyId != null && !state.suppliers.some((s) => s.id === args.partyId)) throw new Error('المورد غير موجود — سجّله أولاً')
+        if (args.kind === 'receipt' && args.counterAccountCode === '1104' && (args.partyKind !== 'customer' || args.partyId == null)) throw new Error('سند قبض العملاء 1104 يتطلب اختيار عميل مسجل')
+        if (args.kind === 'payment' && args.counterAccountCode === '2101' && (args.partyKind !== 'supplier' || args.partyId == null)) throw new Error('سداد الموردين 2101 يتطلب اختيار مورد مسجل')
+        let partyAllocations: FifoAllocation[] | undefined
+        let partyUnallocatedMinor: number | undefined
+        if (args.kind === 'receipt' && args.counterAccountCode === '1104' && args.partyId != null) {
+          const openInvoices = get().getOpenClientInvoices(args.partyId)
+          const result = args.allocations ? validatePaymentAllocations(args.amountMinor, openInvoices, args.allocations) : allocateClientPayment(args.amountMinor, openInvoices)
+          partyAllocations = result.allocations
+          partyUnallocatedMinor = result.unallocatedMinor
+        } else if (args.kind === 'payment' && args.counterAccountCode === '2101' && args.partyId != null) {
+          const openInvoices = get().getOpenSupplierInvoices(args.partyId)
+          const result = args.allocations ? validatePaymentAllocations(args.amountMinor, openInvoices, args.allocations) : allocateClientPayment(args.amountMinor, openInvoices)
+          partyAllocations = result.allocations
+          partyUnallocatedMinor = result.unallocatedMinor
+        }
         if (args.costCenterId != null && !state.costCenters.some((center) => center.id === args.costCenterId && center.isActive)) throw new Error('مركز التكلفة العام غير موجود أو غير نشط')
         if (args.costCenterId != null && args.kind !== 'payment') throw new Error('مركز التكلفة العام في السندات مرتبط بمصروفات الصرف فقط')
         if (args.costCenterId != null && args.kind === 'payment' && !args.counterAccountCode.startsWith('5') && !state.customAccounts.some((account) => account.code === args.counterAccountCode && account.rootType === 'expenses')) throw new Error('مركز التكلفة العام لا يرتبط إلا بحساب مصروف')
@@ -4530,6 +4557,8 @@ export const useDataStore = create<DataState>()(
           partyId: args.partyId ?? null,
           costCenterId: args.costCenterId ?? null,
           vehicleId: args.vehicleId ?? null,
+          ...(partyAllocations ? { allocations: partyAllocations, unallocatedMinor: partyUnallocatedMinor ?? 0 } : {}),
+          reversalEntryId: null,
         }
 
         // ═══ إصلاح المالك: «المبالغ في الملف غير مطابقة لكشف الحساب» ═══
@@ -4647,6 +4676,7 @@ export const useDataStore = create<DataState>()(
       reverseEntry: (entryId, reason) => {
         const state = get()
         const original = state.journal.find((e) => e.id === entryId)
+        if (!reason.trim()) throw new Error('سبب العكس إلزامي — اكتب سبباً واضحاً للمراجعة')
         if (!original) throw new Error('القيد غير موجود')
         if (original.reversedByEntryId) throw new Error('القيد معكوس بالفعل — لا يُعكس مرتين')
         if (original.reversesEntryId) throw new Error('لا يُعكس قيد عاكس — عد للقيد الأصلي')
@@ -4705,6 +4735,14 @@ export const useDataStore = create<DataState>()(
           if (state.employeeAdvances.some((a) => a.journalEntryId === original.id)) {
             throw new Error('لا يُعكس هذا القيد مباشرة: مرتبط بسلفة موظف — سوِّها من صفحة الموظفين')
           }
+          const voucher = state.vouchers.find((v) => v.journalEntryId === original.id)
+          if (voucher?.reversalEntryId) throw new Error('السند معكوس بالفعل — لا يُعكس مرتين')
+          if (voucher && state.paymentTerminalTransactions.some((tx) => tx.documentType === 'receipt_voucher' && tx.documentId === voucher.voucherNumber && tx.kind === 'charge')) {
+            throw new Error('السند مرتبط بماكينة دفع — استخدم استرداد العملية من مستندها الأصلي، لا تعكس السند مباشرة')
+          }
+          if (state.vehicleCostEntries.some((entry) => entry.journalEntryId === original.id)) {
+            throw new Error('لا يُعكس هذا القيد مباشرة: مرتبط بمركز تكلفة مركبة — صححه من مستند المصروف/الصيانة')
+          }
         }
         // G10: قيد بيع بتغطية تأمينية — عكسه المحاسبي وحده يترك المخزون مخصوماً
         // والمطالبة مفتوحة (تُحصَّل عن بيع أُلغي!): نرجع البضاعة ونغلق المطالبة معاً
@@ -4747,10 +4785,22 @@ export const useDataStore = create<DataState>()(
             ...state.journal.map((e) => (e.id === original.id ? { ...e, reversedByEntryId: newId } : e)),
             reversal,
           ],
+          vouchers: state.vouchers.map((voucher) => voucher.journalEntryId === original.id ? { ...voucher, reversalEntryId: newId } : voucher),
           items: updatedItems,
           insuranceClaims: updatedClaims,
         })
         return reversal
+      },
+
+      reverseVoucher: (voucherId, reason) => {
+        const voucher = get().vouchers.find((item) => item.id === voucherId)
+        if (!voucher) throw new Error('السند غير موجود')
+        if (voucher.reversalEntryId) throw new Error('السند معكوس بالفعل — لا يُعكس مرتين')
+        const reversal = get().reverseEntry(voucher.journalEntryId, reason)
+        const current = get()
+        const updatedVoucher = { ...voucher, reversalEntryId: reversal.id }
+        set({ vouchers: current.vouchers.map((item) => item.id === voucherId ? updatedVoucher : item) })
+        return updatedVoucher
       },
 
       openShift: (openedBy, openingCashMinor) => {
@@ -4857,7 +4907,7 @@ export const useDataStore = create<DataState>()(
           hasReturns: state.saleReturns.some((r) => r.saleId === sale.id),
           hasSoldSerials: state.serials.some((u) => u.saleId === sale.id && u.status === 'sold'),
           hasInstallmentPlan: state.installmentPlans.some((p) => p.saleId === sale.id),
-          hasSettlementAllocation: state.clientSettlements.some((st) => st.allocations.some((a) => a.docKey === `sale:${sale.id}`)),
+          hasSettlementAllocation: state.clientSettlements.some((st) => st.allocations.some((a) => a.docKey === `sale:${sale.id}`)) || state.vouchers.some((voucher) => !voucher.reversalEntryId && voucher.allocations?.some((a) => a.docKey === `sale:${sale.id}`)),
           shiftClosed: sale.shiftId != null && state.shifts.some((sh) => sh.id === sale.shiftId && sh.status === 'closed'),
         })
         if (blocks.length) throw new Error(`لا يمكن تعديل هذه الفاتورة: ${blocks.join('؛ ')}`)
@@ -8365,6 +8415,12 @@ export const useDataStore = create<DataState>()(
           if (st.customerId !== customerId) continue
           for (const a of st.allocations) settled.set(a.docKey, (settled.get(a.docKey) ?? 0) + a.appliedMinor)
         }
+        // سند القبض من شاشة السندات يشارك نفس دفتر التوزيع، حتى لا يظهر
+        // الرصيد مسدداً في الكشف بينما تبقى الفاتورة مفتوحة في معالج التحصيل.
+        for (const voucher of state.vouchers) {
+          if (voucher.reversalEntryId || voucher.kind !== 'receipt' || voucher.partyKind !== 'customer' || voucher.partyId !== customerId) continue
+          for (const a of voucher.allocations ?? []) settled.set(a.docKey, (settled.get(a.docKey) ?? 0) + a.appliedMinor)
+        }
         const open: OpenInvoice[] = []
         // فواتير البيع: الجزء الآجل فقط ينشئ ذمة — مخصوماً منه مرتجعات «على الحساب»
         for (const sale of state.sales) {
@@ -8390,6 +8446,27 @@ export const useDataStore = create<DataState>()(
           open.push({ docKey: key, docLabel: `مستخلص ${ex.extractNumber}`, date: ex.date, dueMinor: ex.totals.dueMinor, settledMinor: settled.get(key) ?? 0 })
         }
         return open.filter((inv) => inv.dueMinor - inv.settledMinor > 0).sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
+      },
+
+      getOpenSupplierInvoices: (supplierId) => {
+        const state = get()
+        const settled = new Map<string, number>()
+        for (const voucher of state.vouchers) {
+          if (voucher.reversalEntryId || voucher.kind !== 'payment' || voucher.partyKind !== 'supplier' || voucher.partyId !== supplierId) continue
+          for (const allocation of voucher.allocations ?? []) settled.set(allocation.docKey, (settled.get(allocation.docKey) ?? 0) + allocation.appliedMinor)
+        }
+        return state.purchases
+          .filter((purchase) => purchase.supplierId === supplierId)
+          .map((purchase) => {
+            const returnedOnDebt = state.purchaseReturns
+              .filter((ret) => ret.purchaseId === purchase.id && ret.refund === 'debt')
+              .reduce((sum, ret) => sum + (ret.supplierValueMinor ?? ret.totalMinor) + (ret.inputVatShareMinor ?? 0), 0)
+            const due = Math.max(0, (purchase.supplierDueMinor ?? purchase.grandTotalMinor) - returnedOnDebt)
+            const docKey = `purchase:${purchase.id}`
+            return { docKey, docLabel: `فاتورة شراء ${purchase.invoiceNumber}`, date: purchase.date, dueMinor: due, settledMinor: purchase.paidMinor + (settled.get(docKey) ?? 0) }
+          })
+          .filter((invoice) => invoice.dueMinor - invoice.settledMinor > 0)
+          .sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
       },
 
       receiveClientPayment: (args) => {

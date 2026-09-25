@@ -36,7 +36,7 @@ interface WizardLine {
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, journal, treasuries, warehouses, postSaleReturn, clientSettlements, paymentTerminalTransactions } = useDataStore()
+  const { sales, saleReturns, customers, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -131,6 +131,7 @@ export function SaleReturnsPage() {
       const priorCash = priorReturns.reduce((a, r) => a + returnCashRefundMinor(r), 0)
       const settled = clientSettlements.reduce(
         (a, st) => a + st.allocations.filter((al) => al.docKey === `sale:${sale.id}`).reduce((b, al) => b + al.appliedMinor, 0), 0)
+        + vouchers.reduce((a, voucher) => a + (!voucher.reversalEntryId ? (voucher.allocations ?? []).filter((al) => al.docKey === `sale:${sale.id}`).reduce((b, al) => b + al.appliedMinor, 0) : 0), 0)
       const openCredit = sale.totals.totalMinor - paidAtSale - priorCredit - settled
       const received = paidAtSale + settled - priorCash
       // التوزيع الرباعي: تلقائي حسب نمط الرد، أو يدوي حر (custom) مع أخطائه المفصلة.
@@ -157,7 +158,7 @@ export function SaleReturnsPage() {
         .reduce((a, s) => a + Math.round(s.qty * sale.lines[s.lineIndex].unitCostMinor), 0)
       return { totals, alloc, allocErrors, damagedCost, openCredit: Math.max(0, openCredit), received: Math.max(0, received) }
     } catch { return null }
-  }, [sale, specs, lineErrors, refund, saleReturns, clientSettlements, customCash, customCredit, customStore, customWaived, cur.decimals])
+  }, [sale, specs, lineErrors, refund, saleReturns, clientSettlements, vouchers, customCash, customCredit, customStore, customWaived, cur.decimals])
 
   const approval = useSupervisorApproval()
   const submit = () => {

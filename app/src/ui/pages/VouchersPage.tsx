@@ -52,7 +52,7 @@ const PAYMENT_COUNTERS = [
 ]
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, addLatePurchaseExpense, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, vehicles } = useDataStore()
+  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, vehicles } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup } = useAppStore()
   const toast = useToast()
@@ -78,9 +78,13 @@ export function VouchersPage() {
   const [vehicleId, setVehicleId] = useState<number | null>(null)
   const [costCenterId, setCostCenterId] = useState<number | null>(null)
   const [vehicleCostCategory, setVehicleCostCategory] = useState('maintenance')
+  const [allocationDraft, setAllocationDraft] = useState<Record<string, string>>({})
   const [viewing, setViewing] = useState<Voucher | null>(null)
+  const [reverseTarget, setReverseTarget] = useState<Voucher | null>(null)
+  const [reverseReason, setReverseReason] = useState('')
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
+  const reverseApproval = useSupervisorApproval('acc.journal.reverse')
   // ربط الشجرة المفتوحة بالسندات (طلب المالك): حساب إيراد مخصص يظهر في القبض،
   // وحساب مصروف مخصص يظهر في الصرف — ويُعالج بقيد سليم فور اختياره
   const counters = useMemo(() => {
@@ -144,11 +148,23 @@ export function VouchersPage() {
     setVehicleId(null)
     setCostCenterId(null)
     setVehicleCostCategory('maintenance')
+    setAllocationDraft({})
     setOpen(true)
   }
 
   // سداد عميل (1104) في القبض أو سداد مورد (2101) في الصرف ⇒ نطلب تحديد الطرف
   const needsParty = (kind === 'receipt' && counter === '1104') || (kind === 'payment' && counter === '2101')
+  const partyInvoices = !needsParty || partyId <= 0
+    ? []
+    : kind === 'receipt' ? getOpenClientInvoices(partyId) : getOpenSupplierInvoices(partyId)
+  const hasManualAllocation = Object.values(allocationDraft).some((value) => value.trim() !== '')
+  const manualAllocations = hasManualAllocation
+    ? partyInvoices.flatMap((invoice) => {
+        const amount = Number(allocationDraft[invoice.docKey] || 0)
+        return Number.isInteger(amount) && amount > 0 ? [{ docKey: invoice.docKey, docLabel: invoice.docLabel, appliedMinor: amount }] : []
+      })
+    : undefined
+  const manualAllocatedMinor = manualAllocations?.reduce((sum, allocation) => sum + allocation.appliedMinor, 0) ?? 0
   const isPurchaseExpense = kind === 'payment' && counter === PURCHASE_EXPENSE_CODE
   const isCustomExpense = kind === 'payment' && customAccounts.some((account) => account.code === counter && account.rootType === 'expenses')
   const selectedTerminal = terminalPayment.terminalId ? paymentTerminals.find((terminal) => terminal.id === terminalPayment.terminalId) : undefined
@@ -169,6 +185,23 @@ export function VouchersPage() {
   const save = () => {
     if (kind === 'payment' && !(isPurchaseExpense && expPaidBy === 'payable')) { paymentApproval.request(() => doSave()); return }
     doSave()
+  }
+  const confirmReverse = () => {
+    if (!reverseTarget || !reverseReason.trim()) {
+      toast.show('اكتب سبب العكس قبل الاعتماد', 'error')
+      return
+    }
+    reverseApproval.request(() => {
+      try {
+        const reversed = reverseVoucher(reverseTarget.id, reverseReason.trim())
+        setViewing(reversed)
+        setReverseTarget(null)
+        setReverseReason('')
+        toast.show(`تم عكس السند ${reversed.voucherNumber} بقيد عاكس #${reversed.reversalEntryId} ✓`)
+      } catch (e) {
+        toast.show((e as Error).message, 'error')
+      }
+    })
   }
   const doSave = () => {
     try {
@@ -204,6 +237,7 @@ export function VouchersPage() {
         description: desc.trim(),
         partyKind: needsParty ? (kind === 'receipt' ? 'customer' : 'supplier') : null,
         partyId: needsParty ? partyId : null,
+        allocations: manualAllocations,
         costCenterId: canLinkCostCenter ? costCenterId : null,
         vehicleId: canLinkVehicle ? vehicleId : null,
         vehicleCostCategory: canLinkVehicle && vehicleId != null ? vehicleCostCategory : undefined,
@@ -268,6 +302,7 @@ export function VouchersPage() {
                   <td className="px-4 py-3">
                     <div className="font-bold text-slate-800 dark:text-white">{v.voucherNumber}</div>
                     <div className="text-[11px] text-slate-400">{v.date.slice(0, 16).replace('T', ' ')}{v.description && ` · ${v.description}`}</div>
+                    {v.reversalEntryId && <div className="text-[10px] font-bold text-amber-600">معكوس بقيد #{v.reversalEntryId}</div>}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${v.kind === 'receipt' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'}`}>
@@ -307,7 +342,7 @@ export function VouchersPage() {
             </>
           )}
           <Field label={kind === 'receipt' ? 'مصدر النقدية (الحساب المقابل)' : 'وجهة النقدية (الحساب المقابل)'}>
-            <QuickSelect value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0) }} className={inputCls}>
+            <QuickSelect value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0); setAllocationDraft({}) }} className={inputCls}>
               <option value="">اختر…</option>
               {counters.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
             </QuickSelect>
@@ -316,7 +351,7 @@ export function VouchersPage() {
           {quickAccountOpen&&<div className="grid grid-cols-[110px_1fr_auto] gap-2 rounded-xl border border-brand-500/20 bg-brand-500/5 p-2"><input className={inputCls} value={quickAccountCode} onChange={e=>setQuickAccountCode(e.target.value)} placeholder={kind==='payment'?'51xx':'41xx'} dir="ltr"/><input className={inputCls} value={quickAccountName} onChange={e=>setQuickAccountName(e.target.value)} placeholder="اسم البند"/><Btn onClick={addQuickAccount} disabled={!quickAccountCode.trim()||!quickAccountName.trim()}>إضافة</Btn></div>}
           {needsParty && (
             <Field label={kind === 'receipt' ? 'أي عميل؟ *' : 'أي مورد؟ *'} hint="يظهر السند في كشف حسابه">
-              <PartyQuickPicker parties={kind === 'receipt' ? customers : suppliers} value={partyId} onChange={setPartyId} cashLabel="اختر الطرف" label={kind === 'receipt' ? 'بحث العميل' : 'بحث المورد'} showCash={false} />
+              <PartyQuickPicker parties={kind === 'receipt' ? customers : suppliers} value={partyId} onChange={(id) => { setPartyId(id); setAllocationDraft({}) }} cashLabel="اختر الطرف" label={kind === 'receipt' ? 'بحث العميل' : 'بحث المورد'} showCash={false} />
             </Field>
           )}
           {needsParty && partyId > 0 && liveBalance !== null && (
@@ -324,6 +359,24 @@ export function VouchersPage() {
               {kind === 'receipt'
                 ? liveBalance > 0 ? `💳 الرصيد الحالي: عليه ${fmt(liveBalance)} ${cur.symbol}` : liveBalance < 0 ? `💳 الرصيد الحالي: له عندك ${fmt(-liveBalance)} ${cur.symbol}` : '💳 رصيده صفر — لا مديونية'
                 : liveBalance > 0 ? `💳 الرصيد الحالي: مستحق له ${fmt(liveBalance)} ${cur.symbol}` : liveBalance < 0 ? `💳 الرصيد الحالي: لك عنده ${fmt(-liveBalance)} ${cur.symbol}` : '💳 رصيده صفر'}
+            </div>
+          )}
+          {needsParty && partyId > 0 && partyInvoices.length > 0 && (
+            <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2 text-[11px] font-black text-indigo-700 dark:text-indigo-300">
+                <span>توزيع السداد على الفواتير (اختياري — الافتراضي FIFO)</span>
+                <button type="button" className="text-indigo-600 hover:underline" onClick={() => setAllocationDraft(Object.fromEntries(partyInvoices.map((invoice) => [invoice.docKey, String(invoice.dueMinor - invoice.settledMinor)])))}>توزيع كامل المتبقي</button>
+              </div>
+              <div className="space-y-1.5 max-h-48 overflow-auto">
+                {partyInvoices.map((invoice) => {
+                  const remaining = invoice.dueMinor - invoice.settledMinor
+                  return <div key={invoice.docKey} className="grid grid-cols-[1fr_120px] items-center gap-2 text-[11px]">
+                    <span>{invoice.docLabel}<b className="block text-slate-500">متبقي {fmt(remaining)} {cur.symbol}</b></span>
+                    <input className={inputCls} type="number" min="0" step="1" inputMode="numeric" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="اتركه لـ FIFO" />
+                  </div>
+                })}
+              </div>
+              {hasManualAllocation && <div className={`text-[11px] font-bold ${manualAllocatedMinor > toMinor(amount || '0', cur.decimals) ? 'text-rose-600' : 'text-indigo-700 dark:text-indigo-300'}`}>الموزع الآن: {fmt(manualAllocatedMinor)} {cur.symbol} — المتبقي تحت الحساب بعد التوزيع: {fmt(Math.max(0, toMinor(amount || '0', cur.decimals) - manualAllocatedMinor))} {cur.symbol}</div>}
             </div>
           )}
           {kind === 'payment' && counter === '2101' && partyId > 0 && (() => {
@@ -450,7 +503,9 @@ export function VouchersPage() {
                 {viewing.kind === 'receipt' ? '+' : '-'}{fmt(viewing.amountMinor)} {cur.symbol}
               </div>
               {viewing.description && <div className="text-[12px] text-slate-400 mt-1">{viewing.description}</div>}
+              {viewing.allocations && <div className="text-[11px] text-indigo-600 mt-2">موزع على {viewing.allocations.length} مستنداً{(viewing.unallocatedMinor ?? 0) > 0 ? ` — تحت الحساب ${fmt(viewing.unallocatedMinor ?? 0)}` : ''}</div>}
             </div>
+            {viewing.allocations && viewing.allocations.length > 0 && <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 text-[11px] space-y-1"><b>تفصيل توزيع السداد</b>{viewing.allocations.map((allocation) => <div key={allocation.docKey} className="flex justify-between gap-2"><span>{allocation.docLabel}</span><span className="font-bold">{fmt(allocation.appliedMinor)} {cur.symbol}</span></div>)}</div>}
             <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] overflow-hidden">
               <div className="px-4 py-2.5 text-[12px] font-bold text-rose-600 dark:text-rose-400 border-b border-rose-500/10 flex items-center gap-1.5">
                 <BookOpenText size={13} /> القيد المتولد #{entry.entryNumber}
@@ -469,10 +524,22 @@ export function VouchersPage() {
                 </tbody>
               </table>
             </div>
+            <div className="flex items-center justify-between gap-2">
+              {viewing.reversalEntryId ? <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">معكوس بقيد #{viewing.reversalEntryId} — لا يدخل في أرصدة الطرف</span> : <span className="text-[11px] text-slate-400">العكس ينشئ قيداً عاكساً ولا يحذف السند الأصلي.</span>}
+              {!viewing.reversalEntryId && <Btn variant="danger" onClick={() => { setReverseTarget(viewing); setReverseReason('') }}>↩️ عكس السند</Btn>}
+            </div>
           </div>
         )}
       </Modal>
+      <Modal open={!!reverseTarget} onClose={() => setReverseTarget(null)} title={reverseTarget ? `عكس السند ${reverseTarget.voucherNumber}` : ''}>
+        <div className="space-y-4">
+          <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3 text-[12px] text-amber-800 dark:text-amber-200">سيُنشأ قيد عاكس Append-only ويُستبعد السند من كشف الطرف والتخصيصات المفتوحة. لا يمكن التراجع عن العكس.</div>
+          <Field label="سبب العكس *"><textarea value={reverseReason} onChange={(event) => setReverseReason(event.target.value)} className={inputCls} rows={3} placeholder="مثال: أُدخل السند على الطرف الخطأ…" /></Field>
+          <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setReverseTarget(null)}>إلغاء</Btn><Btn variant="danger" onClick={confirmReverse} disabled={!reverseReason.trim()}>تأكيد العكس</Btn></div>
+        </div>
+      </Modal>
       {paymentApproval.dialog}
+      {reverseApproval.dialog}
     </div>
   )
 }
