@@ -35,6 +35,19 @@ describe('التحكم بلوحة المفاتيح', () => {
     fireEvent.keyDown(document, { key: 'F8' }); expect(draft).toBe(1)
   })
 
+  it('يشغّل F9 لحفظ الصنف وحفظ السند داخل النوافذ', () => {
+    let itemSaved = 0
+    render(<MemoryRouter><KeyboardNavigation/><div role="dialog"><button onClick={() => itemSaved++}>💾 حفظ الصنف <kbd>F9</kbd></button></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(itemSaved).toBe(1)
+    cleanup()
+
+    let voucherSaved = 0
+    render(<MemoryRouter><KeyboardNavigation/><div role="dialog"><button onClick={() => voucherSaved++}>💾 حفظ السند <kbd>F9</kbd></button></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(voucherSaved).toBe(1)
+  })
+
   it('يفضل F9 زر العملية داخل النافذة المفتوحة على زر الصفحة الخلفية', () => {
     let background = 0, modal = 0
     render(<MemoryRouter><KeyboardNavigation/><button onClick={() => background++}>اعتماد وترحيل</button><div role="dialog" aria-modal="true"><button onClick={() => modal++}>اعتماد وترحيل <kbd>F9</kbd></button></div></MemoryRouter>)

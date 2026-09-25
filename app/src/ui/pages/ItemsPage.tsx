@@ -1152,7 +1152,7 @@ function ItemForm({
 
       <div className="flex justify-end gap-2 pt-1">
         <Btn variant="ghost" onClick={onCancel}>إلغاء</Btn>
-        <Btn onClick={onSave}>💾 حفظ الصنف</Btn>
+        <Btn onClick={onSave} shortcut="F9">💾 حفظ الصنف</Btn>
       </div>
     </div>
   )

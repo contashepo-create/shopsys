@@ -5731,13 +5731,16 @@ export const useDataStore = create<DataState>()(
       },
 
       addCustomer: (c) => {
-        // مراجعة الأطراف: اسم فارغ ومكرر كانا يمران من المستودع (بوت التليجرام وغيره لا يمر بالشاشة)
+        // مراجعة الأطراف: اسم فارغ ومكرر كانا يمران من المستودع (بوت التليجرام وغيره لا يمر من الشاشة)
         const nameAr = c.nameAr.trim()
         if (!nameAr) throw new Error('اسم العميل مطلوب')
+        if (c.priceListId != null && !get().priceLists.some((list) => list.id === c.priceListId && list.isActive)) throw new Error('فئة الخصم غير موجودة أو معطلة')
         if (get().customers.some((x) => x.nameAr.trim() === nameAr)) throw new Error(`يوجد عميل مسجل بنفس الاسم «${nameAr}» — استخدمه أو ميّز الاسم`)
         set((s) => ({ customers: [...s.customers, { ...c, nameAr, id: nextId(s.customers) }] }))
       },
       updateCustomer: (id, patch) => {
+        const currentCustomer = get().customers.find((customer) => customer.id === id)
+        if (patch.priceListId != null && !get().priceLists.some((list) => list.id === patch.priceListId && list.isActive) && currentCustomer?.priceListId !== patch.priceListId) throw new Error('فئة الخصم غير موجودة أو معطلة')
         if (patch.nameAr !== undefined) {
           const nameAr = patch.nameAr.trim()
           if (!nameAr) throw new Error('اسم العميل مطلوب')
