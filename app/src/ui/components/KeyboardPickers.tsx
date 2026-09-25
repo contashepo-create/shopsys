@@ -100,7 +100,10 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
     if (inputElementRef) inputElementRef.current = node ?? inputRef.current
   }
   useEffect(() => {
-    const close = (event: PointerEvent) => { if (!pickerRef.current?.contains(event.target as Node)) setOpen(false) }
+    const close = (event: PointerEvent) => {
+      const target = event.target as HTMLElement
+      if (!pickerRef.current?.contains(target) && !target.closest('.invoice-search-overlay')) setOpen(false)
+    }
     document.addEventListener('pointerdown', close)
     return () => document.removeEventListener('pointerdown', close)
   }, [])
@@ -175,7 +178,10 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
   const searchInputRef = useRef<HTMLInputElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const close = (event: PointerEvent) => { if (!pickerRef.current?.contains(event.target as Node)) setOpen(false) }
+    const close = (event: PointerEvent) => {
+      const target = event.target as HTMLElement
+      if (!pickerRef.current?.contains(target) && !target.closest('.invoice-search-overlay')) setOpen(false)
+    }
     document.addEventListener('pointerdown', close)
     return () => document.removeEventListener('pointerdown', close)
   }, [])

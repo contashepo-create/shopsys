@@ -13,6 +13,7 @@ type InvoicePOSFrameProps = {
   userLabel: string
   activityLabel: string
   headerFields: ReactNode
+  partyProfile?: ReactNode
   itemEntry: ReactNode
   onBack: () => void
   onNavigate: (path: string) => void
@@ -35,6 +36,7 @@ export function InvoicePOSFrame({
   userLabel,
   activityLabel,
   headerFields,
+  partyProfile,
   itemEntry,
   onBack,
   onNavigate,
@@ -65,7 +67,6 @@ export function InvoicePOSFrame({
   const printerLabel = browserPrintAvailable
     ? (autoPrintEnabled ? 'متاحة · تلقائية مفعّلة' : `متاحة · ${receipt.defaultTemplate}`)
     : 'غير متاحة في هذا المتصفح'
-  const printerTone = browserPrintAvailable ? 'ok' : 'danger'
 
   return (
     <div className={`invoice-pos-root invoice-editor invoice-pos-${kind}`} dir="rtl">
@@ -104,39 +105,18 @@ export function InvoicePOSFrame({
         </div>
       </header>
 
-      <aside className="invoice-reference-sidebar">
-        <div>
-          <button className="invoice-reference-sidebar-back" type="button" onClick={onBack}><ArrowRight size={15} /><span>العودة إلى قسم {sale ? 'المبيعات' : 'المشتريات'}</span></button>
-          <div className="invoice-reference-sidebar-title">لوحات التحكم والتشغيل</div>
-          <nav>
-            <button className="active" type="button" onClick={() => onNavigate(invoicePath)}><span>نقطة البيع الرئيسية</span><b>POS</b></button>
-            <button type="button" onClick={() => onNavigate(sale ? '/sales/invoices' : '/purchases/invoices')}><span>الفواتير السابقة</span></button>
-            <button type="button" onClick={() => onNavigate('/parties/customers')}><span>حسابات العملاء</span></button>
-            <button type="button" onClick={() => onNavigate('/inventory/items')}><span>الأصناف والمخزون</span></button>
-            <button type="button" onClick={() => onNavigate('/sales/shifts')}><span>تقفيل الوردية</span></button>
-          </nav>
-        </div>
-        <div className="invoice-reference-device-card">
-          <b>الحالة الفعلية للجهاز</b>
-          <span className="invoice-device-status-ok"><i /> التخزين المحلي <strong>نشط</strong></span>
-          <span className="invoice-device-status-ok"><i /> إدخال الباركود <strong>من الحقل</strong></span>
-          <span className={`invoice-device-status-${printerTone}`}><i /> الطباعة <strong>{printerLabel}</strong></span>
-          <small>لا يمكن للمتصفح إثبات اتصال طابعة فعلية؛ الإرسال يتم إلى طابعة النظام الافتراضية.</small>
-        </div>
-      </aside>
-
       <div className="invoice-reference-main-area">
         <main className="invoice-reference-content">
           <section className="invoice-reference-document-head">
+            <button className="invoice-reference-top-back" type="button" onClick={onBack} title={`العودة إلى قسم ${sale ? 'المبيعات' : 'المشتريات'}`} aria-label={`العودة إلى قسم ${sale ? 'المبيعات' : 'المشتريات'}`}><ArrowRight size={19} /></button>
             <div className="invoice-reference-document-card">
               <FileText size={20} />
               <span><small>رقم الفاتورة الإلكترونية</small><strong>يصدر عند الترحيل</strong></span>
             </div>
             <div className="invoice-reference-meta-card"><CalendarDays size={18} /><span><small>تاريخ ووقت الإصدار</small><strong>{dateLabel}</strong></span></div>
             <div className="invoice-reference-meta-card"><CircleDollarSign size={18} /><span><small>العملة</small><strong>{currencyLabel}</strong></span></div>
-            <div className="invoice-reference-state-card"><BadgeCheck size={16} /><span>مسودة قيد التحرير</span></div>
+            <div className="invoice-reference-state-card"><BadgeCheck size={16} /><span><b>مسودة قيد التحرير</b><small>الطباعة: {printerLabel}</small></span></div>
             <div className="invoice-reference-top-actions">
-              <Btn variant="ghost" onClick={onBack}><ArrowRight size={14} /> العودة للقسم</Btn>
               <Btn variant="ghost" onClick={onPartySearch} shortcut="F2"><Search size={14} /> {partyWord}</Btn>
               <Btn variant="ghost" onClick={onItemSearch} shortcut="F5"><PackageSearch size={14} /> صنف</Btn>
               <Btn variant="ghost" onClick={onRestoreDraft}>استعادة</Btn>
@@ -145,6 +125,11 @@ export function InvoicePOSFrame({
               <Btn onClick={onPost} shortcut="F9"><FileCheck2 size={14} /> ترحيل</Btn>
             </div>
           </section>
+
+          {partyProfile && <section className="invoice-reference-party-panel">
+            <div className="invoice-reference-party-panel-title"><Search size={17} /><span><b>ملف {partyWord}</b><small>تفاصيل الحساب من السجل الحقيقي</small></span></div>
+            <div className="invoice-reference-party-panel-body">{partyProfile}</div>
+          </section>}
 
           <section className="invoice-reference-edit-head">
             <div className="invoice-reference-section-title"><FileText size={18} /><span><b>بيانات الفاتورة</b><small>التعديل يتم من هذا الرأس فقط</small></span></div>

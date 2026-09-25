@@ -766,3 +766,43 @@ select { line-height: 1.25rem; }
 .dark .invoice-editor .invoice-lines-table tbody tr:hover { background-color: #183451; }
 .invoice-editor .invoice-lines-table td:first-child { border-inline-start: 1px solid rgb(203 213 225 / .5); }
 .invoice-reference-online { max-width: 19rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* شاشة الفاتورة لا تعرض Sidebar تنقل: الرجوع الوحيد هو سهم الرأس، بينما يبقى محتوى الفاتورة بعرض كامل. */
+.invoice-reference-main-area { margin-right: 0 !important; }
+.invoice-reference-top-back { display: grid; width: 2.65rem; height: 2.65rem; flex: 0 0 auto; place-items: center; border: 1px solid #8aa8c7; border-radius: .4rem; background: #0f2042; color: #fff; cursor: pointer; }
+.invoice-reference-top-back:hover { border-color: #4edea3; background: #173662; }
+.invoice-reference-state-card { gap: .45rem; }
+.invoice-reference-state-card > span { display: flex; flex-direction: column; gap: .08rem; }
+.invoice-reference-state-card small { color: #005236; font-size: .51rem; font-weight: 700; }
+.invoice-reference-party-panel { display: grid; grid-template-columns: 11rem minmax(0, 1fr); align-items: stretch; gap: .8rem; margin-bottom: .75rem; border-radius: .6rem; background: #fff; padding: .75rem; box-shadow: 0 1px 7px rgb(0 0 0 / .05); }
+.invoice-reference-party-panel-title { display: flex; align-items: center; gap: .45rem; border-inline-end: 1px solid #c5c6cf; color: #0f2042; }
+.invoice-reference-party-panel-title span { display: flex; flex-direction: column; gap: .12rem; }
+.invoice-reference-party-panel-title b { font-size: .76rem; }
+.invoice-reference-party-panel-title small { color: #75777f; font-size: .58rem; }
+.invoice-reference-party-panel-body { min-width: 0; }
+.invoice-party-profile-card { display: flex; min-height: 4.2rem; align-items: center; justify-content: space-between; gap: 1rem; }
+.invoice-party-profile-main { display: flex; min-width: 15rem; align-items: center; gap: .6rem; }
+.invoice-party-avatar { display: grid; width: 2.5rem; height: 2.5rem; flex: 0 0 auto; place-items: center; border-radius: .55rem; background: #dce9ff; color: #0f3d69; font-size: 1rem; font-weight: 900; }
+.invoice-party-profile-main > div:last-child { display: flex; min-width: 0; flex-direction: column; gap: .14rem; }
+.invoice-party-profile-main b { overflow: hidden; color: #0b1c30; font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
+.invoice-party-profile-main small { overflow: hidden; color: #64748b; font-size: .59rem; text-overflow: ellipsis; white-space: nowrap; }
+.invoice-party-profile-metrics { display: grid; min-width: 31rem; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .45rem; }
+.invoice-party-profile-metrics > div { display: flex; min-height: 3rem; flex-direction: column; justify-content: center; border-inline-start: 1px solid #e0e7f0; padding-inline: .65rem; }
+.invoice-party-profile-metrics small { color: #64748b; font-size: .56rem; font-weight: 800; }
+.invoice-party-profile-metrics b { color: #0b1c30; font-family: ui-monospace, monospace; font-size: .7rem; }
+.invoice-party-profile-metrics b.is-positive { color: #006b48; }
+.invoice-party-profile-metrics b.is-warning { color: #a85b00; }
+.invoice-party-profile-metrics b.is-danger { color: #ba1a1a; }
+.dark .invoice-reference-party-panel, .dark .invoice-party-profile-card { background: #121f34; }
+.dark .invoice-reference-party-panel-title { border-color: #334d6b; color: #c3ddff; }
+.dark .invoice-party-profile-main b, .dark .invoice-party-profile-metrics b { color: #edf6ff; }
+.dark .invoice-party-profile-main small, .dark .invoice-party-profile-metrics small { color: #9fb4ca; }
+.dark .invoice-party-profile-metrics > div { border-color: #334d6b; }
+.dark .invoice-party-avatar { background: #203e63; color: #c3ddff; }
+@media (max-width: 900px) {
+  .invoice-reference-party-panel { grid-template-columns: 1fr; }
+  .invoice-reference-party-panel-title { border-inline-end: 0; border-bottom: 1px solid #c5c6cf; padding-bottom: .55rem; }
+  .invoice-party-profile-card { align-items: stretch; flex-direction: column; }
+  .invoice-party-profile-metrics { min-width: 0; width: 100%; }
+}
+@media (max-width: 560px) { .invoice-party-profile-metrics { grid-template-columns: 1fr; } .invoice-party-profile-metrics > div { border-inline-start: 0; border-bottom: 1px solid #e0e7f0; padding: .35rem 0; } }

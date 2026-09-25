@@ -51,6 +51,7 @@ export function AdvancedSalesInvoicePage(){
  const invoiceSignature=JSON.stringify({mode,customerId,warehouseId,lines,customerReference,dueDate,notes,discount,discountAmount,paid,terminalPaid,employeePaid,collectionEmployeeId,treasury,terminal,expenses,customerCharges,allowNegative,commissionEmployeeId,commissionBasis,commissionAmount,additionalCommissions})
  const unsaved=useUnsavedChangesGuard(invoiceSignature);const goTo=(path:string)=>{guardNavigation(()=>nav(path))||nav(path)}
  const selectedCustomer=customers.find(customer=>customer.id===customerId)??null
+ const selectedCustomerBalance=selectedCustomer ? getCustomerBalance(selectedCustomer.id) : 0
  return <InvoicePOSFrame
   kind="sale"
   modeLabel={modeNames[mode]}
@@ -69,6 +70,10 @@ export function AdvancedSalesInvoicePage(){
     <Field label="السماح بالمخزون السالب"><label className="invoice-pos-check-field"><input type="checkbox" checked={allowNegative} onChange={e=>setAllowNegative(e.target.checked)}/> تحذير بدلاً من المنع</label></Field>
    </>
   }
+  partyProfile={<div className="invoice-party-profile-card">
+   <div className="invoice-party-profile-main"><div className="invoice-party-avatar">{selectedCustomer ? selectedCustomer.nameAr.slice(0, 1) : 'ن'}</div><div><b>{selectedCustomer?.nameAr ?? 'عميل نقدي'}</b><small>{selectedCustomer ? `${partyCode('CUS', selectedCustomer.id)} · ${selectedCustomer.phone || 'لا يوجد هاتف'}` : 'لا يوجد حساب آجل مرتبط بالفاتورة'}</small><small>{selectedCustomer?.address || selectedCustomer?.city || 'حساب نقدي — لا توجد بيانات عنوان'}</small></div></div>
+   <div className="invoice-party-profile-metrics"><div><small>الرصيد الحالي</small><b className={selectedCustomerBalance > 0 ? 'is-warning' : 'is-positive'}>{selectedCustomer ? `${formatMinor(Math.abs(selectedCustomerBalance), cur, false)} ${cur.symbol} ${selectedCustomerBalance > 0 ? 'عليه' : selectedCustomerBalance < 0 ? 'له' : 'متزن'}` : `0 ${cur.symbol}`}</b></div><div><small>الحد الائتماني</small><b>{selectedCustomer?.creditLimitMinor ? `${formatMinor(selectedCustomer.creditLimitMinor, cur, false)} ${cur.symbol}` : 'غير محدد'}</b></div><div><small>حالة الحساب</small><b className={selectedCustomer?.active === false ? 'is-danger' : 'is-positive'}>{selectedCustomer?.active === false ? 'موقوف' : 'نشط / نقدي'}</b></div></div>
+  </div>}
   onBack={() => unsaved.requestClose(() => nav('/sales/invoices'))}
   onNavigate={goTo}
   onPartySearch={() => window.dispatchEvent(new Event('shopsys:open-party'))}
