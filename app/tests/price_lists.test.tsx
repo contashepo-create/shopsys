@@ -19,6 +19,7 @@ vi.mock('../src/data/repo.ts', () => ({ useDataStore: () => mockData }))
 vi.mock('../src/stores/app.store.ts', () => ({ useAppStore: () => ({ setup: { countryCode: 'EG' } }) }))
 
 import { PriceListsPage } from '../src/ui/pages/PriceListsPage.tsx'
+import { resolvePrice } from '../src/core/priceLists.ts'
 
 afterEach(() => {
   cleanup()
@@ -26,6 +27,12 @@ afterEach(() => {
 })
 
 describe('جدول أسعار الأصناف', () => {
+  it('يطبق سعر فئة العميل الافتراضي أو الخاص قبل إضافة الصنف للفاتورة', () => {
+    const lists = [{ id: 1, nameAr: 'جملة', defaultDiscountPercent: 10, isActive: true }]
+    expect(resolvePrice(1, 1500, 1, lists, [])).toBe(1350)
+    expect(resolvePrice(1, 1500, 1, lists, [{ listId: 1, itemId: 1, priceMinor: 1200 }])).toBe(1200)
+  })
+
   it('يفتح وضع بدء التعديل ويكتب السعر الخاص مباشرة داخل الخلية', () => {
     const view = render(<PriceListsPage />)
     fireEvent.click(view.getByRole('button', { name: 'جدول أسعار الأصناف' }))
