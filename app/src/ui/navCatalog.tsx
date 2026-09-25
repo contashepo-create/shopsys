@@ -11,7 +11,7 @@ import {
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
   FileText, ListChecks, Users2, ChefHat, Scissors, Gem, Tags, PackageMinus, HandCoins, Gauge,
-  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2, Gift, GitBranch } from 'lucide-react'
+  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2, Gift, GitBranch, Calculator } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule, ItemFeature } from '../core/activities.ts'
 import { INVOICE_FIRST_ACTIVITIES } from '../core/activities.ts'
@@ -115,6 +115,10 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'customers', nameAr: 'العملاء', icon: UserRound, path: '/parties/customers' },
       { id: 'employees', nameAr: 'الموظفون', icon: UserCog, path: '/parties/employees' },
+      { id: 'payroll', nameAr: 'المرتبات', icon: Banknote, path: '/parties/payroll' },
+      { id: 'employee-advances', nameAr: 'سلف الموظفين', icon: HandCoins, path: '/parties/employee-advances' },
+      { id: 'employee-deductions', nameAr: 'الخصومات والجزاءات', icon: Percent, path: '/parties/employee-deductions' },
+      { id: 'employee-commissions', nameAr: 'عمولات الموظفين', icon: HandCoins, path: '/parties/employee-commissions' },
       { id: 'custody', nameAr: 'ملفات عهد الموظفين', icon: Wallet2, path: '/parties/custody' },
       { id: 'installments', nameAr: 'الأقساط', icon: CreditCard, path: '/parties/installments', module: 'installments' },
     ],
@@ -206,6 +210,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'vouchers', nameAr: 'سندات قبض وصرف', icon: Landmark, path: '/accounting/vouchers' },
       { id: 'cheques', nameAr: 'الشيكات', icon: Banknote, path: '/accounting/cheques' },
       { id: 'treasury', nameAr: 'الخزائن والبنوك', icon: PiggyBank, path: '/accounting/treasury' },
+      { id: 'payment-terminals', nameAr: 'ماكينات الدفع', icon: CreditCard, path: '/accounting/payment-terminals' },
       { id: 'assets', nameAr: 'الأصول والإهلاك', icon: TrendingDown, path: '/accounting/assets' },
       { id: 'ext-commissions', nameAr: 'العمولات (لي وعليّ)', icon: HandCoins, path: '/accounting/external-commissions' },
       { id: 'opening', nameAr: 'الأرصدة الافتتاحية', icon: Scale, path: '/accounting/opening-balances' },
@@ -216,6 +221,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'reports', nameAr: 'التقارير', icon: BarChart3, color: 'sky',
     children: [
       { id: 'all', nameAr: 'مركز التقارير', icon: BarChart3, path: '/reports' },
+      { id: 'nasq', nameAr: 'نَسَق | NASQ', icon: Calculator, path: '/reports/nasq' },
       { id: 'statements', nameAr: 'كشوف الحساب', icon: FileSpreadsheet, path: '/reports/statements' },
       // الفروع الحقيقية (سد فجوة التدقيق): إدارة + لوحة مقارنة أداء للمالك
       { id: 'branches', nameAr: 'الفروع ومقارنة الأداء', icon: GitBranch, path: '/branches' },
@@ -225,6 +231,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'settings', nameAr: 'الإعدادات', icon: Settings, color: 'slate',
     children: [
       { id: 'general', nameAr: 'عامة (بلد/عملة/ضريبة)', icon: Percent, path: '/settings/general' },
+      { id: 'cost-centers', nameAr: 'مراكز التكلفة وبنود المصروف', icon: Calculator, path: '/settings/cost-centers' },
       { id: 'profile', nameAr: 'حسابي (بياناتي ورقمي السري)', icon: UserCircle2, path: '/settings/profile' },
       { id: 'permissions', nameAr: 'المستخدمون والصلاحيات', icon: ShieldCheck, path: '/settings/permissions' },
       { id: 'audit', nameAr: 'سجل النشاطات (للمالك)', icon: ScrollText, path: '/settings/audit' },

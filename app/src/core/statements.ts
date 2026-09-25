@@ -39,7 +39,7 @@ export interface CustomerStatementInput {
   saleReturns: { returnNumber: string; date: string; saleId: number; refund: 'cash' | 'credit' | 'store_credit' | 'custom'; totals: { totalMinor: Minor }; creditRefundMinor?: Minor }[]
   /** فواتير البيع كاملة لربط المرتجع بعميله */
   allSales: { id: number; customerId: number | null }[]
-  vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor }[]
+  vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor; reversalEntryId?: number | null }[]
   cheques: ChequeLike[]
   /** صفوف تسويات شاملة (SET-####) — فروق مطابقة موثقة تدخل الرصيد الجاري */
   adjustments?: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[]
@@ -88,7 +88,7 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
     rows.push({ date: r.date, docLabel: `مرتجع ${r.returnNumber} (على الحساب)`, debitMinor: 0, creditMinor: creditPart })
   }
   for (const v of input.vouchers) {
-    if (v.partyKind !== 'customer' || v.partyId !== input.customerId || v.kind !== 'receipt') continue
+    if (v.reversalEntryId || v.partyKind !== 'customer' || v.partyId !== input.customerId || v.kind !== 'receipt') continue
     rows.push({ date: v.date, docLabel: `سند قبض ${v.voucherNumber}`, debitMinor: 0, creditMinor: v.amountMinor })
   }
   for (const c of input.cheques) {
@@ -112,7 +112,7 @@ export interface SupplierStatementInput {
   purchases: { invoiceNumber: string; date: string; supplierId: number; grandTotalMinor: Minor; supplierDueMinor?: Minor; paidMinor: Minor }[]
   purchaseReturns: { returnNumber: string; date: string; purchaseId: number; refund: 'cash' | 'debt'; totalMinor: Minor; inputVatShareMinor?: Minor; supplierValueMinor?: Minor }[]
   allPurchases: { id: number; supplierId: number }[]
-  vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor }[]
+  vouchers: { voucherNumber: string; kind: string; date: string; partyKind?: string | null; partyId?: number | null; amountMinor: Minor; reversalEntryId?: number | null }[]
   cheques: ChequeLike[]
   /** صفوف تسويات شاملة (SET-####) — فروق مطابقة موثقة تدخل الرصيد الجاري */
   adjustments?: { docLabel: string; date: string; debitMinor: Minor; creditMinor: Minor }[]
@@ -149,7 +149,7 @@ export function supplierStatement(input: SupplierStatementInput): StatementRow[]
     rows.push({ date: r.date, docLabel: `مرتجع شراء ${r.returnNumber}`, debitMinor: (r.supplierValueMinor ?? r.totalMinor) + (r.inputVatShareMinor ?? 0), creditMinor: 0 })
   }
   for (const v of input.vouchers) {
-    if (v.partyKind !== 'supplier' || v.partyId !== input.supplierId || v.kind !== 'payment') continue
+    if (v.reversalEntryId || v.partyKind !== 'supplier' || v.partyId !== input.supplierId || v.kind !== 'payment') continue
     rows.push({ date: v.date, docLabel: `سند صرف ${v.voucherNumber}`, debitMinor: v.amountMinor, creditMinor: 0 })
   }
   for (const c of input.cheques) {

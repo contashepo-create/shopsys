@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات نشاط العقارات (النشاط 21) — معايير سند/الوسيط/سمات السعودية:
  * - PropertiesPage: عقارات (مملوكة/مدارة بسعي) بوحدات، حسابات الملاك وسدادهم،
@@ -17,8 +18,11 @@ import {
 } from '../../core/realestate.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
+const emptyTerminalPayment = (): TerminalPaymentDraft => ({ terminalId: '', providerReference: '', cardLast4: '' })
 
 function useCur() {
   const { setup } = useAppStore()
@@ -200,9 +204,9 @@ export function PropertiesPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="اسم العقار *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="برج الياسمين…" autoFocus /></Field>
             <Field label="النوع">
-              <select value={kind} onChange={(e) => setKind(e.target.value as PropertyKind)} className={inputCls}>
+              <QuickSelect value={kind} onChange={(e) => setKind(e.target.value as PropertyKind)} className={inputCls}>
                 {Object.entries(PROPERTY_KIND_LABELS).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             {ownership === 'managed' ? (
               <>
@@ -252,7 +256,7 @@ export function PropertiesPage() {
             <div className="text-[12px] text-slate-500">مستحقه الآن: <b className="text-rose-500">{fmt(getOwnerBalance(payFor.id))}</b> (تحصيلاته − سداداته − صيانة على حسابه)</div>
             <Field label={`المبلغ (${cur.symbol})`}><input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <TreasuryPicker value={payTreasury} onChange={setPayTreasury} />
-            <Btn onClick={savePayout} className="w-full" disabled={!payAmount}>سداد وقيد 2115 ← الخزينة</Btn>
+            <Btn onClick={savePayout} shortcut="F9" className="w-full" disabled={!payAmount}>سداد وقيد 2115 ← الخزينة</Btn>
           </div>
         )}
       </Modal>
@@ -262,9 +266,9 @@ export function PropertiesPage() {
         {maintFor && (
           <div className="space-y-3">
             <Field label="الوحدة">
-              <select value={mUnitId} onChange={(e) => setMUnitId(Number(e.target.value))} className={inputCls}>
+              <QuickSelect value={mUnitId} onChange={(e) => setMUnitId(Number(e.target.value))} className={inputCls}>
                 {propertyUnits.filter((u) => u.propertyId === maintFor.id).map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label={`القيمة (${cur.symbol})`}><input value={mAmount} onChange={(e) => setMAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="الوصف"><input value={mDesc} onChange={(e) => setMDesc(e.target.value)} className={inputCls} placeholder="سباكة، كهرباء…" /></Field>
@@ -277,7 +281,7 @@ export function PropertiesPage() {
               </Field>
             )}
             <TreasuryPicker value={mTreasury} onChange={setMTreasury} />
-            <Btn onClick={saveMaint} className="w-full" disabled={!mAmount || mUnitId === ''}>تسجيل الصيانة وقيدها</Btn>
+            <Btn onClick={saveMaint} shortcut="F9" className="w-full" disabled={!mAmount || mUnitId === ''}>تسجيل الصيانة وقيدها</Btn>
           </div>
         )}
       </Modal>
@@ -300,14 +304,11 @@ export function PropertiesPage() {
             </Field>
             <Field label="عمولة موظف (اختياري)" hint="الموظف الذي أتم الصفقة — مصروف مربوط بالبيع يدخل ربحيته">
               <div className="grid grid-cols-2 gap-2">
-                <select value={sCommEmpId} onChange={(e) => setSCommEmpId(e.target.value)} className={inputCls}>
-                  <option value="">— بلا عمولة —</option>
-                  {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={sCommEmpId ? Number(sCommEmpId) : 0} onChange={(id) => setSCommEmpId(id ? String(id) : '')} cashLabel="بلا عمولة" label="بحث موظف العمولة" cashValue={0} />
                 <input value={sCommAmount} onChange={(e) => setSCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!sCommEmpId} />
               </div>
             </Field>
-            <Btn onClick={saveSale} className="w-full" disabled={!sPrice || (!!sCommEmpId && !sCommAmount.trim())}>بيع وقيد الربح</Btn>
+            <Btn onClick={saveSale} shortcut="F9" className="w-full" disabled={!sPrice || (!!sCommEmpId && !sCommAmount.trim())}>بيع وقيد الربح</Btn>
           </div>
         )}
       </Modal>
@@ -317,7 +318,7 @@ export function PropertiesPage() {
 
 /* ─────────────────────────── عقود الإيجار ─────────────────────────── */
 export function LeasesPage() {
-  const { properties, propertyUnits, leases, customers, employees, addLease, collectLeaseInstallment, endLease, addStaffCommission } = useDataStore()
+  const { properties, propertyUnits, leases, customers, employees, paymentTerminals, addLease, collectLeaseInstallment, endLease, addStaffCommission } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
   const todayIso = new Date().toISOString().slice(0, 10)
@@ -367,12 +368,14 @@ export function LeasesPage() {
   /* تحصيل */
   const [collectFor, setCollectFor] = useState<Lease | null>(null)
   const [colTreasury, setColTreasury] = useState('1101')
+  const [colTerminal, setColTerminal] = useState<TerminalPaymentDraft>(emptyTerminalPayment)
   const collect = (seq: number) => {
     if (!collectFor) return
     try {
-      const r = collectLeaseInstallment({ leaseId: collectFor.id, seq, treasury: colTreasury })
+      const terminal = paymentTerminals.find((row) => row.id === colTerminal.terminalId)
+      const r = collectLeaseInstallment({ leaseId: collectFor.id, seq, treasury: terminal?.settlementAccountCode ?? colTreasury, terminalPayment: terminal ? { terminalId: terminal.id, providerReference: colTerminal.providerReference.trim(), cardLast4: colTerminal.cardLast4 || undefined } : undefined })
       toast.show(`حُصل ${fmt(r.paidMinor)}${r.commissionMinor > 0 ? ` — سعي المكتب ${fmt(r.commissionMinor)} ونصيب المالك ${fmt(r.ownerShareMinor)}` : ''} ✅`)
-      setCollectFor((c) => (c ? useDataStore.getState().leases.find((l) => l.id === c.id) ?? null : null))
+      setCollectFor((c) => (c ? useDataStore.getState().leases.find((l) => l.id === c.id) ?? null : null)); setColTerminal(emptyTerminalPayment())
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -461,38 +464,32 @@ export function LeasesPage() {
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العقار *">
-              <select value={propId} onChange={(e) => { setPropId(Number(e.target.value)); setUnitId('') }} className={inputCls}>
+              <QuickSelect value={propId} onChange={(e) => { setPropId(Number(e.target.value)); setUnitId('') }} className={inputCls}>
                 {activeProps.map((p) => <option key={p.id} value={p.id}>{p.nameAr}{p.ownership === 'managed' ? ` (سعي ${p.commissionPercent}٪)` : ''}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="الوحدة الشاغرة *">
-              <select value={unitId} onChange={(e) => setUnitId(Number(e.target.value))} className={inputCls}>
+              <QuickSelect value={unitId} onChange={(e) => setUnitId(Number(e.target.value))} className={inputCls}>
                 <option value="">— اختر —</option>
                 {vacantUnits.map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="اسم المستأجر *"><input value={tenant} onChange={(e) => setTenant(e.target.value)} className={inputCls} /></Field>
             <Field label="ربط بسجل عميل (إداري)">
-              <select value={tenantId} onChange={(e) => setTenantId(e.target.value)} className={inputCls}>
-                <option value="">— بلا ربط —</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={customers} value={tenantId ? Number(tenantId) : 0} onChange={(id) => setTenantId(id ? String(id) : '')} cashLabel="بلا ربط" label="بحث المستأجر" cashValue={0} />
             </Field>
             <Field label="بداية العقد *"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label="المدة بالأشهر *"><input value={months} onChange={(e) => setMonths(e.target.value)} inputMode="numeric" className={inputCls} /></Field>
             <Field label="دورية السداد">
-              <select value={frequency} onChange={(e) => setFrequency(e.target.value as RentFrequency)} className={inputCls}>
+              <QuickSelect value={frequency} onChange={(e) => setFrequency(e.target.value as RentFrequency)} className={inputCls}>
                 {Object.entries(RENT_FREQUENCY_LABELS).map(([k, v]) => <option key={k} value={k}>{v.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label={`إجمالي أجرة كامل المدة (${cur.symbol}) *`}><input value={totalRent} onChange={(e) => setTotalRent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يقيد التزاماً (2103) ويُرد عند الإخلاء ناقص الأضرار"><input value={deposit} onChange={(e) => setDeposit(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="رقم توثيق منصة إيجار" hint="السعودية: رقم العقد الموثق في المنصة الحكومية"><input value={ejar} onChange={(e) => setEjar(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label="عمولة موظف (اختياري)" hint="الموظف الذي سوّق العقد — تُستحق مصروفاً مربوطاً به">
-              <select value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
-                <option value="">— بلا عمولة —</option>
-                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={commEmpId ? Number(commEmpId) : 0} onChange={(id) => setCommEmpId(id ? String(id) : '')} cashLabel="بلا عمولة" label="بحث موظف العمولة" cashValue={0} />
             </Field>
             {commEmpId && (
               <Field label={`مبلغ العمولة (${cur.symbol}) *`} hint="تُصرف مع الراتب أو منفردة من «الموظفون ← العمولات»">
@@ -503,7 +500,7 @@ export function LeasesPage() {
           {deposit && <TreasuryPicker value={leaseTreasury} onChange={setLeaseTreasury} />}
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveLease} disabled={!tenant.trim() || !totalRent || unitId === ''}>إنشاء العقد وتوليد الأقساط</Btn>
+            <Btn onClick={saveLease} shortcut="F9" disabled={!tenant.trim() || !totalRent || unitId === ''}>إنشاء العقد وتوليد الأقساط</Btn>
           </div>
         </div>
       </Modal>
@@ -512,7 +509,7 @@ export function LeasesPage() {
       <Modal open={!!collectFor} onClose={() => setCollectFor(null)} title={collectFor ? `تحصيل — ${collectFor.contractNumber} (${collectFor.tenantName})` : ''} wide>
         {collectFor && (
           <div className="space-y-3">
-            <TreasuryPicker value={colTreasury} onChange={setColTreasury} />
+            <PaymentMethodPicker value={{treasury:colTreasury,terminalPayment:colTerminal}} onChange={value=>{setColTreasury(value.treasury);setColTerminal(value.terminalPayment)}} operation="receipt"/>
             <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <table className="w-full text-[12px]">
                 <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
@@ -560,7 +557,7 @@ export function LeasesPage() {
               <input type="checkbox" checked={endEvicted} onChange={(e) => setEndEvicted(e.target.checked)} className="accent-rose-600" />
               <span className="text-[12px] font-bold text-rose-600 dark:text-rose-400">إخلاء (إنهاء قسري) — يُعلَّم العقد «مُخلى»</span>
             </label>
-            <Btn onClick={saveEnd} className="w-full">إنهاء العقد وتسوية التأمين</Btn>
+            <Btn onClick={saveEnd} shortcut="F9" className="w-full">إنهاء العقد وتسوية التأمين</Btn>
           </div>
         )}
       </Modal>

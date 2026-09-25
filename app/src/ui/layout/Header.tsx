@@ -16,6 +16,9 @@ import { collectNotifications, visibleNotifications } from '../../core/notificat
 import { isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
 import { collectLeaseAlerts } from '../../core/realestate.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
+import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
+import { isInvoiceFirst } from '../../core/activities.ts'
+import { guardNavigation } from '../components/ui.tsx'
 
 export function Header({ title }: { title: string }) {
   const { theme, toggleTheme, setup, setAccountingMode, sync } = useAppStore()
@@ -31,8 +34,9 @@ export function Header({ title }: { title: string }) {
   }, [])
   const conn = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connInfo = CONNECTIVITY_LABELS[conn]
-  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, tickets, laundryOrders, leases } = useDataStore()
+  const { batches, items, installmentPlans, customers, cheques, issues, appUsers, currentUserId, ownerPinHash, logout, pinResetRequests, readNotificationIds, markNotificationRead, markAllNotificationsRead, restoreNotifications, roleOverrides, customRoles, ownerProfile, rentalContracts, tickets, laundryOrders, leases, shifts } = useDataStore()
   const navigate = useNavigate()
+  const goTo = (path: string) => { guardNavigation(() => navigate(path)) || navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -51,6 +55,14 @@ export function Header({ title }: { title: string }) {
   }, [bellOpen])
 
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
+  const shiftPolicy = salesShiftPolicy({
+    roleId: activeUser?.roleId,
+    isOwner: currentUserId == null || activeUser?.roleId === 'owner',
+    requireOpenShiftForSales: setup.requireOpenShiftForSales,
+    userOverride: activeUser?.requireOpenShiftForSales,
+    invoiceFirst: isInvoiceFirst(setup.activityId),
+  })
+  const openShift = currentOpenShift(shifts)
   const authOn = authRequired(ownerPinHash, appUsers.filter((u) => u.active).length)
 
   const notifications = useMemo(
@@ -127,6 +139,21 @@ export function Header({ title }: { title: string }) {
         </span>
       )}
 
+      {/* حالة الوردية: قرارها مركزي حسب الدور، لا حسب كون الحساب مالكاً فقط */}
+      {setup.modules.includes('pos') && !openShift && !isInvoiceFirst(setup.activityId) && (
+        <button
+          onClick={() => goTo('/sales/shifts')}
+          title={shiftPolicy.required ? shiftPolicy.messageAr : shiftPolicy.messageAr}
+          className={`hidden sm:flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-full transition-all hover:scale-105 ${
+            shiftPolicy.required
+              ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30 animate-pulse'
+              : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+          }`}
+        >
+          {shiftPolicy.required ? '⛔ افتح وردية' : '💡 وردية اختيارية'}
+        </button>
+      )}
+
       {/* مفتاح وضع المحاسبة (القرار 10) */}
       <button
         onClick={() => setAccountingMode(setup.accountingMode === 'simple' ? 'full' : 'simple')}
@@ -184,7 +211,7 @@ export function Header({ title }: { title: string }) {
                     key={n.id}
                     className="w-full flex items-start gap-1 px-2 py-2.5 border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                   >
-                    <button onClick={() => { setBellOpen(false); navigate(n.route) }} className="flex-1 text-right">
+                    <button onClick={() => { setBellOpen(false); goTo(n.route) }} className="flex-1 text-right">
                       <div className={`text-[12px] font-bold flex items-center gap-1.5 ${n.severity === 'danger' ? 'text-rose-600' : n.severity === 'warn' ? 'text-amber-600' : 'text-slate-700 dark:text-slate-200'}`}>
                         <span>{n.icon}</span> {n.title}
                       </div>
@@ -226,7 +253,7 @@ export function Header({ title }: { title: string }) {
             {activeUser ? `🛡️ ${activeUser.roleId}` : '👑 كل الصلاحيات'}
           </div>
         </div>
-        <button onClick={() => navigate('/settings/profile')} title="حسابي — بياناتي ورقمي السري" className="transition-transform hover:scale-110">
+        <button onClick={() => goTo('/settings/profile')} title="حسابي — بياناتي ورقمي السري" className="transition-transform hover:scale-110">
           {(() => {
             const av = activeUser ? activeUser.avatarDataUrl : ownerProfile.avatarDataUrl
             return av

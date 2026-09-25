@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * مرتجعات المبيعات — معالج مراحل بالنمط العالمي (Shopify POS / Lightspeed / Square):
  * ① اختر الفاتورة الأصلية ← ② حدد البنود سطراً بسطر (كمية + حالة سليم/تالف + سبب موحد)
@@ -5,21 +6,23 @@
  * ← ④ مراجعة وتأكيد: ملخص المبالغ وتوزيع الرد قبل الترحيل.
  * المحاسبة: قيد عاكس متوازن — التالف يذهب لبند الهالك 5111 ولا يدخل المخزون.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { RotateCcw, Search, BookOpenText, Eye, Printer, ChevronRight, ChevronLeft, Repeat } from 'lucide-react'
+import { RotateCcw, Search, BookOpenText, Eye, Printer, ChevronRight, ChevronLeft, Repeat, Pencil } from 'lucide-react'
 import { useDataStore, type SaleInvoice, type SaleReturn } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { remainingByLine, returnCashRefundMinor, allocationOf, validateRefundAllocation, RETURN_REASONS, returnReasonName, type ReturnLineSpec, type ReturnCondition, type RefundAllocation } from '../../core/returns.ts'
 import { computeTotals } from '../../core/pos.ts'
+import { partyCode } from '../../core/partyCodes.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import type { InvoiceTemplate } from '../../core/receipt.ts'
-import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
+import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -28,12 +31,14 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 interface WizardLine {
   qty: string
   condition: ReturnCondition
+  /** null/undefined = مخزن سطر البيع الأصلي */
+  warehouseId?: number | null
 }
 
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, journal, treasuries, postSaleReturn, clientSettlements } = useDataStore()
+  const { sales, saleReturns, customers, items, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -44,10 +49,13 @@ export function SaleReturnsPage() {
   const [wizardOpen, setWizardOpen] = useState(false)
   const [step, setStep] = useState(0)
   const [pickQuery, setPickQuery] = useState('')
+  const [pickIndex, setPickIndex] = useState(0)
+  const [customerFilterId, setCustomerFilterId] = useState(0)
   const [sale, setSale] = useState<SaleInvoice | null>(null)
   const [wiz, setWiz] = useState<Record<number, WizardLine>>({}) // بمفتاح فهرس السطر
   const [refund, setRefund] = useState<'cash' | 'credit' | 'store_credit' | 'custom'>('cash')
   const [refundTreasury, setRefundTreasury] = useState('')
+  const [terminalRefundReference, setTerminalRefundReference] = useState('')
   /** التوزيع الحر الرباعي (refund='custom') — نصوص المبالغ كما يكتبها المستخدم */
   const [customCash, setCustomCash] = useState('')
   const [customCredit, setCustomCredit] = useState('')
@@ -56,8 +64,13 @@ export function SaleReturnsPage() {
   const [reasonCode, setReasonCode] = useState('changed_mind')
   const [reason, setReason] = useState('')
   const [viewing, setViewing] = useState<SaleReturn | null>(null)
+  const [partyEditorOpen, setPartyEditorOpen] = useState(false)
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
+  const originalTerminalCharge = sale ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentId === String(sale.id)) : undefined
+  const returnSignature = JSON.stringify({ step, saleId: sale?.id ?? null, wiz, refund, refundTreasury, terminalRefundReference, customCash, customCredit, customStore, customWaived, reasonCode, reason })
+  const unsaved = useUnsavedChangesGuard(returnSignature)
+  useEffect(() => { unsaved.markClean() }, [sale?.id])
 
   /** المتبقي القابل للإرجاع لكل سطر من الفاتورة المختارة */
   const remaining = useMemo(() => {
@@ -66,18 +79,24 @@ export function SaleReturnsPage() {
     return remainingByLine(sale.lines, prior)
   }, [sale, saleReturns])
 
+  const customerPickerInfo = (party: { id: number; active?: boolean }) => {
+    const balance = getCustomerBalance(party.id)
+    return { code: partyCode('CUS', party.id), balance: `الرصيد ${fmt(Math.abs(balance))} ${cur.symbol}` }
+  }
+
   const pickable = useMemo(() => {
     const q = pickQuery.trim()
-    return [...sales].reverse().filter((s) => !q || s.invoiceNumber.includes(q) || (s.refCode ?? '').includes(q.toUpperCase())).slice(0, 20)
-  }, [sales, pickQuery])
+    return [...sales].reverse().filter((s) => (customerFilterId === 0 || s.customerId === customerFilterId) && (!q || s.invoiceNumber.includes(q) || (s.refCode ?? '').includes(q.toUpperCase()))).slice(0, 20)
+  }, [sales, pickQuery, customerFilterId])
 
   const resetWizard = () => {
-    setStep(0); setSale(null); setWiz({}); setRefund('cash'); setRefundTreasury('')
+    setStep(0); setSale(null); setWiz({}); setRefund('cash'); setRefundTreasury(''); setTerminalRefundReference('')
     setCustomCash(''); setCustomCredit(''); setCustomStore(''); setCustomWaived('')
-    setReasonCode('changed_mind'); setReason(''); setPickQuery('')
+    setReasonCode('changed_mind'); setReason(''); setPickQuery(''); setCustomerFilterId(0)
   }
   const openWizard = () => { resetWizard(); setWizardOpen(true) }
-  const closeWizard = () => { setWizardOpen(false); resetWizard() }
+  const discardWizard = () => { setWizardOpen(false); resetWizard() }
+  const closeWizard = () => { unsaved.requestClose(discardWizard) }
 
   const startWithSale = (s: SaleInvoice) => {
     setSale(s)
@@ -94,7 +113,7 @@ export function SaleReturnsPage() {
     for (const [idxStr, w] of Object.entries(wiz)) {
       const idx = Number(idxStr)
       const q = Number(w.qty)
-      if (q > 0) out.push({ lineIndex: idx, qty: q, condition: w.condition })
+      if (q > 0) out.push({ lineIndex: idx, qty: q, condition: w.condition, warehouseId: w.warehouseId ?? sale.lines[idx]?.warehouseId ?? sale.warehouseId ?? null })
     }
     return out
   }, [sale, wiz])
@@ -125,6 +144,7 @@ export function SaleReturnsPage() {
       const priorCash = priorReturns.reduce((a, r) => a + returnCashRefundMinor(r), 0)
       const settled = clientSettlements.reduce(
         (a, st) => a + st.allocations.filter((al) => al.docKey === `sale:${sale.id}`).reduce((b, al) => b + al.appliedMinor, 0), 0)
+        + vouchers.reduce((a, voucher) => a + (!voucher.reversalEntryId ? (voucher.allocations ?? []).filter((al) => al.docKey === `sale:${sale.id}`).reduce((b, al) => b + al.appliedMinor, 0) : 0), 0)
       const openCredit = sale.totals.totalMinor - paidAtSale - priorCredit - settled
       const received = paidAtSale + settled - priorCash
       // التوزيع الرباعي: تلقائي حسب نمط الرد، أو يدوي حر (custom) مع أخطائه المفصلة.
@@ -151,7 +171,7 @@ export function SaleReturnsPage() {
         .reduce((a, s) => a + Math.round(s.qty * sale.lines[s.lineIndex].unitCostMinor), 0)
       return { totals, alloc, allocErrors, damagedCost, openCredit: Math.max(0, openCredit), received: Math.max(0, received) }
     } catch { return null }
-  }, [sale, specs, lineErrors, refund, saleReturns, clientSettlements, customCash, customCredit, customStore, customWaived, cur.decimals])
+  }, [sale, specs, lineErrors, refund, saleReturns, clientSettlements, vouchers, customCash, customCredit, customStore, customWaived, cur.decimals])
 
   const approval = useSupervisorApproval()
   const submit = () => {
@@ -165,11 +185,12 @@ export function SaleReturnsPage() {
           ...(refund === 'custom' && preview ? { allocation: preview.alloc } : {}),
           reason: reason.trim() || returnReasonName(reasonCode),
           reasonCode,
-          treasury: refundTreasury || undefined,
+          treasury: originalTerminalCharge ? (sale.treasury ?? undefined) : (refundTreasury || undefined),
           approvedBy,
+          ...(originalTerminalCharge && preview.alloc.cashMinor > 0 ? { terminalRefund: { originalTransactionId: originalTerminalCharge.id, providerReference: terminalRefundReference.trim() } } : {}),
         })
         toast.show(`تم المرتجع ${ret.returnNumber} — تولد القيد العاكس ✓${approvedBy ? ` (اعتمده «${approvedBy}»)` : ''}${ret.crossShiftNote ? ` — ${ret.crossShiftNote}` : ''}`)
-        closeWizard()
+        discardWizard()
         setViewing(ret)
       } catch (e) {
         toast.show((e as Error).message, 'error')
@@ -329,13 +350,25 @@ export function SaleReturnsPage() {
           {/* ① اختيار الفاتورة */}
           {step === 0 && (
             <div className="space-y-3 anim-pop">
+              <Field label="تصفية حسب العميل (اختياري)">
+                <PartyQuickPicker
+                  parties={customers}
+                  value={customerFilterId}
+                  onChange={(id) => { setCustomerFilterId(id); setPickIndex(0) }}
+                  cashValue={0}
+                  cashLabel="كل العملاء"
+                  label="بحث العميل للمرتجع"
+                  partyInfo={customerPickerInfo}
+                  onConfirm={() => requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-return-invoice-search]')?.focus())}
+                />
+              </Field>
               <div className="relative">
                 <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input value={pickQuery} onChange={(e) => setPickQuery(e.target.value)} placeholder="رقم الفاتورة S-0001 أو الكود المرجعي…" className={`${inputCls} pr-9`} autoFocus />
+                <input data-return-invoice-search value={pickQuery} onChange={(e) => { setPickQuery(e.target.value); setPickIndex(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setPickIndex((i) => Math.min(pickable.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setPickIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = pickable[pickIndex] ?? pickable[0]; if (selected) startWithSale(selected) } else if (e.key === 'Escape') closeWizard() }} placeholder="رقم الفاتورة S-0001 أو الكود المرجعي…" className={`${inputCls} pr-9`} autoFocus data-enter-native="true" />
               </div>
               <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-                {pickable.map((s) => (
-                  <button key={s.id} onClick={() => startWithSale(s)} className={`w-full text-right px-3 py-2.5 transition-colors flex items-center justify-between gap-2 ${sale?.id === s.id ? 'bg-rose-500/10' : 'hover:bg-rose-500/5'}`}>
+                {pickable.map((s, rowIndex) => (
+                  <button key={s.id} onClick={() => startWithSale(s)} className={`w-full text-right px-3 py-2.5 transition-colors flex items-center justify-between gap-2 ${rowIndex === pickIndex ? 'bg-rose-500/10 ring-1 ring-inset ring-rose-500/30' : 'hover:bg-rose-500/5'}`}>
                     <span>
                       <b className="text-slate-800 dark:text-white">{s.invoiceNumber}</b>
                       {s.refCode && <span className="text-[10px] font-mono text-sky-600 dark:text-sky-400 mr-2" dir="ltr">{s.refCode}</span>}
@@ -352,6 +385,7 @@ export function SaleReturnsPage() {
           {/* ② البنود سطراً بسطر: كمية + حالة */}
           {step === 1 && sale && (
             <div className="space-y-3 anim-pop">
+              {sale.customerId != null && sale.customerId > 0 && customers.find((row) => row.id === sale.customerId) && (() => { const customer = customers.find((row) => row.id === sale.customerId)!; return <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50/60 px-3 py-2 text-xs dark:border-sky-900/60 dark:bg-sky-950/20"><div className="flex flex-wrap items-center gap-2"><b>{customer.nameAr}</b><span className="font-mono text-slate-500" dir="ltr">{partyCode('CUS', customer.id)}</span><span>الرصيد: {fmt(Math.abs(getCustomerBalance(customer.id)))} {cur.symbol}</span>{customer.address && <span className="text-slate-500">{customer.address}</span>}</div><button type="button" title="تعديل بيانات العميل" onClick={() => setPartyEditorOpen(true)} className="inline-flex items-center gap-1 rounded-lg border border-sky-300 p-1.5 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={14}/> تعديل العميل</button></div> })()}
               <p className="text-[11.5px] text-slate-500 leading-relaxed">
                 حدد <b>كل سطر</b> على حدة — يمكن إرجاع بند واحد فقط أو جزء من كميته. البضاعة
                 <b className="text-emerald-600"> السليمة</b> تعود للمخزون؛ <b className="text-rose-500">التالفة</b> لا تدخل المخزون وتُقيَّد هالكاً (5111) تلقائياً.
@@ -365,7 +399,7 @@ export function SaleReturnsPage() {
                     <th className="px-3 py-2">سعر/خصم</th>
                     <th className="px-3 py-2">المتبقي</th>
                     <th className="px-3 py-2 w-24">كمية الإرجاع</th>
-                    <th className="px-3 py-2 w-40">حالة البضاعة</th>
+                    <th className="px-3 py-2 w-40">الحالة ومستودع الاستلام</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -373,10 +407,10 @@ export function SaleReturnsPage() {
                     const rem = remaining[idx] ?? 0
                     const w = wiz[idx]
                     return (
-                      <tr key={idx} className={`border-b border-slate-50 dark:border-slate-800/50 ${Number(w?.qty) > 0 ? 'bg-rose-500/[0.03]' : ''}`}>
+                      <tr key={idx} data-entry-row className={`border-b border-slate-50 dark:border-slate-800/50 ${Number(w?.qty) > 0 ? 'bg-rose-500/[0.03]' : ''}`}>
                         <td className="px-3 py-2 text-slate-400 text-[11px]">{idx + 1}</td>
-                        <td className="px-3 py-2 font-bold">
-                          {l.soldByWeight && '⚖️ '}{l.nameAr}
+                        <td tabIndex={0} className="px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-brand-500/40">
+                          <span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.soldByWeight && '⚖️ '}{l.nameAr}
                           {(l.variantColor || l.variantSize) && <span className="text-[10px] text-fuchsia-500 mr-1">({[l.variantColor, l.variantSize].filter(Boolean).join('/')})</span>}
                           {l.unitLabel && <span className="text-[10px] text-sky-500 mr-1">[{l.unitLabel}]</span>}
                         </td>
@@ -386,7 +420,8 @@ export function SaleReturnsPage() {
                         <td className="px-3 py-2">
                           <input
                             value={w?.qty ?? ''}
-                            onChange={(e) => setWiz((prev) => ({ ...prev, [idx]: { qty: e.target.value.replace(/[^\d.]/g, ''), condition: prev[idx]?.condition ?? 'resellable' } }))}
+                            onChange={(e) => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: e.target.value.replace(/[^\d.]/g, ''), condition: prev[idx]?.condition ?? 'resellable' } }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget.closest('tr')?.nextElementSibling?.querySelector<HTMLElement>('td[tabindex="0"]'))?.focus() } }}
                             placeholder="0"
                             inputMode="decimal" autoComplete="off"
                             title={l.soldByWeight ? 'صنف وزني ⚖️ — يقبل كسوراً مثل 1.75' : 'الكمية المرتجعة'}
@@ -397,16 +432,37 @@ export function SaleReturnsPage() {
                         <td className="px-3 py-2">
                           <div className="flex gap-1">
                             <button
-                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { qty: prev[idx]?.qty ?? '', condition: 'resellable' } }))}
+                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: 'resellable' } }))}
                               disabled={rem <= 0}
                               className={`flex-1 px-1.5 py-1.5 rounded-lg text-[10.5px] font-bold border transition-all disabled:opacity-30 ${(w?.condition ?? 'resellable') === 'resellable' ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
                             >✅ سليم</button>
                             <button
-                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { qty: prev[idx]?.qty ?? '', condition: 'damaged' } }))}
+                              onClick={() => setWiz((prev) => ({ ...prev, [idx]: { ...prev[idx], qty: prev[idx]?.qty ?? '', condition: 'damaged' } }))}
                               disabled={rem <= 0}
                               className={`flex-1 px-1.5 py-1.5 rounded-lg text-[10.5px] font-bold border transition-all disabled:opacity-30 ${w?.condition === 'damaged' ? 'border-rose-500/50 bg-rose-500/10 text-rose-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
                             >🗑️ تالف</button>
                           </div>
+                          <QuickSelect
+                            value={w?.warehouseId ?? l.warehouseId ?? sale.warehouseId ?? ''}
+                            onChange={(e) => setWiz((prev) => ({
+                              ...prev,
+                              [idx]: {
+                                ...prev[idx],
+                                qty: prev[idx]?.qty ?? '',
+                                condition: prev[idx]?.condition ?? 'resellable',
+                                warehouseId: e.target.value === '' ? null : Number(e.target.value),
+                              },
+                            }))}
+                            disabled={rem <= 0 || w?.condition === 'damaged'}
+                            title={w?.condition === 'damaged' ? 'الصنف التالف لا يدخل أي مستودع' : 'المستودع الذي سيستقبل الكمية السليمة'}
+                            className="mt-1.5 w-full rounded-lg border border-amber-200 dark:border-amber-800 bg-transparent px-1.5 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 disabled:opacity-40"
+                          >
+                            {warehouses.map((warehouse) => (
+                              <option key={warehouse.id} value={warehouse.id}>
+                                🏬 {warehouse.nameAr}{warehouse.id === (l.warehouseId ?? sale.warehouseId) ? ' (الأصلي)' : ''}
+                              </option>
+                            ))}
+                          </QuickSelect>
                         </td>
                       </tr>
                     )
@@ -420,7 +476,7 @@ export function SaleReturnsPage() {
               )}
               {/* سبب الإرجاع الموحد + نص حر */}
               <div className="grid grid-cols-2 gap-2">
-                <select
+                <QuickSelect
                   value={reasonCode}
                   onChange={(e) => {
                     setReasonCode(e.target.value)
@@ -431,7 +487,7 @@ export function SaleReturnsPage() {
                   className={inputCls}
                 >
                   {RETURN_REASONS.map((r) => <option key={r.id} value={r.id}>{r.nameAr}</option>)}
-                </select>
+                </QuickSelect>
                 <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="تفاصيل إضافية (اختياري)…" className={inputCls} />
               </div>
             </div>
@@ -525,7 +581,8 @@ export function SaleReturnsPage() {
                   {preview.alloc.cashMinor > 0 && (
                     <div className="pt-1 space-y-1.5">
                       <div className="text-[10.5px] font-bold text-slate-500">وجهة الجزء النقدي:</div>
-                      <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} compact />
+                      {originalTerminalCharge ? <div className="p-2 rounded-xl bg-sky-500/10 text-sky-700 text-xs">الجزء النقدي يعود إلى ماكينة البيع الأصلية.</div> : <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} operation="refund" compact />}
+                      {originalTerminalCharge && <input className={inputCls} value={terminalRefundReference} onChange={(e) => setTerminalRefundReference(e.target.value)} placeholder="مرجع رد ماكينة الدفع (اختياري)"/>}
                     </div>
                   )}
                 </div>
@@ -534,8 +591,9 @@ export function SaleReturnsPage() {
               {refund === 'cash' && (
                 <div className="p-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.03] space-y-2">
                   <div className="text-[11.5px] font-bold text-emerald-700 dark:text-emerald-400">وجهة الرد: درج نقدي أو بنك/محفظة (تحويل للعميل)</div>
-                  <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} compact />
+                  {originalTerminalCharge ? <div className="p-2 rounded-xl bg-sky-500/10 text-sky-700 text-xs font-bold">الرد على ماكينة البيع الأصلية وحسابها نفسه</div> : <TreasuryPicker value={refundTreasury || (sale.treasury ?? '1101')} onChange={setRefundTreasury} operation="refund" compact />}
                   <p className="text-[10.5px] text-slate-400">الافتراضي: نفس خزينة البيع الأصلية «{treasuries.find((t) => t.code === (sale.treasury ?? '1101'))?.nameAr ?? 'الخزينة الرئيسية'}» — اختر بنكاً لو الرد تحويلاً.</p>
+                  {originalTerminalCharge && <div><div className="text-[10.5px] font-bold text-sky-600">مرجع رد ماكينة الدفع (اختياري)</div><input className={inputCls} value={terminalRefundReference} onChange={(e) => setTerminalRefundReference(e.target.value)} placeholder="رقم عملية الرد من الماكينة"/><p className="text-[10px] text-slate-400">سيُرد المبلغ على الماكينة الأصلية نفسها.</p></div>}
                 </div>
               )}
               {refund === 'store_credit' && (
@@ -565,7 +623,7 @@ export function SaleReturnsPage() {
                       const l = sale.lines[s.lineIndex]
                       return (
                         <tr key={s.lineIndex} className="border-b border-slate-50 dark:border-slate-800/50">
-                          <td className="px-4 py-2 font-bold">{l.nameAr}</td>
+                          <td className="px-4 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}</td>
                           <td className="px-4 py-2">{s.qty} × {fmt(l.unitPriceMinor)}{l.discountPercent > 0 && ` −${l.discountPercent}٪`}</td>
                           <td className="px-4 py-2">
                             {s.condition === 'damaged'
@@ -628,12 +686,20 @@ export function SaleReturnsPage() {
                 التالي <ChevronLeft size={14} />
               </Btn>
             ) : (
-              <Btn onClick={submit} disabled={!preview}>↩️ تأكيد وترحيل المرتجع</Btn>
+              <Btn onClick={submit} shortcut="F9" disabled={!preview}>↩️ تأكيد وترحيل المرتجع</Btn>
             )}
           </div>
         </div>
       </Modal>
       {approval.dialog}
+      {unsaved.prompt}
+      <PartyQuickEditModal
+        open={partyEditorOpen}
+        target={sale && sale.customerId != null && sale.customerId > 0 ? (() => { const customer = customers.find((row) => row.id === sale.customerId); return customer ? { kind: 'customer' as const, party: customer } : null })() : null}
+        currencyDecimals={cur.decimals}
+        currencySymbol={cur.symbol}
+        onClose={() => setPartyEditorOpen(false)}
+      />
 
       {/* عرض مرتجع */}
       <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `المرتجع ${viewing.returnNumber}` : ''} wide>
@@ -648,7 +714,7 @@ export function SaleReturnsPage() {
               <tbody>
                 {viewing.lines.map((l, i) => (
                   <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
-                    <td className="px-3 py-2 font-bold">{l.nameAr}</td>
+                          <td className="px-3 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}</td>
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2 text-[11px]">{l.condition === 'damaged' ? <span className="text-rose-500 font-bold">🗑️ تالف</span> : <span className="text-emerald-600">✅ سليم</span>}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>

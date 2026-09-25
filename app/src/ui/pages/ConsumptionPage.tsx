@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الصرف الداخلي — استهلاك المخزون للتشغيل (طلب المالك):
  * الأنشطة التي تشتري مخزوناً ولا تبيعه (عيادة تستهلك مستلزمات، مغسلة منظفات،
@@ -150,10 +151,10 @@ export function ConsumptionPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="الغرض *" hint="التوثيق إلزامي — يظهر في القيد والسجل، ويمكن كتابة غرض حر">
-              <select value={purpose} onChange={(e) => setPurpose(e.target.value)} className={inputCls}>
+              <QuickSelect value={purpose} onChange={(e) => setPurpose(e.target.value)} className={inputCls}>
                 {CONSUMPTION_PURPOSES.map((p) => <option key={p} value={p}>{p}</option>)}
                 <option value={CUSTOM_PURPOSE}>{CUSTOM_PURPOSE}</option>
-              </select>
+              </QuickSelect>
               {purpose === CUSTOM_PURPOSE && (
                 <input
                   value={customPurpose}
@@ -166,9 +167,9 @@ export function ConsumptionPage() {
               )}
             </Field>
             <Field label="حساب المصروف" hint="افتراضياً 5114 مستهلكات تشغيل — اختر حساباً أدق إن أردت">
-              <select value={account} onChange={(e) => setAccount(e.target.value)} className={inputCls}>
+              <QuickSelect value={account} onChange={(e) => setAccount(e.target.value)} className={inputCls}>
                 {expenseAccounts.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="ملاحظات">
               <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} placeholder="القسم المستفيد / أمر التشغيل…" />
@@ -184,10 +185,10 @@ export function ConsumptionPage() {
               const it = items.find((x) => x.id === Number(l.itemId))
               return (
                 <div key={i} className="grid grid-cols-[1fr_70px_110px_28px] gap-1.5 items-center">
-                  <select value={l.itemId} onChange={(e) => patch(i, { itemId: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px]`}>
+                  <QuickSelect value={l.itemId} onChange={(e) => patch(i, { itemId: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px]`}>
                     <option value="">— اختر الصنف —</option>
                     {active.map((x) => <option key={x.id} value={x.id}>{x.nameAr} (متاح {x.stockQty ?? 0})</option>)}
-                  </select>
+                  </QuickSelect>
                   <input value={l.qty} onChange={(e) => patch(i, { qty: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" />
                   <div className="text-[11px] text-slate-400 text-center">{it ? `${fmt(Math.round((Number(l.qty) || 0) * it.costMinor))} ${cur.symbol}` : '—'}</div>
                   <button onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} className="p-1.5 rounded text-slate-300 hover:text-rose-500"><Trash2 size={13} /></button>
@@ -203,7 +204,7 @@ export function ConsumptionPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save}>📦 ترحيل الصرف وتوليد القيد</Btn>
+            <Btn onClick={save} shortcut="F9">📦 ترحيل الصرف وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>

@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --force",
+    "build": "npm run typecheck && vite build",
     "lint": "oxlint",
+    "lint:src": "oxlint src",
     "preview": "vite preview",
     "test:e2e": "vitest run"
   },

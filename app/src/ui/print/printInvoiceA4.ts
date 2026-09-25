@@ -123,26 +123,26 @@ function metaRows(m: ReceiptModel, s: ReceiptSettings): string {
 
 function itemsTable(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, opts: { dense?: boolean; classic?: boolean; elegant?: boolean }): string {
   const fmt = (v: number) => formatMinor(v, cur, false)
-  const showDisc = s.showDiscount && m.rows.some((r) => r.discountPercent > 0)
-  const showVat = m.rows.some((r) => r.vatPercent != null)
-  const cols = 5 + (showDisc ? 1 : 0) + (showVat ? 1 : 0)
+  const showDisc = !s.hidePrices && s.showDiscount && m.rows.some((r) => r.discountPercent > 0)
+  const showVat = !s.hidePrices && m.rows.some((r) => r.vatPercent != null)
+  const cols = (s.hidePrices ? 3 : 5) + (showDisc ? 1 : 0) + (showVat ? 1 : 0)
   const rows = m.rows
     .map(
       (r, i) => `<tr class="${i % 2 && !opts.elegant ? 'alt' : ''}">
       <td class="c mut">${i + 1}</td>
       <td class="name">${esc(r.nameAr)}${r.serials.length ? `<div style="font-size:9px;color:#64748b;direction:ltr;text-align:right">${r.serials.map(esc).join(' · ')}</div>` : ''}</td>
       <td class="c">${esc(r.qtyLabel)}</td>
-      <td class="c">${fmt(r.unitPriceMinor)}</td>
+      ${s.hidePrices ? '' : `<td class="c">${fmt(r.unitPriceMinor)}</td>`}
       ${showVat ? `<td class="c">${r.vatPercent == null ? '—' : r.vatPercent > 0 ? `${r.vatPercent}٪` : 'معفى'}</td>` : ''}
       ${showDisc ? `<td class="c">${r.discountPercent ? `${r.discountPercent}٪` : '—'}</td>` : ''}
-      <td class="c b">${fmt(r.totalMinor)}</td>
+      ${s.hidePrices ? '' : `<td class="c b">${fmt(r.totalMinor)}</td>`}
     </tr>`,
     )
     .join('')
   return `<table class="items" data-cols="${cols}">
     <thead><tr>
-      <th style="width:28px">#</th><th class="r">الصنف</th><th>الكمية</th><th>سعر الوحدة</th>
-      ${showVat ? '<th>الضريبة</th>' : ''}${showDisc ? '<th>الخصم</th>' : ''}<th>الإجمالي</th>
+      <th style="width:28px">#</th><th class="r">الصنف</th><th>الكمية</th>${s.hidePrices ? '' : '<th>سعر الوحدة</th>'}
+      ${showVat ? '<th>الضريبة</th>' : ''}${showDisc ? '<th>الخصم</th>' : ''}${s.hidePrices ? '' : '<th>الإجمالي</th>'}
     </tr></thead><tbody>${rows}</tbody>
   </table>`
 }
@@ -150,6 +150,7 @@ function itemsTable(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, op
 function totalsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, dark = false): string {
   const fmt = (v: number) => formatMinor(v, cur, false)
   const rows: string[] = []
+  if (s.hidePrices) return s.showItemCounts ? `<div class="totals ${dark ? 'dark' : ''}"><div class="tr"><span>عدد الأصناف / القطع</span><b>${m.itemCount} / ${m.totalQty}</b></div></div>` : ''
   if (s.showItemCounts) rows.push(`<div class="tr"><span>عدد الأصناف / القطع</span><b>${m.itemCount} / ${m.totalQty}</b></div>`)
   if (s.showDiscount && m.discountMinor > 0) {
     rows.push(`<div class="tr"><span>الإجمالي قبل الخصم</span><b>${fmt(m.grossMinor)}</b></div>`)
@@ -172,7 +173,7 @@ function totalsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, d
 }
 
 function wordsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings): string {
-  if (!s.showWords) return ''
+  if (!s.showWords || s.hidePrices) return ''
   return `<div class="words"><div class="wt">المبلغ كتابةً</div><div class="wv">${esc(amountInWords(m.totalMinor, cur))}</div></div>`
 }
 

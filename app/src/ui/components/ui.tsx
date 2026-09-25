@@ -1,15 +1,24 @@
 /** مكونات UI مشتركة — أزرار، مودال، حقول، توست */
-import { useEffect, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Eye, EyeOff } from 'lucide-react'
 import { create } from 'zustand'
 import { PIN_MAX_LENGTH } from '../../core/auth.ts'
 
+let activeNavigationGuard: ((continueNavigation: () => void) => void) | null = null
+/** تستخدمها روابط التخطيط لمنع الانتقال الداخلي عندما توجد مسودة غير محفوظة. */
+export function guardNavigation(continueNavigation: () => void): boolean {
+  if (!activeNavigationGuard) return false
+  activeNavigationGuard(continueNavigation)
+  return true
+}
+
 export function Btn({
-  children, onClick, variant = 'primary', disabled, type = 'button', className = '',
+  children, onClick, variant = 'primary', disabled, type = 'button', className = '', shortcut,
 }: {
   children: ReactNode; onClick?: () => void; disabled?: boolean
   variant?: 'primary' | 'ghost' | 'danger' | 'soft'; type?: 'button' | 'submit'; className?: string
+  shortcut?: string
 }) {
   const styles = {
     primary: 'text-white bg-gradient-to-l from-brand-600 to-fuchsia-600 shadow-lg shadow-brand-500/25 hover:shadow-xl',
@@ -24,7 +33,8 @@ export function Btn({
       disabled={disabled}
       className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 hover:scale-[1.03] active:scale-95 disabled:opacity-40 disabled:pointer-events-none ${styles[variant]} ${className}`}
     >
-      {children}
+      <span className="flex items-center justify-center gap-1.5">{children}</span>
+      {shortcut && <kbd className="block mt-0.5 text-[9px] leading-none opacity-70 font-mono">{shortcut}</kbd>}
     </button>
   )
 }
@@ -33,7 +43,7 @@ export function Field({
   label, children, hint,
 }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <div>
+    <div className="form-field">
       <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">{label}</label>
       {children}
       {hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
@@ -111,7 +121,7 @@ export function Modal({
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" dir="rtl">
       {/* إصلاح الظل الغريب: الحركة كانت مزدوجة (حاوية + لوحة) فيومض الـ blur — الآن التعتيم يتحرك وحده بلا blur متحرك */}
       <div className="absolute inset-0 bg-slate-900/55 anim-in" onClick={onClose} />
-      <div className={`relative anim-pop w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto rounded-3xl bg-white dark:bg-card-dark shadow-2xl border border-slate-200 dark:border-slate-700`}>
+      <div role="dialog" aria-modal="true" className={`relative anim-pop w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto rounded-3xl bg-white dark:bg-card-dark shadow-2xl border border-slate-200 dark:border-slate-700`}>
         <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-white/90 dark:bg-card-dark/90 glass rounded-t-3xl">
           <h3 className="font-extrabold text-slate-800 dark:text-white">{title}</h3>
           <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-rose-500 transition-colors duration-200">
@@ -123,6 +133,40 @@ export function Modal({
     </div>,
     document.body,
   )
+}
+
+/** حارس موحد للعمليات التي تحتوي كتابة غير محفوظة: يحذر من إغلاق المتصفح أو إلغاء الفاتورة بالخطأ. */
+export function useUnsavedChangesGuard(signature: string) {
+  const [baseline, setBaseline] = useState(signature)
+  const pendingDiscard = useRef<(() => void) | null>(null)
+  const [promptOpen, setPromptOpen] = useState(false)
+  const isDirty = signature !== baseline
+  useEffect(() => {
+    if (!isDirty) return
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => window.removeEventListener('beforeunload', beforeUnload)
+  }, [isDirty])
+  const markClean = () => { setBaseline(signature) }
+  const requestClose = (discard: () => void) => {
+    if (!isDirty) { discard(); return }
+    pendingDiscard.current = discard
+    setPromptOpen(true)
+  }
+  useEffect(() => {
+    if (!isDirty) return
+    const guard = (continueNavigation: () => void) => requestClose(continueNavigation)
+    activeNavigationGuard = guard
+    return () => { if (activeNavigationGuard === guard) activeNavigationGuard = null }
+  }, [isDirty])
+  const discard = () => { const action = pendingDiscard.current; pendingDiscard.current = null; setPromptOpen(false); action?.() }
+  const stay = () => { pendingDiscard.current = null; setPromptOpen(false) }
+  return {
+    isDirty,
+    markClean,
+    requestClose,
+    prompt: <Modal open={promptOpen} onClose={stay} title="تعديلات غير محفوظة"><div className="space-y-4"><p className="text-sm leading-7 text-slate-600 dark:text-slate-300">لديك تغييرات لم تُحفظ. اختر «تراجع عن العملية» لفقدها بالكامل، أو تابع التعديل ثم احفظ المسودة/الفاتورة.</p><div className="flex flex-wrap justify-end gap-2"><Btn variant="ghost" onClick={stay}>متابعة التعديل</Btn><Btn variant="danger" onClick={discard}>تراجع عن العملية</Btn></div></div></Modal>,
+  }
 }
 
 /* ─── توست ─── */

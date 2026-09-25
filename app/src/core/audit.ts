@@ -9,6 +9,9 @@
  *    sanitizeText — إزالة محارف التحكم ووسوم HTML ومحارف الحقن، وقصّ الطول.
  */
 
+import type { UserTreasuryAccess } from './treasuryAccess.ts'
+import type { PaymentTerminalAccess } from './paymentTerminalAccess.ts'
+
 export interface AuditEvent {
   id: number
   at: string // ISO
@@ -222,6 +225,15 @@ export interface AppUser {
   /** استثناءات فردية (البند 4 — لكل موظف): ممنوح فوق الدور / محجوب رغم الدور */
   extraPerms?: string[]
   deniedPerms?: string[]
+  /**
+   * سياسة الوردية لهذا المستخدم: true = إجبار، false = إعفاء، undefined = الافتراضي
+   * (الكاشير يتبع إعداد الكاشير العام، وبقية الأدوار غير مجبرة افتراضياً).
+   */
+  requireOpenShiftForSales?: boolean
+  /** خزائن/بنوك المستخدم وعملياتها؛ undefined = سجل قديم غير مقيّد مؤقتاً. */
+  treasuryAccess?: UserTreasuryAccess
+  /** ماكينات الدفع وعملياتها؛ undefined = مستخدم قديم غير مقيد مؤقتاً. */
+  paymentTerminalAccess?: PaymentTerminalAccess
   /**
    * ربط الحساب بسجل الموظف (طلب المالك): المستخدم يجب أن يكون موظفاً مسجلاً
    * أولاً ببياناته المالية والوظيفية — فتُخصم عليه السلف/العجوزات وتُربط وردياته.

@@ -312,7 +312,7 @@ export function EquipmentPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setShiftFor(null)}>إلغاء</Btn>
-            <Btn onClick={saveShift} disabled={!opName.trim() || !shiftEnd}>💾 تسجيل الوردية</Btn>
+            <Btn onClick={saveShift} shortcut="F9" disabled={!opName.trim() || !shiftEnd}>💾 تسجيل الوردية</Btn>
           </div>
         </div>
       </Modal>
@@ -339,7 +339,7 @@ export function EquipmentPage() {
               📒 القيد: مصروفات تشغيل معدات 5105 مدين / الخزينة دائن — ويُخصم من ربحية «{costFor.nameAr}»
               {equipmentCosts.filter((c) => c.equipmentId === costFor.id).length > 0 && ` (مصاريف سابقة: ${equipmentCosts.filter((c) => c.equipmentId === costFor.id).length})`}
             </div>
-            <Btn onClick={saveCost} className="w-full" disabled={!costAmount}>قيد المصروف</Btn>
+            <Btn onClick={saveCost} shortcut="F9" className="w-full" disabled={!costAmount}>قيد المصروف</Btn>
           </div>
         )}
       </Modal>

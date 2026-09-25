@@ -20,7 +20,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { needsSupervisorPin, REFUND_APPROVE_PERM } from '../../core/refundApproval.ts'
 
-export function useSupervisorApproval(permId: string = REFUND_APPROVE_PERM): {
+export function useSupervisorApproval(permId: string = REFUND_APPROVE_PERM, options: { forcePin?: boolean } = {}): {
   /** هل سيُطلب رقم سري من المستخدم الحالي؟ (لعرض تلميح في الشاشة) */
   willAskPin: boolean
   /** نفّذ عملية بموافقة: تمر فوراً للمخول، وتفتح حوار الرقم لغيره */
@@ -38,14 +38,15 @@ export function useSupervisorApproval(permId: string = REFUND_APPROVE_PERM): {
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, useAppStore.getState().setup.activityId))
   const decision = needsSupervisorPin(activeUser, perms, permId)
+  const needsPin = options.forcePin === true || decision.needsPin
 
   const request = useCallback((onApproved: (approvedBy?: string) => void) => {
-    if (!decision.needsPin) {
+    if (!needsPin) {
       onApproved(undefined) // مخول — يمر مباشرة، والختم باسمه
       return
     }
     setPin(''); setError(''); setPending(() => onApproved)
-  }, [decision.needsPin])
+  }, [needsPin])
 
   const confirm = async () => {
     if (!pending || busy) return
@@ -105,5 +106,5 @@ export function useSupervisorApproval(permId: string = REFUND_APPROVE_PERM): {
     document.body,
   ) : null
 
-  return { willAskPin: decision.needsPin, request, dialog }
+  return { willAskPin: needsPin, request, dialog }
 }

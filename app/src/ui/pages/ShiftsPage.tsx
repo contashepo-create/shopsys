@@ -1,3 +1,4 @@
+import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
  * ورديات الكاشير (استكمال المرحلة 2) —
  * فتح برصيد درج افتتاحي، وإقفال بعدّ النقدية الفعلية:
@@ -224,7 +225,7 @@ export function ShiftsPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpenModal(false)}>إلغاء</Btn>
-            <Btn onClick={doOpen}>🔓 فتح الوردية</Btn>
+            <Btn onClick={doOpen} shortcut="F9">🔓 فتح الوردية</Btn>
           </div>
         </div>
       </Modal>
@@ -244,7 +245,7 @@ export function ShiftsPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setCloseModal(false)}>إلغاء</Btn>
-            <Btn onClick={doClose}>🔒 إقفال الوردية</Btn>
+            <Btn onClick={doClose} shortcut="F9">🔒 إقفال الوردية</Btn>
           </div>
         </div>
       </Modal>
@@ -289,10 +290,7 @@ export function ShiftsPage() {
 
               {settleMode === 'advance' && v < 0 && (
                 <Field label="الموظف الذي يتحمل العجز *">
-                  <select value={settleEmployeeId} onChange={(e) => setSettleEmployeeId(Number(e.target.value))} className={inputCls}>
-                    <option value={0}>— اختر الموظف —</option>
-                    {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}{e.jobTitle ? ` — ${e.jobTitle}` : ''}</option>)}
-                  </select>
+                  <PartyQuickPicker parties={employees.filter((employee) => employee.active).map((employee) => ({ ...employee, nameAr: employee.jobTitle ? `${employee.nameAr} — ${employee.jobTitle}` : employee.nameAr }))} value={settleEmployeeId} onChange={setSettleEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
                 </Field>
               )}
 
@@ -307,7 +305,7 @@ export function ShiftsPage() {
                       setSettleShift(null)
                     } catch (err) { toast.show((err as Error).message, 'error') }
                   })}
-                >
+                shortcut="F9">
                   ⚖️ تنفيذ التسوية
                 </Btn>
               </div>

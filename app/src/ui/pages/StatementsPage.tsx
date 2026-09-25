@@ -1,3 +1,4 @@
+import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
  * كشوف الحساب (طلب المالك) — عميل / مورد / موظف
  * كل صف بتاريخه ومستنده والرصيد التراكمي، مع رصيد نهائي واضح وطباعة.
@@ -12,7 +13,7 @@ import { formatMinor } from '../../core/money.ts'
 import { customerStatement, customerUnitDocs, supplierStatement, employeeStatement, statementBalance, type StatementRow } from '../../core/statements.ts'
 import { renderStatementHtml } from '../print/printStatement.ts'
 import { printHtml } from '../print/printReceipt.ts'
-import { inputCls, EmptyState, Btn, useToast } from '../components/ui.tsx'
+import { EmptyState, Btn, useToast } from '../components/ui.tsx'
 
 type Kind = 'customer' | 'supplier' | 'employee'
 
@@ -84,6 +85,16 @@ export function StatementsPage() {
 
   // إصلاح بلاغ المالك: كانت الطباعة عبر window.open فتحجبها المتصفحات —
   // الآن iframe مخفي (نفس آلية إيصال الكاشير) + قالب احترافي على نمط pro-acc
+  const exportStatement = () => {
+    const headers = ['التاريخ', 'المستند', meta.debitLabel, meta.creditLabel, 'الرصيد']
+    const values = rows.map((row) => [row.date.slice(0, 10), row.docLabel, fmt(row.debitMinor), fmt(row.creditMinor), fmt(row.balanceMinor)])
+    const escape = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`
+    const csv = '\ufeff' + [headers, ...values].map((row) => row.map(escape).join(',')).join('\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const anchor = document.createElement('a'); anchor.href = url; anchor.download = `statement-${kind}-${partyId}.csv`; anchor.click(); URL.revokeObjectURL(url)
+    toast.show('تم تصدير كشف الحساب إلى Excel ✓')
+  }
+
   const print = () => {
     printHtml(renderStatementHtml({
       shopName: setup.shopName || 'تَحَكَّم',
@@ -117,12 +128,9 @@ export function StatementsPage() {
       </div>
 
       <div className="anim-up flex items-center gap-3 flex-wrap" style={{ animationDelay: '60ms' }}>
-        <select value={partyId} onChange={(e) => setPartyId(Number(e.target.value))} className={`${inputCls} max-w-sm`}>
-          <option value={0}>اختر {kind === 'customer' ? 'العميل' : kind === 'supplier' ? 'المورد' : 'الموظف'}…</option>
-          {parties.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-        </select>
+        <div className="max-w-sm w-full"><PartyQuickPicker parties={parties} value={partyId} onChange={setPartyId} cashLabel={`اختر ${kind === 'customer' ? 'العميل' : kind === 'supplier' ? 'المورد' : 'الموظف'}`} label={`بحث ${kind === 'customer' ? 'العميل' : kind === 'supplier' ? 'المورد' : 'الموظف'}`} showCash={false} /></div>
         {partyId > 0 && rows.length > 0 && (
-          <Btn variant="ghost" onClick={print}><Printer size={15} /> طباعة الكشف</Btn>
+          <><Btn variant="ghost" onClick={print}><Printer size={15} /> طباعة الكشف</Btn><Btn variant="ghost" onClick={exportStatement}><FileSpreadsheet size={15} /> Excel</Btn></>
         )}
       </div>
 

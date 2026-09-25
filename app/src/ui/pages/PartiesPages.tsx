@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * شاشتا العملاء والموردين — نمط موحّد
  * البيانات الموسعة كلها اختيارية (طلب المالك) لكنها جاهزة للفاتورة الضريبية
@@ -14,6 +15,20 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { supplierStatement, statementBalance } from '../../core/statements.ts'
 import { partyCode, matchesPartyCode, PARTY_CODE_LABELS } from '../../core/partyCodes.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+
+type PartyView = 'cards' | 'list'
+function usePersistedPartyView(key: string): [PartyView, (view: PartyView) => void] {
+  const storageKey = `shopsys:party-view:${key}`
+  const [view, setViewState] = useState<PartyView>(() => {
+    if (typeof window === 'undefined') return 'list'
+    return window.localStorage.getItem(storageKey) === 'cards' ? 'cards' : 'list'
+  })
+  const setView = (next: PartyView) => {
+    setViewState(next)
+    window.localStorage.setItem(storageKey, next)
+  }
+  return [view, setView]
+}
 
 /** مبدّل عرض بطاقات/قائمة (طلب المالك) — مشترك بين العملاء والموردين */
 function ViewToggle({ view, setView }: { view: 'cards' | 'list'; setView: (v: 'cards' | 'list') => void }) {
@@ -91,7 +106,7 @@ function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: Party
 }
 
 export function CustomersPage() {
-  const { customers, addCustomer, updateCustomer, removeCustomer, sales, saleReturns, vouchers, cheques, clientSettlements, getCustomerBalance, redeemLoyaltyPoints } = useDataStore()
+  const { customers, priceLists, addCustomer, updateCustomer, removeCustomer, sales, saleReturns, vouchers, cheques, clientSettlements, getCustomerBalance, redeemLoyaltyPoints } = useDataStore()
   const { setup, loyalty } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -99,7 +114,7 @@ export function CustomersPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [query, setQuery] = useState('')
-  const [view, setView] = useState<'cards' | 'list'>('cards')
+  const [view, setView] = usePersistedPartyView('customers')
 
   // رصيد كل عميل بجانب اسمه (طلب المالك) — الرصيد الموحّد من كل الأنشطة (إصلاح الترابط)
   const balances = useMemo(() => {
@@ -124,6 +139,7 @@ export function CustomersPage() {
   const [phone, setPhone] = useState('')
   const [creditLimit, setCreditLimit] = useState('')
   const [notes, setNotes] = useState('')
+  const [priceListId, setPriceListId] = useState<number | null>(null)
   const [ext, setExt] = useState<PartyExtended>(EMPTY_EXTENDED)
 
   const filtered = useMemo(
@@ -132,11 +148,12 @@ export function CustomersPage() {
     [customers, query],
   )
 
-  const openNew = () => { setEditing(null); setName(''); setPhone(''); setCreditLimit(''); setNotes(''); setExt(EMPTY_EXTENDED); setOpen(true) }
+  const openNew = () => { setEditing(null); setName(''); setPhone(''); setCreditLimit(''); setNotes(''); setPriceListId(null); setExt(EMPTY_EXTENDED); setOpen(true) }
   const openEdit = (c: Customer) => {
     setEditing(c); setName(c.nameAr); setPhone(c.phone)
     setCreditLimit(c.creditLimitMinor ? String(c.creditLimitMinor / 10 ** cur.decimals) : '')
     setNotes(c.notes)
+    setPriceListId(c.priceListId ?? null)
     setExt({
       taxNumber: c.taxNumber, commercialReg: c.commercialReg, email: c.email, address: c.address,
       city: c.city, postalCode: c.postalCode, buildingNo: c.buildingNo, nationalId: c.nationalId,
@@ -149,6 +166,7 @@ export function CustomersPage() {
       nameAr: name.trim(), phone: phone.trim(),
       creditLimitMinor: creditLimit ? toMinor(creditLimit, cur.decimals) : 0,
       notes: notes.trim(),
+      priceListId,
       ...ext,
     }
     try {
@@ -196,6 +214,11 @@ export function CustomersPage() {
                         🎁 {c.loyaltyPoints} نقطة
                       </span>
                     )}
+                    {c.priceListId != null && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 font-bold w-fit">
+                        🏷️ {priceLists.find((list) => list.id === c.priceListId)?.nameAr ?? 'فئة غير متاحة'}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
@@ -220,6 +243,7 @@ export function CustomersPage() {
                 <th className="px-4 py-3 font-bold">الكود</th>
                 <th className="px-4 py-3 font-bold">العميل</th>
                 <th className="px-4 py-3 font-bold">الهاتف</th>
+                <th className="px-4 py-3 font-bold">فئة الخصم</th>
                 <th className="px-4 py-3 font-bold">الرصيد</th>
                 <th className="px-4 py-3 font-bold"></th>
               </tr>
@@ -232,6 +256,7 @@ export function CustomersPage() {
                     <td className="px-4 py-2.5"><span title={PARTY_CODE_LABELS.CUS} className="font-mono font-black text-[11px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-300" dir="ltr">{partyCode('CUS', c.id)}</span></td>
                     <td className="px-4 py-2.5 font-bold text-slate-800 dark:text-white">{c.nameAr}</td>
                     <td className="px-4 py-2.5 text-slate-500 text-[12px]" dir="ltr">{c.phone || '—'}</td>
+                    <td className="px-4 py-2.5 text-[12px] text-sky-600 dark:text-sky-400 font-bold">{priceLists.find((list) => list.id === c.priceListId)?.nameAr ?? '—'}</td>
                     <td className="px-4 py-2.5">
                       <span className={`font-black ${bal > 0 ? 'text-rose-600' : bal < 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
                         {bal === 0 ? '0' : `${fmt(Math.abs(bal))} ${bal > 0 ? 'عليه' : 'له'}`}
@@ -271,7 +296,7 @@ export function CustomersPage() {
             )}
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setRedeeming(null)}>إلغاء</Btn>
-              <Btn onClick={doRedeem} disabled={!(Number(redeemPts) > 0)}>🎁 استبدال وتوليد القيد</Btn>
+              <Btn onClick={doRedeem} shortcut="F9" disabled={!(Number(redeemPts) > 0)}>🎁 استبدال وتوليد القيد</Btn>
             </div>
           </div>
         )}
@@ -284,6 +309,14 @@ export function CustomersPage() {
             <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} /></Field>
             <Field label={`حد الائتمان (${cur.symbol})`} hint="أقصى مديونية مسموحة للبيع الآجل — 0 = بلا حد">
               <input value={creditLimit} onChange={(e) => setCreditLimit(e.target.value)} type="number" min={0} className={inputCls} />
+            </Field>
+            <Field label="فئة الخصم / قائمة الأسعار" hint="تظهر أسعار هذه الفئة تلقائياً عند اختيار العميل في الكاشير">
+              <QuickSelect value={priceListId ?? ''} onChange={(e) => setPriceListId(e.target.value ? Number(e.target.value) : null)} className={inputCls}>
+                <option value="">بدون فئة — سعر قطاعي</option>
+                {priceLists.filter((list) => list.isActive || list.id === priceListId).map((list) => (
+                  <option key={list.id} value={list.id}>{list.nameAr}{list.defaultDiscountPercent > 0 ? ` — خصم ${list.defaultDiscountPercent}٪` : ''}{!list.isActive ? ' (معطلة)' : ''}</option>
+                ))}
+              </QuickSelect>
             </Field>
             <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
           </div>
@@ -306,7 +339,7 @@ export function SuppliersPage() {
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [query, setQuery] = useState('')
-  const [view, setView] = useState<'cards' | 'list'>('cards')
+  const [view, setView] = usePersistedPartyView('suppliers')
 
   // رصيد كل مورد بجانب اسمه (طلب المالك) — موجب = مستحق له عندك
   const balances = useMemo(() => {

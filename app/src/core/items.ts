@@ -125,7 +125,7 @@ export interface Item {
 export class PriceFloorError extends Error {
   itemNames: string[]
   constructor(itemNames: string[]) {
-    super(`سعر بيع تحت الحد الأدنى: ${itemNames.join('، ')} — يلزم اعتماد مدير`)
+    super(`سعر بيع أقل من التكلفة أو الحد الأدنى: ${itemNames.join('، ')} — يلزم اعتماد مدير`)
     this.name = 'PriceFloorError'
     this.itemNames = itemNames
   }
@@ -133,14 +133,14 @@ export class PriceFloorError extends Error {
 
 export function priceFloorViolations(
   lines: readonly { itemId: number; unitPriceMinor: Minor; unitFactor?: number; discountPercent: number }[],
-  items: readonly Pick<Item, 'id' | 'nameAr' | 'minSalePriceMinor'>[],
+  items: readonly Pick<Item, 'id' | 'nameAr' | 'minSalePriceMinor' | 'costMinor'>[],
 ): string[] {
   const bad: string[] = []
   for (const l of lines) {
     const it = items.find((x) => x.id === l.itemId)
-    const floor = it?.minSalePriceMinor ?? 0
+    const floor = Math.max(it?.minSalePriceMinor ?? 0, it?.costMinor ?? 0)
     if (!it || floor <= 0) continue
-    // السعر الفعلي بعد خصم السطر وبالوحدة الأساسية
+    // السعر الفعلي بعد خصم السطر وبالوحدة الأساسية؛ يحمي من البيع بأقل من التكلفة حتى لو لم يضبط المستخدم حداً خاصاً.
     const perBase = (l.unitPriceMinor * (1 - l.discountPercent / 100)) / (l.unitFactor ?? 1)
     if (perBase < floor - 0.5) bad.push(it.nameAr)
   }
@@ -237,7 +237,7 @@ export function nextSku(existing: Item[]): string {
   return `ITM-${max + 1}`
 }
 
-/** الافتراضيات من خصائص القسم (الوراثة — القرار 5) */
+/** افتراضيات الصنف من خصائص القسم؛ الصلاحية استثناء اختياري لا يُورث تلقائياً. */
 export function draftFromCategory(cat: Category | undefined, sku: string): ItemDraft {
   const f = new Set(cat?.features ?? [])
   return {
@@ -251,7 +251,8 @@ export function draftFromCategory(cat: Category | undefined, sku: string): ItemD
     stockQty: 0,
     priceMinor: 0,
     minQty: 0,
-    trackExpiry: f.has('expiry_batches'),
+    // الصلاحية اختيار يدوي للصنف وليست افتراضاً للنشاط أو القسم.
+    trackExpiry: false,
     trackSerial: f.has('serial_warranty'),
     warrantyMonths: f.has('serial_warranty') ? 12 : 0,
     soldByWeight: f.has('weight_scale'),
