@@ -116,13 +116,13 @@ st().setOpeningBalance({ kind: 'treasury', refId: '1101', amountMinor: 1000000, 
 st().postProcessing({ kind: 'butcher', sourceItemId: carcass.id, sourceQty: 10, outputs: [{ itemId: leg.id, qty: 6 }], overheadMinor: 0, wasteQty: 4 })
 // بيع وزني 2.35 كجم ثم استبدال جزء عشري 1.15 كجم بقطعة أخرى وزنها 0.9
 const legCost = st().items.find((i) => i.id === leg.id).costMinor
-st().postSale({ lines: [{ itemId: leg.id, nameAr: 'فخذ', qty: 2.35, unitPriceMinor: 6000, unitCostMinor: legCost, discountPercent: 0, soldByWeight: true }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 15, taxInclusive: true, treasury: '1101' })
+st().postSale({ lines: [{ itemId: leg.id, nameAr: 'فخذ', qty: 2.35, unitPriceMinor: 6000, unitCostMinor: legCost, discountPercent: 0, soldByWeight: true }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 15, taxInclusive: true, treasury: '1101', priceFloorOverrideBy: 'اختبار الترحيل' })
 const sale = st().sales.at(-1)
 const exch = st().postExchange({
   originalSaleId: sale.id,
   returnLineSpecs: [{ lineIndex: 0, qty: 1.15, condition: 'resellable' }],
   newLines: [{ itemId: leg.id, nameAr: 'فخذ', qty: 0.9, unitPriceMinor: 6000, unitCostMinor: legCost, discountPercent: 0, soldByWeight: true }],
-  notes: 'استبدال وزني عشري', approvedBy: 'المالك', creditLimitOverrideBy: null,
+  notes: 'استبدال وزني عشري', approvedBy: 'المالك', creditLimitOverrideBy: null, priceFloorOverrideBy: 'المالك',
 })
 ok(exch.exchangeNumber.startsWith('EXC'), 'مستند استبدال صدر')
 const retDoc = st().saleReturns.at(-1)

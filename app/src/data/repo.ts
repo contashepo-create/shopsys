@@ -1567,6 +1567,8 @@ interface DataState {
     approvedBy?: string
     /** تجاوز حد الائتمان للبيع الجديد (استبدال آجل بأغلى قد يتخطى حد العميل) */
     creditLimitOverrideBy?: string | null
+    /** اعتماد بيع جديد تحت التكلفة/الحد الأدنى ضمن عملية الاستبدال */
+    priceFloorOverrideBy?: string | null
   }) => ExchangeDoc
   /** فتح أمر مطعم (صالة/تيك أواي/دليفري) — لا قيود حتى القفل؛ طاولة الصالة لا تُفتح مرتين */
   openRestaurantOrder: (args: { type: RestaurantOrderType; tableName?: string; deliveryInfo?: string; notes?: string }) => RestaurantOrder
@@ -4332,6 +4334,7 @@ export const useDataStore = create<DataState>()(
             warehouseId: sale.warehouseId ?? null,
             // استبدال آجل بأغلى يزيد الذمم — CreditLimitError تصعد للواجهة بلقطة مسترجعة
             creditLimitOverrideBy: args.creditLimitOverrideBy ?? null,
+            priceFloorOverrideBy: args.priceFloorOverrideBy ?? args.approvedBy ?? null,
           })
           // 3) مستند الربط والصافي
           const afterState = get()
