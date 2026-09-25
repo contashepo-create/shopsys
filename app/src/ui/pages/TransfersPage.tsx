@@ -10,6 +10,7 @@ import { Plus, ArrowLeftRight, Eye, Warehouse, Trash2 } from 'lucide-react'
 import { useDataStore, type StockTransfer } from '../../data/repo.ts'
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 
 interface DraftLine { itemId: string; qty: string }
 
@@ -20,7 +21,7 @@ export function TransfersPage() {
 
   const stock = useMemo(() => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)), [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders])
 
-  const [tab, setTab] = useState<'list' | 'balances'>('list')
+  const [tab, setTab] = usePersistedSectionView('transfers', 'list', ['list', 'balances'] as const)
 
   /* ─── تحويل جديد ─── */
   const [open, setOpen] = useState(false)

@@ -17,6 +17,7 @@ import { printHtml } from '../print/printReceipt.ts'
 import { RATE_TYPE_LABELS, type RateType } from '../../core/rentalMeter.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
@@ -62,7 +63,7 @@ export function RentalContractsPage() {
     }))
   }
 
-  const [tab, setTab] = useState<'list' | 'report'>('list')
+  const [tab, setTab] = usePersistedSectionView('rental-contracts', 'list', ['list', 'report'] as const)
 
   /* ─── فتح عقد ─── */
   const [open, setOpen] = useState(false)

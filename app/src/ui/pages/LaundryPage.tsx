@@ -15,6 +15,7 @@ import {
   type LaundryService, type LaundryStatus,
 } from '../../core/laundry.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
@@ -43,7 +44,7 @@ export function LaundryPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
   const toM = (v: string) => (v.trim() ? toMinor(v, cur.decimals) : 0)
 
-  const [tab, setTab] = useState<'list' | 'report'>('list')
+  const [tab, setTab] = usePersistedSectionView('laundry', 'list', ['list', 'report'] as const)
   const report = useMemo(() => laundryReport(laundryOrders), [laundryOrders])
 
   /* ─── أمر جديد ─── */

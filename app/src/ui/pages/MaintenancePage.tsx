@@ -19,6 +19,7 @@ import { CreditLimitError } from '../../core/pos.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
@@ -73,7 +74,7 @@ export function MaintenancePage() {
     }, cur))
   }
 
-  const [tab, setTab] = useState<'list' | 'report'>('list')
+  const [tab, setTab] = usePersistedSectionView('maintenance', 'list', ['list', 'report'] as const)
 
   /* ─── فتح تذكرة ─── */
   const [open, setOpen] = useState(false)

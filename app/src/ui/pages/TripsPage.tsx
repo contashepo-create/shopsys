@@ -16,6 +16,7 @@ import { computeTripTotals, tripProfitReport, EXPENSE_SOURCE_LABELS, type TripEx
 import { summarizeCustody } from '../../core/custody.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -69,7 +70,7 @@ export function TripsPage() {
   const vehName = (id: number | null) => (id == null ? '—' : vehicles.find((v) => v.id === id)?.plateNumber ?? '—')
   const drvName = (id: number | null) => (id == null ? '—' : employees.find((e) => e.id === id)?.nameAr ?? '—')
 
-  const [tab, setTab] = useState<'list' | 'profit'>('list')
+  const [tab, setTab] = usePersistedSectionView('trips', 'list', ['list', 'profit'] as const)
 
   /* ─── تسجيل نقلة ─── */
   const [open, setOpen] = useState(false)
