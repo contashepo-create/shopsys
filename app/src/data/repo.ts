@@ -985,6 +985,8 @@ export interface Voucher {
   allocations?: FifoAllocation[]
   /** المتبقي تحت الحساب بعد توزيع السند */
   unallocatedMinor?: number
+  /** سند الصرف الناتج عن سداد استحقاق مصروف فاتورة شراء، إن وُجد */
+  purchaseExpensePayableId?: number | null
   /** قيد العكس، إن عُكس السند من مسار التصحيح */
   reversalEntryId?: number | null
 }
@@ -2277,7 +2279,7 @@ function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturn
 
 /** إصدار persist لقاعدة shopsys-data — مصدر وحيد تستورده صفحات النسخ والتليجرام
  *  (9 = أكواد مرجعية للفواتير، 8 = ملفات العهد المتكاملة + استرداد السلف على شهور، 7 = خزائن متعددة + دفع مجزأ) */
-export const DATA_VERSION = 24 // 18: تسجيل الدخول الفعلي + الصرف الداخلي — 19: العروض الترويجية/الباقات — 20: الفروع الحقيقية — 21: استحقاقات مصروفات الشراء ومراكز تكلفة مركبات الأسطول — 22: مراكز التكلفة العامة — 23: بنود المصروف القابلة لإعادة الاستخدام — 24: شجرة وموازنات المراكز العامة
+export const DATA_VERSION = 25 // 18: تسجيل الدخول الفعلي + الصرف الداخلي — 19: العروض الترويجية/الباقات — 20: الفروع الحقيقية — 21: استحقاقات مصروفات الشراء ومراكز تكلفة مركبات الأسطول — 22: مراكز التكلفة العامة — 23: بنود المصروف القابلة لإعادة الاستخدام — 24: شجرة وموازنات المراكز العامة — 25: تحويل سداد استحقاقات المصروفات إلى سندات صرف ظاهرة
 
 /**
  * الحارس المركزي للرصيد السالب (طلب المالك):
@@ -2494,15 +2496,19 @@ export const useDataStore = create<DataState>()(
         const accessErrors = validateTreasuryAccess(activeUser?.treasuryAccess, args.treasury, 'payment', args.amountMinor)
         if (accessErrors.length) throw new Error(accessErrors.join(' — '))
         const entryId = nextId(state.journal)
+        const voucherId = nextId(state.vouchers)
         const now = new Date().toISOString()
-        const entry: JournalEntry = { id: entryId, entryNumber: entryId, date: args.date, description: `سداد مصروف مستحق — ${payable.beneficiaryName}: ${payable.description}`, sourceType: 'payment_voucher', sourceId: payable.id, lines: [{ accountCode: payable.payableAccountCode, debit: args.amountMinor, credit: 0, note: `إقفال استحقاق ${payable.beneficiaryName}` }, { accountCode: args.treasury, debit: 0, credit: args.amountMinor, note: 'سداد مصروف مستحق' }], createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null }
+        const voucherNumber = `PV-${String(voucherId).padStart(4, '0')}`
+        const description = `سداد مصروف مستحق — ${payable.beneficiaryName}: ${payable.description}`
+        const entry: JournalEntry = { id: entryId, entryNumber: entryId, date: args.date, description: `${description} (${voucherNumber})`, sourceType: 'payment_voucher', sourceId: voucherId, lines: [{ accountCode: payable.payableAccountCode, debit: args.amountMinor, credit: 0, note: `إقفال استحقاق ${payable.beneficiaryName}` }, { accountCode: args.treasury, debit: 0, credit: args.amountMinor, note: 'سداد مصروف مستحق' }], createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null }
         assertBalanced(entry.lines)
+        const voucher: Voucher = { id: voucherId, voucherNumber, kind: 'payment', date: args.date, treasury: args.treasury, counterAccountCode: payable.payableAccountCode, amountMinor: args.amountMinor, description, journalEntryId: entryId, partyKind: null, partyId: null, purchaseExpensePayableId: payable.id, reversalEntryId: null }
         const paidMinor = payable.paidMinor + args.amountMinor
         const updated = { ...payable, paidMinor, status: paidMinor === payable.amountMinor ? 'paid' as const : 'partial' as const, settlementEntryIds: [...payable.settlementEntryIds, entryId] }
         const vehicleCostEntries = state.vehicleCostEntries.map((row) => row.payableId === payable.id
           ? { ...row, status: paidMinor === payable.amountMinor ? 'paid' as const : 'partial' as const, settlementEntryIds: [...row.settlementEntryIds, entryId] }
           : row)
-        set({ purchaseExpensePayables: state.purchaseExpensePayables.map((row) => row.id === payable.id ? updated : row), vehicleCostEntries, journal: [...state.journal, entry] })
+        set({ purchaseExpensePayables: state.purchaseExpensePayables.map((row) => row.id === payable.id ? updated : row), vehicleCostEntries, vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry] })
         return updated
       },
       purchaseReturns: [],
@@ -10783,6 +10789,33 @@ export const useDataStore = create<DataState>()(
       // ترحيل البيانات المحفوظة بالأشكال القديمة (أقسام هرمية، stockQty، مرتجعات وورديات وجرد)
       migrate: (persisted: unknown) => {
         const s = persisted as Partial<DataState>
+        // الإصدار 25: السداد القديم للاستحقاق كان يكتب القيد فقط، لذلك كان يختفي
+        // من سجل السندات. نستعيد له سند PV مرتبطاً بنفس القيد مرة واحدة فقط.
+        const storedVouchers = s.vouchers ?? []
+        const storedJournal = s.journal ?? []
+        const linkedEntryIds = new Set(storedVouchers.map((voucher) => voucher.journalEntryId))
+        let nextVoucherId = Math.max(0, ...storedVouchers.map((voucher) => voucher.id))
+        const recoveredPayableVouchers: Voucher[] = []
+        for (const payable of s.purchaseExpensePayables ?? []) {
+          for (const entryId of payable.settlementEntryIds ?? []) {
+            if (linkedEntryIds.has(entryId)) continue
+            const entry = storedJournal.find((row) => row.id === entryId)
+            if (!entry) continue
+            const amountMinor = entry.lines.find((line) => line.accountCode === payable.payableAccountCode && line.debit > 0)?.debit ?? 0
+            const treasuryLine = entry.lines.find((line) => line.credit > 0 && line.accountCode !== payable.payableAccountCode)
+            if (!amountMinor || !treasuryLine) continue
+            nextVoucherId += 1
+            recoveredPayableVouchers.push({
+              id: nextVoucherId,
+              voucherNumber: `PV-${String(nextVoucherId).padStart(4, '0')}`,
+              kind: 'payment', date: entry.date, treasury: treasuryLine.accountCode as TreasuryAccount,
+              counterAccountCode: payable.payableAccountCode, amountMinor,
+              description: entry.description, journalEntryId: entry.id,
+              partyKind: null, partyId: null, purchaseExpensePayableId: payable.id, reversalEntryId: null,
+            })
+            linkedEntryIds.add(entryId)
+          }
+        }
         return {
           ...s,
           // سجل النشاطات والمستخدمون والبلاغات (الإصدار 11) — قواعد قديمة بلا هذه الحقول
@@ -10980,7 +11013,7 @@ export const useDataStore = create<DataState>()(
           exchanges: s.exchanges ?? [],
           restaurantOrders: s.restaurantOrders ?? [],
           goldTradeIns: s.goldTradeIns ?? [],
-          vouchers: s.vouchers ?? [],
+          vouchers: [...storedVouchers, ...recoveredPayableVouchers],
           shifts: s.shifts ?? [],
           journal: s.journal ?? [],
         } as DataState

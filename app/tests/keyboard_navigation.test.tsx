@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it } from 'vitest'
 import { KeyboardNavigation } from '../src/ui/components/KeyboardNavigation.tsx'
+import { Btn } from '../src/ui/components/ui.tsx'
 
 function Path() { return <span data-testid="path">{useLocation().pathname}</span> }
 afterEach(cleanup)
@@ -45,6 +46,24 @@ describe('التحكم بلوحة المفاتيح', () => {
     render(<MemoryRouter initialEntries={['/purchases/invoices/new']}><KeyboardNavigation/><button onClick={() => draft++}>حفظ مسودة</button><button onClick={() => posted++}>اعتماد وترحيل</button></MemoryRouter>)
     fireEvent.keyDown(document, { key: 'F9' }); expect(posted).toBe(1); expect(draft).toBe(0)
     fireEvent.keyDown(document, { key: 'F8' }); expect(draft).toBe(1)
+  })
+
+  it('يضيف F9 تلقائياً لأزرار الحفظ والدفع المشتركة ويشغلها', () => {
+    let saved = 0
+    const view = render(<MemoryRouter><KeyboardNavigation/><div role="dialog"><Btn onClick={() => saved++}>💾 حفظ الصنف</Btn></div></MemoryRouter>)
+    const button = view.getByRole('button', { name: /حفظ الصنف/ })
+    expect(button.getAttribute('data-shortcut')).toBe('F9')
+    expect(button.textContent).toContain('F9')
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(saved).toBe(1)
+  })
+
+  it('يتعامل مع زري حفظ أعلى وأسفل النموذج كعملية واحدة', () => {
+    let saved = 0
+    const save = () => { saved++ }
+    render(<MemoryRouter><KeyboardNavigation/><div role="dialog"><Btn onClick={save}>اعتماد وترحيل</Btn><Btn onClick={save}>ترحيل وتحصيل</Btn></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(saved).toBe(1)
   })
 
   it('يشغّل F9 لحفظ الصنف وحفظ السند داخل النوافذ', () => {

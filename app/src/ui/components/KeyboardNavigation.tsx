@@ -28,7 +28,8 @@ function selectShortcutButton(candidates: HTMLButtonElement[]): HTMLButtonElemen
   const unique = new Map<string, HTMLButtonElement>()
   for (const candidate of candidates) {
     const label = (candidate.textContent ?? '').replace(/F[89]/g, '').replace(/\s+/g, ' ').trim()
-    if (!unique.has(label)) unique.set(label, candidate)
+    const key = candidate.dataset.shortcutAction ?? label
+    if (!unique.has(key)) unique.set(key, candidate)
   }
   return unique.size === 1 ? unique.values().next().value ?? null : null
 }
@@ -58,7 +59,8 @@ export function KeyboardNavigation() {
         const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter((dialog) => visible(dialog))
         const shortcutScope: ParentNode = dialogs.at(-1) ?? document
         const candidates = [...shortcutScope.querySelectorAll<HTMLButtonElement>('button')].filter((candidate) => visible(candidate))
-        const actionCandidates = candidates.filter((candidate) => {
+        const markedCandidates = candidates.filter((candidate) => candidate.dataset.shortcut === event.key)
+        const actionCandidates = markedCandidates.length > 0 ? markedCandidates : candidates.filter((candidate) => {
           const text = candidate.textContent ?? ''
           return event.key === 'F9'
             ? (text.includes('F9') || words.some((word) => text.includes(word))) && !text.includes('مسودة')

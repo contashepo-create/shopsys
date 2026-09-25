@@ -1,5 +1,5 @@
 /** مكونات UI مشتركة — أزرار، مودال، حقول، توست */
-import { useEffect, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { Children, isValidElement, useEffect, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Eye, EyeOff } from 'lucide-react'
 import { create } from 'zustand'
@@ -13,6 +13,19 @@ export function guardNavigation(continueNavigation: () => void): boolean {
   return true
 }
 
+const F9_SAVE_WORDS = /حفظ|ترحيل|اعتماد|تسجيل|إنشاء|تنفيذ|تأكيد|استبدال|استلام|توليد القيد|وقيد|إقفال العقد|إقفال الوردية|إقفال المطابقة/
+const F9_PAYMENT_PHRASES = /سداد|تحصيل وت|تحصيل وق|صرف الدفعة|صرف الآن|صرف المواد|دفع وق|الفاتورة والدفع|شراء وقيد|بيع وقيد/
+const shortcutActionIds = new WeakMap<() => void, number>()
+let nextShortcutActionId = 1
+
+function textFromChildren(children: ReactNode): string {
+  return Children.toArray(children).map((child) => {
+    if (typeof child === 'string' || typeof child === 'number' || typeof child === 'bigint') return String(child)
+    if (isValidElement(child)) return textFromChildren((child.props as { children?: ReactNode }).children)
+    return ''
+  }).join(' ')
+}
+
 export function Btn({
   children, onClick, variant = 'primary', disabled, type = 'button', className = '', shortcut,
 }: {
@@ -20,6 +33,16 @@ export function Btn({
   variant?: 'primary' | 'ghost' | 'danger' | 'soft'; type?: 'button' | 'submit'; className?: string
   shortcut?: string
 }) {
+  const actionText = textFromChildren(children)
+  const resolvedShortcut = shortcut ?? (F9_SAVE_WORDS.test(actionText) || F9_PAYMENT_PHRASES.test(actionText) ? 'F9' : undefined)
+  let shortcutActionId: number | undefined
+  if (resolvedShortcut && onClick) {
+    shortcutActionId = shortcutActionIds.get(onClick)
+    if (shortcutActionId == null) {
+      shortcutActionId = nextShortcutActionId++
+      shortcutActionIds.set(onClick, shortcutActionId)
+    }
+  }
   const styles = {
     primary: 'text-white bg-gradient-to-l from-brand-600 to-fuchsia-600 shadow-lg shadow-brand-500/25 hover:shadow-xl',
     ghost: 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800',
@@ -32,9 +55,11 @@ export function Btn({
       onClick={onClick}
       disabled={disabled}
       className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 hover:scale-[1.03] active:scale-95 disabled:opacity-40 disabled:pointer-events-none ${styles[variant]} ${className}`}
+      data-shortcut={resolvedShortcut}
+      data-shortcut-action={shortcutActionId}
     >
       <span className="flex items-center justify-center gap-1.5">{children}</span>
-      {shortcut && <kbd className="block mt-0.5 text-[9px] leading-none opacity-70 font-mono">{shortcut}</kbd>}
+      {resolvedShortcut && <kbd className="block mt-0.5 text-[9px] leading-none opacity-70 font-mono">{resolvedShortcut}</kbd>}
     </button>
   )
 }

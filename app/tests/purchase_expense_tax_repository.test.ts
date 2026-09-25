@@ -71,6 +71,19 @@ describe('ترحيل ضريبة مصروف الشراء في المستودع', 
     expect(purchase.supplierDueMinor).toBe(10000)
   })
 
+  it('يسجل سند صرف فعلياً عند سداد استحقاق مصروف الفاتورة', () => {
+    const purchase = postDirectExpense('payable')
+    const payable = useDataStore.getState().purchaseExpensePayables.find((row) => row.purchaseId === purchase.id)!
+    expect(useDataStore.getState().vouchers).toHaveLength(0)
+    const updated = useDataStore.getState().settlePurchaseExpensePayable({ payableId: payable.id, amountMinor: payable.amountMinor, treasury: '1101', date: '2026-09-25' })
+    const voucher = useDataStore.getState().vouchers.find((row) => row.purchaseExpensePayableId === payable.id)
+    expect(updated.status).toBe('paid')
+    expect(voucher).toMatchObject({ kind: 'payment', amountMinor: payable.amountMinor, counterAccountCode: '2117', purchaseExpensePayableId: payable.id })
+    const entry = useDataStore.getState().journal.find((row) => row.id === voucher?.journalEntryId)!
+    expect(entry.sourceId).toBe(voucher?.id)
+    expect(entry.lines.reduce((sum, line) => sum + line.debit - line.credit, 0)).toBe(0)
+  })
+
   it('لا يكرر ضريبة مصروف الفترة: تظهر مرة في قيد المصروف ومرة واحدة في المدين', () => {
     const purchase = useDataStore.getState().postPurchase({
       supplierId: 801, date: '2026-09-24',
