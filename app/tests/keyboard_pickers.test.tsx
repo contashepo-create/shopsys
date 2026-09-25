@@ -64,6 +64,14 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     expect(onConfirm).toHaveBeenCalledOnce()
   })
 
+  it('يفتح منتقي الطرف الموجود في النافذة النشطة فقط عند تعدد المنتقيات', () => {
+    const view = render(<MemoryRouter><KeyboardNavigation/><PartyQuickPicker parties={[{ id: 1, nameAr: 'عميل الصفحة' }]} value={0} onChange={() => undefined} cashLabel="عميل نقدي" label="طرف الصفحة"/><div role="dialog"><PartyQuickPicker parties={[{ id: 2, nameAr: 'عميل النافذة' }]} value={0} onChange={() => undefined} cashLabel="عميل نقدي" label="طرف النافذة"/></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F4' })
+    expect(view.getAllByRole('dialog')).toHaveLength(2)
+    expect(view.getByRole('dialog', { name: 'طرف النافذة — نتائج البحث' })).toBeTruthy()
+    expect(view.queryByRole('dialog', { name: 'طرف الصفحة — نتائج البحث' })).toBeNull()
+  })
+
   it('يركز العميل تلقائياً وينقل Enter بعد الاختيار إلى بحث الصنف', async () => {
     const onChange = vi.fn()
     const view = render(<><PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={0} onChange={onChange} cashLabel="عميل نقدي" label="العميل" onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} autoFocus/><ItemQuickPicker items={items} onPick={() => undefined}/></>)

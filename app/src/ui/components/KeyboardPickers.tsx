@@ -146,7 +146,32 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
   }, [])
   const selected = parties.find((party) => party.id === value)
   const matches = useMemo(() => { const q=query.trim().toLowerCase(); return parties.filter((party) => { const info = partyInfo?.(party); return !q || `${party.nameAr} ${party.phone ?? ''} ${info?.code ?? ''}`.toLowerCase().includes(q) }) }, [parties, query, partyInfo])
-  useEffect(() => { const focus=()=>{inputRef.current?.focus();inputRef.current?.select();setQuery('')};const openSearch=()=>{focus();setOpen(true)};window.addEventListener('shopsys:focus-party',focus);window.addEventListener('shopsys:open-party',openSearch);if(autoFocus) requestAnimationFrame(focus);return()=>{window.removeEventListener('shopsys:focus-party',focus);window.removeEventListener('shopsys:open-party',openSearch)} },[autoFocus])
+  useEffect(() => {
+    const focus = () => { inputRef.current?.focus(); inputRef.current?.select(); setQuery('') }
+    const openSearch = () => {
+      const current = pickerRef.current
+      if (!current) return
+      const activePicker = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>('[data-party-picker]')
+      if (activePicker && activePicker !== current) return
+      const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter((dialog) => {
+        const style = window.getComputedStyle(dialog)
+        return style.display !== 'none' && style.visibility !== 'hidden' && dialog.getAttribute('aria-hidden') !== 'true'
+      })
+      const topDialog = dialogs.at(-1)
+      if (topDialog) {
+        const dialogPicker = topDialog.querySelector<HTMLElement>('[data-party-picker]')
+        if (!dialogPicker || dialogPicker !== current) return
+      } else {
+        const firstPicker = document.querySelector<HTMLElement>('[data-party-picker]')
+        if (firstPicker && firstPicker !== current) return
+      }
+      focus(); setOpen(true)
+    }
+    window.addEventListener('shopsys:focus-party', focus)
+    window.addEventListener('shopsys:open-party', openSearch)
+    if (autoFocus) requestAnimationFrame(focus)
+    return () => { window.removeEventListener('shopsys:focus-party', focus); window.removeEventListener('shopsys:open-party', openSearch) }
+  }, [autoFocus])
   const renderParty = (party: Party, row: number) => {
     const info = partyInfo?.(party) ?? {}
     const stopped = party.active === false ? 'موقوف' : undefined
@@ -157,7 +182,7 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
       </div>
     </button>
   }
-  return <div ref={pickerRef} className={`relative ${open ? 'z-[70]' : ''}`} data-enter-native="true">
+  return <div ref={pickerRef} className={`relative ${open ? 'z-[70]' : ''}`} data-enter-native="true" data-party-picker="true">
     <input ref={inputRef} className={`${inputCls} ${open ? 'relative z-[80]' : ''}`} value={open ? query : (selected?.nameAr ?? cashLabel)} aria-label={label} onFocus={() => { setQuery('') }} onChange={(event) => { setQuery(event.target.value); setIndex(0); setOpen(true) }} onKeyDown={(event) => { if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); setIndex((current) => Math.min(Math.max(0, matches.length - 1), current + 1)) } else if (event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); setIndex((current) => Math.max(0, current - 1)) } else if (event.key === 'Enter') { event.preventDefault(); if (!open && showCash && value === emptyValue && !query.trim()) { onChange(emptyValue); onConfirm?.(); return } if (!open) { setOpen(true); return } const party = matches[index] ?? matches[0]; if (party) onChange(party.id); else onChange(value); setOpen(false); onConfirm?.() } else if (event.key === 'Escape') { event.preventDefault(); setOpen(false) } }} />
     {open && <div className="fixed inset-0 z-[60] bg-slate-950/35 p-4 sm:p-8" onMouseDown={() => setOpen(false)}>
       <div role="dialog" aria-label={`${label} — نتائج البحث`} className="mx-auto mt-[8vh] flex max-h-[78vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white shadow-2xl dark:border-brand-700/50 dark:bg-card-dark" onMouseDown={(event) => event.stopPropagation()}>
