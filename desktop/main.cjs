@@ -65,6 +65,24 @@ function snapshotOperation(storeName, expectedRevision, payloadJson) {
   return `snapshot:${storeName}:${expectedRevision}:${digest}`
 }
 
+function normalizeAuditEvents(input) {
+  const events = input == null ? [] : input
+  if (!Array.isArray(events) || events.length > 3000) throw new Error('سجل التدقيق المرسل غير صالح')
+  return events.map((event) => {
+    const id = Number(event?.id)
+    const at = String(event?.at ?? '')
+    const user = String(event?.user ?? '')
+    const kind = String(event?.kind ?? '')
+    const title = String(event?.title ?? '')
+    const refKey = event?.refKey == null ? null : String(event.refKey)
+    if (!Number.isInteger(id) || id < 1 || !at || Number.isNaN(Date.parse(at)) || !user || user.length > 200 || !kind || kind.length > 80 || !title || title.length > 1000 || (refKey && refKey.length > 240)) {
+      throw new Error('حدث تدقيق غير صالح')
+    }
+    const split = refKey?.indexOf(':') ?? -1
+    return { id, at, user, kind, title, refKey, aggregateType: split > 0 ? refKey.slice(0, split) : null, aggregateId: split > 0 ? refKey.slice(split + 1) : null }
+  })
+}
+
 function registerDatabaseIpc() {
   ipcMain.handle('shopsys:db:get-snapshot', (_event, storeName) => {
     const row = db.prepare('SELECT store_name AS storeName, revision, payload_json AS payloadJson, updated_at AS updatedAt FROM store_state WHERE store_name = ?').get(String(storeName))
@@ -79,6 +97,7 @@ function registerDatabaseIpc() {
     const requestedKey = input?.idempotencyKey == null ? '' : String(input.idempotencyKey)
     if (!storeName || !payloadJson || !Number.isInteger(expectedRevision) || expectedRevision < 0) throw new Error('لقطة قاعدة البيانات غير صالحة')
     if (requestedKey && (requestedKey.length > 240 || !/^[A-Za-z0-9:_-]+$/.test(requestedKey))) throw new Error('مفتاح منع تكرار اللقطة غير صالح')
+    const auditEvents = normalizeAuditEvents(input?.auditEvents)
     JSON.parse(payloadJson)
     const storedPayload = encodePayload(payloadJson)
     const operation = snapshotOperation(storeName, expectedRevision, payloadJson)
@@ -97,6 +116,11 @@ function registerDatabaseIpc() {
       const nextRevision = revision + 1
       const result = { revision: nextRevision, updatedAt }
       db.prepare(`INSERT INTO store_state(store_name, revision, payload_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(store_name) DO UPDATE SET revision = excluded.revision, payload_json = excluded.payload_json, updated_at = excluded.updated_at`).run(storeName, nextRevision, storedPayload, updatedAt)
+      const insertAudit = db.prepare(`INSERT OR IGNORE INTO audit_events(id, actor_id, actor_name, action, aggregate_type, aggregate_id, details_json, created_at)
+        VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`)
+      for (const event of auditEvents) {
+        insertAudit.run(`${storeName}:${event.id}`, event.user, event.kind, event.aggregateType, event.aggregateId, JSON.stringify({ title: event.title, refKey: event.refKey }), event.at)
+      }
       if (requestedKey) {
         db.prepare('INSERT INTO idempotency_keys(key, operation, result_json, created_at) VALUES (?, ?, ?, ?)').run(requestedKey, operation, JSON.stringify(result), updatedAt)
         // لقطات Zustand كثيرة؛ نحتفظ بآخر 256 مفتاحاً فقط حتى لا تتحول

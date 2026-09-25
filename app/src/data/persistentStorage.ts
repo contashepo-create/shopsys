@@ -1,5 +1,5 @@
 import type { StateStorage } from 'zustand/middleware'
-import { desktopBridge, type DesktopDatabaseBridge } from './desktopBridge.ts'
+import { desktopBridge, type DesktopAuditEvent, type DesktopDatabaseBridge } from './desktopBridge.ts'
 import { secureStorage } from './secureStorage.ts'
 
 type CachedSnapshot = {
@@ -13,6 +13,40 @@ export async function snapshotIdempotencyKey(storeName: string, expectedRevision
   const digest = await crypto.subtle.digest('SHA-256', data)
   const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
   return `snapshot:${storeName}:${expectedRevision}:${hex}`
+}
+
+function persistedState(payloadJson: string | null): Record<string, unknown> | null {
+  if (!payloadJson) return null
+  try {
+    const parsed: unknown = JSON.parse(payloadJson)
+    if (!parsed || typeof parsed !== 'object') return null
+    const state = 'state' in parsed && parsed.state && typeof parsed.state === 'object' ? parsed.state : parsed
+    return state as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+/** الأحداث الجديدة فقط؛ تُحفظ في جدول التدقيق داخل نفس معاملة اللقطة. */
+export function newAuditEvents(nextPayloadJson: string, previousPayloadJson: string | null): DesktopAuditEvent[] {
+  const next = persistedState(nextPayloadJson)
+  if (!next || !Array.isArray(next.auditLog)) return []
+  const previous = persistedState(previousPayloadJson)
+  const known = new Set(
+    previous && Array.isArray(previous.auditLog)
+      ? previous.auditLog.map((event) => (event && typeof event === 'object' ? (event as { id?: unknown }).id : null)).filter((id): id is number => typeof id === 'number')
+      : [],
+  )
+  return next.auditLog
+    .filter((event): event is Record<string, unknown> => !!event && typeof event === 'object' && Number.isInteger(event.id) && !known.has(event.id))
+    .map((event) => ({
+      id: event.id as number,
+      at: typeof event.at === 'string' ? event.at : '',
+      user: typeof event.user === 'string' ? event.user : '',
+      kind: typeof event.kind === 'string' ? event.kind : '',
+      title: typeof event.title === 'string' ? event.title : '',
+      ...(typeof event.refKey === 'string' ? { refKey: event.refKey } : {}),
+    }))
 }
 
 /**
@@ -55,6 +89,7 @@ export class DesktopStateStorage implements StateStorage {
           expectedRevision: snapshot.revision,
           payloadJson: legacyPayload,
           idempotencyKey: await snapshotIdempotencyKey(storeName, snapshot.revision, legacyPayload),
+          auditEvents: newAuditEvents(legacyPayload, null),
         })
         await this.legacyStorage.removeItem(storeName)
         const loaded: CachedSnapshot = { revision: migrated.revision, payloadJson: legacyPayload }
@@ -80,6 +115,7 @@ export class DesktopStateStorage implements StateStorage {
         expectedRevision: current.revision,
         payloadJson: value,
         idempotencyKey,
+        auditEvents: newAuditEvents(value, current.payloadJson),
       })
       this.snapshots.set(name, { revision: result.revision, payloadJson: value })
     })

@@ -26,9 +26,18 @@ export interface DesktopOutboxEvent {
   sentAt: string | null
 }
 
+export interface DesktopAuditEvent {
+  id: number
+  at: string
+  user: string
+  kind: string
+  title: string
+  refKey?: string
+}
+
 export interface DesktopDatabaseBridge {
   getSnapshot(storeName: string): Promise<DesktopSnapshot>
-  saveSnapshot(input: { storeName: string; expectedRevision: number; payloadJson: string; idempotencyKey?: string }): Promise<{ revision: number; updatedAt: string; replayed?: boolean }>
+  saveSnapshot(input: { storeName: string; expectedRevision: number; payloadJson: string; idempotencyKey?: string; auditEvents?: readonly DesktopAuditEvent[] }): Promise<{ revision: number; updatedAt: string; replayed?: boolean }>
   deleteSnapshot?(input: { storeName: string; expectedRevision: number }): Promise<{ revision: number; updatedAt: string }>
   enqueueOutbox(input: { id: string; aggregateType: string; aggregateId: string; eventType: string; payloadJson: string }): Promise<{ created: boolean }>
   claimOutbox(input?: { now?: string; limit?: number }): Promise<DesktopOutboxEvent[]>

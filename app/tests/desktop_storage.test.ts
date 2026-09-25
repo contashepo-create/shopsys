@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DesktopStateStorage, snapshotIdempotencyKey } from '../src/data/persistentStorage.ts'
+import { DesktopStateStorage, newAuditEvents, snapshotIdempotencyKey } from '../src/data/persistentStorage.ts'
 import type { DesktopDatabaseBridge, DesktopSnapshot } from '../src/data/desktopBridge.ts'
 
 function fakeDatabase() {
@@ -42,6 +42,15 @@ describe('جسر تخزين Zustand إلى SQLite', () => {
     expect(first).toBe(await snapshotIdempotencyKey('shopsys-data', 0, '{"a":1}'))
     expect(first).not.toBe(await snapshotIdempotencyKey('shopsys-data', 1, '{"a":1}'))
     expect(first).not.toBe(await snapshotIdempotencyKey('shopsys-data', 0, '{"a":2}'))
+  })
+
+  it('يستخرج أحداث التدقيق الجديدة فقط من حمولة Zustand', () => {
+    const previous = JSON.stringify({ state: { auditLog: [{ id: 1, at: '2026-09-25T08:00:00.000Z', user: 'المالك', kind: 'auth', title: 'دخول' }] } })
+    const next = JSON.stringify({ state: { auditLog: [
+      { id: 1, at: '2026-09-25T08:00:00.000Z', user: 'المالك', kind: 'auth', title: 'دخول' },
+      { id: 2, at: '2026-09-25T08:01:00.000Z', user: 'محاسب', kind: 'journal', title: 'قيد', refKey: 'entry:9' },
+    ] } })
+    expect(newAuditEvents(next, previous)).toEqual([{ id: 2, at: '2026-09-25T08:01:00.000Z', user: 'محاسب', kind: 'journal', title: 'قيد', refKey: 'entry:9' }])
   })
 
   it('يحفظ ويقرأ اللقطة بإصدار متزايد ويحذفها ذرياً', async () => {
