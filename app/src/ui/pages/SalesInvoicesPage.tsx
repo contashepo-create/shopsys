@@ -494,7 +494,7 @@ export function SalesInvoicesPage() {
                     onMovement={(id) => goTo(`/inventory/items?card=${id}`)}
                     onPrices={(id) => goTo(`/sales/price-lists?item=${id}`)}
                     placeholder="اكتب صنفاً ثم اختر بالسهم + Enter أو مرتين"
-                    amountLabel={(it) => `متاح ${it.stockQty ?? 0}`}
+                    amountLabel={(it) => `متاح ${it.stockQty ?? 0} · قطاعي ${fmt(it.priceMinor ?? 0)}`}
                   />
                 </div>
                 <Btn

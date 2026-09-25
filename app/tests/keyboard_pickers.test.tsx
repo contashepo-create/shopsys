@@ -24,6 +24,15 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     }
   })
 
+  it('ينقل أول حرف إلى حقل البحث داخل نافذة الصنف', () => {
+    const view = render(<ItemQuickPicker items={items} onPick={() => undefined}/>)
+    const trigger = view.getByPlaceholderText(/اكتب كود أو اسم/)
+    fireEvent.change(trigger, { target: { value: 'س' } })
+    const search = view.getByLabelText('بحث الصنف') as HTMLInputElement
+    expect(search.value).toBe('س')
+    expect(document.activeElement).toBe(search)
+  })
+
   it('لا يخفي الأصناف أو الموردين بعد أول 30 نتيجة', () => {
     const manyItems = Array.from({ length: 35 }, (_, index) => ({ id: index + 1, nameAr: `صنف ${index + 1}`, sku: `SKU-${index + 1}`, barcodes: [] }))
     const itemView = render(<ItemQuickPicker items={manyItems} onPick={() => undefined}/>)
@@ -54,8 +63,10 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
   it('يفتح منتقي الطرف عبر F4 ويختار العميل بالأسهم وEnter', () => {
     const onChange = vi.fn(), onConfirm = vi.fn()
     const view = render(<MemoryRouter><KeyboardNavigation/><PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد', phone: '010' }, { id: 11, nameAr: 'منى', phone: '011' }]} value={0} onChange={onChange} cashLabel="عميل نقدي" label="العميل" onConfirm={onConfirm}/></MemoryRouter>)
-    const input = view.getByLabelText('العميل')
+    const trigger = view.getByLabelText('العميل')
     fireEvent.keyDown(document, { key: 'F4' })
+    const input = view.getByLabelText('العميل')
+    expect(trigger).not.toBe(input)
     expect(document.activeElement).toBe(input)
     expect(view.getByRole('dialog')).toBeTruthy()
     fireEvent.keyDown(input, { key: 'ArrowDown' })
@@ -117,6 +128,9 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     fireEvent.focus(input)
     expect(view.queryByRole('dialog')).toBeNull()
     fireEvent.change(input, { target: { value: 'CUS-0001' } })
+    const search = view.getByLabelText('العميل') as HTMLInputElement
+    expect(search.value).toBe('CUS-0001')
+    expect(document.activeElement).toBe(search)
     expect(view.getByText('CUS-0001')).toBeTruthy()
     expect(view.getByText('1 ج.م')).toBeTruthy()
     expect(view.getByText('موقوف')).toBeTruthy()
@@ -127,8 +141,10 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
 
   it('يفتح منتقي الصنف عبر F5 ويبدل دليل الاختصارات عبر F12', () => {
     const view = render(<MemoryRouter><KeyboardNavigation/><ItemQuickPicker items={items} onPick={() => undefined}/></MemoryRouter>)
-    const input = view.getByPlaceholderText(/اكتب كود أو اسم/)
+    const trigger = view.getByPlaceholderText(/اكتب كود أو اسم/)
     fireEvent.keyDown(document, { key: 'F5' })
+    const input = view.getByPlaceholderText(/اكتب كود أو اسم/)
+    expect(trigger).not.toBe(input)
     expect(document.activeElement).toBe(input)
     fireEvent.keyDown(document, { key: 'F12' })
     expect(view.getAllByRole('dialog').some((dialog) => dialog.textContent?.includes('F4'))).toBe(true)
