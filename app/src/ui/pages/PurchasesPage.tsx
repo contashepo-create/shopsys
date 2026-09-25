@@ -4,7 +4,7 @@
  * - كل مصروف (نولون/جمارك/تأمين...) يوزَّع حسب القيمة أو الكمية — اختيار لكل مصروف
  * - الترحيل يحدّث تكلفة الأصناف بالمتوسط المرجح ويزيد المخزون
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer, MoreHorizontal } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type PurchaseInvoice, type PurchaseExpense } from '../../data/repo.ts'
@@ -23,6 +23,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
+import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 
 /**
  * سطر شراء (تدقيق المالك — الشراء بالكرتونة):
@@ -115,6 +116,12 @@ export function PurchasesPage() {
   }
   const [supplierId, setSupplierId] = useState(0)
   const [lines, setLines] = useState<DraftLine[]>([])
+  const firstItemRef = useRef<HTMLSelectElement>(null)
+  useEffect(() => {
+    const focusItem = () => { firstItemRef.current?.focus() }
+    window.addEventListener('shopsys:focus-item', focusItem)
+    return () => window.removeEventListener('shopsys:focus-item', focusItem)
+  }, [])
   /* الأمر 6: إضافة صنف سريعة داخل فاتورة الشراء — بضاعة جديدة تصل مع المورد */
   const [quickOpen, setQuickOpen] = useState(false)
   const [qName, setQName] = useState('')
@@ -494,10 +501,15 @@ export function PurchasesPage() {
         <div className="space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Field label="المورد (اختياري)">
-              <select value={supplierId} onChange={(e) => setSupplierId(Number(e.target.value))} className={inputCls}>
-                <option value={0}>💵 شراء نقدي — بدون مورد</option>
-                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker
+                parties={suppliers}
+                value={supplierId}
+                onChange={setSupplierId}
+                cashLabel="💵 شراء نقدي — بدون مورد"
+                label="بحث المورد — اكتب أول حرف ثم Enter"
+                onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))}
+                autoFocus
+              />
             </Field>
             <Field label={`المدفوع الآن (${cur.symbol})`} hint="الباقي يُسجَّل ديناً على حسابك عند المورد">
               <input value={paid} onChange={(e) => setPaid(e.target.value)} type="number" min={0} className={inputCls} placeholder="0" />
@@ -589,6 +601,7 @@ export function PurchasesPage() {
                 <div key={i} className="anim-in">
                 <div className={`grid grid-cols-2 ${lineGridClass} gap-2 items-center`}>
                   <select
+                    ref={i === 0 ? firstItemRef : undefined}
                     value={l.itemId}
                     onChange={(e) => { const nextId = Number(e.target.value); setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: nextId, unitName: '', vatPercent: itemVatPercent(nextId) } : x))) }}
                     className={`${inputCls} col-span-2 sm:col-span-1`}

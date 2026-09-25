@@ -40,6 +40,7 @@ export const PERMISSION_MODULE_MAP: Record<string, string[]> = {
   'inv.view': ['inventory'],
   'inv.cost.view': ['inventory'],
   'inv.item.manage': ['inventory'],
+  'inv.item.delete': ['inventory'],
   'inv.adjust': ['inventory'],
   'inv.transfer': ['inventory'],
   'inv.count': ['inventory'],
@@ -84,6 +85,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'inv.view', nameAr: 'عرض الكميات', section: 'inventory' },
   { id: 'inv.cost.view', nameAr: 'رؤية سعر التكلفة', section: 'inventory', sensitive: true },
   { id: 'inv.item.manage', nameAr: 'إضافة وتعديل الأصناف', section: 'inventory' },
+  { id: 'inv.item.delete', nameAr: 'حذف صنف نهائياً (تأكيد ورقم سري)', section: 'inventory', sensitive: true },
   { id: 'inv.adjust', nameAr: 'تسوية مخزنية', section: 'inventory', sensitive: true },
   { id: 'inv.transfer', nameAr: 'تحويل بين مخازن', section: 'inventory' },
   { id: 'inv.count', nameAr: 'جرد بالباركود', section: 'inventory' },
@@ -146,7 +148,7 @@ export const CRUD_MATRIX: CrudMatrixRow[] = [
   {
     id: 'inventory', nameAr: 'الأصناف والمخزون', section: 'inventory', requiredModules: ['inventory'],
     permissions: {
-      create: ['inv.item.manage'], read: ['inv.view'], update: ['inv.item.manage'], delete: ['inv.adjust'],
+      create: ['inv.item.manage'], read: ['inv.view'], update: ['inv.item.manage'], delete: ['inv.item.delete'],
     },
   },
   {

@@ -19,6 +19,8 @@ import { FEATURE_LABELS, getActivity, type ItemFeature } from '../../core/activi
 import { buildItemsCsv, parseItemsCsv } from '../../core/itemsCsv.ts'
 import { UNIT_GROUPS } from '../../core/units.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
+import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { buildItemLedger } from '../../core/itemLedger.ts'
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { renderItemLedgerHtml } from '../print/printItemLedger.ts'
@@ -29,16 +31,24 @@ import { printHtml } from '../print/printReceipt.ts'
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
 export function ItemsPage() {
-  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers, journal } = useDataStore()
+  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers, journal, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
   const { setup, labelSettings } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const currentUser = appUsers.find((user) => user.id === currentUserId) ?? null
+  const itemDeletePermissions = useMemo(
+    () => effectivePermissionsFor(currentUser, rolesWithOverrides(roleOverrides, customRoles, setup.activityId)),
+    [currentUser, roleOverrides, customRoles, setup.activityId],
+  )
+  const canDeleteItems = currentUserId == null || currentUser?.roleId === 'owner' || itemDeletePermissions.has('inv.item.delete')
+  const deleteApproval = useSupervisorApproval('inv.item.delete', { forcePin: true })
 
   const [query, setQuery] = useState('')
   const [catFilter, setCatFilter] = useState<number | 0>(0)
   const [warehouseFilter, setWarehouseFilter] = useState<number | 0>(0)
   const [modal, setModal] = useState<'closed' | 'item' | 'category'>('closed')
+  const [deleteTarget, setDeleteTarget] = useState<Item | null>(null)
   const [editing, setEditing] = useState<Item | null>(null)
   const [draft, setDraft] = useState<ItemDraft | null>(null)
   const [errors, setErrors] = useState<string[]>([])
@@ -216,6 +226,30 @@ export function ItemsPage() {
       toast.show(`تم إضافة «${draft.nameAr}»`)
     }
     setModal('closed')
+  }
+
+  const askDeleteItem = (item: Item) => {
+    if (!canDeleteItems) {
+      toast.show('لا تملك فئة موظفك صلاحية حذف الأصناف — اطلب من المالك منحها من شاشة الصلاحيات', 'error')
+      return
+    }
+    setDeleteTarget(item)
+  }
+
+  const confirmDeleteItem = () => {
+    const target = deleteTarget
+    if (!target) return
+    setDeleteTarget(null)
+    deleteApproval.request((approvedBy) => {
+      if (!approvedBy) {
+        toast.show('لم يتم اعتماد حذف الصنف', 'error')
+        return
+      }
+      try {
+        removeItem(target.id, { approvedBy })
+        toast.show(`تم حذف «${target.nameAr}»`)
+      } catch (e) { toast.show((e as Error).message, 'error') }
+    })
   }
 
   const openNewCategory = () => {
@@ -511,13 +545,24 @@ export function ItemsPage() {
                         <button onClick={() => openEditItem(it)} title="تعديل بيانات الصنف" className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110">
                           <Pencil size={15} />
                         </button>
-                        <button
-                          onClick={() => { try { removeItem(it.id); toast.show(`تم حذف «${it.nameAr}»`) } catch (e) { toast.show((e as Error).message, 'error') } }}
-                          title="حذف الصنف — يُرفض إن كان له حركة أو رصيد (عطّله بدلاً من الحذف)"
-                          className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110"
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                        {canDeleteItems ? (
+                          <button
+                            onClick={() => askDeleteItem(it)}
+                            title="حذف الصنف — تأكيد ورقم سري مطلوبان"
+                            className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled
+                            title="حذف الأصناف متاح للمالك أو لفئة موظفين مُنحت صلاحية الحذف"
+                            className="p-2 rounded-lg text-slate-300 dark:text-slate-700 cursor-not-allowed"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -527,6 +572,24 @@ export function ItemsPage() {
           </table>
         </div>
       )}
+
+      {/* تأكيد حذف الصنف قبل فتح حوار الرقم السري */}
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="تأكيد حذف الصنف">
+        {deleteTarget && (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-4 text-sm leading-7">
+              <div className="font-black text-rose-700 dark:text-rose-300">سيتم حذف الصنف نهائياً من قائمة الأصناف.</div>
+              <div className="mt-1">الصنف: <b>{deleteTarget.nameAr}</b></div>
+              <div className="text-[12px] text-slate-500">لن يتم الحذف إذا كان للصنف حركة أو رصيد؛ استخدم التعطيل بدلاً من الحذف في هذه الحالة.</div>
+            </div>
+            <div className="text-[12px] text-slate-600 dark:text-slate-300">بعد المتابعة سيُطلب الرقم السري للمالك أو لموظف من فئة تملك صلاحية حذف الأصناف.</div>
+            <div className="flex justify-end gap-2">
+              <Btn variant="ghost" onClick={() => setDeleteTarget(null)}>إلغاء</Btn>
+              <Btn variant="danger" onClick={confirmDeleteItem}>متابعة وطلب الرقم السري</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* مودال الصنف */}
       <Modal open={modal === 'item'} onClose={() => setModal('closed')} title={editing ? `تعديل: ${editing.nameAr}` : 'صنف جديد'} wide>
@@ -819,6 +882,7 @@ export function ItemsPage() {
           )
         })()}
       </Modal>
+      {deleteApproval.dialog}
     </div>
   )
 }

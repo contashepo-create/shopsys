@@ -1366,7 +1366,7 @@ interface DataState {
   seed: (activityFeatures: ItemFeature[]) => void
   addItem: (item: Omit<Item, 'id'>) => void
   updateItem: (id: number, patch: Partial<Item>) => void
-  removeItem: (id: number) => void
+  removeItem: (id: number, approval?: { approvedBy: string }) => void
   addCategory: (nameAr: string, features: ItemFeature[], parentId?: number | null) => void
   updateCategory: (id: number, patch: Partial<Category>) => void
   removeCategory: (id: number) => void
@@ -2536,10 +2536,22 @@ export const useDataStore = create<DataState>()(
       addItem: (item) => set((s) => ({ items: [...s.items, { ...item, id: nextId(s.items) }] })),
       updateItem: (id, patch) =>
         set((s) => ({ items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) })),
-      removeItem: (id) => {
+      removeItem: (id, approval) => {
         const s = get()
         const it = s.items.find((x) => x.id === id)
         if (!it) return
+        const activeUser = s.appUsers.find((user) => user.id === s.currentUserId) ?? null
+        const roles = rolesWithOverrides(s.roleOverrides, s.customRoles, useAppStore.getState().setup.activityId)
+        const requesterPerms = effectivePermissionsFor(activeUser, roles)
+        const requesterAllowed = s.currentUserId == null || activeUser?.roleId === 'owner' || requesterPerms.has('inv.item.delete')
+        if (!requesterAllowed) throw new Error('حذف الأصناف متاح للمالك أو لفئة موظفين مُنحت صلاحية حذف الأصناف فقط')
+        if (!approval?.approvedBy?.trim()) throw new Error('لا يمكن حذف الصنف دون تأكيد الرقم السري للمالك أو الموظف المخوّل')
+        const approverIsOwner = approval.approvedBy.trim() === 'المالك'
+        const approverIsAuthorizedUser = s.appUsers.some((user) => {
+          if (!user.active || user.nameAr !== approval.approvedBy.trim()) return false
+          return effectivePermissionsFor(user, roles).has('inv.item.delete')
+        })
+        if (!approverIsOwner && !approverIsAuthorizedUser) throw new Error('الرقم السري المستخدم لا يملك صلاحية حذف الأصناف')
         // V1 (مراجعة المخزون): صنف له تاريخ حركة لا يُحذف — الحذف يفقد كروت الأصناف
         // والتقارير مرجعيتها ويترك 1103 بقيمة صنف شبح. البديل: تعطيل (أرشفة).
         const reasons: string[] = []
@@ -2551,7 +2563,16 @@ export const useDataStore = create<DataState>()(
         if (s.transfers.some((t) => t.lines.some((l) => l.itemId === id))) reasons.push('تحويلات مخزنية')
         if (reasons.length) throw new Error(`«${it.nameAr}» له ${reasons.join(' و')} — لا يُحذف حفاظاً على السجل؛ عطّله بدلاً من الحذف`)
         if ((it.stockQty ?? 0) !== 0) throw new Error(`«${it.nameAr}» رصيده ${it.stockQty} — صفّره أولاً (بيع/إتلاف/جرد) ثم احذفه، وإلا بقيت قيمة 1103 بلا صنف`)
-        set({ items: s.items.filter((x) => x.id !== id) })
+        set({
+          items: s.items.filter((x) => x.id !== id),
+          auditLog: appendAudit(s.auditLog, [{
+            at: new Date().toISOString(),
+            user: activeUserName(s),
+            kind: 'auth',
+            title: `حُذف الصنف «${it.nameAr}» بعد اعتماد «${approval.approvedBy.trim()}»`,
+            refKey: `item:${it.id}`,
+          }]),
+        })
       },
 
       addCategory: (nameAr, features, parentId = null) =>

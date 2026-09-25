@@ -8,6 +8,7 @@ describe('employee category CRUD matrix', () => {
       expect(Object.keys(row.permissions).sort()).toEqual(['create', 'delete', 'read', 'update'])
     }
     expect(CRUD_MATRIX.find((row) => row.id === 'reports')?.permissions.delete).toEqual([])
+    expect(CRUD_MATRIX.find((row) => row.id === 'inventory')?.permissions.delete).toEqual(['inv.item.delete'])
   })
 
   it('filters specialized rows by enabled activity modules', () => {

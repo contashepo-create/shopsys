@@ -24,6 +24,19 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     }
   })
 
+  it('لا يخفي الأصناف أو الموردين بعد أول 30 نتيجة', () => {
+    const manyItems = Array.from({ length: 35 }, (_, index) => ({ id: index + 1, nameAr: `صنف ${index + 1}`, sku: `SKU-${index + 1}`, barcodes: [] }))
+    const itemView = render(<ItemQuickPicker items={manyItems} onPick={() => undefined}/>)
+    fireEvent.focus(itemView.getByPlaceholderText(/اكتب كود أو اسم/))
+    expect(itemView.getByText('صنف 35')).toBeTruthy()
+    cleanup()
+
+    const manyParties = Array.from({ length: 35 }, (_, index) => ({ id: index + 1, nameAr: `مورد ${index + 1}` }))
+    const partyView = render(<PartyQuickPicker parties={manyParties} value={0} onChange={() => undefined} cashLabel="مورد نقدي" label="المورد"/>)
+    fireEvent.focus(partyView.getByLabelText('المورد'))
+    expect(partyView.getByText('مورد 35')).toBeTruthy()
+  })
+
   it('يحدد أول نتيجة افتراضياً ويتنقل بالأسهم ثم يغلق بـ Escape', () => {
     const onPick = vi.fn()
     const view = render(<ItemQuickPicker items={items} onPick={onPick}/>)
