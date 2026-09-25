@@ -8,7 +8,7 @@
  */
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
-import { secureStorage } from './secureStorage.ts'
+import { appStorage } from './persistentStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import { priceFloorViolations, PriceFloorError } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
@@ -10651,7 +10651,7 @@ export const useDataStore = create<DataState>()(
       name: 'shopsys-data',
       version: DATA_VERSION,
       // القرار 28: قاعدة البيانات مشفرة AES-256-GCM بمفتاح مشتق لهذا الجهاز
-      storage: createJSONStorage(() => secureStorage),
+      storage: createJSONStorage(appStorage),
       // ترحيل البيانات المحفوظة بالأشكال القديمة (أقسام هرمية، stockQty، مرتجعات وورديات وجرد)
       migrate: (persisted: unknown) => {
         const s = persisted as Partial<DataState>

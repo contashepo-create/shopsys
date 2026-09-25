@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('shopsysDesktop', {
   database: {
     getSnapshot: (storeName) => ipcRenderer.invoke('shopsys:db:get-snapshot', storeName),
     saveSnapshot: (input) => ipcRenderer.invoke('shopsys:db:save-snapshot', input),
+    deleteSnapshot: (input) => ipcRenderer.invoke('shopsys:db:delete-snapshot', input),
     integrityCheck: () => ipcRenderer.invoke('shopsys:db:integrity-check'),
     schemaVersion: () => ipcRenderer.invoke('shopsys:db:schema-version'),
   },

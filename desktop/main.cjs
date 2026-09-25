@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, safeStorage } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 const Database = require('better-sqlite3')
@@ -38,10 +38,31 @@ function openDatabase() {
   migrateDatabase()
 }
 
+function encodePayload(payloadJson) {
+  if (safeStorage.isEncryptionAvailable()) {
+    return `safe:v1:${safeStorage.encryptString(payloadJson).toString('base64')}`
+  }
+  // بعض أنظمة Linux لا توفر keyring داخل جلسة التشغيل؛ أبقِ التوافق قائماً
+  // مع وسم صريح حتى لا يُعامل النص كأنه مشفر بمفتاح النظام.
+  return `plain:v1:${payloadJson}`
+}
+
+function decodePayload(stored) {
+  const value = String(stored ?? '')
+  if (value.startsWith('safe:v1:')) {
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('مفتاح النظام الآمن غير متاح لفك قاعدة SQLite')
+    return safeStorage.decryptString(Buffer.from(value.slice('safe:v1:'.length), 'base64'))
+  }
+  if (value.startsWith('plain:v1:')) return value.slice('plain:v1:'.length)
+  // لقطات الإصدار الانتقالي الأولى كانت JSON مباشرة.
+  return value
+}
+
 function registerDatabaseIpc() {
   ipcMain.handle('shopsys:db:get-snapshot', (_event, storeName) => {
     const row = db.prepare('SELECT store_name AS storeName, revision, payload_json AS payloadJson, updated_at AS updatedAt FROM store_state WHERE store_name = ?').get(String(storeName))
-    return row ?? { storeName: String(storeName), revision: 0, payloadJson: null, updatedAt: null }
+    if (!row) return { storeName: String(storeName), revision: 0, payloadJson: null, updatedAt: null }
+    return { ...row, payloadJson: decodePayload(row.payloadJson) }
   })
 
   ipcMain.handle('shopsys:db:save-snapshot', (_event, input) => {
@@ -50,16 +71,32 @@ function registerDatabaseIpc() {
     const expectedRevision = Number(input?.expectedRevision)
     if (!storeName || !payloadJson || !Number.isInteger(expectedRevision) || expectedRevision < 0) throw new Error('لقطة قاعدة البيانات غير صالحة')
     JSON.parse(payloadJson)
+    const storedPayload = encodePayload(payloadJson)
     const updatedAt = new Date().toISOString()
     const save = db.transaction(() => {
       const current = db.prepare('SELECT revision FROM store_state WHERE store_name = ?').get(storeName)
       const revision = current ? Number(current.revision) : 0
       if (revision !== expectedRevision) throw new Error('تعارض إصدار قاعدة البيانات — أعد القراءة قبل الحفظ')
       const nextRevision = revision + 1
-      db.prepare(`INSERT INTO store_state(store_name, revision, payload_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(store_name) DO UPDATE SET revision = excluded.revision, payload_json = excluded.payload_json, updated_at = excluded.updated_at`).run(storeName, nextRevision, payloadJson, updatedAt)
+      db.prepare(`INSERT INTO store_state(store_name, revision, payload_json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(store_name) DO UPDATE SET revision = excluded.revision, payload_json = excluded.payload_json, updated_at = excluded.updated_at`).run(storeName, nextRevision, storedPayload, updatedAt)
       return { revision: nextRevision, updatedAt }
     })
     return save()
+  })
+
+  ipcMain.handle('shopsys:db:delete-snapshot', (_event, input) => {
+    const storeName = String(input?.storeName ?? '')
+    const expectedRevision = Number(input?.expectedRevision)
+    if (!storeName || !Number.isInteger(expectedRevision) || expectedRevision < 0) throw new Error('طلب حذف لقطة SQLite غير صالح')
+    const updatedAt = new Date().toISOString()
+    const remove = db.transaction(() => {
+      const current = db.prepare('SELECT revision FROM store_state WHERE store_name = ?').get(storeName)
+      const revision = current ? Number(current.revision) : 0
+      if (revision !== expectedRevision) throw new Error('تعارض إصدار قاعدة البيانات — أعد القراءة قبل الحذف')
+      db.prepare('DELETE FROM store_state WHERE store_name = ?').run(storeName)
+      return { revision: 0, updatedAt }
+    })
+    return remove()
   })
 
   ipcMain.handle('shopsys:db:integrity-check', () => {
