@@ -27,6 +27,9 @@ function fakeDatabase() {
       rows.delete(storeName)
       return { revision: 0, updatedAt: new Date().toISOString() }
     },
+    enqueueOutbox: async () => ({ created: true }),
+    claimOutbox: async () => [],
+    completeOutbox: async () => ({ updated: true }),
     integrityCheck: async () => ({ ok: true, message: 'ok' }),
     schemaVersion: async () => 1,
   }

@@ -11,10 +11,28 @@ export interface DesktopSnapshot {
   updatedAt: string | null
 }
 
+export type DesktopOutboxStatus = 'pending' | 'sending' | 'sent' | 'failed'
+
+export interface DesktopOutboxEvent {
+  id: string
+  aggregateType: string
+  aggregateId: string
+  eventType: string
+  payloadJson: string
+  status: DesktopOutboxStatus
+  attempts: number
+  nextAttemptAt: string | null
+  createdAt: string
+  sentAt: string | null
+}
+
 export interface DesktopDatabaseBridge {
   getSnapshot(storeName: string): Promise<DesktopSnapshot>
   saveSnapshot(input: { storeName: string; expectedRevision: number; payloadJson: string; idempotencyKey?: string }): Promise<{ revision: number; updatedAt: string; replayed?: boolean }>
   deleteSnapshot?(input: { storeName: string; expectedRevision: number }): Promise<{ revision: number; updatedAt: string }>
+  enqueueOutbox(input: { id: string; aggregateType: string; aggregateId: string; eventType: string; payloadJson: string }): Promise<{ created: boolean }>
+  claimOutbox(input?: { now?: string; limit?: number }): Promise<DesktopOutboxEvent[]>
+  completeOutbox(input: { id: string; status: 'sent' | 'failed'; nextAttemptAt?: string | null }): Promise<{ updated: boolean }>
   integrityCheck(): Promise<{ ok: boolean; message: string }>
   schemaVersion(): Promise<number>
 }

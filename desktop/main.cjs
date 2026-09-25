@@ -115,6 +115,53 @@ function registerDatabaseIpc() {
     return save()
   })
 
+  ipcMain.handle('shopsys:db:enqueue-outbox', (_event, input) => {
+    const id = String(input?.id ?? '')
+    const aggregateType = String(input?.aggregateType ?? '')
+    const aggregateId = String(input?.aggregateId ?? '')
+    const eventType = String(input?.eventType ?? '')
+    const payloadJson = String(input?.payloadJson ?? '')
+    if (!id || id.length > 240 || !/^[A-Za-z0-9:_-]+$/.test(id)) throw new Error('معرف حدث outbox غير صالح')
+    if (!aggregateType || aggregateType.length > 120 || !aggregateId || aggregateId.length > 240 || !eventType || eventType.length > 120) throw new Error('بيانات حدث outbox غير مكتملة')
+    if (!payloadJson || payloadJson.length > 4_000_000) throw new Error('حمولة حدث outbox كبيرة أو فارغة')
+    JSON.parse(payloadJson)
+    const createdAt = new Date().toISOString()
+    const result = db.prepare(`INSERT OR IGNORE INTO outbox_events(id, aggregate_type, aggregate_id, event_type, payload_json, status, attempts, next_attempt_at, created_at, sent_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, ?, NULL)`).run(id, aggregateType, aggregateId, eventType, payloadJson, createdAt)
+    return { created: result.changes === 1 }
+  })
+
+  ipcMain.handle('shopsys:db:claim-outbox', (_event, input) => {
+    const now = String(input?.now ?? new Date().toISOString())
+    const requestedLimit = Number(input?.limit ?? 20)
+    const limit = Number.isInteger(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 20
+    const claim = db.transaction(() => {
+      const rows = db.prepare(`SELECT id, aggregate_type AS aggregateType, aggregate_id AS aggregateId, event_type AS eventType,
+          payload_json AS payloadJson, status, attempts, next_attempt_at AS nextAttemptAt, created_at AS createdAt, sent_at AS sentAt
+        FROM outbox_events
+        WHERE status IN ('pending', 'failed')
+          AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+        ORDER BY created_at ASC, id ASC
+        LIMIT ?`).all(now, limit)
+      const update = db.prepare(`UPDATE outbox_events SET status = 'sending', attempts = attempts + 1 WHERE id = ? AND status IN ('pending', 'failed')`)
+      return rows.filter((row) => update.run(row.id).changes === 1).map((row) => ({ ...row, status: 'sending', attempts: Number(row.attempts) + 1 }))
+    })
+    return claim()
+  })
+
+  ipcMain.handle('shopsys:db:complete-outbox', (_event, input) => {
+    const id = String(input?.id ?? '')
+    const status = String(input?.status ?? '')
+    if (!id || (status !== 'sent' && status !== 'failed')) throw new Error('حالة إغلاق outbox غير صالحة')
+    const nextAttemptAt = input?.nextAttemptAt == null ? null : String(input.nextAttemptAt)
+    if (nextAttemptAt && Number.isNaN(Date.parse(nextAttemptAt))) throw new Error('موعد إعادة outbox غير صالح')
+    const now = new Date().toISOString()
+    const result = status === 'sent'
+      ? db.prepare(`UPDATE outbox_events SET status = 'sent', sent_at = ?, next_attempt_at = NULL WHERE id = ? AND status = 'sending'`).run(now, id)
+      : db.prepare(`UPDATE outbox_events SET status = 'failed', sent_at = NULL, next_attempt_at = ? WHERE id = ? AND status = 'sending'`).run(nextAttemptAt, id)
+    return { updated: result.changes === 1 }
+  })
+
   ipcMain.handle('shopsys:db:delete-snapshot', (_event, input) => {
     const storeName = String(input?.storeName ?? '')
     const expectedRevision = Number(input?.expectedRevision)
