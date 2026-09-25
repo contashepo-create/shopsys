@@ -36,7 +36,7 @@ function fakeDatabase() {
 describe('جسر تخزين Zustand إلى SQLite', () => {
   it('يحفظ ويقرأ اللقطة بإصدار متزايد ويحذفها ذرياً', async () => {
     const { database, calls } = fakeDatabase()
-    const storage = new DesktopStateStorage(database)
+    const storage = new DesktopStateStorage(database, null)
 
     expect(await storage.getItem('shopsys-data')).toBeNull()
     await storage.setItem('shopsys-data', '{"version":1}')
@@ -51,10 +51,25 @@ describe('جسر تخزين Zustand إلى SQLite', () => {
     expect(await storage.getItem('shopsys-data')).toBeNull()
   })
 
+  it('ينقل التخزين القديم إلى SQLite قبل حذف نسخته', async () => {
+    const { database, calls } = fakeDatabase()
+    let legacyPayload: string | null = '{"legacy":true}'
+    const legacyStorage = {
+      getItem: async () => legacyPayload,
+      setItem: async (_name: string, value: string) => { legacyPayload = value },
+      removeItem: async () => { legacyPayload = null },
+    }
+    const storage = new DesktopStateStorage(database, legacyStorage)
+
+    expect(await storage.getItem('shopsys-data')).toBe('{"legacy":true}')
+    expect(legacyPayload).toBeNull()
+    expect(calls).toEqual([{ expectedRevision: 0, payloadJson: '{"legacy":true}' }])
+  })
+
   it('لا يكتب فوق لقطة أحدث من نافذة أخرى', async () => {
     const { database } = fakeDatabase()
-    const first = new DesktopStateStorage(database)
-    const second = new DesktopStateStorage(database)
+    const first = new DesktopStateStorage(database, null)
+    const second = new DesktopStateStorage(database, null)
 
     await second.getItem('shopsys-data')
     await first.setItem('shopsys-data', '{"owner":"first"}')

@@ -18,8 +18,12 @@ export class DesktopStateStorage implements StateStorage {
   private readonly snapshots = new Map<string, CachedSnapshot>()
   private readonly queues = new Map<string, Promise<unknown>>()
   private readonly database: DesktopDatabaseBridge
+  private readonly legacyStorage: StateStorage | null
 
-  constructor(database: DesktopDatabaseBridge) { this.database = database }
+  constructor(database: DesktopDatabaseBridge, legacyStorage: StateStorage | null = secureStorage) {
+    this.database = database
+    this.legacyStorage = legacyStorage
+  }
 
   private enqueue<T>(storeName: string, work: () => Promise<T>): Promise<T> {
     const previous = this.queues.get(storeName) ?? Promise.resolve()
@@ -33,6 +37,22 @@ export class DesktopStateStorage implements StateStorage {
     if (cached) return cached
     const snapshot = await this.database.getSnapshot(storeName)
     if (snapshot.storeName !== storeName) throw new Error('اسم مخزن SQLite غير مطابق')
+    if (snapshot.payloadJson == null && this.legacyStorage) {
+      // الترحيل لمرة واحدة: نثبت اللقطة في SQLite أولاً ثم نحذف النسخة القديمة.
+      // إذا فشل الحفظ تبقى نسخة الويب سليمة ويمكن إعادة المحاولة عند التشغيل التالي.
+      const legacyPayload = await this.legacyStorage.getItem(storeName)
+      if (legacyPayload != null) {
+        const migrated = await this.database.saveSnapshot({
+          storeName,
+          expectedRevision: snapshot.revision,
+          payloadJson: legacyPayload,
+        })
+        await this.legacyStorage.removeItem(storeName)
+        const loaded: CachedSnapshot = { revision: migrated.revision, payloadJson: legacyPayload }
+        this.snapshots.set(storeName, loaded)
+        return loaded
+      }
+    }
     const loaded: CachedSnapshot = { revision: snapshot.revision, payloadJson: snapshot.payloadJson }
     this.snapshots.set(storeName, loaded)
     return loaded
@@ -59,6 +79,7 @@ export class DesktopStateStorage implements StateStorage {
       const current = await this.load(name)
       if (this.database.deleteSnapshot) {
         const result = await this.database.deleteSnapshot({ storeName: name, expectedRevision: current.revision })
+        if (this.legacyStorage) await this.legacyStorage.removeItem(name)
         this.snapshots.set(name, { revision: result.revision, payloadJson: null })
         return
       }
