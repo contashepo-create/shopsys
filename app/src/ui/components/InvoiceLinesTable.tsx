@@ -89,6 +89,13 @@ export function InvoiceLinesTable({
   const lineWarehouseMode = warehouseId == null
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  const selectedLine = selectedKey ? lines.find((line) => line.key === selectedKey) : undefined
+  const removeSelectedLine = () => {
+    if (!selectedLine) return
+    onRemove(selectedLine.key)
+    setSelectedKey(null)
+  }
   const draftValue = (key: string, value: string | number) => drafts[key] ?? String(value ?? '')
   const updateDraft = (key: string, raw: string, commit: (value: string) => void) => {
     const value = decimalDraft(raw)
@@ -122,6 +129,7 @@ export function InvoiceLinesTable({
         <div className="invoice-lines-toolbar-title">
           <div className="text-[11px] font-bold text-slate-400">بنود الفاتورة</div>
           <h2 className="text-sm font-black">الأصناف والكميات والأسعار</h2>
+          <button type="button" className="invoice-lines-delete" aria-label="حذف السطر المحدد" title="اختر سطراً ثم اضغط لحذفه" disabled={!selectedLine} onClick={removeSelectedLine}><Trash2 size={14} /> حذف السطر</button>
         </div>
         <div className="invoice-lines-kpis">
           <span className="invoice-lines-count">{lines.length} بند</span>
@@ -158,7 +166,6 @@ export function InvoiceLinesTable({
               {kind === 'sale' && mode === 'profit' && canViewCost && <><th className="p-3">التكلفة</th><th className="p-3">الهامش</th></>}
               {kind === 'purchase' && mode === 'profit' && canViewCost && <th className="p-3">نصيبه من المصروفات</th>}
               <th className="p-3">الإجمالي</th>
-              <th className="w-16 p-3 text-center">إجراء</th>
             </tr>
           </thead>
           <tbody>
@@ -168,7 +175,7 @@ export function InvoiceLinesTable({
               const belowCost = belowCostKeys?.has(line.key)
               const actualPrice = line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)
               return (
-                <tr key={line.key} data-entry-row className={`border-t border-slate-100 dark:border-slate-800 ${belowCost ? 'bg-amber-500/10' : warning?.severity === 'error' ? 'bg-rose-500/5' : warning ? 'bg-amber-500/5' : ''}`}>
+                <tr key={line.key} data-entry-row aria-selected={selectedKey === line.key} onClick={() => setSelectedKey(line.key)} className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : belowCost ? 'bg-amber-500/10' : warning?.severity === 'error' ? 'bg-rose-500/5' : warning ? 'bg-amber-500/5' : ''}`}>
                   <td className="w-10 p-3 text-center font-mono text-xs font-black text-slate-400">{lineIndex + 1}</td>
                   <td tabIndex={0} className="min-w-[100px] p-3 font-mono text-xs font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40" dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>
                   <td className="min-w-[180px] p-3 align-top break-words">
@@ -190,8 +197,7 @@ export function InvoiceLinesTable({
                   {kind === 'purchase' && mode !== 'simple' && <td className="w-[6rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
                   {kind === 'sale' && mode === 'profit' && canViewCost && <><td className="p-3">{fmt(line.unitCostMinor ?? 0)}</td><td className="p-3">{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
                   {kind === 'purchase' && mode === 'profit' && canViewCost && <td className="p-3">{fmt(costShares?.get(line.key) ?? 0)}</td>}
-                  <td className="w-[9rem] p-1"><div className={`${inputCls} bg-slate-50/50 font-bold dark:bg-slate-900/30`}>{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
-                  <td className="p-3 text-center"><button type="button" tabIndex={-1} aria-label="حذف السطر" onClick={() => onRemove(line.key)} className="rounded-lg p-1.5 text-slate-300 transition-colors hover:bg-rose-500/10 hover:text-rose-500"><Trash2 size={16} /></button></td>
+                  <td className="w-[9rem] p-1"><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
                 </tr>
               )
             })}

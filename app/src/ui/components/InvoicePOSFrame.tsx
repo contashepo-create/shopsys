@@ -107,33 +107,37 @@ export function InvoicePOSFrame({
 
       <div className="invoice-reference-main-area">
         <main className="invoice-reference-content">
-          <section className="invoice-reference-document-head">
-            <button className="invoice-reference-top-back" type="button" onClick={onBack} title={`العودة إلى قسم ${sale ? 'المبيعات' : 'المشتريات'}`} aria-label={`العودة إلى قسم ${sale ? 'المبيعات' : 'المشتريات'}`}><ArrowRight size={19} /></button>
-            <div className="invoice-reference-document-card">
-              <FileText size={20} />
-              <span><small>رقم الفاتورة الإلكترونية</small><strong>يصدر عند الترحيل</strong></span>
+          <section className="invoice-reference-header-card">
+            <div className="invoice-reference-document-head">
+              <button className="invoice-reference-top-back" type="button" onClick={onBack} title={`العودة إلى قسم ${sale ? 'المبيعات' : 'المشتريات'}`} aria-label={`العودة إلى قسم ${sale ? 'المبيعات' : 'المشتريات'}`}><ArrowRight size={19} /></button>
+              <div className="invoice-reference-document-card">
+                <FileText size={20} />
+                <span><small>رقم الفاتورة الإلكترونية</small><strong>يصدر عند الترحيل</strong></span>
+              </div>
+              <div className="invoice-reference-meta-card"><CalendarDays size={18} /><span><small>تاريخ ووقت الإصدار</small><strong>{dateLabel}</strong></span></div>
+              <div className="invoice-reference-meta-card"><CircleDollarSign size={18} /><span><small>العملة</small><strong>{currencyLabel}</strong></span></div>
+              <div className="invoice-reference-state-card"><BadgeCheck size={16} /><span><b>مسودة قيد التحرير</b><small>الطباعة: {printerLabel}</small></span></div>
+              <div className="invoice-reference-top-actions">
+                <Btn variant="ghost" onClick={onPartySearch} shortcut="F2"><Search size={14} /> {partyWord}</Btn>
+                <Btn variant="ghost" onClick={onItemSearch} shortcut="F5"><PackageSearch size={14} /> صنف</Btn>
+                <Btn variant="ghost" onClick={onRestoreDraft}>استعادة</Btn>
+                <Btn variant="ghost" onClick={onPrint} shortcut="F6"><Printer size={14} /> طباعة</Btn>
+                <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={14} /> حفظ</Btn>
+                <Btn onClick={onPost} shortcut="F9"><FileCheck2 size={14} /> ترحيل</Btn>
+              </div>
             </div>
-            <div className="invoice-reference-meta-card"><CalendarDays size={18} /><span><small>تاريخ ووقت الإصدار</small><strong>{dateLabel}</strong></span></div>
-            <div className="invoice-reference-meta-card"><CircleDollarSign size={18} /><span><small>العملة</small><strong>{currencyLabel}</strong></span></div>
-            <div className="invoice-reference-state-card"><BadgeCheck size={16} /><span><b>مسودة قيد التحرير</b><small>الطباعة: {printerLabel}</small></span></div>
-            <div className="invoice-reference-top-actions">
-              <Btn variant="ghost" onClick={onPartySearch} shortcut="F2"><Search size={14} /> {partyWord}</Btn>
-              <Btn variant="ghost" onClick={onItemSearch} shortcut="F5"><PackageSearch size={14} /> صنف</Btn>
-              <Btn variant="ghost" onClick={onRestoreDraft}>استعادة</Btn>
-              <Btn variant="ghost" onClick={onPrint} shortcut="F6"><Printer size={14} /> طباعة</Btn>
-              <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={14} /> حفظ</Btn>
-              <Btn onClick={onPost} shortcut="F9"><FileCheck2 size={14} /> ترحيل</Btn>
+
+            <div className="invoice-reference-account-invoice-grid">
+              {partyProfile && <section className="invoice-reference-party-panel">
+                <div className="invoice-reference-party-panel-title"><Search size={17} /><span><b>ملف {partyWord}</b><small>تفاصيل الحساب من السجل الحقيقي</small></span></div>
+                <div className="invoice-reference-party-panel-body">{partyProfile}</div>
+              </section>}
+
+              <section className="invoice-reference-edit-head">
+                <div className="invoice-reference-section-title"><FileText size={18} /><span><b>بيانات الفاتورة</b><small>التعديل يتم من هذا الرأس فقط</small></span></div>
+                <div className="invoice-reference-edit-fields">{headerFields}</div>
+              </section>
             </div>
-          </section>
-
-          {partyProfile && <section className="invoice-reference-party-panel">
-            <div className="invoice-reference-party-panel-title"><Search size={17} /><span><b>ملف {partyWord}</b><small>تفاصيل الحساب من السجل الحقيقي</small></span></div>
-            <div className="invoice-reference-party-panel-body">{partyProfile}</div>
-          </section>}
-
-          <section className="invoice-reference-edit-head">
-            <div className="invoice-reference-section-title"><FileText size={18} /><span><b>بيانات الفاتورة</b><small>التعديل يتم من هذا الرأس فقط</small></span></div>
-            <div className="invoice-reference-edit-fields">{headerFields}</div>
           </section>
 
           <section className="invoice-reference-rapid-entry">
