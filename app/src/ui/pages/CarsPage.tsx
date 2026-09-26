@@ -29,7 +29,7 @@ const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
 }
 
 export function CarsPage() {
-  const { cars, journal, paymentTerminals, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, employees, addStaffCommission } = useDataStore()
+  const { cars, journal, paymentTerminals, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, suppliers, employees, addStaffCommission } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -87,17 +87,19 @@ export function CarsPage() {
   const [cost, setCost] = useState('')
   const [odometer, setOdometer] = useState('0')
   const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [supplierId, setSupplierId] = useState(0)
   const [treasury, setTreasury] = useState('1101')
 
   const save = () => {
     try {
+      if (payment === 'credit' && !supplierId) throw new Error('اختر المورد عند الشراء الآجل')
       const c = addCar({
         make: make.trim(), model: model.trim(), year: Number(year) || 0, plateOrVin: plate.trim(),
         purpose: 'sale', purchaseCostMinor: toMinor(cost, cur.decimals), odometerKm: Number(odometer) || 0,
-        payment, notes: '', treasury,
+        payment, supplierId: payment === 'credit' ? supplierId : null, notes: '', treasury,
       })
       toast.show(`أُضيفت ${c.make} ${c.model} للمخزون بقيد شراء ✅`)
-      setOpen(false); setMake(''); setModel(''); setPlate(''); setCost(''); setOdometer('0')
+      setOpen(false); setMake(''); setModel(''); setPlate(''); setCost(''); setOdometer('0'); setSupplierId(0); setPayment('cash')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -310,10 +312,11 @@ export function CarsPage() {
               ))}
             </div>
             {payment === 'cash' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
+            {payment === 'credit' && <div className="mt-2"><Field label="المورد *" hint="سيظهر شراء السيارة الآجل في كشف حساب المورد"><PartyQuickPicker parties={suppliers} value={supplierId} onChange={setSupplierId} cashLabel="اختر المورد" label="بحث المورد" cashValue={0} showCash={false} /></Field></div>}
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} shortcut="F9" disabled={!make.trim() || !model.trim() || !plate.trim() || !cost}>شراء وقيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!make.trim() || !model.trim() || !plate.trim() || !cost || (payment === 'credit' && !supplierId)}>شراء وقيد</Btn>
           </div>
         </div>
       </Modal>

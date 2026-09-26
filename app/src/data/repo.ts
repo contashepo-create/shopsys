@@ -533,6 +533,10 @@ export interface Car {
   status: CarStatus
   odometerKm: number
   purchaseCostMinor: number
+  /** طريقة شراء السيارة — تساعد على تتبع الآجل في كشف المورد */
+  purchasePayment?: 'cash' | 'credit' | null
+  /** المورد الذي اشترينا منه السيارة، إلزامي عند الشراء الآجل */
+  supplierId?: number | null
   prepCostMinor: number // إجمالي التجهيزات المرسملة
   purchaseEntryId: number
   prepEntryIds: number[]
@@ -2079,8 +2083,8 @@ interface DataState {
   addAppointment: (a: Omit<ClinicAppointment, 'id' | 'done'>) => ClinicAppointment
   markAppointmentDone: (id: number) => void
   /* ─── معرض السيارات (القرار 27) ─── */
-  /** شراء سيارة كبضاعة بقيد 1103 ← 1101|2101 */
-  addCar: (args: CarInput & { payment: 'cash' | 'credit'; notes: string; treasury?: string }) => Car
+  /** شراء سيارة كبضاعة بقيد 1103 ← 1101|2101؛ الآجل يتطلب مورداً محدداً */
+  addCar: (args: CarInput & { payment: 'cash' | 'credit'; supplierId?: number | null; notes: string; treasury?: string }) => Car
   /** تجهيز يُرسمل على تكلفة السيارة (سمكرة/دهان/قطع) */
   addCarPrep: (carId: number, amountMinor: number, payment: 'cash' | 'credit', description: string, treasury?: string) => void
   /** بيع سيارة: إيراد + إخراج التكلفة الكاملة من المخزون في قيد واحد */
@@ -5961,7 +5965,8 @@ export const useDataStore = create<DataState>()(
           s.cheques.some((c) => c.direction === 'outgoing' && c.partyId === id) ||
           s.settlements.some((x) => x.section === 'supplier' && Number(x.refId) === id) ||
           (s.openingBalances[`supplier:${id}`] ?? 0) !== 0 ||
-          s.assets.some((a) => a.supplierId === id)
+          s.assets.some((a) => a.supplierId === id) ||
+          s.cars.some((car) => car.supplierId === id)
         if (referenced) throw new Error('لا يمكن حذف مورد له معاملات مسجلة — يبقى للسجل والتدقيق')
         set((st2) => ({ suppliers: st2.suppliers.filter((x) => x.id !== id) }))
       },
@@ -6380,6 +6385,17 @@ export const useDataStore = create<DataState>()(
             debitMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
             creditMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
           })),
+          // شراء سيارات الآجل مستند مستقل عن فواتير المشتريات العامة، لكنه يدخل كشف المورد نفسه.
+          extraDocs: state.cars.filter((car) => car.purchasePayment === 'credit' && car.supplierId === supplierId).map((car) => {
+            const entry = state.journal.find((journalEntry) => journalEntry.id === car.purchaseEntryId)
+            return {
+              docLabel: `شراء سيارة ${car.make} ${car.model} (${car.plateOrVin}) آجل`,
+              date: entry?.date ?? '0000-00-00',
+              operationMinor: car.purchaseCostMinor,
+              debitMinor: 0,
+              creditMinor: car.purchaseCostMinor,
+            }
+          }),
         })
       },
 
@@ -8528,7 +8544,7 @@ export const useDataStore = create<DataState>()(
           if (voucher.reversalEntryId || voucher.kind !== 'payment' || voucher.partyKind !== 'supplier' || voucher.partyId !== supplierId) continue
           for (const allocation of voucher.allocations ?? []) settled.set(allocation.docKey, (settled.get(allocation.docKey) ?? 0) + allocation.appliedMinor)
         }
-        return state.purchases
+        const purchaseInvoices = state.purchases
           .filter((purchase) => purchase.supplierId === supplierId)
           .map((purchase) => {
             const returnedOnDebt = state.purchaseReturns
@@ -8538,6 +8554,20 @@ export const useDataStore = create<DataState>()(
             const docKey = `purchase:${purchase.id}`
             return { docKey, docLabel: `فاتورة شراء ${purchase.invoiceNumber}`, date: purchase.date, dueMinor: due, settledMinor: purchase.paidMinor + (settled.get(docKey) ?? 0) }
           })
+        const carInvoices = state.cars
+          .filter((car) => car.purchasePayment === 'credit' && car.supplierId === supplierId)
+          .map((car) => {
+            const entry = state.journal.find((journalEntry) => journalEntry.id === car.purchaseEntryId)
+            const docKey = `car:${car.id}`
+            return {
+              docKey,
+              docLabel: `شراء سيارة ${car.make} ${car.model} (${car.plateOrVin})`,
+              date: entry?.date ?? '0000-00-00',
+              dueMinor: car.purchaseCostMinor,
+              settledMinor: settled.get(docKey) ?? 0,
+            }
+          })
+        return [...purchaseInvoices, ...carInvoices]
           .filter((invoice) => invoice.dueMinor - invoice.settledMinor > 0)
           .sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
       },
@@ -9291,21 +9321,25 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const errors = validateCar(args, state.cars.map((c) => c.plateOrVin))
         if (errors.length) throw new Error(errors.join(' — '))
+        if (args.payment === 'credit' && !args.supplierId) throw new Error('شراء السيارة الآجل يتطلب اختيار المورد — اختر مورداً مسجلاً أولاً')
+        if (args.supplierId != null && !state.suppliers.some((supplier) => supplier.id === args.supplierId)) throw new Error('المورد غير موجود في سجل الموردين')
         const label = `${args.make} ${args.model} ${args.year} (${args.plateOrVin})`
+        const supplier = args.supplierId != null ? state.suppliers.find((row) => row.id === args.supplierId) : null
         const lines = buildCarPurchaseEntry(args.purchaseCostMinor, args.payment, label, args.treasury ?? '1101')
         const now = new Date().toISOString()
         const id = nextId(state.cars)
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: now.slice(0, 10),
-          description: `شراء سيارة ${label}`,
+          description: `شراء سيارة ${label}${supplier ? ` — المورد: ${supplier.nameAr}` : ''}`,
           sourceType: 'car_purchase', sourceId: id, lines,
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
         const car: Car = {
           id, make: args.make.trim(), model: args.model.trim(), year: args.year,
           plateOrVin: args.plateOrVin.trim(), purpose: args.purpose, status: 'in_stock',
-          odometerKm: args.odometerKm, purchaseCostMinor: args.purchaseCostMinor, prepCostMinor: 0,
+          odometerKm: args.odometerKm, purchaseCostMinor: args.purchaseCostMinor,
+          purchasePayment: args.payment, supplierId: args.supplierId ?? null, prepCostMinor: 0,
           purchaseEntryId: entryId, prepEntryIds: [],
           salePriceMinor: null, saleProfitMinor: null, saleEntryId: null, soldAt: null, buyerName: '',
           rentalEquipmentId: null, notes: args.notes,
@@ -11037,7 +11071,8 @@ export const useDataStore = create<DataState>()(
           patientAttachments: s.patientAttachments ?? [],
           // ترحيل التاريخ المرضي الحر القديم إلى البنية المنظمة (بلا فقد)
           clinicPatients: (s.clinicPatients ?? []).map((p) => (p.history ? p : { ...p, history: migrateFreeHistory(p.medicalHistory ?? ''), linkedCustomerId: p.linkedCustomerId ?? null })),
-          cars: s.cars ?? [],
+          // ترحيل شراء السيارات: السيارات القديمة لا تملك مورداً، والجديدة تحفظ طريقة الشراء والربط
+          cars: (s.cars ?? []).map((car) => ({ ...car, purchasePayment: car.purchasePayment ?? null, supplierId: car.supplierId ?? null })),
           // الأمر 23: تذاكر قديمة إجمالياتها بلا حقول الخدمات/التحصيل المجزأ/الربح — تُستكمل بأمان
           tickets: (s.tickets ?? []).map((t: MaintenanceTicket) => {
             if (!t.totals || t.totals.paidMinor != null) return t
