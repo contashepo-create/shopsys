@@ -20,7 +20,12 @@ function selectShortcutButton(candidates: HTMLButtonElement[]): HTMLButtonElemen
   const active = document.activeElement as HTMLElement | null
   const activeRow = active?.closest('tr,[data-entry-row]')
   if (activeRow) {
-    candidates = candidates.filter((candidate) => activeRow.contains(candidate))
+    const rowCandidates = candidates.filter((candidate) => activeRow.contains(candidate))
+    const globalCandidates = candidates.filter((candidate) => !candidate.closest('tr,[data-entry-row]'))
+    // A global invoice action (for example «ترحيل») must still win while the
+    // cursor is inside a line row. Restrict to the row only when there is no
+    // global action available; this prevents F9 from requiring a blank area.
+    candidates = globalCandidates.length ? globalCandidates : rowCandidates
     if (!candidates.length) return null
   } else if (candidates.some((candidate) => candidate.closest('tr,[data-entry-row]'))) {
     return null

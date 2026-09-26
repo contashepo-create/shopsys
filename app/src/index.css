@@ -519,7 +519,7 @@ select { line-height: 1.25rem; }
 .dark .invoice-pos-document .invoice-shell > section:first-child label { color: #b2c4d8; }
 .invoice-pos-document .invoice-shell > section:first-child input, .invoice-pos-document .invoice-shell > section:first-child select, .invoice-pos-document .invoice-shell > section:first-child [role=combobox] { border-color: #b8c8da; border-radius: .25rem; background: #fbfdff; }
 .dark .invoice-pos-document .invoice-shell > section:first-child input, .dark .invoice-pos-document .invoice-shell > section:first-child select, .dark .invoice-pos-document .invoice-shell > section:first-child [role=combobox] { border-color: #39516d; background: #0f1d31; }
-.invoice-pos-document .invoice-body-grid { padding: .65rem; border: 1px solid #c4d1e0; border-radius: .35rem; background: #dce6f1; gap: .65rem; }
+.invoice-pos-document .invoice-body-grid { min-width: 0; overflow: visible; padding: .65rem; border: 1px solid #c4d1e0; border-radius: .35rem; background: #dce6f1; gap: .65rem; }
 .dark .invoice-pos-document .invoice-body-grid { border-color: #2d435e; background: #101c2d; }
 .invoice-pos-document .invoice-lines-column { gap: .65rem; }
 .invoice-pos-document .invoice-lines-column .invoice-lines-panel { border: 1px solid #b9c9da; border-radius: .3rem; background: #fff; box-shadow: none; }
@@ -538,7 +538,9 @@ select { line-height: 1.25rem; }
 .dark .invoice-pos-document .invoice-lines-table tbody td { color: #d7e5f3; }
 .invoice-pos-document .invoice-lines-column > section:not(.invoice-lines-panel) { border: 1px solid #b9c9da; border-radius: .3rem; background: #f7fafc; }
 .dark .invoice-pos-document .invoice-lines-column > section:not(.invoice-lines-panel) { border-color: #334d6b; background: #15263b; }
-.invoice-pos-document .invoice-totals-footer { gap: .65rem; }
+.invoice-pos-document .invoice-totals-footer { min-width: 0; gap: .65rem; }
+/* لا تقص صناديق الإجماليات محتواها عند تعدد الحقول أو ظهور قائمة منبثقة. */
+.invoice-pos-document .invoice-totals-footer > div { overflow: visible; }
 .invoice-pos-document .invoice-totals-footer > div { border-radius: .3rem; box-shadow: none; }
 .invoice-pos-document .invoice-totals-footer > div > div:first-child { min-height: 3.1rem; background: #edf4fb; }
 .dark .invoice-pos-document .invoice-totals-footer > div > div:first-child { background: #172b46; }

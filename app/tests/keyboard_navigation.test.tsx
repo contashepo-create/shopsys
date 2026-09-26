@@ -106,6 +106,17 @@ describe('التحكم بلوحة المفاتيح', () => {
     expect(posted).toBe(1)
   })
 
+  it('يرحّل من داخل خانة سعر أو كمية السطر دون الحاجة لمساحة فارغة', () => {
+    let posted = 0
+    const view = render(<MemoryRouter><KeyboardNavigation/><button onClick={() => posted++}>ترحيل <kbd>F9</kbd></button><div data-entry-row><input aria-label="سعر السطر" /></div></MemoryRouter>)
+    const price = view.getByLabelText('سعر السطر')
+    price.focus()
+    const event = new KeyboardEvent('keydown', { key: 'F9', bubbles: true, cancelable: true })
+    price.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(posted).toBe(1)
+  })
+
   it('يفتح F3 فاتورة شراء جديدة من قسم المشتريات', () => {
     const view = render(<MemoryRouter initialEntries={['/purchases/invoices']}><KeyboardNavigation/><Routes><Route path="*" element={<Path/>}/></Routes></MemoryRouter>)
     fireEvent.keyDown(document, { key: 'F3' })
