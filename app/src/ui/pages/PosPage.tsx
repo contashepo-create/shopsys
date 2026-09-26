@@ -6,7 +6,7 @@
  */
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Banknote, Trash2, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift, Pencil } from 'lucide-react'
+import { Banknote, Trash2, X, PauseCircle, PlayCircle, ShoppingCart, CheckCircle2, ScanBarcode, Printer, Settings2, Gift, Pencil } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -90,6 +90,7 @@ export function PosPage() {
 
   const [query, setQuery] = useState('')
   const [cart, setCart] = useState<CartLine[]>([])
+  const [selectedCartIndex, setSelectedCartIndex] = useState<number | null>(null)
   // كتابة الكمية العشرية بحرية («.25» لربع كيلو): مسودة نصية لكل سطر أثناء الكتابة،
   // تُرحَّل للسلة عند كل حرف صالح وتُنظَّف عند مغادرة الحقل (بلاغ المالك — نفس نمط الاستبدال الوزني)
   const [qtyDrafts, setQtyDrafts] = useState<Record<number, string>>({})
@@ -515,7 +516,7 @@ export function PosPage() {
       })
       setLastInvoice(sale.invoiceNumber)
       setLastSale(sale)
-      setCart([]); setQtyDrafts({})
+      setCart([]); setQtyDrafts({}); setSelectedCartIndex(null)
       setDiscountUnlockedBy(null)
       setInvoiceDiscount(0)
       setPayOpen(false)
@@ -577,10 +578,17 @@ export function PosPage() {
 
   }
 
+  const removeSelectedCartLine = () => {
+    if (selectedCartIndex == null || !cart[selectedCartIndex]) return
+    setCart((current) => current.filter((_, index) => index !== selectedCartIndex))
+    setQtyDrafts({})
+    setSelectedCartIndex(null)
+  }
+
   const holdCart = () => {
     if (!cart.length) return
     setHeld((h) => [...h, { id: Date.now(), label: `فاتورة معلقة ${h.length + 1}`, lines: cart, discount: invoiceDiscount }])
-    setCart([]); setQtyDrafts({})
+    setCart([]); setQtyDrafts({}); setSelectedCartIndex(null)
     setInvoiceDiscount(0)
     toast.show('عُلّقت الفاتورة — استكملها من الزر الأصفر')
   }
@@ -588,6 +596,7 @@ export function PosPage() {
   const resumeCart = (hc: HeldCart) => {
     if (cart.length) { toast.show('أفرغ السلة الحالية أو علّقها أولاً', 'error'); return }
     setCart(hc.lines)
+    setSelectedCartIndex(null)
     setInvoiceDiscount(hc.discount)
     setHeld((h) => h.filter((x) => x.id !== hc.id))
   }
@@ -685,8 +694,11 @@ export function PosPage() {
             <button onClick={holdCart} disabled={!cart.length} title="تعليق الفاتورة" className="p-2 rounded-lg text-amber-500 hover:bg-amber-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
               <PauseCircle size={17} />
             </button>
-            <button onClick={() => { setCart([]); setQtyDrafts({}); setInvoiceDiscount(0) }} disabled={!cart.length} title="إفراغ السلة" className="p-2 rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
-              <Trash2 size={17} />
+            <button onClick={() => { setCart([]); setQtyDrafts({}); setSelectedCartIndex(null); setInvoiceDiscount(0) }} disabled={!cart.length} title="إفراغ السلة بالكامل" className="p-2 rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-30 transition-all duration-200 hover:scale-110">
+              <X size={17} />
+            </button>
+            <button onClick={removeSelectedCartLine} disabled={selectedCartIndex == null || !cart[selectedCartIndex]} title="اختر سطرًا ثم احذفه" className="inline-flex items-center gap-1 rounded-lg border border-rose-300 px-2 py-1 text-[10px] font-black text-rose-600 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-30 dark:border-rose-800 dark:text-rose-300">
+              <Trash2 size={15} /> حذف السطر
             </button>
           </div>
         </div>
@@ -728,17 +740,16 @@ export function PosPage() {
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {/* رأس أعمدة السلة */}
-              <div className="grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
+              <div className="grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
                 <span>الصنف</span>
                 <span className="text-center">الكمية</span>
                 <span className="text-center">السعر</span>
                 <span className="text-center" title="النسبة الفعلية لكل سطر: نسبة البلد تلقائياً أو استثناء الصنف إن كان معفى">ضريبة</span>
                 <span className="text-center">خصم ٪</span>
                 <span className="text-left">الإجمالي</span>
-                <span></span>
               </div>
               {cart.map((l, i) => (
-                <div key={i} data-entry-row className="anim-pop entry-grid grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem_2rem] gap-2 items-center px-4 py-3 hover:bg-emerald-500/[0.03] transition-colors duration-150">
+                <div key={i} data-entry-row aria-selected={selectedCartIndex === i} onClick={() => setSelectedCartIndex(i)} className={`anim-pop entry-grid grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem] gap-2 items-center px-4 py-3 transition-colors duration-150 ${selectedCartIndex === i ? 'bg-emerald-500/15 ring-1 ring-inset ring-emerald-500/50' : 'hover:bg-emerald-500/[0.03]'}`}>
                   {/* الصنف: الاسم + سعر الوحدة */}
                   <div className="min-w-0">
                     <div className="font-bold text-[13px] text-slate-800 dark:text-white truncate leading-snug">
@@ -873,10 +884,6 @@ export function PosPage() {
                       <div className="text-[10px] text-rose-400 line-through">{fmt(Math.round(l.unitPriceMinor * l.qty))}</div>
                     )}
                   </div>
-                  {/* حذف */}
-                  <button onClick={() => { setQtyDrafts({}); setCart((c) => c.filter((_, j) => j !== i)) }} className="text-slate-300 hover:text-rose-500 hover:scale-125 transition-all duration-200 justify-self-center">
-                    <Trash2 size={15} />
-                  </button>
                 </div>
               ))}
             </div>

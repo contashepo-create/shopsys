@@ -60,6 +60,7 @@ export function SalesInvoicesPage() {
   /* ─── حالة نافذة التعديل ─── */
   const [editing, setEditing] = useState<SaleInvoice | null>(null)
   const [editLines, setEditLines] = useState<CartLine[]>([])
+  const [selectedEditLine, setSelectedEditLine] = useState<number | null>(null)
   const [editCustomerId, setEditCustomerId] = useState<number | null>(null)
   const [editPaid, setEditPaid] = useState('')
   const [editTreasury, setEditTreasury] = useState('1101')
@@ -113,6 +114,7 @@ export function SalesInvoicesPage() {
   }
   const doOpenEdit = (s: SaleInvoice) => {
     setEditing(s)
+    setSelectedEditLine(null)
     setEditLines(s.lines.map((l) => ({ ...l })))
     setEditCustomerId(s.customerId)
     setEditPaid(String((s.paidMinor ?? (s.payment === 'cash' ? s.totals.totalMinor : 0)) / 10 ** cur.decimals))
@@ -125,6 +127,11 @@ export function SalesInvoicesPage() {
     setEditInternalExpenses(s.internalExpenses ?? [])
     setEditReason('')
     setEditAddItemId(0)
+  }
+  const removeSelectedEditLine = () => {
+    if (selectedEditLine == null || !editLines[selectedEditLine]) return
+    setEditLines((current) => current.filter((_, index) => index !== selectedEditLine))
+    setSelectedEditLine(null)
   }
 
   // معاينة إجماليات التعديل بنفس المعاملة الضريبية الأصلية
@@ -435,8 +442,9 @@ export function SalesInvoicesPage() {
             </p>
 
             {/* سطور الفاتورة */}
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-              <table className="w-full text-[13px]">
+            <div className="invoice-edit-lines-panel rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="invoice-edit-lines-toolbar flex items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/50"><b className="text-xs">بنود الفاتورة</b><button type="button" aria-label="حذف السطر المحدد" title="اختر سطراً ثم اضغط لحذفه" disabled={selectedEditLine == null || !editLines[selectedEditLine]} onClick={removeSelectedEditLine} className="invoice-lines-delete inline-flex"><Trash2 size={14}/> حذف السطر</button></div>
+              <table className="invoice-edit-lines-table w-full text-[13px]">
                 <thead>
                   <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
                     <th className="px-3 py-2">الصنف</th>
@@ -445,12 +453,11 @@ export function SalesInvoicesPage() {
                     <th className="px-3 py-2 w-20">ضريبة</th>
                     <th className="px-3 py-2 w-20">خصم ٪</th>
                     <th className="px-3 py-2 w-24">الإجمالي</th>
-                    <th className="px-3 py-2 w-10"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {editLines.map((l, i) => (
-                    <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <tr key={i} aria-selected={selectedEditLine === i} onClick={() => setSelectedEditLine(i)} className={`border-b border-slate-50 dark:border-slate-800/50 ${selectedEditLine === i ? 'invoice-line-selected' : ''}`}>
                       <td className="px-3 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}</td>
                       <td className="px-3 py-2">
                         <input
@@ -475,11 +482,7 @@ export function SalesInvoicesPage() {
                         />
                       </td>
                       <td className="px-3 py-2 font-bold text-emerald-600">{fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}</td>
-                      <td className="px-3 py-2">
-                        <button title="حذف السطر" onClick={() => setEditLines(editLines.filter((_, xi) => xi !== i))} className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors">
-                          <Trash2 size={13} />
-                        </button>
-                      </td>
+
                     </tr>
                   ))}
                 </tbody>

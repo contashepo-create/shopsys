@@ -205,6 +205,7 @@ export function PurchasesPage() {
   /* ─── تعديل فاتورة شراء (عكس القيد + إعادة الترحيل — لا يفسد الدفتر) ─── */
   const [editing, setEditing] = useState<PurchaseInvoice | null>(null)
   const [editLines, setEditLines] = useState<{ itemId: number; qty: string; unitPrice: string }[]>([])
+  const [selectedEditLine, setSelectedEditLine] = useState<number | null>(null)
   const [editPaid, setEditPaid] = useState('')
   const [editTreasury, setEditTreasury] = useState('1101')
   const [editSupplierInvoiceNumber, setEditSupplierInvoiceNumber] = useState('')
@@ -220,6 +221,7 @@ export function PurchasesPage() {
   const openEdit = (p: PurchaseInvoice) => editApproval.request(() => doOpenEdit(p))
   const doOpenEdit = (p: PurchaseInvoice) => {
     setEditing(p)
+    setSelectedEditLine(null)
     setEditLines(p.lines.map((l) => ({ itemId: l.itemId, qty: String(l.qty), unitPrice: String(l.unitPriceMinor / 10 ** cur.decimals) })))
     setEditPaid(String(p.paidMinor / 10 ** cur.decimals))
     setEditTreasury(p.treasury ?? '1101')
@@ -230,6 +232,11 @@ export function PurchasesPage() {
     setEditExpenses(p.expenses.map((expense) => ({ ...expense })))
     setEditReason('')
     setEditAddItemId(0)
+  }
+  const removeSelectedEditLine = () => {
+    if (selectedEditLine == null || !editLines[selectedEditLine]) return
+    setEditLines((current) => current.filter((_, index) => index !== selectedEditLine))
+    setSelectedEditLine(null)
   }
 
   const editGoodsTotal = useMemo(
@@ -1023,20 +1030,20 @@ export function PurchasesPage() {
               💡 {editPolicy.reasonAr} يُعكس القيد القديم ويُعاد الترحيل: يسترد المخزون تكلفته الصحيحة وتُعاد قيمة توزيع المصاريف على السطور الجديدة.
             </p>
 
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-              <table className="w-full text-[13px]">
+            <div className="invoice-edit-lines-panel rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="invoice-edit-lines-toolbar flex items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/50"><b className="text-xs">بنود الفاتورة</b><button type="button" aria-label="حذف السطر المحدد" title="اختر سطراً ثم اضغط لحذفه" disabled={selectedEditLine == null || !editLines[selectedEditLine]} onClick={removeSelectedEditLine} className="invoice-lines-delete inline-flex"><Trash2 size={14}/> حذف السطر</button></div>
+              <table className="invoice-edit-lines-table w-full text-[13px]">
                 <thead>
                   <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
                     <th className="px-3 py-2">الصنف</th>
                     <th className="px-3 py-2 w-24">الكمية</th>
                     <th className="px-3 py-2 w-28">سعر الشراء ({cur.symbol})</th>
                     <th className="px-3 py-2 w-24">الإجمالي</th>
-                    <th className="px-3 py-2 w-10"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {editLines.map((l, i) => (
-                    <tr key={i} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <tr key={i} aria-selected={selectedEditLine === i} onClick={() => setSelectedEditLine(i)} className={`border-b border-slate-50 dark:border-slate-800/50 ${selectedEditLine === i ? 'invoice-line-selected' : ''}`}>
                       <td className="px-3 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((it) => it.id === l.itemId)?.sku || items.find((it) => it.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{items.find((it) => it.id === l.itemId)?.nameAr ?? '—'}</td>
                       <td className="px-3 py-2">
                         <input value={l.qty} onChange={(e) => setEditLines(editLines.map((x, xi) => (xi === i ? { ...x, qty: e.target.value } : x)))} className={inputCls + ' !py-1.5 !text-[12px]'} dir="ltr" />
@@ -1045,11 +1052,7 @@ export function PurchasesPage() {
                         <input value={l.unitPrice} onChange={(e) => setEditLines(editLines.map((x, xi) => (xi === i ? { ...x, unitPrice: e.target.value } : x)))} className={inputCls + ' !py-1.5 !text-[12px]'} dir="ltr" />
                       </td>
                       <td className="px-3 py-2 font-bold text-emerald-600">{fmt(Math.round((Number(l.qty) || 0) * toMinor(l.unitPrice || '0', cur.decimals)))}</td>
-                      <td className="px-3 py-2">
-                        <button title="حذف السطر" onClick={() => setEditLines(editLines.filter((_, xi) => xi !== i))} className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors">
-                          <Trash2 size={13} />
-                        </button>
-                      </td>
+
                     </tr>
                   ))}
                 </tbody>
