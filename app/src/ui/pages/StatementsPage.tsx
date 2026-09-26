@@ -24,7 +24,7 @@ const KINDS: { id: Kind; nameAr: string; icon: typeof UserRound; debitLabel: str
 ]
 
 export function StatementsPage() {
-  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, advanceRepayments, employeeDeductions, laundryOrders, cars, consignmentCars } = useDataStore()
+  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, advanceRepayments, employeeDeductions, laundryOrders, cars, consignmentCars, staffCommissions, custodyFiles, custodyTxs } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -77,8 +77,19 @@ export function StatementsPage() {
         vouchers, cheques,
       })
     }
-    return employeeStatement({ employeeId: partyId, advances: employeeAdvances, payrollRuns, advanceRepayments, deductions: employeeDeductions })
-  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, advanceRepayments, clientSettlements, openingBalances, settlements, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, laundryOrders, cars, consignmentCars, employeeDeductions])
+    return employeeStatement({
+      employeeId: partyId,
+      advances: employeeAdvances,
+      payrollRuns,
+      advanceRepayments,
+      deductions: employeeDeductions,
+      commissions: staffCommissions,
+      custodyTransactions: custodyTxs.flatMap((tx) => {
+        const file = custodyFiles.find((item) => item.id === tx.fileId)
+        return file ? [{ date: tx.date, employeeId: file.employeeId, type: tx.type, amountMinor: tx.amountMinor, description: tx.description }] : []
+      }),
+    })
+  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, advanceRepayments, clientSettlements, openingBalances, settlements, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, laundryOrders, cars, consignmentCars, employeeDeductions, staffCommissions, custodyFiles, custodyTxs])
 
   const balance = statementBalance(rows)
   const partyName = parties.find((p) => p.id === partyId)?.nameAr ?? ''
@@ -86,8 +97,8 @@ export function StatementsPage() {
   // إصلاح بلاغ المالك: كانت الطباعة عبر window.open فتحجبها المتصفحات —
   // الآن iframe مخفي (نفس آلية إيصال الكاشير) + قالب احترافي على نمط pro-acc
   const exportStatement = () => {
-    const headers = ['التاريخ', 'المستند', meta.debitLabel, meta.creditLabel, 'الرصيد']
-    const values = rows.map((row) => [row.date.slice(0, 10), row.docLabel, fmt(row.debitMinor), fmt(row.creditMinor), fmt(row.balanceMinor)])
+    const headers = ['التاريخ', 'المستند', 'قيمة العملية', meta.debitLabel, meta.creditLabel, 'الرصيد']
+    const values = rows.map((row) => [row.date.slice(0, 10), row.docLabel, row.operationMinor != null ? fmt(row.operationMinor) : '', fmt(row.debitMinor), fmt(row.creditMinor), fmt(row.balanceMinor)])
     const escape = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`
     const csv = '\ufeff' + [headers, ...values].map((row) => row.map(escape).join(',')).join('\n')
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
@@ -136,7 +147,7 @@ export function StatementsPage() {
 
       {!partyId ? (
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
-          <EmptyState icon="📄" title="اختر طرفاً لعرض كشف حسابه" sub="فواتير آجلة، سندات، شيكات، مرتجعات، سلف — كل حركة بتاريخها ورصيدها التراكمي" />
+          <EmptyState icon="📄" title="اختر طرفاً لعرض كشف حسابه" sub="فواتير ومرتجعات وخدمات وسندات وشيكات ورواتب وسلف — كل عملية بتاريخها ورصيدها التراكمي" />
         </div>
       ) : rows.length === 0 ? (
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">
@@ -163,6 +174,7 @@ export function StatementsPage() {
                 <tr className="text-right text-[10.5px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
                   <th className="px-4 py-3 font-bold">التاريخ</th>
                   <th className="px-4 py-3 font-bold">المستند</th>
+                  <th className="px-4 py-3 font-bold text-left">قيمة العملية</th>
                   <th className="px-4 py-3 font-bold text-left">{meta.debitLabel}</th>
                   <th className="px-4 py-3 font-bold text-left">{meta.creditLabel}</th>
                   <th className="px-4 py-3 font-bold text-left">الرصيد</th>
@@ -173,6 +185,7 @@ export function StatementsPage() {
                   <tr key={i} style={{ animationDelay: `${i * 20}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50">
                     <td className="px-4 py-2.5 text-slate-400 text-[11.5px]">{r.date.slice(0, 10)}</td>
                     <td className="px-4 py-2.5 font-bold text-slate-700 dark:text-slate-200">{r.docLabel}</td>
+                    <td className="px-4 py-2.5 text-left font-bold text-indigo-500">{r.operationMinor != null ? fmt(r.operationMinor) : ''}</td>
                     <td className="px-4 py-2.5 text-left font-bold text-rose-500">{r.debitMinor ? fmt(r.debitMinor) : ''}</td>
                     <td className="px-4 py-2.5 text-left font-bold text-emerald-600">{r.creditMinor ? fmt(r.creditMinor) : ''}</td>
                     <td className={`px-4 py-2.5 text-left font-black ${r.balanceMinor > 0 ? 'text-slate-800 dark:text-white' : 'text-emerald-600'}`}>{fmt(r.balanceMinor)}</td>

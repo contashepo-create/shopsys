@@ -37,6 +37,7 @@ export function renderStatementHtml(a: StatementPrintArgs): string {
       (r, i) => `<tr class="${i % 2 ? 'alt' : ''}">
       <td>${esc(r.date.slice(0, 10))}</td>
       <td class="doc">${esc(r.docLabel)}</td>
+      <td class="num">${r.operationMinor != null ? fmt(r.operationMinor) : '—'}</td>
       <td class="num">${r.debitMinor ? fmt(r.debitMinor) : '—'}</td>
       <td class="num">${r.creditMinor ? fmt(r.creditMinor) : '—'}</td>
       <td class="num bal ${r.balanceMinor < 0 ? 'neg' : ''}">${fmt(Math.abs(r.balanceMinor))}${r.balanceMinor < 0 ? ' *' : ''}</td>
@@ -107,9 +108,9 @@ export function renderStatementHtml(a: StatementPrintArgs): string {
   </div>
 
   <table>
-    <thead><tr><th>التاريخ</th><th>المستند / البيان</th><th style="text-align:left">${esc(a.debitLabel)}</th><th style="text-align:left">${esc(a.creditLabel)}</th><th style="text-align:left">الرصيد</th></tr></thead>
-    <tbody>${rowsHtml || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:18px">لا حركات في هذا الحساب بعد</td></tr>'}</tbody>
-    <tfoot><tr><td colspan="2">الإجمالي</td><td class="num">${fmt(totalDebit)}</td><td class="num">${fmt(totalCredit)}</td><td class="num ${balance < 0 ? 'neg' : ''}">${fmt(Math.abs(balance))}${balance < 0 ? ' *' : ''}</td></tr></tfoot>
+    <thead><tr><th>التاريخ</th><th>المستند / البيان</th><th style="text-align:left">قيمة العملية</th><th style="text-align:left">${esc(a.debitLabel)}</th><th style="text-align:left">${esc(a.creditLabel)}</th><th style="text-align:left">الرصيد</th></tr></thead>
+    <tbody>${rowsHtml || '<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:18px">لا حركات في هذا الحساب بعد</td></tr>'}</tbody>
+    <tfoot><tr><td colspan="2">الإجمالي</td><td class="num">${fmt(a.rows.reduce((s, r) => s + (r.operationMinor ?? 0), 0))}</td><td class="num">${fmt(totalDebit)}</td><td class="num">${fmt(totalCredit)}</td><td class="num ${balance < 0 ? 'neg' : ''}">${fmt(Math.abs(balance))}${balance < 0 ? ' *' : ''}</td></tr></tfoot>
   </table>
   ${a.rows.some((r) => r.balanceMinor < 0) || balance < 0 ? `<div class="note">* الرصيد المعلّم بنجمة معكوس الاتجاه — ${esc(a.balanceMeaning[1])}</div>` : ''}
 
