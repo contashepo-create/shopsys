@@ -8,23 +8,14 @@ import { useMemo, useState } from 'react'
 import { CloudUpload, Lock, RefreshCw, CheckCircle2, ShieldCheck, Copy, PlugZap, History, Download, Undo2 } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { validateSyncConfig, fetchRemote } from '../../data/syncClient.ts'
+import { validateSyncConfig, fetchRemote, generateSyncSecret, generateStoreAccessToken, rotateStoreAccessToken, rotateSyncEncryptionSecret } from '../../data/syncClient.ts'
 import { runSyncCycle, listConflictSnapshots, getConflictSnapshotData, restoreConflictSnapshot } from '../../data/syncRunner.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { deriveArchitectureMode, MODE_LABELS } from '../../core/architecture.ts'
 import { isCloudDisabled } from '../../core/featureFlags.ts'
+import { exportSyncPairing, importSyncPairing, PAIRING_PASSWORD_MIN } from '../../core/syncPairing.ts'
 
-const CREATE_TABLE_SQL = `create table if not exists stores (
-  store_id text primary key,
-  rev bigint not null default 0,
-  device_id text not null default '',
-  updated_at timestamptz not null default now(),
-  checksum text not null default '',
-  data text not null default ''
-);
-alter table stores enable row level security;
-create policy "stores anon access" on stores for all
-  to anon using (true) with check (true);`
+const MIGRATION_PATH = 'supabase/migrations/202609220001_secure_store_rls.sql'
 
 export function SyncPage() {
   const { sync, updateSync, activatedPayload, trialStartedAt, lastSeenAt, deviceId, deviceFlags } = useAppStore()
@@ -49,6 +40,8 @@ export function SyncPage() {
   const [anonKey, setAnonKey] = useState(sync.anonKey)
   const [storeId, setStoreId] = useState(sync.storeId)
   const [secret, setSecret] = useState(sync.secret)
+  const [accessToken, setAccessToken] = useState(sync.accessToken)
+  const [pairingPassword, setPairingPassword] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   // لقطات التعارض (شبكة الأمان): تُحدَّث بعد كل مزامنة/استرجاع عبر هذا العداد
   const [snapVer, setSnapVer] = useState(0)
@@ -92,7 +85,7 @@ export function SyncPage() {
 
   /* بطاقة وضع التشغيل تُعرض أعلى الصفحة (JSX أدناه) */
   const saveConfig = () => {
-    const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim() }
+    const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
     const errors = validateSyncConfig(cfg)
     if (errors.length) return toast.show(errors[0], 'error')
     updateSync({ ...cfg })
@@ -100,7 +93,7 @@ export function SyncPage() {
   }
 
   const testConnection = async () => {
-    const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim() }
+    const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
     const errors = validateSyncConfig(cfg)
     if (errors.length) return toast.show(errors[0], 'error')
     setBusy('test')
@@ -145,13 +138,77 @@ export function SyncPage() {
     setSnapVer((v) => v + 1)
   }
 
-  const copySql = async () => {
+  const copyMigrationPath = async () => {
     try {
-      await navigator.clipboard.writeText(CREATE_TABLE_SQL)
-      toast.show('نُسخ SQL — ألصقه في SQL Editor داخل مشروع Supabase ✅')
+      await navigator.clipboard.writeText(MIGRATION_PATH)
+      toast.show('نُسخ مسار ملف الترحيل الآمن ✅')
     } catch {
-      toast.show('تعذر النسخ — انسخه يدوياً من الصندوق', 'error')
+      toast.show('تعذر النسخ', 'error')
     }
+  }
+
+  const exportPairing = async () => {
+    try {
+      const cfg = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
+      const errors = validateSyncConfig(cfg)
+      if (errors.length) throw new Error(errors[0])
+      const content = await exportSyncPairing(cfg, pairingPassword)
+      const blob = new Blob([content], { type: 'application/octet-stream' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `tahakam-sync-${cfg.storeId}.tksync`
+      a.click(); URL.revokeObjectURL(a.href)
+      toast.show('تم تنزيل ملف ربط مشفر — انقله للجهاز الآخر بأمان ✅')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const rotateAccess = async () => {
+    if (!window.confirm('سيُنشأ اعتماد جديد. يبقى القديم صالحاً 24 ساعة فقط لتحديث بقية الأجهزة. بعد النجاح نزّل ملف ربط جديداً فوراً. متابعة؟')) return
+    const current = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
+    const errors = validateSyncConfig(current)
+    if (errors.length) return toast.show(errors[0], 'error')
+    const next = generateStoreAccessToken()
+    setBusy('rotate')
+    try {
+      const expiresAt = await rotateStoreAccessToken(current, next)
+      setAccessToken(next)
+      updateSync({ accessToken: next })
+      toast.show(`تم التدوير ✅ — الاعتماد القديم ينتهي ${expiresAt.slice(0, 16).replace('T', ' ')}. صدّر ملف ربط جديداً الآن.`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+    finally { setBusy(null) }
+  }
+
+  const rotateEncryptionSecret = async () => {
+    if (sync.dirty) return toast.show('زامن التغييرات المحلية أولاً قبل تدوير مفتاح التشفير', 'error')
+    if (!window.confirm('سيُعاد تشفير لقطة المتجر كلها بمفتاح جديد. يجب تحديث كل الأجهزة بملف ربط جديد خلال دقائق، وإلا ستفشل مزامنتها. متابعة؟')) return
+    const current = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
+    const errors = validateSyncConfig(current)
+    if (errors.length) return toast.show(errors[0], 'error')
+    const next = generateSyncSecret()
+    setBusy('secret')
+    try {
+      const newRev = await rotateSyncEncryptionSecret(current, next, deviceId)
+      setSecret(next)
+      updateSync({ secret: next, lastKnownRev: newRev, dirty: false })
+      toast.show(`تم تدوير مفتاح التشفير وإعادة تشفير السحابة ✅ — المراجعة ${newRev}. صدّر ملفات ربط جديدة لكل الأجهزة الآن.`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+    finally { setBusy(null) }
+  }
+
+  const importPairing = () => {
+    const input = document.createElement('input')
+    input.type = 'file'; input.accept = '.tksync,text/plain'
+    input.onchange = async () => {
+      try {
+        const file = input.files?.[0]
+        if (!file) return
+        const cfg = await importSyncPairing(await file.text(), pairingPassword)
+        setUrl(cfg.url); setAnonKey(cfg.anonKey); setStoreId(cfg.storeId); setSecret(cfg.secret); setAccessToken(cfg.accessToken)
+        updateSync(cfg)
+        toast.show('استُورد إعداد الربط وحُفظ — اختبر الاتصال الآن ✅')
+      } catch (e) { toast.show((e as Error).message, 'error') }
+    }
+    input.click()
   }
 
   return (
@@ -202,8 +259,19 @@ export function SyncPage() {
           <Field label="معرف المتجر *" hint="نفسه على كل الأجهزة — مثل: matgar-alnour">
             <input value={storeId} onChange={(e) => setStoreId(e.target.value)} className={inputCls} dir="ltr" />
           </Field>
-          <Field label="سر التشفير المشترك *" hint="8 أحرف فأكثر — يُدخل على كل جهاز ولا يُرفع للسحابة أبداً">
-            <input value={secret} onChange={(e) => setSecret(e.target.value)} type="password" className={inputCls} dir="ltr" />
+          <Field label="سر التشفير المشترك *" hint="ولّده عشوائياً ولا تعِد استخدام كلمة سر شخصية">
+            <div className="flex gap-2">
+              <input value={secret} onChange={(e) => setSecret(e.target.value)} type="password" className={inputCls} dir="ltr" />
+              <Btn variant="soft" onClick={() => setSecret(generateSyncSecret())}>توليد 256-bit</Btn>
+              {sync.secret && <Btn variant="ghost" onClick={rotateEncryptionSecret} disabled={busy === 'secret'}>{busy === 'secret' ? 'يُعيد التشفير…' : 'تدوير المفتاح'}</Btn>}
+            </div>
+          </Field>
+          <Field label="اعتماد عزل المتجر *" hint="اعتماد 256-bit منفصل عن التشفير — انسخه بأمان لكل أجهزة المتجر">
+            <div className="flex gap-2">
+              <input value={accessToken} onChange={(e) => setAccessToken(e.target.value.trim())} type="password" className={inputCls} dir="ltr" />
+              <Btn variant="soft" onClick={() => setAccessToken(generateStoreAccessToken())}>توليد</Btn>
+              {sync.accessToken && <Btn variant="ghost" onClick={rotateAccess} disabled={busy === 'rotate'}>{busy === 'rotate' ? 'يدوّر…' : 'تدوير آمن'}</Btn>}
+            </div>
           </Field>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -212,7 +280,7 @@ export function SyncPage() {
           <button
             onClick={() => {
               if (!sync.enabled) {
-                const errors = validateSyncConfig({ url: sync.url, anonKey: sync.anonKey, storeId: sync.storeId, secret: sync.secret })
+                const errors = validateSyncConfig({ url: sync.url, anonKey: sync.anonKey, storeId: sync.storeId, secret: sync.secret, accessToken: sync.accessToken })
                 if (errors.length) return toast.show('احفظ إعدادات صحيحة أولاً ثم فعّل', 'error')
               }
               updateSync({ enabled: !sync.enabled })
@@ -222,6 +290,15 @@ export function SyncPage() {
           >
             {sync.enabled ? 'إيقاف المزامنة' : 'تفعيل المزامنة'}
           </button>
+        </div>
+        <div className="rounded-xl border border-sky-400/20 bg-sky-500/5 p-3 space-y-2">
+          <div className="text-[12px] font-bold text-slate-700 dark:text-slate-200">ربط جهاز آخر دون إرسال الأسرار كنص واضح</div>
+          <div className="text-[10.5px] text-slate-400">اكتب كلمة حماية مؤقتة من {PAIRING_PASSWORD_MIN} خانة فأكثر، نزّل ملف الربط المشفر، ثم افتحه على الجهاز الآخر بنفس الكلمة. أرسل الملف والكلمة في قناتين مختلفتين.</div>
+          <div className="flex flex-wrap gap-2">
+            <input value={pairingPassword} onChange={(e) => setPairingPassword(e.target.value)} type="password" className={`${inputCls} max-w-xs`} placeholder="كلمة حماية ملف الربط" autoComplete="new-password" />
+            <Btn variant="soft" onClick={exportPairing}><Download size={14} /> تنزيل ملف ربط</Btn>
+            <Btn variant="ghost" onClick={importPairing}>استيراد ملف ربط</Btn>
+          </div>
         </div>
         <div className="text-[11px] text-slate-400">معرف هذا الجهاز: <code dir="ltr">{deviceId}</code></div>
       </div>
@@ -255,10 +332,10 @@ export function SyncPage() {
       <div className={`anim-up ${card} space-y-3`} style={{ animationDelay: '120ms' }}>
         <div className="font-bold text-[13px] flex items-center gap-2"><ShieldCheck size={15} className="text-emerald-500" /> تجهيز المشروع (مرة واحدة)</div>
         <p className="text-[12px] text-slate-500 leading-relaxed">
-          أنشئ مشروعاً مجانياً على supabase.com، ثم افتح SQL Editor وألصق هذا السكربت لإنشاء جدول المزامنة:
+          طبّق ملف الترحيل المراجع داخل المستودع عبر Supabase CLI أو SQL Editor. لا تستخدم سياسة <code>using (true)</code> القديمة لأنها تكشف بيانات المتاجر المشفرة لأي حامل لمفتاح anon.
         </p>
-        <pre dir="ltr" className="text-[10.5px] leading-relaxed bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 overflow-x-auto">{CREATE_TABLE_SQL}</pre>
-        <Btn variant="ghost" onClick={copySql}><Copy size={14} /> نسخ SQL</Btn>
+        <pre dir="ltr" className="text-[10.5px] leading-relaxed bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 overflow-x-auto">{MIGRATION_PATH}</pre>
+        <Btn variant="ghost" onClick={copyMigrationPath}><Copy size={14} /> نسخ مسار الترحيل</Btn>
         <div className="text-[11.5px] text-slate-400 leading-relaxed space-y-1">
           <div>🔒 <b>الخصوصية:</b> بياناتك تُشفَّر على جهازك قبل الرفع — Supabase يخزن شفرة لا تُقرأ بلا «سر التشفير» الذي لا يغادر أجهزتك.</div>
           <div>⚔️ <b>لا ضياع بيانات:</b> لو دفع جهازان معاً، يُقبل الأول ويسحب الثاني الأحدث ويعيد تلقائياً (قفل تفاؤلي).</div>

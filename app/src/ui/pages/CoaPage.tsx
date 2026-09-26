@@ -1,9 +1,10 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * شجرة الحسابات (المرحلة 4) — عرض هرمي بالأرصدة الحية من دفتر الأستاذ.
  * الحسابات التجميعية تجمع أرصدة أبنائها، والورقية تقبل القيود.
  */
 import { useMemo, useState } from 'react'
-import { ListTree, ChevronDown, ChevronLeft, Plus, Trash2 } from 'lucide-react'
+import { ListTree, ChevronDown, ChevronLeft, Plus, Trash2, ScrollText, Printer, FileSpreadsheet } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -13,6 +14,7 @@ import { useActivityBaseCoa } from '../activityCoa.ts'
 import { fullCoa } from '../../core/treasury.ts'
 import { customAsAccounts, customParentGroups } from '../../core/customAccounts.ts'
 import { Btn, Field, Modal, inputCls, useToast } from '../components/ui.tsx'
+import { printHtml } from '../print/printReceipt.ts'
 
 const ROOT_LABELS: Record<string, { nameAr: string; tone: string }> = {
   assets: { nameAr: 'الأصول', tone: 'text-sky-600 bg-sky-500/10' },
@@ -51,6 +53,10 @@ export function CoaPage() {
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [statementAccount, setStatementAccount] = useState<Account | null>(null)
+  const [statementFrom, setStatementFrom] = useState('')
+  const [statementTo, setStatementTo] = useState('')
+  const [statementQuery, setStatementQuery] = useState('')
 
   /** أرصدة كل الحسابات — التجميعي يجمع أبناءه تنازلياً */
   const balances = useMemo(() => {
@@ -82,6 +88,27 @@ export function CoaPage() {
     for (const acc of COA.filter((a) => a.parentCode === null)) compute(acc)
     return map
   }, [journal, COA])
+
+  const statementRows = useMemo(() => {
+    if (!statementAccount) return []
+    const natural = (debit: number, credit: number) => statementAccount.rootType === 'assets' || statementAccount.rootType === 'expenses' ? debit - credit : credit - debit
+    let balance = journal.filter((entry) => statementFrom && entry.date.slice(0, 10) < statementFrom).flatMap((entry) => entry.lines).filter((line) => line.accountCode === statementAccount.code).reduce((sum, line) => sum + natural(line.debit, line.credit), 0)
+    const q=statementQuery.trim().toLowerCase()
+    return journal.filter(entry=>(!statementFrom||entry.date.slice(0,10)>=statementFrom)&&(!statementTo||entry.date.slice(0,10)<=statementTo)&&(!q||entry.description.toLowerCase().includes(q)||String(entry.entryNumber).includes(q))).flatMap((entry) => entry.lines.filter((line) => line.accountCode === statementAccount.code).map((line) => {
+      balance += natural(line.debit, line.credit)
+      return { date: entry.date.slice(0, 10), number: entry.entryNumber, description: entry.description, debit: line.debit, credit: line.credit, balance }
+    }))
+  }, [journal, statementAccount, statementFrom, statementTo, statementQuery])
+  const exportStatement = () => {
+    if (!statementAccount) return
+    const esc = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`
+    const rows = [['التاريخ','رقم القيد','البيان','مدين','دائن','الرصيد'], ...statementRows.map(r=>[r.date,r.number,r.description,fmt(r.debit),fmt(r.credit),fmt(r.balance)])]
+    const blob = new Blob(['\ufeff'+rows.map(r=>r.map(esc).join(',')).join('\n')],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`statement-${statementAccount.code}.csv`;a.click();URL.revokeObjectURL(url)
+  }
+  const printStatement = () => {
+    if (!statementAccount) return
+    printHtml(`<html dir="rtl"><head><meta charset="utf-8"><title>كشف حركة ${statementAccount.nameAr}</title><style>body{font-family:Arial;padding:24px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:7px;text-align:right}h2{text-align:center}</style></head><body><h2>كشف حركة ${statementAccount.code} — ${statementAccount.nameAr}</h2><table><thead><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>${statementRows.map(r=>`<tr><td>${r.date}</td><td>#${r.number}</td><td>${r.description}</td><td>${fmt(r.debit)}</td><td>${fmt(r.credit)}</td><td>${fmt(r.balance)}</td></tr>`).join('')}</tbody></table></body></html>`)
+  }
 
   const toggle = (code: string) =>
     setCollapsed((s) => {
@@ -168,6 +195,7 @@ export function CoaPage() {
               <span className={`font-black text-[13px] w-32 text-left ${bal === 0 ? 'text-slate-300' : bal > 0 ? 'text-slate-800 dark:text-white' : 'text-rose-500'}`}>
                 {bal === 0 ? '—' : fmt(bal)}
               </span>
+              {acc.isPostable && <button onClick={()=>setStatementAccount(acc)} className="p-1.5 rounded-lg text-slate-300 hover:text-sky-500 hover:bg-sky-500/10" title="كشف الحركة والطباعة والتصدير"><ScrollText size={13}/></button>}
               {customCodes.has(acc.code) && (
                 <button onClick={() => removeAccount(acc.code)} className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-all" title="حذف الحساب المخصص (يُرفض لو عليه حركة)">
                   <Trash2 size={13} />
@@ -178,6 +206,11 @@ export function CoaPage() {
         })}
       </div>
 
+
+      <Modal open={!!statementAccount} onClose={()=>setStatementAccount(null)} title={`كشف حركة — ${statementAccount?.nameAr??''}`}>
+        <div className="space-y-3"><div className="grid grid-cols-3 gap-2"><Field label="بحث"><input className={inputCls} value={statementQuery} onChange={e=>setStatementQuery(e.target.value)} placeholder="البيان أو رقم القيد"/></Field><Field label="من"><input type="date" className={inputCls} value={statementFrom} onChange={e=>setStatementFrom(e.target.value)}/></Field><Field label="إلى"><input type="date" className={inputCls} value={statementTo} onChange={e=>setStatementTo(e.target.value)}/></Field></div><div className="flex justify-between items-center"><span className="text-xs text-slate-500">{statementRows.length} حركة · الرصيد {fmt(statementRows.at(-1)?.balance??0)}</span><div className="flex gap-2"><Btn variant="ghost" onClick={exportStatement}><FileSpreadsheet size={14}/> Excel CSV</Btn><Btn variant="ghost" onClick={printStatement}><Printer size={14}/> طباعة</Btn></div></div><div className="max-h-[55vh] overflow-auto"><table className="w-full text-xs"><thead className="sticky top-0 bg-white dark:bg-card-dark"><tr><th className="p-2">التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr></thead><tbody>{statementRows.map((r,i)=><tr key={`${r.number}-${i}`} className="border-t dark:border-slate-800"><td className="p-2">{r.date}</td><td>#{r.number}</td><td>{r.description}</td><td>{fmt(r.debit)}</td><td>{fmt(r.credit)}</td><td className="font-bold">{fmt(r.balance)}</td></tr>)}</tbody></table></div></div>
+      </Modal>
+
       {/* إضافة حساب مخصص */}
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="إضافة حساب لشجرة الحسابات">
         <div className="space-y-3">
@@ -186,10 +219,10 @@ export function CoaPage() {
             <b> القيد اليدوي واليومية وميزان المراجعة والتقارير المالية</b> — بلا فرض للشجرة القياسية.
           </div>
           <Field label="المجموعة الأم *">
-            <select value={nParent} onChange={(e) => setNParent(e.target.value)} className={inputCls}>
+            <QuickSelect value={nParent} onChange={(e) => setNParent(e.target.value)} className={inputCls}>
               <option value="">— اختر المجموعة —</option>
               {groups.map((g) => <option key={g.code} value={g.code}>{g.code} — {g.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <div className="grid grid-cols-[8rem_1fr] gap-3">
             <Field label="كود الحساب *" hint={nParent ? `يبدأ بـ ${nParent}` : '4-6 أرقام'}>

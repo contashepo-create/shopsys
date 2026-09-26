@@ -68,6 +68,9 @@ export interface ProcessingOrder {
   /** الخام المستهلك (ذبيحة/محصول) */
   sourceItemId: number
   sourceQty: number
+  /** مخزن صرف الخام ومخزن استلام النواتج — يظلان قابلين للتدقيق لكل نشاط */
+  sourceWarehouseId?: number | null
+  outputWarehouseId?: number | null
   /** تكلفة الخام المستهلكة = costMinor × qty لحظة التنفيذ */
   sourceCostMinor: Minor
   /** مصاريف تجهيز نقدية (عمالة تقطيع/تعبئة/كراتين) تدخل تكلفة النواتج */
@@ -85,6 +88,9 @@ export interface ProcessingInput {
   kind: ProcessingKind
   sourceItemId: number
   sourceQty: number
+  sourceWarehouseId?: number | null
+  outputWarehouseId?: number | null
+  allowNegativeSource?: boolean
   outputs: ProcessingOutput[]
   overheadMinor: Minor
   treasury?: string

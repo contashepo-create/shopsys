@@ -24,7 +24,7 @@ export function OpeningBalancesPage() {
   const { customers, suppliers, employees, treasuries, items, openingBalances, setOpeningBalance } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
-  const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+  const cur = useMemo(() => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [setup.countryCode])
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [tab, setTab] = useState<OpeningKind>('customer')

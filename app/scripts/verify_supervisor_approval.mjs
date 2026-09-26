@@ -183,7 +183,7 @@ console.log('6️⃣ التعميم: توقيعات مرتجع الخدمة كل
     assert.ok(sig.includes('approvedBy?: string'), `${fn} تقبل approvedBy`)
   }
   ok('7 دوال مرتجع خدمة (مغسلة/صيانة/نقلات/معمل/عيادة/إيجار/مستخلص) تقبل approvedBy')
-  assert.ok(repoSrc.includes('returnWalletService: (opId: number, reason: string, approvedBy?: string)'))
+  assert.ok(repoSrc.includes('returnWalletService: (opId: number, reason: string, approvedBy?: string'))
   ok('مرتجع خدمة المحافظ يقبل approvedBy')
   assert.ok(repoSrc.split('postExchange: (args: {')[1].split('}) =>')[0].includes('approvedBy?: string'))
   ok('الاستبدال يمرر الاعتماد لمستند المرتجع الداخلي')

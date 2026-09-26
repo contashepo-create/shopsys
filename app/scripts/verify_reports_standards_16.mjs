@@ -41,7 +41,7 @@ const { ACTIVITY_TEMPLATES } = await import(join(root, 'src/core/activities.ts')
 const { trialBalance, incomeStatement, balanceSheet, cashFlowReport } = await import(join(root, 'src/core/financialReports.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 28)
+assert.equal(ACTIVITIES.length, 29)
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 const ALL = { from: '0000-01-01', to: '9999-12-31' }
 
@@ -122,5 +122,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✓ ${nameAr} (${activityId}): 6 معايير (مجمل الربح + IAS 1 + IAS 7 + إهلاك غير نقدي + اتساق القوائم + الهوامش)`)
 }
 
-assert.equal(pass, 28)
+assert.equal(pass, 29)
 console.log(`\n✅ verify_reports_standards_16: القوائم المالية مطابقة للمعايير العالمية على الأنشطة الـ16`)

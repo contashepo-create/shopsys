@@ -51,8 +51,16 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     description: 'صلاحيات ودفعات، بيع بالوزن، وحدات متعددة',
     features: ['expiry_batches', 'weight_scale', 'multi_unit', 'price_lists'],
     // مراجعة سطرية (طلب المالك): لا أقساط في بيع الأغذية — الوحدة تُفعَّل بالمفتاح لو احتاجها أحد
-    modules: ['pos', 'inventory', 'purchases'],
+    // السوبر ماركت قد يضم مخبزاً/مطبخاً/تعبئة داخلية؛ الوحدة متاحة افتراضياً ويمكن تعطيلها.
+    modules: ['pos', 'inventory', 'purchases', 'recipes'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
+  },
+  {
+    id: 'feed_trade', nameAr: 'تجارة الأعلاف والحبوب', icon: '🌾',
+    description: 'أعلاف وحبوب بالوزن والجوال والطن، تشغيلات وصلاحيات وقوائم أسعار جملة',
+    features: ['expiry_batches', 'weight_scale', 'multi_unit', 'price_lists'],
+    modules: ['pos', 'inventory', 'purchases', 'recipes'],
+    taxInclusiveDefault: true, defaultInvoiceTemplate: 'a4',
   },
   {
     id: 'mobile', nameAr: 'موبايلات وصيانة', icon: '📱',
