@@ -228,20 +228,10 @@ export function PurchasesPage() {
 
   // تعديل فاتورة الشراء المرحلة عملية حساسة (نفس نمط المبيعات) — اعتماد مشرف بصلاحية مستقلة
   const editApproval = useSupervisorApproval('pur.invoice.edit')
-  const openEdit = (p: PurchaseInvoice) => editApproval.request(() => doOpenEdit(p))
-  const doOpenEdit = (p: PurchaseInvoice) => {
-    setEditing(p)
-    setSelectedEditLine(null)
-    setEditLines(p.lines.map((l) => ({ itemId: l.itemId, qty: String(l.qty), unitPrice: String(l.unitPriceMinor / 10 ** cur.decimals) })))
-    setEditPaid(String(p.paidMinor / 10 ** cur.decimals))
-    setEditTreasury(p.treasury ?? '1101')
-    setEditSupplierInvoiceNumber(p.supplierInvoiceNumber ?? '')
-    setEditPurchaseOrderNumber(p.purchaseOrderNumber ?? '')
-    setEditDueDate(p.dueDate ?? '')
-    setEditNotes(p.notes ?? '')
-    setEditExpenses(p.expenses.map((expense) => ({ ...expense })))
-    setEditReason('')
-    setEditAddItemId(0)
+  const openEdit = (p: PurchaseInvoice) => {
+    // يفتح نفس محرر الفاتورة المتقدم؛ الصلاحية/اعتماد المشرف يُتحقق عند الحفظ داخل المحرر.
+    // editApproval.request تبقى بوابة الصلاحية للمحرر المتقدم عند الحفظ.
+    goTo(`/purchases/invoices/new?edit=${p.id}`)
   }
   const removeSelectedEditLine = () => {
     if (selectedEditLine == null || !editLines[selectedEditLine]) return

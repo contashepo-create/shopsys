@@ -80,9 +80,9 @@ console.log('2️⃣ أهلية المعتمدين والصلاحيات الاف
 console.log('3️⃣ approveByPin — التحقق الفعلي بالأرقام')
 {
   const store = useDataStore
-  const ownerHash = await hashPin('1111')
-  const bmHash = await hashPin('2222')
-  const cashierHash = await hashPin('3333')
+  const ownerHash = await hashPin('111111')
+  const bmHash = await hashPin('222222')
+  const cashierHash = await hashPin('333333')
   store.setState({
     ownerPinHash: ownerHash,
     appUsers: [
@@ -92,21 +92,21 @@ console.log('3️⃣ approveByPin — التحقق الفعلي بالأرقام
     currentUserId: 2,
     loginGuard: { failures: 0, lockedUntil: null },
   })
-  const r1 = await store.getState().approveByPin('1111')
+  const r1 = await store.getState().approveByPin('111111')
   assert.equal(r1.approvedBy, 'المالك')
   ok('رقم المالك يعتمد المرتجع')
-  const r2 = await store.getState().approveByPin('2222')
+  const r2 = await store.getState().approveByPin('222222')
   assert.equal(r2.approvedBy, 'سالم المشرف')
   ok('رقم مشرف مخول يعتمد باسمه')
-  await assert.rejects(() => store.getState().approveByPin('3333'), /لا يملك صلاحية|غير صحيح/)
+  await assert.rejects(() => store.getState().approveByPin('333333'), /لا يملك صلاحية|غير صحيح/)
   ok('رقم كاشير (بلا صلاحية) يُرفض حتى لو صحيح')
-  await assert.rejects(() => store.getState().approveByPin('9999'), /غير صحيح|لا يملك/)
+  await assert.rejects(() => store.getState().approveByPin('999999'), /غير صحيح|لا يملك/)
   assert.equal(useDataStore.getState().loginGuard.failures > 0, true)
   ok('الرقم الخاطئ يسجل محاولة فاشلة (حماية التخمين)')
   // التعميم على صلاحية أخرى: المشرف لا يملك acc.fiscal.close مثلاً؟ مدير الفرع لا يملكها
-  await assert.rejects(() => store.getState().approveByPin('2222', 'acc.fiscal.close'), /لا يملك|غير صحيح/)
+  await assert.rejects(() => store.getState().approveByPin('222222', 'acc.fiscal.close'), /لا يملك|غير صحيح/)
   ok('التعميم: رقم المشرف يُرفض لصلاحية لا يملكها (acc.fiscal.close)')
-  const r3 = await store.getState().approveByPin('2222', 'sales.discount.grant')
+  const r3 = await store.getState().approveByPin('222222', 'sales.discount.grant')
   assert.equal(r3.approvedBy, 'سالم المشرف')
   ok('التعميم: رقم المشرف يعتمد الخصم (يملك sales.discount.grant)')
   store.setState({ loginGuard: { failures: 0, lockedUntil: null } })

@@ -108,26 +108,8 @@ export function SalesInvoicesPage() {
   const openEdit = (s: SaleInvoice) => {
     const blocks = blocksOf(s)
     if (blocks.length) return toast.show(`لا يمكن تعديل ${s.invoiceNumber}: ${blocks[0]}`, 'error')
-    editApproval.request((approvedBy) => {
-      if (approvedBy) toast.show(`فُتح التعديل — اعتمده «${approvedBy}» ✓`)
-      doOpenEdit(s)
-    })
-  }
-  const doOpenEdit = (s: SaleInvoice) => {
-    setEditing(s)
-    setSelectedEditLine(null)
-    setEditLines(s.lines.map((l) => ({ ...l })))
-    setEditCustomerId(s.customerId)
-    setEditPaid(String((s.paidMinor ?? (s.payment === 'cash' ? s.totals.totalMinor : 0)) / 10 ** cur.decimals))
-    setEditTreasury(s.treasury ?? '1101')
-    setEditDiscount(s.invoiceDiscountPercent)
-    setEditCustomerReference(s.customerReference ?? '')
-    setEditDueDate(s.dueDate ?? '')
-    setEditNotes(s.notes ?? '')
-    setEditCustomerCharges(s.customerCharges ?? [])
-    setEditInternalExpenses(s.internalExpenses ?? [])
-    setEditReason('')
-    setEditAddItemId(0)
+    // يفتح نفس محرر الفاتورة المتقدم؛ الصلاحية/اعتماد المشرف يُتحقق عند الحفظ داخل المحرر.
+    goTo(`/sales/invoices/new?edit=${s.id}`)
   }
   const removeSelectedEditLine = () => {
     if (selectedEditLine == null || !editLines[selectedEditLine]) return

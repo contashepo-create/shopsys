@@ -92,13 +92,13 @@ for (const activityId of ACTIVITIES) {
   assert.ok(a5.includes('size: A5') && a5.includes('margin: 7mm') && a5.includes(sale.invoiceNumber), `${activityId}: A5 سليم`)
 
   // ── ⑤ دور مخصص «مشرف النشاط» + approveByPin ──
-  st().setOwnerPin(await hashPin('1111'))
+  st().setOwnerPin(await hashPin('111111'))
   st().addEmployee({ nameAr: `مشرف ${tpl.nameAr}`, phone: `01${String(Math.abs(activityId.length * 7919)).padStart(8, '0')}`, jobTitle: 'مشرف', hireDate: '2026-01-01', baseSalaryMinor: 500000, allowancesMinor: 0, active: true, notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
   const emp = st().employees.at(-1)
   const roleId = st().addCustomRole(`مشرف ${tpl.nameAr}`, 'cashier')
   st().setRolePermissions(roleId, [...st().roleOverrides[roleId], REFUND_APPROVE_PERM])
-  st().addAppUser({ nameAr: emp.nameAr, roleId, pinHash: await hashPin('9999'), employeeId: emp.id, phone: emp.phone, email: '', initialPin: '9999', mustChangePin: false })
-  const approved = await st().approveByPin('9999', REFUND_APPROVE_PERM)
+  st().addAppUser({ nameAr: emp.nameAr, roleId, pinHash: await hashPin('999999'), employeeId: emp.id, phone: emp.phone, email: '', initialPin: '999999', mustChangePin: false })
+  const approved = await st().approveByPin('999999', REFUND_APPROVE_PERM)
   assert.equal(approved.approvedBy, `مشرف ${tpl.nameAr}`, `${activityId}: اعتماد الدور المخصص`)
   const allRoles = rolesWithOverrides(st().roleOverrides, st().customRoles)
   assert.ok(allRoles.some((r) => r.id === roleId && r.permissions.includes(REFUND_APPROVE_PERM)), `${activityId}: الدور في القائمة الكاملة`)

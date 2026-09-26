@@ -34,7 +34,7 @@ assert.equal(S().appUsers.length, 0)
 ok('إنشاء الموظف يحفظ الفئة/الدور التشغيلي دون إنشاء حساب دخول')
 
 S().setOwnerPin('owner-hash')
-const user = S().addAppUser({ nameAr: employee.nameAr, roleId: employee.roleId, pinHash: 'initial-hash', employeeId: employee.id, initialPin: '1234', mustChangePin: true })
+const user = S().addAppUser({ nameAr: employee.nameAr, roleId: employee.roleId, pinHash: 'initial-hash', employeeId: employee.id, initialPin: '123456', mustChangePin: true })
 assert.equal(user.employeeId, employee.id)
 assert.equal(user.pinHash, 'initial-hash')
 ok('حساب الدخول والرقم السري لا يُنشآن من نموذج الموظف؛ الإعدادات تنشئهما منفصلين')

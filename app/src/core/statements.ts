@@ -298,7 +298,7 @@ export function customerUnitDocs(args: {
   for (const o of args.laundryOrders ?? []) {
     if (o.customerId !== args.customerId) continue
     const laundryTotal = o.grandMinor ?? 0
-    if (laundryTotal > 0 && (!o.status || o.status === 'delivered' || o.status === 'ready' || o.status === 'picked_up')) {
+    if (laundryTotal > 0 && (!o.status || o.status === 'delivered' || o.status === 'ready')) {
       const prepaid = Math.min(laundryTotal, Math.max(0, o.prepaidMinor ?? 0))
       rows.push({ docLabel: `خدمة مغسلة ${o.orderNumber}`, date: o.receivedAt, operationMinor: laundryTotal, debitMinor: laundryTotal, creditMinor: prepaid })
     }

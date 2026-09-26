@@ -82,7 +82,7 @@ export const inputCls =
 /**
  * حقل كلمة سر موحد بعين إظهار/إخفاء (طلب المالك) — يُستخدم في كل شاشات
  * الأرقام السرية: الدخول، ملفي، المستخدمين، موافقة المشرف.
- * كلمة السر 8–32 خانة: أرقام وحروف ورموز (لا مسافات).
+ * كلمة السر 6–32 خانة: أرقام وحروف ورموز (لا مسافات).
  */
 export function PinInput({
   value, onChange, placeholder = 'كلمة السر', disabled, autoComplete = 'off', name, centered, onEnter, className = '',

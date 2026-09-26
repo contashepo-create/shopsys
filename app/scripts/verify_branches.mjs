@@ -118,7 +118,7 @@ console.log('\n═══ 3) بيع من كل فرع → المقارنة تعك�
 
 console.log('\n═══ 4) تحويل نقدية بين خزينتي الفرعين بمستند سند ═══')
 {
-  st().postVoucher({ kind: 'transfer', date: '2026-09-20T15:00:00.000Z', treasury: branchNew.treasuryCode, counterAccountCode: '1101', amountMinor: 3000, description: 'توريد نقدية فرع المعادي للمركز' })
+  st().postVoucher({ kind: 'transfer', date: '2026-09-20', treasury: branchNew.treasuryCode, counterAccountCode: '1101', amountMinor: 3000, description: 'توريد نقدية فرع المعادي للمركز' })
   const balances = new Map()
   for (const e of st().journal) for (const l of e.lines) balances.set(l.accountCode, (balances.get(l.accountCode) ?? 0) + l.debit - l.credit)
   assert.equal(balances.get(branchNew.treasuryCode), 2000, 'خزينة المعادي 50.00−30.00=20.00')

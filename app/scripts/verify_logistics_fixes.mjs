@@ -92,8 +92,8 @@ throws('جزئي بلا عميل مسجل يُرفض', () => S().postTrip({
 
 console.log('\n3️⃣ كشف الحساب يُظهر النقلات')
 const docs = customerUnitDocs({ customerId: cust.id, trips: S().trips })
-ok('نقلتان بالكشف: 100,000 (آجلة) + 20,000 (باقي الجزئي)',
-  docs.length === 2 && docs.some((d) => d.debitMinor === 100_000) && docs.some((d) => d.debitMinor === 20_000))
+ok('نقلتان بالكشف: 100,000 آجلة + 50,000 جزئية والمدفوع دائنًا',
+  docs.length === 2 && docs.some((d) => d.debitMinor === 100_000) && docs.some((d) => d.debitMinor === 50_000 && d.creditMinor === 30_000))
 const stmt = customerStatement({ customerId: cust.id, sales: [], saleReturns: [], allSales: [], vouchers: [], cheques: [], extraDocs: docs })
 ok('رصيد العميل = 120,000', statementBalance(stmt) === 120_000)
 ok('التسمية واضحة «نقلة TR-…»', stmt.every((r) => r.docLabel.includes('نقلة')))

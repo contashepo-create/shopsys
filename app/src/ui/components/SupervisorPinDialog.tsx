@@ -14,7 +14,7 @@
 import { useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Eye, EyeOff } from 'lucide-react'
-import { PIN_MAX_LENGTH } from '../../core/auth.ts'
+import { PIN_MAX_LENGTH, PIN_MIN_LENGTH } from '../../core/auth.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
@@ -76,7 +76,7 @@ export function useSupervisorApproval(permId: string = REFUND_APPROVE_PERM, opti
             أو لمشرف يملك صلاحية الاعتماد. يُسجَّل اسم المعتمد على المستند.
           </p>
         </div>
-        {/* عين إظهار/إخفاء (طلب المالك) — كلمة سر 8-32 خانة أرقاماً وحروفاً ورموزاً */}
+        {/* عين إظهار/إخفاء (طلب المالك) — كلمة سر 6-32 خانة أرقاماً وحروفاً ورموزاً */}
         <div className="relative">
           <input
             value={pin}
@@ -95,9 +95,7 @@ export function useSupervisorApproval(permId: string = REFUND_APPROVE_PERM, opti
         {error && <p className="text-[12px] font-bold text-rose-500 text-center">{error}</p>}
         <div className="grid grid-cols-2 gap-2">
           <button onClick={() => setPending(null)} className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-[13px] text-slate-500">إلغاء</button>
-          {/* الحد 4 لا PIN_MIN_LENGTH: مشرف برقم قديم (4-8 أرقام) يجب أن يعتمد —
-              التحقق الفعلي في approveByPin (verifyPin)، وسياسة 8-32 عند التعيين فقط */}
-          <button onClick={() => void confirm()} disabled={pin.length < 4 || busy} className="p-2.5 rounded-xl bg-amber-500 text-white font-black text-[13px] disabled:opacity-40">
+          <button onClick={() => void confirm()} disabled={pin.length < PIN_MIN_LENGTH || busy} className="p-2.5 rounded-xl bg-amber-500 text-white font-black text-[13px] disabled:opacity-40">
             {busy ? '…' : '✓ اعتماد'}
           </button>
         </div>

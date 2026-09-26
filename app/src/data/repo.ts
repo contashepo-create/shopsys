@@ -1648,6 +1648,8 @@ interface DataState {
     payment: PaymentMethod
     paidMinor: number
     treasury: TreasuryAccount
+    /** تحصيلات متعددة تُحفظ كما هي عند التعديل (خزينة/ماكينة/موظف) */
+    paymentAllocations?: { accountCode: string; amountMinor: number; note?: string; employeeId?: number }[]
     invoiceDiscountPercent: number
     customerReference?: string
     dueDate?: string
@@ -1666,10 +1668,13 @@ interface DataState {
   /** تعديل فاتورة شراء — نفس منهج editSale (عكس + إعادة ترحيل). يُرفض لو الفاتورة الإلكترونية مفعلة */
   editPurchase: (args: {
     purchaseId: number
+    /** المورد المحدد داخل نفس محرر الفاتورة؛ 0 = شراء نقدي */
+    supplierId?: number
     lines: { itemId: number; qty: number; unitPriceMinor: number }[]
     expenses: PurchaseExpense[]
     paidMinor: number
     treasury: TreasuryAccount
+    paymentAllocations?: { accountCode: string; amountMinor: number; note?: string }[]
     supplierInvoiceNumber?: string
     purchaseOrderNumber?: string
     dueDate?: string
@@ -3422,8 +3427,19 @@ export const useDataStore = create<DataState>()(
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
           if (expense.settlement === 'payable_later' && !expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة للمصروف «${expense.label}» — ليست المورد`)
           if (expense.settlement === 'payable_later' && expense.payableAccountCode === '2101') throw new Error(`مصروف «${expense.label}» مستحق لجهة أخرى ولا يجوز تحميله على الموردين 2101`)
+          if (expense.custodyFileId != null) {
+            if (expense.settlement !== 'paid_now') throw new Error(`مصروف «${expense.label}» المرتبط بعهدة يجب أن يكون مدفوعاً فوراً`)
+            const file = state.custodyFiles.find((row) => row.id === expense.custodyFileId)
+            if (!file) throw new Error(`ملف العهدة للمصروف «${expense.label}» غير موجود`)
+            assertFileOpen(file)
+            const payout = expense.taxTreatment === 'exclusive' ? expense.amountMinor + Math.round(expense.amountMinor * expense.taxPercent / 100) : expense.amountMinor
+            const remaining = summarizeCustody(state.custodyTxs.filter((row) => row.fileId === file.id)).remainingMinor
+            if (payout > remaining) throw new Error(`المصروف «${expense.label}» أكبر من متبقي العهدة`)
+          }
+          if (expense.vehicleId != null && !state.vehicles.some((vehicle) => vehicle.id === expense.vehicleId)) throw new Error(`مركبة المصروف «${expense.label}» غير موجودة`)
         }
         for (const expense of internalExpenses.filter((row) => row.settlement === 'paid_now')) {
+          if (expense.custodyFileId != null) continue
           const payoutTreasury = expense.treasury ?? args.treasury ?? '1101'
           if (!state.treasuries.some((row) => row.code === payoutTreasury)) throw new Error(`خزينة المصروف الداخلي غير موجودة (${payoutTreasury})`)
           const payout = expense.taxTreatment === 'exclusive' ? expense.amountMinor + Math.round(expense.amountMinor * expense.taxPercent / 100) : expense.amountMinor
@@ -3534,11 +3550,17 @@ export const useDataStore = create<DataState>()(
           terminalTransaction = { id: crypto.randomUUID(), idempotencyKey: `sale:${saleId}:terminal:${terminal.id}`, kind: 'charge', terminalId: terminal.id, branchId: terminal.branchId, userId: state.currentUserId ?? 0, documentType: args.terminalPayment.documentType ?? 'sale', documentId: String(saleId), amountMinor: terminalAmount, providerReference: args.terminalPayment.providerReference.trim() || `AUTO-${crypto.randomUUID()}`, occurredAt: now, cardLast4: args.terminalPayment.cardLast4 }
           const errors = validateTerminalTransaction(terminalTransaction); if (errors.length) throw new Error(errors.join(' — '))
         }
+        const custodyExpenseTxs: CustodyTx[] = internalExpenses.filter((expense) => expense.custodyFileId != null && expense.amountMinor > 0).map((expense, index) => ({
+          id: nextId(state.custodyTxs) + index, fileId: expense.custodyFileId!, type: 'expense', date: now.slice(0, 10),
+          amountMinor: expense.taxTreatment === 'exclusive' ? expense.amountMinor + Math.round(expense.amountMinor * expense.taxPercent / 100) : expense.amountMinor,
+          excessMinor: 0, description: `[sale:${saleId}] ${expense.label}`, treasury: null, projectId: expense.projectId ?? null, purchaseId: null, journalEntryId: entryId,
+        }))
         set({
           sales: [...state.sales, sale], journal: [...state.journal, entry, ...commissionEntries], items: updatedItems,
           ...(employeeCollections.length ? { employeeAdvances: [...state.employeeAdvances, ...employeeCollections] } : {}),
           ...(commissions.length ? { staffCommissions: [...state.staffCommissions, ...commissions] } : {}),
           ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}),
+          ...(custodyExpenseTxs.length ? { custodyTxs: [...state.custodyTxs, ...custodyExpenseTxs] } : {}),
           batches: workingBatches, serials: updatedSerials, variantStocks: updatedVariants,
           // إضافة نقاط الولاء المكتسبة لرصيد العميل (0 = برنامج معطل أو عميل نقدي)
           ...(earned > 0 ? { customers: state.customers.map((c) => (c.id === args.customerId ? { ...c, loyaltyPoints: (c.loyaltyPoints ?? 0) + earned } : c)) } : {}),
@@ -5017,14 +5039,28 @@ export const useDataStore = create<DataState>()(
           const receiptErrors = validateTreasuryAccess(user?.treasuryAccess, args.treasury, 'receipt', paidM)
           if (receiptErrors.length) throw new Error(receiptErrors.join(' — '))
         }
-        const newEntryLines = buildSaleEntry(totals, args.payment, args.treasury, paidM)
+        const newEntryLines = args.paymentAllocations?.length
+          ? buildSaleEntryWithAllocations(totals, args.paymentAllocations)
+          : buildSaleEntry(totals, args.payment, args.treasury, paidM)
         const internalExpenses = args.internalExpenses ?? sale.internalExpenses ?? []
         for (const expense of internalExpenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
           if (expense.settlement === 'payable_later' && !expense.beneficiaryName?.trim()) throw new Error(`حدد الجهة المستحقة للمصروف «${expense.label}» — ليست المورد`)
           if (expense.settlement === 'payable_later' && expense.payableAccountCode === '2101') throw new Error(`مصروف «${expense.label}» مستحق لجهة أخرى ولا يجوز تحميله على الموردين 2101`)
+          if (expense.custodyFileId != null) {
+            if (expense.settlement !== 'paid_now') throw new Error(`مصروف «${expense.label}» المرتبط بعهدة يجب أن يكون مدفوعاً فوراً`)
+            const file = state.custodyFiles.find((row) => row.id === expense.custodyFileId)
+            if (!file) throw new Error(`ملف العهدة للمصروف «${expense.label}» غير موجود`)
+            assertFileOpen(file)
+            const payout = expense.taxTreatment === 'exclusive' ? expense.amountMinor + Math.round(expense.amountMinor * expense.taxPercent / 100) : expense.amountMinor
+            const previousSaleCustody = state.custodyTxs.filter((row) => row.fileId === file.id && row.description.includes(`[sale:${sale.id}]`)).reduce((sum, row) => sum + row.amountMinor - row.excessMinor, 0)
+            const remaining = summarizeCustody(state.custodyTxs.filter((row) => row.fileId === file.id)).remainingMinor + previousSaleCustody
+            if (payout > remaining) throw new Error(`المصروف «${expense.label}» أكبر من متبقي العهدة`)
+          }
+          if (expense.vehicleId != null && !state.vehicles.some((vehicle) => vehicle.id === expense.vehicleId)) throw new Error(`مركبة المصروف «${expense.label}» غير موجودة`)
         }
         for (const expense of internalExpenses.filter((row) => row.settlement === 'paid_now')) {
+          if (expense.custodyFileId != null) continue
           const payoutTreasury = expense.treasury ?? args.treasury
           if (!state.treasuries.some((row) => row.code === payoutTreasury)) throw new Error(`خزينة المصروف الداخلي غير موجودة (${payoutTreasury})`)
           const payout = expense.taxTreatment === 'exclusive' ? expense.amountMinor + Math.round(expense.amountMinor * expense.taxPercent / 100) : expense.amountMinor
@@ -5090,6 +5126,12 @@ export const useDataStore = create<DataState>()(
             { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId },
           ],
         }
+        const editCustodyExpenseTxs: CustodyTx[] = internalExpenses.filter((expense) => expense.custodyFileId != null && expense.amountMinor > 0).map((expense, index) => ({
+          id: nextId(state.custodyTxs) + index, fileId: expense.custodyFileId!, type: 'expense', date: now.slice(0, 10),
+          amountMinor: expense.taxTreatment === 'exclusive' ? expense.amountMinor + Math.round(expense.amountMinor * expense.taxPercent / 100) : expense.amountMinor,
+          excessMinor: 0, description: `[sale:${sale.id}] ${expense.label}`, treasury: null, projectId: expense.projectId ?? null, purchaseId: null, journalEntryId: newEntryId,
+        }))
+        const keptCustodyTxs = state.custodyTxs.filter((row) => !row.description.includes(`[sale:${sale.id}]`))
         set({
           sales: state.sales.map((s) => (s.id === sale.id ? updatedSale : s)),
           journal: [
@@ -5098,6 +5140,7 @@ export const useDataStore = create<DataState>()(
             newEntry,
           ],
           items: updatedItems,
+          custodyTxs: [...keptCustodyTxs, ...editCustodyExpenseTxs],
         })
         return updatedSale
       },
@@ -5111,8 +5154,10 @@ export const useDataStore = create<DataState>()(
         const inv = state.purchases.find((p) => p.id === args.purchaseId)
         if (!inv) throw new Error('فاتورة الشراء غير موجودة')
         if (!args.reason.trim()) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
+        const editedSupplierId = args.supplierId ?? inv.supplierId
+        if (editedSupplierId !== 0 && !state.suppliers.some((supplier) => supplier.id === editedSupplierId && supplier.active !== false)) throw new Error('المورد المحدد غير موجود أو غير نشط')
         const supplierDocument = args.supplierInvoiceNumber?.trim()
-        if (supplierDocument && state.purchases.some((row) => row.id !== inv.id && row.supplierId === inv.supplierId && row.supplierInvoiceNumber === supplierDocument)) throw new Error('رقم فاتورة المورد مسجل مسبقاً لهذا المورد')
+        if (supplierDocument && state.purchases.some((row) => row.id !== inv.id && row.supplierId === editedSupplierId && row.supplierInvoiceNumber === supplierDocument)) throw new Error('رقم فاتورة المورد مسجل مسبقاً لهذا المورد')
         if (args.dueDate && args.dueDate < inv.date) throw new Error('تاريخ الاستحقاق لا يسبق تاريخ فاتورة المورد')
         if (!args.lines.length) throw new Error('الفاتورة المعدلة بلا أصناف')
         if (inv.journalEntryId == null) throw new Error('فاتورة قديمة بلا قيد — لا تُعدَّل')
@@ -5183,6 +5228,8 @@ export const useDataStore = create<DataState>()(
           grandTotalMinor: grandTotal,
           paidMinor: args.paidMinor,
           payAccount: args.treasury,
+          paymentCredits: args.paymentAllocations?.map((payment) => ({ account: payment.accountCode, amountMinor: payment.amountMinor, note: payment.note ?? 'سداد مورد' })),
+          cashPurchase: editedSupplierId === 0,
           expensePayments: [],
           inputVatMinor: keptInputVat,
         })
@@ -5238,6 +5285,7 @@ export const useDataStore = create<DataState>()(
 
         const updatedInv: PurchaseInvoice = {
           ...inv,
+          supplierId: editedSupplierId,
           lines: landed.map((l) => ({
             itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
             expenseShareMinor: l.expenseShareMinor, landedUnitCostMinor: l.landedUnitCostMinor,

@@ -50,8 +50,8 @@ async function completeWizard(activityNameAr: string, shopName: string) {
   fireEvent.change(screen.getByPlaceholderText('name@example.com'), { target: { value: 'owner@tahakam.app' } })
   chooseQuickSelect('— اختر المدينة —', 'القاهرة')
   fireEvent.change(screen.getByPlaceholderText('مثال: شارع الجمهورية — حي السلام'), { target: { value: 'شارع التحرير' } })
-  // كلمة سر المالك تُنشأ مع التسجيل (طلب المالك) — 8-32 خانة
-  fireEvent.change(screen.getByPlaceholderText('8 خانات فأكثر'), { target: { value: 'Owner@2026' } })
+  // كلمة سر المالك تُنشأ مع التسجيل (طلب المالك) — 6-32 خانة
+  fireEvent.change(screen.getByPlaceholderText('6 خانات فأكثر'), { target: { value: 'Owner@2026' } })
   fireEvent.change(screen.getByPlaceholderText('أعد كتابتها'), { target: { value: 'Owner@2026' } })
   fireEvent.click(screen.getByText('🚀 ابدأ العمل'))
   // إنهاء المعالج صار غير متزامن (تجزئة كلمة السر) — انتظر اكتمال الإعداد
