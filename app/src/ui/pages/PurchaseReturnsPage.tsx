@@ -23,11 +23,12 @@ import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 
 export function PurchaseReturnsPage() {
-  const { purchases, purchaseReturns, suppliers, items, warehouses, journal, postPurchaseReturn, getSupplierBalance } = useDataStore()
+  const { purchases, purchaseReturns, suppliers, items, warehouses, journal, postPurchaseReturn, getSupplierBalance, appUsers, currentUserId } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
+  const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
 
   const [pickOpen, setPickOpen] = useState(false)
   const [pickQuery, setPickQuery] = useState('')
@@ -66,6 +67,7 @@ export function PurchaseReturnsPage() {
       })),
       totalMinor: r.supplierValueMinor ?? r.totalMinor,
       paidMinor: r.refund === 'cash' ? (r.supplierValueMinor ?? r.totalMinor) : 0,
+      operatorName: printOperatorName,
       settings: receipt,
       extraFooter: r.reason ? `السبب: ${r.reason}` : undefined,
     })

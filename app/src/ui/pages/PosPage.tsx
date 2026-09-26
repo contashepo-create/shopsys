@@ -437,6 +437,7 @@ export function PosPage() {
       totals: sale.totals,
       payment: sale.payment,
       paidMinor: sale.paidMinor, // الدفع المجزأ: يطبع المدفوع/المتبقي (بلاغ المالك)
+      operatorName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك',
       customerName: sale.customerId ? customers.find((c) => c.id === sale.customerId)?.nameAr ?? null : null,
       taxPercent: effectiveCountryVatPercent,
       taxInclusive: setup.taxInclusive,

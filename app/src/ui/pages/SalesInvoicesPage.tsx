@@ -32,7 +32,7 @@ import { partyCode } from '../../core/partyCodes.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 
 export function SalesInvoicesPage() {
-  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance } = useDataStore()
+  const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance, appUsers, currentUserId } = useDataStore()
   const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -40,6 +40,7 @@ export function SalesInvoicesPage() {
   const country = setup.countryCode ? getCountry(setup.countryCode) : null
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
   const fmt = (m: number) => formatMinor(m, cur, false)
   const customerPickerInfo = (party: { id: number; active?: boolean }) => {
     const balance = getCustomerBalance(party.id)
@@ -221,6 +222,7 @@ export function SalesInvoicesPage() {
       totals: s.totals,
       payment: s.payment,
       paidMinor: s.paidMinor, // الدفع المجزأ: المدفوع/المتبقي على المطبوعة (بلاغ المالك)
+      operatorName: printOperatorName,
       customerName: s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : null,
       taxPercent: s.taxPercent ?? countryVatPercent,
       taxInclusive: s.taxInclusive ?? setup.taxInclusive,

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_RECEIPT_SETTINGS, INVOICE_TEMPLATE_OPTIONS, type ReceiptModel } from '../src/core/receipt.ts'
 import { renderInvoiceA4Html } from '../src/ui/print/printInvoiceA4.ts'
+import { renderReceiptHtml } from '../src/ui/print/printReceipt.ts'
 
 const model: ReceiptModel = {
-  shopName: 'متجر الاختبار', headerLines: [], docTitle: 'إذن تسليم', invoiceNumber: 'S-1', refCode: 'SAL-X',
+  shopName: 'متجر الاختبار', headerLines: [], docTitle: 'إذن تسليم', operatorName: 'المحاسب أحمد', invoiceNumber: 'S-1', refCode: 'SAL-X',
   dateLabel: '2026-09-23', customerName: 'عميل', paymentLabel: 'نقدي',
   rows: [{ nameAr: 'صنف', qtyLabel: '2', unitPriceMinor: 1000, totalMinor: 2000, discountPercent: 0, vatPercent: 14, serials: [] }],
   itemCount: 1, totalQty: 2, grossMinor: 2000, discountMinor: 0, taxBaseMinor: 2000, taxMinor: 280,
@@ -21,5 +22,9 @@ describe('قوالب طباعة الفواتير المتقدمة', () => {
     expect(html).not.toContain('سعر الوحدة')
     expect(html).not.toContain('الإجمالي المستحق')
     expect(html).not.toContain('22.80')
+  })
+  it('تظهر هوية القائم بالطباعة في القالب العادي والحراري', () => {
+    expect(renderInvoiceA4Html(model, cur, DEFAULT_RECEIPT_SETTINGS)).toContain('المحاسب أحمد')
+    expect(renderReceiptHtml(model, cur, DEFAULT_RECEIPT_SETTINGS)).toContain('طبع بواسطة: المحاسب أحمد')
   })
 })

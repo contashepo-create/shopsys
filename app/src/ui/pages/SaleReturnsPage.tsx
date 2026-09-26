@@ -38,12 +38,13 @@ interface WizardLine {
 const STEPS = ['الفاتورة', 'البنود', 'طريقة الرد', 'مراجعة وتأكيد'] as const
 
 export function SaleReturnsPage() {
-  const { sales, saleReturns, customers, items, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance } = useDataStore()
+  const { sales, saleReturns, customers, items, journal, treasuries, warehouses, postSaleReturn, clientSettlements, vouchers, paymentTerminalTransactions, getCustomerBalance, appUsers, currentUserId } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
+  const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
 
   /* ─── حالة المعالج ─── */
   const [wizardOpen, setWizardOpen] = useState(false)
@@ -212,6 +213,7 @@ export function SaleReturnsPage() {
       totals: r.totals,
       payment: r.refund === 'cash' ? 'cash' : 'credit',
       paidMinor: r.refund === 'cash' ? r.totals.totalMinor : 0,
+      operatorName: printOperatorName,
       customerName: orig?.customerId ? customers.find((c) => c.id === orig.customerId)?.nameAr ?? null : null,
       taxPercent: setup.vatPercent,
       taxInclusive: setup.taxInclusive,

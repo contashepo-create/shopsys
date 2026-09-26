@@ -127,6 +127,8 @@ export interface ReceiptModel {
   headerLines: string[]
   /** عنوان المستند المطبوع — الافتراضي «فاتورة مبيعات»؛ للمرتجع: «مرتجع مبيعات» */
   docTitle?: string
+  /** اسم المحاسب/الكاشير الذي نفّذ الطباعة الحالية */
+  operatorName?: string
   invoiceNumber: string
   /** الرقم المرجعي للتتبع — يُطبع تحت رقم الفاتورة ويبحث به العميل لاحقاً */
   refCode: string
@@ -160,6 +162,8 @@ export function buildReceiptModel(args: {
   payment: PaymentMethod
   /** المحصل وقت البيع (الدفع المجزأ) — undefined = حسب payment */
   paidMinor?: Minor
+  /** اسم القائم بالطباعة؛ عند غيابه يستخدم اسم المالك الافتراضي */
+  operatorName?: string
   customerName: string | null
   taxPercent: number
   taxInclusive: boolean
@@ -194,6 +198,7 @@ export function buildReceiptModel(args: {
   return {
     shopName: settings.shopName || 'تَحَكَّم',
     headerLines: settings.headerLines.filter((l) => l.trim()),
+    operatorName: args.operatorName?.trim() || 'المالك',
     invoiceNumber: args.invoiceNumber,
     refCode: args.refCode ?? '',
     dateLabel: args.dateIso.slice(0, 16).replace('T', ' '),
@@ -229,6 +234,8 @@ export function buildSimpleDocModel(args: {
   rows: { nameAr: string; qty: number; unitPriceMinor: Minor; totalMinor: Minor }[]
   totalMinor: Minor
   paidMinor: Minor
+  /** اسم المحاسب/الكاشير الذي نفّذ الطباعة الحالية */
+  operatorName?: string
   settings: ReceiptSettings
   /** سطر ملخص إضافي يُبرز في الحاشية (مثلاً «مصاريف شحن وجمارك: …») */
   extraFooter?: string
@@ -246,6 +253,7 @@ export function buildSimpleDocModel(args: {
   return {
     shopName: args.settings.shopName || 'تَحَكَّم',
     headerLines: args.settings.headerLines.filter((l) => l.trim()),
+    operatorName: args.operatorName?.trim() || 'المالك',
     docTitle: args.docTitle,
     invoiceNumber: args.invoiceNumber,
     refCode: args.refCode,
