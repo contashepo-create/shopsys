@@ -447,6 +447,7 @@ export function BondsPage() {
   const [fees, setFees] = useState('')
   const [bank, setBank] = useState('1102')
   const [expiry, setExpiry] = useState('')
+  const [nowMs] = useState(() => Date.now())
 
   const save = () => {
     try {
@@ -470,7 +471,7 @@ export function BondsPage() {
   }
 
   const today = new Date().toISOString().slice(0, 10)
-  const soon = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10)
+  const soon = new Date(nowMs + 30 * 86400000).toISOString().slice(0, 10)
 
   return (
     <div className="space-y-4">

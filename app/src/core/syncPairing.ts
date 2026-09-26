@@ -2,6 +2,7 @@ import { decryptText, deriveKey, encryptText, isEncrypted } from './security.ts'
 
 export const SYNC_PAIRING_PREFIX = 'TAHAKAM-SYNC1.'
 export const PAIRING_PASSWORD_MIN = 12
+export const SYNC_SECRET_RE = /^[A-Za-z0-9_-]{43}$/
 
 export interface SyncPairingConfig {
   url: string
@@ -24,8 +25,8 @@ export function validatePairingConfig(c: SyncPairingConfig): void {
   if (!/^https:\/\//.test(c.url)) throw new Error('ملف الربط: رابط Supabase غير صالح')
   if (c.anonKey.length < 20) throw new Error('ملف الربط: مفتاح anon غير صالح')
   if (!c.storeId.trim()) throw new Error('ملف الربط: معرف المتجر مفقود')
-  if (c.secret.length < 16) throw new Error('ملف الربط: سر التشفير غير صالح')
-  if (!/^[A-Za-z0-9_-]{43}$/.test(c.accessToken)) throw new Error('ملف الربط: اعتماد العزل غير صالح')
+  if (!SYNC_SECRET_RE.test(c.secret)) throw new Error('ملف الربط: سر التشفير يجب أن يكون مفتاحاً مولداً 256-bit')
+  if (!SYNC_SECRET_RE.test(c.accessToken)) throw new Error('ملف الربط: اعتماد العزل غير صالح')
 }
 
 /** حزمة ربط مشفرة لنقل إعداد المزامنة إلى جهاز آخر دون ملف أسرار صريح. */

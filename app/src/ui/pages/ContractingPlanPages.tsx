@@ -40,7 +40,12 @@ export function ProjectBudgetPage() {
   const [draft, setDraft] = useState<Record<CostKind, string>>({ materials: '', labor: '', equipment: '', subcontract: '', other: '' })
 
   // projectCosts في التبعيات ضرورية: أي تكلفة جديدة يجب أن تحدّث تقرير الانحراف فوراً
-  const report = useMemo(() => (project ? getProjectBudgetVariance(project.id) : null), [project, getProjectBudgetVariance, projectBudgets, projectCosts])
+  const report = useMemo(() => {
+    // These reads intentionally invalidate the report when a budget or cost is changed.
+    void projectBudgets
+    void projectCosts
+    return project ? getProjectBudgetVariance(project.id) : null
+  }, [project, getProjectBudgetVariance, projectBudgets, projectCosts])
 
   const startEdit = () => {
     if (!project) return
@@ -159,9 +164,10 @@ export function ProjectTasksPage() {
   const toast = useToast()
   const open = projects.filter((p) => p.status === 'active')
   const [projectId, setProjectId] = useState<number | ''>('')
+  const [nowMs] = useState(() => Date.now())
   const pid = projectId === '' ? (open[0]?.id ?? null) : projectId
   const project = projects.find((p) => p.id === pid) ?? null
-  const tasks = useMemo(() => projectTasks.filter((t) => t.projectId === pid).sort((a, b) => a.startDate.localeCompare(b.startDate)), [projectTasks, pid])
+  const tasks = projectTasks.filter((t) => t.projectId === pid).sort((a, b) => a.startDate.localeCompare(b.startDate))
 
   /* نطاق الجانت: من أول بداية إلى آخر نهاية */
   const range = useMemo(() => {
@@ -178,7 +184,7 @@ export function ProjectTasksPage() {
   const [tStart, setTStart] = useState('')
   const [tEnd, setTEnd] = useState('')
   const [tBoq, setTBoq] = useState<number | ''>('')
-  const projBoq = useMemo(() => boqItems.filter((b) => b.projectId === pid), [boqItems, pid])
+  const projBoq = boqItems.filter((b) => b.projectId === pid)
 
   const saveTask = () => {
     if (!project) return
@@ -194,7 +200,7 @@ export function ProjectTasksPage() {
     try { updateProjectTaskProgress(taskId, Number(raw)); toast.show('حُدث التقدم ✅') } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  const todayPct = range ? Math.min(100, Math.max(0, ((Date.now() - range.d0) / range.span) * 100)) : 0
+  const todayPct = range ? Math.min(100, Math.max(0, ((nowMs - range.d0) / range.span) * 100)) : 0
 
   return (
     <div className="space-y-4">
@@ -226,7 +232,7 @@ export function ProjectTasksPage() {
             {tasks.map((t) => {
               const s = ((new Date(t.startDate).getTime() - range.d0) / range.span) * 100
               const w = Math.max(2, ((new Date(t.endDate).getTime() - new Date(t.startDate).getTime()) / range.span) * 100)
-              const late = t.status !== 'done' && new Date(t.endDate).getTime() < Date.now()
+              const late = t.status !== 'done' && new Date(t.endDate).getTime() < nowMs
               const st = PROJECT_TASK_STATUS_LABELS[t.status]
               return (
                 <div key={t.id} className="grid grid-cols-[180px_1fr_90px] items-center gap-3">

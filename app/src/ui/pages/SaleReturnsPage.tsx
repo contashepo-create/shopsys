@@ -70,7 +70,7 @@ export function SaleReturnsPage() {
   const originalTerminalCharge = sale ? paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentId === String(sale.id)) : undefined
   const returnSignature = JSON.stringify({ step, saleId: sale?.id ?? null, wiz, refund, refundTreasury, terminalRefundReference, customCash, customCredit, customStore, customWaived, reasonCode, reason })
   const unsaved = useUnsavedChangesGuard(returnSignature)
-  useEffect(() => { unsaved.markClean() }, [sale?.id])
+  useEffect(() => { unsaved.markClean() }, [sale?.id, unsaved])
 
   /** المتبقي القابل للإرجاع لكل سطر من الفاتورة المختارة */
   const remaining = useMemo(() => {

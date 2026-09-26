@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useDataStore, type Customer, type Supplier } from '../../data/repo.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { Btn, Field, inputCls, Modal, useToast } from './ui.tsx'
@@ -57,20 +57,13 @@ function formFromTarget(target: Target | null, decimals: number): FormState {
   }
 }
 
-export function PartyQuickEditModal({ open, target, currencyDecimals, currencySymbol, onClose, onSaved }: Props) {
+function PartyQuickEditModalForm({ open, target, currencyDecimals, currencySymbol, onClose, onSaved }: Props) {
   const toast = useToast()
   const { updateCustomer, updateSupplier, priceLists } = useDataStore()
-  const [form, setForm] = useState<FormState>(emptyForm)
-  const [initial, setInitial] = useState('')
+  const initialForm = useMemo(() => formFromTarget(target, currencyDecimals), [target, currencyDecimals])
+  const [form, setForm] = useState<FormState>(() => initialForm)
+  const [initial, setInitial] = useState(() => JSON.stringify(initialForm))
   const [confirmDiscard, setConfirmDiscard] = useState(false)
-
-  useEffect(() => {
-    if (!open) return
-    const next = formFromTarget(target, currencyDecimals)
-    setForm(next)
-    setInitial(JSON.stringify(next))
-    setConfirmDiscard(false)
-  }, [open, target?.kind, target?.party.id, currencyDecimals])
 
   const dirty = useMemo(() => JSON.stringify(form) !== initial, [form, initial])
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((prev) => ({ ...prev, [key]: value }))
@@ -134,3 +127,12 @@ export function PartyQuickEditModal({ open, target, currencyDecimals, currencySy
   </>
 }
 
+
+/** Remount the editable form when its external target changes, avoiding effect-driven resets. */
+export function PartyQuickEditModal(props: Props) {
+  const { open, target, currencyDecimals } = props
+  const targetKey = open && target
+    ? `${target.kind}:${target.party.id}:${target.party.nameAr}:${target.party.phone}:${currencyDecimals}`
+    : 'closed'
+  return <PartyQuickEditModalForm key={targetKey} {...props} />
+}

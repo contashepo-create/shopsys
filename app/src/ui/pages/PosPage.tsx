@@ -65,7 +65,7 @@ export function PosPage() {
   const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
-  const goTo = (path: string) => { guardNavigation(() => navigate(path)) || navigate(path) }
+  const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : null
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
@@ -144,7 +144,7 @@ export function PosPage() {
   const [searchIndex, setSearchIndex] = useState(0)
   const posSignature = JSON.stringify({ cart, qtyDrafts, invoiceDiscount, payment, paymentTerminalId, terminalReference, terminalCardLast4, customerId, paidCash, treasury })
   const unsaved = useUnsavedChangesGuard(posSignature)
-  useEffect(() => { if (!cart.length) unsaved.markClean() }, [cart.length])
+  useEffect(() => { if (!cart.length) unsaved.markClean() }, [cart.length, unsaved])
 
   // التركيز الدائم على البحث — سلوك كاشير حقيقي (القارئ يكتب ثم Enter)
   useEffect(() => { if (cart.length) qtyRefs.current[cart.length - 1]?.focus(); else searchRef.current?.focus() }, [cart.length])

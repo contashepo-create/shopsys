@@ -36,7 +36,7 @@ export function SalesInvoicesPage() {
   const { setup, receipt, einvoice, activatedPayload, trialStartedAt, lastSeenAt } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
-  const goTo = (path: string) => { guardNavigation(() => navigate(path)) || navigate(path) }
+  const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const country = setup.countryCode ? getCountry(setup.countryCode) : null
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
@@ -150,7 +150,7 @@ export function SalesInvoicesPage() {
 
   const editSignature = JSON.stringify({ editingId: editing?.id ?? null, editLines, editCustomerId, editPaid, editTreasury, editDiscount, editCustomerReference, editDueDate, editNotes, editCustomerCharges, editInternalExpenses, editReason })
   const unsavedEdit = useUnsavedChangesGuard(editSignature)
-  useEffect(() => { unsavedEdit.markClean() }, [editing?.id])
+  useEffect(() => { unsavedEdit.markClean() }, [editing?.id, unsavedEdit])
 
   const saveEdit = (creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
     if (!editing || !editTotals) return

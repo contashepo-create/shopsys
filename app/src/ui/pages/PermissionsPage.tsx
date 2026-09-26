@@ -5,7 +5,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * + إدارة المستخدمين الفرعيين (طلب المالك): اسم + دور + رقم سري —
  *   كل ما يفعله كل مستخدم يُسجل باسمه في سجل النشاطات (يراه المالك فقط).
  */
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound, Landmark, CreditCard, Pencil } from 'lucide-react'
 import { crudMatrixForModules, rolesWithOverrides, visibleRolesForModules, permissionsForModules, permissionSectionsForModules, type CrudOperation } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
@@ -125,7 +125,7 @@ export function PermissionsPage() {
   // الدور المعروض ابتداءً = أول دور غير المالك في القائمة المفلترة لهذا النشاط
   const activeRole = roles.find((r) => r.id === activeRoleId) ?? roles.find((r) => !r.isOwner) ?? roles[0]
   const isOwner = !!activeRole.isOwner
-  const permSet = useMemo(() => new Set(activeRole.permissions), [activeRole])
+  const permSet = new Set(activeRole.permissions)
 
   const togglePerm = (permId: string) => {
     if (isOwner) return // المالك محمي — كل الصلاحيات دائماً

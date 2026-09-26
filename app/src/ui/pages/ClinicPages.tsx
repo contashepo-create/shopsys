@@ -232,6 +232,7 @@ export function ClinicPatientsPage() {
   const [phone, setPhone] = useState('')
   const [gender, setGender] = useState<Gender>('male')
   const [birthDate, setBirthDate] = useState('')
+  const [nowMs] = useState(() => Date.now())
   const [history, setHistory] = useState<MedicalHistory>(emptyMedicalHistory())
   const [linkCustomer, setLinkCustomer] = useState(true) // إنشاء/ربط حساب عميل تلقائياً
 
@@ -330,7 +331,7 @@ export function ClinicPatientsPage() {
   /** طباعة روشتة احترافية: البنود المنظمة أولاً — والزيارات القديمة نصها الحر يتحول لسطور */
   const printPrescription = (v: ClinicVisit) => {
     if (!liveFile) return
-    const age = liveFile.birthDate ? `${Math.max(0, Math.floor((Date.now() - Date.parse(liveFile.birthDate)) / 31_557_600_000))} سنة` : ''
+    const age = liveFile.birthDate ? `${Math.max(0, Math.floor((nowMs - Date.parse(liveFile.birthDate)) / 31_557_600_000))} سنة` : ''
     const h = liveFile.history ?? emptyMedicalHistory()
     printHtml(renderPrescriptionHtml({
       clinicName: setup.shopName || 'العيادة',
@@ -356,7 +357,7 @@ export function ClinicPatientsPage() {
   /** تقرير سجل المريض الكامل (طلب المالك): من بداية التعامل حتى الآن — A4 احترافي */
   const printFullRecord = () => {
     if (!liveFile) return
-    const age = liveFile.birthDate ? `${Math.max(0, Math.floor((Date.now() - Date.parse(liveFile.birthDate)) / 31_557_600_000))} سنة` : ''
+    const age = liveFile.birthDate ? `${Math.max(0, Math.floor((nowMs - Date.parse(liveFile.birthDate)) / 31_557_600_000))} سنة` : ''
     const ordered = [...fileVisits].sort((a, b) => a.date.localeCompare(b.date))
     printHtml(renderPatientRecordHtml({
       clinicName: setup.shopName || 'العيادة',

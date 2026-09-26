@@ -1,5 +1,5 @@
 import { QuickSelect } from './KeyboardPickers.tsx'
-import { useEffect, useMemo } from 'react'
+import { useEffect } from 'react'
 import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
 import { allowedTreasuryCodes, type TreasuryOperation } from '../../core/treasuryAccess.ts'
 import { treasuryLabel } from '../../core/treasury.ts'
@@ -37,10 +37,7 @@ export function PaymentMethodPicker({
   const { treasuries: allTreasuries, appUsers, currentUserId, paymentTerminals } = useDataStore()
   const currentUser = appUsers.find((user) => user.id === currentUserId)
   const allowed = allowedTreasuryCodes(currentUser?.treasuryAccess, operation)
-  const treasuries = useMemo(
-    () => (allowed == null ? allTreasuries : allTreasuries.filter((treasury) => allowed.includes(treasury.code))),
-    [allTreasuries, allowed],
-  )
+  const treasuries = allowed == null ? allTreasuries : allTreasuries.filter((treasury) => allowed.includes(treasury.code))
   const terminals = allowTerminal ? (terminalOptions ?? eligiblePaymentTerminals(paymentTerminals, currentUser, 'charge')) : []
   const selectedValue = value.kind === 'credit' ? 'credit' : value.terminalPayment.terminalId ? `terminal:${value.terminalPayment.terminalId}` : `treasury:${value.treasury}`
   const fallbackTreasury = treasuries.find((treasury) => treasury.code === value.treasury)?.code ?? treasuries[0]?.code ?? ''

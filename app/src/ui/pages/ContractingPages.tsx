@@ -111,16 +111,14 @@ export function ProjectsPage() {
   const [exLines, setExLines] = useState<Record<number, string>>({}) // boqItemId → النسبة الجديدة كنص
   const extractBoq = useMemo(() => (extractFor ? boqItems.filter((b) => b.projectId === extractFor.id) : []), [boqItems, extractFor])
   const exLinesPreview = useMemo(() => {
-    let sum = 0
     const rows = extractBoq.map((b) => {
       const raw = exLines[b.id]
       const np = raw === undefined || raw === '' ? null : Number(raw)
       const total = Math.round(b.qty * b.unitPriceMinor)
       const slice = np !== null && Number.isFinite(np) && np > b.progressPercent && np <= 100 ? Math.round((total * (np - b.progressPercent)) / 100) : 0
-      sum += slice
       return { boq: b, newPercent: np, sliceMinor: slice }
     })
-    return { rows, grossMinor: sum }
+    return { rows, grossMinor: rows.reduce((sum, row) => sum + row.sliceMinor, 0) }
   }, [extractBoq, exLines])
 
   // مستخلص آجل فوق حد ائتمان عميل المشروع — تجاوز باعتماد مدير

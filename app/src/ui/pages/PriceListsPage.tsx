@@ -53,8 +53,13 @@ export function PriceListsPage() {
     if (!itemId) return
     const item = items.find((row) => row.id === itemId)
     if (!item) return
-    setCatalogFilter(item.sku || item.nameAr)
-    setCatalogOpen(true)
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      setCatalogFilter(item.sku || item.nameAr)
+      setCatalogOpen(true)
+    })
+    return () => { cancelled = true }
   }, [items])
   const wholesaleList = priceLists.find((list) => /جمل[ةه]/.test(list.nameAr))
   const activeWholesaleList = activePriceLists.find((list) => /جمل[ةه]/.test(list.nameAr))

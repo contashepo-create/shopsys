@@ -32,7 +32,11 @@ describe('توثيق قناة الدعم', () => {
     for (const call of fetchMock.mock.calls) {
       const options = call[1] as RequestInit
       expect((options.headers as Record<string, string>).Authorization).toBe(`Support ${token}`)
-      expect((options.headers as Record<string, string>)['X-Support-Protocol']).toBe('1')
+      const headers = options.headers as Record<string, string>
+      expect(headers['X-Support-Protocol']).toBe('2')
+      expect(headers['X-Support-Timestamp']).toMatch(/^\d{10}$/)
+      expect(headers['X-Support-Nonce']).toMatch(/^[A-Za-z0-9_-]{24}$/)
+      expect(headers['X-Support-Signature']).toMatch(/^[0-9a-f]{64}$/)
     }
   })
 

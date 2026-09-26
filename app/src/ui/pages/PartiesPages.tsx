@@ -106,7 +106,7 @@ function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: Party
 }
 
 export function CustomersPage() {
-  const { customers, priceLists, addCustomer, updateCustomer, removeCustomer, sales, saleReturns, vouchers, cheques, clientSettlements, getCustomerBalance, redeemLoyaltyPoints } = useDataStore()
+  const { customers, priceLists, addCustomer, updateCustomer, removeCustomer, getCustomerBalance, redeemLoyaltyPoints } = useDataStore()
   const { setup, loyalty } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
@@ -121,7 +121,7 @@ export function CustomersPage() {
     const map = new Map<number, number>()
     for (const c of customers) map.set(c.id, getCustomerBalance(c.id))
     return map
-  }, [customers, sales, saleReturns, vouchers, cheques, clientSettlements, getCustomerBalance])
+  }, [customers, getCustomerBalance])
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Customer | null>(null)
   /* استبدال نقاط الولاء (نمط Lightspeed): نقاط ← رصيد دائن في حساب العميل */

@@ -16,9 +16,12 @@ export interface SyncConfig {
   url: string // https://xxxx.supabase.co
   anonKey: string // مفتاح anon (Row Level Security تضبط الوصول)
   storeId: string // معرف المتجر — نفسه على كل الأجهزة
-  secret: string // سر التشفير المشترك — لا يغادر الأجهزة أبداً
+  secret: string // مفتاح تشفير 256-bit بصيغة base64url — لا يغادر الأجهزة أبداً
   accessToken: string // اعتماد RLS عشوائي — يُرسل للتفويض ولا يُستخدم للتشفير
 }
+
+export const SYNC_SECRET_RE = /^[A-Za-z0-9_-]{43}$/
+export const STORE_ACCESS_TOKEN_RE = SYNC_SECRET_RE
 
 export function validateSyncConfig(c: SyncConfig): string[] {
   const errors: string[] = []
@@ -27,17 +30,22 @@ export function validateSyncConfig(c: SyncConfig): string[] {
   }
   if (c.anonKey.trim().length < 20) errors.push('مفتاح anon قصير جداً — انسخه من إعدادات مشروع Supabase')
   if (!c.storeId.trim()) errors.push('معرف المتجر مطلوب — نفس المعرف على كل الأجهزة')
-  if (c.secret.trim().length < 16) errors.push('سر التشفير 16 حرفاً على الأقل — نفسه على كل الأجهزة')
-  if (!/^[A-Za-z0-9_-]{43}$/.test(c.accessToken.trim())) errors.push('اعتماد عزل المتجر غير صالح — ولّده من الزر وانسخه لكل الأجهزة')
+  if (!SYNC_SECRET_RE.test(c.secret.trim())) errors.push('سر التشفير يجب أن يكون مفتاحاً مولداً 256-bit — اضغط «توليد» ثم اربطه بكل الأجهزة')
+  if (!STORE_ACCESS_TOKEN_RE.test(c.accessToken.trim())) errors.push('اعتماد عزل المتجر غير صالح — ولّده من الزر وانسخه لكل الأجهزة')
   return errors
 }
 
-export function generateStoreAccessToken(): string {
+function generate256BitToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32))
   let binary = ''
   for (const byte of bytes) binary += String.fromCharCode(byte)
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
 }
+
+/** مفتاح تشفير 256-bit مستقل عن اعتماد RLS. */
+export function generateSyncSecret(): string { return generate256BitToken() }
+/** اعتماد RLS 256-bit مستقل عن مفتاح التشفير. */
+export function generateStoreAccessToken(): string { return generate256BitToken() }
 
 async function accessTokenHash(token: string): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))
@@ -152,6 +160,22 @@ export async function pushRemote(
   if (!res.ok) throw new Error(`فشل الدفع للسحابة (${res.status})`)
   const rows = (await res.json()) as unknown[]
   return interpretPushResult(Array.isArray(rows) ? rows.length : 0, env)
+}
+
+/**
+ * تدوير مفتاح تشفير المحتوى دون كشف البيانات للسحابة:
+ * يفك الجهاز اللقطة بالمفتاح القديم، يعيد تشفيرها بالجديد، ثم يدفعها
+ * بمراجعة شرطية واحدة. يجب تحديث بقية الأجهزة عبر ملف ربط قبل المزامنة التالية.
+ */
+export async function rotateSyncEncryptionSecret(c: SyncConfig, newSecret: string, deviceId: string): Promise<number> {
+  if (!SYNC_SECRET_RE.test(newSecret) || newSecret === c.secret) throw new Error('مفتاح التشفير الجديد غير صالح أو مطابق للحالي')
+  const remote = await fetchRemote(c)
+  if (!remote || !remote.data) return remote?.rev ?? 0
+  const plain = await decryptFromSync(remote.data, c.secret)
+  const encrypted = await encryptForSync(plain, newSecret)
+  const outcome = await pushRemote({ ...c, secret: newSecret }, deviceId, remote.rev, encrypted)
+  if (outcome.action === 'conflict') throw new Error('تغيرت السحابة أثناء تدوير المفتاح — لم يُبدّل المفتاح، أعد المحاولة')
+  return remote.rev + 1
 }
 
 /* ─── التشفير قبل النقل: مفتاح من سر المتجر (يشترك فيه كل الأجهزة) ─── */

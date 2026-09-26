@@ -45,7 +45,7 @@ export function PurchaseReturnsPage() {
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
   const returnSignature = JSON.stringify({ qtys, returnWarehouses, refund, treasury, reason })
   const unsaved = useUnsavedChangesGuard(returnSignature)
-  useEffect(() => { unsaved.markClean() }, [purchase?.id])
+  useEffect(() => { unsaved.markClean() }, [purchase?.id, unsaved])
   const closePurchase = () => unsaved.requestClose(() => setPurchase(null))
 
   /** إشعار مدين للمورد: سطور بتكلفة الوحدة النهائية + المسترد نقداً/ديناً */

@@ -56,11 +56,19 @@ interface DraftExpense {
 
 const EXPENSE_PRESETS = ['نولون / نقل', 'جمارك', 'تأمين', 'شحن وتفريغ', 'تحميل وتنزيل', 'عمولة مشتريات', 'رسوم بنكية', 'أخرى']
 
+function lineVatMinorFor(line: DraftLine, decimals: number, effectivePercent: number): number {
+  if (effectivePercent === 0) return 0
+  const qty = Number(line.qty) || 0
+  const unitPriceMinor = toMinor(line.unitPrice || '0', decimals)
+  const goodsMinor = Math.round(qty * unitPriceMinor)
+  return Math.round((goodsMinor * Math.max(0, line.vatPercent || 0)) / 100)
+}
+
 export function PurchasesPage() {
   const { items, suppliers, purchases, purchaseExpensePayables, settlePurchaseExpensePayable, journal, projects, costCenters, expenseTemplates, addExpenseTemplate, treasuries, vehicles, custodyFiles, employees, warehouses, categories, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, addItem, postPurchase, addLatePurchaseExpense, editPurchase, getSupplierBalance } = useDataStore()
   const { setup, activatedPayload, trialStartedAt, lastSeenAt, receipt, einvoice } = useAppStore()
   const navigate = useNavigate()
-  const goTo = (path: string) => { guardNavigation(() => navigate(path)) || navigate(path) }
+  const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
   const [today] = useState(() => new Date().toISOString().slice(0, 10))
 
   // سياسة التعديل (طلب المالك): الفاتورة الإلكترونية مفعلة ⇒ لا تعديل — إشعار مدين على المورد
@@ -73,8 +81,8 @@ export function PurchasesPage() {
   const openCustodyFiles = custodyFiles.filter((f) => f.status === 'open')
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : null
-  const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
-  const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
+  const cur = useMemo(() => country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }, [country])
+  const taxPolicy = useMemo(() => resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent), [setup.taxRegistrationStatus, setup.vatPercent])
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
   const effectiveCountryVatPercent = taxPolicy.effectivePercent === 0 ? 0 : countryVatPercent
   const mainWarehouseId = warehouses.find((w) => w.isMain)?.id ?? warehouses[0]?.id ?? null
@@ -239,10 +247,7 @@ export function PurchasesPage() {
     setSelectedEditLine(null)
   }
 
-  const editGoodsTotal = useMemo(
-    () => editLines.reduce((sum, l) => sum + Math.round((Number(l.qty) || 0) * toMinor(l.unitPrice || '0', cur.decimals)), 0),
-    [editLines, cur.decimals],
-  )
+  const editGoodsTotal = editLines.reduce((sum, l) => sum + Math.round((Number(l.qty) || 0) * toMinor(l.unitPrice || '0', cur.decimals)), 0)
 
   const editExpenseTotal = useMemo(() => editExpenses.filter((expense) => (expense.costTreatment ?? 'inventory') === 'inventory').reduce((sum, expense) => sum + expense.amountMinor, 0), [editExpenses])
 
@@ -306,36 +311,11 @@ export function PurchasesPage() {
     setOpen(true)
   }
 
-  /**
-   * تحويل سطر مُدخل بوحدة أكبر إلى الوحدة الأساسية (تدقيق المالك):
-   * «3 كرتونة × 240ج» ⇒ كمية 3×24=72 قطعة وسعر 240÷24=10ج للقطعة —
-   * فيدخل المخزون بالقطعة والتكلفة صحيحة والبيع بالقطعة يعمل مباشرة.
-   */
-  const toBaseLine = (l: DraftLine) => {
-    const it = items.find((x) => x.id === l.itemId)
-    const u = l.unitName ? it?.extraUnits.find((x) => x.nameAr === l.unitName) : undefined
-    const factor = u?.factor ?? 1
-    const enteredQty = Number(l.qty)
-    const enteredPriceMinor = toMinor(l.unitPrice || '0', cur.decimals)
-    return {
-      itemId: l.itemId,
-      qty: Math.round(enteredQty * factor * 1000) / 1000,
-      unitPriceMinor: factor > 1 ? Math.round(enteredPriceMinor / factor) : enteredPriceMinor,
-    }
-  }
-
   /** قيمة البضاعة والضريبة لكل سطر: نسبة البلد تُطبَّق تلقائياً على كل بند لا على الفاتورة ككل */
-  const lineGoodsMinor = (l: DraftLine) => {
-    try {
-      const qty = Number(l.qty) || 0
-      const unitPriceMinor = toMinor(l.unitPrice || '0', cur.decimals)
-      return Math.round(qty * unitPriceMinor)
-    } catch { return 0 }
-  }
-  const lineVatMinor = (l: DraftLine) => taxPolicy.effectivePercent === 0 ? 0 : Math.round((lineGoodsMinor(l) * Math.max(0, l.vatPercent || 0)) / 100)
+  const lineVatMinor = (l: DraftLine) => lineVatMinorFor(l, cur.decimals, taxPolicy.effectivePercent)
   const inputVatMinor = useMemo(
-    () => lines.filter((l) => l.itemId && Number(l.qty) > 0).reduce((sum, l) => sum + lineVatMinor(l), 0),
-    [lines, cur.decimals],
+    () => lines.filter((l) => l.itemId && Number(l.qty) > 0).reduce((sum, l) => sum + lineVatMinorFor(l, cur.decimals, taxPolicy.effectivePercent), 0),
+    [lines, cur.decimals, taxPolicy.effectivePercent],
   )
 
   /** مسح باركود لإضافة سطر: يجد الصنف بباركود القطعة أو باركود الوحدة الأكبر (كرتونة المصنع) */
@@ -365,11 +345,22 @@ export function PurchasesPage() {
   }
 
   /** معاينة حية للتوزيع أثناء الإدخال */
-  const preview = useMemo(() => {
+  const preview = (() => {
     try {
       const costLines = lines
         .filter((l) => l.itemId && Number(l.qty) > 0)
-        .map(toBaseLine)
+        .map((l) => {
+          const it = items.find((x) => x.id === l.itemId)
+          const u = l.unitName ? it?.extraUnits.find((x) => x.nameAr === l.unitName) : undefined
+          const factor = u?.factor ?? 1
+          const enteredQty = Number(l.qty)
+          const enteredPriceMinor = toMinor(l.unitPrice || '0', cur.decimals)
+          return {
+            itemId: l.itemId,
+            qty: Math.round(enteredQty * factor * 1000) / 1000,
+            unitPriceMinor: factor > 1 ? Math.round(enteredPriceMinor / factor) : enteredPriceMinor,
+          }
+        })
       if (!costLines.length) return null
       const exps = expenses
         .filter((e) => Number(e.amount) > 0)
@@ -386,11 +377,11 @@ export function PurchasesPage() {
     } catch {
       return null
     }
-  }, [lines, expenses, cur.decimals, inputVatMinor])
+  })()
 
   const invoiceSignature = JSON.stringify({ supplierId, lines, expenses, paid, paySource, warehouseId, projectId, notes, taxPolicy: taxPolicy.effectivePercent })
   const unsaved = useUnsavedChangesGuard(invoiceSignature)
-  useEffect(() => { if (open) unsaved.markClean() }, [open])
+  useEffect(() => { if (open) unsaved.markClean() }, [open, unsaved])
 
   const save = () => {
     if (!preview || supplierId < 0) return

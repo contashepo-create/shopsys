@@ -61,7 +61,7 @@ export function ReportsPage() {
 
   /* ─── الحسابات (كلها نواة خالصة) ─── */
   const summary = useMemo(() => salesSummary(sales, saleReturns, period), [sales, saleReturns, period])
-  const daily = useMemo(() => dailySales(sales, period), [sales, period, costProject, costSettlement])
+  const daily = useMemo(() => dailySales(sales, period), [sales, period])
   const top = useMemo(() => topItems(sales, saleReturns, period, 10), [sales, saleReturns, period])
   // الراكد (سد فجوة DEXEF): مخزون بلا حركة بيع 30+ يوماً = رأس مال محبوس
   const stagnant = useMemo(() => stagnantItems(items, sales, new Date().toISOString(), 30), [items, sales])
@@ -71,18 +71,24 @@ export function ReportsPage() {
   const getSupplierBalance = useDataStore((s) => s.getSupplierBalance)
   const journalLen = useDataStore((s) => s.journal.length)
   const custRows = useMemo(
-    () => customers
+    () => {
+      void journalLen
+      return customers
       .map((c) => ({ customerId: c.id, balanceMinor: getCustomerBalance(c.id) }))
       .filter((r) => r.balanceMinor !== 0)
-      .sort((a, b) => b.balanceMinor - a.balanceMinor),
+      .sort((a, b) => b.balanceMinor - a.balanceMinor)
+    },
     // journalLen يحدّث القائمة بعد أي عملية مالية جديدة
     [customers, getCustomerBalance, journalLen],
   )
   const suppRows = useMemo(
-    () => suppliers
+    () => {
+      void journalLen
+      return suppliers
       .map((sp) => ({ supplierId: sp.id, balanceMinor: getSupplierBalance(sp.id) }))
       .filter((r) => r.balanceMinor !== 0)
-      .sort((a, b) => b.balanceMinor - a.balanceMinor),
+      .sort((a, b) => b.balanceMinor - a.balanceMinor)
+    },
     [suppliers, getSupplierBalance, journalLen],
   )
   // أعمار الديون (المقارنة العالمية: QuickBooks/Xero يقدمان A/R Aging 30/60/90 — كان غائباً)

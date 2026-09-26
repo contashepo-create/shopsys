@@ -36,6 +36,8 @@ export const AUDIT_MAX = 3000
 export function sanitizeText(input: unknown, maxLen = 500): string {
   if (typeof input !== 'string') return ''
   return input
+    // التحكمية مقصودة هنا: هذا الحارس يزيل control characters قبل التخزين/العرض.
+    // oxlint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
     .replace(/[<>]/g, '')
     .replace(/[\u200B\u2060\uFEFF]/g, '')

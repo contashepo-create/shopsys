@@ -31,7 +31,7 @@ ok(pos.includes('النسبة تظهر بجانب كل بند') && pos.includes(
 
 ok(pur.includes('countryVatPercent = country?.vatPercent ?? setup.vatPercent'), 'فاتورة الشراء تأخذ نسبة الضريبة من بلد المنشأة')
 ok(pur.includes('makeDraftLine') && pur.includes('vatPercent: itemVatPercent(itemId)'), 'سطر الشراء الجديد يحمل نسبة ضريبته تلقائياً')
-ok(pur.includes('inputVatMinor = useMemo') && pur.includes('lineVatMinor(l)'), 'إجمالي ضريبة المدخلات يُحسب من السطور')
+ok(pur.includes('inputVatMinor = useMemo') && pur.includes('lineVatMinorFor(l'), 'إجمالي ضريبة المدخلات يُحسب من السطور')
 ok(!pur.includes('value={inputVat}') && !pur.includes('setInputVat'), 'لا يوجد حقل ضريبة عام يدوي في فاتورة الشراء')
 ok(pur.includes('خيارات أكثر') && pur.includes('lineOptions.expiry') && pur.includes('type="checkbox"'), 'الصلاحية خلف زر خيارات أكثر ومربع checkbox')
 ok(pur.includes('{lineOptions.expiry && (lineItem?.trackExpiry') && pur.includes('تاريخ الصلاحية لكل سطر'), 'حقل الصلاحية لا يظهر افتراضياً بجانب السطور')

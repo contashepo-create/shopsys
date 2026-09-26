@@ -8,7 +8,7 @@ import { useMemo, useState } from 'react'
 import { CloudUpload, Lock, RefreshCw, CheckCircle2, ShieldCheck, Copy, PlugZap, History, Download, Undo2 } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { validateSyncConfig, fetchRemote, generateStoreAccessToken, rotateStoreAccessToken } from '../../data/syncClient.ts'
+import { validateSyncConfig, fetchRemote, generateSyncSecret, generateStoreAccessToken, rotateStoreAccessToken, rotateSyncEncryptionSecret } from '../../data/syncClient.ts'
 import { runSyncCycle, listConflictSnapshots, getConflictSnapshotData, restoreConflictSnapshot } from '../../data/syncRunner.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { deriveArchitectureMode, MODE_LABELS } from '../../core/architecture.ts'
@@ -178,6 +178,23 @@ export function SyncPage() {
     finally { setBusy(null) }
   }
 
+  const rotateEncryptionSecret = async () => {
+    if (sync.dirty) return toast.show('زامن التغييرات المحلية أولاً قبل تدوير مفتاح التشفير', 'error')
+    if (!window.confirm('سيُعاد تشفير لقطة المتجر كلها بمفتاح جديد. يجب تحديث كل الأجهزة بملف ربط جديد خلال دقائق، وإلا ستفشل مزامنتها. متابعة؟')) return
+    const current = { url: url.trim(), anonKey: anonKey.trim(), storeId: storeId.trim(), secret: secret.trim(), accessToken: accessToken.trim() }
+    const errors = validateSyncConfig(current)
+    if (errors.length) return toast.show(errors[0], 'error')
+    const next = generateSyncSecret()
+    setBusy('secret')
+    try {
+      const newRev = await rotateSyncEncryptionSecret(current, next, deviceId)
+      setSecret(next)
+      updateSync({ secret: next, lastKnownRev: newRev, dirty: false })
+      toast.show(`تم تدوير مفتاح التشفير وإعادة تشفير السحابة ✅ — المراجعة ${newRev}. صدّر ملفات ربط جديدة لكل الأجهزة الآن.`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+    finally { setBusy(null) }
+  }
+
   const importPairing = () => {
     const input = document.createElement('input')
     input.type = 'file'; input.accept = '.tksync,text/plain'
@@ -245,7 +262,8 @@ export function SyncPage() {
           <Field label="سر التشفير المشترك *" hint="ولّده عشوائياً ولا تعِد استخدام كلمة سر شخصية">
             <div className="flex gap-2">
               <input value={secret} onChange={(e) => setSecret(e.target.value)} type="password" className={inputCls} dir="ltr" />
-              <Btn variant="soft" onClick={() => setSecret(generateStoreAccessToken())}>توليد</Btn>
+              <Btn variant="soft" onClick={() => setSecret(generateSyncSecret())}>توليد 256-bit</Btn>
+              {sync.secret && <Btn variant="ghost" onClick={rotateEncryptionSecret} disabled={busy === 'secret'}>{busy === 'secret' ? 'يُعيد التشفير…' : 'تدوير المفتاح'}</Btn>}
             </div>
           </Field>
           <Field label="اعتماد عزل المتجر *" hint="اعتماد 256-bit منفصل عن التشفير — انسخه بأمان لكل أجهزة المتجر">

@@ -42,7 +42,7 @@ const { syncOnce, validateSyncConfig, encryptForSync } = await import('../src/da
 
 const config = {
   url: 'https://demo.supabase.co', anonKey: 'x'.repeat(40), storeId: 'matgar-1',
-  secret: 'sirr-mushtarak-strong', accessToken: 'A'.repeat(43),
+  secret: 'S'.repeat(43), accessToken: 'A'.repeat(43),
 }
 
 console.log('🧰 تحقق الإعدادات')

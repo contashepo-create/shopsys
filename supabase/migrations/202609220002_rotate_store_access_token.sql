@@ -71,7 +71,9 @@ declare
   new_hash text;
   overlap_until timestamptz := pg_catalog.now() + interval '24 hours';
 begin
-  if length(old_token) <> 43 or length(new_token) <> 43 or old_token = new_token then
+  if old_token !~ '^[A-Za-z0-9_-]{43}$'
+     or new_token !~ '^[A-Za-z0-9_-]{43}$'
+     or old_token = new_token then
     raise exception 'invalid rotation credentials' using errcode = '22023';
   end if;
   old_hash := pg_catalog.encode(extensions.digest(old_token, 'sha256'), 'hex');

@@ -20,6 +20,22 @@ export const LOG_KEY = 'shopsys-log'
 /** حد حجم اللوج المرفوع للمطور (يُقص الأقدم) */
 export const LOG_EXPORT_MAX_CHARS = 60_000
 
+/**
+ * تنقية رسائل اللوج قبل التخزين أو الإرسال:
+ * اللوج تشخيصي وليس مكاناً للأسرار أو بيانات العملاء. نخفي القيم الشائعة
+ * للأسرار والاعتمادات والـquery strings ونقص الرسالة حتى لا تتسرب حمولة كبيرة.
+ */
+export function redactLogMessage(input: unknown): string {
+  return String(input)
+    .replace(/(authorization|access_token|accessToken|anonKey|api[_-]?key|password|secret|token)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+    .replace(/\b(Bearer|Support)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [REDACTED]')
+    .replace(/(https?:\/\/[^\s?]+)\?[^\s]*/gi, '$1?[REDACTED]')
+    // التحكمية مقصودة هنا: اللوج لا يسمح بمحارف طرفية أو تحكمية.
+    // oxlint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
+    .slice(0, 400)
+}
+
 /** إلحاق سطر بحلقة اللوج — دالة خالصة على المصفوفة */
 export function pushLog(ring: readonly LogLine[], line: LogLine, max = LOG_MAX): LogLine[] {
   const next = [...ring, line]
@@ -39,14 +55,22 @@ function readRing(): LogLine[] {
     const raw = localStorage.getItem(LOG_KEY)
     if (!raw) return []
     const arr = JSON.parse(raw)
-    return Array.isArray(arr) ? arr.filter((l) => l && typeof l.msg === 'string') : []
+    return Array.isArray(arr)
+      ? arr
+        .filter((l): l is Partial<LogLine> => !!l && typeof l === 'object' && typeof l.msg === 'string')
+        .map((l) => ({
+          at: typeof l.at === 'string' ? l.at.slice(0, 30) : '',
+          level: l.level === 'warn' || l.level === 'error' ? l.level : 'info',
+          msg: redactLogMessage(l.msg),
+        }))
+      : []
   } catch { return [] }
 }
 
 /** تسجيل حدث — لا يرمي أبداً (السجل مساعد، لا يعطل التطبيق) */
 export function logEvent(level: LogLevel, msg: string): void {
   try {
-    const line: LogLine = { at: new Date().toISOString(), level, msg: String(msg).slice(0, 400) }
+    const line: LogLine = { at: new Date().toISOString(), level, msg: redactLogMessage(msg) }
     localStorage.setItem(LOG_KEY, JSON.stringify(pushLog(readRing(), line)))
   } catch { /* صامت */ }
 }
@@ -55,9 +79,12 @@ export function getLogLines(): LogLine[] { return readRing() }
 export function getLogText(): string { return logToText(readRing()) }
 
 /** تركيب مصائد الأخطاء العامة — تُستدعى مرة واحدة عند الإقلاع */
+let hooksInstalled = false
 export function installErrorHooks(): void {
+  if (hooksInstalled) return
+  hooksInstalled = true
   try {
-    window.addEventListener('error', (e) => logEvent('error', `${e.message} @${e.filename ?? '?'}:${e.lineno ?? '?'}`))
-    window.addEventListener('unhandledrejection', (e) => logEvent('error', `Promise: ${String((e as PromiseRejectionEvent).reason).slice(0, 300)}`))
+    window.addEventListener('error', (e) => logEvent('error', `window error: ${e.message} @${e.filename ? '[redacted-file]' : '?'}:${e.lineno ?? '?'}`))
+    window.addEventListener('unhandledrejection', (e) => logEvent('error', `Promise: ${String((e as PromiseRejectionEvent).reason)}`))
   } catch { /* صامت */ }
 }

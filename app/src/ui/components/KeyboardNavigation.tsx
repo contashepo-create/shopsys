@@ -45,7 +45,7 @@ export function KeyboardNavigation() {
       if (event.key === 'F3') {
         event.preventDefault()
         const nextPath = pathname.startsWith('/purchases') ? '/purchases/invoices/new' : '/sales/invoices/new'
-        guardNavigation(() => navigate(nextPath)) || navigate(nextPath)
+        if (!guardNavigation(() => navigate(nextPath))) navigate(nextPath)
         return
       }
       if (event.key === 'F4') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:open-party')); return }

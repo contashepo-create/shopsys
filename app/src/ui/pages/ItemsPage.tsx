@@ -75,7 +75,7 @@ export function ItemsPage() {
 
   const warehouseStock = useMemo(
     () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)),
-    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns],
+    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders],
   )
   const stockInWarehouse = useCallback((warehouseId: number, itemId: number) => warehouseStock.get(warehouseId)?.get(itemId) ?? 0, [warehouseStock])
 
@@ -225,8 +225,13 @@ export function ItemsPage() {
     const item = items.find((row) => row.id === itemId)
     if (!item) return
     handledItemAction.current = actionKey
-    if (action === 'edit') openEditItem(item)
-    else openItemCard(item)
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      if (action === 'edit') openEditItem(item)
+      else openItemCard(item)
+    })
+    return () => { cancelled = true }
   }, [location.search, items])
 
   const saveItem = () => {

@@ -74,12 +74,12 @@ export function ProcessingPage() {
   const previewYield = srcQtyNum > 0 ? Math.round((outQtySum / srcQtyNum) * 1000) / 10 : 0
   const overheadMinor = overhead ? Math.round(Number(overhead) * 10 ** cur.decimals) : 0
   const totalCost = source ? Math.round(source.costMinor * srcQtyNum) + overheadMinor : 0
-  const preview = useMemo(() => {
+  const preview = (() => {
     if (!source || parsedOuts.length === 0 || !(srcQtyNum > 0)) return null
     try {
       return allocateProcessingCost(parsedOuts, totalCost, (id) => items.find((it) => it.id === id)?.priceMinor ?? 0)
     } catch { return null }
-  }, [source, parsedOuts.map((o) => `${o.itemId}:${o.qty}`).join(','), totalCost]) // eslint-disable-line react-hooks/exhaustive-deps
+  })()
 
   const run = () => {
     try {
