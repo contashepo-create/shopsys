@@ -11,7 +11,7 @@ import { useDataStore, type RentalContract } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { computeRentalTotals, rentalReport, utilizationReport, isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
+import { computeRentalTotals, rentalReport, utilizationReport, isRentalOverdue, rentalExpectedEnd, type RentalPaymentMode } from '../../core/rental.ts'
 import { renderRentalContractHtml } from '../print/printRentalContract.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { RATE_TYPE_LABELS, type RateType } from '../../core/rentalMeter.ts'
@@ -57,6 +57,9 @@ export function RentalContractsPage() {
       rentTotal: `${fmt(c.totals.rentMinor)} ${cur.symbol}`,
       vat: c.totals.vatMinor > 0 ? `${fmt(c.totals.vatMinor)} ${cur.symbol}` : '',
       deposit: c.totals.depositMinor > 0 ? `${fmt(c.totals.depositMinor)} ${cur.symbol}` : '',
+      paymentLabel: c.payment === 'cash' ? 'نقدي بالكامل' : c.payment === 'credit' ? 'آجل بالكامل' : 'مدفوع + آجل',
+      paidRent: `${fmt(c.totals.grandMinor - c.totals.collectCreditMinor)} ${cur.symbol}`,
+      dueRent: `${fmt(c.totals.collectCreditMinor)} ${cur.symbol}`,
       startReading: c.startReading,
       expectedEnd: rentalExpectedEnd(c.date, c.days, rt),
       notes: c.notes,
@@ -73,7 +76,8 @@ export function RentalContractsPage() {
   const [days, setDays] = useState('1')
   const [dailyRate, setDailyRate] = useState('')
   const [deposit, setDeposit] = useState('')
-  const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [payment, setPayment] = useState<RentalPaymentMode>('cash')
+  const [paidRent, setPaidRent] = useState('')
   const [treasury, setTreasury] = useState('1101')
   const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [withVat, setWithVat] = useState(false)
@@ -84,7 +88,8 @@ export function RentalContractsPage() {
 
   const openNew = () => {
     setCustomerId(''); setEquipmentId(''); setEquipmentName(''); setDays('1')
-    setDailyRate(''); setDeposit(''); setPayment('cash'); setWithVat(false); setNotes('')
+    setDailyRate(''); setDeposit(''); setPayment('cash'); setPaidRent(''); setWithVat(false); setNotes('')
+    setTreasury('1101'); setTerminalPayment({ terminalId: '', providerReference: '', cardLast4: '' })
     setRateType('daily'); setStartReading(''); setOpen(true)
   }
   /** سعر الوحدة من سجل المعدة حسب نوع العقد */
@@ -116,9 +121,10 @@ export function RentalContractsPage() {
     dailyRateMinor: toM(dailyRate),
     depositMinor: toM(deposit),
     payment,
+    paidMinor: payment === 'cash' ? undefined : payment === 'credit' ? 0 : toM(paidRent),
     vatPercent: withVat ? setup.vatPercent : 0,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [equipmentName, days, dailyRate, deposit, payment, withVat, setup.vatPercent, cur.decimals])
+  }), [equipmentName, days, dailyRate, deposit, payment, paidRent, withVat, setup.vatPercent, cur.decimals])
   const draftTotals = useMemo(() => {
     try { return computeRentalTotals(draftInput) } catch { return null }
   }, [draftInput])
@@ -378,16 +384,20 @@ export function RentalContractsPage() {
                 <input value={startReading} onChange={(e) => setStartReading(e.target.value)} className={inputCls} dir="ltr" type="number" inputMode="decimal" step="any" min={0} placeholder="0" />
               </Field>
             )}
-            {payment === 'cash' && <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div></Field>}
+            {payment !== 'credit' && <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div></Field>}
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يُقبض نقداً ويُردّ عند الإقفال — لا يدخل الإيراد">
               <input value={deposit} onChange={(e) => setDeposit(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
             </Field>
             <Field label="سداد الإيجار">
-              <div className="grid grid-cols-2 gap-1.5">
-                <button onClick={() => setPayment('cash')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>نقدي</button>
-                <button onClick={() => setPayment('credit')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'credit' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>آجل (على العميل)</button>
+              <div className="grid grid-cols-3 gap-1.5">
+                <button onClick={() => setPayment('cash')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>نقدي بالكامل</button>
+                <button onClick={() => setPayment('mixed')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'mixed' ? 'border-sky-500/60 bg-sky-500/10 text-sky-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>مدفوع + آجل</button>
+                <button onClick={() => setPayment('credit')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'credit' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>آجل بالكامل</button>
               </div>
             </Field>
+            {payment === 'mixed' && <Field label={`المدفوع الآن من الإيجار (${cur.symbol})`} hint="التأمين منفصل ويُضاف للتحصيل الحالي؛ المتبقي يُثبت على حساب العميل">
+              <input value={paidRent} onChange={(e) => setPaidRent(e.target.value)} className={inputCls} dir="ltr" inputMode="decimal" placeholder="0" />
+            </Field>}
           </div>
 
           <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer">
@@ -396,11 +406,12 @@ export function RentalContractsPage() {
           </label>
 
           {draftTotals && (
-            <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[12px]">
+            <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-[12px]">
               <div><div className="text-slate-400">قيمة الإيجار</div><b>{fmt(draftTotals.rentMinor)}</b></div>
               <div><div className="text-slate-400">الضريبة</div><b>{fmt(draftTotals.vatMinor)}</b></div>
-              <div><div className="text-slate-400">التأمين</div><b className="text-amber-600">{fmt(draftTotals.depositMinor)}</b></div>
-              <div><div className="text-slate-400">يُقبض نقداً الآن</div><b className="text-emerald-600">{fmt(draftTotals.collectCashMinor)}</b></div>
+              <div><div className="text-slate-400">المدفوع من الإيجار</div><b className="text-emerald-600">{fmt(draftTotals.grandMinor - draftTotals.collectCreditMinor)}</b></div>
+              <div><div className="text-slate-400">المتبقي آجلاً</div><b className="text-amber-600">{fmt(draftTotals.collectCreditMinor)}</b></div>
+              <div><div className="text-slate-400">إجمالي التحصيل الآن</div><b className="text-teal-600">{fmt(draftTotals.collectCashMinor)}</b><small className="block text-slate-400">يشمل التأمين {fmt(draftTotals.depositMinor)}</small></div>
             </div>
           )}
 

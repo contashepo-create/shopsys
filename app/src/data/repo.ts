@@ -51,7 +51,7 @@ import { validateOpenShift, currentOpenShift, summarizeShift, salesShiftPolicy, 
 import { computePayrollLine, computePayrollTotals, validatePayrollRun, buildPayrollEntry, monthLabelAr, type PayrollPayMode, type PayrollLineInput, type PayrollLineComputed, type PayrollTotals } from '../core/payroll.ts'
 import { buildSchedule, applyPayment, planProgress, reduceSchedule, type InstallmentItem } from '../core/installments.ts'
 import { validateTrip, computeTripTotals, buildTripEntry, type TripInput, type TripTotals, buildDriverCommissionEntry, buildDriverSettlementEntry } from '../core/logistics.ts'
-import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalTotals } from '../core/rental.ts'
+import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalCloseEntry, type RentalInput, type RentalPaymentMode, type RentalTotals } from '../core/rental.ts'
 import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateDocumentCharges, type DocumentCharge } from '../core/documentCharges.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
@@ -301,7 +301,7 @@ export interface RentalContract {
   /** تسوية التجاوز عند الإقفال (0 = لا تجاوز) */
   extraMinor: number
   extraEntryId: number | null
-  payment: 'cash' | 'credit'
+  payment: RentalPaymentMode
   vatPercent: number
   totals: RentalTotals
   status: 'active' | 'closed'
@@ -6964,7 +6964,7 @@ export const useDataStore = create<DataState>()(
         // 1) تحقق شامل قبل أي كتابة
         const errors = validateRental(args.input)
         if (args.customerId != null && !state.customers.some((c) => c.id === args.customerId)) errors.push('العميل غير موجود')
-        if (args.input.payment === 'credit' && args.customerId == null) errors.push('الإيجار الآجل يتطلب عميلاً مسجلاً')
+        if (args.input.payment !== 'cash' && args.customerId == null) errors.push('الإيجار الآجل أو المختلط يتطلب عميلاً مسجلاً')
         // ترقية القرار 25: العقد الساعي يتطلب قراءة عدّاد التسليم
         if (rateType === 'hourly') {
           if (args.startReading == null || !isValidMeterReading(args.startReading)) {
@@ -7073,8 +7073,10 @@ export const useDataStore = create<DataState>()(
           })
           extraMinor = billing.extraMinor
         }
-        // قيد التجاوز — بنفس طريقة سداد العقد
+        // قيد التجاوز — بنفس طريقة سداد العقد؛ المختلط يضيف التجاوز إلى الذمة
         if (extraMinor > 0) {
+          const extraVatMinor = Math.round((extraMinor * contract.vatPercent) / 100)
+          if (contract.payment !== 'cash') guardCreditLimit(get(), contract.customerId, extraMinor + extraVatMinor)
           extraEntryId = nextId(journal)
           const extraLines = buildExtraUsageEntry(extraMinor, contract.vatPercent, contract.payment, contract.contractNumber, treasury)
           journal = [...journal, {
