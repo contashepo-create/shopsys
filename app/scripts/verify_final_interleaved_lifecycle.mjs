@@ -113,7 +113,7 @@ const OPS = {
     const qty = ri(1, Math.min(5, have))
     const cust = rnd() < 0.5 ? pick(customers) : null
     const payment = cust && rnd() < 0.5 ? 'credit' : 'cash'
-    st().postSale({ lines: [{ itemId: it.id, nameAr: it.nameAr, qty, unitPriceMinor: PRICE[it.id], unitCostMinor: st().items.find((x) => x.id === it.id).costMinor, discountPercent: 0, soldByWeight: false }], payment, treasury: '1101', customerId: cust?.id ?? null, invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: true, allowNegativeStock: false })
+    st().postSale({ lines: [{ itemId: it.id, nameAr: it.nameAr, qty, unitPriceMinor: PRICE[it.id], unitCostMinor: st().items.find((x) => x.id === it.id).costMinor, discountPercent: 0, soldByWeight: false }], payment, treasury: '1101', customerId: cust?.id ?? null, invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: true, allowNegativeStock: false, priceFloorOverrideBy: 'اختبار دورة الحياة' })
     shadowQty.set(it.id, have - qty)
     return `بيع ${qty}×${it.nameAr} (${payment})`
   },

@@ -102,7 +102,7 @@ export function computeUsageBilling(input: UsageBillingInput): UsageBilling {
 export function buildExtraUsageEntry(
   extraMinor: Minor,
   vatPercent: number,
-  payment: 'cash' | 'credit',
+  payment: 'cash' | 'credit' | 'mixed',
   label: string,
   treasury = '1101',
 ): JournalLine[] {

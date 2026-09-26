@@ -23,6 +23,8 @@ export interface SupportMessage {
 }
 
 export const SUPPORT_TEXT_MAX = 1500
+/** إصدار بروتوكول الدعم الموقّع: يمنع إعادة تشغيل طلب صالح خارج نافذته الزمنية. */
+export const SUPPORT_PROTOCOL = '2'
 /** فترة تحديث المحادثة داخل التطبيق */
 export const SUPPORT_POLL_MS = 30_000
 
@@ -84,20 +86,68 @@ export function supportUrl(baseUrl: string, deviceId: string): string {
 
 /* ─── الجالبات (متسامحة مع الفشل — أوفلاين لا يكسر شيئاً) ─── */
 
-export async function fetchConversation(baseUrl: string, deviceId: string): Promise<SupportMessage[] | null> {
+function base64Url(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function hex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function nonce(): string {
+  return base64Url(crypto.getRandomValues(new Uint8Array(18)))
+}
+
+/** توقيع HMAC للطلب نفسه؛ التوكن لا يرسل وحده كاعتماد قابل لإعادة التشغيل. */
+async function requestSignature(token: string, method: string, path: string, timestamp: string, requestNonce: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(token),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const canonical = `${method.toUpperCase()}\n${path}\n${timestamp}\n${requestNonce}\n${body}`
+  return hex(new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(canonical))))
+}
+
+async function supportHeaders(token: string, method: string, url: string, body = '', json = false): Promise<Record<string, string>> {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('اعتماد قناة الدعم غير صالح')
+  const timestamp = String(Math.floor(Date.now() / 1000))
+  const requestNonce = nonce()
+  const path = new URL(url).pathname
+  return {
+    Authorization: `Support ${token}`,
+    'X-Support-Protocol': SUPPORT_PROTOCOL,
+    'X-Support-Timestamp': timestamp,
+    'X-Support-Nonce': requestNonce,
+    'X-Support-Signature': await requestSignature(token, method, path, timestamp, requestNonce, body),
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+  }
+}
+
+export async function fetchConversation(baseUrl: string, deviceId: string, token: string): Promise<SupportMessage[] | null> {
   try {
-    const res = await fetch(supportUrl(baseUrl, deviceId), { signal: AbortSignal.timeout(10_000) })
+    const url = supportUrl(baseUrl, deviceId)
+    const res = await fetch(url, {
+      headers: await supportHeaders(token, 'GET', url),
+      signal: AbortSignal.timeout(10_000),
+    })
     if (!res.ok) return null
     return parseConversation(await res.json())
   } catch { return null }
 }
 
-export async function sendSupportMessage(baseUrl: string, deviceId: string, payload: ClientSupportPayload): Promise<boolean> {
+export async function sendSupportMessage(baseUrl: string, deviceId: string, token: string, payload: ClientSupportPayload): Promise<boolean> {
   try {
-    const res = await fetch(supportUrl(baseUrl, deviceId), {
+    const url = supportUrl(baseUrl, deviceId)
+    const body = JSON.stringify(payload)
+    const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
+      headers: await supportHeaders(token, 'POST', url, body, true),
+      body,
       signal: AbortSignal.timeout(15_000),
     })
     return res.ok

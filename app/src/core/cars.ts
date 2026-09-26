@@ -16,6 +16,7 @@ import { assertBalanced, type JournalLine } from './ledger.ts'
 
 export type CarPurpose = 'sale' | 'rent'
 export type CarStatus = 'in_stock' | 'sold' | 'renting'
+export type CarPaymentMode = 'cash' | 'credit' | 'mixed'
 
 export interface CarInput {
   make: string // ماركة
@@ -40,24 +41,34 @@ export function validateCar(c: CarInput, existingPlates: readonly string[]): str
   return errors
 }
 
-/** قيد شراء سيارة كبضاعة: 1103 ← 1101|2101 */
-export function buildCarPurchaseEntry(costMinor: Minor, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
+/**
+ * قيد شراء سيارة كبضاعة: 1103 ← مصدر الدفع + 2101.
+ * يدعم الشراء النقدي الكامل، الآجل الكامل، أو النقدي/البنكي مع باقي آجل.
+ */
+export function buildCarPurchaseEntry(costMinor: Minor, payment: CarPaymentMode, label: string, treasury = '1101', paidMinor?: Minor): JournalLine[] {
   if (!Number.isInteger(costMinor) || costMinor <= 0) throw new Error('تكلفة الشراء يجب أن تكون موجبة')
-  const lines: JournalLine[] = [
-    { accountCode: '1103', debit: costMinor, credit: 0, note: `شراء ${label}` },
-    { accountCode: payment === 'cash' ? treasury : '2101', debit: 0, credit: costMinor, note: payment === 'cash' ? 'سداد نقدي' : 'مستحق للمورد' },
-  ]
+  const paid = paidMinor ?? (payment === 'cash' ? costMinor : 0)
+  if (!Number.isInteger(paid) || paid < 0 || paid > costMinor) throw new Error('المدفوع يجب أن يكون بين صفر وإجمالي السيارة')
+  const remaining = costMinor - paid
+  const lines: JournalLine[] = [{ accountCode: '1103', debit: costMinor, credit: 0, note: `شراء ${label}` }]
+  if (paid > 0) lines.push({ accountCode: treasury, debit: 0, credit: paid, note: 'مدفوع نقداً/بنكياً' })
+  if (remaining > 0) lines.push({ accountCode: '2101', debit: 0, credit: remaining, note: 'المتبقي مستحق للمورد' })
   assertBalanced(lines)
   return lines
 }
 
-/** قيد تجهيز يُرسمل على السيارة (سمكرة/دهان/قطع): 1103 ← 1101|2101 */
-export function buildCarPrepEntry(costMinor: Minor, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
+/**
+ * قيد تجهيز يُرسمل على السيارة: 1103 ← مصدر الدفع + 2101.
+ * لا يشترط وجود ورشة مسجلة؛ يمكن تسجيل اسم الجهة اختيارياً في وصف القيد.
+ */
+export function buildCarPrepEntry(costMinor: Minor, payment: CarPaymentMode, label: string, treasury = '1101', paidMinor?: Minor): JournalLine[] {
   if (!Number.isInteger(costMinor) || costMinor <= 0) throw new Error('تكلفة التجهيز يجب أن تكون موجبة')
-  const lines: JournalLine[] = [
-    { accountCode: '1103', debit: costMinor, credit: 0, note: `تجهيز ${label} (يرسمل على التكلفة)` },
-    { accountCode: payment === 'cash' ? treasury : '2101', debit: 0, credit: costMinor, note: payment === 'cash' ? 'سداد نقدي' : 'آجل' },
-  ]
+  const paid = paidMinor ?? (payment === 'cash' ? costMinor : 0)
+  if (!Number.isInteger(paid) || paid < 0 || paid > costMinor) throw new Error('المدفوع يجب أن يكون بين صفر وإجمالي التجهيز')
+  const remaining = costMinor - paid
+  const lines: JournalLine[] = [{ accountCode: '1103', debit: costMinor, credit: 0, note: `تجهيز ${label} (يرسمل على التكلفة)` }]
+  if (paid > 0) lines.push({ accountCode: treasury, debit: 0, credit: paid, note: 'مدفوع نقداً/بنكياً' })
+  if (remaining > 0) lines.push({ accountCode: '2101', debit: 0, credit: remaining, note: 'تجهيز مستحق لاحقاً' })
   assertBalanced(lines)
   return lines
 }
@@ -81,13 +92,17 @@ export function computeCarSale(priceMinor: Minor, fullCostMinor: Minor, vatPerce
 
 /**
  * قيدا البيع معاً (سطور قيد واحد متوازن):
- * 1101|1104 بالإجمالي ← 4101 + 2102، ثم 5101 التكلفة ← 1103 إخراج من المخزون
+ * 1101 و/أو 1104 بالإجمالي ← 4101 + 2102، ثم 5101 التكلفة ← 1103 إخراج من المخزون.
+ * يدعم البيع النقدي، الآجل، أو قبض جزء الآن والباقي على حساب العميل.
  */
-export function buildCarSaleEntry(t: CarSaleTotals, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
-  const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? treasury : '1104', debit: t.totalMinor, credit: 0, note: `بيع ${label}` },
-    { accountCode: '4101', debit: 0, credit: t.priceMinor, note: 'إيراد بيع سيارة' },
-  ]
+export function buildCarSaleEntry(t: CarSaleTotals, payment: CarPaymentMode, label: string, treasury = '1101', paidMinor?: Minor): JournalLine[] {
+  const paid = paidMinor ?? (payment === 'cash' ? t.totalMinor : 0)
+  if (!Number.isInteger(paid) || paid < 0 || paid > t.totalMinor) throw new Error('المحصّل يجب أن يكون بين صفر وإجمالي البيع')
+  const remainder = t.totalMinor - paid
+  const lines: JournalLine[] = []
+  if (paid > 0) lines.push({ accountCode: treasury, debit: paid, credit: 0, note: `تحصيل نقدي/بنكي ${label}` })
+  if (remainder > 0) lines.push({ accountCode: '1104', debit: remainder, credit: 0, note: `المتبقي على العميل ${label}` })
+  lines.push({ accountCode: '4101', debit: 0, credit: t.priceMinor, note: 'إيراد بيع سيارة' })
   if (t.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: t.vatMinor, note: 'ض.ق.م' })
   // إثبات التكلفة وإخراج السيارة من المخزون
   lines.push({ accountCode: '5101', debit: t.fullCostMinor, credit: 0, note: 'تكلفة السيارة المباعة' })

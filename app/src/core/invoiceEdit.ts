@@ -19,6 +19,10 @@
  * بلد بضريبة بلا منظومة إلكترونية معتمدة عندنا ⇒ ضريبة طبيعية وتعديل متاح.
  */
 
+export function electronicInvoiceLockActive(input: { licensed: boolean; enabled: boolean; taxNumber: string }): boolean {
+  return input.licensed && input.enabled && input.taxNumber.trim().length > 0
+}
+
 export interface EditPolicyInput {
   /** أي ميزة فاتورة إلكترونية مفعلة بمفتاح الترخيص (einvoice_sa أو einvoice_eg) */
   einvoiceActive: boolean
@@ -64,7 +68,7 @@ export interface QrPolicy {
 
 export function zatcaQrPolicy(i: QrPolicyInput): QrPolicy {
   if (!i.featureActive) {
-    return { printQr: false, reasonAr: 'ميزة الفاتورة الإلكترونية غير مفعلة — يفعّلها المطوّر بمفتاح الترخيص. الضريبة تُحسب وتُطبع طبيعياً بلا باركود.' }
+    return { printQr: false, reasonAr: 'الإصدار الإلكتروني غير مفعّل على هذه المنشأة حالياً. الضريبة تُحسب وتُطبع طبيعياً بلا باركود.' }
   }
   if (!i.online) {
     return {

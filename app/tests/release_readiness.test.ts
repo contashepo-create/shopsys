@@ -1,0 +1,3 @@
+import{describe,expect,it}from'vitest';import{assessReleaseReadiness}from'../src/core/releaseReadiness.ts';
+const ok={typecheck:true,testsPassed:1,testsFailed:0,build:true,lintErrors:0,integrity:true,backupRestore:true,fiscalRollover:true,reconciliationClose:true};
+describe('بوابة الإصدار التجاري',()=>{it('تسمح فقط بأدلة كاملة',()=>expect(assessReleaseReadiness(ok)).toEqual({ready:true,blockers:[]}));it('تجمع جميع الموانع ولا تخفي فشلاً',()=>{const r=assessReleaseReadiness({...ok,testsFailed:1,integrity:false,fiscalRollover:false});expect(r.ready).toBe(false);expect(r.blockers).toHaveLength(3)})})

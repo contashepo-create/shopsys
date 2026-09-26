@@ -20,6 +20,10 @@ export function renderRentalContractHtml(args: {
   rentTotal: string
   vat: string
   deposit: string
+  /** ملخص السداد — اختياري للتوافق مع العقود المطبوعة القديمة */
+  paymentLabel?: string
+  paidRent?: string
+  dueRent?: string
   startReading: number | null
   expectedEnd: string // ISO
   notes: string
@@ -55,6 +59,9 @@ export function renderRentalContractHtml(args: {
       <tr><th>إجمالي الإيجار</th><td class="money">${esc(args.rentTotal)}</td></tr>
       ${args.vat ? `<tr><th>الضريبة</th><td>${esc(args.vat)}</td></tr>` : ''}
       ${args.deposit ? `<tr><th>التأمين المسترد</th><td class="money">${esc(args.deposit)}</td></tr>` : ''}
+      ${args.paymentLabel ? `<tr><th>طريقة السداد</th><td>${esc(args.paymentLabel)}</td></tr>` : ''}
+      ${args.paidRent ? `<tr><th>المدفوع من الإيجار</th><td class="money">${esc(args.paidRent)}</td></tr>` : ''}
+      ${args.dueRent ? `<tr><th>المتبقي على العميل</th><td class="money">${esc(args.dueRent)}</td></tr>` : ''}
       ${args.notes ? `<tr><th>ملاحظات</th><td>${esc(args.notes)}</td></tr>` : ''}
     </table>
     <ol class="terms">

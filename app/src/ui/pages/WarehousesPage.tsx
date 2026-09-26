@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /** شاشة المخازن — إدارة + عرض محتويات كل مخزن */
 import { useMemo, useState } from 'react'
 import { Warehouse, Plus, Trash2, Star, Eye, Search } from 'lucide-react'
@@ -9,7 +10,7 @@ import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.
 import { Btn, inputCls, useToast, Modal, EmptyState } from '../components/ui.tsx'
 
 export function WarehousesPage() {
-  const { warehouses, addWarehouse, removeWarehouse, items, categories, transfers, purchases, sales, saleReturns, purchaseReturns } = useDataStore()
+  const { warehouses, addWarehouse, removeWarehouse, items, categories, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const [name, setName] = useState('')
@@ -21,8 +22,8 @@ export function WarehousesPage() {
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
   const stock = useMemo(
-    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns)),
-    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns],
+    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders)),
+    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, productionOrders, processingOrders],
   )
   const selectedWarehouse = warehouses.find((w) => w.id === viewWarehouseId) ?? null
   const rows = useMemo(() => {
@@ -114,10 +115,10 @@ export function WarehousesPage() {
                 <Search size={15} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="فلترة بالاسم أو SKU أو الباركود…" className={`${inputCls} pr-10`} autoFocus />
               </div>
-              <select value={catId} onChange={(e) => setCatId(Number(e.target.value))} className={inputCls}>
+              <QuickSelect value={catId} onChange={(e) => setCatId(Number(e.target.value))} className={inputCls}>
                 <option value={0}>كل الأقسام</option>
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50"><div className="text-[10px] text-slate-400">عدد الأصناف</div><div className="font-black text-lg">{rows.length}</div></div>

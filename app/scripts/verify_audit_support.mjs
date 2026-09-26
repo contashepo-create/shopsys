@@ -69,14 +69,14 @@ const evs = auditFromPatch({ journal: [{ id: 1, description: 'قديم' }], item
 ok('حدث القيد الجديد فقط ومعقم', evs.length === 1 && evs[0].title === 'قيد bجديد/b' && evs[0].user === 'كاشيرscript')
 
 console.log('\n4️⃣ المستخدمون: PIN مجزأ + مالك محمي + تعطيل لا حذف')
-const pinHash = await hashPin('1234')
+const pinHash = await hashPin('123456')
 ok('PIN يُخزن hex-64 لا نصاً', /^[0-9a-f]{64}$/.test(pinHash))
-ok('التحقق الصحيح يمر', await verifyPin('1234', pinHash))
-ok('التحقق الخاطئ يفشل', !(await verifyPin('9999', pinHash)))
-// سياسة 8-32 الجديدة: الطول يُفرض عند التعيين عبر validatePinFormat (auth.ts) —
-// hashPin نفسها محايدة كي تظل الأرقام القديمة صالحة للدخول حتى أول تغيير
+ok('التحقق الصحيح يمر', await verifyPin('123456', pinHash))
+ok('التحقق الخاطئ يفشل', !(await verifyPin('999999', pinHash)))
+// سياسة 6-32 الجديدة: الطول يُفرض عند التعيين عبر validatePinFormat (auth.ts) —
+// hashPin وverifyPin يفرضان السياسة نفسها على كل إنشاء ودخول واعتماد
 ok('validatePinFormat يرفض القصير', validatePinFormat('Ab1!').length > 0)
-ok('validatePinFormat يقبل 8-32 بحروف ورموز', validatePinFormat('Ahmed@2026').length === 0)
+ok('validatePinFormat يقبل 6-32 بحروف ورموز', validatePinFormat('Ahmed@2026').length === 0)
 ok('validatePinFormat يرفض المسافات', validatePinFormat('abcd efgh').length > 0)
 ok('hashPin يقبل كلمة سر حروفاً ورموزاً', /^[0-9a-f]{64}$/.test(await hashPin('Ahmed@2026')))
 // أمان الدفعة الجديدة: لا مستخدمين قبل تحصين المالك برقم سري
@@ -87,7 +87,7 @@ ok('أُضيف المستخدم', S().appUsers.some((u) => u.id === u1.id && u.a
 throws('اسم مكرر يُرفض', () => S().addAppUser({ nameAr: 'كاشير أحمد', roleId: 'cashier', pinHash }), 'نفس الاسم')
 // التبديل المباشر مقفول بعد تفعيل المصادقة — الدخول بفحص PIN فقط
 throws('setCurrentUser المباشر مرفوض بعد تفعيل المصادقة', () => S().setCurrentUser(u1.id), 'شاشة الدخول')
-await S().login(u1.id, '1234')
+await S().login(u1.id, '123456')
 ok('الدخول بالرقم الصحيح يفعّل المستخدم', S().currentUserId === u1.id)
 S().addCustomer({ ...party('عميل من الكاشير'), creditLimitMinor: 0 })
 ok('الحدث باسم المستخدم النشط', S().auditLog.at(-1).user === 'كاشير أحمد')
@@ -98,7 +98,7 @@ throws('حذف المالك يُرفض', () => S().removeAppUser(uOwner.id), 'ل
 S().removeAppUser(u1.id)
 ok('حذف مستخدم = تعطيل (يبقى بالسجل)', S().appUsers.some((u) => u.id === u1.id && !u.active))
 ok('المستخدم النشط رجع للمالك بعد تعطيله', S().currentUserId === null)
-await S().login(null, '1234') // رجوع للمالك بالدخول الشرعي قبل بقية الفحوص
+await S().login(null, '123456') // رجوع للمالك بالدخول الشرعي قبل بقية الفحوص
 
 console.log('\n5️⃣ البلاغات الداخلية: إنشاء → معالجة → حل موثق + جرس')
 ok('تحقق البلاغ: عنوان مطلوب', validateIssue({ title: '', details: 'تفاصيل كافية' }).length === 1)

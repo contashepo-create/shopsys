@@ -100,7 +100,9 @@ ok('الربح = 1.15م', profit.profitMinor === 1_150_000)
 ok('محتجزات معلقة 300 ألف', profit.retentionHeldMinor === 300_000)
 
 console.log('💵 تحصيل المستخلص الآجل بسند قبض')
-S().postVoucher({ kind: 'receipt', treasury: '1102', counterAccountCode: '1104', amountMinor: 1_040_000, description: 'تحصيل مستخلص الهيئة', partyId: null })
+S().addCustomer({ nameAr: 'هيئة الطرق' })
+const client = S().customers.at(-1)
+S().postVoucher({ kind: 'receipt', treasury: '1102', counterAccountCode: '1104', amountMinor: 1_040_000, description: 'تحصيل مستخلص الهيئة', partyKind: 'customer', partyId: client.id })
 ok('ذمة الهيئة صفرت', balanceOf('1104') === 0)
 
 console.log('🔓 الإفراج عن المحتجزات وإقفال المشروع')

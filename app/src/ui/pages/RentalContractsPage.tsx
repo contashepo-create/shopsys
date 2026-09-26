@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * عقود إيجار المعدات (المرحلة 6 — القرار 13):
  * فتح عقد (أيام × سعر يومي + تأمين مسترد + ضريبة فوق السعر) بقيد فتح
@@ -10,20 +11,23 @@ import { useDataStore, type RentalContract } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { computeRentalTotals, rentalReport, utilizationReport, isRentalOverdue, rentalExpectedEnd } from '../../core/rental.ts'
+import { computeRentalTotals, rentalReport, utilizationReport, isRentalOverdue, rentalExpectedEnd, type RentalPaymentMode } from '../../core/rental.ts'
 import { renderRentalContractHtml } from '../print/printRentalContract.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { RATE_TYPE_LABELS, type RateType } from '../../core/rentalMeter.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 
 export function RentalContractsPage() {
-  const { rentalContracts, equipment, customers, journal, openRental, closeRental, refundRental } = useDataStore()
+  const { rentalContracts, equipment, customers, journal, paymentTerminals, paymentTerminalTransactions, openRental, closeRental, refundRental } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -53,13 +57,16 @@ export function RentalContractsPage() {
       rentTotal: `${fmt(c.totals.rentMinor)} ${cur.symbol}`,
       vat: c.totals.vatMinor > 0 ? `${fmt(c.totals.vatMinor)} ${cur.symbol}` : '',
       deposit: c.totals.depositMinor > 0 ? `${fmt(c.totals.depositMinor)} ${cur.symbol}` : '',
+      paymentLabel: c.payment === 'cash' ? 'نقدي بالكامل' : c.payment === 'credit' ? 'آجل بالكامل' : 'مدفوع + آجل',
+      paidRent: `${fmt(c.totals.grandMinor - c.totals.collectCreditMinor)} ${cur.symbol}`,
+      dueRent: `${fmt(c.totals.collectCreditMinor)} ${cur.symbol}`,
       startReading: c.startReading,
       expectedEnd: rentalExpectedEnd(c.date, c.days, rt),
       notes: c.notes,
     }))
   }
 
-  const [tab, setTab] = useState<'list' | 'report'>('list')
+  const [tab, setTab] = usePersistedSectionView('rental-contracts', 'list', ['list', 'report'] as const)
 
   /* ─── فتح عقد ─── */
   const [open, setOpen] = useState(false)
@@ -69,8 +76,10 @@ export function RentalContractsPage() {
   const [days, setDays] = useState('1')
   const [dailyRate, setDailyRate] = useState('')
   const [deposit, setDeposit] = useState('')
-  const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [payment, setPayment] = useState<RentalPaymentMode>('cash')
+  const [paidRent, setPaidRent] = useState('')
   const [treasury, setTreasury] = useState('1101')
+  const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [withVat, setWithVat] = useState(false)
   const [notes, setNotes] = useState('')
   // ترقية القرار 25: نوع العقد الزمني + قراءة عدّاد التسليم للساعي
@@ -79,7 +88,8 @@ export function RentalContractsPage() {
 
   const openNew = () => {
     setCustomerId(''); setEquipmentId(''); setEquipmentName(''); setDays('1')
-    setDailyRate(''); setDeposit(''); setPayment('cash'); setWithVat(false); setNotes('')
+    setDailyRate(''); setDeposit(''); setPayment('cash'); setPaidRent(''); setWithVat(false); setNotes('')
+    setTreasury('1101'); setTerminalPayment({ terminalId: '', providerReference: '', cardLast4: '' })
     setRateType('daily'); setStartReading(''); setOpen(true)
   }
   /** سعر الوحدة من سجل المعدة حسب نوع العقد */
@@ -111,9 +121,10 @@ export function RentalContractsPage() {
     dailyRateMinor: toM(dailyRate),
     depositMinor: toM(deposit),
     payment,
+    paidMinor: payment === 'cash' ? undefined : payment === 'credit' ? 0 : toM(paidRent),
     vatPercent: withVat ? setup.vatPercent : 0,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [equipmentName, days, dailyRate, deposit, payment, withVat, setup.vatPercent, cur.decimals])
+  }), [equipmentName, days, dailyRate, deposit, payment, paidRent, withVat, setup.vatPercent, cur.decimals])
   const draftTotals = useMemo(() => {
     try { return computeRentalTotals(draftInput) } catch { return null }
   }, [draftInput])
@@ -122,6 +133,7 @@ export function RentalContractsPage() {
   const creditApproval = useSupervisorApproval('sales.credit.override')
   const save = (creditLimitOverrideBy?: string) => {
     try {
+      const terminal = paymentTerminals.find((row) => row.id === terminalPayment.terminalId)
       const c = openRental({
         customerId: customerId ? Number(customerId) : null,
         equipmentId: equipmentId ? Number(equipmentId) : null,
@@ -129,7 +141,8 @@ export function RentalContractsPage() {
         notes: notes.trim(),
         rateType,
         startReading: rateType === 'hourly' && startReading.trim() !== '' ? Number(startReading) : null,
-        treasury,
+        treasury: terminal?.settlementAccountCode ?? treasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
       toast.show(`فُتح العقد ${c.contractNumber} — يُقبض الآن ${fmt(c.totals.collectCashMinor)} ${cur.symbol} ✅`)
@@ -333,16 +346,13 @@ export function RentalContractsPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العميل">
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={inputCls}>
-                <option value="">عميل نقدي</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="عميل نقدي" label="بحث العميل" cashValue={0} />
             </Field>
             <Field label="المعدة من السجل" hint="اختيارها يملأ الاسم والسعر اليومي تلقائياً">
-              <select value={equipmentId} onChange={(e) => pickEquipment(e.target.value)} className={inputCls}>
+              <QuickSelect value={equipmentId} onChange={(e) => pickEquipment(e.target.value)} className={inputCls}>
                 <option value="">— اكتب الاسم يدوياً —</option>
                 {equipment.map((eq) => <option key={eq.id} value={eq.id}>{eq.nameAr}{eq.code ? ` (${eq.code})` : ''}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="اسم المعدة *">
               <input value={equipmentName} onChange={(e) => setEquipmentName(e.target.value)} className={inputCls} placeholder="حفار كاتربيلر 320" />
@@ -371,19 +381,23 @@ export function RentalContractsPage() {
             </div>
             {rateType === 'hourly' && (
               <Field label="قراءة العدّاد عند التسليم (Hour Meter) *" hint="ستُحاسب الساعات الفعلية من فرق القراءتين عند الإرجاع">
-                <input value={startReading} onChange={(e) => setStartReading(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} placeholder="0" />
+                <input value={startReading} onChange={(e) => setStartReading(e.target.value)} className={inputCls} dir="ltr" type="number" inputMode="decimal" step="any" min={0} placeholder="0" />
               </Field>
             )}
-            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></Field>
+            {payment !== 'credit' && <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div></Field>}
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يُقبض نقداً ويُردّ عند الإقفال — لا يدخل الإيراد">
               <input value={deposit} onChange={(e) => setDeposit(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
             </Field>
             <Field label="سداد الإيجار">
-              <div className="grid grid-cols-2 gap-1.5">
-                <button onClick={() => setPayment('cash')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>نقدي</button>
-                <button onClick={() => setPayment('credit')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'credit' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>آجل (على العميل)</button>
+              <div className="grid grid-cols-3 gap-1.5">
+                <button onClick={() => setPayment('cash')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>نقدي بالكامل</button>
+                <button onClick={() => setPayment('mixed')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'mixed' ? 'border-sky-500/60 bg-sky-500/10 text-sky-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>مدفوع + آجل</button>
+                <button onClick={() => setPayment('credit')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payment === 'credit' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>آجل بالكامل</button>
               </div>
             </Field>
+            {payment === 'mixed' && <Field label={`المدفوع الآن من الإيجار (${cur.symbol})`} hint="التأمين منفصل ويُضاف للتحصيل الحالي؛ المتبقي يُثبت على حساب العميل">
+              <input value={paidRent} onChange={(e) => setPaidRent(e.target.value)} className={inputCls} dir="ltr" inputMode="decimal" placeholder="0" />
+            </Field>}
           </div>
 
           <label className="flex items-center justify-between p-3 rounded-xl border border-slate-200 dark:border-slate-700 cursor-pointer">
@@ -392,11 +406,12 @@ export function RentalContractsPage() {
           </label>
 
           {draftTotals && (
-            <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[12px]">
+            <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4 grid grid-cols-2 sm:grid-cols-5 gap-2 text-center text-[12px]">
               <div><div className="text-slate-400">قيمة الإيجار</div><b>{fmt(draftTotals.rentMinor)}</b></div>
               <div><div className="text-slate-400">الضريبة</div><b>{fmt(draftTotals.vatMinor)}</b></div>
-              <div><div className="text-slate-400">التأمين</div><b className="text-amber-600">{fmt(draftTotals.depositMinor)}</b></div>
-              <div><div className="text-slate-400">يُقبض نقداً الآن</div><b className="text-emerald-600">{fmt(draftTotals.collectCashMinor)}</b></div>
+              <div><div className="text-slate-400">المدفوع من الإيجار</div><b className="text-emerald-600">{fmt(draftTotals.grandMinor - draftTotals.collectCreditMinor)}</b></div>
+              <div><div className="text-slate-400">المتبقي آجلاً</div><b className="text-amber-600">{fmt(draftTotals.collectCreditMinor)}</b></div>
+              <div><div className="text-slate-400">إجمالي التحصيل الآن</div><b className="text-teal-600">{fmt(draftTotals.collectCashMinor)}</b><small className="block text-slate-400">يشمل التأمين {fmt(draftTotals.depositMinor)}</small></div>
             </div>
           )}
 
@@ -406,7 +421,7 @@ export function RentalContractsPage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!equipmentName.trim() || !dailyRate.trim()}>💾 فتح العقد وتوليد القيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!equipmentName.trim() || !dailyRate.trim()}>💾 فتح العقد وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>
@@ -423,7 +438,7 @@ export function RentalContractsPage() {
             {/* تسوية الاستخدام الفعلي — ترقية القرار 25 */}
             {closing.rateType === 'hourly' ? (
               <Field label="قراءة العدّاد عند الإرجاع *" hint={`التسليم كان عند ${closing.startReading ?? 0} — المحجوز ${closing.days} ساعة، والتجاوز يُحاسب بقيد منفصل`}>
-                <input value={endReading} onChange={(e) => setEndReading(e.target.value)} className={inputCls} dir="ltr" type="number" min={0} step={0.1} autoFocus />
+                <input value={endReading} onChange={(e) => setEndReading(e.target.value)} className={inputCls} dir="ltr" type="number" inputMode="decimal" step="any" min={0} autoFocus />
               </Field>
             ) : (
               <Field label="تاريخ الإرجاع الفعلي (اختياري)" hint={`المحجوز ${closing.days} ${closing.rateType === 'monthly' ? 'شهر' : 'يوم'} من ${closing.date.slice(0, 10)} — لو تأخر الإرجاع يُحاسَب التجاوز تلقائياً`}>
@@ -446,7 +461,7 @@ export function RentalContractsPage() {
             <Field label="خزينة التسوية (ردّ التأمين / تحصيل التجاوز)"><TreasuryPicker value={closeTreasury} onChange={setCloseTreasury} compact /></Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setClosing(null)}>إلغاء</Btn>
-              <Btn onClick={doClose}>🔒 إقفال العقد</Btn>
+              <Btn onClick={doClose} shortcut="F9">🔒 إقفال العقد</Btn>
             </div>
           </div>
         )}
@@ -468,6 +483,7 @@ export function RentalContractsPage() {
               refundedMinor={viewing.refundedMinor ?? 0}
               currencySymbol={cur.symbol}
               fmt={fmt}
+              terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'rental' && row.documentId === `equipment:${viewing.id}`); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
               allowCredit={viewing.customerId != null}
               refundableItems={[
                 { key: 'rent', label: `إيجار ${viewing.days} × ${fmt(viewing.dailyRateMinor)} — ${viewing.equipmentName}`, valueMinor: viewing.totals.rentMinor, qty: viewing.days },
@@ -476,7 +492,9 @@ export function RentalContractsPage() {
               hint="خصم تعويضي على الإيجار (عطل المعدة/إنهاء مبكر): يعكس الإيراد وحصة الضريبة — التأمين له مساره عند إقفال العقد."
               onSubmit={(a) => {
                 try {
-                  const u = refundRental({ contractId: viewing.id, ...a })
+                  const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
+                  const treasury = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
+                  const u = refundRental({ contractId: viewing.id, ...a, treasury })
                   setViewing(u)
                   toast.show(`سُجل مرتجع الإيجار ${u.contractNumber} وتولد القيد العاكس ✅`)
                 } catch (err) { toast.show((err as Error).message, 'error') }

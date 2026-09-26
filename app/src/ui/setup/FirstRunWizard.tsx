@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * معالج أول تشغيل — إعادة تصميم (أمر المالك):
  * ① البلد والنشاط قوائم منسدلة احترافية + بطاقة معاينة حية.
@@ -155,12 +156,12 @@ export function FirstRunWizard() {
                 سنضبط العملة والكسور والضريبة تلقائياً — <b className="text-amber-600">البلد يُقفل بعد الإعداد</b> ولا يغيّره إلا الدعم الفني
               </p>
               <div className="max-w-md mx-auto space-y-4">
-                <select value={countryCode} onChange={(e) => { setCountryCode(e.target.value); setCity(''); setCustomCity('') }} className={`${inputCls} !text-base font-bold`}>
+                <QuickSelect value={countryCode} onChange={(e) => { setCountryCode(e.target.value); setCity(''); setCustomCity('') }} className={`${inputCls} !text-base font-bold`}>
                   <option value="">— اختر البلد —</option>
                   {ARAB_COUNTRIES.map((c) => (
                     <option key={c.code} value={c.code}>{c.flag} {c.nameAr} — {c.currency.name}</option>
                   ))}
-                </select>
+                </QuickSelect>
                 {country && (
                   <div className="anim-pop p-4 rounded-2xl bg-gradient-to-l from-brand-500/10 to-fuchsia-500/10 border border-brand-500/20 space-y-2">
                     <div className="flex items-center gap-3">
@@ -189,12 +190,12 @@ export function FirstRunWizard() {
                 النشاط يحدد الأقسام والشاشات الظاهرة — الأقسام الإضافية يفعّلها الدعم الفني في رخصتك
               </p>
               <div className="max-w-md mx-auto space-y-4">
-                <select value={activityId} onChange={(e) => setActivityId(e.target.value)} className={`${inputCls} !text-base font-bold`}>
+                <QuickSelect value={activityId} onChange={(e) => setActivityId(e.target.value)} className={`${inputCls} !text-base font-bold`}>
                   <option value="">— اختر النشاط —</option>
                   {ACTIVITY_TEMPLATES.map((a) => (
                     <option key={a.id} value={a.id}>{a.icon} {a.nameAr}</option>
                   ))}
-                </select>
+                </QuickSelect>
                 {activity && (
                   <div className="anim-pop p-4 rounded-2xl bg-brand-500/5 border border-brand-500/20">
                     <div className="flex items-center gap-3 mb-3">
@@ -225,11 +226,11 @@ export function FirstRunWizard() {
                   <div className="anim-pop p-4 rounded-2xl bg-sky-500/5 border border-sky-500/20 space-y-2">
                     <div className="text-sm font-black text-slate-700 dark:text-white">🩺 تخصص العيادة</div>
                     <div className="text-[11px] text-slate-400">اختر التخصص أو اكتبه — يظهر في الشاشات والمطبوعات</div>
-                    <select value={specialty} onChange={(e) => setSpecialty(e.target.value)} className={inputCls}>
+                    <QuickSelect value={specialty} onChange={(e) => setSpecialty(e.target.value)} className={inputCls}>
                       <option value="">— اختر التخصص —</option>
                       {DOCTOR_SPECIALTIES.map((x) => <option key={x} value={x}>{x}</option>)}
                       <option value="__other__">تخصص آخر (اكتبه بنفسك)…</option>
-                    </select>
+                    </QuickSelect>
                     {specialty === '__other__' && (
                       <input value={specialtyOther} onChange={(e) => setSpecialtyOther(e.target.value)} className={inputCls} placeholder="اكتب التخصص — مثال: نساء وتوليد" />
                     )}
@@ -328,11 +329,11 @@ export function FirstRunWizard() {
                 <div>
                   <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">المدينة *</label>
                   {cities.length > 0 ? (
-                    <select value={city} onChange={(e) => setCity(e.target.value)} className={inputCls}>
+                    <QuickSelect value={city} onChange={(e) => setCity(e.target.value)} className={inputCls}>
                       <option value="">— اختر المدينة —</option>
                       {cities.map((c) => <option key={c} value={c}>{c}</option>)}
                       <option value="__other__">أخرى…</option>
-                    </select>
+                    </QuickSelect>
                   ) : (
                     <input value={customCity} onChange={(e) => { setCustomCity(e.target.value); setCity('__other__') }} placeholder="اكتب المدينة" className={inputCls} />
                   )}

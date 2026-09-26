@@ -103,6 +103,15 @@ export function AppearancePage() {
         </div>
       </section>
 
+      {/* نمط التنقل */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5">
+        <h2 className="text-[13px] font-black text-slate-700 dark:text-slate-200 mb-1">نمط شريط التنقل</h2>
+        <p className="text-[11px] text-slate-400 mb-3">يمكن تبديله فورياً؛ الشريط الجانبي هو الافتراضي</p>
+        <div className="grid grid-cols-2 gap-2">
+          {([['sidebar','شريط جانبي','أقسام رأسية قابلة للطي'],['topbar','شريط علوي','قوائم أقسام منسدلة']] as const).map(([id,label,desc])=><button key={id} onClick={()=>updateAppearance({navigationMode:id})} className={`p-3 rounded-xl border-2 text-right ${appearance.navigationMode===id?'border-brand-500 bg-brand-50 dark:bg-brand-500/10':'border-slate-200 dark:border-slate-700'}`}><b className="text-sm">{label}</b><div className="text-[10px] text-slate-400">{desc}</div></button>)}
+        </div>
+      </section>
+
       {/* إتاحة */}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '180ms' }}>
         <h2 className="text-[13px] font-black text-slate-700 dark:text-slate-200 flex items-center gap-2 mb-3">

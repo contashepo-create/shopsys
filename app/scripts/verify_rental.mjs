@@ -49,6 +49,13 @@ check('grand = rent+vat', t2.grandMinor === 1150000)
 check('آجل: نقداً يُقبض التأمين فقط', t2.collectCashMinor === 500000)
 check('آجل: على العميل grand', t2.collectCreditMinor === 1150000)
 
+const tMixed = computeRentalTotals({ ...base, payment: 'mixed', paidMinor: 400000, vatPercent: 15 })
+check('مختلط: المدفوع الحالي منفصل عن التأمين', tMixed.collectCashMinor === 900000)
+check('مختلط: المتبقي على العميل', tMixed.collectCreditMinor === 750000)
+check('مختلط: متوازن حسابياً', tMixed.collectCashMinor + tMixed.collectCreditMinor === tMixed.grandMinor + tMixed.depositMinor)
+check('يرفض المختلط بلا مدفوع حالي', validateRental({ ...base, payment: 'mixed' }).some((e) => e.includes('الدفع المختلط')))
+check('يرفض مختلطاً مساوياً للإجمالي', validateRental({ ...base, payment: 'mixed', paidMinor: 1000000 }).some((e) => e.includes('أقل')))
+
 const t3 = computeRentalTotals({ ...base, depositMinor: 0 })
 check('بلا تأمين نقدي: يُقبض rent فقط', t3.collectCashMinor === 1000000)
 
@@ -70,6 +77,12 @@ check('آجل: مدين 1104 = grand', find(e2, '1104')[0].debit === 1150000)
 check('سطر ضريبة 2102 = vat', find(e2, '2102')[0].credit === 150000)
 check('قيد آجل متوازن', sum(e2, 'debit') === sum(e2, 'credit'))
 check('عدد سطوره 5', e2.length === 5)
+
+const eMixed = buildRentalOpenEntry(tMixed, 'RC-MIX')
+check('مختلط: مدين 1101 = المدفوع + التأمين', find(eMixed, '1101')[0].debit === 900000)
+check('مختلط: مدين 1104 = المتبقي فقط', find(eMixed, '1104')[0].debit === 750000)
+check('مختلط: لا يُحمّل العميل التأمين', find(eMixed, '1104')[0].debit === tMixed.collectCreditMinor)
+check('قيد المختلط متوازن', sum(eMixed, 'debit') === sum(eMixed, 'credit'))
 
 const e3 = buildRentalOpenEntry(t3, 'RC-0003')
 check('بلا تأمين: لا سطر 2103', find(e3, '2103').length === 0)

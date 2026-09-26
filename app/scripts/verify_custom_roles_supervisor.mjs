@@ -76,23 +76,23 @@ console.log('\n3️⃣ الدورة الكاملة: موظفة → كاشير �
 const supRoleId = S().customRoles.find((r) => r.nameAr === 'مشرف وردية المساء').id
 {
   // المالك برقم 1111 (شرط تفعيل الدخول)
-  S().setOwnerPin(await hashPin('1111'))
+  S().setOwnerPin(await hashPin('111111'))
   S().addEmployee({ nameAr: 'سلمى المشرفة', phone: '0100000001', jobTitle: 'كاشير', hireDate: '2026-01-01', baseSalaryMinor: 500000, allowancesMinor: 0, active: true, notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
   const emp = S().employees.at(-1)
-  S().addAppUser({ nameAr: emp.nameAr, roleId: 'cashier', pinHash: await hashPin('2222'), employeeId: emp.id, phone: emp.phone, email: '', initialPin: '2222', mustChangePin: false })
+  S().addAppUser({ nameAr: emp.nameAr, roleId: 'cashier', pinHash: await hashPin('222222'), employeeId: emp.id, phone: emp.phone, email: '', initialPin: '222222', mustChangePin: false })
   const user = S().appUsers.at(-1)
   // كاشير عادية: رقمها لا يعتمد مرتجعاً
-  await throwsAsync('رقم كاشير عادية يُرفض للاعتماد', () => S().approveByPin('2222', REFUND_APPROVE_PERM), 'غير صحيح أو صاحبه لا يملك')
+  await throwsAsync('رقم كاشير عادية يُرفض للاعتماد', () => S().approveByPin('222222', REFUND_APPROVE_PERM), 'غير صحيح أو صاحبه لا يملك')
   // الترقية بالضغطة: تعيينها على الدور المخصص (كما في مودال «تغيير دور»)
   S().updateAppUser(user.id, { roleId: supRoleId })
   ok('التعيين على الدور المخصص انعكس', S().appUsers.find((u) => u.id === user.id).roleId === supRoleId)
-  const res = await S().approveByPin('2222', REFUND_APPROVE_PERM)
+  const res = await S().approveByPin('222222', REFUND_APPROVE_PERM)
   ok('رقمها يعتمد الآن — approvedBy باسمها', res.approvedBy === 'سلمى المشرفة')
   // صلاحية أخرى يملكها الدور (نسخة مدير فرع): تسوية مخزنية
-  const res2 = await S().approveByPin('2222', 'inv.adjust')
+  const res2 = await S().approveByPin('222222', 'inv.adjust')
   ok('تعتمد تسوية مخزنية أيضاً (من صلاحيات الأساس)', res2.approvedBy === 'سلمى المشرفة')
   // رقم المالك يعتمد دائماً
-  const res3 = await S().approveByPin('1111', REFUND_APPROVE_PERM)
+  const res3 = await S().approveByPin('111111', REFUND_APPROVE_PERM)
   ok('رقم المالك يعتمد دائماً', res3.approvedBy === 'المالك')
 }
 
@@ -101,10 +101,10 @@ console.log('\n4️⃣ تعديل صلاحيات الدور المخصص يسر�
   // سحب صلاحية الاعتماد من الدور — رقم سلمى يُرفض فوراً (لا نسخ قديمة)
   const cur = S().roleOverrides[supRoleId]
   S().setRolePermissions(supRoleId, cur.filter((p) => p !== REFUND_APPROVE_PERM && p !== 'inv.adjust'))
-  await throwsAsync('بعد سحب الصلاحية: رقمها يُرفض فوراً', () => S().approveByPin('2222', REFUND_APPROVE_PERM), 'غير صحيح أو صاحبه لا يملك')
+  await throwsAsync('بعد سحب الصلاحية: رقمها يُرفض فوراً', () => S().approveByPin('222222', REFUND_APPROVE_PERM), 'غير صحيح أو صاحبه لا يملك')
   // إرجاعها
   S().setRolePermissions(supRoleId, cur)
-  const res = await S().approveByPin('2222', REFUND_APPROVE_PERM)
+  const res = await S().approveByPin('222222', REFUND_APPROVE_PERM)
   ok('بعد الإرجاع: تعتمد من جديد', res.approvedBy === 'سلمى المشرفة')
 }
 
@@ -115,7 +115,7 @@ console.log('\n5️⃣ الحمايات البنيوية')
   S().updateAppUser(salma.id, { roleId: 'cashier' })
   S().removeCustomRole(supRoleId)
   ok('بعد نقلها لدور آخر: الحذف يمر', !S().customRoles.some((r) => r.id === supRoleId))
-  await throwsAsync('بعد حذف الدور: الرقم لا يعتمد (كاشير)', () => S().approveByPin('2222', REFUND_APPROVE_PERM), 'غير صحيح أو صاحبه لا يملك')
+  await throwsAsync('بعد حذف الدور: الرقم لا يعتمد (كاشير)', () => S().approveByPin('222222', REFUND_APPROVE_PERM), 'غير صحيح أو صاحبه لا يملك')
   throws('rename لدور محذوف يُرفض', () => S().renameCustomRole(supRoleId, 'س'), 'غير موجود')
 }
 

@@ -70,32 +70,32 @@ const st = () => useDataStore.getState()
 st().seed([])
 
 /* ═══ ب) الحساب مبني على موظف ═══ */
-const ownerHash = await hashPin('9999')
+const ownerHash = await hashPin('999999')
 st().setOwnerPin(ownerHash)
 st().addEmployee({ nameAr: 'أحمد الجزار', phone: '0551112223', jobTitle: 'كاشير', hireDate: '2026-01-01', baseSalaryMinor: 500000, allowancesMinor: 0, active: true, notes: '', taxNumber: '', commercialReg: '', email: 'ahmed@butcher.sa', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
 const emp = st().employees.at(-1)
 st().addEmployee({ nameAr: 'موظف سابق', phone: '', jobTitle: '', hireDate: '2026-01-01', baseSalaryMinor: 0, allowancesMinor: 0, active: false, notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
 const inactiveEmp = st().employees.at(-1)
 
-const pin1 = await hashPin('1234')
+const pin1 = await hashPin('123456')
 throws(() => st().addAppUser({ nameAr: 'x', roleId: 'cashier', pinHash: pin1, employeeId: 999 }), 'رفض موظف غير موجود')
 throws(() => st().addAppUser({ nameAr: 'x', roleId: 'cashier', pinHash: pin1, employeeId: inactiveEmp.id }), 'رفض موظف غير نشط')
-const user = st().addAppUser({ nameAr: emp.nameAr, roleId: 'cashier', pinHash: pin1, employeeId: emp.id, phone: emp.phone, email: emp.email, initialPin: '1234', mustChangePin: true })
+const user = st().addAppUser({ nameAr: emp.nameAr, roleId: 'cashier', pinHash: pin1, employeeId: emp.id, phone: emp.phone, email: emp.email, initialPin: '123456', mustChangePin: true })
 eq(user.employeeId, emp.id, 'الحساب مربوط بالموظف')
-eq(user.initialPin, '1234', 'الرقم المبدئي محفوظ للمدير')
+eq(user.initialPin, '123456', 'الرقم المبدئي محفوظ للمدير')
 eq(user.mustChangePin, true, 'إجبار تغيير الرقم مفعل')
 throws(() => st().addAppUser({ nameAr: 'حساب ثانٍ', roleId: 'cashier', pinHash: pin1, employeeId: emp.id }), 'رفض حساب ثانٍ لنفس الموظف')
 
 /* ═══ ج + د) أول دخول: mustChangePin ثم changeOwnPin يمسح initialPin ═══ */
-const login1 = await st().login(user.id, '1234')
+const login1 = await st().login(user.id, '123456')
 eq(login1.mustChangePin, true, 'أول دخول يعيد mustChangePin=true')
-const newHash = await hashPin('5678')
+const newHash = await hashPin('567890')
 throws(() => st().changeOwnPin(user.id, pin1), 'رفض رقم جديد يطابق القديم')
 st().changeOwnPin(user.id, newHash)
 const after = st().appUsers.find((u) => u.id === user.id)
 eq(after.mustChangePin, false, 'بعد التغيير: لا إجبار')
 eq(after.initialPin, null, 'الرقم المبدئي مُسح — لا يعرفه أحد الآن')
-const login2 = await st().login(user.id, '5678')
+const login2 = await st().login(user.id, '567890')
 eq(login2.mustChangePin, false, 'الدخول التالي عادي')
 ok(st().auditLog.some((e) => e.title.includes('غيّر رقمه السري')), 'تغيير الرقم مسجل في التدقيق')
 
@@ -116,13 +116,13 @@ st().setOpeningBalance({ kind: 'treasury', refId: '1101', amountMinor: 1000000, 
 st().postProcessing({ kind: 'butcher', sourceItemId: carcass.id, sourceQty: 10, outputs: [{ itemId: leg.id, qty: 6 }], overheadMinor: 0, wasteQty: 4 })
 // بيع وزني 2.35 كجم ثم استبدال جزء عشري 1.15 كجم بقطعة أخرى وزنها 0.9
 const legCost = st().items.find((i) => i.id === leg.id).costMinor
-st().postSale({ lines: [{ itemId: leg.id, nameAr: 'فخذ', qty: 2.35, unitPriceMinor: 6000, unitCostMinor: legCost, discountPercent: 0, soldByWeight: true }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 15, taxInclusive: true, treasury: '1101' })
+st().postSale({ lines: [{ itemId: leg.id, nameAr: 'فخذ', qty: 2.35, unitPriceMinor: 6000, unitCostMinor: legCost, discountPercent: 0, soldByWeight: true }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 15, taxInclusive: true, treasury: '1101', priceFloorOverrideBy: 'اختبار الترحيل' })
 const sale = st().sales.at(-1)
 const exch = st().postExchange({
   originalSaleId: sale.id,
   returnLineSpecs: [{ lineIndex: 0, qty: 1.15, condition: 'resellable' }],
   newLines: [{ itemId: leg.id, nameAr: 'فخذ', qty: 0.9, unitPriceMinor: 6000, unitCostMinor: legCost, discountPercent: 0, soldByWeight: true }],
-  notes: 'استبدال وزني عشري', approvedBy: 'المالك', creditLimitOverrideBy: null,
+  notes: 'استبدال وزني عشري', approvedBy: 'المالك', creditLimitOverrideBy: null, priceFloorOverrideBy: 'المالك',
 })
 ok(exch.exchangeNumber.startsWith('EXC'), 'مستند استبدال صدر')
 const retDoc = st().saleReturns.at(-1)
