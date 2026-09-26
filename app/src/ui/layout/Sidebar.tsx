@@ -69,8 +69,8 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     })
 
   return (
-    <aside className={`${collapsed ? 'w-16 sidebar-collapsed' : 'w-72'} relative shrink-0 h-screen sticky top-0 flex flex-col border-l transition-[width] duration-200 border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-card-dark/80 glass`}>
-      <button onClick={onToggle} title={collapsed ? 'فتح الشريط الجانبي' : 'طي الشريط الجانبي'} className="absolute -left-3 top-16 z-50 w-7 h-7 rounded-full border bg-white dark:bg-card-dark shadow flex items-center justify-center text-brand-600">{collapsed ? <PanelRightOpen size={14}/> : <PanelRightClose size={14}/>}</button>
+    <aside className={`${collapsed ? 'w-16 sidebar-collapsed' : 'w-72'} app-sidebar relative z-30 shrink-0 h-screen sticky top-0 flex flex-col border-l transition-[width] duration-200 border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-card-dark/80 glass`}>
+      <button onClick={onToggle} title={collapsed ? 'فتح الشريط الجانبي' : 'طي الشريط الجانبي'} className="sidebar-toggle absolute -left-3 top-20 z-[70] w-7 h-7 rounded-full border bg-white dark:bg-card-dark shadow flex items-center justify-center text-brand-600">{collapsed ? <PanelRightOpen size={14}/> : <PanelRightClose size={14}/>}</button>
       {/* الشعار */}
       <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800">
         <img src="/app-icon.png?v=3" alt="TAHAKAM ERP" className="w-10 h-10 rounded-xl shadow-lg shadow-brand-500/30 object-cover" />
