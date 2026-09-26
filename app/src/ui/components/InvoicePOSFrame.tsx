@@ -107,7 +107,7 @@ export function InvoicePOSFrame({
 
       <div className="invoice-reference-main-area">
         <main className="invoice-reference-content">
-          <section className="invoice-reference-header-card">
+          <section className="invoice-reference-header-card invoice-reference-compact-header">
             <div className="invoice-reference-document-head">
               <button className="invoice-reference-top-back" type="button" onClick={onBack} title={`العودة إلى قسم ${sale ? 'المبيعات' : 'المشتريات'}`} aria-label={`العودة إلى قسم ${sale ? 'المبيعات' : 'المشتريات'}`}><ArrowRight size={19} /></button>
               <div className="invoice-reference-document-card">
