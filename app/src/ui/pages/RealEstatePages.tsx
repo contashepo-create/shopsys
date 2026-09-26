@@ -14,7 +14,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import {
   PROPERTY_KIND_LABELS, RENT_FREQUENCY_LABELS, collectLeaseAlerts, leaseEndDate,
-  type PropertyKind, type PropertyOwnership, type RentFrequency, type Property, type Lease,
+  type PropertyKind, type PropertyOwnership, type RentFrequency, type Property, type PropertyUnit, type Lease,
 } from '../../core/realestate.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -23,6 +23,7 @@ import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
 const emptyTerminalPayment = (): TerminalPaymentDraft => ({ terminalId: '', providerReference: '', cardLast4: '' })
+type InitialUnitDraft = { code: string; rent: string; cost: string; salePrice: string }
 
 function useCur() {
   const { setup } = useAppStore()
@@ -36,7 +37,7 @@ function useCur() {
 
 /* ─────────────────────────── العقارات والملاك ─────────────────────────── */
 export function PropertiesPage() {
-  const { properties, propertyUnits, employees, addProperty, addPropertyUnit, getOwnerBalance, payPropertyOwner, addUnitMaintenance, sellProperty, addStaffCommission } = useDataStore()
+  const { properties, propertyUnits, employees, addProperty, addPropertyUnit, sellPropertyUnit, getOwnerBalance, payPropertyOwner, addUnitMaintenance, sellProperty, addStaffCommission } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
 
@@ -51,20 +52,29 @@ export function PropertiesPage() {
   const [cost, setCost] = useState('')
   const [payMode, setPayMode] = useState<'cash' | 'credit'>('cash')
   const [treasury, setTreasury] = useState('1101')
-  const [initialUnits, setInitialUnits] = useState<{ code: string; rent: string }[]>([{ code: '', rent: '' }])
+  const [initialUnits, setInitialUnits] = useState<InitialUnitDraft[]>([{ code: '', rent: '', cost: '', salePrice: '' }])
 
   const saveProperty = () => {
     try {
+      const unitRows = initialUnits.filter((unit) => unit.code.trim())
+      const unitCostTotal = unitRows.reduce((sum, unit) => sum + (unit.cost.trim() ? toMinor(unit.cost, cur.decimals) : 0), 0)
+      const propertyCost = ownership === 'owned' ? (unitCostTotal > 0 ? unitCostTotal : cost ? toMinor(cost, cur.decimals) : 0) : 0
       const p = addProperty({
         nameAr, kind, ownership,
         ownerName: ownership === 'managed' ? ownerName : '',
         commissionPercent: ownership === 'managed' ? Number(commission) || 0 : 0,
-        address, costMinor: ownership === 'owned' && cost ? toMinor(cost, cur.decimals) : 0,
-        notes: '', initialUnits: initialUnits.filter((unit) => unit.code.trim()).map((unit) => ({ code: unit.code.trim(), annualRentMinor: unit.rent ? toMinor(unit.rent, cur.decimals) : 0 })),
+        address, costMinor: propertyCost,
+        notes: '', initialUnits: unitRows.map((unit) => ({
+          code: unit.code.trim(),
+          annualRentMinor: unit.rent ? toMinor(unit.rent, cur.decimals) : 0,
+          costMinor: unit.cost.trim() ? toMinor(unit.cost, cur.decimals) : undefined,
+          salePriceMinor: unit.salePrice.trim() ? toMinor(unit.salePrice, cur.decimals) : 0,
+          acquisitionPayment: payMode,
+        })),
         acquisitionPayment: payMode, treasury,
       })
       toast.show(`أُنشئ العقار ${p.code} ✅`)
-      setOpen(false); setNameAr(''); setOwnerName(''); setAddress(''); setCost(''); setInitialUnits([{ code: '', rent: '' }])
+      setOpen(false); setNameAr(''); setOwnerName(''); setAddress(''); setCost(''); setInitialUnits([{ code: '', rent: '', cost: '', salePrice: '' }])
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -72,11 +82,19 @@ export function PropertiesPage() {
   const [unitFor, setUnitFor] = useState<Property | null>(null)
   const [uCode, setUCode] = useState('')
   const [uRent, setURent] = useState('')
+  const [uCost, setUCost] = useState('')
+  const [uSalePrice, setUSalePrice] = useState('')
+  const [uPay, setUPay] = useState<'cash' | 'credit'>('cash')
   const saveUnit = () => {
     if (!unitFor) return
     try {
-      addPropertyUnit({ propertyId: unitFor.id, code: uCode, annualRentMinor: uRent ? toMinor(uRent, cur.decimals) : 0 })
-      toast.show('أُضيفت الوحدة ✅'); setUnitFor(null); setUCode(''); setURent('')
+      addPropertyUnit({
+        propertyId: unitFor.id, code: uCode, annualRentMinor: uRent ? toMinor(uRent, cur.decimals) : 0,
+        costMinor: uCost ? toMinor(uCost, cur.decimals) : 0,
+        salePriceMinor: uSalePrice ? toMinor(uSalePrice, cur.decimals) : 0,
+        acquisitionPayment: uPay, treasury,
+      })
+      toast.show('أُضيفت الوحدة وسُجلت بياناتها المستقلة ✅'); setUnitFor(null); setUCode(''); setURent(''); setUCost(''); setUSalePrice('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -130,6 +148,20 @@ export function PropertiesPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
+  /* بيع وحدة مستقلة — لا يخرج تكلفة باقي الوحدات */
+  const [sellUnitFor, setSellUnitFor] = useState<{ property: Property; unit: PropertyUnit } | null>(null)
+  const [unitSalePrice, setUnitSalePrice] = useState('')
+  const [unitSalePay, setUnitSalePay] = useState<'cash' | 'credit'>('cash')
+  const [unitSaleTreasury, setUnitSaleTreasury] = useState('1101')
+  const saveUnitSale = () => {
+    if (!sellUnitFor) return
+    try {
+      sellPropertyUnit({ propertyId: sellUnitFor.property.id, unitId: sellUnitFor.unit.id, salePriceMinor: toMinor(unitSalePrice, cur.decimals), payment: unitSalePay, treasury: unitSaleTreasury })
+      toast.show(`بيعت الوحدة ${sellUnitFor.unit.code} وأُخرجت تكلفتها فقط ✅`)
+      setSellUnitFor(null); setUnitSalePrice('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -147,6 +179,8 @@ export function PropertiesPage() {
           {properties.map((p) => {
             const units = propertyUnits.filter((u) => u.propertyId === p.id)
             const leased = units.filter((u) => u.status === 'leased').length
+            const sold = units.filter((u) => u.status === 'sold').length
+            const vacant = units.filter((u) => u.status === 'vacant').length
             const balance = p.ownership === 'managed' ? getOwnerBalance(p.id) : 0
             const kd = PROPERTY_KIND_LABELS[p.kind]
             return (
@@ -162,19 +196,19 @@ export function PropertiesPage() {
                       {p.address ? ` · ${p.address}` : ''}
                     </div>
                     <div className="text-[12px] font-bold text-slate-600 dark:text-slate-300 mt-1.5">
-                      الوحدات: {units.length} ({leased} مؤجرة / {units.length - leased} شاغرة)
+                      الوحدات: {units.length} ({leased} مؤجرة / {vacant} شاغرة{sold > 0 ? ` / ${sold} مباعة` : ''})
                       {p.ownership === 'managed' && <> · مستحق المالك: <b className={balance > 0 ? 'text-rose-500' : 'text-emerald-600'}>{fmt(balance)}</b></>}
                     </div>
                   </div>
                   {p.status === 'active' && (
                     <div className="flex gap-1">
-                      <button onClick={() => { setUnitFor(p); setUCode(''); setURent('') }} title="وحدة جديدة" className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all hover:scale-110"><DoorOpen className="w-4 h-4" /></button>
+                      <button onClick={() => { setUnitFor(p); setUCode(''); setURent(''); setUCost(''); setUSalePrice(''); setUPay('cash') }} title="وحدة جديدة" className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all hover:scale-110"><DoorOpen className="w-4 h-4" /></button>
                       <button onClick={() => { setMaintFor(p); setMUnitId(units[0]?.id ?? ''); setMBearer(p.ownership === 'managed' ? 'owner' : 'office') }} title="صيانة وحدة" className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Wrench className="w-4 h-4" /></button>
                       {p.ownership === 'managed' && (
                         <button onClick={() => { setPayFor(p); setPayAmount('') }} title="سداد للمالك" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><HandCoins className="w-4 h-4" /></button>
                       )}
-                      {p.ownership === 'owned' && (
-                        <button onClick={() => { setSellFor(p); setSPrice('') }} title="بيع العقار" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Tag className="w-4 h-4" /></button>
+                      {p.ownership === 'owned' && !units.some((u) => u.status === 'sold') && (
+                        <button onClick={() => { setSellFor(p); setSPrice('') }} title="بيع العقار بالكامل" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Tag className="w-4 h-4" /></button>
                       )}
                     </div>
                   )}
@@ -182,9 +216,16 @@ export function PropertiesPage() {
                 {units.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {units.map((u) => (
-                      <span key={u.id} className={`text-[11px] px-2 py-1 rounded-lg font-bold ${u.status === 'leased' ? 'bg-teal-500/10 text-teal-600' : u.status === 'maintenance' ? 'bg-amber-500/10 text-amber-600' : 'bg-slate-500/10 text-slate-500'}`}>
-                        {u.code} · {u.status === 'leased' ? 'مؤجرة' : u.status === 'maintenance' ? 'صيانة' : 'شاغرة'}
-                      </span>
+                      <div key={u.id} className="flex items-center gap-1">
+                        <span className={`text-[11px] px-2 py-1 rounded-lg font-bold ${u.status === 'leased' ? 'bg-teal-500/10 text-teal-600' : u.status === 'maintenance' ? 'bg-amber-500/10 text-amber-600' : u.status === 'sold' ? 'bg-rose-500/10 text-rose-600' : 'bg-slate-500/10 text-slate-500'}`}>
+                          {u.code} · {u.status === 'leased' ? 'مؤجرة' : u.status === 'maintenance' ? 'صيانة' : u.status === 'sold' ? 'مباعة' : 'شاغرة'}
+                          {u.costMinor > 0 ? ` · تكلفة ${fmt(u.costMinor)}` : ''}
+                          {u.salePriceMinor > 0 && u.status !== 'sold' ? ` · بيع ${fmt(u.salePriceMinor)}` : ''}
+                        </span>
+                        {p.ownership === 'owned' && p.status === 'active' && u.status === 'vacant' && (
+                          <button onClick={() => { setSellUnitFor({ property: p, unit: u }); setUnitSalePrice(u.salePriceMinor > 0 ? formatMinor(u.salePriceMinor, cur, false) : ''); setUnitSalePay('cash') }} title="بيع هذه الوحدة فقط" className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-500/10"><Tag className="w-3.5 h-3.5" /></button>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -215,7 +256,7 @@ export function PropertiesPage() {
               </>
             ) : (
               <>
-                <Field label={`تكلفة الاقتناء (${cur.symbol})`} hint="تُرسمل على 1113 — أساس ربح البيع لاحقاً؛ اتركها 0 لعقار قديم مُقيد سابقاً"><input value={cost} onChange={(e) => setCost(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+                <Field label={`إجمالي تكلفة الاقتناء (${cur.symbol})`} hint="يمكن تركه فارغاً؛ عند إدخال تكاليف الوحدات أدناه يُحسب الإجمالي منها، وكل وحدة تُقيد بسجل مستقل"><input value={cost} onChange={(e) => setCost(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
                 {cost && (
                   <Field label="سداد الاقتناء">
                     <div className="flex gap-2">
@@ -230,17 +271,19 @@ export function PropertiesPage() {
             )}
             <Field label="العنوان"><input value={address} onChange={(e) => setAddress(e.target.value)} className={inputCls} /></Field>
           </div>
-          <Field label="الوحدات الأولية" hint="كل وحدة سطر مستقل ببياناته؛ يمكن تأجيرها أو بيعها أو تعديلها لاحقاً بشكل منفصل">
-            <div className="space-y-2 rounded-xl border border-slate-200 dark:border-slate-700 p-2">
-              <div className="grid grid-cols-[1fr_1fr_auto] gap-2 px-1 text-[11px] font-bold text-slate-400"><span>كود الوحدة</span><span>الأجرة السنوية الاسترشادية</span><span /></div>
+          <Field label="الوحدات الأولية" hint="كل وحدة سطر مستقل حقيقي: كود وأجرة وتكلفة اقتناء وسعر بيع؛ لا تُدمج الوحدات في تكلفة واحدة">
+            <div className="space-y-2 rounded-xl border border-slate-200 dark:border-slate-700 p-2 overflow-x-auto">
+              <div className="grid grid-cols-[1.1fr_1fr_1fr_1fr_auto] min-w-[650px] gap-2 px-1 text-[11px] font-bold text-slate-400"><span>كود الوحدة</span><span>الأجرة السنوية</span><span>تكلفة الاقتناء</span><span>سعر البيع</span><span /></div>
               {initialUnits.map((unit, index) => (
-                <div key={index} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                <div key={index} className="grid grid-cols-[1.1fr_1fr_1fr_1fr_auto] min-w-[650px] gap-2 items-center">
                   <input value={unit.code} onChange={(e) => setInitialUnits((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, code: e.target.value } : row))} className={inputCls} placeholder="شقة 1 — الدور الأول" />
                   <input value={unit.rent} onChange={(e) => setInitialUnits((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, rent: e.target.value } : row))} inputMode="decimal" className={inputCls} placeholder={cur.symbol} />
-                  <button type="button" onClick={() => setInitialUnits((rows) => rows.length > 1 ? rows.filter((_, rowIndex) => rowIndex !== index) : [{ code: '', rent: '' }])} className="h-9 px-2 rounded-lg text-rose-500 hover:bg-rose-500/10" title="حذف الوحدة">×</button>
+                  <input value={unit.cost} onChange={(e) => setInitialUnits((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, cost: e.target.value } : row))} inputMode="decimal" className={inputCls} placeholder="0" />
+                  <input value={unit.salePrice} onChange={(e) => setInitialUnits((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, salePrice: e.target.value } : row))} inputMode="decimal" className={inputCls} placeholder="0" />
+                  <button type="button" onClick={() => setInitialUnits((rows) => rows.length > 1 ? rows.filter((_, rowIndex) => rowIndex !== index) : [{ code: '', rent: '', cost: '', salePrice: '' }])} className="h-9 px-2 rounded-lg text-rose-500 hover:bg-rose-500/10" title="حذف الوحدة">×</button>
                 </div>
               ))}
-              <button type="button" onClick={() => setInitialUnits((rows) => [...rows, { code: '', rent: '' }])} className="text-[11px] font-bold text-teal-600 hover:underline">+ إضافة وحدة مستقلة</button>
+              <button type="button" onClick={() => setInitialUnits((rows) => [...rows, { code: '', rent: '', cost: '', salePrice: '' }])} className="text-[11px] font-bold text-teal-600 hover:underline">+ إضافة وحدة مستقلة</button>
             </div>
           </Field>
           <div className="flex justify-end gap-2">
@@ -251,11 +294,17 @@ export function PropertiesPage() {
       </Modal>
 
       {/* وحدة جديدة */}
-      <Modal open={!!unitFor} onClose={() => setUnitFor(null)} title={unitFor ? `وحدة جديدة — ${unitFor.nameAr}` : ''}>
+      <Modal open={!!unitFor} onClose={() => setUnitFor(null)} title={unitFor ? `وحدة مستقلة جديدة — ${unitFor.nameAr}` : ''}>
         <div className="space-y-3">
+          <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-[12px] text-slate-500">تُحفظ الوحدة كسجل مستقل ويمكن تأجيرها أو بيعها لاحقاً دون التأثير على باقي الوحدات.</div>
           <Field label="كود الوحدة *"><input value={uCode} onChange={(e) => setUCode(e.target.value)} className={inputCls} placeholder="شقة 5 — الدور الثاني" /></Field>
-          <Field label={`الأجرة السنوية الاسترشادية (${cur.symbol})`}><input value={uRent} onChange={(e) => setURent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-          <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setUnitFor(null)}>إلغاء</Btn><Btn onClick={saveUnit} disabled={!uCode.trim()}>إضافة</Btn></div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <Field label={`الأجرة السنوية (${cur.symbol})`}><input value={uRent} onChange={(e) => setURent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label={`تكلفة الاقتناء (${cur.symbol})`} hint={unitFor?.ownership === 'managed' ? 'العقار المدار ليس أصلاً للمكتب' : ''}><input value={uCost} onChange={(e) => setUCost(e.target.value)} inputMode="decimal" className={inputCls} disabled={unitFor?.ownership === 'managed'} /></Field>
+            <Field label={`سعر البيع (${cur.symbol})`}><input value={uSalePrice} onChange={(e) => setUSalePrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+          </div>
+          {unitFor?.ownership === 'owned' && uCost && <Field label="طريقة دفع الاقتناء"><div className="flex gap-2">{(['cash', 'credit'] as const).map((m) => <button key={m} onClick={() => setUPay(m)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border ${uPay === m ? 'bg-teal-600 text-white border-teal-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>{m === 'cash' ? 'نقدي' : 'آجل'}</button>)}</div></Field>}
+          <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setUnitFor(null)}>إلغاء</Btn><Btn onClick={saveUnit} disabled={!uCode.trim()}>إضافة الوحدة وقيدها</Btn></div>
         </div>
       </Modal>
 
@@ -292,6 +341,23 @@ export function PropertiesPage() {
             )}
             <TreasuryPicker value={mTreasury} onChange={setMTreasury} />
             <Btn onClick={saveMaint} shortcut="F9" className="w-full" disabled={!mAmount || mUnitId === ''}>تسجيل الصيانة وقيدها</Btn>
+          </div>
+        )}
+      </Modal>
+
+      {/* بيع وحدة مستقلة */}
+      <Modal open={!!sellUnitFor} onClose={() => setSellUnitFor(null)} title={sellUnitFor ? `بيع الوحدة ${sellUnitFor.unit.code} — ${sellUnitFor.property.nameAr}` : ''}>
+        {sellUnitFor && (
+          <div className="space-y-3">
+            <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 text-[12px] font-bold text-rose-700 dark:text-rose-300">
+              تكلفة هذه الوحدة {fmt(sellUnitFor.unit.costMinor)} — لن تُخرج إلا تكلفة هذه الوحدة من الأصل 1113، وتبقى باقي الوحدات قابلة للتعامل.
+            </div>
+            <Field label={`سعر البيع (${cur.symbol}) *`}><input value={unitSalePrice} onChange={(e) => setUnitSalePrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label="التحصيل">
+              <div className="flex gap-2">{(['cash', 'credit'] as const).map((m) => <button key={m} onClick={() => setUnitSalePay(m)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border ${unitSalePay === m ? 'bg-teal-600 text-white border-teal-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>{m === 'cash' ? 'نقدي' : 'آجل'}</button>)}</div>
+              {unitSalePay === 'cash' && <div className="mt-2"><TreasuryPicker value={unitSaleTreasury} onChange={setUnitSaleTreasury} compact /></div>}
+            </Field>
+            <Btn onClick={saveUnitSale} shortcut="F9" className="w-full" disabled={!unitSalePrice.trim()}>بيع الوحدة وقيد ربحها</Btn>
           </div>
         )}
       </Modal>

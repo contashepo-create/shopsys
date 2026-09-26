@@ -1928,8 +1928,16 @@ interface DataState {
   /** تحديث تقدم المهمة — 100٪ تُنجزها تلقائياً؛ ربطها ببند BOQ يزامن نسبته إن تقدّم */
   updateProjectTaskProgress: (taskId: number, progressPercent: number) => void
   /* ─── العقارات: عقار/وحدات/عقد إيجار بأقساط/تحصيل/سداد مالك/إخلاء/بيع ─── */
-  addProperty: (args: Omit<Property, 'id' | 'code' | 'status'> & { unitCodes?: string[]; initialUnits?: { code: string; annualRentMinor: number }[]; acquisitionPayment?: 'cash' | 'credit'; treasury?: string }) => Property
-  addPropertyUnit: (args: Omit<PropertyUnit, 'id' | 'status'>) => PropertyUnit
+  addProperty: (args: Omit<Property, 'id' | 'code' | 'status'> & {
+    unitCodes?: string[]
+    initialUnits?: { code: string; annualRentMinor: number; costMinor?: number; salePriceMinor?: number; acquisitionPayment?: 'cash' | 'credit' }[]
+    acquisitionPayment?: 'cash' | 'credit'
+    treasury?: string
+  }) => Property
+  /** إضافة وحدة مستقلة: تسجل تكلفتها وقيد اقتنائها إن كانت مملوكة، لا تُدمج في تكلفة العقار */
+  addPropertyUnit: (args: { propertyId: number; code: string; annualRentMinor: number; costMinor?: number; salePriceMinor?: number; acquisitionPayment?: 'cash' | 'credit'; treasury?: string }) => PropertyUnit
+  /** بيع وحدة مملوكة منفردة مع إخراج تكلفتها فقط من 1113 */
+  sellPropertyUnit: (args: { propertyId: number; unitId: number; salePriceMinor: number; payment: 'cash' | 'credit'; vatPercent?: number; treasury?: string }) => void
   /** عقد إيجار: يولّد جدول الأقساط ويقبض التأمين (2103) ويشغل الوحدة */
   addLease: (args: { propertyId: number; unitId: number; tenantName: string; tenantId?: number | null; startDate: string; months: number; frequency: RentFrequency; totalRentMinor: number; depositMinor: number; ejarNumber?: string; treasury?: string }) => Lease
   /** تحصيل قسط إيجار: مملوك → 4113، مدار → 2115 نصيب المالك + 4114 سعي (نمط الوسيط) */
@@ -7769,7 +7777,7 @@ export const useDataStore = create<DataState>()(
         }
         // كل وحدة أولية تُحفظ كسجل مستقل قابل للتأجير/البيع/التقارير لاحقاً.
         let nextUnitId = state.propertyUnits.reduce((m, u) => Math.max(m, u.id), 0)
-        const initialUnits = args.initialUnits?.length
+        const initialUnits: { code: string; annualRentMinor: number; costMinor?: number; salePriceMinor?: number; acquisitionPayment?: 'cash' | 'credit' }[] = args.initialUnits?.length
           ? args.initialUnits
           : (args.unitCodes ?? []).filter((code) => code.trim()).map((code) => ({ code, annualRentMinor: 0 }))
         const unitCodesSeen = new Set<string>()
@@ -7779,18 +7787,59 @@ export const useDataStore = create<DataState>()(
           if (unitCodesSeen.has(normalizedCode)) throw new Error(`كود الوحدة «${normalizedCode}» مكرر`)
           unitCodesSeen.add(normalizedCode)
           if (!Number.isInteger(unit.annualRentMinor) || unit.annualRentMinor < 0) throw new Error(`الأجرة الاسترشادية للوحدة «${normalizedCode}» غير صالحة`)
+          if (unit.costMinor != null && (!Number.isInteger(unit.costMinor) || unit.costMinor < 0)) throw new Error(`تكلفة الوحدة «${normalizedCode}» غير صالحة`)
+          if (unit.salePriceMinor != null && (!Number.isInteger(unit.salePriceMinor) || unit.salePriceMinor < 0)) throw new Error(`سعر بيع الوحدة «${normalizedCode}» غير صالح`)
+          if (args.ownership === 'managed' && (unit.costMinor ?? 0) > 0) throw new Error(`العقار المدار لا يحمل تكلفة اقتناء للوحدة «${normalizedCode}»`)
         }
-        const units: PropertyUnit[] = initialUnits.filter((unit) => unit.code.trim()).map((unit) => ({
-          id: ++nextUnitId, propertyId: id, code: unit.code.trim(), annualRentMinor: unit.annualRentMinor, status: 'vacant' as UnitStatus,
+        const rows = initialUnits.filter((unit) => unit.code.trim())
+        const hasExplicitUnitCost = rows.some((unit) => unit.costMinor != null)
+        const explicitUnitCost = rows.reduce((sum, unit) => sum + (unit.costMinor ?? 0), 0)
+        if (args.ownership === 'owned' && hasExplicitUnitCost && explicitUnitCost !== args.costMinor) {
+          throw new Error(`مجموع تكاليف الوحدات (${explicitUnitCost}) لا يساوي تكلفة اقتناء العقار (${args.costMinor})`)
+        }
+        if (args.ownership === 'owned' && rows.length > 0 && !hasExplicitUnitCost && args.costMinor > 0) {
+          // توافق السجلات القديمة: توزيع التكلفة السابقة على وحدات مستقلة مع تحميل الباقي على الأخيرة.
+          const base = Math.floor(args.costMinor / rows.length)
+          let allocated = 0
+          for (const [index, unit] of rows.entries()) {
+            const allocatedCost = index === rows.length - 1 ? args.costMinor - allocated : base
+            ;(unit as { costMinor?: number }).costMinor = allocatedCost
+            allocated += allocatedCost
+          }
+        }
+        const units: PropertyUnit[] = rows.map((unit) => ({
+          id: ++nextUnitId,
+          propertyId: id,
+          code: unit.code.trim(),
+          annualRentMinor: unit.annualRentMinor,
+          costMinor: unit.costMinor ?? 0,
+          salePriceMinor: unit.salePriceMinor ?? 0,
+          acquisitionPayment: args.ownership === 'owned' && (unit.costMinor ?? 0) > 0 ? (unit.acquisitionPayment ?? args.acquisitionPayment ?? 'cash') : null,
+          status: 'vacant' as UnitStatus,
         }))
-        // اقتناء عقار مملوك بتكلفة: قيد 1113 ← نقدية/مورد
+        // اقتناء عقار مملوك بتكلفة: قيد مستقل لكل وحدة، مع إبقاء كل وحدة قابلة للتعامل لاحقاً.
         let journal = state.journal
-        if (args.ownership === 'owned' && args.costMinor > 0) {
+        const acquisitionRows = units.filter((unit) => unit.costMinor > 0)
+        if (args.ownership === 'owned' && acquisitionRows.length > 0) {
+          for (const unit of acquisitionRows) {
+            const payment = unit.acquisitionPayment ?? args.acquisitionPayment ?? 'cash'
+            const treasury = args.treasury ?? '1101'
+            const entryId = nextId(journal)
+            const now = new Date().toISOString()
+            journal = [...journal, {
+              id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+              description: `اقتناء وحدة ${unit.code} من عقار ${property.code} — ${property.nameAr}`,
+              sourceType: 'property_acquisition' as const, sourceId: unit.id,
+              lines: buildPropertyAcquisitionEntry(unit.costMinor, payment, treasury, `${property.nameAr} / ${unit.code}`),
+              createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+            }]
+          }
+        } else if (args.ownership === 'owned' && args.costMinor > 0) {
           const payment = args.acquisitionPayment ?? 'cash'
           const treasury = args.treasury ?? '1101'
-          const entryId = nextId(state.journal)
+          const entryId = nextId(journal)
           const now = new Date().toISOString()
-          journal = [...state.journal, {
+          journal = [...journal, {
             id: entryId, entryNumber: entryId, date: now.slice(0, 10),
             description: `اقتناء عقار ${property.code} — ${property.nameAr}`,
             sourceType: 'property_acquisition' as const, sourceId: id,
@@ -7809,9 +7858,65 @@ export const useDataStore = create<DataState>()(
         if (!args.code.trim()) throw new Error('كود الوحدة مطلوب')
         if (state.propertyUnits.some((u) => u.propertyId === args.propertyId && u.code.trim() === args.code.trim())) throw new Error('كود الوحدة مكرر في هذا العقار')
         if (!Number.isInteger(args.annualRentMinor) || args.annualRentMinor < 0) throw new Error('الأجرة الاسترشادية لا تكون سالبة')
-        const unit: PropertyUnit = { id: nextId(state.propertyUnits), propertyId: args.propertyId, code: args.code.trim(), annualRentMinor: args.annualRentMinor, status: 'vacant' }
-        set({ propertyUnits: [...state.propertyUnits, unit] })
+        const costMinor = args.costMinor ?? 0
+        const salePriceMinor = args.salePriceMinor ?? 0
+        if (!Number.isInteger(costMinor) || costMinor < 0) throw new Error('تكلفة الوحدة لا تكون سالبة')
+        if (!Number.isInteger(salePriceMinor) || salePriceMinor < 0) throw new Error('سعر بيع الوحدة لا يكون سالباً')
+        if (property.ownership === 'managed' && costMinor > 0) throw new Error('العقار المدار ليس أصلاً لديك — تكلفة الوحدة يجب أن تكون صفراً')
+        const id = nextId(state.propertyUnits)
+        const unit: PropertyUnit = {
+          id, propertyId: args.propertyId, code: args.code.trim(), annualRentMinor: args.annualRentMinor,
+          costMinor, salePriceMinor,
+          acquisitionPayment: property.ownership === 'owned' && costMinor > 0 ? (args.acquisitionPayment ?? 'cash') : null,
+          status: 'vacant',
+        }
+        let journal = state.journal
+        if (property.ownership === 'owned' && costMinor > 0) {
+          const entryId = nextId(journal)
+          const now = new Date().toISOString()
+          journal = [...journal, {
+            id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+            description: `اقتناء وحدة ${unit.code} من عقار ${property.code} — ${property.nameAr}`,
+            sourceType: 'property_acquisition' as const, sourceId: unit.id,
+            lines: buildPropertyAcquisitionEntry(costMinor, unit.acquisitionPayment ?? 'cash', args.treasury ?? '1101', `${property.nameAr} / ${unit.code}`),
+            createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+          }]
+        }
+        set({
+          propertyUnits: [...state.propertyUnits, unit],
+          properties: costMinor > 0 ? state.properties.map((p) => p.id === property.id ? { ...p, costMinor: p.costMinor + costMinor } : p) : state.properties,
+          journal,
+        })
         return unit
+      },
+      sellPropertyUnit: (args) => {
+        const state = get()
+        const property = state.properties.find((p) => p.id === args.propertyId)
+        if (!property) throw new Error('العقار غير موجود')
+        if (property.status === 'sold') throw new Error('العقار مباع بالفعل')
+        if (property.ownership !== 'owned') throw new Error('لا تُباع وحدة من عقار مدار — البيع للمالك')
+        const unit = state.propertyUnits.find((u) => u.id === args.unitId && u.propertyId === property.id)
+        if (!unit) throw new Error('الوحدة غير موجودة في هذا العقار')
+        if (unit.status === 'sold') throw new Error('الوحدة مباعة بالفعل')
+        if (unit.status === 'leased') throw new Error('الوحدة مؤجرة — أنهِ عقدها أولاً')
+        if (unit.status === 'maintenance') throw new Error('الوحدة تحت الصيانة — أعدها شاغرة أولاً')
+        if (!Number.isInteger(args.salePriceMinor) || args.salePriceMinor <= 0) throw new Error('سعر بيع الوحدة يجب أن يكون موجباً')
+        const vat = Math.round(args.salePriceMinor * (args.vatPercent ?? 0) / 100)
+        const now = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `بيع وحدة ${unit.code} — ${property.nameAr}`,
+          sourceType: 'property_sale', sourceId: unit.id,
+          lines: buildPropertySaleEntry({ salePriceMinor: args.salePriceMinor, costMinor: unit.costMinor ?? 0, payment: args.payment, treasury: args.treasury ?? '1101', vatMinor: vat, label: `${property.nameAr} / ${unit.code}` }),
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const allUnitsSold = state.propertyUnits.filter((u) => u.propertyId === property.id && u.id !== unit.id).every((u) => u.status === 'sold')
+        set({
+          propertyUnits: state.propertyUnits.map((u) => u.id === unit.id ? { ...u, status: 'sold' as const, soldPriceMinor: args.salePriceMinor, saleEntryId: entryId, soldAt: now } : u),
+          properties: allUnitsSold ? state.properties.map((p) => p.id === property.id ? { ...p, status: 'sold' as const } : p) : state.properties,
+          journal: [...state.journal, entry],
+        })
       },
       addLease: (args) => {
         const state = get()
@@ -7820,6 +7925,7 @@ export const useDataStore = create<DataState>()(
         if (property.status === 'sold') throw new Error('العقار مباع')
         const unit = state.propertyUnits.find((u) => u.id === args.unitId && u.propertyId === args.propertyId)
         if (!unit) throw new Error('الوحدة غير موجودة في هذا العقار')
+        if (unit.status === 'sold') throw new Error('الوحدة مباعة — لا عقد إيجار جديد')
         if (unit.status === 'leased') throw new Error('الوحدة مؤجرة بالفعل — أنهِ عقدها أولاً')
         const errors = validateLease(args)
         if (errors.length) throw new Error(errors.join(' — '))
@@ -7965,6 +8071,7 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const unit = state.propertyUnits.find((u) => u.id === args.unitId)
         if (!unit) throw new Error('الوحدة غير موجودة')
+        if (unit.status === 'sold') throw new Error('الوحدة مباعة — لا صيانة جديدة')
         const property = state.properties.find((p) => p.id === unit.propertyId)!
         if (args.bearer === 'owner' && property.ownership !== 'managed') throw new Error('العقار مملوك لك — الصيانة على المكتب')
         if (args.bearer === 'owner' && args.amountMinor > get().getOwnerBalance(property.id)) throw new Error('الصيانة أكبر من مستحق المالك — حصّل أولاً أو حمّلها على المكتب')
@@ -7992,6 +8099,7 @@ export const useDataStore = create<DataState>()(
         if (property.status === 'sold') throw new Error('العقار مباع بالفعل')
         if (property.ownership !== 'owned') throw new Error('لا يُباع إلا عقار مملوك لك — المدار ملك صاحبه')
         if (state.leases.some((l) => l.propertyId === property.id && l.status === 'active')) throw new Error('على العقار عقود إيجار نشطة — أنهِها أولاً')
+        if (state.propertyUnits.some((u) => u.propertyId === property.id && u.status === 'sold')) throw new Error('بعض وحدات العقار مباعة — بع باقي الوحدات منفردة أو استخدم تسوية خاصة')
         const vatPercent = args.vatPercent ?? 0
         const vat = Math.round(args.salePriceMinor * vatPercent / 100)
         const now = new Date().toISOString()
@@ -8003,8 +8111,11 @@ export const useDataStore = create<DataState>()(
           lines: buildPropertySaleEntry({ salePriceMinor: args.salePriceMinor, costMinor: property.costMinor, payment: args.payment, treasury: args.treasury ?? '1101', vatMinor: vat, label: property.nameAr }),
           createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
         }
+        const nowSold = new Date().toISOString()
         set({
           properties: state.properties.map((p) => (p.id === property.id ? { ...p, status: 'sold' as const } : p)),
+          // البيع الكلي للعقار يغيّر حالة كل وحداته حتى لا تعود للعرض أو التأجير.
+          propertyUnits: state.propertyUnits.map((u) => u.propertyId === property.id ? { ...u, status: 'sold' as const, soldPriceMinor: u.soldPriceMinor ?? 0, soldAt: nowSold } : u),
           journal: [...state.journal, entry],
         })
       },
@@ -11056,7 +11167,17 @@ export const useDataStore = create<DataState>()(
           projectBudgets: s.projectBudgets ?? [],
           projectTasks: s.projectTasks ?? [],
           properties: s.properties ?? [],
-          propertyUnits: s.propertyUnits ?? [],
+          // ترقية الوحدات العقارية: السجلات القديمة لا تحمل تكلفة/سعر بيع لكل وحدة.
+          propertyUnits: (s.propertyUnits ?? []).map((u) => ({
+            ...u,
+            status: u.status ?? 'vacant',
+            costMinor: u.costMinor ?? 0,
+            salePriceMinor: u.salePriceMinor ?? 0,
+            acquisitionPayment: u.acquisitionPayment ?? null,
+            soldPriceMinor: u.soldPriceMinor ?? undefined,
+            saleEntryId: u.saleEntryId ?? null,
+            soldAt: u.soldAt ?? null,
+          })),
           leases: s.leases ?? [],
           ownerTxns: s.ownerTxns ?? [],
           subPayments: s.subPayments ?? [],
