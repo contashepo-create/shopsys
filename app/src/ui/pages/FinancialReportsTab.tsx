@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * تبويب «القوائم المالية» بمركز التقارير (أمر المالك):
  * قائمة منسدلة لاختيار التقرير + فلتر الفترة → عرض → طباعة/PDF أو تصدير Excel:
@@ -161,16 +162,16 @@ export function FinancialReportsTab({ period, cur, companyName }: { period: { fr
       <div className="flex flex-wrap items-end gap-3">
         <div className="min-w-[260px]">
           <div className="text-[11px] font-bold text-slate-400 mb-1">نوع التقرير</div>
-          <select value={reportId} onChange={(e) => setReportId(e.target.value as FinReportId)} className={inputCls}>
+          <QuickSelect value={reportId} onChange={(e) => setReportId(e.target.value as FinReportId)} className={inputCls}>
             {REPORTS.map((r) => <option key={r.id} value={r.id}>{r.icon} {r.nameAr}</option>)}
-          </select>
+          </QuickSelect>
         </div>
         {reportId === 'gl' && (
           <div className="min-w-[240px]">
             <div className="text-[11px] font-bold text-slate-400 mb-1">الحساب</div>
-            <select value={glAccount} onChange={(e) => setGlAccount(e.target.value)} className={inputCls}>
+            <QuickSelect value={glAccount} onChange={(e) => setGlAccount(e.target.value)} className={inputCls}>
               {accountOptions.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </div>
         )}
         <div className="flex gap-2 ms-auto">

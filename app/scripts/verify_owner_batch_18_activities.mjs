@@ -41,7 +41,7 @@ const { REFUND_APPROVE_PERM } = await import(join(root, 'src/core/refundApproval
 const { hashPin } = await import(join(root, 'src/core/audit.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 28, `المتوقع 28 نشاطاً — الموجود ${ACTIVITIES.length}`)
+assert.equal(ACTIVITIES.length, 29, `المتوقع 29 نشاطاً — الموجود ${ACTIVITIES.length}`)
 
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 const cur = { code: 'EGP', symbol: 'ج.م', decimals: 2, name: '' }
@@ -92,13 +92,13 @@ for (const activityId of ACTIVITIES) {
   assert.ok(a5.includes('size: A5') && a5.includes('margin: 7mm') && a5.includes(sale.invoiceNumber), `${activityId}: A5 سليم`)
 
   // ── ⑤ دور مخصص «مشرف النشاط» + approveByPin ──
-  st().setOwnerPin(await hashPin('1111'))
+  st().setOwnerPin(await hashPin('111111'))
   st().addEmployee({ nameAr: `مشرف ${tpl.nameAr}`, phone: `01${String(Math.abs(activityId.length * 7919)).padStart(8, '0')}`, jobTitle: 'مشرف', hireDate: '2026-01-01', baseSalaryMinor: 500000, allowancesMinor: 0, active: true, notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
   const emp = st().employees.at(-1)
   const roleId = st().addCustomRole(`مشرف ${tpl.nameAr}`, 'cashier')
   st().setRolePermissions(roleId, [...st().roleOverrides[roleId], REFUND_APPROVE_PERM])
-  st().addAppUser({ nameAr: emp.nameAr, roleId, pinHash: await hashPin('9999'), employeeId: emp.id, phone: emp.phone, email: '', initialPin: '9999', mustChangePin: false })
-  const approved = await st().approveByPin('9999', REFUND_APPROVE_PERM)
+  st().addAppUser({ nameAr: emp.nameAr, roleId, pinHash: await hashPin('999999'), employeeId: emp.id, phone: emp.phone, email: '', initialPin: '999999', mustChangePin: false })
+  const approved = await st().approveByPin('999999', REFUND_APPROVE_PERM)
   assert.equal(approved.approvedBy, `مشرف ${tpl.nameAr}`, `${activityId}: اعتماد الدور المخصص`)
   const allRoles = rolesWithOverrides(st().roleOverrides, st().customRoles)
   assert.ok(allRoles.some((r) => r.id === roleId && r.permissions.includes(REFUND_APPROVE_PERM)), `${activityId}: الدور في القائمة الكاملة`)
@@ -123,6 +123,6 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✅ ${tpl.icon ?? ''} ${tpl.nameAr} (${activityId}) — عشري POS + صرف حر + تصنيف حر + 3 قوالب + مشرف مخصص + وجهات الإشعار`)
 }
 
-console.log(`\n══════════════════\n${pass}/28 نشاطاً اجتاز المراجعة الشاملة`)
-if (pass !== 28) process.exit(1)
+console.log(`\n══════════════════\n${pass}/29 نشاطاً اجتاز المراجعة الشاملة`)
+if (pass !== 29) process.exit(1)
 console.log('OWNER-BATCH-18-ACTIVITIES-OK ✅')

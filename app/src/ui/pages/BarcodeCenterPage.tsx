@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * مركز الباركود والسيريال (طلب المالك — قسم مستقل احترافي كمحلات البيع):
  * - قالب ملصق يُضبط مرة (المقاس A4/رول، ما يظهر، سطر مخصص) ويسري على كل طباعة.
@@ -136,7 +137,7 @@ export function BarcodeCenterPage() {
                       <td className="py-1.5 px-2 text-slate-500">{(it.priceMinor / 10 ** cur.decimals).toLocaleString('ar-EG')} {cur.symbol}</td>
                       <td className="py-1.5 px-2">
                         <input
-                          type="number" min={0} max={500}
+                          type="number" inputMode="decimal" step="any" min={0} max={500}
                           value={counts[it.id] ?? ''}
                           onChange={(e) => setCounts((c) => ({ ...c, [it.id]: e.target.value }))}
                           placeholder="0"
@@ -208,9 +209,9 @@ export function BarcodeCenterPage() {
       {tab === 'template' && (
         <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-4 space-y-4 max-w-2xl">
           <Field label="مقاس الملصق">
-            <select value={labelSettings.sizeId} onChange={(e) => updateLabelSettings({ sizeId: e.target.value })} className={inputCls}>
+            <QuickSelect value={labelSettings.sizeId} onChange={(e) => updateLabelSettings({ sizeId: e.target.value })} className={inputCls}>
               {LABEL_SIZES.map((s) => <option key={s.id} value={s.id}>{s.nameAr}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {([

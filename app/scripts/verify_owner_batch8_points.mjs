@@ -1,11 +1,11 @@
 /**
- * التحقق من دفعة المالك الثامنة (8 نقاط) على مستوى كل الأنشطة الـ18:
+ * التحقق من دفعة المالك الثامنة (8 نقاط) على مستوى كل الأنشطة الحالية:
  * ① باج إجبار تغيير الرقم أول دخول: login يرجع mustChangePin وبوابة App تحتجزه حتى التغيير
  * ② الدخول الموحد: لا زر مالك — matchesOwnerIdentity بالهوية الافتراضية والمخصصة + منع التصادم
  * ③ «حسابي»: changeMyPin (مالك وموظف) بتحقق الرقم الحالي + updateMyProfile بمنع التصادم
  * ⑤ تصفية الإشعارات بالصلاحيات: الكاشير لا يرى أقساطاً/شيكات/بلاغات — المحاسب يرى ماليّاته
  * ⑥ طباعة الشراء ومرتجعه بالقوالب الثلاثة (buildSimpleDocModel) — لكل نشاط
- * ⑦ سياسة «لا بيع بلا وردية»: مرفوض افتراضياً، يمر بعد فتح وردية، ويمر بلا وردية عند التعطيل — لكل نشاط
+ * ⑦ سياسة الوردية بحسب الدور: المالك تلميح فقط، والكاشير حسب الإعداد، وبقية الأدوار الملزمة — لكل نشاط
  * (④ نقل شريط الطباعة و⑧ مراجعة قسم الأدوار: تحقق بصري/قرائي — الأدوار مغطاة في batch_18)
  * تشغيل: node --experimental-strip-types scripts/verify_owner_batch8_points.mjs
  */
@@ -39,7 +39,7 @@ const { renderInvoiceA4Html } = await import(join(root, 'src/ui/print/printInvoi
 const { renderReceiptHtml } = await import(join(root, 'src/ui/print/printReceipt.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 28, `المتوقع 28 نشاطاً — الموجود ${ACTIVITIES.length}`)
+assert.equal(ACTIVITIES.length, 29, `المتوقع 29 نشاطاً — الموجود ${ACTIVITIES.length}`)
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 const cur = { code: 'EGP', symbol: 'ج.م', decimals: 2, name: '' }
 
@@ -56,30 +56,30 @@ mem.set('shopsys-app', appState('grocery', false))
   const st = () => useDataStore.getState()
 
   // ── ① باج إجبار تغيير الرقم أول دخول ──
-  st().setOwnerPin(await hashPin('1111'))
+  st().setOwnerPin(await hashPin('111111'))
   st().addEmployee({ nameAr: 'كاشير الاختبار', phone: '01000000001', jobTitle: 'كاشير', hireDate: '2026-01-01', baseSalaryMinor: 400000, allowancesMinor: 0, active: true, notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
   const emp = st().employees.at(-1)
-  st().addAppUser({ nameAr: emp.nameAr, roleId: 'cashier', pinHash: await hashPin('2222'), employeeId: emp.id, phone: emp.phone, email: '', initialPin: '2222', mustChangePin: true })
+  st().addAppUser({ nameAr: emp.nameAr, roleId: 'cashier', pinHash: await hashPin('222222'), employeeId: emp.id, phone: emp.phone, email: '', initialPin: '222222', mustChangePin: true })
   const u = st().appUsers.at(-1)
-  const r1 = await st().login(u.id, '2222')
+  const r1 = await st().login(u.id, '222222')
   assert.equal(r1.mustChangePin, true, '① login يرجع mustChangePin=true للرقم المبدئي')
   // بوابة App: activeUser.mustChangePin يبقيه محتجزاً في LoginScreen حتى بعد login
   const gateUser = st().appUsers.find((x) => x.id === st().currentUserId)
   assert.equal(!!(st().loggedOut || gateUser?.mustChangePin), true, '① البوابة تحتجزه: mustChangePin يبقي LoginScreen ظاهرة')
   // تغيير الرقم من المودال الإجباري
-  st().changeOwnPin(u.id, await hashPin('7777'))
+  st().changeOwnPin(u.id, await hashPin('777777'))
   const after = st().appUsers.find((x) => x.id === u.id)
   assert.equal(after.mustChangePin, false, '① mustChangePin يُمسح بعد التغيير')
   assert.equal(after.initialPin, null, '① الرقم المبدئي يُمسح — لا يعرفه أحد بعدها')
   assert.equal(!!(st().loggedOut || after.mustChangePin), false, '① البوابة تفتح بعد التعيين')
-  const r2 = await st().login(u.id, '7777')
+  const r2 = await st().login(u.id, '777777')
   assert.equal(r2.mustChangePin, false, '① الدخول التالي بالرقم الجديد — بلا إجبار')
-  await assert.rejects(() => st().login(u.id, '2222'), /خاطئ/, '① الرقم المبدئي القديم لم يعد يعمل')
+  await assert.rejects(() => st().login(u.id, '222222'), /خاطئ/, '① الرقم المبدئي القديم لم يعد يعمل')
 
   // ── ② الدخول الموحد بهوية المالك ──
   assert.ok(matchesOwnerIdentity(DEFAULT_OWNER_PROFILE, 'المالك'), '② الهوية الافتراضية «المالك» تعمل قبل التخصيص')
   assert.ok(!matchesOwnerIdentity(DEFAULT_OWNER_PROFILE, 'كاشير الاختبار'), '② اسم موظف لا يطابق هوية المالك')
-  await st().login(null, '1111') // دخول المالك
+  await st().login(null, '111111') // دخول المالك
   st().updateOwnerProfile({ nameAr: 'أبو أحمد', phone: '01099999999', email: 'owner@shop.com' })
   const op = st().ownerProfile
   assert.ok(matchesOwnerIdentity(op, 'أبو أحمد') && matchesOwnerIdentity(op, '01099999999') && matchesOwnerIdentity(op, 'OWNER@shop.com'), '② الاسم/الهاتف/البريد (غير حساس لحالة الأحرف) معرفات دخول')
@@ -88,16 +88,16 @@ mem.set('shopsys-app', appState('grocery', false))
   assert.throws(() => st().updateOwnerProfile({ nameAr: 'كاشير الاختبار' }), /يتصادم/, '② تصادم الاسم مع موظف مرفوض')
   assert.throws(() => st().updateOwnerProfile({ phone: '01000000001' }), /يتصادم/, '② تصادم الهاتف مع موظف مرفوض')
   // موظف لا يعدل هوية المالك
-  await st().login(u.id, '7777')
+  await st().login(u.id, '777777')
   assert.throws(() => st().updateOwnerProfile({ nameAr: 'مخترق' }), /المالك فقط/, '② هوية المالك محمية من الموظفين')
 
   // ── ③ «حسابي»: تغيير الرقم ذاتياً + بيانات التواصل ──
-  const h8888 = await hashPin('8888')
-  const h7777 = await hashPin('7777')
+  const h8888 = await hashPin('888888')
+  const h7777 = await hashPin('777777')
   await assert.rejects(() => st().changeMyPin('0000', h8888), /غير صحيح/, '③ رقم حالي خاطئ مرفوض')
-  await assert.rejects(() => st().changeMyPin('7777', h7777), /يطابق/, '③ الرقم الجديد المطابق مرفوض')
-  await st().changeMyPin('7777', h8888)
-  const r3 = await st().login(u.id, '8888')
+  await assert.rejects(() => st().changeMyPin('777777', h7777), /يطابق/, '③ الرقم الجديد المطابق مرفوض')
+  await st().changeMyPin('777777', h8888)
+  const r3 = await st().login(u.id, '888888')
   assert.equal(r3.mustChangePin, false, '③ الموظف غيّر رقمه بنفسه ودخل به')
   st().updateMyProfile({ phone: '01011111111', email: 'cashier@shop.com' })
   assert.equal(st().appUsers.find((x) => x.id === u.id).phone, '01011111111', '③ تحديث الهاتف من البروفايل')
@@ -105,10 +105,10 @@ mem.set('shopsys-app', appState('grocery', false))
   st().updateMyProfile({ avatarDataUrl: 'data:image/jpeg;base64,TEST' })
   assert.equal(st().appUsers.find((x) => x.id === u.id).avatarDataUrl, 'data:image/jpeg;base64,TEST', '③ الصورة الشخصية تُحفظ')
   // المالك يغير رقمه من نفس الصفحة
-  await st().login(null, '1111')
-  await st().changeMyPin('1111', await hashPin('5555'))
-  await assert.rejects(() => st().login(null, '1111'), /خاطئ/, '③ رقم المالك القديم سقط')
-  await st().login(null, '5555')
+  await st().login(null, '111111')
+  await st().changeMyPin('111111', await hashPin('555555'))
+  await assert.rejects(() => st().login(null, '111111'), /خاطئ/, '③ رقم المالك القديم سقط')
+  await st().login(null, '555555')
 
   // ── ⑤ تصفية الإشعارات بالصلاحيات ──
   const roles = rolesWithOverrides(st().roleOverrides, st().customRoles)
@@ -148,11 +148,12 @@ let pass = 0
 for (const activityId of ACTIVITIES) {
   const tpl = ACTIVITY_TEMPLATES.find((a) => a.id === activityId)
 
-  // ── ⑦ الإلزام مفعّل: البيع بلا وردية مرفوض ثم يمر بعد الفتح ──
+  // ── ⑦ المالك الرئيسي: تلميح فقط؛ البيع بلا وردية يمر ثم يُربط عند فتحها ──
   mem.clear()
   mem.set('shopsys-app', appState(activityId, true))
   const { useDataStore } = await import(`${repoUrl}?b8=${activityId}`)
   const st = () => useDataStore.getState()
+  st().seed([])
 
   st().addItem({ nameAr: `صنف ${tpl.nameAr}`, sku: `B8-${activityId}`, barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 0, stockQty: 0, priceMinor: 100_00, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
   const item = st().items.at(-1)
@@ -170,14 +171,12 @@ for (const activityId of ACTIVITIES) {
     assert.equal(sale0.shiftId, null, `${activityId}: ⑦ فاتورة أولاً — بيع بلا وردية يمر وبلا ربط`)
     assertBalanced(st().journal.find((e) => e.id === sale0.journalEntryId).lines)
   } else {
-    assert.throws(
-      () => st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true }),
-      /وردية/,
-      `${activityId}: ⑦ البيع بلا وردية مرفوض والرسالة تشرح`,
-    )
-    const shift = st().openShift('كاشير', 100_00)
+    const ownerSale = st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true })
+    assert.equal(ownerSale.shiftId, null, `${activityId}: ⑦ المالك لا يُمنع عند غياب الوردية`)
+    assertBalanced(st().journal.find((e) => e.id === ownerSale.journalEntryId).lines)
+    const shift = st().openShift('المالك الرئيسي', 100_00)
     const sale = st().postSale({ lines: [line], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true })
-    assert.equal(sale.shiftId, shift.id, `${activityId}: ⑦ الفاتورة مربوطة بالوردية`)
+    assert.equal(sale.shiftId, shift.id, `${activityId}: ⑦ عند فتحها تُربط الفاتورة بالوردية`)
     assertBalanced(st().journal.find((e) => e.id === sale.journalEntryId).lines)
   }
 
@@ -201,7 +200,7 @@ for (const activityId of ACTIVITIES) {
   assert.ok(pA5.includes('size: A5') && pA5.includes(pur.invoiceNumber), `${activityId}: ⑥ A5 الشراء`)
 
   // ── ⑥ مرتجع شراء + طباعة إشعاره ──
-  st().setOwnerPin(await hashPin('1111'))
+  st().setOwnerPin(await hashPin('111111'))
   const pr = await (async () => {
     const ret = st().postPurchaseReturn({ purchaseId: pur.id, refund: 'debt', qtyByItem: new Map([[item.id, 2]]), reason: 'تالف', approvedBy: 'المالك' })
     return ret
@@ -235,5 +234,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✔ ${tpl.nameAr} (${activityId}) — ⑥ طباعة الشراء ومرتجعه ×3 قوالب + ⑦ سياسة الورديات`)
 }
 
-assert.equal(pass, 28, 'اكتمال الأنشطة الـ28')
-console.log(`\n✅ دفعة النقاط الثماني: الجزء العام (①②③⑤) + ${pass}/20 نشاطاً (⑥⑦) — كله سليم`)
+assert.equal(pass, 29, 'اكتمال الأنشطة الـ29')
+console.log(`\n✅ دفعة النقاط الثماني: الجزء العام (①②③⑤) + ${pass}/29 نشاطاً (⑥⑦) — كله سليم`)

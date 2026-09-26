@@ -20,11 +20,20 @@ export interface CurrencyConfig {
 
 /** تطبيع الأرقام العربية والفارسية والفواصل العربية إلى ASCII — يمنع رفض «١٣٠» بصمت */
 export function normalizeDigits(s: string): string {
-  return s
+  const translated = s
     .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
     .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
     .replace(/٫/g, '.') // الفاصلة العشرية العربية
-    .replace(/[٬,]/g, '') // فواصل الآلاف
+    .replace(/٬/g, '') // فاصل الآلاف العربي
+  // لوحة المفاتيح العربية قد ترسل الفاصلة الإنجليزية كفاصل عشري. عند وجود
+  // نقطتين/فواصل معاً نعتبر آخر فاصل هو العشري والباقي فواصل آلاف.
+  const lastDot = translated.lastIndexOf('.')
+  const lastComma = translated.lastIndexOf(',')
+  if (lastComma < 0) return translated
+  if (lastDot < 0) return translated.replace(/,/g, '.')
+  return lastComma > lastDot
+    ? translated.replace(/\./g, '').replace(',', '.')
+    : translated.replace(/,/g, '')
 }
 
 /** تحويل من نص/رقم مُدخل إلى أصغر وحدة (بأمان من أخطاء التعويم) */

@@ -9,12 +9,12 @@ import { ACTIVITY_TEMPLATES } from '../src/core/activities.ts'
 let PASS = 0, FAIL = 0
 const ok = (cond, msg) => { if (cond) { PASS++; console.log(`  ✓ ${msg}`) } else { FAIL++; console.log(`  ✗ ${msg}`) } }
 
-ok(ACTIVITY_TEMPLATES.length === 28, `28 نشاطاً (${ACTIVITY_TEMPLATES.length})`)
+ok(ACTIVITY_TEMPLATES.length === 29, `29 نشاطاً (${ACTIVITY_TEMPLATES.length})`)
 for (const a of ACTIVITY_TEMPLATES) {
   const acc = activityAccentId(a.id)
   ok(ACCENTS.some((p) => p.id === acc), `${a.nameAr} → لوحة «${acc}» موجودة`)
 }
-ok(Object.keys(ACTIVITY_ACCENTS).length === 21, `خريطة الأنشطة تغطي الـ21 كلها`)
+ok(Object.keys(ACTIVITY_ACCENTS).length === ACTIVITY_TEMPLATES.length, `خريطة الأنشطة تغطي الـ${ACTIVITY_TEMPLATES.length} كلها`)
 ok(activityAccentId(null) === DEFAULT_ACCENT_ID, 'نشاط غائب → اللوحة الافتراضية')
 ok(activityAccentId('no_such') === DEFAULT_ACCENT_ID, 'نشاط مجهول → الافتراضية بأمان')
 ok(activityAccentId('jewelry') === 'gold', 'المجوهرات ذهبي فاخر')

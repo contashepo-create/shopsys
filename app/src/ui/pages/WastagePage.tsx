@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الإتلاف — الهالك والتوالف (مراجعة نشاط الأغذية/السوبرماركت):
  * البضاعة المنتهية/التالفة تُعدم بمستند موثق بسبب ← قيد 5111 هالك / 1103 مخزون
@@ -148,9 +149,9 @@ export function WastagePage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="سبب الإتلاف *" hint="التوثيق إلزامي — يظهر في القيد والسجل">
-              <select value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls}>
+              <QuickSelect value={reason} onChange={(e) => setReason(e.target.value)} className={inputCls}>
                 {WASTAGE_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="ملاحظات">
               <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} placeholder="رقم محضر / لجنة الإعدام…" />
@@ -166,10 +167,10 @@ export function WastagePage() {
               const it = items.find((x) => x.id === Number(l.itemId))
               return (
                 <div key={i} className="grid grid-cols-[1fr_70px_110px_28px] gap-1.5 items-center">
-                  <select value={l.itemId} onChange={(e) => patch(i, { itemId: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px]`}>
+                  <QuickSelect value={l.itemId} onChange={(e) => patch(i, { itemId: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px]`}>
                     <option value="">— اختر الصنف —</option>
                     {active.map((x) => <option key={x.id} value={x.id}>{x.nameAr} (متاح {x.stockQty ?? 0})</option>)}
-                  </select>
+                  </QuickSelect>
                   <input value={l.qty} onChange={(e) => patch(i, { qty: e.target.value })} className={`${inputCls} !py-1.5 !text-[12px] text-center`} dir="ltr" />
                   <div className="text-[11px] text-slate-400 text-center">{it ? `${fmt(Math.round((Number(l.qty) || 0) * it.costMinor))} ${cur.symbol}` : '—'}</div>
                   <button onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} className="p-1.5 rounded text-slate-300 hover:text-rose-500"><Trash2 size={13} /></button>
@@ -185,7 +186,7 @@ export function WastagePage() {
 
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save}>🗑️ ترحيل الإتلاف وتوليد القيد</Btn>
+            <Btn onClick={save} shortcut="F9">🗑️ ترحيل الإتلاف وتوليد القيد</Btn>
           </div>
         </div>
       </Modal>

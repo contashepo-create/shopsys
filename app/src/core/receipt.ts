@@ -10,13 +10,16 @@ import type { CartLine, CartTotals, PaymentMethod } from './pos.ts'
 export type PaperWidth = '80' | '58'
 
 /** قالب الطباعة الافتراضي بعد البيع: إيصال حراري أو فاتورة A4 أو A5 (نصف الورقة — طلب المالك) */
-export type InvoiceTemplate = 'thermal' | 'a4' | 'a5'
+export type InvoiceTemplate = 'thermal' | 'a4' | 'a5' | 'tax' | 'compact' | 'delivery'
 
 /** خيارات شريط الطباعة السريع في شاشة الكاشير — تجاوز مؤقت لا يمس الإعدادات الدائمة */
 export const INVOICE_TEMPLATE_OPTIONS: { id: InvoiceTemplate; label: string; sub: string }[] = [
   { id: 'thermal', label: '🖨️ حراري', sub: 'رول 80/58مم' },
   { id: 'a4', label: '📄 A4', sub: 'ورقة كاملة' },
   { id: 'a5', label: '📃 A5', sub: 'نصف ورقة' },
+  { id: 'tax', label: '🧾 ضريبي', sub: 'A4 بتفصيل الضريبة' },
+  { id: 'compact', label: '📑 مختصر', sub: 'A4 موفر للمساحة' },
+  { id: 'delivery', label: '📦 إذن تسليم/استلام', sub: 'كميات بلا أسعار' },
 ]
 
 /** أنماط فاتورة A4 الاحترافية — منقولة ومكيّفة من قوالب logistics-web */
@@ -72,6 +75,8 @@ export interface ReceiptSettings {
   /** خانتا التوقيع — فاتورة A4 */
   showSignatures: boolean
   showFooter: boolean
+  /** خيار عابر لقالب إذن التسليم/الاستلام؛ لا يُحفظ في الإعدادات */
+  hidePrices?: boolean
 }
 
 export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
@@ -122,6 +127,8 @@ export interface ReceiptModel {
   headerLines: string[]
   /** عنوان المستند المطبوع — الافتراضي «فاتورة مبيعات»؛ للمرتجع: «مرتجع مبيعات» */
   docTitle?: string
+  /** اسم المحاسب/الكاشير الذي نفّذ الطباعة الحالية */
+  operatorName?: string
   invoiceNumber: string
   /** الرقم المرجعي للتتبع — يُطبع تحت رقم الفاتورة ويبحث به العميل لاحقاً */
   refCode: string
@@ -155,6 +162,8 @@ export function buildReceiptModel(args: {
   payment: PaymentMethod
   /** المحصل وقت البيع (الدفع المجزأ) — undefined = حسب payment */
   paidMinor?: Minor
+  /** اسم القائم بالطباعة؛ عند غيابه يستخدم اسم المالك الافتراضي */
+  operatorName?: string
   customerName: string | null
   taxPercent: number
   taxInclusive: boolean
@@ -189,6 +198,7 @@ export function buildReceiptModel(args: {
   return {
     shopName: settings.shopName || 'تَحَكَّم',
     headerLines: settings.headerLines.filter((l) => l.trim()),
+    operatorName: args.operatorName?.trim() || 'المالك',
     invoiceNumber: args.invoiceNumber,
     refCode: args.refCode ?? '',
     dateLabel: args.dateIso.slice(0, 16).replace('T', ' '),
@@ -224,6 +234,8 @@ export function buildSimpleDocModel(args: {
   rows: { nameAr: string; qty: number; unitPriceMinor: Minor; totalMinor: Minor }[]
   totalMinor: Minor
   paidMinor: Minor
+  /** اسم المحاسب/الكاشير الذي نفّذ الطباعة الحالية */
+  operatorName?: string
   settings: ReceiptSettings
   /** سطر ملخص إضافي يُبرز في الحاشية (مثلاً «مصاريف شحن وجمارك: …») */
   extraFooter?: string
@@ -241,6 +253,7 @@ export function buildSimpleDocModel(args: {
   return {
     shopName: args.settings.shopName || 'تَحَكَّم',
     headerLines: args.settings.headerLines.filter((l) => l.trim()),
+    operatorName: args.operatorName?.trim() || 'المالك',
     docTitle: args.docTitle,
     invoiceNumber: args.invoiceNumber,
     refCode: args.refCode,

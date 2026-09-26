@@ -128,7 +128,10 @@ ok(validateCar({ ...carIn, year: 1800 }, []).length > 0, 'سنة غير منطق
 const buyEntry = buildCarPurchaseEntry(500_000_00, 'cash', 'كورولا')
 ok(balanced(buyEntry) && buyEntry[0].accountCode === '1103' && buyEntry[1].accountCode === '1101', 'شراء: مخزون ← خزينة')
 ok(buildCarPurchaseEntry(100, 'credit', 'x')[1].accountCode === '2101', 'شراء آجل ← موردون')
+const mixedBuy = buildCarPurchaseEntry(1000, 'mixed', 'x', '1102', 400)
+ok(balanced(mixedBuy) && mixedBuy.some((l) => l.accountCode === '1102' && l.credit === 400) && mixedBuy.some((l) => l.accountCode === '2101' && l.credit === 600), 'شراء مختلط: بنك الآن + باقي آجل')
 const prepEntry = buildCarPrepEntry(20_000_00, 'cash', 'سمكرة')
+ok(balanced(buildCarPrepEntry(1000, 'credit', 'ورشة خارجية')) && buildCarPrepEntry(1000, 'credit', 'ورشة خارجية').some((l) => l.accountCode === '2101' && l.credit === 1000), 'تجهيز آجل على حساب 2101 بلا ورشة مسجلة')
 ok(balanced(prepEntry) && prepEntry[0].accountCode === '1103', 'التجهيز يُرسمل على المخزون')
 
 const sale = computeCarSale(600_000_00, 520_000_00, 0)

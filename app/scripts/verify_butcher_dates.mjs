@@ -43,7 +43,7 @@ const eq = (a, b, name) => { assert.equal(a, b, `${name} — الفعلي ${a} �
 const throws = (fn, name) => { assert.throws(fn, undefined, name); pass++ }
 
 /* ═══ أ) القالبان والثيمات ═══ */
-eq(ACTIVITY_TEMPLATES.length, 28, 'عدد الأنشطة 28')
+eq(ACTIVITY_TEMPLATES.length, 29, 'عدد الأنشطة 28')
 const butcher = getActivity('butcher')
 const dates = getActivity('dates')
 ok(butcher && dates, 'القالبان موجودان')
@@ -165,7 +165,7 @@ const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
   const invValue = st().items.reduce((a, i) => a + Math.round((i.stockQty ?? 0) * i.costMinor), 0)
   ok(Math.abs(bal('1103') - invValue) <= 3, `الدفتر يطابق المخزون (فرق تقريب ≤3 هللات) — دفتر ${bal('1103')} مخزون ${invValue}`)
   // بيع 2.35 كجم فخذ بالوزن — سعر شامل 15٪
-  st().postSale({ lines: [{ itemId: leg.id, nameAr: 'فخذ نعيمي', qty: 2.35, unitPriceMinor: 6000, unitCostMinor: legCost, discountPercent: 0, soldByWeight: true }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 15, taxInclusive: true, treasury: '1101' })
+  st().postSale({ lines: [{ itemId: leg.id, nameAr: 'فخذ نعيمي', qty: 2.35, unitPriceMinor: 6000, unitCostMinor: legCost, discountPercent: 0, soldByWeight: true }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 15, taxInclusive: true, treasury: '1101', priceFloorOverrideBy: 'اختبار الترحيل' })
   const sale = st().sales.at(-1)
   ok(sale.totals.taxMinor > 0, 'ضريبة 15٪ محسوبة داخل السعر')
   // زاتكا QR: TLV سليم بالحقول الخمسة
@@ -228,7 +228,7 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
   // القيمة البيعية: 160000 فاخر + 87500 وسط + 15000 تصنيع = 262500 ⇒ الفاخر ~ 128000×160/262.5
   ok(Math.abs(order.outputs[0].allocatedCostMinor - (128000 * 160000 / 262500)) <= 1, 'نصيب الفاخر بالنسبة الصحيحة (±1 هللة لبواقي التقريب للأكبر)')
   // بيع 5 كجم فاخر
-  st().postSale({ lines: [{ itemId: premium.id, nameAr: 'سكري فاخر', qty: 5, unitPriceMinor: 4000, unitCostMinor: pCost, discountPercent: 0, soldByWeight: true }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 15, taxInclusive: true, treasury: '1101' })
+  st().postSale({ lines: [{ itemId: premium.id, nameAr: 'سكري فاخر', qty: 5, unitPriceMinor: 4000, unitCostMinor: pCost, discountPercent: 0, soldByWeight: true }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 15, taxInclusive: true, treasury: '1101', priceFloorOverrideBy: 'اختبار الترحيل' })
   eq(st().items.find((i) => i.id === premium.id).stockQty, 35, 'رصيد الفاخر بعد البيع 35')
   // كل القيود متوازنة
   for (const e of st().journal) assertBalanced(e.lines)

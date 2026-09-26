@@ -16,7 +16,7 @@ const throws = (fn, name) => { try { fn(); fail++; console.error(`❌ لم ير�
 
 /* ─── القائمة الكاملة (20 نشاطاً بعد إضافة صالون/مخبز) ─── */
 const EXPECTED = [
-  'grocery', 'mobile', 'clothing', 'pharmacy', 'electronics', 'spare_parts',
+  'grocery', 'feed_trade', 'mobile', 'clothing', 'pharmacy', 'electronics', 'spare_parts',
   'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars',
   'restaurant', 'jewelry', 'laundry', 'butcher', 'dates', 'salon', 'bakery', 'realestate',
   // دفعة المالك (تغطية الأنشطة التجارية والخدمية المصرية/السعودية):

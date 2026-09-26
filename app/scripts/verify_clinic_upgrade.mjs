@@ -114,7 +114,7 @@ const docs = customerUnitDocs({
   clinicVisits: S().clinicVisits, clinicCollections: S().clinicCollections,
   linkedPatientIds: S().clinicPatients.filter((p) => p.linkedCustomerId === cust.id).map((p) => p.id),
 })
-ok(docs.some((d) => d.docLabel.includes('زيارة عيادة') && d.debitMinor === 7000), 'كشف العميل يُظهر زيارة العيادة الآجلة 70')
+ok(docs.some((d) => d.docLabel.includes('زيارة عيادة') && d.debitMinor === 10000 && d.creditMinor === 3000), 'كشف العميل يُظهر زيارة العيادة وقيمة المدفوع دائنًا')
 S().collectFromPatient(patient.id, 4000, '1101')
 const docs2 = customerUnitDocs({
   customerId: cust.id,
