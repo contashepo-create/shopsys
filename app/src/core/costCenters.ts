@@ -18,6 +18,14 @@ export interface CostCenterBudget {
   notes: string
 }
 
+/** يولد أول كود متاح لمركز جديد؛ يبقى الحقل قابلاً للتعديل قبل الحفظ. */
+export function nextCostCenterCode(existing: Pick<CostCenter, 'code'>[]): string {
+  const used = new Set(existing.map((center) => center.code.trim().toUpperCase()))
+  let sequence = 1
+  while (used.has(`CC-${String(sequence).padStart(4, '0')}`)) sequence += 1
+  return `CC-${String(sequence).padStart(4, '0')}`
+}
+
 export function validateCostCenter(input: Pick<CostCenter, 'code' | 'nameAr' | 'parentId'>, existing: CostCenter[], excludeId?: number): string[] {
   const errors: string[] = []
   const code = input.code.trim()

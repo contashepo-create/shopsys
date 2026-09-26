@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { validateCostCenter } from '../src/core/costCenters.ts'
+import { nextCostCenterCode, validateCostCenter } from '../src/core/costCenters.ts'
 import { allocateJournalLine } from '../src/core/ledger.ts'
 import { validateExpenseTemplate } from '../src/core/expenseCatalog.ts'
 import { invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter } from '../src/core/expenseReports.ts'
@@ -12,6 +12,11 @@ beforeEach(() => useDataStore.setState({ ...original, costCenters: [], expenseTe
 afterEach(() => useDataStore.setState(original))
 
 describe('المراكز العامة وبنود المصروف القابلة لإعادة الاستخدام', () => {
+  it('يولد أول كود متاح مع إبقاء الأكواد المخصصة قابلة للاستخدام', () => {
+    expect(nextCostCenterCode([])).toBe('CC-0001')
+    expect(nextCostCenterCode([{ code: 'CC-0001' }, { code: 'مبيعات' }, { code: 'CC-0003' }])).toBe('CC-0002')
+  })
+
   it('يتحقق من عدم تكرار كود واسم المركز', () => {
     const existing = [{ id: 1, code: 'OPS', nameAr: 'تشغيل', isActive: true, notes: '' }]
     expect(validateCostCenter({ code: ' ops ', nameAr: 'جديد' }, existing)).toContain('كود مركز التكلفة مستخدم مسبقاً')
