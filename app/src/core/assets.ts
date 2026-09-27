@@ -155,6 +155,77 @@ export function buildDepreciationEntry(totalMinor: Minor, monthLabel: string): J
   return lines
 }
 
+/* ─── استبعاد الأصل: بيع أو خردة أو تلف (سد فجوة تدقيق المالك) ─── */
+
+/** حساب أرباح بيع الأصول الثابتة — إيراد غير تشغيلي */
+export const ASSET_GAIN_ACCOUNT = '4116'
+/** حساب خسائر بيع/استبعاد الأصول الثابتة */
+export const ASSET_LOSS_ACCOUNT = '5118'
+
+/** طريقة الخروج: بيع بمقابل، أو خردة/تلف بلا مقابل */
+export type AssetDisposalMode = 'sale' | 'scrap'
+
+export const ASSET_DISPOSAL_LABELS: Record<AssetDisposalMode, string> = {
+  sale: 'بيع الأصل (بمقابل نقدي أو على العميل)',
+  scrap: 'خردة أو تلف أو فقد (بلا مقابل)',
+}
+
+export interface AssetDisposalPreview {
+  costMinor: Minor
+  accumulatedMinor: Minor // مجمع إهلاك هذا الأصل حتى اللحظة
+  bookValueMinor: Minor // القيمة الدفترية = التكلفة − المجمع
+  proceedsMinor: Minor // ثمن البيع (صفر للخردة)
+  resultMinor: Minor // موجب = ربح، سالب = خسارة
+}
+
+/**
+ * حصيلة الاستبعاد قبل الترحيل — يراها المستخدم في النافذة كما سيراها في الدفتر.
+ * القيمة الدفترية تُحسب من جدول الإهلاك نفسه لا من قسمة تقريبية، فلا يتبقى مليم معلّق.
+ */
+export function assetDisposalPreview(
+  asset: { costMinor: Minor; salvageMinor: Minor; lifeMonths: number; monthsDepreciated: number },
+  proceedsMinor: Minor,
+): AssetDisposalPreview {
+  const schedule = depreciationSchedule(asset.costMinor, asset.salvageMinor, asset.lifeMonths)
+  const accumulated = schedule.slice(0, asset.monthsDepreciated).reduce((x, y) => x + y, 0)
+  const book = asset.costMinor - accumulated
+  return {
+    costMinor: asset.costMinor,
+    accumulatedMinor: accumulated,
+    bookValueMinor: book,
+    proceedsMinor,
+    resultMinor: proceedsMinor - book,
+  }
+}
+
+/**
+ * قيد الاستبعاد — يُخرج الأصل ومجمع إهلاكه من الدفاتر معاً:
+ *   مدين 1202 بمجمع الإهلاك (إقفاله)
+ *   مدين الخزينة/العميل بثمن البيع (إن وُجد)
+ *   دائن 1201 بالتكلفة الأصلية كاملةً
+ *   والفرق: دائن 4116 ربحاً أو مدين 5118 خسارةً
+ * لا يبقى للأصل أثر في الميزانية بعد هذا القيد — وهذا هو الفرق بين «استبعاد» و«تصفير يدوي».
+ */
+export function buildAssetDisposalEntry(args: {
+  preview: AssetDisposalPreview
+  assetLabel: string
+  /** حساب تحصيل الثمن: خزينة/بنك عند البيع النقدي، أو 1104 عند البيع على عميل */
+  proceedsAccount?: string
+}): JournalLine[] {
+  const { costMinor, accumulatedMinor, proceedsMinor, resultMinor } = args.preview
+  if (costMinor <= 0) throw new Error('تكلفة الأصل غير صالحة')
+  if (proceedsMinor < 0) throw new Error('ثمن البيع لا يكون سالباً')
+  if (proceedsMinor > 0 && !args.proceedsAccount) throw new Error('حدد الخزينة أو الحساب الذي استلم ثمن البيع')
+  const lines: JournalLine[] = []
+  if (accumulatedMinor > 0) lines.push({ accountCode: '1202', debit: accumulatedMinor, credit: 0, note: `إقفال مجمع إهلاك ${args.assetLabel}` })
+  if (proceedsMinor > 0) lines.push({ accountCode: args.proceedsAccount!, debit: proceedsMinor, credit: 0, note: `ثمن بيع ${args.assetLabel}` })
+  if (resultMinor < 0) lines.push({ accountCode: ASSET_LOSS_ACCOUNT, debit: -resultMinor, credit: 0, note: `خسارة استبعاد ${args.assetLabel}` })
+  lines.push({ accountCode: '1201', debit: 0, credit: costMinor, note: `إخراج ${args.assetLabel} من الأصول` })
+  if (resultMinor > 0) lines.push({ accountCode: ASSET_GAIN_ACCOUNT, debit: 0, credit: resultMinor, note: `ربح بيع ${args.assetLabel}` })
+  assertBalanced(lines)
+  return lines
+}
+
 /* ─── تقرير الأصول ─── */
 
 export interface AssetReportRow {

@@ -182,7 +182,7 @@ export function Header({ title }: { title: string }) {
           )}
         </button>
         {bellOpen && (
-          <div className="absolute left-0 top-full mt-2 w-80 max-h-96 overflow-y-auto rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700 shadow-2xl z-50 anim-in">
+          <div className="absolute left-0 top-full z-[70] mt-2 w-80 max-h-96 overflow-y-auto rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700 shadow-2xl z-50 anim-in">
             <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <span className="text-[12px] font-extrabold text-slate-700 dark:text-slate-200">
                 🔔 التنبيهات {unread.length > 0 && <span className="text-rose-500 font-bold">({unread.length} جديد)</span>}

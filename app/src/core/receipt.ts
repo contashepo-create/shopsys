@@ -70,6 +70,8 @@ export interface ReceiptSettings {
   showItemCounts: boolean
   showDiscount: boolean
   showTaxSummary: boolean
+  /** اسم القائم بالطباعة على الإيصال الحراري (طلب المالك: قابل للإظهار والإخفاء) */
+  showOperator: boolean
   /** المبلغ كتابةً (تفقيط) — فاتورة A4 */
   showWords: boolean
   /** خانتا التوقيع — فاتورة A4 */
@@ -105,6 +107,7 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   showItemCounts: true,
   showDiscount: true,
   showTaxSummary: true,
+  showOperator: true,
   showWords: true,
   showSignatures: true,
   showFooter: true,

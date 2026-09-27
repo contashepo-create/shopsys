@@ -83,7 +83,10 @@ export function summarizeShift(shift: Shift, sales: ShiftDoc[], returns: ShiftDo
 /** التحقق قبل فتح وردية: لا ورديتين مفتوحتين معاً، ولا رصيد سالب */
 export function validateOpenShift(openingCashMinor: Minor, shifts: Shift[]): string[] {
   const errors: string[] = []
-  if (openingCashMinor < 0) errors.push('رصيد الدرج الافتتاحي لا يكون سالباً')
+  // AUDIT-010: قيمة غير رقمية (undefined/NaN/كسر) كانت تمر صامتة فتجعل
+  // «المتوقع في الدرج» = NaN وتُفسد فرق الوردية وتسويته — الرفض هنا مبكراً.
+  if (!Number.isInteger(openingCashMinor)) errors.push('رصيد الدرج الافتتاحي مطلوب بالقرش الصحيح')
+  else if (openingCashMinor < 0) errors.push('رصيد الدرج الافتتاحي لا يكون سالباً')
   if (shifts.some((s) => s.status === 'open')) errors.push('توجد وردية مفتوحة بالفعل — أقفلها أولاً')
   return errors
 }
