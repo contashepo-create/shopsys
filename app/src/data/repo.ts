@@ -37,6 +37,7 @@ import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlemen
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
 import { STANDARD_COA, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
+import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
 import { getCountry } from '../core/countries.ts'
 import { DEFAULT_LOYALTY, earnedPoints, redeemValue, validateRedeem, buildLoyaltyRedeemEntry, type LoyaltySettings } from '../core/loyalty.ts'
 import { validateCustomAccount, customAsAccounts, rootOfParent, type CustomAccount } from '../core/customAccounts.ts'
@@ -2522,7 +2523,18 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const patch = typeof partial === 'function' ? (partial as (s: DataState) => Partial<DataState>)(state) : partial as Partial<DataState>
         if (patch && (patch as Partial<DataState>).journal) {
-          assertTreasuryNotNegative(state.journal, (patch as Partial<DataState>).journal!, (patch as Partial<DataState>).treasuries ?? state.treasuries)
+          // توحيد التاريخ أولاً: كل قيد بصيغة YYYY-MM-DD مهما أرسل المسار
+          const rawJournal = (patch as Partial<DataState>).journal!
+          const nextJournal = normalizeJournalDates(rawJournal) as JournalEntry[]
+          if (nextJournal !== rawJournal) (patch as Partial<DataState>).journal = nextJournal
+          const nextTreasuries = (patch as Partial<DataState>).treasuries ?? state.treasuries
+          // الحارس المركزي للدفتر (AUDIT-002/003): توازن + نظافة سطر + مصدر + سنة مفتوحة
+          // + لا تعديل صامت — يُرفض القيد المختل قبل أي كتابة فلا يبقى أثر جزئي أبداً.
+          assertJournalIntegrity(state.journal, nextJournal, {
+            coa: [...fullCoa(STANDARD_COA, nextTreasuries), ...customAsAccounts((patch as Partial<DataState>).customAccounts ?? state.customAccounts ?? [])],
+            fiscalYears: useAppStore.getState().fiscalYears,
+          })
+          assertTreasuryNotNegative(state.journal, nextJournal, nextTreasuries)
         }
         // سجل النشاطات (طلب المالك): كل كتابة تولد أحداث تدقيق تلقائياً —
         // «من فعل ماذا ومتى» بلا اعتماد على تسجيل يدوي في كل إجراء
