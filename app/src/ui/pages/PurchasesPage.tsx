@@ -732,7 +732,7 @@ export function PurchasesPage() {
             </div>
             {managedExpenses.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{managedExpenses.map((expense, index) => <span key={index} className="rounded-lg bg-white/70 px-2 py-1 text-[11px] dark:bg-slate-900/40">{expense.nameAr}: {fmt(expense.amountMinor)} {expense.paidBy === 'payable' ? '· مستحق' : ''}</span>)}</div>}
           </div>
-          <Modal open={expensesOpen} onClose={() => setExpensesOpen(false)} title="تفاصيل مصاريف الشراء" wide>
+          <Modal open={expensesOpen} onClose={() => setExpensesOpen(false)} title="تفاصيل مصاريف الشراء" extraWide>
             <PurchaseExpenseManager
               expenses={managedExpenses}
               onChange={setManagedExpenses}

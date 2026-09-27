@@ -147,9 +147,23 @@ html.dark { color-scheme: dark; }
 .anim-float { animation: floatY 4s ease-in-out infinite; }
 .anim-orb { animation: orbDrift 14s ease-in-out infinite; }
 
-.anim-up { animation: fadeSlideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.anim-in { animation: fadeIn 0.4s ease both; }
-.anim-pop { animation: popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+/* بلاغ المالك: «النوافذ المنبثقة يختفي جزء منها خلف الحقول».
+   السبب الجذري: fill-mode=both كان يُبقي transform نهائياً (translateY(0)/scale(1))
+   على كل بطاقة متحركة، وأي transform يجعل العنصر «كتلة احتواء» للعناصر
+   position:fixed ويقصّها بـoverflow. backwards يعطي نفس الحركة تماماً ثم يعيد
+   العنصر لحالته الطبيعية بلا transform، فتظهر القوائم والنوافذ كاملة فوق كل شيء. */
+.anim-up { animation: fadeSlideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+.anim-in { animation: fadeIn 0.4s ease backwards; }
+.anim-pop { animation: popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) backwards; }
+
+/* ─── سلّم طبقات موحّد لكل ما يطفو فوق الصفحة (طلب المالك: لا يختفي جزء من أي نافذة) ───
+   كل هذه الطبقات تُركَّب على <body> مباشرة عبر createPortal فلا يحبسها أي سياق تراكم:
+   layer-modal (1000) النوافذ المنبثقة · layer-picker (2000) قوائم البحث والمنتقيات
+   · layer-approval (3000) حوارات اعتماد المشرف · layer-toast (4000) التنبيهات. */
+.layer-modal { z-index: 1000; }
+.layer-picker { z-index: 2000; }
+.layer-approval { z-index: 3000; }
+.layer-toast { z-index: 4000; }
 
 /* تقليل الحركة (إعداد المظهر) — يوقف كل الحركات والانتقالات */
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {

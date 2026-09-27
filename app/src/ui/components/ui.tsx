@@ -171,6 +171,19 @@ export function DecimalInput({
   return <input {...props} type="text" inputMode="decimal" value={displayValue} onFocus={handleFocus} onChange={handleChange} onBlur={handleBlur} />
 }
 
+/**
+ * بوابة عرض فوق كل الصفحة — تركّب المحتوى على <body> مباشرة.
+ *
+ * بلاغ المالك: «نوافذ منبثقة يختفي جزء منها خلف حقل أو خانة». السبب أن أي
+ * حاوية بـtransform/overflow تحبس العناصر الثابتة داخلها وتقصّها؛ الحل أن كل
+ * طبقة عائمة (نافذة، قائمة بحث، حوار اعتماد، تنبيه) تخرج من الشجرة إلى body
+ * مع طبقة من سلّم `layer-*` الموحّد في index.css.
+ */
+export function OverlayPortal({ children }: { children: ReactNode }) {
+  if (typeof document === 'undefined') return null
+  return createPortal(children, document.body)
+}
+
 export function Modal({
   open, onClose, title, children, wide, extraWide, bare,
 }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean; extraWide?: boolean; bare?: boolean }) {
@@ -185,7 +198,7 @@ export function Modal({
      anim-in/anim-up (animation تنشئ stacking context) فيصبح z-50 محلياً داخل الصفحة ويعلوه
      هيدر sticky z-20 الخارجي. الحل الجذري: createPortal إلى <body> فيخرج المودال من أي سياق. */
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" dir="rtl">
+    <div className="layer-modal fixed inset-0 flex items-center justify-center p-4" dir="rtl">
       {/* إصلاح الظل الغريب: الحركة كانت مزدوجة (حاوية + لوحة) فيومض الـ blur — الآن التعتيم يتحرك وحده بلا blur متحرك */}
       <div className="absolute inset-0 bg-slate-900/55 anim-in" onClick={onClose} />
       <div role="dialog" aria-modal="true" className={`relative anim-pop w-full ${extraWide ? 'max-w-6xl' : wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[92vh] overflow-y-auto rounded-3xl bg-white dark:bg-card-dark shadow-2xl border border-slate-200 dark:border-slate-700`}>
@@ -273,7 +286,7 @@ export function ToastHost() {
   const { msg, kind } = useToast()
   if (!msg) return null
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] anim-pop" dir="rtl">
+    <div className="layer-toast fixed bottom-6 left-1/2 -translate-x-1/2 anim-pop" dir="rtl">
       <div className={`px-5 py-3 rounded-2xl shadow-2xl text-sm font-bold text-white ${kind === 'success' ? 'bg-gradient-to-l from-emerald-600 to-teal-500' : 'bg-gradient-to-l from-rose-600 to-red-500'}`}>
         {kind === 'success' ? '✅ ' : '⚠️ '}{msg}
       </div>

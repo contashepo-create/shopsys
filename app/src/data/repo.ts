@@ -6038,10 +6038,21 @@ export const useDataStore = create<DataState>()(
         // 1) حساب كل سطر بالنواة الخالصة (يرمي لو صافي سطر سالب)
         const computed: PayrollLineComputed[] = args.lines.map(computePayrollLine)
         // 2) تحقق شامل قبل أي كتابة
+        // مسير راتب موظف واحد (طلب المالك): الشهر يقبل أكثر من مسير، والممنوع
+        // هو تكرار صرف راتب الموظف نفسه في الشهر نفسه — برسالة باسمه لا برقمه.
+        const monthRuns = state.payrollRuns.filter((r) => r.month === args.month)
+        const alreadyPaid = computed
+          .map((line) => line.employeeId)
+          .filter((id) => monthRuns.some((run) => run.lines.some((line) => line.employeeId === id)))
+        if (alreadyPaid.length) {
+          const names = [...new Set(alreadyPaid)].map((id) => state.employees.find((e) => e.id === id)?.nameAr ?? `#${id}`)
+          throw new Error(`راتب ${monthLabelAr(args.month)} مرحّل بالفعل لـ«${names.join('»، «')}» — لا يتكرر صرف راتب الموظف نفسه في الشهر نفسه`)
+        }
         const errors = validatePayrollRun({
           month: args.month,
           lines: computed,
           existingMonths: state.payrollRuns.map((r) => r.month),
+          existingRuns: state.payrollRuns.map((r) => ({ month: r.month, employeeIds: r.lines.map((line) => line.employeeId) })),
         })
         if (errors.length) throw new Error(errors.join(' — '))
 

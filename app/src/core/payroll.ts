@@ -71,19 +71,38 @@ export function computePayrollTotals(lines: PayrollLineComputed[]): PayrollTotal
   }
 }
 
+/** ملخص مسير مرحّل — شهره وموظفوه (لمنع تكرار صرف راتب الموظف نفسه في الشهر) */
+export interface PostedPayrollSummary {
+  month: string
+  employeeIds: number[]
+}
+
 /**
- * التحقق قبل الترحيل: شهر صالح YYYY-MM، لا مسير مكرر لنفس الشهر،
- * سطر واحد على الأقل، وصافي إجمالي أكبر من صفر
+ * التحقق قبل الترحيل: شهر صالح YYYY-MM، لا تكرار لصرف راتب الشهر،
+ * سطر واحد على الأقل، وصافي إجمالي أكبر من صفر.
+ *
+ * طلب المالك (مسير راتب موظف واحد): الشهر الواحد يقبل أكثر من مسير ما دام
+ * الموظف نفسه لا يتكرر — تُمرَّر عندها `existingRuns` فتصير القاعدة «لا يُصرف
+ * راتب الموظف مرتين في الشهر» بدل «مسير واحد للشهر». وعند غيابها تبقى القاعدة
+ * القديمة (مسير واحد لكل شهر) كما هي للتوافق مع الاستدعاءات السابقة.
  */
 export function validatePayrollRun(args: {
   month: string
   lines: PayrollLineComputed[]
   existingMonths: string[]
+  existingRuns?: PostedPayrollSummary[]
 }): string[] {
   const errors: string[] = []
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(args.month)) errors.push('صيغة الشهر يجب أن تكون YYYY-MM')
-  else if (args.existingMonths.includes(args.month)) errors.push(`يوجد مسير رواتب مرحّل بالفعل لشهر ${args.month}`)
+  const monthValid = /^\d{4}-(0[1-9]|1[0-2])$/.test(args.month)
+  if (!monthValid) errors.push('صيغة الشهر يجب أن تكون YYYY-MM')
+  else if (args.existingRuns) {
+    const paid = new Set(args.existingRuns.filter((run) => run.month === args.month).flatMap((run) => run.employeeIds))
+    const repeated = [...new Set(args.lines.map((line) => line.employeeId))].filter((id) => paid.has(id))
+    if (repeated.length) errors.push(`راتب شهر ${args.month} مرحّل بالفعل للموظف رقم ${repeated.join('، ')} — لا يتكرر صرفه لنفس الموظف`)
+  } else if (args.existingMonths.includes(args.month)) errors.push(`يوجد مسير رواتب مرحّل بالفعل لشهر ${args.month}`)
   if (args.lines.length === 0) errors.push('المسير فارغ — أضف موظفاً واحداً على الأقل')
+  const duplicates = args.lines.map((line) => line.employeeId).filter((id, index, all) => all.indexOf(id) !== index)
+  if (duplicates.length) errors.push(`الموظف رقم ${[...new Set(duplicates)].join('، ')} مكرر داخل المسير نفسه`)
   const net = args.lines.reduce((a, l) => a + l.netMinor, 0)
   if (args.lines.length > 0 && net <= 0) errors.push('صافي المسير يجب أن يكون أكبر من صفر')
   return errors

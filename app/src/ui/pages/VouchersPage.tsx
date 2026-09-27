@@ -464,15 +464,22 @@ export function VouchersPage() {
                 {needsParty ? (
                   <PartyQuickPicker parties={kind === 'receipt' ? customers : suppliers} value={partyId} onChange={(id) => { setPartyId(id); setAllocationDraft({}) }} cashLabel="اختر الطرف" label={kind === 'receipt' ? 'بحث العميل' : 'بحث المورد'} showCash={false} />
                 ) : (
-                  <div className="flex min-h-10 items-center gap-2 rounded-lg bg-[#eff4ff] px-3 text-sm text-[#45464e]">
-                    <Search size={17} className="text-[#75777f]" />
-                    <span>{counters.find((item) => item.code === counter)?.label ?? 'اختر الحساب المقابل من القائمة'}</span>
+                  /* بلاغ المالك: جملة «اختر الحساب المقابل من القائمة» كانت نصاً ميتاً فوق القائمة.
+                     صارت الخانة نفسها هي البحث: اكتب أول حرف من اسم الحساب أو كوده فتُفلتر القائمة فوراً. */
+                  <div className="relative">
+                    <Search size={16} className="pointer-events-none absolute right-2.5 top-1/2 z-10 -translate-y-1/2 text-[#75777f]" />
+                    <QuickSelect aria-label="بحث الحساب المقابل" value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0); setAllocationDraft({}) }} className="h-10 w-full rounded-lg border border-[#c5c6cf] bg-[#f8f9ff] pr-8 text-sm text-[#0f2042] outline-none focus:border-[#3f5f92]">
+                      <option value="">ابحث بالاسم أو الكود ثم Enter…</option>
+                      {counters.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.label}</option>)}
+                    </QuickSelect>
                   </div>
                 )}
-                <QuickSelect aria-label="الحساب المقابل" value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0); setAllocationDraft({}) }} className="h-10 border-[#c5c6cf] bg-[#f8f9ff] text-sm">
-                  <option value="">اختر الحساب المقابل…</option>
-                  {counters.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
-                </QuickSelect>
+                {!needsParty && (
+                  <div className="flex items-center justify-between rounded-lg bg-[#eff4ff] px-3 py-1.5 text-[11px] font-bold text-[#254778]">
+                    <span>الحساب المختار</span>
+                    <span>{counter ? `${counter} — ${counters.find((item) => item.code === counter)?.label ?? ''}` : 'لم يُحدد بعد'}</span>
+                  </div>
+                )}
                 {needsParty && partyId > 0 && liveBalance !== null && (
                   <div className={`flex items-center justify-between rounded-lg px-3 py-1.5 text-[11px] font-bold ${liveBalance > 0 ? 'bg-rose-50 text-rose-700' : liveBalance < 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-600'}`}>
                     <span>الرصيد القائم قبل السند</span>
