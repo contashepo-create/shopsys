@@ -74,7 +74,7 @@ import { buildYearClosingLines, validateYearClose, dateInClosedYear, type Fiscal
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
-import { validateAsset, buildAssetPurchaseEntry, buildAssetPaymentEntry, buildAssetInstallments, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput, type AssetFunding, type AssetInstallment } from '../core/assets.ts'
+import { validateAsset, assetDisposalPreview, buildAssetDisposalEntry, type AssetDisposalMode, buildAssetPurchaseEntry, buildAssetPaymentEntry, buildAssetInstallments, buildDepreciationEntry, monthlyDepreciation, nextDepreciationMonth, type AssetInput, type AssetFunding, type AssetInstallment } from '../core/assets.ts'
 import { parseSerialsInput, markSold, markReturned, markReturnedToSupplier, type SerialUnit } from '../core/serials.ts'
 import { computeUsageBilling, buildExtraUsageEntry, validateOperatorShift, isValidMeterReading, usageHours, shiftsSummary, equipmentProfitability, EQUIPMENT_COST_LABELS, type RateType, type OperatorShift, type EquipmentCostKind } from '../core/rentalMeter.ts'
 import { validateLabTest, validateReferrer, computeLabTotals, buildLabOrderEntry, commissionFor, buildCommissionAccrualEntry, buildCommissionPayoutEntry, canTransition, STARTER_TESTS, ageYears as ageYearsFn, matchRefRange as matchRefRangeFn, evaluateResult as evaluateResultFn, type LabTest, type Referrer, type TestStatus, type LabOrderTotals, type Gender } from '../core/lab.ts'
@@ -698,6 +698,17 @@ export interface FixedAsset {
   paidMinor?: number // المدفوع عند الاقتناء
   /** جدول أقساط الشراء الآجل (يظهر بملف الأصل مع المسدد والمتبقي وتواريخ الصرف) */
   installments?: AssetInstallment[]
+  /** استبعاد الأصل (بيع/خردة): بعده يخرج من الميزانية ويتوقف إهلاكه */
+  disposal?: {
+    date: string
+    mode: AssetDisposalMode
+    proceedsMinor: number
+    proceedsAccount: string | null
+    bookValueMinor: number
+    resultMinor: number // موجب ربح · سالب خسارة
+    reason: string
+    journalEntryId: number
+  } | null
   /** سدادات الأصل: كل دفعة بقيدها وتاريخها */
   payments?: { id: number; date: string; amountMinor: number; treasury: string; journalEntryId: number; installmentSeq: number | null }[]
 }
@@ -2334,6 +2345,8 @@ interface DataState {
   payAssetInstallment: (args: { assetId: number; amountMinor: number; treasury: TreasuryAccount }) => FixedAsset
   /** متبقي الدين على أصل (لسند الصرف وشاشة الملف) */
   getAssetDue: (assetId: number) => { totalDueMinor: number; paidMinor: number; remainingMinor: number; nextInstallment: AssetInstallment | null }
+  /** استبعاد أصل ثابت: بيع بمقابل أو خردة — يُخرج التكلفة ومجمع الإهلاك ويُثبت الربح/الخسارة */
+  disposeAsset: (args: { assetId: number; mode: AssetDisposalMode; proceedsMinor: number; proceedsAccount?: string | null; reason: string; date?: string }) => FixedAsset
   /** استحقاق عمولة خارجية للمنشأة لدى الغير: 1112 / 4112 */
   /** تسجيل شخص/جهة عمولات — إلزامي قبل تسجيل أي عمولة (طلب المالك) */
   addCommissionParty: (args: { nameAr: string; phone: string; kind: string; notes: string }) => CommissionParty
@@ -10608,6 +10621,63 @@ export const useDataStore = create<DataState>()(
         return { totalDueMinor: totalDue, paidMinor: paid, remainingMinor: remaining, nextInstallment }
       },
 
+      disposeAsset: (args) => {
+        const state = get()
+        const asset = state.assets.find((a) => a.id === args.assetId)
+        if (!asset) throw new Error('الأصل غير موجود')
+        if (asset.disposal) throw new Error(`الأصل ${asset.assetNumber} مستبعد بالفعل بتاريخ ${asset.disposal.date} — لا يُستبعد مرتين`)
+        if (!args.reason.trim()) throw new Error('اذكر سبب الاستبعاد (بيع/خردة/تلف) — يظهر في الدفتر')
+        const proceeds = args.mode === 'scrap' ? 0 : args.proceedsMinor
+        if (!Number.isInteger(proceeds) || proceeds < 0) throw new Error('ثمن البيع يجب أن يكون رقماً صحيحاً غير سالب')
+        // الدين المتبقي على الأصل لا يختفي ببيعه — يُسدَّد للمورد أولاً كي لا يضيع التزام من الدفاتر
+        const due = get().getAssetDue(asset.id)
+        if (due.remainingMinor > 0) throw new Error(`على الأصل ${asset.assetNumber} متبقٍّ للمورد ${(due.remainingMinor / 100).toFixed(2)} — سدّده قبل الاستبعاد`)
+        const proceedsAccount = proceeds > 0 ? (args.proceedsAccount || '1101') : null
+        if (proceeds > 0) {
+          const isTreasury = state.treasuries.some((t) => t.code === proceedsAccount)
+          if (!isTreasury && proceedsAccount !== '1104') throw new Error('حساب تحصيل الثمن يجب أن يكون خزينة/بنك أو ذمم عملاء 1104')
+          if (isTreasury) {
+            const errors = validateTreasuryAccess(state.appUsers.find((u) => u.id === state.currentUserId)?.treasuryAccess, proceedsAccount!, 'receipt', proceeds)
+            if (errors.length) throw new Error(errors.join(' — '))
+          }
+        }
+        const preview = assetDisposalPreview(asset, proceeds)
+        const now = new Date().toISOString()
+        const date = args.date ?? now.slice(0, 10)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date,
+          description: `استبعاد أصل ${asset.assetNumber} — ${asset.nameAr}: ${args.reason.trim()}`,
+          sourceType: 'asset_disposal',
+          sourceId: asset.id,
+          lines: buildAssetDisposalEntry({ preview, assetLabel: `${asset.assetNumber} ${asset.nameAr}`, proceedsAccount: proceedsAccount ?? undefined }),
+          createdBy: activeUserName(get()),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        const disposed: FixedAsset = {
+          ...asset,
+          disposal: {
+            date,
+            mode: args.mode,
+            proceedsMinor: proceeds,
+            proceedsAccount,
+            bookValueMinor: preview.bookValueMinor,
+            resultMinor: preview.resultMinor,
+            reason: args.reason.trim(),
+            journalEntryId: entryId,
+          },
+        }
+        set({
+          assets: state.assets.map((a) => (a.id === asset.id ? disposed : a)),
+          journal: [...state.journal, entry],
+        })
+        return disposed
+      },
+
       addCommissionParty: (args) => {
         const state = get()
         const errors = validateCommissionParty(args, state.commissionParties)
@@ -11354,7 +11424,7 @@ export const useDataStore = create<DataState>()(
         const nowMonth = new Date().toISOString().slice(0, 7)
         // الأصول المستحقة: لم يكتمل عمرها، وشهرها التالي ≤ الشهر الحالي (لا إهلاك مستقبلي)
         const due = state.assets.filter(
-          (a) => a.monthsDepreciated < a.lifeMonths && nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated) <= nowMonth,
+          (a) => !a.disposal && a.monthsDepreciated < a.lifeMonths && nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated) <= nowMonth,
         )
         if (due.length === 0) throw new Error('لا إهلاك مستحقاً — كل الأصول مُهلَكة حتى هذا الشهر')
 
@@ -11392,7 +11462,7 @@ export const useDataStore = create<DataState>()(
           const state = get()
           const nowMonth = new Date().toISOString().slice(0, 7)
           const due = state.assets.some(
-            (a) => a.monthsDepreciated < a.lifeMonths && nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated) <= nowMonth,
+            (a) => !a.disposal && a.monthsDepreciated < a.lifeMonths && nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated) <= nowMonth,
           )
           if (!due) break
           try {

@@ -7,6 +7,7 @@ import type { PurchaseExpense, Vehicle } from '../../data/repo.ts'
 import type { CustodyFile } from '../../core/custody.ts'
 import { Btn, DecimalInput, Field, inputCls, Modal, useToast } from './ui.tsx'
 import { QuickSelect } from './KeyboardPickers.tsx'
+import { DocSectionHead } from './DocSection.tsx'
 
 /**
  * محرر مصاريف فاتورة الشراء — أُعيد تصميمه بنمط سند القبض/الصرف (طلب المالك):
@@ -61,17 +62,6 @@ function blankFromTemplate(template: ExpenseTemplate | undefined, defaultTreasur
     costCenterId: null,
     vehicleId: null,
   }
-}
-
-/** عنوان قسم داخل بطاقة المصروف — نفس نَفَس أقسام السند */
-function SectionHead({ step, icon, title, hint }: { step: string; icon: React.ReactNode; title: string; hint?: string }) {
-  return (
-    <div className="mb-2 flex flex-wrap items-center gap-2">
-      <span className="grid h-5 w-5 place-items-center rounded-full bg-[#0f2042] text-[10px] font-black text-white">{step}</span>
-      <h4 className="flex items-center gap-1.5 text-[12.5px] font-bold text-[#0f2042]">{icon}{title}</h4>
-      {hint && <span className="text-[10px] text-[#75777f]">{hint}</span>}
-    </div>
-  )
 }
 
 export function PurchaseExpenseManager({
@@ -147,30 +137,30 @@ export function PurchaseExpenseManager({
     if (expense.paidBy === 'supplier') acc.onSupplier += parts.total
     return acc
   }, { total: 0, tax: 0, inventory: 0, period: 0, onSupplier: 0 })
-  const cardCls = 'rounded-xl bg-white p-3.5 shadow-sm ring-1 ring-[#dce9ff] dark:bg-slate-900/40 dark:ring-slate-700'
-  const fieldCls = 'h-10 w-full rounded-lg border border-[#c5c6cf] bg-[#f8f9ff] px-3 text-sm text-[#0f2042] outline-none focus:border-[#3f5f92] dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100'
+  const cardCls = 'rounded-xl doc-card doc-ring p-3.5'
+  const fieldCls = 'h-10 w-full rounded-lg border doc-line doc-tint px-3 text-sm doc-ink outline-none focus:border-[color:var(--doc-accent)] dark:text-slate-100'
 
-  return <div dir="rtl" className="space-y-3.5 rounded-2xl bg-[#f8f9ff] p-3.5 text-[#0b1c30] dark:bg-slate-900/30 dark:text-slate-100">
+  return <div dir="rtl" className="space-y-3.5 rounded-2xl doc-sheet p-3.5">
     {/* شريط الملخص — مثل ترويسة السند */}
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#0f2042] px-4 py-3 text-white">
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl doc-head px-4 py-3">
       <div className="flex items-center gap-2.5">
         <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/10"><Receipt size={18} /></span>
         <div>
           <b className="block text-sm">مصاريف الفاتورة والتكلفة المحمّلة</b>
-          <span className="text-[10.5px] text-[#d6e3ff]">{expenses.length} بند · كل بند له حسابه ومصدر سداده وقيده المستقل</span>
+          <span className="text-[10.5px] doc-head-sub">{expenses.length} بند · كل بند له حسابه ومصدر سداده وقيده المستقل</span>
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-[10.5px]">
         <span className="rounded-lg bg-white/10 px-2.5 py-1.5">على المخزون <b className="font-mono">{money(totals.inventory)}</b></span>
         <span className="rounded-lg bg-white/10 px-2.5 py-1.5">مصروف فترة <b className="font-mono">{money(totals.period)}</b></span>
         {totals.tax > 0 && <span className="rounded-lg bg-white/10 px-2.5 py-1.5">ضريبة <b className="font-mono">{money(totals.tax)}</b></span>}
-        <span className="rounded-lg bg-[#6ffbbe] px-3 py-1.5 font-bold text-[#002113]">الإجمالي <b className="font-mono">{money(totals.total)}</b></span>
+        <span className="rounded-lg bg-emerald-300 px-3 py-1.5 font-bold text-emerald-950">الإجمالي <b className="font-mono">{money(totals.total)}</b></span>
       </div>
     </div>
 
     {/* ① اختيار البند */}
     <section className={cardCls}>
-      <SectionHead step="١" icon={<Search size={15} className="text-[#3f5f92]" />} title="اختر بند المصروف" hint="اكتب أول حرف من اسم المصروف ثم Enter" />
+      <DocSectionHead step="١" icon={<Search size={15} className="doc-accent" />} title="اختر بند المصروف" hint="اكتب أول حرف من اسم المصروف ثم Enter" />
       <div className="flex flex-wrap items-end gap-2">
         <div className="min-w-[240px] flex-1">
           <QuickSelect aria-label="بحث قالب المصروف" className={fieldCls} value={templateChoice} onChange={(event) => chooseTemplate(event.target.value)}>
@@ -180,11 +170,11 @@ export function PurchaseExpenseManager({
         </div>
         <Btn variant="soft" type="button" onClick={() => setNewTemplateOpen(true)}><Plus size={15} /> قالب جديد</Btn>
       </div>
-      <p className="mt-2 text-[10.5px] text-[#75777f]">يملأ القالب اسم المصروف وحسابه ومعالجته ومركز توزيعه — ثم تحدد أنت القيمة ومصدر السداد بالأسفل.</p>
+      <p className="mt-2 text-[10.5px] doc-faint">يملأ القالب اسم المصروف وحسابه ومعالجته ومركز توزيعه — ثم تحدد أنت القيمة ومصدر السداد بالأسفل.</p>
     </section>
 
     {expenses.length === 0 && (
-      <div className="rounded-xl border border-dashed border-[#c5c6cf] bg-white/60 p-6 text-center text-xs text-[#75777f] dark:bg-slate-900/20">
+      <div className="rounded-xl border border-dashed doc-line doc-tint p-6 text-center text-xs doc-faint">
         لا مصروف على هذه الفاتورة بعد — ابحث عن بند بالأعلى لإضافته.
       </div>
     )}
@@ -197,26 +187,26 @@ export function PurchaseExpenseManager({
         : expense.paidBy === 'treasury' ? `${treasuries.find((treasury) => treasury.code === (expense.payAccount ?? defaultTreasury))?.nameAr ?? 'الخزينة'} (${expense.payAccount ?? defaultTreasury})`
         : expense.paidBy === 'custody' ? `عهدة ${custodyFiles.find((file) => file.id === expense.custodyFileId)?.fileNumber ?? '—'} (1108)`
         : 'مصاريف مستحقة (2117)'
-      return <section key={index} className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-[#dce9ff] dark:bg-slate-900/40 dark:ring-slate-700">
+      return <section key={index} className="overflow-hidden rounded-xl doc-card doc-ring">
         {/* ترويسة البند */}
-        <div className="flex flex-wrap items-center justify-between gap-2 bg-[#eff4ff] px-4 py-2.5 dark:bg-slate-800/60">
+        <div className="flex flex-wrap items-center justify-between gap-2 doc-tint px-4 py-2.5">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#0f2042] text-[11px] font-black text-white">{index + 1}</span>
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg doc-head text-[11px] font-black">{index + 1}</span>
             <div className="min-w-0">
-              <b className="block truncate text-[13px] text-[#0f2042] dark:text-slate-100">{expense.nameAr || 'مصروف جديد'}</b>
-              <span className="text-[10px] text-[#75777f]">حساب المصروف {expense.accountCode || '5108'} · {isPeriod ? 'مصروف فترة' : 'يُحمَّل على تكلفة المخزون'}</span>
+              <b className="block truncate text-[13px] doc-ink">{expense.nameAr || 'مصروف جديد'}</b>
+              <span className="text-[10px] doc-faint">حساب المصروف {expense.accountCode || '5108'} · {isPeriod ? 'مصروف فترة' : 'يُحمَّل على تكلفة المخزون'}</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-[#0f2042] shadow-sm dark:bg-slate-900 dark:text-slate-100">{money(parts.total)}</span>
-            <button type="button" aria-label="حذف المصروف" className="rounded-lg p-1.5 text-[#75777f] transition hover:bg-rose-500 hover:text-white" onClick={() => onChange(expenses.filter((_, row) => row !== index))}><Trash2 size={15} /></button>
+            <span className="rounded-lg doc-card doc-ring px-2.5 py-1 text-[11px] font-bold doc-ink">{money(parts.total)}</span>
+            <button type="button" aria-label="حذف المصروف" className="rounded-lg p-1.5 doc-faint transition hover:bg-rose-500 hover:text-white" onClick={() => onChange(expenses.filter((_, row) => row !== index))}><Trash2 size={15} /></button>
           </div>
         </div>
 
         <div className="space-y-3 p-4">
           {/* ② القيمة والمعالجة */}
-          <div className="rounded-lg bg-[#f8f9ff] p-3 dark:bg-slate-800/40">
-            <SectionHead step="٢" icon={<Layers size={15} className="text-[#3f5f92]" />} title="القيمة ومعالجة التكلفة" />
+          <div className="rounded-lg doc-tint p-3">
+            <DocSectionHead step="٢" icon={<Layers size={15} className="doc-accent" />} title="القيمة ومعالجة التكلفة" />
             <div className="grid gap-2.5 md:grid-cols-3">
               <Field label="قيمة المصروف *">
                 <DecimalInput className={fieldCls} min="0" value={amountText(expense.amountMinor)} onValueChange={(value) => patch(index, { amountMinor: toMinor(value) })} placeholder="0" />
@@ -237,8 +227,8 @@ export function PurchaseExpenseManager({
           </div>
 
           {/* ③ الضريبة ومراكز التكلفة */}
-          <div className="rounded-lg bg-[#f8f9ff] p-3 dark:bg-slate-800/40">
-            <SectionHead step="٣" icon={<Percent size={15} className="text-[#3f5f92]" />} title="الضريبة ومركز التكلفة" hint={taxEnabled ? undefined : 'الضريبة غير مفعّلة لهذه الفاتورة'} />
+          <div className="rounded-lg doc-tint p-3">
+            <DocSectionHead step="٣" icon={<Percent size={15} className="doc-accent" />} title="الضريبة ومركز التكلفة" hint={taxEnabled ? undefined : 'الضريبة غير مفعّلة لهذه الفاتورة'} />
             <div className="grid gap-2.5 md:grid-cols-4">
               <Field label="معاملة الضريبة">
                 <QuickSelect className={fieldCls} disabled={!taxEnabled} value={taxEnabled ? (expense.taxTreatment ?? 'exempt') : 'exempt'} onChange={(event) => patch(index, { taxTreatment: event.target.value as PurchaseExpense['taxTreatment'], taxPercent: event.target.value === 'exempt' ? 0 : taxPercent })}>
@@ -266,13 +256,13 @@ export function PurchaseExpenseManager({
                 </QuickSelect>
               </Field>
             </div>
-            {parts.tax > 0 && <div className="mt-2 flex flex-wrap gap-2 text-[10.5px] text-[#254778]"><span className="rounded bg-[#dce9ff]/70 px-2 py-1">الأساس {money(parts.base)}</span><span className="rounded bg-[#dce9ff]/70 px-2 py-1">الضريبة {money(parts.tax)}</span><span className="rounded bg-[#dce9ff]/70 px-2 py-1">الإجمالي {money(parts.total)}</span></div>}
+            {parts.tax > 0 && <div className="mt-2 flex flex-wrap gap-2 text-[10.5px] doc-accent-deep"><span className="rounded doc-band px-2 py-1">الأساس {money(parts.base)}</span><span className="rounded doc-band px-2 py-1">الضريبة {money(parts.tax)}</span><span className="rounded doc-band px-2 py-1">الإجمالي {money(parts.total)}</span></div>}
             {selectedVehicle && <div className="mt-2 text-[10.5px] font-bold text-emerald-600">مرتبط بالسيارة {selectedVehicle.plateNumber} ولن يُحمّل تلقائياً على المورد.</div>}
           </div>
 
           {/* ④ مصدر السداد */}
-          <div className="rounded-lg bg-[#f8f9ff] p-3 dark:bg-slate-800/40">
-            <SectionHead step="٤" icon={<Wallet size={15} className="text-[#3f5f92]" />} title="مصدر السداد والاستحقاق" />
+          <div className="rounded-lg doc-tint p-3">
+            <DocSectionHead step="٤" icon={<Wallet size={15} className="doc-accent" />} title="مصدر السداد والاستحقاق" />
             <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-4">
               {sourceOptions.filter(([source]) => showSupplierSource || source !== 'supplier').map(([source, label, hint]) => (
                 <button
@@ -280,19 +270,19 @@ export function PurchaseExpenseManager({
                   key={source}
                   onClick={() => patch(index, { paidBy: source, custodyFileId: source === 'custody' ? (openCustodyFiles[0]?.id ?? null) : null, ...(source === 'payable' ? { payableAccountCode: '2117' } : {}) })}
                   disabled={source === 'custody' && openCustodyFiles.length === 0}
-                  className={`rounded-lg border px-2.5 py-2 text-right transition disabled:opacity-40 ${expense.paidBy === source ? 'border-[#0f2042] bg-[#0f2042] text-white' : 'border-[#c5c6cf] bg-white text-[#45464e] hover:border-[#3f5f92] dark:bg-slate-900 dark:border-slate-700'}`}
+                  className={`rounded-lg border px-2.5 py-2 text-right transition disabled:opacity-40 ${expense.paidBy === source ? 'doc-head' : 'doc-card doc-ring doc-muted hover:doc-tint-strong'}`}
                 >
                   <b className="block text-[11.5px]">{label}</b>
-                  <span className={`block text-[9.5px] ${expense.paidBy === source ? 'text-[#d6e3ff]' : 'text-[#75777f]'}`}>{hint}</span>
+                  <span className={`block text-[9.5px] ${expense.paidBy === source ? 'doc-head-sub' : 'doc-faint'}`}>{hint}</span>
                 </button>
               ))}
             </div>
             <div className="mt-2.5 grid gap-2.5 md:grid-cols-3">
-              {expense.paidBy === 'treasury' && <Field label="الخزينة/البنك"><QuickSelect className={fieldCls} value={expense.payAccount ?? defaultTreasury} onChange={(event) => patch(index, { payAccount: event.target.value })}>{treasuries.map((treasury) => <option key={treasury.code} value={treasury.code}>{treasury.nameAr}</option>)}</QuickSelect></Field>}
+              {expense.paidBy === 'treasury' && <Field label="الخزينة/البنك"><QuickSelect className={fieldCls} value={expense.payAccount ?? defaultTreasury} onChange={(event) => patch(index, { payAccount: event.target.value })}>{treasuries.map((treasury) => <option key={treasury.code} value={treasury.code}>{treasury.nameAr} — {treasury.kind === 'bank' ? 'بنك/بطاقة' : 'نقدية'}</option>)}</QuickSelect></Field>}
               {expense.paidBy === 'custody' && <Field label="ملف العهدة"><QuickSelect className={fieldCls} value={expense.custodyFileId ?? ''} onChange={(event) => patch(index, { custodyFileId: event.target.value ? Number(event.target.value) : null })}>{openCustodyFiles.map((file) => <option key={file.id} value={file.id}>{file.fileNumber}</option>)}</QuickSelect></Field>}
               {expense.paidBy === 'payable' && <>
                 <Field label="الجهة المستحقة (ليست المورد) *"><input className={fieldCls} value={expense.beneficiaryName ?? ''} onChange={(event) => patch(index, { beneficiaryName: event.target.value })} placeholder="شركة النقل أو مالك السيارة" /></Field>
-                <Field label="حساب الاستحقاق"><div className={`${fieldCls} flex items-center bg-[#eff4ff] text-[12px] dark:bg-slate-800`}>مصاريف مستحقة (2117) — مستقل عن المورد</div></Field>
+                <Field label="حساب الاستحقاق"><div className={`${fieldCls} flex items-center doc-tint-strong text-[12px]`}>مصاريف مستحقة (2117) — مستقل عن المورد</div></Field>
               </>}
               {expense.paidBy === 'supplier' && <div className="self-end text-[11px] font-bold text-amber-700 md:col-span-2 dark:text-amber-300">سيزيد هذا الخيار مستحق المورد فقط لأنه اختيار صريح منك.</div>}
             </div>
@@ -300,9 +290,9 @@ export function PurchaseExpenseManager({
         </div>
 
         {/* شريط القيد المتوقع */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#dce9ff] bg-white px-4 py-2.5 text-[10.5px] text-[#45464e] dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
-          <span className="flex items-center gap-1.5"><BookOpenText size={13} className="text-[#3f5f92]" /> القيد المتوقع: مدين <b className="text-[#0f2042] dark:text-slate-100">{isPeriod ? `${expense.accountCode || '5108'} مصروف فترة` : '1103 مخزون'}</b> ← دائن <b className="text-[#0f2042] dark:text-slate-100">{creditAccount}</b></span>
-          <span className="flex items-center gap-1 font-bold text-[#009c6b]"><CheckCircle2 size={13} /> يُرحَّل مع الفاتورة</span>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t doc-line doc-tint px-4 py-2.5 text-[10.5px] doc-muted dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
+          <span className="flex items-center gap-1.5"><BookOpenText size={13} className="doc-accent" /> القيد المتوقع: مدين <b className="doc-ink">{isPeriod ? `${expense.accountCode || '5108'} مصروف فترة` : '1103 مخزون'}</b> ← دائن <b className="doc-ink">{creditAccount}</b></span>
+          <span className="flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-300"><CheckCircle2 size={13} /> يُرحَّل مع الفاتورة</span>
         </div>
       </section>
     })}

@@ -5,17 +5,19 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * بقيد مجمع واحد (5107 / 1202)، وتقرير بقيمة دفترية لا تهبط تحت الخردة.
  */
 import { useMemo, useState } from 'react'
-import { Plus, TrendingDown, BookOpenText } from 'lucide-react'
+import { Plus, TrendingDown, BookOpenText, PackageMinus } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { assetsReport, depreciationSchedule, nextDepreciationMonth, ASSET_FUNDING_LABELS, type AssetFunding } from '../../core/assets.ts'
+import { assetsReport, assetDisposalPreview, depreciationSchedule, nextDepreciationMonth, ASSET_FUNDING_LABELS, ASSET_DISPOSAL_LABELS, type AssetFunding, type AssetDisposalMode } from '../../core/assets.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { DocSection, DocOutcome } from '../components/DocSection.tsx'
+import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 
 export function AssetsPage() {
-  const { assets, journal, suppliers, addAsset, postMonthlyDepreciation, payAssetInstallment, getAssetDue } = useDataStore()
+  const { assets, journal, suppliers, treasuries, addAsset, postMonthlyDepreciation, payAssetInstallment, getAssetDue } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -29,6 +31,41 @@ export function AssetsPage() {
   const dueCount = assets.filter(
     (a) => a.monthsDepreciated < a.lifeMonths && nextDepreciationMonth(a.purchaseMonth, a.monthsDepreciated) <= nowMonth,
   ).length
+
+  /* ─── استبعاد أصل: بيع أو خردة (سد فجوة التدقيق) ─── */
+  const [disposeId, setDisposeId] = useState<number | null>(null)
+  const [disposeMode, setDisposeMode] = useState<AssetDisposalMode>('sale')
+  const [disposeProceeds, setDisposeProceeds] = useState('')
+  const [disposeAccount, setDisposeAccount] = useState('1101')
+  const [disposeReason, setDisposeReason] = useState('')
+  const disposeAsset = useDataStore((state) => state.disposeAsset)
+  const disposeTarget = disposeId == null ? null : assets.find((a) => a.id === disposeId) ?? null
+  const disposeProceedsMinor = disposeMode === 'scrap' ? 0 : (disposeProceeds.trim() ? toMinor(disposeProceeds, cur.decimals) : 0)
+  const disposePreview = disposeTarget ? assetDisposalPreview(disposeTarget, disposeProceedsMinor) : null
+  const disposeDue = disposeTarget ? getAssetDue(disposeTarget.id).remainingMinor : 0
+  const disposeApproval = useSupervisorApproval('inv.adjust')
+  const openDispose = (assetId: number) => {
+    setDisposeId(assetId); setDisposeMode('sale'); setDisposeProceeds(''); setDisposeAccount('1101'); setDisposeReason('')
+  }
+  const submitDispose = () => {
+    if (!disposeTarget) return
+    disposeApproval.request(() => {
+      try {
+        const result = disposeAsset({
+          assetId: disposeTarget.id,
+          mode: disposeMode,
+          proceedsMinor: disposeProceedsMinor,
+          proceedsAccount: disposeMode === 'sale' ? disposeAccount : null,
+          reason: disposeReason,
+        })
+        const r = result.disposal!.resultMinor
+        toast.show(`تم استبعاد ${result.assetNumber} — ${r === 0 ? 'بلا ربح أو خسارة' : r > 0 ? `ربح ${fmt(r)}` : `خسارة ${fmt(-r)}`} ✓`)
+        setDisposeId(null)
+      } catch (error) {
+        toast.show((error as Error).message, 'error')
+      }
+    })
+  }
 
   /* ─── إضافة أصل ─── */
   const [open, setOpen] = useState(false)
@@ -168,7 +205,10 @@ export function AssetsPage() {
                 return (
                   <tr key={r.assetId} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                     <td className="px-4 py-3">
-                      <div className="font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</div>
+                      <div className="flex items-center gap-1.5 font-bold text-slate-700 dark:text-slate-200">
+                        {r.nameAr}
+                        {asset.disposal && <span className="rounded-full bg-slate-500/15 px-2 py-0.5 text-[9.5px] font-black text-slate-500 dark:text-slate-300">مستبعد {asset.disposal.date}</span>}
+                      </div>
                       <div className="text-[10px] text-slate-400">{asset.assetNumber} — <span dir="ltr">{asset.purchaseDate.slice(0, 10)}</span></div>
                     </td>
                     <td className="px-4 py-3 font-bold">{fmt(r.costMinor)}</td>
@@ -186,6 +226,7 @@ export function AssetsPage() {
                     <td className="px-4 py-3 text-left whitespace-nowrap">
                       {(() => { const d = getAssetDue(asset.id); return d.remainingMinor > 0 ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold ml-1">متبقٍ {fmt(d.remainingMinor)}</span> : null })()}
                       <button onClick={() => setFileAssetId(asset.id)} className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-sky-600 hover:bg-sky-500/10 transition-all" title="ملف الأصل">📂 الملف</button>
+                      {!asset.disposal && <button onClick={() => openDispose(asset.id)} title="استبعاد الأصل: بيع أو خردة" className="rounded-lg p-2 text-slate-400 transition-all hover:bg-amber-500/10 hover:text-amber-600"><PackageMinus size={15} /></button>}
                       <button onClick={() => setViewingEntryId(asset.purchaseEntryId)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110" title="قيد الاقتناء"><BookOpenText size={15} /></button>
                     </td>
                   </tr>
@@ -365,6 +406,100 @@ export function AssetsPage() {
       </Modal>
 
       {/* عرض قيد */}
+      {/* استبعاد أصل — بلغة المستند: أقسام مرقّمة + حصيلة + القيد قبل الترحيل */}
+      <Modal open={!!disposeTarget} onClose={() => setDisposeId(null)} title="" wide bare>
+        {disposeTarget && disposePreview && (
+          <div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
+            <div className="doc-head flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><PackageMinus size={19} /></span>
+                <div>
+                  <h3 className="text-base font-black leading-tight">استبعاد أصل ثابت</h3>
+                  <span className="text-[10.5px] doc-head-sub">ASSET DISPOSAL</span>
+                </div>
+              </div>
+              <span className="rounded-lg bg-white/10 px-2.5 py-1.5 font-mono text-[11px] font-bold">{disposeTarget.assetNumber}</span>
+            </div>
+            <div className="doc-meta px-5 py-2 text-[10px]">
+              {disposeTarget.nameAr} · تاريخ الشراء <span dir="ltr">{disposeTarget.purchaseDate.slice(0, 10)}</span> · أُهلك {disposeTarget.monthsDepreciated} من {disposeTarget.lifeMonths} شهراً
+            </div>
+            <div className="max-h-[calc(92vh-11rem)] space-y-3.5 overflow-y-auto px-5 py-4">
+              <DocSection step="١" title="طريقة الخروج" hint="البيع يُثبت ثمناً · الخردة بلا مقابل">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {(Object.keys(ASSET_DISPOSAL_LABELS) as AssetDisposalMode[]).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setDisposeMode(mode)}
+                      className={`rounded-lg border px-3 py-2 text-right text-[11.5px] font-bold transition ${disposeMode === mode ? 'doc-head' : 'doc-card doc-ring doc-muted'}`}
+                    >
+                      {ASSET_DISPOSAL_LABELS[mode]}
+                    </button>
+                  ))}
+                </div>
+              </DocSection>
+
+              {disposeMode === 'sale' && (
+                <DocSection step="٢" title="ثمن البيع ومن استلمه" hint="خزينة/بنك للبيع النقدي، أو ذمم العملاء للبيع الآجل">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field label={`ثمن البيع (${cur.symbol})`}>
+                      <input className={inputCls} value={disposeProceeds} onChange={(e) => setDisposeProceeds(e.target.value)} placeholder="0" dir="ltr" inputMode="decimal" autoFocus />
+                    </Field>
+                    <Field label="حساب التحصيل">
+                      <QuickSelect className={inputCls} value={disposeAccount} onChange={(e) => setDisposeAccount(e.target.value)}>
+                        {treasuries.map((t) => <option key={t.code} value={t.code}>{t.nameAr} — {t.kind === 'bank' ? 'بنك/بطاقة' : 'نقدية'}</option>)}
+                        <option value="1104">على حساب العميل (ذمم عملاء 1104)</option>
+                      </QuickSelect>
+                    </Field>
+                  </div>
+                </DocSection>
+              )}
+
+              <DocSection step={disposeMode === 'sale' ? '٣' : '٢'} title="سبب الاستبعاد" hint="يظهر في الدفتر وفي ملف الأصل — إلزامي">
+                <input className={inputCls} value={disposeReason} onChange={(e) => setDisposeReason(e.target.value)} placeholder="مثال: بيع السيارة لتقادمها · تلف المولد بحريق · خردة بعد انتهاء العمر" />
+              </DocSection>
+
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {[
+                  ['التكلفة الأصلية', fmt(disposePreview.costMinor)],
+                  ['مجمع الإهلاك', fmt(disposePreview.accumulatedMinor)],
+                  ['القيمة الدفترية', fmt(disposePreview.bookValueMinor)],
+                  [disposePreview.resultMinor >= 0 ? 'ربح الاستبعاد' : 'خسارة الاستبعاد', fmt(Math.abs(disposePreview.resultMinor))],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-xl doc-card doc-ring px-3 py-2">
+                    <div className="text-[10px] doc-faint">{label}</div>
+                    <div className="font-mono text-[13px] font-black doc-ink">{value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <DocOutcome>
+                <b className="block pb-1">القيد الذي سيُرحَّل</b>
+                {disposePreview.accumulatedMinor > 0 && <div className="flex items-center justify-between gap-3"><span>مجمع الإهلاك (1202) — مديناً لإقفاله</span><b className="font-mono">{fmt(disposePreview.accumulatedMinor)}</b></div>}
+                {disposeProceedsMinor > 0 && <div className="flex items-center justify-between gap-3"><span>{disposeAccount === '1104' ? 'ذمم العملاء (1104)' : `${treasuries.find((t) => t.code === disposeAccount)?.nameAr ?? disposeAccount} (${disposeAccount})`} — مديناً بالثمن</span><b className="font-mono">{fmt(disposeProceedsMinor)}</b></div>}
+                {disposePreview.resultMinor < 0 && <div className="flex items-center justify-between gap-3"><span>خسائر بيع واستبعاد أصول (5118) — مديناً</span><b className="font-mono">{fmt(-disposePreview.resultMinor)}</b></div>}
+                <div className="flex items-center justify-between gap-3"><span>أصول ومعدات (1201) — دائناً بالتكلفة كاملةً</span><b className="font-mono">{fmt(disposePreview.costMinor)}</b></div>
+                {disposePreview.resultMinor > 0 && <div className="flex items-center justify-between gap-3"><span>أرباح بيع أصول ثابتة (4116) — دائناً</span><b className="font-mono">{fmt(disposePreview.resultMinor)}</b></div>}
+                <div className="mt-1 border-t doc-line pt-1 text-[10.5px] doc-faint">بعد الترحيل يخرج الأصل من الميزانية ويتوقف إهلاكه الشهري تلقائياً.</div>
+              </DocOutcome>
+
+              {disposeDue > 0 && (
+                <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-[11.5px] font-bold text-rose-700 dark:text-rose-300">
+                  على هذا الأصل متبقٍّ للمورد {fmt(disposeDue)} — سدّد الأقساط أولاً من ملف الأصل، فالدين لا يسقط ببيع الأصل.
+                </p>
+              )}
+            </div>
+            <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+              <span className="text-[11px] doc-faint">{disposeMode === 'scrap' ? 'خردة بلا مقابل: القيمة الدفترية كلها خسارة' : 'بيع بمقابل: الفرق عن القيمة الدفترية ربح أو خسارة'}</span>
+              <div className="flex gap-2">
+                <Btn variant="ghost" onClick={() => setDisposeId(null)}>إلغاء</Btn>
+                <Btn onClick={submitDispose} disabled={!disposeReason.trim() || disposeDue > 0 || (disposeMode === 'sale' && disposeProceedsMinor <= 0)}>ترحيل الاستبعاد</Btn>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <Modal open={!!viewEntry} onClose={() => setViewingEntryId(null)} title={viewEntry ? `قيد #${viewEntry.entryNumber}` : ''}>
         {viewEntry && (
           <div className="space-y-3">

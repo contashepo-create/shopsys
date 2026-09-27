@@ -39,6 +39,7 @@ const SOURCE_LABELS: Record<string, string> = {
   reversal: 'قيد عاكس',
   asset_purchase: 'اقتناء أصل',
   asset_payment: 'سداد أصل',
+  asset_disposal: 'استبعاد أصل',
   depreciation: 'إهلاك شهري',
   external_commission: 'عمولة لدى الغير',
 }
