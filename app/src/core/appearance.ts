@@ -123,7 +123,7 @@ export interface AppearanceSettings {
   accentId: string
   zoom: number
   reduceMotion: boolean
-  /** نمط التنقل: جانبي افتراضياً، أو شريط علوي بقوائم أقسام منسدلة */
+  /** نمط التنقل: شريط قوائم علوي افتراضياً (نمط ويندوز/VS Code)، أو شريط جانبي */
   navigationMode: 'sidebar' | 'topbar'
 }
 
@@ -131,7 +131,7 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   accentId: DEFAULT_ACCENT_ID,
   zoom: 1,
   reduceMotion: false,
-  navigationMode: 'sidebar',
+  navigationMode: 'topbar',
 }
 
 /** خريطة متغيرات CSS للون المختار — تُطبَّق على documentElement */
@@ -148,6 +148,6 @@ export function buildAccentCssVars(accentId: string): Record<string, string> {
 export function sanitizeAppearance(input: Partial<AppearanceSettings> | null | undefined): AppearanceSettings {
   const accentId = input?.accentId && ACCENTS.some((a) => a.id === input.accentId) ? input.accentId : DEFAULT_ACCENT_ID
   const zoom = input?.zoom && ZOOM_LEVELS.some((z) => z.value === input.zoom) ? input.zoom : 1
-  const navigationMode = input?.navigationMode === 'topbar' ? 'topbar' : 'sidebar'
+  const navigationMode = input?.navigationMode === 'sidebar' ? 'sidebar' : 'topbar'
   return { accentId, zoom, reduceMotion: input?.reduceMotion === true, navigationMode }
 }

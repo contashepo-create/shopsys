@@ -141,7 +141,7 @@ console.log('5️⃣ postSaleReturn يختم الاعتماد ويوثق الو�
     warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true,
   })
   const item = store.getState().items.at(-1)
-  store.getState().openShift(0)
+  store.getState().openShift('كاشير', 0)
   const shift1 = store.getState().shifts.at(-1)
   const sale = store.getState().postSale({
     lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 2, unitPriceMinor: 10000, unitCostMinor: 6000, discountPercent: 0, soldByWeight: false }],
@@ -149,7 +149,7 @@ console.log('5️⃣ postSaleReturn يختم الاعتماد ويوثق الو�
   })
   assert.equal(sale.shiftId, shift1.id)
   store.getState().closeShift(20000)
-  store.getState().openShift(0)
+  store.getState().openShift('كاشير', 0)
   const shift2 = store.getState().shifts.at(-1)
   const ret = store.getState().postSaleReturn({
     saleId: sale.id, qtyByItem: new Map([[item.id, 1]]), refund: 'cash', reason: 'اختبار', approvedBy: 'سالم المشرف',

@@ -62,7 +62,8 @@ export function LabOrdersPage() {
   const [patientId, setPatientId] = useState('')
   const [referrerId, setReferrerId] = useState('')
   const [selected, setSelected] = useState<number[]>([])
-  const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [payment, setPayment] = useState<'cash' | 'credit' | 'mixed'>('cash')
+  const [labPaidNow, setLabPaidNow] = useState('')
   const [insuranceId, setInsuranceId] = useState('') // '' = بلا تغطية
   const [treasury, setTreasury] = useState('1101')
   const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
@@ -79,7 +80,7 @@ export function LabOrdersPage() {
     } catch { return null }
   }, [selected, discount, withVat, setup.vatPercent, activeTests])
 
-  const resetForm = () => { setPatientId(''); setReferrerId(''); setSelected([]); setPayment('cash'); setDiscount('0'); setWithVat(false); setNotes('') }
+  const resetForm = () => { setPatientId(''); setReferrerId(''); setSelected([]); setPayment('cash'); setLabPaidNow(''); setDiscount('0'); setWithVat(false); setNotes('') }
 
   // طلب آجل لمريض مربوط بعميل تجاوز حده — تجاوز باعتماد مدير
   const creditApproval = useSupervisorApproval('sales.credit.override')
@@ -103,6 +104,7 @@ export function LabOrdersPage() {
             referrerId: referrerId ? Number(referrerId) : null,
             testIds: selected,
             payment,
+            paidMinor: payment === 'mixed' ? toMinor(labPaidNow || '0', cur.decimals) : undefined,
             discountPercent: Number(discount) || 0,
             vatPercent: withVat ? setup.vatPercent : 0,
             notes: notes.trim(),
@@ -240,14 +242,15 @@ export function LabOrdersPage() {
           <div className="grid grid-cols-3 gap-3">
             <Field label="طريقة السداد">
               <div className="flex gap-2">
-                {(['cash', 'credit'] as const).map((p) => (
-                  <button key={p} onClick={() => setPayment(p)}
-                    className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${payment === p ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
-                    {p === 'cash' ? 'نقدي' : 'آجل / شركة'}
+                {([['cash', 'نقدي'], ['mixed', 'جزئي'], ['credit', 'آجل / شركة']] as const).map(([mode, label]) => (
+                  <button key={mode} onClick={() => setPayment(mode)} data-lab-pay={mode}
+                    className={`flex-1 py-2 rounded-xl text-[12px] font-bold border transition-all ${payment === mode ? 'bg-violet-600 text-white border-violet-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
+                    {label}
                   </button>
                 ))}
               </div>
-              {(payment === 'cash' || insuranceId) && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div>}
+              {(payment !== 'credit' || insuranceId) && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></div>}
+              {payment === 'mixed' && !insuranceId && <div className="mt-2"><Field label="المحصَّل الآن" hint="الباقي يبقى ذمة على المريض ويُحصَّل لاحقاً بسند قبض"><input value={labPaidNow} onChange={(e) => setLabPaidNow(e.target.value)} inputMode="decimal" className={inputCls} aria-label="المحصل الآن من طلب المعمل" /></Field></div>}
             </Field>
             <Field label="خصم ٪"><input value={discount} onChange={(e) => setDiscount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="الضريبة">
@@ -345,7 +348,7 @@ export function LabOrdersPage() {
           <div className="space-y-4 text-sm">
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">المريض</div><div className="font-black">{viewing.patientName}</div></div>
-              <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">السداد</div><div className="font-black">{viewing.payment === 'cash' ? 'نقدي' : 'آجل'}</div></div>
+              <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">السداد</div><div className="font-black">{viewing.payment === 'cash' ? 'نقدي' : viewing.payment === 'mixed' ? 'جزئي' : 'آجل'}</div></div>
               <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">الإجمالي</div><div className="font-black text-violet-600">{fmt(viewing.totals.totalMinor)} {cur.symbol}</div></div>
             </div>
             {viewing.commissionMinor > 0 && (
@@ -359,7 +362,7 @@ export function LabOrdersPage() {
               currencySymbol={cur.symbol}
               fmt={fmt}
               terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'lab' && row.documentId === String(viewing.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
-              allowCredit={viewing.payment === 'credit' || labPatients.find((pt) => pt.id === viewing.patientId)?.linkedCustomerId != null}
+              allowCredit={viewing.payment !== 'cash' || labPatients.find((pt) => pt.id === viewing.patientId)?.linkedCustomerId != null}
               hint="فحص أُلغي أو أُعيدت العينة؟ اختر الفحوصات الملغاة — يعكس الإيراد وحصة الضريبة، وعمولة المُحيل غير المصروفة تُعكس بنفس النسبة تلقائياً."
               refundableItems={viewing.tests.map((t, ti) => ({ key: `test:${ti}`, label: `${t.nameAr} (${t.code})`, valueMinor: t.priceMinor }))}
               onSubmit={(a) => {

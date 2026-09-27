@@ -174,3 +174,139 @@ export function buildConsignmentPayoutEntry(ownerNetMinor: Minor, label: string,
   assertBalanced(lines)
   return lines
 }
+
+/* ─── فاتورة شراء سيارات كاملة (طلب المالك) ─── */
+
+/**
+ * سطر سيارة داخل فاتورة الشراء — كل سيارة سطر مستقل بلوحته وتكلفته،
+ * تماماً كسطر الصنف في فاتورة الشراء العامة، لكن بحقول تصلح للمعرض.
+ */
+export interface CarInvoiceLine {
+  make: string
+  model: string
+  year: number
+  plateOrVin: string
+  odometerKm: number
+  /** سعر السيارة من المورد قبل المصاريف والضريبة */
+  costMinor: Minor
+  /** غرض الاقتناء لكل سيارة على حدة: للبيع أو للتأجير */
+  purpose: CarPurpose
+}
+
+/** مصروف مرسمل على الفاتورة (نقل، جمارك، فحص، تجهيز أولي) يوزَّع على السيارات بالقيمة */
+export interface CarInvoiceExpense {
+  label: string
+  amountMinor: Minor
+}
+
+export interface CarPurchaseInvoiceTotals {
+  vehiclesMinor: Minor
+  expensesMinor: Minor
+  /** الضريبة المحتسبة على (السيارات + المصاريف) */
+  taxMinor: Minor
+  /** الجزء القابل للخصم من الضريبة (يذهب 2102 مدخلات) — الباقي يُرسمل على التكلفة */
+  recoverableTaxMinor: Minor
+  /** إجمالي الفاتورة المستحق للمورد = سيارات + مصاريف + ضريبة */
+  totalMinor: Minor
+  /** تكلفة كل سيارة بعد توزيع المصاريف والضريبة غير القابلة للخصم */
+  perVehicleCostMinor: Minor[]
+  /** مجموع تكاليف السيارات المرسملة (ما يدخل 1103) */
+  capitalizedMinor: Minor
+}
+
+/**
+ * توزيع مبلغ على قيم بنسبة كل قيمة، والباقي (كسر القسمة) يذهب لأكبر قيمة —
+ * نفس قاعدة توزيع تكلفة التجهيز، فلا يضيع مليم ولا يتضخم.
+ */
+export function allocateByValue(values: readonly Minor[], amountMinor: Minor): Minor[] {
+  if (values.length === 0) return []
+  if (!Number.isInteger(amountMinor) || amountMinor < 0) throw new Error('المبلغ الموزَّع لا يكون سالباً')
+  const total = values.reduce((sum, value) => sum + value, 0)
+  if (amountMinor === 0) return values.map(() => 0)
+  if (total <= 0) {
+    // بلا قيم موجبة: وزّع بالتساوي والباقي للأول
+    const share = Math.floor(amountMinor / values.length)
+    const parts = values.map(() => share)
+    parts[0] += amountMinor - share * values.length
+    return parts
+  }
+  const parts = values.map((value) => Math.floor((value * amountMinor) / total))
+  const remainder = amountMinor - parts.reduce((sum, part) => sum + part, 0)
+  if (remainder > 0) {
+    let largest = 0
+    for (let i = 1; i < values.length; i++) if (values[i] > values[largest]) largest = i
+    parts[largest] += remainder
+  }
+  return parts
+}
+
+/** حساب إجماليات فاتورة شراء السيارات وتكلفة كل سيارة بعد التوزيع */
+export function computeCarPurchaseInvoice(args: {
+  lines: readonly CarInvoiceLine[]
+  expenses?: readonly CarInvoiceExpense[]
+  taxPercent?: number
+  /** true = ضريبة مدخلات قابلة للخصم (2102)، false = تُرسمل على تكلفة السيارات */
+  taxRecoverable?: boolean
+}): CarPurchaseInvoiceTotals {
+  const { lines } = args
+  if (lines.length === 0) throw new Error('الفاتورة بلا سيارات — أضف سطراً واحداً على الأقل')
+  for (const line of lines) {
+    if (!Number.isInteger(line.costMinor) || line.costMinor <= 0) throw new Error(`تكلفة السيارة ${line.plateOrVin || line.make} يجب أن تكون موجبة`)
+  }
+  const expenses = args.expenses ?? []
+  for (const expense of expenses) {
+    if (!Number.isInteger(expense.amountMinor) || expense.amountMinor < 0) throw new Error('قيمة المصروف لا تكون سالبة')
+  }
+  const taxPercent = args.taxPercent ?? 0
+  if (taxPercent < 0 || taxPercent > 100) throw new Error('نسبة الضريبة بين 0 و100')
+  const vehiclesMinor = lines.reduce((sum, line) => sum + line.costMinor, 0)
+  const expensesMinor = expenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
+  const taxMinor = Math.round(((vehiclesMinor + expensesMinor) * taxPercent) / 100)
+  const recoverableTaxMinor = args.taxRecoverable === false ? 0 : taxMinor
+  const nonRecoverable = taxMinor - recoverableTaxMinor
+  const values = lines.map((line) => line.costMinor)
+  const expenseShares = allocateByValue(values, expensesMinor)
+  const taxShares = allocateByValue(values, nonRecoverable)
+  const perVehicleCostMinor = values.map((value, index) => value + expenseShares[index] + taxShares[index])
+  return {
+    vehiclesMinor,
+    expensesMinor,
+    taxMinor,
+    recoverableTaxMinor,
+    totalMinor: vehiclesMinor + expensesMinor + taxMinor,
+    perVehicleCostMinor,
+    capitalizedMinor: perVehicleCostMinor.reduce((sum, cost) => sum + cost, 0),
+  }
+}
+
+/**
+ * قيد فاتورة شراء السيارات — قيد واحد متوازن مهما كان عدد السيارات:
+ *   1103 مدين بتكلفة كل سيارة (سطر لكل سيارة) + 2102 مدين بالضريبة القابلة للخصم
+ *   ← الخزينة/البنك بالمدفوع الآن + 2101 بالمتبقي على المورد.
+ */
+export function buildCarPurchaseInvoiceEntry(args: {
+  totals: CarPurchaseInvoiceTotals
+  labels: readonly string[]
+  paidMinor: Minor
+  treasury?: string
+  supplierLabel?: string
+}): JournalLine[] {
+  const { totals, labels } = args
+  const treasury = args.treasury ?? '1101'
+  const paid = args.paidMinor
+  if (!Number.isInteger(paid) || paid < 0 || paid > totals.totalMinor) throw new Error('المدفوع يجب أن يكون بين صفر وإجمالي الفاتورة')
+  const remaining = totals.totalMinor - paid
+  const lines: JournalLine[] = totals.perVehicleCostMinor.map((costMinor, index) => ({
+    accountCode: '1103',
+    debit: costMinor,
+    credit: 0,
+    note: `شراء ${labels[index] ?? `سيارة ${index + 1}`}`,
+  }))
+  if (totals.recoverableTaxMinor > 0) {
+    lines.push({ accountCode: '2102', debit: totals.recoverableTaxMinor, credit: 0, note: 'ض.ق.م مدخلات قابلة للخصم' })
+  }
+  if (paid > 0) lines.push({ accountCode: treasury, debit: 0, credit: paid, note: 'مدفوع نقداً/بنكياً من الفاتورة' })
+  if (remaining > 0) lines.push({ accountCode: '2101', debit: 0, credit: remaining, note: `المتبقي مستحق${args.supplierLabel ? ` للمورد ${args.supplierLabel}` : ' للمورد'}` })
+  assertBalanced(lines)
+  return lines
+}

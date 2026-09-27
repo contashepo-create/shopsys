@@ -14,6 +14,7 @@ import type { TreasuryDef } from '../../core/treasury.ts'
 import { Btn, Modal, Field, inputCls, useToast } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { DocSection, DocOutcome } from '../components/DocSection.tsx'
 import { summarizeTreasuryByUser, treasuryUserSummaryCsv } from '../../core/treasuryUserReport.ts'
 import { allowedTreasuryCodes } from '../../core/treasuryAccess.ts'
 
@@ -55,6 +56,10 @@ export function TreasuryPage() {
   const [tSwift, setTSwift] = useState('')
   const [tNotes, setTNotes] = useState('')
 
+  /** قيم نافذة التحويل: المبلغ والرسوم والعجز المتوقع في المصدر */
+  const transferAmountMinor = amount.trim() ? toMinor(amount, cur.decimals) : 0
+  const transferFeeMinor = fee.trim() ? toMinor(fee, cur.decimals) : 0
+
   /** رصيد وحركة كل خزينة من دفتر الأستاذ مباشرة */
   const balances = useMemo(() => {
     const map = new Map<string, { balance: number; moves: Move[] }>()
@@ -75,6 +80,8 @@ export function TreasuryPage() {
   )
 
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? code
+  /** العجز المتوقع في خزينة المصدر: المبلغ + الرسوم فوق الرصيد الحالي */
+  const transferShort = Math.max(0, transferAmountMinor + transferFeeMinor - (balances.get(from)?.balance ?? 0))
 
   // تحريك النقدية بين الخزائن عملية حساسة — اعتماد مشرف (نفس صلاحية سند الصرف)
   const transferApproval = useSupervisorApproval('trs.payment.approve')
@@ -277,36 +284,68 @@ export function TreasuryPage() {
         </div>
       </Modal>
 
-      {/* تحويل بين أي خزينتين */}
-      <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="تحويل بين الخزائن والبنوك">
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="من">
-              <TreasuryPicker value={from} onChange={setFrom} operation="transfer_from" compact />
-            </Field>
-            <Field label="إلى">
-              <TreasuryPicker value={to} onChange={setTo} operation="transfer_to" compact />
-            </Field>
+      {/* تحويل بين أي خزينتين — بلغة المستند: أقسام مرقّمة + رصيد حي + القيد قبل الترحيل */}
+      <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="" wide bare>
+        <div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
+          <div className="doc-head flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><ArrowLeftRight size={19} /></span>
+              <div>
+                <h3 className="text-base font-black leading-tight">تحويل بين الخزائن والبنوك</h3>
+                <span className="text-[10.5px] doc-head-sub">TREASURY TRANSFER</span>
+              </div>
+            </div>
+            <span className="rounded-lg bg-white/10 px-2.5 py-1.5 text-[11px] font-bold">لا يمس الإيراد ولا المصروف — نقل داخلي</span>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label={`المبلغ (${cur.symbol})`}>
-              <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputCls} dir="ltr" autoFocus />
-            </Field>
-            <Field label={`مصروف التحويل (${cur.symbol})`} hint="رسوم بنكية/عمولة — يخرج من المصدر ويقيد مصروفاً عمومياً">
-              <input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="0" className={inputCls} dir="ltr" />
-            </Field>
+          <div className="doc-meta px-5 py-2 text-[10px]">المبلغ يخرج من المصدر كاملاً مع الرسوم · الرسوم وحدها تُقيَّد مصروفاً عمومياً (5108)</div>
+          <div className="max-h-[calc(92vh-11rem)] space-y-3.5 overflow-y-auto px-5 py-4">
+            <DocSection step="١" title="طرفا التحويل" hint="الرصيد الحي من دفتر الأستاذ لحظة الفتح">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Field label="من"><TreasuryPicker value={from} onChange={setFrom} operation="transfer_from" compact /></Field>
+                  <div className="rounded-lg doc-tint px-2.5 py-1.5 text-[11px] doc-muted">الرصيد الحالي <b className="font-mono doc-ink">{fmt(balances.get(from)?.balance ?? 0)}</b></div>
+                </div>
+                <div className="space-y-1.5">
+                  <Field label="إلى"><TreasuryPicker value={to} onChange={setTo} operation="transfer_to" compact /></Field>
+                  <div className="rounded-lg doc-tint px-2.5 py-1.5 text-[11px] doc-muted">الرصيد الحالي <b className="font-mono doc-ink">{fmt(balances.get(to)?.balance ?? 0)}</b></div>
+                </div>
+              </div>
+              {from === to && <p className="mt-2 text-[11px] font-bold text-amber-600 dark:text-amber-300">اختر خزينتين مختلفتين — لا يجوز التحويل من الخزينة لنفسها.</p>}
+            </DocSection>
+
+            <DocSection step="٢" title="المبلغ والرسوم" hint="الرسوم البنكية اختيارية وتُقيَّد مصروفاً لا نقلاً">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label={`المبلغ المحوَّل (${cur.symbol})`}>
+                  <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputCls} dir="ltr" inputMode="decimal" autoFocus />
+                </Field>
+                <Field label={`رسوم التحويل (${cur.symbol})`} hint="عمولة بنك/محفظة — تخرج من المصدر زيادةً على المبلغ">
+                  <input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="0" className={inputCls} dir="ltr" inputMode="decimal" />
+                </Field>
+              </div>
+              {transferShort > 0 && (
+                <p className="mt-2 rounded-lg bg-rose-500/10 px-2.5 py-1.5 text-[11px] font-bold text-rose-700 dark:text-rose-300">
+                  رصيد {nameOf(from)} لا يكفي: الناقص {fmt(transferShort)} — قلّل المبلغ أو حوّل من خزينة أخرى.
+                </p>
+              )}
+            </DocSection>
+
+            <DocSection step="٣" title="البيان" hint="يظهر في كشف حركة الخزينتين وفي الدفتر">
+              <input value={desc} onChange={(e) => setDesc(e.target.value)} className={inputCls} placeholder="مثال: تغذية خزينة الفرع من الحساب البنكي" />
+            </DocSection>
+
+            <DocOutcome>
+              <b className="block pb-1">القيد الذي سيُرحَّل</b>
+              <div className="flex items-center justify-between gap-3"><span>{nameOf(to)} ({to}) — مديناً</span><b className="font-mono">{fmt(transferAmountMinor)}</b></div>
+              {transferFeeMinor > 0 && <div className="flex items-center justify-between gap-3"><span>مصروفات عمومية (5108) — رسوم التحويل مديناً</span><b className="font-mono">{fmt(transferFeeMinor)}</b></div>}
+              <div className="flex items-center justify-between gap-3"><span>{nameOf(from)} ({from}) — دائناً</span><b className="font-mono">{fmt(transferAmountMinor + transferFeeMinor)}</b></div>
+            </DocOutcome>
           </div>
-          {Number(fee) > 0 && Number(amount) > 0 && (
-            <p className="text-[11px] font-bold text-amber-600">
-              ⚠️ سيخرج من {nameOf(from)}: {fmt(toMinor(amount || '0', cur.decimals) + toMinor(fee, cur.decimals))} — يصل {fmt(toMinor(amount || '0', cur.decimals))} والرسوم {fmt(toMinor(fee, cur.decimals))} مصروف
-            </p>
-          )}
-          <Field label="البيان (اختياري)">
-            <input value={desc} onChange={(e) => setDesc(e.target.value)} className={inputCls} />
-          </Field>
-          <div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setTransferOpen(false)}>إلغاء</Btn>
-            <Btn onClick={doTransfer} shortcut="F9" disabled={!amount.trim() || from === to}>↔️ تنفيذ التحويل</Btn>
+          <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+            <span className="text-[11px] doc-faint">يصل إلى {nameOf(to)} صافياً: <b className="font-mono doc-ink">{fmt(transferAmountMinor)}</b></span>
+            <div className="flex gap-2">
+              <Btn variant="ghost" onClick={() => setTransferOpen(false)}>إلغاء</Btn>
+              <Btn onClick={doTransfer} shortcut="F9" disabled={transferAmountMinor <= 0 || from === to || transferShort > 0}>تنفيذ التحويل</Btn>
+            </div>
           </div>
         </div>
       </Modal>

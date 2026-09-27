@@ -171,26 +171,69 @@ export function DecimalInput({
   return <input {...props} type="text" inputMode="decimal" value={displayValue} onFocus={handleFocus} onChange={handleChange} onBlur={handleBlur} />
 }
 
+/**
+ * بوابة عرض فوق كل الصفحة — تركّب المحتوى على <body> مباشرة.
+ *
+ * بلاغ المالك: «نوافذ منبثقة يختفي جزء منها خلف حقل أو خانة». السبب أن أي
+ * حاوية بـtransform/overflow تحبس العناصر الثابتة داخلها وتقصّها؛ الحل أن كل
+ * طبقة عائمة (نافذة، قائمة بحث، حوار اعتماد، تنبيه) تخرج من الشجرة إلى body
+ * مع طبقة من سلّم `layer-*` الموحّد في index.css.
+ */
+export function OverlayPortal({ children }: { children: ReactNode }) {
+  if (typeof document === 'undefined') return null
+  return createPortal(children, document.body)
+}
+
+/* مكدّس النوافذ المنبثقة (طلب المالك): النافذة فوق النافذة تعمل بأمان —
+   الأحدث تعلو الأقدم بصرياً، وEscape يغلق العليا وحدها لا كل شيء،
+   والضغط في مكان فارغ لا يغلق شيئاً إطلاقاً (تُغلق بزر الإغلاق أو الإلغاء فقط). */
+let modalSeq = 0
+const useModalStack = create<{ stack: string[]; push: (id: string) => void; pop: (id: string) => void }>((set) => ({
+  stack: [],
+  push: (id) => set((state) => (state.stack.includes(id) ? state : { stack: [...state.stack, id] })),
+  pop: (id) => set((state) => ({ stack: state.stack.filter((row) => row !== id) })),
+}))
+
 export function Modal({
   open, onClose, title, children, wide, extraWide, bare,
 }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean; extraWide?: boolean; bare?: boolean }) {
+  const [modalId] = useState(() => `modal-${++modalSeq}`)
+  const [nudge, setNudge] = useState(false)
+  const stack = useModalStack((state) => state.stack)
+  const pushModal = useModalStack((state) => state.push)
+  const popModal = useModalStack((state) => state.pop)
+  const depth = Math.max(0, stack.indexOf(modalId))
+  const isTopModal = stack.length === 0 || stack[stack.length - 1] === modalId
+
   useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    if (open) window.addEventListener('keydown', h)
+    if (!open) return
+    pushModal(modalId)
+    return () => popModal(modalId)
+  }, [open, modalId, pushModal, popModal])
+
+  useEffect(() => {
+    if (!open) return
+    const h = (e: KeyboardEvent) => {
+      // النافذة العليا فقط هي التي تستجيب — فلا تُغلق النوافذ الأخرى خلفها
+      if (e.key !== 'Escape' || !isTopModal) return
+      e.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [open, onClose])
+  }, [open, onClose, isTopModal])
 
   if (!open) return null
   /* بلاغ المالك: نوافذ منبثقة كانت تُغطى جزئياً خلف الهيدر — السبب أن الصفحات تُغلَّف بـ
      anim-in/anim-up (animation تنشئ stacking context) فيصبح z-50 محلياً داخل الصفحة ويعلوه
      هيدر sticky z-20 الخارجي. الحل الجذري: createPortal إلى <body> فيخرج المودال من أي سياق. */
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" dir="rtl">
-      {/* إصلاح الظل الغريب: الحركة كانت مزدوجة (حاوية + لوحة) فيومض الـ blur — الآن التعتيم يتحرك وحده بلا blur متحرك */}
-      <div className="absolute inset-0 bg-slate-900/55 anim-in" onClick={onClose} />
-      <div role="dialog" aria-modal="true" className={`relative anim-pop w-full ${extraWide ? 'max-w-6xl' : wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[92vh] overflow-y-auto rounded-3xl bg-white dark:bg-card-dark shadow-2xl border border-slate-200 dark:border-slate-700`}>
+    <div className="layer-modal fixed inset-0 flex items-center justify-center p-4" dir="rtl" style={{ zIndex: 1000 + depth * 4 }} data-modal-id={modalId} data-modal-depth={depth}>
+      {/* الضغط في الفراغ لا يُغلق (طلب المالك) — يهتز الإطار للتنبيه أن الإغلاق يدوي */}
+      <div className="absolute inset-0 bg-slate-900/55 anim-in" data-modal-backdrop onClick={() => { setNudge(true); window.setTimeout(() => setNudge(false), 320) }} />
+      <div role="dialog" aria-modal={depth === 0} className={`relative anim-pop ${nudge ? 'modal-nudge' : ''} w-full ${extraWide ? 'max-w-6xl' : wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[92vh] overflow-y-auto rounded-3xl bg-white dark:bg-card-dark shadow-2xl border border-slate-200 dark:border-slate-700`}>
         {bare ? children : <>
-          <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-white/90 dark:bg-card-dark/90 glass rounded-t-3xl">
+          <div className="sticky top-0 z-[70] flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-white/90 dark:bg-card-dark/90 glass rounded-t-3xl">
             <h3 className="font-extrabold text-slate-800 dark:text-white">{title}</h3>
             <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-rose-500 transition-colors duration-200">
               <X size={18} />
@@ -273,7 +316,7 @@ export function ToastHost() {
   const { msg, kind } = useToast()
   if (!msg) return null
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] anim-pop" dir="rtl">
+    <div className="layer-toast fixed bottom-6 left-1/2 -translate-x-1/2 anim-pop" dir="rtl">
       <div className={`px-5 py-3 rounded-2xl shadow-2xl text-sm font-bold text-white ${kind === 'success' ? 'bg-gradient-to-l from-emerald-600 to-teal-500' : 'bg-gradient-to-l from-rose-600 to-red-500'}`}>
         {kind === 'success' ? '✅ ' : '⚠️ '}{msg}
       </div>
