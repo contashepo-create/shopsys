@@ -213,9 +213,14 @@ input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
 .sidebar-collapsed nav > a, .sidebar-collapsed nav > div > button { justify-content: center; padding-inline: .35rem; }
 .sidebar-collapsed > div:first-of-type { justify-content: center; padding-inline: .35rem; }
 .sidebar-collapsed > div:first-of-type img { width: 2rem; height: 2rem; }
-/* في نمط القوائم العلوية لا يتراكب رأس الصفحة مع شريط الأقسام */
+/* في نمط شريط القوائم العلوي لا يتراكب رأس الصفحة مع الشريط */
 .top-navigation-layout > header { position: relative; top: auto; z-index: 20; background-color: rgb(255 255 255); }
 .dark .top-navigation-layout > header { background-color: rgb(15 23 42); }
+/* شريط القوائم (نمط ويندوز/VS Code): كثافة عالية وتمرير أفقي بلا شريط تمرير مرئي */
+.app-menubar { min-height: 2.1rem; }
+.menubar-scroll { scrollbar-width: none; }
+.menubar-scroll::-webkit-scrollbar { display: none; }
+.sidebar-collapsed .sidebar-nav-switch { display: none; }
 
 /* كثافة شاشة الكاشير: أكبر مساحة للسلة والأصناف وأقل كروم بصري */
 .pos-workspace { font-size: .8rem; }

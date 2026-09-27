@@ -1486,3 +1486,14 @@ git push origin "$(git branch --show-current)"
 **ملفات جديدة**: `src/core/search.ts`، `src/ui/components/anchoredMenu.ts`، واختبارات `pos_item_search` و`payroll_single_employee` و`redesigned_modals` و`payroll_run_modal` و`voucher_counter_picker` و`overlay_layers`.
 
 **تحقق هذه الجولة (2026-09-27)**: `tsc -b --force` نظيف، `npm run build` ناجح (تحذير حجم bundle فقط)، `npm run lint:strict` = 0/0، Vitest = **79 ملفاً / 324 اختباراً** ناجحة، و`verify:all` = **160/160**. حُدِّث `scripts/verify_owner_batch_pos_print.mjs` ليختبر سلم الطبقات الجديد بدل `z-[100]/[110]/[120]` القديمة.
+
+### MENUBAR-2026-09-27 — شريط القوائم العلوي صار نمط التنقل الافتراضي
+طلب المالك: «اجعل الشريط العلوي شريط قوائم حقيقياً مثل ويندوز وVS Code، واجعله الافتراضي، وضع زراً صغيراً في نهايته يحوّله إلى شريط جانبي».
+
+- **`src/ui/layout/MenuBar.tsx` (جديد، يحل محل `TopNavigation.tsx` المحذوف)** — شريط بارتفاع ‎2.1rem‎ فيه أيقونة التطبيق ثم عناوين الأقسام بخط 12.5px مع سهم صغير. السلوك الكلاسيكي كاملاً: النقر يفتح القائمة، وبعد فتحها يكفي **المرور بالفأرة** لتبديل القوائم، والأسهم يمين/يسار تتنقل بين العناوين (باتجاه RTL) وأعلى/أسفل داخل البنود وEnter يفتح البند، وEscape أو النقر بالخارج يغلق ويعيد التركيز للعنوان. كل قائمة **مركَّبة على `body` عبر `OverlayPortal` بطبقة `layer-picker`** وموضعها محسوب من مستطيل عنوانها (محاذاة يمينية + سقف ارتفاع 75% من الشاشة + إعادة قياس عند التمرير/تغيير المقاس)، فلا يحجبها أي كرت أو حقل. رأس كل قائمة يحمل لون القسم وعدد بنوده، والبند الحالي يُعلَّم بعلامة ✔.
+- **الفلترة هي نفسها منطق الشريط الجانبي حرفياً**: module → accountingOnly → feature → activities → hideForActivities → `canAccessPath` → `labelFor`، مع إسقاط الأقسام الفارغة، و`guardNavigation` قبل أي انتقال حتى لا تُفقد تعديلات غير محفوظة.
+- **التبديل بين النمطين في مكانين**: زر صغير في نهاية شريط القوائم (يساره في RTL) `data-switch-to-sidebar` بعنوان «تحويل التنقل إلى شريط جانبي»، وزر مقابل في رأس الشريط الجانبي `data-switch-to-menubar` للعودة. صفحة المظهر تعرض الآن «شريط قوائم علوي (افتراضي)» أولاً.
+- **الافتراضي**: `DEFAULT_APPEARANCE.navigationMode = 'topbar'` و`sanitizeAppearance` صارت `=== 'sidebar' ? 'sidebar' : 'topbar'`. للتركيبات القائمة أُضيف **ترحيل لمرة واحدة** في `onRehydrateStorage` بمفتاح `localStorage['shopsys:menubar-default']` ينقلها إلى شريط القوائم مرة واحدة فقط ثم يحترم اختيار المستخدم بعدها.
+- **CSS**: `.app-menubar`/`.menubar-scroll` (تمرير أفقي بلا شريط مرئي) و`.sidebar-collapsed .sidebar-nav-switch{display:none}` في `src/index.css`.
+- **اختبار دائم**: `tests/menu_bar.test.tsx` (5 اختبارات) — الافتراضي topbar وسلامة `sanitizeAppearance`، ظهور العناوين، فتح قائمة على `body` بطبقة `layer-picker` + تبديلها بالمرور، الأسهم/Escape/إغلاق عند اختيار بند، وزر التحويل إلى الشريط الجانبي.
+- **تحقق**: `tsc -b --force` نظيف، `npm run build` ناجح، `lint:strict` = 0/0، Vitest = **80 ملفاً / 329 اختباراً**، `verify:all` = **160/160**.
