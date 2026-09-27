@@ -175,4 +175,16 @@ const sellOnCredit = (c, customerId, amountMinor) => {
   R.ok('AUDIT-013: صفوف الكشف = رصيد الدالة = رصيد الدفتر — ثلاثتها رقم واحد')
 }
 
-R.done('— حسابات المراقبة مغلقة بمستنداتها، والمقاصة لها مستندها، والكشف مصدره واحد')
+/* ⑤ واجهة المقاصة موجودة فعلاً (لا محرك بلا شاشة) */
+{
+  const { readFileSync } = await import('node:fs')
+  const page = readFileSync('/home/user/shopsys/app/src/ui/pages/SettlementsPage.tsx', 'utf8')
+  assert.ok(page.includes('postPartyOffset'), 'شاشة التسويات لا تستدعي محرك المقاصة')
+  assert.ok(page.includes('offsetCapMinor') && page.includes('أقصى مقاصة ممكنة'), 'الشاشة لا تعرض سقف المقاصة (أقل الرصيدين)')
+  assert.ok(page.includes('getCustomerBalance') && page.includes('getSupplierBalance'), 'الشاشة لا تعرض رصيدي الطرفين قبل المقاصة')
+  assert.ok(page.includes('القيد الذي سيُرحَّل'), 'الشاشة لا تُظهر القيد قبل الترحيل')
+  assert.ok(page.includes('doc-head') && page.includes('doc-footer'), 'نافذة المقاصة ليست بلغة المستند')
+  R.ok('واجهة المقاصة موجودة في شاشة التسويات: رصيدا الطرفين + سقف المقاصة + القيد المعلن + لغة المستند')
+}
+
+R.done('— حسابات المراقبة مغلقة بمستنداتها، والمقاصة لها مستندها وشاشتها، والكشف مصدره واحد')

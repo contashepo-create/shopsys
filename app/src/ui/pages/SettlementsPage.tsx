@@ -5,12 +5,12 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * كل فرق يضرب قائمة الدخل عبر 5112 إجبارياً (لا عجز «يتبخر» بتعديل صامت).
  */
 import { useMemo, useState } from 'react'
-import { Scale, PiggyBank, Users, Truck, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Scale, PiggyBank, Users, Truck, AlertTriangle, CheckCircle2, ArrowLeftRight, X } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { Btn, Field, inputCls, useToast, EmptyState, Modal } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 
 type Section = 'treasury' | 'customer' | 'supplier'
@@ -30,6 +30,12 @@ export function SettlementsPage() {
   const fmt = (m: number) => formatMinor(m, cur, false)
 
   const [section, setSection] = useState<Section>('treasury')
+  // مقاصة عميل/مورد (AUDIT-012): الطرف الواحد الذي هو عميل ومورد معاً
+  const [offsetOpen, setOffsetOpen] = useState(false)
+  const [offsetCustomer, setOffsetCustomer] = useState(0)
+  const [offsetSupplier, setOffsetSupplier] = useState(0)
+  const [offsetAmount, setOffsetAmount] = useState('')
+  const [offsetNotes, setOffsetNotes] = useState('')
   const [refId, setRefId] = useState<string>('')
   const [actual, setActual] = useState('')
   const [reason, setReason] = useState('')
@@ -77,6 +83,23 @@ export function SettlementsPage() {
     })
   }
 
+  // ——— مقاصة العميل/المورد ———
+  const offsetCustomerBalance = offsetCustomer ? store.getCustomerBalance(offsetCustomer) : 0
+  const offsetSupplierBalance = offsetSupplier ? store.getSupplierBalance(offsetSupplier) : 0
+  const offsetCapMinor = Math.max(0, Math.min(offsetCustomerBalance, offsetSupplierBalance))
+  const offsetAmountMinor = offsetAmount.trim() === '' ? null : (() => { try { return toMinor(offsetAmount, cur.decimals) } catch { return null } })()
+  const offsetApproval = useSupervisorApproval('inv.adjust')
+  const submitOffset = () => {
+    if (!offsetCustomer || !offsetSupplier || !offsetAmountMinor) return
+    offsetApproval.request(() => {
+      try {
+        const doc = store.postPartyOffset({ customerId: offsetCustomer, supplierId: offsetSupplier, amountMinor: offsetAmountMinor, notes: offsetNotes })
+        toast.show(`رُحّلت المقاصة ${doc.offsetNumber}: خُفض دين العميل ومستحق المورد بـ${fmt(doc.amountMinor)} ${cur.symbol} بقيد واحد`)
+        setOffsetAmount(''); setOffsetNotes(''); setOffsetOpen(false)
+      } catch (e) { toast.show((e as Error).message, 'error') }
+    })
+  }
+
   return (
     <div className="space-y-4">
       <p className="anim-up text-[12px] text-slate-400 max-w-2xl leading-relaxed">
@@ -98,7 +121,10 @@ export function SettlementsPage() {
           )
         })}
       </div>
-      <p className="text-[11.5px] text-slate-400">{meta.hint}</p>
+      <div className="anim-up flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11.5px] text-slate-400">{meta.hint}</p>
+        <Btn variant="ghost" onClick={() => setOffsetOpen(true)}><ArrowLeftRight size={14} /> مقاصة عميل/مورد</Btn>
+      </div>
 
       <div className="anim-up grid lg:grid-cols-2 gap-4">
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-3">
@@ -167,6 +193,78 @@ export function SettlementsPage() {
           )}
         </div>
       </div>
+      {/* مقاصة عميل/مورد — بلغة المستند نفسها (AUDIT-012 + المرحلة 6) */}
+      <Modal open={offsetOpen} onClose={() => setOffsetOpen(false)} title="" wide bare>
+        <div className="overflow-hidden rounded-3xl doc-sheet" dir="rtl">
+          <div className="flex items-center justify-between gap-4 doc-head px-5 py-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/15"><ArrowLeftRight size={22} /></div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-bold">مقاصة عميل / مورد</h2>
+                  <span className="text-[10px] uppercase tracking-wider doc-head-sub">Party Offset</span>
+                  <span className="rounded bg-white/10 px-2 py-0.5 font-mono text-[11px]">OFS — جديد</span>
+                </div>
+                <p className="mt-0.5 truncate text-[11px] doc-head-sub">الطرف الذي يشتري منك ويبيع لك: بدل أن يدفع لك وتدفع له، تُخصم الأقل من الأكبر بقيد واحد</p>
+              </div>
+            </div>
+            <button type="button" onClick={() => setOffsetOpen(false)} aria-label="إغلاق" className="rounded-lg p-2 text-white/70 transition hover:bg-rose-500 hover:text-white"><X size={18} /></button>
+          </div>
+
+          <div className="space-y-4 px-5 py-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2 rounded-xl doc-card doc-ring p-4">
+                <Field label="العميل (المدين لنا)">
+                  <PartyQuickPicker label="العميل" parties={customers} value={offsetCustomer} onChange={(id) => setOffsetCustomer(id)} cashLabel="— اختر العميل —" />
+                </Field>
+                <div className="flex items-center justify-between rounded-lg doc-tint px-3 py-2 text-[11px] font-bold doc-accent-deep">
+                  <span>مديونية العميل الآن</span><span dir="ltr">{fmt(offsetCustomerBalance)} {cur.symbol}</span>
+                </div>
+              </div>
+              <div className="space-y-2 rounded-xl doc-card doc-ring p-4">
+                <Field label="المورد (الدائن علينا)">
+                  <PartyQuickPicker label="المورد" parties={suppliers} value={offsetSupplier} onChange={(id) => setOffsetSupplier(id)} cashLabel="— اختر المورد —" />
+                </Field>
+                <div className="flex items-center justify-between rounded-lg doc-tint px-3 py-2 text-[11px] font-bold doc-accent-deep">
+                  <span>مستحق المورد الآن</span><span dir="ltr">{fmt(offsetSupplierBalance)} {cur.symbol}</span>
+                </div>
+              </div>
+            </div>
+
+            <section className="space-y-2 rounded-xl doc-card doc-ring p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Field label={`قيمة المقاصة (${cur.symbol})`} hint={`أقصى مقاصة ممكنة: ${fmt(offsetCapMinor)} ${cur.symbol} — أقل الرصيدين`}>
+                  <input value={offsetAmount} onChange={(e) => setOffsetAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
+                </Field>
+                <Btn variant="ghost" onClick={() => setOffsetAmount(String(offsetCapMinor / 100))} disabled={offsetCapMinor <= 0}>استخدم الحد الأقصى</Btn>
+              </div>
+              {offsetAmountMinor != null && offsetAmountMinor > offsetCapMinor && (
+                <div className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-2 text-[11px] font-bold text-amber-700">
+                  <AlertTriangle size={14} /> المبلغ يتجاوز أقل الرصيدين — المقاصة لا تخلق رصيداً سالباً لأي طرف
+                </div>
+              )}
+              <Field label="ملاحظات (اختياري)">
+                <input value={offsetNotes} onChange={(e) => setOffsetNotes(e.target.value)} className={inputCls} placeholder="مثال: تسوية ربع سنوية باتفاق موقّع" />
+              </Field>
+            </section>
+
+            <section className="rounded-xl doc-band p-4 text-[11.5px] leading-6 doc-ink">
+              <b className="mb-1 block">القيد الذي سيُرحَّل</b>
+              من ح/ الموردون (2101) بـ<b dir="ltr">{fmt(offsetAmountMinor ?? 0)} {cur.symbol}</b> — إلى ح/ العملاء (1104) بنفس القيمة.
+              يظهر صفٌّ في كشف الطرفين، ولا تتأثر الخزينة بقرش (لا نقد يتحرك).
+            </section>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 doc-footer px-5 py-3">
+            <span className="text-[10px] doc-faint">المقاصة مستند OFS مستقل قابل للمراجعة — لا تعديل صامت على أي رصيد</span>
+            <div className="flex items-center gap-2">
+              <Btn variant="ghost" onClick={() => setOffsetOpen(false)}>إلغاء</Btn>
+              <Btn onClick={submitOffset} disabled={!offsetCustomer || !offsetSupplier || !offsetAmountMinor || offsetAmountMinor > offsetCapMinor}>ترحيل المقاصة</Btn>
+            </div>
+          </div>
+        </div>
+      </Modal>
+      {offsetApproval.dialog}
       {approval.dialog}
     </div>
   )
