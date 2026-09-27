@@ -214,12 +214,18 @@ export function checkInvariants(caseOrState, opts = {}) {
   }
 
   // ——— ث5: المخزون الدفتري = المقوَّم ———
+  // الدفتر المساعد لـ1103 ليس جدول الأصناف وحده: معرض السيارات يرسمل ثمن السيارة
+  // وتجهيزاتها على نفس الحساب (سجل `cars` هو دفترها المساعد)، والسيارة المباعة
+  // تخرج منه بتكلفتها الكاملة. تجاهُل ذلك كان يجعل كل معرض سيارات «مخالفاً» زوراً.
   const items = state.items ?? []
-  const valued = items.reduce((s, it) => s + Math.round((it.stockQty || 0) * (it.costMinor || 0)), 0)
+  const valuedItems = items.reduce((s, it) => s + Math.round((it.stockQty || 0) * (it.costMinor || 0)), 0)
+  const carsInStock = (state.cars ?? []).filter((car) => car.status !== 'sold')
+  const valuedCars = carsInStock.reduce((s, car) => s + (car.purchaseCostMinor || 0) + (car.prepCostMinor || 0), 0)
+  const valued = valuedItems + valuedCars
   const book = balanceOf(journal, '1103')
-  const tolerance = Math.max(items.length, 1)
+  const tolerance = Math.max(items.length + carsInStock.length, 1)
   if (Math.abs(book - (valued - inventoryOffsetMinor)) > tolerance) {
-    errors.push(`ث5 المخزون: دفتر 1103 = ${book} بينما التقييم = ${valued} (إزاحة افتتاحية ${inventoryOffsetMinor})`)
+    errors.push(`ث5 المخزون: دفتر 1103 = ${book} بينما التقييم = ${valued} (أصناف ${valuedItems} + سيارات ${valuedCars}، إزاحة افتتاحية ${inventoryOffsetMinor})`)
   }
 
   // ——— ث6: معادلة الميزانية ———

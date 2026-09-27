@@ -24,7 +24,22 @@ const frame = read('components/InvoicePOSFrame.tsx')
 {
   const css = readFileSync('/home/user/shopsys/app/src/index.css', 'utf8')
   // الفاتورة نظام أصناف (invoice-doc-*) له وضع ليلي — والسند يجب أن يكون مثله لا ألواناً ست عشرية ثابتة
-  assert.ok(frame.includes('invoice-doc-topbar') && css.includes('.dark .invoice-doc-topbar'), 'نظام مستند الفاتورة أو وضعه الليلي مفقود')
+  // UNIFY-DOC-2026-09-28: لوحة ألوان **واحدة** للفاتورة والسند — لا عائلتان تتباعدان مع كل تعديل
+  assert.ok(frame.includes('invoice-doc-topbar'), 'شريط مستند الفاتورة مفقود')
+  const topbarRule = css.match(/\.invoice-doc-topbar \{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(/background:\s*var\(--doc-paper\)/.test(topbarRule) && /border-bottom:[^;]*var\(--doc-line\)/.test(topbarRule),
+    'شريط الفاتورة ما زال بألوان محفورة بدل متغيرات المستند — الفاتورة والسند سيتباعدان')
+  const invoiceBlock = css.slice(css.indexOf('.invoice-doc {'), css.indexOf('طبقة «المستند» الموحدة للسندات'))
+  for (const line of invoiceBlock.split('\n')) {
+    if (line.trimStart().startsWith('.dark ')) continue // الحالات الليلية الخاصة (تظليل الصفوف مثلاً) مسموحة
+    for (const dead of ['#f1f5f9', '#f8fafc', '#e2e8f0', '#1e293b', '#0f172a', '#64748b', '#475569', '#4338ca']) {
+      assert.ok(!line.includes(dead), `لون بنية محفور في مستند الفاتورة (${dead}) — استعمل var(--doc-*): ${line.trim().slice(0, 80)}`)
+    }
+  }
+  for (const token of ['--doc-paper', '--doc-surface', '--doc-line', '--doc-ink', '--doc-accent', '--doc-tint']) {
+    assert.ok(css.includes(`${token}:`), `المتغير ${token} غير معرّف`)
+    assert.ok(css.slice(css.indexOf('.dark {')).includes(`${token}:`), `المتغير ${token} بلا بديل ليلي`)
+  }
   for (const cls of ['.doc-sheet', '.doc-head', '.doc-meta', '.doc-card', '.doc-ring', '.doc-band', '.doc-footer']) {
     assert.ok(css.includes(cls), `طبقة المستند تنقصها ${cls}`)
   }
@@ -32,7 +47,7 @@ const frame = read('components/InvoicePOSFrame.tsx')
   R.ok('طبقة مستند موحّدة (doc-*) بمتغيرات لونية لها بديل ليلي — كنظام الفاتورة (invoice-doc-*)')
 
   // لا ألوان ست عشرية في هياكل صفحة السندات (باقي الاستثناءات: شارات حالة وطباعة)
-  const structural = ['bg-[#0f2042]', 'bg-[#f8f9ff]', 'bg-[#eff4ff]', 'ring-[#dce9ff]', 'text-[#45464e]', 'text-[#75777f]', 'border-[#c5c6cf]']
+  const structural = ['bg-[#0f2042]', 'bg-[#f8f9ff]', 'bg-[#eff4ff]', 'ring-[#dce9ff]', 'text-[#45464e]', 'text-[#75777f]', 'border-[#c5c6cf]', '#3f5f92', '#d6e3ff', '#009c6b', 'accent-[#0f2042]']
   const leftovers = structural.filter((t) => vouchers.includes(t))
   assert.deepEqual(leftovers, [], `ألوان محفورة باقية في هيكل السندات: ${leftovers.join('، ')}`)
   R.ok('لا لون محفور في هيكل صفحة السندات — الشكل يأتي من الطبقة المشتركة فيتبع الوضع الليلي تلقائياً')
@@ -115,7 +130,7 @@ const frame = read('components/InvoicePOSFrame.tsx')
 /* ⑦ الطباعة تحمل نفس هوية المستند */
 {
   assert.ok(vouchers.includes('printDraft') && vouchers.includes('amountInWords'), 'الطباعة بلا مبلغ بالحروف')
-  assert.ok(vouchers.slice(vouchers.indexOf('const printDraft')).includes('#0f2042'), 'الطباعة بلا هوية لونية موحدة')
+  assert.ok(vouchers.slice(vouchers.indexOf('const printDraft')).includes('#0f172a'), 'الطباعة بلا هوية لونية موحدة (حبر المستند #0f172a)')
   R.ok('نسخة الطباعة تحمل هوية المستند نفسها (ألوان وترويسة ومبلغ بالحروف)')
 }
 

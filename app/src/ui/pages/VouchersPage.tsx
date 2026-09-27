@@ -247,7 +247,7 @@ export function VouchersPage() {
   const printDraft = () => {
     const title = kind === 'receipt' ? 'سند قبض نقدية' : 'سند صرف نقدية'
     const amountText = parsedAmountMinor > 0 ? `${fmt(parsedAmountMinor)} ${cur.symbol}` : '—'
-    printHtml(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${escapePrintText(title)}</title><style>body{font-family:Arial,sans-serif;color:#0f2042;padding:28px;max-width:760px;margin:auto}h1{border-bottom:3px solid #0f2042;padding-bottom:12px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;background:#eff4ff;padding:14px;margin:16px 0}.amount{font-size:30px;font-weight:800;color:#0f2042;margin:22px 0}.label{color:#68738a;font-size:12px}.value{font-weight:700}p{line-height:1.8}</style></head><body><h1>${escapePrintText(title)}</h1><div class="meta"><div><div class="label">المنشأة</div><div class="value">${escapePrintText(setup.shopName || 'نظام الحسابات')}</div></div><div><div class="label">التاريخ</div><div class="value">${escapePrintText(voucherDate)}</div></div><div><div class="label">الطرف</div><div class="value">${escapePrintText(selectedPartyName || 'غير مرتبط بطرف')}</div></div><div><div class="label">الحساب المقابل</div><div class="value">${escapePrintText(counters.find((item) => item.code === counter)?.label ?? '—')}</div></div></div><div class="amount">${escapePrintText(amountText)}</div><p><b>البيان:</b> ${escapePrintText(desc || '—')}</p><p><b>الحالة:</b> مسودة قبل الترحيل</p></body></html>`)
+    printHtml(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${escapePrintText(title)}</title><style>body{font-family:Arial,sans-serif;color:#0f172a;padding:28px;max-width:760px;margin:auto}h1{border-bottom:3px solid #0f172a;padding-bottom:12px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;background:#f8fafc;padding:14px;margin:16px 0}.amount{font-size:30px;font-weight:800;color:#0f172a;margin:22px 0}.label{color:#64748b;font-size:12px}.value{font-weight:700}p{line-height:1.8}</style></head><body><h1>${escapePrintText(title)}</h1><div class="meta"><div><div class="label">المنشأة</div><div class="value">${escapePrintText(setup.shopName || 'نظام الحسابات')}</div></div><div><div class="label">التاريخ</div><div class="value">${escapePrintText(voucherDate)}</div></div><div><div class="label">الطرف</div><div class="value">${escapePrintText(selectedPartyName || 'غير مرتبط بطرف')}</div></div><div><div class="label">الحساب المقابل</div><div class="value">${escapePrintText(counters.find((item) => item.code === counter)?.label ?? '—')}</div></div></div><div class="amount">${escapePrintText(amountText)}</div><p><b>البيان:</b> ${escapePrintText(desc || '—')}</p><p><b>الحالة:</b> مسودة قبل الترحيل</p></body></html>`)
   }
   const focusVoucherForEdit = () => {
     document.querySelector<HTMLInputElement>('[data-voucher-amount]')?.focus()
@@ -445,10 +445,10 @@ export function VouchersPage() {
 
           <div className="flex flex-wrap items-center justify-between gap-2 doc-meta px-5 py-2 text-[10px]">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-              <span className="flex items-center gap-1"><FileText size={14} className="text-[#009c6b]" /> المنشأة: <b className="doc-ink">{setup.shopName || 'غير محدد'}</b></span>
+              <span className="flex items-center gap-1"><FileText size={14} className="doc-accent" /> المنشأة: <b className="doc-ink">{setup.shopName || 'غير محدد'}</b></span>
               {receipt.headerLines.filter((line) => line.trim()).slice(0, 1).map((line) => <span key={line}>{line}</span>)}
             </div>
-            <span className="flex items-center gap-1 font-semibold doc-ink"><CheckCircle2 size={13} className="text-[#009c6b]" /> سيُنشأ القيد تلقائياً بعد الترحيل</span>
+            <span className="flex items-center gap-1 font-semibold doc-ink"><CheckCircle2 size={13} className="doc-accent" /> سيُنشأ القيد تلقائياً بعد الترحيل</span>
           </div>
 
           <div className="max-h-[calc(92vh-7rem)] space-y-4 overflow-y-auto px-5 py-4 sm:px-6">
@@ -469,7 +469,7 @@ export function VouchersPage() {
                      صارت الخانة نفسها هي البحث: اكتب أول حرف من اسم الحساب أو كوده فتُفلتر القائمة فوراً. */
                   <div className="relative">
                     <Search size={16} className="pointer-events-none absolute right-2.5 top-1/2 z-10 -translate-y-1/2 doc-faint" />
-                    <QuickSelect aria-label="بحث الحساب المقابل" value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0); setAllocationDraft({}) }} className="h-10 w-full rounded-lg border doc-line doc-sheet pr-8 text-sm doc-ink outline-none focus:border-[#3f5f92]">
+                    <QuickSelect aria-label="بحث الحساب المقابل" value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0); setAllocationDraft({}) }} className="h-10 w-full rounded-lg border doc-line doc-sheet pr-8 text-sm doc-ink outline-none focus:border-[color:var(--doc-accent)]">
                       <option value="">ابحث بالاسم أو الكود ثم Enter…</option>
                       {counters.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.label}</option>)}
                     </QuickSelect>
@@ -492,7 +492,7 @@ export function VouchersPage() {
               </div>
 
               <div className="col-span-12 space-y-2 rounded-lg doc-tint p-3 lg:col-span-4">
-                <div className="flex items-center justify-between text-sm font-bold doc-ink"><span>{kind === 'receipt' ? 'المبلغ الإجمالي المقبوض' : 'قيمة سند الصرف'}</span><span className="rounded bg-[#d6e3ff] px-2 py-0.5 text-[10px] doc-accent-deep">{cur.code} · {cur.symbol}</span></div>
+                <div className="flex items-center justify-between text-sm font-bold doc-ink"><span>{kind === 'receipt' ? 'المبلغ الإجمالي المقبوض' : 'قيمة سند الصرف'}</span><span className="rounded doc-band px-2 py-0.5 text-[10px] doc-accent-deep">{cur.code} · {cur.symbol}</span></div>
                 <div className="flex items-baseline gap-2 rounded-lg doc-card px-3 py-2 shadow-inner doc-ring">
                   <input data-voucher-amount="true" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" className="w-full bg-transparent text-left font-mono text-3xl font-bold tracking-tight doc-ink outline-none" dir="ltr" inputMode="decimal" autoFocus />
                   <span className="whitespace-nowrap text-sm font-bold doc-muted">{cur.symbol}</span>
@@ -502,7 +502,7 @@ export function VouchersPage() {
 
               <div className="col-span-12 space-y-2 lg:col-span-3">
                 <label className="block text-sm font-bold doc-ink">تاريخ السند</label>
-                <input type="date" value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} className="h-10 w-full rounded-lg border doc-line doc-card px-3 text-sm font-mono doc-ink outline-none focus:border-[#3f5f92]" />
+                <input type="date" value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} className="h-10 w-full rounded-lg border doc-line doc-card px-3 text-sm font-mono doc-ink outline-none focus:border-[color:var(--doc-accent)]" />
                 <div className="rounded-lg doc-tint-strong px-3 py-2 text-[10px] doc-muted">يُحفظ التاريخ في السند والقيد وكشف الحساب.</div>
               </div>
             </div>
@@ -533,7 +533,7 @@ export function VouchersPage() {
                     {partyInvoices.map((invoice) => {
                       const remaining = invoice.dueMinor - invoice.settledMinor
                       const applied = parseAllocationAmount(allocationDraft[invoice.docKey] || '')
-                      return <tr key={invoice.docKey} className="hover:opacity-90"><td className="px-3 py-2"><input type="checkbox" checked={applied > 0} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.checked ? fmt(remaining).replaceAll(',', '') : '' }))} className="h-4 w-4 accent-[#0f2042]" /></td><td className="px-3 py-2 font-bold doc-ink">{invoice.docLabel}</td><td className="px-3 py-2 font-mono doc-muted">{invoice.date.slice(0, 10)}</td><td className="px-3 py-2 text-left font-mono">{fmt(invoice.dueMinor + invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono doc-faint">{fmt(invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono font-bold text-rose-600">{fmt(remaining)}</td><td className="bg-[#d6e3ff]/50 px-3 py-2 text-left"><input className="h-8 w-28 rounded border doc-line doc-card px-2 text-left font-mono font-bold" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="0" inputMode="decimal" /></td><td className="px-3 py-2 text-left font-mono font-bold text-[#009c6b]">{fmt(Math.max(0, remaining - applied))}</td></tr>
+                      return <tr key={invoice.docKey} className="hover:opacity-90"><td className="px-3 py-2"><input type="checkbox" checked={applied > 0} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.checked ? fmt(remaining).replaceAll(',', '') : '' }))} className="h-4 w-4 accent-[color:var(--doc-accent)]" /></td><td className="px-3 py-2 font-bold doc-ink">{invoice.docLabel}</td><td className="px-3 py-2 font-mono doc-muted">{invoice.date.slice(0, 10)}</td><td className="px-3 py-2 text-left font-mono">{fmt(invoice.dueMinor + invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono doc-faint">{fmt(invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono font-bold text-rose-600">{fmt(remaining)}</td><td className="doc-band/50 px-3 py-2 text-left"><input className="h-8 w-28 rounded border doc-line doc-card px-2 text-left font-mono font-bold" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="0" inputMode="decimal" /></td><td className="px-3 py-2 text-left font-mono font-bold doc-accent">{fmt(Math.max(0, remaining - applied))}</td></tr>
                     })}
                   </tbody>
                   <tfoot className="doc-tint-strong font-bold doc-ink"><tr><td colSpan={3} className="px-3 py-2">إجمالي التخصيص</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono text-rose-600">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor - invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono doc-ink">{fmt(manualAllocatedMinor)}</td><td className="px-3 py-2" /></tr></tfoot>
@@ -554,13 +554,13 @@ export function VouchersPage() {
             {isPurchaseExpense && <section className="space-y-3 rounded-xl border doc-line doc-card p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold doc-ink">مصروف مرتبط بفاتورة شراء</h3><div className="flex overflow-hidden rounded-lg border doc-line">{([['treasury', 'مدفوع الآن'], ['payable', 'مستحق لاحقاً']] as const).map(([mode, label]) => <button key={mode} type="button" onClick={() => setExpPaidBy(mode)} className={`px-3 py-1.5 text-[11px] font-bold ${expPaidBy === mode ? 'doc-head' : 'doc-card doc-muted'}`}>{label}</button>)}</div></div>{expPaidBy === 'payable' && <div className="grid gap-3 sm:grid-cols-2"><Field label="الجهة المستحقة *"><input value={expBeneficiary} onChange={(e) => setExpBeneficiary(e.target.value)} className="h-10 w-full rounded-lg border doc-line doc-card px-3 text-sm" placeholder="شركة النقل / الجمارك…" /></Field><Field label="حساب الاستحقاق"><QuickSelect value={expPayableAccount} onChange={(e) => setExpPayableAccount(e.target.value)} className="h-10 doc-line doc-card"><option value="2117">مصاريف مستحقة (2117)</option></QuickSelect></Field></div>}<Field label="أي فاتورة شراء؟ *"><QuickSelect value={purchaseId} onChange={(e) => setPurchaseId(Number(e.target.value))} className="h-10 doc-line doc-card"><option value={0}>اختر…</option>{[...purchases].reverse().slice(0, 50).map((p) => <option key={p.id} value={p.id}>{p.invoiceNumber} — {suppliers.find((s) => s.id === p.supplierId)?.nameAr ?? '—'} ({p.date})</option>)}</QuickSelect></Field><Field label="توزيع المصروف على الأصناف"><div className="flex overflow-hidden rounded-lg border doc-line w-fit">{([['qty', 'بالكمية'], ['value', 'بالقيمة']] as const).map(([m, label]) => <button key={m} type="button" onClick={() => setExpMethod(m)} className={`px-4 py-2 text-[11px] font-bold ${expMethod === m ? 'bg-amber-500 text-white' : 'doc-card doc-muted'}`}>{label}</button>)}</div></Field></section>}
 
             <section className="grid gap-3 rounded-xl doc-card doc-ring p-4 lg:grid-cols-12">
-              <div className="lg:col-span-8"><Field label="البيان / الشرح التفصيلي للسند"><textarea value={desc} onChange={(e) => setDesc(e.target.value)} className="min-h-20 w-full resize-y rounded-lg border doc-line doc-sheet px-3 py-2 text-sm doc-ink outline-none focus:border-[#3f5f92]" placeholder={kind === 'receipt' ? 'مثال: تحصيل دفعة من العميل…' : 'مثال: سداد الفاتورة أو المصروف…'} /></Field></div>
+              <div className="lg:col-span-8"><Field label="البيان / الشرح التفصيلي للسند"><textarea value={desc} onChange={(e) => setDesc(e.target.value)} className="min-h-20 w-full resize-y rounded-lg border doc-line doc-sheet px-3 py-2 text-sm doc-ink outline-none focus:border-[color:var(--doc-accent)]" placeholder={kind === 'receipt' ? 'مثال: تحصيل دفعة من العميل…' : 'مثال: سداد الفاتورة أو المصروف…'} /></Field></div>
               <div className="flex items-end gap-2 text-[10px] doc-muted lg:col-span-4"><Paperclip size={16} className="doc-accent" /><span>البيان يُحفظ داخل السند ويظهر في اليومية والكشوف.</span></div>
             </section>
 
             <div className="grid gap-3 text-center text-[10px] sm:grid-cols-3">
               <div className="rounded-lg doc-card doc-ring p-3"><span className="block doc-faint">المستفيد / الطرف</span><b className="mt-2 block text-sm doc-ink">{needsParty && partyId ? (kind === 'receipt' ? customers.find((customer) => customer.id === partyId)?.nameAr : suppliers.find((supplier) => supplier.id === partyId)?.nameAr) : 'غير مرتبط بطرف'}</b></div>
-              <div className="rounded-lg doc-card doc-ring p-3"><span className="block doc-faint">حالة الاعتماد</span><b className="mt-2 flex items-center justify-center gap-1 text-sm text-[#009c6b]"><CheckCircle2 size={15} /> جاهز للتحقق والترحيل</b></div>
+              <div className="rounded-lg doc-card doc-ring p-3"><span className="block doc-faint">حالة الاعتماد</span><b className="mt-2 flex items-center justify-center gap-1 text-sm doc-accent"><CheckCircle2 size={15} /> جاهز للتحقق والترحيل</b></div>
               <div className="rounded-lg doc-card doc-ring p-3"><span className="block doc-faint">ختم المستند</span><b className="mt-2 flex items-center justify-center gap-1 text-sm doc-accent"><Stamp size={15} /> يُثبت مع القيد</b></div>
             </div>
           </div>
@@ -624,8 +624,8 @@ export function VouchersPage() {
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-2 doc-meta px-5 py-2 text-[10px]">
-                <span className="flex items-center gap-1"><FileText size={14} className="text-[#009c6b]" /> المنشأة: <b className="doc-ink">{setup.shopName || 'غير محدد'}</b></span>
-                <span className="flex items-center gap-1"><CheckCircle2 size={13} className="text-[#009c6b]" /> حرّره: <b className="doc-ink">{entry.createdBy || '—'}</b></span>
+                <span className="flex items-center gap-1"><FileText size={14} className="doc-accent" /> المنشأة: <b className="doc-ink">{setup.shopName || 'غير محدد'}</b></span>
+                <span className="flex items-center gap-1"><CheckCircle2 size={13} className="doc-accent" /> حرّره: <b className="doc-ink">{entry.createdBy || '—'}</b></span>
               </div>
 
               <div className="max-h-[calc(92vh-9rem)] space-y-4 overflow-y-auto px-5 py-4 sm:px-6">

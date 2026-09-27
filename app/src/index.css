@@ -1095,8 +1095,7 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
    ③ «تقسيم حقول جدول الأصناف غير متناسق» — مقاسات الأعمدة ومحاذاتها موحّدة
       (أرقام وسط، مبالغ يسار بخط أحادي) في `InvoiceLinesTable`.
    ═══════════════════════════════════════════════════════════════════════════ */
-.invoice-doc { display: flex; min-height: 100%; flex-direction: column; background: #f1f5f9; color: #1e293b; }
-.dark .invoice-doc { background: #0b1220; color: #e2e8f0; }
+.invoice-doc { display: flex; min-height: 100%; flex-direction: column; background: var(--doc-surface); color: var(--doc-ink-soft); }
 /* إلغاء هوامش «صفحة الفاتورة» القديمة داخل النافذة — هي سبب اختفاء الجدول لأسفل */
 .invoice-doc.invoice-pos-root { width: auto; min-height: 100%; margin: 0; padding: 0; overflow: visible; }
 
@@ -1104,34 +1103,28 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-topbar {
   position: sticky; top: 0; z-index: 40;
   display: flex; flex-wrap: wrap; align-items: center; gap: .45rem;
-  border-bottom: 1px solid #e2e8f0; background: #fff; padding: .28rem .5rem;
+  border-bottom: 1px solid var(--doc-line); background: var(--doc-paper); padding: .28rem .5rem;
 }
-.dark .invoice-doc-topbar { background: #101827; border-bottom-color: #23304a; }
 .invoice-doc-utility-tools { position: relative; display: flex; align-items: center; gap: .1rem; }
-.invoice-doc-utility-tools > button { display: grid; width: 1.6rem; height: 1.6rem; place-items: center; border-radius: .4rem; color: #64748b; }
-.invoice-doc-utility-tools > button:hover { background: #f1f5f9; color: #0f172a; }
-.dark .invoice-doc-utility-tools > button:hover { background: #1e293b; color: #e2e8f0; }
-.invoice-doc-close { display: grid; width: 1.6rem; height: 1.6rem; place-items: center; border-radius: .4rem; color: #64748b; }
+.invoice-doc-utility-tools > button { display: grid; width: 1.6rem; height: 1.6rem; place-items: center; border-radius: .4rem; color: var(--doc-faint); }
+.invoice-doc-utility-tools > button:hover { background: var(--doc-hover); color: var(--doc-ink); }
+.invoice-doc-close { display: grid; width: 1.6rem; height: 1.6rem; place-items: center; border-radius: .4rem; color: var(--doc-faint); }
 .invoice-doc-close:hover { background: #fee2e2; color: #b91c1c; }
 .invoice-doc-menu {
   position: absolute; inset-inline-start: 0; top: 1.95rem; z-index: 50; min-width: 14rem;
   display: flex; flex-direction: column; gap: .1rem; padding: .3rem;
-  border: 1px solid #e2e8f0; border-radius: .55rem; background: #fff; box-shadow: 0 16px 34px -16px rgb(15 23 42 / .45);
+  border: 1px solid var(--doc-line); border-radius: .55rem; background: var(--doc-paper); box-shadow: 0 16px 34px -16px rgb(15 23 42 / .45);
 }
-.dark .invoice-doc-menu { background: #111a2c; border-color: #2b3852; }
 .invoice-doc-menu > button { border-radius: .4rem; padding: .32rem .5rem; text-align: start; font-size: .68rem; font-weight: 700; }
-.invoice-doc-menu > button:hover { background: #f1f5f9; }
-.dark .invoice-doc-menu > button:hover { background: #1e293b; }
+.invoice-doc-menu > button:hover { background: var(--doc-hover); }
 .invoice-doc-menu.is-help { gap: .25rem; padding: .6rem; max-width: 21rem; }
 .invoice-doc-menu.is-help b { font-size: .7rem; }
-.invoice-doc-menu.is-help span { font-size: .63rem; line-height: 1.75; color: #64748b; }
+.invoice-doc-menu.is-help span { font-size: .63rem; line-height: 1.75; color: var(--doc-faint); }
 
 .invoice-doc-identity { display: flex; min-width: 0; flex: 1; flex-wrap: wrap; align-items: center; gap: .35rem; }
-.invoice-doc-identity > svg { flex: 0 0 auto; color: #4338ca; }
-.dark .invoice-doc-identity > svg { color: #a5b4fc; }
-.invoice-doc-identity b { overflow: hidden; color: #0f172a; font-family: ui-monospace, monospace; font-size: .78rem; font-weight: 800; letter-spacing: .02em; text-overflow: ellipsis; white-space: nowrap; }
-.dark .invoice-doc-identity b { color: #e8eefb; }
-.invoice-doc-identity small { overflow: hidden; color: #64748b; font-size: .59rem; text-overflow: ellipsis; white-space: nowrap; }
+.invoice-doc-identity > svg { flex: 0 0 auto; color: var(--doc-accent); }
+.invoice-doc-identity b { overflow: hidden; color: var(--doc-ink); font-family: ui-monospace, monospace; font-size: .78rem; font-weight: 800; letter-spacing: .02em; text-overflow: ellipsis; white-space: nowrap; }
+.invoice-doc-identity small { overflow: hidden; color: var(--doc-faint); font-size: .59rem; text-overflow: ellipsis; white-space: nowrap; }
 .invoice-doc-status { border: 1px solid #fde68a; border-radius: 999px; background: #fef3c7; color: #92400e; padding: .02rem .5rem; font-size: .58rem; font-weight: 800; }
 .dark .invoice-doc-status { border-color: #78350f; background: #43290b; color: #fcd34d; }
 
@@ -1142,36 +1135,28 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 
 /* ② جسم المستند وبطاقاته */
 .invoice-doc-body { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: .4rem; padding: .4rem; }
-.invoice-doc-card { overflow: hidden; border: 1px solid #e2e8f0; border-radius: .6rem; background: #fff; box-shadow: 0 1px 2px rgb(15 23 42 / .04); }
-.dark .invoice-doc-card { background: #101827; border-color: #27344e; }
+.invoice-doc-card { overflow: hidden; border: 1px solid var(--doc-line); border-radius: .6rem; background: var(--doc-paper); box-shadow: 0 1px 2px rgb(15 23 42 / .04); }
 
-.invoice-doc-cardbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .35rem .6rem; border-bottom: 1px solid #eef2f7; background: #f8fafc; padding: .25rem .5rem; font-size: .6rem; }
-.dark .invoice-doc-cardbar { background: #0f1729; border-bottom-color: #23304a; }
-.invoice-doc-cardbar-main { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .35rem; color: #475569; }
-.dark .invoice-doc-cardbar-main { color: #94a3b8; }
-.invoice-doc-cardbar-icon { display: grid; width: 1.05rem; height: 1.05rem; place-items: center; border: 1px solid #c7d2fe; border-radius: .3rem; background: #eef2ff; color: #4338ca; }
-.dark .invoice-doc-cardbar-icon { border-color: #3730a3; background: #1e1b4b; color: #c7d2fe; }
-.invoice-doc-cardbar-main b { color: #1e293b; font-size: .65rem; font-weight: 800; }
-.dark .invoice-doc-cardbar-main b { color: #e2e8f0; }
-.invoice-doc-cardbar-main i { width: 1px; height: .7rem; background: #cbd5e1; }
+.invoice-doc-cardbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .35rem .6rem; border-bottom: 1px solid var(--doc-line); background: var(--doc-tint); padding: .25rem .5rem; font-size: .6rem; }
+.invoice-doc-cardbar-main { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .35rem; color: var(--doc-muted); }
+.invoice-doc-cardbar-icon { display: grid; width: 1.05rem; height: 1.05rem; place-items: center; border: 1px solid var(--doc-accent-soft); border-radius: .3rem; background: var(--doc-tint-strong); color: var(--doc-accent); }
+.invoice-doc-cardbar-main b { color: var(--doc-ink-soft); font-size: .65rem; font-weight: 800; }
+.invoice-doc-cardbar-main i { width: 1px; height: .7rem; background: var(--doc-line); }
 .invoice-doc-chip { display: inline-flex; align-items: center; gap: .25rem; border: 1px solid #bbf7d0; border-radius: 999px; background: #f0fdf4; color: #15803d; padding: .02rem .45rem; font-size: .56rem; font-weight: 800; }
 .invoice-doc-chip.is-edit { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
 .dark .invoice-doc-chip { border-color: #14532d; background: #052e16; color: #86efac; }
 .dark .invoice-doc-chip.is-edit { border-color: #7c2d12; background: #431407; color: #fdba74; }
-.invoice-doc-cardbar-meta { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .1rem .55rem; color: #64748b; }
+.invoice-doc-cardbar-meta { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .1rem .55rem; color: var(--doc-faint); }
 .invoice-doc-cardbar-meta span { display: inline-flex; align-items: center; gap: .2rem; }
-.invoice-doc-cardbar-meta strong { color: #334155; font-family: ui-monospace, monospace; font-weight: 700; }
-.dark .invoice-doc-cardbar-meta strong { color: #cbd5e1; }
+.invoice-doc-cardbar-meta strong { color: var(--doc-muted); font-family: ui-monospace, monospace; font-weight: 700; }
 .invoice-doc-cardbar-session { overflow: hidden; max-width: 22rem; text-overflow: ellipsis; white-space: nowrap; }
 
 .invoice-doc-header-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(min(17rem, 100%), 20rem); gap: .45rem; padding: .45rem .5rem; }
 .invoice-doc-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(10.5rem, 100%), 1fr)); gap: .3rem .45rem; align-content: start; }
-.invoice-doc-party { min-width: 0; border-inline-start: 1px dashed #e2e8f0; padding-inline-start: .5rem; }
-.dark .invoice-doc-party { border-color: #2b3852; }
+.invoice-doc-party { min-width: 0; border-inline-start: 1px dashed var(--doc-line); padding-inline-start: .5rem; }
 
 /* حقول مضغوطة داخل المستند كله (الشكل المرجعي: 11px للعناوين و12px للقيم) */
-.invoice-doc .form-field > label { margin-bottom: .12rem; color: #475569; font-size: .6rem; font-weight: 800; }
-.dark .invoice-doc .form-field > label { color: #94a3b8; }
+.invoice-doc .form-field > label { margin-bottom: .12rem; color: var(--doc-muted); font-size: .6rem; font-weight: 800; }
 .invoice-doc .form-field > p { margin-top: .1rem; font-size: .55rem; }
 .invoice-doc input:not([type=checkbox]):not([type=radio]),
 .invoice-doc select,
@@ -1182,13 +1167,12 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 
 /* ③ شريط إضافة صنف */
 .invoice-doc-entry { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; padding: .3rem .5rem; }
-.invoice-doc-entry-label { display: inline-flex; align-items: center; gap: .25rem; color: #3730a3; font-size: .66rem; font-weight: 800; white-space: nowrap; }
-.dark .invoice-doc-entry-label { color: #c7d2fe; }
+.invoice-doc-entry-label { display: inline-flex; align-items: center; gap: .25rem; color: var(--doc-accent-deep); font-size: .66rem; font-weight: 800; white-space: nowrap; }
 .invoice-doc-entry-input { min-width: min(14rem, 100%); flex: 1; }
-.invoice-doc-entry-hints { display: flex; align-items: center; gap: .4rem; color: #64748b; font-size: .58rem; }
-.invoice-doc-entry-hints > button { display: inline-flex; align-items: center; gap: .2rem; border: 1px solid #e2e8f0; border-radius: .4rem; padding: .18rem .45rem; font-weight: 700; }
-.invoice-doc-entry-hints > button:hover { background: #f1f5f9; }
-.invoice-doc-entry-hints kbd { border: 1px solid #cbd5e1; border-radius: .25rem; padding: 0 .22rem; font-size: .55rem; }
+.invoice-doc-entry-hints { display: flex; align-items: center; gap: .4rem; color: var(--doc-faint); font-size: .58rem; }
+.invoice-doc-entry-hints > button { display: inline-flex; align-items: center; gap: .2rem; border: 1px solid var(--doc-line); border-radius: .4rem; padding: .18rem .45rem; font-weight: 700; }
+.invoice-doc-entry-hints > button:hover { background: var(--doc-surface); }
+.invoice-doc-entry-hints kbd { border: 1px solid var(--doc-line); border-radius: .25rem; padding: 0 .22rem; font-size: .55rem; }
 
 /* ④ الجسم: البنود بعرض كامل ثم ثلاث لوحات سفلية */
 .invoice-doc .invoice-body-grid { grid-template-columns: minmax(0, 1fr); background: transparent; padding: 0; gap: .4rem; }
@@ -1197,34 +1181,26 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc .invoice-pos-document .invoice-shell > section:first-child,
 .invoice-doc .invoice-pos-document .invoice-lines-column .invoice-lines-panel,
 .invoice-doc .invoice-pos-document .invoice-lines-column > section:not(.invoice-lines-panel),
-.invoice-doc .invoice-totals-footer > div { border: 1px solid #e2e8f0; border-radius: .6rem; box-shadow: 0 1px 2px rgb(15 23 42 / .04); }
-.dark .invoice-doc .invoice-pos-document .invoice-shell > section:first-child,
-.dark .invoice-doc .invoice-pos-document .invoice-lines-column .invoice-lines-panel,
-.dark .invoice-doc .invoice-pos-document .invoice-lines-column > section:not(.invoice-lines-panel),
-.dark .invoice-doc .invoice-totals-footer > div { border-color: #27344e; }
+.invoice-doc .invoice-totals-footer > div { border: 1px solid var(--doc-line); border-radius: .6rem; box-shadow: 0 1px 2px rgb(15 23 42 / .04); }
 
 /* رؤوس اللوحات: شريط رفيع بلون slate بدل التدرّج الأزرق العريض */
 .invoice-doc .invoice-lines-panel > div:first-child,
 .invoice-doc .invoice-totals-footer > div > div:first-child,
 .invoice-doc .invoice-pos-document .invoice-shell > section:first-child > div:first-child {
-  min-height: 0; background: #f8fafc; padding: .35rem .55rem !important;
+  min-height: 0; background: var(--doc-tint); padding: .35rem .55rem !important;
 }
-.dark .invoice-doc .invoice-lines-panel > div:first-child,
-.dark .invoice-doc .invoice-totals-footer > div > div:first-child,
-.dark .invoice-doc .invoice-pos-document .invoice-shell > section:first-child > div:first-child { background: #0f1729; }
-.invoice-doc .invoice-lines-panel h2, .invoice-doc .invoice-totals-footer h3 { color: #1e293b; font-size: .72rem; }
-.dark .invoice-doc .invoice-lines-panel h2, .dark .invoice-doc .invoice-totals-footer h3 { color: #e2e8f0; }
+.invoice-doc .invoice-lines-panel h2, .invoice-doc .invoice-totals-footer h3 { color: var(--doc-ink-soft); font-size: .72rem; }
 .invoice-doc .invoice-lines-toolbar-title > div:first-child { font-size: .56rem; }
 
 /* جدول البنود: صفوف رفيعة، رأس فاتح، أعمدة موحّدة */
 .invoice-doc .invoice-lines-table { font-size: .68rem; }
-.invoice-doc .invoice-lines-table thead th { position: sticky; top: 0; z-index: 2; border-bottom: 1px solid #e2e8f0; background: #f8fafc; box-shadow: none; color: #475569; font-size: .59rem; font-weight: 800; padding: .35rem .45rem; }
+.invoice-doc .invoice-lines-table thead th { position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--doc-line); background: var(--doc-tint); box-shadow: none; color: var(--doc-muted); font-size: .59rem; font-weight: 800; padding: .35rem .45rem; }
 .dark .invoice-doc .invoice-lines-table thead th { border-color: #27344e; background: #131d33; color: #cbd5e1; }
-.invoice-doc .invoice-lines-table tbody td { border-color: #f1f5f9; color: #334155; padding: .2rem .35rem; vertical-align: middle; }
+.invoice-doc .invoice-lines-table tbody td { border-color: var(--doc-surface); color: var(--doc-muted); padding: .2rem .35rem; vertical-align: middle; }
 .dark .invoice-doc .invoice-lines-table tbody td { border-color: #1e293b; color: #dbe5f2; }
 .invoice-doc .invoice-lines-table tbody tr:nth-child(even) { background: #fcfdff; }
 .dark .invoice-doc .invoice-lines-table tbody tr:nth-child(even) { background: #0f1a2e; }
-.invoice-doc .invoice-lines-table tbody tr:hover { background: #f8fafc; }
+.invoice-doc .invoice-lines-table tbody tr:hover { background: var(--doc-tint); }
 .dark .invoice-doc .invoice-lines-table tbody tr:hover { background: #16233b; }
 .invoice-doc .invoice-lines-table input, .invoice-doc .invoice-lines-table select { min-height: 1.7rem !important; font-size: .67rem; }
 .invoice-doc .invoice-lines-panel .overflow-x-auto { max-height: min(52vh, 40rem); }
@@ -1234,20 +1210,19 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc .invoice-table-total { direction: ltr; font-family: ui-monospace, monospace; font-weight: 800; text-align: left; }
 
 /* لوحة الملاحظات السفلية */
-.invoice-doc-notes-card { display: flex; flex-direction: column; gap: .3rem; border: 1px solid #e2e8f0; border-radius: .6rem; background: #fff; padding: .55rem; }
-.dark .invoice-doc-notes-card { background: #101827; border-color: #27344e; }
+.invoice-doc-notes-card { display: flex; flex-direction: column; gap: .3rem; border: 1px solid var(--doc-line); border-radius: .6rem; background: var(--doc-paper); padding: .55rem; }
 .invoice-doc-notes-card b { font-size: .72rem; }
 .invoice-doc-notes-card textarea { min-height: 5.5rem; resize: vertical; }
-.invoice-doc-notes-card small { color: #64748b; font-size: .58rem; line-height: 1.6; }
+.invoice-doc-notes-card small { color: var(--doc-faint); font-size: .58rem; line-height: 1.6; }
 
 /* ⑤ شريط الإجراءات اللاصق */
 .invoice-doc-actionbar {
   position: sticky; bottom: 0; z-index: 20;
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem;
-  border-top: 1px solid #e2e8f0; background: rgb(255 255 255 / .97); padding: .35rem .6rem;
+  border-top: 1px solid var(--doc-line); background: rgb(255 255 255 / .97); padding: .35rem .6rem;
 }
 .dark .invoice-doc-actionbar { background: rgb(16 24 39 / .97); border-top-color: #27344e; }
-.invoice-doc-actionbar-info { display: flex; flex-wrap: wrap; gap: .6rem; color: #64748b; font-size: .58rem; }
+.invoice-doc-actionbar-info { display: flex; flex-wrap: wrap; gap: .6rem; color: var(--doc-faint); font-size: .58rem; }
 .invoice-doc-actionbar-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
 .invoice-doc-actionbar-buttons button { min-height: 1.85rem !important; border-radius: .4rem !important; padding: .2rem .7rem !important; font-size: .68rem !important; }
 .invoice-doc-post { font-size: .74rem !important; font-weight: 900 !important; }
@@ -1261,7 +1236,7 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 }
 @media (max-width: 1000px) {
   .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr); }
-  .invoice-doc-party { border-inline-start: 0; border-top: 1px dashed #e2e8f0; padding-inline-start: 0; padding-top: .4rem; }
+  .invoice-doc-party { border-inline-start: 0; border-top: 1px dashed var(--doc-line); padding-inline-start: 0; padding-top: .4rem; }
   .invoice-doc .invoice-totals-footer { grid-template-columns: minmax(0, 1fr); }
   .invoice-doc-cardbar-session { display: none; }
 }
@@ -1274,42 +1249,48 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
    ثابتة على نص داكن). هذه الطبقة تجمع الألوان في متغيرات لها بديل
    ليلي، فيبقى شكل المستند واحداً في الوضعين.                          */
 :root {
-  --doc-ink: #0f2042;        /* حبر الترويسة والعناوين */
-  --doc-ink-soft: #0b1c30;
-  --doc-surface: #f8f9ff;    /* سطح المستند خلف البطاقات */
+  /* هوية واحدة للمستند: الفاتورة والسند وكل نافذة إدخال تقرأ من هنا (UNIFY-DOC-2026-09-28) */
+  --doc-ink: #0f172a;        /* حبر العناوين والأرقام */
+  --doc-ink-soft: #1e293b;   /* نص المستند */
+  --doc-surface: #f1f5f9;    /* سطح المستند خلف البطاقات */
   --doc-paper: #ffffff;      /* ورق البطاقة */
-  --doc-tint: #eff4ff;       /* تظليل خفيف داخل البطاقة */
-  --doc-tint-strong: #e5eeff;
-  --doc-band: #dce9ff;       /* شريط عنوان القسم */
-  --doc-line: #c5c6cf;
-  --doc-muted: #45464e;
-  --doc-faint: #75777f;
-  --doc-accent: #3f5f92;
-  --doc-accent-deep: #254778;
-  --doc-head-sub: #d6e3ff;
+  --doc-tint: #f8fafc;       /* شريط البطاقة والتظليل الخفيف */
+  --doc-tint-strong: #eef2ff;/* لمسة نيلية: شارة الأيقونة */
+  --doc-band: #f1f5f9;       /* شريط عنوان القسم */
+  --doc-line: #e2e8f0;       /* كل الحدود */
+  --doc-muted: #475569;      /* عناوين الحقول */
+  --doc-faint: #64748b;      /* التلميحات */
+  --doc-accent: #4338ca;     /* العلامة النيلية */
+  --doc-accent-deep: #3730a3;
+  --doc-accent-soft: #c7d2fe;/* حدود الشارة النيلية */
+  --doc-hover: #f1f5f9;      /* تمرير الفأرة */
+  --doc-head: #0f172a;       /* ترويسة المستند الداكنة */
+  --doc-head-sub: #cbd5e1;
 }
 .dark {
   --doc-ink: #e8eefb;
-  --doc-ink-soft: #e8eefb;
+  --doc-ink-soft: #e2e8f0;
   --doc-surface: #0b1220;
   --doc-paper: #101827;
-  --doc-tint: #16203a;
-  --doc-tint-strong: #1b2745;
-  --doc-band: #1e2c4d;
+  --doc-tint: #0f1729;
+  --doc-tint-strong: #1e1b4b;
+  --doc-band: #0f1729;
   --doc-line: #27344e;
-  --doc-muted: #aab6cd;
-  --doc-faint: #8291ab;
-  --doc-accent: #93b4ea;
-  --doc-accent-deep: #b9cdf3;
-  --doc-head-sub: #b9cdf3;
+  --doc-muted: #cbd5e1;
+  --doc-faint: #94a3b8;
+  --doc-accent: #a5b4fc;
+  --doc-accent-deep: #c7d2fe;
+  --doc-accent-soft: #3730a3;
+  --doc-hover: #1e293b;
+  --doc-head: #101827;
+  --doc-head-sub: #94a3b8;
 }
 .doc-sheet { background: var(--doc-surface); color: var(--doc-ink-soft); }
-.doc-head { background: #0f2042; color: #fff; }
-.dark .doc-head { background: #101827; }
+.doc-head { background: var(--doc-head); color: #fff; }
 .doc-head-sub { color: var(--doc-head-sub); }
 .doc-meta { background: var(--doc-tint); color: var(--doc-muted); }
-.doc-card { background: var(--doc-paper); box-shadow: 0 6px 18px -12px rgb(15 23 42 / .35); }
-.doc-ring { box-shadow: inset 0 0 0 1px var(--doc-band); }
+.doc-card { background: var(--doc-paper); box-shadow: 0 1px 2px rgb(15 23 42 / .04); }
+.doc-ring { box-shadow: inset 0 0 0 1px var(--doc-line); }
 .doc-band { background: var(--doc-band); }
 .doc-tint { background: var(--doc-tint); }
 .doc-tint-strong { background: var(--doc-tint-strong); }

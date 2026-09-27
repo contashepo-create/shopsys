@@ -2459,6 +2459,50 @@ function guardCreditLimit(
   }
 }
 
+/**
+ * AUDIT-017 — «ذمة بلا صاحب» من باب المرضى:
+ * زيارة عيادة أو طلب تحاليل بمتبقٍّ كانا يُحمّلان **1104 ذمم العملاء** بينما
+ * المريض ليس عميلاً مسجلاً ⇒ حساب المراقبة يتحرك ولا يراه أي كشف طرف، فينكسر
+ * الثابت السابع (دفتر 1104 = مجموع كشوف العملاء) ويختفي دين حقيقي من تقرير
+ * أعمار الديون. نفس سياسة النظام في البيع الآجل: **لا دين بلا مدين**.
+ *
+ * الحل بلا احتكاك للاستقبال: أول متبقٍّ يفتح للمريض سجل عميل بنفس اسمه ورقمه
+ * (أو يربطه بعميل قائم بنفس الاسم) ويثبّت الرابط، فتدخل الذمة كشفه تلقائياً.
+ * @returns معرّف العميل المالي للمريض
+ */
+function ensurePatientDebtor(
+  state: DataState,
+  registry: 'clinic' | 'lab',
+  patient: { id: number; nameAr: string; phone?: string; linkedCustomerId?: number | null },
+): { customerId: number; customers: Customer[]; clinicPatients: DataState['clinicPatients']; labPatients: DataState['labPatients'] } {
+  let customers = state.customers
+  let customerId = patient.linkedCustomerId ?? 0
+  if (!customerId || !customers.some((c) => c.id === customerId)) {
+    const nameAr = patient.nameAr.trim() || `مريض #${patient.id}`
+    const existing = customers.find((c) => c.nameAr.trim() === nameAr)
+    if (existing) {
+      customerId = existing.id
+    } else {
+      customerId = nextId(customers)
+      customers = [...customers, {
+        ...EMPTY_EXTENDED,
+        id: customerId, nameAr, phone: patient.phone ?? '', creditLimitMinor: 0,
+        notes: registry === 'clinic' ? 'فُتح تلقائياً لذمة مريض عيادة' : 'فُتح تلقائياً لذمة مريض معمل',
+      }]
+    }
+  }
+  return {
+    customerId,
+    customers,
+    clinicPatients: registry === 'clinic'
+      ? state.clinicPatients.map((p) => (p.id === patient.id ? { ...p, linkedCustomerId: customerId } : p))
+      : state.clinicPatients,
+    labPatients: registry === 'lab'
+      ? state.labPatients.map((p) => (p.id === patient.id ? { ...p, linkedCustomerId: customerId } : p))
+      : state.labPatients,
+  }
+}
+
 function usedRefCodes(state: Pick<DataState, 'sales' | 'purchases' | 'saleReturns' | 'purchaseReturns'>): Set<string> {
   const set = new Set<string>()
   for (const x of state.sales) if (x.refCode) set.add(x.refCode)
@@ -7613,10 +7657,12 @@ export const useDataStore = create<DataState>()(
 
         // الإجماليات وقيد التحصيل (كلاهما يرمي قبل أي كتابة)
         const totals = computeLabTotals(chosen.map((t) => t.priceMinor), args.discountPercent, args.vatPercent)
-        // حد الائتمان: الطلب الآجل لمريض مربوط بعميل مالي يرفع ذمم ذلك العميل
-        if (args.payment !== 'cash') {
-          const dueForLimit = totals.totalMinor - (args.paidMinor ?? 0)
-          if (dueForLimit > 0) guardCreditLimit(get(), patient.linkedCustomerId ?? null, dueForLimit, args.creditLimitOverrideBy)
+        // AUDIT-017: متبقي الطلب دين على مريض ⇒ يُفتح/يُربط له سجل عميل فيدخل كشفه و1104 يبقى مطابقاً
+        const labDueMinor = totals.totalMinor - (args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0))
+        const labDebtor = labDueMinor > 0 ? ensurePatientDebtor(state, 'lab', patient) : null
+        // حد الائتمان: الطلب الآجل يرفع ذمم عميل المريض
+        if (args.payment !== 'cash' && labDueMinor > 0) {
+          guardCreditLimit(get(), labDebtor?.customerId ?? patient.linkedCustomerId ?? null, labDueMinor, args.creditLimitOverrideBy)
         }
         const now = new Date().toISOString()
         const orderId = nextId(state.labOrders)
@@ -7681,7 +7727,7 @@ export const useDataStore = create<DataState>()(
           const activeUser = state.appUsers.find((user) => user.id === state.currentUserId); if (activeUser && activeUser.roleId !== 'owner' && activeUser.paymentTerminalAccess) assertTerminalOperation(activeUser.paymentTerminalAccess, terminal.id, 'charge', totals.totalMinor)
           terminalTransaction = buildTerminalCharge({ terminal, documentType: 'lab', documentId: String(orderId), amountMinor: totals.totalMinor, providerReference: args.terminalPayment.providerReference, occurredAt: now, userId: state.currentUserId ?? 0, cardLast4: args.terminalPayment.cardLast4 })
         }
-        set({ labOrders: [...state.labOrders, order], journal, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        set({ labOrders: [...state.labOrders, order], journal, ...(labDebtor ? { customers: labDebtor.customers, labPatients: labDebtor.labPatients } : {}), ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return order
       },
       advanceLabTest: (orderId, testId, to, resultValue) => {
@@ -9785,8 +9831,10 @@ export const useDataStore = create<DataState>()(
           if (rxErrors.length) throw new Error(rxErrors.join(' — '))
         }
         const totals = computeVisitTotals({ kind: args.kind, feeMinor: args.feeMinor, paidMinor: args.paidMinor, vatPercent: args.vatPercent })
-        // حد الائتمان: متبقي الزيارة دين على العميل المالي المربوط بالمريض (إن وُجد)
-        guardCreditLimit(get(), patient.linkedCustomerId ?? null, totals.dueMinor, args.creditLimitOverrideBy)
+        // AUDIT-017: المتبقي دين حقيقي ⇒ لا بد له من صاحب في كشف العملاء قبل الترحيل
+        const debtor = totals.dueMinor > 0 ? ensurePatientDebtor(state, 'clinic', patient) : null
+        // حد الائتمان: متبقي الزيارة دين على العميل المالي المربوط بالمريض
+        guardCreditLimit(get(), debtor?.customerId ?? patient.linkedCustomerId ?? null, totals.dueMinor, args.creditLimitOverrideBy)
         const id = nextId(state.clinicVisits)
         const visitNumber = `VIS-${String(id).padStart(4, '0')}`
         const lines = buildVisitEntry(totals, `${visitNumber} — ${patient.nameAr}`, args.treasury ?? '1101')
@@ -9807,6 +9855,7 @@ export const useDataStore = create<DataState>()(
         set({
           clinicVisits: [...state.clinicVisits, visit],
           journal: [...state.journal, entry],
+          ...(debtor ? { customers: debtor.customers, clinicPatients: debtor.clinicPatients } : {}),
           treatmentPlans: args.planId != null
             ? state.treatmentPlans.map((pl) => (pl.id === args.planId ? { ...pl, doneSessions: pl.doneSessions + 1 } : pl))
             : state.treatmentPlans,
