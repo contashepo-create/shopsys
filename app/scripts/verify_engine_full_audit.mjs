@@ -230,7 +230,7 @@ S().postTransfer({ fromWarehouseId: mainWh.id, toWarehouseId: wh2.id, lines: [{ 
 invariants('تحويل مخزني (لا قيد مالي — كميات فقط)')
 const shirtNow = S().items.find((i) => i.id === shirtM.id)
 S().postStocktake([{ itemId: shirtM.id, nameAr: shirtNow.nameAr, expectedQty: shirtNow.stockQty, countedQty: shirtNow.stockQty - 2, unitCostMinor: shirtNow.costMinor }], 'جرد المراجعة')
-ok('عجز الجرد خرج مصروفاً 5108 بتكلفته', bal('5108') >= 2 * shirtNow.costMinor)
+ok('عجز الجرد خرج هالك مخزون 5111 بتكلفته', bal('5111') >= 2 * shirtNow.costMinor)
 invariants('تسوية جرد بالعجز')
 
 /* ═════ الفحص التقاطعي: القوائم المالية على نفس الدفتر ═════ */

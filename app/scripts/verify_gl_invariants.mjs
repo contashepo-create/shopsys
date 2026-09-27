@@ -156,7 +156,7 @@ ok('2104 صفرت بعد السداد', bal('2104') === 0)
 console.log('📦 الجرد')
 const riceNow = S().items.find((i) => i.id === rice.id)
 S().postStocktake([{ itemId: rice.id, nameAr: 'أرز', expectedQty: riceNow.stockQty, countedQty: riceNow.stockQty - 3, unitCostMinor: riceNow.costMinor }], 'عجز جرد شهري')
-invariants('تسوية عجز جرد (5108←1103)')
+invariants('تسوية عجز جرد (5111←1103)')
 
 /* ═══════════ الأصول والإهلاك ═══════════ */
 console.log('🏢 الأصول')

@@ -29,6 +29,7 @@ import { renderItemLedgerHtml } from '../print/printItemLedger.ts'
 import { renderItemLabelsHtml } from '../print/printProLabels.ts'
 import type { ItemLabelData } from '../../core/labels.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { rowOpenProps } from '../components/rowOpen.ts'
 
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
@@ -771,7 +772,7 @@ export function ItemsPage() {
               </thead>
               <tbody>
                 {items.filter((it) => it.isActive).map((it) => (
-                  <tr key={it.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                  <tr key={it.id} {...rowOpenProps(() => openEditItem(it), `انقر مرتين لفتح بطاقة ${it.nameAr}`)} className="border-b border-slate-50 dark:border-slate-800/50">
                     <td className="px-4 py-1.5 font-bold">{it.nameAr}</td>
                     <td className="px-4 py-1.5 font-mono text-[11px] text-slate-400" dir="ltr">{it.barcodes.find(Boolean) || it.sku || it.id}</td>
                     <td className="px-4 py-1.5 text-emerald-600 font-bold">{formatMinor(it.priceMinor, cur, false)}</td>

@@ -26,6 +26,7 @@ import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { rowOpenProps } from '../components/rowOpen.ts'
 
 /** حالة سطر واحد في المعالج */
 interface WizardLine {
@@ -277,7 +278,7 @@ export function SaleReturnsPage() {
                 const orig = sales.find((s) => s.id === r.saleId)
                 const hasDamaged = r.lines.some((l) => l.condition === 'damaged')
                 return (
-                  <tr key={r.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-rose-500/[0.03] transition-colors">
+                  <tr key={r.id} {...rowOpenProps(() => setViewing(r), `انقر مرتين لفتح المرتجع ${r.returnNumber}`)} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-rose-500/[0.03] transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-800 dark:text-white">{r.returnNumber}</div>
                       <div className="text-[11px] text-slate-400">{r.date.slice(0, 16).replace('T', ' ')}</div>

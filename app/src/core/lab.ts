@@ -166,12 +166,15 @@ export function computeLabTotals(prices: readonly Minor[], discountPercent: numb
  *   من ح/ 1101 خزينة (نقدي) أو 1104 عملاء (آجل — شركة تعاقد أو مريض بحساب)
  *     إلى ح/ 4106 إيرادات تحاليل + 2102 ض.ق.م (إن وجدت)
  */
-export function buildLabOrderEntry(totals: LabOrderTotals, payment: 'cash' | 'credit', label: string, treasury = '1101'): JournalLine[] {
+export function buildLabOrderEntry(totals: LabOrderTotals, payment: 'cash' | 'credit' | 'mixed', label: string, treasury = '1101', paidMinor?: Minor): JournalLine[] {
   if (totals.netMinor <= 0) throw new Error('قيمة الطلب يجب أن تكون موجبة')
-  const lines: JournalLine[] = [
-    { accountCode: payment === 'cash' ? treasury : '1104', debit: totals.totalMinor, credit: 0, note: `تحصيل ${label}` },
-    { accountCode: '4106', debit: 0, credit: totals.netMinor, note: 'إيراد تحاليل طبية' },
-  ]
+  // تحصيل جزئي: المحصَّل الآن في الخزينة/البنك والباقي ذمة على المريض (1104)
+  const paid = paidMinor ?? (payment === 'cash' ? totals.totalMinor : 0)
+  if (!Number.isInteger(paid) || paid < 0 || paid > totals.totalMinor) throw new Error('المحصَّل يجب أن يكون بين صفر وإجمالي الطلب')
+  const lines: JournalLine[] = []
+  if (paid > 0) lines.push({ accountCode: treasury, debit: paid, credit: 0, note: `تحصيل ${label}` })
+  if (totals.totalMinor - paid > 0) lines.push({ accountCode: '1104', debit: totals.totalMinor - paid, credit: 0, note: `متبقٍ على المريض — ${label}` })
+  lines.push({ accountCode: '4106', debit: 0, credit: totals.netMinor, note: 'إيراد تحاليل طبية' })
   if (totals.vatMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: totals.vatMinor, note: 'ض.ق.م' })
   assertBalanced(lines)
   return lines

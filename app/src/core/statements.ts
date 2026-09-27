@@ -263,7 +263,7 @@ export function customerUnitDocs(args: {
   /** معرفات المرضى المرتبطين بهذا العميل */
   linkedPatientIds?: readonly number[]
   /** طلبات معمل آجلة لمرضى معمل مرتبطين بهذا العميل (إصلاح الترابط الشامل) */
-  labOrders?: readonly { orderNumber: string; date: string; patientId: number; payment: string; totals: { totalMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
+  labOrders?: readonly { orderNumber: string; date: string; patientId: number; payment: string; paidMinor?: number; totals: { totalMinor: Minor }; refunds?: readonly { date: string; amountMinor: Minor; mode: string }[] }[]
   linkedLabPatientIds?: readonly number[]
   /** خدمات محافظ بجزء آجل على العميل */
   walletOps?: readonly { opNumber: string; date: string; customerId: number | null; status: string; chargeMinor: Minor; paidMinor: Minor; totals: { remainingMinor: Minor } }[]
@@ -285,6 +285,8 @@ export function customerUnitDocs(args: {
   cars?: readonly { make: string; model: string; year: number; plateOrVin: string; buyerCustomerId?: number | null; salePayment?: string; salePaidMinor?: number; saleTotalMinor?: number | null; soldAt: string | null }[]
   /** سيارات أمانة بيعت آجلاً لمشترٍ مربوط بهذا العميل */
   consignmentCars?: readonly { make: string; model: string; plateOrVin: string; buyerCustomerId?: number | null; salePayment?: string; salePriceMinor: number | null; soldAt: string | null }[]
+  /** مستندات بيع وحدات عقارية بجزء آجل على هذا العميل (سطر لكل وحدة داخل المستند) */
+  propertySales?: readonly { saleNumber: string; date: string; buyerCustomerId: number | null; totalMinor: Minor; paidMinor: Minor; dueMinor: Minor; lines: readonly { code: string }[] }[]
 }): { docLabel: string; date: string; operationMinor?: Minor; debitMinor: Minor; creditMinor: Minor }[] {
   const rows: { docLabel: string; date: string; operationMinor?: Minor; debitMinor: Minor; creditMinor: Minor }[] = []
   for (const c of args.cars ?? []) {
@@ -295,16 +297,27 @@ export function customerUnitDocs(args: {
     const status = paid > 0 ? 'مقدم/آجل' : 'آجل'
     rows.push({ docLabel: `بيع سيارة ${c.make} ${c.model} ${c.year} (${c.plateOrVin}) ${status}`, date: c.soldAt, operationMinor: total, debitMinor: total, creditMinor: paid })
   }
+  for (const sale of args.propertySales ?? []) {
+    if (sale.buyerCustomerId !== args.customerId || sale.dueMinor <= 0) continue
+    const unitsLabel = sale.lines.length > 1 ? `${sale.lines.length} وحدات` : `الوحدة ${sale.lines[0]?.code ?? ''}`
+    rows.push({
+      docLabel: `بيع عقاري ${sale.saleNumber} (${unitsLabel})${sale.paidMinor > 0 ? ' — مقدم وباقٍ آجل' : ' آجل'}`,
+      date: sale.date, operationMinor: sale.totalMinor, debitMinor: sale.totalMinor, creditMinor: sale.paidMinor,
+    })
+  }
   for (const c of args.consignmentCars ?? []) {
     if (c.buyerCustomerId !== args.customerId || c.salePayment !== 'credit' || !c.soldAt) continue
     if ((c.salePriceMinor ?? 0) > 0) rows.push({ docLabel: `بيع أمانة ${c.make} ${c.model} (${c.plateOrVin}) آجل`, date: c.soldAt, operationMinor: c.salePriceMinor ?? 0, debitMinor: c.salePriceMinor ?? 0, creditMinor: 0 })
   }
   for (const o of args.laundryOrders ?? []) {
     if (o.customerId !== args.customerId) continue
+    // AUDIT-015: أمر الغسيل يُحصَّل بالكامل عند التسليم (العربون + الباقي نقداً) — لا يصير ذمة أبداً.
+    // كان الكشف يخصم العربون فقط فيظهر باقٍ وهمي على عميل لا يدين بشيء (وينفصل الكشف عن الحساب 1104).
+    // فالأمر المسلَّم يظهر مستنداً بصافٍ صفر (مدين بالخدمة ودائن بما حُصِّل)، وغير المسلَّم لا يظهر
+    // لأن إيراده لم يُعترف بعد وعربونه التزام في 2109 لا ذمة على العميل.
     const laundryTotal = o.grandMinor ?? 0
-    if (laundryTotal > 0 && (!o.status || o.status === 'delivered' || o.status === 'ready')) {
-      const prepaid = Math.min(laundryTotal, Math.max(0, o.prepaidMinor ?? 0))
-      rows.push({ docLabel: `خدمة مغسلة ${o.orderNumber}`, date: o.receivedAt, operationMinor: laundryTotal, debitMinor: laundryTotal, creditMinor: prepaid })
+    if (laundryTotal > 0 && o.status === 'delivered') {
+      rows.push({ docLabel: `خدمة مغسلة ${o.orderNumber} (محصَّلة بالكامل)`, date: o.receivedAt, operationMinor: laundryTotal, debitMinor: laundryTotal, creditMinor: laundryTotal })
     }
     for (const r of o.refunds ?? []) {
       if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع خدمة ${o.orderNumber} (إيداع في الحساب)`, date: r.date, operationMinor: r.amountMinor, debitMinor: 0, creditMinor: r.amountMinor })
@@ -326,8 +339,8 @@ export function customerUnitDocs(args: {
   const labSet = new Set(args.linkedLabPatientIds ?? [])
   for (const o of args.labOrders ?? []) {
     if (!labSet.has(o.patientId) || o.totals.totalMinor <= 0) continue
-    const paid = o.payment === 'cash' ? o.totals.totalMinor : 0
-    const status = paid >= o.totals.totalMinor ? 'نقدي/مسدد' : 'آجل'
+    const paid = o.paidMinor ?? (o.payment === 'cash' ? o.totals.totalMinor : 0)
+    const status = paid >= o.totals.totalMinor ? 'نقدي/مسدد' : paid > 0 ? 'جزئي' : 'آجل'
     rows.push({ docLabel: `طلب معمل ${o.orderNumber} (${status})`, date: o.date, operationMinor: o.totals.totalMinor, debitMinor: o.totals.totalMinor, creditMinor: paid })
     for (const r of o.refunds ?? []) {
       if (r.mode === 'customer_credit') rows.push({ docLabel: `مرتجع تحاليل ${o.orderNumber} (على الحساب)`, date: r.date, operationMinor: r.amountMinor, debitMinor: 0, creditMinor: r.amountMinor })
@@ -448,4 +461,79 @@ export function agingFromStatement(rows: readonly StatementRow[], asOf: string):
 /** كشف المورد معكوس الاتجاه (الدائن دين علينا) — نقلبه لنمرره لنفس محرك الأعمار */
 export function supplierRowsForAging(rows: readonly StatementRow[]): StatementRow[] {
   return rows.map((r) => ({ ...r, debitMinor: r.creditMinor, creditMinor: r.debitMinor }))
+}
+
+/**
+ * مستندات الوحدات المدينة لمورد (الوجه المقابل لـ customerUnitDocs) — طلب المالك:
+ * «أريد أن أحمّل تجهيز السيارة على ورشة أو مصنع كحساب آجل».
+ *  • فاتورة شراء سيارات كاملة بجزء آجل → دائن للمورد بالمتبقي.
+ *  • شراء سيارة منفردة (بلا فاتورة) بجزء آجل → دائن بالمتبقي.
+ *  • تكلفة تجهيز آجلة على ورشة/مصنع مسجل كمورد → دائن بالمتبقي.
+ * القاعدة الثابتة: لا يظهر إلا الجزء غير المسدَّد، ولا يُحتسب مستند مرتين
+ * (سيارة داخل فاتورة تُترك للفاتورة).
+ */
+export function supplierUnitDocs(args: {
+  supplierId: number
+  /** سيارات المعرض؛ تُقرأ منها المشتريات الآجلة غير المرتبطة بفاتورة */
+  cars?: readonly {
+    make: string; model: string; year: number; plateOrVin: string
+    supplierId?: number | null; purchasePayment?: string | null
+    purchaseDueMinor?: number; purchasePaidMinor?: number; purchaseCostMinor: Minor
+    purchaseEntryId: number; purchaseInvoiceId?: number | null
+  }[]
+  /** فواتير شراء السيارات الكاملة */
+  carPurchaseInvoices?: readonly {
+    invoiceNumber: string; date: string; supplierId: number | null
+    totalMinor: Minor; paidMinor: Minor; dueMinor: Minor; carIds: readonly number[]
+  }[]
+  /** تكاليف تجهيز السيارات المحمَّلة على جهات (ورش/مصانع) */
+  carPrepCosts?: readonly {
+    carId: number; date: string; description: string
+    supplierId: number | null; amountMinor: Minor; paidMinor: Minor; dueMinor: Minor
+  }[]
+  /** تكاليف مشاريع المقاولات الآجلة على مورد/مقاول باطن مسجل */
+  projectCosts?: readonly {
+    date: string; description: string; kind?: string
+    supplierId?: number | null; amountMinor: Minor; paidMinor?: number; dueMinor?: number
+  }[]
+  /** تسمية السيارة لعرضها في وصف سطر التجهيز */
+  carLabel?: (carId: number) => string
+  /** تاريخ قيد شراء السيارة المنفردة */
+  entryDate?: (entryId: number) => string
+}): { docLabel: string; date: string; operationMinor?: Minor; debitMinor: Minor; creditMinor: Minor }[] {
+  const rows: { docLabel: string; date: string; operationMinor?: Minor; debitMinor: Minor; creditMinor: Minor }[] = []
+  for (const invoice of args.carPurchaseInvoices ?? []) {
+    if (invoice.supplierId !== args.supplierId || invoice.dueMinor <= 0) continue
+    rows.push({
+      docLabel: `فاتورة شراء سيارات ${invoice.invoiceNumber} (${invoice.carIds.length} سيارة)${invoice.paidMinor > 0 ? ' — مقدم وباقٍ آجل' : ' آجلة'}`,
+      date: invoice.date, operationMinor: invoice.totalMinor, debitMinor: 0, creditMinor: invoice.dueMinor,
+    })
+  }
+  for (const car of args.cars ?? []) {
+    if (car.supplierId !== args.supplierId) continue
+    if (car.purchaseInvoiceId != null) continue // محسوبة ضمن الفاتورة
+    const due = car.purchaseDueMinor ?? 0
+    if (car.purchasePayment === 'cash' || due <= 0) continue
+    rows.push({
+      docLabel: `شراء سيارة ${car.make} ${car.model} (${car.plateOrVin})${(car.purchasePaidMinor ?? 0) > 0 ? ' — مقدم وباقٍ آجل' : ' آجل'}`,
+      date: args.entryDate?.(car.purchaseEntryId) ?? '0000-00-00',
+      operationMinor: car.purchaseCostMinor, debitMinor: 0, creditMinor: due,
+    })
+  }
+  for (const cost of args.projectCosts ?? []) {
+    const due = cost.dueMinor ?? 0
+    if (cost.supplierId !== args.supplierId || due <= 0) continue
+    rows.push({
+      docLabel: `تكلفة مشروع: ${cost.description || 'بند تكلفة'}${(cost.paidMinor ?? 0) > 0 ? ' — دفعة وباقٍ آجل' : ' آجل'}`,
+      date: cost.date.slice(0, 10), operationMinor: cost.amountMinor, debitMinor: 0, creditMinor: due,
+    })
+  }
+  for (const prep of args.carPrepCosts ?? []) {
+    if (prep.supplierId !== args.supplierId || prep.dueMinor <= 0) continue
+    rows.push({
+      docLabel: `تجهيز ${args.carLabel?.(prep.carId) ?? `سيارة #${prep.carId}`}: ${prep.description}${prep.paidMinor > 0 ? ' — دفعة وباقٍ آجل' : ' آجل'}`,
+      date: prep.date, operationMinor: prep.amountMinor, debitMinor: 0, creditMinor: prep.dueMinor,
+    })
+  }
+  return rows
 }

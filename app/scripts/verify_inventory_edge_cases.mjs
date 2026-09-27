@@ -68,7 +68,7 @@ console.log('\n— ح1) الوزن الكسري (3 منازل) —')
   st().postStocktake([{ itemId: meat.id, nameAr: meat.nameAr, expectedQty: 11.405, countedQty: 11.25, unitCostMinor: 20000 }], 'وزن فعلي')
   assert.equal(st().items.find((i) => i.id === meat.id).stockQty, 11.25)
   const lastEntry = st().journal.at(-1)
-  assert.equal(lastEntry.lines.find((l) => l.accountCode === '5108').debit, Math.round(0.155 * 20000))
+  assert.equal(lastEntry.lines.find((l) => l.accountCode === '5111').debit, Math.round(0.155 * 20000)) // AUDIT-001: عجز الجرد على هالك المخزون
   assertBalanced(lastEntry.lines)
   ok('ح1: جرد بعجز 0.155 كجم — القيد بقيمة الكسر بالضبط (31 قرشاً) ومتوازن')
   st().postWastage({ reason: 'تلف', lines: [{ itemId: meat.id, qty: 0.25 }], notes: '' })
@@ -87,8 +87,11 @@ console.log('\n— ح2) جرد متعدد الأصناف: عجز وزيادة ف
     { itemId: b.id, nameAr: b.nameAr, expectedQty: 10, countedQty: 12, unitCostMinor: 2000 }, // زيادة 2 = 40
   ], 'جرد مزدوج')
   const entry = st().journal.find((e) => e.id === stk.journalEntryId)
-  assert.ok(entry.lines.some((l) => l.accountCode === '5108' && l.debit === 3000))
+  // AUDIT-001: العجز على 5111 (هالك مخزون) والفائض إيراداً على 4110 — في قيد واحد
+  assert.ok(entry.lines.some((l) => l.accountCode === '5111' && l.debit === 3000))
+  assert.ok(entry.lines.some((l) => l.accountCode === '1103' && l.credit === 3000))
   assert.ok(entry.lines.some((l) => l.accountCode === '1103' && l.debit === 4000))
+  assert.ok(entry.lines.some((l) => l.accountCode === '4110' && l.credit === 4000))
   assertBalanced(entry.lines)
   assert.equal(stk.result.netValueMinor, 1000)
   ok('ح2: عجز 30 وزيادة 40 في قيد واحد صافٍ متوازن (صافي +10) — لا قيدان منفصلان')

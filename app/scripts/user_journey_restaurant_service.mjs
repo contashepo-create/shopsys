@@ -73,6 +73,10 @@ console.log('\n═══ 3) تقسيم الحساب: صديق يدفع العص�
   assert.equal(st().restaurantOrders.find(o => o.id === order.id).lines.length, 1, 'بقي الطبق فقط')
   // العصير بلا وصفة بعد — بيعه يحتاج مخزوناً؛ أمر إنتاج مسبق أولاً
   st().addRecipe({ productItemId: juice.id, mode: 'prepped', yieldQty: 10, ingredients: [{ itemId: orange.id, qty: 3 }], overheadMinor: 500, isActive: true, notes: 'تشغيلة عصير' })
+  // أوامر الإنتاج تتطلب مخزن استلام صحيحاً؛ شاشة الإعداد تنشئ «المخزن الرئيسي» عبر seed
+  // (AUDIT-007: إضافة مخزن يدوياً لا ترقّي أوله إلى «رئيسي» — مرصود في AGENTS §3.6)
+  assert.throws(() => st().postProduction({ recipeId: st().recipes[1].id, batches: 1 }), /مخزن استلام ناتج/)
+  st().seed([])
   const prod = st().postProduction({ recipeId: st().recipes[1].id, batches: 1 })
   assert.equal(st().items.find(i => i.id === juice.id).stockQty, 10, 'الإنتاج أدخل 10 أكواب')
   assert.equal(st().items.find(i => i.id === orange.id).stockQty, 22, 'استهلك 3 كجم برتقال')

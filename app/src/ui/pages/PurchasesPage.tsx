@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Trash2, Receipt, TruckIcon, Eye, BookOpenText, Pencil, History, Printer, MoreHorizontal } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { openPurchaseInvoiceWindow } from '../windows/windowStore.ts'
 import { useDataStore, type PurchaseInvoice, type PurchaseExpense } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -28,6 +29,7 @@ import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/Ke
 import { partyCode } from '../../core/partyCodes.ts'
 import { PurchaseExpenseManager } from '../components/PurchaseExpenseManager.tsx'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
+import { rowOpenProps } from '../components/rowOpen.ts'
 
 /**
  * سطر شراء (تدقيق المالك — الشراء بالكرتونة):
@@ -231,7 +233,7 @@ export function PurchasesPage() {
   const openEdit = (p: PurchaseInvoice) => {
     // يفتح نفس محرر الفاتورة المتقدم؛ الصلاحية/اعتماد المشرف يُتحقق عند الحفظ داخل المحرر.
     // editApproval.request تبقى بوابة الصلاحية للمحرر المتقدم عند الحفظ.
-    goTo(`/purchases/invoices/new?edit=${p.id}`)
+    openPurchaseInvoiceWindow(p.id)
   }
   const removeSelectedEditLine = () => {
     if (selectedEditLine == null || !editLines[selectedEditLine]) return
@@ -442,14 +444,14 @@ export function PurchasesPage() {
 
   return (
     <div className="space-y-4">
-      {advancedInvoiceDrafts.filter(d=>d.kind==='purchase').length>0&&<div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 flex flex-wrap items-center justify-between gap-2"><div><b>مسودات مشتريات محفوظة: {advancedInvoiceDrafts.filter(d=>d.kind==='purchase').length}</b><div className="text-xs text-slate-500">يمكن استعادة أحدث مسودة من المحرر المتقدم دون أي أثر محاسبي</div></div><div className="flex gap-2"><Btn variant="ghost" onClick={()=>navigate('/purchases/invoices/new')}>الانتقال للمحرر</Btn><Btn variant="ghost" onClick={()=>{advancedInvoiceDrafts.filter(d=>d.kind==='purchase').forEach(d=>deleteAdvancedInvoiceDraft(d.id));toast.show('حُذفت مسودات المشتريات')}}>حذف الكل</Btn></div></div>}
+      {advancedInvoiceDrafts.filter(d=>d.kind==='purchase').length>0&&<div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 flex flex-wrap items-center justify-between gap-2"><div><b>مسودات مشتريات محفوظة: {advancedInvoiceDrafts.filter(d=>d.kind==='purchase').length}</b><div className="text-xs text-slate-500">يمكن استعادة أحدث مسودة من المحرر المتقدم دون أي أثر محاسبي</div></div><div className="flex gap-2"><Btn variant="ghost" onClick={()=>openPurchaseInvoiceWindow()}>الانتقال للمحرر</Btn><Btn variant="ghost" onClick={()=>{advancedInvoiceDrafts.filter(d=>d.kind==='purchase').forEach(d=>deleteAdvancedInvoiceDraft(d.id));toast.show('حُذفت مسودات المشتريات')}}>حذف الكل</Btn></div></div>}
       <div className="anim-up flex items-center justify-between">
         <div><p className="text-[12px] text-slate-400 max-w-lg leading-relaxed">
           💡 الترحيل يوزع مصاريف الشراء على الأصناف (حسب القيمة أو الكمية لكل مصروف) ثم يحدّث
           تكلفة كل صنف <b>بالمتوسط المرجح المتحرك</b> ويزيد رصيد المخزون.
         </p>
         {purchaseExpensePayables.some(p=>p.status!=='paid')&&<div className="text-[11px] font-bold text-violet-600 mt-1">استحقاقات جهات أخرى: {purchaseExpensePayables.filter(p=>p.status!=='paid').length} · متبقي {fmt(purchaseExpensePayables.filter(p=>p.status!=='paid').reduce((s,p)=>s+p.amountMinor-p.paidMinor,0))}</div>}</div>
-        <div className="flex gap-2"><Btn variant="ghost" onClick={openNew} disabled={items.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> إدخال سريع</span></Btn><Btn shortcut="F3" onClick={() => navigate('/purchases/invoices/new')} disabled={items.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة شراء</span></Btn></div>
+        <div className="flex gap-2"><Btn variant="ghost" onClick={openNew} disabled={items.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> إدخال سريع</span></Btn><Btn shortcut="F3" onClick={() => openPurchaseInvoiceWindow()} disabled={items.length === 0}><span className="flex items-center gap-1.5"><Plus size={15} /> فاتورة شراء</span></Btn></div>
       </div>
 
       {items.length === 0 && (
@@ -479,7 +481,7 @@ export function PurchasesPage() {
             </thead>
             <tbody>
               {purchases.map((p, i) => (
-                <tr key={p.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.04] transition-colors duration-150">
+                <tr key={p.id} {...rowOpenProps(() => setViewing(p), `انقر مرتين لفتح فاتورة الشراء ${p.invoiceNumber}`)} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.04] transition-colors duration-150">
                   <td className="px-4 py-3">
                     <div className="font-bold text-slate-800 dark:text-white">{p.invoiceNumber}</div>
                     {p.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{p.refCode}</div>}
@@ -732,7 +734,7 @@ export function PurchasesPage() {
             </div>
             {managedExpenses.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{managedExpenses.map((expense, index) => <span key={index} className="rounded-lg bg-white/70 px-2 py-1 text-[11px] dark:bg-slate-900/40">{expense.nameAr}: {fmt(expense.amountMinor)} {expense.paidBy === 'payable' ? '· مستحق' : ''}</span>)}</div>}
           </div>
-          <Modal open={expensesOpen} onClose={() => setExpensesOpen(false)} title="تفاصيل مصاريف الشراء" wide>
+          <Modal open={expensesOpen} onClose={() => setExpensesOpen(false)} title="تفاصيل مصاريف الشراء" extraWide>
             <PurchaseExpenseManager
               expenses={managedExpenses}
               onChange={setManagedExpenses}

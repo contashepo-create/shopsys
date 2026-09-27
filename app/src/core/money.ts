@@ -120,3 +120,20 @@ function roundHalfUp(x: number): Minor {
 function assertMinor(x: number): void {
   if (!Number.isSafeInteger(x)) throw new TypeError('money: المبالغ يجب أن تكون أعداداً صحيحة بأصغر وحدة')
 }
+
+/**
+ * نص رصيد الطرف كما يظهر في ترويسة الفاتورة (بلاغ المالك: «الرصيد يخرج خارج إطار البوكس»).
+ * كان النص يُبنى دائماً كـ«القيمة + العملة + الحالة» فيصير «0.00 ر.س متزن» ويفيض من خانته.
+ * عند التوازن لا قيمة تُذكر أصلاً: كلمة واحدة تكفي وتُقرأ في أضيق شاشة.
+ */
+export function partyBalanceText(
+  balanceMinor: Minor,
+  hasParty: boolean,
+  currency: CurrencyConfig,
+  words: { owes: string; owed: string; none?: string } = { owes: 'عليه', owed: 'له' },
+): string {
+  if (!hasParty) return words.none ?? 'نقدي — بلا حساب'
+  if (balanceMinor === 0) return 'متزن'
+  const value = `${formatMinor(Math.abs(balanceMinor), currency, false)} ${currency.symbol}`
+  return balanceMinor > 0 ? `${value} ${words.owes}` : `${value} ${words.owed}`
+}

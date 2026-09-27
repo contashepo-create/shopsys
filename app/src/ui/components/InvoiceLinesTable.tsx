@@ -36,6 +36,25 @@ export type InvoiceTableLine = {
 
 type Warehouse = { id: number; nameAr: string }
 
+/**
+ * أعمدة جدول البنود — **مقاس ومحاذاة واحدة للرأس والخلية**.
+ * بلاغ المالك: «تقسيم الحقول بجانب بعضها به عدم تناسق». السبب أن كل خلية كانت
+ * تكتب عرضها ومحاذاتها يدوياً (th بلا عرض وtd بـ w-[7rem]…)، فتختلف حدود العمود
+ * عن حدود رأسه. الآن كل عمود معرَّف مرة واحدة هنا ويُقرأ منه الاثنان.
+ */
+const COL = {
+  index: 'w-9 text-center',
+  code: 'w-24 text-center',
+  name: 'min-w-[13rem] text-start',
+  warehouse: 'w-36 text-start',
+  qty: 'w-[5.5rem] text-center',
+  price: 'w-[7rem] text-center',
+  percent: 'w-[4.75rem] text-center',
+  money: 'w-[7.5rem] text-left',
+  total: 'w-[8.5rem] text-left',
+} as const
+
+
 type Props = {
   kind: 'sale' | 'purchase'
   mode: InvoiceEditorMode
@@ -152,20 +171,22 @@ export function InvoiceLinesTable({
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="invoice-lines-table w-full min-w-[900px] table-auto text-sm">
-          <thead className="bg-slate-500/10">
-            <tr className="text-right text-[11px] font-black text-slate-500 dark:text-slate-300">
-              <th className="w-10 p-3 text-center">م</th>
-              <th className="p-3">كود الصنف</th>
-              <th className="p-3">الصنف</th>
-              {lineWarehouseMode && <th className="p-3">المخزن</th>}
-              {kind === 'purchase' && mode !== 'simple' ? <><th className="p-3">المطلوب</th><th className="p-3">المستلم</th><th className="p-3">المرفوض</th></> : <th className="p-3">الكمية</th>}
-              <th className="p-3">{kind === 'sale' ? 'السعر' : 'سعر الشراء'}</th>
-              {kind === 'sale' && <th className="p-3">خصم %</th>}
-              {kind === 'purchase' && mode !== 'simple' && <th className="p-3">ضريبة مدخلات %</th>}
-              {kind === 'sale' && mode === 'profit' && canViewCost && <><th className="p-3">التكلفة</th><th className="p-3">الهامش</th></>}
-              {kind === 'purchase' && mode === 'profit' && canViewCost && <th className="p-3">نصيبه من المصروفات</th>}
-              <th className="p-3">الإجمالي</th>
+        <table className="invoice-lines-table w-full min-w-[56rem] table-fixed text-sm">
+          <thead className="bg-slate-50 dark:bg-slate-800/60">
+            <tr className="text-[11px] font-black text-slate-500 dark:text-slate-300">
+              <th className={`p-2 ${COL.index}`} scope="col">م</th>
+              <th className={`p-2 ${COL.code}`} scope="col">كود الصنف</th>
+              <th className={`p-2 ${COL.name}`} scope="col">الصنف / الوصف</th>
+              {lineWarehouseMode && <th className={`p-2 ${COL.warehouse}`} scope="col">المخزن</th>}
+              {kind === 'purchase' && mode !== 'simple'
+                ? <><th className={`p-2 ${COL.qty}`} scope="col">المطلوب</th><th className={`p-2 ${COL.qty}`} scope="col">المستلم</th><th className={`p-2 ${COL.qty}`} scope="col">المرفوض</th></>
+                : <th className={`p-2 ${COL.qty}`} scope="col">الكمية</th>}
+              <th className={`p-2 ${COL.price}`} scope="col">{kind === 'sale' ? 'السعر' : 'سعر الشراء'}</th>
+              {kind === 'sale' && <th className={`p-2 ${COL.percent}`} scope="col">خصم %</th>}
+              {kind === 'purchase' && mode !== 'simple' && <th className={`p-2 ${COL.percent}`} scope="col">ضريبة %</th>}
+              {kind === 'sale' && mode === 'profit' && canViewCost && <><th className={`p-2 ${COL.money}`} scope="col">التكلفة</th><th className={`p-2 ${COL.money}`} scope="col">الهامش</th></>}
+              {kind === 'purchase' && mode === 'profit' && canViewCost && <th className={`p-2 ${COL.money}`} scope="col">نصيبه من المصروفات</th>}
+              <th className={`p-2 ${COL.total}`} scope="col">الإجمالي</th>
             </tr>
           </thead>
           <tbody>
@@ -176,9 +197,9 @@ export function InvoiceLinesTable({
               const actualPrice = line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)
               return (
                 <tr key={line.key} data-entry-row aria-selected={selectedKey === line.key} onClick={() => setSelectedKey(line.key)} className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : belowCost ? 'bg-amber-500/10' : warning?.severity === 'error' ? 'bg-rose-500/5' : warning ? 'bg-amber-500/5' : ''}`}>
-                  <td className="w-10 p-3 text-center font-mono text-xs font-black text-slate-400">{lineIndex + 1}</td>
-                  <td tabIndex={0} className="min-w-[100px] p-3 font-mono text-xs font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40" dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>
-                  <td className="min-w-[180px] p-3 align-top break-words">
+                  <td className={`p-2 font-mono text-[11px] font-black text-slate-400 ${COL.index}`}>{lineIndex + 1}</td>
+                  <td tabIndex={0} className={`p-2 font-mono text-[11px] font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40 ${COL.code}`} dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>
+                  <td className={`p-2 align-middle break-words ${COL.name}`}>
                     <b>{line.nameAr || item?.nameAr}</b>
                     {warning && <div className={warning.severity === 'error' ? 'text-xs text-rose-600' : 'text-xs text-amber-600'}>{warning.message}</div>}
                     {belowCost && belowCostNotice?.(line)}
@@ -186,18 +207,18 @@ export function InvoiceLinesTable({
                       <input type="date" className={`${inputCls} mt-1.5`} value={line.expiryDate ?? ''} onChange={(event) => onPatch(line.key, { expiryDate: event.target.value })} />
                     )}
                   </td>
-                  {lineWarehouseMode && <td className="min-w-[150px] p-1 align-top"><QuickSelect data-arrows-native="true" className={inputCls} value={line.warehouseId ?? ''} onChange={(event) => onPatch(line.key, { warehouseId: Number(event.target.value) || null, warehouseSource: 'manual' })}><option value="">اختر المخزن</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect></td>}
+                  {lineWarehouseMode && <td className={`p-1 align-middle ${COL.warehouse}`}><QuickSelect data-arrows-native="true" className={inputCls} value={line.warehouseId ?? ''} onChange={(event) => onPatch(line.key, { warehouseId: Number(event.target.value) || null, warehouseSource: 'manual' })}><option value="">اختر المخزن</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect></td>}
                   {kind === 'purchase' && mode !== 'simple' ? <>
-                    <td className="w-[7rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`ordered:${line.key}`, line.orderedQty ?? line.qty)} onChange={(event) => updateDraft(`ordered:${line.key}`, event.target.value, (value) => patchDecimal(line, 'orderedQty', value))} onBlur={() => clearDraft(`ordered:${line.key}`)} /></td>
-                    <td className="w-[7rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty)} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>
-                    <td className="w-[7rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
-                  </> : <td className="w-[7rem] p-1 align-top"><input className={`${inputCls} !w-auto`} style={numberStyle(line.qty)} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>}
-                  <td className="w-[8rem] p-1 align-top"><input className={`${inputCls} !w-auto`} style={numberStyle(line.unitPriceMinor / 10 ** currencyDecimals)} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:focus-item')) } }} /></td>
-                  {kind === 'sale' && <td className="w-[6rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
-                  {kind === 'purchase' && mode !== 'simple' && <td className="w-[6rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
-                  {kind === 'sale' && mode === 'profit' && canViewCost && <><td className="p-3">{fmt(line.unitCostMinor ?? 0)}</td><td className="p-3">{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
-                  {kind === 'purchase' && mode === 'profit' && canViewCost && <td className="p-3">{fmt(costShares?.get(line.key) ?? 0)}</td>}
-                  <td className="w-[9rem] p-1"><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
+                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`ordered:${line.key}`, line.orderedQty ?? line.qty)} onChange={(event) => updateDraft(`ordered:${line.key}`, event.target.value, (value) => patchDecimal(line, 'orderedQty', value))} onBlur={() => clearDraft(`ordered:${line.key}`)} /></td>
+                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty)} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>
+                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
+                  </> : <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.qty)} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>}
+                  <td className={`num-cell p-1 align-middle ${COL.price}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.unitPriceMinor / 10 ** currencyDecimals)} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:focus-item')) } }} /></td>
+                  {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
+                  {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
+                  {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
+                  {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`money-cell p-2 ${COL.money}`}>{fmt(costShares?.get(line.key) ?? 0)}</td>}
+                  <td className={`p-1 ${COL.total}`}><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
                 </tr>
               )
             })}
