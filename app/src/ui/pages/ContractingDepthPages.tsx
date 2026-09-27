@@ -16,6 +16,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { boqItemTotal, BOND_TYPE_LABELS, type BondType, type SubContract, type Bond } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 const useCur = () => {
   const { setup } = useAppStore()
@@ -295,8 +296,8 @@ export function SubcontractorsPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="عقد مقاول باطن جديد">
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title="عقد مقاول باطن جديد" subtitle="مستند عقد باطن: قيمة ونسبة محتجز ودفعة مقدمة">
+        <div className="space-y-3"><DocSectionHead step="١" title="المشروع والمقاول والقيمة" hint="المحتجز يُخصم من كل مستخلص ويُرد عند الاستلام النهائي" />
           <Field label="المشروع">
             <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : '')} className={inputCls}>
               <option value="">— اختر —</option>
@@ -334,7 +335,7 @@ export function SubcontractorsPage() {
                 ))}
               </div>
             </Field>
-          )}
+          )}<DocOutcome>الأثر عند اعتماد مستخلص الباطن: <b>تكلفة المقاولين</b> مديناً · <b>2101 الموردون</b> دائناً · والمحتجز محجوز حتى الاستلام النهائي.</DocOutcome>
           <Btn onClick={saveContract} className="w-full">إنشاء العقد</Btn>
         </div>
       </Modal>

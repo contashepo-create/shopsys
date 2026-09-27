@@ -7,7 +7,7 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  * معمم على كل الأنشطة: سمسار، مندوب، طبيب محيل، وسيط شحن…
  */
 import { useMemo, useState } from 'react'
-import { Plus, HandCoins, Users2, Trash2, Pencil, BookOpenText } from 'lucide-react'
+import { Plus, HandCoins, Users2, Trash2, Pencil, BookOpenText, Handshake} from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
@@ -15,6 +15,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { COMMISSION_DIRECTION_LABELS, commissionsByParty, type CommissionDirection } from '../../core/commissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { DocSection, DocOutcome } from '../components/DocSection.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { accountName } from './accountNames.ts'
@@ -319,19 +320,73 @@ export function ExternalCommissionsPage() {
       </Modal>
 
       {/* تحصيل/دفع */}
-      <Modal open={!!settling} onClose={() => setSettleId(null)} title={settling ? (direction === 'earned' ? `💰 تحصيل ${settling.commissionNumber} من ${settling.partyName}` : `📤 دفع ${settling.commissionNumber} لـ${settling.partyName}`) : ''}>
-        {settling && (
-          <div className="space-y-3">
-            <Field label={`المبلغ (المتبقي ${fmt(settling.amountMinor - settling.collectedMinor)} ${cur.symbol})`}>
-              <input value={settleAmount} onChange={(e) => setSettleAmount(e.target.value)} className={inputCls} dir="ltr" autoFocus />
-            </Field>
-            {direction === 'earned' ? <Field label="يدخل في"><PaymentMethodPicker value={{treasury,terminalPayment}} onChange={value=>{setTreasury(value.treasury);setTerminalPayment(value.terminalPayment)}} operation="receipt"/></Field> : <Field label="يُدفع من"><TreasuryPicker value={treasury} onChange={setTreasury} operation="payment" /></Field>}
-            <div className="flex justify-end gap-2">
-              <Btn variant="ghost" onClick={() => setSettleId(null)}>إلغاء</Btn>
-              <Btn onClick={settle} shortcut="F9" disabled={!settleAmount.trim()}>{direction === 'earned' ? '💰 تحصيل' : '📤 دفع'} وقيد</Btn>
+      <Modal open={!!settling} onClose={() => setSettleId(null)} title="" wide bare>
+        {settling && (() => {
+          const remaining = settling.amountMinor - settling.collectedMinor
+          const amountMinor = (() => { try { return settleAmount.trim() ? toMinor(settleAmount, cur.decimals) : 0 } catch { return 0 } })()
+          const over = amountMinor > remaining
+          const earned = direction === 'earned'
+          const terminal = earned && terminalPayment.terminalId ? paymentTerminals.find((t) => t.id === terminalPayment.terminalId) : undefined
+          const cashAccount = terminal?.settlementAccountCode ?? treasury
+          return (
+            <div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
+              <div className="doc-head flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+                <div className="flex items-center gap-2.5">
+                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><Handshake size={19} /></span>
+                  <div>
+                    <h3 className="text-base font-black leading-tight">{earned ? 'تحصيل عمولة مستحقة لنا' : 'سداد عمولة مستحقة علينا'}</h3>
+                    <span className="text-[10.5px] doc-head-sub">{earned ? 'COMMISSION RECEIPT' : 'COMMISSION PAYMENT'}</span>
+                  </div>
+                </div>
+                <span className="rounded-lg bg-white/10 px-2.5 py-1.5 font-mono text-[11px] font-bold">{settling.commissionNumber}</span>
+              </div>
+              <div className="doc-meta px-5 py-2 text-[10px]">
+                {earned ? 'من' : 'إلى'} {settling.partyName} · إجمالي العمولة {fmt(settling.amountMinor)} · {earned ? 'محصَّل' : 'مسدَّد'} {fmt(settling.collectedMinor)} · المتبقي {fmt(remaining)}
+              </div>
+              <div className="max-h-[calc(92vh-11rem)] space-y-3.5 overflow-y-auto px-5 py-4">
+                <DocSection step="١" title="المبلغ" hint="يجوز التحصيل على دفعات — لا يتجاوز المتبقي">
+                  <Field label={`القيمة (${cur.symbol}) — المتبقي ${fmt(remaining)}`}>
+                    <input value={settleAmount} onChange={(e) => setSettleAmount(e.target.value)} className={inputCls} dir="ltr" inputMode="decimal" autoFocus />
+                  </Field>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button onClick={() => setSettleAmount(String(remaining / 10 ** cur.decimals))} className="rounded-lg doc-tint px-3 py-1.5 text-[11px] font-bold doc-accent-deep">تعبئة المتبقي كاملاً</button>
+                  </div>
+                  {over && <p className="mt-2 rounded-lg bg-rose-500/10 px-3 py-2 text-[11.5px] font-bold text-rose-700 dark:text-rose-300">المبلغ يتجاوز المتبقي بـ{fmt(amountMinor - remaining)} — صحّح القيمة.</p>}
+                </DocSection>
+
+                <DocSection step="٢" title={earned ? 'أين يدخل المبلغ؟' : 'من أين يُدفع؟'} hint={earned ? 'نقداً أو بنكياً أو على ماكينة دفع' : 'خزينة أو حساب بنكي'}>
+                  {earned
+                    ? <PaymentMethodPicker value={{ treasury, terminalPayment }} onChange={(value) => { setTreasury(value.treasury); setTerminalPayment(value.terminalPayment) }} operation="receipt" />
+                    : <TreasuryPicker value={treasury} onChange={setTreasury} operation="payment" />}
+                </DocSection>
+
+                <DocOutcome>
+                  <b className="block pb-1">القيد الذي سيُرحَّل</b>
+                  {earned ? (
+                    <>
+                      <div className="flex items-center justify-between gap-3"><span>{terminal ? `${terminal.nameAr} — حساب التسوية (${cashAccount})` : `الخزينة (${cashAccount})`} — مديناً</span><b className="font-mono">{fmt(amountMinor)}</b></div>
+                      <div className="flex items-center justify-between gap-3"><span>عمولات مستحقة لنا (1112) — دائناً</span><b className="font-mono">{fmt(amountMinor)}</b></div>
+                      <div className="mt-1 border-t doc-line pt-1 text-[10.5px] doc-faint">الإيراد أُثبت (4112) عند استحقاق العمولة — هذا تحصيل لا إيراد جديد.</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between gap-3"><span>عمولات مستحقة للغير (2114) — مديناً</span><b className="font-mono">{fmt(amountMinor)}</b></div>
+                      <div className="flex items-center justify-between gap-3"><span>الخزينة ({cashAccount}) — دائناً</span><b className="font-mono">{fmt(amountMinor)}</b></div>
+                      <div className="mt-1 border-t doc-line pt-1 text-[10.5px] doc-faint">المصروف أُثبت (5113) عند استحقاق العمولة — هذا سداد لا مصروف جديد.</div>
+                    </>
+                  )}
+                </DocOutcome>
+              </div>
+              <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+                <span className="text-[11px] doc-faint">يتبقى بعد العملية: <b className="font-mono doc-ink">{fmt(Math.max(0, remaining - amountMinor))}</b></span>
+                <div className="flex gap-2">
+                  <Btn variant="ghost" onClick={() => setSettleId(null)}>إلغاء</Btn>
+                  <Btn onClick={settle} shortcut="F9" disabled={amountMinor <= 0 || over}>{earned ? 'تحصيل' : 'دفع'} وقيد</Btn>
+                </div>
+              </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
       </Modal>
 
       {/* شخص/جهة جديدة أو تعديل */}

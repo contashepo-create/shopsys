@@ -12,6 +12,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, PROJECT_TASK_STATUS_LABELS, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
 const KINDS = Object.keys(COST_KIND_LABELS) as CostKind[]
@@ -138,8 +139,8 @@ export function ProjectBudgetPage() {
         </div>
       )}
 
-      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={project ? `موازنة — ${project.nameAr}` : ''}>
-        <div className="space-y-3">
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={project ? `موازنة — ${project.nameAr}` : ''} subtitle="موازنة تقديرية: سقف إنفاق لكل بند">
+        <div className="space-y-3"><DocSectionHead step="١" title="بنود الموازنة التقديرية" hint="الموازنة رقابية لا محاسبية — تُقارن بالفعلي ولا تُرحَّل" />
           {KINDS.map((k) => (
             <Field key={k} label={`${COST_KIND_LABELS[k].icon} ${COST_KIND_LABELS[k].nameAr} (${cur.symbol})`}>
               <input value={draft[k]} onChange={(e) => setDraft((s) => ({ ...s, [k]: e.target.value }))} inputMode="decimal" className={inputCls} placeholder="0 = بلا موازنة لهذه الفئة" />
@@ -148,7 +149,7 @@ export function ProjectBudgetPage() {
           <div className="rounded-xl bg-sky-500/10 border border-sky-500/30 p-3 text-[12px] font-bold text-sky-700 dark:text-sky-300">
             الحفظ يستبدل الموازنة السابقة للمشروع بالكامل — أي تكلفة تُسجل في فئة بلا موازنة ستظهر «تجاوزاً» فوراً
           </div>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: لا قيد — الموازنة سقف رقابي يُقارن بالتكاليف الفعلية المرحَّلة على المشروع.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setEditOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveBudget}>حفظ الموازنة</Btn>
           </div>

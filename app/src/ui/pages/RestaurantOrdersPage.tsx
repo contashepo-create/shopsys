@@ -16,6 +16,7 @@ import type { CartLine } from '../../core/pos.ts'
 import { renderKitchenTicketHtml } from '../print/printKitchen.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function RestaurantOrdersPage() {
   const { restaurantOrders, items, treasuries, paymentTerminals, appUsers, currentUserId, openRestaurantOrder, setRestaurantOrderLines, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, getEffectivePrice } = useDataStore()
@@ -206,7 +207,8 @@ export function RestaurantOrdersPage() {
       )}
 
       {/* أمر جديد */}
-      <Modal open={newOpen} onClose={() => setNewOpen(false)} title="أمر جديد">
+      <Modal open={newOpen} onClose={() => setNewOpen(false)} title="أمر جديد" subtitle="مستند أمر: صالة أو تيك أواي أو توصيل">
+        <DocSectionHead step="١" title="نوع الأمر وبياناته" hint="الأمر لا يُقيَّد حتى الإغلاق والتحصيل" />
         <div className="flex gap-2">
           {(Object.keys(ORDER_TYPE_LABELS) as RestaurantOrderType[]).map((t) => (
             <button key={t} onClick={() => setNType(t)}
@@ -222,6 +224,7 @@ export function RestaurantOrdersPage() {
         {nType === 'delivery' && (
           <Field label="بيانات التوصيل" hint="اسم / هاتف / عنوان — تُطبع على البون"><input value={nDelivery} onChange={(e) => setNDelivery(e.target.value)} className={inputCls} autoFocus /></Field>
         )}
+        <DocOutcome>الأثر عند إغلاق الأمر: <b>4103 إيراد المطعم</b> دائناً · التحصيل على الخزينة · واستهلاك المكوّنات يخرج من <b>1103</b> بوصفة الصنف.</DocOutcome>
         <Btn onClick={create} className="w-full mt-2">فتح الأمر</Btn>
       </Modal>
 
@@ -258,7 +261,7 @@ export function RestaurantOrdersPage() {
       </Modal>
 
       {/* حوار تقسيم الحساب: اختر السطور المفصولة لأمر جديد يُفوتر مستقلاً */}
-      <Modal open={splitOpen && !!active} onClose={() => setSplitOpen(false)} title="✂️ تقسيم الحساب">
+      <Modal open={splitOpen && !!active} onClose={() => setSplitOpen(false)} title="تقسيم الحساب">
         {active && (
           <div className="space-y-3">
             <p className="text-[11.5px] text-slate-400 leading-relaxed">

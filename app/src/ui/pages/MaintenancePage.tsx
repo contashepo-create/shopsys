@@ -24,6 +24,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 const STATUS_COLORS: Record<TicketStatus, string> = {
   received: 'bg-sky-500/10 text-sky-600',
@@ -360,8 +361,8 @@ export function MaintenancePage() {
       )}
 
       {/* فتح تذكرة */}
-      <Modal open={open} onClose={() => setOpen(false)} title="تذكرة صيانة جديدة" wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => setOpen(false)} title="تذكرة صيانة جديدة" wide subtitle="مستند تذكرة: جهاز العميل وعطله وتقدير التكلفة">
+        <div className="space-y-4"><DocSectionHead step="١" title="بيانات العميل والجهاز والعطل" hint="التذكرة لا تُحدث قيداً حتى التسليم والتحصيل" />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="عميل مسجل">
               <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="غير مسجل" label="بحث العميل" cashValue={0} />
@@ -406,7 +407,7 @@ export function MaintenancePage() {
           <Field label="ملاحظات">
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
           </Field>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر عند التسليم: <b>4102 إيراد الصيانة</b> دائناً · قطع الغيار تخرج من <b>1103 المخزون</b> إلى <b>5101 التكلفة</b>.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveTicket} disabled={!deviceName.trim() || !issue.trim()}>💾 فتح التذكرة</Btn>
           </div>
@@ -508,7 +509,7 @@ export function MaintenancePage() {
       </Modal>
 
       {/* كتالوج خدمات الصيانة (الأمر 23): تكلفة داخلية + سعر بيع — الربح محسوب تلقائياً */}
-      <Modal open={catalogOpen} onClose={() => setCatalogOpen(false)} title="🛠️ كتالوج خدمات الصيانة" wide>
+      <Modal open={catalogOpen} onClose={() => setCatalogOpen(false)} title="كتالوج خدمات الصيانة" wide>
         <div className="space-y-4">
           <p className="text-[11.5px] text-slate-400">
             كل خدمة لها تكلفة داخلية (أجر فني/مواد) وسعر بيع — الربح يُحسب تلقائياً، والتكلفة لا تظهر أبداً في مطبوعات العميل.

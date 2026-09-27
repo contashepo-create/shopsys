@@ -120,3 +120,39 @@ function roundHalfUp(x: number): Minor {
 function assertMinor(x: number): void {
   if (!Number.isSafeInteger(x)) throw new TypeError('money: المبالغ يجب أن تكون أعداداً صحيحة بأصغر وحدة')
 }
+
+/**
+ * نص رصيد الطرف كما يظهر في ترويسة الفاتورة (بلاغ المالك: «الرصيد يخرج خارج إطار البوكس»).
+ * كان النص يُبنى دائماً كـ«القيمة + العملة + الحالة» فيصير «0.00 ر.س متزن» ويفيض من خانته.
+ * عند التوازن لا قيمة تُذكر أصلاً: كلمة واحدة تكفي وتُقرأ في أضيق شاشة.
+ */
+/**
+ * نغمة مؤشر الطرف داخل الفاتورة (بلاغ المالك: حالة الحساب تُقرأ بجوار الاسم لا في خانة منفصلة).
+ *
+ * - `danger`  الحساب موقوف، أو الرصيد المتوقع بعد ترحيل هذه الفاتورة يتجاوز الحد الائتماني.
+ * - `warning` عليه مديونية لكنها داخل الحد.
+ * - `positive` متزن أو دائن.
+ *
+ * تُستعمل للاسم وللمؤشر معاً حتى لا تتناقض الألوان في المستند.
+ */
+export function partyCreditTone(
+  projectedBalanceMinor: Minor,
+  creditLimitMinor?: Minor | null,
+  active = true,
+): 'positive' | 'warning' | 'danger' {
+  if (!active) return 'danger'
+  if (creditLimitMinor && creditLimitMinor > 0 && projectedBalanceMinor > creditLimitMinor) return 'danger'
+  return projectedBalanceMinor > 0 ? 'warning' : 'positive'
+}
+
+export function partyBalanceText(
+  balanceMinor: Minor,
+  hasParty: boolean,
+  currency: CurrencyConfig,
+  words: { owes: string; owed: string; none?: string } = { owes: 'عليه', owed: 'له' },
+): string {
+  if (!hasParty) return words.none ?? 'نقدي — بلا حساب'
+  if (balanceMinor === 0) return 'متزن'
+  const value = `${formatMinor(Math.abs(balanceMinor), currency, false)} ${currency.symbol}`
+  return balanceMinor > 0 ? `${value} ${words.owes}` : `${value} ${words.owed}`
+}

@@ -25,6 +25,7 @@ import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function RentalContractsPage() {
   const { rentalContracts, equipment, customers, journal, paymentTerminals, paymentTerminalTransactions, openRental, closeRental, refundRental } = useDataStore()
@@ -342,8 +343,8 @@ export function RentalContractsPage() {
       )}
 
       {/* فتح عقد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="عقد إيجار جديد" wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => setOpen(false)} title="عقد إيجار جديد" wide subtitle="مستند عقد: طرف وأصل مؤجَّر ومدة وقيمة وتأمين">
+        <div className="space-y-4"><DocSectionHead step="١" title="أطراف العقد ومدته وقيمته" hint="التأمين المسترد ليس إيراداً — يُقيَّد التزاماً حتى الإقفال" />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العميل">
               <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="عميل نقدي" label="بحث العميل" cashValue={0} />
@@ -419,7 +420,7 @@ export function RentalContractsPage() {
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
           </Field>
 
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر عند الترحيل: <b>1104 العميل</b> مديناً بالإيجار · <b>4104 إيراد التأجير</b> دائناً · والتأمين على <b>2109</b> التزاماً لا إيراداً.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} shortcut="F9" disabled={!equipmentName.trim() || !dailyRate.trim()}>💾 فتح العقد وتوليد القيد</Btn>
           </div>

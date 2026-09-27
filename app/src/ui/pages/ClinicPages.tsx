@@ -32,6 +32,7 @@ import { renderPrescriptionHtml, parsePrescriptionText } from '../print/printPre
 import { renderPatientRecordHtml } from '../print/printPatientRecord.ts'
 import { partyCode, partySearchFilter } from '../../core/partyCodes.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -495,8 +496,8 @@ export function ClinicPatientsPage() {
       )}
 
       {/* ملف مريض جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="فتح ملف مريض" wide>
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title="فتح ملف مريض" wide subtitle="ملف مريض يُربط بحساب عميل عند أول دين">
+        <div className="space-y-3"><DocSectionHead step="١" title="بيانات المريض الأساسية" hint="لا دين بلا مدين — الملف يفتح حساباً للمريض عند أول متبقٍ" />
           <Field label="الاسم *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} /></Field>
           <div className="grid grid-cols-3 gap-3">
             <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} /></Field>
@@ -519,7 +520,7 @@ export function ClinicPatientsPage() {
             <input type="checkbox" checked={linkCustomer} onChange={(e) => setLinkCustomer(e.target.checked)} className="accent-cyan-600 w-4 h-4" />
             <Link2 className="w-4 h-4 text-cyan-500" /> إنشاء/ربط حساب عميل مالي تلقائياً (يُنصح به — الزيارات تظهر في كشف الحساب)
           </label>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: لا قيد عند فتح الملف · أول زيارة بمتبقٍ تُنشئ ذمة على <b>1104</b> باسم المريض نفسه.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={savePatient} disabled={!nameAr.trim()}>فتح الملف</Btn>
           </div>

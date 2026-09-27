@@ -6,7 +6,7 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  * يومية/شهرية بعدّاد الكيلومترات) — تكامل بلا تكرار منطق.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Car as CarIcon, Eye, BookOpenText, Wrench, HandCoins, KeySquare, Handshake, Undo2, Banknote, Printer } from 'lucide-react'
+import { Plus, Car as CarIcon, Eye, BookOpenText, Wrench, HandCoins, KeySquare, Handshake, Undo2, Banknote, Printer, FileText } from 'lucide-react'
 import { useDataStore, type Car } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -19,8 +19,10 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { CarPurchaseInvoiceModal, SupplierInlineCreate } from '../components/CarPurchaseInvoiceModal.tsx'
 import { renderCarSaleContractHtml } from '../print/printCarSale.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
   in_stock: { nameAr: 'بالمعرض', cls: 'bg-sky-500/10 text-sky-600' },
@@ -78,7 +80,8 @@ export function CarsPage() {
   }
   const summary = useMemo(() => showroomSummary(cars.map((c) => ({ status: c.status, fullCostMinor: c.purchaseCostMinor + c.prepCostMinor, profitMinor: c.saleProfitMinor }))), [cars])
 
-  /* شراء سيارة */
+  /* فاتورة شراء سيارات كاملة (الافتراضية) + الشراء السريع لسيارة واحدة */
+  const [invoiceOpen, setInvoiceOpen] = useState(false)
   const [open, setOpen] = useState(false)
   const [make, setMake] = useState('')
   const [model, setModel] = useState('')
@@ -114,6 +117,7 @@ export function CarsPage() {
   const [prepPayment, setPrepPayment] = useState<CarPaymentMode>('cash')
   const [prepPaidNow, setPrepPaidNow] = useState('')
   const [prepBeneficiary, setPrepBeneficiary] = useState('')
+  const [prepSupplierId, setPrepSupplierId] = useState(0)
   const [prepTreasury, setPrepTreasury] = useState('1101')
 
   const savePrep = () => {
@@ -121,9 +125,15 @@ export function CarsPage() {
     try {
       const amountMinor = toMinor(prepAmount, cur.decimals)
       const paidMinor = prepPayment === 'cash' ? amountMinor : prepPayment === 'mixed' ? toMinor(prepPaidNow || '0', cur.decimals) : 0
-      addCarPrep(prepFor.id, amountMinor, prepPayment, prepDesc.trim(), prepTreasury, paidMinor, prepBeneficiary)
-      toast.show('رُسملت التكلفة على السيارة — ستدخل في حساب ربحية بيعها ✅')
-      setPrepFor(null); setPrepAmount(''); setPrepDesc(''); setPrepPaidNow(''); setPrepBeneficiary(''); setPrepPayment('cash')
+      // أي مبلغ آجل يجب أن يُحمّل على جهة مسجلة (ورشة/مصنع/مورد) ليظهر في كشف حسابها
+      if (amountMinor - paidMinor > 0 && !prepSupplierId && !prepBeneficiary.trim()) {
+        throw new Error('اختر الورشة/الجهة المسجلة لتحميل الآجل عليها — أو أضفها الآن من زر «جهة غير مسجلة؟»')
+      }
+      addCarPrep(prepFor.id, amountMinor, prepPayment, prepDesc.trim(), prepTreasury, paidMinor, prepBeneficiary, prepSupplierId || null)
+      toast.show(prepSupplierId
+        ? `رُسملت التكلفة على السيارة وحُمِّل الآجل على حساب ${suppliers.find((row) => row.id === prepSupplierId)?.nameAr ?? 'الجهة'} ✅`
+        : 'رُسملت التكلفة على السيارة — ستدخل في حساب ربحية بيعها ✅')
+      setPrepFor(null); setPrepAmount(''); setPrepDesc(''); setPrepPaidNow(''); setPrepBeneficiary(''); setPrepSupplierId(0); setPrepPayment('cash')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -246,7 +256,8 @@ export function CarsPage() {
         <h1 className="text-xl font-black flex items-center gap-2"><CarIcon className="w-6 h-6 text-indigo-500" /> معرض السيارات</h1>
         <div className="flex gap-2">
           <Btn variant="soft" onClick={() => setCgOpen(true)}><Handshake className="w-4 h-4" /> سيارة أمانة</Btn>
-          <Btn onClick={() => setOpen(true)}><Plus className="w-4 h-4" /> شراء سيارة</Btn>
+          <Btn variant="soft" onClick={() => setOpen(true)}><Plus className="w-4 h-4" /> شراء سريع لسيارة</Btn>
+          <Btn onClick={() => setInvoiceOpen(true)}><FileText className="w-4 h-4" /> فاتورة شراء سيارات</Btn>
         </div>
       </div>
 
@@ -301,9 +312,12 @@ export function CarsPage() {
         </div>
       )}
 
-      {/* شراء */}
-      <Modal open={open} onClose={() => setOpen(false)} title="شراء سيارة">
-        <div className="space-y-3">
+      {/* فاتورة شراء سيارات كاملة — سطر لكل سيارة + مصاريف + ضريبة + سداد مختلط */}
+      <CarPurchaseInvoiceModal open={invoiceOpen} onClose={() => setInvoiceOpen(false)} cur={cur} />
+
+      {/* شراء سريع لسيارة واحدة */}
+      <Modal open={open} onClose={() => setOpen(false)} title="شراء سريع لسيارة واحدة" subtitle="مستند شراء: سيارة واحدة بتكلفتها ومصدر السداد">
+        <div className="space-y-3"><DocSectionHead step="١" title="بيانات السيارة وثمن الشراء" hint="السيارة تدخل المخزون بتكلفتها ولا تصير مصروفاً" />
           <div className="grid grid-cols-3 gap-3">
             <Field label="الماركة *"><input value={make} onChange={(e) => setMake(e.target.value)} className={inputCls} placeholder="تويوتا" /></Field>
             <Field label="الموديل *"><input value={model} onChange={(e) => setModel(e.target.value)} className={inputCls} placeholder="كورولا" /></Field>
@@ -326,7 +340,7 @@ export function CarsPage() {
             {payment !== 'credit' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
             {payment !== 'cash' && <div className="mt-2"><Field label="المورد *" hint="سيظهر الجزء الآجل في كشف حساب المورد"><PartyQuickPicker parties={suppliers} value={supplierId} onChange={setSupplierId} cashLabel="اختر المورد" label="بحث المورد" cashValue={0} showCash={false} /></Field></div>}
           </Field>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>1103 مخزون المعرض</b> مديناً بثمن الشراء · <b>الخزينة/2101 المورد</b> دائناً · ومصاريف التجهيز تُرسمل على نفس السيارة.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} shortcut="F9" disabled={!make.trim() || !model.trim() || !plate.trim() || !cost || (payment !== 'cash' && !supplierId) || (payment === 'mixed' && !paidNow.trim())}>شراء وقيد</Btn>
           </div>
@@ -348,21 +362,33 @@ export function CarsPage() {
                 ))}
               </div>
               {prepPayment === 'mixed' && <Field label={`المدفوع الآن (${cur.symbol}) *`}><input value={prepPaidNow} onChange={(e) => setPrepPaidNow(e.target.value)} inputMode="decimal" className={inputCls} /></Field>}
-              {prepPayment !== 'credit' && <div className="mt-2"><TreasuryPicker value={prepTreasury} onChange={setPrepTreasury} compact /></div>}
-              {prepPayment !== 'cash' && <Field label="جهة الاستحقاق (اختياري)" hint="يُرحل الباقي على 2101 حتى لو لم تكن الجهة مسجلة كمورد"><input value={prepBeneficiary} onChange={(e) => setPrepBeneficiary(e.target.value)} className={inputCls} placeholder="ورشة أو جهة خارجية…" /></Field>}
+              {prepPayment !== 'credit' && <div className="mt-2"><TreasuryPicker value={prepTreasury} onChange={setPrepTreasury} compact operation="payment" /></div>}
+              {prepPayment !== 'cash' && (
+                <div className="mt-2 space-y-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                  <Field label="الورشة / المصنع / جهة التجهيز *" hint="جهة مسجلة كمورد: الآجل يدخل كشف حسابها ويُسدَّد لاحقاً بسند صرف">
+                    <PartyQuickPicker parties={suppliers} value={prepSupplierId} onChange={setPrepSupplierId} cashLabel="بلا جهة مسجلة" label="بحث الورشة أو الجهة" cashValue={0} />
+                  </Field>
+                  <SupplierInlineCreate onCreated={(supplier) => setPrepSupplierId(supplier.id)} placeholder="اسم الورشة أو المصنع" />
+                  {!prepSupplierId && (
+                    <Field label="اسم الجهة غير المسجلة (توثيق فقط)" hint="بلا كشف حساب — يُرحل الباقي على 2101 موردون عام">
+                      <input value={prepBeneficiary} onChange={(e) => setPrepBeneficiary(e.target.value)} className={inputCls} placeholder="ورشة خارجية…" />
+                    </Field>
+                  )}
+                </div>
+              )}
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setPrepFor(null)}>إلغاء</Btn>
-              <Btn onClick={savePrep} shortcut="F9" disabled={!prepAmount || (prepPayment === 'mixed' && !prepPaidNow.trim())}>رسملة التكلفة</Btn>
+              <Btn onClick={savePrep} shortcut="F9" disabled={!prepAmount || (prepPayment === 'mixed' && !prepPaidNow.trim()) || (prepPayment !== 'cash' && !prepSupplierId && !prepBeneficiary.trim())}>رسملة التكلفة</Btn>
             </div>
           </div>
         )}
       </Modal>
 
       {/* بيع */}
-      <Modal open={!!sellFor} onClose={() => setSellFor(null)} title={sellFor ? `بيع — ${sellFor.make} ${sellFor.model} ${sellFor.year}` : ''}>
+      <Modal open={!!sellFor} onClose={() => setSellFor(null)} title={sellFor ? `بيع — ${sellFor.make} ${sellFor.model} ${sellFor.year}` : ''} subtitle="مستند بيع سيارة: ثمن البيع وتكلفتها وربحها">
         {sellFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="بيانات البيع والمشتري" hint="الربح = ثمن البيع − (الشراء + التجهيز)" />
             <div className="rounded-xl bg-indigo-500/10 border border-indigo-500/30 p-3 text-[12px] font-bold text-indigo-700 dark:text-indigo-300">
               التكلفة الكاملة (شراء + تجهيز): {fmt(sellFor.purchaseCostMinor + sellFor.prepCostMinor)} {cur.symbol}
             </div>
@@ -398,7 +424,7 @@ export function CarsPage() {
                 <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!commEmpId} />
               </div>
             </Field>
-            <div className="flex justify-end gap-2">
+            <DocOutcome>الأثر: <b>4101 إيراد بيع السيارات</b> دائناً بثمن البيع · <b>5101 تكلفة المبيعات</b> مديناً بتكلفة السيارة · و<b>1103</b> يفرغ منها.</DocOutcome><div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSellFor(null)}>إلغاء</Btn>
               <Btn onClick={doSell} shortcut="F9" disabled={!price || (sellPayment !== 'cash' && !buyerCustomerId) || (sellPayment === 'mixed' && !sellPaidNow.trim()) || (!!commEmpId && !commAmount.trim())}>بيع وقيد الربحية</Btn>
             </div>

@@ -63,10 +63,11 @@ export function useSupervisorApproval(permId: string = REFUND_APPROVE_PERM, opti
     }
   }
 
-  /* مراجعة المالك الثانية: المودال العام صار createPortal بـ z-[100] — هذا الحوار يُطلب
-     غالباً ومودال مفتوح (صرف/إتلاف/مرتجع)، فيجب أن يكون بوابةً أيضاً وفوقه: z-[110] */
+  /* مراجعة المالك الثانية: المودال العام صار createPortal — هذا الحوار يُطلب غالباً
+     ومودال مفتوح (صرف/إتلاف/مرتجع)، فيجب أن يكون بوابةً أيضاً وفوق كل الطبقات:
+     layer-approval (3000) في سلّم الطبقات الموحد بـindex.css. */
   const dialog = pending ? createPortal(
-    <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPending(null)}>
+    <div className="layer-approval fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={(event) => event.stopPropagation()}>
       <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-card-dark border border-amber-500/30 p-6 space-y-4 anim-pop" onClick={(e) => e.stopPropagation()}>
         <div className="text-center space-y-1">
           <div className="text-4xl">🔐</div>

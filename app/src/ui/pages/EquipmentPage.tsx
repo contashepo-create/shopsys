@@ -12,6 +12,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { serviceStatus, shiftsSummary, EQUIPMENT_COST_LABELS, type EquipmentCostKind } from '../../core/rentalMeter.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 const EQUIPMENT_KINDS = ['حفار', 'لودر', 'بلدوزر', 'ونش', 'رافعة شوكية', 'مولد', 'ضاغط هواء', 'أخرى']
 
@@ -239,8 +240,8 @@ export function EquipmentPage() {
       )}
 
       {/* نافذة معدة جديدة/تعديل */}
-      <Modal open={open} onClose={() => setOpen(false)} title={editing ? `تعديل ${editing.nameAr}` : 'معدة جديدة'}>
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title={editing ? `تعديل ${editing.nameAr}` : 'معدة جديدة'} subtitle="بطاقة معدة: أصل يُؤجَّر ويُهلك">
+        <div className="space-y-3"><DocSectionHead step="١" title="بيانات المعدة وتكلفتها" hint="المعدة أصل ثابت — إهلاكها مصروف دوري لا تكلفة بيع" />
           <Field label="اسم المعدة *">
             <input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="حفار كاتربيلر 320" autoComplete="off" />
             <div className="flex flex-wrap gap-1 mt-1.5">
@@ -276,7 +277,7 @@ export function EquipmentPage() {
           <Field label="ملاحظات">
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
           </Field>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>1201 الأصول الثابتة</b> مديناً بالتكلفة · الإهلاك الدوري <b>5107</b> مقابل <b>1202 مجمع الإهلاك</b> · وإيراد تأجيرها <b>4104</b>.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save}>💾 حفظ</Btn>
           </div>

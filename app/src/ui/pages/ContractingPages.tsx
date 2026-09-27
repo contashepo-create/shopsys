@@ -22,10 +22,11 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { renderExtractHtml } from '../print/printExtract.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function ProjectsPage() {
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems, costCenters, paymentTerminals, paymentTerminalTransactions,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, costCenters, paymentTerminals, paymentTerminalTransactions,
     addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission,
@@ -159,7 +160,9 @@ export function ProjectsPage() {
   const [costKind, setCostKind] = useState<CostKind>('materials')
   const [costAmount, setCostAmount] = useState('')
   const [costDesc, setCostDesc] = useState('')
-  const [costPayment, setCostPayment] = useState<'cash' | 'credit'>('cash')
+  const [costPayment, setCostPayment] = useState<'cash' | 'credit' | 'mixed'>('cash')
+  const [costPaidNow, setCostPaidNow] = useState('')
+  const [costSupplierId, setCostSupplierId] = useState(0)
   const [costPaySource, setCostPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [costVat, setCostVat] = useState('')
   const [costCenterId, setCostCenterId] = useState<number | null>(null)
@@ -167,16 +170,19 @@ export function ProjectsPage() {
   const saveCost = () => {
     if (!costFor) return
     try {
+      const grossMinor = toMinor(costAmount, cur.decimals) + (costVat ? toMinor(costVat, cur.decimals) : 0)
+      const paidMinor = costPayment === 'cash' ? grossMinor : costPayment === 'credit' ? 0 : toMinor(costPaidNow || '0', cur.decimals)
+      if (grossMinor - paidMinor > 0 && !costSupplierId) throw new Error('الجزء الآجل يتطلب اختيار المورد/مقاول الباطن — ليظهر في كشف حسابه')
       addProjectCost({
         projectId: costFor.id, kind: costKind, amountMinor: toMinor(costAmount, cur.decimals),
         inputVatMinor: costVat ? toMinor(costVat, cur.decimals) : 0,
-        payment: costPayment, description: costDesc.trim(),
+        payment: costPayment, paidMinor, supplierId: costSupplierId || null, description: costDesc.trim(),
         treasury: costPaySource.kind === 'treasury' ? costPaySource.treasury : undefined,
         custodyFileId: costPayment === 'cash' && costPaySource.kind === 'custody' ? costPaySource.custodyFileId : null,
         costCenterId,
       })
       toast.show('سُجلت التكلفة على المشروع بقيد متوازن ✅')
-      setCostFor(null); setCostAmount(''); setCostDesc(''); setCostVat(''); setCostCenterId(null)
+      setCostFor(null); setCostAmount(''); setCostDesc(''); setCostVat(''); setCostCenterId(null); setCostPaidNow(''); setCostSupplierId(0); setCostPayment('cash')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -350,8 +356,8 @@ export function ProjectsPage() {
       )}
 
       {/* مشروع جديد — نموذج مقسّم أقساماً (أمر التعديل: نماذج احترافية) */}
-      <Modal open={open} onClose={() => setOpen(false)} title="مشروع مقاولات جديد" wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => setOpen(false)} title="مشروع مقاولات جديد" wide subtitle="مستند مشروع: عقد وقيمة ومحتجز ومدة">
+        <div className="space-y-4"><DocSectionHead step="١" title="أساسيات العقد وأطرافه" hint="المشروع مركز تكلفة مستقل: كل مستخلص وتكلفة يُنسبان إليه" />
           {/* القسم 1: أساسيات العقد */}
           <div className="rounded-2xl border border-orange-500/20 p-4 space-y-3">
             <div className="text-[11.5px] font-black text-orange-600 dark:text-orange-400">📋 بيانات العقد الأساسية</div>
@@ -437,7 +443,7 @@ export function ProjectsPage() {
               <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
             </div>
           </div>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: لا قيد عند فتح المشروع · القيود تبدأ من أول دفعة مقدمة أو مستخلص، وكلها منسوبة لمركز تكلفة هذا المشروع.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveProject} disabled={!nameAr.trim() || (valueMode === 'manual' ? !contractValue : validBoqLines.length === 0)}>إنشاء المشروع</Btn>
           </div>
@@ -445,9 +451,9 @@ export function ProjectsPage() {
       </Modal>
 
       {/* مستخلص */}
-      <Modal open={!!extractFor} onClose={() => setExtractFor(null)} title={extractFor ? `مستخلص جديد — ${extractFor.nameAr}` : ''}>
+      <Modal open={!!extractFor} onClose={() => setExtractFor(null)} title={extractFor ? `مستخلص جديد — ${extractFor.nameAr}` : ''} subtitle="مستند مستخلص: أعمال منفَّذة ومحتجز وضريبة">
         {extractFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="بنود المستخلص ونسب التنفيذ" hint="المحتجز أصل لدى العميل لا خسارة" />
             {extractBoq.length > 0 && (
               <div className="flex gap-2">
                 {([['lines', 'بندي من جدول الكميات'], ['gross', 'مبلغ إجمالي']] as const).map(([m, label]) => (
@@ -529,7 +535,7 @@ export function ProjectsPage() {
               <input type="checkbox" checked={exFinal} onChange={(e) => setExFinal(e.target.checked)} className="accent-rose-600" />
               <span className="text-[12px] font-bold text-rose-600 dark:text-rose-400">مستخلص ختامي — لا مستخلصات بعده (يمهد للتسليم والإفراج عن المحتجز)</span>
             </label>
-            <div className="flex justify-end gap-2">
+            <DocOutcome>الأثر: <b>1104 العميل</b> مديناً بصافي المستخلص · <b>4107 إيراد المقاولات</b> دائناً · <b>1105 محتجز لدى العملاء</b> بالنسبة المحتجزة · والضريبة على <b>2102</b>.</DocOutcome><div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setExtractFor(null)}>إلغاء</Btn>
               <Btn onClick={saveExtract} shortcut="F9" disabled={exMode === 'lines' ? exLinesPreview.grossMinor <= 0 : !exGross}>تسجيل المستخلص وقيده</Btn>
             </div>
@@ -555,13 +561,19 @@ export function ProjectsPage() {
               <Field label={`المبلغ (${cur.symbol}) *`}><input value={costAmount} onChange={(e) => setCostAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
               <Field label="السداد">
                 <div className="flex gap-2">
-                  {(['cash', 'credit'] as const).map((p) => (
-                    <button key={p} onClick={() => setCostPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${costPayment === p ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
-                      {p === 'cash' ? 'نقدي' : 'آجل (مورد)'}
+                  {([['cash', 'نقدي'], ['mixed', 'مدفوع + آجل'], ['credit', 'آجل (مورد)']] as const).map(([mode, label]) => (
+                    <button key={mode} onClick={() => setCostPayment(mode)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border transition-all ${costPayment === mode ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
+                      {label}
                     </button>
                   ))}
                 </div>
-                {costPayment === 'cash' && <div className="mt-2"><PaySourcePicker value={costPaySource} onChange={setCostPaySource} /></div>}
+                {costPayment !== 'credit' && <div className="mt-2"><PaySourcePicker value={costPaySource} onChange={setCostPaySource} /></div>}
+                {costPayment === 'mixed' && <div className="mt-2"><Field label={`المدفوع الآن (${cur.symbol}) *`} hint="الباقي يُرحَّل على حساب المورد"><input value={costPaidNow} onChange={(e) => setCostPaidNow(e.target.value)} inputMode="decimal" className={inputCls} /></Field></div>}
+                {costPayment !== 'cash' && (
+                  <div className="mt-2"><Field label="المورد / مقاول الباطن *" hint="الجزء الآجل يظهر في كشف حسابه ويُسدَّد بسند صرف">
+                    <PartyQuickPicker parties={suppliers} value={costSupplierId} onChange={setCostSupplierId} cashLabel="اختر المورد" label="بحث المورد" cashValue={0} showCash={false} />
+                  </Field></div>
+                )}
               </Field>
             </div>
             <Field label="الوصف"><input value={costDesc} onChange={(e) => setCostDesc(e.target.value)} className={inputCls} placeholder="حديد تسليح، أجور نجارين…" /></Field>

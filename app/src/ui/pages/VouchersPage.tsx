@@ -6,7 +6,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * كل سند يولّد قيده المتوازن فوراً ويظهر في اليومية.
  */
 import { useMemo, useState } from 'react'
-import { ArrowDownCircle, ArrowUpCircle, BookOpenText, CheckCircle2, Eye, FileSpreadsheet, FileText, Landmark, Paperclip, Pencil, Printer, ReceiptText, Save, Search, Stamp, WalletCards, X } from 'lucide-react'
+import { ArrowDownCircle, ArrowUpCircle, BookOpenText, CheckCircle2, Eye, FileSpreadsheet, FileText, Landmark, Paperclip, Pencil, Printer, ReceiptText, Save, Search, Stamp, Undo2, WalletCards, X } from 'lucide-react'
 import { useDataStore, type Voucher } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -19,7 +19,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
-import { customerStatement, supplierStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
+import { customerStatement, supplierStatement, customerUnitDocs, supplierUnitDocs, statementBalance } from '../../core/statements.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
 
@@ -55,7 +55,7 @@ const PAYMENT_COUNTERS = [
 const escapePrintText = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, vehicles } = useDataStore()
+  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, vehicles } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup, receipt } = useAppStore()
   const toast = useToast()
@@ -122,7 +122,7 @@ export function VouchersPage() {
         customerId: partyId,
         openingMinor: openingBalances[`customer:${partyId}`] ?? 0,
         sales, saleReturns, allSales: sales,
-        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), labOrders, linkedLabPatientIds: labPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), walletOps, projectExtracts, linkedProjectIds: projects.filter((p) => p.clientId === partyId).map((p) => p.id), installmentPlans, laundryOrders, cars, consignmentCars }),
+        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), labOrders, linkedLabPatientIds: labPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), walletOps, projectExtracts, linkedProjectIds: projects.filter((p) => p.clientId === partyId).map((p) => p.id), installmentPlans, laundryOrders, cars, consignmentCars, propertySales }),
         vouchers: [
           ...vouchers,
           ...clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
@@ -134,8 +134,9 @@ export function VouchersPage() {
       supplierId: partyId,
       openingMinor: openingBalances[`supplier:${partyId}`] ?? 0,
       purchases, purchaseReturns, allPurchases: purchases, vouchers, cheques,
+      extraDocs: supplierUnitDocs({ supplierId: partyId, cars, carPurchaseInvoices, carPrepCosts, projectCosts, carLabel: (carId) => { const car = cars.find((row) => row.id === carId); return car ? `${car.make} ${car.model} (${car.plateOrVin})` : `سيارة #${carId}` }, entryDate: (entryId) => journal.find((row) => row.id === entryId)?.date ?? '0000-00-00' }),
     }))
-  }, [partyId, kind, sales, saleReturns, vouchers, cheques, purchases, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, laundryOrders, cars, consignmentCars])
+  }, [partyId, kind, sales, saleReturns, vouchers, cheques, purchases, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, journal])
 
   const clearDraft = (voucherKind: 'receipt' | 'payment') => {
     try { window.localStorage.removeItem(`shopsys.voucher-draft.${voucherKind}`) } catch { /* التخزين المحلي اختياري */ }
@@ -246,7 +247,7 @@ export function VouchersPage() {
   const printDraft = () => {
     const title = kind === 'receipt' ? 'سند قبض نقدية' : 'سند صرف نقدية'
     const amountText = parsedAmountMinor > 0 ? `${fmt(parsedAmountMinor)} ${cur.symbol}` : '—'
-    printHtml(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${escapePrintText(title)}</title><style>body{font-family:Arial,sans-serif;color:#0f2042;padding:28px;max-width:760px;margin:auto}h1{border-bottom:3px solid #0f2042;padding-bottom:12px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;background:#eff4ff;padding:14px;margin:16px 0}.amount{font-size:30px;font-weight:800;color:#0f2042;margin:22px 0}.label{color:#68738a;font-size:12px}.value{font-weight:700}p{line-height:1.8}</style></head><body><h1>${escapePrintText(title)}</h1><div class="meta"><div><div class="label">المنشأة</div><div class="value">${escapePrintText(setup.shopName || 'نظام الحسابات')}</div></div><div><div class="label">التاريخ</div><div class="value">${escapePrintText(voucherDate)}</div></div><div><div class="label">الطرف</div><div class="value">${escapePrintText(selectedPartyName || 'غير مرتبط بطرف')}</div></div><div><div class="label">الحساب المقابل</div><div class="value">${escapePrintText(counters.find((item) => item.code === counter)?.label ?? '—')}</div></div></div><div class="amount">${escapePrintText(amountText)}</div><p><b>البيان:</b> ${escapePrintText(desc || '—')}</p><p><b>الحالة:</b> مسودة قبل الترحيل</p></body></html>`)
+    printHtml(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${escapePrintText(title)}</title><style>body{font-family:Arial,sans-serif;color:#0f172a;padding:28px;max-width:760px;margin:auto}h1{border-bottom:3px solid #0f172a;padding-bottom:12px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;background:#f8fafc;padding:14px;margin:16px 0}.amount{font-size:30px;font-weight:800;color:#0f172a;margin:22px 0}.label{color:#64748b;font-size:12px}.value{font-weight:700}p{line-height:1.8}</style></head><body><h1>${escapePrintText(title)}</h1><div class="meta"><div><div class="label">المنشأة</div><div class="value">${escapePrintText(setup.shopName || 'نظام الحسابات')}</div></div><div><div class="label">التاريخ</div><div class="value">${escapePrintText(voucherDate)}</div></div><div><div class="label">الطرف</div><div class="value">${escapePrintText(selectedPartyName || 'غير مرتبط بطرف')}</div></div><div><div class="label">الحساب المقابل</div><div class="value">${escapePrintText(counters.find((item) => item.code === counter)?.label ?? '—')}</div></div></div><div class="amount">${escapePrintText(amountText)}</div><p><b>البيان:</b> ${escapePrintText(desc || '—')}</p><p><b>الحالة:</b> مسودة قبل الترحيل</p></body></html>`)
   }
   const focusVoucherForEdit = () => {
     document.querySelector<HTMLInputElement>('[data-voucher-amount]')?.focus()
@@ -415,8 +416,8 @@ export function VouchersPage() {
 
       {/* سند جديد — نافذة تشغيلية واسعة مستوحاة من شاشة السند المرجعية */}
       <Modal open={open} onClose={() => setOpen(false)} title="" extraWide bare>
-        <div className="overflow-hidden rounded-3xl bg-[#f8f9ff] text-[#0b1c30]" dir="rtl">
-          <div className="flex items-center justify-between gap-4 bg-[#0f2042] px-5 py-4 text-white">
+        <div className="overflow-hidden rounded-3xl doc-sheet" dir="rtl">
+          <div className="flex items-center justify-between gap-4 doc-head px-5 py-4">
             <div className="flex items-center gap-3 min-w-0">
               <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${kind === 'receipt' ? 'bg-emerald-400/20 text-emerald-200' : 'bg-rose-400/20 text-rose-200'}`}>
                 {kind === 'receipt' ? <ArrowDownCircle size={24} /> : <ArrowUpCircle size={24} />}
@@ -427,7 +428,7 @@ export function VouchersPage() {
                   <span className="text-[10px] uppercase tracking-wider text-[#a9c7ff]">{kind === 'receipt' ? 'Receipt Voucher' : 'Payment Voucher'}</span>
                   <span className="rounded bg-white/10 px-2 py-0.5 font-mono text-[11px]">{kind === 'receipt' ? 'RV' : 'PV'} — جديد</span>
                 </div>
-                <p className="mt-0.5 truncate text-[11px] text-[#d6e3ff]">{setup.shopName || 'نظام الحسابات'} · سند مرتبط آلياً باليومية وكشف الطرف</p>
+                <p className="mt-0.5 truncate text-[11px] doc-head-sub">{setup.shopName || 'نظام الحسابات'} · سند مرتبط آلياً باليومية وكشف الطرف</p>
               </div>
             </div>
             <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
@@ -442,187 +443,308 @@ export function VouchersPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 bg-[#eff4ff] px-5 py-2 text-[10px] text-[#45464e]">
+          <div className="flex flex-wrap items-center justify-between gap-2 doc-meta px-5 py-2 text-[10px]">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-              <span className="flex items-center gap-1"><FileText size={14} className="text-[#009c6b]" /> المنشأة: <b className="text-[#0f2042]">{setup.shopName || 'غير محدد'}</b></span>
+              <span className="flex items-center gap-1"><FileText size={14} className="doc-accent" /> المنشأة: <b className="doc-ink">{setup.shopName || 'غير محدد'}</b></span>
               {receipt.headerLines.filter((line) => line.trim()).slice(0, 1).map((line) => <span key={line}>{line}</span>)}
             </div>
-            <span className="flex items-center gap-1 font-semibold text-[#0f2042]"><CheckCircle2 size={13} className="text-[#009c6b]" /> سيُنشأ القيد تلقائياً بعد الترحيل</span>
+            <span className="flex items-center gap-1 font-semibold doc-ink"><CheckCircle2 size={13} className="doc-accent" /> سيُنشأ القيد تلقائياً بعد الترحيل</span>
           </div>
 
           <div className="max-h-[calc(92vh-7rem)] space-y-4 overflow-y-auto px-5 py-4 sm:px-6">
-            <div className="grid grid-cols-12 items-start gap-3 rounded-xl bg-white p-4 shadow-sm ring-1 ring-[#dce9ff]">
+            <div className="grid grid-cols-12 items-start gap-3 rounded-xl doc-card doc-ring p-4">
               <div className="col-span-12 space-y-2 lg:col-span-5">
                 <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-1 text-sm font-bold text-[#0f2042]">
-                    {kind === 'receipt' ? <WalletCards size={16} className="text-[#3f5f92]" /> : <Landmark size={16} className="text-[#3f5f92]" />}
+                  <label className="flex items-center gap-1 text-sm font-bold doc-ink">
+                    {kind === 'receipt' ? <WalletCards size={16} className="doc-accent" /> : <Landmark size={16} className="doc-accent" />}
                     {needsParty ? kind === 'receipt' ? 'استلمنا من العميل' : 'يصرف إلى المورد' : kind === 'receipt' ? 'مصدر النقدية والحساب المقابل' : 'وجهة النقدية والحساب المقابل'}
                     {needsParty && <span className="text-rose-600">*</span>}
                   </label>
-                  {needsParty && <span className="rounded bg-[#e5eeff] px-2 py-0.5 text-[10px] font-semibold text-[#254778]">بحث سريع [F3]</span>}
+                  {needsParty && <span className="rounded doc-tint-strong px-2 py-0.5 text-[10px] font-semibold doc-accent-deep">بحث سريع [F3]</span>}
                 </div>
                 {needsParty ? (
                   <PartyQuickPicker parties={kind === 'receipt' ? customers : suppliers} value={partyId} onChange={(id) => { setPartyId(id); setAllocationDraft({}) }} cashLabel="اختر الطرف" label={kind === 'receipt' ? 'بحث العميل' : 'بحث المورد'} showCash={false} />
                 ) : (
-                  <div className="flex min-h-10 items-center gap-2 rounded-lg bg-[#eff4ff] px-3 text-sm text-[#45464e]">
-                    <Search size={17} className="text-[#75777f]" />
-                    <span>{counters.find((item) => item.code === counter)?.label ?? 'اختر الحساب المقابل من القائمة'}</span>
+                  /* بلاغ المالك: جملة «اختر الحساب المقابل من القائمة» كانت نصاً ميتاً فوق القائمة.
+                     صارت الخانة نفسها هي البحث: اكتب أول حرف من اسم الحساب أو كوده فتُفلتر القائمة فوراً. */
+                  <div className="relative">
+                    <Search size={16} className="pointer-events-none absolute right-2.5 top-1/2 z-10 -translate-y-1/2 doc-faint" />
+                    <QuickSelect aria-label="بحث الحساب المقابل" value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0); setAllocationDraft({}) }} className="h-10 w-full rounded-lg border doc-line doc-sheet pr-8 text-sm doc-ink outline-none focus:border-[color:var(--doc-accent)]">
+                      <option value="">ابحث بالاسم أو الكود ثم Enter…</option>
+                      {counters.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.label}</option>)}
+                    </QuickSelect>
                   </div>
                 )}
-                <QuickSelect aria-label="الحساب المقابل" value={counter} onChange={(e) => { setCounter(e.target.value); setPartyId(0); setAllocationDraft({}) }} className="h-10 border-[#c5c6cf] bg-[#f8f9ff] text-sm">
-                  <option value="">اختر الحساب المقابل…</option>
-                  {counters.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
-                </QuickSelect>
+                {!needsParty && (
+                  <div className="flex items-center justify-between rounded-lg doc-tint px-3 py-1.5 text-[11px] font-bold doc-accent-deep">
+                    <span>الحساب المختار</span>
+                    <span>{counter ? `${counter} — ${counters.find((item) => item.code === counter)?.label ?? ''}` : 'لم يُحدد بعد'}</span>
+                  </div>
+                )}
                 {needsParty && partyId > 0 && liveBalance !== null && (
                   <div className={`flex items-center justify-between rounded-lg px-3 py-1.5 text-[11px] font-bold ${liveBalance > 0 ? 'bg-rose-50 text-rose-700' : liveBalance < 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-50 text-slate-600'}`}>
                     <span>الرصيد القائم قبل السند</span>
                     <span>{liveBalance > 0 ? kind === 'receipt' ? `عليه ${fmt(liveBalance)}` : `مستحق له ${fmt(liveBalance)}` : liveBalance < 0 ? kind === 'receipt' ? `له عندك ${fmt(-liveBalance)}` : `لك عنده ${fmt(-liveBalance)}` : 'الرصيد صفر'} {cur.symbol}</span>
                   </div>
                 )}
-                {!needsParty && <button type="button" onClick={() => setQuickAccountOpen(!quickAccountOpen)} className="text-right text-[11px] font-bold text-[#3f5f92] hover:underline">+ إضافة بند {kind === 'payment' ? 'مصروف' : 'إيراد'} جديد</button>}
-                {quickAccountOpen && <div className="grid grid-cols-[100px_1fr_auto] gap-2 rounded-lg bg-[#eff4ff] p-2"><input className="h-9 rounded border border-[#c5c6cf] bg-white px-2 text-xs" value={quickAccountCode} onChange={(e) => setQuickAccountCode(e.target.value)} placeholder={kind === 'payment' ? '51xx' : '41xx'} dir="ltr" /><input className="h-9 rounded border border-[#c5c6cf] bg-white px-2 text-xs" value={quickAccountName} onChange={(e) => setQuickAccountName(e.target.value)} placeholder="اسم البند" /><Btn onClick={addQuickAccount} disabled={!quickAccountCode.trim() || !quickAccountName.trim()}>إضافة</Btn></div>}
+                {!needsParty && <button type="button" onClick={() => setQuickAccountOpen(!quickAccountOpen)} className="text-right text-[11px] font-bold doc-accent hover:underline">+ إضافة بند {kind === 'payment' ? 'مصروف' : 'إيراد'} جديد</button>}
+                {quickAccountOpen && <div className="grid grid-cols-[100px_1fr_auto] gap-2 rounded-lg doc-tint p-2"><input className="h-9 rounded border doc-line doc-card px-2 text-xs" value={quickAccountCode} onChange={(e) => setQuickAccountCode(e.target.value)} placeholder={kind === 'payment' ? '51xx' : '41xx'} dir="ltr" /><input className="h-9 rounded border doc-line doc-card px-2 text-xs" value={quickAccountName} onChange={(e) => setQuickAccountName(e.target.value)} placeholder="اسم البند" /><Btn onClick={addQuickAccount} disabled={!quickAccountCode.trim() || !quickAccountName.trim()}>إضافة</Btn></div>}
               </div>
 
-              <div className="col-span-12 space-y-2 rounded-lg bg-[#eff4ff] p-3 lg:col-span-4">
-                <div className="flex items-center justify-between text-sm font-bold text-[#0f2042]"><span>{kind === 'receipt' ? 'المبلغ الإجمالي المقبوض' : 'قيمة سند الصرف'}</span><span className="rounded bg-[#d6e3ff] px-2 py-0.5 text-[10px] text-[#254778]">{cur.code} · {cur.symbol}</span></div>
-                <div className="flex items-baseline gap-2 rounded-lg bg-white px-3 py-2 shadow-inner ring-1 ring-[#dce9ff]">
-                  <input data-voucher-amount="true" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" className="w-full bg-transparent text-left font-mono text-3xl font-bold tracking-tight text-[#0f2042] outline-none" dir="ltr" inputMode="decimal" autoFocus />
-                  <span className="whitespace-nowrap text-sm font-bold text-[#45464e]">{cur.symbol}</span>
+              <div className="col-span-12 space-y-2 rounded-lg doc-tint p-3 lg:col-span-4">
+                <div className="flex items-center justify-between text-sm font-bold doc-ink"><span>{kind === 'receipt' ? 'المبلغ الإجمالي المقبوض' : 'قيمة سند الصرف'}</span><span className="rounded doc-band px-2 py-0.5 text-[10px] doc-accent-deep">{cur.code} · {cur.symbol}</span></div>
+                <div className="flex items-baseline gap-2 rounded-lg doc-card px-3 py-2 shadow-inner doc-ring">
+                  <input data-voucher-amount="true" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" className="w-full bg-transparent text-left font-mono text-3xl font-bold tracking-tight doc-ink outline-none" dir="ltr" inputMode="decimal" autoFocus />
+                  <span className="whitespace-nowrap text-sm font-bold doc-muted">{cur.symbol}</span>
                 </div>
-                {parsedAmountMinor > 0 && <div className="flex items-start gap-1.5 rounded bg-[#dce9ff]/60 px-2 py-1.5 text-[10px] leading-5 text-[#254778]"><FileText size={14} className="mt-0.5 shrink-0" /><span>{amountInWords(parsedAmountMinor, cur)}</span></div>}
+                {parsedAmountMinor > 0 && <div className="flex items-start gap-1.5 rounded doc-band px-2 py-1.5 text-[10px] leading-5 doc-accent-deep"><FileText size={14} className="mt-0.5 shrink-0" /><span>{amountInWords(parsedAmountMinor, cur)}</span></div>}
               </div>
 
               <div className="col-span-12 space-y-2 lg:col-span-3">
-                <label className="block text-sm font-bold text-[#0f2042]">تاريخ السند</label>
-                <input type="date" value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} className="h-10 w-full rounded-lg border border-[#c5c6cf] bg-white px-3 text-sm font-mono text-[#0f2042] outline-none focus:border-[#3f5f92]" />
-                <div className="rounded-lg bg-[#e5eeff] px-3 py-2 text-[10px] text-[#45464e]">يُحفظ التاريخ في السند والقيد وكشف الحساب.</div>
+                <label className="block text-sm font-bold doc-ink">تاريخ السند</label>
+                <input type="date" value={voucherDate} onChange={(e) => setVoucherDate(e.target.value)} className="h-10 w-full rounded-lg border doc-line doc-card px-3 text-sm font-mono doc-ink outline-none focus:border-[color:var(--doc-accent)]" />
+                <div className="rounded-lg doc-tint-strong px-3 py-2 text-[10px] doc-muted">يُحفظ التاريخ في السند والقيد وكشف الحساب.</div>
               </div>
             </div>
 
-            {!(isPurchaseExpense && expPaidBy === 'payable') && <section className="space-y-3 rounded-xl bg-white p-4 shadow-sm ring-1 ring-[#dce9ff]">
+            {!(isPurchaseExpense && expPaidBy === 'payable') && <section className="space-y-3 rounded-xl doc-card doc-ring p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="flex items-center gap-2 text-base font-bold text-[#0f2042]"><WalletCards size={19} className="text-[#3f5f92]" /> {kind === 'receipt' ? 'طريقة استلام الدفعة' : 'مصدر الصرف والحساب المالي'}</h3>
-                <span className="text-[10px] text-[#75777f]">اختر الحساب الفعلي المستخدم في هذه العملية</span>
+                <h3 className="flex items-center gap-2 text-base font-bold doc-ink"><WalletCards size={19} className="doc-accent" /> {kind === 'receipt' ? 'طريقة استلام الدفعة' : 'مصدر الصرف والحساب المالي'}</h3>
+                <span className="text-[10px] doc-faint">اختر الحساب الفعلي المستخدم في هذه العملية</span>
               </div>
-              <div className="rounded-lg bg-[#eff4ff] p-3">
+              <div className="rounded-lg doc-tint p-3">
                 {kind === 'receipt' ? <PaymentMethodPicker value={{ treasury, terminalPayment }} onChange={(value) => { setTreasury(value.treasury); setTerminalPayment(value.terminalPayment) }} operation="receipt" /> : <TreasuryPicker value={treasury} onChange={(c) => setTreasury(c as TreasuryAccount)} operation="payment" />}
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-[#45464e]">
-                  <span className="rounded bg-white px-2 py-1">الحساب المختار: <b className="text-[#0f2042]">{nameOf(selectedTerminal?.settlementAccountCode ?? treasury)}</b></span>
-                  {selectedTerminal && <span className="rounded bg-[#d6e3ff] px-2 py-1 text-[#254778]">مرجع الماكينة محفوظ مع السند</span>}
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] doc-muted">
+                  <span className="rounded doc-card px-2 py-1">الحساب المختار: <b className="doc-ink">{nameOf(selectedTerminal?.settlementAccountCode ?? treasury)}</b></span>
+                  {selectedTerminal && <span className="rounded doc-band px-2 py-1 doc-accent-deep">مرجع الماكينة محفوظ مع السند</span>}
                 </div>
               </div>
             </section>}
 
-            {needsParty && partyId > 0 && partyInvoices.length > 0 && <section className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-[#dce9ff]">
-              <div className="flex flex-wrap items-center justify-between gap-2 bg-[#dce9ff]/70 px-4 py-3">
-                <h3 className="flex items-center gap-2 text-sm font-bold text-[#0f2042]"><ReceiptText size={18} className="text-[#3f5f92]" /> جدول تخصيص وتسوية {kind === 'receipt' ? 'فواتير البيع' : 'فواتير الشراء'}</h3>
-                <button type="button" className="rounded bg-white px-3 py-1.5 text-[10px] font-bold text-[#3f5f92] hover:bg-[#f8f9ff]" onClick={() => setAllocationDraft(Object.fromEntries(partyInvoices.map((invoice) => [invoice.docKey, fmt(invoice.dueMinor - invoice.settledMinor).replaceAll(',', '')])))}>تسوية تلقائية FIFO</button>
+            {needsParty && partyId > 0 && partyInvoices.length > 0 && <section className="overflow-hidden rounded-xl doc-card doc-ring">
+              <div className="flex flex-wrap items-center justify-between gap-2 doc-band px-4 py-3">
+                <h3 className="flex items-center gap-2 text-sm font-bold doc-ink"><ReceiptText size={18} className="doc-accent" /> جدول تخصيص وتسوية {kind === 'receipt' ? 'فواتير البيع' : 'فواتير الشراء'}</h3>
+                <button type="button" className="rounded doc-card px-3 py-1.5 text-[10px] font-bold doc-accent hover:doc-sheet" onClick={() => setAllocationDraft(Object.fromEntries(partyInvoices.map((invoice) => [invoice.docKey, fmt(invoice.dueMinor - invoice.settledMinor).replaceAll(',', '')])))}>تسوية تلقائية FIFO</button>
               </div>
               <div className="max-h-64 overflow-auto">
                 <table className="w-full min-w-[700px] border-collapse text-right text-[11px]">
-                  <thead className="bg-[#eff4ff] text-[#45464e]"><tr><th className="px-3 py-2">إجراء</th><th className="px-3 py-2">المستند</th><th className="px-3 py-2">التاريخ</th><th className="px-3 py-2 text-left">الإجمالي</th><th className="px-3 py-2 text-left">المدفوع سابقاً</th><th className="px-3 py-2 text-left">المتبقي</th><th className="px-3 py-2 text-left">المبلغ في السند</th><th className="px-3 py-2 text-left">بعد السداد</th></tr></thead>
-                  <tbody className="divide-y divide-[#dce9ff]">
+                  <thead className="doc-tint doc-muted"><tr><th className="px-3 py-2">إجراء</th><th className="px-3 py-2">المستند</th><th className="px-3 py-2">التاريخ</th><th className="px-3 py-2 text-left">الإجمالي</th><th className="px-3 py-2 text-left">المدفوع سابقاً</th><th className="px-3 py-2 text-left">المتبقي</th><th className="px-3 py-2 text-left">المبلغ في السند</th><th className="px-3 py-2 text-left">بعد السداد</th></tr></thead>
+                  <tbody className="divide-y doc-line">
                     {partyInvoices.map((invoice) => {
                       const remaining = invoice.dueMinor - invoice.settledMinor
                       const applied = parseAllocationAmount(allocationDraft[invoice.docKey] || '')
-                      return <tr key={invoice.docKey} className="hover:bg-[#eff4ff]/70"><td className="px-3 py-2"><input type="checkbox" checked={applied > 0} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.checked ? fmt(remaining).replaceAll(',', '') : '' }))} className="h-4 w-4 accent-[#0f2042]" /></td><td className="px-3 py-2 font-bold text-[#0f2042]">{invoice.docLabel}</td><td className="px-3 py-2 font-mono text-[#45464e]">{invoice.date.slice(0, 10)}</td><td className="px-3 py-2 text-left font-mono">{fmt(invoice.dueMinor + invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono text-[#75777f]">{fmt(invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono font-bold text-rose-600">{fmt(remaining)}</td><td className="bg-[#d6e3ff]/50 px-3 py-2 text-left"><input className="h-8 w-28 rounded border border-[#c5c6cf] bg-white px-2 text-left font-mono font-bold" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="0" inputMode="decimal" /></td><td className="px-3 py-2 text-left font-mono font-bold text-[#009c6b]">{fmt(Math.max(0, remaining - applied))}</td></tr>
+                      return <tr key={invoice.docKey} className="hover:opacity-90"><td className="px-3 py-2"><input type="checkbox" checked={applied > 0} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.checked ? fmt(remaining).replaceAll(',', '') : '' }))} className="h-4 w-4 accent-[color:var(--doc-accent)]" /></td><td className="px-3 py-2 font-bold doc-ink">{invoice.docLabel}</td><td className="px-3 py-2 font-mono doc-muted">{invoice.date.slice(0, 10)}</td><td className="px-3 py-2 text-left font-mono">{fmt(invoice.dueMinor + invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono doc-faint">{fmt(invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono font-bold text-rose-600">{fmt(remaining)}</td><td className="doc-band/50 px-3 py-2 text-left"><input className="h-8 w-28 rounded border doc-line doc-card px-2 text-left font-mono font-bold" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="0" inputMode="decimal" /></td><td className="px-3 py-2 text-left font-mono font-bold doc-accent">{fmt(Math.max(0, remaining - applied))}</td></tr>
                     })}
                   </tbody>
-                  <tfoot className="bg-[#e5eeff] font-bold text-[#0f2042]"><tr><td colSpan={3} className="px-3 py-2">إجمالي التخصيص</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono text-rose-600">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor - invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono text-[#0f2042]">{fmt(manualAllocatedMinor)}</td><td className="px-3 py-2" /></tr></tfoot>
+                  <tfoot className="doc-tint-strong font-bold doc-ink"><tr><td colSpan={3} className="px-3 py-2">إجمالي التخصيص</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono text-rose-600">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor - invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono doc-ink">{fmt(manualAllocatedMinor)}</td><td className="px-3 py-2" /></tr></tfoot>
                 </table>
               </div>
-              {hasManualAllocation && <div className={`px-4 py-2 text-[11px] font-bold ${manualAllocatedMinor > parsedAmountMinor ? 'text-rose-600' : 'text-[#254778]'}`}>الموزع الآن: {fmt(manualAllocatedMinor)} {cur.symbol} — المتبقي تحت الحساب: {fmt(Math.max(0, parsedAmountMinor - manualAllocatedMinor))} {cur.symbol}</div>}
+              {hasManualAllocation && <div className={`px-4 py-2 text-[11px] font-bold ${manualAllocatedMinor > parsedAmountMinor ? 'text-rose-600' : 'doc-accent-deep'}`}>الموزع الآن: {fmt(manualAllocatedMinor)} {cur.symbol} — المتبقي تحت الحساب: {fmt(Math.max(0, parsedAmountMinor - manualAllocatedMinor))} {cur.symbol}</div>}
             </section>}
 
             {kind === 'payment' && counter === '2101' && partyId > 0 && (() => {
               const supplierAssets = assets.map((a) => ({ a, due: getAssetDue(a.id) })).filter((x) => x.a.supplierId === partyId && x.due.remainingMinor > 0)
               if (supplierAssets.length === 0) return null
-              return <section className="space-y-2 rounded-xl border border-[#c5c6cf] bg-white p-4"><h3 className="flex items-center gap-2 text-sm font-bold text-[#0f2042]"><Landmark size={17} className="text-[#3f5f92]" /> أقساط الأصول المستحقة لهذا المورد</h3>{supplierAssets.map(({ a, due }) => <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded bg-[#eff4ff] px-3 py-2 text-[11px]"><span>{a.assetNumber} — {a.nameAr}</span><b>متبقٍ {fmt(due.remainingMinor)} {cur.symbol}{due.nextInstallment ? ` · قسط ${fmt(due.nextInstallment.amountMinor - due.nextInstallment.paidMinor)} يستحق ${due.nextInstallment.dueDate}` : ''}</b></div>)}</section>
+              return <section className="space-y-2 rounded-xl border doc-line doc-card p-4"><h3 className="flex items-center gap-2 text-sm font-bold doc-ink"><Landmark size={17} className="doc-accent" /> أقساط الأصول المستحقة لهذا المورد</h3>{supplierAssets.map(({ a, due }) => <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded doc-tint px-3 py-2 text-[11px]"><span>{a.assetNumber} — {a.nameAr}</span><b>متبقٍ {fmt(due.remainingMinor)} {cur.symbol}{due.nextInstallment ? ` · قسط ${fmt(due.nextInstallment.amountMinor - due.nextInstallment.paidMinor)} يستحق ${due.nextInstallment.dueDate}` : ''}</b></div>)}</section>
             })()}
 
-            {canLinkCostCenter && !canLinkVehicle && <Field label="مركز التكلفة العام (اختياري)"><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className="h-10 border-[#c5c6cf] bg-white"><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field>}
-            {canLinkVehicle && <div className="grid gap-3 rounded-xl border border-[#c5c6cf] bg-white p-4 sm:grid-cols-3"><Field label="مركز التكلفة العام (اختياري)"><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className="h-10 border-[#c5c6cf] bg-white"><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field><Field label="مركز تكلفة المركبة (اختياري)"><QuickSelect value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className="h-10 border-[#c5c6cf] bg-white"><option value="">بدون مركبة</option>{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber} — {vehicle.vehicleType}</option>)}</QuickSelect></Field>{vehicleId != null && <Field label="نوع مصروف السيارة"><QuickSelect value={vehicleCostCategory} onChange={(e) => setVehicleCostCategory(e.target.value)} className="h-10 border-[#c5c6cf] bg-white">{VEHICLE_COST_CATEGORIES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</QuickSelect></Field>}</div>}
+            {canLinkCostCenter && !canLinkVehicle && <Field label="مركز التكلفة العام (اختياري)"><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field>}
+            {canLinkVehicle && <div className="grid gap-3 rounded-xl border doc-line doc-card p-4 sm:grid-cols-3"><Field label="مركز التكلفة العام (اختياري)"><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field><Field label="مركز تكلفة المركبة (اختياري)"><QuickSelect value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركبة</option>{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber} — {vehicle.vehicleType}</option>)}</QuickSelect></Field>{vehicleId != null && <Field label="نوع مصروف السيارة"><QuickSelect value={vehicleCostCategory} onChange={(e) => setVehicleCostCategory(e.target.value)} className="h-10 doc-line doc-card">{VEHICLE_COST_CATEGORIES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</QuickSelect></Field>}</div>}
 
-            {isPurchaseExpense && <section className="space-y-3 rounded-xl border border-[#c5c6cf] bg-white p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold text-[#0f2042]">مصروف مرتبط بفاتورة شراء</h3><div className="flex overflow-hidden rounded-lg border border-[#c5c6cf]">{([['treasury', 'مدفوع الآن'], ['payable', 'مستحق لاحقاً']] as const).map(([mode, label]) => <button key={mode} type="button" onClick={() => setExpPaidBy(mode)} className={`px-3 py-1.5 text-[11px] font-bold ${expPaidBy === mode ? 'bg-[#0f2042] text-white' : 'bg-white text-[#45464e]'}`}>{label}</button>)}</div></div>{expPaidBy === 'payable' && <div className="grid gap-3 sm:grid-cols-2"><Field label="الجهة المستحقة *"><input value={expBeneficiary} onChange={(e) => setExpBeneficiary(e.target.value)} className="h-10 w-full rounded-lg border border-[#c5c6cf] bg-white px-3 text-sm" placeholder="شركة النقل / الجمارك…" /></Field><Field label="حساب الاستحقاق"><QuickSelect value={expPayableAccount} onChange={(e) => setExpPayableAccount(e.target.value)} className="h-10 border-[#c5c6cf] bg-white"><option value="2117">مصاريف مستحقة (2117)</option></QuickSelect></Field></div>}<Field label="أي فاتورة شراء؟ *"><QuickSelect value={purchaseId} onChange={(e) => setPurchaseId(Number(e.target.value))} className="h-10 border-[#c5c6cf] bg-white"><option value={0}>اختر…</option>{[...purchases].reverse().slice(0, 50).map((p) => <option key={p.id} value={p.id}>{p.invoiceNumber} — {suppliers.find((s) => s.id === p.supplierId)?.nameAr ?? '—'} ({p.date})</option>)}</QuickSelect></Field><Field label="توزيع المصروف على الأصناف"><div className="flex overflow-hidden rounded-lg border border-[#c5c6cf] w-fit">{([['qty', 'بالكمية'], ['value', 'بالقيمة']] as const).map(([m, label]) => <button key={m} type="button" onClick={() => setExpMethod(m)} className={`px-4 py-2 text-[11px] font-bold ${expMethod === m ? 'bg-amber-500 text-white' : 'bg-white text-[#45464e]'}`}>{label}</button>)}</div></Field></section>}
+            {isPurchaseExpense && <section className="space-y-3 rounded-xl border doc-line doc-card p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold doc-ink">مصروف مرتبط بفاتورة شراء</h3><div className="flex overflow-hidden rounded-lg border doc-line">{([['treasury', 'مدفوع الآن'], ['payable', 'مستحق لاحقاً']] as const).map(([mode, label]) => <button key={mode} type="button" onClick={() => setExpPaidBy(mode)} className={`px-3 py-1.5 text-[11px] font-bold ${expPaidBy === mode ? 'doc-head' : 'doc-card doc-muted'}`}>{label}</button>)}</div></div>{expPaidBy === 'payable' && <div className="grid gap-3 sm:grid-cols-2"><Field label="الجهة المستحقة *"><input value={expBeneficiary} onChange={(e) => setExpBeneficiary(e.target.value)} className="h-10 w-full rounded-lg border doc-line doc-card px-3 text-sm" placeholder="شركة النقل / الجمارك…" /></Field><Field label="حساب الاستحقاق"><QuickSelect value={expPayableAccount} onChange={(e) => setExpPayableAccount(e.target.value)} className="h-10 doc-line doc-card"><option value="2117">مصاريف مستحقة (2117)</option></QuickSelect></Field></div>}<Field label="أي فاتورة شراء؟ *"><QuickSelect value={purchaseId} onChange={(e) => setPurchaseId(Number(e.target.value))} className="h-10 doc-line doc-card"><option value={0}>اختر…</option>{[...purchases].reverse().slice(0, 50).map((p) => <option key={p.id} value={p.id}>{p.invoiceNumber} — {suppliers.find((s) => s.id === p.supplierId)?.nameAr ?? '—'} ({p.date})</option>)}</QuickSelect></Field><Field label="توزيع المصروف على الأصناف"><div className="flex overflow-hidden rounded-lg border doc-line w-fit">{([['qty', 'بالكمية'], ['value', 'بالقيمة']] as const).map(([m, label]) => <button key={m} type="button" onClick={() => setExpMethod(m)} className={`px-4 py-2 text-[11px] font-bold ${expMethod === m ? 'bg-amber-500 text-white' : 'doc-card doc-muted'}`}>{label}</button>)}</div></Field></section>}
 
-            <section className="grid gap-3 rounded-xl bg-white p-4 shadow-sm ring-1 ring-[#dce9ff] lg:grid-cols-12">
-              <div className="lg:col-span-8"><Field label="البيان / الشرح التفصيلي للسند"><textarea value={desc} onChange={(e) => setDesc(e.target.value)} className="min-h-20 w-full resize-y rounded-lg border border-[#c5c6cf] bg-[#f8f9ff] px-3 py-2 text-sm text-[#0b1c30] outline-none focus:border-[#3f5f92]" placeholder={kind === 'receipt' ? 'مثال: تحصيل دفعة من العميل…' : 'مثال: سداد الفاتورة أو المصروف…'} /></Field></div>
-              <div className="flex items-end gap-2 text-[10px] text-[#45464e] lg:col-span-4"><Paperclip size={16} className="text-[#3f5f92]" /><span>البيان يُحفظ داخل السند ويظهر في اليومية والكشوف.</span></div>
+            <section className="grid gap-3 rounded-xl doc-card doc-ring p-4 lg:grid-cols-12">
+              <div className="lg:col-span-8"><Field label="البيان / الشرح التفصيلي للسند"><textarea value={desc} onChange={(e) => setDesc(e.target.value)} className="min-h-20 w-full resize-y rounded-lg border doc-line doc-sheet px-3 py-2 text-sm doc-ink outline-none focus:border-[color:var(--doc-accent)]" placeholder={kind === 'receipt' ? 'مثال: تحصيل دفعة من العميل…' : 'مثال: سداد الفاتورة أو المصروف…'} /></Field></div>
+              <div className="flex items-end gap-2 text-[10px] doc-muted lg:col-span-4"><Paperclip size={16} className="doc-accent" /><span>البيان يُحفظ داخل السند ويظهر في اليومية والكشوف.</span></div>
             </section>
 
             <div className="grid gap-3 text-center text-[10px] sm:grid-cols-3">
-              <div className="rounded-lg bg-white p-3 ring-1 ring-[#dce9ff]"><span className="block text-[#75777f]">المستفيد / الطرف</span><b className="mt-2 block text-sm text-[#0f2042]">{needsParty && partyId ? (kind === 'receipt' ? customers.find((customer) => customer.id === partyId)?.nameAr : suppliers.find((supplier) => supplier.id === partyId)?.nameAr) : 'غير مرتبط بطرف'}</b></div>
-              <div className="rounded-lg bg-white p-3 ring-1 ring-[#dce9ff]"><span className="block text-[#75777f]">حالة الاعتماد</span><b className="mt-2 flex items-center justify-center gap-1 text-sm text-[#009c6b]"><CheckCircle2 size={15} /> جاهز للتحقق والترحيل</b></div>
-              <div className="rounded-lg bg-white p-3 ring-1 ring-[#dce9ff]"><span className="block text-[#75777f]">ختم المستند</span><b className="mt-2 flex items-center justify-center gap-1 text-sm text-[#3f5f92]"><Stamp size={15} /> يُثبت مع القيد</b></div>
+              <div className="rounded-lg doc-card doc-ring p-3"><span className="block doc-faint">المستفيد / الطرف</span><b className="mt-2 block text-sm doc-ink">{needsParty && partyId ? (kind === 'receipt' ? customers.find((customer) => customer.id === partyId)?.nameAr : suppliers.find((supplier) => supplier.id === partyId)?.nameAr) : 'غير مرتبط بطرف'}</b></div>
+              <div className="rounded-lg doc-card doc-ring p-3"><span className="block doc-faint">حالة الاعتماد</span><b className="mt-2 flex items-center justify-center gap-1 text-sm doc-accent"><CheckCircle2 size={15} /> جاهز للتحقق والترحيل</b></div>
+              <div className="rounded-lg doc-card doc-ring p-3"><span className="block doc-faint">ختم المستند</span><b className="mt-2 flex items-center justify-center gap-1 text-sm doc-accent"><Stamp size={15} /> يُثبت مع القيد</b></div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#c5c6cf] bg-white px-5 py-3">
-            <span className="text-[10px] text-[#75777f]">اضغط Esc للإلغاء · الترحيل ينشئ سنداً وقيداً متوازناً</span>
+          <div className="flex flex-wrap items-center justify-between gap-3 doc-footer px-5 py-3">
+            <span className="text-[10px] doc-faint">اضغط Esc للإلغاء · الترحيل ينشئ سنداً وقيداً متوازناً</span>
             <div className="flex items-center gap-2"><Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn></div>
           </div>
         </div>
       </Modal>
 
       <Modal open={previewOpen} onClose={() => setPreviewOpen(false)} title="معاينة السند" wide>
-        <div dir="rtl" className="space-y-4 rounded-2xl bg-[#f8f9ff] p-5 text-[#0b1c30] ring-1 ring-[#dce9ff]">
-          <div className="flex items-start justify-between gap-3 border-b border-[#c5c6cf] pb-3">
-            <div><p className="text-[11px] text-[#75777f]">{setup.shopName || 'نظام الحسابات'}</p><h3 className="mt-1 text-xl font-black">{kind === 'receipt' ? 'سند قبض نقدية' : 'سند دفع وصرف نقدية / بنكي'}</h3></div>
-            <span className="rounded-lg bg-[#0f2042] px-3 py-1.5 text-xs font-bold text-white">{kind === 'receipt' ? 'RV' : 'PV'} — مسودة</span>
+        <div dir="rtl" className="space-y-4 rounded-2xl doc-sheet p-5 doc-ink doc-ring">
+          <div className="flex items-start justify-between gap-3 border-b doc-line pb-3">
+            <div><p className="text-[11px] doc-faint">{setup.shopName || 'نظام الحسابات'}</p><h3 className="mt-1 text-xl font-black">{kind === 'receipt' ? 'سند قبض نقدية' : 'سند دفع وصرف نقدية / بنكي'}</h3></div>
+            <span className="rounded-lg doc-head px-3 py-1.5 text-xs font-bold">{kind === 'receipt' ? 'RV' : 'PV'} — مسودة</span>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg bg-white p-3 ring-1 ring-[#dce9ff]"><span className="block text-[11px] text-[#75777f]">التاريخ</span><b className="mt-1 block font-mono">{voucherDate}</b></div>
-            <div className="rounded-lg bg-white p-3 ring-1 ring-[#dce9ff]"><span className="block text-[11px] text-[#75777f]">الطرف</span><b className="mt-1 block">{selectedPartyName || 'غير مرتبط بطرف'}</b></div>
+            <div className="rounded-lg doc-card doc-ring p-3"><span className="block text-[11px] doc-faint">التاريخ</span><b className="mt-1 block font-mono">{voucherDate}</b></div>
+            <div className="rounded-lg doc-card doc-ring p-3"><span className="block text-[11px] doc-faint">الطرف</span><b className="mt-1 block">{selectedPartyName || 'غير مرتبط بطرف'}</b></div>
           </div>
-          <div className="rounded-xl bg-[#eff4ff] p-4 text-center"><span className="block text-xs text-[#45464e]">المبلغ</span><strong className="mt-1 block font-mono text-3xl text-[#0f2042]">{parsedAmountMinor > 0 ? fmt(parsedAmountMinor) : '0.00'} <small className="text-base">{cur.symbol}</small></strong>{parsedAmountMinor > 0 && <span className="mt-2 block text-[11px] text-[#254778]">{amountInWords(parsedAmountMinor, cur)}</span>}</div>
-          <div className="grid gap-3 sm:grid-cols-2 text-xs"><div><span className="text-[#75777f]">الحساب المقابل</span><b className="mt-1 block">{counters.find((item) => item.code === counter)?.label ?? '—'}</b></div><div><span className="text-[#75777f]">البيان</span><b className="mt-1 block">{desc || '—'}</b></div></div>
+          <div className="rounded-xl doc-tint p-4 text-center"><span className="block text-xs doc-muted">المبلغ</span><strong className="mt-1 block font-mono text-3xl doc-ink">{parsedAmountMinor > 0 ? fmt(parsedAmountMinor) : '0.00'} <small className="text-base">{cur.symbol}</small></strong>{parsedAmountMinor > 0 && <span className="mt-2 block text-[11px] doc-accent-deep">{amountInWords(parsedAmountMinor, cur)}</span>}</div>
+          <div className="grid gap-3 sm:grid-cols-2 text-xs"><div><span className="doc-faint">الحساب المقابل</span><b className="mt-1 block">{counters.find((item) => item.code === counter)?.label ?? '—'}</b></div><div><span className="doc-faint">البيان</span><b className="mt-1 block">{desc || '—'}</b></div></div>
           <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setPreviewOpen(false)}>إغلاق المعاينة</Btn></div>
         </div>
       </Modal>
 
       {/* عرض سند وقيده */}
-      <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `السند ${viewing.voucherNumber}` : ''}>
-        {viewing && entry && (
-          <div className="space-y-4">
-            <div className="text-center p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50">
-              <div className={`font-black text-2xl ${viewing.kind === 'receipt' ? 'text-emerald-600' : 'text-rose-500'}`}>
-                {viewing.kind === 'receipt' ? '+' : '-'}{fmt(viewing.amountMinor)} {cur.symbol}
+      {/* سند مرحّل — بنفس لغة المستند المعتمدة في الفواتير: ترويسة داكنة، شريط بيانات،
+          أقسام بيضاء، توقيعات، ثم شريط إجراءات سفلي. (تدقيق المالك — المرحلة 6) */}
+      <Modal open={!!viewing} onClose={() => setViewing(null)} title="" extraWide bare>
+        {viewing && entry && (() => {
+          const isReceipt = viewing.kind === 'receipt'
+          const reversed = !!viewing.reversalEntryId
+          const partyLabel = viewing.partyKind === 'customer'
+            ? customers.find((x) => x.id === viewing.partyId)?.nameAr ?? 'عميل'
+            : viewing.partyKind === 'supplier'
+              ? suppliers.find((x) => x.id === viewing.partyId)?.nameAr ?? 'مورد'
+              : nameOf(viewing.counterAccountCode)
+          const totalDebit = entry.lines.reduce((sum, l) => sum + l.debit, 0)
+          return (
+            <div className="overflow-hidden rounded-3xl doc-sheet" dir="rtl">
+              <div className="flex items-center justify-between gap-4 doc-head px-5 py-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${isReceipt ? 'bg-emerald-400/20 text-emerald-200' : 'bg-rose-400/20 text-rose-200'}`}>
+                    {isReceipt ? <ArrowDownCircle size={24} /> : <ArrowUpCircle size={24} />}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-lg font-bold">{isReceipt ? 'سند قبض نقدية' : 'سند صرف نقدية'}</h2>
+                      <span className="text-[10px] uppercase tracking-wider text-[#a9c7ff]">{isReceipt ? 'Receipt Voucher' : 'Payment Voucher'}</span>
+                      <span className="rounded bg-white/10 px-2 py-0.5 font-mono text-[11px]">{viewing.voucherNumber}</span>
+                      <span className={`rounded px-2 py-0.5 text-[10px] font-bold ${reversed ? 'bg-amber-400/20 text-amber-100' : 'bg-emerald-400/20 text-emerald-100'}`}>
+                        {reversed ? 'معكوس — خارج الأرصدة' : 'مرحّل ومعتمد'}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[11px] doc-head-sub">{setup.shopName || 'نظام الحسابات'} · قيد #{entry.entryNumber} · {entry.date}</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setViewing(null)} aria-label="إغلاق" className="rounded-lg p-2 text-white/70 transition hover:bg-rose-500 hover:text-white"><X size={18} /></button>
               </div>
-              {viewing.description && <div className="text-[12px] text-slate-400 mt-1">{viewing.description}</div>}
-              {viewing.allocations && <div className="text-[11px] text-indigo-600 mt-2">موزع على {viewing.allocations.length} مستنداً{(viewing.unallocatedMinor ?? 0) > 0 ? ` — تحت الحساب ${fmt(viewing.unallocatedMinor ?? 0)}` : ''}</div>}
-            </div>
-            {viewing.allocations && viewing.allocations.length > 0 && <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3 text-[11px] space-y-1"><b>تفصيل توزيع السداد</b>{viewing.allocations.map((allocation) => <div key={allocation.docKey} className="flex justify-between gap-2"><span>{allocation.docLabel}</span><span className="font-bold">{fmt(allocation.appliedMinor)} {cur.symbol}</span></div>)}</div>}
-            <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] overflow-hidden">
-              <div className="px-4 py-2.5 text-[12px] font-bold text-rose-600 dark:text-rose-400 border-b border-rose-500/10 flex items-center gap-1.5">
-                <BookOpenText size={13} /> القيد المتولد #{entry.entryNumber}
+
+              <div className="flex flex-wrap items-center justify-between gap-2 doc-meta px-5 py-2 text-[10px]">
+                <span className="flex items-center gap-1"><FileText size={14} className="doc-accent" /> المنشأة: <b className="doc-ink">{setup.shopName || 'غير محدد'}</b></span>
+                <span className="flex items-center gap-1"><CheckCircle2 size={13} className="doc-accent" /> حرّره: <b className="doc-ink">{entry.createdBy || '—'}</b></span>
               </div>
-              <table className="w-full text-[12px]">
-                <tbody>
-                  {entry.lines.map((l, i) => (
-                    <tr key={i} className="border-t border-rose-500/5">
-                      <td className="px-4 py-1.5 text-slate-600 dark:text-slate-300">
-                        {l.debit > 0 ? '' : '\u00A0\u00A0\u00A0\u00A0إلى '} {nameOf(l.accountCode)}
-                      </td>
-                      <td className="px-4 py-1.5 w-28 font-bold">{l.debit > 0 ? fmt(l.debit) : ''}</td>
-                      <td className="px-4 py-1.5 w-28 font-bold text-slate-400">{l.credit > 0 ? fmt(l.credit) : ''}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+              <div className="max-h-[calc(92vh-9rem)] space-y-4 overflow-y-auto px-5 py-4 sm:px-6">
+                <div className="grid gap-3 sm:grid-cols-12">
+                  <div className="space-y-1 rounded-xl doc-card doc-ring p-4 sm:col-span-5">
+                    <span className="text-[11px] doc-faint">{isReceipt ? 'استلمنا من' : 'صُرف إلى'}</span>
+                    <b className="block text-base doc-ink">{partyLabel}</b>
+                    <span className="block text-[11px] doc-muted">الحساب المقابل: {viewing.counterAccountCode} — {nameOf(viewing.counterAccountCode)}</span>
+                  </div>
+                  <div className="space-y-1 rounded-xl doc-tint p-4 doc-ring sm:col-span-4">
+                    <span className="text-[11px] doc-muted">{isReceipt ? 'المبلغ المقبوض' : 'المبلغ المصروف'}</span>
+                    <b className={`block font-mono text-2xl ${isReceipt ? 'text-emerald-700' : 'text-rose-600'}`}>{fmt(viewing.amountMinor)} {cur.symbol}</b>
+                    <span className="block text-[10px] leading-5 doc-accent-deep">فقط {amountInWords(viewing.amountMinor, cur)} لا غير</span>
+                  </div>
+                  <div className="space-y-1 rounded-xl doc-card doc-ring p-4 sm:col-span-3">
+                    <span className="text-[11px] doc-faint">الخزينة / الحساب النقدي</span>
+                    <b className="block text-sm doc-ink">{nameOf(viewing.treasury)}</b>
+                    <span className="block text-[11px] doc-muted">تاريخ السند: {viewing.date?.slice(0, 10) ?? entry.date}</span>
+                  </div>
+                </div>
+
+                {viewing.description && (
+                  <section className="rounded-xl doc-card doc-ring p-4">
+                    <h3 className="mb-1 flex items-center gap-2 text-sm font-bold doc-ink"><FileText size={16} className="doc-accent" /> البيان</h3>
+                    <p className="text-[12px] leading-6 doc-muted">{viewing.description}</p>
+                  </section>
+                )}
+
+                {viewing.allocations && viewing.allocations.length > 0 && (
+                  <section className="overflow-hidden rounded-xl doc-card doc-ring">
+                    <div className="flex flex-wrap items-center justify-between gap-2 doc-band px-4 py-3">
+                      <h3 className="flex items-center gap-2 text-sm font-bold doc-ink"><ReceiptText size={18} className="doc-accent" /> توزيع السداد على المستندات</h3>
+                      {(viewing.unallocatedMinor ?? 0) > 0 && <span className="rounded doc-card px-2 py-1 text-[10px] font-bold doc-accent-deep">تحت الحساب: {fmt(viewing.unallocatedMinor ?? 0)}</span>}
+                    </div>
+                    <table className="w-full border-collapse text-right text-[11px]">
+                      <thead className="doc-tint doc-muted"><tr><th className="px-4 py-2">المستند</th><th className="px-4 py-2">المخصص</th></tr></thead>
+                      <tbody className="divide-y doc-line">
+                        {viewing.allocations.map((a, i) => (
+                          <tr key={i}><td className="px-4 py-2 doc-ink">{a.docLabel || a.docKey}</td><td className="px-4 py-2 font-mono font-bold">{fmt(a.appliedMinor)}</td></tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </section>
+                )}
+
+                <section className="overflow-hidden rounded-xl doc-card doc-ring">
+                  <div className="flex items-center gap-2 doc-band px-4 py-3 text-sm font-bold doc-ink">
+                    <BookOpenText size={18} className="doc-accent" /> القيد المحاسبي المتولد #{entry.entryNumber}
+                  </div>
+                  <table className="w-full border-collapse text-right text-[12px]">
+                    <thead className="doc-tint text-[11px] doc-muted"><tr><th className="px-4 py-2">الحساب</th><th className="w-32 px-4 py-2">مدين</th><th className="w-32 px-4 py-2">دائن</th></tr></thead>
+                    <tbody className="divide-y doc-line">
+                      {entry.lines.map((l, i) => (
+                        <tr key={i}>
+                          <td className="px-4 py-2 doc-ink">{l.debit > 0 ? '' : '\u00A0\u00A0من / '}{nameOf(l.accountCode)} <span className="font-mono text-[10px] doc-faint">{l.accountCode}</span></td>
+                          <td className="px-4 py-2 font-mono font-bold">{l.debit > 0 ? fmt(l.debit) : ''}</td>
+                          <td className="px-4 py-2 font-mono font-bold doc-muted">{l.credit > 0 ? fmt(l.credit) : ''}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="doc-tint-strong font-bold doc-ink"><tr><td className="px-4 py-2">الإجمالي — القيد متوازن</td><td className="px-4 py-2 font-mono">{fmt(totalDebit)}</td><td className="px-4 py-2 font-mono">{fmt(totalDebit)}</td></tr></tfoot>
+                  </table>
+                </section>
+
+                <div className="grid gap-3 text-center text-[10px] sm:grid-cols-3">
+                  <div className="rounded-lg doc-card doc-ring p-4"><span className="block doc-faint">توقيع {isReceipt ? 'المستلم' : 'المستفيد'}</span><span className="mt-6 block border-t border-dashed doc-line pt-1 doc-muted">{partyLabel}</span></div>
+                  <div className="rounded-lg doc-card doc-ring p-4"><span className="block doc-faint">أمين الخزينة</span><span className="mt-6 block border-t border-dashed doc-line pt-1 doc-muted">{entry.createdBy || '—'}</span></div>
+                  <div className="rounded-lg doc-card doc-ring p-4"><span className="block doc-faint">الاعتماد</span><span className="mt-6 block border-t border-dashed doc-line pt-1 doc-muted">{reversed ? 'ملغى بقيد عاكس' : 'معتمد'}</span></div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 doc-footer px-5 py-3">
+                <span className="text-[10px] doc-faint">
+                  {reversed ? `معكوس بقيد #${viewing.reversalEntryId} — لا يدخل في أرصدة الطرف` : 'السند مرحّل — التصحيح يكون بقيد عاكس لا بالحذف'}
+                </span>
+                <div className="flex items-center gap-2">
+                  {!reversed && <Btn variant="danger" onClick={() => { setReverseTarget(viewing); setReverseReason('') }}><Undo2 size={14} /> عكس السند</Btn>}
+                  <Btn variant="ghost" onClick={() => setViewing(null)}>إغلاق</Btn>
+                </div>
+              </div>
             </div>
-            <div className="flex items-center justify-between gap-2">
-              {viewing.reversalEntryId ? <span className="text-[11px] font-bold text-amber-700 dark:text-amber-400">معكوس بقيد #{viewing.reversalEntryId} — لا يدخل في أرصدة الطرف</span> : <span className="text-[11px] text-slate-400">العكس ينشئ قيداً عاكساً ولا يحذف السند الأصلي.</span>}
-              {!viewing.reversalEntryId && <Btn variant="danger" onClick={() => { setReverseTarget(viewing); setReverseReason('') }}>↩️ عكس السند</Btn>}
+          )
+        })()}
+      </Modal>
+
+      {/* عكس سند مرحّل — نافذة قرار بنفس لغة المستند: سبب إلزامي وأثر معلن قبل التنفيذ */}
+      <Modal open={!!reverseTarget} onClose={() => setReverseTarget(null)} title="" wide bare>
+        {reverseTarget && (
+          <div className="overflow-hidden rounded-3xl doc-sheet" dir="rtl">
+            <div className="flex items-center justify-between gap-4 bg-[#7a2431] px-5 py-4 text-white">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/15"><Undo2 size={22} /></div>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-bold">عكس السند {reverseTarget.voucherNumber}</h2>
+                  <p className="mt-0.5 truncate text-[11px] text-white/80">{fmt(reverseTarget.amountMinor)} {cur.symbol} · {reverseTarget.kind === 'receipt' ? 'سند قبض' : 'سند صرف'}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setReverseTarget(null)} aria-label="إغلاق" className="rounded-lg p-2 text-white/70 transition hover:bg-rose-600 hover:text-white"><X size={18} /></button>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <section className="rounded-xl border border-amber-500/30 bg-amber-50 p-4 text-[12px] leading-6 text-amber-900">
+                <b className="mb-1 block">ماذا سيحدث بالضبط؟</b>
+                يُنشأ <b>قيد عاكس جديد</b> بنفس القيم وبالاتجاه المضاد (لا يُحذف شيء من الدفتر)، ويخرج السند من كشف حساب الطرف ومن أرصدة الخزينة، ويبقى الأصل والعكس ظاهرين في اليومية لأثر تدقيق كامل.
+              </section>
+              <section className="rounded-xl doc-card doc-ring p-4">
+                <Field label="سبب العكس * (يُحفظ في القيد العاكس ويظهر للمراجع)">
+                  <textarea value={reverseReason} onChange={(event) => setReverseReason(event.target.value)} className={inputCls} rows={3} placeholder="مثال: أُدخل السند على الطرف الخطأ — صُحِّح بسند جديد رقم…" />
+                </Field>
+              </section>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 doc-footer px-5 py-3">
+              <span className="text-[10px] doc-faint">العكس عملية دائمة في الدفتر — لا يمكن التراجع عنها إلا بسند جديد</span>
+              <div className="flex items-center gap-2">
+                <Btn variant="ghost" onClick={() => setReverseTarget(null)}>إلغاء</Btn>
+                <Btn variant="danger" onClick={confirmReverse} disabled={!reverseReason.trim()}>تأكيد العكس</Btn>
+              </div>
             </div>
           </div>
         )}
-      </Modal>
-      <Modal open={!!reverseTarget} onClose={() => setReverseTarget(null)} title={reverseTarget ? `عكس السند ${reverseTarget.voucherNumber}` : ''}>
-        <div className="space-y-4">
-          <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-3 text-[12px] text-amber-800 dark:text-amber-200">سيُنشأ قيد عاكس Append-only ويُستبعد السند من كشف الطرف والتخصيصات المفتوحة. لا يمكن التراجع عن العكس.</div>
-          <Field label="سبب العكس *"><textarea value={reverseReason} onChange={(event) => setReverseReason(event.target.value)} className={inputCls} rows={3} placeholder="مثال: أُدخل السند على الطرف الخطأ…" /></Field>
-          <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setReverseTarget(null)}>إلغاء</Btn><Btn variant="danger" onClick={confirmReverse} disabled={!reverseReason.trim()}>تأكيد العكس</Btn></div>
-        </div>
       </Modal>
       {paymentApproval.dialog}
       {reverseApproval.dialog}

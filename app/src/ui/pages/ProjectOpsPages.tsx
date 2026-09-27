@@ -16,6 +16,7 @@ import { APPROVAL_ACTION_LABELS, type ApprovalAction, type IssueLineInput } from
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
 
@@ -120,8 +121,8 @@ export function MaterialIssuesPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="إذن صرف مواد لمشروع" wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => setOpen(false)} title="إذن صرف مواد لمشروع" wide subtitle="مستند إذن صرف: خروج مواد من المخزن إلى مشروع">
+        <div className="space-y-4"><DocSectionHead step="١" title="المشروع والمواد المنصرفة" hint="صرف المواد تكلفة مشروع لا مصروف عام" />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="المشروع *">
               <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
@@ -169,7 +170,7 @@ export function MaterialIssuesPage() {
           </div>
 
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} placeholder="صبّة القواعد — بلوك أ…" /></Field>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>1103 المخزون</b> دائناً بتكلفة المنصرف · <b>5114 تكلفة المشروعات</b> مديناً بها على مركز تكلفة المشروع.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} shortcut="F9" disabled={!projectId || !issuedBy || !receivedBy || lines.every((l) => !l.itemId)}>📦 صرف المواد</Btn>
           </div>

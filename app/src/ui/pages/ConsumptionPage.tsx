@@ -147,7 +147,7 @@ export function ConsumptionPage() {
       )}
 
       {/* مستند جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="📦 مستند صرف داخلي (استهلاك تشغيل)" wide>
+      <Modal open={open} onClose={() => setOpen(false)} title="مستند صرف داخلي (استهلاك تشغيل)" wide>
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="الغرض *" hint="التوثيق إلزامي — يظهر في القيد والسجل، ويمكن كتابة غرض حر">

@@ -21,6 +21,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
+import { rowOpenProps } from '../components/rowOpen.ts'
 
 export function PurchaseReturnsPage() {
   const { purchases, purchaseReturns, suppliers, items, warehouses, journal, postPurchaseReturn, getSupplierBalance, appUsers, currentUserId } = useDataStore()
@@ -170,7 +171,7 @@ export function PurchaseReturnsPage() {
               {[...purchaseReturns].reverse().map((r, i) => {
                 const orig = purchases.find((p) => p.id === r.purchaseId)
                 return (
-                  <tr key={r.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.03] transition-colors">
+                  <tr key={r.id} {...rowOpenProps(() => setViewing(r), `انقر مرتين لفتح مرتجع المشتريات ${r.returnNumber}`)} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.03] transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-800 dark:text-white">{r.returnNumber}</div>
                       <div className="text-[11px] text-slate-400">{r.date.slice(0, 16).replace('T', ' ')}</div>

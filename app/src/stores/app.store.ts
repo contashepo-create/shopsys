@@ -379,6 +379,12 @@ export const useAppStore = create<AppState>()(
         if (state && (!state.scaleRules || state.scaleRules.length === 0)) state.scaleRules = DEFAULT_SCALE_RULES
         // ترحيل: حسابات قبل ميزة المظهر تحصل على الافتراضيات (مع تنقية القيم)
         if (state) state.appearance = sanitizeAppearance(state.appearance)
+        // ترحيل لمرة واحدة (طلب المالك): شريط القوائم العلوي صار نمط التنقل الافتراضي.
+        // يُطبَّق مرة واحدة فقط، وبعدها يظل اختيار المستخدم (جانبي/علوي) محفوظاً كما هو.
+        if (state && typeof localStorage !== 'undefined' && localStorage.getItem('shopsys:menubar-default') !== '1') {
+          state.appearance = { ...state.appearance, navigationMode: 'topbar' }
+          try { localStorage.setItem('shopsys:menubar-default', '1') } catch { /* وضع خاص بلا تخزين */ }
+        }
         // ترحيل: حسابات قبل ميزة التليجرام تحصل على الافتراضيات
         if (state) state.telegram = { ...DEFAULT_TELEGRAM_SETTINGS, ...state.telegram }
         // ترحيل: حسابات قبل ميزة المزامنة السحابية تحصل على الافتراضيات

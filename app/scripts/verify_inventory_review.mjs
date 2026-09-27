@@ -4,7 +4,7 @@
  *     كان الحذف يمر فيترك 1103 بقيمة صنف شبح ويفقد التقارير مرجعيتها)
  * V2) عجز الجرد يخصم من دفعات الصلاحية FEFO (فجوة سُدت: كانت الدفعات
  *     تبقى أعلى من الرصيد فتنذر «منتهي» عن بضاعة غير موجودة)
- * V3) الجرد: قيد تسوية متوازن (عجز 5108/1103، زيادة 1103/5108) وضبط الرصيد
+ * V3) الجرد: قيد تسوية متوازن (عجز 5111/1103، زيادة 1103/4110) وضبط الرصيد
  * V4) الإتلاف: قيد 5111/1103 بالتكلفة المرجحة + خصم الدفعات الأقدم أولاً
  * V5) الصرف الداخلي: قيد مصروف/1103 + رفض حساب غير مصروف
  * V6) التحويلات المخزنية: بلا قيد (1103 ثابت)، تحقق رصيد المصدر، أرصدة المخازن
@@ -87,8 +87,8 @@ console.log('\n— V2+V3) الجرد: القيد والرصيد ودفعات ا�
   ok('V3: الرصيد ضُبط على المعدود 45')
   assert.equal(bal('1103'), invBefore - 5 * 2000)
   const entry = st().journal.find((e) => e.id === stk.journalEntryId)
-  assert.ok(entry.lines.some((l) => l.accountCode === '5108' && l.debit === 10000))
-  ok('V3: قيد العجز 5108 مدين 100 / 1103 دائن 100 — متوازن')
+  assert.ok(entry.lines.some((l) => l.accountCode === '5111' && l.debit === 10000)) // AUDIT-001
+  ok('V3: قيد العجز 5111 هالك مخزون مدين 100 / 1103 دائن 100 — متوازن')
   // V2: الدفعة القريبة نقصت 5 (FEFO) — كانت الفجوة: تبقى 20+30=50 والرصيد 45
   const near = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === '2026-10-01')
   const far = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === '2027-01-01')
@@ -101,7 +101,7 @@ console.log('\n— V2+V3) الجرد: القيد والرصيد ودفعات ا�
   const entry2 = st().journal.find((e) => e.id === stk2.journalEntryId)
   assert.ok(entry2.lines.some((l) => l.accountCode === '1103' && l.debit === 6000))
   assert.equal(st().items.find((i) => i.id === milk.id).stockQty, 48)
-  ok('V3: زيادة الجرد 1103 مدين / 5108 دائن وضبط الرصيد 48')
+  ok('V3: زيادة الجرد 1103 مدين / 4110 إيراد فائض دائن وضبط الرصيد 48')
   // جرد مطابق: لا قيد
   const stk3 = st().postStocktake([{ itemId: milk.id, nameAr: milk.nameAr, expectedQty: 48, countedQty: 48, unitCostMinor: 2000 }], 'مطابق')
   assert.equal(stk3.journalEntryId, null)

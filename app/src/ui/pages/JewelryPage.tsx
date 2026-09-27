@@ -12,6 +12,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { KARAT_LABELS, ALL_KARATS, jewelryBreakdown, pricesAreStale, computeTradeInNet, type Karat } from '../../core/jewelry.ts'
 import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function JewelryPage() {
   const {
@@ -325,8 +326,8 @@ export function JewelryPage() {
       </Modal>
 
       {/* مقايضة: بيع مشغول جديد بجزء من ثمنه كسر العميل (جولة الصاغة) */}
-      <Modal open={tradeOpen} onClose={() => setTradeOpen(false)} title="♻️ بيع بمقايضة كسر">
-        <div className="space-y-3">
+      <Modal open={tradeOpen} onClose={() => setTradeOpen(false)} title="بيع بمقايضة كسر" subtitle="مستند مقايضة: ذهب كسر مقابل مشغول">
+        <div className="space-y-3"><DocSectionHead step="١" title="وزن الكسر وعياره وسعر اليوم" hint="قيمة الكسر تُخصم من إجمالي البيع ولا تُدفع نقداً" />
           <p className="text-[11.5px] text-slate-400 leading-relaxed">
             العميل يأخذ مشغولاً جديداً ويدفع جزءاً من ثمنه بذهبه القديم — النظام يولّد
             <b> فاتورة بيع كاملة + لوط كسر FIFO</b> بمستند GTI واحد، والفرق النقدي فقط يتحرك بالخزينة.
@@ -355,7 +356,7 @@ export function JewelryPage() {
               المشغول {fmt(tradePreview.saleMinor)} − كسر العميل {fmt(tradePreview.scrapValueMinor)} =
               {tradePreview.netMinor === 0 ? ' مقايضة متكافئة' : tradePreview.netMinor > 0 ? ` العميل يدفع ${fmt(tradePreview.netMinor)}` : ` نرد للعميل ${fmt(-tradePreview.netMinor)}`}
             </div>
-          )}
+          )}<DocOutcome>الأثر: <b>4101 إيراد البيع</b> دائناً بكامل قيمة المشغول · <b>1103 المخزون</b> مديناً بقيمة الكسر المستلم · والفرق وحده يدخل الخزينة مديناً.</DocOutcome>
           <Btn onClick={saveTrade} shortcut="F9" className="w-full" disabled={!tradeItem || !(Number(trWeight) > 0) || !trGramPrice.trim()}>ترحيل المقايضة</Btn>
         </div>
       </Modal>

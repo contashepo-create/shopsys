@@ -24,6 +24,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderWaybillHtml } from '../print/printWaybill.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 interface DraftExpense {
   nameAr: string
@@ -294,8 +295,8 @@ export function TripsPage() {
       )}
 
       {/* تسجيل نقلة */}
-      <Modal open={open} onClose={() => setOpen(false)} title="نقلة جديدة" wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => setOpen(false)} title="نقلة جديدة" wide subtitle="مستند نقلة: بضاعة وخط سير وأجرة">
+        <div className="space-y-4"><DocSectionHead step="١" title="بيانات النقلة وأطرافها" hint="مصاريف الرحلة تُحمَّل على النقلة نفسها لا على المصروف العام" />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="العميل">
               <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="عميل نقدي" label="بحث العميل" cashValue={0} />
@@ -397,7 +398,7 @@ export function TripsPage() {
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
           </Field>
 
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>4105 إيراد النقل</b> دائناً بالأجرة · مصاريف الرحلة (وقود/سائق) على مركز تكلفة النقلة · والمتبقي على <b>1104</b>.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} shortcut="F9" disabled={!fromLoc.trim() || !toLoc.trim() || !unitPrice.trim()}>💾 ترحيل النقلة وتوليد القيد</Btn>
           </div>
