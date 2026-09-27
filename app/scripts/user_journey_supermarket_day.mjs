@@ -24,9 +24,14 @@ assert.ok(riceCost > 2500 && oilCost > 6000, 'مصاريف النقل دخلت �
 assert.equal(100 * riceCost + 50 * oilCost <= 100*2500 + 50*6000 + 5000 + 150, true)
 ok(`landed cost: أرز ${riceCost} وزيت ${oilCost} — النقل موزع بالكمية`)
 
-// 2) لا بيع بلا وردية (الإعداد الافتراضي مفعل)
+// 2) سياسة الورديات بالدور (salesShiftPolicy): المالك معفى تلميحاً، والكاشير ملزم
+const { hashPin } = await import('/home/user/shopsys/app/src/core/audit.ts')
+st().setOwnerPin(await hashPin('123456'))
+const cashier = st().addAppUser({ nameAr: 'كاشير الوردية', roleId: 'cashier', pinHash: await hashPin('567890'), active: true })
+await st().login(cashier.id, '567890') // التبديل يمر بشاشة الدخول بالرقم السري (حماية بنيوية)
 assert.throws(() => st().postSale({ lines: [{ itemId: oil.id, nameAr: 'زيت', qty: 1, unitPriceMinor: 9000, unitCostMinor: oilCost, discountPercent: 0, soldByWeight: false }], payment: 'cash', treasury: '1101', customerId: null, invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: true, allowNegativeStock: false }), /وردية/)
-ok('لا بيع بلا وردية — الحارس يعمل')
+await st().login(null, '123456') // العودة لحساب المالك بالرقم السري
+ok('لا بيع بلا وردية للكاشير — الحارس يعمل بالدور (المالك معفى تلميحاً)')
 
 // 3) وردية + بيع بالوزن (2.75 كجم أرز) بضريبة شاملة
 const shift = st().openShift({ openedBy: 'الكاشير', openingFloatMinor: 50000 })
