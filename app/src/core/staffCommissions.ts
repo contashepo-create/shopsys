@@ -57,6 +57,9 @@ export interface StaffCommission {
   /** وصف حر يظهر في الكشوف: «عمولة تأجير وحدة A-3 عقد LSE-0007» */
   description: string
   amountMinor: Minor
+  /** قيمة الاستحقاق الأصلية وتسويات المرتجعات التراكمية */
+  originalAmountMinor?: Minor
+  returnAdjustedMinor?: Minor
   date: string
   status: StaffCommissionStatus
   /** قيد الاستحقاق 5117/2116 */

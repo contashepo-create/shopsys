@@ -36,7 +36,7 @@ const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
 const { customerStatement, supplierStatement, statementBalance } = await import(join(root, 'src/core/statements.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 28)
+assert.equal(ACTIVITIES.length, 29)
 
 let pass = 0
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
@@ -112,5 +112,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✓ ${nameAr} (${activityId}): سندات↔شيكات↔تحويل↔جرد خزينة — كشوف الطرفين صفر و${st().journal.length} قيداً متوازناً`)
 }
 
-assert.equal(pass, 28)
+assert.equal(pass, 29)
 console.log(`\n✅ verify_treasury_all_activities: الدورة النقدية الكاملة سليمة على الأنشطة الـ${pass}`)

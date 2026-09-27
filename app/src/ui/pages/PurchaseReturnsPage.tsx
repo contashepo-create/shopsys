@@ -1,17 +1,20 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * مرتجعات الشراء (المرحلة 3) — عن فاتورة شراء أصلية:
  * تُقيَّم بالتكلفة النهائية للوحدة (بضاعة + نصيب مصاريف)، ولا تتجاوز
  * المتبقي القابل للإرجاع ولا المخزون الحالي (لا إرجاع لبضاعة بيعت).
  * الاسترداد: نقدي من المورد أو تخفيض دينه.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { RotateCcw, Search, BookOpenText, Eye, Printer } from 'lucide-react'
 import { useDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { remainingPurchasable } from '../../core/purchases.ts'
-import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { remainingPurchaseByLine } from '../../core/purchases.ts'
+import { partyCode } from '../../core/partyCodes.ts'
+import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
+import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -20,22 +23,31 @@ import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 
 export function PurchaseReturnsPage() {
-  const { purchases, purchaseReturns, suppliers, items, journal, postPurchaseReturn } = useDataStore()
+  const { purchases, purchaseReturns, suppliers, items, warehouses, journal, postPurchaseReturn, getSupplierBalance, appUsers, currentUserId } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
+  const printOperatorName = appUsers.find((user) => user.id === currentUserId)?.nameAr ?? setup.ownerName ?? 'المالك'
 
   const [pickOpen, setPickOpen] = useState(false)
   const [pickQuery, setPickQuery] = useState('')
+  const [pickIndex, setPickIndex] = useState(0)
+  const [supplierFilterId, setSupplierFilterId] = useState(-2)
   const [purchase, setPurchase] = useState<PurchaseInvoice | null>(null)
   const [qtys, setQtys] = useState<Record<number, string>>({})
+  const [returnWarehouses, setReturnWarehouses] = useState<Record<number, number>>({})
   const [refund, setRefund] = useState<'cash' | 'debt'>('cash')
   const [treasury, setTreasury] = useState('1101')
   const [reason, setReason] = useState('')
   const [viewing, setViewing] = useState<PurchaseReturn | null>(null)
   // طباعة إشعار مرتجع الشراء بقوالب الكاشير الثلاثة (طلب المالك)
   const [printTarget, setPrintTarget] = useState<PurchaseReturn | null>(null)
+  const [partyEditorOpen, setPartyEditorOpen] = useState(false)
+  const returnSignature = JSON.stringify({ qtys, returnWarehouses, refund, treasury, reason })
+  const unsaved = useUnsavedChangesGuard(returnSignature)
+  useEffect(() => { unsaved.markClean() }, [purchase?.id, unsaved])
+  const closePurchase = () => unsaved.requestClose(() => setPurchase(null))
 
   /** إشعار مدين للمورد: سطور بتكلفة الوحدة النهائية + المسترد نقداً/ديناً */
   const printPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
@@ -45,7 +57,7 @@ export function PurchaseReturnsPage() {
       invoiceNumber: r.returnNumber,
       refCode: r.refCode ?? '',
       dateIso: r.date,
-      partyLabel: orig ? (suppliers.find((sp) => sp.id === orig.supplierId)?.nameAr ?? `مورد #${orig.supplierId}`) : 'مورد؟',
+      partyLabel: orig ? supplierName(orig.supplierId) : 'مورد؟',
       paymentLabel: r.refund === 'cash' ? 'استرداد نقدي' : 'تخفيض من دين المورد',
       rows: r.lines.map((l) => ({
         nameAr: l.nameAr,
@@ -55,6 +67,7 @@ export function PurchaseReturnsPage() {
       })),
       totalMinor: r.supplierValueMinor ?? r.totalMinor,
       paidMinor: r.refund === 'cash' ? (r.supplierValueMinor ?? r.totalMinor) : 0,
+      operatorName: printOperatorName,
       settings: receipt,
       extraFooter: r.reason ? `السبب: ${r.reason}` : undefined,
     })
@@ -63,18 +76,23 @@ export function PurchaseReturnsPage() {
   }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
-  const supplierName = (id: number) => suppliers.find((s) => s.id === id)?.nameAr ?? '—'
+  const supplierName = (id: number) => id === 0 ? 'مورد نقدي' : suppliers.find((s) => s.id === id)?.nameAr ?? `مورد #${id}`
 
   const remaining = useMemo(() => {
-    if (!purchase) return new Map<number, number>()
+    if (!purchase) return [] as number[]
     const prior = purchaseReturns.filter((r) => r.purchaseId === purchase.id).flatMap((r) => r.lines)
-    return remainingPurchasable(purchase.lines, prior)
+    return remainingPurchaseByLine(purchase.lines, prior)
   }, [purchase, purchaseReturns])
+
+  const supplierPickerInfo = (party: { id: number; active?: boolean }) => {
+    const balance = getSupplierBalance(party.id)
+    return { code: partyCode('SUP', party.id), balance: `الرصيد ${fmt(Math.abs(balance))} ${cur.symbol}` }
+  }
 
   const pickable = useMemo(() => {
     const q = pickQuery.trim()
-    return [...purchases].reverse().filter((p) => !q || p.invoiceNumber.includes(q) || (p.refCode ?? '').includes(q.toUpperCase())).slice(0, 20)
-  }, [purchases, pickQuery])
+    return [...purchases].reverse().filter((p) => (supplierFilterId === -2 || p.supplierId === supplierFilterId) && (!q || p.invoiceNumber.includes(q) || (p.refCode ?? '').includes(q.toUpperCase()))).slice(0, 20)
+  }, [purchases, pickQuery, supplierFilterId])
 
   /** الدين المتبقي غير المدفوع على الفاتورة المختارة (بعد مرتجعات الدين السابقة) */
   const unpaidDebt = useMemo(() => {
@@ -89,6 +107,7 @@ export function PurchaseReturnsPage() {
   const startReturn = (p: PurchaseInvoice) => {
     setPurchase(p)
     setQtys({})
+    setReturnWarehouses({})
     setRefund((p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor > 0 ? 'debt' : 'cash')
     setReason('')
     setPickOpen(false)
@@ -100,12 +119,15 @@ export function PurchaseReturnsPage() {
     if (!purchase) return
     approval.request((approvedBy) => {
     try {
-      const map = new Map<number, number>()
-      for (const [id, v] of Object.entries(qtys)) {
-        const n = Number(v)
-        if (n > 0) map.set(Number(id), n)
-      }
-      const ret = postPurchaseReturn({ purchaseId: purchase.id, qtyByItem: map, refund, reason: reason.trim(), treasury, approvedBy })
+      const lineSpecs = Object.entries(qtys).flatMap(([indexText, value]) => {
+        const lineIndex = Number(indexText)
+        const qty = Number(value)
+        if (!(qty > 0)) return []
+        const source = purchase.lines[lineIndex]
+        const warehouseId = returnWarehouses[lineIndex] ?? source?.warehouseId ?? purchase.warehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? null
+        return [{ lineIndex, qty, warehouseId }]
+      })
+      const ret = postPurchaseReturn({ purchaseId: purchase.id, lineSpecs, refund, reason: reason.trim(), treasury, approvedBy })
       toast.show(`تم مرتجع الشراء ${ret.returnNumber} — خرجت البضاعة وتولد القيد ✓`)
       setPurchase(null)
     } catch (e) {
@@ -115,13 +137,13 @@ export function PurchaseReturnsPage() {
   }
 
   const anyQty = Object.values(qtys).some((v) => Number(v) > 0)
-  const itemName = (id: number) => items.find((it) => it.id === id)?.nameAr ?? `#${id}`
+  const itemName = (id: number) => { const item = items.find((it) => it.id === id); return `${item?.sku || item?.barcodes?.[0] || id} — ${item?.nameAr ?? `#${id}`}` }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between anim-up">
         <div className="text-sm text-slate-500">يُرجَع للمورد بتكلفة الوحدة النهائية من فاتورته — ولا يُرجَع ما بيع بالفعل</div>
-        <Btn onClick={() => { setPickQuery(''); setPickOpen(true) }} disabled={purchases.length === 0}>
+        <Btn onClick={() => { setPickQuery(''); setSupplierFilterId(-2); setPickOpen(true) }} disabled={purchases.length === 0}>
           <RotateCcw size={15} /> مرتجع شراء جديد
         </Btn>
       </div>
@@ -185,13 +207,25 @@ export function PurchaseReturnsPage() {
       {/* اختيار فاتورة الشراء */}
       <Modal open={pickOpen} onClose={() => setPickOpen(false)} title="اختر فاتورة الشراء الأصلية">
         <div className="space-y-3">
+          <Field label="تصفية حسب المورد (اختياري)">
+            <PartyQuickPicker
+              parties={suppliers}
+              value={supplierFilterId}
+              onChange={(id) => { setSupplierFilterId(id); setPickIndex(0) }}
+              cashValue={-2}
+              cashLabel="كل الموردين"
+              label="بحث المورد للمرتجع"
+              partyInfo={supplierPickerInfo}
+              onConfirm={() => requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-return-purchase-search]')?.focus())}
+            />
+          </Field>
           <div className="relative">
             <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input value={pickQuery} onChange={(e) => setPickQuery(e.target.value)} placeholder="رقم الفاتورة… P-0001" className={`${inputCls} pr-9`} autoFocus />
+            <input data-return-purchase-search value={pickQuery} onChange={(e) => { setPickQuery(e.target.value); setPickIndex(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setPickIndex((i) => Math.min(pickable.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setPickIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = pickable[pickIndex] ?? pickable[0]; if (selected) startReturn(selected) } else if (e.key === 'Escape') setPickOpen(false) }} placeholder="رقم الفاتورة… P-0001" className={`${inputCls} pr-9`} autoFocus data-enter-native="true" />
           </div>
           <div className="max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-            {pickable.map((p) => (
-              <button key={p.id} onClick={() => startReturn(p)} className="w-full text-right px-3 py-2.5 hover:bg-cyan-500/5 transition-colors flex items-center justify-between gap-2">
+            {pickable.map((p, rowIndex) => (
+              <button key={p.id} onClick={() => startReturn(p)} className={`w-full text-right px-3 py-2.5 transition-colors flex items-center justify-between gap-2 ${rowIndex === pickIndex ? 'bg-cyan-500/10 ring-1 ring-inset ring-cyan-500/30' : 'hover:bg-cyan-500/5'}`}>
                 <span>
                   <b className="text-slate-800 dark:text-white">{p.invoiceNumber}</b>
                   {p.refCode && <span className="text-[10px] font-mono text-sky-600 dark:text-sky-400 mr-2" dir="ltr">{p.refCode}</span>}
@@ -206,9 +240,10 @@ export function PurchaseReturnsPage() {
       </Modal>
 
       {/* نموذج المرتجع */}
-      <Modal open={!!purchase} onClose={() => setPurchase(null)} title={purchase ? `مرتجع عن فاتورة الشراء ${purchase.invoiceNumber}` : ''} wide>
+      <Modal open={!!purchase} onClose={closePurchase} title={purchase ? `مرتجع عن فاتورة الشراء ${purchase.invoiceNumber}` : ''} wide>
         {purchase && (
           <div className="space-y-4">
+            {purchase.supplierId > 0 && suppliers.find((row) => row.id === purchase.supplierId) && (() => { const supplier = suppliers.find((row) => row.id === purchase.supplierId)!; return <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50/60 px-3 py-2 text-xs dark:border-sky-900/60 dark:bg-sky-950/20"><div className="flex flex-wrap items-center gap-2"><b>{supplier.nameAr}</b><span className="font-mono text-slate-500" dir="ltr">{partyCode('SUP', supplier.id)}</span><span>الرصيد: {fmt(Math.abs(getSupplierBalance(supplier.id)))} {cur.symbol}</span>{supplier.address && <span className="text-slate-500">{supplier.address}</span>}</div><button type="button" title="تعديل بيانات المورد" onClick={() => setPartyEditorOpen(true)} className="rounded-lg border border-sky-300 p-1.5 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300">تعديل المورد</button></div> })()}
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
@@ -220,26 +255,35 @@ export function PurchaseReturnsPage() {
                 </tr>
               </thead>
               <tbody>
-                {purchase.lines.map((l) => {
-                  const rem = remaining.get(l.itemId) ?? 0
-                  const stock = items.find((it) => it.id === l.itemId)?.stockQty ?? 0
-                  const max = Math.min(rem, stock)
+                {purchase.lines.map((l, lineIndex) => {
+                  const rem = remaining[lineIndex] ?? 0
+                  const selectedWarehouseId = returnWarehouses[lineIndex] ?? l.warehouseId ?? purchase.warehouseId ?? warehouses.find((warehouse) => warehouse.isMain)?.id ?? null
                   return (
-                    <tr key={l.itemId} className="border-b border-slate-50 dark:border-slate-800/50">
-                      <td className="px-3 py-2 font-bold">{itemName(l.itemId)}</td>
+                    <tr key={lineIndex} data-entry-row className="border-b border-slate-50 dark:border-slate-800/50">
+                      <td tabIndex={0} className="px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-brand-500/40">{itemName(l.itemId)}</td>
                       <td className="px-3 py-2">{l.qty}</td>
                       <td className="px-3 py-2">{fmt(l.landedUnitCostMinor)}</td>
-                      <td className={`px-3 py-2 font-bold ${max > 0 ? 'text-cyan-600' : 'text-slate-300'}`}>
-                        {rem}{stock < rem && <span className="text-[10px] text-amber-500 mr-1">(المخزون {stock})</span>}
-                      </td>
-                      <td className="px-3 py-2">
+                      <td className={`px-3 py-2 font-bold ${rem > 0 ? 'text-cyan-600' : 'text-slate-300'}`}>{rem}</td>
+                      <td className="px-3 py-2 space-y-1">
                         <input
-                          value={qtys[l.itemId] ?? ''}
-                          onChange={(e) => setQtys((q) => ({ ...q, [l.itemId]: e.target.value }))}
+                          value={qtys[lineIndex] ?? ''}
+                          onChange={(e) => setQtys((q) => ({ ...q, [lineIndex]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.currentTarget.closest('tr')?.nextElementSibling?.querySelector<HTMLElement>('td[tabindex="0"]'))?.focus() } }}
                           placeholder="0"
-                          disabled={max <= 0}
+                          disabled={rem <= 0}
                           className={`${inputCls} text-center py-1.5 disabled:opacity-40`}
                         />
+                        {warehouses.length > 0 && (l.warehouseId ?? purchase.warehouseId) == null && (
+                          <QuickSelect
+                            value={selectedWarehouseId ?? ''}
+                            onChange={(e) => setReturnWarehouses((current) => ({ ...current, [lineIndex]: Number(e.target.value) }))}
+                            disabled={rem <= 0}
+                            title="المخزن الذي ستخرج منه البضاعة المرتجعة للمورد"
+                            className="w-full rounded-lg border border-amber-200 dark:border-amber-800 bg-transparent px-1 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300"
+                          >
+                            {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}{warehouse.id === (l.warehouseId ?? purchase.warehouseId) ? ' (مخزن الاستلام)' : ''}</option>)}
+                          </QuickSelect>
+                        )}
                       </td>
                     </tr>
                   )
@@ -258,17 +302,25 @@ export function PurchaseReturnsPage() {
                 className={`p-3 rounded-2xl border-2 font-bold text-sm transition-all disabled:opacity-40 ${refund === 'debt' ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
               >📉 تخفيض دين المورد {unpaidDebt > 0 ? `(المتبقي ${fmt(unpaidDebt)})` : '(مسددة بالكامل)'}</button>
             </div>
-            {refund === 'cash' && <TreasuryPicker value={treasury} onChange={setTreasury} compact />}
+            {refund === 'cash' && <TreasuryPicker value={treasury} onChange={setTreasury} operation="receipt" compact />}
 
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="سبب الإرجاع (اختياري): تالف، غير مطابق للمواصفات…" className={inputCls} />
 
             <div className="flex justify-end gap-2">
-              <Btn variant="ghost" onClick={() => setPurchase(null)}>إلغاء</Btn>
-              <Btn onClick={submit} disabled={!anyQty}>📤 تنفيذ المرتجع</Btn>
+              <Btn variant="ghost" onClick={closePurchase}>تراجع عن المرتجع</Btn>
+              <Btn onClick={submit} shortcut="F9" disabled={!anyQty}>📤 تنفيذ المرتجع</Btn>
             </div>
           </div>
         )}
       </Modal>
+      {unsaved.prompt}
+      <PartyQuickEditModal
+        open={partyEditorOpen}
+        target={purchase && purchase.supplierId > 0 ? (() => { const supplier = suppliers.find((row) => row.id === purchase.supplierId); return supplier ? { kind: 'supplier' as const, party: supplier } : null })() : null}
+        currencyDecimals={cur.decimals}
+        currencySymbol={cur.symbol}
+        onClose={() => setPartyEditorOpen(false)}
+      />
 
       {/* عرض مرتجع */}
       <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `المرتجع ${viewing.returnNumber}` : ''} wide>

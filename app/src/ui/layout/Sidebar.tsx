@@ -2,17 +2,23 @@
  * الشريط الجانبي — على اليمين (RTL)، كل قسم رئيسي بلونه مع فروعه،
  * تأثيرات هوفر وانتقالات ناعمة (طلبات المالك).
  */
-import { useState } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
-import { ChevronDown } from 'lucide-react'
+import { useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { ChevronDown, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../../core/permissions.ts'
 import { labelFor } from '../../core/activityLabels.ts'
+import { guardNavigation } from '../components/ui.tsx'
 
-export function Sidebar() {
+export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation()
+  const navigate = useNavigate()
+  const guardLink = (event: ReactMouseEvent<HTMLAnchorElement>, path: string) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    if (guardNavigation(() => navigate(path))) event.preventDefault()
+  }
   const { setup } = useAppStore()
   const [openSections, setOpenSections] = useState<Set<string>>(() => {
     // القسم الحاوي للمسار الحالي يبدأ مفتوحاً
@@ -63,7 +69,8 @@ export function Sidebar() {
     })
 
   return (
-    <aside className="w-72 shrink-0 h-screen sticky top-0 flex flex-col border-l border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-card-dark/80 glass">
+    <aside className={`${collapsed ? 'w-16 sidebar-collapsed' : 'w-72'} app-sidebar relative z-30 shrink-0 h-screen sticky top-0 flex flex-col border-l transition-[width] duration-200 border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-card-dark/80 glass`}>
+      <button onClick={onToggle} title={collapsed ? 'فتح الشريط الجانبي' : 'طي الشريط الجانبي'} className="sidebar-toggle absolute -left-3 top-20 z-[70] w-7 h-7 rounded-full border bg-white dark:bg-card-dark shadow flex items-center justify-center text-brand-600">{collapsed ? <PanelRightOpen size={14}/> : <PanelRightClose size={14}/>}</button>
       {/* الشعار */}
       <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800">
         <img src="/app-icon.png?v=3" alt="TAHAKAM ERP" className="w-10 h-10 rounded-xl shadow-lg shadow-brand-500/30 object-cover" />
@@ -89,6 +96,7 @@ export function Sidebar() {
               <NavLink
                 key={sec.id}
                 to={child.path}
+                onClick={(event) => guardLink(event, child.path)}
                 style={{ animationDelay: `${i * 35}ms` }}
                 className={({ isActive }) =>
                   `anim-up group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
@@ -139,6 +147,7 @@ export function Sidebar() {
                       <NavLink
                         key={child.id}
                         to={child.path}
+                        onClick={(event) => guardLink(event, child.path)}
                         className={({ isActive }) =>
                           `group flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 ${
                             isActive

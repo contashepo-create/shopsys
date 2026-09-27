@@ -178,6 +178,19 @@ const line = (qty, price = 10000) => ({ itemId: item.id, nameAr: item.nameAr, qt
   assert.equal(c.totals.collectCreditMinor, 70000)
   ok('openRental: التجاوز المعتمد يفتح العقد')
   st().receiveClientPayment({ customerId: bounded.id, amountMinor: st().getCustomerBalance(bounded.id), treasury: '1101' })
+
+  // الدفع المختلط يختبر الحارس على المتبقي فقط، مع إبقاء التأمين نقدياً مستقلاً.
+  const mixed = st().openRental({
+    customerId: bounded.id,
+    equipmentId: null,
+    input: { equipmentName: 'رافعة', days: 7, dailyRateMinor: 10000, depositMinor: 10000, payment: 'mixed', paidMinor: 20000, vatPercent: 0 },
+    notes: '',
+  })
+  assert.equal(mixed.totals.collectCashMinor, 30000)
+  assert.equal(mixed.totals.collectCreditMinor, 50000)
+  assert.equal(st().getCustomerBalance(bounded.id), 50000)
+  ok('openRental: المختلط يرحّل المدفوع والتأمين للخزينة والمتبقي 500 فقط للعميل')
+  st().receiveClientPayment({ customerId: bounded.id, amountMinor: st().getCustomerBalance(bounded.id), treasury: '1101' })
 }
 
 /* ═══ 6) postWalletService (محافظ): متبقٍ آجل فوق الحد ═══ */

@@ -1,16 +1,48 @@
 /** مكونات UI مشتركة — أزرار، مودال، حقول، توست */
-import { useEffect, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FocusEvent, type InputHTMLAttributes, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Eye, EyeOff } from 'lucide-react'
 import { create } from 'zustand'
 import { PIN_MAX_LENGTH } from '../../core/auth.ts'
 
+let activeNavigationGuard: ((continueNavigation: () => void) => void) | null = null
+/** تستخدمها روابط التخطيط لمنع الانتقال الداخلي عندما توجد مسودة غير محفوظة. */
+export function guardNavigation(continueNavigation: () => void): boolean {
+  if (!activeNavigationGuard) return false
+  activeNavigationGuard(continueNavigation)
+  return true
+}
+
+const F9_SAVE_WORDS = /حفظ|ترحيل|اعتماد|تسجيل|إنشاء|تنفيذ|تأكيد|استبدال|استلام|توليد القيد|وقيد|إقفال العقد|إقفال الوردية|إقفال المطابقة/
+const F9_PAYMENT_PHRASES = /سداد|تحصيل وت|تحصيل وق|صرف الدفعة|صرف الآن|صرف المواد|دفع وق|الفاتورة والدفع|شراء وقيد|بيع وقيد/
+const shortcutActionIds = new WeakMap<() => void, number>()
+let nextShortcutActionId = 1
+
+function textFromChildren(children: ReactNode): string {
+  return Children.toArray(children).map((child) => {
+    if (typeof child === 'string' || typeof child === 'number' || typeof child === 'bigint') return String(child)
+    if (isValidElement(child)) return textFromChildren((child.props as { children?: ReactNode }).children)
+    return ''
+  }).join(' ')
+}
+
 export function Btn({
-  children, onClick, variant = 'primary', disabled, type = 'button', className = '',
+  children, onClick, variant = 'primary', disabled, type = 'button', className = '', shortcut,
 }: {
   children: ReactNode; onClick?: () => void; disabled?: boolean
   variant?: 'primary' | 'ghost' | 'danger' | 'soft'; type?: 'button' | 'submit'; className?: string
+  shortcut?: string
 }) {
+  const actionText = textFromChildren(children)
+  const resolvedShortcut = shortcut ?? (F9_SAVE_WORDS.test(actionText) || F9_PAYMENT_PHRASES.test(actionText) ? 'F9' : undefined)
+  let shortcutActionId: number | undefined
+  if (resolvedShortcut && onClick) {
+    shortcutActionId = shortcutActionIds.get(onClick)
+    if (shortcutActionId == null) {
+      shortcutActionId = nextShortcutActionId++
+      shortcutActionIds.set(onClick, shortcutActionId)
+    }
+  }
   const styles = {
     primary: 'text-white bg-gradient-to-l from-brand-600 to-fuchsia-600 shadow-lg shadow-brand-500/25 hover:shadow-xl',
     ghost: 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800',
@@ -23,8 +55,11 @@ export function Btn({
       onClick={onClick}
       disabled={disabled}
       className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 hover:scale-[1.03] active:scale-95 disabled:opacity-40 disabled:pointer-events-none ${styles[variant]} ${className}`}
+      data-shortcut={resolvedShortcut}
+      data-shortcut-action={shortcutActionId}
     >
-      {children}
+      <span className="flex items-center justify-center gap-1.5">{children}</span>
+      {resolvedShortcut && <kbd className="block mt-0.5 text-[9px] leading-none opacity-70 font-mono">{resolvedShortcut}</kbd>}
     </button>
   )
 }
@@ -33,7 +68,7 @@ export function Field({
   label, children, hint,
 }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <div>
+    <div className="form-field">
       <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">{label}</label>
       {children}
       {hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
@@ -47,7 +82,7 @@ export const inputCls =
 /**
  * حقل كلمة سر موحد بعين إظهار/إخفاء (طلب المالك) — يُستخدم في كل شاشات
  * الأرقام السرية: الدخول، ملفي، المستخدمين، موافقة المشرف.
- * كلمة السر 8–32 خانة: أرقام وحروف ورموز (لا مسافات).
+ * كلمة السر 6–32 خانة: أرقام وحروف ورموز (لا مسافات).
  */
 export function PinInput({
   value, onChange, placeholder = 'كلمة السر', disabled, autoComplete = 'off', name, centered, onEnter, className = '',
@@ -94,9 +129,51 @@ export function PinInput({
   )
 }
 
+function normalizeDecimalDraft(value: string): string {
+  const translated = value
+    .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
+    .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
+    .replace(/[٫,]/g, '.')
+    .replace(/[^\d.-]/g, '')
+  const sign = translated.startsWith('-') ? '-' : ''
+  const unsigned = translated.replace(/-/g, '')
+  const dot = unsigned.indexOf('.')
+  if (dot < 0) return sign + unsigned
+  return sign + unsigned.slice(0, dot + 1) + unsigned.slice(dot + 1).replace(/\./g, '')
+}
+
+/**
+ * إدخال رقمي لا يفقد النقطة أثناء الكتابة. لا يحوّل القيمة إلى رقم في كل ضغطة؛
+ * لذلك تبقى حالات مثل `1.` و`١٫٥` قابلة للتحرير، بينما يقرر الحقل الأب نوع
+ * التخزين (كمية، نسبة، أو مبلغ بوحدة صغرى) عند الحاجة.
+ */
+export function DecimalInput({
+  value, onValueChange, onBlur, onFocus, ...props
+}: Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'inputMode'> & {
+  value?: string | number | null
+  onValueChange: (value: string) => void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const displayValue = draft ?? (value == null ? '' : String(value))
+  const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const normalized = normalizeDecimalDraft(event.currentTarget.value)
+    setDraft(normalized)
+    onValueChange(normalized)
+  }
+  const handleFocus = (event: FocusEvent<HTMLInputElement>) => {
+    setDraft(event.currentTarget.value)
+    onFocus?.(event)
+  }
+  const handleBlur = (event: FocusEvent<HTMLInputElement>) => {
+    onBlur?.(event)
+    setDraft(null)
+  }
+  return <input {...props} type="text" inputMode="decimal" value={displayValue} onFocus={handleFocus} onChange={handleChange} onBlur={handleBlur} />
+}
+
 export function Modal({
-  open, onClose, title, children, wide,
-}: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
+  open, onClose, title, children, wide, extraWide, bare,
+}: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean; extraWide?: boolean; bare?: boolean }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     if (open) window.addEventListener('keydown', h)
@@ -111,18 +188,68 @@ export function Modal({
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" dir="rtl">
       {/* إصلاح الظل الغريب: الحركة كانت مزدوجة (حاوية + لوحة) فيومض الـ blur — الآن التعتيم يتحرك وحده بلا blur متحرك */}
       <div className="absolute inset-0 bg-slate-900/55 anim-in" onClick={onClose} />
-      <div className={`relative anim-pop w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto rounded-3xl bg-white dark:bg-card-dark shadow-2xl border border-slate-200 dark:border-slate-700`}>
-        <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-white/90 dark:bg-card-dark/90 glass rounded-t-3xl">
-          <h3 className="font-extrabold text-slate-800 dark:text-white">{title}</h3>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-rose-500 transition-colors duration-200">
-            <X size={18} />
-          </button>
-        </div>
-        <div className="p-6">{children}</div>
+      <div role="dialog" aria-modal="true" className={`relative anim-pop w-full ${extraWide ? 'max-w-6xl' : wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[92vh] overflow-y-auto rounded-3xl bg-white dark:bg-card-dark shadow-2xl border border-slate-200 dark:border-slate-700`}>
+        {bare ? children : <>
+          <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-white/90 dark:bg-card-dark/90 glass rounded-t-3xl">
+            <h3 className="font-extrabold text-slate-800 dark:text-white">{title}</h3>
+            <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-rose-500 transition-colors duration-200">
+              <X size={18} />
+            </button>
+          </div>
+          <div className="p-6">{children}</div>
+        </>}
       </div>
     </div>,
     document.body,
   )
+}
+
+/** حارس موحد للعمليات التي تحتوي كتابة غير محفوظة: يحذر من إغلاق المتصفح أو إلغاء الفاتورة بالخطأ. */
+export function useUnsavedChangesGuard(signature: string) {
+  const [baseline, setBaseline] = useState(signature)
+  const pendingDiscard = useRef<(() => void) | null>(null)
+  const [promptOpen, setPromptOpen] = useState(false)
+  const isDirty = signature !== baseline
+  const markClean = useCallback(() => { setBaseline(signature) }, [signature])
+  const requestClose = useCallback((discard: () => void) => {
+    if (!isDirty) { discard(); return }
+    pendingDiscard.current = discard
+    setPromptOpen(true)
+  }, [isDirty])
+  useEffect(() => {
+    if (!isDirty) return
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => window.removeEventListener('beforeunload', beforeUnload)
+  }, [isDirty])
+  useEffect(() => {
+    if (!isDirty) return
+    const guard = (continueNavigation: () => void) => requestClose(continueNavigation)
+    activeNavigationGuard = guard
+    return () => { if (activeNavigationGuard === guard) activeNavigationGuard = null }
+  }, [isDirty, requestClose])
+  const discard = useCallback(() => {
+    const action = pendingDiscard.current
+    pendingDiscard.current = null
+    setPromptOpen(false)
+    action?.()
+  }, [])
+  const stay = useCallback(() => {
+    pendingDiscard.current = null
+    setPromptOpen(false)
+  }, [])
+  const prompt = useMemo(() => (
+    <Modal open={promptOpen} onClose={stay} title="تعديلات غير محفوظة">
+      <div className="space-y-4">
+        <p className="text-sm leading-7 text-slate-600 dark:text-slate-300">لديك تغييرات لم تُحفظ. اختر «تراجع عن العملية» لفقدها بالكامل، أو تابع التعديل ثم احفظ المسودة/الفاتورة.</p>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Btn variant="ghost" onClick={stay}>متابعة التعديل</Btn>
+          <Btn variant="danger" onClick={discard}>تراجع عن العملية</Btn>
+        </div>
+      </div>
+    </Modal>
+  ), [promptOpen, stay, discard])
+  return useMemo(() => ({ isDirty, markClean, requestClose, prompt }), [isDirty, markClean, requestClose, prompt])
 }
 
 /* ─── توست ─── */

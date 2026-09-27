@@ -40,6 +40,24 @@ throws('رفض عقار مدار بلا اسم مالك', () => S().addProperty(
 throws('رفض سعي على عقار مملوك', () => S().addProperty({ nameAr: 'خطأ', kind: 'residential', ownership: 'owned', ownerName: '', commissionPercent: 5, address: '', costMinor: 0, notes: '' }), 'سعي')
 throws('رفض كود وحدة مكرر', () => S().addPropertyUnit({ propertyId: owned.id, code: 'شقة 1', annualRentMinor: 0 }), 'مكرر')
 
+console.log('🧾 كل وحدة لها تكلفة وسعر بيع وقيد مستقل')
+const granular = S().addProperty({
+  nameAr: 'عمارة وحدات مستقلة', kind: 'mixed', ownership: 'owned', ownerName: '', commissionPercent: 0,
+  address: 'الدمام', costMinor: 900_000, acquisitionPayment: 'cash',
+  initialUnits: [
+    { code: 'A-01', annualRentMinor: 60_000, costMinor: 400_000, salePriceMinor: 700_000 },
+    { code: 'B-01', annualRentMinor: 75_000, costMinor: 500_000, salePriceMinor: 900_000 },
+  ], notes: '',
+})
+const gUnits = S().propertyUnits.filter((u) => u.propertyId === granular.id)
+ok('كل وحدة حفظت تكلفتها وسعرها منفصلين', gUnits.length === 2 && gUnits[0].costMinor === 400_000 && gUnits[1].salePriceMinor === 900_000)
+ok('اقتناء الوحدتين ولد قيدين مستقلين ومتوازنين', S().journal.filter((e) => e.sourceType === 'property_acquisition' && e.sourceId === gUnits[0].id).length === 1 && S().journal.filter((e) => e.sourceType === 'property_acquisition' && e.sourceId === gUnits[1].id).length === 1)
+S().sellPropertyUnit({ propertyId: granular.id, unitId: gUnits[0].id, salePriceMinor: 700_000, payment: 'cash', treasury: '1101' })
+ok('بيع وحدة واحدة أخرج تكلفتها فقط وبقي العقار نشطاً', S().propertyUnits.find((u) => u.id === gUnits[0].id).status === 'sold' && S().properties.find((p) => p.id === granular.id).status === 'active' && bal('1113') === 5_500_000)
+throws('رفض تأجير الوحدة المباعة', () => S().addLease({ propertyId: granular.id, unitId: gUnits[0].id, tenantName: 'غير مسموح', startDate: '2026-01-01', months: 12, frequency: 'annual', totalRentMinor: 100_000, depositMinor: 0 }), 'مباعة')
+S().sellPropertyUnit({ propertyId: granular.id, unitId: gUnits[1].id, salePriceMinor: 900_000, payment: 'cash', treasury: '1101' })
+ok('بيع آخر وحدة أغلق العقار وجعل كل الأصل الوحدي خارج 1113', S().properties.find((p) => p.id === granular.id).status === 'sold' && bal('1113') === 5_000_000)
+
 console.log('📄 عقد إيجار مملوك: 12 شهراً شهري 120,000 + تأمين 10,000')
 const u1 = S().propertyUnits.find((u) => u.propertyId === owned.id)
 const lease1 = S().addLease({ propertyId: owned.id, unitId: u1.id, tenantName: 'سالم', startDate: '2026-01-01', months: 12, frequency: 'monthly', totalRentMinor: 120_000, depositMinor: 10_000, ejarNumber: 'EJAR-123', treasury: '1101' })
@@ -94,7 +112,7 @@ throws('رفض البيع وعليه عقد نشط… بعد إنشاء عقد �
 S().endLease({ leaseId: S().leases.at(-1).id })
 S().sellProperty({ propertyId: owned.id, salePriceMinor: 6_000_000, payment: 'cash', treasury: '1101' })
 ok('العقار مباع و1113 صفر', S().properties.find((p) => p.id === owned.id).status === 'sold' && bal('1113') === 0)
-ok('الإيراد 4115 = 6,000,000 والتكلفة 5116 = 5,000,000', bal('4115') === -6_000_000 && bal('5116') === 5_000_000)
+ok('الإيراد 4115 يشمل بيع الوحدتين + العقار، والتكلفة 5116 كذلك', bal('4115') === -7_600_000 && bal('5116') === 5_900_000)
 throws('رفض بيع عقار مدار', () => S().sellProperty({ propertyId: managed.id, salePriceMinor: 100, payment: 'cash' }), 'مملوك')
 
 ok('دفتر الأستاذ متوازن في النهاية', balanced())

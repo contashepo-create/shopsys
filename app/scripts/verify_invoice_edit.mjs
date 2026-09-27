@@ -80,18 +80,18 @@ ok('ضريبة الفاتورة المعدلة رُحّلت (2102 تغير)', ba
 ok('الشامل: الإجمالي = الأساس الضريبي + الضريبة', edited.totals.totalMinor === edited.totals.taxBaseMinor + edited.totals.taxMinor)
 
 console.log('\n4️⃣ موانع تعديل البيع')
-throws('einvoiceActive ⇒ الرفض بالإشعارات', () => S().editSale({ saleId: edited.id, lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: null, payment: 'cash', paidMinor: 3000, treasury: '1101', invoiceDiscountPercent: 0, reason: '', einvoiceActive: true }), 'إشعار')
-throws('مدفوع أكبر من الإجمالي يُرفض', () => S().editSale({ saleId: edited.id, lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: null, payment: 'cash', paidMinor: 999999, treasury: '1101', invoiceDiscountPercent: 0, reason: '', einvoiceActive: false }), 'أكبر')
-throws('جزء آجل بلا عميل يُرفض', () => S().editSale({ saleId: edited.id, lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: null, payment: 'credit', paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: '', einvoiceActive: false }), 'عميل')
+throws('einvoiceActive ⇒ الرفض بالإشعارات', () => S().editSale({ saleId: edited.id, lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: null, payment: 'cash', paidMinor: 3000, treasury: '1101', invoiceDiscountPercent: 0, reason: 'اختبار حاجز', einvoiceActive: true }), 'إشعار')
+throws('مدفوع أكبر من الإجمالي يُرفض', () => S().editSale({ saleId: edited.id, lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: null, payment: 'cash', paidMinor: 999999, treasury: '1101', invoiceDiscountPercent: 0, reason: 'اختبار حاجز', einvoiceActive: false }), 'أكبر')
+throws('جزء آجل بلا عميل يُرفض', () => S().editSale({ saleId: edited.id, lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: null, payment: 'credit', paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: 'اختبار حاجز', einvoiceActive: false }), 'عميل')
 // فاتورة عليها مرتجع لا تُعدَّل
 const sale2 = S().postSale({ lines: [cartLine(itA.id, 2, 3000, 1000)], customerId: cust.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101', paidMinor: 0 })
 S().postSaleReturn({ saleId: sale2.id, qtyByItem: new Map([[itA.id, 1]]), refund: 'credit', reason: 'عيب' })
-throws('فاتورة عليها مرتجع تُرفض', () => S().editSale({ saleId: sale2.id, lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: cust.id, payment: 'credit', paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: '', einvoiceActive: false }), 'مرتجعات')
+throws('فاتورة عليها مرتجع تُرفض', () => S().editSale({ saleId: sale2.id, lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: cust.id, payment: 'credit', paidMinor: 0, treasury: '1101', invoiceDiscountPercent: 0, reason: 'اختبار حاجز', einvoiceActive: false }), 'مرتجعات')
 // الوردية المقفلة تمنع
 const shift = S().openShift('كاشير', 0)
 const sale3 = S().postSale({ lines: [cartLine(itA.id, 1, 3000, 1000)], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101', paidMinor: 3000 })
 S().closeShift(3000)
-throws('فاتورة وردية مقفلة تُرفض', () => S().editSale({ saleId: sale3.id, lines: [cartLine(itA.id, 2, 3000, 1000)], customerId: null, payment: 'cash', paidMinor: 6000, treasury: '1101', invoiceDiscountPercent: 0, reason: '', einvoiceActive: false }), 'أُقفلت')
+throws('فاتورة وردية مقفلة تُرفض', () => S().editSale({ saleId: sale3.id, lines: [cartLine(itA.id, 2, 3000, 1000)], customerId: null, payment: 'cash', paidMinor: 6000, treasury: '1101', invoiceDiscountPercent: 0, reason: 'اختبار حاجز', einvoiceActive: false }), 'أُقفلت')
 // الدالة الخالصة تجمع كل الأسباب
 ok('saleEditBlocks تجمع 5 موانع', saleEditBlocks({ hasReturns: true, hasSoldSerials: true, hasInstallmentPlan: true, hasSettlementAllocation: true, shiftClosed: true }).length === 5)
 ok('بلا موانع ⇒ قائمة فارغة', saleEditBlocks({ hasReturns: false, hasSoldSerials: false, hasInstallmentPlan: false, hasSettlementAllocation: false, shiftClosed: false }).length === 0)
@@ -123,10 +123,10 @@ ok('سجل تدقيق الشراء موجود', editedPur.editHistory?.length ==
 ok('قيد الشراء القديم معكوس', S().journal.find((e) => e.id === pur.journalEntryId)?.reversedByEntryId != null)
 
 console.log('\n6️⃣ موانع تعديل الشراء')
-throws('einvoiceActive ⇒ رفض تعديل الشراء', () => S().editPurchase({ purchaseId: pur.id, lines: [{ itemId: itB.id, qty: 1, unitPriceMinor: 2000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: '', einvoiceActive: true }), 'مرتجع شراء')
+throws('einvoiceActive ⇒ رفض تعديل الشراء', () => S().editPurchase({ purchaseId: pur.id, lines: [{ itemId: itB.id, qty: 1, unitPriceMinor: 2000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'اختبار حاجز', einvoiceActive: true }), 'مرتجع شراء')
 // بيع من بضاعة الفاتورة يمنع تعديلها (يفسد التكلفة)
 S().postSale({ lines: [cartLine(itB.id, 55, 5000, 2550)], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101', paidMinor: 275000 })
-throws('بيع من بضاعتها ⇒ يُرفض', () => S().editPurchase({ purchaseId: pur.id, lines: [{ itemId: itB.id, qty: 1, unitPriceMinor: 2000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: '', einvoiceActive: false }), 'بيع من بضاعة')
+throws('بيع من بضاعتها ⇒ يُرفض', () => S().editPurchase({ purchaseId: pur.id, lines: [{ itemId: itB.id, qty: 1, unitPriceMinor: 2000 }], expenses: [], paidMinor: 0, treasury: '1101', reason: 'اختبار تعديل', einvoiceActive: false }), 'بيع من بضاعة')
 // مصاريف مدفوعة من خزينة تمنع
 const pur2 = S().postPurchase({
   supplierId: sup.id, date: '2026-09-15',
@@ -134,7 +134,7 @@ const pur2 = S().postPurchase({
   expenses: [{ nameAr: 'شحن', amountMinor: 500, method: 'qty', paidBy: 'treasury', payAccount: '1101' }],
   paidMinor: 0, treasury: '1101', notes: '',
 })
-throws('مصاريف من خزينة ⇒ يُرفض', () => S().editPurchase({ purchaseId: pur2.id, lines: [{ itemId: itA.id, qty: 5, unitPriceMinor: 1000 }], expenses: pur2.expenses, paidMinor: 0, treasury: '1101', reason: '', einvoiceActive: false }), 'مدفوعة من خزائن')
+throws('مصاريف من خزينة ⇒ يُرفض', () => S().editPurchase({ purchaseId: pur2.id, lines: [{ itemId: itA.id, qty: 5, unitPriceMinor: 1000 }], expenses: pur2.expenses, paidMinor: 0, treasury: '1101', reason: 'اختبار تعديل', einvoiceActive: false }), 'مدفوعة من خزائن')
 
 console.log(`\n═══════════ PASS=${pass} FAIL=${fail} ═══════════`)
 if (fail > 0) process.exit(1)

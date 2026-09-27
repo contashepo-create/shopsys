@@ -18,6 +18,8 @@ import type { Minor } from './money.ts'
 /* ─── إعدادات الممول (تُحفظ في مخزن التطبيق) ─── */
 
 export interface EinvoiceSettings {
+  /** تشغيل الإصدار الإلكتروني الفعلي لدى المنشأة؛ إيقافه يعيد دورة التعديل المحلية. */
+  enabled: boolean
   /** الرقم الضريبي للممول (السعودية: 15 رقماً 3…3 — مصر: 9 أرقام) */
   taxNumber: string
   /** عنوان المنشأة (مطلوب لمستند مصر) */
@@ -27,6 +29,7 @@ export interface EinvoiceSettings {
 }
 
 export const DEFAULT_EINVOICE_SETTINGS: EinvoiceSettings = {
+  enabled: false,
   taxNumber: '',
   address: '',
   printZatcaQr: true,

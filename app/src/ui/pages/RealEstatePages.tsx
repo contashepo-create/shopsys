@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات نشاط العقارات (النشاط 21) — معايير سند/الوسيط/سمات السعودية:
  * - PropertiesPage: عقارات (مملوكة/مدارة بسعي) بوحدات، حسابات الملاك وسدادهم،
@@ -13,12 +14,16 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import {
   PROPERTY_KIND_LABELS, RENT_FREQUENCY_LABELS, collectLeaseAlerts, leaseEndDate,
-  type PropertyKind, type PropertyOwnership, type RentFrequency, type Property, type Lease,
+  type PropertyKind, type PropertyOwnership, type RentFrequency, type Property, type PropertyUnit, type Lease,
 } from '../../core/realestate.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
+const emptyTerminalPayment = (): TerminalPaymentDraft => ({ terminalId: '', providerReference: '', cardLast4: '' })
+type InitialUnitDraft = { code: string; rent: string; cost: string; salePrice: string }
 
 function useCur() {
   const { setup } = useAppStore()
@@ -32,7 +37,7 @@ function useCur() {
 
 /* ─────────────────────────── العقارات والملاك ─────────────────────────── */
 export function PropertiesPage() {
-  const { properties, propertyUnits, employees, addProperty, addPropertyUnit, getOwnerBalance, payPropertyOwner, addUnitMaintenance, sellProperty, addStaffCommission } = useDataStore()
+  const { properties, propertyUnits, employees, addProperty, addPropertyUnit, sellPropertyUnit, getOwnerBalance, payPropertyOwner, addUnitMaintenance, sellProperty, addStaffCommission } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
 
@@ -47,20 +52,29 @@ export function PropertiesPage() {
   const [cost, setCost] = useState('')
   const [payMode, setPayMode] = useState<'cash' | 'credit'>('cash')
   const [treasury, setTreasury] = useState('1101')
-  const [unitCodes, setUnitCodes] = useState('')
+  const [initialUnits, setInitialUnits] = useState<InitialUnitDraft[]>([{ code: '', rent: '', cost: '', salePrice: '' }])
 
   const saveProperty = () => {
     try {
+      const unitRows = initialUnits.filter((unit) => unit.code.trim())
+      const unitCostTotal = unitRows.reduce((sum, unit) => sum + (unit.cost.trim() ? toMinor(unit.cost, cur.decimals) : 0), 0)
+      const propertyCost = ownership === 'owned' ? (unitCostTotal > 0 ? unitCostTotal : cost ? toMinor(cost, cur.decimals) : 0) : 0
       const p = addProperty({
         nameAr, kind, ownership,
         ownerName: ownership === 'managed' ? ownerName : '',
         commissionPercent: ownership === 'managed' ? Number(commission) || 0 : 0,
-        address, costMinor: ownership === 'owned' && cost ? toMinor(cost, cur.decimals) : 0,
-        notes: '', unitCodes: unitCodes.split('\n').map((x) => x.trim()).filter(Boolean),
+        address, costMinor: propertyCost,
+        notes: '', initialUnits: unitRows.map((unit) => ({
+          code: unit.code.trim(),
+          annualRentMinor: unit.rent ? toMinor(unit.rent, cur.decimals) : 0,
+          costMinor: unit.cost.trim() ? toMinor(unit.cost, cur.decimals) : undefined,
+          salePriceMinor: unit.salePrice.trim() ? toMinor(unit.salePrice, cur.decimals) : 0,
+          acquisitionPayment: payMode,
+        })),
         acquisitionPayment: payMode, treasury,
       })
       toast.show(`أُنشئ العقار ${p.code} ✅`)
-      setOpen(false); setNameAr(''); setOwnerName(''); setAddress(''); setCost(''); setUnitCodes('')
+      setOpen(false); setNameAr(''); setOwnerName(''); setAddress(''); setCost(''); setInitialUnits([{ code: '', rent: '', cost: '', salePrice: '' }])
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -68,11 +82,19 @@ export function PropertiesPage() {
   const [unitFor, setUnitFor] = useState<Property | null>(null)
   const [uCode, setUCode] = useState('')
   const [uRent, setURent] = useState('')
+  const [uCost, setUCost] = useState('')
+  const [uSalePrice, setUSalePrice] = useState('')
+  const [uPay, setUPay] = useState<'cash' | 'credit'>('cash')
   const saveUnit = () => {
     if (!unitFor) return
     try {
-      addPropertyUnit({ propertyId: unitFor.id, code: uCode, annualRentMinor: uRent ? toMinor(uRent, cur.decimals) : 0 })
-      toast.show('أُضيفت الوحدة ✅'); setUnitFor(null); setUCode(''); setURent('')
+      addPropertyUnit({
+        propertyId: unitFor.id, code: uCode, annualRentMinor: uRent ? toMinor(uRent, cur.decimals) : 0,
+        costMinor: uCost ? toMinor(uCost, cur.decimals) : 0,
+        salePriceMinor: uSalePrice ? toMinor(uSalePrice, cur.decimals) : 0,
+        acquisitionPayment: uPay, treasury,
+      })
+      toast.show('أُضيفت الوحدة وسُجلت بياناتها المستقلة ✅'); setUnitFor(null); setUCode(''); setURent(''); setUCost(''); setUSalePrice('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -126,6 +148,20 @@ export function PropertiesPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
+  /* بيع وحدة مستقلة — لا يخرج تكلفة باقي الوحدات */
+  const [sellUnitFor, setSellUnitFor] = useState<{ property: Property; unit: PropertyUnit } | null>(null)
+  const [unitSalePrice, setUnitSalePrice] = useState('')
+  const [unitSalePay, setUnitSalePay] = useState<'cash' | 'credit'>('cash')
+  const [unitSaleTreasury, setUnitSaleTreasury] = useState('1101')
+  const saveUnitSale = () => {
+    if (!sellUnitFor) return
+    try {
+      sellPropertyUnit({ propertyId: sellUnitFor.property.id, unitId: sellUnitFor.unit.id, salePriceMinor: toMinor(unitSalePrice, cur.decimals), payment: unitSalePay, treasury: unitSaleTreasury })
+      toast.show(`بيعت الوحدة ${sellUnitFor.unit.code} وأُخرجت تكلفتها فقط ✅`)
+      setSellUnitFor(null); setUnitSalePrice('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -143,6 +179,8 @@ export function PropertiesPage() {
           {properties.map((p) => {
             const units = propertyUnits.filter((u) => u.propertyId === p.id)
             const leased = units.filter((u) => u.status === 'leased').length
+            const sold = units.filter((u) => u.status === 'sold').length
+            const vacant = units.filter((u) => u.status === 'vacant').length
             const balance = p.ownership === 'managed' ? getOwnerBalance(p.id) : 0
             const kd = PROPERTY_KIND_LABELS[p.kind]
             return (
@@ -158,19 +196,19 @@ export function PropertiesPage() {
                       {p.address ? ` · ${p.address}` : ''}
                     </div>
                     <div className="text-[12px] font-bold text-slate-600 dark:text-slate-300 mt-1.5">
-                      الوحدات: {units.length} ({leased} مؤجرة / {units.length - leased} شاغرة)
+                      الوحدات: {units.length} ({leased} مؤجرة / {vacant} شاغرة{sold > 0 ? ` / ${sold} مباعة` : ''})
                       {p.ownership === 'managed' && <> · مستحق المالك: <b className={balance > 0 ? 'text-rose-500' : 'text-emerald-600'}>{fmt(balance)}</b></>}
                     </div>
                   </div>
                   {p.status === 'active' && (
                     <div className="flex gap-1">
-                      <button onClick={() => { setUnitFor(p); setUCode(''); setURent('') }} title="وحدة جديدة" className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all hover:scale-110"><DoorOpen className="w-4 h-4" /></button>
+                      <button onClick={() => { setUnitFor(p); setUCode(''); setURent(''); setUCost(''); setUSalePrice(''); setUPay('cash') }} title="وحدة جديدة" className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all hover:scale-110"><DoorOpen className="w-4 h-4" /></button>
                       <button onClick={() => { setMaintFor(p); setMUnitId(units[0]?.id ?? ''); setMBearer(p.ownership === 'managed' ? 'owner' : 'office') }} title="صيانة وحدة" className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all hover:scale-110"><Wrench className="w-4 h-4" /></button>
                       {p.ownership === 'managed' && (
                         <button onClick={() => { setPayFor(p); setPayAmount('') }} title="سداد للمالك" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><HandCoins className="w-4 h-4" /></button>
                       )}
-                      {p.ownership === 'owned' && (
-                        <button onClick={() => { setSellFor(p); setSPrice('') }} title="بيع العقار" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Tag className="w-4 h-4" /></button>
+                      {p.ownership === 'owned' && !units.some((u) => u.status === 'sold') && (
+                        <button onClick={() => { setSellFor(p); setSPrice('') }} title="بيع العقار بالكامل" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Tag className="w-4 h-4" /></button>
                       )}
                     </div>
                   )}
@@ -178,9 +216,16 @@ export function PropertiesPage() {
                 {units.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {units.map((u) => (
-                      <span key={u.id} className={`text-[11px] px-2 py-1 rounded-lg font-bold ${u.status === 'leased' ? 'bg-teal-500/10 text-teal-600' : u.status === 'maintenance' ? 'bg-amber-500/10 text-amber-600' : 'bg-slate-500/10 text-slate-500'}`}>
-                        {u.code} · {u.status === 'leased' ? 'مؤجرة' : u.status === 'maintenance' ? 'صيانة' : 'شاغرة'}
-                      </span>
+                      <div key={u.id} className="flex items-center gap-1">
+                        <span className={`text-[11px] px-2 py-1 rounded-lg font-bold ${u.status === 'leased' ? 'bg-teal-500/10 text-teal-600' : u.status === 'maintenance' ? 'bg-amber-500/10 text-amber-600' : u.status === 'sold' ? 'bg-rose-500/10 text-rose-600' : 'bg-slate-500/10 text-slate-500'}`}>
+                          {u.code} · {u.status === 'leased' ? 'مؤجرة' : u.status === 'maintenance' ? 'صيانة' : u.status === 'sold' ? 'مباعة' : 'شاغرة'}
+                          {u.costMinor > 0 ? ` · تكلفة ${fmt(u.costMinor)}` : ''}
+                          {u.salePriceMinor > 0 && u.status !== 'sold' ? ` · بيع ${fmt(u.salePriceMinor)}` : ''}
+                        </span>
+                        {p.ownership === 'owned' && p.status === 'active' && u.status === 'vacant' && (
+                          <button onClick={() => { setSellUnitFor({ property: p, unit: u }); setUnitSalePrice(u.salePriceMinor > 0 ? formatMinor(u.salePriceMinor, cur, false) : ''); setUnitSalePay('cash') }} title="بيع هذه الوحدة فقط" className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-500/10"><Tag className="w-3.5 h-3.5" /></button>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -200,9 +245,9 @@ export function PropertiesPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="اسم العقار *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="برج الياسمين…" autoFocus /></Field>
             <Field label="النوع">
-              <select value={kind} onChange={(e) => setKind(e.target.value as PropertyKind)} className={inputCls}>
+              <QuickSelect value={kind} onChange={(e) => setKind(e.target.value as PropertyKind)} className={inputCls}>
                 {Object.entries(PROPERTY_KIND_LABELS).map(([k, v]) => <option key={k} value={k}>{v.icon} {v.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             {ownership === 'managed' ? (
               <>
@@ -211,7 +256,7 @@ export function PropertiesPage() {
               </>
             ) : (
               <>
-                <Field label={`تكلفة الاقتناء (${cur.symbol})`} hint="تُرسمل على 1113 — أساس ربح البيع لاحقاً؛ اتركها 0 لعقار قديم مُقيد سابقاً"><input value={cost} onChange={(e) => setCost(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+                <Field label={`إجمالي تكلفة الاقتناء (${cur.symbol})`} hint="يمكن تركه فارغاً؛ عند إدخال تكاليف الوحدات أدناه يُحسب الإجمالي منها، وكل وحدة تُقيد بسجل مستقل"><input value={cost} onChange={(e) => setCost(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
                 {cost && (
                   <Field label="سداد الاقتناء">
                     <div className="flex gap-2">
@@ -226,8 +271,20 @@ export function PropertiesPage() {
             )}
             <Field label="العنوان"><input value={address} onChange={(e) => setAddress(e.target.value)} className={inputCls} /></Field>
           </div>
-          <Field label="الوحدات الأولية (سطر لكل وحدة)" hint="مثال: شقة 1 — الدور الأول؛ يمكنك الإضافة لاحقاً">
-            <textarea value={unitCodes} onChange={(e) => setUnitCodes(e.target.value)} rows={3} className={inputCls + ' !h-auto'} placeholder={'شقة 1\nشقة 2\nمحل أ'} />
+          <Field label="الوحدات الأولية" hint="كل وحدة سطر مستقل حقيقي: كود وأجرة وتكلفة اقتناء وسعر بيع؛ لا تُدمج الوحدات في تكلفة واحدة">
+            <div className="space-y-2 rounded-xl border border-slate-200 dark:border-slate-700 p-2 overflow-x-auto">
+              <div className="grid grid-cols-[1.1fr_1fr_1fr_1fr_auto] min-w-[650px] gap-2 px-1 text-[11px] font-bold text-slate-400"><span>كود الوحدة</span><span>الأجرة السنوية</span><span>تكلفة الاقتناء</span><span>سعر البيع</span><span /></div>
+              {initialUnits.map((unit, index) => (
+                <div key={index} className="grid grid-cols-[1.1fr_1fr_1fr_1fr_auto] min-w-[650px] gap-2 items-center">
+                  <input value={unit.code} onChange={(e) => setInitialUnits((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, code: e.target.value } : row))} className={inputCls} placeholder="شقة 1 — الدور الأول" />
+                  <input value={unit.rent} onChange={(e) => setInitialUnits((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, rent: e.target.value } : row))} inputMode="decimal" className={inputCls} placeholder={cur.symbol} />
+                  <input value={unit.cost} onChange={(e) => setInitialUnits((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, cost: e.target.value } : row))} inputMode="decimal" className={inputCls} placeholder="0" />
+                  <input value={unit.salePrice} onChange={(e) => setInitialUnits((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, salePrice: e.target.value } : row))} inputMode="decimal" className={inputCls} placeholder="0" />
+                  <button type="button" onClick={() => setInitialUnits((rows) => rows.length > 1 ? rows.filter((_, rowIndex) => rowIndex !== index) : [{ code: '', rent: '', cost: '', salePrice: '' }])} className="h-9 px-2 rounded-lg text-rose-500 hover:bg-rose-500/10" title="حذف الوحدة">×</button>
+                </div>
+              ))}
+              <button type="button" onClick={() => setInitialUnits((rows) => [...rows, { code: '', rent: '', cost: '', salePrice: '' }])} className="text-[11px] font-bold text-teal-600 hover:underline">+ إضافة وحدة مستقلة</button>
+            </div>
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
@@ -237,11 +294,17 @@ export function PropertiesPage() {
       </Modal>
 
       {/* وحدة جديدة */}
-      <Modal open={!!unitFor} onClose={() => setUnitFor(null)} title={unitFor ? `وحدة جديدة — ${unitFor.nameAr}` : ''}>
+      <Modal open={!!unitFor} onClose={() => setUnitFor(null)} title={unitFor ? `وحدة مستقلة جديدة — ${unitFor.nameAr}` : ''}>
         <div className="space-y-3">
+          <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-[12px] text-slate-500">تُحفظ الوحدة كسجل مستقل ويمكن تأجيرها أو بيعها لاحقاً دون التأثير على باقي الوحدات.</div>
           <Field label="كود الوحدة *"><input value={uCode} onChange={(e) => setUCode(e.target.value)} className={inputCls} placeholder="شقة 5 — الدور الثاني" /></Field>
-          <Field label={`الأجرة السنوية الاسترشادية (${cur.symbol})`}><input value={uRent} onChange={(e) => setURent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-          <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setUnitFor(null)}>إلغاء</Btn><Btn onClick={saveUnit} disabled={!uCode.trim()}>إضافة</Btn></div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <Field label={`الأجرة السنوية (${cur.symbol})`}><input value={uRent} onChange={(e) => setURent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label={`تكلفة الاقتناء (${cur.symbol})`} hint={unitFor?.ownership === 'managed' ? 'العقار المدار ليس أصلاً للمكتب' : ''}><input value={uCost} onChange={(e) => setUCost(e.target.value)} inputMode="decimal" className={inputCls} disabled={unitFor?.ownership === 'managed'} /></Field>
+            <Field label={`سعر البيع (${cur.symbol})`}><input value={uSalePrice} onChange={(e) => setUSalePrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+          </div>
+          {unitFor?.ownership === 'owned' && uCost && <Field label="طريقة دفع الاقتناء"><div className="flex gap-2">{(['cash', 'credit'] as const).map((m) => <button key={m} onClick={() => setUPay(m)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border ${uPay === m ? 'bg-teal-600 text-white border-teal-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>{m === 'cash' ? 'نقدي' : 'آجل'}</button>)}</div></Field>}
+          <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setUnitFor(null)}>إلغاء</Btn><Btn onClick={saveUnit} disabled={!uCode.trim()}>إضافة الوحدة وقيدها</Btn></div>
         </div>
       </Modal>
 
@@ -252,7 +315,7 @@ export function PropertiesPage() {
             <div className="text-[12px] text-slate-500">مستحقه الآن: <b className="text-rose-500">{fmt(getOwnerBalance(payFor.id))}</b> (تحصيلاته − سداداته − صيانة على حسابه)</div>
             <Field label={`المبلغ (${cur.symbol})`}><input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <TreasuryPicker value={payTreasury} onChange={setPayTreasury} />
-            <Btn onClick={savePayout} className="w-full" disabled={!payAmount}>سداد وقيد 2115 ← الخزينة</Btn>
+            <Btn onClick={savePayout} shortcut="F9" className="w-full" disabled={!payAmount}>سداد وقيد 2115 ← الخزينة</Btn>
           </div>
         )}
       </Modal>
@@ -262,9 +325,9 @@ export function PropertiesPage() {
         {maintFor && (
           <div className="space-y-3">
             <Field label="الوحدة">
-              <select value={mUnitId} onChange={(e) => setMUnitId(Number(e.target.value))} className={inputCls}>
+              <QuickSelect value={mUnitId} onChange={(e) => setMUnitId(Number(e.target.value))} className={inputCls}>
                 {propertyUnits.filter((u) => u.propertyId === maintFor.id).map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label={`القيمة (${cur.symbol})`}><input value={mAmount} onChange={(e) => setMAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="الوصف"><input value={mDesc} onChange={(e) => setMDesc(e.target.value)} className={inputCls} placeholder="سباكة، كهرباء…" /></Field>
@@ -277,7 +340,24 @@ export function PropertiesPage() {
               </Field>
             )}
             <TreasuryPicker value={mTreasury} onChange={setMTreasury} />
-            <Btn onClick={saveMaint} className="w-full" disabled={!mAmount || mUnitId === ''}>تسجيل الصيانة وقيدها</Btn>
+            <Btn onClick={saveMaint} shortcut="F9" className="w-full" disabled={!mAmount || mUnitId === ''}>تسجيل الصيانة وقيدها</Btn>
+          </div>
+        )}
+      </Modal>
+
+      {/* بيع وحدة مستقلة */}
+      <Modal open={!!sellUnitFor} onClose={() => setSellUnitFor(null)} title={sellUnitFor ? `بيع الوحدة ${sellUnitFor.unit.code} — ${sellUnitFor.property.nameAr}` : ''}>
+        {sellUnitFor && (
+          <div className="space-y-3">
+            <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 text-[12px] font-bold text-rose-700 dark:text-rose-300">
+              تكلفة هذه الوحدة {fmt(sellUnitFor.unit.costMinor)} — لن تُخرج إلا تكلفة هذه الوحدة من الأصل 1113، وتبقى باقي الوحدات قابلة للتعامل.
+            </div>
+            <Field label={`سعر البيع (${cur.symbol}) *`}><input value={unitSalePrice} onChange={(e) => setUnitSalePrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label="التحصيل">
+              <div className="flex gap-2">{(['cash', 'credit'] as const).map((m) => <button key={m} onClick={() => setUnitSalePay(m)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border ${unitSalePay === m ? 'bg-teal-600 text-white border-teal-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>{m === 'cash' ? 'نقدي' : 'آجل'}</button>)}</div>
+              {unitSalePay === 'cash' && <div className="mt-2"><TreasuryPicker value={unitSaleTreasury} onChange={setUnitSaleTreasury} compact /></div>}
+            </Field>
+            <Btn onClick={saveUnitSale} shortcut="F9" className="w-full" disabled={!unitSalePrice.trim()}>بيع الوحدة وقيد ربحها</Btn>
           </div>
         )}
       </Modal>
@@ -300,14 +380,11 @@ export function PropertiesPage() {
             </Field>
             <Field label="عمولة موظف (اختياري)" hint="الموظف الذي أتم الصفقة — مصروف مربوط بالبيع يدخل ربحيته">
               <div className="grid grid-cols-2 gap-2">
-                <select value={sCommEmpId} onChange={(e) => setSCommEmpId(e.target.value)} className={inputCls}>
-                  <option value="">— بلا عمولة —</option>
-                  {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={sCommEmpId ? Number(sCommEmpId) : 0} onChange={(id) => setSCommEmpId(id ? String(id) : '')} cashLabel="بلا عمولة" label="بحث موظف العمولة" cashValue={0} />
                 <input value={sCommAmount} onChange={(e) => setSCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!sCommEmpId} />
               </div>
             </Field>
-            <Btn onClick={saveSale} className="w-full" disabled={!sPrice || (!!sCommEmpId && !sCommAmount.trim())}>بيع وقيد الربح</Btn>
+            <Btn onClick={saveSale} shortcut="F9" className="w-full" disabled={!sPrice || (!!sCommEmpId && !sCommAmount.trim())}>بيع وقيد الربح</Btn>
           </div>
         )}
       </Modal>
@@ -317,7 +394,7 @@ export function PropertiesPage() {
 
 /* ─────────────────────────── عقود الإيجار ─────────────────────────── */
 export function LeasesPage() {
-  const { properties, propertyUnits, leases, customers, employees, addLease, collectLeaseInstallment, endLease, addStaffCommission } = useDataStore()
+  const { properties, propertyUnits, leases, customers, employees, paymentTerminals, addLease, collectLeaseInstallment, endLease, addStaffCommission } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
   const todayIso = new Date().toISOString().slice(0, 10)
@@ -367,12 +444,14 @@ export function LeasesPage() {
   /* تحصيل */
   const [collectFor, setCollectFor] = useState<Lease | null>(null)
   const [colTreasury, setColTreasury] = useState('1101')
+  const [colTerminal, setColTerminal] = useState<TerminalPaymentDraft>(emptyTerminalPayment)
   const collect = (seq: number) => {
     if (!collectFor) return
     try {
-      const r = collectLeaseInstallment({ leaseId: collectFor.id, seq, treasury: colTreasury })
+      const terminal = paymentTerminals.find((row) => row.id === colTerminal.terminalId)
+      const r = collectLeaseInstallment({ leaseId: collectFor.id, seq, treasury: terminal?.settlementAccountCode ?? colTreasury, terminalPayment: terminal ? { terminalId: terminal.id, providerReference: colTerminal.providerReference.trim(), cardLast4: colTerminal.cardLast4 || undefined } : undefined })
       toast.show(`حُصل ${fmt(r.paidMinor)}${r.commissionMinor > 0 ? ` — سعي المكتب ${fmt(r.commissionMinor)} ونصيب المالك ${fmt(r.ownerShareMinor)}` : ''} ✅`)
-      setCollectFor((c) => (c ? useDataStore.getState().leases.find((l) => l.id === c.id) ?? null : null))
+      setCollectFor((c) => (c ? useDataStore.getState().leases.find((l) => l.id === c.id) ?? null : null)); setColTerminal(emptyTerminalPayment())
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -461,38 +540,32 @@ export function LeasesPage() {
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العقار *">
-              <select value={propId} onChange={(e) => { setPropId(Number(e.target.value)); setUnitId('') }} className={inputCls}>
+              <QuickSelect value={propId} onChange={(e) => { setPropId(Number(e.target.value)); setUnitId('') }} className={inputCls}>
                 {activeProps.map((p) => <option key={p.id} value={p.id}>{p.nameAr}{p.ownership === 'managed' ? ` (سعي ${p.commissionPercent}٪)` : ''}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="الوحدة الشاغرة *">
-              <select value={unitId} onChange={(e) => setUnitId(Number(e.target.value))} className={inputCls}>
+              <QuickSelect value={unitId} onChange={(e) => setUnitId(Number(e.target.value))} className={inputCls}>
                 <option value="">— اختر —</option>
                 {vacantUnits.map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="اسم المستأجر *"><input value={tenant} onChange={(e) => setTenant(e.target.value)} className={inputCls} /></Field>
             <Field label="ربط بسجل عميل (إداري)">
-              <select value={tenantId} onChange={(e) => setTenantId(e.target.value)} className={inputCls}>
-                <option value="">— بلا ربط —</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={customers} value={tenantId ? Number(tenantId) : 0} onChange={(id) => setTenantId(id ? String(id) : '')} cashLabel="بلا ربط" label="بحث المستأجر" cashValue={0} />
             </Field>
             <Field label="بداية العقد *"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label="المدة بالأشهر *"><input value={months} onChange={(e) => setMonths(e.target.value)} inputMode="numeric" className={inputCls} /></Field>
             <Field label="دورية السداد">
-              <select value={frequency} onChange={(e) => setFrequency(e.target.value as RentFrequency)} className={inputCls}>
+              <QuickSelect value={frequency} onChange={(e) => setFrequency(e.target.value as RentFrequency)} className={inputCls}>
                 {Object.entries(RENT_FREQUENCY_LABELS).map(([k, v]) => <option key={k} value={k}>{v.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label={`إجمالي أجرة كامل المدة (${cur.symbol}) *`}><input value={totalRent} onChange={(e) => setTotalRent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يقيد التزاماً (2103) ويُرد عند الإخلاء ناقص الأضرار"><input value={deposit} onChange={(e) => setDeposit(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="رقم توثيق منصة إيجار" hint="السعودية: رقم العقد الموثق في المنصة الحكومية"><input value={ejar} onChange={(e) => setEjar(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label="عمولة موظف (اختياري)" hint="الموظف الذي سوّق العقد — تُستحق مصروفاً مربوطاً به">
-              <select value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
-                <option value="">— بلا عمولة —</option>
-                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={commEmpId ? Number(commEmpId) : 0} onChange={(id) => setCommEmpId(id ? String(id) : '')} cashLabel="بلا عمولة" label="بحث موظف العمولة" cashValue={0} />
             </Field>
             {commEmpId && (
               <Field label={`مبلغ العمولة (${cur.symbol}) *`} hint="تُصرف مع الراتب أو منفردة من «الموظفون ← العمولات»">
@@ -503,7 +576,7 @@ export function LeasesPage() {
           {deposit && <TreasuryPicker value={leaseTreasury} onChange={setLeaseTreasury} />}
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveLease} disabled={!tenant.trim() || !totalRent || unitId === ''}>إنشاء العقد وتوليد الأقساط</Btn>
+            <Btn onClick={saveLease} shortcut="F9" disabled={!tenant.trim() || !totalRent || unitId === ''}>إنشاء العقد وتوليد الأقساط</Btn>
           </div>
         </div>
       </Modal>
@@ -512,7 +585,7 @@ export function LeasesPage() {
       <Modal open={!!collectFor} onClose={() => setCollectFor(null)} title={collectFor ? `تحصيل — ${collectFor.contractNumber} (${collectFor.tenantName})` : ''} wide>
         {collectFor && (
           <div className="space-y-3">
-            <TreasuryPicker value={colTreasury} onChange={setColTreasury} />
+            <PaymentMethodPicker value={{treasury:colTreasury,terminalPayment:colTerminal}} onChange={value=>{setColTreasury(value.treasury);setColTerminal(value.terminalPayment)}} operation="receipt"/>
             <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <table className="w-full text-[12px]">
                 <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
@@ -560,7 +633,7 @@ export function LeasesPage() {
               <input type="checkbox" checked={endEvicted} onChange={(e) => setEndEvicted(e.target.checked)} className="accent-rose-600" />
               <span className="text-[12px] font-bold text-rose-600 dark:text-rose-400">إخلاء (إنهاء قسري) — يُعلَّم العقد «مُخلى»</span>
             </label>
-            <Btn onClick={saveEnd} className="w-full">إنهاء العقد وتسوية التأمين</Btn>
+            <Btn onClick={saveEnd} shortcut="F9" className="w-full">إنهاء العقد وتسوية التأمين</Btn>
           </div>
         )}
       </Modal>

@@ -154,14 +154,15 @@ for (const id of newActs) {
   const eff = effectiveModules(id, undefined)
   assert.ok(eff.length > 0, `${id}: وحدات فعالة`)
 }
-assert.equal(ACTIVITY_TEMPLATES.length, 28, 'إجمالي القوالب = 28')
-ok(`7 أنشطة جديدة (تجارة/مصنع/خدمات/مكتبة/عطارة/مواد بناء/منظفات) بقالب+ثيم+شروحات — الإجمالي 28 نشاطاً`)
+assert.equal(ACTIVITY_TEMPLATES.length, 29, 'إجمالي القوالب = 29')
+ok(`7 أنشطة جديدة (تجارة/مصنع/خدمات/مكتبة/عطارة/مواد بناء/منظفات) بقالب+ثيم+شروحات — الإجمالي 29 نشاطاً`)
 // شاشة المطعم لا تظهر لغير المطعم حتى مع recipes
 const manuTpl = ACTIVITY_TEMPLATES.find((a) => a.id === 'manufacturing')
 assert.ok(manuTpl.modules.includes('recipes'), 'المصنع فيه recipes')
 ok('المصنع يملك وحدة recipes — وشاشة «أوامر الطاولات» مقيدة بنشاط restaurant فقط (activities filter)')
 
 console.log('\n🏭 S5: التصنيع المعمم — خامات بصلاحية تستهلك FEFO')
+st().seed([])
 st().addSupplier({ nameAr: 'مورد خامات', phone: '', address: '', notes: '', openingMinor: 0 })
 const sup = st().suppliers.at(-1)
 const mkItem = (nameAr, sku, extra = {}) => st().addItem({ nameAr, sku, barcodes: [], categoryId: 1, baseUnit: 'كجم', extraUnits: [], costMinor: 0, stockQty: 0, priceMinor: 0, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true, ...extra })

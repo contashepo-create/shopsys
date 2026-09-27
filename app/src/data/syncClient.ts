@@ -16,8 +16,12 @@ export interface SyncConfig {
   url: string // https://xxxx.supabase.co
   anonKey: string // مفتاح anon (Row Level Security تضبط الوصول)
   storeId: string // معرف المتجر — نفسه على كل الأجهزة
-  secret: string // سر التشفير المشترك — لا يغادر الأجهزة أبداً
+  secret: string // مفتاح تشفير 256-bit بصيغة base64url — لا يغادر الأجهزة أبداً
+  accessToken: string // اعتماد RLS عشوائي — يُرسل للتفويض ولا يُستخدم للتشفير
 }
+
+export const SYNC_SECRET_RE = /^[A-Za-z0-9_-]{43}$/
+export const STORE_ACCESS_TOKEN_RE = SYNC_SECRET_RE
 
 export function validateSyncConfig(c: SyncConfig): string[] {
   const errors: string[] = []
@@ -26,18 +30,56 @@ export function validateSyncConfig(c: SyncConfig): string[] {
   }
   if (c.anonKey.trim().length < 20) errors.push('مفتاح anon قصير جداً — انسخه من إعدادات مشروع Supabase')
   if (!c.storeId.trim()) errors.push('معرف المتجر مطلوب — نفس المعرف على كل الأجهزة')
-  if (c.secret.trim().length < 8) errors.push('سر المزامنة 8 أحرف على الأقل — نفسه على كل الأجهزة')
+  if (!SYNC_SECRET_RE.test(c.secret.trim())) errors.push('سر التشفير يجب أن يكون مفتاحاً مولداً 256-bit — اضغط «توليد» ثم اربطه بكل الأجهزة')
+  if (!STORE_ACCESS_TOKEN_RE.test(c.accessToken.trim())) errors.push('اعتماد عزل المتجر غير صالح — ولّده من الزر وانسخه لكل الأجهزة')
   return errors
+}
+
+function generate256BitToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+/** مفتاح تشفير 256-bit مستقل عن اعتماد RLS. */
+export function generateSyncSecret(): string { return generate256BitToken() }
+/** اعتماد RLS 256-bit مستقل عن مفتاح التشفير. */
+export function generateStoreAccessToken(): string { return generate256BitToken() }
+
+async function accessTokenHash(token: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
 const headers = (c: SyncConfig) => ({
   apikey: c.anonKey,
   Authorization: `Bearer ${c.anonKey}`,
   'Content-Type': 'application/json',
+  'X-Store-Id': c.storeId,
+  'X-Store-Access-Token': c.accessToken,
 })
 
-const restUrl = (c: SyncConfig) =>
-  `${c.url.trim().replace(/\/$/, '')}/rest/v1/${SUPABASE_STORES_TABLE}`
+const apiBase = (c: SyncConfig) => c.url.trim().replace(/\/$/, '')
+const restUrl = (c: SyncConfig) => `${apiBase(c)}/rest/v1/${SUPABASE_STORES_TABLE}`
+
+/** تدوير ذري لاعتماد RLS؛ يبقى القديم صالحاً 24 ساعة كي تنتقل بقية الأجهزة. */
+export async function rotateStoreAccessToken(c: SyncConfig, newToken: string): Promise<string> {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(newToken) || newToken === c.accessToken) {
+    throw new Error('اعتماد التدوير الجديد غير صالح أو مطابق للحالي')
+  }
+  const res = await fetch(`${apiBase(c)}/rest/v1/rpc/rotate_store_access_token`, {
+    method: 'POST',
+    headers: { ...headers(c), 'X-New-Store-Access-Token': newToken },
+    body: JSON.stringify({ p_store_id: c.storeId }),
+    signal: AbortSignal.timeout(15000),
+  })
+  if (res.status === 401 || res.status === 403) throw new Error('رُفض اعتماد المتجر الحالي — لا يمكن التدوير')
+  if (!res.ok) throw new Error(`تعذر تدوير اعتماد المتجر (${res.status})`)
+  const expiresAt = await res.json() as unknown
+  if (typeof expiresAt !== 'string') throw new Error('استجابة تدوير الاعتماد غير صالحة')
+  return expiresAt
+}
 
 interface RawRow {
   store_id: string
@@ -46,6 +88,21 @@ interface RawRow {
   updated_at: string
   checksum: string
   data: string
+  access_token_hash?: string | null
+}
+
+/** مطالبة آمنة لمرة واحدة بصف قديم أنشأته السياسة التاريخية المفتوحة. */
+async function claimLegacyRow(c: SyncConfig): Promise<void> {
+  const hash = await accessTokenHash(c.accessToken)
+  const res = await fetch(`${restUrl(c)}?store_id=eq.${encodeURIComponent(c.storeId)}&access_token_hash=is.null`, {
+    method: 'PATCH',
+    headers: { ...headers(c), Prefer: 'return=representation' },
+    body: JSON.stringify({ access_token_hash: hash }),
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!res.ok) throw new Error(`تعذر تأمين سجل المزامنة القديم (${res.status})`)
+  const rows = await res.json() as unknown[]
+  if (!Array.isArray(rows) || rows.length !== 1) throw new Error('سجل المزامنة مرتبط باعتماد آخر — راجع مسؤول النظام')
 }
 
 /** قراءة صف المتجر من السحابة — null لو غير موجود بعد */
@@ -58,6 +115,7 @@ export async function fetchRemote(c: SyncConfig): Promise<RemoteRow | null> {
   const rows = (await res.json()) as RawRow[]
   if (!Array.isArray(rows) || rows.length === 0) return null
   const r = rows[0]
+  if (!r.access_token_hash) await claimLegacyRow(c)
   return { rev: r.rev, deviceId: r.device_id, updatedAt: r.updated_at, checksum: r.checksum, data: r.data }
 }
 
@@ -66,7 +124,10 @@ export async function ensureRemoteRow(c: SyncConfig): Promise<void> {
   const res = await fetch(restUrl(c), {
     method: 'POST',
     headers: { ...headers(c), Prefer: 'resolution=ignore-duplicates' },
-    body: JSON.stringify({ store_id: c.storeId, rev: 0, device_id: '', checksum: '', data: '' }),
+    body: JSON.stringify({
+      store_id: c.storeId, rev: 0, device_id: '', checksum: '', data: '',
+      access_token_hash: await accessTokenHash(c.accessToken),
+    }),
     signal: AbortSignal.timeout(15000),
   })
   if (!res.ok && res.status !== 409) throw new Error(`تعذر إنشاء سجل المتجر (${res.status})`)
@@ -99,6 +160,22 @@ export async function pushRemote(
   if (!res.ok) throw new Error(`فشل الدفع للسحابة (${res.status})`)
   const rows = (await res.json()) as unknown[]
   return interpretPushResult(Array.isArray(rows) ? rows.length : 0, env)
+}
+
+/**
+ * تدوير مفتاح تشفير المحتوى دون كشف البيانات للسحابة:
+ * يفك الجهاز اللقطة بالمفتاح القديم، يعيد تشفيرها بالجديد، ثم يدفعها
+ * بمراجعة شرطية واحدة. يجب تحديث بقية الأجهزة عبر ملف ربط قبل المزامنة التالية.
+ */
+export async function rotateSyncEncryptionSecret(c: SyncConfig, newSecret: string, deviceId: string): Promise<number> {
+  if (!SYNC_SECRET_RE.test(newSecret) || newSecret === c.secret) throw new Error('مفتاح التشفير الجديد غير صالح أو مطابق للحالي')
+  const remote = await fetchRemote(c)
+  if (!remote || !remote.data) return remote?.rev ?? 0
+  const plain = await decryptFromSync(remote.data, c.secret)
+  const encrypted = await encryptForSync(plain, newSecret)
+  const outcome = await pushRemote({ ...c, secret: newSecret }, deviceId, remote.rev, encrypted)
+  if (outcome.action === 'conflict') throw new Error('تغيرت السحابة أثناء تدوير المفتاح — لم يُبدّل المفتاح، أعد المحاولة')
+  return remote.rev + 1
 }
 
 /* ─── التشفير قبل النقل: مفتاح من سر المتجر (يشترك فيه كل الأجهزة) ─── */

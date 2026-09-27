@@ -20,7 +20,10 @@
  * حماية (طلب المالك — ضد الحقن والرفع):
  * - نصوص JSON فقط: لا ملفات ولا وسائط — أي رد تليجرام غير نصي يُتجاهل.
  * - كل نص يُعقَّم (لا وسوم ولا محارف تحكم) وبحدود طول صارمة.
+ * - كل GET/POST للدعم يتطلب اعتماد جهاز عشوائياً 256-bit مع توقيع HMAC ووقت/nonce (v2).
+ * - KV يخزن بصمة الاعتماد فقط ويمنع إعادة استخدام nonce لمدة 10 دقائق.
  * - معرف الجهاز يُطابق نمطاً صارماً؛ حد معدل للإرسال لكل جهاز (10 رسائل/ساعة).
+ * - CORS allowlist صريحة من SUPPORT_ALLOWED_ORIGINS؛ لا يوجد wildcard.
  * - ويبهوك تليجرام محمي بـsecret_token — أي استدعاء بدونه يُرفض.
  *
  * ملاحظة أمان: نقاط العرض للعرض فقط — الحجية القانونية دائماً للمفتاح
@@ -29,17 +32,91 @@
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
-  'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type',
+  'access-control-allow-headers': 'content-type, authorization, x-support-protocol, x-support-timestamp, x-support-nonce, x-support-signature',
   'cache-control': 'no-store',
+  'vary': 'Origin',
 }
 
+const SUPPORT_PROTOCOL = '2'
 const DEVICE_RE = /^[A-Za-z0-9_-]{6,64}$/
 const TEXT_MAX = 1500
 const LOG_MAX = 60_000
 const CHAT_KEEP = 200 // آخر 200 رسالة لكل جهاز
 const RATE_LIMIT = 10 // رسائل لكل جهاز في الساعة
+const SUPPORT_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/ // 32 bytes base64url
+
+function hex(bytes) {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function supportTokenHash(token) {
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))))
+}
+
+function constantTimeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return diff === 0
+}
+
+/**
+ * توثيق قناة الدعم بنمط Trust On First Use:
+ * أول طلب صحيح الشكل يربط اعتماداً عشوائياً 256-bit بمعرف الجهاز، وبعدها لا يكفي
+ * معرفة deviceId لقراءة المحادثة أو الكتابة فيها. لا نخزن الاعتماد نفسه بل SHA-256.
+ */
+function hexToBytes(hexString) {
+  const out = new Uint8Array(hexString.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = Number.parseInt(hexString.slice(i * 2, i * 2 + 2), 16)
+  return out
+}
+
+async function supportRequestSignature(token, method, pathname, timestamp, requestNonce, signature, body) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(token),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify'],
+  )
+  const canonical = `${method.toUpperCase()}\n${pathname}\n${timestamp}\n${requestNonce}\n${body}`
+  return crypto.subtle.verify(
+    'HMAC', key, hexToBytes(signature),
+    new TextEncoder().encode(canonical),
+  )
+}
+
+/**
+ * توثيق قناة الدعم بنمط HMAC v2:
+ * الاعتماد العشوائي يثبت الجهاز، وتوقيع الطريقة/المسار/الوقت/الرقم الفريد
+ * يمنع إعادة تشغيل طلب صالح حتى لو تسربت نسخة من طلب HTTPS.
+ */
+async function authorizeSupport(request, env, deviceId, body = '') {
+  if (request.headers.get('x-support-protocol') !== SUPPORT_PROTOCOL) return false
+  const auth = request.headers.get('authorization') ?? ''
+  const token = auth.startsWith('Support ') ? auth.slice(8) : ''
+  if (!SUPPORT_TOKEN_RE.test(token)) return false
+
+  const timestamp = request.headers.get('x-support-timestamp') ?? ''
+  const requestNonce = request.headers.get('x-support-nonce') ?? ''
+  const signature = request.headers.get('x-support-signature') ?? ''
+  const timestampNumber = Number(timestamp)
+  if (!/^\d{10}$/.test(timestamp) || !Number.isInteger(timestampNumber) || Math.abs(Math.floor(Date.now() / 1000) - timestampNumber) > 300) return false
+  if (!/^[A-Za-z0-9_-]{24}$/.test(requestNonce) || !/^[0-9a-f]{64}$/i.test(signature)) return false
+  if (!await supportRequestSignature(token, request.method, new URL(request.url).pathname, timestamp, requestNonce, signature, body)) return false
+
+  const nonceKey = `support-nonce:${deviceId}:${requestNonce}`
+  if (await env.SHOPSYS_KV.get(nonceKey)) return false
+  await env.SHOPSYS_KV.put(nonceKey, '1', { expirationTtl: 600 })
+
+  const presentedHash = await supportTokenHash(token)
+  const key = `support-auth:${deviceId}`
+  const storedHash = await env.SHOPSYS_KV.get(key)
+  if (storedHash) return constantTimeEqual(storedHash, presentedHash)
+  await env.SHOPSYS_KV.put(key, presentedHash)
+  return true
+}
 
 /* ─── إصدار المفاتيح من البوت (ترقية بوت المطوّر — سد فجوة التدقيق) ───
  * نفس صيغة license_tool.mjs حرفياً: canonicalPayload → Ed25519 → SHOPSYS1.<b64u>.<b64u>
@@ -132,8 +209,25 @@ function clean(v, max = TEXT_MAX) {
     .slice(0, max)
 }
 
-function json(data, status = 200) {
-  return new Response(JSON.stringify(data), { status, headers: JSON_HEADERS })
+function allowedOrigin(request, env) {
+  const origin = request.headers.get('Origin')
+  if (!origin) return null
+  const configured = String(env.SUPPORT_ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  return configured.includes(origin) ? origin : null
+}
+
+function responseHeaders(request, env) {
+  const headers = new Headers(JSON_HEADERS)
+  const origin = allowedOrigin(request, env)
+  if (origin) headers.set('access-control-allow-origin', origin)
+  return headers
+}
+
+function json(data, status = 200, request, env) {
+  return new Response(JSON.stringify(data), { status, headers: responseHeaders(request, env) })
 }
 
 async function readChat(env, deviceId) {
@@ -184,33 +278,47 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url)
     const path = url.pathname.replace(/\/$/, '')
+    const requestOrigin = request.headers.get('Origin')
 
-    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: JSON_HEADERS })
+    if (requestOrigin && !allowedOrigin(request, env)) {
+      return json({ error: 'origin not allowed' }, 403, request, env)
+    }
+
+    if (request.method === 'OPTIONS') {
+      const origin = request.headers.get('Origin')
+      if (origin && !allowedOrigin(request, env)) return json({ error: 'origin not allowed' }, 403, request, env)
+      return new Response(null, { status: 204, headers: responseHeaders(request, env) })
+    }
 
     /* ─── قناة الدعم: GET يجلب المحادثة، POST يرسل رسالة ─── */
     const sm = path.match(/^\/support\/([A-Za-z0-9_-]{6,64})$/)
     if (sm) {
       const deviceId = sm[1]
-      if (!DEVICE_RE.test(deviceId)) return json({ error: 'bad device' }, 400)
+      if (!DEVICE_RE.test(deviceId)) return json({ error: 'bad device' }, 400, request, env)
+      let rawBody = ''
+      if (request.method === 'POST') {
+        rawBody = await request.text()
+        if (new TextEncoder().encode(rawBody).byteLength > 200_000) return json({ error: 'too large' }, 413, request, env)
+      }
+      if (!(await authorizeSupport(request, env, deviceId, rawBody))) return json({ error: 'unauthorized' }, 401, request, env)
 
       if (request.method === 'GET') {
-        return json(await readChat(env, deviceId))
+        return json(await readChat(env, deviceId), 200, request, env)
       }
 
       if (request.method === 'POST') {
         // حد الحجم الكلي (نص + لوج) — يمنع إغراق الووركر
-        if ((Number(request.headers.get('content-length')) || 0) > 200_000) return json({ error: 'too large' }, 413)
         let body
-        try { body = await request.json() } catch { return json({ error: 'json only' }, 400) }
+        try { body = JSON.parse(rawBody) } catch { return json({ error: 'json only' }, 400, request, env) }
 
         // حد المعدل: 10 رسائل/ساعة لكل جهاز
         const hourKey = `rate:${deviceId}:${new Date().toISOString().slice(0, 13)}`
         const count = Number((await env.SHOPSYS_KV.get(hourKey)) || 0)
-        if (count >= RATE_LIMIT) return json({ error: 'rate limit' }, 429)
+        if (count >= RATE_LIMIT) return json({ error: 'rate limit' }, 429, request, env)
         await env.SHOPSYS_KV.put(hourKey, String(count + 1), { expirationTtl: 3700 })
 
         const text = clean(body?.text)
-        if (text.length < 3) return json({ error: 'empty' }, 400)
+        if (text.length < 3) return json({ error: 'empty' }, 400, request, env)
         const customer = clean(body?.customer, 80) || 'غير مسمى'
         const activity = clean(body?.activity, 40)
         const appVersion = clean(body?.appVersion, 20)
@@ -227,20 +335,20 @@ export default {
           const logText = String(body.log).slice(-LOG_MAX).replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
           await tgSendLog(env, deviceId, logText)
         }
-        return json({ ok: true })
+        return json({ ok: true }, 200, request, env)
       }
 
-      return json({ error: 'method' }, 405)
+      return json({ error: 'method' }, 405, request, env)
     }
 
     /* ─── ويبهوك تليجرام: رد المطوّر (Reply) يدخل محادثة العميل ─── */
     if (path === '/tg-webhook' && request.method === 'POST') {
       // secret_token إلزامي — أي استدعاء بدونه يُرفض (حماية من حقن البوت)
       if (!env.TG_WEBHOOK_SECRET || request.headers.get('x-telegram-bot-api-secret-token') !== env.TG_WEBHOOK_SECRET) {
-        return json({ error: 'forbidden' }, 403)
+        return json({ error: 'forbidden' }, 403, request, env)
       }
       let update
-      try { update = await request.json() } catch { return json({ ok: true }) }
+      try { update = await request.json() } catch { return json({ ok: true }, 200, request, env) }
       const msg = update?.message
       // نقبل فقط: رسالة نصية، من محادثة المطوّر نفسها، وهي Reply على رسالة بلاغ
       const replyTo = msg?.reply_to_message?.message_id
@@ -411,10 +519,10 @@ export default {
         }
       }
       // أي شيء آخر (ملفات/وسائط/محادثات غريبة) يُتجاهل بصمت
-      return json({ ok: true })
+      return json({ ok: true }, 200, request, env)
     }
 
-    if (request.method !== 'GET') return json({ error: 'GET only' }, 405)
+    if (request.method !== 'GET') return json({ error: 'GET only' }, 405, request, env)
 
     // GET /about — محتوى صفحة «حول» يتحكم فيه المطوّر
     if (path === '/about') {
@@ -424,13 +532,13 @@ export default {
         body: 'نظام عربي متكامل — تواصل مع المطوّر للتفعيل والدعم.',
         supportPhone: '', supportTelegram: '', website: '',
         updatedAt: new Date().toISOString(),
-      }), { headers: JSON_HEADERS })
+      }), { headers: responseHeaders(request, env) })
     }
 
     // GET /revoked — بصمات المفاتيح المحروقة (حرق نهائي، لا يعاد الاستخدام)
     if (path === '/revoked') {
       const raw = await env.SHOPSYS_KV.get('revoked')
-      return new Response(raw ?? '[]', { headers: JSON_HEADERS })
+      return new Response(raw ?? '[]', { headers: responseHeaders(request, env) })
     }
 
     // GET /version — أحدث إصدار منشور (البند 6: زر «فحص التحديثات» في «حول»)
@@ -444,15 +552,15 @@ export default {
         sha256: '',
         mandatory: false,
         publishedAt: new Date().toISOString(),
-      }), { headers: JSON_HEADERS })
+      }), { headers: responseHeaders(request, env) })
     }
 
     // GET /subscription/:deviceId — حالة اشتراك للعرض في التطبيق
     const m = path.match(/^\/subscription\/([A-Z0-9-]+)$/i)
     if (m) {
       const raw = await env.SHOPSYS_KV.get(`sub:${m[1]}`)
-      if (!raw) return json(null)
-      return new Response(raw, { headers: JSON_HEADERS })
+      if (!raw) return json(null, 200, request, env)
+      return new Response(raw, { headers: responseHeaders(request, env) })
     }
 
     // GET /flags/:deviceId — مفتاح الإطفاء السحابي (البند 5):
@@ -461,10 +569,10 @@ export default {
     const fm = path.match(/^\/flags\/([A-Z0-9-]+)$/i)
     if (fm) {
       const raw = await env.SHOPSYS_KV.get(`flags:${fm[1]}`)
-      return new Response(raw ?? JSON.stringify({ disabledFeatures: [], noteAr: '', updatedAt: '' }), { headers: JSON_HEADERS })
+      return new Response(raw ?? JSON.stringify({ disabledFeatures: [], noteAr: '', updatedAt: '' }), { headers: responseHeaders(request, env) })
     }
 
-    return json({ error: 'not found' }, 404)
+    return json({ error: 'not found' }, 404, request, env)
   },
 
   /**

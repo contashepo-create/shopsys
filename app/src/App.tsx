@@ -29,6 +29,7 @@ import { WarehousesPage } from './ui/pages/WarehousesPage.tsx'
 import { BranchesPage } from './ui/pages/BranchesPage.tsx'
 import { CustomersPage, SuppliersPage } from './ui/pages/PartiesPages.tsx'
 import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
+import { AdvancedPurchaseInvoicePage } from './ui/pages/AdvancedPurchaseInvoicePage.tsx'
 import { PurchaseReturnsPage } from './ui/pages/PurchaseReturnsPage.tsx'
 import { StocktakePage } from './ui/pages/StocktakePage.tsx'
 import { RecipesPage } from './ui/pages/RecipesPage.tsx'
@@ -38,6 +39,7 @@ import { PriceListsPage } from './ui/pages/PriceListsPage.tsx'
 import { PromotionsPage } from './ui/pages/PromotionsPage.tsx'
 import { PosPage } from './ui/pages/PosPage.tsx'
 import { SalesInvoicesPage } from './ui/pages/SalesInvoicesPage.tsx'
+import { AdvancedSalesInvoicePage } from './ui/pages/AdvancedSalesInvoicePage.tsx'
 import { SaleReturnsPage } from './ui/pages/SaleReturnsPage.tsx'
 import { ShiftsPage } from './ui/pages/ShiftsPage.tsx'
 import { JournalPage } from './ui/pages/JournalPage.tsx'
@@ -45,13 +47,16 @@ import { CoaPage } from './ui/pages/CoaPage.tsx'
 import { TrialBalancePage } from './ui/pages/TrialBalancePage.tsx'
 import { VouchersPage } from './ui/pages/VouchersPage.tsx'
 import { TreasuryPage } from './ui/pages/TreasuryPage.tsx'
+import { PaymentTerminalsPage } from './ui/pages/PaymentTerminalsPage.tsx'
 import { ChequesPage } from './ui/pages/ChequesPage.tsx'
 import { EinvoicePage } from './ui/pages/EinvoicePage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
+import { CostCentersPage } from './ui/pages/CostCentersPage.tsx'
 import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
 import { InstallmentsPage } from './ui/pages/InstallmentsPage.tsx'
 import { ReportsPage } from './ui/pages/ReportsPage.tsx'
+import { NasqPage } from './ui/pages/NasqPage.tsx'
 import { StatementsPage } from './ui/pages/StatementsPage.tsx'
 import { LicensePage } from './ui/pages/LicensePage.tsx'
 import { BackupPage } from './ui/pages/BackupPage.tsx'
@@ -95,6 +100,7 @@ import { TelegramPage } from './ui/pages/TelegramPage.tsx'
 import { AssetsPage } from './ui/pages/AssetsPage.tsx'
 import { ExternalCommissionsPage } from './ui/pages/ExternalCommissionsPage.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
+import { KeyboardNavigation } from './ui/components/KeyboardNavigation.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
 
 function usePageTitle(): string {
@@ -162,10 +168,12 @@ function Shell() {
 
   return (
     <MainLayout title={title}>
+      <KeyboardNavigation />
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/settings/permissions" element={<PermissionsPage />} />
         <Route path="/settings/general" element={<GeneralSettingsPage />} />
+        <Route path="/settings/cost-centers" element={<CostCentersPage />} />
         <Route path="/inventory/items" element={<ItemsPage />} />
         <Route path="/inventory/warehouses" element={<WarehousesPage />} />
         <Route path="/parties/customers" element={<CustomersPage />} />
@@ -173,6 +181,7 @@ function Shell() {
         {/* شاشات المراحل القادمة — كلها مسجلة في الراوتر منذ الآن */}
         <Route path="/pos" element={<PosPage />} />
         <Route path="/sales/invoices" element={<SalesInvoicesPage />} />
+        <Route path="/sales/invoices/new" element={<AdvancedSalesInvoicePage />} />
         <Route path="/sales/returns" element={<SaleReturnsPage />} />
         <Route path="/sales/shifts" element={<ShiftsPage />} />
         <Route path="/sales/price-lists" element={<PriceListsPage />} />
@@ -183,8 +192,13 @@ function Shell() {
         <Route path="/inventory/processing" element={<ProcessingPage />} />
         <Route path="/inventory/jewelry" element={<JewelryPage />} />
         <Route path="/purchases/invoices" element={<PurchasesPage />} />
+        <Route path="/purchases/invoices/new" element={<AdvancedPurchaseInvoicePage />} />
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
         <Route path="/parties/employees" element={<EmployeesPage />} />
+        <Route path="/parties/payroll" element={<EmployeesPage initialTab="payroll" />} />
+        <Route path="/parties/employee-advances" element={<EmployeesPage initialTab="advances" />} />
+        <Route path="/parties/employee-deductions" element={<EmployeesPage initialTab="deductions" />} />
+        <Route path="/parties/employee-commissions" element={<EmployeesPage initialTab="commissions" />} />
         <Route path="/parties/installments" element={<InstallmentsPage />} />
         <Route path="/maintenance/tickets" element={<MaintenancePage />} />
         <Route path="/laundry/orders" element={<LaundryPage />} />
@@ -219,11 +233,13 @@ function Shell() {
         <Route path="/accounting/trial-balance" element={<TrialBalancePage />} />
         <Route path="/accounting/vouchers" element={<VouchersPage />} />
         <Route path="/accounting/treasury" element={<TreasuryPage />} />
+        <Route path="/accounting/payment-terminals" element={<PaymentTerminalsPage />} />
         <Route path="/accounting/cheques" element={<ChequesPage />} />
         <Route path="/accounting/assets" element={<AssetsPage />} />
         <Route path="/accounting/external-commissions" element={<ExternalCommissionsPage />} />
         <Route path="/branches" element={<BranchesPage />} />
         <Route path="/reports" element={<ReportsPage />} />
+        <Route path="/reports/nasq" element={<NasqPage />} />
         <Route path="/reports/statements" element={<StatementsPage />} />
         <Route path="/settings/printing" element={<PrintSettingsPage />} />
         <Route path="/settings/backup" element={<BackupPage />} />

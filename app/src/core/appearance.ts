@@ -74,6 +74,7 @@ export const ACCENTS: AccentPalette[] = [
  */
 export const ACTIVITY_ACCENTS: Record<string, string> = {
   grocery: 'emerald', // طزاجة الأغذية
+  feed_trade: 'date_palm', // أعلاف وحبوب بطابع زراعي
   mobile: 'sky', // تقني هادئ
   clothing: 'fuchsia', // أزياء وحيوية
   pharmacy: 'teal', // طبي مطمئن
@@ -93,6 +94,13 @@ export const ACTIVITY_ACCENTS: Record<string, string> = {
   salon: 'fuchsia', // أناقة وعناية
   bakery: 'amber', // دفء الأفران
   realestate: 'teal', // عقارات وعمران
+  trading: 'indigo', // تجارة وتوزيع
+  manufacturing: 'orange', // مصنع وورشة
+  services: 'sky', // شركة خدمات
+  stationery: 'fuchsia', // مكتبة وخدمة طالب
+  herbalist: 'emerald', // عطارة وبهارات
+  building_materials: 'orange', // مواد بناء
+  household: 'teal', // منظفات وأدوات منزلية
   general: 'indigo', // الافتراضي
 }
 
@@ -115,12 +123,15 @@ export interface AppearanceSettings {
   accentId: string
   zoom: number
   reduceMotion: boolean
+  /** نمط التنقل: جانبي افتراضياً، أو شريط علوي بقوائم أقسام منسدلة */
+  navigationMode: 'sidebar' | 'topbar'
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
   accentId: DEFAULT_ACCENT_ID,
   zoom: 1,
   reduceMotion: false,
+  navigationMode: 'sidebar',
 }
 
 /** خريطة متغيرات CSS للون المختار — تُطبَّق على documentElement */
@@ -137,5 +148,6 @@ export function buildAccentCssVars(accentId: string): Record<string, string> {
 export function sanitizeAppearance(input: Partial<AppearanceSettings> | null | undefined): AppearanceSettings {
   const accentId = input?.accentId && ACCENTS.some((a) => a.id === input.accentId) ? input.accentId : DEFAULT_ACCENT_ID
   const zoom = input?.zoom && ZOOM_LEVELS.some((z) => z.value === input.zoom) ? input.zoom : 1
-  return { accentId, zoom, reduceMotion: input?.reduceMotion === true }
+  const navigationMode = input?.navigationMode === 'topbar' ? 'topbar' : 'sidebar'
+  return { accentId, zoom, reduceMotion: input?.reduceMotion === true, navigationMode }
 }

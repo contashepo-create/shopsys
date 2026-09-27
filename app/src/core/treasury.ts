@@ -16,6 +16,10 @@ export interface TreasuryDef {
   // ─── بيانات احترافية (طلب المالك — بمستوى البرامج العالمية) ───
   /** اسم إضافي/فرعي: «درج الكاشير 2» أو الاسم الإنجليزي للبنك */
   aliasAr?: string
+  /** حساب أب عند تمثيل فرع بنك أو محفظة تابعة له */
+  parentCode?: string | null
+  /** قناة الحساب البنكي لعرضه واختياره بوضوح */
+  channel?: 'bank_account' | 'wallet'
   /** رقم الحساب البنكي */
   accountNumber?: string
   /** الآيبان IBAN */
@@ -80,7 +84,7 @@ export function treasuryAccounts(treasuries: TreasuryDef[]): Account[] {
 
 /** اسم معروض بأيقونة النوع */
 export function treasuryLabel(t: TreasuryDef): string {
-  return `${t.kind === 'cash' ? '💰' : '🏦'} ${t.nameAr}`
+  return `${t.kind === 'cash' ? '💰' : t.channel === 'wallet' ? '📱' : '🏦'} ${t.nameAr}${t.branch ? ` — ${t.branch}` : ''}`
 }
 
 /**

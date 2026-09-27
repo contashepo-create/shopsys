@@ -13,6 +13,8 @@ globalThis.window = globalThis
 
 const { useDataStore } = await import('../src/data/repo.ts')
 const S = () => useDataStore.getState()
+S().seed([])
+const outputWarehouseId = S().warehouses.find((warehouse) => warehouse.isMain).id
 
 let pass = 0, fail = 0
 const ok = (name, cond, extra = '') => { if (cond) { pass++; console.log(`  ✅ ${name}`) } else { fail++; console.log(`  ❌ ${name}${extra ? ' — ' + String(extra) : ''}`) } }
@@ -90,17 +92,17 @@ const r2 = S().addRecipe({
 ok('تكلفة وحدة الصوص = 10', S().getRecipeUnitCost(r2.id) === 1000)
 const invBeforeProd = invValue()
 const cashBefore = bal('1101')
-const order = S().postProduction({ recipeId: r2.id, batches: 2, treasury: '1101' })
+const order = S().postProduction({ recipeId: r2.id, batches: 2, treasury: '1101', outputWarehouseId })
 ok('أمر الإنتاج PRD مرقم بمرجع', order.orderNumber === 'PRD-0001' && order.refCode.startsWith('PRD-'))
 ok('أُنتج 40 صوص', order.producedQty === 40 && stockOf(sauce) === 40)
 ok('الخامات استُهلكت (طماطم −10، جبن −20)', stockOf(tomato) === 9.9 && stockOf(cheese) === 26)
 ok('تكلفة الصوص بالمتوسط = 10', costOf(sauce) === 1000)
 ok('قيمة المخزون ارتفعت بمصاريف التشغيل فقط', invValue() === invBeforeProd + 4000)
-ok('الخزينة دفعت مصاريف التشغيل 40', bal('1101') - cashBefore === -4000)
+ok('التكلفة المعيارية للإنتاج لا تسحب نقدية بلا مصروف مدخل', bal('1101') - cashBefore === 0)
 ok('حركة 1103 ما زالت تطابق حركة المخزون', bal('1103') - opening1103 === invValue() - openingInv)
-throws('إنتاج بخامات غير كافية يُرفض', () => S().postProduction({ recipeId: r2.id, batches: 100 }), 'خامات غير كافية')
-throws('إنتاج من وصفة «عند الطلب» يُرفض', () => S().postProduction({ recipeId: r1.id, batches: 1 }), 'إنتاج مسبق')
-throws('تشغيلات صفر تُرفض', () => S().postProduction({ recipeId: r2.id, batches: 0 }), 'موجباً')
+throws('إنتاج بخامات غير كافية يُرفض', () => S().postProduction({ recipeId: r2.id, batches: 100, outputWarehouseId }), 'خامات غير كافية')
+throws('إنتاج من وصفة «عند الطلب» يُرفض', () => S().postProduction({ recipeId: r1.id, batches: 1, outputWarehouseId }), 'إنتاج مسبق')
+throws('تشغيلات صفر تُرفض', () => S().postProduction({ recipeId: r2.id, batches: 0, outputWarehouseId }), 'موجباً')
 
 console.log('🥪 الصوص المنتَج يُباع كصنف عادي ويصلح مكوناً')
 S().postSale({

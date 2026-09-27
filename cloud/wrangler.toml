@@ -12,6 +12,10 @@ compatibility_date = "2026-09-01"
 # [triggers]
 # crons = ["0 9 * * *"]
 
+# قائمة CORS إلزامية — لا تستخدم wildcard. ضع origins الإنتاجية فقط، مفصولة بفواصل:
+#   wrangler secret put SUPPORT_ALLOWED_ORIGINS
+#   مثال القيمة: https://app.example.com,https://desktop.example.com
+#
 # أسرار البوت (تُضبط مرة واحدة):
 #   wrangler secret put DEV_BOT_TOKEN        ← توكن بوت المطوّر
 #   wrangler secret put DEV_CHAT_ID          ← محادثة المطوّر

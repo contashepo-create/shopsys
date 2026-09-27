@@ -32,6 +32,8 @@ interface SetupState {
   modules: BusinessModule[]
   taxInclusive: boolean
   vatPercent: number
+  /** الصفة القانونية منفصلة عن النسبة: المسجل بنسبة صفر ليس معفى */
+  taxRegistrationStatus?: 'registered' | 'exempt' | 'zero_rated'
   accountingMode: 'simple' | 'full'
   /** السماح بالرصيد السالب في الخزائن والبنوك (طلب المالك — الافتراضي: ممنوع) */
   allowNegativeTreasury: boolean
@@ -138,6 +140,8 @@ export interface SyncSettings {
   anonKey: string
   storeId: string
   secret: string
+  /** اعتماد RLS عشوائي 256-bit، منفصل عن سر تشفير المحتوى */
+  accessToken: string
   lastKnownRev: number // آخر مراجعة سحابية طبقها هذا الجهاز
   lastSyncedAt: string | null
   lastResult: string | null // آخر رسالة نتيجة للعرض
@@ -145,7 +149,7 @@ export interface SyncSettings {
 }
 
 export const DEFAULT_SYNC_SETTINGS: SyncSettings = {
-  enabled: false, url: '', anonKey: '', storeId: '', secret: '',
+  enabled: false, url: '', anonKey: '', storeId: '', secret: '', accessToken: '',
   lastKnownRev: 0, lastSyncedAt: null, lastResult: null, dirty: false,
 }
 
@@ -192,6 +196,7 @@ export const useAppStore = create<AppState>()(
         modules: [],
         taxInclusive: true,
         vatPercent: 14,
+        taxRegistrationStatus: 'registered',
         accountingMode: 'simple',
         allowNegativeTreasury: false,
         allowNegativeStock: false,

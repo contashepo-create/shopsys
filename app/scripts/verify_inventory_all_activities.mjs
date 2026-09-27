@@ -38,7 +38,7 @@ const { supplierStatement, statementBalance } = await import(join(root, 'src/cor
 const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 28)
+assert.equal(ACTIVITIES.length, 29)
 
 let pass = 0
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
@@ -121,7 +121,7 @@ for (const activityId of ACTIVITIES) {
   check1103('بعد مرتجع الشراء')
 
   // 8) حذف الصنف مرفوض — الفجوة المسدودة تسري في كل نشاط
-  assert.throws(() => st().removeItem(item.id), /فواتير شراء/, `${activityId}: منع الحذف`)
+  assert.throws(() => st().removeItem(item.id, { approvedBy: 'المالك' }), /فواتير شراء/, `${activityId}: منع الحذف`)
 
   // 9) الثوابت الختامية
   for (const e of st().journal) assertBalanced(e.lines)
@@ -137,5 +137,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✓ ${nameAr} (${activityId}): شراء→تحويل→بيع→مرتجع→جرد→إتلاف→صرف→مرتجع شراء — ${st().journal.length} قيود متوازنة و1103 مطابق في كل خطوة`)
 }
 
-assert.equal(pass, 28)
+assert.equal(pass, 29)
 console.log(`\n✅ verify_inventory_all_activities: دورة المخزون المتشابكة مع الأقسام الأربعة سليمة على الأنشطة الـ${pass}`)

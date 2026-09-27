@@ -37,6 +37,8 @@ const { trialBalance, incomeStatement, balanceSheet } = await import(join(root, 
 const { buildFiscalYearReport } = await import(join(root, 'src/core/fiscal.ts'))
 
 const st = () => useDataStore.getState()
+st().seed([])
+const outputWarehouseId = st().warehouses.find((warehouse) => warehouse.isMain).id
 const P = { from: '2000-01-01', to: '2099-12-31' }
 let pass = 0, checkpoints = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
@@ -173,7 +175,7 @@ ok('بيع 10 برجر استهلك 2 كج لحم و10 عيش تلقائياً (
 // إنتاج مسبق للكرواسون: تشغيلة تحول الخامات لمنتج بتكلفة مشتقة
 st().addRecipe({ productItemId: croissant.id, mode: 'prepped', yieldQty: 50, ingredients: [{ itemId: bun.id, qty: 25 }], overheadMinor: 25_000, isActive: true, notes: '' })
 const recipe2 = st().recipes.at(-1)
-st().postProduction({ recipeId: recipe2.id, batches: 2, treasury: '1101' })
+st().postProduction({ recipeId: recipe2.id, batches: 2, treasury: '1101', outputWarehouseId })
 core('R2 أمر إنتاج مسبق')
 assert.equal(st().items.find((i) => i.id === croissant.id).stockQty, 100)
 ok('تشغيلتان أنتجتا 100 كرواسون — الخامات خرجت والتكلفة انتقلت للمنتج + مصاريف التشغيل')

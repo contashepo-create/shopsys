@@ -84,9 +84,14 @@ console.log('\n═══ G1) أرضية السعر (DEXEF/الأمين) ══�
   // صنف بلا حد (0/undefined) لا يُفحص
   st().addItem({ nameAr: 'سكر', sku: 'SGR-1', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [], costMinor: 20_00, stockQty: 50, priceMinor: 30_00, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true })
   const sugar = st().items.at(-1)
-  const s2 = st().postSale({ lines: [{ itemId: sugar.id, nameAr: sugar.nameAr, qty: 1, unitPriceMinor: 1_00, unitCostMinor: 20_00, discountPercent: 0, soldByWeight: false }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true })
+  assert.throws(
+    () => st().postSale({ lines: [{ itemId: sugar.id, nameAr: sugar.nameAr, qty: 1, unitPriceMinor: 1_00, unitCostMinor: 20_00, discountPercent: 0, soldByWeight: false }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true }),
+    (e) => e instanceof PriceFloorError && e.itemNames.includes('سكر'),
+    'البيع تحت التكلفة يجب أن يطلب اعتماداً حتى بلا حد أدنى',
+  )
+  const s2 = st().postSale({ lines: [{ itemId: sugar.id, nameAr: sugar.nameAr, qty: 1, unitPriceMinor: 1_00, unitCostMinor: 20_00, discountPercent: 0, soldByWeight: false }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, priceFloorOverrideBy: 'المدير أحمد' })
   assert.ok(s2.id)
-  ok('صنف بلا حد أدنى: يباع بأي سعر (سلوك اختياري لا إجباري)')
+  ok('صنف بلا حد أدنى: لا يفرض حداً مستقلاً، مع بقاء اعتماد البيع تحت التكلفة إلزامياً')
 }
 
 console.log('\n═══ G2) الأصناف الراكدة ═══')

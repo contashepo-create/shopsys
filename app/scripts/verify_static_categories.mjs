@@ -66,7 +66,7 @@ repoLines.forEach((l, i) => {
   if (m) starts.push([i, m[1]])
 })
 // استثناءات مراجَعة يدوياً: متغير مفرد (نتيجة find) لا مصفوفة — لا يمرر إلى set
-const singularWhitelist = new Set(['postTrip:custodyFile'])
+const singularWhitelist = new Set(['postTrip:custodyFile', 'postSale:workingBatches'])
 let flagged = []
 for (let k = 0; k < starts.length; k++) {
   const [start, name] = starts[k]

@@ -41,10 +41,9 @@ export function EinvoicePage() {
       <div className="max-w-2xl">
         <div className={`anim-up ${card} !p-10 text-center space-y-3`}>
           <Lock className="w-12 h-12 mx-auto text-slate-300" />
-          <h1 className="text-xl font-black">الفاتورة الإلكترونية — ميزة مدفوعة</h1>
+          <h1 className="text-xl font-black">الفاتورة الإلكترونية غير مفعّلة</h1>
           <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed max-w-md mx-auto">
-            رمز QR زاتكا (السعودية) وتصدير مستندات بوابة الضرائب (مصر) يفعّلهما المطوّر
-            بمفتاح الترخيص حسب بلدك. تواصل معه من صفحة «حول التطبيق» لتفعيل الميزة.
+            الإصدار الإلكتروني الرسمي والرمز الضريبي غير مفعّلين على هذه المنشأة حالياً.
           </p>
           {/* سياسة المالك: عدم التفعيل لا يوقف الضريبة إطلاقاً — فقط الرمز الضريبي */}
           <div className="text-right max-w-md mx-auto text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed rounded-xl bg-slate-500/5 border border-slate-200 dark:border-slate-700 p-4 space-y-1.5">
@@ -158,6 +157,10 @@ export function EinvoicePage() {
           <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
             <FileCheck2 size={17} className="text-slate-500" /> بيانات الممول
           </div>
+          <label className="flex items-center gap-2 text-[13px] font-bold text-slate-700 dark:text-slate-200 cursor-pointer">
+            <input type="checkbox" checked={einvoice.enabled === true} onChange={(e) => updateEinvoice({ enabled: e.target.checked })} className="w-4 h-4 accent-emerald-600" />
+            تشغيل الإصدار الإلكتروني الرسمي وربط دورة المستندات
+          </label>
           <Field label={saActive ? 'الرقم الضريبي (زاتكا: 15 رقماً يبدأ وينتهي بـ3)' : 'رقم التسجيل الضريبي (مصر: 9 أرقام)'}>
             <input value={taxNumber} onChange={(e) => setTaxNumber(e.target.value)} placeholder={saActive ? '310122393500003' : '123456789'} className={inputCls} dir="ltr" />
           </Field>

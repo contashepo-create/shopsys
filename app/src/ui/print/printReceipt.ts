@@ -39,6 +39,7 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
   const metaBottom: string[] = []
   if (settings.showCustomer) metaBottom.push(`<span>العميل: ${esc(model.customerName)}</span>`)
   if (settings.showPayment) metaBottom.push(`<span>الدفع: ${esc(model.paymentLabel)}</span>`)
+  if (model.operatorName?.trim()) metaBottom.push(`<span>طبع بواسطة: ${esc(model.operatorName)}</span>`)
 
   return `<!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8">

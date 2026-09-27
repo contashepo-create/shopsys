@@ -27,11 +27,13 @@ const html = renderRentalContractHtml({
   shopName: 'الوطنية للمعدات', shopPhone: '0100', contractNumber: 'RC-0009', dateIso: '2026-09-16T10:00:00Z',
   customerName: 'شركة النيل', customerPhone: '0111', equipmentName: 'حفار كوماتسو', equipmentCode: 'EX-200',
   units: 5, unitLabel: 'يوم', unitRate: '3,000 ج.م', rentTotal: '15,000 ج.م', vat: '', deposit: '10,000 ج.م',
+  paymentLabel: 'مدفوع + آجل', paidRent: '8,000 ج.م', dueRent: '7,000 ج.م',
   startReading: 4520, expectedEnd: '2026-09-21T10:00:00Z', notes: '',
 })
 ok('العقد والطرفان والمعدة', html.includes('RC-0009') && html.includes('شركة النيل') && html.includes('حفار كوماتسو'))
 ok('المدة وموعد الإرجاع', html.includes('5 يوم') && html.includes('2026-09-21'))
 ok('قراءة العدّاد والتأمين', html.includes('4520') && html.includes('10,000'))
+ok('المبلغ المدفوع والمتبقي في العقد', html.includes('مدفوع + آجل') && html.includes('8,000') && html.includes('7,000'))
 ok('بنود الالتزام والتوقيعان', html.includes('من الباطن') && html.includes('الطرف الأول') && html.includes('الطرف الثاني'))
 ok('تهريب HTML', renderRentalContractHtml({ shopName: '<script>', shopPhone: '', contractNumber: 'x', dateIso: '2026-01-01', customerName: 'a', customerPhone: '', equipmentName: 'b', equipmentCode: '', units: 1, unitLabel: 'يوم', unitRate: '1', rentTotal: '1', vat: '', deposit: '', startReading: null, expectedEnd: '2026-01-02', notes: '' }).includes('&lt;script&gt;'))
 

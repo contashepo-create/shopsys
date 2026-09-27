@@ -17,9 +17,9 @@ console.log('🔍 فحص نموذج الأصناف (items.ts)')
 const groceryCat = { id: 1, nameAr: 'ألبان', features: ['expiry_batches', 'weight_scale', 'multi_unit'] }
 const mobileCat = { id: 2, nameAr: 'موبايلات', features: ['serial_warranty', 'variants'] }
 
-ok('الوراثة: قسم أغذية → صلاحية + وزن مفعلان والوحدة كجم', () => {
+ok('الوراثة: قسم أغذية → الوزن مفعل والوحدة كجم، والصلاحية اختيارية', () => {
   const d = draftFromCategory(groceryCat, 'ITM-1001')
-  assert.equal(d.trackExpiry, true)
+  assert.equal(d.trackExpiry, false)
   assert.equal(d.soldByWeight, true)
   assert.equal(d.trackSerial, false)
   assert.equal(d.baseUnit, 'كجم')
@@ -40,7 +40,7 @@ ok('التجاوز الفردي: غسالة بسيريال داخل هايبر �
   d.baseUnit = 'قطعة'
   const errs = validateItem(d, []).filter((e) => !e.startsWith('تنبيه'))
   assert.equal(errs.length, 0)
-  assert.equal(d.trackExpiry, true) // ما زال يرث صلاحية القسم حتى يُعطَّل
+  assert.equal(d.trackExpiry, false) // الصلاحية اختيارية ولا تُفرض من القسم
 })
 
 ok('تنبيه (غير مانع) عند سعر بيع صفر — درس خطأ الكاشير', () => {

@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * صفحات المقاولات (القرار 27):
  * ProjectsPage — مشروعات بمستخلصات (PRX) وتكاليف ببنود ومحتجزات وربحية
@@ -13,7 +14,8 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, CHANGE_ORDER_STATUS_LABELS, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
-import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -23,7 +25,7 @@ import { printHtml } from '../print/printReceipt.ts'
 
 export function ProjectsPage() {
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems, costCenters, paymentTerminals, paymentTerminalTransactions,
     addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission,
@@ -100,6 +102,7 @@ export function ProjectsPage() {
   const [exDesc, setExDesc] = useState('')
   const [exPayment, setExPayment] = useState<'cash' | 'credit'>('credit')
   const [exTreasury, setExTreasury] = useState('1101')
+  const [exTerminal, setExTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [exVat, setExVat] = useState(true)
   const [exRecovery, setExRecovery] = useState('')
   /* المستخلص البندي (AccFlex): نسب تنفيذ تراكمية لكل بند BOQ — قيمة الشريحة تُحسب تلقائياً */
@@ -108,16 +111,14 @@ export function ProjectsPage() {
   const [exLines, setExLines] = useState<Record<number, string>>({}) // boqItemId → النسبة الجديدة كنص
   const extractBoq = useMemo(() => (extractFor ? boqItems.filter((b) => b.projectId === extractFor.id) : []), [boqItems, extractFor])
   const exLinesPreview = useMemo(() => {
-    let sum = 0
     const rows = extractBoq.map((b) => {
       const raw = exLines[b.id]
       const np = raw === undefined || raw === '' ? null : Number(raw)
       const total = Math.round(b.qty * b.unitPriceMinor)
       const slice = np !== null && Number.isFinite(np) && np > b.progressPercent && np <= 100 ? Math.round((total * (np - b.progressPercent)) / 100) : 0
-      sum += slice
       return { boq: b, newPercent: np, sliceMinor: slice }
     })
-    return { rows, grossMinor: sum }
+    return { rows, grossMinor: rows.reduce((sum, row) => sum + row.sliceMinor, 0) }
   }, [extractBoq, exLines])
 
   // مستخلص آجل فوق حد ائتمان عميل المشروع — تجاوز باعتماد مدير
@@ -134,11 +135,13 @@ export function ProjectsPage() {
               return b ? l.newProgressPercent > b.progressPercent : false
             })
         : undefined
+      const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
       const ex = addProjectExtract({
         projectId: extractFor.id,
         grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
         extractLines: linesInput,
-        vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
+        vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: terminal?.settlementAccountCode ?? exTreasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: exTerminal.providerReference.trim(), cardLast4: exTerminal.cardLast4 || undefined } : undefined,
         advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
         isFinal: exFinal,
@@ -159,6 +162,7 @@ export function ProjectsPage() {
   const [costPayment, setCostPayment] = useState<'cash' | 'credit'>('cash')
   const [costPaySource, setCostPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [costVat, setCostVat] = useState('')
+  const [costCenterId, setCostCenterId] = useState<number | null>(null)
 
   const saveCost = () => {
     if (!costFor) return
@@ -169,9 +173,10 @@ export function ProjectsPage() {
         payment: costPayment, description: costDesc.trim(),
         treasury: costPaySource.kind === 'treasury' ? costPaySource.treasury : undefined,
         custodyFileId: costPayment === 'cash' && costPaySource.kind === 'custody' ? costPaySource.custodyFileId : null,
+        costCenterId,
       })
       toast.show('سُجلت التكلفة على المشروع بقيد متوازن ✅')
-      setCostFor(null); setCostAmount(''); setCostDesc(''); setCostVat('')
+      setCostFor(null); setCostAmount(''); setCostDesc(''); setCostVat(''); setCostCenterId(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -236,15 +241,18 @@ export function ProjectsPage() {
 
   const [releaseFor, setReleaseFor] = useState<Project | null>(null)
   const [releaseTreasury, setReleaseTreasury] = useState('1101')
+  const [releaseTerminal, setReleaseTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
 
   /* دفعة مقدمة من العميل */
   const [advanceFor, setAdvanceFor] = useState<Project | null>(null)
   const [advAmount, setAdvAmount] = useState('')
   const [advTreasury, setAdvTreasury] = useState('1101')
+  const [advTerminal, setAdvTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const saveAdvance = () => {
     if (!advanceFor) return
     try {
-      receiveClientAdvance({ projectId: advanceFor.id, amountMinor: toMinor(advAmount, cur.decimals), treasury: advTreasury })
+      const terminal = paymentTerminals.find((row) => row.id === advTerminal.terminalId)
+      receiveClientAdvance({ projectId: advanceFor.id, amountMinor: toMinor(advAmount, cur.decimals), treasury: terminal?.settlementAccountCode ?? advTreasury, terminalPayment: terminal ? { terminalId: terminal.id, providerReference: advTerminal.providerReference.trim(), cardLast4: advTerminal.cardLast4 || undefined } : undefined })
       toast.show('سُجلت الدفعة المقدمة كالتزام 2109 — تُسترد من المستخلصات ✅')
       setAdvanceFor(null); setAdvAmount('')
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -267,7 +275,8 @@ export function ProjectsPage() {
   const doRelease = () => {
     if (!releaseFor) return
     try {
-      const r = releaseRetention(releaseFor.id, releaseTreasury)
+      const terminal = paymentTerminals.find((row) => row.id === releaseTerminal.terminalId)
+      const r = releaseRetention(releaseFor.id, terminal?.settlementAccountCode ?? releaseTreasury, terminal ? { terminalId: terminal.id, providerReference: releaseTerminal.providerReference.trim(), cardLast4: releaseTerminal.cardLast4 || undefined } : undefined)
       toast.show(`أُفرج عن محتجزات ${fmt(r.amount)} ${cur.symbol} وأُقفل المشروع 🎉`)
       setReleaseFor(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
@@ -410,10 +419,7 @@ export function ProjectsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="اسم العميل / الجهة"><input value={clientName} onChange={(e) => setClientName(e.target.value)} className={inputCls} /></Field>
               <Field label="ربط بسجل عميل (إداري)" hint="للمتابعة والتحصيل فقط — لا يؤثر على رصيده؛ الذمة من المستخلص/الفاتورة">
-                <select value={clientId} onChange={(e) => { setClientId(e.target.value); const c = customers.find((x) => x.id === Number(e.target.value)); if (c && !clientName.trim()) setClientName(c.nameAr) }} className={inputCls}>
-                  <option value="">— بلا ربط —</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                </select>
+                <PartyQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = customers.find((x) => x.id === id); if (c && !clientName.trim()) setClientName(c.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />
               </Field>
             </div>
           </div>
@@ -424,10 +430,7 @@ export function ProjectsPage() {
               <Field label="تاريخ البدء"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} /></Field>
               <Field label="التسليم المتوقع"><input type="date" value={expectedEnd} onChange={(e) => setExpectedEnd(e.target.value)} className={inputCls} /></Field>
               <Field label="مدير المشروع" hint="من سجل الموظفين">
-                <select value={managerId} onChange={(e) => setManagerId(e.target.value)} className={inputCls}>
-                  <option value="">— لاحقاً —</option>
-                  {employees.filter((em) => em.active).map((em) => <option key={em.id} value={em.id}>{em.nameAr}</option>)}
-                </select>
+                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={managerId ? Number(managerId) : 0} onChange={(id) => setManagerId(id ? String(id) : '')} cashLabel="لاحقاً" label="بحث مدير المشروع" cashValue={0} />
               </Field>
               <Field label="موقع التنفيذ"><input value={location} onChange={(e) => setLocation(e.target.value)} className={inputCls} placeholder="المنصورة — حي الجامعة" /></Field>
               <Field label="وسوم (افصل بـ ،)"><input value={tags} onChange={(e) => setTags(e.target.value)} className={inputCls} placeholder="حكومي، تشطيبات" /></Field>
@@ -505,7 +508,7 @@ export function ProjectsPage() {
                     </button>
                   ))}
                 </div>
-                {exPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={exTreasury} onChange={setExTreasury} compact /></div>}
+                {exPayment === 'cash' && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury:exTreasury,terminalPayment:exTerminal}} onChange={value=>{setExTreasury(value.treasury);setExTerminal(value.terminalPayment)}} operation="receipt"/></div>}
               </Field>
               <Field label="الضريبة">
                 <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
@@ -528,7 +531,7 @@ export function ProjectsPage() {
             </label>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setExtractFor(null)}>إلغاء</Btn>
-              <Btn onClick={saveExtract} disabled={exMode === 'lines' ? exLinesPreview.grossMinor <= 0 : !exGross}>تسجيل المستخلص وقيده</Btn>
+              <Btn onClick={saveExtract} shortcut="F9" disabled={exMode === 'lines' ? exLinesPreview.grossMinor <= 0 : !exGross}>تسجيل المستخلص وقيده</Btn>
             </div>
           </div>
         )}
@@ -562,12 +565,13 @@ export function ProjectsPage() {
               </Field>
             </div>
             <Field label="الوصف"><input value={costDesc} onChange={(e) => setCostDesc(e.target.value)} className={inputCls} placeholder="حديد تسليح، أجور نجارين…" /></Field>
+            <Field label="مركز التكلفة العام (اختياري)" hint="يبقى المشروع منفصلاً ويمكن تحميل تكلفة المشروع على مركز عام لأغراض التقارير."><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className={inputCls}><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field>
             <Field label={`ض.ق.م مدخلات قابلة للخصم (${cur.symbol}) — اختياري`} hint="للمنشآت المسجلة ضريبياً: تُعزل عن تكلفة المشروع (المبلغ أعلاه صافٍ) فتبقى ربحية المشروع صافية من الضريبة تماماً — غير المسجل يتركها فارغة">
               <input value={costVat} onChange={(e) => setCostVat(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setCostFor(null)}>إلغاء</Btn>
-              <Btn onClick={saveCost} disabled={!costAmount}>تسجيل التكلفة</Btn>
+              <Btn onClick={saveCost} shortcut="F9" disabled={!costAmount}>تسجيل التكلفة</Btn>
             </div>
           </div>
         )}
@@ -651,8 +655,8 @@ export function ProjectsPage() {
               {getAdvanceBalance(advanceFor.id) > 0 && <> الرصيد الحالي: <b>{fmt(getAdvanceBalance(advanceFor.id))}</b></>}
             </div>
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={advTreasury} onChange={setAdvTreasury} /></Field>
-            <Btn onClick={saveAdvance} className="w-full" disabled={!advAmount}>استلام الدفعة</Btn>
+            <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury:advTreasury,terminalPayment:advTerminal}} onChange={value=>{setAdvTreasury(value.treasury);setAdvTerminal(value.terminalPayment)}} operation="receipt"/></div></Field>
+            <Btn onClick={saveAdvance} shortcut="F9" className="w-full" disabled={!advAmount}>استلام الدفعة</Btn>
           </div>
         )}
       </Modal>
@@ -708,10 +712,10 @@ export function ProjectsPage() {
             <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
               سيُحصَّل المحتجز المتبقي {fmt(getProjectProfit(releaseFor.id).retentionHeldMinor)} {cur.symbol} ويُقفل المشروع نهائياً.
             </div>
-            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={releaseTreasury} onChange={setReleaseTreasury} compact /></Field>
+            <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury:releaseTreasury,terminalPayment:releaseTerminal}} onChange={value=>{setReleaseTreasury(value.treasury);setReleaseTerminal(value.terminalPayment)}} operation="receipt"/></div></Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setReleaseFor(null)}>إلغاء</Btn>
-              <Btn onClick={doRelease}>🏁 تحصيل وإقفال</Btn>
+              <Btn onClick={doRelease} shortcut="F9">🏁 تحصيل وإقفال</Btn>
             </div>
           </div>
         )}
@@ -725,11 +729,14 @@ export function ProjectsPage() {
             refundedMinor={refundingExtract.refundedMinor ?? 0}
             currencySymbol={cur.symbol}
             fmt={fmt}
+            terminalOriginal={(() => { const x = paymentTerminalTransactions.find((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(refundingExtract.id)); return x ? { transactionId: x.id, terminalName: paymentTerminals.find((t) => t.id === x.terminalId)?.nameAr ?? x.terminalId } : undefined })()}
             allowCredit={true}
             hint="رفض المالك/الاستشاري جزءاً من الأعمال بعد اعتماد المستخلص: يعكس الإيراد وحصة الضريبة — «على الحساب» يخفض ذمة الجهة المالكة."
             onSubmit={(a) => {
               try {
-                const u = refundProjectExtract({ extractId: refundingExtract.id, ...a })
+                const original = a.terminalRefund ? paymentTerminalTransactions.find((row) => row.id === a.terminalRefund!.originalTransactionId) : undefined
+                const treasury = original ? paymentTerminals.find((row) => row.id === original.terminalId)?.settlementAccountCode ?? a.treasury : a.treasury
+                const u = refundProjectExtract({ extractId: refundingExtract.id, ...a, treasury })
                 setRefundingExtract(null)
                 toast.show(`سُجل إشعار دائن على ${u.extractNumber} وتولد القيد العاكس ✅`)
               } catch (err) { toast.show((err as Error).message, 'error') }
@@ -747,10 +754,7 @@ export function ProjectsPage() {
               </div>
             ))}
             <Field label="الموظف *">
-              <select value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
-                <option value="">— اختر الموظف —</option>
-                {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={commEmpId ? Number(commEmpId) : 0} onChange={(id) => setCommEmpId(id ? String(id) : '')} cashLabel="اختر الموظف" label="بحث الموظف" cashValue={0} />
             </Field>
             <Field label={`مبلغ العمولة (${cur.symbol}) *`}>
               <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
@@ -760,7 +764,7 @@ export function ProjectsPage() {
             </div>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setCommFor(null)}>إغلاق</Btn>
-              <Btn onClick={saveProjectCommission} disabled={!commEmpId || !commAmount.trim()}>💾 استحقاق العمولة</Btn>
+              <Btn onClick={saveProjectCommission} shortcut="F9" disabled={!commEmpId || !commAmount.trim()}>💾 استحقاق العمولة</Btn>
             </div>
           </div>
         )}

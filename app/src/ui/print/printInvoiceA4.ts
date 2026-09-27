@@ -118,31 +118,32 @@ function metaRows(m: ReceiptModel, s: ReceiptSettings): string {
   if (s.showDate) rows.push(`<tr><td class="k">التاريخ</td><td class="v">${esc(m.dateLabel)}</td></tr>`)
   if (s.showCustomer) rows.push(`<tr><td class="k">العميل</td><td class="v">${esc(m.customerName)}</td></tr>`)
   if (s.showPayment) rows.push(`<tr><td class="k">طريقة الدفع</td><td class="v">${esc(m.paymentLabel)}</td></tr>`)
+  if (m.operatorName?.trim()) rows.push(`<tr><td class="k">طبع بواسطة</td><td class="v">${esc(m.operatorName)}</td></tr>`)
   return `<table class="meta">${rows.join('')}</table>`
 }
 
 function itemsTable(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, opts: { dense?: boolean; classic?: boolean; elegant?: boolean }): string {
   const fmt = (v: number) => formatMinor(v, cur, false)
-  const showDisc = s.showDiscount && m.rows.some((r) => r.discountPercent > 0)
-  const showVat = m.rows.some((r) => r.vatPercent != null)
-  const cols = 5 + (showDisc ? 1 : 0) + (showVat ? 1 : 0)
+  const showDisc = !s.hidePrices && s.showDiscount && m.rows.some((r) => r.discountPercent > 0)
+  const showVat = !s.hidePrices && m.rows.some((r) => r.vatPercent != null)
+  const cols = (s.hidePrices ? 3 : 5) + (showDisc ? 1 : 0) + (showVat ? 1 : 0)
   const rows = m.rows
     .map(
       (r, i) => `<tr class="${i % 2 && !opts.elegant ? 'alt' : ''}">
       <td class="c mut">${i + 1}</td>
       <td class="name">${esc(r.nameAr)}${r.serials.length ? `<div style="font-size:9px;color:#64748b;direction:ltr;text-align:right">${r.serials.map(esc).join(' · ')}</div>` : ''}</td>
       <td class="c">${esc(r.qtyLabel)}</td>
-      <td class="c">${fmt(r.unitPriceMinor)}</td>
+      ${s.hidePrices ? '' : `<td class="c">${fmt(r.unitPriceMinor)}</td>`}
       ${showVat ? `<td class="c">${r.vatPercent == null ? '—' : r.vatPercent > 0 ? `${r.vatPercent}٪` : 'معفى'}</td>` : ''}
       ${showDisc ? `<td class="c">${r.discountPercent ? `${r.discountPercent}٪` : '—'}</td>` : ''}
-      <td class="c b">${fmt(r.totalMinor)}</td>
+      ${s.hidePrices ? '' : `<td class="c b">${fmt(r.totalMinor)}</td>`}
     </tr>`,
     )
     .join('')
   return `<table class="items" data-cols="${cols}">
     <thead><tr>
-      <th style="width:28px">#</th><th class="r">الصنف</th><th>الكمية</th><th>سعر الوحدة</th>
-      ${showVat ? '<th>الضريبة</th>' : ''}${showDisc ? '<th>الخصم</th>' : ''}<th>الإجمالي</th>
+      <th style="width:28px">#</th><th class="r">الصنف</th><th>الكمية</th>${s.hidePrices ? '' : '<th>سعر الوحدة</th>'}
+      ${showVat ? '<th>الضريبة</th>' : ''}${showDisc ? '<th>الخصم</th>' : ''}${s.hidePrices ? '' : '<th>الإجمالي</th>'}
     </tr></thead><tbody>${rows}</tbody>
   </table>`
 }
@@ -150,6 +151,7 @@ function itemsTable(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, op
 function totalsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, dark = false): string {
   const fmt = (v: number) => formatMinor(v, cur, false)
   const rows: string[] = []
+  if (s.hidePrices) return s.showItemCounts ? `<div class="totals ${dark ? 'dark' : ''}"><div class="tr"><span>عدد الأصناف / القطع</span><b>${m.itemCount} / ${m.totalQty}</b></div></div>` : ''
   if (s.showItemCounts) rows.push(`<div class="tr"><span>عدد الأصناف / القطع</span><b>${m.itemCount} / ${m.totalQty}</b></div>`)
   if (s.showDiscount && m.discountMinor > 0) {
     rows.push(`<div class="tr"><span>الإجمالي قبل الخصم</span><b>${fmt(m.grossMinor)}</b></div>`)
@@ -172,7 +174,7 @@ function totalsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, d
 }
 
 function wordsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings): string {
-  if (!s.showWords) return ''
+  if (!s.showWords || s.hidePrices) return ''
   return `<div class="words"><div class="wt">المبلغ كتابةً</div><div class="wv">${esc(amountInWords(m.totalMinor, cur))}</div></div>`
 }
 
@@ -242,7 +244,7 @@ function renderCompact(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings,
         <span>${esc(m.invoiceNumber)}${m.refCode ? ` | <span dir="ltr">${esc(m.refCode)}</span>` : ''}${s.showDate ? ` | ${esc(m.dateLabel)}` : ''}</span>
       </div>
     </div>
-    ${s.showCustomer || s.showPayment ? `<div class="strip">${s.showCustomer ? `العميل: <b>${esc(m.customerName)}</b>` : ''}${s.showCustomer && s.showPayment ? ' — ' : ''}${s.showPayment ? `الدفع: <b>${esc(m.paymentLabel)}</b>` : ''}</div>` : ''}
+    ${s.showCustomer || s.showPayment || m.operatorName ? `<div class="strip">${s.showCustomer ? `العميل: <b>${esc(m.customerName)}</b>` : ''}${s.showCustomer && s.showPayment ? ' — ' : ''}${s.showPayment ? `الدفع: <b>${esc(m.paymentLabel)}</b>` : ''}${(s.showCustomer || s.showPayment) && m.operatorName ? ' — ' : ''}${m.operatorName ? `طبع بواسطة: <b>${esc(m.operatorName)}</b>` : ''}</div>` : ''}
     ${itemsTable(m, cur, s, { dense: true })}
     <div class="bottom">
       ${wordsBlock(m, cur, s)}
@@ -261,9 +263,10 @@ function renderElegant(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings,
       ${headerLinesHtml(m, s)}
       <div class="pill" style="background:${accent}12;color:${accent}">${esc(m.docTitle ?? 'فاتورة مبيعات')} ${esc(m.invoiceNumber)}${m.refCode ? ` • <span dir="ltr">${esc(m.refCode)}</span>` : ''}${s.showDate ? ` • ${esc(m.dateLabel)}` : ''}</div>
     </div>
-    ${s.showCustomer || s.showPayment ? `<div class="cards">
+    ${s.showCustomer || s.showPayment || m.operatorName ? `<div class="cards">
       ${s.showCustomer ? `<div class="card" style="background:${accent}0a;border:1px solid ${accent}20"><div class="ct" style="color:${accent}">العميل</div><b>${esc(m.customerName)}</b></div>` : ''}
       ${s.showPayment ? `<div class="card" style="background:${accent}0a;border:1px solid ${accent}20"><div class="ct" style="color:${accent}">طريقة الدفع</div><b>${esc(m.paymentLabel)}</b></div>` : ''}
+      ${m.operatorName ? `<div class="card" style="background:${accent}0a;border:1px solid ${accent}20"><div class="ct" style="color:${accent}">طبع بواسطة</div><b>${esc(m.operatorName)}</b></div>` : ''}
     </div>` : ''}
     <div class="tbl-wrap" style="border:1px solid ${accent}26;">${itemsTable(m, cur, s, { elegant: true })}</div>
     <div class="bottom dark" style="background:${accent};">
@@ -287,9 +290,10 @@ function renderRoyal(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, a
         <div style="color:#e7e5e4">${metaRows(m, s)}</div>
       </div>
     </div>
-    ${s.showCustomer || s.showPayment ? `<div class="cards" style="margin-top:10px">
+    ${s.showCustomer || s.showPayment || m.operatorName ? `<div class="cards" style="margin-top:10px">
       ${s.showCustomer ? `<div class="card" style="background:${accent}0d;border:1px solid ${accent}33"><div class="ct" style="color:${accent}">العميل</div><b>${esc(m.customerName)}</b></div>` : ''}
       ${s.showPayment ? `<div class="card" style="background:${accent}0d;border:1px solid ${accent}33"><div class="ct" style="color:${accent}">طريقة الدفع</div><b>${esc(m.paymentLabel)}</b></div>` : ''}
+      ${m.operatorName ? `<div class="card" style="background:${accent}0d;border:1px solid ${accent}33"><div class="ct" style="color:${accent}">طبع بواسطة</div><b>${esc(m.operatorName)}</b></div>` : ''}
     </div>` : ''}
     <div class="tbl-wrap" style="border:1.5px solid ${accent}44;border-radius:10px;overflow:hidden;margin-top:10px">${itemsTable(m, cur, s, { elegant: true })}</div>
     <div class="bottom dark" style="background:linear-gradient(135deg, ${night}, #292524);border-radius:10px;border-inline-start:4px solid ${accent}">

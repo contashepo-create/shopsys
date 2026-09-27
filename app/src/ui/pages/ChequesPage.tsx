@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * الشيكات (أوراق القبض والدفع) — كل السيناريوهات العملية (طلب المالك):
  * وارد: من عميل مسجل أو بلا طرف (إيراد/حساب آخر) ← إيداع ← تحصيل في بنك أو خزينة / ارتداد
@@ -235,10 +236,7 @@ export function ChequesPage() {
             </Field>
           </div>
           <Field label={direction === 'incoming' ? 'العميل (يُخفَّض دينه فوراً)' : 'المورد (يُخفَّض ديننا له فوراً)'}>
-            <select value={partyId} onChange={(e) => setPartyId(e.target.value)} className={inputCls}>
-              <option value="">— بلا طرف مسجل (شيك {direction === 'incoming' ? 'وارد لإيراد/حساب آخر' : 'مصروف/راتب/حساب آخر'}) —</option>
-              {parties.map((p) => <option key={p.id} value={p.id}>{p.nameAr}</option>)}
-            </select>
+            <PartyQuickPicker parties={parties} value={partyId ? Number(partyId) : 0} onChange={(id) => setPartyId(id ? String(id) : '')} cashLabel={`بلا طرف مسجل (شيك ${direction === 'incoming' ? 'وارد لإيراد/حساب آخر' : 'مصروف/راتب/حساب آخر'})`} label={direction === 'incoming' ? 'بحث العميل' : 'بحث المورد'} cashValue={0} />
           </Field>
           {!partyId && (
             <div className="grid grid-cols-2 gap-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-3">
@@ -246,9 +244,9 @@ export function ChequesPage() {
                 <input value={partyName} onChange={(e) => setPartyName(e.target.value)} placeholder={direction === 'incoming' ? 'شركة كذا…' : 'الموظف/الجهة…'} className={inputCls} />
               </Field>
               <Field label={direction === 'incoming' ? 'يقيَّد كإيراد في' : 'يقيَّد على حساب'} hint={direction === 'incoming' ? 'الطرف الدائن لقيد الاستلام' : 'الطرف المدين لقيد التحرير — مصروف أو رواتب مستحقة'}>
-                <select value={counterAccount} onChange={(e) => setCounterAccount(e.target.value)} className={inputCls}>
+                <QuickSelect value={counterAccount} onChange={(e) => setCounterAccount(e.target.value)} className={inputCls}>
                   {counterOptions.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.nameAr}</option>)}
-                </select>
+                </QuickSelect>
               </Field>
             </div>
           )}
@@ -265,7 +263,7 @@ export function ChequesPage() {
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!chequeNumber.trim() || (!partyId && !partyName.trim()) || !amount.trim() || !dueDate}>💾 تسجيل الشيك</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!chequeNumber.trim() || (!partyId && !partyName.trim()) || !amount.trim() || !dueDate}>💾 تسجيل الشيك</Btn>
           </div>
         </div>
       </Modal>

@@ -35,6 +35,30 @@ const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
 const { CreditLimitError } = await import(join(root, 'src/core/pos.ts'))
 const st = () => useDataStore.getState()
 
+/* شراء سيارة للمعرض: الآجل يتطلب مورداً ويظهر في كشفه وفواتيره المفتوحة */
+st().addSupplier({ nameAr: 'مورد سيارات', phone: '', notes: '' })
+const carSupplier = st().suppliers.at(-1)
+assert.throws(
+  () => st().addCar({ make: 'فورد', model: 'فوكس', year: 2021, plateOrVin: 'م س ر 7788', purpose: 'sell', odometerKm: 60000, purchaseCostMinor: 120000, payment: 'credit', notes: '' }),
+  /يتطلب اختيار المورد/,
+)
+const creditPurchase = st().addCar({ make: 'فورد', model: 'فوكس', year: 2021, plateOrVin: 'م س ر 7788', purpose: 'sell', odometerKm: 60000, purchaseCostMinor: 120000, payment: 'credit', supplierId: carSupplier.id, notes: '' })
+assert.equal(creditPurchase.supplierId, carSupplier.id)
+assert.equal(creditPurchase.purchasePayment, 'credit')
+assert.equal(st().getSupplierBalance(carSupplier.id), 120000)
+assert.equal(st().getOpenSupplierInvoices(carSupplier.id).at(0)?.docKey, `car:${creditPurchase.id}`)
+const mixedPurchase = st().addCar({ make: 'كيا', model: 'سيراتو', year: 2022, plateOrVin: 'م س ر 7789', purpose: 'sell', odometerKm: 40000, purchaseCostMinor: 1000, payment: 'mixed', paidMinor: 400, supplierId: carSupplier.id, notes: '' })
+assert.equal(mixedPurchase.purchasePaidMinor, 400)
+assert.equal(mixedPurchase.purchaseDueMinor, 600)
+assert.equal(st().getSupplierBalance(carSupplier.id), 120600)
+const prepEntryBefore = st().journal.length
+st().addCarPrep(mixedPurchase.id, 1000, 'mixed', 'تجهيز خارجي', '1102', 250, 'جهة تجهيز غير مسجلة')
+const prepEntry = st().journal.at(-1)
+assert.equal(st().journal.length, prepEntryBefore + 1)
+assert.ok(prepEntry.lines.some((line) => line.accountCode === '1102' && line.credit === 250) && prepEntry.lines.some((line) => line.accountCode === '2101' && line.credit === 750))
+ok('شراء السيارة المختلط والتجهيز الآجل يدعمان بنكاً الآن وباقياً على 2101 بلا جهة مسجلة')
+ok('شراء السيارة الآجل يتطلب مورداً وتظهر ذمته في كشف المورد وفواتيره المفتوحة')
+
 /* تجهيز: مشتريان — مقيد بحد 500 وحر */
 st().addCustomer({ nameAr: 'مشترٍ مقيد', phone: '0100', address: '', notes: '', openingMinor: 0, creditLimitMinor: 50000 })
 const bounded = st().customers.at(-1)
@@ -129,6 +153,7 @@ ok('بيع سيارة آجل بلا مشترٍ من السجل — مرفوض ب
 {
   const page = readFileSync(join(root, 'src/ui/pages/CarsPage.tsx'), 'utf8')
   assert.ok(page.includes('buyerCustomerId') && page.includes('cgBuyerCustomerId'))
+  assert.ok(page.includes('supplierId') && page.includes('parties={suppliers}') && page.includes('اختر المورد عند وجود مبلغ آجل'))
   assert.ok(page.includes("useSupervisorApproval('sales.credit.override')"))
   assert.ok(page.includes('CreditLimitError') && page.includes('creditApproval.dialog'))
   ok('CarsPage: اختيار المشتري من السجل (معرض + أمانة) + حوار تجاوز حد الائتمان')

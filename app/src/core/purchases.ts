@@ -9,6 +9,32 @@
 import type { Minor } from './money.ts'
 import type { JournalLine } from './ledger.ts'
 import { assertBalanced } from './ledger.ts'
+import type { BusinessTaxPolicy } from './taxRegistration.ts'
+
+export interface PurchaseExpenseTaxInput {
+  amountMinor: Minor
+  taxTreatment?: 'exempt' | 'exclusive' | 'inclusive'
+  taxPercent?: number
+}
+
+/** يفصل مبلغ الدفع عن التكلفة وضريبة المدخلات وفق صفة المنشأة. */
+export function purchaseExpenseTaxParts(expense: PurchaseExpenseTaxInput, policy: BusinessTaxPolicy): { baseMinor: Minor; taxMinor: Minor; recoverableTaxMinor: Minor; costMinor: Minor; payableMinor: Minor } {
+  if (!Number.isSafeInteger(expense.amountMinor) || expense.amountMinor < 0) throw new Error('قيمة مصروف الشراء غير صالحة')
+  const treatment = expense.taxTreatment ?? 'exempt'
+  const rate = treatment === 'exempt' ? 0 : Math.max(0, expense.taxPercent ?? policy.effectivePercent)
+  if (!Number.isFinite(rate) || rate > 100) throw new Error('نسبة ضريبة المصروف يجب أن تكون بين 0 و100')
+  let baseMinor = expense.amountMinor
+  let taxMinor = 0
+  if (treatment === 'exclusive') taxMinor = Math.round(baseMinor * rate / 100)
+  else if (treatment === 'inclusive' && rate > 0) {
+    baseMinor = Math.round(expense.amountMinor / (1 + rate / 100))
+    taxMinor = expense.amountMinor - baseMinor
+  }
+  const payableMinor = treatment === 'exclusive' ? expense.amountMinor + taxMinor : expense.amountMinor
+  const recoverableTaxMinor = policy.canRecoverInputTax ? taxMinor : 0
+  const costMinor = baseMinor + (taxMinor - recoverableTaxMinor)
+  return { baseMinor, taxMinor, recoverableTaxMinor, costMinor, payableMinor }
+}
 
 /**
  * قيد فاتورة الشراء:
@@ -56,6 +82,10 @@ export function buildPurchaseEntryV2(args: {
   grandTotalMinor: Minor // بضاعة + كل المصاريف (تدخل التكلفة دائماً)
   paidMinor: Minor // المدفوع من مستحق المورد
   payAccount: string // خزينة/بنك أو 1108 عهدة
+  /** توزيع سداد المورد على عدة خزائن/بنوك/محافظ؛ غيابه يحافظ على المصدر الواحد القديم */
+  paymentCredits?: ExpensePaymentCredit[]
+  /** شراء نقدي بلا مورد: يجب أن يساوي السداد كامل المستحق ولا ينشئ دائن 2101 */
+  cashPurchase?: boolean
   expensePayments: ExpensePaymentCredit[] // المصاريف المدفوعة مباشرة
   /**
    * ض.ق.م المدخلات القابلة للخصم (سد فجوة T1 — للمنشآت المسجلة ضريبياً):
@@ -65,7 +95,9 @@ export function buildPurchaseEntryV2(args: {
    */
   inputVatMinor?: Minor
 }): JournalLine[] {
-  const { grandTotalMinor, paidMinor, expensePayments } = args
+  const { grandTotalMinor, expensePayments } = args
+  const paymentCredits = args.paymentCredits?.length ? args.paymentCredits : (args.paidMinor > 0 ? [{ account: args.payAccount, amountMinor: args.paidMinor, note: 'مدفوع للمورد' }] : [])
+  const paidMinor = paymentCredits.reduce((sum, payment) => sum + payment.amountMinor, 0)
   const inputVat = args.inputVatMinor ?? 0
   if (!Number.isInteger(grandTotalMinor) || grandTotalMinor <= 0) throw new RangeError('إجمالي الفاتورة يجب أن يكون موجباً')
   if (!Number.isInteger(paidMinor) || paidMinor < 0) throw new RangeError('المدفوع لا يكون سالباً')
@@ -78,12 +110,16 @@ export function buildPurchaseEntryV2(args: {
   const supplierDue = grandTotalMinor + inputVat - expensesPaidDirect
   if (supplierDue < 0) throw new RangeError('المصاريف المدفوعة مباشرة أكبر من إجمالي الفاتورة')
   if (paidMinor > supplierDue) throw new RangeError('المدفوع أكبر من مستحق المورد (البضاعة + الضريبة + المصاريف المحملة على حسابه)')
+  if (args.cashPurchase && paidMinor !== supplierDue) throw new RangeError('الشراء النقدي يجب سداده بالكامل ولا ينشئ ديناً على مورد')
   const remaining = supplierDue - paidMinor
   const lines: JournalLine[] = [
     { accountCode: args.inventoryAccount, debit: grandTotalMinor, credit: 0, note: args.inventoryNote },
   ]
   if (inputVat > 0) lines.push({ accountCode: '2102', debit: inputVat, credit: 0, note: 'ض.ق.م مدخلات قابلة للخصم' })
-  if (paidMinor > 0) lines.push({ accountCode: args.payAccount, debit: 0, credit: paidMinor, note: 'مدفوع للمورد' })
+  for (const payment of paymentCredits) {
+    if (!Number.isInteger(payment.amountMinor) || payment.amountMinor <= 0) throw new RangeError('قيمة وسيلة سداد المورد غير صالحة')
+    lines.push({ accountCode: payment.account, debit: 0, credit: payment.amountMinor, note: payment.note || 'مدفوع للمورد' })
+  }
   for (const e of expensePayments) lines.push({ accountCode: e.account, debit: 0, credit: e.amountMinor, note: e.note })
   if (remaining > 0) lines.push({ accountCode: '2101', debit: 0, credit: remaining, note: 'دين للمورد' })
   assertBalanced(lines)
@@ -122,6 +158,16 @@ export interface PurchaseReturnLine {
   landedUnitCostMinor: Minor // تكلفة الوحدة النهائية من فاتورة الشراء الأصلية
   /** سعر الوحدة في فاتورة المورد (قبل المصاريف) — undefined = سجل قديم (يعامل كالمحمل) */
   unitPriceMinor?: Minor
+  /** فهرس سطر فاتورة الشراء الأصلية — undefined لسجل قديم مجمع بالصنف */
+  purchaseLineIndex?: number
+  /** المخزن الذي خرج منه المرتجع؛ يثبت عند الترحيل */
+  warehouseId?: number | null
+}
+
+export interface PurchaseReturnLineSpec {
+  lineIndex: number
+  qty: number
+  warehouseId?: number | null
 }
 
 /** سطر من فاتورة الشراء الأصلية كما تحتاجه حسابات المرتجع */
@@ -130,6 +176,7 @@ export interface OriginalPurchaseLine {
   qty: number
   landedUnitCostMinor: Minor
   unitPriceMinor?: Minor
+  warehouseId?: number | null
 }
 
 /** المتبقي القابل للإرجاع لكل صنف (المشترى − مجموع المرتجعات السابقة على نفس الفاتورة) */
@@ -178,6 +225,62 @@ export function buildPurchaseReturnLines(
       throw new RangeError(`«${name}»: المخزون الحالي ${info.stockQty} فقط — لا يمكن إرجاع بضاعة بيعت بالفعل`)
     }
     out.push({ itemId, nameAr: name, qty: wanted, landedUnitCostMinor: avgLanded, unitPriceMinor: avgPrice })
+  }
+  if (!out.length) throw new RangeError('لا كميات للإرجاع')
+  return out
+}
+
+/** المتبقي لكل سطر أصلي، مع توزيع السجلات القديمة المجمعة بالصنف بالترتيب. */
+export function remainingPurchaseByLine(
+  purchaseLines: OriginalPurchaseLine[],
+  priorReturnLines: Pick<PurchaseReturnLine, 'itemId' | 'qty' | 'purchaseLineIndex'>[],
+): number[] {
+  const remaining = purchaseLines.map((line) => line.qty)
+  for (const returned of priorReturnLines) {
+    if (returned.purchaseLineIndex !== undefined && purchaseLines[returned.purchaseLineIndex]?.itemId === returned.itemId) {
+      remaining[returned.purchaseLineIndex] = Math.round((remaining[returned.purchaseLineIndex] - returned.qty) * 1000) / 1000
+      continue
+    }
+    let left = returned.qty
+    for (let index = 0; index < purchaseLines.length && left > 1e-9; index++) {
+      if (purchaseLines[index].itemId !== returned.itemId || remaining[index] <= 0) continue
+      const take = Math.min(left, remaining[index])
+      remaining[index] = Math.round((remaining[index] - take) * 1000) / 1000
+      left = Math.round((left - take) * 1000) / 1000
+    }
+  }
+  return remaining
+}
+
+/** بناء مرتجع شراء سطراً بسطر دون خلط سعرين أو مخزنين للصنف نفسه. */
+export function buildPurchaseReturnLinesPerLine(
+  purchaseLines: OriginalPurchaseLine[],
+  priorReturnLines: PurchaseReturnLine[],
+  specs: PurchaseReturnLineSpec[],
+  itemName: (itemId: number) => string,
+): PurchaseReturnLine[] {
+  const remaining = remainingPurchaseByLine(purchaseLines, priorReturnLines)
+  const seen = new Set<number>()
+  const out: PurchaseReturnLine[] = []
+  for (const spec of specs) {
+    if (spec.qty <= 0) continue
+    const source = purchaseLines[spec.lineIndex]
+    if (!source) throw new RangeError(`سطر شراء غير موجود (#${spec.lineIndex + 1})`)
+    if (seen.has(spec.lineIndex)) throw new RangeError(`سطر الشراء #${spec.lineIndex + 1} مكرر`)
+    seen.add(spec.lineIndex)
+    const canReturn = remaining[spec.lineIndex]
+    if (spec.qty > canReturn + 1e-9) {
+      throw new RangeError(`«${itemName(source.itemId)}» (سطر ${spec.lineIndex + 1}): المطلوب ${spec.qty} والمتبقي ${canReturn}`)
+    }
+    out.push({
+      itemId: source.itemId,
+      nameAr: itemName(source.itemId),
+      qty: Math.round(spec.qty * 1000) / 1000,
+      landedUnitCostMinor: source.landedUnitCostMinor,
+      unitPriceMinor: source.unitPriceMinor,
+      purchaseLineIndex: spec.lineIndex,
+      warehouseId: spec.warehouseId ?? source.warehouseId ?? null,
+    })
   }
   if (!out.length) throw new RangeError('لا كميات للإرجاع')
   return out

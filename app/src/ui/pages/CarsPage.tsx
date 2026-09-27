@@ -1,3 +1,4 @@
+import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
 /**
  * صفحة معرض السيارات (القرار 27):
  * كل سيارة بتكلفة شراء + تجهيزات مرسملة = تكلفة كاملة، فربحية البيع
@@ -10,11 +11,13 @@ import { useDataStore, type Car } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { showroomSummary } from '../../core/cars.ts'
+import { showroomSummary, type CarPaymentMode } from '../../core/cars.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
+import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { renderCarSaleContractHtml } from '../print/printCarSale.ts'
 import { printHtml } from '../print/printReceipt.ts'
@@ -26,7 +29,7 @@ const STATUS_LABEL: Record<Car['status'], { nameAr: string; cls: string }> = {
 }
 
 export function CarsPage() {
-  const { cars, journal, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, employees, addStaffCommission } = useDataStore()
+  const { cars, journal, paymentTerminals, addCar, addCarPrep, sellCar, moveCarToRental, consignmentCars, addConsignmentCar, sellConsignmentCar, payConsignmentOwner, returnConsignmentCar, customers, suppliers, employees, addStaffCommission } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = useMemo(
@@ -83,18 +86,24 @@ export function CarsPage() {
   const [plate, setPlate] = useState('')
   const [cost, setCost] = useState('')
   const [odometer, setOdometer] = useState('0')
-  const [payment, setPayment] = useState<'cash' | 'credit'>('cash')
+  const [payment, setPayment] = useState<CarPaymentMode>('cash')
+  const [supplierId, setSupplierId] = useState(0)
+  const [paidNow, setPaidNow] = useState('')
   const [treasury, setTreasury] = useState('1101')
 
   const save = () => {
     try {
+      const purchaseCostMinor = toMinor(cost, cur.decimals)
+      const paidMinor = payment === 'cash' ? purchaseCostMinor : payment === 'mixed' ? toMinor(paidNow || '0', cur.decimals) : 0
+      if (payment !== 'cash' && !supplierId) throw new Error('اختر المورد عند وجود مبلغ آجل')
+      if (payment === 'mixed' && !paidNow.trim()) throw new Error('أدخل المبلغ المدفوع الآن')
       const c = addCar({
         make: make.trim(), model: model.trim(), year: Number(year) || 0, plateOrVin: plate.trim(),
-        purpose: 'sale', purchaseCostMinor: toMinor(cost, cur.decimals), odometerKm: Number(odometer) || 0,
-        payment, notes: '', treasury,
+        purpose: 'sale', purchaseCostMinor, odometerKm: Number(odometer) || 0,
+        payment, paidMinor, supplierId: payment !== 'cash' ? supplierId : null, notes: '', treasury,
       })
       toast.show(`أُضيفت ${c.make} ${c.model} للمخزون بقيد شراء ✅`)
-      setOpen(false); setMake(''); setModel(''); setPlate(''); setCost(''); setOdometer('0')
+      setOpen(false); setMake(''); setModel(''); setPlate(''); setCost(''); setOdometer('0'); setSupplierId(0); setPaidNow(''); setPayment('cash')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -102,15 +111,19 @@ export function CarsPage() {
   const [prepFor, setPrepFor] = useState<Car | null>(null)
   const [prepAmount, setPrepAmount] = useState('')
   const [prepDesc, setPrepDesc] = useState('')
-  const [prepPayment, setPrepPayment] = useState<'cash' | 'credit'>('cash')
+  const [prepPayment, setPrepPayment] = useState<CarPaymentMode>('cash')
+  const [prepPaidNow, setPrepPaidNow] = useState('')
+  const [prepBeneficiary, setPrepBeneficiary] = useState('')
   const [prepTreasury, setPrepTreasury] = useState('1101')
 
   const savePrep = () => {
     if (!prepFor) return
     try {
-      addCarPrep(prepFor.id, toMinor(prepAmount, cur.decimals), prepPayment, prepDesc.trim(), prepTreasury)
+      const amountMinor = toMinor(prepAmount, cur.decimals)
+      const paidMinor = prepPayment === 'cash' ? amountMinor : prepPayment === 'mixed' ? toMinor(prepPaidNow || '0', cur.decimals) : 0
+      addCarPrep(prepFor.id, amountMinor, prepPayment, prepDesc.trim(), prepTreasury, paidMinor, prepBeneficiary)
       toast.show('رُسملت التكلفة على السيارة — ستدخل في حساب ربحية بيعها ✅')
-      setPrepFor(null); setPrepAmount(''); setPrepDesc('')
+      setPrepFor(null); setPrepAmount(''); setPrepDesc(''); setPrepPaidNow(''); setPrepBeneficiary(''); setPrepPayment('cash')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -120,8 +133,10 @@ export function CarsPage() {
   const [buyer, setBuyer] = useState('')
   const [buyerCustomerId, setBuyerCustomerId] = useState(0)
   const [sellVat, setSellVat] = useState(false)
-  const [sellPayment, setSellPayment] = useState<'cash' | 'credit'>('cash')
+  const [sellPayment, setSellPayment] = useState<CarPaymentMode>('cash')
+  const [sellPaidNow, setSellPaidNow] = useState('')
   const [sellTreasury, setSellTreasury] = useState('1101')
+  const [sellTerminal, setSellTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   // عمولة موظف عن البيع (تعميم — أمر المالك): مصروف مربوط بالسيارة يدخل ربحيتها
   const [commEmpId, setCommEmpId] = useState('')
   const [commAmount, setCommAmount] = useState('')
@@ -131,9 +146,13 @@ export function CarsPage() {
   const doSell = (creditLimitOverrideBy?: string) => {
     if (!sellFor) return
     try {
+      const terminal = paymentTerminals.find((row) => row.id === sellTerminal.terminalId)
+      const saleTotalMinor = toMinor(price, cur.decimals) + (sellVat ? Math.round(toMinor(price, cur.decimals) * setup.vatPercent / 100) : 0)
+      const paidMinor = sellPayment === 'cash' ? saleTotalMinor : sellPayment === 'mixed' ? toMinor(sellPaidNow || '0', cur.decimals) : 0
       const c = sellCar({
         carId: sellFor.id, priceMinor: toMinor(price, cur.decimals),
-        vatPercent: sellVat ? setup.vatPercent : 0, payment: sellPayment, buyerName: buyer.trim(), treasury: sellTreasury,
+        vatPercent: sellVat ? setup.vatPercent : 0, payment: sellPayment, paidMinor, buyerName: buyer.trim(), treasury: terminal?.settlementAccountCode ?? sellTreasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: sellTerminal.providerReference.trim(), cardLast4: sellTerminal.cardLast4 || undefined } : undefined,
         buyerCustomerId: buyerCustomerId || null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
@@ -147,7 +166,7 @@ export function CarsPage() {
       }
       const p = c.saleProfitMinor ?? 0
       toast.show(p >= 0 ? `بيعت بربح ${fmt(p)} ${cur.symbol} 🎉` : `بيعت بخسارة ${fmt(-p)} ${cur.symbol}`, p >= 0 ? 'success' : 'error')
-      setSellFor(null); setPrice(''); setBuyer(''); setBuyerCustomerId(0); setCommEmpId(''); setCommAmount('')
+      setSellFor(null); setPrice(''); setBuyer(''); setBuyerCustomerId(0); setSellPaidNow(''); setSellPayment('cash'); setCommEmpId(''); setCommAmount('')
     } catch (e) {
       if (e instanceof CreditLimitError) { creditApproval.request((by) => doSell(by ?? 'المشرف')); return }
       toast.show((e as Error).message, 'error')
@@ -202,11 +221,14 @@ export function CarsPage() {
   const [cgBuyerCustomerId, setCgBuyerCustomerId] = useState(0)
   const [cgPayment, setCgPayment] = useState<'cash' | 'credit'>('cash')
   const [cgTreasury, setCgTreasury] = useState('1101')
+  const [cgTerminal, setCgTerminal] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const doSellConsignment = (creditLimitOverrideBy?: string) => {
     if (!cgSellCar) return
     try {
+      const terminal = paymentTerminals.find((row) => row.id === cgTerminal.terminalId)
       const sold = sellConsignmentCar({
-        id: cgSellCar.id, salePriceMinor: toMinor(cgSalePrice, cur.decimals), payment: cgPayment, buyerName: cgBuyer.trim(), treasury: cgTreasury,
+        id: cgSellCar.id, salePriceMinor: toMinor(cgSalePrice, cur.decimals), payment: cgPayment, buyerName: cgBuyer.trim(), treasury: terminal?.settlementAccountCode ?? cgTreasury,
+        terminalPayment: terminal ? { terminalId: terminal.id, providerReference: cgTerminal.providerReference.trim(), cardLast4: cgTerminal.cardLast4 || undefined } : undefined,
         buyerCustomerId: cgBuyerCustomerId || null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
       })
@@ -294,17 +316,19 @@ export function CarsPage() {
           </div>
           <Field label="السداد">
             <div className="flex gap-2">
-              {(['cash', 'credit'] as const).map((p) => (
-                <button key={p} onClick={() => setPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${payment === p ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
-                  {p === 'cash' ? 'نقدي' : 'آجل (مورد)'}
+              {(['cash', 'credit', 'mixed'] as const).map((p) => (
+                <button key={p} type="button" onClick={() => setPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${payment === p ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
+                  {p === 'cash' ? 'نقدي بالكامل' : p === 'credit' ? 'آجل بالكامل' : 'مدفوع + آجل'}
                 </button>
               ))}
             </div>
-            {payment === 'cash' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
+            {payment === 'mixed' && <Field label={`المدفوع الآن (${cur.symbol}) *`} hint="الباقي سيظهر على المورد"><input value={paidNow} onChange={(e) => setPaidNow(e.target.value)} inputMode="decimal" className={inputCls} /></Field>}
+            {payment !== 'credit' && <div className="mt-2"><TreasuryPicker value={treasury} onChange={setTreasury} compact /></div>}
+            {payment !== 'cash' && <div className="mt-2"><Field label="المورد *" hint="سيظهر الجزء الآجل في كشف حساب المورد"><PartyQuickPicker parties={suppliers} value={supplierId} onChange={setSupplierId} cashLabel="اختر المورد" label="بحث المورد" cashValue={0} showCash={false} /></Field></div>}
           </Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!make.trim() || !model.trim() || !plate.trim() || !cost}>شراء وقيد</Btn>
+            <Btn onClick={save} shortcut="F9" disabled={!make.trim() || !model.trim() || !plate.trim() || !cost || (payment !== 'cash' && !supplierId) || (payment === 'mixed' && !paidNow.trim())}>شراء وقيد</Btn>
           </div>
         </div>
       </Modal>
@@ -317,17 +341,19 @@ export function CarsPage() {
             <Field label="الوصف"><input value={prepDesc} onChange={(e) => setPrepDesc(e.target.value)} className={inputCls} placeholder="سمكرة ودهان، قطع غيار…" /></Field>
             <Field label="السداد">
               <div className="flex gap-2">
-                {(['cash', 'credit'] as const).map((p) => (
-                  <button key={p} onClick={() => setPrepPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${prepPayment === p ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
-                    {p === 'cash' ? 'نقدي' : 'آجل'}
+                {(['cash', 'credit', 'mixed'] as const).map((p) => (
+                  <button key={p} type="button" onClick={() => setPrepPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${prepPayment === p ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
+                    {p === 'cash' ? 'نقدي بالكامل' : p === 'credit' ? 'آجل بالكامل' : 'مدفوع + آجل'}
                   </button>
                 ))}
               </div>
-              {prepPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={prepTreasury} onChange={setPrepTreasury} compact /></div>}
+              {prepPayment === 'mixed' && <Field label={`المدفوع الآن (${cur.symbol}) *`}><input value={prepPaidNow} onChange={(e) => setPrepPaidNow(e.target.value)} inputMode="decimal" className={inputCls} /></Field>}
+              {prepPayment !== 'credit' && <div className="mt-2"><TreasuryPicker value={prepTreasury} onChange={setPrepTreasury} compact /></div>}
+              {prepPayment !== 'cash' && <Field label="جهة الاستحقاق (اختياري)" hint="يُرحل الباقي على 2101 حتى لو لم تكن الجهة مسجلة كمورد"><input value={prepBeneficiary} onChange={(e) => setPrepBeneficiary(e.target.value)} className={inputCls} placeholder="ورشة أو جهة خارجية…" /></Field>}
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setPrepFor(null)}>إلغاء</Btn>
-              <Btn onClick={savePrep} disabled={!prepAmount}>رسملة التكلفة</Btn>
+              <Btn onClick={savePrep} shortcut="F9" disabled={!prepAmount || (prepPayment === 'mixed' && !prepPaidNow.trim())}>رسملة التكلفة</Btn>
             </div>
           </div>
         )}
@@ -342,24 +368,22 @@ export function CarsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label={`سعر البيع (${cur.symbol}) *`}><input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-              <Field label={sellPayment === 'credit' ? 'المشتري من سجل العملاء *' : 'المشتري من سجل العملاء'} hint="الآجل يتطلبه — ذمته تظهر بكشف حسابه ويسري حده الائتماني">
-                <select value={buyerCustomerId} onChange={(e) => setBuyerCustomerId(Number(e.target.value))} className={inputCls}>
-                  <option value={0}>— مشترٍ عابر (نقدي فقط) —</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-                </select>
+              <Field label={sellPayment !== 'cash' ? 'المشتري من سجل العملاء *' : 'المشتري من سجل العملاء'} hint="أي جزء آجل يتطلبه — ذمته تظهر بكشف حسابه ويسري حده الائتماني">
+                <PartyQuickPicker parties={customers} value={buyerCustomerId} onChange={setBuyerCustomerId} cashLabel="مشترٍ عابر (نقدي فقط)" label="بحث المشتري" cashValue={0} />
               </Field>
             </div>
             {!buyerCustomerId && <Field label="اسم المشتري (حر — للعقد المطبوع)"><input value={buyer} onChange={(e) => setBuyer(e.target.value)} className={inputCls} /></Field>}
             <div className="grid grid-cols-2 gap-3">
               <Field label="التحصيل">
                 <div className="flex gap-2">
-                  {(['cash', 'credit'] as const).map((p) => (
-                    <button key={p} onClick={() => setSellPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${sellPayment === p ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
-                      {p === 'cash' ? 'نقدي' : 'آجل'}
+                  {(['cash', 'credit', 'mixed'] as const).map((p) => (
+                    <button key={p} type="button" onClick={() => setSellPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${sellPayment === p ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
+                      {p === 'cash' ? 'نقدي بالكامل' : p === 'credit' ? 'آجل بالكامل' : 'مدفوع + آجل'}
                     </button>
                   ))}
                 </div>
-                {sellPayment === 'cash' && <div className="mt-2"><TreasuryPicker value={sellTreasury} onChange={setSellTreasury} compact /></div>}
+                {sellPayment === 'mixed' && <Field label={`المدفوع الآن (${cur.symbol}) *`}><input value={sellPaidNow} onChange={(e) => setSellPaidNow(e.target.value)} inputMode="decimal" className={inputCls} /></Field>}
+                {sellPayment !== 'credit' && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury:sellTreasury,terminalPayment:sellTerminal}} onChange={value=>{setSellTreasury(value.treasury);setSellTerminal(value.terminalPayment)}} operation="receipt"/></div>}
               </Field>
               <Field label="الضريبة">
                 <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
@@ -370,16 +394,13 @@ export function CarsPage() {
             </div>
             <Field label="عمولة موظف (اختياري)" hint="البائع الذي أتم الصفقة — مصروف مربوط بالسيارة يدخل ربحيتها">
               <div className="grid grid-cols-2 gap-2">
-                <select value={commEmpId} onChange={(e) => setCommEmpId(e.target.value)} className={inputCls}>
-                  <option value="">— بلا عمولة —</option>
-                  {employees.filter((e) => e.active).map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-                </select>
+                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={commEmpId ? Number(commEmpId) : 0} onChange={(id) => setCommEmpId(id ? String(id) : '')} cashLabel="بلا عمولة" label="بحث موظف العمولة" cashValue={0} />
                 <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!commEmpId} />
               </div>
             </Field>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSellFor(null)}>إلغاء</Btn>
-              <Btn onClick={doSell} disabled={!price || (!!commEmpId && !commAmount.trim())}>بيع وقيد الربحية</Btn>
+              <Btn onClick={doSell} shortcut="F9" disabled={!price || (sellPayment !== 'cash' && !buyerCustomerId) || (sellPayment === 'mixed' && !sellPaidNow.trim()) || (!!commEmpId && !commAmount.trim())}>بيع وقيد الربحية</Btn>
             </div>
           </div>
         )}
@@ -398,7 +419,7 @@ export function CarsPage() {
             </div>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setRentFor(null)}>إلغاء</Btn>
-              <Btn onClick={doRent} disabled={!dailyRate && !monthlyRate}>تحويل للتأجير</Btn>
+              <Btn onClick={doRent} shortcut="F9" disabled={!dailyRate && !monthlyRate}>تحويل للتأجير</Btn>
             </div>
           </div>
         )}
@@ -507,7 +528,7 @@ export function CarsPage() {
               عمولتك المتوقعة: {fmt(toMinor(cgAsk, cur.decimals) - toMinor(cgNet, cur.decimals))}
             </div>
           )}
-          <Btn onClick={saveConsignment} className="w-full" disabled={!cgMake.trim() || !cgModel.trim() || !cgPlate.trim() || !cgOwner.trim() || !cgNet || !cgAsk}>تسجيل الأمانة</Btn>
+          <Btn onClick={saveConsignment} shortcut="F9" className="w-full" disabled={!cgMake.trim() || !cgModel.trim() || !cgPlate.trim() || !cgOwner.trim() || !cgNet || !cgAsk}>تسجيل الأمانة</Btn>
         </div>
       </Modal>
 
@@ -519,10 +540,7 @@ export function CarsPage() {
               <input value={cgSalePrice} onChange={(e) => setCgSalePrice(e.target.value)} inputMode="decimal" className={inputCls} />
             </Field>
             <Field label={cgPayment === 'credit' ? 'المشتري من سجل العملاء *' : 'المشتري من سجل العملاء'} hint="بيع الأمانة الآجل يتطلبه — الذمة على المشتري لا على مالك السيارة">
-              <select value={cgBuyerCustomerId} onChange={(e) => setCgBuyerCustomerId(Number(e.target.value))} className={inputCls}>
-                <option value={0}>— مشترٍ عابر (نقدي فقط) —</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={customers} value={cgBuyerCustomerId} onChange={setCgBuyerCustomerId} cashLabel="مشترٍ عابر (نقدي فقط)" label="بحث المشتري" cashValue={0} />
             </Field>
             {!cgBuyerCustomerId && <Field label="اسم المشتري (حر — للإيصال)"><input value={cgBuyer} onChange={(e) => setCgBuyer(e.target.value)} className={inputCls} /></Field>}
             <div className="grid grid-cols-2 gap-3">
@@ -535,14 +553,14 @@ export function CarsPage() {
                   ))}
                 </div>
               </Field>
-              {cgPayment === 'cash' && <Field label="إلى"><TreasuryPicker value={cgTreasury} onChange={setCgTreasury} compact /></Field>}
+              {cgPayment === 'cash' && <div className="space-y-2"><PaymentMethodPicker value={{treasury:cgTreasury,terminalPayment:cgTerminal}} onChange={value=>{setCgTreasury(value.treasury);setCgTerminal(value.terminalPayment)}} operation="receipt"/></div>}
             </div>
             {cgSalePrice && toMinor(cgSalePrice, cur.decimals) >= cgSellCar.ownerNetMinor && (
               <div className="rounded-xl bg-violet-500/10 border border-violet-500/30 p-3 text-[12px] font-bold text-violet-700 dark:text-violet-300">
                 📒 القيد: {cgPayment === 'cash' ? 'الخزينة' : 'العملاء'} {fmt(toMinor(cgSalePrice, cur.decimals))} / مستحق المالك {fmt(cgSellCar.ownerNetMinor)} + عمولتك {fmt(toMinor(cgSalePrice, cur.decimals) - cgSellCar.ownerNetMinor)}
               </div>
             )}
-            <Btn onClick={doSellConsignment} className="w-full" disabled={!cgSalePrice}>بيع وقيد العمولة</Btn>
+            <Btn onClick={doSellConsignment} shortcut="F9" className="w-full" disabled={!cgSalePrice}>بيع وقيد العمولة</Btn>
           </div>
         )}
       </Modal>

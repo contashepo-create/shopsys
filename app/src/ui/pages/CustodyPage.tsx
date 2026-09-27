@@ -1,3 +1,4 @@
+import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * ملفات عهد الموظفين — نظام متكامل (طلب المالك، مرجعية pro-acc):
  * فتح ملف (بلا قيد) ← تعزيزات من خزينة/بنك ← مصروفات وفواتير تُخصم منه
@@ -176,15 +177,13 @@ export function CustodyPage() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="الموظف *">
-              <select value={fEmployeeId} onChange={(e) => setFEmployeeId(Number(e.target.value))} className={inputCls}>
-                {employees.map((e) => <option key={e.id} value={e.id}>{e.nameAr}</option>)}
-              </select>
+              <PartyQuickPicker parties={employees} value={fEmployeeId} onChange={setFEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
             </Field>
             <Field label="ربط بمشروع (اختياري)" hint="مصروفات الملف تدخل تكاليف المشروع تلقائياً">
-              <select value={fProjectId} onChange={(e) => setFProjectId(e.target.value)} className={inputCls}>
+              <QuickSelect value={fProjectId} onChange={(e) => setFProjectId(e.target.value)} className={inputCls}>
                 <option value="">— بلا مشروع —</option>
                 {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
           <Field label="سبب الملف *"><input value={fReason} onChange={(e) => setFReason(e.target.value)} className={inputCls} placeholder="عهدة موقع، مشتريات نثرية، تشغيل يومي…" autoFocus /></Field>
@@ -270,12 +269,12 @@ export function CustodyPage() {
       {/* تعزيز */}
       <Modal open={fundOpen} onClose={() => setFundOpen(false)} title={viewing ? `💰 تعزيز ${viewing.fileNumber}` : ''}>
         <div className="space-y-4">
-          <Field label={`المبلغ (${cur.symbol}) *`}><input value={fundAmount} onChange={(e) => setFundAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
+          <Field label={`المبلغ (${cur.symbol}) *`}><input value={fundAmount} onChange={(e) => setFundAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
           <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={fundTreasury} onChange={setFundTreasury} /></Field>
           <Field label="البيان"><input value={fundDesc} onChange={(e) => setFundDesc(e.target.value)} className={inputCls} placeholder="عهدة أسبوع، تشغيل موقع…" /></Field>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setFundOpen(false)}>إلغاء</Btn>
-            <Btn onClick={doFund} disabled={!fundAmount.trim()}>💾 تعزيز وقيد</Btn>
+            <Btn onClick={doFund} shortcut="F9" disabled={!fundAmount.trim()}>💾 تعزيز وقيد</Btn>
           </div>
         </div>
       </Modal>
@@ -288,12 +287,12 @@ export function CustodyPage() {
               <span className="text-slate-500">المتبقي بالعهدة</span><b>{fmt(viewSummary.remainingMinor)} {cur.symbol}</b>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label={`المبلغ (${cur.symbol}) *`}><input value={expAmount} onChange={(e) => setExpAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
+              <Field label={`المبلغ (${cur.symbol}) *`}><input value={expAmount} onChange={(e) => setExpAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
               <Field label="على مشروع؟" hint="يدخل تكاليفه وربحيته">
-                <select value={expProjectId} onChange={(e) => setExpProjectId(e.target.value)} className={inputCls}>
+                <QuickSelect value={expProjectId} onChange={(e) => setExpProjectId(e.target.value)} className={inputCls}>
                   <option value="">— بلا مشروع —</option>
                   {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-                </select>
+                </QuickSelect>
               </Field>
             </div>
             <Field label="بيان المصروف *"><input value={expDesc} onChange={(e) => setExpDesc(e.target.value)} className={inputCls} placeholder="مواد، مواصلات، إكراميات عمال…" /></Field>
@@ -303,7 +302,7 @@ export function CustodyPage() {
             </label>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setExpOpen(false)}>إلغاء</Btn>
-              <Btn onClick={doExpense} disabled={!expAmount.trim() || !expDesc.trim()}>💾 تسجيل المصروف</Btn>
+              <Btn onClick={doExpense} shortcut="F9" disabled={!expAmount.trim() || !expDesc.trim()}>💾 تسجيل المصروف</Btn>
             </div>
           </div>
         )}
@@ -317,7 +316,7 @@ export function CustodyPage() {
               <span className="text-slate-500">المتبقي بعهدة {empName(viewing.employeeId)}</span><b>{fmt(viewSummary.remainingMinor)} {cur.symbol}</b>
             </div>
             <Field label={`المرتجع نقداً (${cur.symbol})`} hint="ما يعيده الموظف فعلاً — الفرق يُسجَّل عجزاً">
-              <input value={returnAmount} onChange={(e) => setReturnAmount(e.target.value)} type="number" min={0} className={inputCls} dir="ltr" autoFocus />
+              <input value={returnAmount} onChange={(e) => setReturnAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
             </Field>
             <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={settleTreasury} onChange={setSettleTreasury} compact /></Field>
             {returnAmount.trim() !== '' && (() => {
@@ -337,7 +336,7 @@ export function CustodyPage() {
             })()}
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setSettleOpen(false)}>إلغاء</Btn>
-              <Btn onClick={doSettle} disabled={returnAmount.trim() === ''}>⚖️ تنفيذ التسوية والإغلاق</Btn>
+              <Btn onClick={doSettle} shortcut="F9" disabled={returnAmount.trim() === ''}>⚖️ تنفيذ التسوية والإغلاق</Btn>
             </div>
           </div>
         )}

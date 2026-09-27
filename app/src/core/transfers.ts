@@ -116,8 +116,10 @@ export function transferTotalQty(lines: TransferLine[]): number {
 export function buildWarehouseDocs(
   purchases: { id?: number; projectId?: number | null; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
   sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
-  saleReturns: { saleId: number; lines: { itemId: number; qty: number; condition?: string }[] }[] = [],
-  purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number }[] }[] = [],
+  saleReturns: { saleId: number; lines: { itemId: number; qty: number; condition?: string; saleLineIndex?: number; warehouseId?: number | null }[] }[] = [],
+  purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number; purchaseLineIndex?: number; warehouseId?: number | null }[] }[] = [],
+  productionOrders: { warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; productItemId: number; producedQty: number; ingredientItems?: { itemId: number; qty: number; warehouseId?: number | null }[] }[] = [],
+  processingOrders: { sourceWarehouseId?: number | null; outputWarehouseId?: number | null; sourceItemId: number; sourceQty: number; outputs: { itemId: number; qty: number }[] }[] = [],
 ): WarehouseDoc[] {
   const docs: WarehouseDoc[] = []
   const pushLineDoc = (warehouseId: number | null | undefined, itemId: number, qtyDelta: number) => {
@@ -135,21 +137,40 @@ export function buildWarehouseDocs(
   }
 
   const saleById = new Map(sales.filter((s) => s.id != null).map((s) => [s.id!, s]))
+  // يبقى الاستهلاك متراكماً بين جميع مرتجعات الفاتورة، لا يبدأ من أول سطر مع كل مستند.
+  const remainingSaleLineQty = new Map<string, number>()
+  for (const sale of sales) sale.lines.forEach((line, index) => remainingSaleLineQty.set(`${sale.id ?? 0}:${index}`, line.qty))
   for (const r of saleReturns) {
     const sale = saleById.get(r.saleId)
     if (!sale) continue
-    const remainingByLine = sale.lines.map((l) => l.qty)
     for (const retLine of r.lines.filter((l) => l.condition !== 'damaged')) {
       let left = retLine.qty
-      for (let i = 0; i < sale.lines.length && left > 1e-9; i++) {
+      const referencedIndex = 'saleLineIndex' in retLine && typeof retLine.saleLineIndex === 'number' ? retLine.saleLineIndex : null
+      const indexes = referencedIndex == null ? sale.lines.map((_, index) => index) : [referencedIndex]
+      for (const i of indexes) {
+        if (left <= 1e-9) break
         const sl = sale.lines[i]
-        if (sl.itemId !== retLine.itemId || remainingByLine[i] <= 0) continue
-        const take = Math.min(left, remainingByLine[i])
-        remainingByLine[i] -= take
+        if (!sl || sl.itemId !== retLine.itemId) continue
+        const key = `${sale.id ?? 0}:${i}`
+        const can = remainingSaleLineQty.get(key) ?? 0
+        if (can <= 0) continue
+        const take = Math.min(left, can)
+        remainingSaleLineQty.set(key, Math.round((can - take) * 1000) / 1000)
         left = Math.round((left - take) * 1000) / 1000
-        pushLineDoc(sl.warehouseId ?? sale.warehouseId ?? null, retLine.itemId, take)
+        pushLineDoc(retLine.warehouseId ?? sl.warehouseId ?? sale.warehouseId ?? null, retLine.itemId, take)
       }
     }
+  }
+
+  // التصنيع حركة داخل المخزن المحدد: خامات سالبة ومنتج نهائي موجب.
+  for (const order of productionOrders) {
+    pushLineDoc(order.outputWarehouseId ?? order.warehouseId ?? null, order.productItemId, order.producedQty)
+    for (const ingredient of order.ingredientItems ?? []) pushLineDoc(ingredient.warehouseId ?? order.ingredientWarehouseId ?? order.warehouseId ?? null, ingredient.itemId, -ingredient.qty)
+  }
+  // التجهيز/التفكيك أيضاً حركة مخزنية: خام خارج ونواتج داخلة في مخازنها.
+  for (const order of processingOrders) {
+    pushLineDoc(order.sourceWarehouseId ?? null, order.sourceItemId, -order.sourceQty)
+    for (const output of order.outputs) pushLineDoc(order.outputWarehouseId ?? order.sourceWarehouseId ?? null, output.itemId, output.qty)
   }
 
   const purchaseById = new Map(purchases.filter((p) => p.id != null && p.projectId == null).map((p) => [p.id!, p]))
@@ -161,16 +182,20 @@ export function buildWarehouseDocs(
     if (!purchase) continue
     for (const retLine of r.lines) {
       let left = retLine.qty
-      for (let i = 0; i < purchase.lines.length && left > 1e-9; i++) {
+      const indexes = retLine.purchaseLineIndex == null
+        ? purchase.lines.map((_, index) => index)
+        : [retLine.purchaseLineIndex]
+      for (const i of indexes) {
+        if (left <= 1e-9) break
         const pl = purchase.lines[i]
-        if (pl.itemId !== retLine.itemId) continue
+        if (!pl || pl.itemId !== retLine.itemId) continue
         const key = `${purchase.id ?? 0}:${i}`
         const can = remainingPurchaseLineQty.get(key) ?? 0
         if (can <= 0) continue
         const take = Math.min(left, can)
         remainingPurchaseLineQty.set(key, Math.round((can - take) * 1000) / 1000)
         left = Math.round((left - take) * 1000) / 1000
-        pushLineDoc(pl.warehouseId ?? purchase.warehouseId ?? null, retLine.itemId, -take)
+        pushLineDoc(retLine.warehouseId ?? pl.warehouseId ?? purchase.warehouseId ?? null, retLine.itemId, -take)
       }
     }
   }

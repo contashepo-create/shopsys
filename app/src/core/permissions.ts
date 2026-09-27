@@ -40,6 +40,7 @@ export const PERMISSION_MODULE_MAP: Record<string, string[]> = {
   'inv.view': ['inventory'],
   'inv.cost.view': ['inventory'],
   'inv.item.manage': ['inventory'],
+  'inv.item.delete': ['inventory'],
   'inv.adjust': ['inventory'],
   'inv.transfer': ['inventory'],
   'inv.count': ['inventory'],
@@ -50,8 +51,9 @@ export const PERMISSION_MODULE_MAP: Record<string, string[]> = {
   // شاشات النشاط التخصصي — تظهر فقط إن وُجدت وحدة تخصصية واحدة على الأقل
   'ops.activity.use': [
     'maintenance', 'laundry', 'wallet_services', 'equipment_rental', 'logistics',
-    'lab', 'contracting', 'clinic', 'cars', 'realestate', 'recipes', 'processing', 'jewelry', 'installments',
+    'lab', 'contracting', 'clinic', 'cars', 'realestate',
   ],
+  'rep.fleet': ['logistics', 'cars'],
 }
 
 /** الصلاحيات الظاهرة لنشاطٍ وحداته modules — العامة + المرتبطة بوحدة مفعلة */
@@ -83,6 +85,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'inv.view', nameAr: 'عرض الكميات', section: 'inventory' },
   { id: 'inv.cost.view', nameAr: 'رؤية سعر التكلفة', section: 'inventory', sensitive: true },
   { id: 'inv.item.manage', nameAr: 'إضافة وتعديل الأصناف', section: 'inventory' },
+  { id: 'inv.item.delete', nameAr: 'حذف صنف نهائياً (تأكيد ورقم سري)', section: 'inventory', sensitive: true },
   { id: 'inv.adjust', nameAr: 'تسوية مخزنية', section: 'inventory', sensitive: true },
   { id: 'inv.transfer', nameAr: 'تحويل بين مخازن', section: 'inventory' },
   { id: 'inv.count', nameAr: 'جرد بالباركود', section: 'inventory' },
@@ -108,6 +111,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'acc.fiscal.close', nameAr: 'إقفال السنة المالية', section: 'accounting', sensitive: true },
   // التقارير
   { id: 'rep.sales', nameAr: 'تقارير المبيعات', section: 'reports' },
+  { id: 'rep.fleet', nameAr: 'تقارير الأسطول ومراكز تكلفة السيارات', section: 'reports' },
   { id: 'rep.profit', nameAr: 'تقارير الربحية', section: 'reports', sensitive: true },
   { id: 'rep.financial', nameAr: 'القوائم المالية', section: 'reports', sensitive: true },
   // الإعدادات
@@ -117,6 +121,90 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'set.backup', nameAr: 'النسخ الاحتياطي', section: 'settings', sensitive: true },
   { id: 'set.audit.view', nameAr: 'عرض سجل التدقيق', section: 'settings', sensitive: true },
 ]
+
+/**
+ * مصفوفة CRUD المرئية لفئات الموظفين.
+ * كل خلية تشير إلى صلاحية فعلية مستخدمة في التطبيق؛ لا توجد صلاحيات شكلية
+ * لا يقرأها الحارس. بعض الوحدات لا تملك عملية معينة بطبيعتها، لذلك تعرض
+ * الخلية «غير متاحة» بدلاً من منح صلاحية مضللة (مثل حذف تقرير مالي).
+ */
+export type CrudOperation = 'create' | 'read' | 'update' | 'delete'
+
+export interface CrudMatrixRow {
+  id: string
+  nameAr: string
+  section: string
+  requiredModules?: string[]
+  permissions: Record<CrudOperation, string[]>
+}
+
+export const CRUD_MATRIX: CrudMatrixRow[] = [
+  {
+    id: 'sales', nameAr: 'المبيعات والفواتير', section: 'sales', requiredModules: ['pos'],
+    permissions: {
+      create: ['sales.invoice.create'], read: ['sales.pos.open'], update: ['sales.price.edit'], delete: ['sales.return.create'],
+    },
+  },
+  {
+    id: 'inventory', nameAr: 'الأصناف والمخزون', section: 'inventory', requiredModules: ['inventory'],
+    permissions: {
+      create: ['inv.item.manage'], read: ['inv.view'], update: ['inv.item.manage'], delete: ['inv.item.delete'],
+    },
+  },
+  {
+    id: 'purchases', nameAr: 'المشتريات والموردون', section: 'purchases', requiredModules: ['purchases'],
+    permissions: {
+      create: ['pur.invoice.create'], read: ['pur.invoice.create'], update: ['pur.invoice.edit'], delete: ['pur.return.create'],
+    },
+  },
+  {
+    id: 'customers', nameAr: 'العملاء وكشوفهم', section: 'parties',
+    permissions: {
+      create: ['party.customer.manage'], read: ['party.customer.statement'], update: ['party.customer.manage'], delete: ['party.customer.manage'],
+    },
+  },
+  {
+    id: 'employees', nameAr: 'الموظفون والرواتب', section: 'parties',
+    permissions: {
+      create: ['party.employee.manage'], read: ['party.employee.manage'], update: ['party.employee.manage'], delete: ['party.employee.manage'],
+    },
+  },
+  {
+    id: 'suppliers', nameAr: 'الموردون', section: 'purchases', requiredModules: ['purchases'],
+    permissions: {
+      create: ['pur.supplier.manage'], read: ['pur.supplier.manage'], update: ['pur.supplier.manage'], delete: ['pur.supplier.manage'],
+    },
+  },
+  {
+    id: 'accounting', nameAr: 'الحسابات والسندات', section: 'accounting',
+    permissions: {
+      create: ['acc.vouchers'], read: ['acc.journal.view'], update: ['acc.journal.manual'], delete: ['acc.journal.reverse'],
+    },
+  },
+  {
+    id: 'reports', nameAr: 'التقارير', section: 'reports',
+    permissions: {
+      create: [], read: ['rep.sales'], update: [], delete: [],
+    },
+  },
+  {
+    id: 'fleet', nameAr: 'الأسطول ومراكز تكلفة السيارات', section: 'reports', requiredModules: ['logistics', 'cars'],
+    permissions: {
+      create: ['ops.activity.use'], read: ['rep.fleet'], update: ['ops.activity.use'], delete: [],
+    },
+  },
+  {
+    id: 'settings', nameAr: 'المستخدمون والإعدادات', section: 'settings',
+    permissions: {
+      create: ['set.users'], read: ['set.users'], update: ['set.users'], delete: ['set.users'],
+    },
+  },
+]
+
+/** صفوف CRUD المتاحة للنشاط الحالي — العامة + ما يخص وحدة مفعلة. */
+export function crudMatrixForModules(modules: readonly string[]): CrudMatrixRow[] {
+  return CRUD_MATRIX.filter((row) => !row.requiredModules || row.requiredModules.some((module) => modules.includes(module)))
+}
 
 /* ─── فرض الصلاحيات (البند 4 — صفر تجاوز): خريطة مسار → صلاحية ─── */
 
@@ -147,6 +235,10 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/purchases/suppliers', perm: 'pur.supplier.manage' },
   { prefix: '/purchases', perm: 'pur.invoice.create' },
   { prefix: '/parties/employees', perm: 'party.employee.manage' },
+  { prefix: '/parties/payroll', perm: 'party.employee.manage' },
+  { prefix: '/parties/employee-advances', perm: 'party.employee.manage' },
+  { prefix: '/parties/employee-deductions', perm: 'party.employee.manage' },
+  { prefix: '/parties/employee-commissions', perm: 'party.employee.manage' },
   { prefix: '/parties/custody', perm: 'party.employee.manage' },
   { prefix: '/parties', perm: 'party.customer.manage' },
   // شاشات النشاط التخصصي (صيانة/رحلات/معمل/عيادة/مقاولات/سيارات/محافظ/تأجير)
@@ -154,6 +246,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/laundry', perm: 'ops.activity.use' },
   { prefix: '/wallets', perm: 'ops.activity.use' },
   { prefix: '/rental', perm: 'ops.activity.use' },
+  { prefix: '/logistics/fleet', perm: 'rep.fleet' },
   { prefix: '/logistics', perm: 'ops.activity.use' },
   { prefix: '/lab', perm: 'ops.activity.use' },
   { prefix: '/contracting', perm: 'ops.activity.use' },
@@ -299,6 +392,8 @@ export const DEFAULT_ROLES: Role[] = [
       'acc.journal.view', 'acc.journal.manual', 'acc.journal.reverse', 'acc.coa.manage',
       'acc.vouchers', 'acc.fiscal.close',
       'rep.sales', 'rep.profit', 'rep.financial',
+      // المحاسب الذي ينفذ سياقاً يحتاج وردية يستطيع فتحها من شاشة الورديات
+      'sales.shift.close',
     ],
   },
 ]
@@ -362,7 +457,7 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
   logistics: [
     {
       id: 'fleet_coordinator', nameAr: 'منسق أسطول ورحلات', isSystem: true,
-      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers', 'rep.sales'],
+      permissions: ['ops.activity.use', 'party.customer.manage', 'party.customer.statement', 'acc.vouchers', 'rep.sales', 'rep.fleet'],
     },
   ],
   cars: [
@@ -419,7 +514,7 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
     {
       // الحلاق/الخبيرة — يسجل خدماته فقط، الخصومات بموافقة
       id: 'stylist', nameAr: 'حلاق / خبيرة تجميل', isSystem: true,
-      permissions: ['sales.pos.open', 'sales.invoice.create', 'party.customer.manage'],
+      permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.shift.close', 'party.customer.manage'],
     },
   ],
   bakery: [
@@ -477,7 +572,7 @@ export const ACTIVITY_ROLES: Record<string, Role[]> = {
     {
       // صايغ أول — يسعّر بحسب جرام اليوم لكن التكلفة والخصومات للمالك
       id: 'goldsmith', nameAr: 'صايغ أول', isSystem: true,
-      permissions: ['sales.pos.open', 'sales.invoice.create', 'ops.activity.use', 'inv.view', 'party.customer.manage'],
+      permissions: ['sales.pos.open', 'sales.invoice.create', 'sales.shift.close', 'ops.activity.use', 'inv.view', 'party.customer.manage'],
     },
   ],
 }

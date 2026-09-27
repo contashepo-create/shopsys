@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="2100" viewBox="0 0 1440 2100" role="img" aria-label="تصور بصري لتصميم فاتورة المبيعات المتقدمة الحالية">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="5" stdDeviation="10" flood-color="#0f172a" flood-opacity=".08"/></filter>
+    <style>
+      .ar{font-family:Arial,Tahoma,sans-serif;fill:#172033} .muted{fill:#64748b;font-size:18px}.tiny{fill:#64748b;font-size:15px}.label{fill:#475569;font-size:17px;font-weight:700}.value{fill:#172033;font-size:17px}.title{fill:#111827;font-size:28px;font-weight:800}.section{fill:#0f172a;font-size:21px;font-weight:800}.button{font-family:Arial,Tahoma,sans-serif;font-size:16px;font-weight:700}.num{font-family:Arial,Tahoma,sans-serif;fill:#172033;font-size:17px}.line{stroke:#e2e8f0;stroke-width:1}.card{fill:#fff;stroke:#e2e8f0;stroke-width:1}.field{fill:#fff;stroke:#cbd5e1;stroke-width:1.5}.chip{fill:#f1f5f9}.blue{fill:#2563eb}.green{fill:#059669}.amber{fill:#d97706}.rose{fill:#e11d48}
+    </style>
+  </defs>
+  <rect width="1440" height="2100" fill="#f8fafc"/>
+  <!-- page header -->
+  <rect x="40" y="30" width="1360" height="92" rx="18" class="card" filter="url(#shadow)"/>
+  <text x="1350" y="68" text-anchor="end" class="title ar">فاتورة مبيعات جديدة</text>
+  <text x="1350" y="96" text-anchor="end" class="muted ar">فاتورة متقدمة · مسودة جديدة</text>
+  <text x="92" y="83" class="button ar" fill="#475569">← رجوع</text>
+  <rect x="530" y="53" width="115" height="42" rx="12" fill="#f1f5f9"/><text x="587" y="80" text-anchor="middle" class="button ar" fill="#475569">▣ طباعة  F6</text>
+  <rect x="660" y="53" width="150" height="42" rx="12" fill="#f1f5f9"/><text x="735" y="80" text-anchor="middle" class="button ar" fill="#475569">▤ حفظ مسودة  F8</text>
+  <rect x="825" y="53" width="180" height="42" rx="12" fill="#2563eb"/><text x="915" y="80" text-anchor="middle" class="button ar" fill="#fff">✓ اعتماد وترحيل  F9</text>
+  <!-- meta card -->
+  <rect x="40" y="145" width="1360" height="225" rx="18" class="card" filter="url(#shadow)"/>
+  <text x="1350" y="180" text-anchor="end" class="section ar">بيانات الفاتورة</text>
+  <g transform="translate(70 205)">
+    <text x="1260" y="0" text-anchor="end" class="label ar">نمط الإدخال</text><rect x="930" y="15" width="330" height="48" rx="10" class="field"/><text x="1235" y="46" text-anchor="end" class="value ar">قياسي ▾</text>
+    <text x="850" y="0" text-anchor="end" class="label ar">العميل</text><rect x="520" y="15" width="330" height="48" rx="10" class="field"/><text x="825" y="46" text-anchor="end" class="value ar">عميل نقدي · بحث العميل — F4</text>
+    <text x="440" y="0" text-anchor="end" class="label ar">مرجع/أمر شراء العميل</text><rect x="180" y="15" width="250" height="48" rx="10" class="field"/>
+    <text x="120" y="0" text-anchor="end" class="label ar">تاريخ الاستحقاق</text><rect x="-10" y="15" width="150" height="48" rx="10" class="field"/><text x="110" y="46" text-anchor="end" class="value ar">2026/09/25</text>
+    <text x="1260" y="95" text-anchor="end" class="label ar">المخزن الافتراضي</text><rect x="930" y="110" width="330" height="48" rx="10" class="field"/><text x="1235" y="141" text-anchor="end" class="value ar">المخزن الرئيسي ▾</text>
+    <text x="850" y="95" text-anchor="end" class="label ar">المخزون السالب</text><rect x="520" y="110" width="330" height="48" rx="10" fill="#fff7ed" stroke="#fed7aa"/><circle cx="550" cy="134" r="10" fill="#f59e0b"/><text x="825" y="141" text-anchor="end" class="value ar">تحذير بدلاً من المنع</text>
+  </g>
+  <!-- items card -->
+  <rect x="40" y="395" width="1360" height="455" rx="18" class="card" filter="url(#shadow)"/>
+  <rect x="70" y="425" width="1300" height="54" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="1335" y="460" text-anchor="end" class="muted ar">كود/اسم الصنف — اكتب ثم اختر بالأسهم واضغط Enter</text><text x="100" y="460" class="button ar" fill="#2563eb">بحث سريع</text>
+  <rect x="70" y="505" width="1300" height="54" fill="#f1f5f9"/>
+  <g class="label ar"><text x="1260" y="539" text-anchor="middle">الصنف</text><text x="1010" y="539" text-anchor="middle">الكمية</text><text x="830" y="539" text-anchor="middle">السعر</text><text x="650" y="539" text-anchor="middle">خصم %</text><text x="450" y="539" text-anchor="middle">الإجمالي</text><text x="180" y="539" text-anchor="middle">إجراء</text></g>
+  <g class="ar">
+    <line x1="70" y1="559" x2="1370" y2="559" class="line"/><text x="1260" y="597" text-anchor="middle" class="value">هاتف ذكي</text><text x="1010" y="597" text-anchor="middle" class="num">2</text><text x="830" y="597" text-anchor="middle" class="num">12,500</text><text x="650" y="597" text-anchor="middle" class="num">0%</text><text x="450" y="597" text-anchor="middle" class="num">25,000</text><text x="180" y="597" text-anchor="middle" class="rose">×</text>
+    <line x1="70" y1="625" x2="1370" y2="625" class="line"/><text x="1260" y="663" text-anchor="middle" class="value">شاحن سريع</text><text x="1010" y="663" text-anchor="middle" class="num">3</text><text x="830" y="663" text-anchor="middle" class="num">450</text><text x="650" y="663" text-anchor="middle" class="num">5%</text><text x="450" y="663" text-anchor="middle" class="num">1,283</text><text x="180" y="663" text-anchor="middle" class="rose">×</text>
+    <line x1="70" y1="691" x2="1370" y2="691" class="line"/><text x="1260" y="729" text-anchor="middle" class="value">خدمة تركيب</text><text x="1010" y="729" text-anchor="middle" class="num">1</text><text x="830" y="729" text-anchor="middle" class="num">300</text><text x="650" y="729" text-anchor="middle" class="num">0%</text><text x="450" y="729" text-anchor="middle" class="num">300</text><text x="180" y="729" text-anchor="middle" class="rose">×</text>
+  </g>
+  <text x="1340" y="810" text-anchor="end" class="tiny ar">يمكن أن تظهر تحذيرات المخزون داخل السطر عند وجود عجز</text>
+  <!-- charges -->
+  <rect x="40" y="875" width="1360" height="130" rx="18" class="card" filter="url(#shadow)"/>
+  <text x="1340" y="915" text-anchor="end" class="section ar">مصروفات يتحملها العميل</text><text x="1340" y="946" text-anchor="end" class="muted ar">تظهر كبنود مستقلة في الفاتورة وتدخل إجمالي العميل عند الحاجة.</text><rect x="70" y="910" width="170" height="45" rx="12" fill="#eff6ff"/><text x="155" y="939" text-anchor="middle" class="button ar" fill="#2563eb">＋ إدارة المصروفات</text>
+  <!-- commission/expenses -->
+  <rect x="40" y="1030" width="1360" height="300" rx="18" class="card" filter="url(#shadow)"/>
+  <text x="1340" y="1070" text-anchor="end" class="section ar">المصروفات الداخلية والعمولات</text><rect x="70" y="1045" width="170" height="42" rx="12" fill="#eff6ff"/><text x="155" y="1072" text-anchor="middle" class="button ar" fill="#2563eb">＋ إدارة المصروفات</text>
+  <g transform="translate(70 1110)"><rect x="0" y="0" width="410" height="48" rx="10" class="field"/><text x="390" y="31" text-anchor="end" class="value ar">بند مصروف محفوظ ▾</text><rect x="430" y="0" width="230" height="48" rx="10" class="field"/><text x="640" y="31" text-anchor="end" class="value ar">القيمة</text><rect x="680" y="0" width="250" height="48" rx="10" class="field"/><text x="910" y="31" text-anchor="end" class="value ar">مركز التكلفة العام ▾</text><rect x="950" y="0" width="300" height="48" rx="10" class="field"/><text x="1230" y="31" text-anchor="end" class="value ar">مشروع اختياري ▾</text></g>
+  <g transform="translate(70 1180)"><rect x="0" y="0" width="410" height="48" rx="10" class="field"/><text x="390" y="31" text-anchor="end" class="value ar">المعاملة الضريبية: معفى ▾</text><rect x="430" y="0" width="230" height="48" rx="10" class="field"/><text x="640" y="31" text-anchor="end" class="value ar">حساب المصروف 5108</text><rect x="680" y="0" width="250" height="48" rx="10" class="field"/><text x="910" y="31" text-anchor="end" class="value ar">مستحق لاحقاً ▾</text><rect x="950" y="0" width="300" height="48" rx="10" class="field"/><text x="1230" y="31" text-anchor="end" class="value ar">لا يحمّل على البنود ▾</text></g>
+  <text x="1340" y="1280" text-anchor="end" class="tiny ar">العمولات تدعم مبلغاً ثابتاً أو نسبة من الإجمالي أو الصافي أو الربح</text>
+  <!-- bottom payment/summary -->
+  <rect x="40" y="1355" width="660" height="390" rx="18" class="card" filter="url(#shadow)"/><text x="640" y="1400" text-anchor="end" class="section ar">التحصيل الآن</text><rect x="80" y="1430" width="540" height="58" rx="12" fill="#fff" stroke="#cbd5e1"/><text x="590" y="1466" text-anchor="end" class="value ar">نقدية / بنك / ماكينة دفع ▾</text><text x="640" y="1532" text-anchor="end" class="label ar">المبلغ المحصل</text><rect x="80" y="1548" width="540" height="58" rx="12" class="field"/><text x="590" y="1585" text-anchor="end" class="num">26,583 ج.م</text><rect x="80" y="1640" width="260" height="48" rx="12" class="field"/><text x="320" y="1671" text-anchor="end" class="value ar">على حساب موظف ▾</text><text x="590" y="1725" text-anchor="end" class="green ar" font-size="17" font-weight="700">إجمالي المحصل: 26,583 · المتبقي: 0</text>
+  <rect x="740" y="1355" width="660" height="390" rx="18" class="card" filter="url(#shadow)"/><text x="1340" y="1400" text-anchor="end" class="section ar">الإجماليات</text><g class="ar"><text x="1340" y="1450" text-anchor="end" class="label">خصم عام %</text><rect x="1080" y="1465" width="260" height="44" rx="10" class="field"/><text x="1340" y="1560" text-anchor="end" class="label">إجمالي البنود</text><text x="820" y="1560" class="num">26,583 ج.م</text><text x="1340" y="1610" text-anchor="end" class="label">الخصم</text><text x="820" y="1610" class="num">0 ج.م</text><text x="1340" y="1660" text-anchor="end" class="label">الضريبة</text><text x="820" y="1660" class="num">0 ج.م</text><line x1="800" y1="1682" x2="1340" y2="1682" class="line"/><text x="1340" y="1720" text-anchor="end" class="section">صافي إجمالي الفاتورة</text><text x="820" y="1720" class="num green" font-size="22" font-weight="800">26,583 ج.م</text></g>
+  <!-- bottom sticky action bar -->
+  <rect x="40" y="1810" width="1360" height="90" rx="18" fill="#fff" stroke="#cbd5e1" filter="url(#shadow)"/><rect x="1040" y="1834" width="250" height="44" rx="12" fill="#f1f5f9"/><text x="1165" y="1862" text-anchor="middle" class="button ar" fill="#475569">استعادة آخر مسودة</text><rect x="760" y="1834" width="250" height="44" rx="12" fill="#f1f5f9"/><text x="885" y="1862" text-anchor="middle" class="button ar" fill="#475569">حفظ مسودة  F8</text><rect x="480" y="1834" width="250" height="44" rx="12" fill="#2563eb"/><text x="605" y="1862" text-anchor="middle" class="button ar" fill="#fff">ترحيل وتحصيل  F9</text>
+  <text x="720" y="1980" text-anchor="middle" class="muted ar">تصور بصري لتقسيم شاشة فاتورة البيع المتقدمة الحالية — RTL · متجاوبة · مبنية على مكونات ShopSys الحالية</text>
+</svg>

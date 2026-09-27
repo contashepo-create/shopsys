@@ -9,6 +9,10 @@
  *    sanitizeText — إزالة محارف التحكم ووسوم HTML ومحارف الحقن، وقصّ الطول.
  */
 
+import type { UserTreasuryAccess } from './treasuryAccess.ts'
+import type { PaymentTerminalAccess } from './paymentTerminalAccess.ts'
+import { PIN_MAX_LENGTH, PIN_MIN_LENGTH } from './auth.ts'
+
 export interface AuditEvent {
   id: number
   at: string // ISO
@@ -33,6 +37,8 @@ export const AUDIT_MAX = 3000
 export function sanitizeText(input: unknown, maxLen = 500): string {
   if (typeof input !== 'string') return ''
   return input
+    // التحكمية مقصودة هنا: هذا الحارس يزيل control characters قبل التخزين/العرض.
+    // oxlint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
     .replace(/[<>]/g, '')
     .replace(/[\u200B\u2060\uFEFF]/g, '')
@@ -223,6 +229,15 @@ export interface AppUser {
   extraPerms?: string[]
   deniedPerms?: string[]
   /**
+   * سياسة الوردية لهذا المستخدم: true = إجبار، false = إعفاء، undefined = الافتراضي
+   * (الكاشير يتبع إعداد الكاشير العام، وبقية الأدوار غير مجبرة افتراضياً).
+   */
+  requireOpenShiftForSales?: boolean
+  /** خزائن/بنوك المستخدم وعملياتها؛ undefined = سجل قديم غير مقيّد مؤقتاً. */
+  treasuryAccess?: UserTreasuryAccess
+  /** ماكينات الدفع وعملياتها؛ undefined = مستخدم قديم غير مقيد مؤقتاً. */
+  paymentTerminalAccess?: PaymentTerminalAccess
+  /**
    * ربط الحساب بسجل الموظف (طلب المالك): المستخدم يجب أن يكون موظفاً مسجلاً
    * أولاً ببياناته المالية والوظيفية — فتُخصم عليه السلف/العجوزات وتُربط وردياته.
    * undefined/null = حساب قديم قبل الربط (يبقى صالحاً للتوافق الخلفي).
@@ -302,13 +317,11 @@ export function findUserByIdentifier(users: readonly AppUser[], identifier: stri
 
 /**
  * تجزئة كلمة السر — WebCrypto متاح في المتصفح وNode 18+.
- * سياسة الطول (8-32 خانة، أرقام وحروف ورموز) تُفرض عند التعيين عبر
- * validatePinFormat في core/auth.ts — التجزئة نفسها محايدة حتى تظل
- * الأرقام القديمة (4-8 أرقام) صالحة للدخول ثم تُرقَّى عند أول تغيير.
+ * سياسة الطول (6-32 خانة، أرقام وحروف ورموز) تُفرض قبل التجزئة والتحقق.
  */
 export async function hashPin(pin: string): Promise<string> {
   const clean = pin.trim()
-  if (!clean || clean.length > 64) throw new Error('كلمة السر فارغة أو أطول من المسموح')
+  if (!clean || clean.length < PIN_MIN_LENGTH || clean.length > PIN_MAX_LENGTH) throw new Error(`كلمة السر يجب أن تكون من ${PIN_MIN_LENGTH} إلى ${PIN_MAX_LENGTH} خانة`)
   const data = new TextEncoder().encode(`tahakam:${clean}`)
   const digest = await crypto.subtle.digest('SHA-256', data)
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -316,6 +329,6 @@ export async function hashPin(pin: string): Promise<string> {
 
 export async function verifyPin(pin: string, pinHash: string): Promise<boolean> {
   const clean = pin.trim()
-  if (!clean || clean.length > 64) return false
+  if (!clean || clean.length < PIN_MIN_LENGTH || clean.length > PIN_MAX_LENGTH) return false
   return (await hashPin(clean)) === pinHash
 }

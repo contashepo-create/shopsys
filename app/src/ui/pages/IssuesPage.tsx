@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * بلاغات المشاكل الداخلية (طلب المالك):
  * أي مستخدم فرعي يبلغ عن مشكلة في أي عملية (فاتورة/قيد/سند…) —
@@ -110,10 +111,10 @@ export function IssuesPage() {
             <input value={title} onChange={(e) => setTitle(e.target.value)} className={inputCls} placeholder="فاتورة بمبلغ خاطئ / سند مكرر…" />
           </Field>
           <Field label="العملية المرتبطة (اختياري)" hint="حدد الفاتورة أو السند ليصل المدير للمشكلة مباشرة">
-            <select value={refKey} onChange={(e) => setRefKey(e.target.value)} className={inputCls}>
+            <QuickSelect value={refKey} onChange={(e) => setRefKey(e.target.value)} className={inputCls}>
               <option value="">— بدون —</option>
               {refOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-            </select>
+            </QuickSelect>
           </Field>
           <Field label="شرح المشكلة">
             <textarea value={details} onChange={(e) => setDetails(e.target.value)} rows={4} className={inputCls} placeholder="ماذا حدث بالضبط؟ ما القيمة الصحيحة؟" />

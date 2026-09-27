@@ -28,14 +28,14 @@ const cheques = [
   { chequeNumber: '123', direction: 'incoming', partyId: 7, amountMinor: 30000, status: 'bounced', createdAt: '2026-01-18T10:00', settledAt: '2026-01-25T10:00' },
 ]
 const cs = customerStatement({ customerId: 7, sales, saleReturns, allSales: sales, vouchers, cheques })
-ok(cs.length === 6, `كشف العميل 6 صفوف (فعلياً ${cs.length})`)
+ok(cs.length === 8, `كشف العميل يعرض كل العمليات (8 صفوف، فعلياً ${cs.length})` )
 // 100000 + 50000 − 20000 − 40000 − 30000 + 30000 (ارتداد) = 90000
 ok(statementBalance(cs) === 90000, `رصيد العميل 90000 (فعلياً ${statementBalance(cs)})`)
 ok(cs[0].docLabel.includes('S-0001'), 'مرتب زمنياً — الفاتورة الأولى أولاً')
 ok(cs.some((r) => r.docLabel.includes('مجزأ') || r.docLabel.includes('S-0003')), 'الفاتورة المجزأة موجودة بالجزء الآجل')
 const splitRow = cs.find((r) => r.docLabel.includes('S-0003'))
-ok(splitRow?.debitMinor === 50000, 'الجزء الآجل فقط (50000) لا كامل الفاتورة')
-ok(!cs.some((r) => r.docLabel.includes('S-0002')), 'فاتورة الكاش لا تدخل الكشف')
+ok(splitRow?.debitMinor === 80000 && splitRow?.creditMinor === 30000, 'الفاتورة المجزأة تعرض كامل العملية والمدفوع دائنًا')
+ok(cs.some((r) => r.docLabel.includes('S-0002') && r.docLabel.includes('نقدي/مسدد')), 'فاتورة الكاش تظهر في الكشف كعملية مكتملة')
 ok(!cs.some((r) => r.docLabel.includes('S-0004')), 'فواتير عميل آخر لا تدخل')
 ok(cs.some((r) => r.docLabel.includes('ارتداد')), 'ارتداد الشيك يعيد المديونية')
 
@@ -53,7 +53,7 @@ const pVouchers = [
 const ss = supplierStatement({ supplierId: 3, purchases, purchaseReturns: pReturns, allPurchases: purchases, vouchers: pVouchers, cheques: [] })
 // 150000 − 30000 − 70000 = 50000 مستحق له
 ok(statementBalance(ss) === 50000, `رصيد المورد 50000 (فعلياً ${statementBalance(ss)})`)
-ok(!ss.some((r) => r.docLabel.includes('P-0002')), 'الفاتورة المسددة بالكامل لا تدخل')
+ok(ss.some((r) => r.docLabel.includes('P-0002') && r.docLabel.includes('نقدي/مسدد')), 'الفاتورة المسددة بالكامل تظهر كعملية مكتملة')
 ok(ss.some((r) => r.docLabel.includes('مرتجع')), 'مرتجع الشراء يخفض المستحق')
 
 /* ─── كشف موظف ─── */

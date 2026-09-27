@@ -33,7 +33,7 @@ const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
 const { agingFromStatement, supplierRowsForAging, statementBalance } = await import(join(root, 'src/core/statements.ts'))
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
-assert.equal(ACTIVITIES.length, 28)
+assert.equal(ACTIVITIES.length, 29)
 
 let pass = 0
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
@@ -104,5 +104,5 @@ for (const activityId of ACTIVITIES) {
   console.log(`  ✓ ${nameAr} (${activityId}): افتتاحي↔آجل↔حد ائتمان↔سندات↔أعمار FIFO — 1104/2101 = Σ الأرصدة بالقرش`)
 }
 
-assert.equal(pass, 28)
+assert.equal(pass, 29)
 console.log(`\n✅ verify_parties_all_activities: دورة الذمم الكاملة سليمة على الأنشطة الـ${pass}`)

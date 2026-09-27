@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * بوت التليجرام — جانب العميل (المرحلة 5 — القرار 7):
  * القرار 7 يفصل بوتين: بوت المطوّر (تراخيص وتفعيل ميزات — خارج التطبيق)
@@ -242,7 +243,7 @@ export function TelegramPage() {
         </label>
         <div className="flex items-center gap-3 flex-wrap">
           <Field label="ساعة الإرسال اليومي">
-            <select
+            <QuickSelect
               value={schedule.hour}
               onChange={(e) => updateSchedule({ hour: sanitizeHour(e.target.value) })}
               className={inputCls}
@@ -251,7 +252,7 @@ export function TelegramPage() {
               {Array.from({ length: 24 }, (_, h) => (
                 <option key={h} value={h}>{hourLabelAr(h)}</option>
               ))}
-            </select>
+            </QuickSelect>
           </Field>
           <div className="text-[11.5px] text-slate-400 pt-4">
             {lastDailySentDay ? `آخر إرسال تلقائي ناجح: ${lastDailySentDay}` : 'لم يُرسل تلقائياً بعد'}

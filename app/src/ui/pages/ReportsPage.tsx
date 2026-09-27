@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * مركز التقارير (المرحلة 5) — كل الأرقام من المستندات المرحّلة وقيودها:
  * ملخص المبيعات والأرباح، مبيعات يومية (أعمدة)، أفضل الأصناف،
@@ -15,7 +16,7 @@ import {
 } from '../../core/reports.ts'
 import { expiryAlerts } from '../../core/batches.ts'
 import { agingFromStatement, supplierRowsForAging } from '../../core/statements.ts'
-import { expensesSummary, expenseDetails } from '../../core/expenseReports.ts'
+import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalExpensesByCostCenter, costCenterBudgetReport, returnsByCostCenter, costCenterExpensesCsv, expenseSummaryCsv, expenseDetailsCsv, invoiceExpensesByCategory, invoiceExpenseCategoriesCsv } from '../../core/expenseReports.ts'
 import { accountName } from './accountNames.ts'
 import { inputCls } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
@@ -35,7 +36,7 @@ const EXP_SOURCE_LABELS: Record<string, string> = {
 }
 
 export function ReportsPage() {
-  const { sales, saleReturns, items, customers, suppliers, batches, journal, customAccounts } = useDataStore()
+  const { sales, saleReturns, purchases, purchaseReturns, vouchers, items, customers, suppliers, batches, journal, customAccounts, projects, costCenters, costCenterBudgets } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
@@ -54,6 +55,9 @@ export function ReportsPage() {
   }, [presetId, customFrom, customTo, presets])
 
   const [tab, setTab] = useState<TabId>('sales')
+  const [costProject, setCostProject] = useState<string>('all')
+  const [costCenter, setCostCenter] = useState<string>('all')
+  const [costSettlement, setCostSettlement] = useState<'all' | 'paid_now' | 'payable_later'>('all')
 
   /* ─── الحسابات (كلها نواة خالصة) ─── */
   const summary = useMemo(() => salesSummary(sales, saleReturns, period), [sales, saleReturns, period])
@@ -67,18 +71,24 @@ export function ReportsPage() {
   const getSupplierBalance = useDataStore((s) => s.getSupplierBalance)
   const journalLen = useDataStore((s) => s.journal.length)
   const custRows = useMemo(
-    () => customers
+    () => {
+      void journalLen
+      return customers
       .map((c) => ({ customerId: c.id, balanceMinor: getCustomerBalance(c.id) }))
       .filter((r) => r.balanceMinor !== 0)
-      .sort((a, b) => b.balanceMinor - a.balanceMinor),
+      .sort((a, b) => b.balanceMinor - a.balanceMinor)
+    },
     // journalLen يحدّث القائمة بعد أي عملية مالية جديدة
     [customers, getCustomerBalance, journalLen],
   )
   const suppRows = useMemo(
-    () => suppliers
+    () => {
+      void journalLen
+      return suppliers
       .map((sp) => ({ supplierId: sp.id, balanceMinor: getSupplierBalance(sp.id) }))
       .filter((r) => r.balanceMinor !== 0)
-      .sort((a, b) => b.balanceMinor - a.balanceMinor),
+      .sort((a, b) => b.balanceMinor - a.balanceMinor)
+    },
     [suppliers, getSupplierBalance, journalLen],
   )
   // أعمار الديون (المقارنة العالمية: QuickBooks/Xero يقدمان A/R Aging 30/60/90 — كان غائباً)
@@ -106,11 +116,26 @@ export function ReportsPage() {
   const [expSource, setExpSource] = useState('')
   const expFilter = useMemo(() => ({ from: period.from, to: period.to, sourceType: expSource || undefined }), [period, expSource])
   const expSummary = useMemo(() => expensesSummary(journal, expFilter, accountName, customExpenseCodes), [journal, expFilter, customExpenseCodes])
+  const invoiceExpenseDocuments = useMemo(() => [...sales, ...purchases.map(purchase => ({ date: purchase.date, internalExpenses: purchase.expenses.map(expense => ({ label: expense.nameAr, accountCode: expense.accountCode ?? '5108', costCenterId: expense.costCenterId ?? null, projectId: purchase.projectId ?? null, amountMinor: expense.amountMinor, settlement: expense.paidBy === 'treasury' || expense.paidBy === 'custody' ? 'paid_now' as const : 'payable_later' as const, taxTreatment: expense.taxTreatment, taxPercent: expense.taxPercent })) })), ...vouchers.filter(voucher => voucher.kind === 'payment' && (voucher.counterAccountCode.startsWith('5') || customExpenseCodes.has(voucher.counterAccountCode))).map(voucher => ({ date: voucher.date, internalExpenses: [{ label: voucher.description || 'سند صرف', accountCode: voucher.counterAccountCode, costCenterId: voucher.costCenterId ?? null, projectId: null, amountMinor: voucher.amountMinor, settlement: 'paid_now' as const }] }))], [sales, purchases, vouchers, customExpenseCodes])
+  const costCenterExpenses = useMemo(() => invoiceExpensesByCostCenter(invoiceExpenseDocuments, { from: period.from, to: period.to, costCenterId: costCenter === 'all' ? 'all' : costCenter === 'none' ? null : Number(costCenter), projectId: costProject === 'all' ? 'all' : costProject === 'none' ? null : Number(costProject), settlement: costSettlement }), [invoiceExpenseDocuments, period, costCenter, costProject, costSettlement])
+  const expenseCategories = useMemo(() => invoiceExpensesByCategory(invoiceExpenseDocuments, { from: period.from, to: period.to }), [invoiceExpenseDocuments, period])
+  const journalCostCenterExpenses = useMemo(() => journalExpensesByCostCenter(journal, { from: period.from, to: period.to, costCenterId: costCenter === 'all' ? 'all' : costCenter === 'none' ? null : Number(costCenter) }, customExpenseCodes), [journal, period, costCenter, customExpenseCodes])
+  const costCenterBudgetsReport = useMemo(() => costCenterBudgetReport(costCenterBudgets, journal, { from: period.from, to: period.to }, customExpenseCodes, costCenters), [costCenterBudgets, journal, period, customExpenseCodes, costCenters])
+  const costCenterReturns = useMemo(() => returnsByCostCenter([
+    ...saleReturns.map((row) => ({ date: row.date, totalMinor: row.totals.totalMinor, costCenterIds: row.costCenterIds, kind: 'sale_return' as const })),
+    ...purchaseReturns.map((row) => ({ date: row.date, totalMinor: row.totalMinor, costCenterIds: row.costCenterIds, kind: 'purchase_return' as const })),
+  ], { from: period.from, to: period.to }), [saleReturns, purchaseReturns, period])
   const expDetail = useMemo(
     () => expenseDetails(journal, { ...expFilter, accountCode: expAccount || undefined }, customExpenseCodes),
     [journal, expFilter, expAccount, customExpenseCodes],
   )
   const expSources = useMemo(() => [...new Set(journal.flatMap((e) => e.lines.some((l) => l.accountCode.startsWith('5') || customExpenseCodes.has(l.accountCode)) ? [e.sourceType] : []))], [journal, customExpenseCodes])
+  const exportExpenses = () => {
+    const csv = expAccount ? expenseDetailsCsv(expDetail.rows) : expenseSummaryCsv(expSummary.rows)
+    const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a'); link.href = url; link.download = expAccount ? `expenses-${expAccount}.csv` : 'expenses-summary.csv'; link.click(); URL.revokeObjectURL(url)
+  }
+
   const printExpenses = () => {
     const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     const { reportPrint, receipt } = useAppStore.getState()
@@ -129,6 +154,22 @@ export function ReportsPage() {
       settings: reportPrint,
       bodyHtml: body,
     }))
+  }
+
+  const printCostCenterExpenses = () => {
+    const esc = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const projectName = (id: number | null) => id == null ? '—' : projects.find((project) => project.id === id)?.nameAr ?? `مشروع #${id}`
+    const costCenterName = (id: number | null) => id == null ? 'بدون مركز عام' : costCenters.find((center) => center.id === id)?.nameAr ?? `مركز #${id}`
+    const body = `<table><thead><tr><th>المركز العام</th><th>المشروع</th><th>الحركات</th><th>مدفوع</th><th>مستحق</th><th>الإجمالي</th></tr></thead><tbody>${costCenterExpenses.rows.map((row) => `<tr><td>${esc(costCenterName(row.costCenterId ?? null))}</td><td>${esc(projectName(row.projectId))}</td><td class="num">${row.txCount}</td><td class="num">${fmt(row.paidMinor)}</td><td class="num">${fmt(row.accruedMinor)}</td><td class="num">${fmt(row.totalMinor)}</td></tr>`).join('')}<tr class="total"><td colspan="5">الإجمالي</td><td class="num">${fmt(costCenterExpenses.totalMinor)}</td></tr></tbody></table>`
+    const { reportPrint, receipt } = useAppStore.getState()
+    printHtml(renderReportShell({ title: 'تحليل مصروفات الفواتير حسب مركز التكلفة', subtitle: `الفترة ${period.from} → ${period.to} · ${costSettlement === 'paid_now' ? 'مدفوع' : costSettlement === 'payable_later' ? 'مستحق' : 'كل حالات السداد'}`, companyName: setup.shopName || '', logoDataUrl: receipt.logoDataUrl, settings: reportPrint, bodyHtml: body }))
+  }
+
+  const printExpenseCategories = () => {
+    const esc = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const body = `<table><thead><tr><th>النوع</th><th>الحساب</th><th>الحركات</th><th>المراكز</th><th>مدفوع</th><th>مستحق</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>${expenseCategories.rows.map((row) => `<tr><td>${esc(row.label)}</td><td class="num">${esc(row.accountCode)}</td><td class="num">${row.txCount}</td><td class="num">${row.costCenterCount}</td><td class="num">${fmt(row.paidMinor)}</td><td class="num">${fmt(row.accruedMinor)}</td><td class="num">${fmt(row.taxMinor)}</td><td class="num">${fmt(row.totalMinor)}</td></tr>`).join('')}<tr class="total"><td colspan="6">الإجمالي</td><td class="num">${fmt(expenseCategories.taxMinor)}</td><td class="num">${fmt(expenseCategories.totalMinor)}</td></tr></tbody></table>`
+    const { reportPrint, receipt } = useAppStore.getState()
+    printHtml(renderReportShell({ title: 'تحليل أنواع مصروفات الفواتير', subtitle: `الفترة ${period.from} → ${period.to}`, companyName: setup.shopName || '', logoDataUrl: receipt.logoDataUrl, settings: reportPrint, bodyHtml: body }))
   }
 
   const custName = (id: number) => customers.find((c) => c.id === id)?.nameAr ?? `عميل #${id}`
@@ -498,23 +539,24 @@ export function ReportsPage() {
           <div className={`${card} p-4 flex flex-wrap items-end gap-3`}>
             <div className="min-w-52">
               <div className="text-[10px] font-bold text-slate-400 mb-1">بند المصروف</div>
-              <select value={expAccount} onChange={(e) => setExpAccount(e.target.value)} className={inputCls}>
+              <QuickSelect value={expAccount} onChange={(e) => setExpAccount(e.target.value)} className={inputCls}>
                 <option value="">— كل البنود (تقرير مجمّع) —</option>
                 {expSummary.rows.map((r) => <option key={r.accountCode} value={r.accountCode}>{r.accountCode} — {r.accountName}</option>)}
-              </select>
+              </QuickSelect>
             </div>
             <div className="min-w-44">
               <div className="text-[10px] font-bold text-slate-400 mb-1">مصدر العملية</div>
-              <select value={expSource} onChange={(e) => setExpSource(e.target.value)} className={inputCls}>
+              <QuickSelect value={expSource} onChange={(e) => setExpSource(e.target.value)} className={inputCls}>
                 <option value="">الكل</option>
                 {expSources.map((st) => <option key={st} value={st}>{EXP_SOURCE_LABELS[st] ?? st}</option>)}
-              </select>
+              </QuickSelect>
             </div>
             <div className="ms-auto flex items-center gap-3">
               <div className="text-left">
                 <div className="text-[10px] font-bold text-slate-400">إجمالي مصروفات الفترة</div>
                 <div className="font-black text-lg text-rose-500">{fmt(expSummary.grandTotalMinor)} {cur.symbol}</div>
               </div>
+              <button onClick={exportExpenses} className="px-3 py-2 rounded-xl text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-emerald-600 transition-all">Excel/CSV</button>
               <button onClick={printExpenses} className="px-3 py-2 rounded-xl text-[12px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-sky-600 transition-all flex items-center gap-1.5">
                 <Printer size={13} /> طباعة التقرير
               </button>
@@ -598,6 +640,29 @@ export function ReportsPage() {
               )}
             </div>
           )}
+          <div className={`${card} overflow-hidden`}>
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between">
+              <div><b>تحليل مصروفات الفواتير حسب مركز التكلفة</b><div className="text-[10px] text-slate-400">المدفوع والمستحق المرتبطان بالفاتورة والربحية</div></div>
+              <div className="flex gap-2 items-center"><QuickSelect className={inputCls} value={costCenter} onChange={(e) => setCostCenter(e.target.value)}><option value="all">كل المراكز العامة</option><option value="none">بدون مركز عام</option>{costCenters.map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect><QuickSelect className={inputCls} value={costProject} onChange={(e) => setCostProject(e.target.value)}><option value="all">كل المشاريع</option><option value="none">بدون مشروع</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.nameAr}</option>)}</QuickSelect><QuickSelect className={inputCls} value={costSettlement} onChange={(e) => setCostSettlement(e.target.value as typeof costSettlement)}><option value="all">كل الحالات</option><option value="paid_now">مدفوع</option><option value="payable_later">مستحق</option></QuickSelect><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={printCostCenterExpenses}><Printer size={13} className="inline me-1"/>طباعة</button><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={() => { const csv = costCenterExpensesCsv(costCenterExpenses.rows, (id) => id == null ? 'بدون مشروع' : projects.find((project) => project.id === id)?.nameAr ?? `مشروع #${id}`, (id) => id == null ? 'بدون مركز عام' : costCenters.find((center) => center.id === id)?.nameAr ?? `مركز #${id}`); const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'cost-center-expenses.csv'; link.click(); URL.revokeObjectURL(url) }}>Excel/CSV</button><b className="text-rose-500">{fmt(costCenterExpenses.totalMinor)}</b></div>
+            </div>
+            {costCenterExpenses.rows.length ? <table className="w-full text-[12.5px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">المركز العام</th><th>المشروع</th><th>الحركات</th><th>مدفوع</th><th>مستحق</th><th>الإجمالي</th></tr></thead><tbody>{costCenterExpenses.rows.map((row) => <tr key={`${row.costCenterId ?? 'none'}:${row.projectId ?? 'none'}`} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{(row.costCenterId ?? null) == null ? 'بدون مركز عام' : costCenters.find((center) => center.id === row.costCenterId)?.nameAr ?? `مركز #${row.costCenterId}`}</td><td>{row.projectId == null ? '—' : projects.find((project) => project.id === row.projectId)?.nameAr ?? `مشروع #${row.projectId}`}</td><td>{row.txCount}</td><td className="text-emerald-600">{fmt(row.paidMinor)}</td><td className="text-amber-600">{fmt(row.accruedMinor)}</td><td className="font-black text-rose-500">{fmt(row.totalMinor)}</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد مصروفات فواتير مرتبطة بالفترة</div>}
+          </div>
+          <div className={`${card} overflow-hidden`}>
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center"><div><b>قيود المصروفات الموسومة بالمراكز العامة</b><div className="text-[10px] text-slate-400">يشمل القيود المرحّلة من المصروفات والأنشطة خارج الفواتير</div></div><b className="text-rose-500">{fmt(journalCostCenterExpenses.totalMinor)}</b></div>
+            {journalCostCenterExpenses.rows.length ? <table className="w-full text-[12px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">المركز العام</th><th>الحساب</th><th>الحركات</th><th>الإجمالي</th></tr></thead><tbody>{journalCostCenterExpenses.rows.map((row) => <tr key={`${row.costCenterId}:${row.accountCode}`} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{costCenters.find((center) => center.id === row.costCenterId)?.nameAr ?? `مركز #${row.costCenterId}`}</td><td className="font-mono">{row.accountCode}</td><td>{row.txCount}</td><td className="font-black text-rose-500">{fmt(row.totalMinor)}</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد قيود موسومة بمركز عام في الفترة</div>}
+          </div>
+          <div className={`${card} overflow-hidden`}>
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800"><b>موازنة المركز مقابل الفعلي</b><div className="text-[10px] text-slate-400">المصروف الفعلي مأخوذ من سطور القيود الموسومة بالمركز ضمن الفترة المحددة</div></div>
+            {costCenterBudgetsReport.length ? <table className="w-full text-[12px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">المركز</th><th>الفترة</th><th>الموازنة</th><th>الفعلي</th><th>الانحراف</th><th>الاستخدام</th></tr></thead><tbody>{costCenterBudgetsReport.map((row) => <tr key={row.id} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{costCenters.find(center => center.id === row.costCenterId)?.nameAr ?? `مركز #${row.costCenterId}`}</td><td>{row.from} → {row.to}</td><td>{fmt(row.amountMinor)}</td><td className="text-rose-500">{fmt(row.actualMinor)}</td><td className={row.varianceMinor < 0 ? 'text-rose-500 font-black' : 'text-emerald-600 font-black'}>{fmt(row.varianceMinor)}</td><td>{row.utilizationPercent}%</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد موازنات للمراكز في الفترة</div>}
+          </div>
+          <div className={`${card} overflow-hidden`}>
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800"><b>المرتجعات المرتبطة بالمراكز العامة</b><div className="text-[10px] text-slate-400">ارتباط المستند المرتجع بالمراكز الموروثة من الفاتورة، منفصل عن إجمالي المصروفات</div></div>
+            {costCenterReturns.length ? <table className="w-full text-[12px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">المركز</th><th>النوع</th><th>الحركات</th><th>قيمة المرتجع</th></tr></thead><tbody>{costCenterReturns.map((row) => <tr key={`${row.costCenterId}:${row.kind}`} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{costCenters.find(center => center.id === row.costCenterId)?.nameAr ?? `مركز #${row.costCenterId}`}</td><td>{row.kind === 'sale_return' ? 'مرتجع بيع' : 'مرتجع شراء'}</td><td>{row.txCount}</td><td className="font-black text-amber-600">{fmt(row.totalMinor)}</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد مرتجعات مرتبطة بمراكز في الفترة</div>}
+          </div>
+          <div className={`${card} overflow-hidden`}>
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center"><div><b>تحليل أنواع مصروفات الفواتير</b><div className="text-[10px] text-slate-400">يشمل العمولات والضريبة وحالة السداد وعدد مراكز التكلفة</div></div><div className="flex gap-2 items-center"><span className="text-xs text-slate-500">ضريبة {fmt(expenseCategories.taxMinor)}</span><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={printExpenseCategories}><Printer size={13} className="inline me-1"/>طباعة</button><button className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold" onClick={() => { const csv = invoiceExpenseCategoriesCsv(expenseCategories.rows); const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = 'invoice-expense-categories.csv'; link.click(); URL.revokeObjectURL(url) }}>Excel/CSV</button><b className="text-rose-500">{fmt(expenseCategories.totalMinor)}</b></div></div>
+            {expenseCategories.rows.length ? <table className="w-full text-[12px]"><thead><tr className="text-right text-slate-400 border-b"><th className="px-4 py-2">النوع</th><th>الحساب</th><th>الحركات</th><th>المراكز</th><th>مدفوع</th><th>مستحق</th><th>الضريبة</th><th>الإجمالي</th></tr></thead><tbody>{expenseCategories.rows.map((row) => <tr key={`${row.accountCode}:${row.label}`} className="border-b border-slate-50 dark:border-slate-800/50"><td className="px-4 py-2 font-bold">{row.label}</td><td className="font-mono">{row.accountCode}</td><td>{row.txCount}</td><td>{row.costCenterCount}</td><td className="text-emerald-600">{fmt(row.paidMinor)}</td><td className="text-amber-600">{fmt(row.accruedMinor)}</td><td>{fmt(row.taxMinor)}</td><td className="font-black text-rose-500">{fmt(row.totalMinor)}</td></tr>)}</tbody></table> : <div className="text-center text-slate-400 text-xs py-6">لا توجد أنواع مصروفات في الفترة</div>}
+          </div>
         </div>
       )}
 

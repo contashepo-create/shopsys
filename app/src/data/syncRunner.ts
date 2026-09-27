@@ -111,7 +111,7 @@ export async function runSyncCycle(): Promise<CycleResult> {
   const app = useAppStore.getState()
   const s = app.sync
   if (!s.enabled) return { ok: false, message: 'المزامنة غير مفعلة' }
-  const config: SyncConfig = { url: s.url, anonKey: s.anonKey, storeId: s.storeId, secret: s.secret }
+  const config: SyncConfig = { url: s.url, anonKey: s.anonKey, storeId: s.storeId, secret: s.secret, accessToken: s.accessToken }
   const errors = validateSyncConfig(config)
   if (errors.length) return { ok: false, message: errors[0] }
   if (cycleRunning) return { ok: false, message: 'دورة مزامنة جارية بالفعل' }

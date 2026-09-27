@@ -157,10 +157,8 @@ export function LoginScreen() {
     }
   }
 
-  // حد الإرسال 4 مقصود (لا يُرفع إلى PIN_MIN_LENGTH): التوافق الخلفي مع الأرقام
-  // القديمة (4-8 أرقام) + الرقم المؤقت من تليجرام (6 أرقام) — سياسة 8-32 تُفرض
-  // عند «التعيين» فقط عبر validatePinFormat، والتحقق الفعلي دوماً في verifyPin
-  const canSubmit = pin.length >= 4 && identifier.trim().length > 0
+  // كلمة السر الجديدة والرقم المؤقت يلتزمان بحد 6-32؛ لا نرسل نموذجاً أقصر من السياسة الحالية.
+  const canSubmit = pin.length >= PIN_MIN_LENGTH && identifier.trim().length > 0
 
   return (
     <div dir="rtl" className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-slate-100 via-white to-brand-500/10 dark:from-slate-950 dark:via-slate-900 dark:to-brand-500/10">

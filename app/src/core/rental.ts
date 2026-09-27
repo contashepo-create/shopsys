@@ -9,12 +9,16 @@
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
+export type RentalPaymentMode = 'cash' | 'credit' | 'mixed'
+
 export interface RentalInput {
   equipmentName: string
   days: number
   dailyRateMinor: Minor
   depositMinor: Minor // تأمين مسترد — لا يدخل الإيراد
-  payment: 'cash' | 'credit' // تحصيل قيمة الإيجار (التأمين نقدي دائماً)
+  payment: RentalPaymentMode // تحصيل قيمة الإيجار (التأمين نقدي دائماً)
+  /** ما يُقبض من قيمة الإيجار الآن عند «مدفوع + آجل» */
+  paidMinor?: Minor
   vatPercent: number // تُضاف فوق قيمة الإيجار
 }
 
@@ -37,6 +41,17 @@ export function validateRental(input: RentalInput): string[] {
   if (!isPosInt(input.dailyRateMinor) || input.dailyRateMinor <= 0) errors.push('السعر اليومي يجب أن يكون موجباً')
   if (!isPosInt(input.depositMinor)) errors.push('التأمين لا يكون سالباً')
   if (input.vatPercent < 0 || input.vatPercent > 100) errors.push('نسبة الضريبة بين 0 و100')
+
+  // الدفع المختلط يخص قيمة الإيجار فقط؛ التأمين يُقبض حالاً ولا يدخل هذا الحقل.
+  if (input.paidMinor != null && !isPosInt(input.paidMinor)) errors.push('المدفوع من الإيجار يجب أن يكون رقماً صحيحاً غير سالب')
+  if (Number.isInteger(input.days) && input.days >= 1 && isPosInt(input.dailyRateMinor) && input.dailyRateMinor > 0 && input.vatPercent >= 0 && input.vatPercent <= 100) {
+    const grandMinor = Math.round(input.dailyRateMinor * input.days) + Math.round((input.dailyRateMinor * input.days * input.vatPercent) / 100)
+    if (input.payment === 'cash' && input.paidMinor != null && input.paidMinor !== grandMinor) errors.push('الإيجار النقدي يُحصّل بالكامل')
+    if (input.payment === 'credit' && input.paidMinor != null && input.paidMinor !== 0) errors.push('الإيجار الآجل لا يحتوي مدفوعاً حالياً')
+    if (input.payment === 'mixed' && (input.paidMinor == null || input.paidMinor <= 0 || input.paidMinor >= grandMinor)) errors.push('الدفع المختلط يتطلب مدفوعاً حالياً أقل من إجمالي الإيجار')
+  } else if (input.payment === 'mixed' && input.paidMinor == null) {
+    errors.push('حدد المدفوع الحالي للدفع المختلط')
+  }
   return errors
 }
 
@@ -45,13 +60,18 @@ export function computeRentalTotals(input: RentalInput): RentalTotals {
   const rentMinor = Math.round(input.dailyRateMinor * input.days)
   const vatMinor = Math.round((rentMinor * input.vatPercent) / 100)
   const grandMinor = rentMinor + vatMinor
+  const paidRentMinor = input.paidMinor ?? (input.payment === 'cash' ? grandMinor : 0)
+  if (!Number.isInteger(paidRentMinor) || paidRentMinor < 0 || paidRentMinor > grandMinor) throw new Error('المحصل من الإيجار بين صفر وإجماليه')
+  if (input.payment === 'cash' && paidRentMinor !== grandMinor) throw new Error('الإيجار النقدي يُحصّل بالكامل')
+  if (input.payment === 'credit' && paidRentMinor !== 0) throw new Error('الإيجار الآجل لا يحتوي مدفوعاً حالياً')
+  if (input.payment === 'mixed' && (paidRentMinor <= 0 || paidRentMinor >= grandMinor)) throw new Error('الدفع المختلط يتطلب مدفوعاً حالياً أقل من إجمالي الإيجار')
   return {
     rentMinor,
     vatMinor,
     grandMinor,
     depositMinor: input.depositMinor,
-    collectCashMinor: input.payment === 'cash' ? grandMinor + input.depositMinor : input.depositMinor,
-    collectCreditMinor: input.payment === 'cash' ? 0 : grandMinor,
+    collectCashMinor: paidRentMinor + input.depositMinor,
+    collectCreditMinor: grandMinor - paidRentMinor,
   }
 }
 

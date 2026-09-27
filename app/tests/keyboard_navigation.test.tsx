@@ -1,0 +1,125 @@
+import { cleanup, fireEvent, render } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { afterEach, describe, expect, it } from 'vitest'
+import { KeyboardNavigation } from '../src/ui/components/KeyboardNavigation.tsx'
+import { Btn } from '../src/ui/components/ui.tsx'
+
+function Path() { return <span data-testid="path">{useLocation().pathname}</span> }
+afterEach(cleanup)
+
+describe('التحكم بلوحة المفاتيح', () => {
+  it('ينقل Enter إلى الحقل التالي وShift+Enter إلى السابق', () => {
+    const view = render(<MemoryRouter><main><KeyboardNavigation/><input aria-label="a"/><input aria-label="b"/></main></MemoryRouter>)
+    const first = view.getByLabelText('a'), second = view.getByLabelText('b')
+    first.focus(); fireEvent.keyDown(first, { key: 'Enter' }); expect(document.activeElement).toBe(second)
+    fireEvent.keyDown(second, { key: 'Enter', shiftKey: true }); expect(document.activeElement).toBe(first)
+  })
+
+  it('ينقل الأسهم رأسياً بين خلايا العمود نفسه في صفوف الإدخال', () => {
+    const view = render(<MemoryRouter><main><KeyboardNavigation/><div><div data-entry-row><input aria-label="r1c1"/><input aria-label="r1c2"/></div><div data-entry-row><input aria-label="r2c1"/><input aria-label="r2c2"/></div></div></main></MemoryRouter>)
+    const first = view.getByLabelText('r1c2'), below = view.getByLabelText('r2c2')
+    first.focus(); fireEvent.keyDown(first, { key: 'ArrowDown' }); expect(document.activeElement).toBe(below)
+    fireEvent.keyDown(below, { key: 'ArrowUp' }); expect(document.activeElement).toBe(first)
+  })
+
+  it('ينقل الأسهم بين خلايا كود الصنف القابلة للتركيز', () => {
+    const view = render(<MemoryRouter><main><KeyboardNavigation/><div><div data-entry-row><span tabIndex={0} aria-label="code1">A</span></div><div data-entry-row><span tabIndex={0} aria-label="code2">B</span></div></div></main></MemoryRouter>)
+    const first = view.getByLabelText('code1'), second = view.getByLabelText('code2')
+    first.focus(); fireEvent.keyDown(first, { key: 'ArrowDown' }); expect(document.activeElement).toBe(second)
+    fireEvent.keyDown(second, { key: 'ArrowUp' }); expect(document.activeElement).toBe(first)
+  })
+
+  it('يمنع الأسهم عند حدود جدول الفاتورة من تغيير حقل رقمي', () => {
+    const view = render(<MemoryRouter><main><KeyboardNavigation/><div><div data-entry-row><input aria-label="qty" type="number" value="7" readOnly /></div></div></main></MemoryRouter>)
+    const input = view.getByLabelText('qty')
+    input.focus()
+    for (const key of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
+      const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      input.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(true)
+    }
+    expect((input as HTMLInputElement).value).toBe('7')
+  })
+
+  it('يخصص F9 للترحيل وF8 للمسودة خارج الكاشير', () => {
+    let draft = 0, posted = 0
+    render(<MemoryRouter initialEntries={['/purchases/invoices/new']}><KeyboardNavigation/><button onClick={() => draft++}>حفظ مسودة</button><button onClick={() => posted++}>اعتماد وترحيل</button></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' }); expect(posted).toBe(1); expect(draft).toBe(0)
+    fireEvent.keyDown(document, { key: 'F8' }); expect(draft).toBe(1)
+  })
+
+  it('يضيف F9 تلقائياً لأزرار الحفظ والدفع المشتركة ويشغلها', () => {
+    let saved = 0
+    const view = render(<MemoryRouter><KeyboardNavigation/><div role="dialog"><Btn onClick={() => saved++}>💾 حفظ الصنف</Btn></div></MemoryRouter>)
+    const button = view.getByRole('button', { name: /حفظ الصنف/ })
+    expect(button.getAttribute('data-shortcut')).toBe('F9')
+    expect(button.textContent).toContain('F9')
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(saved).toBe(1)
+  })
+
+  it('يتعامل مع زري حفظ أعلى وأسفل النموذج كعملية واحدة', () => {
+    let saved = 0
+    const save = () => { saved++ }
+    render(<MemoryRouter><KeyboardNavigation/><div role="dialog"><Btn onClick={save}>اعتماد وترحيل</Btn><Btn onClick={save}>ترحيل وتحصيل</Btn></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(saved).toBe(1)
+  })
+
+  it('يشغّل F9 لحفظ الصنف وحفظ السند داخل النوافذ', () => {
+    let itemSaved = 0
+    render(<MemoryRouter><KeyboardNavigation/><div role="dialog"><button onClick={() => itemSaved++}>💾 حفظ الصنف <kbd>F9</kbd></button></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(itemSaved).toBe(1)
+    cleanup()
+
+    let voucherSaved = 0
+    render(<MemoryRouter><KeyboardNavigation/><div role="dialog"><button onClick={() => voucherSaved++}>💾 حفظ السند <kbd>F9</kbd></button></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(voucherSaved).toBe(1)
+  })
+
+  it('يفضل F9 زر العملية داخل النافذة المفتوحة على زر الصفحة الخلفية', () => {
+    let background = 0, modal = 0
+    render(<MemoryRouter><KeyboardNavigation/><button onClick={() => background++}>اعتماد وترحيل</button><div role="dialog" aria-modal="true"><button onClick={() => modal++}>اعتماد وترحيل <kbd>F9</kbd></button></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(modal).toBe(1)
+    expect(background).toBe(0)
+  })
+
+  it('لا يختار F9 صفاً عشوائياً عند وجود عمليات متعددة، ويعمل داخل الصف المركّز', () => {
+    let first = 0, second = 0
+    const view = render(<MemoryRouter><KeyboardNavigation/><div data-entry-row><input aria-label="row-one"/><button onClick={() => first++}>سند صرف وإقفال <kbd>F9</kbd></button></div><div data-entry-row><input aria-label="row-two"/><button onClick={() => second++}>سند صرف وإقفال <kbd>F9</kbd></button></div></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(first).toBe(0)
+    expect(second).toBe(0)
+    view.getByLabelText('row-two').focus()
+    fireEvent.keyDown(view.getByLabelText('row-two'), { key: 'F9' })
+    expect(first).toBe(0)
+    expect(second).toBe(1)
+  })
+
+  it('يقبل تكرار زر F9 لنفس العملية أعلى وأسفل النموذج', () => {
+    let posted = 0
+    render(<MemoryRouter><KeyboardNavigation/><button onClick={() => posted++}>اعتماد وترحيل <kbd>F9</kbd></button><button onClick={() => posted++}>اعتماد وترحيل <kbd>F9</kbd></button></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F9' })
+    expect(posted).toBe(1)
+  })
+
+  it('يرحّل من داخل خانة سعر أو كمية السطر دون الحاجة لمساحة فارغة', () => {
+    let posted = 0
+    const view = render(<MemoryRouter><KeyboardNavigation/><button onClick={() => posted++}>ترحيل <kbd>F9</kbd></button><div data-entry-row><input aria-label="سعر السطر" /></div></MemoryRouter>)
+    const price = view.getByLabelText('سعر السطر')
+    price.focus()
+    const event = new KeyboardEvent('keydown', { key: 'F9', bubbles: true, cancelable: true })
+    price.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(posted).toBe(1)
+  })
+
+  it('يفتح F3 فاتورة شراء جديدة من قسم المشتريات', () => {
+    const view = render(<MemoryRouter initialEntries={['/purchases/invoices']}><KeyboardNavigation/><Routes><Route path="*" element={<Path/>}/></Routes></MemoryRouter>)
+    fireEvent.keyDown(document, { key: 'F3' })
+    expect(view.getByTestId('path').textContent).toBe('/purchases/invoices/new')
+  })
+})

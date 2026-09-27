@@ -1,3 +1,4 @@
+import { QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
  * إعدادات باركود الميزان (عالمي — طلب المالك: «لا أعلم أي ميزان سيتعامل معه العميل»):
  * ① قواعد تفكيك قابلة للتحرير بالكامل (بادئة/أطوال/وزن أو سعر/كسور/خانة تحقق)
@@ -127,14 +128,14 @@ export function ScaleSettingsPage() {
             <Scale size={16} className="text-brand-500" /> قواعد تفكيك باركود الميزان
           </h3>
           <div className="flex items-center gap-2">
-            <select
+            <QuickSelect
               className={`${inputCls} !w-auto !py-1.5 !text-[12px]`}
               value=""
               onChange={(e) => { const p = SCALE_RULE_PRESETS[Number(e.target.value)]; if (p) openNew(p) }}
             >
               <option value="">➕ من قالب جاهز…</option>
               {SCALE_RULE_PRESETS.map((p, i) => <option key={i} value={i}>{p.nameAr}</option>)}
-            </select>
+            </QuickSelect>
             <Btn variant="ghost" className="border border-slate-200 dark:border-slate-700 !text-[12px] !py-1.5" onClick={() => openNew()}>
               <Plus size={13} /> قاعدة يدوية
             </Btn>
@@ -275,34 +276,34 @@ export function ScaleSettingsPage() {
               <input value={draft.prefix} onChange={(e) => setDraft((d) => ({ ...d, prefix: e.target.value.replace(/\D/g, '').slice(0, 3) }))} dir="ltr" className={`${inputCls} text-center font-mono`} />
             </Field>
             <Field label="خانات كود الصنف">
-              <select value={draft.itemCodeLen} onChange={(e) => setDraft((d) => ({ ...d, itemCodeLen: Number(e.target.value) }))} className={inputCls}>
+              <QuickSelect value={draft.itemCodeLen} onChange={(e) => setDraft((d) => ({ ...d, itemCodeLen: Number(e.target.value) }))} className={inputCls}>
                 {[3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="خانات القيمة">
-              <select value={draft.valueLen} onChange={(e) => setDraft((d) => ({ ...d, valueLen: Number(e.target.value) }))} className={inputCls}>
+              <QuickSelect value={draft.valueLen} onChange={(e) => setDraft((d) => ({ ...d, valueLen: Number(e.target.value) }))} className={inputCls}>
                 {[3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="عدد الكسور" hint="وزن: 3=جرامات · سعر: 2=قروش">
-              <select value={draft.valueDecimals} onChange={(e) => setDraft((d) => ({ ...d, valueDecimals: Number(e.target.value) }))} className={inputCls}>
+              <QuickSelect value={draft.valueDecimals} onChange={(e) => setDraft((d) => ({ ...d, valueDecimals: Number(e.target.value) }))} className={inputCls}>
                 {[0, 1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
+              </QuickSelect>
             </Field>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="نوع القيمة داخل الباركود" hint="بعض الموازين تطبع الوزن وبعضها السعر الإجمالي — راجع دليل ميزانك أو جرب">
-              <select value={draft.valueType} onChange={(e) => setDraft((d) => ({ ...d, valueType: e.target.value as 'weight' | 'price' }))} className={inputCls}>
+              <QuickSelect value={draft.valueType} onChange={(e) => setDraft((d) => ({ ...d, valueType: e.target.value as 'weight' | 'price' }))} className={inputCls}>
                 <option value="weight">⚖️ وزن (الكاشير يحسب السعر = الوزن × سعر الكيلو)</option>
                 <option value="price">💰 سعر إجمالي (الكاشير يشتق الوزن = السعر ÷ سعر الكيلو)</option>
-              </select>
+              </QuickSelect>
             </Field>
             <Field label="خانة التحقق (سبيرة EAN-13)">
-              <select value={draft.checkDigit} onChange={(e) => setDraft((d) => ({ ...d, checkDigit: e.target.value as 'auto' | 'require' | 'none' }))} className={inputCls}>
+              <QuickSelect value={draft.checkDigit} onChange={(e) => setDraft((d) => ({ ...d, checkDigit: e.target.value as 'auto' | 'require' | 'none' }))} className={inputCls}>
                 <option value="auto">تلقائي — يقبلها إن وُجدت (الأنسب لمعظم الموازين)</option>
                 <option value="require">إلزامية — يرفض بدونها (أقصى دقة)</option>
                 <option value="none">بدون — الميزان يطبع Code128/ITF بلا سبيرة</option>
-              </select>
+              </QuickSelect>
             </Field>
           </div>
           {/* معاينة حية للصيغة */}

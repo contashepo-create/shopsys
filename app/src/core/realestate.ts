@@ -43,14 +43,28 @@ export interface Property {
   notes: string
 }
 
-export type UnitStatus = 'vacant' | 'leased' | 'maintenance'
+export type UnitStatus = 'vacant' | 'leased' | 'maintenance' | 'sold'
 
+/**
+ * الوحدة هي سجل العمل الفعلي، وليست مجرد رقم داخل تكلفة العقار:
+ * تحفظ تكلفة اقتنائها وسعر بيعها وأجرة تأجيرها وحالتها بصورة مستقلة.
+ */
 export interface PropertyUnit {
   id: number
   propertyId: number
   code: string // شقة 3 — الدور الأول
   /** الأجرة السنوية الاسترشادية للوحدة */
   annualRentMinor: Minor
+  /** تكلفة اقتناء هذه الوحدة من أصل العقار — 0 لو لم تُسجل تكلفة تفصيلية */
+  costMinor: Minor
+  /** سعر بيع الوحدة الاسترشادي/المتفق عليه، مستقل عن تكلفة الاقتناء */
+  salePriceMinor: Minor
+  /** طريقة دفع اقتناء الوحدة — null لو وحدة قديمة بلا تكلفة/وحدة مدارَة */
+  acquisitionPayment: 'cash' | 'credit' | null
+  /** عند البيع الجزئي: لقطة سعر البيع وقيد العملية */
+  soldPriceMinor?: Minor
+  saleEntryId?: number | null
+  soldAt?: string | null
   status: UnitStatus
 }
 
