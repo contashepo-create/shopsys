@@ -5,7 +5,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * «أكبر البواقي»، سداد يتوزع على الأقدم أولاً بقيد تحصيل متوازن (خزينة ← عملاء).
  */
 import { useMemo, useState } from 'react'
-import { Plus, CalendarClock, AlarmClock, Eye, HandCoins, BookOpenText, CheckCircle2 } from 'lucide-react'
+import { Plus, CalendarClock, AlarmClock, Eye, HandCoins, CheckCircle2 } from 'lucide-react'
 import { useDataStore, type InstallmentPlan } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -14,6 +14,7 @@ import { buildSchedule, planProgress, installmentStatus, collectAlerts, type Ins
 import type { TreasuryAccount } from '../../core/accounting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { DocSection, DocOutcome } from '../components/DocSection.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
@@ -291,88 +292,128 @@ export function InstallmentsPage() {
       </Modal>
 
       {/* عرض خطة وسدادها */}
-      <Modal open={!!livePlan} onClose={() => setViewing(null)} title={livePlan ? `الخطة ${livePlan.planNumber} — ${custName(livePlan.customerId)}` : ''} wide>
-        {livePlan && liveProgress && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-3 text-center">
-              <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-3">
-                <div className="text-[10px] text-slate-400 font-bold">المحصَّل</div>
-                <div className="font-black text-emerald-600">{fmt(liveProgress.paidMinor + livePlan.downPaymentMinor)}</div>
-              </div>
-              <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-3">
-                <div className="text-[10px] text-slate-400 font-bold">المتبقي</div>
-                <div className="font-black">{fmt(liveProgress.remainingMinor)}</div>
-              </div>
-              <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-3">
-                <div className="text-[10px] text-slate-400 font-bold">المتأخر</div>
-                <div className={`font-black ${liveProgress.overdueMinor > 0 ? 'text-rose-600' : 'text-slate-400'}`}>{fmt(liveProgress.overdueMinor)}</div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-              <div className="max-h-52 overflow-y-auto">
-                <table className="w-full text-[12px]">
-                  <tbody>
-                    {livePlan.items.map((it) => {
-                      const st = installmentStatus(it, today)
-                      const badge = STATUS_BADGE[st]
-                      return (
-                        <tr key={it.seq} className="border-b border-slate-50 dark:border-slate-800/50">
-                          <td className="px-4 py-2 text-slate-500">قسط {it.seq}</td>
-                          <td className="px-4 py-2 text-slate-500" dir="ltr">{it.dueDate}</td>
-                          <td className="px-4 py-2 font-bold">{fmt(it.amountMinor)}</td>
-                          <td className="px-4 py-2 text-slate-400">{it.paidMinor > 0 ? `سُدد ${fmt(it.paidMinor)}` : ''}</td>
-                          <td className="px-4 py-2 text-left">
-                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badge.cls}`}>{badge.label}</span>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {!liveProgress.finished && (
-              <div className="rounded-2xl border-2 border-emerald-500/30 bg-emerald-500/[0.04] p-4 space-y-3">
-                <div className="flex items-center gap-2 font-extrabold text-emerald-600 text-[13px]"><HandCoins size={16} /> تحصيل دفعة</div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} />
-                  <QuickSelect value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}><option value="">نقدي/بنك</option>{availableTerminals.map((terminal) => <option key={terminal.id} value={terminal.id}>💳 {terminal.nameAr}</option>)}</QuickSelect>
-                  {!terminalId && <TreasuryPicker value={payTreasury} onChange={setPayTreasury} compact />}
-                  {terminalId && <><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls} placeholder="مرجع الماكينة (اختياري)"/><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} className={inputCls} placeholder="آخر 4 أرقام (اختياري)"/></>}
-                  <Btn onClick={pay} shortcut="F9" disabled={!payAmount.trim()}>💾 تحصيل وتوليد القيد</Btn>
+      <Modal open={!!livePlan} onClose={() => setViewing(null)} title="" extraWide bare>
+        {livePlan && liveProgress && (() => {
+          const payMinor = (() => { try { return payAmount.trim() ? toMinor(payAmount, cur.decimals) : 0 } catch { return 0 } })()
+          const terminal = availableTerminals.find((row) => row.id === terminalId)
+          const targetAccount = terminal?.settlementAccountCode ?? payTreasury
+          const over = payMinor > liveProgress.remainingMinor
+          return (
+            <div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
+              <div className="doc-head flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+                <div className="flex items-center gap-2.5">
+                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><HandCoins size={19} /></span>
+                  <div>
+                    <h3 className="text-base font-black leading-tight">خطة أقساط — {custName(livePlan.customerId)}</h3>
+                    <span className="text-[10.5px] doc-head-sub">INSTALLMENT PLAN</span>
+                  </div>
                 </div>
-                {liveProgress.nextDue && (
-                  <button onClick={() => setPayAmount(String((liveProgress.nextDue!.amountMinor - liveProgress.nextDue!.paidMinor) / 10 ** cur.decimals))} className="text-[11px] text-emerald-600 font-bold hover:underline">
-                    ← تعبئة قيمة القسط القادم ({fmt(liveProgress.nextDue.amountMinor - liveProgress.nextDue.paidMinor)})
-                  </button>
+                <span className="rounded-lg bg-white/10 px-2.5 py-1.5 font-mono text-[11px] font-bold">{livePlan.planNumber}</span>
+              </div>
+              <div className="doc-meta px-5 py-2 text-[10px]">
+                {livePlan.items.length} قسطاً · مقدم {fmt(livePlan.downPaymentMinor)} · {liveProgress.finished ? 'الخطة مكتملة السداد' : `القسط القادم ${liveProgress.nextDue ? liveProgress.nextDue.dueDate : '—'}`}
+              </div>
+              <div className="max-h-[calc(92vh-11rem)] space-y-3.5 overflow-y-auto px-5 py-4">
+                <div className="grid grid-cols-3 gap-2.5">
+                  {[
+                    ['المحصَّل', fmt(liveProgress.paidMinor + livePlan.downPaymentMinor), 'text-emerald-600 dark:text-emerald-400'],
+                    ['المتبقي', fmt(liveProgress.remainingMinor), 'doc-ink'],
+                    ['المتأخر', fmt(liveProgress.overdueMinor), liveProgress.overdueMinor > 0 ? 'text-rose-600 dark:text-rose-400' : 'doc-faint'],
+                  ].map(([label, value, cls]) => (
+                    <div key={label} className="rounded-xl doc-card doc-ring p-3 text-center">
+                      <div className="text-[10px] font-bold doc-faint">{label}</div>
+                      <div className={`font-mono text-[15px] font-black ${cls}`}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <DocSection step="١" title="جدول الأقساط" hint="حالة كل قسط بتاريخ استحقاقه">
+                  <div className="max-h-52 overflow-y-auto rounded-xl doc-ring">
+                    <table className="w-full text-[12px]">
+                      <tbody className="divide-y doc-line">
+                        {livePlan.items.map((it) => {
+                          const st = installmentStatus(it, today)
+                          const badge = STATUS_BADGE[st]
+                          return (
+                            <tr key={it.seq}>
+                              <td className="px-4 py-2 doc-muted">قسط {it.seq}</td>
+                              <td className="px-4 py-2 doc-muted" dir="ltr">{it.dueDate}</td>
+                              <td className="px-4 py-2 font-mono font-bold doc-ink">{fmt(it.amountMinor)}</td>
+                              <td className="px-4 py-2 doc-faint">{it.paidMinor > 0 ? `سُدد ${fmt(it.paidMinor)}` : ''}</td>
+                              <td className="px-4 py-2 text-left"><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${badge.cls}`}>{badge.label}</span></td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </DocSection>
+
+                {!liveProgress.finished && (
+                  <DocSection step="٢" title="تحصيل دفعة" hint="نقداً أو بنكياً أو على ماكينة دفع — القيد يُرحَّل فوراً">
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+                      <Field label={`المبلغ (${cur.symbol})`}>
+                        <input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} className={inputCls} dir="ltr" inputMode="decimal" placeholder="0" />
+                      </Field>
+                      <Field label="وسيلة التحصيل">
+                        <QuickSelect value={terminalId} onChange={(e) => setTerminalId(e.target.value)} className={inputCls}>
+                          <option value="">نقدي/بنك</option>
+                          {availableTerminals.map((t) => <option key={t.id} value={t.id}>{t.nameAr}</option>)}
+                        </QuickSelect>
+                      </Field>
+                      {!terminalId
+                        ? <Field label="الخزينة المستلمة"><TreasuryPicker value={payTreasury} onChange={setPayTreasury} compact /></Field>
+                        : <Field label="مرجع العملية"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls} placeholder="مرجع الماكينة" /></Field>}
+                    </div>
+                    {liveProgress.nextDue && (
+                      <button
+                        onClick={() => setPayAmount(String((liveProgress.nextDue!.amountMinor - liveProgress.nextDue!.paidMinor) / 10 ** cur.decimals))}
+                        className="mt-2 rounded-lg doc-tint px-3 py-1.5 text-[11px] font-bold doc-accent-deep"
+                      >
+                        تعبئة قيمة القسط القادم ({fmt(liveProgress.nextDue.amountMinor - liveProgress.nextDue.paidMinor)})
+                      </button>
+                    )}
+                    {over && <p className="mt-2 rounded-lg bg-rose-500/10 px-3 py-2 text-[11.5px] font-bold text-rose-700 dark:text-rose-300">المبلغ يتجاوز المتبقي على الخطة بـ{fmt(payMinor - liveProgress.remainingMinor)} — صحّح القيمة.</p>}
+                  </DocSection>
+                )}
+
+                {!liveProgress.finished && (
+                  <DocOutcome>
+                    <b className="block pb-1">القيد الذي سيُرحَّل</b>
+                    <div className="flex items-center justify-between gap-3"><span>{terminal ? `${terminal.nameAr} — حساب التسوية (${targetAccount}) مديناً` : `الخزينة (${targetAccount}) — مديناً`}</span><b className="font-mono">{fmt(payMinor)}</b></div>
+                    <div className="flex items-center justify-between gap-3"><span>ذمم العملاء (1104) — {custName(livePlan.customerId)} دائناً</span><b className="font-mono">{fmt(payMinor)}</b></div>
+                    <div className="mt-1 border-t doc-line pt-1 text-[10.5px] doc-faint">هامش التمويل أُثبت إيراداً (4111) عند إنشاء الخطة — التحصيل هنا تخفيض مديونية لا إيراد جديد.</div>
+                  </DocOutcome>
+                )}
+
+                {planEntries.length > 0 && (
+                  <DocSection step={liveProgress.finished ? '٢' : '٣'} title={`قيود التحصيل (${planEntries.length})`} hint="سجل غير قابل للتعديل">
+                    <div className="max-h-36 overflow-y-auto rounded-xl doc-ring">
+                      <table className="w-full text-[12px]">
+                        <tbody className="divide-y doc-line">
+                          {planEntries.map((e) => (
+                            <tr key={e.id}>
+                              <td className="px-4 py-1.5 doc-faint">#{e.entryNumber}</td>
+                              <td className="px-4 py-1.5 doc-muted">{e.description}</td>
+                              <td className="px-4 py-1.5 text-left font-mono font-bold doc-ink">{fmt(e.lines[0]?.debit ?? 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </DocSection>
                 )}
               </div>
-            )}
-
-            {planEntries.length > 0 && (
-              <div className="rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] overflow-hidden">
-                <div className="px-4 py-2.5 text-[12px] font-bold text-rose-600 dark:text-rose-400 border-b border-rose-500/10 flex items-center gap-1.5">
-                  <BookOpenText size={13} /> قيود التحصيل ({planEntries.length})
-                </div>
-                <div className="max-h-36 overflow-y-auto">
-                  <table className="w-full text-[12px]">
-                    <tbody>
-                      {planEntries.map((e) => (
-                        <tr key={e.id} className="border-t border-rose-500/5">
-                          <td className="px-4 py-1.5 text-slate-500">#{e.entryNumber}</td>
-                          <td className="px-4 py-1.5 text-slate-600 dark:text-slate-300">{e.description}</td>
-                          <td className="px-4 py-1.5 font-bold text-left">{fmt(e.lines[0]?.debit ?? 0)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+                <span className="text-[11px] doc-faint">{liveProgress.finished ? 'الخطة مسددة بالكامل' : `المتبقي بعد هذه الدفعة: ${fmt(Math.max(0, liveProgress.remainingMinor - payMinor))}`}</span>
+                <div className="flex gap-2">
+                  <Btn variant="ghost" onClick={() => setViewing(null)}>إغلاق</Btn>
+                  {!liveProgress.finished && <Btn onClick={pay} shortcut="F9" disabled={payMinor <= 0 || over}>تحصيل وتوليد القيد</Btn>}
                 </div>
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )
+        })()}
       </Modal>
       {creditApproval.dialog}
     </div>

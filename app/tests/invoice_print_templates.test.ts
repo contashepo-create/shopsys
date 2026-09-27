@@ -27,4 +27,29 @@ describe('قوالب طباعة الفواتير المتقدمة', () => {
     expect(renderInvoiceA4Html(model, cur, DEFAULT_RECEIPT_SETTINGS)).toContain('المحاسب أحمد')
     expect(renderReceiptHtml(model, cur, DEFAULT_RECEIPT_SETTINGS)).toContain('طبع بواسطة: المحاسب أحمد')
   })
+  it('مفتاح إعدادات الطباعة الحرارية يخفي اسم القائم بالطباعة ويبقي باقي الفاتورة', () => {
+    const hidden = renderReceiptHtml(model, cur, { ...DEFAULT_RECEIPT_SETTINGS, showOperator: false })
+    expect(hidden).not.toContain('طبع بواسطة')
+    expect(hidden).toContain('S-1')
+    expect(hidden).toContain('الإجمالي المستحق')
+  })
+  it('الإيصال الحراري المعاد تصميمه يحمل كل بيانات المستند', () => {
+    const html = renderReceiptHtml(model, cur, DEFAULT_RECEIPT_SETTINGS)
+    expect(html).toContain('إذن تسليم') // شريط عنوان المستند
+    expect(html).toContain('رقم الفاتورة')
+    expect(html).toContain('مرجع التتبع')
+    expect(html).toContain('التاريخ والوقت')
+    expect(html).toContain('العميل')
+    expect(html).toContain('طريقة الدفع')
+    expect(html).toContain('عدد الأصناف / القطع')
+    expect(html).toContain('الأساس الخاضع للضريبة')
+    expect(html).toContain('المبلغ كتابةً')
+    expect(html).toContain('تمت الطباعة')
+    expect(html).toContain('<svg') // باركود رقم الفاتورة
+  })
+  it('الدفع المجزأ يطبع المدفوع والمتبقي، والسداد الكامل لا يطبعهما', () => {
+    const partial = renderReceiptHtml({ ...model, paidMinor: 1000, remainingMinor: 1280 }, cur, DEFAULT_RECEIPT_SETTINGS)
+    expect(partial).toContain('المتبقي (آجل)')
+    expect(renderReceiptHtml(model, cur, DEFAULT_RECEIPT_SETTINGS)).not.toContain('المتبقي (آجل)')
+  })
 })

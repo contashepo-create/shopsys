@@ -1,0 +1,147 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { render, fireEvent, cleanup, act, waitFor } from '@testing-library/react'
+import React, { useState } from 'react'
+import { MemoryRouter } from 'react-router-dom'
+vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
+const { useDataStore } = await import('../src/data/repo.ts')
+const { useAppStore } = await import('../src/stores/app.store.ts')
+const { useWindowStore, openSalesInvoiceWindow, openItemEditorWindow, openPartyLedgerWindow } = await import('../src/ui/windows/windowStore.ts')
+const { WindowHost } = await import('../src/ui/windows/WindowHost.tsx')
+const { Modal, Btn } = await import('../src/ui/components/ui.tsx')
+
+const S = () => useDataStore.getState()
+const W = () => useWindowStore.getState()
+const EMPTY = { taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' }
+
+beforeEach(() => {
+  useWindowStore.setState({ windows: [], topZ: 700 })
+  const app = useAppStore.getState()
+  useAppStore.setState({ ...app, setup: { ...app.setup, completed: true, countryCode: 'EG', activityId: 'grocery', shopName: 'متجر', ownerName: 'مالك', allowNegativeTreasury: true } })
+})
+afterEach(() => cleanup())
+
+describe('نظام النوافذ المستقلة', () => {
+  it('يفتح أكثر من فاتورة في وقت واحد ولكل واحدة حالتها', () => {
+    const first = openSalesInvoiceWindow()
+    const second = openSalesInvoiceWindow()
+    expect(W().windows.length).toBe(2)
+    expect(first).not.toBe(second)
+    // الثانية أعلى بصرياً، والتركيز يعيد ترتيب الطبقات
+    expect(W().windows[1].z).toBeGreaterThan(W().windows[0].z)
+    W().focusWindow(first)
+    expect(W().windows.find((w) => w.id === first)!.z).toBeGreaterThan(W().windows.find((w) => w.id === second)!.z)
+  })
+
+  it('تعديل الصنف يفتح نافذة ابنة: إغلاقها لا يغلق الفاتورة، وإغلاق الفاتورة يغلق بناتها', () => {
+    const invoice = openSalesInvoiceWindow()
+    const child = openItemEditorWindow(7, invoice)
+    expect(W().windows.length).toBe(2)
+    W().closeWindow(child)
+    expect(W().windows.map((w) => w.id)).toEqual([invoice])
+    const child2 = openItemEditorWindow(9, invoice)
+    expect(W().windows.length).toBe(2)
+    W().closeWindow(invoice)
+    expect(W().windows.length).toBe(0)
+    expect(W().windows.find((w) => w.id === child2)).toBeUndefined()
+  })
+
+  it('فتح نفس الصنف مرتين يركّز النافذة القائمة بدل التكرار', () => {
+    const a = openItemEditorWindow(5, null)
+    const b = openItemEditorWindow(5, null)
+    expect(a).toBe(b)
+    expect(W().windows.length).toBe(1)
+  })
+
+  it('التصغير يبقيها في شريط المهام والاستعادة تعيدها', () => {
+    S().addItem({ nameAr: 'علف بادئ', sku: 'F1', barcodes: [], categoryId: 0, baseUnit: 'كجم', costMinor: 1000, stockQty: 50, priceMinor: 1500, minQty: 5 } as never)
+    const item = S().items.at(-1)!
+    const id = openItemEditorWindow(item.id, null)
+    const view = render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    expect(document.querySelector(`[data-app-window="${id}"]`)).toBeTruthy()
+    fireEvent.click(document.querySelector('[data-window-minimize]') as HTMLElement)
+    expect(document.querySelector(`[data-app-window="${id}"]`)).toBeFalsy()
+    const task = document.querySelector(`[data-window-task="${id}"] button`) as HTMLElement
+    expect(task).toBeTruthy()
+    fireEvent.click(task)
+    expect(document.querySelector(`[data-app-window="${id}"]`)).toBeTruthy()
+    // التكبير والاستعادة
+    fireEvent.click(document.querySelector('[data-window-maximize]') as HTMLElement)
+    expect(document.querySelector(`[data-app-window="${id}"]`)!.getAttribute('data-window-mode')).toBe('maximized')
+    view.unmount()
+  })
+
+  it('الإغلاق مع تعديلات غير محفوظة يسأل أولاً ولا يغلق إلا بالتأكيد', () => {
+    S().addItem({ nameAr: 'ذرة صفراء', sku: 'F2', barcodes: [], categoryId: 0, baseUnit: 'كجم', costMinor: 800, stockQty: 10, priceMinor: 1200, minQty: 1 } as never)
+    const item = S().items.at(-1)!
+    const id = openItemEditorWindow(item.id, null)
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    const nameInput = document.querySelector('[aria-label="اسم الصنف"]') as HTMLInputElement
+    fireEvent.change(nameInput, { target: { value: 'ذرة صفراء مستوردة' } })
+    expect(W().windows[0].dirty).toBe(true)
+    fireEvent.click(document.querySelector('[data-window-close]') as HTMLElement)
+    expect(document.querySelector('[data-window-close-confirm]')).toBeTruthy()
+    expect(W().windows.length).toBe(1)
+    fireEvent.click(document.querySelector('[data-window-close-cancel]') as HTMLElement)
+    expect(W().windows.length).toBe(1)
+    fireEvent.click(document.querySelector('[data-window-close]') as HTMLElement)
+    fireEvent.click(document.querySelector('[data-window-close-confirm-yes]') as HTMLElement)
+    expect(W().windows.length).toBe(0)
+  })
+
+  it('فاتورة المبيعات نفسها تعمل داخل النافذة المستقلة وتُغلق بزرها', async () => {
+    const id = openSalesInvoiceWindow()
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    await waitFor(() => expect(document.querySelector('[data-window-kind="sales-invoice"] .invoice-pos-root')).toBeTruthy(), { timeout: 8000 })
+    expect(document.querySelector(`[data-app-window="${id}"]`)).toBeTruthy()
+    fireEvent.click(document.querySelector('[data-window-close]') as HTMLElement)
+    expect(W().windows.length).toBe(0)
+  })
+
+  it('كشف حساب العميل يفتح كنافذة مستقلة بصفوف الحركة', () => {
+    S().addCustomer({ ...EMPTY, nameAr: 'مزرعة الخير', phone: '', creditLimitMinor: 0, notes: '' } as never)
+    const customer = S().customers.at(-1)!
+    openPartyLedgerWindow('customer', customer.id, null)
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    expect(document.querySelector('[data-window-view="party-ledger"]')).toBeTruthy()
+    expect(document.body.textContent).toContain('مزرعة الخير')
+  })
+})
+
+describe('النوافذ المنبثقة المتداخلة', () => {
+  function TwoModals() {
+    const [first, setFirst] = useState(true)
+    const [second, setSecond] = useState(true)
+    return (
+      <>
+        <Modal open={first} onClose={() => setFirst(false)} title="النافذة الأولى">
+          <div data-testid="first-body">محتوى الأولى</div>
+          <Btn onClick={() => setSecond(true)}>افتح الثانية</Btn>
+        </Modal>
+        <Modal open={second} onClose={() => setSecond(false)} title="النافذة الثانية">
+          <div data-testid="second-body">محتوى الثانية</div>
+        </Modal>
+      </>
+    )
+  }
+
+  it('الضغط في مكان فارغ لا يغلق أي نافذة', () => {
+    render(<TwoModals />)
+    expect(document.querySelectorAll('[data-modal-id]').length).toBe(2)
+    const backdrops = document.querySelectorAll('[data-modal-backdrop]')
+    fireEvent.click(backdrops[backdrops.length - 1])
+    expect(document.querySelectorAll('[data-modal-id]').length).toBe(2)
+  })
+
+  it('Escape يغلق النافذة العليا وحدها لا كل النوافذ', () => {
+    render(<TwoModals />)
+    const layers = Array.from(document.querySelectorAll('[data-modal-id]'))
+    expect(layers.length).toBe(2)
+    // العليا لها عمق أكبر فتظهر فوق الأولى
+    expect(Number(layers[1].getAttribute('data-modal-depth'))).toBeGreaterThan(Number(layers[0].getAttribute('data-modal-depth')))
+    act(() => { fireEvent.keyDown(window, { key: 'Escape' }) })
+    expect(document.querySelectorAll('[data-modal-id]').length).toBe(1)
+    expect(document.querySelector('[data-testid="first-body"]')).toBeTruthy()
+    act(() => { fireEvent.keyDown(window, { key: 'Escape' }) })
+    expect(document.querySelectorAll('[data-modal-id]').length).toBe(0)
+  })
+})

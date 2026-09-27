@@ -147,9 +147,23 @@ html.dark { color-scheme: dark; }
 .anim-float { animation: floatY 4s ease-in-out infinite; }
 .anim-orb { animation: orbDrift 14s ease-in-out infinite; }
 
-.anim-up { animation: fadeSlideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.anim-in { animation: fadeIn 0.4s ease both; }
-.anim-pop { animation: popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+/* بلاغ المالك: «النوافذ المنبثقة يختفي جزء منها خلف الحقول».
+   السبب الجذري: fill-mode=both كان يُبقي transform نهائياً (translateY(0)/scale(1))
+   على كل بطاقة متحركة، وأي transform يجعل العنصر «كتلة احتواء» للعناصر
+   position:fixed ويقصّها بـoverflow. backwards يعطي نفس الحركة تماماً ثم يعيد
+   العنصر لحالته الطبيعية بلا transform، فتظهر القوائم والنوافذ كاملة فوق كل شيء. */
+.anim-up { animation: fadeSlideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+.anim-in { animation: fadeIn 0.4s ease backwards; }
+.anim-pop { animation: popIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) backwards; }
+
+/* ─── سلّم طبقات موحّد لكل ما يطفو فوق الصفحة (طلب المالك: لا يختفي جزء من أي نافذة) ───
+   كل هذه الطبقات تُركَّب على <body> مباشرة عبر createPortal فلا يحبسها أي سياق تراكم:
+   layer-modal (1000) النوافذ المنبثقة · layer-picker (2000) قوائم البحث والمنتقيات
+   · layer-approval (3000) حوارات اعتماد المشرف · layer-toast (4000) التنبيهات. */
+.layer-modal { z-index: 1000; }
+.layer-picker { z-index: 2000; }
+.layer-approval { z-index: 3000; }
+.layer-toast { z-index: 4000; }
 
 /* تقليل الحركة (إعداد المظهر) — يوقف كل الحركات والانتقالات */
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
@@ -199,9 +213,14 @@ input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
 .sidebar-collapsed nav > a, .sidebar-collapsed nav > div > button { justify-content: center; padding-inline: .35rem; }
 .sidebar-collapsed > div:first-of-type { justify-content: center; padding-inline: .35rem; }
 .sidebar-collapsed > div:first-of-type img { width: 2rem; height: 2rem; }
-/* في نمط القوائم العلوية لا يتراكب رأس الصفحة مع شريط الأقسام */
+/* في نمط شريط القوائم العلوي لا يتراكب رأس الصفحة مع الشريط */
 .top-navigation-layout > header { position: relative; top: auto; z-index: 20; background-color: rgb(255 255 255); }
 .dark .top-navigation-layout > header { background-color: rgb(15 23 42); }
+/* شريط القوائم (نمط ويندوز/VS Code): كثافة عالية وتمرير أفقي بلا شريط تمرير مرئي */
+.app-menubar { min-height: 2.1rem; }
+.menubar-scroll { scrollbar-width: none; }
+.menubar-scroll::-webkit-scrollbar { display: none; }
+.sidebar-collapsed .sidebar-nav-switch { display: none; }
 
 /* كثافة شاشة الكاشير: أكبر مساحة للسلة والأصناف وأقل كروم بصري */
 .pos-workspace { font-size: .8rem; }
@@ -744,8 +763,10 @@ select { line-height: 1.25rem; }
 /* أيقونة البحث داخل حقول RTL تحتاج مساحة داخلية من اليمين حتى لا تكتب فوق النص. */
 .invoice-picker-root > input { padding-right: 2.35rem !important; }
 .invoice-reference-rapid-input > div > input { padding: .35rem 2.35rem .35rem .7rem !important; }
-.invoice-search-overlay { z-index: 110 !important; }
-.invoice-search-dialog { position: relative; z-index: 111; }
+/* لا تُعِد تعريف طبقة المنتقي هنا: الصنف layer-picker (2000) هو المرجع الوحيد.
+   السطر القديم كان يفرض z-index: 110 !important فيهبط بنافذة بحث العميل/الصنف
+   تحت الفاتورة (نافذة 700+) والحوارات (1000+) — فتختفي خلفها كما بلّغ المالك. */
+.invoice-search-dialog { position: relative; z-index: 1; }
 .invoice-search-inputbar .relative > input { padding-right: 2.35rem !important; }
 
 /* شريط جدول البنود: عدّاد وقيمة فعلية متجاورة مع مدخل الصنف السريع. */
@@ -929,3 +950,243 @@ select { line-height: 1.25rem; }
   .invoice-reference-compact-header .invoice-party-profile-card { align-items: stretch; flex-direction: column; }
   .invoice-reference-compact-header .invoice-party-profile-metrics { width: 100%; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   النوافذ المستقلة (طلب المالك): الفاتورة وشاشات التعديل تفتح كنوافذ حرة
+   فوق التطبيق — تُسحب وتُصغَّر وتُكبَّر، ولا تُغلق بالضغط في مكان فارغ.
+   سلم الطبقات: layer-window (700) < layer-modal (1000) حتى تظهر الحوارات فوق النوافذ.
+   ═════════════════════════════════════════════════════════════════════════ */
+.layer-window { z-index: 700; }
+.layer-window-bar { z-index: 690; }
+
+.app-window {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  min-width: 360px;
+  min-height: 240px;
+  overflow: hidden;
+  border: 1px solid #c7d0e0;
+  border-radius: 1rem;
+  background: #fff;
+  box-shadow: 0 32px 70px -24px rgba(15, 23, 42, .5), 0 0 0 1px rgba(15, 23, 42, .05);
+  animation: windowPop .14s ease-out backwards;
+}
+.dark .app-window { background: #101827; border-color: #334155; }
+.app-window.is-maximized { border-radius: .75rem; }
+.app-window.is-dragging { user-select: none; }
+@keyframes windowPop { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
+
+.app-window-bar {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .4rem .55rem .4rem .35rem;
+  background: linear-gradient(90deg, #eaf0ff, #f7f9ff);
+  border-bottom: 1px solid #dbe3f4;
+  cursor: grab; touch-action: none; user-select: none;
+}
+.dark .app-window-bar { background: linear-gradient(90deg, #172038, #111a2c); border-bottom-color: #2b3852; }
+.app-window.is-dragging .app-window-bar { cursor: grabbing; }
+.app-window-grip { color: #8f9dba; display: inline-flex; }
+.app-window-titles { min-width: 0; flex: 1; line-height: 1.15; }
+.app-window-titles b { display: block; font-size: .8rem; font-weight: 800; color: #14213d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dark .app-window-titles b { color: #e7edf9; }
+.app-window-titles small { display: block; font-size: .62rem; color: #7c89a3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-window-dirty { color: #f59e0b; font-size: .7rem; }
+.app-window-buttons { display: flex; align-items: center; gap: .15rem; }
+.app-window-buttons button {
+  display: grid; place-items: center; width: 1.7rem; height: 1.55rem;
+  border-radius: .45rem; color: #48566f; transition: background .15s, color .15s;
+}
+.app-window-buttons button:hover { background: rgba(15, 23, 42, .09); }
+.app-window-buttons button.is-close:hover { background: #e11d48; color: #fff; }
+.dark .app-window-buttons button { color: #aebbd2; }
+
+.app-window-body { flex: 1; min-height: 0; overflow: auto; background: #f7f8fc; }
+.dark .app-window-body { background: #0c1424; }
+
+.app-window-resize { position: absolute; }
+.app-window-resize.is-e { inset-block: 10px 12px; right: -3px; width: 8px; cursor: ew-resize; }
+.app-window-resize.is-w { inset-block: 10px 12px; left: -3px; width: 8px; cursor: ew-resize; }
+.app-window-resize.is-s { inset-inline: 12px; bottom: -3px; height: 8px; cursor: ns-resize; }
+.app-window-resize.is-se { right: -3px; bottom: -3px; width: 16px; height: 16px; cursor: nwse-resize; }
+.app-window-resize.is-sw { left: -3px; bottom: -3px; width: 16px; height: 16px; cursor: nesw-resize; }
+
+.app-window-ask { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(15, 23, 42, .45); padding: 1rem; }
+.app-window-ask-card { max-width: 24rem; border-radius: 1rem; background: #fff; padding: 1.1rem; box-shadow: 0 20px 45px -15px rgba(15, 23, 42, .5); }
+.dark .app-window-ask-card { background: #131c2f; }
+.app-window-ask-card b { display: block; font-size: .95rem; }
+.app-window-ask-card p { margin-top: .35rem; font-size: .75rem; color: #64748b; line-height: 1.7; }
+.app-window-ask-actions { margin-top: .9rem; display: flex; gap: .5rem; justify-content: flex-end; }
+.app-window-ask-actions button { border-radius: .65rem; padding: .45rem .85rem; font-size: .75rem; font-weight: 800; }
+.app-window-ask-actions .is-keep { background: #e2e8f0; color: #1e293b; }
+.app-window-ask-actions .is-discard { background: #e11d48; color: #fff; }
+
+.app-window-taskbar {
+  position: fixed; bottom: .6rem; inset-inline-start: .75rem;
+  display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; max-width: min(70vw, 60rem);
+  border-radius: 999px; border: 1px solid #d5ddec; background: rgba(255, 255, 255, .95);
+  padding: .3rem .5rem; box-shadow: 0 16px 34px -18px rgba(15, 23, 42, .6); backdrop-filter: blur(6px);
+}
+.dark .app-window-taskbar { background: rgba(16, 24, 39, .95); border-color: #2b3852; }
+.app-window-taskbar-label { display: inline-flex; align-items: center; gap: .25rem; font-size: .62rem; font-weight: 800; color: #64748b; padding-inline: .3rem; }
+.app-window-task { display: inline-flex; align-items: center; border-radius: 999px; background: #eef2fb; border: 1px solid transparent; }
+.dark .app-window-task { background: #1b2740; }
+.app-window-task.is-active { border-color: #6366f1; background: #e0e7ff; }
+.dark .app-window-task.is-active { background: #27336b; }
+.app-window-task.is-minimized { opacity: .65; }
+.app-window-task > button { display: inline-flex; align-items: center; gap: .25rem; padding: .28rem .55rem; font-size: .68rem; font-weight: 700; color: #1e293b; }
+.dark .app-window-task > button { color: #dbe3f4; }
+.app-window-task-title { max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-window-task-close { padding: .28rem .4rem; color: #94a3b8; border-start-end-radius: 999px; border-end-end-radius: 999px; }
+.app-window-task-close:hover { background: #e11d48; color: #fff; }
+
+/* النوافذ تحتوي صفحات كاملة (الفاتورة) — نلغي الحشو الخارجي داخل النافذة */
+.app-window-body .invoice-pos-root { min-height: 100%; }
+.app-window-body .invoice-standalone-layout { min-height: 100%; }
+
+/* الضغط خارج أي نافذة منبثقة لم يعد يغلقها — نُظهر اهتزازة تنبيه بدل الإغلاق */
+@keyframes modalNudge { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-7px); } 45% { transform: translateX(6px); } 70% { transform: translateX(-3px); } }
+.modal-nudge { animation: modalNudge .3s ease-in-out; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   شكل «المستند» للفاتورة (طلب المالك — الشكل المرفق): رأس مضغوط، بطاقة بيانات،
+   جدول بنود، ثم ثلاث لوحات سفلية (ملاحظات · التحصيل · الإجماليات) وشريط إجراءات.
+   ═════════════════════════════════════════════════════════════════════════ */
+.invoice-doc { display: flex; min-height: 100%; flex-direction: column; background: #f4f6fb; }
+.dark .invoice-doc { background: #0b1220; }
+
+.invoice-doc-utility {
+  display: flex; align-items: center; gap: .75rem;
+  padding: .3rem .6rem; border-bottom: 1px solid #e2e8f0; background: #fff;
+}
+.dark .invoice-doc-utility { background: #101827; border-bottom-color: #23304a; }
+.invoice-doc-utility-tools { position: relative; display: flex; align-items: center; gap: .1rem; }
+.invoice-doc-utility-tools > button { display: grid; place-items: center; width: 1.85rem; height: 1.7rem; border-radius: .5rem; color: #64748b; }
+.invoice-doc-utility-tools > button:hover { background: #eef2f9; color: #1e293b; }
+.invoice-doc-menu {
+  position: absolute; inset-inline-start: 0; top: 2rem; z-index: 40; min-width: 15rem;
+  display: flex; flex-direction: column; gap: .1rem; padding: .35rem;
+  border: 1px solid #dbe3f4; border-radius: .75rem; background: #fff; box-shadow: 0 18px 40px -18px rgb(15 23 42 / .45);
+}
+.dark .invoice-doc-menu { background: #111a2c; border-color: #2b3852; }
+.invoice-doc-menu > button { border-radius: .5rem; padding: .4rem .55rem; text-align: start; font-size: .72rem; font-weight: 700; }
+.invoice-doc-menu > button:hover { background: #eef2f9; }
+.invoice-doc-menu.is-help { gap: .3rem; padding: .7rem; max-width: 22rem; }
+.invoice-doc-menu.is-help b { font-size: .75rem; }
+.invoice-doc-menu.is-help span { font-size: .68rem; line-height: 1.8; color: #64748b; }
+.invoice-doc-utility-session { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: .75rem; font-size: .64rem; color: #64748b; }
+.invoice-doc-online { display: inline-flex; align-items: center; gap: .25rem; }
+.invoice-doc-online i { width: .45rem; height: .45rem; border-radius: 999px; background: #22c55e; }
+.invoice-doc-online.is-warning i { background: #f59e0b; }
+.invoice-doc-online.is-danger i, .invoice-doc-online.is-error i { background: #ef4444; }
+.invoice-doc-close { display: grid; place-items: center; width: 1.9rem; height: 1.75rem; border-radius: .5rem; color: #64748b; }
+.invoice-doc-close:hover { background: #fee2e2; color: #b91c1c; }
+
+.invoice-doc-head {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem;
+  padding: .55rem .8rem; border-bottom: 1px solid #e2e8f0; background: #fff;
+}
+.dark .invoice-doc-head { background: #101827; border-bottom-color: #23304a; }
+.invoice-doc-identity { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; min-width: 0; }
+.invoice-doc-identity b { font-size: 1.05rem; font-weight: 900; letter-spacing: .01em; color: #12203f; }
+.dark .invoice-doc-identity b { color: #e8eefb; }
+.invoice-doc-identity small { font-size: .65rem; color: #64748b; }
+.invoice-doc-status { border-radius: 999px; background: #fef3c7; color: #92400e; padding: .12rem .6rem; font-size: .65rem; font-weight: 800; }
+.invoice-doc-head-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+
+.invoice-doc-body { display: flex; flex-direction: column; gap: .6rem; padding: .7rem; }
+.invoice-doc-card { border: 1px solid #dbe2ee; border-radius: .9rem; background: #fff; box-shadow: 0 6px 18px -12px rgb(15 23 42 / .35); }
+.dark .invoice-doc-card { background: #101827; border-color: #27344e; }
+.invoice-doc-header-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(16rem, 21rem); gap: .6rem; padding: .7rem; }
+.invoice-doc-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .5rem .6rem; align-content: start; }
+.invoice-doc-party { border-inline-start: 1px dashed #dbe2ee; padding-inline-start: .6rem; }
+.dark .invoice-doc-party { border-color: #2b3852; }
+
+.invoice-doc-entry { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem .7rem; }
+.invoice-doc-entry-label { display: inline-flex; align-items: center; gap: .3rem; font-size: .72rem; font-weight: 800; color: #1f3568; white-space: nowrap; }
+.dark .invoice-doc-entry-label { color: #c7d7ff; }
+.invoice-doc-entry-input { flex: 1; min-width: 14rem; }
+.invoice-doc-entry-hints { display: flex; align-items: center; gap: .5rem; font-size: .63rem; color: #64748b; }
+.invoice-doc-entry-hints > button { display: inline-flex; align-items: center; gap: .25rem; border: 1px solid #dbe2ee; border-radius: .5rem; padding: .25rem .5rem; font-weight: 700; }
+.invoice-doc-entry-hints kbd { border: 1px solid #cbd5e1; border-radius: .3rem; padding: 0 .25rem; font-size: .6rem; }
+
+/* الجسم: البنود بعرض كامل ثم ثلاث لوحات سفلية كما في الشكل المطلوب */
+.invoice-doc .invoice-body-grid { grid-template-columns: minmax(0, 1fr); background: transparent; padding: 0; gap: .6rem; }
+.invoice-doc .invoice-totals-footer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: .6rem; }
+.invoice-doc .invoice-reference-shell { border: 0; box-shadow: none; background: transparent; }
+@media (max-width: 1100px) {
+  .invoice-doc-header-card { grid-template-columns: minmax(0, 1fr); }
+  .invoice-doc-party { border-inline-start: 0; border-top: 1px dashed #dbe2ee; padding-inline-start: 0; padding-top: .5rem; }
+  .invoice-doc .invoice-totals-footer { grid-template-columns: minmax(0, 1fr); }
+}
+
+.invoice-doc-notes-card { display: flex; flex-direction: column; gap: .4rem; border: 1px solid #dbe2ee; border-radius: .65rem; background: #fff; padding: .7rem; }
+.dark .invoice-doc-notes-card { background: #101827; border-color: #27344e; }
+.invoice-doc-notes-card b { font-size: .78rem; }
+.invoice-doc-notes-card textarea { min-height: 6.5rem; resize: vertical; }
+.invoice-doc-notes-card small { font-size: .63rem; color: #64748b; line-height: 1.7; }
+
+.invoice-doc-actionbar {
+  position: sticky; bottom: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem;
+  border-top: 1px solid #dbe2ee; background: rgb(255 255 255 / .96); padding: .5rem .8rem; backdrop-filter: blur(6px);
+}
+.dark .invoice-doc-actionbar { background: rgb(16 24 39 / .96); border-top-color: #27344e; }
+.invoice-doc-actionbar-info { display: flex; flex-wrap: wrap; gap: .75rem; font-size: .64rem; color: #64748b; }
+.invoice-doc-actionbar-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.invoice-doc-post { font-size: .82rem !important; font-weight: 900 !important; }
+
+/* ─────────────────────────────────────────────────────────────
+   طبقة «المستند» الموحدة للسندات (تدقيق المالك — المرحلة 6)
+   ─────────────────────────────────────────────────────────────
+   كانت صفحة السندات تكتب ألوان المستند بقيم ست عشرية مباشرة، فبدت
+   نهاراً كالفاتورة لكنها لا ترى الوضع الليلي إطلاقاً (خلفيات بيضاء
+   ثابتة على نص داكن). هذه الطبقة تجمع الألوان في متغيرات لها بديل
+   ليلي، فيبقى شكل المستند واحداً في الوضعين.                          */
+:root {
+  --doc-ink: #0f2042;        /* حبر الترويسة والعناوين */
+  --doc-ink-soft: #0b1c30;
+  --doc-surface: #f8f9ff;    /* سطح المستند خلف البطاقات */
+  --doc-paper: #ffffff;      /* ورق البطاقة */
+  --doc-tint: #eff4ff;       /* تظليل خفيف داخل البطاقة */
+  --doc-tint-strong: #e5eeff;
+  --doc-band: #dce9ff;       /* شريط عنوان القسم */
+  --doc-line: #c5c6cf;
+  --doc-muted: #45464e;
+  --doc-faint: #75777f;
+  --doc-accent: #3f5f92;
+  --doc-accent-deep: #254778;
+  --doc-head-sub: #d6e3ff;
+}
+.dark {
+  --doc-ink: #e8eefb;
+  --doc-ink-soft: #e8eefb;
+  --doc-surface: #0b1220;
+  --doc-paper: #101827;
+  --doc-tint: #16203a;
+  --doc-tint-strong: #1b2745;
+  --doc-band: #1e2c4d;
+  --doc-line: #27344e;
+  --doc-muted: #aab6cd;
+  --doc-faint: #8291ab;
+  --doc-accent: #93b4ea;
+  --doc-accent-deep: #b9cdf3;
+  --doc-head-sub: #b9cdf3;
+}
+.doc-sheet { background: var(--doc-surface); color: var(--doc-ink-soft); }
+.doc-head { background: #0f2042; color: #fff; }
+.dark .doc-head { background: #101827; }
+.doc-head-sub { color: var(--doc-head-sub); }
+.doc-meta { background: var(--doc-tint); color: var(--doc-muted); }
+.doc-card { background: var(--doc-paper); box-shadow: 0 6px 18px -12px rgb(15 23 42 / .35); }
+.doc-ring { box-shadow: inset 0 0 0 1px var(--doc-band); }
+.doc-band { background: var(--doc-band); }
+.doc-tint { background: var(--doc-tint); }
+.doc-tint-strong { background: var(--doc-tint-strong); }
+.doc-ink { color: var(--doc-ink); }
+.doc-muted { color: var(--doc-muted); }
+.doc-faint { color: var(--doc-faint); }
+.doc-accent { color: var(--doc-accent); }
+.doc-accent-deep { color: var(--doc-accent-deep); }
+.doc-line { border-color: var(--doc-line); }
+.doc-footer { background: var(--doc-paper); border-top: 1px solid var(--doc-line); }

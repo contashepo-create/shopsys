@@ -8,7 +8,7 @@ import { ItemQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
  * أو الجني/الموسم) — كلها اختيارية كبقية بيانات النظام.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Scissors, Trash2, ShieldCheck } from 'lucide-react'
+import { Plus, Scissors, Trash2, ShieldCheck, X, CheckCircle2, Boxes, Layers, Wallet, BookOpenText, ChevronDown, AlertTriangle } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -49,9 +49,11 @@ export function ProcessingPage() {
   const [allowNegativeSource, setAllowNegativeSource] = useState(() => localStorage.getItem('shopsys:manufacturing:allow-negative-stock') === 'true')
   const [outs, setOuts] = useState<{ itemId: string; qty: string }[]>([{ itemId: '', qty: '' }])
   const [waste, setWaste] = useState('')
-  const [overhead, setOverhead] = useState('')
+  /** مصاريف التشغيل ببنود مسماة (عمالة/كراتين/نقل) — تُجمع في overheadMinor وتفصيلها يُحفظ في الملاحظات */
+  const [overheadLines, setOverheadLines] = useState<{ label: string; amount: string }[]>([{ label: '', amount: '' }])
   const [treasury, setTreasury] = useState('1101')
   const [notes, setNotes] = useState('')
+  const [docsOpen, setDocsOpen] = useState(false)
   // توثيق SFDA
   const [origin, setOrigin] = useState('')
   const [facility, setFacility] = useState('')
@@ -61,7 +63,7 @@ export function ProcessingPage() {
 
   const openNew = () => {
     setSourceId(''); setSourceQty(''); setSourceWarehouseId(String(mainWarehouseId)); setOutputWarehouseId(String(mainWarehouseId)); setOuts([{ itemId: '', qty: '' }]); setWaste('')
-    setOverhead(''); setTreasury('1101'); setNotes('')
+    setOverheadLines([{ label: '', amount: '' }]); setTreasury('1101'); setNotes(''); setDocsOpen(false)
     setOrigin(isSA ? 'السعودية' : ''); setFacility(''); setHalal(''); setProdDate(''); setSeason('')
     setOpen(true)
   }
@@ -72,7 +74,8 @@ export function ProcessingPage() {
   const outQtySum = parsedOuts.reduce((a, o) => a + o.qty, 0)
   const srcQtyNum = Number(sourceQty) || 0
   const previewYield = srcQtyNum > 0 ? Math.round((outQtySum / srcQtyNum) * 1000) / 10 : 0
-  const overheadMinor = overhead ? Math.round(Number(overhead) * 10 ** cur.decimals) : 0
+  const overheadMinor = overheadLines.reduce((sum, line) => sum + Math.max(0, Math.round((Number(line.amount) || 0) * 10 ** cur.decimals)), 0)
+  const overheadNote = overheadLines.filter((line) => Number(line.amount) > 0).map((line) => `${line.label.trim() || 'مصروف تجهيز'}: ${fmt(Math.round(Number(line.amount) * 10 ** cur.decimals))}`).join(' · ')
   const totalCost = source ? Math.round(source.costMinor * srcQtyNum) + overheadMinor : 0
   const preview = (() => {
     if (!source || parsedOuts.length === 0 || !(srcQtyNum > 0)) return null
@@ -81,6 +84,10 @@ export function ProcessingPage() {
     } catch { return null }
   })()
 
+  /** القيمة البيعية المتوقعة لكل النواتج — تقيس جدوى الأمر قبل ترحيله */
+  const expectedSalesMinor = parsedOuts.reduce((sum, out) => sum + Math.round((items.find((item) => item.id === out.itemId)?.priceMinor ?? 0) * out.qty), 0)
+  const canPost = !!sourceId && !!sourceWarehouseId && !!outputWarehouseId && srcQtyNum > 0 && parsedOuts.length > 0
+
   const run = () => {
     try {
       const order = postProcessing({
@@ -88,7 +95,7 @@ export function ProcessingPage() {
         outputs: parsedOuts, overheadMinor, treasury,
         wasteQty: waste ? Number(waste) : 0,
         compliance: { originCountry: origin.trim(), facilityNo: facility.trim(), halalCert: halal.trim(), productionDate: prodDate, season: season.trim() },
-        notes: notes.trim(),
+        notes: [notes.trim(), overheadNote && `تفصيل المصاريف — ${overheadNote}`].filter(Boolean).join(' | '),
       })
       toast.show(`رُحّل ${order.orderNumber} — التصافي ${processingYieldPercent(order)}٪ ✅`)
       setOpen(false)
@@ -185,78 +192,207 @@ export function ProcessingPage() {
         </div>
       )}
 
-      {/* نافذة أمر التجهيز */}
-      <Modal open={open} onClose={() => setOpen(false)} title={`${L.icon} ${L.nameAr}`} wide>
-        <div className="space-y-3">
-          <div className="grid md:grid-cols-4 gap-3">
-            <Field label={`${L.sourceLabel} *`} hint="صنف الخام — تكلفته الحالية بالمتوسط المرجح ستدخل النواتج">
-              <ItemQuickPicker items={items.filter((item) => item.isActive)} onPick={(id) => setSourceId(String(id))} placeholder="ابحث عن الخام ثم Enter" />
-            </Field>
-            <Field label="مخزن صرف الخام *">
-              <QuickSelect value={sourceWarehouseId} onChange={(e) => setSourceWarehouseId(e.target.value)} className={inputCls}>
-                <option value="">اختر المخزن</option>
-                {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}{source ? ` — متاح ${warehouseStock.get(warehouse.id)?.get(source.id) ?? 0}` : ''}</option>)}
-              </QuickSelect>
-            </Field>
-            <Field label="الكمية المستهلكة *" hint={source ? `متاح في المخزن: ${sourceAvailable} — تكلفة الوحدة ${fmt(source.costMinor)}` : undefined}>
-              <input value={sourceQty} onChange={(e) => setSourceQty(e.target.value)} inputMode="decimal" className={inputCls} placeholder="مثال: 18.5" />
-            </Field>
-            <Field label="مخزن استلام النواتج *">
-              <QuickSelect value={outputWarehouseId} onChange={(e) => setOutputWarehouseId(e.target.value)} className={inputCls}>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect>
-            </Field>
-          </div>
-
-          <Field label={`${L.outputLabel} *`} hint="كل جزء/درجة صنف مستقل بسعر بيعه — التوزيع بنسبة (السعر × الكمية)">
-            <div className="space-y-2">
-              {outs.map((o, i) => (
-                <div key={i} className="flex gap-2">
-                  <ItemQuickPicker items={items.filter((item) => item.isActive && String(item.id) !== sourceId)} onPick={(id) => setOuts(outs.map((row, j) => (j === i ? { ...row, itemId: String(id) } : row)))} placeholder="ابحث عن الناتج ثم Enter" />
-                  <input value={o.qty} onChange={(e) => setOuts(outs.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} inputMode="decimal" placeholder="الكمية" className={`${inputCls} w-28`} />
-                  <button onClick={() => setOuts(outs.filter((_, j) => j !== i))} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10"><Trash2 className="w-4 h-4" /></button>
+      {/* نافذة أمر التجهيز/التصنيع — أعيد بناؤها كشاشة تصنيع كاملة داخل نافذة (طلب المالك):
+          رأس تشغيلي، خام ومخازن، جدول نواتج بتوزيع حي، فاقد ومصاريف ببنود، توثيق، وملخص وقيد */}
+      <Modal open={open} onClose={() => setOpen(false)} title="" extraWide bare>
+        <div dir="rtl" className="overflow-hidden rounded-3xl bg-[#f8f9ff] text-[#0b1c30] dark:bg-slate-900 dark:text-slate-100">
+          {/* الرأس */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-[#0f2042] px-5 py-3.5 text-white">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-white/10 text-xl">{L.icon}</span>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-bold">أمر {L.nameAr}</h2>
+                  <span className="text-[10px] uppercase tracking-wider text-[#a9c7ff]">Manufacturing Order</span>
+                  <span className="rounded bg-white/10 px-2 py-0.5 font-mono text-[11px]">{kind === 'butcher' ? 'CUT' : 'PKG'} — جديد</span>
                 </div>
-              ))}
-              <Btn variant="soft" onClick={() => setOuts([...outs, { itemId: '', qty: '' }])}><Plus className="w-4 h-4" /> ناتج آخر</Btn>
-            </div>
-          </Field>
-
-          <div className="grid grid-cols-3 gap-3">
-            <Field label={L.wasteLabel} hint="كمية موثقة فقط — لا تحمل تكلفة"><input value={waste} onChange={(e) => setWaste(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0" /></Field>
-            <Field label={`مصاريف تجهيز (${cur.symbol})`} hint="عمالة/كراتين — تدخل تكلفة النواتج"><input value={overhead} onChange={(e) => setOverhead(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0" /></Field>
-            {overheadMinor > 0 ? <Field label="مصدر المصاريف"><TreasuryPicker value={treasury} onChange={setTreasury} /></Field> : <div />}
-          </div>
-
-          {/* توثيق سعودي SFDA */}
-          <div className={`rounded-xl border p-3 space-y-2 ${kind === 'butcher' ? 'border-red-600/20 bg-red-600/5' : 'border-yellow-700/25 bg-yellow-700/5'}`}>
-            <div className="flex items-center gap-2 text-[12px] font-black"><ShieldCheck className="w-4 h-4 text-emerald-600" /> توثيق الجودة والحلال (SFDA) — اختياري</div>
-            <div className="grid grid-cols-3 gap-2">
-              <Field label="بلد المنشأ"><input value={origin} onChange={(e) => setOrigin(e.target.value)} className={inputCls} placeholder={kind === 'butcher' ? 'السعودية / الصومال…' : 'السعودية / القصيم…'} /></Field>
-              <Field label={kind === 'butcher' ? 'رقم المسلخ / المنشأة' : 'رقم منشأة التعبئة'}><input value={facility} onChange={(e) => setFacility(e.target.value)} className={inputCls} /></Field>
-              <Field label={L.dateLabel}><input type="date" value={prodDate} onChange={(e) => setProdDate(e.target.value)} className={inputCls} /></Field>
-              {kind === 'butcher'
-                ? <Field label="شهادة الحلال (للمستورد)"><input value={halal} onChange={(e) => setHalal(e.target.value)} className={inputCls} placeholder="رقم/جهة الشهادة" /></Field>
-                : <Field label="الموسم"><input value={season} onChange={(e) => setSeason(e.target.value)} className={inputCls} placeholder="موسم 1447هـ" /></Field>}
-            </div>
-          </div>
-
-          {/* معاينة التوزيع الحية */}
-          {preview && (
-            <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3 space-y-1 text-[12px]">
-              <div className="font-black text-emerald-700 dark:text-emerald-300">
-                معاينة: تكلفة كلية {fmt(totalCost)} — تصافي {previewYield}٪
-                {srcQtyNum > 0 && outQtySum > srcQtyNum && <span className="text-rose-600"> ⚠️ النواتج أكبر من الخام!</span>}
+                <p className="mt-0.5 truncate text-[11px] text-[#d6e3ff]">{setup.shopName || 'نظام الحسابات'} · خام واحد ← نواتج متعددة بتوزيع التكلفة بالقيمة البيعية</p>
               </div>
-              {preview.map((o) => (
-                <div key={o.itemId} className="flex justify-between">
-                  <span>{nameOf(o.itemId)} × {o.qty}</span>
-                  <span className="tabular-nums font-bold">{fmt(o.allocatedCostMinor)} — الوحدة {fmt(o.unitCostMinor)}</span>
-                </div>
-              ))}
             </div>
-          )}
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={run} disabled={!canPost} className="flex items-center gap-1.5 rounded-lg bg-[#6ffbbe] px-4 py-2 text-xs font-bold text-[#002113] shadow-sm transition hover:bg-[#4edea3] disabled:cursor-not-allowed disabled:opacity-50">
+                <CheckCircle2 size={16} /> ترحيل الأمر [F9]
+              </button>
+              <button type="button" onClick={() => setOpen(false)} aria-label="إغلاق" className="rounded-lg p-2 text-white/70 transition hover:bg-rose-500 hover:text-white"><X size={20} /></button>
+            </div>
+          </div>
 
-          <label className="flex items-center gap-2 text-xs font-bold rounded-xl border p-3"><input type="checkbox" checked={allowNegativeSource} onChange={(e) => { setAllowNegativeSource(e.target.checked); localStorage.setItem('shopsys:manufacturing:allow-negative-stock', String(e.target.checked)) }} /> السماح بصرف الخام برصيد سالب</label>
-          <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
-          <Btn onClick={run} shortcut="F9" className="w-full" disabled={!sourceId || !sourceWarehouseId || !outputWarehouseId || !(srcQtyNum > 0) || parsedOuts.length === 0}>ترحيل أمر التجهيز</Btn>
+          {/* شريط مؤشرات حي */}
+          <div className="grid grid-cols-2 gap-px bg-[#dce9ff] text-center sm:grid-cols-5 dark:bg-slate-700">
+            {[
+              { label: 'تكلفة الخام', value: source ? fmt(Math.round(source.costMinor * srcQtyNum)) : '—' },
+              { label: 'مصاريف التجهيز', value: fmt(overheadMinor) },
+              { label: 'التكلفة الكلية', value: fmt(totalCost), strong: true },
+              { label: 'نسبة التصافي', value: `${previewYield}٪`, tone: previewYield >= 45 ? 'text-[#009c6b]' : 'text-amber-600' },
+              { label: L.wasteLabel, value: `${Number(waste) || 0}${srcQtyNum > 0 ? ` (${Math.round(((Number(waste) || 0) / srcQtyNum) * 1000) / 10}٪)` : ''}`, tone: 'text-rose-600' },
+            ].map((card) => (
+              <div key={card.label} className="bg-white px-3 py-2.5 dark:bg-slate-900">
+                <div className={`font-mono text-[15px] font-black ${card.tone ?? (card.strong ? 'text-[#0f2042] dark:text-white' : 'text-[#254778] dark:text-slate-200')}`}>{card.value}</div>
+                <div className="text-[10px] font-bold text-[#75777f]">{card.label}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="max-h-[calc(92vh-11rem)] space-y-3.5 overflow-y-auto px-5 py-4">
+            {/* ① الخام والمخازن */}
+            <section className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-[#dce9ff] dark:bg-slate-900/50 dark:ring-slate-700">
+              <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="flex items-center gap-2 text-sm font-bold text-[#0f2042] dark:text-slate-100"><Boxes size={17} className="text-[#3f5f92]" /> ① الخام المستهلك والمخازن</h3>
+                {source && <span className="rounded bg-[#eff4ff] px-2.5 py-1 text-[10.5px] font-bold text-[#254778] dark:bg-slate-800 dark:text-slate-300">متاح {sourceAvailable} · تكلفة الوحدة {fmt(source.costMinor)}</span>}
+              </div>
+              <div className="grid gap-2.5 md:grid-cols-4">
+                <Field label={`${L.sourceLabel} *`} hint="ابحث بالاسم أو الباركود ثم Enter">
+                  <ItemQuickPicker items={items.filter((item) => item.isActive)} onPick={(id) => setSourceId(String(id))} placeholder="ابحث عن الخام ثم Enter" />
+                </Field>
+                <Field label="مخزن صرف الخام *">
+                  <QuickSelect value={sourceWarehouseId} onChange={(e) => setSourceWarehouseId(e.target.value)} className={inputCls}>
+                    <option value="">اختر المخزن</option>
+                    {warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}{source ? ` — متاح ${warehouseStock.get(warehouse.id)?.get(source.id) ?? 0}` : ''}</option>)}
+                  </QuickSelect>
+                </Field>
+                <Field label="الكمية المستهلكة *" hint={source ? `يُصرف من المخزون بتكلفته المرجحة` : undefined}>
+                  <input value={sourceQty} onChange={(e) => setSourceQty(e.target.value)} inputMode="decimal" className={inputCls} placeholder="مثال: 18.5" />
+                </Field>
+                <Field label="مخزن استلام النواتج *">
+                  <QuickSelect value={outputWarehouseId} onChange={(e) => setOutputWarehouseId(e.target.value)} className={inputCls}>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect>
+                </Field>
+              </div>
+              {source && srcQtyNum > sourceAvailable && !allowNegativeSource && (
+                <div className="mt-2 flex items-center gap-1.5 rounded-lg bg-rose-500/10 px-3 py-2 text-[11px] font-bold text-rose-600"><AlertTriangle size={14} /> الكمية المطلوبة {srcQtyNum} أكبر من المتاح {sourceAvailable} في هذا المخزن — فعّل السماح بالسالب أو صحّح الكمية.</div>
+              )}
+            </section>
+
+            {/* ② النواتج */}
+            <section className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-[#dce9ff] dark:bg-slate-900/50 dark:ring-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-[#eff4ff] px-4 py-2.5 dark:bg-slate-800/60">
+                <h3 className="flex items-center gap-2 text-sm font-bold text-[#0f2042] dark:text-slate-100"><Layers size={17} className="text-[#3f5f92]" /> ② {L.outputLabel} وتوزيع التكلفة</h3>
+                <span className="text-[10px] text-[#75777f]">التوزيع بنسبة (سعر البيع × الكمية) — الباقي للأكبر قيمةً</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[42rem] text-[12px]">
+                  <thead className="bg-[#f8f9ff] text-[10px] text-[#45464e] dark:bg-slate-800/40 dark:text-slate-400">
+                    <tr>
+                      <th className="px-3 py-2 text-right font-black">الصنف الناتج</th>
+                      <th className="px-2 py-2 font-black">الكمية</th>
+                      <th className="px-2 py-2 font-black">سعر البيع/وحدة</th>
+                      <th className="px-2 py-2 font-black">القيمة البيعية</th>
+                      <th className="px-2 py-2 font-black">نصيبه من التكلفة</th>
+                      <th className="px-2 py-2 font-black">تكلفة الوحدة</th>
+                      <th className="px-2 py-2 font-black">هامش الوحدة</th>
+                      <th className="px-1 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {outs.map((o, i) => {
+                      const outItem = items.find((item) => String(item.id) === o.itemId)
+                      const qty = Number(o.qty) || 0
+                      const salesValue = Math.round((outItem?.priceMinor ?? 0) * qty)
+                      const costed = preview?.find((row) => row.itemId === Number(o.itemId))
+                      const margin = outItem && costed ? outItem.priceMinor - costed.unitCostMinor : null
+                      return (
+                        <tr key={i} className={`border-t border-[#dce9ff] dark:border-slate-800 ${i % 2 ? 'bg-[#f8f9ff]/60 dark:bg-slate-800/20' : ''}`}>
+                          <td className="min-w-[13rem] px-3 py-2">
+                            {outItem
+                              ? <div className="flex items-center justify-between gap-2"><b className="truncate text-[12px]">{outItem.nameAr}</b><button type="button" onClick={() => setOuts(outs.map((row, j) => (j === i ? { ...row, itemId: '' } : row)))} className="text-[10px] font-bold text-[#3f5f92] hover:underline">تغيير</button></div>
+                              : <ItemQuickPicker items={items.filter((item) => item.isActive && String(item.id) !== sourceId)} onPick={(id) => setOuts(outs.map((row, j) => (j === i ? { ...row, itemId: String(id) } : row)))} placeholder="ابحث عن الناتج ثم Enter" />}
+                          </td>
+                          <td className="px-2 py-2 text-center"><input value={o.qty} onChange={(e) => setOuts(outs.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} inputMode="decimal" placeholder="0" aria-label="كمية الناتج" className="h-9 w-24 rounded-lg border border-[#c5c6cf] bg-transparent px-2 text-center font-mono font-bold outline-none focus:border-[#3f5f92] dark:border-slate-700" /></td>
+                          <td className="px-2 py-2 text-center font-mono text-[#45464e] dark:text-slate-300">{outItem ? fmt(outItem.priceMinor) : '—'}</td>
+                          <td className="px-2 py-2 text-center font-mono text-[#45464e] dark:text-slate-300">{salesValue ? fmt(salesValue) : '—'}</td>
+                          <td className="px-2 py-2 text-center font-mono font-black text-[#0f2042] dark:text-slate-100">{costed ? fmt(costed.allocatedCostMinor) : '—'}</td>
+                          <td className="px-2 py-2 text-center font-mono text-[#254778] dark:text-slate-300">{costed ? fmt(costed.unitCostMinor) : '—'}</td>
+                          <td className={`px-2 py-2 text-center font-mono font-bold ${margin === null ? 'text-slate-400' : margin >= 0 ? 'text-[#009c6b]' : 'text-rose-600'}`}>{margin === null ? '—' : fmt(margin)}</td>
+                          <td className="px-1 py-2"><button onClick={() => setOuts(outs.length === 1 ? [{ itemId: '', qty: '' }] : outs.filter((_, j) => j !== i))} aria-label="حذف الناتج" className="rounded p-1 text-slate-400 transition hover:text-rose-600"><Trash2 className="h-4 w-4" /></button></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-[#dce9ff] bg-[#eff4ff] text-[11px] font-black dark:border-slate-700 dark:bg-slate-800/60">
+                      <td className="px-3 py-2">الإجمالي ({parsedOuts.length} ناتج)</td>
+                      <td className="px-2 py-2 text-center font-mono">{Math.round(outQtySum * 1000) / 1000}</td>
+                      <td className="px-2 py-2" />
+                      <td className="px-2 py-2 text-center font-mono">{fmt(expectedSalesMinor)}</td>
+                      <td className="px-2 py-2 text-center font-mono">{fmt(preview ? preview.reduce((a, row) => a + row.allocatedCostMinor, 0) : 0)}</td>
+                      <td className="px-2 py-2" />
+                      <td className={`px-2 py-2 text-center font-mono ${expectedSalesMinor - totalCost >= 0 ? 'text-[#009c6b]' : 'text-rose-600'}`}>ربح {fmt(expectedSalesMinor - totalCost)}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#dce9ff] px-4 py-2.5 dark:border-slate-800">
+                <Btn variant="soft" onClick={() => setOuts([...outs, { itemId: '', qty: '' }])}><Plus className="h-4 w-4" /> ناتج آخر</Btn>
+                {srcQtyNum > 0 && outQtySum > srcQtyNum && <span className="flex items-center gap-1.5 text-[11px] font-bold text-rose-600"><AlertTriangle size={14} /> مجموع النواتج ({outQtySum}) أكبر من الخام ({srcQtyNum}) — راجع الكميات</span>}
+              </div>
+            </section>
+
+            {/* ③ الفاقد ومصاريف التشغيل */}
+            <section className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-[#dce9ff] dark:bg-slate-900/50 dark:ring-slate-700">
+              <h3 className="mb-2.5 flex items-center gap-2 text-sm font-bold text-[#0f2042] dark:text-slate-100"><Wallet size={17} className="text-[#3f5f92]" /> ③ الفاقد ومصاريف التشغيل</h3>
+              <div className="grid gap-2.5 md:grid-cols-3">
+                <Field label={L.wasteLabel} hint="كمية موثقة فقط — لا تحمل تكلفة"><input value={waste} onChange={(e) => setWaste(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0" /></Field>
+                <Field label="مصدر صرف المصاريف" hint={overheadMinor > 0 ? undefined : 'يُستخدم عند إدخال مصاريف'}>
+                  <TreasuryPicker value={treasury} onChange={setTreasury} />
+                </Field>
+                <div className="self-end rounded-lg bg-[#eff4ff] px-3 py-2 text-[10.5px] text-[#254778] dark:bg-slate-800 dark:text-slate-300">
+                  مصاريف التشغيل تدخل تكلفة النواتج وتُصرف من الخزينة المختارة لحظة الترحيل.
+                </div>
+              </div>
+              <div className="mt-2.5 space-y-2">
+                {overheadLines.map((line, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2">
+                    <input value={line.label} onChange={(e) => setOverheadLines(overheadLines.map((row, j) => (j === i ? { ...row, label: e.target.value } : row)))} placeholder="بند المصروف (عمالة، كراتين، نقل…)" aria-label="بند مصروف التجهيز" className={`${inputCls} min-w-[12rem] flex-1`} />
+                    <input value={line.amount} onChange={(e) => setOverheadLines(overheadLines.map((row, j) => (j === i ? { ...row, amount: e.target.value } : row)))} inputMode="decimal" placeholder={`0 ${cur.symbol}`} aria-label="قيمة مصروف التجهيز" className={`${inputCls} w-32 text-center font-mono`} />
+                    <button onClick={() => setOverheadLines(overheadLines.length === 1 ? [{ label: '', amount: '' }] : overheadLines.filter((_, j) => j !== i))} aria-label="حذف بند المصروف" className="rounded p-1.5 text-slate-400 transition hover:text-rose-600"><Trash2 className="h-4 w-4" /></button>
+                  </div>
+                ))}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Btn variant="soft" onClick={() => setOverheadLines([...overheadLines, { label: '', amount: '' }])}><Plus className="h-4 w-4" /> بند مصروف</Btn>
+                  <span className="text-[11px] font-bold text-[#0f2042] dark:text-slate-200">إجمالي المصاريف: <span className="font-mono">{fmt(overheadMinor)}</span> {cur.symbol}</span>
+                </div>
+              </div>
+            </section>
+
+            {/* ④ التوثيق (SFDA) */}
+            <section className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-[#dce9ff] dark:bg-slate-900/50 dark:ring-slate-700">
+              <button type="button" onClick={() => setDocsOpen(!docsOpen)} className="flex w-full items-center gap-2 px-4 py-3 text-right">
+                <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                <span className="flex-1 text-sm font-bold text-[#0f2042] dark:text-slate-100">④ توثيق الجودة والحلال (SFDA) — اختياري</span>
+                {[origin, facility, halal, prodDate, season].filter((value) => value.trim()).length > 0 && <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-600">{[origin, facility, halal, prodDate, season].filter((value) => value.trim()).length} حقل مكتمل</span>}
+                <ChevronDown size={16} className={`opacity-50 transition-transform ${docsOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {docsOpen && (
+                <div className="grid gap-2.5 border-t border-[#dce9ff] p-4 md:grid-cols-4 dark:border-slate-800">
+                  <Field label="بلد المنشأ"><input value={origin} onChange={(e) => setOrigin(e.target.value)} className={inputCls} placeholder={kind === 'butcher' ? 'السعودية / الصومال…' : 'السعودية / القصيم…'} /></Field>
+                  <Field label={kind === 'butcher' ? 'رقم المسلخ / المنشأة' : 'رقم منشأة التعبئة'}><input value={facility} onChange={(e) => setFacility(e.target.value)} className={inputCls} /></Field>
+                  <Field label={L.dateLabel}><input type="date" value={prodDate} onChange={(e) => setProdDate(e.target.value)} className={inputCls} /></Field>
+                  {kind === 'butcher'
+                    ? <Field label="شهادة الحلال (للمستورد)"><input value={halal} onChange={(e) => setHalal(e.target.value)} className={inputCls} placeholder="رقم/جهة الشهادة" /></Field>
+                    : <Field label="الموسم"><input value={season} onChange={(e) => setSeason(e.target.value)} className={inputCls} placeholder="موسم 1447هـ" /></Field>}
+                </div>
+              )}
+            </section>
+
+            {/* ⑤ الملاحظات والخيارات */}
+            <section className="grid gap-2.5 rounded-xl bg-white p-4 shadow-sm ring-1 ring-[#dce9ff] md:grid-cols-2 dark:bg-slate-900/50 dark:ring-slate-700">
+              <Field label="ملاحظات الأمر"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} placeholder="اختياري — يظهر في سجل الأوامر والقيد" /></Field>
+              <label className="flex items-center gap-2 self-end rounded-lg border border-[#c5c6cf] px-3 py-2.5 text-[11.5px] font-bold dark:border-slate-700">
+                <input type="checkbox" checked={allowNegativeSource} onChange={(e) => { setAllowNegativeSource(e.target.checked); localStorage.setItem('shopsys:manufacturing:allow-negative-stock', String(e.target.checked)) }} /> السماح بصرف الخام برصيد سالب
+              </label>
+            </section>
+          </div>
+
+          {/* التذييل: القيد المتوقع + الترحيل */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#c5c6cf] bg-white px-5 py-3 dark:border-slate-700 dark:bg-slate-900">
+            <span className="flex items-center gap-1.5 text-[10.5px] text-[#45464e] dark:text-slate-400">
+              <BookOpenText size={14} className="text-[#3f5f92]" /> القيد المتوقع: مدين <b className="text-[#0f2042] dark:text-slate-100">1103 مخزون (النواتج {fmt(totalCost)})</b> ← دائن <b className="text-[#0f2042] dark:text-slate-100">1103 مخزون (الخام){overheadMinor > 0 ? ' + الخزينة (المصاريف)' : ''}</b>
+            </span>
+            <div className="flex items-center gap-2">
+              <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
+              <Btn onClick={run} shortcut="F9" disabled={!canPost}>ترحيل أمر التجهيز</Btn>
+            </div>
+          </div>
         </div>
       </Modal>
     </div>

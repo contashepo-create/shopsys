@@ -7,17 +7,18 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  */
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download, UserSearch } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
 import { rolesWithOverrides, visibleRolesForModules } from '../../core/permissions.ts'
 import { suggestRoleForJobTitle } from '../../core/audit.ts'
 import type { PartyExtended } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
-import { matchesPartyCode } from '../../core/partyCodes.ts'
+import { matchesPartyCode, partyCode } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { toCsv } from '../../core/security.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
+import { matchesSearch } from '../../core/search.ts'
 import { STAFF_COMMISSION_SOURCE_LABELS, STAFF_COMMISSION_STATUS_LABELS, type StaffCommissionSource } from '../../core/staffCommissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
@@ -238,26 +239,61 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
   /* ─── تبويب المسيرات ─── */
   const [runOpen, setRunOpen] = useState(false)
+  /** نطاق المسير (طلب المالك): «all» كل الموظفين كما كان، و«single» موظف واحد بالبحث */
+  const [runScope, setRunScope] = useState<'all' | 'single'>('all')
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7))
   const [payMode, setPayMode] = useState<PayrollPayMode>('cash')
   const [paySource, setPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [runNotes, setRunNotes] = useState('')
   const [draft, setDraft] = useState<DraftLine[]>([])
+  const [runFilter, setRunFilter] = useState('')
   const [viewingRun, setViewingRun] = useState<PayrollRun | null>(null)
   const runEntry = viewingRun ? journal.find((e) => e.id === viewingRun.journalEntryId) : null
 
+  const draftLineFor = (employee: Employee): DraftLine => ({
+    employeeId: employee.id,
+    base: toMajor(employee.baseSalaryMinor),
+    allowances: toMajor(employee.allowancesMinor),
+    overtime: '', deductions: '', advances: '', excessPaid: '', payCommissions: false,
+  })
+  /** أُسند راتب هذا الشهر لهذا الموظف من قبل؟ (يمنع التكرار قبل الترحيل) */
+  const paidThisMonth = (employeeId: number, forMonth: string) =>
+    payrollRuns.some((run) => run.month === forMonth && run.lines.some((line) => line.employeeId === employeeId))
+
+  const resetRunHeader = () => {
+    setMonth(new Date().toISOString().slice(0, 7))
+    setPayMode('cash'); setPaySource(DEFAULT_PAY_SOURCE); setRunNotes(''); setRunFilter('')
+  }
   const openRun = () => {
     const activeStaff = employees.filter((e) => e.active)
     if (activeStaff.length === 0) return toast.show('لا يوجد موظفون على رأس العمل — أضفهم أولاً', 'error')
-    setDraft(activeStaff.map((e) => ({
-      employeeId: e.id,
-      base: toMajor(e.baseSalaryMinor),
-      allowances: toMajor(e.allowancesMinor),
-      overtime: '', deductions: '', advances: '', excessPaid: '', payCommissions: false,
-    })))
-    setMonth(new Date().toISOString().slice(0, 7))
-    setPayMode('cash'); setPaySource(DEFAULT_PAY_SOURCE); setRunNotes('')
+    const thisMonth = new Date().toISOString().slice(0, 7)
+    setRunScope('all')
+    setDraft(activeStaff.filter((employee) => !paidThisMonth(employee.id, thisMonth)).map(draftLineFor))
+    resetRunHeader()
     setRunOpen(true)
+  }
+  /** مسير راتب موظف واحد — يفتح فارغاً وتبحث أنت عن الموظف (طلب المالك) */
+  const openSingleRun = () => {
+    if (employees.filter((e) => e.active).length === 0) return toast.show('لا يوجد موظفون على رأس العمل — أضفهم أولاً', 'error')
+    setRunScope('single')
+    setDraft([])
+    resetRunHeader()
+    setRunOpen(true)
+  }
+  const pickSingleEmployee = (employeeId: number) => {
+    const employee = employees.find((e) => e.id === employeeId)
+    if (!employee) return
+    if (paidThisMonth(employee.id, month)) {
+      toast.show(`صُرف راتب ${monthLabelAr(month)} لـ«${employee.nameAr}» من قبل — اختر شهراً آخر`, 'error')
+      return
+    }
+    setDraft([draftLineFor(employee)])
+  }
+  /** إعادة تعبئة مسير «كل الموظفين» عند تغيير الشهر — يستبعد من صُرف له بالفعل */
+  const refillAll = (forMonth: string) => {
+    if (runScope !== 'all') return
+    setDraft(employees.filter((employee) => employee.active && !paidThisMonth(employee.id, forMonth)).map(draftLineFor))
   }
   const patchDraft = (id: number, patch: Partial<DraftLine>) =>
     setDraft((d) => d.map((l) => (l.employeeId === id ? { ...l, ...patch } : l)))
@@ -265,15 +301,50 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
   const draftTotals = useMemo(() => {
-    let gross = 0, ded = 0, excess = 0
+    let gross = 0, ded = 0, excess = 0, commissions = 0
     for (const l of draft) {
       gross += toM(l.base) + toM(l.allowances) + toM(l.overtime)
       ded += toM(l.deductions) + toM(l.advances)
       excess += toM(l.excessPaid)
+      if (l.payCommissions) commissions += getStaffCommissionsDue(l.employeeId).totalMinor
     }
-    return { gross, ded, excess, net: gross - ded }
+    const net = gross - ded
+    return { gross, ded, excess, commissions, net, payout: net + excess + commissions }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, cur.decimals])
+
+  /** كل أرقام سطر المسير في مكان واحد — يستخدمها الجدول الشامل وبطاقة الموظف الواحد */
+  const payrollRowData = (line: DraftLine) => {
+    const gross = toM(line.base) + toM(line.allowances) + toM(line.overtime)
+    const cut = toM(line.deductions) + toM(line.advances)
+    const commissionsDue = getStaffCommissionsDue(line.employeeId).totalMinor
+    const excessDue = getEmployeeExcessDue(line.employeeId)
+    const advanceBalance = getEmployeeAdvanceBalance(line.employeeId)
+    const deductionBalance = getEmployeeDeductionBalance(line.employeeId)
+    const net = gross - cut
+    return {
+      employee: employees.find((e) => e.id === line.employeeId),
+      gross, cut, net, commissionsDue, excessDue, advanceBalance, deductionBalance,
+      payout: net + toM(line.excessPaid) + (line.payCommissions ? commissionsDue : 0),
+      advanceReasons: advanceBalance.advances.filter((a) => a.amountMinor > a.recoveredMinor)
+        .map((a) => `${a.advanceNumber}${a.source === 'custody_shortage' ? ' (عجز عهدة)' : ''}: متبقٍ ${fmt(a.amountMinor - a.recoveredMinor)}${a.notes ? ` — ${a.notes}` : ''}`)
+        .join('\n'),
+      deductionReasons: deductionBalance.deductions.filter((d) => d.amountMinor > d.recoveredMinor)
+        .map((d) => `${d.dedNumber}: ${d.reason} — متبقٍ ${fmt(d.amountMinor - d.recoveredMinor)}`)
+        .join('\n'),
+    }
+  }
+  /** الموظفون المعروضون في جدول المسير بعد بحث المستخدم داخل النافذة */
+  const visibleDraft = useMemo(() => draft.filter((line) => {
+    const employee = employees.find((e) => e.id === line.employeeId)
+    return matchesSearch([employee?.nameAr, employee?.jobTitle, partyCode('EMP', line.employeeId)], runFilter)
+  }), [draft, employees, runFilter])
+  /** موظفون على رأس العمل خارج المسير الحالي — لإعادة إدراج من استُبعد */
+  const draftCandidates = useMemo(
+    () => employees.filter((employee) => employee.active && !draft.some((line) => line.employeeId === employee.id) && !paidThisMonth(employee.id, month)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [employees, draft, month, payrollRuns],
+  )
 
   const saveRun = () => {
     try {
@@ -736,8 +807,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
       {tab === 'payroll' && (
         <>
-          <div className="anim-up flex justify-end">
-            <Btn onClick={openRun}><span className="flex items-center gap-1.5"><Plus size={15} /> مسير رواتب جديد</span></Btn>
+          <div className="anim-up flex flex-wrap justify-end gap-2">
+            <Btn variant="ghost" onClick={openSingleRun}><span className="flex items-center gap-1.5"><UserSearch size={15} /> مسير راتب موظف واحد</span></Btn>
+            <Btn onClick={openRun}><span className="flex items-center gap-1.5"><Plus size={15} /> مسير رواتب لكل الموظفين</span></Btn>
           </div>
 
           {listedRuns.length === 0 ? (
@@ -832,137 +904,216 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
         </div>
       </Modal>
 
-      {/* نموذج مسير رواتب */}
-      <Modal open={runOpen} onClose={() => setRunOpen(false)} title="مسير رواتب جديد" wide>
+      {/* نموذج مسير الرواتب — أعيد تصميمه (طلب المالك): رأس مرتب، بحث داخل المسير،
+          جدول عملي بأعمدة مجمّعة وصف إجماليات، ونمط «موظف واحد» ببطاقة راتب كاملة */}
+      <Modal open={runOpen} onClose={() => setRunOpen(false)} title={runScope === 'single' ? '👤 مسير راتب موظف واحد' : '👥 مسير رواتب شامل'} extraWide>
         <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <Field label="الشهر">
-              <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={inputCls} dir="ltr" />
-            </Field>
-            <Field label="طريقة الصرف">
-              <div className="grid grid-cols-2 gap-1.5">
-                <button onClick={() => setPayMode('cash')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payMode === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>نقدي فوري</button>
-                <button onClick={() => setPayMode('accrue')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payMode === 'accrue' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>استحقاق</button>
+          {/* 1) بيانات المسير */}
+          <section className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-brand-500/10 px-4 py-2.5">
+              <b className="text-[13px] text-brand-700 dark:text-brand-300">① بيانات المسير</b>
+              <div className="flex gap-1.5">
+                {([['all', 'كل الموظفين'], ['single', 'موظف واحد']] as const).map(([scope, label]) => (
+                  <button
+                    key={scope}
+                    type="button"
+                    onClick={() => {
+                      setRunScope(scope)
+                      setRunFilter('')
+                      setDraft(scope === 'all' ? employees.filter((employee) => employee.active && !paidThisMonth(employee.id, month)).map(draftLineFor) : [])
+                    }}
+                    className={`rounded-lg px-3 py-1 text-[11px] font-bold transition-all ${runScope === scope ? 'bg-brand-600 text-white' : 'bg-white/70 dark:bg-slate-800 text-slate-500'}`}
+                  >{label}</button>
+                ))}
               </div>
-            </Field>
-            {payMode === 'cash' ? (
-              <Field label="الصرف من" hint="خزينة/بنك — أو عهدة موظف مفتوحة">
-                <PaySourcePicker value={paySource} onChange={setPaySource} />
+            </div>
+            <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
+              <Field label="شهر الاستحقاق" hint={`يُصرف مرة واحدة لكل موظف في ${monthLabelAr(month)}`}>
+                <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); refillAll(e.target.value) }} className={inputCls} dir="ltr" />
               </Field>
-            ) : (
-              <div className="text-[11px] text-amber-600 bg-amber-500/10 rounded-xl p-3 self-end">
-                يُقيَّد على «رواتب مستحقة 2104» ويُسدَّد لاحقاً بسند صرف
+              <Field label="طريقة الصرف">
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button onClick={() => setPayMode('cash')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payMode === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>نقدي فوري</button>
+                  <button onClick={() => setPayMode('accrue')} className={`p-2 rounded-lg border-2 text-[12px] font-bold transition-all ${payMode === 'accrue' ? 'border-amber-500/60 bg-amber-500/10 text-amber-600' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>استحقاق</button>
+                </div>
+              </Field>
+              {payMode === 'cash' ? (
+                <Field label="الصرف من" hint="خزينة/بنك — أو عهدة موظف مفتوحة">
+                  <PaySourcePicker value={paySource} onChange={setPaySource} />
+                </Field>
+              ) : (
+                <div className="self-end rounded-xl bg-amber-500/10 p-3 text-[11px] text-amber-600">
+                  يُقيَّد على «رواتب مستحقة 2104» ويُسدَّد لاحقاً بسند صرف
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* 2) الموظفون */}
+          <section className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-500/5 px-4 py-2.5">
+              <b className="text-[13px] text-slate-700 dark:text-slate-200">② {runScope === 'single' ? 'الموظف' : `الموظفون المدرجون (${draft.length})`}</b>
+              {runScope === 'all' && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative">
+                    <Search size={13} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input value={runFilter} onChange={(e) => setRunFilter(e.target.value)} placeholder="بحث داخل المسير بالاسم أو الكود" className="h-8 w-56 rounded-lg border border-slate-200 bg-transparent pr-7 text-[11px] outline-none focus:border-brand-500 dark:border-slate-700" />
+                  </div>
+                  <button type="button" onClick={() => refillAll(month)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-500 hover:border-brand-400 dark:border-slate-700">إعادة إدراج الكل</button>
+                </div>
+              )}
+            </div>
+
+            {runScope === 'single' ? (
+              <div className="space-y-3 p-4">
+                <Field label="ابحث عن الموظف بالاسم أو الكود أو الهاتف *" hint="مسير هذا الموظف وحده — لا يفتح باقي الحسابات">
+                  <PartyQuickPicker
+                    parties={employees.filter((employee) => employee.active).map((employee) => ({ id: employee.id, nameAr: employee.nameAr, phone: employee.phone, active: employee.active }))}
+                    value={draft[0]?.employeeId ?? 0}
+                    onChange={pickSingleEmployee}
+                    cashLabel="اختر الموظف"
+                    label="بحث الموظف"
+                    showCash={false}
+                    partyInfo={(party) => ({ code: partyCode('EMP', party.id), balance: paidThisMonth(party.id, month) ? `صُرف راتب ${monthLabelAr(month)}` : '' })}
+                  />
+                </Field>
+                {draft.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-[12px] text-slate-400 dark:border-slate-700">اكتب أول حرف من اسم الموظف لاختياره — ثم تظهر بطاقة راتبه كاملة.</div>}
+              </div>
+            ) : draft.length === 0 ? (
+              <div className="p-6 text-center text-[12px] text-slate-400">لا موظف مدرج — كل من على رأس العمل صُرف راتب هذا الشهر، أو استبعدتهم يدوياً.</div>
+            ) : null}
+
+            {draft.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[46rem] text-[12px]">
+                  <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-800/80">
+                    <tr className="text-[10px] text-slate-500">
+                      <th className="px-3 py-2 text-right font-black">الموظف</th>
+                      <th className="px-2 py-2 font-black text-emerald-700 dark:text-emerald-300">الأساسي</th>
+                      <th className="px-2 py-2 font-black text-emerald-700 dark:text-emerald-300">بدلات</th>
+                      <th className="px-2 py-2 font-black text-emerald-700 dark:text-emerald-300">إضافي</th>
+                      <th className="px-2 py-2 font-black">الإجمالي</th>
+                      <th className="px-2 py-2 font-black text-rose-600">خصومات</th>
+                      <th className="px-2 py-2 font-black text-rose-600">سلف</th>
+                      <th className="px-2 py-2 font-black text-sky-600">مستحق عهدة</th>
+                      <th className="px-2 py-2 font-black text-violet-600">عمولات</th>
+                      <th className="px-2 py-2 font-black">المصروف للموظف</th>
+                      <th className="px-1 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleDraft.map((l, rowIndex) => {
+                      const row = payrollRowData(l)
+                      const cell = 'h-9 w-[5.5rem] rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent px-1 text-center text-[12px] font-bold tabular-nums outline-none focus:border-brand-500 disabled:opacity-40'
+                      const quick = 'mx-auto mt-0.5 block text-[9.5px] font-bold hover:underline'
+                      return (
+                        <tr key={l.employeeId} className={`border-t border-slate-100 dark:border-slate-800 ${rowIndex % 2 ? 'bg-slate-500/[0.03]' : ''}`}>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-brand-500/15 text-[11px] font-black text-brand-700 dark:text-brand-300">{(row.employee?.nameAr ?? '؟').slice(0, 1)}</span>
+                              <span className="min-w-0">
+                                <b className="block truncate text-[12px] text-slate-700 dark:text-slate-200">{row.employee?.nameAr ?? empName(l.employeeId)}</b>
+                                <span className="block text-[9.5px] text-slate-400">{partyCode('EMP', l.employeeId)}{row.employee?.jobTitle ? ` · ${row.employee.jobTitle}` : ''}</span>
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-1 py-2 text-center"><input value={l.base} onChange={(e) => patchDraft(l.employeeId, { base: e.target.value })} className={cell} dir="ltr" aria-label={`الأساسي ${row.employee?.nameAr ?? ''}`} /></td>
+                          <td className="px-1 py-2 text-center"><input value={l.allowances} onChange={(e) => patchDraft(l.employeeId, { allowances: e.target.value })} className={cell} dir="ltr" aria-label={`بدلات ${row.employee?.nameAr ?? ''}`} /></td>
+                          <td className="px-1 py-2 text-center"><input value={l.overtime} onChange={(e) => patchDraft(l.employeeId, { overtime: e.target.value })} className={cell} dir="ltr" placeholder="0" aria-label={`إضافي ${row.employee?.nameAr ?? ''}`} /></td>
+                          <td className="px-2 py-2 text-center font-black tabular-nums text-slate-600 dark:text-slate-300">{fmt(row.gross)}</td>
+                          <td className="px-1 py-2 text-center">
+                            <input value={l.deductions} onChange={(e) => patchDraft(l.employeeId, { deductions: e.target.value })} className={cell} dir="ltr" placeholder="0" title={row.deductionBalance.remainingMinor > 0 ? `جزاءات مسجلة غير مخصومة: ${fmt(row.deductionBalance.remainingMinor)}\nاكتب المبلغ كاملاً أو جزءاً — أو 0 للتأجيل` : 'اكتب أي خصم مباشر لهذا الشهر'} />
+                            {row.deductionBalance.remainingMinor > 0 && (
+                              <button type="button" onClick={() => patchDraft(l.employeeId, { deductions: String(row.deductionBalance.remainingMinor / 10 ** cur.decimals) })} title={row.deductionReasons} className={`${quick} text-rose-500`}>جزاءات {fmt(row.deductionBalance.remainingMinor)}</button>
+                            )}
+                          </td>
+                          <td className="px-1 py-2 text-center">
+                            <input value={l.advances} onChange={(e) => patchDraft(l.employeeId, { advances: e.target.value })} className={cell} dir="ltr" placeholder="0" title={row.advanceReasons || 'لا سلف على الموظف'} disabled={row.advanceBalance.remainingMinor === 0} />
+                            {row.advanceBalance.remainingMinor > 0 && (
+                              <button type="button" onClick={() => patchDraft(l.employeeId, { advances: String(row.advanceBalance.remainingMinor / 10 ** cur.decimals) })} title={`إجمالي السلف ${fmt(row.advanceBalance.totalMinor)}\n${row.advanceReasons}`} className={`${quick} text-amber-600`}>متبقٍ {fmt(row.advanceBalance.remainingMinor)}</button>
+                            )}
+                          </td>
+                          <td className="px-1 py-2 text-center">
+                            <input value={l.excessPaid} onChange={(e) => patchDraft(l.employeeId, { excessPaid: e.target.value })} className={cell} dir="ltr" placeholder="0" disabled={row.excessDue === 0} title={row.excessDue > 0 ? `مستحق الموظف من زيادات مصاريف عهده: ${fmt(row.excessDue)}` : 'لا مستحقات عهد'} />
+                            {row.excessDue > 0 && (
+                              <button type="button" onClick={() => patchDraft(l.employeeId, { excessPaid: String(row.excessDue / 10 ** cur.decimals) })} className={`${quick} text-emerald-600`}>له {fmt(row.excessDue)}</button>
+                            )}
+                          </td>
+                          <td className="px-1 py-2 text-center">
+                            {row.commissionsDue === 0 ? <span className="text-[10px] text-slate-300">—</span> : (
+                              <label className="flex cursor-pointer flex-col items-center gap-0.5" title={`عمولات مستحقة: ${fmt(row.commissionsDue)} — تُصرف كاملة مع الراتب (تصفية لا مصروف جديد)`}>
+                                <input type="checkbox" checked={l.payCommissions} onChange={(e) => patchDraft(l.employeeId, { payCommissions: e.target.checked })} className="accent-brand-600" />
+                                <span className="text-[9.5px] font-bold text-violet-600">{fmt(row.commissionsDue)}</span>
+                              </label>
+                            )}
+                          </td>
+                          <td className={`px-2 py-2 text-center font-black tabular-nums whitespace-nowrap ${row.net < 0 ? 'text-rose-500' : 'text-brand-600'}`}>
+                            {fmt(row.payout)}
+                            {row.payout !== row.net && <span className="block text-[9px] font-bold text-slate-400">الراتب {fmt(row.net)}</span>}
+                          </td>
+                          <td className="px-1 py-2">
+                            <button onClick={() => dropDraft(l.employeeId)} title="استبعاد من هذا المسير" className="rounded p-1 text-slate-300 transition-colors hover:text-rose-500"><Trash2 size={13} /></button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {visibleDraft.length === 0 && <tr><td colSpan={11} className="px-3 py-6 text-center text-[12px] text-slate-400">لا نتيجة لبحثك داخل المسير.</td></tr>}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-slate-200 bg-slate-500/5 text-[11px] font-black dark:border-slate-700">
+                      <td className="px-3 py-2">الإجماليات ({draft.length} موظف)</td>
+                      <td className="px-2 py-2 text-center tabular-nums" colSpan={3}>—</td>
+                      <td className="px-2 py-2 text-center tabular-nums">{fmt(draftTotals.gross)}</td>
+                      <td className="px-2 py-2 text-center tabular-nums text-rose-600" colSpan={2}>-{fmt(draftTotals.ded)}</td>
+                      <td className="px-2 py-2 text-center tabular-nums text-sky-600">{fmt(draftTotals.excess)}</td>
+                      <td className="px-2 py-2 text-center tabular-nums text-violet-600">{fmt(draftTotals.commissions)}</td>
+                      <td className="px-2 py-2 text-center tabular-nums text-brand-600">{fmt(draftTotals.payout)}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
               </div>
             )}
-          </div>
 
-          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-x-auto">
-            <table className="w-full text-[12px]">
-              <thead>
-                <tr className="text-slate-400 text-[10px] border-b border-slate-100 dark:border-slate-800">
-                  <th className="px-3 py-2 text-right font-bold">الموظف</th>
-                  <th className="px-2 py-2 font-bold">الأساسي</th>
-                  <th className="px-2 py-2 font-bold">بدلات</th>
-                  <th className="px-2 py-2 font-bold">إضافي</th>
-                  <th className="px-2 py-2 font-bold">خصومات</th>
-                  <th className="px-2 py-2 font-bold">خصم سلفة</th>
-                  <th className="px-2 py-2 font-bold">مستحق عهدة</th>
-                  <th className="px-2 py-2 font-bold">عمولات</th>
-                  <th className="px-2 py-2 font-bold">الصافي</th>
-                  <th className="px-1 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {draft.map((l) => {
-                  const net = toM(l.base) + toM(l.allowances) + toM(l.overtime) - toM(l.deductions) - toM(l.advances)
-                  const cell = 'w-20 px-1.5 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-transparent text-center text-[12px] focus:border-brand-500 outline-none'
-                  // شفافية كاملة (طلب المالك): إجمالي سلف الموظف والمتبقي منها وسببها + مستحقه من زيادات العهد
-                  const advBal = getEmployeeAdvanceBalance(l.employeeId)
-                  const dedBal = getEmployeeDeductionBalance(l.employeeId)
-                  const excessDue = getEmployeeExcessDue(l.employeeId)
-                  const advReasons = advBal.advances.filter((a) => a.amountMinor > a.recoveredMinor)
-                    .map((a) => `${a.advanceNumber}${a.source === 'custody_shortage' ? ' (عجز عهدة)' : ''}: متبقٍ ${fmt(a.amountMinor - a.recoveredMinor)}${a.notes ? ` — ${a.notes}` : ''}`)
-                    .join('\n')
-                  return (
-                    <tr key={l.employeeId} className="border-b border-slate-50 dark:border-slate-800/50">
-                      <td className="px-3 py-1.5 font-bold text-slate-700 dark:text-slate-200 whitespace-nowrap">{empName(l.employeeId)}</td>
-                      <td className="px-1 py-1.5 text-center"><input value={l.base} onChange={(e) => patchDraft(l.employeeId, { base: e.target.value })} className={cell} dir="ltr" /></td>
-                      <td className="px-1 py-1.5 text-center"><input value={l.allowances} onChange={(e) => patchDraft(l.employeeId, { allowances: e.target.value })} className={cell} dir="ltr" /></td>
-                      <td className="px-1 py-1.5 text-center"><input value={l.overtime} onChange={(e) => patchDraft(l.employeeId, { overtime: e.target.value })} className={cell} dir="ltr" placeholder="0" /></td>
-                      <td className="px-1 py-1.5 text-center">
-                        <input value={l.deductions} onChange={(e) => patchDraft(l.employeeId, { deductions: e.target.value })} className={cell} dir="ltr" placeholder="0" title={dedBal.remainingMinor > 0 ? `جزاءات مسجلة غير مخصومة: ${fmt(dedBal.remainingMinor)}\nاكتب المبلغ كاملاً أو جزءاً — أو 0 للتأجيل` : 'اكتب أي خصم مباشر لهذا الشهر'} />
-                        {dedBal.remainingMinor > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => patchDraft(l.employeeId, { deductions: String(dedBal.remainingMinor / 10 ** cur.decimals) })}
-                            title={dedBal.deductions.filter((d) => d.amountMinor > d.recoveredMinor).map((d) => `${d.dedNumber}: ${d.reason} — متبقٍ ${fmt(d.amountMinor - d.recoveredMinor)}`).join('\n')}
-                            className="block mx-auto mt-0.5 text-[9.5px] font-bold text-rose-500 hover:underline"
-                          >جزاءات {fmt(dedBal.remainingMinor)}</button>
-                        )}
-                      </td>
-                      <td className="px-1 py-1.5 text-center">
-                        <input value={l.advances} onChange={(e) => patchDraft(l.employeeId, { advances: e.target.value })} className={cell} dir="ltr" placeholder="0" title={advReasons || 'لا سلف على الموظف'} disabled={advBal.remainingMinor === 0} />
-                        {advBal.remainingMinor > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => patchDraft(l.employeeId, { advances: String(advBal.remainingMinor / 10 ** cur.decimals) })}
-                            title={`إجمالي السلف ${fmt(advBal.totalMinor)}\n${advReasons}`}
-                            className="block mx-auto mt-0.5 text-[9.5px] font-bold text-amber-600 hover:underline"
-                          >متبقٍ {fmt(advBal.remainingMinor)}</button>
-                        )}
-                      </td>
-                      <td className="px-1 py-1.5 text-center">
-                        <input value={l.excessPaid} onChange={(e) => patchDraft(l.employeeId, { excessPaid: e.target.value })} className={cell} dir="ltr" placeholder="0" disabled={excessDue === 0} title={excessDue > 0 ? `مستحق الموظف من زيادات مصاريف عهده: ${fmt(excessDue)}` : 'لا مستحقات عهد'} />
-                        {excessDue > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => patchDraft(l.employeeId, { excessPaid: String(excessDue / 10 ** cur.decimals) })}
-                            className="block mx-auto mt-0.5 text-[9.5px] font-bold text-emerald-600 hover:underline"
-                          >له {fmt(excessDue)}</button>
-                        )}
-                      </td>
-                      <td className="px-1 py-1.5 text-center">
-                        {(() => {
-                          const commDue = getStaffCommissionsDue(l.employeeId).totalMinor
-                          if (commDue === 0) return <span className="text-[10px] text-slate-300">—</span>
-                          return (
-                            <label className="flex flex-col items-center gap-0.5 cursor-pointer" title={`عمولات مستحقة: ${fmt(commDue)} — تُصرف كاملة مع الراتب (تصفية لا مصروف جديد)`}>
-                              <input type="checkbox" checked={l.payCommissions} onChange={(e) => patchDraft(l.employeeId, { payCommissions: e.target.checked })} className="accent-brand-600" />
-                              <span className="text-[9.5px] font-bold text-violet-600">{fmt(commDue)}</span>
-                            </label>
-                          )
-                        })()}
-                      </td>
-                      <td className={`px-2 py-1.5 text-center font-black whitespace-nowrap ${net < 0 ? 'text-rose-500' : ''}`}>{fmt(net)}{toM(l.excessPaid) > 0 && <span className="block text-[9px] text-emerald-600 font-bold">+{fmt(toM(l.excessPaid))} عهدة</span>}{l.payCommissions && getStaffCommissionsDue(l.employeeId).totalMinor > 0 && <span className="block text-[9px] text-violet-600 font-bold">+{fmt(getStaffCommissionsDue(l.employeeId).totalMinor)} عمولات</span>}</td>
-                      <td className="px-1 py-1.5">
-                        <button onClick={() => dropDraft(l.employeeId)} title="استبعاد من هذا المسير" className="p-1 rounded text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={12} /></button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+            {runScope === 'all' && draftCandidates.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-4 py-2.5 dark:border-slate-800">
+                <span className="text-[11px] font-bold text-slate-400">إضافة موظف مستبعد:</span>
+                {draftCandidates.slice(0, 8).map((employee) => (
+                  <button key={employee.id} type="button" onClick={() => setDraft((d) => [...d, draftLineFor(employee)])} className="rounded-full bg-brand-500/10 px-2.5 py-1 text-[11px] font-bold text-brand-700 hover:bg-brand-500/20 dark:text-brand-300">+ {employee.nameAr}</button>
+                ))}
+              </div>
+            )}
+          </section>
 
-          <div className="flex items-center justify-between rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4">
-            <div className="text-[12px] text-slate-500 space-y-0.5">
-              <div>إجمالي الاستحقاق: <b>{fmt(draftTotals.gross)}</b></div>
-              <div>إجمالي الخصومات والسلف: <b className="text-rose-500">-{fmt(draftTotals.ded)}</b></div>
+          {/* 3) الملخص والترحيل */}
+          <section className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="bg-slate-500/5 px-4 py-2.5"><b className="text-[13px] text-slate-700 dark:text-slate-200">③ الملخص والترحيل</b></div>
+            <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
+              {([
+                ['إجمالي الاستحقاق', fmt(draftTotals.gross), 'text-slate-700 dark:text-slate-200'],
+                ['الخصومات والسلف', `-${fmt(draftTotals.ded)}`, 'text-rose-500'],
+                ['صافي الرواتب', fmt(draftTotals.net), 'text-emerald-600'],
+                ['المصروف الكلي', fmt(draftTotals.payout), 'text-brand-600'],
+              ] as const).map(([label, value, color]) => (
+                <div key={label} className="rounded-xl border border-slate-200 p-3 text-center dark:border-slate-700">
+                  <div className={`text-lg font-black tabular-nums ${color}`}>{value}</div>
+                  <div className="text-[10px] font-bold text-slate-400">{label}</div>
+                </div>
+              ))}
             </div>
-            <div className="text-left">
-              <div className="text-[11px] text-slate-400">صافي المسير</div>
-              <div className="font-black text-2xl text-brand-600">{fmt(draftTotals.net)} {cur.symbol}</div>
+            <div className="px-4 pb-4">
+              <Field label="ملاحظات المسير">
+                <input value={runNotes} onChange={(e) => setRunNotes(e.target.value)} className={inputCls} placeholder="اختياري — يظهر في وصف القيد" />
+              </Field>
             </div>
-          </div>
-
-          <Field label="ملاحظات">
-            <input value={runNotes} onChange={(e) => setRunNotes(e.target.value)} className={inputCls} />
-          </Field>
-
-          <div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setRunOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveRun} shortcut="F9" disabled={draft.length === 0 || draftTotals.net <= 0}>💾 ترحيل المسير وتوليد القيد</Btn>
-          </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-500/5 px-4 py-3 dark:border-slate-800">
+              <span className="text-[11px] text-slate-500">القيد: 5102 رواتب وأجور {payMode === 'cash' ? '← الخزينة/البنك' : '← 2104 رواتب مستحقة'}{draftTotals.excess > 0 ? ' + تصفية 2107' : ''}{draftTotals.commissions > 0 ? ' + تصفية 2116' : ''}</span>
+              <div className="flex gap-2">
+                <Btn variant="ghost" onClick={() => setRunOpen(false)}>إلغاء</Btn>
+                <Btn onClick={saveRun} shortcut="F9" disabled={draft.length === 0 || draftTotals.net <= 0}>💾 ترحيل المسير وتوليد القيد</Btn>
+              </div>
+            </div>
+          </section>
         </div>
       </Modal>
 

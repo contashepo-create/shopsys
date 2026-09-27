@@ -14,12 +14,12 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { useActivityBaseCoa } from '../activityCoa.ts'
 import { fullCoa } from '../../core/treasury.ts'
 import { customAsAccounts } from '../../core/customAccounts.ts'
-import { validateManualEntry } from '../../core/accounting.ts'
+import { validateManualEntry, PARTY_CONTROL_ACCOUNTS } from '../../core/accounting.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 
-interface DraftLine { accountCode: string; debit: string; credit: string; costCenterId?: string }
+interface DraftLine { accountCode: string; debit: string; credit: string; costCenterId?: string; partyId?: string }
 
 /** تسميات مصادر القيود بالعربية — كل قيد مربوط بمستنده (القرار 9) */
 const SOURCE_LABELS: Record<string, string> = {
@@ -39,12 +39,13 @@ const SOURCE_LABELS: Record<string, string> = {
   reversal: 'قيد عاكس',
   asset_purchase: 'اقتناء أصل',
   asset_payment: 'سداد أصل',
+  asset_disposal: 'استبعاد أصل',
   depreciation: 'إهلاك شهري',
   external_commission: 'عمولة لدى الغير',
 }
 
 export function JournalPage() {
-  const { journal, treasuries, customAccounts, costCenters, postManualEntry, reverseEntry } = useDataStore()
+  const { journal, treasuries, customAccounts, costCenters, customers, suppliers, postManualEntry, reverseEntry } = useDataStore()
   // الشجرة الكاملة تشمل الخزائن المخصصة — القيد اليدوي يستطيع استخدامها
   // الشجرة الكاملة = القياسية + خزائن المالك + حساباته المخصصة (الشجرة ليست مفروضة)
   // فلترة حسب النشاط (أمر المالك): القيد اليدوي لا يعرض حسابات نشاط آخر
@@ -146,6 +147,9 @@ export function JournalPage() {
         debit: l.debit.trim() ? toMinor(l.debit, cur.decimals) : 0,
         credit: l.credit.trim() ? toMinor(l.credit, cur.decimals) : 0,
         costCenterId: l.costCenterId ? Number(l.costCenterId) : null,
+        // AUDIT-011: سطر حساب مراقبة (عملاء/موردون) يحمل طرفه فيدخل كشف حسابه
+        partyKind: PARTY_CONTROL_ACCOUNTS[l.accountCode] ?? null,
+        partyId: l.partyId ? Number(l.partyId) : null,
       })),
     [mLines, cur.decimals],
   )
@@ -197,7 +201,7 @@ export function JournalPage() {
           open={manualOpen} onClose={() => setManualOpen(false)}
           mDesc={mDesc} setMDesc={setMDesc} mDate={mDate} setMDate={setMDate}
           mLines={mLines} setMLines={setMLines} errors={manualErrors} onSave={saveManual} fmt={fmt}
-          parsed={parsedLines} postable={POSTABLE} costCenters={costCenters}
+          parsed={parsedLines} postable={POSTABLE} costCenters={costCenters} customers={customers} suppliers={suppliers}
         />
       </div>
     )
@@ -334,7 +338,7 @@ export function JournalPage() {
         open={manualOpen} onClose={() => setManualOpen(false)}
         mDesc={mDesc} setMDesc={setMDesc} mDate={mDate} setMDate={setMDate}
         mLines={mLines} setMLines={setMLines} errors={manualErrors} onSave={saveManual} fmt={fmt}
-        parsed={parsedLines} postable={POSTABLE} costCenters={costCenters}
+        parsed={parsedLines} postable={POSTABLE} costCenters={costCenters} customers={customers} suppliers={suppliers}
       />
       {reverseApproval.dialog}
     </div>
@@ -343,10 +347,12 @@ export function JournalPage() {
 
 /** مودال القيد اليدوي — زر الحفظ معطل حتى يتوازن القيد (القرار 9) */
 function ManualEntryModal({
-  open, onClose, mDesc, setMDesc, mDate, setMDate, mLines, setMLines, errors, onSave, fmt, parsed, postable, costCenters,
+  open, onClose, mDesc, setMDesc, mDate, setMDate, mLines, setMLines, errors, onSave, fmt, parsed, postable, costCenters, customers, suppliers,
 }: {
   postable: { code: string; nameAr: string }[]
   costCenters: { id: number; code: string; nameAr: string; isActive: boolean }[]
+  customers: { id: number; nameAr: string }[]
+  suppliers: { id: number; nameAr: string }[]
   open: boolean
   onClose: () => void
   mDesc: string
@@ -393,7 +399,17 @@ function ManualEntryModal({
               </QuickSelect>
               <input value={l.debit} onChange={(e) => setLine(i, { debit: e.target.value, credit: e.target.value.trim() ? '' : l.credit })} placeholder="0" className={`${inputCls} py-1.5 text-center`} dir="ltr" />
               <input value={l.credit} onChange={(e) => setLine(i, { credit: e.target.value, debit: e.target.value.trim() ? '' : l.debit })} placeholder="0" className={`${inputCls} py-1.5 text-center`} dir="ltr" />
+              {PARTY_CONTROL_ACCOUNTS[l.accountCode] ? (
+                /* AUDIT-011: حساب مراقبة — الطرف إلزامي ليدخل السطر كشف حسابه */
+                <QuickSelect value={l.partyId ?? ''} onChange={(e) => setLine(i, { partyId: e.target.value })} className={`${inputCls} py-1.5 text-[11px] ${l.partyId ? '' : '!border-amber-400'}`}>
+                  <option value="">{PARTY_CONTROL_ACCOUNTS[l.accountCode] === 'customer' ? 'اختر العميل…' : 'اختر المورد…'}</option>
+                  {(PARTY_CONTROL_ACCOUNTS[l.accountCode] === 'customer' ? customers : suppliers).map((p) => (
+                    <option key={p.id} value={p.id}>{p.nameAr}</option>
+                  ))}
+                </QuickSelect>
+              ) : (
               <QuickSelect value={l.costCenterId ?? ''} onChange={(e) => setLine(i, { costCenterId: e.target.value })} className={`${inputCls} py-1.5 text-[11px]`}><option value="">بدون مركز</option>{costCenters.filter(center => center.isActive).map(center => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect>
+              )}
               <button
                 onClick={() => setMLines((ls) => ls.filter((_, j) => j !== i))}
                 disabled={mLines.length <= 2}

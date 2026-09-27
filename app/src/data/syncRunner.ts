@@ -9,6 +9,9 @@
 import { useDataStore } from './repo.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { syncOnce, validateSyncConfig, type SyncConfig } from './syncClient.ts'
+import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
+import { STANDARD_COA, type JournalEntry } from '../core/ledger.ts'
+import { fullCoa } from '../core/treasury.ts'
 
 let applyingPull = false // يمنع اعتبار «تطبيق المسحوب» تغييراً محلياً جديداً
 let cycleRunning = false // قفل: دورة واحدة في اللحظة
@@ -26,6 +29,30 @@ function serializeStore(): string {
   const state = { ...useDataStore.getState() } as Record<string, unknown>
   for (const k of LOCAL_SESSION_KEYS) delete state[k]
   return JSON.stringify(state)
+}
+
+/**
+ * AUDIT-016 — حارس الوارد من السحابة.
+ *
+ * حالة السحابة تُطبَّق بـ`useDataStore.setState` مباشرةً، وهذا **يتجاوز** غلاف `set` المركزي
+ * في `repo.ts` الذي يحرس كل قيد محلي (توازن، نظافة سطر، حساب موجود، سنة مفتوحة، لا تعديل صامت).
+ * فجهاز مخترَق أو صف تالف كان يستطيع زرع قيد غير متزن في دفتر بقية الأجهزة بلا أي فحص.
+ * هنا نمرّ الدفتر الوارد على نفس الحارس قبل تطبيقه: إن سقط، تُرفض الدفعة كاملة
+ * ويبقى الدفتر المحلي كما هو (لا تطبيق جزئي أبداً).
+ */
+function assertIncomingLedgerSafe(parsed: Record<string, unknown>): void {
+  const incoming = parsed.journal
+  if (!Array.isArray(incoming)) return // دفعة بلا دفتر — لا شيء يُحرس
+  const normalized = normalizeJournalDates(incoming as JournalEntry[]) as JournalEntry[]
+  parsed.journal = normalized
+  const treasuries = (Array.isArray(parsed.treasuries) ? parsed.treasuries : useDataStore.getState().treasuries) as Parameters<typeof fullCoa>[1]
+  const customAccounts = (Array.isArray(parsed.customAccounts) ? parsed.customAccounts : useDataStore.getState().customAccounts) as { code: string; nameAr: string; rootType: string; parentCode: string }[]
+  const coa = [
+    ...fullCoa(STANDARD_COA, treasuries),
+    ...customAccounts.map((a) => ({ code: a.code, nameAr: a.nameAr, rootType: a.rootType, parentCode: a.parentCode, isPostable: true } as never)),
+  ]
+  // الدفتر الوارد يُقاس من الصفر: كل قيد فيه «جديد» بالنسبة للحارس فيُفحص كاملاً
+  assertJournalIntegrity([], normalized, { coa, fiscalYears: useAppStore.getState().fiscalYears })
 }
 
 /** بدء مراقبة التغييرات المحلية — يُستدعى مرة عند الإقلاع */
@@ -97,6 +124,12 @@ export function restoreConflictSnapshot(at: string): { ok: boolean; message: str
   }
   saveConflictSnapshot(serializeStore()) // شبكة أمان مزدوجة: الحالة الحالية تُحفظ قبل الدهس
   for (const k of LOCAL_SESSION_KEYS) delete parsed[k]
+  // AUDIT-016: اللقطة أيضاً تمر بالحارس — ملف محفوظ قد يكون تالفاً أو من نسخة قديمة مختلة
+  try {
+    assertIncomingLedgerSafe(parsed)
+  } catch (e) {
+    return { ok: false, message: `اللقطة مرفوضة — دفترها غير سليم: ${e instanceof Error ? e.message : ''}` }
+  }
   useDataStore.setState(parsed)
   const app = useAppStore.getState()
   if (app.sync.enabled && !app.sync.dirty) app.updateSync({ dirty: true })
@@ -136,6 +169,15 @@ export async function runSyncCycle(): Promise<CycleResult> {
       const parsed = JSON.parse(outcome.pulledData) as Record<string, unknown>
       // جلسة هذا الجهاز تبقى كما هي: المستخدم النشط محلي لا يأتي من السحابة
       for (const k of LOCAL_SESSION_KEYS) delete parsed[k]
+      // AUDIT-016: لا يدخل دفتر السحابة قبل أن يجتاز حارس الدفتر نفسه
+      try {
+        assertIncomingLedgerSafe(parsed)
+      } catch (e) {
+        const why = e instanceof Error ? e.message : 'دفتر وارد غير سليم'
+        saveConflictSnapshot(serializeStore())
+        useAppStore.getState().updateSync({ lastResult: `⛔ رُفضت حالة السحابة — ${why}` })
+        return { ok: false, message: `رُفضت حالة السحابة حفاظاً على سلامة الدفتر — ${why}` }
+      }
       applyingPull = true
       try {
         useDataStore.setState(parsed)
