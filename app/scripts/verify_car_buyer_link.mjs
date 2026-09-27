@@ -160,10 +160,16 @@ ok('بيع سيارة آجل بلا مشترٍ من السجل — مرفوض ب
   const stmts = readFileSync(join(root, 'src/core/statements.ts'), 'utf8')
   assert.ok(stmts.includes('بيع سيارة') && stmts.includes('بيع أمانة'))
   ok('customerUnitDocs: مستندا بيع السيارة والأمانة الآجلان في كشف حساب العميل')
-  for (const f of ['src/ui/pages/StatementsPage.tsx', 'src/ui/pages/VouchersPage.tsx', 'src/ui/pages/SettlementsPage.tsx']) {
-    assert.ok(readFileSync(join(root, f), 'utf8').includes('consignmentCars'), f)
+  // AUDIT-013: الكشف صار من مصدر واحد — دوال المتجر — فالتحقق ينتقل إليها بدل تكرار التمرير في كل صفحة
+  const repoSrc = readFileSync(join(root, 'src/data/repo.ts'), 'utf8')
+  assert.ok(repoSrc.includes('consignmentCars: state.consignmentCars'), 'repo.getCustomerStatementRows يمرر سيارات الأمانة')
+  assert.ok(readFileSync(join(root, 'src/ui/pages/VouchersPage.tsx'), 'utf8').includes('consignmentCars'))
+  for (const f of ['src/ui/pages/StatementsPage.tsx', 'src/ui/pages/SettlementsPage.tsx']) {
+    const src = readFileSync(join(root, f), 'utf8')
+    assert.ok(src.includes('getCustomerStatementRows') || src.includes('getCustomerBalance'), `${f}: يستدعي دالة المتجر لا نسخة محلية`)
+    assert.ok(!src.includes('customerUnitDocs('), `${f}: لا تركيب كشف موازٍ`)
   }
-  ok('الكشوف الثلاثة (كشف حساب/سندات/تسويات) تمرر السيارات لكشف العميل')
+  ok('كشف العميل من مصدر واحد: دوال المتجر تمرر سيارات الأمانة، والصفحات تستدعيها بلا نسخ موازية')
 }
 
 console.log(`\n✅ verify_car_buyer_link: ${pass} تحققاً — مشتري السيارات عميل مسجل بذمة متتبعة وحد ائتمان سارٍ`)

@@ -24,7 +24,7 @@ const SAMPLE_LINES = [
 ]
 
 /** مفاتيح الإظهار/الإخفاء مع أسمائها ونطاقها */
-const VISIBILITY_KEYS: { key: keyof ReceiptSettings; label: string; scope: 'الكل' | 'A4' }[] = [
+const VISIBILITY_KEYS: { key: keyof ReceiptSettings; label: string; scope: 'الكل' | 'A4' | 'حراري' }[] = [
   { key: 'showLogo', label: 'شعار المحل', scope: 'الكل' },
   { key: 'showHeaderLines', label: 'سطور الترويسة (عنوان/هاتف…)', scope: 'الكل' },
   { key: 'showDate', label: 'تاريخ الفاتورة', scope: 'الكل' },
@@ -33,6 +33,7 @@ const VISIBILITY_KEYS: { key: keyof ReceiptSettings; label: string; scope: 'ال
   { key: 'showItemCounts', label: 'عدد الأصناف والقطع', scope: 'الكل' },
   { key: 'showDiscount', label: 'الخصومات', scope: 'الكل' },
   { key: 'showTaxSummary', label: 'ملخص الضريبة', scope: 'الكل' },
+  { key: 'showOperator', label: 'اسم القائم بالطباعة (الكاشير/المالك)', scope: 'حراري' },
   { key: 'showWords', label: 'المبلغ كتابةً (تفقيط)', scope: 'A4' },
   { key: 'showSignatures', label: 'خانتا التوقيع', scope: 'A4' },
   { key: 'showFooter', label: 'نص التذييل', scope: 'الكل' },
@@ -428,6 +429,7 @@ export function PrintSettingsPage() {
                 <span className="text-[12.5px] font-bold text-slate-700 dark:text-slate-200">
                   {label}
                   {scope === 'A4' && <span className="text-[9px] font-normal text-violet-500 ms-1">A4 فقط</span>}
+                  {scope === 'حراري' && <span className="text-[9px] font-normal text-teal-500 ms-1">الإيصال الحراري</span>}
                 </span>
                 <input
                   type="checkbox"

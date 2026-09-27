@@ -7,7 +7,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  *   تحصيل الأقساط، تنبيهات الانتهاء والتأخير، وإنهاء/إخلاء برد التأمين.
  */
 import { useMemo, useState } from 'react'
-import { Plus, Building2, HandCoins, Wrench, Tag, Eye, DoorOpen, KeyRound, BellRing } from 'lucide-react'
+import { Plus, Building2, HandCoins, Wrench, Tag, Eye, DoorOpen, KeyRound, BellRing, ReceiptText } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -37,7 +37,7 @@ function useCur() {
 
 /* ─────────────────────────── العقارات والملاك ─────────────────────────── */
 export function PropertiesPage() {
-  const { properties, propertyUnits, employees, addProperty, addPropertyUnit, sellPropertyUnit, getOwnerBalance, payPropertyOwner, addUnitMaintenance, sellProperty, addStaffCommission } = useDataStore()
+  const { properties, propertyUnits, employees, customers, addProperty, addPropertyUnit, sellPropertyUnits, getOwnerBalance, payPropertyOwner, addUnitMaintenance, sellProperty, addStaffCommission } = useDataStore()
   const { cur, fmt } = useCur()
   const toast = useToast()
 
@@ -128,7 +128,9 @@ export function PropertiesPage() {
   /* بيع عقار */
   const [sellFor, setSellFor] = useState<Property | null>(null)
   const [sPrice, setSPrice] = useState('')
-  const [sPay, setSPay] = useState<'cash' | 'credit'>('cash')
+  const [sPay, setSPay] = useState<'cash' | 'credit' | 'mixed'>('cash')
+  const [sPaidNow, setSPaidNow] = useState('')
+  const [sBuyerId, setSBuyerId] = useState(0)
   const [sTreasury, setSTreasury] = useState('1101')
   // عمولة موظف عن البيع (طلب المالك): استحقاق مربوط بالعقار المباع
   const [sCommEmpId, setSCommEmpId] = useState('')
@@ -136,7 +138,10 @@ export function PropertiesPage() {
   const saveSale = () => {
     if (!sellFor) return
     try {
-      sellProperty({ propertyId: sellFor.id, salePriceMinor: toMinor(sPrice, cur.decimals), payment: sPay, treasury: sTreasury })
+      const priceMinor = toMinor(sPrice, cur.decimals)
+      const paidMinor = sPay === 'cash' ? priceMinor : sPay === 'credit' ? 0 : toMinor(sPaidNow || '0', cur.decimals)
+      if (priceMinor - paidMinor > 0 && !sBuyerId) throw new Error('الجزء الآجل يتطلب اختيار المشتري من سجل العملاء')
+      sellProperty({ propertyId: sellFor.id, salePriceMinor: priceMinor, payment: sPay, paidMinor, buyerCustomerId: sBuyerId || null, treasury: sTreasury })
       if (sCommEmpId && sCommAmount.trim()) {
         addStaffCommission({
           employeeId: Number(sCommEmpId), source: 'property_sale', sourceId: sellFor.id,
@@ -144,21 +149,56 @@ export function PropertiesPage() {
           amountMinor: toMinor(sCommAmount, cur.decimals),
         })
       }
-      toast.show(`بيع العقار وقُيد الربح${sCommEmpId && sCommAmount.trim() ? ' + استحقاق عمولة الموظف' : ''} ✅`); setSellFor(null); setSPrice(''); setSCommEmpId(''); setSCommAmount('')
+      toast.show(`بيع العقار وقُيد الربح${sCommEmpId && sCommAmount.trim() ? ' + استحقاق عمولة الموظف' : ''} ✅`); setSellFor(null); setSPrice(''); setSPaidNow(''); setSBuyerId(0); setSPay('cash'); setSCommEmpId(''); setSCommAmount('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  /* بيع وحدة مستقلة — لا يخرج تكلفة باقي الوحدات */
-  const [sellUnitFor, setSellUnitFor] = useState<{ property: Property; unit: PropertyUnit } | null>(null)
-  const [unitSalePrice, setUnitSalePrice] = useState('')
-  const [unitSalePay, setUnitSalePay] = useState<'cash' | 'credit'>('cash')
+  /* مستند بيع وحدات: سطر مستقل لكل وحدة — لا تُخرج إلا تكلفة الوحدات المباعة */
+  const [unitSaleFor, setUnitSaleFor] = useState<Property | null>(null)
+  const [unitSaleRows, setUnitSaleRows] = useState<{ unitId: number; code: string; costMinor: number; price: string; picked: boolean }[]>([])
+  const [unitSalePay, setUnitSalePay] = useState<'cash' | 'credit' | 'mixed'>('cash')
+  const [unitSalePaidNow, setUnitSalePaidNow] = useState('')
+  const [unitSaleVat, setUnitSaleVat] = useState('0')
+  const [unitSaleBuyerId, setUnitSaleBuyerId] = useState(0)
+  const [unitSaleBuyerName, setUnitSaleBuyerName] = useState('')
   const [unitSaleTreasury, setUnitSaleTreasury] = useState('1101')
+
+  /** فتح المستند: كل الوحدات القابلة للبيع سطور، ويمكن تحديد وحدة بعينها مسبقاً */
+  const openUnitSale = (property: Property, preselect?: PropertyUnit) => {
+    const rows = propertyUnits
+      .filter((u) => u.propertyId === property.id && u.status === 'vacant')
+      .map((u) => ({
+        unitId: u.id, code: u.code, costMinor: u.costMinor ?? 0,
+        price: u.salePriceMinor > 0 ? formatMinor(u.salePriceMinor, cur, false) : '',
+        picked: preselect ? u.id === preselect.id : false,
+      }))
+    setUnitSaleFor(property)
+    setUnitSaleRows(rows)
+    setUnitSalePay('cash'); setUnitSalePaidNow(''); setUnitSaleVat('0'); setUnitSaleBuyerId(0); setUnitSaleBuyerName('')
+  }
+
+  const unitSalePicked = unitSaleRows.filter((row) => row.picked && row.price.trim())
+  const unitSaleNetMinor = unitSalePicked.reduce((sum, row) => sum + toMinor(row.price || '0', cur.decimals), 0)
+  const unitSaleCostMinor = unitSalePicked.reduce((sum, row) => sum + row.costMinor, 0)
+  const unitSaleVatMinor = Math.round((unitSaleNetMinor * (Number(unitSaleVat) || 0)) / 100)
+  const unitSaleTotalMinor = unitSaleNetMinor + unitSaleVatMinor
+  const unitSalePaidMinor = unitSalePay === 'cash' ? unitSaleTotalMinor : unitSalePay === 'credit' ? 0 : toMinor(unitSalePaidNow || '0', cur.decimals)
+  const unitSaleDueMinor = Math.max(0, unitSaleTotalMinor - unitSalePaidMinor)
+
   const saveUnitSale = () => {
-    if (!sellUnitFor) return
+    if (!unitSaleFor) return
     try {
-      sellPropertyUnit({ propertyId: sellUnitFor.property.id, unitId: sellUnitFor.unit.id, salePriceMinor: toMinor(unitSalePrice, cur.decimals), payment: unitSalePay, treasury: unitSaleTreasury })
-      toast.show(`بيعت الوحدة ${sellUnitFor.unit.code} وأُخرجت تكلفتها فقط ✅`)
-      setSellUnitFor(null); setUnitSalePrice('')
+      if (unitSalePicked.length === 0) throw new Error('اختر وحدة واحدة على الأقل وحدد سعرها')
+      if (unitSaleDueMinor > 0 && !unitSaleBuyerId) throw new Error('الجزء الآجل يتطلب اختيار المشتري من سجل العملاء')
+      const doc = sellPropertyUnits({
+        propertyId: unitSaleFor.id,
+        lines: unitSalePicked.map((row) => ({ unitId: row.unitId, priceMinor: toMinor(row.price || '0', cur.decimals) })),
+        payment: unitSalePay, paidMinor: unitSalePaidMinor,
+        buyerCustomerId: unitSaleBuyerId || null, buyerName: unitSaleBuyerName.trim(),
+        vatPercent: Number(unitSaleVat) || 0, treasury: unitSaleTreasury,
+      })
+      toast.show(`${doc.saleNumber}: بيعت ${doc.lines.length} وحدة بسطر لكل وحدة — المتبقي ${fmt(doc.dueMinor)} ✅`)
+      setUnitSaleFor(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -207,6 +247,9 @@ export function PropertiesPage() {
                       {p.ownership === 'managed' && (
                         <button onClick={() => { setPayFor(p); setPayAmount('') }} title="سداد للمالك" className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><HandCoins className="w-4 h-4" /></button>
                       )}
+                      {p.ownership === 'owned' && units.some((u) => u.status === 'vacant') && (
+                        <button onClick={() => openUnitSale(p)} title="مستند بيع وحدات (سطر لكل وحدة)" data-open-unit-sale className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all hover:scale-110"><ReceiptText className="w-4 h-4" /></button>
+                      )}
                       {p.ownership === 'owned' && !units.some((u) => u.status === 'sold') && (
                         <button onClick={() => { setSellFor(p); setSPrice('') }} title="بيع العقار بالكامل" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all hover:scale-110"><Tag className="w-4 h-4" /></button>
                       )}
@@ -223,7 +266,7 @@ export function PropertiesPage() {
                           {u.salePriceMinor > 0 && u.status !== 'sold' ? ` · بيع ${fmt(u.salePriceMinor)}` : ''}
                         </span>
                         {p.ownership === 'owned' && p.status === 'active' && u.status === 'vacant' && (
-                          <button onClick={() => { setSellUnitFor({ property: p, unit: u }); setUnitSalePrice(u.salePriceMinor > 0 ? formatMinor(u.salePriceMinor, cur, false) : ''); setUnitSalePay('cash') }} title="بيع هذه الوحدة فقط" className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-500/10"><Tag className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => openUnitSale(p, u)} title="بيع هذه الوحدة (سطر مستقل داخل مستند بيع)" className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-500/10"><Tag className="w-3.5 h-3.5" /></button>
                         )}
                       </div>
                     ))}
@@ -345,19 +388,70 @@ export function PropertiesPage() {
         )}
       </Modal>
 
-      {/* بيع وحدة مستقلة */}
-      <Modal open={!!sellUnitFor} onClose={() => setSellUnitFor(null)} title={sellUnitFor ? `بيع الوحدة ${sellUnitFor.unit.code} — ${sellUnitFor.property.nameAr}` : ''}>
-        {sellUnitFor && (
+      {/* مستند بيع وحدات — سطر مستقل لكل وحدة */}
+      <Modal open={!!unitSaleFor} onClose={() => setUnitSaleFor(null)} title={unitSaleFor ? `مستند بيع وحدات — ${unitSaleFor.nameAr}` : ''} wide>
+        {unitSaleFor && (
           <div className="space-y-3">
-            <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 text-[12px] font-bold text-rose-700 dark:text-rose-300">
-              تكلفة هذه الوحدة {fmt(sellUnitFor.unit.costMinor)} — لن تُخرج إلا تكلفة هذه الوحدة من الأصل 1113، وتبقى باقي الوحدات قابلة للتعامل.
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {([
+                ['الوحدات المختارة', String(unitSalePicked.length)],
+                ['إجمالي البيع', fmt(unitSaleTotalMinor)],
+                ['تكلفتها', fmt(unitSaleCostMinor)],
+                ['الربح المتوقع', fmt(unitSaleNetMinor - unitSaleCostMinor)],
+              ] as const).map(([label, value]) => (
+                <div key={label} className="rounded-xl bg-teal-500/10 p-2.5 text-center">
+                  <div className="text-[10px] text-slate-500">{label}</div>
+                  <div className="text-[12.5px] font-black text-teal-700 dark:text-teal-300" dir="ltr">{value}</div>
+                </div>
+              ))}
             </div>
-            <Field label={`سعر البيع (${cur.symbol}) *`}><input value={unitSalePrice} onChange={(e) => setUnitSalePrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            <Field label="التحصيل">
-              <div className="flex gap-2">{(['cash', 'credit'] as const).map((m) => <button key={m} onClick={() => setUnitSalePay(m)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border ${unitSalePay === m ? 'bg-teal-600 text-white border-teal-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>{m === 'cash' ? 'نقدي' : 'آجل'}</button>)}</div>
-              {unitSalePay === 'cash' && <div className="mt-2"><TreasuryPicker value={unitSaleTreasury} onChange={setUnitSaleTreasury} compact /></div>}
+
+            {/* ① سطور الوحدات */}
+            <Field label="① الوحدات المعروضة للبيع" hint="كل وحدة سطر مستقل بسعرها وتكلفتها — لا تُخرج إلا تكلفة الوحدات المختارة من الأصل 1113">
+              <div className="max-h-56 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700">
+                {unitSaleRows.length === 0 ? (
+                  <div className="p-3 text-[12px] text-slate-400">لا توجد وحدات شاغرة قابلة للبيع في هذا العقار.</div>
+                ) : unitSaleRows.map((row, index) => (
+                  <label key={row.unitId} data-unit-sale-line className="flex items-center gap-2 border-b border-slate-100 p-2 last:border-0 dark:border-slate-800">
+                    <input type="checkbox" checked={row.picked} aria-label={`اختيار الوحدة ${row.code}`} onChange={(e) => setUnitSaleRows((list) => list.map((r, i) => (i === index ? { ...r, picked: e.target.checked } : r)))} />
+                    <b className="text-[12px] flex-1">{row.code}</b>
+                    <span className="text-[11px] text-slate-400">تكلفتها {fmt(row.costMinor)}</span>
+                    <input value={row.price} onChange={(e) => setUnitSaleRows((list) => list.map((r, i) => (i === index ? { ...r, price: e.target.value, picked: true } : r)))} inputMode="decimal" className={`${inputCls} w-32`} placeholder="سعر البيع" aria-label={`سعر بيع الوحدة ${row.code}`} />
+                  </label>
+                ))}
+              </div>
             </Field>
-            <Btn onClick={saveUnitSale} shortcut="F9" className="w-full" disabled={!unitSalePrice.trim()}>بيع الوحدة وقيد ربحها</Btn>
+
+            {/* ② المشتري */}
+            <div className="grid md:grid-cols-2 gap-3">
+              <Field label="② المشتري" hint="إلزامي لأي جزء آجل — تُتتبع ذمته بكشف حسابه">
+                <PartyQuickPicker parties={customers} value={unitSaleBuyerId} onChange={setUnitSaleBuyerId} cashLabel="مشترٍ عابر (نقدي فقط)" label="بحث المشتري" cashValue={0} />
+              </Field>
+              <Field label="اسم المشتري في العقد (اختياري)"><input value={unitSaleBuyerName} onChange={(e) => setUnitSaleBuyerName(e.target.value)} className={inputCls} /></Field>
+            </div>
+
+            {/* ③ التحصيل */}
+            <Field label="③ التحصيل" hint="نقدي/بنكي بالكامل، أو مقدم والباقي على المشتري">
+              <div className="flex gap-2">
+                {([['cash', 'نقدي بالكامل'], ['mixed', 'مقدم + آجل'], ['credit', 'آجل بالكامل']] as const).map(([mode, label]) => (
+                  <button key={mode} type="button" data-unit-sale-pay={mode} onClick={() => setUnitSalePay(mode)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border ${unitSalePay === mode ? 'bg-teal-600 text-white border-teal-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>{label}</button>
+                ))}
+              </div>
+              <div className="grid md:grid-cols-2 gap-3 mt-2">
+                {unitSalePay === 'mixed' && (
+                  <Field label={`المحصَّل الآن (${cur.symbol}) *`} hint={`المتبقي ${fmt(unitSaleDueMinor)} على المشتري`}>
+                    <input value={unitSalePaidNow} onChange={(e) => setUnitSalePaidNow(e.target.value)} inputMode="decimal" className={inputCls} />
+                  </Field>
+                )}
+                <Field label="نسبة ض.ق.م (%)"><input value={unitSaleVat} onChange={(e) => setUnitSaleVat(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+                {unitSalePay !== 'credit' && <div><TreasuryPicker value={unitSaleTreasury} onChange={setUnitSaleTreasury} compact operation="receipt" /></div>}
+              </div>
+            </Field>
+
+            <div className="rounded-xl bg-slate-50 p-2.5 text-[11px] text-slate-500 dark:bg-slate-800/50">
+              القيد: {unitSalePaidMinor > 0 ? `الخزينة ${unitSaleTreasury} مدين ${fmt(unitSalePaidMinor)}` : ''}{unitSalePaidMinor > 0 && unitSaleDueMinor > 0 ? ' + ' : ''}{unitSaleDueMinor > 0 ? `1104 عملاء مدين ${fmt(unitSaleDueMinor)}` : ''} ← 4115 إيراد بسطر لكل وحدة{unitSaleVatMinor > 0 ? ` + 2102 ضريبة ${fmt(unitSaleVatMinor)}` : ''}، و5116 تكلفة ← 1113 بسطر لكل وحدة.
+            </div>
+            <Btn onClick={saveUnitSale} shortcut="F9" className="w-full" disabled={unitSalePicked.length === 0 || (unitSaleDueMinor > 0 && !unitSaleBuyerId)}>ترحيل مستند البيع ({unitSalePicked.length} وحدة)</Btn>
           </div>
         )}
       </Modal>
@@ -367,16 +461,22 @@ export function PropertiesPage() {
         {sellFor && (
           <div className="space-y-3">
             <div className="rounded-xl bg-teal-500/10 border border-teal-500/30 p-3 text-[12px] font-bold text-teal-700 dark:text-teal-300">
-              التكلفة الدفترية {fmt(sellFor.costMinor)} — البيع يقيد الإيراد (4115) والتكلفة (5116) ويخرج العقار من الأصول (1113). لا بيع وعلى العقار عقود نشطة.
+              التكلفة الدفترية {fmt(sellFor.costMinor)} — البيع يقيد الإيراد (4115) والتكلفة (5116) ويخرج العقار من الأصول (1113) — <b>بسطر مستقل لكل وحدة</b> يُوزَّع عليه السعر بنسبة تكلفتها. لا بيع وعلى العقار عقود نشطة.
             </div>
             <Field label={`سعر البيع (${cur.symbol}) *`}><input value={sPrice} onChange={(e) => setSPrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="التحصيل">
               <div className="flex gap-2">
-                {(['cash', 'credit'] as const).map((m) => (
-                  <button key={m} onClick={() => setSPay(m)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border transition-all ${sPay === m ? 'bg-teal-600 text-white border-teal-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>{m === 'cash' ? 'نقدي' : 'آجل (مدينون)'}</button>
+                {([['cash', 'نقدي'], ['mixed', 'مقدم + آجل'], ['credit', 'آجل (مدينون)']] as const).map(([mode, label]) => (
+                  <button key={mode} onClick={() => setSPay(mode)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border transition-all ${sPay === mode ? 'bg-teal-600 text-white border-teal-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>{label}</button>
                 ))}
               </div>
-              {sPay === 'cash' && <div className="mt-2"><TreasuryPicker value={sTreasury} onChange={setSTreasury} compact /></div>}
+              {sPay === 'mixed' && <div className="mt-2"><Field label={`المحصَّل الآن (${cur.symbol}) *`} hint="الباقي يُرحَّل على حساب المشتري"><input value={sPaidNow} onChange={(e) => setSPaidNow(e.target.value)} inputMode="decimal" className={inputCls} /></Field></div>}
+              {sPay !== 'credit' && <div className="mt-2"><TreasuryPicker value={sTreasury} onChange={setSTreasury} compact operation="receipt" /></div>}
+              {sPay !== 'cash' && (
+                <div className="mt-2"><Field label="المشتري *" hint="الجزء الآجل يظهر في كشف حسابه ويسري حده الائتماني">
+                  <PartyQuickPicker parties={customers} value={sBuyerId} onChange={setSBuyerId} cashLabel="اختر المشتري" label="بحث المشتري" cashValue={0} showCash={false} />
+                </Field></div>
+              )}
             </Field>
             <Field label="عمولة موظف (اختياري)" hint="الموظف الذي أتم الصفقة — مصروف مربوط بالبيع يدخل ربحيته">
               <div className="grid grid-cols-2 gap-2">
@@ -384,7 +484,7 @@ export function PropertiesPage() {
                 <input value={sCommAmount} onChange={(e) => setSCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!sCommEmpId} />
               </div>
             </Field>
-            <Btn onClick={saveSale} shortcut="F9" className="w-full" disabled={!sPrice || (!!sCommEmpId && !sCommAmount.trim())}>بيع وقيد الربح</Btn>
+            <Btn onClick={saveSale} shortcut="F9" className="w-full" disabled={!sPrice || (sPay !== 'cash' && !sBuyerId) || (!!sCommEmpId && !sCommAmount.trim())}>بيع وقيد الربح</Btn>
           </div>
         )}
       </Modal>
@@ -403,13 +503,13 @@ export function LeasesPage() {
   /* عقد جديد */
   const [open, setOpen] = useState(false)
   const [propId, setPropId] = useState<number | ''>('')
-  const [unitId, setUnitId] = useState<number | ''>('')
+  /** سطور وحدات العقد: سطر مستقل لكل وحدة بأجرتها — عقد واحد قد يضم عدة وحدات */
+  const [leaseUnitRows, setLeaseUnitRows] = useState<{ unitId: number; code: string; rent: string; picked: boolean }[]>([])
   const [tenant, setTenant] = useState('')
   const [tenantId, setTenantId] = useState('')
   const [startDate, setStartDate] = useState(todayIso)
   const [months, setMonths] = useState('12')
   const [frequency, setFrequency] = useState<RentFrequency>('quarterly')
-  const [totalRent, setTotalRent] = useState('')
   const [deposit, setDeposit] = useState('')
   const [ejar, setEjar] = useState('')
   const [leaseTreasury, setLeaseTreasury] = useState('1101')
@@ -417,27 +517,41 @@ export function LeasesPage() {
   const [commEmpId, setCommEmpId] = useState('')
   const [commAmount, setCommAmount] = useState('')
   const activeProps = properties.filter((p) => p.status === 'active')
-  const vacantUnits = useMemo(() => propertyUnits.filter((u) => u.propertyId === propId && u.status === 'vacant'), [propertyUnits, propId])
+  const pickedLeaseUnits = leaseUnitRows.filter((row) => row.picked)
+  const leaseUnitsTotalMinor = pickedLeaseUnits.reduce((sum, row) => sum + toMinor(row.rent || '0', cur.decimals), 0)
+  /** تحميل سطور الوحدات الشاغرة عند اختيار العقار (الأجرة الاسترشادية × سنوات المدة) */
+  const loadLeaseUnitRows = (propertyId: number, monthsValue: number) => {
+    const years = Math.max(1, monthsValue) / 12
+    setLeaseUnitRows(propertyUnits
+      .filter((u) => u.propertyId === propertyId && u.status === 'vacant')
+      .map((u) => ({
+        unitId: u.id, code: u.code, picked: false,
+        rent: u.annualRentMinor > 0 ? formatMinor(Math.round(u.annualRentMinor * years), cur, false) : '',
+      })))
+  }
 
   const saveLease = () => {
     try {
-      if (propId === '' || unitId === '') throw new Error('اختر العقار والوحدة')
+      if (propId === '') throw new Error('اختر العقار')
+      if (pickedLeaseUnits.length === 0) throw new Error('اختر وحدة واحدة على الأقل — كل وحدة سطر مستقل في العقد')
       const l = addLease({
-        propertyId: propId, unitId, tenantName: tenant, tenantId: tenantId ? Number(tenantId) : null,
-        startDate, months: Number(months) || 0, frequency, totalRentMinor: toMinor(totalRent, cur.decimals),
+        propertyId: propId,
+        units: pickedLeaseUnits.map((row) => ({ unitId: row.unitId, rentMinor: toMinor(row.rent || '0', cur.decimals) })),
+        tenantName: tenant, tenantId: tenantId ? Number(tenantId) : null,
+        startDate, months: Number(months) || 0, frequency, totalRentMinor: leaseUnitsTotalMinor,
         depositMinor: deposit ? toMinor(deposit, cur.decimals) : 0, ejarNumber: ejar, treasury: leaseTreasury,
       })
       // عمولة الموظف المسوّق (اختيارية): استحقاق مربوط بالعقد — تظهر في «الموظفون ← العمولات»
       if (commEmpId && commAmount.trim()) {
-        const unit = propertyUnits.find((u) => u.id === unitId)
+        const unitsLabel = pickedLeaseUnits.map((row) => row.code).join('، ')
         addStaffCommission({
           employeeId: Number(commEmpId), source: 'lease', sourceId: l.id,
-          description: `عمولة تأجير ${unit?.code ?? ''} — عقد ${l.contractNumber}`,
+          description: `عمولة تأجير ${unitsLabel} — عقد ${l.contractNumber}`,
           amountMinor: toMinor(commAmount, cur.decimals),
         })
       }
-      toast.show(`أُنشئ العقد ${l.contractNumber} بجدول ${l.installments.length} قسطاً${commEmpId && commAmount.trim() ? ' + استحقاق عمولة الموظف' : ''} ✅`)
-      setOpen(false); setTenant(''); setTotalRent(''); setDeposit(''); setEjar(''); setUnitId(''); setCommEmpId(''); setCommAmount('')
+      toast.show(`أُنشئ العقد ${l.contractNumber} على ${l.unitLines?.length ?? 1} وحدة بجدول ${l.installments.length} قسطاً${commEmpId && commAmount.trim() ? ' + استحقاق عمولة الموظف' : ''} ✅`)
+      setOpen(false); setTenant(''); setDeposit(''); setEjar(''); setLeaseUnitRows([]); setCommEmpId(''); setCommAmount('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -515,7 +629,7 @@ export function LeasesPage() {
                       </span>
                     </div>
                     <div className="text-[11px] text-slate-400 mt-1">
-                      {propName(l.propertyId)} · {unitCode(l.unitId)} · {l.months} شهراً {RENT_FREQUENCY_LABELS[l.frequency].nameAr} · من {l.startDate} إلى {leaseEndDate(l.startDate, l.months)}
+                      {propName(l.propertyId)} · {(l.unitLines && l.unitLines.length > 0 ? l.unitLines.map((line) => line.code).join('، ') : unitCode(l.unitId))}{l.unitLines && l.unitLines.length > 1 ? ` (${l.unitLines.length} وحدات)` : ''} · {l.months} شهراً {RENT_FREQUENCY_LABELS[l.frequency].nameAr} · من {l.startDate} إلى {leaseEndDate(l.startDate, l.months)}
                       {l.ejarNumber ? ` · إيجار: ${l.ejarNumber}` : ''}
                     </div>
                     <div className="text-[12px] font-bold text-slate-600 dark:text-slate-300 mt-1.5">
@@ -540,16 +654,30 @@ export function LeasesPage() {
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العقار *">
-              <QuickSelect value={propId} onChange={(e) => { setPropId(Number(e.target.value)); setUnitId('') }} className={inputCls}>
+              <QuickSelect value={propId} onChange={(e) => { const id = Number(e.target.value); setPropId(id); loadLeaseUnitRows(id, Number(months) || 12) }} className={inputCls}>
                 {activeProps.map((p) => <option key={p.id} value={p.id}>{p.nameAr}{p.ownership === 'managed' ? ` (سعي ${p.commissionPercent}٪)` : ''}</option>)}
               </QuickSelect>
             </Field>
-            <Field label="الوحدة الشاغرة *">
-              <QuickSelect value={unitId} onChange={(e) => setUnitId(Number(e.target.value))} className={inputCls}>
-                <option value="">— اختر —</option>
-                {vacantUnits.map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
-              </QuickSelect>
-            </Field>
+            <div className="sm:col-span-2">
+              <Field label={`الوحدات المؤجَّرة * — سطر مستقل لكل وحدة (${pickedLeaseUnits.length} مختارة)`} hint="عقد واحد قد يضم عدة وحدات؛ أجرة كل وحدة سطر مستقل وإجمالي العقد مجموعها">
+                <div className="max-h-44 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700">
+                  {propId === '' ? (
+                    <div className="p-3 text-[12px] text-slate-400">اختر العقار أولاً لعرض وحداته الشاغرة.</div>
+                  ) : leaseUnitRows.length === 0 ? (
+                    <div className="p-3 text-[12px] text-slate-400">لا توجد وحدات شاغرة في هذا العقار.</div>
+                  ) : leaseUnitRows.map((row, index) => (
+                    <label key={row.unitId} data-lease-unit-line className="flex items-center gap-2 border-b border-slate-100 p-2 last:border-0 dark:border-slate-800">
+                      <input type="checkbox" checked={row.picked} aria-label={`اختيار الوحدة ${row.code} للعقد`} onChange={(e) => setLeaseUnitRows((list) => list.map((r, i) => (i === index ? { ...r, picked: e.target.checked } : r)))} />
+                      <b className="text-[12px] flex-1">{row.code}</b>
+                      <input value={row.rent} onChange={(e) => setLeaseUnitRows((list) => list.map((r, i) => (i === index ? { ...r, rent: e.target.value, picked: true } : r)))} inputMode="decimal" className={`${inputCls} w-36`} placeholder={`أجرة المدة (${cur.symbol})`} aria-label={`أجرة الوحدة ${row.code}`} />
+                    </label>
+                  ))}
+                </div>
+                {pickedLeaseUnits.length > 0 && (
+                  <div className="mt-1 text-[11px] font-bold text-teal-700 dark:text-teal-300">إجمالي أجرة العقد من السطور: {fmt(leaseUnitsTotalMinor)} {cur.symbol}</div>
+                )}
+              </Field>
+            </div>
             <Field label="اسم المستأجر *"><input value={tenant} onChange={(e) => setTenant(e.target.value)} className={inputCls} /></Field>
             <Field label="ربط بسجل عميل (إداري)">
               <PartyQuickPicker parties={customers} value={tenantId ? Number(tenantId) : 0} onChange={(id) => setTenantId(id ? String(id) : '')} cashLabel="بلا ربط" label="بحث المستأجر" cashValue={0} />
@@ -561,7 +689,9 @@ export function LeasesPage() {
                 {Object.entries(RENT_FREQUENCY_LABELS).map(([k, v]) => <option key={k} value={k}>{v.nameAr}</option>)}
               </QuickSelect>
             </Field>
-            <Field label={`إجمالي أجرة كامل المدة (${cur.symbol}) *`}><input value={totalRent} onChange={(e) => setTotalRent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label={`إجمالي أجرة كامل المدة (${cur.symbol})`} hint="محسوب تلقائياً من سطور الوحدات">
+              <input value={formatMinor(leaseUnitsTotalMinor, cur, false)} readOnly className={`${inputCls} bg-slate-50 dark:bg-slate-800 font-bold`} dir="ltr" />
+            </Field>
             <Field label={`التأمين المسترد (${cur.symbol})`} hint="يقيد التزاماً (2103) ويُرد عند الإخلاء ناقص الأضرار"><input value={deposit} onChange={(e) => setDeposit(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="رقم توثيق منصة إيجار" hint="السعودية: رقم العقد الموثق في المنصة الحكومية"><input value={ejar} onChange={(e) => setEjar(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label="عمولة موظف (اختياري)" hint="الموظف الذي سوّق العقد — تُستحق مصروفاً مربوطاً به">
@@ -576,7 +706,7 @@ export function LeasesPage() {
           {deposit && <TreasuryPicker value={leaseTreasury} onChange={setLeaseTreasury} />}
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveLease} shortcut="F9" disabled={!tenant.trim() || !totalRent || unitId === ''}>إنشاء العقد وتوليد الأقساط</Btn>
+            <Btn onClick={saveLease} shortcut="F9" disabled={!tenant.trim() || pickedLeaseUnits.length === 0 || leaseUnitsTotalMinor <= 0}>إنشاء العقد وتوليد الأقساط ({pickedLeaseUnits.length} وحدة)</Btn>
           </div>
         </div>
       </Modal>

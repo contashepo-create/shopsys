@@ -4,7 +4,7 @@
  */
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { ChevronDown, PanelRightClose, PanelRightOpen, PanelTop } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
@@ -19,7 +19,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     if (guardNavigation(() => navigate(path))) event.preventDefault()
   }
-  const { setup } = useAppStore()
+  const { setup, updateAppearance } = useAppStore()
   const [openSections, setOpenSections] = useState<Set<string>>(() => {
     // القسم الحاوي للمسار الحالي يبدأ مفتوحاً
     const s = new Set<string>(['dashboard'])
@@ -74,12 +74,23 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
       {/* الشعار */}
       <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800">
         <img src="/app-icon.png?v=3" alt="TAHAKAM ERP" className="w-10 h-10 rounded-xl shadow-lg shadow-brand-500/30 object-cover" />
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="font-extrabold text-slate-800 dark:text-white leading-tight tracking-wide" dir="ltr">TAHAKAM <span className="text-emerald-500">ERP</span></div>
           <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate max-w-[150px]">
             {setup.shopName || 'تَحَكَّم في إدارة أعمالك'}
           </div>
         </div>
+        {/* العودة إلى شريط القوائم العلوي (الوضع الافتراضي) */}
+        <button
+          type="button"
+          onClick={() => updateAppearance({ navigationMode: 'topbar' })}
+          title="تحويل التنقل إلى شريط قوائم علوي"
+          aria-label="تحويل التنقل إلى شريط قوائم علوي"
+          data-switch-to-menubar="true"
+          className="sidebar-nav-switch shrink-0 rounded-lg border border-slate-200 p-1.5 text-slate-500 transition-colors hover:border-brand-400 hover:text-brand-600 dark:border-slate-700 dark:text-slate-400"
+        >
+          <PanelTop size={14} />
+        </button>
       </div>
 
       {/* الأقسام */}

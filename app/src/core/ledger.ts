@@ -30,6 +30,12 @@ export interface JournalLine {
   note?: string
   /** مركز التكلفة العام على سطر المصروف؛ لا يخلط مع مركز تكلفة المركبة */
   costCenterId?: number | null
+  /**
+   * AUDIT-011 — الطرف على سطر حساب المراقبة (1104 عملاء / 2101 موردون):
+   * إلزامي في القيد اليدوي حتى يدخل السطر كشف حساب الطرف فلا ينفصل الدفتر عن الكشف.
+   */
+  partyKind?: 'customer' | 'supplier' | null
+  partyId?: number | null
 }
 
 export interface CostCenterAllocationWeight {
@@ -69,6 +75,7 @@ export type SourceType =
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
   | 'lease' | 'lease_collection' | 'owner_payout' | 'lease_end' | 'unit_maintenance' | 'property_acquisition' | 'property_sale'
   | 'staff_commission' | 'staff_commission_payout' | 'staff_commission_cancel'
+  | 'party_offset'
   | 'opening' | 'manual' | 'year_closing' | 'asset_purchase' | 'asset_payment' | 'depreciation' | 'external_commission' | 'laundry' | 'reversal'
 
 export interface JournalEntry {
@@ -117,7 +124,12 @@ export function accountBalance(rootType: AccountRootType, totalDebit: Minor, tot
 
 /** توليد القيد العاكس (التصحيح الوحيد المسموح — القاعدة 2) */
 export function buildReversalLines(original: JournalLine[]): JournalLine[] {
-  return original.map((l) => ({ accountCode: l.accountCode, debit: l.credit, credit: l.debit, note: l.note }))
+  // الطرف ومركز التكلفة يُنقلان مع العكس وإلا بقي كشف الطرف بصف بلا مقابل (AUDIT-011)
+  return original.map((l) => ({
+    accountCode: l.accountCode, debit: l.credit, credit: l.debit, note: l.note,
+    ...(l.costCenterId != null ? { costCenterId: l.costCenterId } : {}),
+    ...(l.partyKind ? { partyKind: l.partyKind, partyId: l.partyId ?? null } : {}),
+  }))
 }
 
 /**

@@ -91,13 +91,17 @@ throws('ضريبة مدخلات سالبة تُرفض', () => S().postPurchase({
 
 console.log('\n📦 T2: المخزون الافتتاحي (بضاعة أول المدة)')
 // صنف قائم قبل البرنامج: رصيد 50 بتكلفة افتتاحية 200ج = 10,000ج
+const inv1103Before = bal('1103'), capBefore = bal('3101')
+// AUDIT-005: إنشاء صنف برصيد ابتدائي يولّد قيد «بضاعة أول المدة» تلقائياً (1103/3101)
 S().addItem(item({ nameAr: 'بضاعة قديمة', stockQty: 50, costMinor: 20000 }))
 const legacy = S().items.at(-1)
-const inv1103Before = bal('1103'), capBefore = bal('3101')
-S().setOpeningBalance({ kind: 'item_stock', refId: legacy.id, amountMinor: 1000000, label: 'بضاعة قديمة' })
-ok('1103 زاد بقيمة بضاعة أول المدة (10,000ج)', bal('1103') - inv1103Before === 1000000, `فعلي ${bal('1103') - inv1103Before}`)
+ok('1103 زاد بقيمة بضاعة أول المدة (10,000ج) لحظة إنشاء الصنف', bal('1103') - inv1103Before === 1000000, `فعلي ${bal('1103') - inv1103Before}`)
 ok('3101 دائن بالمقابل (المعادلة المحاسبية سليمة)', capBefore - bal('3101') === 1000000)
 ok('الميزان متوازن بعد الإثبات', balanced())
+// إعادة تثبيت نفس القيمة لا تكرر القيد (الفرق = صفر)
+const entriesBefore = S().journal.length
+S().setOpeningBalance({ kind: 'item_stock', refId: legacy.id, amountMinor: 1000000, label: 'بضاعة قديمة' })
+ok('تثبيت نفس القيمة لا يكرر القيد', S().journal.length === entriesBefore && bal('1103') - inv1103Before === 1000000)
 
 // تعديل بفرق: من 10,000 إلى 12,000 ⇒ قيد فرق +2,000 فقط
 S().setOpeningBalance({ kind: 'item_stock', refId: legacy.id, amountMinor: 1200000, label: 'بضاعة قديمة' })

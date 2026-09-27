@@ -10,7 +10,6 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { customerStatement, customerUnitDocs, supplierStatement, statementBalance } from '../../core/statements.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 
@@ -42,7 +41,10 @@ export function SettlementsPage() {
     return suppliers.map((s) => ({ id: String(s.id), nameAr: s.nameAr }))
   }, [section, treasuries, customers, suppliers])
 
-  /** الرصيد الدفتري الحالي — نفس مصادر شاشات الكشوف والخزائن (لا حساب موازٍ) */
+  /**
+   * الرصيد الدفتري الحالي — من دوال المتجر نفسها (AUDIT-013):
+   * الصفحة كانت تعيد تركيب الكشف يدوياً فتختلف عن باقي الشاشات عند نقاط الولاء والمقاصات.
+   */
   const bookMinor = useMemo(() => {
     if (!refId) return null
     if (section === 'treasury') {
@@ -51,37 +53,9 @@ export function SettlementsPage() {
       return b
     }
     const pid = Number(refId)
-    if (section === 'customer') {
-      return statementBalance(customerStatement({
-        customerId: pid,
-        openingMinor: store.openingBalances[`customer:${pid}`] ?? 0,
-        sales: store.sales, saleReturns: store.saleReturns, allSales: store.sales,
-        extraDocs: customerUnitDocs({ customerId: pid, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts, clinicVisits: store.clinicVisits, clinicCollections: store.clinicCollections, linkedPatientIds: store.clinicPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id), labOrders: store.labOrders, linkedLabPatientIds: store.labPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id), walletOps: store.walletOps, projectExtracts: store.projectExtracts, linkedProjectIds: store.projects.filter((p) => p.clientId === pid).map((p) => p.id), installmentPlans: store.installmentPlans, laundryOrders: store.laundryOrders, cars: store.cars, consignmentCars: store.consignmentCars }),
-        vouchers: [
-          ...store.vouchers,
-          ...store.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
-        ],
-        cheques: store.cheques,
-        adjustments: settlements.filter((st) => st.section === 'customer' && Number(st.refId) === pid).map((st) => ({
-          docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
-          debitMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
-          creditMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
-        })),
-      }))
-    }
-    return statementBalance(supplierStatement({
-      supplierId: pid,
-      openingMinor: store.openingBalances[`supplier:${pid}`] ?? 0,
-      purchases: store.purchases, purchaseReturns: store.purchaseReturns, allPurchases: store.purchases,
-      vouchers: store.vouchers, cheques: store.cheques,
-      adjustments: settlements.filter((st) => st.section === 'supplier' && Number(st.refId) === pid).map((st) => ({
-        docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
-        debitMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
-        creditMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
-      })),
-    }))
+    return section === 'customer' ? store.getCustomerBalance(pid) : store.getSupplierBalance(pid)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [section, refId, journal, settlements, store.sales, store.purchases, store.vouchers, store.cheques, store.openingBalances, store.clientSettlements])
+  }, [section, refId, journal, settlements, store.sales, store.purchases, store.vouchers, store.cheques, store.openingBalances, store.clientSettlements, store.partyOffsets, store.loyaltyRedemptions])
 
   const actualMinor = actual.trim() === '' ? null : (() => { try { return toMinor(actual, cur.decimals) } catch { return null } })()
   const variance = bookMinor != null && actualMinor != null ? actualMinor - bookMinor : null

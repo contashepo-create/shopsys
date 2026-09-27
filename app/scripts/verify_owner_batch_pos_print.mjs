@@ -122,7 +122,8 @@ console.log('\n5️⃣ ثبات الإعدادات الدائمة + بنية ا�
 
   const ui = readFileSync(new URL('../src/ui/components/ui.tsx', import.meta.url), 'utf-8')
   ok('المودال عبر createPortal إلى body (فوق الهيدر)', ui.includes('createPortal(') && ui.includes('document.body'))
-  ok('طبقة المودال z-[100] أعلى من هيدر z-20', ui.includes('z-[100]'))
+  // سلم الطبقات الموحد (تحديث المالك): layer-modal 1000 < layer-picker 2000 < layer-approval 3000 < layer-toast 4000
+  ok('طبقة المودال layer-modal أعلى من هيدر z-20', ui.includes('layer-modal'))
 
   const parties = readFileSync(new URL('../src/ui/pages/PartiesPages.tsx', import.meta.url), 'utf-8')
   ok('تصنيف المورد حقل نص حر (لا select مغلق)', parties.includes('placeholder="مثال: مورد لحوم') && !parties.includes('<select value={category}'))
@@ -138,9 +139,12 @@ console.log('\n6️⃣ المراجعة الثانية (طلب المالك): ط
   // حوار المشرف يُفتح فوق مودال مفتوح (صرف/إتلاف/مرتجع) — يجب أن يكون بوابةً وأعلى طبقة
   const pinDlg = readFileSync(new URL('../src/ui/components/SupervisorPinDialog.tsx', import.meta.url), 'utf-8')
   ok('حوار المشرف عبر createPortal أيضاً', pinDlg.includes('createPortal(') && pinDlg.includes('document.body'))
-  ok('حوار المشرف z-[110] فوق المودال z-[100]', pinDlg.includes('z-[110]'))
+  ok('حوار المشرف layer-approval فوق المودال layer-modal', pinDlg.includes('layer-approval'))
   const ui = readFileSync(new URL('../src/ui/components/ui.tsx', import.meta.url), 'utf-8')
-  ok('التوست z-[120] فوق كل الطبقات', ui.includes('z-[120]'))
+  ok('التوست layer-toast فوق كل الطبقات', ui.includes('layer-toast'))
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf-8')
+  ok('سلم الطبقات معرف في CSS بترتيب صاعد', /\.layer-modal \{ z-index: 1000; \}/.test(css) && /\.layer-picker \{ z-index: 2000; \}/.test(css) && /\.layer-approval \{ z-index: 3000; \}/.test(css) && /\.layer-toast \{ z-index: 4000; \}/.test(css))
+  ok('الحركات لا تُبقي تحويلاً بعد انتهائها (لا تحبس النوافذ)', !/animation-fill-mode:\s*both/.test(css) && css.includes('backwards'))
 
   // A5 متاح من كل منافذ الطباعة لا الكاشير فقط
   const salesPage = readFileSync(new URL('../src/ui/pages/SalesInvoicesPage.tsx', import.meta.url), 'utf-8')
