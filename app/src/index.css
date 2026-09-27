@@ -1133,3 +1133,58 @@ select { line-height: 1.25rem; }
 .invoice-doc-actionbar-info { display: flex; flex-wrap: wrap; gap: .75rem; font-size: .64rem; color: #64748b; }
 .invoice-doc-actionbar-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
 .invoice-doc-post { font-size: .82rem !important; font-weight: 900 !important; }
+
+/* ─────────────────────────────────────────────────────────────
+   طبقة «المستند» الموحدة للسندات (تدقيق المالك — المرحلة 6)
+   ─────────────────────────────────────────────────────────────
+   كانت صفحة السندات تكتب ألوان المستند بقيم ست عشرية مباشرة، فبدت
+   نهاراً كالفاتورة لكنها لا ترى الوضع الليلي إطلاقاً (خلفيات بيضاء
+   ثابتة على نص داكن). هذه الطبقة تجمع الألوان في متغيرات لها بديل
+   ليلي، فيبقى شكل المستند واحداً في الوضعين.                          */
+:root {
+  --doc-ink: #0f2042;        /* حبر الترويسة والعناوين */
+  --doc-ink-soft: #0b1c30;
+  --doc-surface: #f8f9ff;    /* سطح المستند خلف البطاقات */
+  --doc-paper: #ffffff;      /* ورق البطاقة */
+  --doc-tint: #eff4ff;       /* تظليل خفيف داخل البطاقة */
+  --doc-tint-strong: #e5eeff;
+  --doc-band: #dce9ff;       /* شريط عنوان القسم */
+  --doc-line: #c5c6cf;
+  --doc-muted: #45464e;
+  --doc-faint: #75777f;
+  --doc-accent: #3f5f92;
+  --doc-accent-deep: #254778;
+  --doc-head-sub: #d6e3ff;
+}
+.dark {
+  --doc-ink: #e8eefb;
+  --doc-ink-soft: #e8eefb;
+  --doc-surface: #0b1220;
+  --doc-paper: #101827;
+  --doc-tint: #16203a;
+  --doc-tint-strong: #1b2745;
+  --doc-band: #1e2c4d;
+  --doc-line: #27344e;
+  --doc-muted: #aab6cd;
+  --doc-faint: #8291ab;
+  --doc-accent: #93b4ea;
+  --doc-accent-deep: #b9cdf3;
+  --doc-head-sub: #b9cdf3;
+}
+.doc-sheet { background: var(--doc-surface); color: var(--doc-ink-soft); }
+.doc-head { background: #0f2042; color: #fff; }
+.dark .doc-head { background: #101827; }
+.doc-head-sub { color: var(--doc-head-sub); }
+.doc-meta { background: var(--doc-tint); color: var(--doc-muted); }
+.doc-card { background: var(--doc-paper); box-shadow: 0 6px 18px -12px rgb(15 23 42 / .35); }
+.doc-ring { box-shadow: inset 0 0 0 1px var(--doc-band); }
+.doc-band { background: var(--doc-band); }
+.doc-tint { background: var(--doc-tint); }
+.doc-tint-strong { background: var(--doc-tint-strong); }
+.doc-ink { color: var(--doc-ink); }
+.doc-muted { color: var(--doc-muted); }
+.doc-faint { color: var(--doc-faint); }
+.doc-accent { color: var(--doc-accent); }
+.doc-accent-deep { color: var(--doc-accent-deep); }
+.doc-line { border-color: var(--doc-line); }
+.doc-footer { background: var(--doc-paper); border-top: 1px solid var(--doc-line); }
