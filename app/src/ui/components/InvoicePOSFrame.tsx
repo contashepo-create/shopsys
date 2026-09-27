@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowRight, BadgeCheck, CalendarDays, CircleDollarSign, FileCheck2, FileText, Keyboard, PackageSearch, Printer, Save, Search, Store } from 'lucide-react'
+import { ArrowLeft, CircleHelp, Eye, FileCheck2, MonitorSmartphone, MoreVertical, Printer, Save, Search, PackageSearch } from 'lucide-react'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { Btn } from './ui.tsx'
@@ -15,6 +15,10 @@ type InvoicePOSFrameProps = {
   headerFields: ReactNode
   partyProfile?: ReactNode
   itemEntry: ReactNode
+  /** رقم المستند إن وُجد (تعديل فاتورة مرحّلة)؛ وإلا «مسودة» */
+  documentNumber?: string
+  /** قيمة زر الترحيل: «ترحيل وتحصيل 25,000.00» */
+  postAmountLabel?: string
   onBack: () => void
   onNavigate: (path: string) => void
   onPartySearch: () => void
@@ -26,7 +30,12 @@ type InvoicePOSFrameProps = {
   children: ReactNode
 }
 
-/** سطح فاتورة POS مستقل: رأس مرجعي، شريط اختصارات، إدخال سريع، وجدول/حسابات. */
+/**
+ * سطح الفاتورة بشكل «مستند» مرتب (طلب المالك — الشكل المرفق):
+ * شريط علوي فيه رقم المستند وحالته وأزرار الحفظ/المعاينة/الاعتماد، ثم بطاقة رأس
+ * فيها الطرف والتواريخ وملف الحساب، ثم جدول البنود، ثم صف سفلي بثلاث لوحات
+ * (ملاحظات · التحصيل الآن · الإجماليات) وشريط إجراءات ثابت أسفل الشاشة.
+ */
 export function InvoicePOSFrame({
   kind,
   modeLabel,
@@ -38,6 +47,8 @@ export function InvoicePOSFrame({
   headerFields,
   partyProfile,
   itemEntry,
+  documentNumber,
+  postAmountLabel,
   onBack,
   onNavigate,
   onPartySearch,
@@ -50,9 +61,10 @@ export function InvoicePOSFrame({
 }: InvoicePOSFrameProps) {
   const sale = kind === 'sale'
   const partyWord = sale ? 'العميل' : 'المورد'
-  const invoicePath = sale ? '/sales/invoices/new' : '/purchases/invoices/new'
   const { sync, receipt, autoPrintAfterSale } = useAppStore()
   const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   useEffect(() => {
     const on = () => setBrowserOnline(true)
     const off = () => setBrowserOnline(false)
@@ -64,95 +76,87 @@ export function InvoicePOSFrame({
   const connectivityInfo = CONNECTIVITY_LABELS[connectivity]
   const browserPrintAvailable = typeof window !== 'undefined' && typeof window.print === 'function'
   const autoPrintEnabled = sale && autoPrintAfterSale
-  const printerLabel = browserPrintAvailable
-    ? (autoPrintEnabled ? 'متاحة · تلقائية مفعّلة' : `متاحة · ${receipt.defaultTemplate}`)
-    : 'غير متاحة في هذا المتصفح'
 
   return (
-    <div className={`invoice-pos-root invoice-editor invoice-pos-${kind}`} dir="rtl">
-      <header className="invoice-reference-header">
-        <div className="invoice-reference-utility">
-          <div className="invoice-reference-brandline">
-            <div className="invoice-reference-window-dots"><i /><i /><i /></div>
-            <span className="invoice-reference-brand-mark">T</span>
-            <span>منظومة الفواتير ونقاط البيع | TAHAKAM ERP</span>
-          </div>
-          <div className="invoice-reference-session">
-            <span><Store size={14} /> {activityLabel}</span>
-            <span>الفرع: <b>{branchLabel}</b></span>
-            <span>المستخدم: <b>{userLabel}</b></span>
-            <span className={`invoice-reference-online invoice-reference-online-${connectivityInfo.tone}`} title={connectivityInfo.nameAr}><i /> {connectivityInfo.icon} {connectivityInfo.nameAr}</span>
-          </div>
+    <div className={`invoice-doc invoice-editor invoice-pos-root invoice-pos-${kind}`} dir="rtl">
+      {/* ① الشريط العلوي: أدوات صغيرة يميناً/يساراً كما في نوافذ البرامج */}
+      <div className="invoice-doc-utility">
+        <div className="invoice-doc-utility-tools">
+          <button type="button" data-doc-menu aria-label="إجراءات المستند" title="إجراءات المستند" onClick={() => setMenuOpen((v) => !v)}><MoreVertical size={15} /></button>
+          <button type="button" aria-label="معاينة الطباعة" title="معاينة الطباعة" onClick={onPrint}><MonitorSmartphone size={15} /></button>
+          <button type="button" data-doc-help aria-label="مساعدة الفاتورة" title="كيف تُحرَّر الفاتورة؟" onClick={() => setHelpOpen((v) => !v)}><CircleHelp size={15} /></button>
+          {menuOpen && (
+            <div className="invoice-doc-menu" data-doc-menu-panel>
+              <button type="button" onClick={() => { setMenuOpen(false); onRestoreDraft() }}>استعادة آخر مسودة</button>
+              <button type="button" onClick={() => { setMenuOpen(false); onPartySearch() }}>بحث {partyWord} (F2)</button>
+              <button type="button" onClick={() => { setMenuOpen(false); onItemSearch() }}>بحث صنف (F5)</button>
+              <button type="button" onClick={() => { setMenuOpen(false); onNavigate(sale ? '/sales/invoices' : '/purchases/invoices') }}>سجل الفواتير</button>
+            </div>
+          )}
+          {helpOpen && (
+            <div className="invoice-doc-menu is-help" data-doc-help-panel>
+              <b>ترتيب العمل في الفاتورة</b>
+              <span>① اختر {partyWord} · ② أضف الأصناف سطراً سطراً · ③ اكتب الخصم والضريبة إن وُجدت · ④ حدد المحصَّل الآن · ⑤ اضغط «اعتماد وترحيل».</span>
+              <span>الحفظ كمسودة لا يؤثر على المخزون ولا الحسابات، والترحيل هو ما يُنشئ القيد.</span>
+            </div>
+          )}
         </div>
-        <div className="invoice-reference-mainnav">
-          <div className="invoice-reference-navbrand">TAHAKAM <b>ERP</b></div>
-          <nav>
-            <button className="active" type="button" onClick={() => onNavigate(invoicePath)}>شاشة الفاتورة السريعة</button>
-            <button type="button" onClick={() => onNavigate(sale ? '/sales/invoices' : '/purchases/invoices')}>سجل الفواتير والمردودات</button>
-            <button type="button" onClick={() => onNavigate('/parties/customers')}>إدارة العملاء والديون</button>
-            <button type="button" onClick={() => onNavigate('/sales/shifts')}>حركة الصندوق واليومية</button>
-          </nav>
-          <span className="invoice-reference-mode">{sale ? 'مبيعات' : 'مشتريات'} · {modeLabel}</span>
+        <div className="invoice-doc-utility-session">
+          <span>{activityLabel}</span>
+          <span>الفرع: <b>{branchLabel}</b></span>
+          <span>المستخدم: <b>{userLabel}</b></span>
+          <span className={`invoice-doc-online is-${connectivityInfo.tone}`}><i /> {connectivityInfo.nameAr}</span>
         </div>
-        <div className="invoice-reference-shortcutbar">
-          <span className="invoice-reference-shortcut-label"><Keyboard size={14} /> اختصارات سريعة:</span>
-          <span><kbd>F2</kbd> اختيار {partyWord}</span>
-          <span><kbd>F5</kbd> بحث صنف</span>
-          <span><kbd>F6</kbd> طباعة</span>
-          <span><kbd>F8</kbd> حفظ مسودة</span>
-          <span className="primary"><kbd>F9</kbd> ترحيل</span>
-          <time>{dateLabel}</time>
+        <button type="button" className="invoice-doc-close" onClick={onBack} aria-label="إغلاق المستند والعودة" title="إغلاق المستند"><ArrowLeft size={17} /></button>
+      </div>
+
+      {/* ② رأس المستند: الرقم والحالة وأزرار الحفظ والاعتماد */}
+      <header className="invoice-doc-head">
+        <div className="invoice-doc-identity">
+          <b data-doc-number>{documentNumber || (sale ? 'فاتورة مبيعات جديدة' : 'فاتورة مشتريات جديدة')}</b>
+          <span className="invoice-doc-status" data-doc-status>{documentNumber ? 'تعديل' : 'مسودة'}</span>
+          <small>{modeLabel} · {currencyLabel} · {dateLabel}</small>
+        </div>
+        <div className="invoice-doc-head-actions">
+          <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={14} /> حفظ مسودة</Btn>
+          <Btn variant="ghost" onClick={onPrint} shortcut="F6"><Eye size={14} /> معاينة</Btn>
+          <Btn onClick={onPost} shortcut="F9"><FileCheck2 size={14} /> اعتماد وترحيل</Btn>
         </div>
       </header>
 
-      <div className="invoice-reference-main-area">
-        <main className="invoice-reference-content">
-          <section className="invoice-reference-header-card invoice-reference-compact-header">
-            <div className="invoice-reference-document-head">
-              <button className="invoice-reference-top-back" type="button" onClick={onBack} title={`العودة إلى قسم ${sale ? 'المبيعات' : 'المشتريات'}`} aria-label={`العودة إلى قسم ${sale ? 'المبيعات' : 'المشتريات'}`}><ArrowRight size={19} /></button>
-              <div className="invoice-reference-document-card">
-                <FileText size={20} />
-                <span><small>رقم الفاتورة الإلكترونية</small><strong>يصدر عند الترحيل</strong></span>
-              </div>
-              <div className="invoice-reference-meta-card"><CalendarDays size={18} /><span><small>تاريخ ووقت الإصدار</small><strong>{dateLabel}</strong></span></div>
-              <div className="invoice-reference-meta-card"><CircleDollarSign size={18} /><span><small>العملة</small><strong>{currencyLabel}</strong></span></div>
-              <div className="invoice-reference-state-card"><BadgeCheck size={16} /><span><b>مسودة قيد التحرير</b><small>الطباعة: {printerLabel}</small></span></div>
-              <div className="invoice-reference-top-actions">
-                <Btn variant="ghost" onClick={onPartySearch} shortcut="F2"><Search size={14} /> {partyWord}</Btn>
-                <Btn variant="ghost" onClick={onItemSearch} shortcut="F5"><PackageSearch size={14} /> صنف</Btn>
-                <Btn variant="ghost" onClick={onRestoreDraft}>استعادة</Btn>
-                <Btn variant="ghost" onClick={onPrint} shortcut="F6"><Printer size={14} /> طباعة</Btn>
-                <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={14} /> حفظ</Btn>
-                <Btn onClick={onPost} shortcut="F9"><FileCheck2 size={14} /> ترحيل</Btn>
-              </div>
-            </div>
+      <div className="invoice-doc-body">
+        {/* ③ بطاقة الرأس: الطرف والتواريخ والمخزن + ملف الحساب */}
+        <section className="invoice-doc-card invoice-doc-header-card">
+          <div className="invoice-doc-fields">{headerFields}</div>
+          {partyProfile && <aside className="invoice-doc-party">{partyProfile}</aside>}
+        </section>
 
-            <div className="invoice-reference-account-invoice-grid">
-              {partyProfile && <section className="invoice-reference-party-panel">
-                <div className="invoice-reference-party-panel-title"><Search size={17} /><span><b>ملف {partyWord}</b><small>تفاصيل الحساب من السجل الحقيقي</small></span></div>
-                <div className="invoice-reference-party-panel-body">{partyProfile}</div>
-              </section>}
+        {/* ④ شريط إضافة صنف سريع */}
+        <section className="invoice-doc-card invoice-doc-entry">
+          <div className="invoice-doc-entry-label"><PackageSearch size={15} /> إضافة صنف أو خدمة</div>
+          <div className="invoice-doc-entry-input">{itemEntry}</div>
+          <div className="invoice-doc-entry-hints">
+            <button type="button" onClick={onItemSearch}><Search size={12} /> مسح باركود / بحث</button>
+            <span><kbd>Enter</kbd> إضافة · <kbd>F5</kbd> بحث · <kbd>F9</kbd> ترحيل</span>
+          </div>
+        </section>
 
-              <section className="invoice-reference-edit-head">
-                <div className="invoice-reference-section-title"><FileText size={18} /><span><b>بيانات الفاتورة</b><small>التعديل يتم من هذا الرأس فقط</small></span></div>
-                <div className="invoice-reference-edit-fields">{headerFields}</div>
-              </section>
-            </div>
-          </section>
-
-          <section className="invoice-reference-rapid-entry">
-            <div className="invoice-reference-rapid-title"><BarcodeIcon /> <span><b>إدخال سريع للأصناف</b><small>امسح الباركود أو ابحث بالاسم والكود</small></span></div>
-            <div className="invoice-reference-rapid-input">{itemEntry}</div>
-            <div className="invoice-reference-rapid-hint"><kbd>F5</kbd> لفتح البحث · <kbd>Enter</kbd> للإضافة · زر واحد لاختيار الصنف لا يعتمد الإضافة</div>
-          </section>
-
-          <div className="invoice-pos-document">{children}</div>
-        </main>
+        {/* ⑤ جدول البنود واللوحات السفلية */}
+        <div className="invoice-pos-document">{children}</div>
       </div>
 
-      <footer className="invoice-reference-statusbar"><span className={`invoice-reference-status-${connectivityInfo.tone}`}><i /> {connectivityInfo.nameAr}</span><span><i /> الطباعة: {browserPrintAvailable ? (autoPrintEnabled ? 'تلقائية' : 'يدوية') : 'غير متاحة'}</span><span>TAHAKAM ERP · {sale ? 'فاتورة مبيعات' : 'فاتورة مشتريات'}</span></footer>
+      {/* ⑥ شريط الإجراءات الثابت */}
+      <footer className="invoice-doc-actionbar">
+        <div className="invoice-doc-actionbar-info">
+          <span className={`invoice-doc-online is-${connectivityInfo.tone}`}><i /> {connectivityInfo.nameAr}</span>
+          <span>الطباعة: {browserPrintAvailable ? (autoPrintEnabled ? 'تلقائية بعد البيع' : receipt.defaultTemplate) : 'غير متاحة'}</span>
+        </div>
+        <div className="invoice-doc-actionbar-buttons">
+          <Btn variant="ghost" onClick={onSaveDraft}>حفظ فقط</Btn>
+          <Btn variant="ghost" onClick={onPrint}><Printer size={14} /> حفظ ومعاينة</Btn>
+          <Btn onClick={onPost} shortcut="F9" className="invoice-doc-post"><FileCheck2 size={15} /> ترحيل {sale ? 'وتحصيل' : 'وسداد'} {postAmountLabel ?? ''}</Btn>
+        </div>
+      </footer>
     </div>
   )
 }
-
-function BarcodeIcon() { return <span className="invoice-reference-barcode-icon" aria-hidden="true">▥</span> }

@@ -14,6 +14,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { summarizeCustody, CUSTODY_TX_LABELS, type CustodyFile } from '../../core/custody.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
+import { DocSection, DocOutcome } from '../components/DocSection.tsx'
 
 export function CustodyPage() {
   const {
@@ -53,6 +54,9 @@ export function CustodyPage() {
   const viewing: CustodyFile | null = viewingId != null ? custodyFiles.find((f) => f.id === viewingId) ?? null : null
   const viewTxs = useMemo(() => custodyTxs.filter((t) => t.fileId === viewingId), [custodyTxs, viewingId])
   const viewSummary = useMemo(() => summarizeCustody(viewTxs), [viewTxs])
+
+  /* قيم مشتقة لنوافذ العهدة: المبالغ بالقروش وأثرها المحاسبي قبل الترحيل */
+  const toMinorSafe = (v: string) => { try { return v.trim() ? toMinor(v, cur.decimals) : 0 } catch { return 0 } }
 
   /* ─── تعزيز ─── */
   const [fundOpen, setFundOpen] = useState(false)
@@ -267,79 +271,168 @@ export function CustodyPage() {
       </Modal>
 
       {/* تعزيز */}
-      <Modal open={fundOpen} onClose={() => setFundOpen(false)} title={viewing ? `💰 تعزيز ${viewing.fileNumber}` : ''}>
-        <div className="space-y-4">
-          <Field label={`المبلغ (${cur.symbol}) *`}><input value={fundAmount} onChange={(e) => setFundAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
-          <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={fundTreasury} onChange={setFundTreasury} /></Field>
-          <Field label="البيان"><input value={fundDesc} onChange={(e) => setFundDesc(e.target.value)} className={inputCls} placeholder="عهدة أسبوع، تشغيل موقع…" /></Field>
-          <div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setFundOpen(false)}>إلغاء</Btn>
-            <Btn onClick={doFund} shortcut="F9" disabled={!fundAmount.trim()}>💾 تعزيز وقيد</Btn>
-          </div>
-        </div>
-      </Modal>
-
-      {/* مصروف */}
-      <Modal open={expOpen} onClose={() => setExpOpen(false)} title={viewing ? `🧾 مصروف من ${viewing.fileNumber}` : ''}>
+      <Modal open={fundOpen} onClose={() => setFundOpen(false)} title="" wide bare>
         {viewing && (
-          <div className="space-y-4">
-            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-[12.5px] flex justify-between">
-              <span className="text-slate-500">المتبقي بالعهدة</span><b>{fmt(viewSummary.remainingMinor)} {cur.symbol}</b>
+          <div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
+            <div className="doc-head flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><HandCoins size={19} /></span>
+                <div>
+                  <h3 className="text-base font-black leading-tight">تعزيز عهدة</h3>
+                  <span className="text-[10.5px] doc-head-sub">CUSTODY FUNDING</span>
+                </div>
+              </div>
+              <span className="rounded-lg bg-white/10 px-2.5 py-1.5 font-mono text-[11px] font-bold">{viewing.fileNumber}</span>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label={`المبلغ (${cur.symbol}) *`}><input value={expAmount} onChange={(e) => setExpAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus /></Field>
-              <Field label="على مشروع؟" hint="يدخل تكاليفه وربحيته">
-                <QuickSelect value={expProjectId} onChange={(e) => setExpProjectId(e.target.value)} className={inputCls}>
-                  <option value="">— بلا مشروع —</option>
-                  {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
-                </QuickSelect>
-              </Field>
+            <div className="doc-meta px-5 py-2 text-[10px]">{empName(viewing.employeeId)} · المتبقي بالعهدة الآن {fmt(viewSummary.remainingMinor)} {cur.symbol}</div>
+            <div className="max-h-[calc(92vh-11rem)] space-y-3.5 overflow-y-auto px-5 py-4">
+              <DocSection step="١" title="المبلغ ومصدره" hint="المال ينتقل من خزينة المنشأة إلى ذمة الموظف">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Field label={`المبلغ (${cur.symbol}) *`}>
+                    <input value={fundAmount} onChange={(e) => setFundAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
+                  </Field>
+                  <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={fundTreasury} onChange={setFundTreasury} compact /></Field>
+                </div>
+              </DocSection>
+              <DocSection step="٢" title="البيان" hint="يظهر في كشف العهدة وفي الدفتر">
+                <input value={fundDesc} onChange={(e) => setFundDesc(e.target.value)} className={inputCls} placeholder="عهدة أسبوع، تشغيل موقع…" />
+              </DocSection>
+              <DocOutcome>
+                <b className="block pb-1">القيد الذي سيُرحَّل</b>
+                <div className="flex items-center justify-between gap-3"><span>عهد الموظفين (1108) — مديناً بذمة {empName(viewing.employeeId)}</span><b className="font-mono">{fmt(toMinorSafe(fundAmount))}</b></div>
+                <div className="flex items-center justify-between gap-3"><span>الخزينة المصدر ({fundTreasury}) — دائناً</span><b className="font-mono">{fmt(toMinorSafe(fundAmount))}</b></div>
+                <div className="mt-1 border-t doc-line pt-1 text-[10.5px] doc-faint">ليس مصروفاً: المال ما زال ملك المنشأة في ذمة الموظف حتى ينفقه أو يردّه.</div>
+              </DocOutcome>
             </div>
-            <Field label="بيان المصروف *"><input value={expDesc} onChange={(e) => setExpDesc(e.target.value)} className={inputCls} placeholder="مواد، مواصلات، إكراميات عمال…" /></Field>
-            <label className="flex items-center gap-2.5 p-3 rounded-xl border border-amber-300/50 dark:border-amber-700/50 cursor-pointer">
-              <input type="checkbox" checked={expAllowExcess} onChange={(e) => setExpAllowExcess(e.target.checked)} className="w-4 h-4 accent-amber-500" />
-              <span className="text-[12px] font-bold text-amber-700 dark:text-amber-300">سماح بالزيادة عن العهدة — الفرق يُسجَّل مستحقاً للموظف ويُصرف مع راتبه</span>
-            </label>
-            <div className="flex justify-end gap-2">
-              <Btn variant="ghost" onClick={() => setExpOpen(false)}>إلغاء</Btn>
-              <Btn onClick={doExpense} shortcut="F9" disabled={!expAmount.trim() || !expDesc.trim()}>💾 تسجيل المصروف</Btn>
+            <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+              <span className="text-[11px] doc-faint">العهدة بعد التعزيز: <b className="font-mono doc-ink">{fmt(viewSummary.remainingMinor + toMinorSafe(fundAmount))}</b></span>
+              <div className="flex gap-2">
+                <Btn variant="ghost" onClick={() => setFundOpen(false)}>إلغاء</Btn>
+                <Btn onClick={doFund} shortcut="F9" disabled={toMinorSafe(fundAmount) <= 0}>تعزيز وقيد</Btn>
+              </div>
             </div>
           </div>
         )}
       </Modal>
 
-      {/* تسوية */}
-      <Modal open={settleOpen} onClose={() => setSettleOpen(false)} title={viewing ? `⚖️ تسوية وإغلاق ${viewing.fileNumber}` : ''}>
-        {viewing && (
-          <div className="space-y-4">
-            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-[12.5px] flex justify-between">
-              <span className="text-slate-500">المتبقي بعهدة {empName(viewing.employeeId)}</span><b>{fmt(viewSummary.remainingMinor)} {cur.symbol}</b>
-            </div>
-            <Field label={`المرتجع نقداً (${cur.symbol})`} hint="ما يعيده الموظف فعلاً — الفرق يُسجَّل عجزاً">
-              <input value={returnAmount} onChange={(e) => setReturnAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
-            </Field>
-            <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={settleTreasury} onChange={setSettleTreasury} compact /></Field>
-            {returnAmount.trim() !== '' && (() => {
-              try {
-                const ret = toMinor(returnAmount, cur.decimals)
-                if (ret > viewSummary.remainingMinor) return <div className="text-[12px] font-bold text-rose-500">⚠️ المرتجع أكبر من المتبقي بالعهدة</div>
-                const shortage = viewSummary.remainingMinor - ret
-                return shortage > 0 ? (
-                  <div className="anim-pop rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[12px] font-bold text-amber-700 dark:text-amber-300 flex items-start gap-2">
-                    <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                    <span>عجز {fmt(shortage)} {cur.symbol} — سيُسجَّل <b>سلفة على الموظف</b> تخصمها من راتبه بحريتك: كلها أو أجزاء على عدة مسيرات</span>
+      {/* مصروف من العهدة */}
+      <Modal open={expOpen} onClose={() => setExpOpen(false)} title="" wide bare>
+        {viewing && (() => {
+          const amountMinor = toMinorSafe(expAmount)
+          const excess = Math.max(0, amountMinor - viewSummary.remainingMinor)
+          return (
+            <div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
+              <div className="doc-head flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+                <div className="flex items-center gap-2.5">
+                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><Receipt size={19} /></span>
+                  <div>
+                    <h3 className="text-base font-black leading-tight">مصروف من العهدة</h3>
+                    <span className="text-[10.5px] doc-head-sub">CUSTODY EXPENSE</span>
                   </div>
-                ) : (
-                  <div className="anim-pop text-[12px] font-bold text-emerald-600 bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3">✓ تسوية كاملة بلا عجز — الملف يُغلق نهائياً</div>
-                )
-              } catch { return null }
-            })()}
-            <div className="flex justify-end gap-2">
-              <Btn variant="ghost" onClick={() => setSettleOpen(false)}>إلغاء</Btn>
-              <Btn onClick={doSettle} shortcut="F9" disabled={returnAmount.trim() === ''}>⚖️ تنفيذ التسوية والإغلاق</Btn>
+                </div>
+                <span className="rounded-lg bg-white/10 px-2.5 py-1.5 font-mono text-[11px] font-bold">{viewing.fileNumber}</span>
+              </div>
+              <div className="doc-meta px-5 py-2 text-[10px]">{empName(viewing.employeeId)} · المتبقي بالعهدة {fmt(viewSummary.remainingMinor)} {cur.symbol}</div>
+              <div className="max-h-[calc(92vh-11rem)] space-y-3.5 overflow-y-auto px-5 py-4">
+                <DocSection step="١" title="قيمة المصروف ووجهته" hint="المشروع اختياري — يدخل تكاليفه وربحيته">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field label={`المبلغ (${cur.symbol}) *`}>
+                      <input value={expAmount} onChange={(e) => setExpAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
+                    </Field>
+                    <Field label="على مشروع؟">
+                      <QuickSelect value={expProjectId} onChange={(e) => setExpProjectId(e.target.value)} className={inputCls}>
+                        <option value="">— بلا مشروع —</option>
+                        {projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
+                      </QuickSelect>
+                    </Field>
+                  </div>
+                </DocSection>
+                <DocSection step="٢" title="بيان المصروف" hint="إلزامي — هو سند إنفاق العهدة">
+                  <input value={expDesc} onChange={(e) => setExpDesc(e.target.value)} className={inputCls} placeholder="مواد، مواصلات، إصلاح…" />
+                </DocSection>
+                <DocSection step="٣" title="تجاوز رصيد العهدة" hint="حين ينفق الموظف من جيبه فوق عهدته">
+                  <label className="flex cursor-pointer items-center gap-2.5 rounded-xl doc-tint p-3">
+                    <input type="checkbox" checked={expAllowExcess} onChange={(e) => setExpAllowExcess(e.target.checked)} className="h-4 w-4 accent-amber-500" />
+                    <span className="text-[12px] font-bold doc-ink">اسمح بالزيادة عن العهدة — الفرق يُسجَّل مستحقاً للموظف يُصرف مع راتبه</span>
+                  </label>
+                  {excess > 0 && (
+                    <p className={`mt-2 rounded-lg px-3 py-2 text-[11.5px] font-bold ${expAllowExcess ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'bg-rose-500/10 text-rose-700 dark:text-rose-300'}`}>
+                      {expAllowExcess
+                        ? `الزائد ${fmt(excess)} ${cur.symbol} سيصير مستحقاً للموظف (2107) لا خصماً من العهدة.`
+                        : `المبلغ يتجاوز العهدة بـ${fmt(excess)} ${cur.symbol} — فعّل السماح بالزيادة أو قلّل المبلغ.`}
+                    </p>
+                  )}
+                </DocSection>
+                <DocOutcome>
+                  <b className="block pb-1">القيد الذي سيُرحَّل</b>
+                  <div className="flex items-center justify-between gap-3"><span>حساب المصروف — مديناً</span><b className="font-mono">{fmt(amountMinor)}</b></div>
+                  <div className="flex items-center justify-between gap-3"><span>عهد الموظفين (1108) — دائناً بما خرج من العهدة</span><b className="font-mono">{fmt(Math.min(amountMinor, viewSummary.remainingMinor))}</b></div>
+                  {excess > 0 && expAllowExcess && <div className="flex items-center justify-between gap-3"><span>مستحق للموظف (2107) — دائناً بالزائد</span><b className="font-mono">{fmt(excess)}</b></div>}
+                </DocOutcome>
+              </div>
+              <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+                <span className="text-[11px] doc-faint">يتبقى بالعهدة بعد الصرف: <b className="font-mono doc-ink">{fmt(Math.max(0, viewSummary.remainingMinor - amountMinor))}</b></span>
+                <div className="flex gap-2">
+                  <Btn variant="ghost" onClick={() => setExpOpen(false)}>إلغاء</Btn>
+                  <Btn onClick={doExpense} shortcut="F9" disabled={amountMinor <= 0 || !expDesc.trim() || (excess > 0 && !expAllowExcess)}>تسجيل المصروف</Btn>
+                </div>
+              </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
+      </Modal>
+
+      {/* تسوية وإغلاق العهدة */}
+      <Modal open={settleOpen} onClose={() => setSettleOpen(false)} title="" wide bare>
+        {viewing && (() => {
+          const returned = toMinorSafe(returnAmount)
+          const over = returned > viewSummary.remainingMinor
+          const shortage = Math.max(0, viewSummary.remainingMinor - returned)
+          return (
+            <div dir="rtl" className="overflow-hidden rounded-3xl doc-sheet">
+              <div className="doc-head flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+                <div className="flex items-center gap-2.5">
+                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/10"><Scale size={19} /></span>
+                  <div>
+                    <h3 className="text-base font-black leading-tight">تسوية وإغلاق عهدة</h3>
+                    <span className="text-[10.5px] doc-head-sub">CUSTODY SETTLEMENT</span>
+                  </div>
+                </div>
+                <span className="rounded-lg bg-white/10 px-2.5 py-1.5 font-mono text-[11px] font-bold">{viewing.fileNumber}</span>
+              </div>
+              <div className="doc-meta px-5 py-2 text-[10px]">{empName(viewing.employeeId)} · المطلوب رده {fmt(viewSummary.remainingMinor)} {cur.symbol}</div>
+              <div className="max-h-[calc(92vh-11rem)] space-y-3.5 overflow-y-auto px-5 py-4">
+                <DocSection step="١" title="المرتجع نقداً" hint="ما يعيده الموظف فعلاً — الفرق يصير سلفة عليه">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field label={`المرتجع (${cur.symbol})`}>
+                      <input value={returnAmount} onChange={(e) => setReturnAmount(e.target.value)} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" autoFocus />
+                    </Field>
+                    <Field label="إلى أي خزينة/بنك؟"><TreasuryPicker value={settleTreasury} onChange={setSettleTreasury} compact /></Field>
+                  </div>
+                  {over && <p className="mt-2 rounded-lg bg-rose-500/10 px-3 py-2 text-[11.5px] font-bold text-rose-700 dark:text-rose-300">المرتجع أكبر من المتبقي بالعهدة بـ{fmt(returned - viewSummary.remainingMinor)} — راجع المبلغ.</p>}
+                </DocSection>
+                <DocOutcome>
+                  <b className="block pb-1">القيد الذي سيُرحَّل</b>
+                  {returned > 0 && <div className="flex items-center justify-between gap-3"><span>الخزينة ({settleTreasury}) — مديناً بالمرتجع</span><b className="font-mono">{fmt(Math.min(returned, viewSummary.remainingMinor))}</b></div>}
+                  {shortage > 0 && <div className="flex items-center justify-between gap-3"><span>سلف الموظفين (1107) — مديناً بالعجز</span><b className="font-mono">{fmt(shortage)}</b></div>}
+                  <div className="flex items-center justify-between gap-3"><span>عهد الموظفين (1108) — دائناً بإقفال العهدة</span><b className="font-mono">{fmt(viewSummary.remainingMinor)}</b></div>
+                  <div className="mt-1 flex items-start gap-1.5 border-t doc-line pt-1 text-[10.5px] doc-faint">
+                    {shortage > 0
+                      ? <><AlertTriangle size={12} className="mt-0.5 shrink-0" /><span>العجز {fmt(shortage)} يصير سلفة على {empName(viewing.employeeId)} تخصمها من راتبه كلها أو على دفعات.</span></>
+                      : <><CheckCircle2 size={12} className="mt-0.5 shrink-0" /><span>تسوية كاملة بلا عجز — يُغلق الملف بعد الترحيل.</span></>}
+                  </div>
+                </DocOutcome>
+              </div>
+              <div className="doc-footer flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+                <span className="text-[11px] doc-faint">{shortage > 0 ? `سلفة ستُقيَّد: ${fmt(shortage)}` : 'لا سلفة — العهدة مغطاة بالكامل'}</span>
+                <div className="flex gap-2">
+                  <Btn variant="ghost" onClick={() => setSettleOpen(false)}>إلغاء</Btn>
+                  <Btn onClick={doSettle} shortcut="F9" disabled={returnAmount.trim() === '' || over}>تنفيذ التسوية والإغلاق</Btn>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
       </Modal>
     </div>
   )

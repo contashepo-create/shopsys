@@ -143,8 +143,10 @@ assert.throws(() => st().deleteCommissionParty(broker.id))
 ok('حذف طرف عليه عمولات مرفوض', true)
 
 console.log('― الرصيد الموحّد للمورد + توازن الدفتر ―')
+const supBeforeOpening = st().getSupplierBalance(sup.id)
 useDataStore.setState({ openingBalances: { ...st().openingBalances, [`supplier:${sup.id}`]: 40_000 } })
-ok('getSupplierBalance يشمل الرصيد الافتتاحي', st().getSupplierBalance(sup.id) === 40_000)
+// AUDIT-014: رصيد المورد صار يضم دين الأصول الثابتة الآجلة أيضاً — فيُقاس الفرق لا القيمة المطلقة
+ok('getSupplierBalance يشمل الرصيد الافتتاحي فوق ما عليه من مستندات', st().getSupplierBalance(sup.id) === supBeforeOpening + 40_000)
 let d = 0, c = 0
 for (const e of st().journal) for (const l of e.lines) { d += l.debit; c += l.credit }
 ok('الدفتر متوازن بعد كل العمليات', d === c)

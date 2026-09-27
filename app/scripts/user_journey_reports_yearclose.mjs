@@ -63,9 +63,11 @@ const Y25 = { from: '2025-01-01', to: '2025-12-31' }
     { accountCode: '5101', debit: 250000, credit: 0, note: '' },
     { accountCode: '1103', debit: 0, credit: 250000, note: '' },
   ] })
-  // بيع آجل 200 + ض 28
+  // بيع آجل 200 + ض 28 — سطر حساب المراقبة يحمل العميل (AUDIT-011) فيدخل كشف حسابه
+  st().addCustomer({ nameAr: 'عميل 2025', phone: '', taxNumber: '', address: '', notes: '', isActive: true, creditLimitMinor: 0 })
+  const oldCustomer = st().customers.at(-1)
   st().postManualEntry({ date: '2025-06-20', description: 'بيع آجل', lines: [
-    { accountCode: '1104', debit: 228000, credit: 0, note: '' },
+    { accountCode: '1104', debit: 228000, credit: 0, note: '', partyKind: 'customer', partyId: oldCustomer.id },
     { accountCode: '4101', debit: 0, credit: 200000, note: '' },
     { accountCode: '2102', debit: 0, credit: 28000, note: 'مخرجات' },
   ] })

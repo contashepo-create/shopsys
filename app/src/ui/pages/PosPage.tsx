@@ -16,6 +16,7 @@ import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
 import { effectiveVatPercent, sameIngredientAlternatives, itemMatchesPartQuery, type Item } from '../../core/items.ts'
+import { matchesSearch, searchRank } from '../../core/search.ts'
 import { resolveBusinessTax } from '../../core/taxRegistration.ts'
 import { themeForActivity } from '../../core/activityTheme.ts'
 import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.ts'
@@ -28,7 +29,8 @@ import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { maybeZatcaQr } from '../print/zatcaQr.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
-import { Btn, Modal, Field, inputCls, useToast, useUnsavedChangesGuard, guardNavigation } from '../components/ui.tsx'
+import { Btn, Modal, Field, inputCls, useToast, useUnsavedChangesGuard, guardNavigation, OverlayPortal } from '../components/ui.tsx'
+import { useAnchoredMenu } from '../components/anchoredMenu.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
@@ -139,6 +141,7 @@ export function PosPage() {
   const [treasury, setTreasury] = useState('1101')
   const [lastInvoice, setLastInvoice] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const searchBoxRef = useRef<HTMLDivElement>(null)
   const qtyRefs = useRef<Record<number, HTMLInputElement | null>>({})
   const priceRefs = useRef<Record<number, HTMLInputElement | null>>({})
   const [searchIndex, setSearchIndex] = useState(0)
@@ -170,12 +173,21 @@ export function PosPage() {
 
   const sellable = useMemo(() => items.filter((it) => it.isActive), [items])
 
+  /* بلاغ المالك: «لا يظهر أي صنف عند كتابة حرف في خانة البحث».
+     السبب أن المطابقة كانت حرفية فتفشل مع همزة أو تاء مربوطة أو رقم عربي.
+     الآن المطابقة بنواة البحث المتسامحة (core/search.ts) مع ترتيب النتائج:
+     المطابق التام ثم ما يبدأ بالحرف ثم ما يحتويه. */
   const filtered = useMemo(() => {
     const q = query.trim()
     if (!q) return sellable.slice(0, 24)
-    // بحث موحد: اسم/SKU/باركود + أرقام OEM والتوافق (جولة قطع الغيار)
-    return sellable.filter((it) => it.nameAr.includes(q) || it.sku.includes(q) || it.barcodes.some((b) => b.includes(q)) || itemMatchesPartQuery(it, q)).slice(0, 24)
+    return sellable
+      .filter((it) => matchesSearch([it.nameAr, it.sku, ...it.barcodes, it.id], q) || itemMatchesPartQuery(it, q))
+      .sort((a, b) => searchRank([a.nameAr, a.sku, ...a.barcodes], q) - searchRank([b.nameAr, b.sku, ...b.barcodes], q))
+      .slice(0, 24)
   }, [sellable, query])
+  const searchResults = useMemo(() => filtered.slice(0, 8), [filtered])
+  const searchOpen = query.trim().length > 0
+  const searchMenuStyle = useAnchoredMenu(searchBoxRef, searchOpen, 420)
 
   // نافذة اختيار السيريال/IMEI (نمط موبايل شوب: البيع بالقطعة المعيّنة)
   const [serialPickItem, setSerialPickItem] = useState<number | null>(null)
@@ -606,13 +618,13 @@ export function PosPage() {
     <div data-pos-layout={posLayout} className={`pos-workspace pos-layout-${posLayout} ${isFastList ? 'pos-fast-list' : isVisualGrid ? 'pos-visual-grid' : isDetailCards ? 'pos-detail-cards' : ''} flex flex-col gap-2 h-[calc(100vh-6.5rem)]`}>
       {/* ═══ يمين: الأصناف والبحث ═══ */}
       <div className="relative flex flex-col gap-2 shrink-0">
-        <div className="anim-up relative">
+        <div ref={searchBoxRef} className="anim-up relative">
           <ScanBarcode size={17} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-brand-500" />
           <input
             ref={searchRef}
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSearchIndex(0) }}
-            onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex((i) => Math.min(filtered.slice(0, 8).length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Enter') { e.preventDefault(); const selected = filtered[searchIndex] ?? filtered[0]; if (selected) { addToCart(selected.id); setQuery('') } else onSearchEnter() } }}
+            onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSearchIndex((i) => Math.min(searchResults.length - 1, i + 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setSearchIndex((i) => Math.max(0, i - 1)) } else if (e.key === 'Escape') { setQuery('') } else if (e.key === 'Enter') { e.preventDefault(); const selected = searchResults[searchIndex] ?? searchResults[0]; if (selected) { addToCart(selected.id); setQuery('') } else onSearchEnter() } }}
             placeholder="F2 بحث · امسح الباركود أو اكتب الاسم · Enter إضافة · F8 نقدي · F9 دفع"
             className={`${inputCls} pr-10 py-3 text-base border-brand-300 dark:border-brand-700 shadow-sm`}
           />
@@ -633,12 +645,58 @@ export function PosPage() {
           </div>
         )}
 
-        {query.trim() && filtered.length > 0 && (
-          <div role="dialog" aria-label="نتائج بحث الأصناف في الكاشير" className="absolute z-30 top-14 right-0 left-0 overflow-hidden rounded-2xl border border-emerald-300/50 dark:border-emerald-800 bg-white dark:bg-card-dark shadow-2xl">
-            {filtered[searchIndex] && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-emerald-500/5 px-3 py-2 dark:border-slate-700"><div><span className="ml-2 font-mono text-[10px] text-slate-500" dir="ltr">{filtered[searchIndex].sku || filtered[searchIndex].barcodes?.[0] || filtered[searchIndex].id}</span><b>{filtered[searchIndex].nameAr}</b></div><div className="flex gap-1"><button type="button" onClick={() => goTo(`/inventory/items?edit=${filtered[searchIndex].id}`)} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-sky-700 dark:border-slate-700 dark:text-sky-300">✎ تعديل</button><button type="button" onClick={() => goTo(`/inventory/items?card=${filtered[searchIndex].id}`)} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-violet-700 dark:border-slate-700 dark:text-violet-300">↗ حركة الصنف</button><button type="button" onClick={() => goTo(`/sales/price-lists?item=${filtered[searchIndex].id}`)} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:border-slate-700 dark:text-emerald-300">٪ الأسعار</button></div></div>}
-            <div className="max-h-52 overflow-auto p-1">{filtered.slice(0, 8).map((item, index) => <button key={item.id} type="button" onClick={() => setSearchIndex(index)} onDoubleClick={() => { addToCart(item.id); setQuery(''); searchRef.current?.focus() }} className={`w-full flex justify-between gap-3 px-3 py-2 rounded-lg text-xs ${index === searchIndex ? 'bg-emerald-500/15 ring-1 ring-emerald-500/40' : 'hover:bg-emerald-500/10'}`}><span className="font-bold"><span className="font-mono text-[10px] text-slate-500 ml-2" dir="ltr">{item.sku||item.barcodes?.[0]||item.id}</span>{item.nameAr}</span><span className="text-slate-400">{fmt(item.priceMinor)}</span></button>)}</div>
-            <div className="border-t border-slate-100 px-3 py-1.5 text-[10px] text-slate-400 dark:border-slate-800">اختر بالسهم ثم Enter، أو اضغط مرتين للإضافة إلى السلة.</div>
-          </div>
+        {/* بلاغ المالك: «لا تظهر أي صفحة منبثقة لاختيار الصنف». النافذة الآن تُركَّب على
+            <body> بإحداثيات الحقل (layer-picker) فلا يحجبها أي عنصر، وتظهر حتى بلا نتائج
+            برسالة واضحة بدل الصمت. */}
+        {searchOpen && (
+          <OverlayPortal>
+            <div
+              role="dialog"
+              aria-label="نتائج بحث الأصناف في الكاشير"
+              dir="rtl"
+              style={searchMenuStyle}
+              className="layer-picker flex flex-col overflow-hidden rounded-2xl border border-emerald-300/60 bg-white shadow-2xl dark:border-emerald-800 dark:bg-card-dark"
+              onMouseDown={(event) => event.preventDefault()}
+            >
+              <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-emerald-500/10 px-3 py-2 dark:border-slate-700">
+                <b className="text-[11px] font-black text-emerald-700 dark:text-emerald-300">نتائج البحث «{query.trim()}» — {filtered.length} صنف</b>
+                <button type="button" onClick={() => { setQuery(''); searchRef.current?.focus() }} className="rounded-lg px-2 py-0.5 text-[11px] font-bold text-slate-500 hover:bg-slate-500/10">إغلاق Esc</button>
+              </div>
+              {searchResults[searchIndex] && (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-emerald-500/5 px-3 py-2 dark:border-slate-700">
+                  <div className="min-w-0">
+                    <span className="ml-2 font-mono text-[10px] text-slate-500" dir="ltr">{searchResults[searchIndex].sku || searchResults[searchIndex].barcodes?.[0] || searchResults[searchIndex].id}</span>
+                    <b className="text-[12px]">{searchResults[searchIndex].nameAr}</b>
+                  </div>
+                  <div className="flex gap-1">
+                    <button type="button" onClick={() => goTo(`/inventory/items?edit=${searchResults[searchIndex].id}`)} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-sky-700 dark:border-slate-700 dark:text-sky-300">✎ تعديل</button>
+                    <button type="button" onClick={() => goTo(`/inventory/items?card=${searchResults[searchIndex].id}`)} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-violet-700 dark:border-slate-700 dark:text-violet-300">↗ حركة الصنف</button>
+                    <button type="button" onClick={() => goTo(`/sales/price-lists?item=${searchResults[searchIndex].id}`)} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:border-slate-700 dark:text-emerald-300">٪ الأسعار</button>
+                  </div>
+                </div>
+              )}
+              <div className="min-h-0 flex-1 overflow-auto p-1">
+                {searchResults.length === 0
+                  ? <div className="p-5 text-center text-[12px] text-slate-500">لا يوجد صنف مطابق لـ«{query.trim()}» — جرّب جزءاً من الاسم أو الكود أو امسح الباركود.<div className="mt-1 text-[10px] text-slate-400">Enter يبحث عن باركود ميزان أو رقم سيريال مباشرة.</div></div>
+                  : searchResults.map((item, index) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      data-pos-result="true"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => setSearchIndex(index)}
+                      onDoubleClick={() => { addToCart(item.id); setQuery(''); searchRef.current?.focus() }}
+                      className={`w-full grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 rounded-lg text-right text-xs ${index === searchIndex ? 'bg-emerald-500/15 ring-1 ring-emerald-500/40' : 'hover:bg-emerald-500/10'}`}
+                    >
+                      <span className="font-mono text-[10px] text-slate-500" dir="ltr">{item.sku || item.barcodes?.[0] || item.id}</span>
+                      <span className="truncate font-bold">{item.nameAr}<span className="mr-2 text-[10px] font-normal text-slate-400">رصيد {item.stockQty}</span></span>
+                      <span className="whitespace-nowrap font-black text-emerald-700 dark:text-emerald-300">{fmt(item.priceMinor)}</span>
+                    </button>
+                  ))}
+              </div>
+              <div className="border-t border-slate-100 px-3 py-1.5 text-[10px] text-slate-400 dark:border-slate-800">↑↓ للتنقل · Enter للإضافة · ضغطتان على الصنف تضيفه فوراً</div>
+            </div>
+          </OverlayPortal>
         )}
         <div className="text-[10px] text-slate-400 px-1">اكتب اسم الصنف أو امسح الباركود ثم اضغط Enter — لا توجد بطاقات تشغل مساحة الفاتورة.</div>
       </div>

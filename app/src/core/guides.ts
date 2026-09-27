@@ -4,6 +4,7 @@
  * أول تغطية كاملة: دورة المرتجعات بكل مراحلها وصلاحياتها وسيناريوهاتها المحاسبية.
  * الصفحة GuidesPage تعرض موضوعات النشاط المفعّل + الموضوعات العامة مع بحث فوري.
  */
+import { INVOICE_FIRST_ACTIVITIES } from './activities.ts'
 
 export interface GuideTopic {
   id: string
@@ -386,6 +387,33 @@ export const ACTIVITY_GUIDES: Record<string, GuideTopic[]> = {
 export function guidesForActivity(activityId: string | null): GuideTopic[] {
   const own = (activityId && ACTIVITY_GUIDES[activityId]) || []
   return [...own, ...COMMON_GUIDES]
+}
+
+/**
+ * شروط ظهور الموضوعات العامة (طلب المالك: «لا تشرح نشاطاً داخل نشاط آخر»):
+ * موضوع المرتجعات لا يُعرض لنشاط بلا مبيعات، ومرتجع الشراء لا يُعرض لنشاط بلا مشتريات…
+ * modules: يجب توفر كل الوحدات المذكورة. hideForActivities: يُخفى لهذه الأنشطة.
+ */
+const TOPIC_REQUIREMENTS: Record<string, { modules?: string[]; hideForActivities?: readonly string[] }> = {
+  returns_wizard: { modules: ['pos', 'inventory'] },
+  returns_refund_freedom: { modules: ['pos'] },
+  returns_condition: { modules: ['pos', 'inventory'] },
+  returns_permissions: { modules: ['pos'] },
+  returns_warehouses: { modules: ['pos', 'inventory'] },
+  returns_exchange: { modules: ['pos', 'inventory'], hideForActivities: INVOICE_FIRST_ACTIVITIES },
+  purchase_returns: { modules: ['purchases'] },
+  service_refunds: { modules: ['pos'] },
+}
+
+/** تصفية الموضوعات على ما يملكه النشاط فعلاً من وحدات */
+export function topicsForSetup(topics: GuideTopic[], modules: readonly string[], activityId: string | null): GuideTopic[] {
+  return topics.filter((t) => {
+    const req = TOPIC_REQUIREMENTS[t.id]
+    if (!req) return true
+    if (req.modules && !req.modules.every((m) => modules.includes(m))) return false
+    if (req.hideForActivities && activityId && req.hideForActivities.includes(activityId)) return false
+    return true
+  })
 }
 
 /** بحث نصي بسيط في العناوين والفقرات */
