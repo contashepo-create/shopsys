@@ -25,6 +25,7 @@ const vouchers = read('pages/VouchersPage.tsx')
 const settlements = read('pages/SettlementsPage.tsx')
 const salesInvoice = read('pages/AdvancedSalesInvoicePage.tsx')
 const treasury = read('pages/TreasuryPage.tsx')
+const custody = read('pages/CustodyPage.tsx')
 
 /* ① قطعة أقسام مشتركة بدل تكرار الشكل في كل ملف */
 {
@@ -153,6 +154,25 @@ const treasury = read('pages/TreasuryPage.tsx')
   assert.equal(after.exp - before.exp, 15_00, 'الرسوم لم تُقيَّد مصروفاً عمومياً 5108')
   assertInvariants(c, 'تحويل بين الخزائن برسوم')
   R.ok('اختبار حي: تحويل 200 برسوم 15 ⇒ المصدر −215 · الوجهة +200 · 5108 +15 — مطابق تماماً لما تعرضه النافذة')
+}
+
+/* ⑫ نوافذ العهدة الثلاث: تعزيز · مصروف · تسوية */
+{
+  for (const [title, needle] of [['تعزيز', 'تعزيز عهدة'], ['مصروف', 'مصروف من العهدة'], ['تسوية', 'تسوية وإغلاق عهدة']]) {
+    assert.ok(custody.includes(needle), `نافذة ${title} ليست بلغة المستند`)
+  }
+  assert.equal((custody.match(/<DocOutcome>/g) ?? []).length, 3, 'ليست كل نوافذ العهدة تعرض القيد قبل الترحيل')
+  // الحسابات المعروضة في المعاينة هي نفسها التي يرحّل عليها المحرك
+  const engine = readFileSync('/home/user/shopsys/app/src/core/custody.ts', 'utf8')
+  for (const code of ['1108', '2107', '1107']) {
+    assert.ok(engine.includes(`'${code}'`), `حساب العهدة ${code} غير موجود في المحرك`)
+    assert.ok(custody.includes(`(${code})`), `النافذة لا تُظهر الحساب ${code} الذي يرحّل عليه المحرك`)
+  }
+  assert.ok(/disabled=\{amountMinor <= 0 \|\| !expDesc\.trim\(\) \|\| \(excess > 0 && !expAllowExcess\)\}/.test(custody),
+    'نافذة مصروف العهدة تسمح بتجاوز الرصيد بلا إقرار صريح')
+  assert.ok(custody.includes('over = returned > viewSummary.remainingMinor') && /disabled=\{returnAmount\.trim\(\) === '' \|\| over\}/.test(custody),
+    'نافذة التسوية تقبل مرتجعاً أكبر من العهدة')
+  R.ok('نوافذ العهدة الثلاث بلغة المستند، وكل منها يعرض قيده بحسابات المحرك نفسها (1108/2107/1107) ويمنع التجاوز بلا إقرار')
 }
 
 R.done('— نوافذ الإدخال المالية بلغة واحدة، تتبع الوضع الليلي، وتشرح أثرها المحاسبي قبل الترحيل')
