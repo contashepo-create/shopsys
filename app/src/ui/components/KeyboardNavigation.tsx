@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { guardNavigation, OverlayPortal } from './ui.tsx'
+import { OverlayPortal } from './ui.tsx'
+import { openPurchaseInvoiceWindow, openSalesInvoiceWindow } from '../windows/windowStore.ts'
 
 const selector = 'input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),[tabindex]:not([tabindex="-1"])'
 const rowFieldSelector = 'input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]'
@@ -49,8 +50,9 @@ export function KeyboardNavigation() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'F3') {
         event.preventDefault()
-        const nextPath = pathname.startsWith('/purchases') ? '/purchases/invoices/new' : '/sales/invoices/new'
-        if (!guardNavigation(() => navigate(nextPath))) navigate(nextPath)
+        // F3 يفتح فاتورة في نافذة مستقلة جديدة — يمكن تكراره لفتح أكثر من فاتورة معاً
+        if (pathname.startsWith('/purchases')) openPurchaseInvoiceWindow()
+        else openSalesInvoiceWindow()
         return
       }
       if (event.key === 'F4') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:open-party')); return }

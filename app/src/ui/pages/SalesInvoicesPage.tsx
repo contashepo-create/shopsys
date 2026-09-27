@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Eye, BookOpenText, Printer, Pencil, FileMinus2, FilePlus2, FileSpreadsheet, Trash2, History, HandCoins } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
 import type { DocumentCharge } from '../../core/documentCharges.ts'
 import type { InternalExpense } from '../../core/advancedInvoice.ts'
@@ -109,7 +110,7 @@ export function SalesInvoicesPage() {
     const blocks = blocksOf(s)
     if (blocks.length) return toast.show(`لا يمكن تعديل ${s.invoiceNumber}: ${blocks[0]}`, 'error')
     // يفتح نفس محرر الفاتورة المتقدم؛ الصلاحية/اعتماد المشرف يُتحقق عند الحفظ داخل المحرر.
-    goTo(`/sales/invoices/new?edit=${s.id}`)
+    openSalesInvoiceWindow(s.id)
   }
   const removeSelectedEditLine = () => {
     if (selectedEditLine == null || !editLines[selectedEditLine]) return
@@ -224,14 +225,14 @@ export function SalesInvoicesPage() {
 
   if (sales.length === 0) {
     return (
-      <div className="space-y-4">{advancedInvoiceDrafts.filter(d=>d.kind==='sale').length>0&&<DraftBanner/>}<div className="flex justify-end"><Btn variant="ghost" onClick={exportSales}><FileSpreadsheet size={15}/> Excel</Btn><Btn shortcut="F3" onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn></div><div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800"><EmptyState icon="🧾" title="لا فواتير مبيعات بعد" sub="أنشئ فاتورة متقدمة أو استخدم الكاشير للبيع السريع" /></div></div>
+      <div className="space-y-4">{advancedInvoiceDrafts.filter(d=>d.kind==='sale').length>0&&<DraftBanner/>}<div className="flex justify-end"><Btn variant="ghost" onClick={exportSales}><FileSpreadsheet size={15}/> Excel</Btn><Btn shortcut="F3" onClick={() => openSalesInvoiceWindow()}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn></div><div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800"><EmptyState icon="🧾" title="لا فواتير مبيعات بعد" sub="أنشئ فاتورة متقدمة أو استخدم الكاشير للبيع السريع" /></div></div>
     )
   }
 
   function DraftBanner() {
     const drafts = advancedInvoiceDrafts.filter((draft) => draft.kind === 'sale').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     if (!drafts.length) return null
-    return <div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 flex flex-wrap items-center justify-between gap-2"><div><b>مسودات مبيعات محفوظة: {drafts.length}</b><div className="text-xs text-slate-500">الأحدث: {drafts[0].name} · {new Date(drafts[0].updatedAt).toLocaleString('ar-EG')}</div></div><div className="flex gap-2"><Btn variant="ghost" onClick={()=>navigate('/sales/invoices/new')}>الانتقال للمحرر</Btn><Btn variant="ghost" onClick={()=>{drafts.forEach(d=>deleteAdvancedInvoiceDraft(d.id));toast.show('حُذفت مسودات المبيعات')}}>حذف الكل</Btn></div></div>
+    return <div className="rounded-2xl border border-amber-400/30 bg-amber-500/5 p-3 flex flex-wrap items-center justify-between gap-2"><div><b>مسودات مبيعات محفوظة: {drafts.length}</b><div className="text-xs text-slate-500">الأحدث: {drafts[0].name} · {new Date(drafts[0].updatedAt).toLocaleString('ar-EG')}</div></div><div className="flex gap-2"><Btn variant="ghost" onClick={()=>openSalesInvoiceWindow()}>الانتقال للمحرر</Btn><Btn variant="ghost" onClick={()=>{drafts.forEach(d=>deleteAdvancedInvoiceDraft(d.id));toast.show('حُذفت مسودات المبيعات')}}>حذف الكل</Btn></div></div>
   }
 
   const returnStateOf = (sale: SaleInvoice): 'none' | 'partial' | 'full' => {
@@ -260,7 +261,7 @@ export function SalesInvoicesPage() {
       <DraftBanner/>
       <div className="anim-up flex flex-wrap items-center gap-2">
         <Btn variant="ghost" onClick={exportSales}><FileSpreadsheet size={15}/> Excel</Btn>
-        <Btn shortcut="F3" onClick={() => navigate('/sales/invoices/new')}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn>
+        <Btn shortcut="F3" onClick={() => openSalesInvoiceWindow()}><FilePlus2 size={16}/> فاتورة مبيعات جديدة</Btn>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
