@@ -100,11 +100,22 @@ export interface LeaseInstallment {
   paidAt: string | null
 }
 
+/** سطر وحدة داخل عقد إيجار — عقد واحد قد يضم عدة وحدات، لكل وحدة سطر وأجرتها */
+export interface LeaseUnitLine {
+  unitId: number
+  code: string
+  /** أجرة هذه الوحدة لكامل مدة العقد */
+  rentMinor: Minor
+}
+
 export interface Lease {
   id: number
   contractNumber: string // LC-0001
   propertyId: number
+  /** الوحدة الأساسية (أول سطر) — محفوظة للتوافق مع العقود القديمة */
   unitId: number
+  /** سطور الوحدات: سطر مستقل لكل وحدة مؤجرة في هذا العقد */
+  unitLines?: LeaseUnitLine[]
   tenantName: string
   /** ربط إداري بسجل عميل */
   tenantId: number | null
@@ -329,4 +340,76 @@ export function collectLeaseAlerts(leases: readonly Lease[], todayIso: string, e
     }
   }
   return alerts.sort((a, b) => (a.kind === b.kind ? b.days - a.days : a.kind === 'overdue' ? -1 : 1))
+}
+
+/* ─── بيع الوحدات سطراً سطراً (طلب المالك) ─── */
+
+/** سطر بيع وحدة: سعرها وتكلفتها مستقلان، فتظهر ربحية كل وحدة على حدة */
+export interface PropertySaleLine {
+  unitId: number
+  label: string
+  priceMinor: Minor
+  costMinor: Minor
+}
+
+/**
+ * قيد بيع وحدات عقارية بسطر مستقل لكل وحدة (بديل قيد الإجمالي):
+ *   الخزينة/البنك بالمقبوض + 1104 عملاء بالمتبقي (مدين)
+ *   ← 4115 إيراد بيع عقارات (سطر لكل وحدة) + 2102 الضريبة
+ *   5116 تكلفة عقارات مباعة (سطر لكل وحدة) ← 1113 العقارات (سطر لكل وحدة)
+ * يدعم السداد النقدي/البنكي الجزئي والباقي آجل على العميل — تماماً كفاتورة البيع.
+ */
+export function buildPropertyUnitsSaleEntry(args: {
+  lines: readonly PropertySaleLine[]
+  vatMinor: Minor
+  paidMinor: Minor
+  treasury: string
+  label: string
+}): JournalLine[] {
+  const { lines, vatMinor, paidMinor, treasury, label } = args
+  if (lines.length === 0) throw new Error('لا وحدات في هذا البيع — أضف سطر وحدة واحداً على الأقل')
+  for (const line of lines) {
+    if (!Number.isInteger(line.priceMinor) || line.priceMinor <= 0) throw new Error(`سعر بيع ${line.label} يجب أن يكون موجباً`)
+    if (!Number.isInteger(line.costMinor) || line.costMinor < 0) throw new Error(`تكلفة ${line.label} لا تكون سالبة`)
+  }
+  if (!Number.isInteger(vatMinor) || vatMinor < 0) throw new Error('الضريبة غير صحيحة')
+  const priceTotal = lines.reduce((sum, line) => sum + line.priceMinor, 0)
+  const grandTotal = priceTotal + vatMinor
+  if (!Number.isInteger(paidMinor) || paidMinor < 0 || paidMinor > grandTotal) throw new Error('المحصّل يجب أن يكون بين صفر وإجمالي البيع')
+  const dueMinor = grandTotal - paidMinor
+  const journalLines: JournalLine[] = []
+  if (paidMinor > 0) journalLines.push({ accountCode: treasury, debit: paidMinor, credit: 0, note: `تحصيل بيع ${label}` })
+  if (dueMinor > 0) journalLines.push({ accountCode: '1104', debit: dueMinor, credit: 0, note: `المتبقي على المشتري ${label}` })
+  for (const line of lines) {
+    journalLines.push({ accountCode: '4115', debit: 0, credit: line.priceMinor, note: `إيراد بيع ${line.label}` })
+  }
+  if (vatMinor > 0) journalLines.push({ accountCode: '2102', debit: 0, credit: vatMinor, note: 'ض.ق.م' })
+  for (const line of lines) {
+    if (line.costMinor <= 0) continue
+    journalLines.push({ accountCode: '5116', debit: line.costMinor, credit: 0, note: `تكلفة ${line.label} المباعة` })
+    journalLines.push({ accountCode: '1113', debit: 0, credit: line.costMinor, note: `إخراج ${line.label} من الأصول` })
+  }
+  assertBalanced(journalLines)
+  return journalLines
+}
+
+/** توزيع سعر بيع إجمالي على الوحدات بنسبة تكلفة كل وحدة (الباقي لأكبر وحدة) */
+export function allocatePriceOverUnits(units: readonly { costMinor: Minor; salePriceMinor?: Minor }[], totalPriceMinor: Minor): Minor[] {
+  if (units.length === 0) return []
+  const weights = units.map((unit) => (unit.costMinor > 0 ? unit.costMinor : unit.salePriceMinor ?? 0))
+  const total = weights.reduce((sum, weight) => sum + weight, 0)
+  if (total <= 0) {
+    const share = Math.floor(totalPriceMinor / units.length)
+    const parts = units.map(() => share)
+    parts[0] += totalPriceMinor - share * units.length
+    return parts
+  }
+  const parts = weights.map((weight) => Math.floor((weight * totalPriceMinor) / total))
+  const remainder = totalPriceMinor - parts.reduce((sum, part) => sum + part, 0)
+  if (remainder !== 0) {
+    let largest = 0
+    for (let i = 1; i < weights.length; i++) if (weights[i] > weights[largest]) largest = i
+    parts[largest] += remainder
+  }
+  return parts
 }

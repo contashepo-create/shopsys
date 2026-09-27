@@ -10,7 +10,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { customerStatement, customerUnitDocs, supplierStatement, employeeStatement, statementBalance, type StatementRow } from '../../core/statements.ts'
+import { customerStatement, customerUnitDocs, supplierStatement, supplierUnitDocs, employeeStatement, statementBalance, type StatementRow } from '../../core/statements.ts'
 import { renderStatementHtml } from '../print/printStatement.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { EmptyState, Btn, useToast } from '../components/ui.tsx'
@@ -24,7 +24,7 @@ const KINDS: { id: Kind; nameAr: string; icon: typeof UserRound; debitLabel: str
 ]
 
 export function StatementsPage() {
-  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, advanceRepayments, employeeDeductions, laundryOrders, cars, consignmentCars, staffCommissions, custodyFiles, custodyTxs } = useDataStore()
+  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, advanceRepayments, employeeDeductions, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, journal, staffCommissions, custodyFiles, custodyTxs } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -54,7 +54,7 @@ export function StatementsPage() {
         sales, saleReturns,
         allSales: sales,
         // إصلاح المالك: مستندات الوحدات الأخرى (نقلات/صيانة/إيجار) كانت غائبة عن الكشف
-        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), labOrders, linkedLabPatientIds: labPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), walletOps, projectExtracts, linkedProjectIds: projects.filter((p) => p.clientId === partyId).map((p) => p.id), installmentPlans, laundryOrders, cars, consignmentCars }),
+        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), labOrders, linkedLabPatientIds: labPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), walletOps, projectExtracts, linkedProjectIds: projects.filter((p) => p.clientId === partyId).map((p) => p.id), installmentPlans, laundryOrders, cars, consignmentCars, propertySales }),
         // تسويات التحصيل FIFO تدخل الكشف كسندات قبض — كانت غائبة (إصلاح تقرير المديونيات)
         vouchers: [
           ...vouchers,
@@ -75,6 +75,8 @@ export function StatementsPage() {
         purchases, purchaseReturns,
         allPurchases: purchases,
         vouchers, cheques,
+        // شراء السيارات وتجهيزاتها المحمَّلة على ورش/مصانع تدخل كشف المورد نفسه
+        extraDocs: supplierUnitDocs({ supplierId: partyId, cars, carPurchaseInvoices, carPrepCosts, projectCosts, carLabel: (carId) => { const car = cars.find((row) => row.id === carId); return car ? `${car.make} ${car.model} (${car.plateOrVin})` : `سيارة #${carId}` }, entryDate: (entryId) => journal.find((row) => row.id === entryId)?.date ?? '0000-00-00' }),
       })
     }
     return employeeStatement({
@@ -89,7 +91,7 @@ export function StatementsPage() {
         return file ? [{ date: tx.date, employeeId: file.employeeId, type: tx.type, amountMinor: tx.amountMinor, description: tx.description }] : []
       }),
     })
-  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, advanceRepayments, clientSettlements, openingBalances, settlements, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, laundryOrders, cars, consignmentCars, employeeDeductions, staffCommissions, custodyFiles, custodyTxs])
+  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, advanceRepayments, clientSettlements, openingBalances, settlements, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, journal, employeeDeductions, staffCommissions, custodyFiles, custodyTxs])
 
   const balance = statementBalance(rows)
   const partyName = parties.find((p) => p.id === partyId)?.nameAr ?? ''

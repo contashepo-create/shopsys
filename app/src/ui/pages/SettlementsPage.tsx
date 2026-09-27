@@ -10,7 +10,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { customerStatement, customerUnitDocs, supplierStatement, statementBalance } from '../../core/statements.ts'
+import { customerStatement, customerUnitDocs, supplierStatement, supplierUnitDocs, statementBalance } from '../../core/statements.ts'
 import { Btn, Field, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 
@@ -56,7 +56,7 @@ export function SettlementsPage() {
         customerId: pid,
         openingMinor: store.openingBalances[`customer:${pid}`] ?? 0,
         sales: store.sales, saleReturns: store.saleReturns, allSales: store.sales,
-        extraDocs: customerUnitDocs({ customerId: pid, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts, clinicVisits: store.clinicVisits, clinicCollections: store.clinicCollections, linkedPatientIds: store.clinicPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id), labOrders: store.labOrders, linkedLabPatientIds: store.labPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id), walletOps: store.walletOps, projectExtracts: store.projectExtracts, linkedProjectIds: store.projects.filter((p) => p.clientId === pid).map((p) => p.id), installmentPlans: store.installmentPlans, laundryOrders: store.laundryOrders, cars: store.cars, consignmentCars: store.consignmentCars }),
+        extraDocs: customerUnitDocs({ customerId: pid, trips: store.trips, tickets: store.tickets, rentals: store.rentalContracts, clinicVisits: store.clinicVisits, clinicCollections: store.clinicCollections, linkedPatientIds: store.clinicPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id), labOrders: store.labOrders, linkedLabPatientIds: store.labPatients.filter((p) => p.linkedCustomerId === pid).map((p) => p.id), walletOps: store.walletOps, projectExtracts: store.projectExtracts, linkedProjectIds: store.projects.filter((p) => p.clientId === pid).map((p) => p.id), installmentPlans: store.installmentPlans, laundryOrders: store.laundryOrders, cars: store.cars, consignmentCars: store.consignmentCars, propertySales: store.propertySales }),
         vouchers: [
           ...store.vouchers,
           ...store.clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
@@ -74,6 +74,7 @@ export function SettlementsPage() {
       openingMinor: store.openingBalances[`supplier:${pid}`] ?? 0,
       purchases: store.purchases, purchaseReturns: store.purchaseReturns, allPurchases: store.purchases,
       vouchers: store.vouchers, cheques: store.cheques,
+      extraDocs: supplierUnitDocs({ supplierId: pid, cars: store.cars, carPurchaseInvoices: store.carPurchaseInvoices, carPrepCosts: store.carPrepCosts, projectCosts: store.projectCosts, carLabel: (carId) => { const car = store.cars.find((row) => row.id === carId); return car ? `${car.make} ${car.model} (${car.plateOrVin})` : `سيارة #${carId}` }, entryDate: (entryId) => journal.find((row) => row.id === entryId)?.date ?? '0000-00-00' }),
       adjustments: settlements.filter((st) => st.section === 'supplier' && Number(st.refId) === pid).map((st) => ({
         docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
         debitMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,

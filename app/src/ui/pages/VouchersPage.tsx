@@ -19,7 +19,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
-import { customerStatement, supplierStatement, customerUnitDocs, statementBalance } from '../../core/statements.ts'
+import { customerStatement, supplierStatement, customerUnitDocs, supplierUnitDocs, statementBalance } from '../../core/statements.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { ACCOUNT_MODULE_MAP } from '../../core/coaVisibility.ts'
 
@@ -55,7 +55,7 @@ const PAYMENT_COUNTERS = [
 const escapePrintText = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, vehicles } = useDataStore()
+  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, vehicles } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup, receipt } = useAppStore()
   const toast = useToast()
@@ -122,7 +122,7 @@ export function VouchersPage() {
         customerId: partyId,
         openingMinor: openingBalances[`customer:${partyId}`] ?? 0,
         sales, saleReturns, allSales: sales,
-        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), labOrders, linkedLabPatientIds: labPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), walletOps, projectExtracts, linkedProjectIds: projects.filter((p) => p.clientId === partyId).map((p) => p.id), installmentPlans, laundryOrders, cars, consignmentCars }),
+        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), labOrders, linkedLabPatientIds: labPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), walletOps, projectExtracts, linkedProjectIds: projects.filter((p) => p.clientId === partyId).map((p) => p.id), installmentPlans, laundryOrders, cars, consignmentCars, propertySales }),
         vouchers: [
           ...vouchers,
           ...clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
@@ -134,8 +134,9 @@ export function VouchersPage() {
       supplierId: partyId,
       openingMinor: openingBalances[`supplier:${partyId}`] ?? 0,
       purchases, purchaseReturns, allPurchases: purchases, vouchers, cheques,
+      extraDocs: supplierUnitDocs({ supplierId: partyId, cars, carPurchaseInvoices, carPrepCosts, projectCosts, carLabel: (carId) => { const car = cars.find((row) => row.id === carId); return car ? `${car.make} ${car.model} (${car.plateOrVin})` : `سيارة #${carId}` }, entryDate: (entryId) => journal.find((row) => row.id === entryId)?.date ?? '0000-00-00' }),
     }))
-  }, [partyId, kind, sales, saleReturns, vouchers, cheques, purchases, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, laundryOrders, cars, consignmentCars])
+  }, [partyId, kind, sales, saleReturns, vouchers, cheques, purchases, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, journal])
 
   const clearDraft = (voucherKind: 'receipt' | 'payment') => {
     try { window.localStorage.removeItem(`shopsys.voucher-draft.${voucherKind}`) } catch { /* التخزين المحلي اختياري */ }
