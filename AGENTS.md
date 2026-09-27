@@ -1483,6 +1483,6 @@ git push origin "$(git branch --show-current)"
 
 **إصلاح بوابة CI** — `npm run lint:strict` كان يفشل بتحذيرين (`react-hooks/exhaustive-deps`) ظهرا بصيغة «seems like a minified file» لأن السطر أطول من الشاشة؛ التشخيص الحقيقي يُقرأ بـ`npx oxlint <file> --format json`. حُذفت التبعية الزائدة `editingInvoice.id` من `useMemo` في `AdvancedSalesInvoicePage.tsx`، وفُصل `useEffect` تعبئة التعديل في `AdvancedPurchaseInvoicePage.tsx` على أسطره مع تعليق `eslint-disable-next-line react-hooks/exhaustive-deps` موثق السبب. النتيجة **0 تحذير / 0 خطأ**.
 
-**ملفات جديدة**: `src/core/search.ts`، `src/ui/components/anchoredMenu.ts`، واختبارات `pos_item_search` و`payroll_single_employee` و`redesigned_modals` و`voucher_counter_picker` و`overlay_layers`.
+**ملفات جديدة**: `src/core/search.ts`، `src/ui/components/anchoredMenu.ts`، واختبارات `pos_item_search` و`payroll_single_employee` و`redesigned_modals` و`payroll_run_modal` و`voucher_counter_picker` و`overlay_layers`.
 
-**تحقق هذه الجولة (2026-09-27)**: `tsc -b --force` نظيف، `npm run build` ناجح (تحذير حجم bundle فقط)، `npm run lint:strict` = 0/0، Vitest = **78 ملفاً / 323 اختباراً** ناجحة، و`verify:all` = **160/160**. حُدِّث `scripts/verify_owner_batch_pos_print.mjs` ليختبر سلم الطبقات الجديد بدل `z-[100]/[110]/[120]` القديمة.
+**تحقق هذه الجولة (2026-09-27)**: `tsc -b --force` نظيف، `npm run build` ناجح (تحذير حجم bundle فقط)، `npm run lint:strict` = 0/0، Vitest = **79 ملفاً / 324 اختباراً** ناجحة، و`verify:all` = **160/160**. حُدِّث `scripts/verify_owner_batch_pos_print.mjs` ليختبر سلم الطبقات الجديد بدل `z-[100]/[110]/[120]` القديمة.
