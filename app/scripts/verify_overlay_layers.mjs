@@ -73,7 +73,8 @@ const layerOf = (name) => {
   assert.ok(Number.isFinite(ceiling) && ceiling < modal, `سقف النوافذ ${ceiling} يجب أن يقل عن طبقة الحوارات ${modal}`)
   assert.ok(store.includes('function renumber'), 'لا إعادة ترقيم عند بلوغ السقف')
   for (const site of ['openWindow', 'focusWindow']) {
-    const body = store.slice(store.indexOf(`${site}: (`), store.indexOf(`${site}: (`) + 1800)
+    const at = store.indexOf(`${site}: (`)
+    const body = store.slice(at, store.indexOf('\n  },', at))
     assert.ok(body.includes('MAX_WINDOW_Z'), `${site} لا يحترم سقف الطبقة — سيعود التسلق`)
   }
   R.ok(`سقف النوافذ ${ceiling} < طبقة الحوارات ${modal}: عند بلوغه تُعاد ترقيم النوافذ بدل التصاعد بلا حد`)

@@ -1,4 +1,4 @@
-import{useEffect,useMemo,useRef,useState}from'react';import{useNavigate,useSearchParams}from'react-router-dom';import{Boxes,Calculator,CalendarClock,CalendarDays,Coins,Link2,Package,Pencil,Plus,PackageCheck,ScrollText,Truck,Wallet,Warehouse as WarehouseIcon}from'lucide-react';import { useWindowHost } from '../windows/windowHostContext.ts'
+import{useEffect,useMemo,useRef,useState}from'react';import{useNavigate,useSearchParams}from'react-router-dom';import{Boxes,Calculator,CalendarClock,CalendarDays,Link2,Pencil,ScrollText,Truck,Wallet,Warehouse as WarehouseIcon}from'lucide-react';import { useWindowHost } from '../windows/windowHostContext.ts'
 import { openItemEditorWindow, openItemLedgerWindow, openPartyEditorWindow } from '../windows/windowStore.ts'
 import { buildWarehouseReceiptHtml } from '../../core/warehouseReceipt.ts'
 import { formatInvoiceAuditLine } from '../../core/invoiceAudit.ts'
@@ -23,25 +23,26 @@ export function AdvancedPurchaseInvoicePage(){const nav=useNavigate(),toast=useT
  <>
   <Field label="المورد" icon={<Truck size={11}/>} badge={!selectedSupplier?'شراء نقدي':'مورد مسجَّل'} badgeTone={selectedSupplier?'accent':undefined}><div className="invoice-pos-party-field invoice-doc-infield"><button type="button" className="invoice-pos-edit-party" onClick={()=>{if(host&&selectedSupplier){openPartyEditorWindow('supplier',selectedSupplier.id,host.windowId);return}setPartyEditorOpen(true)}} disabled={!selectedSupplier} title="تعديل بيانات المورد"><Pencil size={13}/></button><PartyQuickPicker parties={suppliers} value={supplierId} onChange={setSupplierId} cashValue={-1} cashLabel="مورد نقدي" label="بحث المورد — F4" partyInfo={supplierPickerInfo} onConfirm={()=>window.dispatchEvent(new Event('shopsys:focus-item'))} autoFocus/><span className="invoice-doc-infield-chip">{selectedSupplier?partyCode('SUP',selectedSupplier.id):'CASH'}</span></div></Field>
   <Field label="تاريخ الفاتورة" icon={<CalendarDays size={11}/>} badge={date===new Date().toISOString().slice(0,10)?'اليوم':'تاريخ سابق'} badgeTone={date===new Date().toISOString().slice(0,10)?undefined:'warn'}><input type="date" className={inputCls} value={date} onChange={e=>setDate(e.target.value)}/></Field>
-  <Field label="العملة والضريبة" icon={<Coins size={11}/>} badge={applyTax?`ضريبة ${taxPolicy.effectivePercent}%`:'غير خاضعة'} badgeTone={applyTax?'accent':undefined}><label className="invoice-pos-check-field"><input type="checkbox" checked={applyTax} onChange={e=>{const enabled=e.target.checked;setApplyTax(enabled);setLines(lines.map(l=>({...l,vatPercent:enabled?taxPolicy.effectivePercent:0})))}}/> {cur.code} · خاضعة للضريبة</label></Field>
   <Field label="تاريخ الاستحقاق" icon={<CalendarClock size={11}/>} badge={selectedSupplier?.paymentTermsDays?`صافي ${selectedSupplier.paymentTermsDays}`:dueDate?'آجل محدَّد':'فوري'} badgeTone={dueDate?'warn':undefined}><input type="date" min={date} className={inputCls} value={dueDate} onChange={e=>setDueDate(e.target.value)}/></Field>
-  <Field label="الفرع والمخزن" icon={<WarehouseIcon size={11}/>} badge={warehouseId?'يستلم البضاعة':'كل المخازن'} badgeTone={warehouseId?'ok':undefined}><QuickSelect className={inputCls} value={warehouseId??''} onChange={e=>changeWarehouse(e.target.value?Number(e.target.value):null)}><option value="">كل المخازن — اختيار لكل سطر</option>{warehouses.map(w=><option key={w.id} value={w.id}>{w.nameAr}</option>)}</QuickSelect></Field>
-  
- </>
-} referenceBar={
- <>
-  <Field label="نمط تحرير الفاتورة" icon={<Boxes size={11}/>} badge={modes[mode]} badgeTone="accent"><QuickSelect className={inputCls} value={mode} onChange={e=>setMode(e.target.value as InvoiceEditorMode)}>{Object.entries(modes).filter(([key])=>key!=='profit'||canViewCost).map(([k,v])=><option key={k} value={k}>{v}</option>)}</QuickSelect></Field>
-  <Field label="مرجع المورد" icon={<Link2 size={11}/>} badge="رقم فاتورة المورد"><input className={inputCls} value={supplierInvoiceNumber} onChange={e=>setSupplierInvoiceNumber(e.target.value)} placeholder="رقم الفاتورة الواردة من المورد"/></Field>
-  <Field label="أمر الشراء" icon={<Package size={11}/>}><input className={inputCls} value={purchaseOrderNumber} onChange={e=>setPurchaseOrderNumber(e.target.value)} placeholder="رقم أمر الشراء الداخلي"/></Field>
-  <Field label="حالة الاستلام" icon={<PackageCheck size={11}/>} badge={receiptStatus==='received'?'مستلمة':receiptStatus==='partial'?'جزئي':'بانتظار'} badgeTone={receiptStatus==='received'?'ok':'warn'}><QuickSelect className={inputCls} value={receiptStatus} onChange={e=>setReceiptStatus(e.target.value as typeof receiptStatus)}><option value="pending">بانتظار الاستلام</option><option value="partial">استلام جزئي</option><option value="received">مستلمة</option></QuickSelect></Field>
-  {setup.modules.includes('contracting')&&<Field label="المشروع/مركز الربحية" icon={<Boxes size={11}/>}><QuickSelect className={inputCls} value={projectId} onChange={e=>setProjectId(Number(e.target.value))}><option value={0}>بدون مشروع</option>{projects.filter(p=>p.status==='active').map(p=><option key={p.id} value={p.id}>{p.nameAr}</option>)}</QuickSelect></Field>}
-  {editingInvoice&&<Field label="سبب التعديل" icon={<Pencil size={11}/>} badge="إلزامي" badgeTone="warn"><input className={inputCls} value={editReason} onChange={e=>setEditReason(e.target.value)} placeholder="سبب واضح يُحفظ في سجل التدقيق"/></Field>}
+  <Field label="المخزن" icon={<WarehouseIcon size={11}/>} badge={warehouseId?'يستلم البضاعة':'كل المخازن'} badgeTone={warehouseId?'ok':undefined}><QuickSelect className={inputCls} value={warehouseId??''} onChange={e=>changeWarehouse(e.target.value?Number(e.target.value):null)}><option value="">كل المخازن — اختيار لكل سطر</option>{warehouses.map(w=><option key={w.id} value={w.id}>{w.nameAr}</option>)}</QuickSelect></Field>
+  <Field label="مرجع المورد / أمر الشراء" icon={<Link2 size={11}/>} badge="رقم فاتورة المورد"><input className={inputCls} value={supplierInvoiceNumber} onChange={e=>setSupplierInvoiceNumber(e.target.value)} placeholder="رقم الفاتورة الواردة من المورد"/></Field>
+  <Field label="نمط الفاتورة" icon={<Boxes size={11}/>} badge={modes[mode]} badgeTone="accent"><QuickSelect className={inputCls} value={mode} onChange={e=>setMode(e.target.value as InvoiceEditorMode)} aria-label="نمط تحرير الفاتورة">{Object.entries(modes).filter(([key])=>key!=='profit'||canViewCost).map(([k,v])=><option key={k} value={k}>{v}</option>)}</QuickSelect></Field>
  </>
 }partyMeta={<div className="invoice-doc-partymeta">
    <span>التصنيف: <b>{selectedSupplier?.category?.trim()||'مورد عام'}</b></span>
    <span>شروط السداد: <b>{selectedSupplier?.paymentTermsDays?`${selectedSupplier.paymentTermsDays} يوماً`:'نقدي'}</b></span>
    <span>الحالة: <b>{supplierId===-1?'شراء نقدي':selectedSupplier?.active===false?'مورد موقوف':'مورد نشط'}</b></span>
-   <button type="button" onClick={()=>{if(!selectedSupplier)return toast.show('اختر مورداً مسجَّلاً أولاً','error');setPartyEditorOpen(true)}}>تعديل التصنيف والبيانات</button>
+   <button type="button" onClick={()=>{if(!selectedSupplier)return toast.show('اختر مورداً مسجَّلاً أولاً','error');setPartyEditorOpen(true)}}>✎ تعديل التصنيف والبيانات</button>
+   <span className="invoice-doc-stripsep" aria-hidden="true" />
+   <span className="invoice-doc-stripfield">أمر الشراء<input value={purchaseOrderNumber} onChange={e=>setPurchaseOrderNumber(e.target.value)} placeholder="رقم داخلي — اختياري" aria-label="رقم أمر الشراء الداخلي"/></span>
+   <span className="invoice-doc-stripfield">الاستلام
+    <QuickSelect aria-label="حالة استلام البضاعة" value={receiptStatus} onChange={e=>setReceiptStatus(e.target.value as typeof receiptStatus)}><option value="pending">بانتظار الاستلام</option><option value="partial">استلام جزئي</option><option value="received">مستلمة</option></QuickSelect>
+   </span>
+   <label className="invoice-doc-stripcheck" title="خضوع الفاتورة للضريبة"><input type="checkbox" checked={applyTax} onChange={e=>{const enabled=e.target.checked;setApplyTax(enabled);setLines(previous=>previous.map(line=>({...line,vatPercentOverride:enabled?taxPolicy.effectivePercent:0})))}}/> خاضعة للضريبة {applyTax?`${taxPolicy.effectivePercent}%`:''}</label>
+   {setup.modules.includes('contracting')&&<span className="invoice-doc-stripfield">المشروع
+    <QuickSelect aria-label="المشروع أو مركز الربحية" value={projectId} onChange={e=>setProjectId(Number(e.target.value))}><option value={0}>بدون مشروع</option>{projects.filter(p=>p.status==='active').map(p=><option key={p.id} value={p.id}>{p.nameAr}</option>)}</QuickSelect>
+   </span>}
+   {editingInvoice&&<span className="invoice-doc-stripfield is-warn">سبب التعديل<input value={editReason} onChange={e=>setEditReason(e.target.value)} placeholder="إلزامي — يُحفظ في سجل التدقيق" aria-label="سبب تعديل المستند"/></span>}
    <span className="invoice-doc-partynote" title={selectedSupplier?.notes||'لا ملاحظة على المورد'}>ملاحظة: {selectedSupplier?.notes?.trim()||'—'}</span>
   </div>}  partyProfile={<>
  <div className="invoice-doc-cardhead"><b><Truck size={11}/> حساب {selectedSupplier?'المورد':'الشراء النقدي'}</b><span className={`invoice-party-state ${!selectedSupplier?'is-cash':selectedSupplier.active===false?'is-off':''}`} title={!selectedSupplier?'شراء نقدي بلا حساب آجل':selectedSupplier.active===false?'الحساب موقوف — راجع ملف المورد':'الحساب نشط'}><i/>{!selectedSupplier?'نقدي':selectedSupplier.active===false?'موقوف':'نشط'}</span></div>
@@ -53,16 +54,14 @@ export function AdvancedPurchaseInvoicePage(){const nav=useNavigate(),toast=useT
  </div>
  <div className="invoice-doc-cardfoot"><span>الرصيد بعد الترحيل</span><b dir="ltr" title="رصيد المورد بعد ترحيل هذه الفاتورة وخصم المسدَّد منها">{selectedSupplier?`${formatMinor(Math.abs(projectedSupplierBalance),cur,false)} ${cur.symbol}`:'نقدي'}</b></div>
 </>} itemProfile={<>
- <div className="invoice-doc-cardhead"><b><Package size={11}/> الصنف المختار</b>{focusedItem&&<span className="field-badge is-accent">{focusedItem.sku}</span>}</div>
- {focusedItem?<>
-  <div className="invoice-doc-metric"><span>{focusedItem.nameAr}</span><b>{focusedItem.stockQty??0} {focusedItem.baseUnit}</b></div>
-  {canViewCost&&<div className="invoice-doc-metric"><span>متوسط التكلفة</span><b>{formatMinor(focusedItem.costMinor,cur,false)}</b></div>}
-  <div className="invoice-doc-metric"><span>سعر البيع الحالي</span><b className="is-ok">{formatMinor(focusedItem.priceMinor,cur,false)}</b></div>
-  <div className="invoice-doc-cardfoot"><span>{(focusedItem.stockQty??0)<=focusedItem.minQty?'دون حد إعادة الطلب':'فوق حد إعادة الطلب'}</span><b>{lines.length} بنداً في الفاتورة</b></div>
- </>:<>
-  <div className="invoice-doc-metric"><span>لم يُضف صنف بعد</span><b>—</b></div>
-  <div className="invoice-doc-cardfoot"><span>امسح الباركود أو اضغط F5</span><b>0 بنود</b></div>
- </>}
+ <span className="invoice-doc-strip-k">الصنف المحدد</span><span className="invoice-doc-strip-v">{focusedItem?focusedItem.nameAr:'—'}</span>
+ <span className="invoice-doc-stripsep" aria-hidden="true" />
+ <span className="invoice-doc-strip-k">المتاح</span><span className="invoice-doc-strip-v" dir="ltr">{focusedItem?`${focusedItem.stockQty??0} ${focusedItem.baseUnit??''}`:'—'}</span>
+ {canViewCost&&<><span className="invoice-doc-stripsep" aria-hidden="true" /><span className="invoice-doc-strip-k">متوسط التكلفة</span><span className="invoice-doc-strip-v" dir="ltr">{focusedItem?formatMinor(focusedItem.costMinor,cur,false):'—'}</span></>}
+ <span className="invoice-doc-stripsep" aria-hidden="true" />
+ <span className="invoice-doc-strip-k">سعر البيع الحالي</span><span className="invoice-doc-strip-v is-ok" dir="ltr">{focusedItem?formatMinor(focusedItem.priceMinor,cur,false):'—'}</span>
+ <span className="invoice-doc-stripspacer" />
+ <span className="invoice-doc-strip-k">حد الطلب</span><span className="invoice-doc-strip-v">{focusedItem?((focusedItem.stockQty??0)<=focusedItem.minQty?'دون حد إعادة الطلب':'فوق حد إعادة الطلب'):'—'}</span>
 </>} onBack={() => unsaved.requestClose(() => finishDocument())} onNavigate={goTo} onPartySearch={() => window.dispatchEvent(new Event('shopsys:open-party'))} onItemSearch={() => window.dispatchEvent(new Event('shopsys:open-item'))} onSaveDraft={saveDraft} draftCount={advancedInvoiceDrafts.filter(d=>d.kind==='purchase').length} onRestoreDraft={restoreDraft} onPrint={() => setPrintOpen(true)} onExportPdf={exportPdf} onPost={save}
   documentNumber={editingInvoice?editingInvoice.invoiceNumber:undefined}
 >
@@ -95,7 +94,6 @@ export function AdvancedPurchaseInvoicePage(){const nav=useNavigate(),toast=useT
    placeholder="اكتب اسم الصنف أو الكود؛ ثم اختر بالسهم + Enter أو مرتين"
    showPicker={false}
   />
-  <section className="border-b border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/45 space-y-2"><div className="flex items-center justify-between gap-2"><div><b>المصروفات المحملة على الفاتورة</b><p className="text-xs text-slate-500">شحن، جمارك، تأمين أو تحميل — تُدار من نافذة مستقلة.</p></div><Btn variant="soft" onClick={() => setExpensesDialog(true)}><Plus size={15}/> إضافة مصاريف {expenses.length ? `(${expenses.length})` : ''}</Btn></div>{expenses.length > 0 && <div className="flex flex-wrap gap-2">{expenses.map((expense,index) => <span key={index} className="rounded-lg bg-slate-100 dark:bg-slate-800 px-2 py-1 text-xs">{expense.nameAr}: {formatMinor(expense.amountMinor, cur, false)} · {expense.paidBy === 'payable' ? 'مستحق' : 'مدفوع'}</span>)}</div>}</section>
    </div>
   <Modal open={expensesDialog} onClose={() => setExpensesDialog(false)} title="مصروفات الشراء والتكلفة المحملة" extraWide><PurchaseExpenseManager expenses={expenses} onChange={setExpenses} expenseTemplates={expenseTemplates} onAddTemplate={addExpenseTemplate} costCenters={costCenters} vehicles={vehicles} treasuries={treasuries} custodyFiles={custodyFiles} currencyDecimals={cur.decimals} taxPercent={taxPolicy.effectivePercent} taxEnabled={applyTax && taxPolicy.canRecoverInputTax} defaultTreasury={treasury} /><div className="flex justify-end mt-3"><Btn onClick={() => setExpensesDialog(false)}>تم</Btn></div></Modal>
 <section className="invoice-totals-footer">
@@ -105,6 +103,11 @@ export function AdvancedPurchaseInvoicePage(){const nav=useNavigate(),toast=useT
     <div className="invoice-doc-panel-body">
      <div className="invoice-doc-quick">{PURCHASE_TERMS.map(term=><button key={term} type="button" title="إضافة الشرط إلى الملاحظات" onClick={()=>setNotes(notes.trim()?`${notes.trim()}\n${term}`:term)}>+ {term}</button>)}</div>
      <textarea className={inputCls} value={notes} onChange={e=>setNotes(e.target.value)} aria-label="ملاحظات وشروط المستند" placeholder="رقم أمر التوريد · شروط الضمان · أي اتفاق مع المورد…"/>
+     <div className="invoice-doc-addons">
+      <button type="button" className="is-amber" onClick={()=>setExpensesDialog(true)} title="شحن · جمارك · تأمين — تُحمَّل على تكلفة المخزون أو تُقيَّد مصروف فترة">＋ مصاريف الفاتورة <span className="invoice-doc-count">{expenses.length}</span></button>
+      <button type="button" onClick={()=>setExpensesDialog(true)} title="عرض وتعديل المصاريف المحمَّلة على هذه الفاتورة">☰ إدارة المصاريف</button>
+     </div>
+     {expenses.length>0&&<div className="invoice-doc-addonlist">{expenses.map((expense,index)=><span key={index}>{expense.nameAr}: {formatMinor(expense.amountMinor,cur,false)} · {expense.paidBy==='payable'?'مستحق':'مدفوع'}</span>)}</div>}
     </div>
     <div className="invoice-doc-panel-foot"><DocumentAttachmentsBox documentKind="purchase" documentId={editingInvoice?.id??null} pending={attachments} onPendingChange={setAttachments} addedBy={currentUser?.nameAr??setup.ownerName??'المالك'}/><span>شروط سداد المورد</span><b>{selectedSupplier?.paymentTermsDays?`${selectedSupplier.paymentTermsDays} يوم`:'نقدي'}</b></div>
    </div>

@@ -168,8 +168,11 @@ const ruleOf = (selector) => {
   assert.ok(/height: 100%/.test(ruleOf('.app-window-body .invoice-doc.invoice-pos-root')), 'داخل النافذة المستقلة لا يأخذ المستند ارتفاع النافذة')
   const body = ruleOf('.invoice-doc-body')
   assert.ok(/grid-template-rows: auto minmax\(0, 1fr\)/.test(body) && /overflow: hidden/.test(body), 'جسم المستند لا يمنح البنود المساحة المتبقية')
-  const docGrid = ruleOf('.invoice-pos-document > .invoice-body-grid')
-  assert.ok(/grid-template-rows: minmax\(0, 1fr\) auto/.test(docGrid), 'البنود واللوحات ليستا صفّين (بنود تتمدد ثم لوحات)')
+  /* `.invoice-shell` صار display:contents، والمحدِّدات تُطابق شجرة DOM الحقيقية
+     لا شجرة الصناديق — فالقاعدة وصفية لا بـ`>`، وإلا لم تُطبَّق أصلاً. */
+  assert.ok(/display: contents/.test(ruleOf('.invoice-pos-document > .invoice-shell')), 'غلاف invoice-shell ما زال يقطع سلسلة الارتفاع')
+  const docGrid = ruleOf('.invoice-pos-document .invoice-body-grid')
+  assert.ok(/grid-template-rows: minmax\(0, 1fr\) auto/.test(docGrid) && /align-items: stretch/.test(docGrid), 'البنود واللوحات ليستا صفّين ممدودين (بنود تتمدد ثم لوحات)')
   const scroll = ruleOf('.invoice-editor .invoice-lines-panel .overflow-x-auto')
   assert.ok(/flex: 1/.test(scroll) && /max-height: none/.test(scroll) && /overflow: auto/.test(scroll), 'جدول البنود لا يُمرَّر داخلياً — سيدفع بقية الفاتورة خارج الشاشة')
   assert.ok(/repeat\(3, minmax\(0, 1fr\)\)/.test(ruleOf('.invoice-pos-document .invoice-totals-footer')), 'اللوحات الثلاث ليست في صف واحد كالنموذج')

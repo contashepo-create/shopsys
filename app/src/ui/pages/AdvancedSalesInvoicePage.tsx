@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Boxes, Calculator, CalendarClock, CalendarDays, CircleUser, Coins, Link2, Package, Pencil, Plus, ScrollText, Trash2, UserRound, Wallet, Warehouse as WarehouseIcon } from 'lucide-react'
+import { Boxes, Calculator, CalendarClock, CalendarDays, CircleUser, Link2, Pencil, Plus, ScrollText, Trash2, Wallet, Warehouse as WarehouseIcon } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { DocSectionHead } from '../components/DocSection.tsx'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
@@ -46,7 +46,7 @@ const SALE_TERMS=['السداد خلال 30 يوماً من تاريخ الفا�
 
 export function AdvancedSalesInvoicePage(){
  const nav=useNavigate(),toast=useToast();const [searchParams]=useSearchParams();const host=useWindowHost();const editId=Number((host?.props.editId as number|undefined)??searchParams.get('edit')??0);const {setup,receipt,einvoice,activatedPayload,trialStartedAt,lastSeenAt,warehouseReceipt}=useAppStore();const cur=(setup.countryCode&&getCountry(setup.countryCode)?.currency)||{code:'EGP',symbol:'ج.م',decimals:2 as const,name:''};const taxPolicy=resolveBusinessTax(setup.taxRegistrationStatus,setup.vatPercent)
- const {items,categories,customers,warehouses,branches,treasuries,custodyFiles,vehicles,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,priceLists,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,editSale,sales,getEffectivePrice,getCustomerBalance,addDocumentFile}=useDataStore();const [attachments,setAttachments]=useState<PendingAttachment[]>([]);const [draftsOpen,setDraftsOpen]=useState(false);const [draftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);const [mode,setMode]=useState<InvoiceEditorMode>('simple');const [customerId,setCustomerId]=useState(0);const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [customerReference,setCustomerReference]=useState(''),[dueDate,setDueDate]=useState(''),[notes,setNotes]=useState('');const [discount,setDiscount]=useState('0'),[discountAmount,setDiscountAmount]=useState('');const [paid,setPaid]=useState('');const [fxOn,setFxOn]=useState(false);const [fxCode,setFxCode]=useState('USD');const [fxAmount,setFxAmount]=useState('');const [fxRate,setFxRate]=useState('');const paidTouched=useRef(false);const [terminalPaid,setTerminalPaid]=useState('');const [employeePaid,setEmployeePaid]=useState('');const [collectionEmployeeId,setCollectionEmployeeId]=useState(0);const [treasury,setTreasury]=useState(()=>effectiveDefaultTreasury(appUsers.find(u=>u.id===currentUserId)?.treasuryAccess,'receipt','1101'));const [terminal,setTerminal]=useState<TerminalPaymentDraft>({terminalId:'',providerReference:'',cardLast4:''});const [expenses,setExpenses]=useState<InternalExpense[]>([]);const [customerCharges,setCustomerCharges]=useState<DocumentCharge[]>([]);const [allowNegative,setAllowNegative]=useState(setup.allowNegativeStock);const [chargesOpen,setChargesOpen]=useState(false);const [internalExpensesOpen,setInternalExpensesOpen]=useState(false);const [categoryFilter,setCategoryFilter]=useState(0);const [printOpen,setPrintOpen]=useState(false);const [partyEditorOpen,setPartyEditorOpen]=useState(false);const [editReason,setEditReason]=useState('')
+ const {items,categories,customers,warehouses,branches,treasuries,custodyFiles,vehicles,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,priceLists,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,editSale,sales,getEffectivePrice,getCustomerBalance,addDocumentFile}=useDataStore();const [attachments,setAttachments]=useState<PendingAttachment[]>([]);const [draftsOpen,setDraftsOpen]=useState(false);const [draftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);const [mode,setMode]=useState<InvoiceEditorMode>('simple');const [customerId,setCustomerId]=useState(0);const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [customerReference,setCustomerReference]=useState(''),[dueDate,setDueDate]=useState(''),[notes,setNotes]=useState('');const [discount,setDiscount]=useState('0'),[discountAmount,setDiscountAmount]=useState('');const [discByAmount,setDiscByAmount]=useState(false);const [paid,setPaid]=useState('');const [fxOn,setFxOn]=useState(false);const [fxCode,setFxCode]=useState('USD');const [fxAmount,setFxAmount]=useState('');const [fxRate,setFxRate]=useState('');const paidTouched=useRef(false);const [terminalPaid,setTerminalPaid]=useState('');const [employeePaid,setEmployeePaid]=useState('');const [collectionEmployeeId,setCollectionEmployeeId]=useState(0);const [treasury,setTreasury]=useState(()=>effectiveDefaultTreasury(appUsers.find(u=>u.id===currentUserId)?.treasuryAccess,'receipt','1101'));const [terminal,setTerminal]=useState<TerminalPaymentDraft>({terminalId:'',providerReference:'',cardLast4:''});const [expenses,setExpenses]=useState<InternalExpense[]>([]);const [customerCharges,setCustomerCharges]=useState<DocumentCharge[]>([]);const [allowNegative,setAllowNegative]=useState(setup.allowNegativeStock);const [chargesOpen,setChargesOpen]=useState(false);const [internalExpensesOpen,setInternalExpensesOpen]=useState(false);const [categoryFilter,setCategoryFilter]=useState(0);const [printOpen,setPrintOpen]=useState(false);const [partyEditorOpen,setPartyEditorOpen]=useState(false);const [editReason,setEditReason]=useState('')
  const editingInvoice=sales.find(invoice=>invoice.id===editId)??null;const lic=evaluateLicense({activatedPayload,trialStartedAt,lastSeenAt,today:new Date().toISOString()});const einvoiceActive=electronicInvoiceLockActive({licensed:hasFeature(lic,'einvoice_sa')||hasFeature(lic,'einvoice_eg'),enabled:einvoice.enabled===true,taxNumber:einvoice.taxNumber});const currentUser=appUsers.find(u=>u.id===currentUserId)??null;const canViewCost=effectivePermissionsFor(currentUser,rolesWithOverrides(roleOverrides,customRoles,setup.activityId)).has('inv.cost.view')
  const customerPriceListId=(id:number)=>customers.find(customer=>customer.id===id)?.priceListId??null
  const selectCustomer=(id:number)=>{setCustomerId(id);const listId=customerPriceListId(id);setLines(previous=>previous.map(line=>({...line,unitPriceMinor:getEffectivePrice(line.itemId,listId)})));if(id!==0&&!paidTouched.current){setPaid('');setTerminalPaid('')}}
@@ -106,18 +106,10 @@ export function AdvancedSalesInvoicePage(){
    <>
     <Field label="العميل" icon={<CircleUser size={11}/>} badge={!selectedCustomer?'بيع نقدي':selectedCustomer.active===false?'حساب موقوف':'عميل مسجَّل'} badgeTone={!selectedCustomer?undefined:selectedCustomer.active===false?'warn':'accent'}><div className="invoice-pos-party-field invoice-doc-infield"><button type="button" className="invoice-pos-edit-party" onClick={()=>{if(host&&selectedCustomer){openPartyEditorWindow('customer',selectedCustomer.id,host.windowId);return}setPartyEditorOpen(true)}} disabled={!selectedCustomer} title="تعديل بيانات العميل"><Pencil size={13}/></button><PartyQuickPicker parties={customers} value={customerId} onChange={selectCustomer} cashLabel="عميل نقدي" label="بحث العميل — F4" partyInfo={customerPickerInfo} onConfirm={()=>window.dispatchEvent(new Event('shopsys:focus-item'))} autoFocus/><span className="invoice-doc-infield-chip">{selectedCustomer?partyCode('CUS',selectedCustomer.id):'CASH'}</span></div></Field>
     <Field label="تاريخ الفاتورة" icon={<CalendarDays size={11}/>} badge="اليوم"><div className="invoice-doc-static" dir="ltr">{new Date().toISOString().slice(0,10)}</div></Field>
-    <Field label="العملة ولائحة الأسعار" icon={<Coins size={11}/>} badge={`1.00 = ${cur.code}`} badgeTone="accent"><div className="invoice-doc-static">{cur.name||cur.code} · {priceLists.find(list=>list.id===customerPriceListId(customerId))?.nameAr??'اللائحة الأساسية'}</div></Field>
     <Field label="تاريخ الاستحقاق" icon={<CalendarClock size={11}/>} badge={dueDate?'آجل محدَّد':'فوري'} badgeTone={dueDate?'warn':undefined}><input type="date" className={inputCls} value={dueDate} onChange={e=>setDueDate(e.target.value)} aria-label="تاريخ استحقاق الفاتورة"/></Field>
-    <Field label="الفرع والمخزن" icon={<WarehouseIcon size={11}/>} badge={warehouseId?(items.some(item=>(item.stockQty??0)>0)?'متوفر بالمخزون':'مخزون فارغ'):'كل المخازن'} badgeTone={warehouseId?'ok':undefined}><QuickSelect className={inputCls} value={warehouseId??''} onChange={e=>changeWarehouse(e.target.value?Number(e.target.value):null)}><option value="">كل المخازن — اختيار لكل سطر</option>{warehouses.map(w=><option key={w.id} value={w.id}>{w.nameAr}</option>)}</QuickSelect></Field>
-    <Field label="المندوب / البائع" icon={<UserRound size={11}/>} badge={commissionEmployeeId?(commissionBasis==='fixed'?`عمولة ثابتة`:`عمولة ${commissionAmount||0}٪`):'بلا عمولة'} badgeTone={commissionEmployeeId?'accent':undefined}><div className="invoice-doc-infield"><PartyQuickPicker parties={employees.filter(employee=>employee.active)} value={commissionEmployeeId} onChange={setCommissionEmployeeId} cashLabel="بلا مندوب" label="بحث الموظف"/>{commissionEmployeeId>0&&<span className="invoice-doc-infield-avatar">{(employees.find(employee=>employee.id===commissionEmployeeId)?.nameAr??'').trim().split(/\s+/).slice(0,2).map(word=>word[0]).join('')}</span>}</div></Field>
-   </>
-  }
-  referenceBar={
-   <>
-    <Field label="المرجع الخارجي" icon={<Link2 size={11}/>} badge="أمر شراء العميل"><input className={inputCls} value={customerReference} onChange={e=>setCustomerReference(e.target.value)} placeholder="رقم أمر الشراء أو العقد — اختياري"/></Field>
-    <Field label="نمط تحرير الفاتورة" icon={<Boxes size={11}/>} badge={modeNames[mode]} badgeTone="accent"><QuickSelect className={inputCls} value={mode} onChange={e=>setMode(e.target.value as InvoiceEditorMode)}>{Object.entries(modeNames).filter(([key])=>key!=='profit'||canViewCost).map(([k,v])=><option key={k} value={k}>{v}</option>)}</QuickSelect></Field>
-    <Field label="المخزون السالب" icon={<Package size={11}/>}><label className="invoice-pos-check-field"><input type="checkbox" checked={allowNegative} onChange={e=>setAllowNegative(e.target.checked)}/> تحذير بدلاً من المنع</label></Field>
-    {editingInvoice&&<Field label="سبب التعديل" icon={<Pencil size={11}/>} badge="إلزامي" badgeTone="warn"><input className={inputCls} value={editReason} onChange={e=>setEditReason(e.target.value)} placeholder="سبب واضح يُحفظ في سجل التدقيق"/></Field>}
+    <Field label="المخزن" icon={<WarehouseIcon size={11}/>} badge={warehouseId?(items.some(item=>(item.stockQty??0)>0)?'متوفر بالمخزون':'مخزون فارغ'):'كل المخازن'} badgeTone={warehouseId?'ok':undefined}><QuickSelect className={inputCls} value={warehouseId??''} onChange={e=>changeWarehouse(e.target.value?Number(e.target.value):null)}><option value="">كل المخازن — اختيار لكل سطر</option>{warehouses.map(w=><option key={w.id} value={w.id}>{w.nameAr}</option>)}</QuickSelect></Field>
+    <Field label="نمط الفاتورة" icon={<Boxes size={11}/>} badge={modeNames[mode]} badgeTone="accent"><QuickSelect className={inputCls} value={mode} onChange={e=>setMode(e.target.value as InvoiceEditorMode)} aria-label="نمط تحرير الفاتورة">{Object.entries(modeNames).filter(([key])=>key!=='profit'||canViewCost).map(([k,v])=><option key={k} value={k}>{v}</option>)}</QuickSelect></Field>
+    <Field label="المرجع / أمر الشراء" icon={<Link2 size={11}/>}><input className={inputCls} value={customerReference} onChange={e=>setCustomerReference(e.target.value)} placeholder="رقم أمر الشراء أو العقد — اختياري" aria-label="المرجع الخارجي للفاتورة"/></Field>
    </>
   }
   /* نص الرصيد مختصر حتى لا يفيض من خانة المؤشر: «متزن» وحدها عند الصفر */
@@ -125,8 +117,16 @@ export function AdvancedSalesInvoicePage(){
    <span>الفئة: <b>{priceLists.find(list=>list.id===customerPriceListId(customerId))?.nameAr??'تجزئة (اللائحة الأساسية)'}</b></span>
    <span>خصم الفاتورة: <b dir="ltr">{invoiceDiscountPercent}%</b></span>
    <span>الحالة: <b>{!selectedCustomer?'بيع نقدي':selectedCustomer.active===false?'حساب موقوف':'حساب نشط'}</b></span>
-   <button type="button" onClick={()=>{if(!selectedCustomer)return toast.show('اختر عميلاً مسجَّلاً أولاً','error');setPartyEditorOpen(true)}}>تعديل الفئة والبيانات</button>
+   <button type="button" onClick={()=>{if(!selectedCustomer)return toast.show('اختر عميلاً مسجَّلاً أولاً','error');setPartyEditorOpen(true)}}>✎ تعديل الفئة والخصم</button>
    <span className="invoice-doc-partynote" title={selectedCustomer?.notes||'لا ملاحظة على العميل'}>ملاحظة: {selectedCustomer?.notes?.trim()||'—'}</span>
+   <span className="invoice-doc-stripsep" aria-hidden="true" />
+   <span className="invoice-doc-stripfield">المندوب
+    <QuickSelect aria-label="المندوب أو البائع صاحب العمولة" value={commissionEmployeeId} onChange={e=>setCommissionEmployeeId(Number(e.target.value))}>
+     <option value={0}>بلا مندوب</option>{employees.filter(employee=>employee.active).map(employee=><option key={employee.id} value={employee.id}>{employee.nameAr}</option>)}
+    </QuickSelect>
+   </span>
+   <label className="invoice-doc-stripcheck" title="عند نفاد الرصيد: تحذير بدلاً من منع البيع"><input type="checkbox" checked={allowNegative} onChange={e=>setAllowNegative(e.target.checked)}/> بيع بمخزون سالب</label>
+   {editingInvoice&&<span className="invoice-doc-stripfield is-warn">سبب التعديل<input value={editReason} onChange={e=>setEditReason(e.target.value)} placeholder="إلزامي — يُحفظ في سجل التدقيق" aria-label="سبب تعديل المستند"/></span>}
   </div>}
   partyProfile={<>
    <div className="invoice-doc-cardhead"><b><CircleUser size={11}/> رصيد {selectedCustomer?'العميل':'البيع النقدي'}</b><span className={`invoice-party-state ${!selectedCustomer?'is-cash':selectedCustomer.active===false?'is-off':''}`} title={!selectedCustomer?'بيع نقدي بلا حساب آجل':selectedCustomer.active===false?'الحساب موقوف — لا يُسمح بالبيع الآجل':'الحساب نشط'}><i/>{!selectedCustomer?'نقدي':selectedCustomer.active===false?'موقوف':'نشط'}</span></div>
@@ -139,16 +139,14 @@ export function AdvancedSalesInvoicePage(){
    <div className="invoice-doc-cardfoot"><span>الرصيد بعد الترحيل</span><b dir="ltr" title="رصيد العميل بعد ترحيل هذه الفاتورة وخصم المحصَّل منها">{selectedCustomer?`${formatMinor(Math.abs(projectedCustomerBalance),cur,false)} ${cur.symbol}`:'نقدي'}</b></div>
   </>}
   itemProfile={<>
-   <div className="invoice-doc-cardhead"><b><Package size={11}/> الصنف المختار</b>{focusedItem&&<span className="field-badge is-accent">{focusedItem.sku}</span>}</div>
-   {focusedItem?<>
-    <div className="invoice-doc-metric"><span>{focusedItem.nameAr}</span><b>{focusedItem.stockQty??0} {focusedItem.baseUnit}</b></div>
-    {canViewCost&&<div className="invoice-doc-metric"><span>متوسط التكلفة</span><b>{formatMinor(focusedItem.costMinor,cur,false)}</b></div>}
-    <div className="invoice-doc-metric"><span>سعر البيع المعتمد</span><b className="is-ok">{formatMinor(getEffectivePrice(focusedItem.id,customerPriceListId(customerId)),cur,false)}</b></div>
-    <div className="invoice-doc-cardfoot"><span>{focusedItem.warrantyMonths?`ضمان ${focusedItem.warrantyMonths} شهراً`:'بلا ضمان'}</span><b>{lines.length} بنداً في الفاتورة</b></div>
-   </>:<>
-    <div className="invoice-doc-metric"><span>لم يُضف صنف بعد</span><b>—</b></div>
-    <div className="invoice-doc-cardfoot"><span>امسح الباركود أو اضغط F5</span><b>0 بنود</b></div>
-   </>}
+   <span className="invoice-doc-strip-k">الصنف المحدد</span><span className="invoice-doc-strip-v">{focusedItem?focusedItem.nameAr:'—'}</span>
+   <span className="invoice-doc-stripsep" aria-hidden="true" />
+   <span className="invoice-doc-strip-k">المتاح</span><span className="invoice-doc-strip-v" dir="ltr">{focusedItem?`${focusedItem.stockQty??0} ${focusedItem.baseUnit??''}`:'—'}</span>
+   {canViewCost&&<><span className="invoice-doc-stripsep" aria-hidden="true" /><span className="invoice-doc-strip-k">تكلفة الشراء</span><span className="invoice-doc-strip-v" dir="ltr">{focusedItem?formatMinor(focusedItem.costMinor,cur,false):'—'}</span></>}
+   <span className="invoice-doc-stripsep" aria-hidden="true" />
+   <span className="invoice-doc-strip-k">سعر البيع</span><span className="invoice-doc-strip-v is-ok" dir="ltr">{focusedItem?formatMinor(getEffectivePrice(focusedItem.id,customerPriceListId(customerId)),cur,false):'—'}</span>
+   <span className="invoice-doc-stripspacer" />
+   <span className="invoice-doc-strip-k">العملة واللائحة</span><span className="invoice-doc-strip-v">{cur.code} · {priceLists.find(list=>list.id===customerPriceListId(customerId))?.nameAr??'اللائحة الأساسية'}</span>
   </>}
   onBack={() => unsaved.requestClose(() => finishDocument())}
   onNavigate={goTo}
@@ -194,11 +192,7 @@ export function AdvancedSalesInvoicePage(){
    placeholder="اكتب اسم الصنف أو الكود؛ ثم اختر بالسهم + Enter أو مرتين"
    showPicker={false}
   />
-  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/45">
-   <div className="flex items-center gap-2"><span className="grid h-7 w-7 place-items-center rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300">＋</span><div><b className="text-xs">المصروفات</b><p className="text-[10px] text-slate-500">أضفها من الزر المناسب دون حجز مساحة كبيرة من الفاتورة.</p></div></div>
-   <div className="flex flex-wrap items-center gap-2"><Btn variant="soft" className="!px-3 !py-1.5 !text-xs" onClick={() => setChargesOpen(true)}><Plus size={14}/> على العميل {customerCharges.length ? `(${customerCharges.length})` : ''}</Btn><Btn variant="soft" className="!px-3 !py-1.5 !text-xs" onClick={() => setInternalExpensesOpen(true)}><Plus size={14}/> داخلية {expenses.length || allCommissionInputs.length ? `(${expenses.length + allCommissionInputs.length})` : ''}</Btn></div>
   </div>
-   </div>
   <Modal open={chargesOpen} onClose={() => setChargesOpen(false)} title="مصروفات يتحملها العميل">
    <div className="space-y-3"><DocSectionHead step="١" title="بنود يتحملها العميل" hint="شحن · توصيل · تركيب — تُضاف لإجمالي الفاتورة ولا تُثبت في الدفتر حتى تعتمدها" />{customerCharges.map((charge,index) => <div key={index} className="grid md:grid-cols-[1fr_10rem_auto] gap-2 items-end rounded-xl border p-2"><Field label="البيان"><input className={inputCls} value={charge.nameAr} onChange={e => setCustomerCharges(customerCharges.map((row,i) => i === index ? { ...row, nameAr: e.target.value } : row))}/></Field><Field label="القيمة"><DecimalInput className={inputCls} min="0" value={charge.amountMinor ? charge.amountMinor / 10 ** cur.decimals : ''} onValueChange={value => setCustomerCharges(customerCharges.map((row,i) => i === index ? { ...row, amountMinor: Math.max(0, toMinor(value || '0', cur.decimals)) } : row))}/></Field><div className="flex items-center gap-2 pb-2"><label className="text-xs"><input type="checkbox" checked={charge.taxable} onChange={e => setCustomerCharges(customerCharges.map((row,i) => i === index ? { ...row, taxable: e.target.checked } : row))}/> ضريبة</label><button type="button" className="text-rose-500" onClick={() => setCustomerCharges(customerCharges.filter((_,i) => i !== index))}><Trash2 size={16}/></button></div></div>)}<Btn variant="ghost" onClick={() => setCustomerCharges([...customerCharges, { kind: 'shipping', nameAr: 'شحن', amountMinor: 0, taxable: false }])}><Plus size={15}/> إضافة مصروف</Btn><div className="flex justify-end"><Btn onClick={() => setChargesOpen(false)}>تم</Btn></div></div>
   </Modal>
@@ -212,6 +206,11 @@ export function AdvancedSalesInvoicePage(){
     <div className="invoice-doc-panel-body">
      <div className="invoice-doc-quick">{SALE_TERMS.map(term=><button key={term} type="button" title="إضافة الشرط إلى الملاحظات" onClick={()=>setNotes(notes.trim()?`${notes.trim()}\n${term}`:term)}>+ {term}</button>)}</div>
      <textarea className={inputCls} value={notes} onChange={e=>setNotes(e.target.value)} aria-label="ملاحظات وشروط المستند" placeholder="شروط السداد · موعد التسليم · أي تعهد يظهر للعميل…"/>
+     <div className="invoice-doc-addons">
+      <button type="button" className="is-amber" onClick={()=>setChargesOpen(true)} title="مصروف يتحمله العميل ويُضاف لإجمالي الفاتورة">＋ مصروف على العميل <span className="invoice-doc-count">{customerCharges.length}</span></button>
+      <button type="button" className="is-amber" onClick={()=>setInternalExpensesOpen(true)} title="مصروف على المنشأة يُخصم من ربح الفاتورة">＋ مصروف داخلي <span className="invoice-doc-count">{expenses.length}</span></button>
+      <button type="button" onClick={()=>setInternalExpensesOpen(true)} title="عمولة موظف على هذه الفاتورة">＋ عمولة موظف <span className="invoice-doc-count">{allCommissionInputs.length}</span></button>
+     </div>
     </div>
     <div className="invoice-doc-panel-foot"><DocumentAttachmentsBox documentKind="sale" documentId={editingInvoice?.id??null} pending={attachments} onPendingChange={setAttachments} addedBy={currentUser?.nameAr??setup.ownerName??'المالك'}/><span>الاستحقاق</span><b>{dueDate||'غير محدد'}</b></div>
    </div>
@@ -246,7 +245,15 @@ export function AdvancedSalesInvoicePage(){
    <div className="invoice-doc-panel">
     <div className="invoice-doc-panel-head"><span className="invoice-doc-panel-icon"><Calculator size={11}/></span><b>إجمالي الفاتورة</b><small>{mode==='profit'&&canViewCost?'مع الربح':'ملخص الحساب'}</small></div>
     <div className="invoice-doc-panel-body">
-     <div className="invoice-doc-panel-grid"><Field label="خصم نسبة %"><DecimalInput className={inputCls} min="0" max="100" value={discount} onValueChange={value=>{setDiscount(value);setDiscountAmount('')}} placeholder="0"/></Field><Field label={`خصم يدوي (${cur.symbol})`}><DecimalInput className={inputCls} min="0" value={discountAmount} onValueChange={value=>{setDiscountAmount(value);setDiscount('0')}} placeholder="0"/></Field></div>
+     <div className="invoice-doc-discline">
+      <span className="invoice-doc-discline-lbl">الخصم</span>
+      <DecimalInput className={inputCls} min="0" max={discByAmount?undefined:"100"} value={discByAmount?discountAmount:discount} onValueChange={value=>{if(discByAmount){setDiscountAmount(value);setDiscount('0')}else{setDiscount(value);setDiscountAmount('')}}} placeholder="0" aria-label={discByAmount?`قيمة الخصم بـ${cur.symbol}`:'نسبة الخصم %'}/>
+      <span className="invoice-doc-disctog">
+       <button type="button" className={discByAmount?'':'is-on'} onClick={()=>{setDiscByAmount(false);setDiscountAmount('')}} title="خصم بنسبة مئوية">%</button>
+       <button type="button" className={discByAmount?'is-on':''} onClick={()=>{setDiscByAmount(true);setDiscount('0')}} title={`خصم بمبلغ ${cur.symbol}`}>{cur.symbol}</button>
+      </span>
+      <span className="invoice-doc-disceq" dir="ltr">= {formatMinor(totals?.discountMinor??0,cur,false)}</span>
+     </div>
      <div className="invoice-doc-sum">
       <Row n="إجمالي البنود" v={totals?.grossMinor??0}/>
       <Row n="الخصم" v={-(totals?.discountMinor??0)} minus/>

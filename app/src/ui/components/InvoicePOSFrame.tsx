@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeft, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, Columns3, Eye, FileClock, FileDown, FileText, Fingerprint, Hash, MessageSquare, MoreVertical, PackageCheck, Printer, RotateCcw, Save, UserRound } from 'lucide-react'
+import { ArrowLeft, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, Columns3, Eye, FileClock, FileDown, FileText, MessageSquare, MoreVertical, PackageCheck, Printer, RotateCcw, Save, Settings, UserRound } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
@@ -15,8 +15,6 @@ type InvoicePOSFrameProps = {
   userLabel: string
   activityLabel: string
   headerFields: ReactNode
-  /** شريط المرجع الخارجي أسفل الحقول (أمر شراء العميل / بوليصة شحن) */
-  referenceBar?: ReactNode
   partyProfile?: ReactNode
   /** الصف الثالث في الترويسة: فئة الطرف وخصمه وملاحظته وزر تعديلها (شريط واحد) */
   partyMeta?: ReactNode
@@ -70,7 +68,6 @@ export function InvoicePOSFrame({
   userLabel,
   activityLabel,
   headerFields,
-  referenceBar,
   partyProfile,
   partyMeta,
   itemProfile,
@@ -188,28 +185,14 @@ export function InvoicePOSFrame({
       <div className="invoice-doc-body">
         {/* ② بطاقة الرأس: شريط بيانات ثم حقول + بطاقتا مؤشرات */}
         <section className="invoice-doc-card invoice-doc-header-card">
-          <div className="invoice-doc-cardbar">
-            <div className="invoice-doc-cardbar-main">
-              <span className="invoice-doc-cardbar-icon"><FileText size={11} /></span>
-              <b>بيانات الفاتورة والمعاملة</b>
-              <i />
-              <span>{ledgerLabel}</span>
-              <span className={`invoice-doc-chip ${documentNumber ? 'is-edit' : 'is-live'}`}><em />{documentNumber ? 'تعديل مستند مرحّل' : 'قيد التحرير'}</span>
-            </div>
-            <div className="invoice-doc-cardbar-meta">
-              <span><Hash size={10} /> المسلسل: <strong>{serial}</strong></span>
-              <span><Fingerprint size={10} /> الرقم الضريبي: <strong>{einvoice.taxNumber || 'غير مسجَّل'}</strong></span>
-            </div>
-          </div>
           <div className="invoice-doc-header-body">
             <div className="invoice-doc-form">
               <div className="invoice-doc-fields">{headerFields}</div>
-              {referenceBar && <div className="invoice-doc-refbar">{referenceBar}</div>}
               {/* الصف الثاني: شريط الصنف المحدد بجانب اسم المستخدم — كما في التصميم المعتمد */}
               {itemProfile && (
                 <div className="invoice-doc-strip">
                   <span className="invoice-doc-strip-user" title="المستخدم الذي يحرر المستند"><UserRound size={11} /> {userLabel}</span>
-                  <div className="invoice-doc-itemcard">{itemProfile}</div>
+                  {itemProfile}
                 </div>
               )}
               {/* الصف الثالث: فئة الطرف وخصمه وملاحظته */}
@@ -230,6 +213,7 @@ export function InvoicePOSFrame({
         <div className="invoice-doc-actionbar-info">
           <span className={`invoice-doc-online is-${connectivityInfo.tone}`}><i /> {connectivityInfo.nameAr}</span>
           <span className="invoice-doc-cardbar-session">{activityLabel} · {branchLabel} · {userLabel}</span>
+          <span>{ledgerLabel} · المسلسل {serial} · الرقم الضريبي {einvoice.taxNumber || 'غير مسجَّل'}</span>
           <span>الطباعة: {browserPrintAvailable ? (autoPrintEnabled ? 'تلقائية بعد البيع' : receipt.defaultTemplate) : 'غير متاحة'}</span>
           {auditLabel && <span className="invoice-doc-audit" title={auditLabel}>{auditLabel}</span>}
         </div>
@@ -253,6 +237,7 @@ export function InvoicePOSFrame({
               </div>
             )}
           </div>
+          <Btn variant="ghost" onClick={() => onNavigate('/settings/printing')} title="قوالب الطباعة وإعداد إذن الاستلام والحرارية"><Settings size={13} /> إعدادات الطباعة</Btn>
           {onExportPdf && <Btn variant="ghost" onClick={onExportPdf} title="يفتح حوار الطباعة — اختر وجهة «حفظ كـ PDF»"><FileDown size={13} /> تصدير PDF</Btn>}
         </div>
       </footer>

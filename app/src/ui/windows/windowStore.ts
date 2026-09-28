@@ -63,6 +63,8 @@ export interface AppWindow {
 }
 
 export interface OpenWindowInput {
+  /** فتح النافذة مكبَّرة من أول لحظة — الفواتير تفتح كمستند ملء الشاشة */
+  mode?: AppWindowMode
   kind: AppWindowKind
   title: string
   subtitle?: string
@@ -155,7 +157,7 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       title: input.title,
       subtitle: input.subtitle ?? '',
       props: input.props ?? {},
-      mode: 'normal',
+      mode: input.mode ?? 'normal',
       rect,
       lastRect: rect,
       z,
@@ -253,6 +255,8 @@ export function openSalesInvoiceWindow(editId?: number) {
     subtitle: 'نافذة مستقلة — تبقى مفتوحة حتى تحفظها أو تغلقها',
     props: editId ? { editId } : {},
     dedupeKey: editId ? `sales-invoice:${editId}` : null,
+    /* الفاتورة مستند ملء الشاشة كالنموذج المعتمد — تفتح مكبَّرة بلا إطار نافذة */
+    mode: 'maximized',
   })
 }
 
@@ -263,6 +267,7 @@ export function openPurchaseInvoiceWindow(editId?: number) {
     subtitle: 'نافذة مستقلة — تبقى مفتوحة حتى تحفظها أو تغلقها',
     props: editId ? { editId } : {},
     dedupeKey: editId ? `purchase-invoice:${editId}` : null,
+    mode: 'maximized',
   })
 }
 

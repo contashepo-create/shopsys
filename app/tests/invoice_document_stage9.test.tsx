@@ -109,10 +109,12 @@ describe('جدول بنود الفاتورة في الوضع الحي', () => {
     />,
   )
 
-  it('يعرض خمسة سطور على الأقل فلا تقفز الشاشة مع أول صنف', () => {
+  it('يملأ الجدول أحد عشر سطراً كالنموذج المعتمد ولا يقلّ الفراغ عن خمسة سطور', () => {
     const view = renderTable()
-    expect(view.container.querySelectorAll('tbody tr').length).toBeGreaterThanOrEqual(5)
-    expect(view.container.querySelectorAll('tr.invoice-line-ghost').length).toBe(4)
+    /* النموذج المعتمد يبقي الجدول ممتلئاً (11 سطراً) فلا تقفز الشاشة مع أول صنف،
+       ومهما امتلأت البنود يبقى أمام الكاشير خمسة سطور فارغة جاهزة للكتابة. */
+    expect(view.container.querySelectorAll('tbody tr').length).toBe(11)
+    expect(view.container.querySelectorAll('tr.invoice-line-ghost').length).toBe(10)
   })
 
   it('مربع البحث داخل خلية اسم أول سطر فارغ — لا شريط بحث منفصل', () => {

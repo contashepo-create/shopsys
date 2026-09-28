@@ -111,12 +111,17 @@ const footerOf = (src) => {
   assert.ok(/@media \(max-width: 760px\)[^}]*\{[^}]*\.invoice-doc-fields \{ grid-template-columns: repeat\(2/.test(css.replace(/\s+/g, ' ')),
     'لا تنكمش حقول الرأس إلى عمودين على الشاشات الضيقة')
   assert.ok(/repeat\(auto-fit/.test(ruleOf('.invoice-doc-side')), 'عمود المؤشرات ليس شبكة تنكمش')
-  assert.ok(css.includes('.invoice-doc-party, .invoice-doc-itemcard'), 'بطاقتا الطرف والصنف لا تتقاسمان قاعدة واحدة')
+  assert.ok(css.includes('.invoice-doc-party'), 'لا قاعدة لبطاقة رصيد الطرف')
   assert.ok(/13rem/.test(ruleOf('.invoice-doc-header-body')), 'عمود بطاقة الطرف ليس بعرض 13rem كالنموذج')
-  assert.ok(/border:\s*1px dashed var\(--doc-line\)/.test(ruleOf('.invoice-doc-refbar')), 'شريط المرجع الخارجي بلا إطاره المتقطع')
-  // الإطار نفسه: حقول ثم شريط مرجع، وبجانبها بطاقتا المؤشرات
+  /* 2026-09-28: شريط المرجع المستقل أُلغي — «المرجع/أمر الشراء» صار أحد الحقول
+     الستة، وبقية إعداداته انتقلت إلى شريط بيانات الطرف، تماماً كالنموذج المعتمد. */
+  assert.ok(!css.includes('.invoice-doc-refbar {') || !frame.includes('invoice-doc-refbar'), 'شريط المرجع المستقل عاد فوق الحقول')
+  for (const [cls, why] of [['invoice-doc-stripfield', 'حقول الشريط المدمجة (المندوب/أمر الشراء)'], ['invoice-doc-stripcheck', 'خيارات الشريط المدمجة']]) {
+    assert.ok(css.includes(`.${cls}`), `لا قاعدة CSS لـ${why}`)
+  }
+  // الإطار نفسه: حقول ثم شريطان رفيعان، وبجانبها بطاقة رصيد الطرف
   const header = frame.slice(frame.indexOf('invoice-doc-header-body'), frame.indexOf('invoice-pos-document'))
-  for (const cls of ['invoice-doc-fields', 'invoice-doc-refbar', 'invoice-doc-side', 'invoice-doc-party', 'invoice-doc-itemcard', 'invoice-doc-strip']) {
+  for (const cls of ['invoice-doc-fields', 'invoice-doc-side', 'invoice-doc-party', 'invoice-doc-strip']) {
     assert.ok(header.includes(cls), `رأس الإطار ينقصه ${cls}`)
   }
   // الجلسة والاتصال مرة واحدة فقط: في شريط الإجراءات السفلي
@@ -139,15 +144,18 @@ const footerOf = (src) => {
     assert.ok(card.includes('الرصيد بعد الترحيل'), `${label}: بطاقة الطرف بلا مؤشر الرصيد المتوقع`)
     assert.ok(!card.includes('<small>حالة الحساب</small>'), `${label}: خانة «حالة الحساب» عادت تأكل سطراً بعد نقلها بجوار العنوان`)
     assert.ok(src.includes('partyCreditTone('), `${label}: نغمة الحالة لا تأتي من دالة واحدة`)
+    /* النموذج المعتمد يضع الصنف المحدد **شريطاً** في الترويسة لا بطاقة جانبية:
+       الصنف · المتاح · تكلفة الشراء · سعر البيع، بجوار اسم المستخدم. */
     const item = src.slice(src.indexOf('itemProfile={'), src.indexOf('itemProfile={') + 2200)
-    assert.ok(item.includes('الصنف المختار'), `${label}: لا بطاقة «الصنف المختار» بجوار بطاقة الطرف`)
-    assert.ok(item.includes('field-badge is-accent'), `${label}: بطاقة الصنف بلا رقاقة كود SKU`)
-    assert.ok(item.includes('focusedItem'), `${label}: بطاقة الصنف لا تتبع آخر سطر مضاف`)
+    assert.ok(item.includes('الصنف المحدد'), `${label}: شريط الترويسة بلا «الصنف المحدد»`)
+    assert.ok(item.includes('invoice-doc-strip-k') && item.includes('invoice-doc-strip-v'), `${label}: شريط الصنف ليس بمفاتيح وقيم النموذج`)
+    assert.ok(item.includes('المتاح'), `${label}: شريط الصنف بلا المتاح من المخزون`)
+    assert.ok(item.includes('focusedItem'), `${label}: شريط الصنف لا يتبع آخر سطر مضاف`)
   }
   const state = ruleOf('.invoice-party-state')
   assert.ok(state.includes('--doc-ok'), 'شارة الحالة بلون محفور بدل متغير المستند')
   assert.ok(ruleOf('.invoice-doc-gauge-fill').includes('--doc-accent'), 'شريط النسبة بلون محفور')
-  R.ok('بطاقتا المؤشرات: حالة الطرف بجوار عنوانه مع شريط النسبة، وبطاقة الصنف المختار برقاقة كوده')
+  R.ok('بطاقة رصيد الطرف بشريط النسبة، وشريط الصنف المحدد (المتاح · التكلفة · السعر) في الترويسة كالنموذج')
 }
 
 /* ⑥ فحص وظيفي: نغمة الحد الائتماني تحكم على الرصيد المتوقع لا الحالي */

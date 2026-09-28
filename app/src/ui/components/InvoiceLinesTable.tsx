@@ -159,6 +159,8 @@ function decimalDraft(value: string): string {
 
 /** أقل عدد سطور ظاهرة في جدول البنود — تبقى الشاشة ثابتة ولا «تقفز» مع أول صنف */
 const MIN_VISIBLE_ROWS = 5
+/** عدد السطور الذي يملأ منطقة البنود في المستند الكامل — كالنموذج المعتمد */
+const TARGET_VISIBLE_ROWS = 11
 
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
@@ -197,6 +199,21 @@ export function InvoiceLinesTable({
     const next = value === '' || value === '-' || value === '.' || value === '-.' ? 0 : Math.min(100, Math.max(0, Number(value) || 0))
     onPatch(line.key, { [field]: next })
   }
+  /* عدد أعمدة الجدول الحقيقي: سطور الفراغ كانت تكتب colSpan=20 فتخلق أعمدة وهمية
+     تسحق عمود «الصنف / الوصف» وتترك فراغاً هائلاً — الآن الفراغ بعرض الجدول تماماً. */
+  const columnCount = 1
+    + (columns.code ? 1 : 0)
+    + 1
+    + (lineWarehouseMode ? 1 : 0)
+    + (kind === 'purchase' && mode !== 'simple' ? 3 : 1)
+    + (columns.unit ? 1 : 0)
+    + 1
+    + (kind === 'sale' ? 1 : 0)
+    + (kind === 'purchase' && mode !== 'simple' ? 1 : 0)
+    + (kind === 'sale' && mode === 'profit' && canViewCost ? 2 : 0)
+    + (kind === 'purchase' && mode === 'profit' && canViewCost ? 1 : 0)
+    + (columns.tax ? 1 : 0)
+    + 2
   const linesValueMinor = lines.reduce((sum, line) => sum + Math.round(line.qty * line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)), 0)
 
   return (
@@ -208,6 +225,7 @@ export function InvoiceLinesTable({
           <button type="button" className="invoice-lines-delete" aria-label="مسح باركود" title="امسح الباركود لإضافة الصنف في سطر جديد" onClick={() => window.dispatchEvent(new Event('shopsys:focus-item'))}><Barcode size={14} /> مسح باركود</button>
         </div>
         {entryFilter && <div className="invoice-lines-filter">{entryFilter}</div>}
+        <span className="invoice-lines-hint">اكتب داخل خلية الصنف ← يفتح البحث · Enter: صنف ← كمية ← سعر ← السطر التالي · الأسهم للتنقل بين الحقول</span>
         <div className="invoice-lines-kpis">
           <span className="invoice-lines-count">{lines.length} بند</span>
           <span className="invoice-lines-value" dir="ltr">{fmt(linesValueMinor)} {currencySymbol}</span>
@@ -229,7 +247,7 @@ export function InvoiceLinesTable({
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="invoice-lines-table w-full min-w-[66rem] table-fixed text-sm">
+        <table className="invoice-lines-table w-full min-w-[58rem] table-fixed text-sm">
           <thead className="bg-slate-50 dark:bg-slate-800/60">
             <tr className="text-[11px] font-black text-slate-500 dark:text-slate-300">
               <th className={`p-2 ${COL.index}`} scope="col">م</th>
@@ -294,7 +312,7 @@ export function InvoiceLinesTable({
                 </tr>
               )
             })}
-            {Array.from({ length: Math.max(0, MIN_VISIBLE_ROWS - lines.length) }, (_, ghostIndex) => (
+            {Array.from({ length: Math.max(MIN_VISIBLE_ROWS, TARGET_VISIBLE_ROWS - lines.length) }, (_, ghostIndex) => (
               <tr key={`ghost-${ghostIndex}`} className="invoice-line-ghost border-t border-slate-100 dark:border-slate-800">
                 <td className={`p-2 font-mono text-[11px] font-black text-slate-300 ${COL.index}`}>{lines.length + ghostIndex + 1}</td>
                 {columns.code && <td className={`p-2 ${COL.code}`} />}
@@ -310,7 +328,7 @@ export function InvoiceLinesTable({
                       >اكتب اسم الصنف أو امسح الباركود…</button>}
                 </td>
                 <td
-                  colSpan={20}
+                  colSpan={Math.max(1, columnCount - (columns.code ? 3 : 2))}
                   tabIndex={0}
                   aria-label="سطر فارغ"
                   onFocus={() => window.dispatchEvent(new Event('shopsys:focus-item'))}
