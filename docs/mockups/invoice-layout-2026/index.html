@@ -131,9 +131,12 @@ tbody tr.ghost td{color:#94a3b8;height:2.15rem}
 .panel-head{display:flex;align-items:center;gap:.25rem;border-bottom:1px solid var(--doc-line);background:var(--doc-band);padding:.18rem .45rem;font-size:0.71rem;font-weight:800;color:var(--doc-ink-soft)}
 .panel-head small{margin-inline-start:auto;font-size:0.59rem;font-weight:700;color:var(--doc-faint)}
 .panel-body{flex:1;overflow:auto;padding:.28rem .45rem;display:flex;flex-direction:column;gap:.22rem}
+#payPanel .panel-body,#totalsPanel .panel-body{overflow:hidden;gap:.18rem}
 .panel-foot{display:flex;align-items:center;justify-content:space-between;gap:.3rem;border-top:1px solid var(--doc-line);background:var(--doc-tint);padding:.16rem .45rem;font-size:0.66rem;font-weight:700;color:var(--doc-muted)}
 .panel-foot b{direction:ltr;font-family:ui-monospace,monospace}
 .terms{display:flex;flex-wrap:wrap;gap:.18rem}
+.chip.tiny{padding:.08rem .28rem;font-size:0.54rem;font-weight:800}
+.panel-body>.terms:first-child{flex-wrap:nowrap;overflow:hidden}
 .addons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.18rem;border-top:1px dashed var(--doc-line);padding-top:.22rem}
 .addons .chip{justify-content:center}
 .addonlist{display:flex;flex-wrap:wrap;gap:.15rem}
@@ -199,6 +202,22 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
 .win-foot{display:flex;align-items:center;gap:.3rem;border-top:1px solid var(--doc-line);background:var(--doc-tint);padding:.2rem .4rem;font-size:0.62rem;color:var(--doc-faint);font-weight:700}
 .rescust{grid-template-columns:minmax(0,1fr) 7.5rem 6rem 6rem 4.6rem}
 .formgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.3rem;padding:.4rem}
+.whbar{display:flex;align-items:center;gap:.3rem;border-bottom:1px solid var(--doc-line);background:var(--doc-tint);padding:.22rem .4rem}
+.whpaper{flex:1;overflow:auto;background:#fff;margin:.35rem;padding:.55rem .7rem;border:1px solid var(--doc-line);border-radius:.3rem}
+.whpaper h3{font-size:0.85rem;text-align:center;margin-bottom:.15rem}
+.whpaper .wh-org{text-align:center;font-size:0.62rem;color:var(--doc-faint);font-weight:800;margin-bottom:.2rem}
+.whpaper .wh-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));gap:.1rem .5rem;font-size:0.63rem;font-weight:700;color:var(--doc-muted);
+  border-block:1px solid var(--doc-line);padding:.2rem 0;margin-bottom:.3rem}
+.whpaper table{width:100%;border-collapse:collapse;table-layout:auto}
+.whpaper th{border:1px solid var(--doc-line);background:var(--doc-tint);padding:.18rem .25rem;font-size:0.62rem;font-weight:800;text-align:center}
+.whpaper td{border:1px solid var(--doc-line);padding:.18rem .25rem;font-size:0.65rem;text-align:center;height:1.5rem}
+.whpaper td.nm{text-align:right;font-weight:700}
+.whpaper .wh-sum{display:flex;gap:1rem;justify-content:flex-end;font-size:0.65rem;font-weight:800;margin-top:.25rem}
+.whpaper .wh-sign{display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-top:1rem;font-size:0.63rem;font-weight:700;color:var(--doc-muted)}
+.whpaper .wh-sign div{border-top:1px dashed var(--doc-line);padding-top:.2rem;text-align:center}
+.whpaper .wh-foot{display:flex;justify-content:space-between;font-size:0.56rem;color:var(--doc-faint);font-weight:700;margin-top:.5rem}
+.setbody{display:flex;flex-direction:column;gap:.3rem;padding:.4rem;max-height:60vh;overflow:auto}
+.setgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.25rem .4rem}
 .dock{position:fixed;inset-block-end:.4rem;inset-inline-end:.4rem;z-index:70;display:flex;gap:.25rem}
 .dock button{border:1px solid var(--doc-accent);border-radius:.4rem;background:var(--doc-paper);padding:.15rem .45rem;font-size:0.67rem;font-weight:800;color:var(--doc-accent-deep);box-shadow:0 4px 12px rgb(15 23 42/.12)}
 .demo{position:fixed;inset-block-end:.4rem;inset-inline-start:.4rem;z-index:80;display:flex;gap:.25rem;align-items:center;background:#0f172a;color:#fff;border-radius:.5rem;padding:.22rem .35rem;font-size:0.64rem;box-shadow:0 6px 18px rgb(15 23 42/.25)}
@@ -231,9 +250,11 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
     <div class="dots"><i></i><i></i><i></i></div><span class="sep"></span>
     <button class="iconbtn" title="رجوع">←</button><button class="iconbtn" title="قائمة">≡</button><button class="iconbtn" title="مساعدة">؟</button>
     <span class="sep"></span>
-    <span class="numberbox">فاتورة مبيعات · S-0042 <span class="chipS chip-warn">مسودة</span></span>
+    <span class="numberbox">فاتورة مبيعات · S-0042 <span class="chipS chip-warn">مسودة</span>
+      <span class="chipS chip-ok" id="balChip">القيد متزن — مدين = دائن</span></span>
     <span class="spacer"></span>
     <button class="btn">المسودات (2)</button>
+    <button class="btn" id="whBtn" title="طباعة إذن استلام من المستودع — كميات فقط بلا أسعار">📦 إذن استلام مستودع</button>
     <button class="btn">حفظ مسودة <span class="kbd">F8</span></button>
     <button class="btn">معاينة <span class="kbd">F6</span></button>
     <button class="btn primary" id="postBtn">✓ حفظ وترحيل <span class="kbd">F9</span></button>
@@ -261,11 +282,10 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
         <span class="sepv"></span>
         <span class="k">المتاح</span><span class="v num" id="selStock">—</span>
         <span class="sepv"></span>
-        <span class="k">سعر الشراء</span><span class="v num" id="selCost">—</span>
+        <span class="k">تكلفة الشراء</span><span class="v num" id="selCost">—</span><span class="k" id="selCostBreak"></span>
         <span class="spacer"></span>
         <span class="k" data-modes="advanced">مركز التكلفة</span>
         <select data-modes="advanced"><option>الفرع الرئيسي</option><option>فرع الخُبر</option></select>
-        <span class="chipS chip-ind" id="modeHint">قياسي</span>
       </div></div>
       <!-- السطر الثالث: فئة العميل وخصمه المسجل + ملاحظة سريعة تُحفظ مع العميل -->
       <div class="f f-strip"><div class="selstrip" id="custMeta">
@@ -308,7 +328,7 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
         <th style="text-align:center">م</th><th class="col-code">كود الصنف</th><th>الصنف / الوصف</th>
         <th class="num">الكمية</th><th class="col-unit">الوحدة</th><th class="num">السعر</th>
         <th class="col-disc num">خصم %</th><th class="col-tax">الضريبة</th>
-        <th class="col-cost num">التكلفة</th><th class="col-margin num">الهامش %</th>
+        <th class="col-cost num">تكلفة الشراء</th><th class="col-margin num">الهامش %</th>
         <th class="num">الإجمالي</th><th>إجراءات</th>
       </tr></thead>
       <tbody id="linesBody"></tbody>
@@ -321,8 +341,7 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
       <div class="panel-head">📄 الملاحظات وشروط التعامل <small>تُطبع في نسخة العميل</small></div>
       <div class="panel-body">
         <div class="terms">
-          <button class="chip">＋ السداد خلال 30 يوماً</button><button class="chip">＋ لا يُرد ولا يُستبدل</button>
-          <button class="chip">＋ التسليم من المخزن</button><button class="chip">＋ ضمان سنة</button>
+          <button class="chip tiny">＋ السداد خلال 30 يوماً</button><button class="chip tiny">＋ لا يُرد ولا يُستبدل</button><button class="chip tiny">＋ ضمان سنة</button>
         </div>
         <textarea class="notes" placeholder="شروط السداد · موعد التسليم · أي تعهد يظهر للعميل…"></textarea>
         <div class="addons">
@@ -336,8 +355,8 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
       <div class="panel-foot"><span>تاريخ الاستحقاق</span><b>2026-10-28</b></div>
     </div>
 
-    <div class="panel">
-      <div class="panel-head">👛 التحصيل الآن <small id="payModeLabel">طريقة واحدة</small></div>
+    <div class="panel" id="payPanel">
+      <div class="panel-head" id="payHead">👛 التحصيل الآن <small id="payModeLabel">طريقة واحدة</small></div>
       <div class="panel-body">
         <label class="checkline"><input type="checkbox" id="multiPay"> تحصيل متعدد (أكثر من طريقة في فاتورة واحدة)</label>
         <div id="singlePay">
@@ -361,7 +380,7 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
       <div class="panel-foot"><span>المحصَّل <b id="paidOut">0.00</b></span><span style="color:var(--doc-danger)">المتبقي <b id="dueOut">0.00</b></span></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" id="totalsPanel">
       <div class="panel-head">🧮 إجمالي الفاتورة <small>ملخص الحساب</small></div>
       <div class="panel-body">
         <div class="discline">
@@ -379,7 +398,6 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
         </div>
         <div class="grand"><span>صافي إجمالي الفاتورة</span><b id="grand">0.00</b></div>
       </div>
-      <div class="panel-foot"><span>قيد الفاتورة</span><span style="color:var(--doc-ok);font-weight:800"><span class="dot"></span> متزن — مدين = دائن</span></div>
     </div>
   </section>
 
@@ -389,7 +407,7 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
     <span>تمور وتعبئة · الفرع الواحد · محمد عبده · الطباعة: thermal</span>
     <span class="spacer"></span>
     <span class="totals"><span>الإجمالي <b id="stTotal">0.00</b></span><span>المتبقي <b id="stDue" style="color:var(--doc-danger)">0.00</b></span></span>
-    <button class="chip">تخصيص الحقول</button><button class="chip">تصدير PDF</button>
+    <button class="chip">تخصيص الحقول</button><button class="chip" id="printSetBtn">⚙ إعدادات الطباعة</button><button class="chip">تصدير PDF</button>
   </footer>
 </div>
 
@@ -443,6 +461,52 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
     <span class="spacer"></span><span>يحدّث بيانات الصنف في البحث وفي سطور الفاتورة الحالية.</span></div>
 </div>
 
+<!-- ══ إذن استلام من المستودع (كميات فقط) ══ -->
+<div class="win" id="whWin" hidden style="inset-inline-start:50%;transform:translateX(-50%);top:9vh;width:min(48rem,94vw);height:min(32rem,80vh)">
+  <div class="win-head" data-drag>📦 إذن استلام من المستودع — كميات فقط
+    <span class="hint">بلا أي أسعار · Esc إغلاق</span>
+    <button class="wbtn" data-min title="تصغير">—</button><button class="wbtn x" data-close title="إغلاق">✕</button></div>
+  <div class="whbar">
+    <button class="btn primary sm" id="whPrint">🖨 طباعة</button>
+    <button class="btn sm" id="whSetBtn">⚙ إعدادات الطباعة المتقدمة</button>
+    <span class="spacer"></span>
+    <span class="chipS chip-ok">الأسعار والإجماليات المالية محجوبة دائماً في هذا المستند</span>
+  </div>
+  <div class="whpaper" id="whPaper"></div>
+  <div class="win-foot">نفس الإعدادات متاحة من: الإعدادات ← إعدادات الطباعة ← إذن استلام المستودع.</div>
+</div>
+
+<!-- ══ إعدادات طباعة إذن الاستلام (المتقدمة) ══ -->
+<div class="win" id="whSetWin" hidden style="inset-inline-start:50%;transform:translateX(-50%);top:12vh;width:min(34rem,94vw);z-index:78">
+  <div class="win-head" data-drag>⚙ إعدادات طباعة إذن الاستلام <span class="hint">التغيير يظهر فوراً في المعاينة · Esc إغلاق</span>
+    <button class="wbtn x" data-close title="إغلاق">✕</button></div>
+  <div class="setbody">
+    <div class="setgrid">
+      <div class="f"><label>حجم الورق</label><select class="in" id="wsPaper"><option>A4</option><option>A5</option><option>حراري 80 مم</option></select></div>
+      <div class="f"><label>عدد النسخ</label><select class="in" id="wsCopies"><option>1</option><option selected>2</option><option>3</option></select></div>
+      <div class="f"><label>ترتيب الأصناف</label><select class="in" id="wsSort">
+        <option value="entry">حسب الإدخال</option><option value="name">حسب اسم الصنف</option><option value="loc">حسب موقع التخزين</option></select></div>
+      <div class="f"><label>تجميع المكرر</label><select class="in" id="wsGroup"><option value="0">لا</option><option value="1">نعم — يدمج الكميات</option></select></div>
+    </div>
+    <div class="setgrid">
+      <label class="checkline"><input type="checkbox" id="wsHead" checked> ترويسة الفرع والشعار</label>
+      <label class="checkline"><input type="checkbox" id="wsCode" checked> عمود كود الصنف</label>
+      <label class="checkline"><input type="checkbox" id="wsBar"> عمود الباركود</label>
+      <label class="checkline"><input type="checkbox" id="wsUnit" checked> عمود الوحدة</label>
+      <label class="checkline"><input type="checkbox" id="wsLoc"> عمود موقع التخزين</label>
+      <label class="checkline"><input type="checkbox" id="wsGot" checked> عمود «المستلم فعلياً» فارغاً</label>
+      <label class="checkline"><input type="checkbox" id="wsNotes"> عمود ملاحظات المستودع</label>
+      <label class="checkline"><input type="checkbox" id="wsSum" checked> إجمالي عدد الأصناف والكميات</label>
+      <label class="checkline"><input type="checkbox" id="wsUser" checked> اسم المستخدم والتاريخ والوقت</label>
+      <label class="checkline"><input type="checkbox" id="wsSign" checked> سطرا توقيع المستلم وأمين المستودع</label>
+      <label class="checkline"><input type="checkbox" id="wsNote"> ملاحظة الفاتورة أسفل الجدول</label>
+      <label class="checkline"><input type="checkbox" id="wsCust" checked> بيانات العميل والمخزن</label>
+    </div>
+  </div>
+  <div class="win-foot"><button class="btn primary sm" id="wsClose">تم</button>
+    <span class="spacer"></span><span>تُحفظ هذه الإعدادات لكل مستخدم ولكل فرع.</span></div>
+</div>
+
 <!-- ══ نافذة فئة العميل وخصمه ══ -->
 <div class="win" id="catWin" hidden style="inset-inline-start:50%;transform:translateX(-50%);top:22vh;width:min(28rem,92vw);z-index:76">
   <div class="win-head" data-drag>✎ فئة العميل وخصمه <span class="hint">Esc للإغلاق</span>
@@ -491,16 +555,16 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
 'use strict'
 // ═════ بيانات تجريبية ═════
 const ITEMS=[
- {id:1,code:'ITM-1001',barcode:'62810010001',name:'تمر سكري فاخر',unit:'كجم',price:100,cost:62,stock:1000,cat:'تمور',wh:'الرئيسي'},
- {id:2,code:'ITM-1007',barcode:'62810070002',name:'تمر عجوة المدينة',unit:'كجم',price:180,cost:120,stock:240,cat:'تمور',wh:'الرئيسي'},
- {id:3,code:'ITM-1019',barcode:'62810190003',name:'تمر خلاص معبأ',unit:'كرتونة',price:95,cost:61,stock:75,cat:'تمور',wh:'الفرع'},
- {id:4,code:'ITM-1042',barcode:'62810420004',name:'عسل سدر جبلي',unit:'كجم',price:120,cost:80,stock:60,cat:'عسل',wh:'الرئيسي'},
- {id:5,code:'ITM-1055',barcode:'62810550005',name:'عسل زهور برسيم',unit:'كجم',price:70,cost:44,stock:8,cat:'عسل',wh:'الرئيسي'},
- {id:6,code:'ITM-2001',barcode:'62820010006',name:'مكسرات مشكلة',unit:'كجم',price:150,cost:96,stock:120,cat:'مكسرات',wh:'الرئيسي'},
- {id:7,code:'ITM-2014',barcode:'62820140007',name:'لوز محمص',unit:'كجم',price:190,cost:130,stock:44,cat:'مكسرات',wh:'الفرع'},
- {id:8,code:'ITM-3001',barcode:'62830010008',name:'كرتونة هدايا فاخرة',unit:'قطعة',price:45,cost:26,stock:300,cat:'تغليف',wh:'الرئيسي'},
- {id:9,code:'SRV-2001',barcode:'62820010009',name:'خدمة تعبئة وتغليف',unit:'خدمة',price:25,cost:0,stock:Infinity,cat:'خدمات',wh:'—'},
- {id:10,code:'SRV-2002',barcode:'62820020010',name:'خدمة توصيل داخل المدينة',unit:'خدمة',price:35,cost:18,stock:Infinity,cat:'خدمات',wh:'—'},
+ {id:1,code:'ITM-1001',barcode:'62810010001',name:'تمر سكري فاخر',unit:'كجم',price:100,buy:56,load:6,cost:62,stock:1000,cat:'تمور',wh:'الرئيسي'},
+ {id:2,code:'ITM-1007',barcode:'62810070002',name:'تمر عجوة المدينة',unit:'كجم',price:180,buy:110,load:10,cost:120,stock:240,cat:'تمور',wh:'الرئيسي'},
+ {id:3,code:'ITM-1019',barcode:'62810190003',name:'تمر خلاص معبأ',unit:'كرتونة',price:95,buy:55,load:6,cost:61,stock:75,cat:'تمور',wh:'الفرع'},
+ {id:4,code:'ITM-1042',barcode:'62810420004',name:'عسل سدر جبلي',unit:'كجم',price:120,buy:72,load:8,cost:80,stock:60,cat:'عسل',wh:'الرئيسي'},
+ {id:5,code:'ITM-1055',barcode:'62810550005',name:'عسل زهور برسيم',unit:'كجم',price:70,buy:40,load:4,cost:44,stock:8,cat:'عسل',wh:'الرئيسي'},
+ {id:6,code:'ITM-2001',barcode:'62820010006',name:'مكسرات مشكلة',unit:'كجم',price:150,buy:88,load:8,cost:96,stock:120,cat:'مكسرات',wh:'الرئيسي'},
+ {id:7,code:'ITM-2014',barcode:'62820140007',name:'لوز محمص',unit:'كجم',price:190,buy:120,load:10,cost:130,stock:44,cat:'مكسرات',wh:'الفرع'},
+ {id:8,code:'ITM-3001',barcode:'62830010008',name:'كرتونة هدايا فاخرة',unit:'قطعة',price:45,buy:23,load:3,cost:26,stock:300,cat:'تغليف',wh:'الرئيسي'},
+ {id:9,code:'SRV-2001',barcode:'62820010009',name:'خدمة تعبئة وتغليف',unit:'خدمة',price:25,buy:0,load:0,cost:0,stock:Infinity,cat:'خدمات',wh:'—'},
+ {id:10,code:'SRV-2002',barcode:'62820020010',name:'خدمة توصيل داخل المدينة',unit:'خدمة',price:35,buy:15,load:3,cost:18,stock:Infinity,cat:'خدمات',wh:'—'},
 ]
 const CUSTOMERS=[
  {id:0,name:'عميل نقدي',phone:'',balance:0,limit:0,active:1,cat:'أفراد',discount:0,note:'',notePrivate:0},
@@ -510,6 +574,7 @@ const CUSTOMERS=[
  {id:4,name:'عميل موقوف — سعد',phone:'0500011122',balance:900,limit:1000,active:0,cat:'أفراد',discount:0,note:'موقوف بقرار الإدارة حتى سداد المتأخرات.',notePrivate:1},
  {id:5,name:'شركة الواحة (دفعة مقدمة)',phone:'0590001122',balance:-2500,limit:30000,active:1,cat:'عقود',discount:10,note:'',notePrivate:0},
 ]
+ITEMS.forEach(i=>{ i.buy=i.buy??i.cost; i.load=i.load??0; i.cost=i.buy+i.load })  // التكلفة = الشراء + التحميل/النقل
 const fmt=n=>(Math.round(n*100)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)]
 
@@ -652,6 +717,7 @@ function renderSelectedInfo(){
   $('#selName').textContent=it?it.name:'—'
   $('#selStock').textContent=it?(it.stock===Infinity?'∞':fmt(it.stock)+' '+it.unit):'—'
   $('#selCost').textContent=it?fmt(it.cost):'—'
+  $('#selCostBreak').textContent=it? `(شراء ${fmt(it.buy)} + تحميل ${fmt(it.load)})` : ''
 }
 function curCust(){ return CUSTOMERS.find(x=>x.id===state.customerId) }
 // أقل مبلغ يجب تحصيله قبل الترحيل
@@ -682,16 +748,17 @@ function renderTotals(){
   // بوابة الترحيل
   const need=minCollect(t), short=Math.max(0,need-t.paid)
   const note=$('#payNote'), post=$('#postBtn')
-  if(c.id===0){
-    note.className='payok'
-    note.textContent=short>0.004? `عميل نقدي — لا يقل التحصيل عن إجمالي الفاتورة ${fmt(t.grand)} ر.س`
-                                : `عميل نقدي — محصَّل بالكامل ${fmt(t.paid)} ر.س`
+  if(short<=0.004){ note.className=''; note.textContent=''; note.hidden=true }
+  else if(c.id===0){
+    note.hidden=false; note.className='paywarn'
+    note.textContent=`عميل نقدي — لا يقل التحصيل عن ${fmt(t.grand)} ر.س`
   } else if(short>0.004){
+    note.hidden=false
     note.className='paywarn'
     note.textContent=!c.active? `عميل موقوف — يلزم تحصيل الفاتورة كاملة ${fmt(need)} ر.س`
       : (+c.limit>0? `حد الائتمان ${fmt(c.limit)} — يلزم تحصيل ${fmt(short)} ر.س قبل الترحيل`
                    : `العميل بلا حد ائتمان — يلزم تحصيل الفاتورة كاملة`)
-  } else { note.className='payok'; note.textContent=need>0? `الحد مغطّى — يمكن الترحيل` : `ضمن حد الائتمان — يمكن الترحيل آجلاً` }
+  }
   post.disabled=short>0.004
   post.title=short>0.004? `ممنوع الترحيل: ينقص ${fmt(short)} ر.س من التحصيل` : 'حفظ وترحيل'
   $('#payFull').disabled=false; $('#payNone').disabled=(c.id===0)
@@ -723,7 +790,7 @@ function minWin(id){ $('#'+id).classList.toggle('min'); renderDock() }
 function renderDock(){
   const dock=$('#dock'); dock.innerHTML=''
   winStack.filter(id=>$('#'+id).classList.contains('min')).forEach(id=>{
-    const label=id==='itemWin'?'بحث الأصناف':id==='custWin'?'بحث العملاء':id==='barWin'?'مسح باركود':'نافذة'
+    const label=id==='itemWin'?'بحث الأصناف':id==='custWin'?'بحث العملاء':id==='barWin'?'مسح باركود':id==='whWin'?'إذن استلام':'نافذة'
     const b=document.createElement('button'); b.textContent='⬆ '+label
     b.onclick=()=>{ $('#'+id).classList.remove('min'); renderDock() }
     dock.appendChild(b)
@@ -789,7 +856,9 @@ function renderItemSide(){
     <div class="kv"><span>التصنيف</span><b>${it.cat}</b></div>
     <div class="kv"><span>الوحدة</span><b>${it.unit}</b></div>
     <div class="kv"><span>سعر البيع</span><b>${fmt(it.price)}</b></div>
-    <div class="kv"><span>سعر الشراء</span><b>${fmt(it.cost)}</b></div>
+    <div class="kv"><span>سعر الشراء</span><b>${fmt(it.buy)}</b></div>
+    <div class="kv"><span>مصروفات تحميل/نقل</span><b>${fmt(it.load)}</b></div>
+    <div class="kv" style="border-top:1px solid var(--doc-line);padding-top:.1rem"><span>تكلفة الشراء</span><b style="color:var(--doc-warn)">${fmt(it.cost)}</b></div>
     <div class="kv"><span>هامش الربح</span><b>${Math.round((1-it.cost/it.price)*100)||0}%</b></div>
     <div class="kv"><span>المتاح</span><b style="color:${it.stock<20?'var(--doc-danger)':'inherit'}">${it.stock===Infinity?'∞':it.stock} ${it.unit}</b></div>
     <div class="kv"><span>المخزن</span><b>${it.wh}</b></div>
@@ -826,7 +895,9 @@ function openItemEdit(it,kind){
     ? `<div class="f"><label>سعر البيع</label><input class="in num" id="ieA" value="${it.price}"></div>
        <div class="f"><label>سعر الجملة</label><input class="in num" value="${(it.price*0.92).toFixed(2)}"></div>
        <div class="f"><label>أقل سعر بيع</label><input class="in num" value="${(it.cost*1.05).toFixed(2)}"></div>
-       <div class="f"><label>سعر الشراء</label><input class="in num" id="ieB" value="${it.cost}"></div>`
+       <div class="f"><label>سعر الشراء</label><input class="in num" id="ieB" value="${it.buy}"></div>
+       <div class="f"><label>مصروفات تحميل/نقل</label><input class="in num" id="ieC" value="${it.load}"></div>
+       <div class="f"><label>تكلفة الشراء (محسوبة)</label><div class="in ro num" id="ieCost">${fmt(it.cost)}</div></div>`
     : `<div class="f"><label>اسم الصنف</label><input class="in" id="ieA" value="${it.name}"></div>
        <div class="f"><label>الوحدة</label><input class="in" id="ieB" value="${it.unit}"></div>
        <div class="f"><label>سعر البيع</label><input class="in num" id="ieC" value="${it.price}"></div>
@@ -835,7 +906,11 @@ function openItemEdit(it,kind){
 }
 $('#ieSave').onclick=()=>{
   if(!editingItem)return
-  if(editingKind==='prices'){ editingItem.price=+$('#ieA').value||editingItem.price; editingItem.cost=+$('#ieB').value||editingItem.cost }
+  if(editingKind==='prices'){
+    editingItem.price=+$('#ieA').value||editingItem.price
+    editingItem.buy=+$('#ieB').value||0; editingItem.load=+$('#ieC').value||0
+    editingItem.cost=editingItem.buy+editingItem.load
+  }
   else{ editingItem.name=$('#ieA').value||editingItem.name; editingItem.unit=$('#ieB').value||editingItem.unit
         editingItem.price=+$('#ieC').value||editingItem.price
         const st=$('#ieD').value; editingItem.stock=st===''?Infinity:(+st||0) }
@@ -923,6 +998,60 @@ function setDiscKind(kind){
 $('#discPct').onclick=()=>setDiscKind('pct')
 $('#discAmt').onclick=()=>setDiscKind('amt')
 $('#discInput').addEventListener('input',e=>{state.discValue=parseFloat(e.target.value.replace(/,/g,''))||0;renderTotals()})
+
+// ═════ إذن استلام المستودع + إعداداته المتقدمة ═════
+const WS=['wsHead','wsCode','wsBar','wsUnit','wsLoc','wsGot','wsNotes','wsSum','wsUser','wsSign','wsNote','wsCust']
+function whLines(){
+  let rows=state.lines.filter(l=>l.item).map(l=>({it:l.item,qty:l.qty}))
+  if($('#wsGroup').value==='1'){
+    const m=new Map()
+    rows.forEach(r=>{ const k=r.it.id; m.has(k)? m.get(k).qty+=r.qty : m.set(k,{...r}) })
+    rows=[...m.values()]
+  }
+  const sort=$('#wsSort').value
+  if(sort==='name') rows.sort((a,b)=>a.it.name.localeCompare(b.it.name,'ar'))
+  else if(sort==='loc') rows.sort((a,b)=>(a.it.wh+a.it.code).localeCompare(b.it.wh+b.it.code,'ar'))
+  return rows
+}
+function renderWh(){
+  const on=id=>$('#'+id).checked
+  const rows=whLines(), c=curCust()
+  const cols=[{h:'م'},on('wsCode')&&{h:'الكود'},on('wsBar')&&{h:'الباركود'},{h:'الصنف'},on('wsUnit')&&{h:'الوحدة'},
+    on('wsLoc')&&{h:'الموقع'},{h:'الكمية المطلوبة'},on('wsGot')&&{h:'المستلم فعلياً'},on('wsNotes')&&{h:'ملاحظات'}].filter(Boolean)
+  const body=rows.map((r,i)=>`<tr>
+      <td>${i+1}</td>
+      ${on('wsCode')?`<td>${r.it.code}</td>`:''}
+      ${on('wsBar')?`<td style="font-family:ui-monospace,monospace">${r.it.barcode}</td>`:''}
+      <td class="nm">${r.it.name}</td>
+      ${on('wsUnit')?`<td>${r.it.unit}</td>`:''}
+      ${on('wsLoc')?`<td>${r.it.wh}</td>`:''}
+      <td style="font-weight:800">${r.qty}</td>
+      ${on('wsGot')?'<td></td>':''}
+      ${on('wsNotes')?'<td></td>':''}
+    </tr>`).join('') || `<tr><td colspan="${cols.length}" style="color:#94a3b8">لا أصناف في الفاتورة بعد</td></tr>`
+  const qty=rows.reduce((a,r)=>a+(+r.qty||0),0)
+  $('#whPaper').innerHTML=`
+    ${on('wsHead')?'<div class="wh-org">مؤسسة تمور وتعبئة · الفرع الرئيسي · س.ت 1010234567 · هاتف 0112345678</div>':''}
+    <h3>إذن استلام من المستودع</h3>
+    ${on('wsCust')?`<div class="wh-meta">
+      <span>المستند: S-0042</span><span>التاريخ: 2026-09-28</span>
+      <span>العميل: ${c.name}</span><span>المخزن: المخزن الرئيسي</span></div>`:''}
+    <table><thead><tr>${cols.map(c0=>`<th>${c0.h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
+    ${on('wsSum')?`<div class="wh-sum"><span>عدد الأصناف: ${rows.length}</span><span>إجمالي الكميات: ${qty}</span></div>`:''}
+    ${on('wsNote')?'<div style="font-size:0.62rem;margin-top:.3rem;color:var(--doc-muted)"><b>ملاحظة:</b> يُسلَّم للعميل أو مندوبه بعد التوقيع.</div>':''}
+    ${on('wsSign')?'<div class="wh-sign"><div>توقيع المستلم</div><div>أمين المستودع</div></div>':''}
+    <div class="wh-foot">
+      <span>${on('wsUser')?'أصدره: محمد عبده — 2026-09-28 11:40':''}</span>
+      <span>${$('#wsPaper').value} · عدد النسخ ${$('#wsCopies').value} · بلا أسعار</span>
+    </div>`
+}
+function openWh(){ openWin('whWin'); renderWh() }
+$('#whBtn').onclick=openWh
+$('#whSetBtn').onclick=()=>openWin('whSetWin')
+$('#printSetBtn').onclick=()=>{ openWin('whSetWin'); if($('#whWin').hidden) openWh() }
+$('#wsClose').onclick=()=>closeWin('whSetWin')
+$('#whPrint').onclick=()=>alert('طباعة إذن الاستلام — نموذج تجريبي (كميات فقط بلا أسعار)')
+;[...WS,'wsPaper','wsCopies','wsSort','wsGroup'].forEach(id=>$('#'+id).addEventListener('change',renderWh))
 
 // ═════ فئة العميل وخصمه وملاحظته ═════
 function renderCustMeta(flash){

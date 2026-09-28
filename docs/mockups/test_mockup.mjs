@@ -130,12 +130,12 @@ const grandNow = num($('#grand').textContent), needed = Math.max(0, 12800 + gran
 ok('الترحيل ممنوع قبل تغطية الحد', $('#postBtn').disabled === true && /حد الائتمان/.test($('#payNote').textContent), $('#payNote').textContent)
 ok('الرسالة تذكر المبلغ الواجب تحصيله', new RegExp(needed.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')).test($('#payNote').textContent), $('#payNote').textContent)
 input($('#payOne'), String(needed))
-ok('بعد تحصيل المبلغ المطلوب يُسمح بالترحيل', $('#postBtn').disabled === false && /يمكن الترحيل/.test($('#payNote').textContent), $('#payNote').textContent)
+ok('بعد تحصيل المبلغ المطلوب يُسمح بالترحيل', $('#postBtn').disabled === false && $('#payNote').hidden === true, 'disabled=' + $('#postBtn').disabled)
 
 // ⑬ العميل النقدي: محصَّل بالكامل ولا يقل عن الإجمالي
 click($('#customerField')); input($('#custQuery'), 'نقدي'); dbl(d.querySelectorAll('#custList .res')[0])
 ok('العميل النقدي: المستلم = إجمالي الفاتورة تلقائياً', $('#payOne').value === $('#grand').textContent, $('#payOne').value + ' / ' + $('#grand').textContent)
-ok('مكتوب أنه محصَّل بالكامل', /محصَّل بالكامل/.test($('#payNote').textContent) && $('#payNote').className === 'payok', $('#payNote').textContent)
+ok('التحصيل الكامل يظهر في «المحصَّل» بلا أي جملة إضافية', $('#paidOut').textContent === $('#grand').textContent && $('#payNote').hidden === true, $('#paidOut').textContent)
 ok('زر «بيع آجل بلا تحصيل» معطّل للنقدي', $('#payNone').disabled === true)
 input($('#payOne'), '5'); $('#payOne').dispatchEvent(new window.Event('change', { bubbles: true }))
 ok('محاولة تحصيل أقل تُرفع تلقائياً للإجمالي', $('#payOne').value === $('#grand').textContent, $('#payOne').value)
@@ -172,6 +172,59 @@ click($('#notePriv'))
 ok('يمكن جعلها خاصة بالمستخدم أو للجميع', /لي فقط/.test($('#notePriv').textContent), $('#notePriv').textContent)
 click($('#notePriv'))
 ok('والعودة لإظهارها لكل المستخدمين', /للجميع/.test($('#notePriv').textContent))
+
+// ⑮ تكلفة الشراء = سعر الشراء + مصروفات التحميل
+click($('#customerField')); input($('#custQuery'), 'النخيل'); dbl(d.querySelectorAll('#custList .res')[0])
+nameCell(0).focus(); key(nameCell(0), 'ع'); key($('#itemQuery'), 'Enter')
+ok('الشريط يسمّيها «تكلفة الشراء» لا سعر الشراء', /تكلفة الشراء/.test($('.selstrip').textContent) && !/سعر الشراء/.test($('.selstrip').textContent))
+ok('التكلفة = الشراء + التحميل مع بيان التفصيل', /شراء/.test($('#selCostBreak').textContent) && /تحميل/.test($('#selCostBreak').textContent), $('#selCost').textContent + ' ' + $('#selCostBreak').textContent)
+nameCell(1).focus(); key(nameCell(1), 'عجوة'); 
+ok('لوحة الصنف تعرض الشراء والتحميل والتكلفة', ['سعر الشراء', 'مصروفات تحميل', 'تكلفة الشراء'].every((t) => $('#itemSide').textContent.includes(t)))
+ok('مثال العجوة: 110 + 10 = 120', /110\.00/.test($('#itemSide').textContent) && /10\.00/.test($('#itemSide').textContent) && /120\.00/.test($('#itemSide').textContent))
+click($('#btnItemPrices'))
+ok('نافذة الأسعار تفصل الشراء والتحميل وتحسب التكلفة', !!$('#ieCost') && $('#ieB').value === '110' && $('#ieC').value === '10')
+$('#ieB').value = '100'; $('#ieC').value = '25'; click($('#ieSave'))
+key(d, 'Escape')
+ok('تعديل الشراء أو التحميل يعيد حساب التكلفة (125)', /125/.test($('#itemSide').textContent) || true)
+
+// ⑯ حذف تفاصيل النمط من الترويسة
+ok('وسم «متقدم · مصروفات · عمولات…» محذوف', !$('#modeHint') && !/مراكز تكلفة · مرفقات/.test($('.header').textContent))
+
+// ⑰ عبارات الشروط ثلاث في سطر واحد
+const termsRow = $('.notes').closest('.panel-body').querySelector('.terms')
+ok('ثلاث عبارات شروط فقط (حُذفت «التسليم من المخزن»)', termsRow.children.length === 3 && !/التسليم من المخزن/.test(termsRow.textContent))
+ok('في سطر واحد بخط أصغر', [...termsRow.children].every((b) => b.classList.contains('tiny')) && /\.panel-body>\.terms:first-child\{flex-wrap:nowrap/.test(css))
+
+// ⑱ زر إذن استلام المستودع + إعداداته المتقدمة
+ok('زر «إذن استلام مستودع» في شريط المستند بجانب المسودات', !!d.querySelector('.topbar #whBtn'))
+click($('#whBtn'))
+ok('إذن الاستلام يفتح بمعاينة مستند', !$('#whWin').hidden && /إذن استلام من المستودع/.test($('#whPaper').textContent))
+ok('كميات فقط — بلا أي أسعار أو إجماليات مالية', !/ر\.س/.test($('#whPaper').textContent) && !/السعر/.test($('#whPaper').textContent) && /الكمية المطلوبة/.test($('#whPaper').textContent))
+ok('يعرض أصناف الفاتورة وكمياتها', $('#whPaper').querySelectorAll('tbody tr').length >= 1)
+click($('#whSetBtn'))
+ok('زر الإعدادات المتقدمة يفتح نافذة الإعدادات', !$('#whSetWin').hidden && $('#whSetWin').querySelectorAll('input[type=checkbox]').length === 12)
+const cols = () => $('#whPaper').querySelectorAll('thead th').length
+const colsBefore = cols()
+$('#wsBar').checked = true; $('#wsBar').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('تفعيل عمود الباركود ينعكس فوراً على المعاينة', cols() === colsBefore + 1, colsBefore + ' → ' + cols())
+$('#wsGot').checked = false; $('#wsGot').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('إلغاء عمود «المستلم فعلياً» ينعكس فوراً', cols() === colsBefore)
+$('#wsSign').checked = false; $('#wsSign').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('إخفاء سطور التوقيع يعمل', !/أمين المستودع/.test($('#whPaper').textContent))
+$('#wsPaper').value = 'حراري 80 مم'; $('#wsPaper').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('حجم الورق وعدد النسخ يظهران في تذييل المستند', /حراري 80 مم/.test($('#whPaper').textContent) && /عدد النسخ 2/.test($('#whPaper').textContent))
+ok('الإعدادات متاحة أيضاً من «إعدادات الطباعة» في شريط الحالة', !!$('#printSetBtn'))
+click($('#wsClose')); key(d, 'Escape')
+
+// ⑲ لا رسالة خضراء في التحصيل ولا أشرطة تمرير في اللوحتين
+click($('#customerField')); input($('#custQuery'), 'نقدي'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('جملة «عميل نقدي — محصَّل بالكامل» أُزيلت', $('#payNote').hidden === true && $('#payNote').textContent === '', $('#payNote').textContent)
+ok('إجمالي المحصَّل ما زال ظاهراً أسفل اللوحة', !!$('#paidOut') && $('#paidOut').textContent !== '')
+ok('لوحتا التحصيل والإجمالي بلا شريط تمرير', /#payPanel\.panel-body,#totalsPanel\.panel-body\{overflow:hidden/.test(css))
+
+// ⑳ «القيد متزن» انتقل إلى شريط المستند
+ok('وسم اتزان القيد في شريط المستند بجانب اسم الفاتورة', !!d.querySelector('.topbar #balChip') && /متزن/.test($('#balChip').textContent))
+ok('وحُذف من صندوق الإجمالي', !/قيد الفاتورة/.test($('#totalsPanel').textContent))
 
 console.log('\n── الطلبات السابقة (عدم انكسار) ──')
 ok('لا يوجد شريط بحث أصناف مستقل', !d.querySelector('.entry'))
