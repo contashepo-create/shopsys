@@ -59,23 +59,22 @@ interface SetupState {
 
 /**
  * تفضيلات أعمدة جدول البنود — أعمدة **عرضية** فقط (لا تحمل إدخالاً):
- * كود الصنف · الوحدة · عمود الضريبة · سطر تفاصيل الصنف الرمادي.
+ * كود الصنف · الوحدة · عمود الضريبة. (سطر التفاصيل أسفل الاسم أُلغي نهائياً
+ * بقرار المالك ⑩ي: خلية الاسم تحمل اسم الصنف فقط.)
  */
 export interface InvoiceColumnPrefs {
   code: boolean
   unit: boolean
   tax: boolean
-  details: boolean
 }
 
-export const DEFAULT_INVOICE_COLUMNS: InvoiceColumnPrefs = { code: true, unit: true, tax: true, details: true }
+export const DEFAULT_INVOICE_COLUMNS: InvoiceColumnPrefs = { code: true, unit: true, tax: true }
 
 /** أسماء الأعمدة كما تظهر في قائمة «تخصيص الحقول» */
 export const INVOICE_COLUMN_LABELS: Record<keyof InvoiceColumnPrefs, string> = {
   code: 'كود الصنف',
   unit: 'وحدة القياس',
-  tax: 'عمود الضريبة',
-  details: 'تفاصيل الصنف أسفل الاسم',
+  tax: 'عمود الضريبة (الربحية والمتقدمة فقط)',
 }
 
 interface AppState {

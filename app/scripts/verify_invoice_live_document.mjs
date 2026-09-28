@@ -125,7 +125,7 @@ const ruleOf = (selector) => {
   for (const key of ['money', 'total', 'warehouse', 'qty', 'price']) {
     assert.ok(new RegExp(`${key}:\\s*'[^']*text-center`).test(col), `عمود ${key} غير موسَّط`)
   }
-  assert.ok(/name:\s*'[^']*text-start/.test(col), 'عمود الاسم ليس محاذى لليمين')
+  assert.ok(/name:\s*'[^']*text-center/.test(col), 'عمود اسم الصنف غير موسَّط (قرار المالك ⑩ي)')
   R.ok('الأسهم تنقل التركيز · Enter كمية ⇐ سعر ⇐ السطر التالي · كل الأعمدة وسط عدا الاسم')
 }
 
@@ -172,13 +172,16 @@ const ruleOf = (selector) => {
      لا شجرة الصناديق — فالقاعدة وصفية لا بـ`>`، وإلا لم تُطبَّق أصلاً. */
   assert.ok(/display: contents/.test(ruleOf('.invoice-pos-document > .invoice-shell')), 'غلاف invoice-shell ما زال يقطع سلسلة الارتفاع')
   const docGrid = ruleOf('.invoice-pos-document .invoice-body-grid')
-  assert.ok(/grid-template-rows: minmax\(0, auto\) minmax\(0, 1fr\)/.test(docGrid) && /align-items: stretch/.test(docGrid),
-    'صفّا الجسم ليسا: بنود بخمسة سطور ثم لوحات تملأ الباقي')
+  /* قرار المالك ⑩ي: صف اللوحات يتمدد لمحتواه (min-content) فلا يختفي أسفلها شيء،
+     ويملأ الباقي (1fr) حين تتسع الشاشة. */
+  assert.ok(/grid-template-rows: minmax\(0, auto\) minmax\(min-content, 1fr\)/.test(docGrid) && /align-items: stretch/.test(docGrid),
+    'صفّا الجسم ليسا: بنود بخمسة سطور ثم لوحات تأخذ محتواها كاملاً')
   const scroll = ruleOf('.invoice-editor .invoice-lines-panel .overflow-x-auto')
   assert.ok(/flex: 1/.test(scroll) && /max-height: none/.test(scroll) && /overflow: auto/.test(scroll), 'جدول البنود لا يُمرَّر داخلياً — سيدفع بقية الفاتورة خارج الشاشة')
   assert.ok(/repeat\(3, minmax\(0, 1fr\)\)/.test(ruleOf('.invoice-pos-document .invoice-totals-footer')), 'اللوحات الثلاث ليست في صف واحد كالنموذج')
   const panel = ruleOf('.invoice-pos-document .invoice-doc-panel')
-  assert.ok(/max-height: 100%/.test(panel) && /overflow: hidden/.test(panel), 'اللوحات السفلية لا تملأ المساحة المحرَّرة من الجدول')
+  assert.ok(/max-height: none/.test(panel) && /min-height: min-content/.test(panel) && /overflow: visible/.test(panel),
+    'اللوحات السفلية تُقصّ بدل أن تُظهر محتواها كاملاً (قرار المالك ⑩ي)')
   for (const narrow of ['820px', '620px']) {
     assert.ok(css.replace(/\s+/g, ' ').includes(`@media (max-width: ${narrow}) { .invoice-pos-document .invoice-totals-footer`), `لا تتكيف اللوحات مع مقاس ${narrow}`)
   }
@@ -209,7 +212,8 @@ const ruleOf = (selector) => {
   // قرار المالك (⑩ز): السطور الفارغة نظيفة تماماً — لا مربعات ولا تسطيرات، والنقر عليها يفتح البحث
   assert.ok(!table.includes('invoice-line-ghost-in') && !css.includes('.invoice-line-ghost-in'), 'عادت مربعات الإدخال (التسطيرات) في السطور الفارغة')
   assert.ok(table.includes("ghostCell('qty'") && table.includes("ghostCell('price'"), 'خلايا السطر الفارغ غير مرسومة')
-  assert.ok(/data-ghost-field=\{label\}/.test(table) && /openPicker\(\)/.test(table), 'النقر على خلية فارغة لا يفتح بحث الصنف')
+  /* قرار المالك ⑩ي: النقر المزدوج (لا المفرد) هو ما يفتح بحث الصنف من خلية فارغة. */
+  assert.ok(/data-ghost-field=\{label\}/.test(table) && /onDoubleClick=\{openPicker\}/.test(table), 'النقر المزدوج على خلية فارغة لا يفتح بحث الصنف')
   assert.ok(!table.includes('colSpan={Math.max(1, columnCount'), 'عادت خلية colSpan العملاقة بدل خلايا السطر الحقيقية')
 
   // عدد السطور يملأ منطقة البنود: أحد عشر على شاشة المرجع، وأكثر/أقل بحسب الارتفاع

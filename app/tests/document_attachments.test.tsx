@@ -65,11 +65,13 @@ describe('مرفقات الفاتورة', () => {
 describe('تخصيص أعمدة جدول البنود', () => {
   const items = [{ id: 1, nameAr: 'شاشة', sku: 'SKU-1', stockQty: 5, baseUnit: 'قطعة', priceMinor: 10000, costMinor: 6000, isActive: true }]
   const lines = [{ key: 'k1', itemId: 1, nameAr: 'شاشة', qty: 2, unitPriceMinor: 10000, discountPercent: 0, warehouseId: 1 }]
-  const table = () => render(
+  /* عمود الضريبة لا يظهر إلا في الربحية/المتقدمة ومع تفعيل الضريبة (قرار المالك ⑩ي). */
+  const table = (extra: Record<string, unknown> = {}) => render(
     <InvoiceLinesTable
-      kind="sale" mode="simple" lines={lines} items={items} warehouses={[{ id: 1, nameAr: 'الرئيسي' }]} warehouseId={1}
+      kind="sale" mode="advanced" taxEnabled lines={lines} items={items} warehouses={[{ id: 1, nameAr: 'الرئيسي' }]} warehouseId={1}
       currencyDecimals={2} currencySymbol="ج.م" documentTaxPercent={14} placeholder="ابحث" showPicker={false}
       onPick={() => {}} onPatch={() => {}} onRemove={() => {}}
+      {...extra}
     />,
   )
 
@@ -81,10 +83,27 @@ describe('تخصيص أعمدة جدول البنود', () => {
     expect(view.getByText('14% ض.ق.م')).toBeTruthy()
   })
 
+  it('عمود الضريبة يختفي في البيع المباشر أو عند إلغاء تفعيل الضريبة (قرار المالك ⑩ي)', () => {
+    const direct = table({ mode: 'simple' })
+    expect(direct.queryByText('الضريبة')).toBeNull()
+    expect(direct.queryByText('14% ض.ق.م')).toBeNull()
+    cleanup()
+    const noTax = table({ taxEnabled: false })
+    expect(noTax.queryByText('الضريبة')).toBeNull()
+    expect(noTax.queryByText('14% ض.ق.م')).toBeNull()
+  })
+
+  it('خلية اسم الصنف تحمل الاسم وحده بلا سطر فرعي (قرار المالك ⑩ي)', () => {
+    const view = table()
+    expect(view.container.querySelector('.invoice-doc-linesub')).toBeNull()
+    const nameCell = [...view.container.querySelectorAll('tbody tr[data-entry-row] td')].find((cell) => cell.textContent?.includes('شاشة'))!
+    expect(nameCell.textContent?.trim()).toBe('شاشة')
+  })
+
   it('يخفي الأعمدة المطفأة ولا يغيّر إجمالي السطر — إخفاء عرضٍ لا حساب', () => {
     const before = table().container.querySelector('.invoice-table-total')?.textContent
     cleanup()
-    A().toggleInvoiceColumn('code'); A().toggleInvoiceColumn('unit'); A().toggleInvoiceColumn('tax'); A().toggleInvoiceColumn('details')
+    A().toggleInvoiceColumn('code'); A().toggleInvoiceColumn('unit'); A().toggleInvoiceColumn('tax')
     const view = table()
     expect(view.queryByText('كود الصنف')).toBeNull()
     expect(view.queryByText('الوحدة')).toBeNull()

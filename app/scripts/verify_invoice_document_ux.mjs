@@ -156,8 +156,11 @@ const remOf = (body, prop) => {
   assert.ok(heads >= 9 && cells >= 9, `أعمدة لا تقرأ المقاس من الخريطة (رؤوس ${heads} · خلايا ${cells})`)
   assert.ok(!/<t[hd] className="w-\[/.test(table), 'ما زالت هناك خلية تكتب عرضها يدوياً خارج الخريطة')
   assert.ok(/table-fixed/.test(table), 'الجدول ليس ثابت الأعمدة — ستتراقص الحدود مع المحتوى')
-  assert.ok(/\.money-cell\s*\{[^}]*text-align:\s*left/.test(css) && /\.num-cell input\s*\{[^}]*text-align:\s*center/.test(css),
-    'محاذاة المبالغ/الأرقام غير موحّدة في index.css')
+  /* قرار المالك ⑩ي: **كل** بيانات الجدول في منتصف الخلية — لا يمين ولا يسار. */
+  assert.ok(/\.money-cell\s*\{[^}]*text-align:\s*center/.test(css) && /\.invoice-table-total\s*\{[^}]*text-align:\s*center/.test(css),
+    'المبالغ غير موسَّطة في index.css')
+  assert.ok(/tbody td,\s*\n\.invoice-doc \.invoice-lines-table thead th \{ text-align: center; \}/.test(css),
+    'خلايا الجدول (رأساً وجسماً) غير موسَّطة')
   R.ok(`أعمدة الجدول موحّدة: ${heads} رأساً و${cells} خلية تقرأ من خريطة واحدة، والجدول ثابت الأعمدة`)
 }
 

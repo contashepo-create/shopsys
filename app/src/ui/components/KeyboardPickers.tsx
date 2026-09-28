@@ -192,14 +192,19 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
     onPick(item.id); setQuery(''); setOpen(false); setIndex(0)
   }
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); setIndex((value) => Math.min(Math.max(0, matches.length - 1), value + 1)) }
-    else if (event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); setIndex((value) => Math.max(0, value - 1)) }
+    /* الأسهم للتنقل بين خلايا الجدول فقط (قرار المالك) — لا تفتح قائمة الأصناف.
+       القائمة تُفتح بالكتابة أو Enter أو النقر المزدوج. */
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (!open) return
+      event.preventDefault()
+      setIndex((value) => (event.key === 'ArrowDown' ? Math.min(Math.max(0, matches.length - 1), value + 1) : Math.max(0, value - 1)))
+    }
     else if (event.key === 'Enter') { event.preventDefault(); if (!open) { openSearch(); return } pick(matches[index] ?? matches[0]) }
     else if (event.key === 'Escape') { event.preventDefault(); setOpen(false) }
   }
   return <div ref={pickerRef} className="relative invoice-picker-root" data-enter-native="true">
-    {!open && <Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-brand-500"/>}
-    <input ref={(node) => { inputRef.current = node; setExternalRef(node) }} className={`${inputCls} pr-9`} value={open ? '' : query} placeholder={open ? undefined : placeholder} aria-hidden={open || undefined} tabIndex={open ? -1 : undefined} onFocus={() => { if (!open) { setQuery(''); inputRef.current?.select() } }} onChange={(event) => { if (open) setQuery(event.target.value); else openSearch(event.target.value) }} onKeyDown={handleKeyDown}/>
+
+    <input ref={(node) => { inputRef.current = node; setExternalRef(node) }} className={`${inputCls} invoice-line-entry-input`} value={open ? '' : query} placeholder="" aria-label="اسم الصنف — اكتب للبحث أو اضغط مرتين" aria-hidden={open || undefined} tabIndex={open ? -1 : undefined} onFocus={() => { if (!open) { setQuery(''); inputRef.current?.select() } }} onDoubleClick={() => { if (!open) openSearch() }} onChange={(event) => { if (open) setQuery(event.target.value); else openSearch(event.target.value) }} onKeyDown={handleKeyDown}/>
     {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-item-overlay" dir="rtl" onMouseDown={(event) => event.stopPropagation()}>
       <div role="dialog" aria-label="نتائج بحث الأصناف" style={panelStyle} className="invoice-search-dialog flex flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white dark:border-brand-700/50 dark:bg-card-dark" onMouseDown={(event) => event.stopPropagation()}>
       <div className="invoice-search-inputbar border-b border-slate-200 p-2 dark:border-slate-700"><div className="relative"><Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-brand-500"/><input ref={(node) => { searchInputRef.current = node; setExternalRef(node) }} className={`${inputCls} pr-9`} value={query} placeholder={placeholder} aria-label="بحث الصنف" role="combobox" aria-expanded aria-controls="invoice-item-results" aria-autocomplete="list" aria-activedescendant={matches[index] ? `invoice-item-option-${matches[index].id}` : undefined} onChange={(event) => { setQuery(event.target.value); setIndex(0) }} onKeyDown={handleKeyDown}/></div></div>

@@ -48,7 +48,7 @@ type Warehouse = { id: number; nameAr: string }
 const COL = {
   index: 'w-9 text-center',
   code: 'w-24 text-center',
-  name: 'min-w-[13rem] text-start',
+  name: 'min-w-[13rem] text-center',
   warehouse: 'w-36 text-center',
   qty: 'w-[5.5rem] text-center',
   price: 'w-[7rem] text-center',
@@ -76,7 +76,6 @@ type Props = {
   warnings?: Map<string, { message: string; severity: 'warning' | 'error' }>
   costShares?: Map<string, number>
   belowCostKeys?: Set<string>
-  belowCostNotice?: (line: InvoiceTableLine) => ReactNode
   onPick: (id: number) => void
   /** الصنف في السطر **النشِط** (بالنقر أو بالتنقل بالأسهم) — يتبعه شريط «الصنف المحدد» في الترويسة */
   onActiveItem?: (itemId: number | null) => void
@@ -164,16 +163,21 @@ const MIN_VISIBLE_ROWS = 5
 /** خمسة سطور ظاهرة في جدول الأصناف — وما زاد يُمرَّر داخلياً (قرار المالك ⑩ح) */
 const TARGET_VISIBLE_ROWS = 5
 const VISIBLE_ROWS = Math.max(MIN_VISIBLE_ROWS, TARGET_VISIBLE_ROWS)
+/** هامش الربح الأدنى الذي يُنبَّه تحته بلون برتقالي (10% فوق التكلفة) */
+const MIN_MARGIN_RATIO = 0.1
 
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
-  canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys, belowCostNotice,
+  canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys,
   onPick, onActiveItem, onPatch, onRemove, onDuplicate, documentTaxPercent = 0, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
   entry, entryFilter,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
   /* أعمدة العرض الاختيارية — من زر «تخصيص الحقول»؛ إخفاؤها لا يغيّر أي حساب */
   const columns = useAppStore((state) => state.invoiceColumns)
+  /* عمود الضريبة لا يظهر إلا إذا كانت الضريبة مفعَّلة **وفي نمط الربحية أو المتقدم**
+     (قرار المالك): البيع المباشر والمبسط بلا عمود ضريبة أصلاً. */
+  const showTaxColumn = columns.tax && taxEnabled && (mode === 'profit' || mode === 'advanced')
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
@@ -267,7 +271,7 @@ export function InvoiceLinesTable({
     + (kind === 'purchase' && mode !== 'simple' ? 1 : 0)
     + (kind === 'sale' && mode === 'profit' && canViewCost ? 2 : 0)
     + (kind === 'purchase' && mode === 'profit' && canViewCost ? 1 : 0)
-    + (columns.tax ? 1 : 0)
+    + (showTaxColumn ? 1 : 0)
     + 2
   const linesValueMinor = lines.reduce((sum, line) => sum + Math.round(line.qty * line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)), 0)
 
@@ -318,7 +322,7 @@ export function InvoiceLinesTable({
               {kind === 'purchase' && mode !== 'simple' && <th className={`p-2 ${COL.percent}`} scope="col">ضريبة %</th>}
               {kind === 'sale' && mode === 'profit' && canViewCost && <><th className={`p-2 ${COL.money}`} scope="col">التكلفة</th><th className={`p-2 ${COL.money}`} scope="col">الهامش</th></>}
               {kind === 'purchase' && mode === 'profit' && canViewCost && <th className={`p-2 ${COL.money}`} scope="col">نصيبه من المصروفات</th>}
-              {columns.tax && <th className={`p-2 ${COL.tax}`} scope="col">الضريبة</th>}
+              {showTaxColumn && <th className={`p-2 ${COL.tax}`} scope="col">الضريبة</th>}
               <th className={`p-2 ${COL.total}`} scope="col">الإجمالي</th>
               <th className={`p-2 ${COL.tools}`} scope="col">إجراءات</th>
             </tr>
@@ -329,15 +333,24 @@ export function InvoiceLinesTable({
               const warning = warnings?.get(line.key)
               const belowCost = belowCostKeys?.has(line.key)
               const actualPrice = line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)
+              /* تلوين تحذيري داخل الخلية (قرار المالك):
+                 الكمية حمراء فاتحة إذا تجاوزت المتاح فيصير الرصيد سالباً،
+                 والسعر برتقالي إذا نزل تحت هامش الربح الأدنى وأحمر إذا نزل عن التكلفة. */
+              const stockShort = kind === 'sale' && !item?.isService && line.qty > (item?.stockQty ?? 0)
+              const unitCost = line.unitCostMinor ?? item?.costMinor ?? 0
+              const priceTone = kind === 'sale' && unitCost > 0
+                ? (actualPrice < unitCost ? ' is-loss' : actualPrice < unitCost * (1 + MIN_MARGIN_RATIO) ? ' is-thin' : '')
+                : ''
+              const qtyTone = stockShort ? ' is-shortstock' : ''
               return (
-                <tr key={line.key} data-entry-row aria-selected={selectedKey === line.key} onClick={() => setSelectedKey(line.key)} onFocusCapture={() => setSelectedKey(line.key)} className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : belowCost ? 'bg-amber-500/10' : warning?.severity === 'error' ? 'bg-rose-500/5' : warning ? 'bg-amber-500/5' : ''}`}>
+                <tr key={line.key} data-entry-row aria-selected={selectedKey === line.key} title={[warning?.message, belowCost ? 'بيع أقل من التكلفة — اعتماد مشرف مطلوب' : ''].filter(Boolean).join(' · ') || undefined} onClick={() => setSelectedKey(line.key)} onFocusCapture={() => setSelectedKey(line.key)} /* لا تظليل للسطر كله: التنبيه صار لوناً في الخلية المعنية وحدها (قرار المالك ⑩ي) */
+                  className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : ''}`}>
                   <td className={`p-2 font-mono text-[11px] font-black text-slate-400 ${COL.index}`}>{lineIndex + 1}</td>
                   {columns.code && <td tabIndex={0} className={`p-2 font-mono text-[11px] font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40 ${COL.code}`} dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>}
+                  {/* اسم الصنف وحده في الخلية (قرار المالك ⑩ي): لا سطر فرعي ولا تحذير نصي —
+                      التحذير صار لوناً داخل خلية الكمية/السعر ونصاً في تلميح السطر وشريط التدقيق. */}
                   <td className={`p-2 align-middle break-words ${COL.name}`}>
                     <b>{line.nameAr || item?.nameAr}</b>
-                    {columns.details && <div className="invoice-doc-linesub">{item?.isService ? 'خدمة بلا مخزون' : `متاح ${item?.stockQty ?? 0} ${item?.baseUnit ?? ''}`}{item?.sku ? ` · ${item.sku}` : ''}</div>}
-                    {warning && <div className={warning.severity === 'error' ? 'text-xs text-rose-600' : 'text-xs text-amber-600'}>{warning.message}</div>}
-                    {belowCost && belowCostNotice?.(line)}
                     {kind === 'purchase' && item?.trackExpiry && (
                       <input type="date" className={`${inputCls} mt-1.5`} value={line.expiryDate ?? ''} onChange={(event) => onPatch(line.key, { expiryDate: event.target.value })} />
                     )}
@@ -347,14 +360,14 @@ export function InvoiceLinesTable({
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`ordered:${line.key}`, line.orderedQty ?? line.qty)} onChange={(event) => updateDraft(`ordered:${line.key}`, event.target.value, (value) => patchDecimal(line, 'orderedQty', value))} onBlur={() => clearDraft(`ordered:${line.key}`)} /></td>
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty)} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
-                  </> : <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.qty)} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const priceCell = event.currentTarget.closest('tr')?.querySelector<HTMLInputElement>('.price-cell input'); priceCell?.focus(); priceCell?.select() }} /></td>}
+                  </> : <td className={`num-cell p-1 align-middle ${COL.qty}${qtyTone}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.qty)} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const priceCell = event.currentTarget.closest('tr')?.querySelector<HTMLInputElement>('.price-cell input'); priceCell?.focus(); priceCell?.select() }} /></td>}
                   {columns.unit && <td className={`unit-cell p-1 align-middle ${COL.unit}`}>{item?.baseUnit || (item?.isService ? 'خدمة' : '—')}</td>}
-                  <td className={`num-cell price-cell p-1 align-middle ${COL.price}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.unitPriceMinor / 10 ** currencyDecimals)} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } window.dispatchEvent(new Event('shopsys:open-item')) }} /></td>
+                  <td className={`num-cell price-cell p-1 align-middle ${COL.price}${priceTone}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.unitPriceMinor / 10 ** currencyDecimals)} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } /* قرار المالك: Enter من السعر ينزل للسطر التالي **وينتظر الكتابة** ولا يفتح البحث تلقائياً */ const entryInput = event.currentTarget.closest('tbody')?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input'); entryInput?.focus(); entryInput?.select() }} /></td>
                   {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
                   {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
                   {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
                   {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`money-cell p-2 ${COL.money}`}>{fmt(costShares?.get(line.key) ?? 0)}</td>}
-                  {columns.tax && <td className={`p-1 text-center ${COL.tax}`}><span className="invoice-doc-taxchip">{(line.vatPercent ?? documentTaxPercent) > 0 ? `${line.vatPercent ?? documentTaxPercent}% ض.ق.م` : 'معفى'}</span></td>}
+                  {showTaxColumn && <td className={`p-1 text-center ${COL.tax}`}><span className="invoice-doc-taxchip">{(line.vatPercent ?? documentTaxPercent) > 0 ? `${line.vatPercent ?? documentTaxPercent}% ض.ق.م` : 'معفى'}</span></td>}
                   <td className={`p-1 ${COL.total}`}><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
                   <td className={`p-1 ${COL.tools}`}>
                     <div className="invoice-doc-rowtools">
@@ -372,11 +385,18 @@ export function InvoiceLinesTable({
                 والكتابة في أي منها تفتح بحث الصنف لأن الكمية بلا صنف لا معنى لها. */}
             {Array.from({ length: Math.max(1, VISIBLE_ROWS - lines.length) }, (_, ghostIndex) => {
               const openPicker = () => window.dispatchEvent(new Event('shopsys:open-item'))
+              /* نقرة واحدة تحدّد الخلية فقط (بلا نافذة)، والنقر المزدوج يفتح بحث
+                 الصنف — قرار المالك: «لا تفتح البحث بنقرة واحدة». */
+              const focusEntry = () => {
+                const input = scrollRef.current?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input')
+                input?.focus()
+              }
               const ghostCell = (label: string, extra = '') => (
                 <td
                   className={`p-1 align-middle ${extra}`}
                   data-ghost-field={label}
-                  onMouseDown={(event) => { event.preventDefault(); openPicker() }}
+                  onClick={focusEntry}
+                  onDoubleClick={openPicker}
                 />
               )
               return (
@@ -390,8 +410,9 @@ export function InvoiceLinesTable({
                     : <button
                         type="button"
                         className="invoice-line-ghost-btn"
-                        aria-label="سطر فارغ — اضغط لإضافة صنف"
-                        onClick={openPicker}
+                        aria-label="سطر فارغ — اكتب اسم الصنف أو اضغط مرتين لفتح البحث"
+                        onClick={focusEntry}
+                        onDoubleClick={openPicker}
                       ><span className="sr-only">اكتب اسم الصنف أو امسح الباركود</span></button>}
                 </td>
                 {lineWarehouseMode && <td className={`p-1 ${COL.warehouse}`} />}
@@ -404,7 +425,7 @@ export function InvoiceLinesTable({
                 {kind === 'purchase' && mode !== 'simple' && ghostCell('vat', `num-cell ${COL.percent}`)}
                 {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`p-1 ${COL.money}`} /><td className={`p-1 ${COL.money}`} /></>}
                 {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`p-1 ${COL.money}`} />}
-                {columns.tax && <td className={`p-1 ${COL.tax}`} />}
+                {showTaxColumn && <td className={`p-1 ${COL.tax}`} />}
                 <td className={`p-1 ${COL.total}`} />
                 <td className={`p-1 ${COL.tools}`} />
               </tr>

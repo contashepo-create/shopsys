@@ -134,13 +134,14 @@ describe('جدول بنود الفاتورة في الوضع الحي', () => {
     expect(view.container.querySelector('.invoice-doc-linebar')).toBeNull()
   })
 
-  it('أعمدة المبالغ والمخزن والكميات موسَّطة والاسم يمين', () => {
+  it('كل أعمدة الجدول موسَّطة بما فيها اسم الصنف (قرار المالك ⑩ي)', () => {
     const view = renderTable()
     const headers = [...view.container.querySelectorAll('thead th')] as HTMLElement[]
     const total = headers.find((header) => header.textContent === 'الإجمالي')!
     expect(total.className).toContain('text-center')
     const name = headers.find((header) => header.textContent === 'الصنف / الوصف')!
-    expect(name.className).toContain('text-start')
+    expect(name.className).toContain('text-center')
+    expect(name.className).not.toContain('text-start')
   })
 
   it('الأسهم تنقل التركيز داخل الجدول بلا تغيير أي قيمة', () => {

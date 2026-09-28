@@ -63,12 +63,19 @@ check('خمسة سطور نظيفة والمساحة الباقية للوحات
     'عدد السطور الظاهرة ليس ستة')
   assert.ok(/rows\.reduce/.test(table) && /setBoxMaxHeight/.test(table), 'ارتفاع الجدول غير مقيس من ارتفاع السطور — قد يظهر نصف سطر')
   assert.ok(!/invoice-line-ghost-in/.test(table) && !/invoice-line-ghost-in/.test(css), 'عادت مربعات (تسطيرات) السطور الفارغة')
-  assert.ok(/ghostCell = \(label: string/.test(table) && /onMouseDown=\{\(event\) => \{ event\.preventDefault\(\); openPicker\(\) \}\}/.test(table),
-    'خلايا السطر الفارغ لا تفتح بحث الصنف بالنقر')
+  /* قرار المالك ⑩ي: نقرة واحدة تُحدِّد الخلية فقط، والنقر المزدوج (أو الكتابة/Enter) يفتح البحث. */
+  assert.ok(/ghostCell = \(label: string/.test(table) && /onClick=\{focusEntry\}/.test(table) && /onDoubleClick=\{openPicker\}/.test(table),
+    'خلايا السطر الفارغ لا تتبع قاعدة «نقرة تحدّد ونقرتان تفتحان»')
+  assert.ok(!/onMouseDown=\{\(event\) => \{ event\.preventDefault\(\); openPicker\(\) \}\}/.test(table),
+    'عادت النقرة الواحدة تفتح بحث الصنف')
   const grid = css.match(/\.invoice-pos-document \.invoice-body-grid \{[^}]*\}/)?.[0] ?? ''
-  assert.ok(/grid-template-rows: minmax\(0, auto\) minmax\(0, 1fr\)/.test(grid), 'اللوحات لا تأخذ المساحة المحرَّرة من الجدول')
+  assert.ok(/grid-template-rows: minmax\(0, auto\) minmax\(min-content, 1fr\)/.test(grid),
+    'صف اللوحات لا يتمدد لمحتواه — سيختفي جزء أسفل اللوحات')
   const panel = css.match(/\.invoice-pos-document \.invoice-doc-panel \{[^}]*\}/)?.[0] ?? ''
-  assert.ok(/max-height: 100%/.test(panel) && /height: 100%/.test(panel), 'اللوحات الثلاث لا تملأ ارتفاع صفّها')
+  assert.ok(/min-height: min-content/.test(panel) && /max-height: none/.test(panel) && /height: 100%/.test(panel),
+    'اللوحات الثلاث تُقصّ بدل أن تأخذ ارتفاع محتواها (قرار المالك ⑩ي: ممنوع اختفاء أي جزء)')
+  const panelBody = css.match(/\.invoice-pos-document \.invoice-doc-panel-body \{[^}]*\}/)?.[0] ?? ''
+  assert.ok(/overflow: visible/.test(panelBody), 'جسم اللوحة يُمرَّر داخلياً فيختفي أسفلها')
   assert.ok(/\.invoice-doc \.invoice-doc-amountfield \{ height: 2\.1rem; \}/.test(css), 'حقل المبلغ لم يكبر')
 })
 

@@ -471,7 +471,7 @@ select { line-height: 1.25rem; }
 }
 .invoice-pos-document { min-width: 0; }
 .invoice-pos-document .invoice-shell { overflow: visible; border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important; }
-.invoice-pos-document .invoice-body-grid { display: grid; grid-template-rows: minmax(0, auto) minmax(0, 1fr); align-items: stretch; min-width: 0; height: 100%; min-height: 0; overflow: hidden; border: 0; border-radius: 0; background: transparent; padding: 0; gap: .4rem; }
+.invoice-pos-document .invoice-body-grid { display: grid; grid-template-rows: minmax(0, auto) minmax(min-content, 1fr); align-items: stretch; min-width: 0; height: 100%; min-height: 0; overflow: hidden auto; border: 0; border-radius: 0; background: transparent; padding: 0; gap: .4rem; }
 .invoice-pos-document .invoice-lines-column { gap: .45rem; }
 /* بطاقة البنود: ورق أبيض بحدّ رمادي ورأس رمادي فاتح كالتصميم المرجعي */
 .invoice-pos-document .invoice-lines-column .invoice-lines-panel,
@@ -1213,12 +1213,42 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .dark .invoice-doc .invoice-lines-table tbody tr:hover { background: #16233b; }
 .invoice-doc .invoice-lines-table input, .invoice-doc .invoice-lines-table select { min-height: 1.7rem !important; font-size: .67rem; }
 .invoice-doc .invoice-lines-panel .overflow-x-auto { max-height: none; }
-/* محاذاة موحّدة: الأرقام وسط الخانة، المبالغ يسارها بخط أحادي */
-.invoice-doc .invoice-lines-table .num-cell input { text-align: center; }
-.invoice-doc .invoice-lines-table .money-cell { direction: ltr; font-family: ui-monospace, monospace; text-align: left; }
-.invoice-doc .invoice-table-total { direction: ltr; font-family: ui-monospace, monospace; font-weight: 800; text-align: left; }
+/* محاذاة موحّدة (قرار المالك): كل بيانات الجدول في منتصف الخلية — لا يمين ولا يسار */
+.invoice-doc .invoice-lines-table tbody td,
+.invoice-doc .invoice-lines-table thead th { text-align: center; }
+.invoice-doc .invoice-lines-table tbody td input,
+.invoice-doc .invoice-lines-table tbody td select { text-align: center; text-align-last: center; }
+.invoice-doc .invoice-lines-table .money-cell { direction: ltr; font-family: ui-monospace, monospace; text-align: center; }
+.invoice-doc .invoice-table-total { direction: ltr; font-family: ui-monospace, monospace; font-weight: 800; text-align: center; }
+/* بلا «تقسيمات» داخل السطور (قرار المالك): مربعات الإدخال بلا إطار ولا خلفية،
+   ويظهر الإطار عند التركيز فقط ليعرف المستخدم موضع الكتابة. */
+.invoice-doc .invoice-lines-table tbody td input:not([type="checkbox"]),
+.invoice-doc .invoice-lines-table tbody td select:not([hidden]),
+.invoice-doc .invoice-lines-table tbody td .invoice-table-total:not([hidden]) {
+  border-color: transparent !important; background: transparent !important; box-shadow: none !important;
+}
+.invoice-doc .invoice-lines-table tbody td input:not([type="checkbox"]):focus,
+.invoice-doc .invoice-lines-table tbody td select:not([hidden]):focus,
+.invoice-doc .invoice-lines-table tbody td input:not([type="checkbox"]):focus-visible,
+.invoice-doc .invoice-lines-table tbody td select:not([hidden]):focus-visible {
+  border-color: var(--doc-accent) !important; background: var(--doc-paper) !important;
+  box-shadow: 0 0 0 1px var(--doc-accent-soft) !important; outline: none !important;
+}
+.dark .invoice-doc .invoice-lines-table tbody td input:not([type="checkbox"]):focus,
+.dark .invoice-doc .invoice-lines-table tbody td select:not([hidden]):focus { background: #0f1a2e !important; }
+/* تنبيهات السطر: كمية أكبر من المتاح (أحمر فاتح) · سعر تحت الهامش (برتقالي) أو تحت التكلفة (أحمر).
+   الانتقائية مرفوعة بـ`tbody tr` لتتقدّم على تظليل السطر المحدَّد. */
+.invoice-doc .invoice-lines-table tbody tr td.is-shortstock { background: #fee2e2 !important; }
+.invoice-doc .invoice-lines-table tbody tr td.is-shortstock input { color: #b91c1c !important; font-weight: 800; }
+.invoice-doc .invoice-lines-table tbody tr td.is-thin { background: #ffedd5 !important; }
+.invoice-doc .invoice-lines-table tbody tr td.is-thin input { color: #c2410c !important; font-weight: 800; }
+.invoice-doc .invoice-lines-table tbody tr td.is-loss { background: #fee2e2 !important; }
+.invoice-doc .invoice-lines-table tbody tr td.is-loss input { color: #b91c1c !important; font-weight: 800; }
+.dark .invoice-doc .invoice-lines-table tbody tr td.is-shortstock, .dark .invoice-doc .invoice-lines-table tbody tr td.is-loss { background: #4c1d24 !important; }
+.dark .invoice-doc .invoice-lines-table tbody tr td.is-shortstock input, .dark .invoice-doc .invoice-lines-table tbody tr td.is-loss input { color: #fecaca !important; }
+.dark .invoice-doc .invoice-lines-table tbody tr td.is-thin { background: #4a2a12 !important; }
+.dark .invoice-doc .invoice-lines-table tbody tr td.is-thin input { color: #fed7aa !important; }
 /* خانة الوحدة ورقاقة الضريبة وأدوات السطر — أعمدة المرجع الثلاثة الأخيرة */
-.invoice-doc-linesub { overflow: hidden; color: var(--doc-faint); font-size: .55rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .invoice-doc .invoice-lines-table .unit-cell { color: var(--doc-faint); font-size: .62rem; font-weight: 700; text-align: center; }
 .invoice-doc-taxchip { display: inline-block; border-radius: .3rem; background: var(--doc-band); padding: .02rem .3rem; color: var(--doc-muted); font-family: ui-monospace, monospace; font-size: .55rem; font-weight: 700; white-space: nowrap; }
 .invoice-doc-rowtools { display: flex; align-items: center; justify-content: center; gap: .15rem; }
@@ -1490,9 +1520,13 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc { --doc-rows: 5; --doc-row-h: 2.05rem; --doc-head-h: 2.1rem; }
 .invoice-doc .invoice-lines-panel .overflow-x-auto { flex: 0 1 auto; max-height: calc(var(--doc-rows) * var(--doc-row-h) + var(--doc-head-h)); }
 
-/* ④ ثلاث لوحات في صف واحد بارتفاع محكوم — بلا شريط تمرير للصفحة */
-.invoice-pos-document .invoice-doc-panel { display: flex; min-height: 8.6rem; max-height: 100%; height: 100%; flex-direction: column; overflow: hidden; }
-.invoice-pos-document .invoice-doc-panel-body { min-height: 0; flex: 1; overflow: auto; }
+/* ④ ثلاث لوحات في صف واحد — **بلا أي اختفاء** (قرار المالك ⑩ي):
+   اللوحة تأخذ ارتفاع محتواها كاملاً (min-content) وتتمدد لملء الفراغ المتاح،
+   وجسمها بلا تمرير داخلي فلا يُقصّ أسفل «الإجمالي» أو «التحصيل» أو «الملاحظات».
+   وإذا ضاقت الشاشة عن المستند كله يُمرَّر جسم المستند نفسه — فيبقى كل جزء قابلاً
+   للوصول بدل أن يختفي داخل صندوق. */
+.invoice-pos-document .invoice-doc-panel { display: flex; min-height: min-content; max-height: none; height: 100%; flex-direction: column; overflow: visible; }
+.invoice-pos-document .invoice-doc-panel-body { min-height: 0; flex: 1; overflow: visible; }
 @media (max-width: 820px) {
   .invoice-pos-document .invoice-totals-footer { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .invoice-pos-document .invoice-totals-footer > *:nth-child(3) { grid-column: 1 / -1; }
@@ -1586,7 +1620,10 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-stripcheck input { width: .8rem; height: .8rem; min-height: .8rem !important; accent-color: var(--doc-accent); }
 
 /* بطاقة رصيد الطرف: أسطر رفيعة كالنموذج (.party) */
-.invoice-doc .invoice-doc-side { align-content: start; }
+/* بطاقة الطرف تمتد بطول عمود الحقول كاملاً بما فيه سطر الفئة (قرار المالك ⑩ي):
+   `align-content: start` كان يقصّر البطاقة عن الصف المجاور. */
+.invoice-doc .invoice-doc-side { align-content: stretch; }
+.invoice-doc .invoice-doc-side > * { min-height: 100%; }
 .invoice-doc .invoice-doc-party { display: flex; height: 100%; flex-direction: column; justify-content: space-between; gap: .12rem; border-radius: .45rem; background: var(--doc-tint); padding: .22rem .4rem; }
 .invoice-doc .invoice-doc-party .invoice-doc-cardhead { padding: 0 0 .12rem; }
 .invoice-doc .invoice-doc-party .invoice-doc-cardhead > b { font-size: .66rem; }

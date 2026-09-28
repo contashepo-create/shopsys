@@ -208,10 +208,13 @@ const footerOf = (src) => {
 
 /* ⑧ التحصيل: ملء سريع بالمبلغ كاملاً أو تحويله لآجل، وسطر متبقٍ صريح */
 {
-  assert.ok(sales.includes('تحصيل المبلغ كاملاً') && sales.includes('بيع آجل بلا تحصيل'), 'لوحة التحصيل بلا أزرار ملء سريع')
-  assert.ok(purchase.includes('سداد المستحق كاملاً') && purchase.includes('شراء آجل بلا سداد'), 'لوحة الدفع بلا أزرار ملء سريع')
+  /* قرار المالك ⑩ي: أزرار «تحصيل المبلغ كاملاً» و«بيع آجل بلا تحصيل» (ومقابلاهما في الشراء)
+     محذوفة — غير عملية وتأخذ مكان اللوحة. */
+  assert.ok(!sales.includes('تحصيل المبلغ كاملاً') && !sales.includes('بيع آجل بلا تحصيل'), 'عادت أزرار الملء السريع للتحصيل')
+  assert.ok(!purchase.includes('سداد المستحق كاملاً') && !purchase.includes('شراء آجل بلا سداد'), 'عادت أزرار الملء السريع للسداد')
   for (const [label, src] of PAGES) {
-    assert.ok(/paidTouched\.current=true;const full=|paidTouched\.current=true;setPaid\(String\(/.test(src), `${label}: الملء السريع لا يعلّم الحقل كمُعدَّل يدوياً`)
+    /* الكتابة اليدوية في حقل المبلغ تبقى هي التي تُعلِّم الحقل كمُعدَّل يدوياً بعد حذف أزرار الملء. */
+    assert.ok(/paidTouched\.current=true/.test(src), `${label}: تحرير المبلغ لا يعلّم الحقل كمُعدَّل يدوياً`)
     assert.ok(footerOf(src).includes('is-due'), `${label}: لا سطر «متبقٍ» بارز في تذييل اللوحة`)
   }
   R.ok('التحصيل والسداد: ملء المبلغ كاملاً أو تحويله لآجل بضغطة، والمتبقي معلن في ذيل اللوحة')
@@ -258,7 +261,7 @@ const footerOf = (src) => {
   assert.ok(!frame.includes('itemEntry'), 'الإطار ما زال يستقبل مربع البحث بدل جدول البنود')
   // جدول البنود: الوحدة والضريبة وأدوات السطر والبحث داخل خلية الاسم
   const table = readFileSync(`${ROOT}/src/ui/components/InvoiceLinesTable.tsx`, 'utf8')
-  for (const [needle, label] of [['COL.unit', 'عمود الوحدة'], ['COL.tax', 'عمود الضريبة'], ['COL.tools', 'عمود الإجراءات'], ['invoice-line-entry-cell', 'مربع البحث داخل خلية اسم أول سطر فارغ'], ['onDuplicate', 'تكرار السطر']]) {
+  for (const [needle, label] of [['COL.unit', 'عمود الوحدة'], ['showTaxColumn', 'عمود الضريبة (ربحية/متقدمة فقط)'], ['COL.tools', 'عمود الإجراءات'], ['invoice-line-entry-cell', 'مربع البحث داخل خلية اسم أول سطر فارغ'], ['onDuplicate', 'تكرار السطر']]) {
     assert.ok(table.includes(needle), `جدول البنود ينقصه ${label}`)
   }
   assert.ok(!table.includes('invoice-doc-linebar'), 'عاد شريط أدوات البنود السفلي المكرر')
@@ -311,7 +314,8 @@ const footerOf = (src) => {
     'لا تفضيل محفوظ لأعمدة جدول البنود')
   assert.ok(/DEFAULT_INVOICE_COLUMNS[\s\S]{0,120}code:\s*true/.test(store), 'الأعمدة لا تبدأ كلها ظاهرة')
   assert.ok(table.includes('state.invoiceColumns'), 'جدول البنود لا يقرأ تفضيل الأعمدة')
-  for (const key of ['columns.code', 'columns.unit', 'columns.tax', 'columns.details']) {
+  /* `columns.details` أُلغي: لا سطر فرعي أسفل اسم الصنف بعد قرار المالك ⑩ي. */
+  for (const key of ['columns.code', 'columns.unit', 'columns.tax']) {
     assert.ok(table.includes(key), `عمود ${key} غير موصول بزر تخصيص الحقول`)
   }
   for (const guard of ['COL.qty', 'COL.price', 'COL.total', 'COL.tools']) {

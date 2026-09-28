@@ -199,7 +199,6 @@ export function AdvancedSalesInvoicePage(){
    canViewCost={canViewCost}
    warnings={new Map(stockWarnings.map(w => [w.lineId, { message: w.message, severity: w.severity }]))}
    belowCostKeys={new Set(belowCostLines.map(line => line.key))}
-   belowCostNotice={line => <div className="mt-1 text-xs font-black text-amber-700 dark:text-amber-300">⚠ بيع أقل من التكلفة: {formatMinor(Math.round(line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)), cur, false)} مقابل تكلفة {formatMinor(line.unitCostMinor ?? 0, cur, false)} — اعتماد مشرف مطلوب</div>}
    onPick={addItem}
    onActiveItem={setActiveItemId}
    onPatch={(key, patchValue) => patch(key, patchValue as Partial<DraftLine>)}
@@ -256,10 +255,6 @@ export function AdvancedSalesInvoicePage(){
       <PaymentMethodPicker value={{treasury,terminalPayment:terminal}} onChange={value=>{setTreasury(value.treasury);setTerminal(value.terminalPayment)}} operation="receipt"/>
      </div>}
      <p className={collectNote.ok?'invoice-doc-paynote is-ok':'invoice-doc-paynote is-warn'} data-invoice-paynote>{collectNote.text}</p>
-     <div className="invoice-doc-quick">
-      <button type="button" onClick={()=>{paidTouched.current=true;const full=String((totals?.totalMinor??0)/10**cur.decimals);if(multiPay){setPaid(full);setBankPaid('');setTerminalPaid('');setEmployeePaid('')}else if(terminal.terminalId){setTerminalPaid(full)}else{setPaid(full)}}}>تحصيل المبلغ كاملاً</button>
-      <button type="button" onClick={()=>{paidTouched.current=true;setPaid('');setTerminalPaid('');setBankPaid('');setEmployeePaid('')}}>بيع آجل بلا تحصيل</button>
-     </div>
      {!terminal.terminalId&&<div className="invoice-doc-fx" data-invoice-fx="true">
       <label className="invoice-doc-fx-toggle"><input type="checkbox" checked={fxOn} onChange={e=>{const on=e.target.checked;setFxOn(on);paidTouched.current=true;if(on){setPaid('')}else{setFxAmount('');setFxRate('')}}}/><span>تحصيل بعملة أجنبية</span><small>القيد يبقى بعملة الدفتر {cur.code}</small></label>
       {fxOn&&<><div className="invoice-doc-panel-grid">

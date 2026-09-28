@@ -137,10 +137,6 @@ export function AdvancedPurchaseInvoicePage(){const nav=useNavigate(),toast=useT
     <div className="invoice-doc-panel-body">
      <PaymentMethodPicker tiles value={{treasury,terminalPayment:{terminalId:'',providerReference:'',cardLast4:''}}} onChange={value=>setTreasury(value.treasury)} operation="payment" allowTerminal={false}/>
      <Field label={fxOn?`المبلغ المدفوع بعملة الدفتر (محسوب من ${fxCode})`:"المبلغ المدفوع الآن"}><div className="invoice-doc-amountfield"><input data-invoice-paid="true" className={inputCls} readOnly={fxOn} value={fxOn?formatMinor(fxBookMinor,cur,false):paid} onChange={e=>{paidTouched.current=true;setPaid(e.target.value)}} inputMode="decimal" placeholder="0.00"/><span className="invoice-doc-amountcur">{cur.code}</span></div></Field>
-     <div className="invoice-doc-quick">
-      <button type="button" onClick={()=>{paidTouched.current=true;setPaid(String(supplierDue/10**cur.decimals))}}>سداد المستحق كاملاً</button>
-      <button type="button" onClick={()=>{paidTouched.current=true;setPaid('')}}>شراء آجل بلا سداد</button>
-     </div>
      <div className="invoice-doc-fx" data-invoice-fx="true">
       <label className="invoice-doc-fx-toggle"><input type="checkbox" checked={fxOn} onChange={e=>{const on=e.target.checked;setFxOn(on);paidTouched.current=true;if(on){setPaid('')}else{setFxAmount('');setFxRate('')}}}/><span>سداد بعملة أجنبية</span><small>القيد يبقى بعملة الدفتر {cur.code}</small></label>
       {fxOn&&<><div className="invoice-doc-panel-grid">
