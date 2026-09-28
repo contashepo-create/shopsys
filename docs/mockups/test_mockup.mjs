@@ -89,6 +89,15 @@ $('#expNote').value = 'نقل وتحميل'; $('#expAmount').value = '75'
 click($('#expSave'))
 ok('الحفظ يضيف رقاقة صغيرة ويزيد العداد', $('#expCustN').textContent === '1' && /نقل وتحميل/.test($('#addonList').textContent))
 
+// ⑨ الترويسة صفّان فقط
+const fields = $('.fields')
+ok('حقول الترويسة صف واحد (٦ حقول في ٦ أعمدة)', fields.querySelectorAll(':scope > .f:not(.f-strip)').length === 6,
+  fields.querySelectorAll(':scope > .f:not(.f-strip)').length + ' حقل')
+ok('شبكة الحقول ستة أعمدة ثابتة', /\.fields\{display:grid;grid-template-columns:1\.55fr1fr1fr1\.2fr1\.3fr1fr/.test(css))
+ok('الصف الثاني شريط واحد يمتد بعرض الترويسة', !!fields.querySelector('.f-strip .selstrip') && /\.fields\.f-strip\{grid-column:1\/-1\}/.test(css))
+ok('المستخدم والخانات الثلاث كلها داخل الشريط', ['selName', 'selStock', 'selCost'].every((id) => !!$('.selstrip #' + id)) && /محمد عبده/.test($('.selstrip').textContent))
+ok('بطاقة العميل مضغوطة في سطرين', $('#partyCard').querySelectorAll('.prow').length === 2)
+
 console.log('\n── الطلبات السابقة (عدم انكسار) ──')
 ok('لا يوجد شريط بحث أصناف مستقل', !d.querySelector('.entry'))
 ok('خمسة سطور ظاهرة على الأقل', d.querySelectorAll('#linesBody tr').length >= 5)

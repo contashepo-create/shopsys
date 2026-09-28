@@ -53,8 +53,16 @@ body.zones .zone[data-zone]::after{content:attr(data-zone);position:absolute;top
 .kbd{border:1px solid currentColor;border-radius:.2rem;padding:0 .18rem;font-size:0.57rem;opacity:.8}
 
 /* ② الترويسة */
-.header{display:grid;grid-template-columns:minmax(0,1fr) 14.5rem;gap:.4rem;padding:.3rem .45rem}
-.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(8.6rem,1fr));gap:.25rem .35rem}
+.header{display:grid;grid-template-columns:minmax(0,1fr) 13rem;gap:.4rem;padding:.26rem .45rem}
+/* صف واحد للحقول + صف واحد لشريط المتابعة = ترويسة من صفّين فقط */
+.fields{display:grid;grid-template-columns:1.55fr 1fr 1fr 1.2fr 1.3fr 1fr;gap:.18rem .3rem;align-content:start}
+.fields .f-strip{grid-column:1/-1}
+.selstrip{display:flex;align-items:center;flex-wrap:wrap;gap:.3rem;min-height:1.55rem;border:1px solid var(--doc-line);
+  border-radius:.35rem;background:var(--doc-tint);padding:.1rem .4rem;overflow:hidden}
+.selstrip .k{font-size:0.62rem;font-weight:800;color:var(--doc-faint);white-space:nowrap}
+.selstrip .v{font-size:0.72rem;font-weight:800;color:var(--doc-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:12rem}
+.selstrip .sepv{width:1px;height:.95rem;background:var(--doc-line)}
+.selstrip select{height:1.35rem;border:1px solid var(--doc-line);border-radius:.3rem;background:var(--doc-paper);font-size:0.66rem;font-weight:700;padding:0 .2rem}
 .f{display:flex;flex-direction:column;gap:.08rem;min-width:0}
 .f>label{font-size:0.62rem;font-weight:800;color:var(--doc-muted);display:flex;align-items:center;gap:.2rem}
 .in{height:1.6rem;width:100%;border:1px solid var(--doc-line);border-radius:.35rem;background:var(--doc-paper);padding:0 .35rem;display:flex;align-items:center;font-size:0.72rem;color:var(--doc-ink);font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -62,9 +70,11 @@ body.zones .zone[data-zone]::after{content:attr(data-zone);position:absolute;top
 .in.clickable{cursor:pointer}
 .in.clickable:hover{border-color:var(--doc-accent)}
 select.in{cursor:pointer}
-.party{border:1px solid var(--doc-line);border-radius:.5rem;background:var(--doc-tint);padding:.28rem .4rem;display:flex;flex-direction:column;gap:.12rem;min-width:0}
-.party b{font-size:0.78rem;color:var(--doc-ink);display:flex;align-items:center;gap:.25rem}
-.party .row{display:flex;justify-content:space-between;gap:.3rem;font-size:0.66rem;color:var(--doc-faint);font-weight:700}
+.party{border:1px solid var(--doc-line);border-radius:.5rem;background:var(--doc-tint);padding:.22rem .4rem;display:flex;flex-direction:column;justify-content:center;gap:.08rem;min-width:0}
+.party b{font-size:0.74rem;color:var(--doc-ink);display:flex;align-items:center;gap:.25rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.party .prow{display:flex;justify-content:space-between;gap:.25rem;font-size:0.62rem;color:var(--doc-faint);font-weight:700}
+.party .prow b{font-size:0.66rem;direction:ltr;font-family:ui-monospace,monospace}
+.party .warnline{font-size:0.62rem;color:var(--doc-danger);font-weight:800}
 .dot{width:.4rem;height:.4rem;border-radius:999px;background:var(--doc-ok);display:inline-block}
 .dot.warn{background:var(--doc-warn)}.dot.danger{background:var(--doc-danger)}
 
@@ -177,16 +187,18 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
 .demo button.on{background:#4338ca;border-color:#4338ca;color:#fff}
 .hidecol{display:none!important}
 
-@media (max-width:1280px){.header{grid-template-columns:minmax(0,1fr) 12rem}}
+@media (max-width:1280px){.header{grid-template-columns:minmax(0,1fr) 11.5rem}.fields{grid-template-columns:1.4fr 1fr 1fr 1.1fr 1.2fr 1fr}}
 @media (max-width:1080px){
   .header{grid-template-columns:minmax(0,1fr)}
-  .party{flex-direction:row;flex-wrap:wrap;align-items:center;gap:.4rem}
+  .fields{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .party{flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.4rem}
   .panels{grid-template-columns:repeat(2,minmax(0,1fr))}
   .panels>.panel:nth-child(3){grid-column:1/-1}
   .win{inset-inline:1rem!important;width:auto!important}
   .side{width:11rem}
 }
 @media (max-width:760px){
+  .fields{grid-template-columns:repeat(2,minmax(0,1fr))}
   .panels{grid-template-columns:minmax(0,1fr);max-height:15rem;overflow:auto}
   .panels>.panel:nth-child(3){grid-column:auto}
   .side{display:none}
@@ -218,24 +230,26 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
       <div class="f"><label>المرجع / أمر الشراء</label><input class="in" value="PO-9841"></div>
       <div class="f"><label>المخزن</label><select class="in"><option>المخزن الرئيسي</option><option>مخزن الفرع</option></select></div>
       <div class="f"><label>نمط الفاتورة</label>
-        <select class="in" id="modeSelect">
+        <select class="in" id="modeSelect" title="يغيّر الأعمدة والأقسام — لا يمس الحساب">
           <option value="simple">بسيط</option><option value="standard" selected>قياسي</option>
           <option value="profit">ربحية</option><option value="advanced">متقدم</option>
         </select></div>
-      <div class="f"><label>أثر النمط</label><div class="in ro" id="modeHint">يغيّر الأعمدة والأقسام — لا يمس الحساب</div></div>
-      <div class="f"><label>أنشأ الفاتورة</label><div class="in ro">محمد عبده — كاشير</div></div>
-      <div class="f" data-modes="advanced"><label>مركز التكلفة</label><select class="in"><option>الفرع الرئيسي</option></select></div>
-      <!-- ثلاث خانات تتبع الصنف المحدد في الجدول -->
-      <div class="f"><label>الصنف المحدد</label><div class="in ro" id="selName">—</div></div>
-      <div class="f"><label>المتاح بالمخزن</label><div class="in ro num" id="selStock">—</div></div>
-      <div class="f"><label>سعر الشراء</label><div class="in ro num" id="selCost">—</div></div>
+      <!-- الصف الثاني: المستخدم + الخانات الثلاث التابعة للصنف المحدد في سطر واحد -->
+      <div class="f f-strip"><div class="selstrip">
+        <span class="k">أنشأ الفاتورة</span><span class="v">محمد عبده — كاشير</span>
+        <span class="sepv"></span>
+        <span class="k">الصنف المحدد</span><span class="v" id="selName">—</span>
+        <span class="sepv"></span>
+        <span class="k">المتاح</span><span class="v num" id="selStock">—</span>
+        <span class="sepv"></span>
+        <span class="k">سعر الشراء</span><span class="v num" id="selCost">—</span>
+        <span class="spacer"></span>
+        <span class="k" data-modes="advanced">مركز التكلفة</span>
+        <select data-modes="advanced"><option>الفرع الرئيسي</option><option>فرع الخُبر</option></select>
+        <span class="chipS chip-ind" id="modeHint">قياسي</span>
+      </div></div>
     </div>
-    <aside class="party" id="partyCard">
-      <b><span class="dot"></span> عميل نقدي</b>
-      <div class="row"><span>الرصيد الحالي</span><b class="num">0.00</b></div>
-      <div class="row"><span>بعد هذه الفاتورة</span><b class="num">0.00</b></div>
-      <div class="row"><span>حد الائتمان</span><b class="num">0.00</b></div>
-    </aside>
+    <aside class="party" id="partyCard"></aside>
   </section>
 
   <!-- ③ البنود -->
@@ -465,7 +479,8 @@ const MODE_COLS={
 const MODE_HINT={simple:'٤ أعمدة · لوحتان فقط',standard:'كود · وحدة · خصم · ضريبة',profit:'يضيف التكلفة والهامش والربح',advanced:'مصروفات · عمولات · مراكز تكلفة · مرفقات'}
 function applyMode(){
   const m=state.mode, cols=MODE_COLS[m]
-  const hint=document.getElementById('modeHint'); if(hint)hint.textContent=MODE_HINT[m]
+  const hint=document.getElementById('modeHint')
+  if(hint)hint.textContent={simple:'بسيط',standard:'قياسي',profit:'ربحية',advanced:'متقدم'}[m]+' · '+MODE_HINT[m]
   for(const key of Object.keys(cols)) $$('.col-'+key).forEach(el=>el.classList.toggle('hidecol',!cols[key]))
   $$('[data-modes]').forEach(el=>el.classList.toggle('hidecol',!el.dataset.modes.split(' ').includes(m)))
   renderLines()
@@ -601,10 +616,9 @@ function renderParty(){
   const tone=!c.active?'danger':after>c.limit&&c.limit>0?'danger':after>0?'warn':'ok'
   $('#customerField').textContent=c.name
   $('#partyCard').innerHTML=`<b><span class="dot ${tone==='ok'?'':tone}"></span> ${c.name}</b>
-    <div class="row"><span>الرصيد الحالي</span><b class="num">${fmt(c.balance)}</b></div>
-    <div class="row"><span>بعد هذه الفاتورة</span><b class="num" style="color:${tone==='danger'?'var(--doc-danger)':tone==='warn'?'var(--doc-warn)':'inherit'}">${fmt(after)}</b></div>
-    <div class="row"><span>حد الائتمان</span><b class="num">${fmt(c.limit)}</b></div>
-    ${!c.active?'<div class="row" style="color:var(--doc-danger);font-weight:800">العميل موقوف — البيع الآجل ممنوع</div>':''}`
+    <div class="prow"><span>الرصيد <b>${fmt(c.balance)}</b></span><span>الحد <b>${fmt(c.limit)}</b></span></div>
+    <div class="prow"><span>بعد الفاتورة <b style="color:${tone==='danger'?'var(--doc-danger)':tone==='warn'?'var(--doc-warn)':'inherit'}">${fmt(after)}</b></span></div>
+    ${!c.active?'<div class="warnline">موقوف — الآجل ممنوع</div>':''}`
 }
 
 // ═════ نوافذ عائمة: تصغير · إغلاق · Esc · سحب ═════
