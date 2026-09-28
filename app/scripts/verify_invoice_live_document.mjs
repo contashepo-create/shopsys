@@ -37,6 +37,14 @@ const store = read('src/stores/app.store.ts')
 const printSettings = read('src/ui/pages/PrintSettingsPage.tsx')
 const PAGES = [['المبيعات', sales], ['المشتريات', purchase]]
 
+/** جسم قاعدة CSS لمحدِّد (أول تطابق) */
+const ruleOf = (selector) => {
+  const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = css.match(new RegExp(`(^|\\n)\\s*${esc}\\s*\\{([^}]*)\\}`))
+  assert.ok(match, `قاعدة مفقودة في index.css: ${selector}`)
+  return match[2].replace(/\s+/g, ' ')
+}
+
 /* ① زر ترحيل واحد اسمه «حفظ وترحيل» */
 {
   assert.ok(frame.includes('حفظ وترحيل'), 'زر الترحيل الأعلى لم يُسمَّ «حفظ وترحيل»')
@@ -150,6 +158,40 @@ const PAGES = [['المبيعات', sales], ['المشتريات', purchase]]
     assert.ok(src.includes('<Modal'), `${label}: لا يستعمل النافذة الموحدة (بلا تعتيم وبزر تصغير)`)
   }
   R.ok('المرتجعات: جدول بنود بلغة الفاتورة وأعمدة موسَّطة داخل نافذة بلا تعتيم')
+}
+
+/* ⑨ تخطيط المستند الكامل: خمس مناطق في ارتفاع الشاشة — لا يختفي جزء ولا تُمرَّر الصفحة */
+{
+  const root = ruleOf('.invoice-doc.invoice-pos-root')
+  assert.ok(/display: grid/.test(root) && /grid-template-rows: auto minmax\(0, 1fr\) auto/.test(root), 'سطح الفاتورة ليس شبكة ثلاث مناطق (شريط · جسم · شريط حالة)')
+  assert.ok(/height: 100dvh/.test(root) && /overflow: hidden/.test(root), 'سطح الفاتورة لا يملأ ارتفاع الشاشة أو يسمح بتمرير الصفحة كلها')
+  assert.ok(/height: 100%/.test(ruleOf('.app-window-body .invoice-doc.invoice-pos-root')), 'داخل النافذة المستقلة لا يأخذ المستند ارتفاع النافذة')
+  const body = ruleOf('.invoice-doc-body')
+  assert.ok(/grid-template-rows: auto minmax\(0, 1fr\)/.test(body) && /overflow: hidden/.test(body), 'جسم المستند لا يمنح البنود المساحة المتبقية')
+  const docGrid = ruleOf('.invoice-pos-document > .invoice-body-grid')
+  assert.ok(/grid-template-rows: minmax\(0, 1fr\) auto/.test(docGrid), 'البنود واللوحات ليستا صفّين (بنود تتمدد ثم لوحات)')
+  const scroll = ruleOf('.invoice-editor .invoice-lines-panel .overflow-x-auto')
+  assert.ok(/flex: 1/.test(scroll) && /max-height: none/.test(scroll) && /overflow: auto/.test(scroll), 'جدول البنود لا يُمرَّر داخلياً — سيدفع بقية الفاتورة خارج الشاشة')
+  assert.ok(/repeat\(3, minmax\(0, 1fr\)\)/.test(ruleOf('.invoice-pos-document .invoice-totals-footer')), 'اللوحات الثلاث ليست في صف واحد كالنموذج')
+  const panel = ruleOf('.invoice-pos-document .invoice-doc-panel')
+  assert.ok(/max-height/.test(panel) && /overflow: hidden/.test(panel), 'اللوحات السفلية بلا سقف ارتفاع — تدفع شريط الحالة خارج الشاشة')
+  for (const narrow of ['1180px', '760px']) {
+    assert.ok(css.replace(/\s+/g, ' ').includes(`@media (max-width: ${narrow}) { .invoice-pos-document .invoice-totals-footer`), `لا تتكيف اللوحات مع مقاس ${narrow}`)
+  }
+  R.ok('خمس مناطق في ارتفاع الشاشة: شريط · ترويسة · بنود تتمدد وتُمرَّر داخلياً · ثلاث لوحات · شريط حالة')
+}
+
+/* ⑩ الترويسة ثلاثة صفوف: ستة حقول · شريط الصنف والمستخدم · شريط بيانات الطرف */
+{
+  assert.ok(frame.includes('invoice-doc-strip') && frame.includes('invoice-doc-strip-user'), 'شريط الصنف المحدد واسم المستخدم غير موجود في الترويسة')
+  assert.ok(frame.includes('partyMeta'), 'الإطار لا يستقبل شريط بيانات الطرف (فئة · خصم · ملاحظة)')
+  const side = frame.slice(frame.indexOf('<aside className="invoice-doc-side">'), frame.indexOf('</aside>'))
+  assert.ok(side.includes('invoice-doc-party') && !side.includes('invoice-doc-itemcard'), 'بطاقة الصنف ما زالت في العمود الجانبي بدل شريط الترويسة')
+  for (const [label, src] of PAGES) {
+    assert.ok(src.includes('partyMeta') && src.includes('invoice-doc-partymeta'), `${label}: لا شريط لفئة الطرف وخصمه وملاحظته`)
+  }
+  assert.ok(css.includes('.invoice-doc-partymeta'), 'لا قاعدة CSS لشريط بيانات الطرف')
+  R.ok('الترويسة ثلاثة صفوف: ستة حقول · شريط الصنف بجوار المستخدم · فئة الطرف وخصمه وملاحظته وزر تعديلها')
 }
 
 R.done()

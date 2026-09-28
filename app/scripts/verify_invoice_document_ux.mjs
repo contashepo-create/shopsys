@@ -34,7 +34,8 @@ const ruleOf = (selector) => {
 }
 const remOf = (body, prop) => {
   const m = body.match(new RegExp(`${prop}:\\s*([\\d.]+)rem`))
-  return m ? Number(m[1]) : null
+  if (m) return Number(m[1])
+  return new RegExp(`${prop}:\\s*0\\s*[;}]`).test(body) ? 0 : null
 }
 
 /* ① فتح أي مستند/معاملة بالنقر المزدوج */
@@ -165,8 +166,9 @@ const remOf = (body, prop) => {
   assert.ok(/invoice-doc-topbar/.test(frame), 'الشريط العلوي الموحّد غير مستعمل في إطار الفاتورة')
   assert.ok(!/className="invoice-doc-utility"/.test(frame), 'ما زال هناك شريطان علويان متراكمان')
   const reset = ruleOf('.invoice-doc.invoice-pos-root')
-  assert.ok(/margin:\s*0/.test(reset) && /padding:\s*0/.test(reset),
-    'هوامش «صفحة الفاتورة» القديمة ما زالت تسري داخل النافذة فتدفع الجدول لأسفل')
+  const rootPad = Number(reset.match(/padding:\s*([\d.]+)rem/)?.[1] ?? (/padding:\s*0/.test(reset) ? 0 : 9))
+  assert.ok(/margin:\s*0/.test(reset) && rootPad <= 0.5,
+    `هوامش «صفحة الفاتورة» القديمة ما زالت تسري داخل النافذة فتدفع الجدول لأسفل (padding ${rootPad}rem)`)
   const body = ruleOf('.invoice-doc-body')
   assert.ok((remOf(body, 'padding') ?? 1) <= 0.5, 'حشوة جسم المستند كبيرة')
   assert.ok((remOf(body, 'gap') ?? 1) <= 0.45, 'الفراغ بين بطاقات المستند كبير')
@@ -177,9 +179,14 @@ const remOf = (body, prop) => {
   assert.ok(btnHeight !== null && btnHeight <= 1.8, `أزرار أعلى الفاتورة مرتفعة (${btnHeight}rem)`)
   const fields = css.match(/\.invoice-doc input:not\(\[type=checkbox\]\):not\(\[type=radio\]\),\s*\n\.invoice-doc select \{([^}]*)\}/)?.[1] ?? ''
   assert.ok((remOf(fields, 'min-height') ?? 9) <= 1.9, 'حقول الرأس مرتفعة — تدفع الجدول خارج الشاشة')
-  const tableMax = css.match(/\.invoice-doc \.invoice-lines-panel \.overflow-x-auto \{[^}]*max-height:\s*min\((\d+)vh/)?.[1]
-  assert.ok(Number(tableMax) >= 50, `مساحة الجدول ${tableMax}vh قليلة — المطلوب أن يظهر الجدول لا أن يختفي`)
-  R.ok(`أعلى المستند مضغوط: شريط واحد بحشوة ${remOf(topbar, 'padding')}rem وأزرار ${btnHeight}rem، والجدول يأخذ ${tableMax}vh`)
+  /* التصميم المعتمد (2026-09-28): الجدول لم يعد بسقف vh ثابت — يأخذ كل المساحة المتبقية
+     داخل شبكة المستند (flex: 1) ويُمرَّر داخلياً، فلا يختفي ولا يدفع اللوحات خارج الشاشة. */
+  const tableArea = css.match(/\.invoice-editor \.invoice-lines-panel \.overflow-x-auto \{([^}]*)\}/)?.[1] ?? ''
+  assert.ok(/flex:\s*1/.test(tableArea) && /max-height:\s*none/.test(tableArea) && /overflow:\s*auto/.test(tableArea),
+    `مساحة الجدول ليست ممتدة داخل شبكة المستند: ${tableArea}`)
+  assert.ok(/grid-template-rows:\s*auto minmax\(0, 1fr\) auto/.test(ruleOf('.invoice-doc.invoice-pos-root')),
+    'سطح الفاتورة ليس شبكة ثلاث مناطق تمنح الجدول ما تبقّى من الارتفاع')
+  R.ok(`أعلى المستند مضغوط: شريط واحد بحشوة ${remOf(topbar, 'padding')}rem وأزرار ${btnHeight}rem، والجدول يأخذ كل المساحة المتبقية ويُمرَّر داخلياً`)
 }
 
 /* ⑪ لا سؤال بلا سبب: ما يملؤه النظام تلقائياً لا يُحسب تعديلاً من المستخدم */

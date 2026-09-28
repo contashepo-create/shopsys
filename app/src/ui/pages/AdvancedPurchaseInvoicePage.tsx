@@ -37,7 +37,13 @@ export function AdvancedPurchaseInvoicePage(){const nav=useNavigate(),toast=useT
   {setup.modules.includes('contracting')&&<Field label="المشروع/مركز الربحية" icon={<Boxes size={11}/>}><QuickSelect className={inputCls} value={projectId} onChange={e=>setProjectId(Number(e.target.value))}><option value={0}>بدون مشروع</option>{projects.filter(p=>p.status==='active').map(p=><option key={p.id} value={p.id}>{p.nameAr}</option>)}</QuickSelect></Field>}
   {editingInvoice&&<Field label="سبب التعديل" icon={<Pencil size={11}/>} badge="إلزامي" badgeTone="warn"><input className={inputCls} value={editReason} onChange={e=>setEditReason(e.target.value)} placeholder="سبب واضح يُحفظ في سجل التدقيق"/></Field>}
  </>
-} partyProfile={<>
+}partyMeta={<div className="invoice-doc-partymeta">
+   <span>التصنيف: <b>{selectedSupplier?.category?.trim()||'مورد عام'}</b></span>
+   <span>شروط السداد: <b>{selectedSupplier?.paymentTermsDays?`${selectedSupplier.paymentTermsDays} يوماً`:'نقدي'}</b></span>
+   <span>الحالة: <b>{supplierId===-1?'شراء نقدي':selectedSupplier?.active===false?'مورد موقوف':'مورد نشط'}</b></span>
+   <button type="button" onClick={()=>{if(!selectedSupplier)return toast.show('اختر مورداً مسجَّلاً أولاً','error');setPartyEditorOpen(true)}}>تعديل التصنيف والبيانات</button>
+   <span className="invoice-doc-partynote" title={selectedSupplier?.notes||'لا ملاحظة على المورد'}>ملاحظة: {selectedSupplier?.notes?.trim()||'—'}</span>
+  </div>}  partyProfile={<>
  <div className="invoice-doc-cardhead"><b><Truck size={11}/> حساب {selectedSupplier?'المورد':'الشراء النقدي'}</b><span className={`invoice-party-state ${!selectedSupplier?'is-cash':selectedSupplier.active===false?'is-off':''}`} title={!selectedSupplier?'شراء نقدي بلا حساب آجل':selectedSupplier.active===false?'الحساب موقوف — راجع ملف المورد':'الحساب نشط'}><i/>{!selectedSupplier?'نقدي':selectedSupplier.active===false?'موقوف':'نشط'}</span></div>
  <div className="invoice-doc-metric"><span>الرصيد السابق</span><b className={`is-${partyCreditTone(selectedSupplierBalance,null,selectedSupplier?.active!==false)}`} title={partyBalanceText(selectedSupplierBalance,!!selectedSupplier,cur,{owes:'مستحق له',owed:'لك عنده'})}>{partyBalanceText(selectedSupplierBalance,!!selectedSupplier,cur,{owes:'مستحق له',owed:'لك عنده'})}</b></div>
  <div className="invoice-doc-metric"><span>شروط السداد</span><b>{selectedSupplier?.paymentTermsDays?`${selectedSupplier.paymentTermsDays} يوم`:'نقدي'}</b></div>

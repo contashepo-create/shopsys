@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeft, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, Columns3, Eye, FileClock, FileDown, FileText, Fingerprint, Hash, MessageSquare, MoreVertical, PackageCheck, Printer, RotateCcw, Save } from 'lucide-react'
+import { ArrowLeft, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, Columns3, Eye, FileClock, FileDown, FileText, Fingerprint, Hash, MessageSquare, MoreVertical, PackageCheck, Printer, RotateCcw, Save, UserRound } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
@@ -18,6 +18,8 @@ type InvoicePOSFrameProps = {
   /** شريط المرجع الخارجي أسفل الحقول (أمر شراء العميل / بوليصة شحن) */
   referenceBar?: ReactNode
   partyProfile?: ReactNode
+  /** الصف الثالث في الترويسة: فئة الطرف وخصمه وملاحظته وزر تعديلها (شريط واحد) */
+  partyMeta?: ReactNode
   /** بطاقة «الصنف المختار» بجانب بطاقة رصيد الطرف */
   itemProfile?: ReactNode
   /** فتح المستند السابق/التالي من نفس الدفتر — يُعطَّل السهم إن لم يوجد جار */
@@ -70,6 +72,7 @@ export function InvoicePOSFrame({
   headerFields,
   referenceBar,
   partyProfile,
+  partyMeta,
   itemProfile,
   onPrevDocument,
   onNextDocument,
@@ -202,10 +205,18 @@ export function InvoicePOSFrame({
             <div className="invoice-doc-form">
               <div className="invoice-doc-fields">{headerFields}</div>
               {referenceBar && <div className="invoice-doc-refbar">{referenceBar}</div>}
+              {/* الصف الثاني: شريط الصنف المحدد بجانب اسم المستخدم — كما في التصميم المعتمد */}
+              {itemProfile && (
+                <div className="invoice-doc-strip">
+                  <span className="invoice-doc-strip-user" title="المستخدم الذي يحرر المستند"><UserRound size={11} /> {userLabel}</span>
+                  <div className="invoice-doc-itemcard">{itemProfile}</div>
+                </div>
+              )}
+              {/* الصف الثالث: فئة الطرف وخصمه وملاحظته */}
+              {partyMeta && <div className="invoice-doc-strip is-party">{partyMeta}</div>}
             </div>
             <aside className="invoice-doc-side">
               {partyProfile && <div className="invoice-doc-party">{partyProfile}</div>}
-              {itemProfile && <div className="invoice-doc-itemcard">{itemProfile}</div>}
             </aside>
           </div>
         </section>

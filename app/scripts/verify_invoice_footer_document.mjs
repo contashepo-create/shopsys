@@ -103,17 +103,20 @@ const footerOf = (src) => {
   assert.ok(/minmax\(min\(/.test(cols), `عمود المؤشرات بحدّ صلب يُفيض الرأس: ${cols}`)
   const pad = Number(body.match(/padding:\s*([\d.]+)rem/)?.[1] ?? 9)
   assert.ok(pad <= 0.45, `حشوة رأس المستند ${pad}rem كبيرة`)
-  // المرجع: صفّان × ثلاثة حقول ثابتة (md:grid-cols-3) لا شبكة تتمدد فتُغيّر عدد الحقول بالسطر
+  // النموذج المعتمد (2026-09-28): ستة حقول في سطر واحد ثم شريطان عرضيان، وتنكمش تدريجياً
   const fields = ruleOf('.invoice-doc-fields')
-  assert.ok(/grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(fields), `حقول الرأس ليست ثلاثة أعمدة متساوية كالمرجع: ${fields}`)
-  assert.ok(/@media \(max-width: 1100px\)[^}]*\{[^}]*\.invoice-doc-fields \{ grid-template-columns: repeat\(2/.test(css.replace(/\s+/g, ' ')),
+  assert.ok(/grid-template-columns:\s*1\.55fr 1fr 1fr 1\.2fr 1\.3fr 1fr/.test(fields), `حقول الرأس ليست ستة أعمدة كالنموذج المعتمد: ${fields}`)
+  assert.ok(/@media \(max-width: 1100px\)[^}]*\{[^}]*\.invoice-doc-fields \{ grid-template-columns: repeat\(3/.test(css.replace(/\s+/g, ' ')),
+    'لا تنكمش حقول الرأس إلى ثلاثة أعمدة على الشاشات المتوسطة')
+  assert.ok(/@media \(max-width: 760px\)[^}]*\{[^}]*\.invoice-doc-fields \{ grid-template-columns: repeat\(2/.test(css.replace(/\s+/g, ' ')),
     'لا تنكمش حقول الرأس إلى عمودين على الشاشات الضيقة')
-  assert.ok(/repeat\(auto-fit/.test(ruleOf('.invoice-doc-side')), 'عمود المؤشرات ليس شبكة تنكمش ببطاقتيها')
+  assert.ok(/repeat\(auto-fit/.test(ruleOf('.invoice-doc-side')), 'عمود المؤشرات ليس شبكة تنكمش')
   assert.ok(css.includes('.invoice-doc-party, .invoice-doc-itemcard'), 'بطاقتا الطرف والصنف لا تتقاسمان قاعدة واحدة')
+  assert.ok(/13rem/.test(ruleOf('.invoice-doc-header-body')), 'عمود بطاقة الطرف ليس بعرض 13rem كالنموذج')
   assert.ok(/border:\s*1px dashed var\(--doc-line\)/.test(ruleOf('.invoice-doc-refbar')), 'شريط المرجع الخارجي بلا إطاره المتقطع')
   // الإطار نفسه: حقول ثم شريط مرجع، وبجانبها بطاقتا المؤشرات
   const header = frame.slice(frame.indexOf('invoice-doc-header-body'), frame.indexOf('invoice-pos-document'))
-  for (const cls of ['invoice-doc-fields', 'invoice-doc-refbar', 'invoice-doc-side', 'invoice-doc-party', 'invoice-doc-itemcard']) {
+  for (const cls of ['invoice-doc-fields', 'invoice-doc-refbar', 'invoice-doc-side', 'invoice-doc-party', 'invoice-doc-itemcard', 'invoice-doc-strip']) {
     assert.ok(header.includes(cls), `رأس الإطار ينقصه ${cls}`)
   }
   // الجلسة والاتصال مرة واحدة فقط: في شريط الإجراءات السفلي
@@ -121,7 +124,7 @@ const footerOf = (src) => {
   assert.ok(!cardbar.includes('invoice-doc-cardbar-session'), 'بيانات الجلسة ما زالت مكرَّرة في شريط البطاقة وفي شريط الإجراءات')
   assert.ok(!cardbar.includes('invoice-doc-online'), 'مؤشر الاتصال مكرَّر في رأس المستند وأسفله')
   assert.ok(frame.slice(frame.indexOf('invoice-doc-actionbar-info')).includes('invoice-doc-cardbar-session'), 'بيانات الجلسة اختفت بدل أن تنتقل لشريط الإجراءات')
-  R.ok(`رأس المستند عمودان: ثلاثة حقول في السطر بحشوة ${pad}rem + بطاقتا مؤشرات، والجلسة مرة واحدة أسفل الشاشة`)
+  R.ok(`رأس المستند: ستة حقول في سطر + شريطا الصنف وبيانات الطرف + بطاقة الطرف 13rem بحشوة ${pad}rem، والجلسة مرة واحدة أسفل الشاشة`)
 }
 
 /* ⑤ بطاقتا المؤشرات كما في المرجع: حالة الطرف بجوار عنوانه وشريط استهلاك، ورقاقة كود للصنف */

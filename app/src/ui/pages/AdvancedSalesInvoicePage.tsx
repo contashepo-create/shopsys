@@ -121,6 +121,13 @@ export function AdvancedSalesInvoicePage(){
    </>
   }
   /* نص الرصيد مختصر حتى لا يفيض من خانة المؤشر: «متزن» وحدها عند الصفر */
+  partyMeta={<div className="invoice-doc-partymeta">
+   <span>الفئة: <b>{priceLists.find(list=>list.id===customerPriceListId(customerId))?.nameAr??'تجزئة (اللائحة الأساسية)'}</b></span>
+   <span>خصم الفاتورة: <b dir="ltr">{invoiceDiscountPercent}%</b></span>
+   <span>الحالة: <b>{!selectedCustomer?'بيع نقدي':selectedCustomer.active===false?'حساب موقوف':'حساب نشط'}</b></span>
+   <button type="button" onClick={()=>{if(!selectedCustomer)return toast.show('اختر عميلاً مسجَّلاً أولاً','error');setPartyEditorOpen(true)}}>تعديل الفئة والبيانات</button>
+   <span className="invoice-doc-partynote" title={selectedCustomer?.notes||'لا ملاحظة على العميل'}>ملاحظة: {selectedCustomer?.notes?.trim()||'—'}</span>
+  </div>}
   partyProfile={<>
    <div className="invoice-doc-cardhead"><b><CircleUser size={11}/> رصيد {selectedCustomer?'العميل':'البيع النقدي'}</b><span className={`invoice-party-state ${!selectedCustomer?'is-cash':selectedCustomer.active===false?'is-off':''}`} title={!selectedCustomer?'بيع نقدي بلا حساب آجل':selectedCustomer.active===false?'الحساب موقوف — لا يُسمح بالبيع الآجل':'الحساب نشط'}><i/>{!selectedCustomer?'نقدي':selectedCustomer.active===false?'موقوف':'نشط'}</span></div>
    <div className="invoice-doc-metric"><span>الرصيد السابق</span><b className={`is-${partyCreditTone(selectedCustomerBalance,selectedCustomer?.creditLimitMinor,selectedCustomer?.active!==false)}`} title={partyBalanceText(selectedCustomerBalance,!!selectedCustomer,cur)}>{partyBalanceText(selectedCustomerBalance,!!selectedCustomer,cur)}</b></div>
