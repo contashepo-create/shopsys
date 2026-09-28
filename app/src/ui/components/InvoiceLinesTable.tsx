@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Barcode, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { InvoiceEditorMode } from '../../core/advancedInvoice.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { inputCls } from './ui.tsx'
@@ -16,6 +16,8 @@ type InvoiceLineItem = {
   soldByWeight?: boolean
   trackExpiry?: boolean
   isActive?: boolean
+  baseUnit?: string
+  isService?: boolean
 }
 
 export type InvoiceTableLine = {
@@ -50,8 +52,11 @@ const COL = {
   qty: 'w-[5.5rem] text-center',
   price: 'w-[7rem] text-center',
   percent: 'w-[4.75rem] text-center',
+  unit: 'w-[4.5rem] text-center',
+  tax: 'w-[5.5rem] text-center',
   money: 'w-[7.5rem] text-left',
   total: 'w-[8.5rem] text-left',
+  tools: 'w-[4.5rem] text-center',
 } as const
 
 
@@ -74,6 +79,10 @@ type Props = {
   onPick: (id: number) => void
   onPatch: (key: string, patch: Partial<InvoiceTableLine>) => void
   onRemove: (key: string) => void
+  /** نسخ السطر المحدد بكل قيمه — زر «تكرار السطر» في شريط أدوات البنود */
+  onDuplicate?: (key: string) => void
+  /** نسبة ضريبة المستند لعرض رقاقة الضريبة على كل سطر (المرجع: 14% VAT) */
+  documentTaxPercent?: number
   onEdit?: (id: number) => void
   onMovement?: (id: number) => void
   onPrices?: (id: number) => void
@@ -103,7 +112,7 @@ function decimalDraft(value: string): string {
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
   canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys, belowCostNotice,
-  onPick, onPatch, onRemove, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
+  onPick, onPatch, onRemove, onDuplicate, documentTaxPercent = 0, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
@@ -171,7 +180,7 @@ export function InvoiceLinesTable({
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="invoice-lines-table w-full min-w-[56rem] table-fixed text-sm">
+        <table className="invoice-lines-table w-full min-w-[66rem] table-fixed text-sm">
           <thead className="bg-slate-50 dark:bg-slate-800/60">
             <tr className="text-[11px] font-black text-slate-500 dark:text-slate-300">
               <th className={`p-2 ${COL.index}`} scope="col">م</th>
@@ -181,12 +190,15 @@ export function InvoiceLinesTable({
               {kind === 'purchase' && mode !== 'simple'
                 ? <><th className={`p-2 ${COL.qty}`} scope="col">المطلوب</th><th className={`p-2 ${COL.qty}`} scope="col">المستلم</th><th className={`p-2 ${COL.qty}`} scope="col">المرفوض</th></>
                 : <th className={`p-2 ${COL.qty}`} scope="col">الكمية</th>}
+              <th className={`p-2 ${COL.unit}`} scope="col">الوحدة</th>
               <th className={`p-2 ${COL.price}`} scope="col">{kind === 'sale' ? 'السعر' : 'سعر الشراء'}</th>
               {kind === 'sale' && <th className={`p-2 ${COL.percent}`} scope="col">خصم %</th>}
               {kind === 'purchase' && mode !== 'simple' && <th className={`p-2 ${COL.percent}`} scope="col">ضريبة %</th>}
               {kind === 'sale' && mode === 'profit' && canViewCost && <><th className={`p-2 ${COL.money}`} scope="col">التكلفة</th><th className={`p-2 ${COL.money}`} scope="col">الهامش</th></>}
               {kind === 'purchase' && mode === 'profit' && canViewCost && <th className={`p-2 ${COL.money}`} scope="col">نصيبه من المصروفات</th>}
+              <th className={`p-2 ${COL.tax}`} scope="col">الضريبة</th>
               <th className={`p-2 ${COL.total}`} scope="col">الإجمالي</th>
+              <th className={`p-2 ${COL.tools}`} scope="col">إجراءات</th>
             </tr>
           </thead>
           <tbody>
@@ -201,6 +213,7 @@ export function InvoiceLinesTable({
                   <td tabIndex={0} className={`p-2 font-mono text-[11px] font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40 ${COL.code}`} dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>
                   <td className={`p-2 align-middle break-words ${COL.name}`}>
                     <b>{line.nameAr || item?.nameAr}</b>
+                    <div className="invoice-doc-linesub">{item?.isService ? 'خدمة بلا مخزون' : `متاح ${item?.stockQty ?? 0} ${item?.baseUnit ?? ''}`}{item?.sku ? ` · ${item.sku}` : ''}</div>
                     {warning && <div className={warning.severity === 'error' ? 'text-xs text-rose-600' : 'text-xs text-amber-600'}>{warning.message}</div>}
                     {belowCost && belowCostNotice?.(line)}
                     {kind === 'purchase' && item?.trackExpiry && (
@@ -213,12 +226,21 @@ export function InvoiceLinesTable({
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty)} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
                   </> : <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.qty)} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>}
+                  <td className={`unit-cell p-1 align-middle ${COL.unit}`}>{item?.baseUnit || (item?.isService ? 'خدمة' : '—')}</td>
                   <td className={`num-cell p-1 align-middle ${COL.price}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.unitPriceMinor / 10 ** currencyDecimals)} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:focus-item')) } }} /></td>
                   {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
                   {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
                   {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
                   {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`money-cell p-2 ${COL.money}`}>{fmt(costShares?.get(line.key) ?? 0)}</td>}
+                  <td className={`p-1 text-center ${COL.tax}`}><span className="invoice-doc-taxchip">{(line.vatPercent ?? documentTaxPercent) > 0 ? `${line.vatPercent ?? documentTaxPercent}% ض.ق.م` : 'معفى'}</span></td>
                   <td className={`p-1 ${COL.total}`}><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
+                  <td className={`p-1 ${COL.tools}`}>
+                    <div className="invoice-doc-rowtools">
+                      {onEdit && <button type="button" title="بطاقة الصنف" aria-label={`تعديل بطاقة ${line.nameAr || item?.nameAr || ''}`} onClick={(event) => { event.stopPropagation(); onEdit(line.itemId) }}><Pencil size={11} /></button>}
+                      {onDuplicate && <button type="button" title="تكرار السطر" aria-label={`تكرار سطر ${line.nameAr || item?.nameAr || ''}`} onClick={(event) => { event.stopPropagation(); onDuplicate(line.key) }}><Copy size={11} /></button>}
+                      <button type="button" className="is-danger" title="حذف السطر" aria-label={`حذف سطر ${line.nameAr || item?.nameAr || ''}`} onClick={(event) => { event.stopPropagation(); onRemove(line.key) }}><Trash2 size={11} /></button>
+                    </div>
+                  </td>
                 </tr>
               )
             })}
@@ -226,6 +248,15 @@ export function InvoiceLinesTable({
         </table>
       </div>
       {!lines.length && <div className="m-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-8 text-center dark:border-slate-700 dark:bg-slate-900/30"><div className="mb-2 text-3xl">🧾</div><div className="font-black">لم تتم إضافة أصناف بعد</div><div className="mt-1 text-xs text-slate-500">استخدم مربع البحث بالأعلى أو اضغط F5 للبدء وإضافة أول صنف إلى الفاتورة.</div></div>}
-    </section>
+          {/* شريط أدوات البنود أسفل الجدول — كما في التصميم المرجعي */}
+      <div className="invoice-doc-linebar">
+        <button type="button" className="is-add" onClick={() => window.dispatchEvent(new Event('shopsys:open-item'))}><Plus size={12} /> إضافة صنف أو خدمة</button>
+        <div className="invoice-doc-linebar-tools">
+          <button type="button" disabled={!selectedLine || !onDuplicate} onClick={() => { if (selectedLine && onDuplicate) onDuplicate(selectedLine.key) }}><Copy size={11} /> تكرار السطر</button>
+          <button type="button" disabled={!selectedLine} onClick={removeSelectedLine}><Trash2 size={11} /> حذف السطر</button>
+          <button type="button" onClick={() => window.dispatchEvent(new Event('shopsys:focus-item'))}><Barcode size={11} /> مسح باركود</button>
+        </div>
+      </div>
+</section>
   )
 }

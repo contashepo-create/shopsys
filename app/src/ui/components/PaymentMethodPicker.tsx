@@ -26,6 +26,7 @@ export function PaymentMethodPicker({
   allowTerminal = operation === 'receipt',
   allowCredit = false,
   terminalOptions,
+  tiles = false,
 }: {
   value: PaymentMethodDraft
   onChange: (value: PaymentMethodDraft) => void
@@ -33,6 +34,8 @@ export function PaymentMethodPicker({
   allowTerminal?: boolean
   allowCredit?: boolean
   terminalOptions?: readonly { id: string; nameAr: string }[]
+  /** بلاطات «نقدي · تحويل بنكي · ماكينة» فوق القائمة (شكل الفاتورة المرجعي) */
+  tiles?: boolean
 }) {
   const { treasuries: allTreasuries, appUsers, currentUserId, paymentTerminals } = useDataStore()
   const currentUser = appUsers.find((user) => user.id === currentUserId)
@@ -69,8 +72,24 @@ export function PaymentMethodPicker({
     return <div className="text-[11px] font-bold text-rose-500">لا توجد وسيلة دفع مسموحة لهذه العملية</div>
   }
 
+  const firstCash = treasuries.find((treasury) => treasury.kind === 'cash')
+  const firstBank = treasuries.find((treasury) => treasury.kind === 'bank')
+  const firstTerminal = terminals[0]
+  const activeTreasury = treasuries.find((treasury) => treasury.code === value.treasury)
+  const tileMode: 'cash' | 'bank' | 'terminal' | null = value.kind === 'credit' ? null
+    : value.terminalPayment.terminalId ? 'terminal'
+    : activeTreasury?.kind === 'bank' ? 'bank'
+    : activeTreasury ? 'cash' : null
+
   return (
     <div className="space-y-2">
+      {tiles && (
+        <div className="invoice-doc-tiles" role="group" aria-label="طريقة الدفع السريعة">
+          <button type="button" aria-pressed={tileMode === 'cash'} disabled={!firstCash} onClick={() => firstCash && selectMethod(`treasury:${firstCash.code}`)}>نقدي</button>
+          <button type="button" aria-pressed={tileMode === 'bank'} disabled={!firstBank} onClick={() => firstBank && selectMethod(`treasury:${firstBank.code}`)}>تحويل بنكي</button>
+          <button type="button" aria-pressed={tileMode === 'terminal'} disabled={!firstTerminal} onClick={() => firstTerminal && selectMethod(`terminal:${firstTerminal.id}`)}>ماكينة دفع</button>
+        </div>
+      )}
       <QuickSelect aria-label="طريقة الدفع" value={selectedValue} onChange={(event) => selectMethod(event.target.value)} className={inputCls}>
         <option value="">اختر طريقة الدفع…</option>
         {treasuries.length > 0 && (

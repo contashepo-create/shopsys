@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeft, Barcode, CheckCheck, CircleHelp, Eye, FileClock, FileText, Fingerprint, Hash, MessageSquare, MoreVertical, Printer, Save, Search, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, Barcode, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, Eye, FileClock, FileText, Fingerprint, Hash, MessageSquare, MoreVertical, Printer, Save, Search, SlidersHorizontal } from 'lucide-react'
+import { useWindowHost } from '../windows/windowHostContext.ts'
+import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { Btn } from './ui.tsx'
@@ -19,6 +21,11 @@ type InvoicePOSFrameProps = {
   /** بطاقة «الصنف المختار» بجانب بطاقة رصيد الطرف */
   itemProfile?: ReactNode
   itemEntry: ReactNode
+  /** منتقي تصنيف الأصناف بجوار شريط الباركود (تصفية ما يظهر في البحث السريع) */
+  entryFilter?: ReactNode
+  /** فتح المستند السابق/التالي من نفس الدفتر — يُعطَّل السهم إن لم يوجد جار */
+  onPrevDocument?: () => void
+  onNextDocument?: () => void
   /** رقم المستند إن وُجد (تعديل فاتورة مرحّلة)؛ وإلا «مسودة» */
   documentNumber?: string
   /** قيمة زر الترحيل: «ترحيل وتحصيل 25,000.00» */
@@ -64,6 +71,9 @@ export function InvoicePOSFrame({
   partyProfile,
   itemProfile,
   itemEntry,
+  entryFilter,
+  onPrevDocument,
+  onNextDocument,
   documentNumber,
   postAmountLabel,
   draftCount = 0,
@@ -79,6 +89,10 @@ export function InvoicePOSFrame({
 }: InvoicePOSFrameProps) {
   const sale = kind === 'sale'
   const partyWord = sale ? 'العميل' : 'المورد'
+  /* نقاط سطح المكتب الثلاث: تعمل فعلاً على النافذة الحاوية (إغلاق · تصغير · تكبير) */
+  const host = useWindowHost()
+  const minimizeWindow = useWindowStore((state) => state.minimizeWindow)
+  const toggleMaximize = useWindowStore((state) => state.toggleMaximizeWindow)
   const { sync, receipt, autoPrintAfterSale, einvoice } = useAppStore()
   const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -101,8 +115,14 @@ export function InvoicePOSFrame({
     <div className={`invoice-doc invoice-editor invoice-pos-root invoice-pos-${kind}`} dir="rtl">
       {/* ① الشريط العلوي: أدوات · رقم المستند وحالته · أزرار الاعتماد */}
       <header className="invoice-doc-topbar">
+        <div className="invoice-doc-dots">
+          <button type="button" className="is-close" onClick={onBack} aria-label="إغلاق المستند" title="إغلاق المستند" />
+          <button type="button" className="is-min" onClick={() => { if (host) minimizeWindow(host.windowId) }} disabled={!host} aria-label="تصغير النافذة" title="تصغير النافذة" />
+          <button type="button" className="is-max" onClick={() => { if (host) toggleMaximize(host.windowId) }} disabled={!host} aria-label="تكبير النافذة" title="تكبير/استعادة النافذة" />
+        </div>
+        <span className="invoice-doc-divider" />
         <div className="invoice-doc-utility-tools">
-          <button type="button" className="invoice-doc-close" onClick={onBack} aria-label="إغلاق المستند والعودة" title="إغلاق المستند"><ArrowLeft size={15} /></button>
+          <button type="button" className="invoice-doc-close" onClick={onBack} aria-label="إغلاق المستند والعودة" title="رجوع وإغلاق المستند"><ArrowLeft size={15} /></button>
           <button type="button" data-doc-menu aria-label="إجراءات المستند" title="إجراءات المستند" onClick={() => setMenuOpen((v) => !v)}><MoreVertical size={14} /></button>
           <button type="button" aria-label="معاينة الطباعة" title="معاينة الطباعة" onClick={onPrint}><Printer size={14} /></button>
           <button type="button" aria-label="محادثة الدعم" title="الدعم الفني" onClick={() => onNavigate('/support')}><MessageSquare size={14} /></button>
@@ -125,7 +145,13 @@ export function InvoicePOSFrame({
         </div>
 
         <div className="invoice-doc-identity">
-          <span className="invoice-doc-numberbox"><FileText size={12} /><b data-doc-number>{documentNumber || (sale ? 'INV — مسودة جديدة' : 'PUR — مسودة جديدة')}</b></span>
+          <span className="invoice-doc-numberbox">
+            <FileText size={12} /><b data-doc-number>{documentNumber || (sale ? 'INV — مسودة جديدة' : 'PUR — مسودة جديدة')}</b>
+            <span className="invoice-doc-nav">
+              <button type="button" onClick={onPrevDocument} disabled={!onPrevDocument} aria-label="المستند السابق" title="المستند السابق"><ChevronRight size={11} /></button>
+              <button type="button" onClick={onNextDocument} disabled={!onNextDocument} aria-label="المستند التالي" title="المستند التالي"><ChevronLeft size={11} /></button>
+            </span>
+          </span>
           <span className="invoice-doc-status" data-doc-status>{documentNumber ? 'تعديل' : 'مسودة'}</span>
           <small>{modeLabel} · {currencyLabel} · {dateLabel}</small>
         </div>
@@ -168,14 +194,19 @@ export function InvoicePOSFrame({
 
         {/* ③ شريط البحث والباركود */}
         <section className="invoice-doc-card invoice-doc-entry">
-          <div className="invoice-doc-entry-input"><Barcode size={14} className="invoice-doc-entry-icon" />{itemEntry}</div>
-          <div className="invoice-doc-entry-hints">
-            <span className="invoice-doc-kbd">F5</span>
-            <span className="invoice-doc-ready"><i /> جاهز للمسح</span>
+          <div className="invoice-doc-entry-input">
+            <Barcode size={14} className="invoice-doc-entry-icon" />
+            {itemEntry}
+            <span className="invoice-doc-entry-hints">
+              <span className="invoice-doc-kbd">F5</span>
+              <span className="invoice-doc-ready"><i /> جاهز للمسح</span>
+            </span>
           </div>
+          {entryFilter && <div className="invoice-doc-entry-filter">{entryFilter}</div>}
           <div className="invoice-doc-entry-actions">
-            <button type="button" className="is-primary" onClick={onItemSearch}><Search size={12} /> بحث وإضافة</button>
-            <button type="button" onClick={onPartySearch}><SlidersHorizontal size={12} /> بحث {partyWord}</button>
+            <button type="button" className="is-primary" onClick={() => window.dispatchEvent(new Event('shopsys:focus-item'))}><Search size={12} /> إضافة سريعة</button>
+            <button type="button" onClick={onItemSearch}><SlidersHorizontal size={12} /> تصفية</button>
+            <button type="button" onClick={onPartySearch}>بحث {partyWord}</button>
           </div>
         </section>
 

@@ -103,9 +103,11 @@ const footerOf = (src) => {
   assert.ok(/minmax\(min\(/.test(cols), `عمود المؤشرات بحدّ صلب يُفيض الرأس: ${cols}`)
   const pad = Number(body.match(/padding:\s*([\d.]+)rem/)?.[1] ?? 9)
   assert.ok(pad <= 0.45, `حشوة رأس المستند ${pad}rem كبيرة`)
+  // المرجع: صفّان × ثلاثة حقول ثابتة (md:grid-cols-3) لا شبكة تتمدد فتُغيّر عدد الحقول بالسطر
   const fields = ruleOf('.invoice-doc-fields')
-  const colMin = Number(fields.match(/minmax\(min\(([\d.]+)rem/)?.[1] ?? 99)
-  assert.ok(colMin <= 11.5, `أدنى عرض لعمود الحقول ${colMin}rem — لا يتسع لثلاثة حقول في السطر كالمرجع`)
+  assert.ok(/grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(fields), `حقول الرأس ليست ثلاثة أعمدة متساوية كالمرجع: ${fields}`)
+  assert.ok(/@media \(max-width: 1100px\)[^}]*\{[^}]*\.invoice-doc-fields \{ grid-template-columns: repeat\(2/.test(css.replace(/\s+/g, ' ')),
+    'لا تنكمش حقول الرأس إلى عمودين على الشاشات الضيقة')
   assert.ok(/repeat\(auto-fit/.test(ruleOf('.invoice-doc-side')), 'عمود المؤشرات ليس شبكة تنكمش ببطاقتيها')
   assert.ok(css.includes('.invoice-doc-party, .invoice-doc-itemcard'), 'بطاقتا الطرف والصنف لا تتقاسمان قاعدة واحدة')
   assert.ok(/border:\s*1px dashed var\(--doc-line\)/.test(ruleOf('.invoice-doc-refbar')), 'شريط المرجع الخارجي بلا إطاره المتقطع')
@@ -119,7 +121,7 @@ const footerOf = (src) => {
   assert.ok(!cardbar.includes('invoice-doc-cardbar-session'), 'بيانات الجلسة ما زالت مكرَّرة في شريط البطاقة وفي شريط الإجراءات')
   assert.ok(!cardbar.includes('invoice-doc-online'), 'مؤشر الاتصال مكرَّر في رأس المستند وأسفله')
   assert.ok(frame.slice(frame.indexOf('invoice-doc-actionbar-info')).includes('invoice-doc-cardbar-session'), 'بيانات الجلسة اختفت بدل أن تنتقل لشريط الإجراءات')
-  R.ok(`رأس المستند عمودان: حقول من ${colMin}rem بحشوة ${pad}rem + بطاقتا مؤشرات، والجلسة مرة واحدة أسفل الشاشة`)
+  R.ok(`رأس المستند عمودان: ثلاثة حقول في السطر بحشوة ${pad}rem + بطاقتا مؤشرات، والجلسة مرة واحدة أسفل الشاشة`)
 }
 
 /* ⑤ بطاقتا المؤشرات كما في المرجع: حالة الطرف بجوار عنوانه وشريط استهلاك، ورقاقة كود للصنف */
@@ -193,6 +195,39 @@ const footerOf = (src) => {
     'المبالغ في الكشف بلا محاذاة يسارية بخط أحادي')
   assert.ok(sumRow.includes('--doc-muted'), 'صف الكشف بلون محفور')
   R.ok('كشف الإجماليات: بند ونقاط موصولة ومبلغ أحادي المسافة — شكل المستند المحاسبي')
+}
+
+/* ⑩ قطع التصميم المرجعي الذي أرسله المالك (2026-09-28) — سبع قطع لا تسقط بالصدفة */
+{
+  const frameParts = [
+    ['invoice-doc-dots', 'نقاط نافذة سطح المكتب الثلاث أعلى يمين المستند'],
+    ['invoice-doc-nav', 'سهما المستند السابق/التالي داخل صندوق الرقم'],
+    ['invoice-doc-entry-filter', 'منتقي تصنيف الأصناف بجوار شريط الباركود'],
+  ]
+  for (const [cls, label] of frameParts) {
+    assert.ok(frame.includes(cls), `الإطار فقد ${label} (${cls})`)
+    assert.ok(css.includes(`.${cls}`), `لا قاعدة CSS لـ ${cls}`)
+  }
+  // الرقاقات داخل مربع البحث لا بجانبه (المرجع: F2 و«جاهز للمسح» داخل الحافة)
+  const entryInput = frame.slice(frame.indexOf('invoice-doc-entry-input'), frame.indexOf('invoice-doc-entry-actions'))
+  assert.ok(entryInput.includes('invoice-doc-entry-hints'), 'رقاقات الاختصار خرجت من داخل مربع البحث')
+  assert.ok(/position:\s*absolute/.test(ruleOf('.invoice-doc-entry-input > .invoice-doc-entry-hints')), 'رقاقات مربع البحث ليست داخل حافته')
+  // جدول البنود: الوحدة والضريبة وأدوات السطر
+  const table = readFileSync(`${ROOT}/src/ui/components/InvoiceLinesTable.tsx`, 'utf8')
+  for (const [needle, label] of [['COL.unit', 'عمود الوحدة'], ['COL.tax', 'عمود الضريبة'], ['COL.tools', 'عمود الإجراءات'], ['invoice-doc-linebar', 'شريط أدوات البنود أسفل الجدول'], ['onDuplicate', 'تكرار السطر']]) {
+    assert.ok(table.includes(needle), `جدول البنود ينقصه ${label}`)
+  }
+  assert.ok(/invoice-doc-taxchip/.test(table) && css.includes('.invoice-doc-taxchip'), 'رقاقة نسبة الضريبة على السطر غير موجودة')
+  // البلاطات الثلاث وكتلة التسوية في صفحتي البيع والشراء
+  const picker = readFileSync(`${ROOT}/src/ui/components/PaymentMethodPicker.tsx`, 'utf8')
+  assert.ok(picker.includes('invoice-doc-tiles') && /نقدي/.test(picker) && /ماكينة دفع/.test(picker), 'بلاطات وسيلة الدفع الثلاث غير موجودة')
+  for (const [label, src] of PAGES) {
+    assert.ok(src.includes('tiles'), `${label}: لوحة التحصيل بلا بلاطات وسيلة الدفع`)
+    assert.ok(src.includes('invoice-doc-settle'), `${label}: لا كتلة «المدفوع/المتبقي» أسفل الإجمالي`)
+    assert.ok(src.includes('invoice-doc-balance') && src.includes('متزن — مدين = دائن'), `${label}: لا سطر لحالة اتزان القيد`)
+    assert.ok(src.includes('invoice-doc-infield-chip'), `${label}: كود الطرف ليس رقاقة داخل حقله كالمرجع`)
+  }
+  R.ok('قطع التصميم المرجعي: نقاط النافذة · تصفّح الدفتر · تصفية التصنيف · رقاقات داخل الحقول · وحدة وضريبة وأدوات لكل سطر · بلاطات الدفع · كتلة التسوية')
 }
 
 R.done()
