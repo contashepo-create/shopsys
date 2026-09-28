@@ -8,6 +8,7 @@ import { useSearchParams } from 'react-router-dom'
 import { FileSpreadsheet, UserRound, Building2, UserCog, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
+import { PartyNotesLog } from '../components/PartyNotesLog.tsx'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { employeeStatement, statementBalance, type StatementRow } from '../../core/statements.ts'
@@ -117,6 +118,11 @@ export function StatementsPage() {
           <><Btn variant="ghost" onClick={print}><Printer size={15} /> طباعة الكشف</Btn><Btn variant="ghost" onClick={exportStatement}><FileSpreadsheet size={15} /> Excel</Btn></>
         )}
       </div>
+
+      {/* سجل ملاحظات الطرف: تاريخ ما كُتب عنه في الفواتير وفي بطاقته (طلب المالك) */}
+      {partyId > 0 && kind !== 'employee' && (
+        <PartyNotesLog kind={kind} partyId={partyId} partyName={parties.find((party) => party.id === partyId)?.nameAr ?? ''} />
+      )}
 
       {!partyId ? (
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">

@@ -1070,7 +1070,9 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 
 .invoice-doc-header-body { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(min(13rem, 100%), 13rem); gap: .3rem; padding: .22rem .4rem; align-items: stretch; }
 .invoice-doc-form { display: flex; min-width: 0; flex-direction: column; gap: .4rem; }
-.invoice-doc-fields { display: grid; grid-template-columns: 1.55fr 1fr 1fr 1.2fr 1.3fr 1fr; gap: .25rem .35rem; align-content: start; }
+.invoice-doc-fields { display: grid; grid-template-columns: 1.95fr .82fr .82fr 1.02fr .92fr .95fr; gap: .25rem .35rem; align-content: start; }
+/* فاتورة البيع فيها حقل سابع (المندوب) — حقل الطرف يبقى الأعرض والبقية مضغوطة بقدرها */
+.invoice-doc-fields:has(> :nth-child(7)) { grid-template-columns: 2fr .8fr .8fr 1fr .9fr .92fr 1.05fr; }
 /* شريط المرجع الخارجي: إطار متقطع كما في التصميم المرجعي */
 .invoice-doc-refbar { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; border: 1px dashed var(--doc-line); border-radius: .45rem; background: var(--doc-tint); padding: .3rem .45rem; }
 .invoice-doc-refbar .form-field { display: flex; min-width: 0; flex: 1 1 14rem; align-items: center; gap: .4rem; margin: 0; }
@@ -1333,7 +1335,8 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
   .invoice-doc .invoice-totals-footer { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 1280px) {
-  .invoice-doc-fields { grid-template-columns: 1.4fr 1fr 1fr 1.1fr 1.2fr 1fr; }
+  .invoice-doc-fields { grid-template-columns: 1.85fr .8fr .8fr 1fr .9fr .92fr; }
+  .invoice-doc-fields:has(> :nth-child(7)) { grid-template-columns: 1.9fr .78fr .78fr .98fr .88fr .9fr 1fr; }
 }
 @media (max-width: 900px) {
   .invoice-doc-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1504,9 +1507,9 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-partymeta button:hover { border-color: var(--doc-accent-soft); background: var(--doc-tint-strong); color: var(--doc-accent-deep); }
 /* بطاقة رصيد الطرف تبقى **مربعاً صغيراً في أقصى اليسار** بجوار الحقول كالنموذج،
    وتضيق تدريجياً (13rem ⇐ 11.5rem ⇐ 9.5rem) قبل أن تنزل أسفلها عند 820px فقط. */
-@media (max-width: 1280px) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) 11.5rem; } }
-@media (max-width: 1100px) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) 10rem; } }
-@media (max-width: 920px) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) 8.8rem; } }
+@media (max-width: 1280px) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) 13rem; } }
+@media (max-width: 1100px) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) 11.5rem; } }
+@media (max-width: 920px) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) 10rem; } }
 @media (max-width: 820px) {
   .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr); }
   .invoice-doc-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .35rem; }
@@ -1550,7 +1553,7 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
   font-size: .72rem !important; font-weight: 600;
 }
 .invoice-doc .invoice-doc-fields .invoice-doc-static { display: flex; align-items: center; overflow: hidden; border: 1px solid var(--doc-line); background: var(--doc-tint); color: var(--doc-faint); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.invoice-doc .invoice-doc-fields .invoice-pos-edit-party { min-height: 1.5rem; padding: 0 .3rem; }
+.invoice-doc .invoice-doc-fields .invoice-pos-edit-party { min-height: 1.5rem; width: 1.35rem; padding: 0 !important; }
 .invoice-doc .invoice-doc-fields .invoice-doc-infield-chip { font-size: .52rem; }
 
 /* شريطا الترويسة: سطر واحد رفيع لكل منهما — مفتاح/قيمة كالنموذج */
@@ -1575,7 +1578,7 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc .invoice-doc-party { gap: .12rem; border-radius: .45rem; background: var(--doc-tint); padding: .22rem .4rem; }
 .invoice-doc .invoice-doc-party .invoice-doc-cardhead { padding: 0 0 .12rem; }
 .invoice-doc .invoice-doc-party .invoice-doc-cardhead > b { font-size: .66rem; }
-.invoice-doc .invoice-doc-party .invoice-doc-metric { min-height: 0; border: 0; border-radius: 0; background: transparent; padding: 0; }
+.invoice-doc .invoice-doc-party .invoice-doc-metric { min-height: 1.15rem; flex-wrap: nowrap; gap: .4rem; border: 0; border-radius: 0; background: transparent; padding: 0; }
 .invoice-doc .invoice-doc-party .invoice-doc-metric > span { font-size: .58rem; }
 .invoice-doc .invoice-doc-party .invoice-doc-metric > b { font-size: .64rem; }
 .invoice-doc .invoice-doc-party .invoice-doc-gauge { padding-top: .16rem; }
@@ -1768,7 +1771,7 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 .invoice-doc .invoice-doc-actionbar-buttons button { height: 1.5rem; min-height: 0 !important; padding: 0 .4rem !important; }
 
 /* بطاقة رصيد الطرف: أربعة أسطر رفيعة كالنموذج فلا تُطيل الترويسة */
-.invoice-doc .invoice-doc-party .invoice-doc-metric { min-height: 0; line-height: 1.25; }
+.invoice-doc .invoice-doc-party .invoice-doc-metric { min-height: 1.15rem; line-height: 1.25; }
 .invoice-doc .invoice-doc-party .invoice-doc-gauge { height: .3rem; padding-top: 0; margin: .1rem 0; }
 .invoice-doc .invoice-doc-party .invoice-doc-cardfoot { margin-top: .06rem; padding-top: .1rem; }
 
@@ -1897,3 +1900,33 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 .invoice-doc .invoice-doc-fields .field-head > label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .invoice-doc .invoice-doc-fields .field-head { min-width: 0; overflow: hidden; }
 .invoice-doc .invoice-doc-partymeta button { white-space: nowrap; }
+
+/* ⑩هـ — تعديلات الترويسة بطلب المالك:
+   رمز تعديل الطرف رقاقة صغيرة لا زر عريض · سطر ملاحظة الطرف حقل كتابة واضح يمتد بالباقي */
+.invoice-doc .invoice-doc-fields .invoice-pos-edit-party svg { width: 10px; height: 10px; }
+.invoice-doc-noteline {
+  display: flex; min-width: 14rem; flex: 1 1 22rem; align-items: center; gap: .3rem;
+  border-inline-start: 1px solid var(--doc-line); padding-inline-start: .45rem;
+  color: var(--doc-faint); font-size: .6rem; font-weight: 800; white-space: nowrap;
+}
+.invoice-doc-noteline > input {
+  min-width: 0; flex: 1; min-height: 1.45rem; border: 1px solid var(--doc-line); border-radius: .35rem;
+  background: var(--doc-paper); padding: 0 .4rem; color: var(--doc-ink); font-size: .68rem; font-weight: 600;
+}
+.invoice-doc-noteline > input:focus { border-color: var(--doc-accent); outline: none; box-shadow: 0 0 0 2px var(--doc-tint-strong); }
+.invoice-doc-noteline > input::placeholder { color: var(--doc-muted); font-weight: 500; }
+.invoice-doc-notecount {
+  display: inline-flex; min-width: 1.05rem; align-items: center; justify-content: center;
+  border-radius: .35rem; background: var(--doc-tint-strong); padding: 0 .25rem;
+  color: var(--doc-accent-deep); font-size: .58rem; font-weight: 900;
+}
+
+/* بطاقة الطرف: كل مؤشر **سطر واضح** لا يلتفّ ولا ينضغط (طلب المالك) */
+.invoice-doc .invoice-doc-party .invoice-doc-metric > span { flex: 0 0 auto; white-space: nowrap; }
+.invoice-doc .invoice-doc-party .invoice-doc-metric > b {
+  min-width: 0; flex: 1; overflow: hidden; text-align: end; text-overflow: ellipsis; white-space: nowrap;
+}
+.invoice-doc .invoice-doc-party .invoice-doc-cardhead > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* حقول التاريخ ضاقت بطلب المالك — يُصغَّر خطها حتى لا يُقصّ قناع التاريخ */
+.invoice-doc .invoice-doc-fields input[type="date"] { padding: 0 .25rem !important; font-size: .64rem !important; }
+.invoice-doc .invoice-doc-fields input[type="date"]::-webkit-calendar-picker-indicator { margin: 0; padding: 0; opacity: .55; }

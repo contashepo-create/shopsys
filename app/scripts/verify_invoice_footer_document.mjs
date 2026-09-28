@@ -105,7 +105,11 @@ const footerOf = (src) => {
   assert.ok(pad <= 0.45, `حشوة رأس المستند ${pad}rem كبيرة`)
   // النموذج المعتمد (2026-09-28): ستة حقول في سطر واحد ثم شريطان عرضيان، وتنكمش تدريجياً
   const fields = ruleOf('.invoice-doc-fields')
-  assert.ok(/grid-template-columns:\s*1\.55fr 1fr 1fr 1\.2fr 1\.3fr 1fr/.test(fields), `حقول الرأس ليست ستة أعمدة كالنموذج المعتمد: ${fields}`)
+  // ميزانية العرض عُدّلت بطلب المالك (⑩هـ): حقل الطرف الأعرض والبقية مضغوطة — تبقى ستة أعمدة
+  const headWidths = (fields.match(/grid-template-columns:\s*([^;]+);/)?.[1] ?? '').split(/\s+/).filter(Boolean)
+  assert.equal(headWidths.length, 6, `حقول الرأس ليست ستة أعمدة كالنموذج المعتمد: ${fields}`)
+  assert.ok(headWidths.every((token) => token.endsWith('fr')), `أعمدة الرأس ليست نسباً مرنة: ${fields}`)
+  assert.ok(Number(headWidths[0].replace('fr', '')) >= 1.8, `حقل الطرف ليس الأعرض في الرأس: ${fields}`)
   const flat = css.replace(/\s+/g, ' ')
   // النوافذ المتوسطة (1000–1280px) لا تكسر الصف: يصغر مقياس الجذر بدل تكديس الحقول
   assert.ok(/@media \(max-width: 1280px\) \{ html:has\(\.invoice-doc\.invoice-pos-root\) \{ font-size: clamp\(14\.5px/.test(flat),
@@ -115,7 +119,8 @@ const footerOf = (src) => {
   assert.ok(/@media \(max-width: 660px\)[^}]*\{[^}]*\.invoice-doc-fields \{ grid-template-columns: repeat\(2/.test(flat),
     'لا تنكمش حقول الرأس إلى عمودين على الشاشات الضيقة')
   // بطاقة رصيد الطرف تبقى مربعاً جانبياً في أقصى اليسار حتى 820px ولا تنزل أسفل الحقول قبلها
-  for (const [bp, col] of [['1280px', '11.5rem'], ['1100px', '10rem'], ['920px', '8.8rem']]) {
+  // وُسّعت البطاقة بطلب المالك (⑩هـ) ليظهر كل مؤشر في سطر واضح
+  for (const [bp, col] of [['1280px', '13rem'], ['1100px', '11.5rem'], ['920px', '10rem']]) {
     assert.ok(flat.includes(`@media (max-width: ${bp}) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) ${col}; } }`),
       `بطاقة الطرف لا تبقى جانبية بعرض ${col} عند ${bp}`)
   }

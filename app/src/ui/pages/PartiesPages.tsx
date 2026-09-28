@@ -15,6 +15,7 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { supplierStatement, statementBalance } from '../../core/statements.ts'
 import { partyCode, matchesPartyCode, PARTY_CODE_LABELS } from '../../core/partyCodes.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { PartyNotesLog } from '../components/PartyNotesLog.tsx'
 
 type PartyView = 'cards' | 'list'
 function usePersistedPartyView(key: string): [PartyView, (view: PartyView) => void] {
@@ -320,6 +321,8 @@ export function CustomersPage() {
             </Field>
             <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
           </div>
+          {/* سجل الملاحظات: تاريخ ما كُتب عن العميل في الفواتير وفي بطاقته (طلب المالك) */}
+          {editing && <PartyNotesLog kind="customer" partyId={editing.id} partyName={editing.nameAr} compact />}
           <ExtendedFields ext={ext} setExt={setExt} />
           <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn><Btn onClick={save} disabled={!name.trim()}>حفظ</Btn></div>
         </div>
@@ -500,6 +503,8 @@ export function SuppliersPage() {
             <Field label="اسم البنك"><input value={bankName} onChange={(e) => setBankName(e.target.value)} className={inputCls} /></Field>
             <Field label="IBAN / رقم الحساب"><input value={iban} onChange={(e) => setIban(e.target.value)} className={inputCls} dir="ltr" placeholder="EG…" /></Field>
           </div>
+          {/* سجل الملاحظات: تاريخ ما كُتب عن المورد في الفواتير وفي بطاقته (طلب المالك) */}
+          {editing && <PartyNotesLog kind="supplier" partyId={editing.id} partyName={editing.nameAr} compact />}
           <ExtendedFields ext={ext} setExt={setExt} />
           <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn><Btn onClick={save} disabled={!name.trim()}>حفظ</Btn></div>
         </div>

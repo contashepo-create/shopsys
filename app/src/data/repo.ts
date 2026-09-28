@@ -10,6 +10,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { appStorage } from './persistentStorage.ts'
 import type { Item, Category } from '../core/items.ts'
+import { buildPartyNote, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
 import { priceFloorViolations, PriceFloorError } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
@@ -1451,6 +1452,10 @@ interface DataState {
   advancedInvoiceDrafts: AdvancedInvoiceDraft[]
   upsertAdvancedInvoiceDraft: (draft: Omit<AdvancedInvoiceDraft, 'createdAt' | 'updatedAt'> & { createdAt?: string }) => AdvancedInvoiceDraft
   deleteAdvancedInvoiceDraft: (id: string) => void
+  /** سجل ملاحظات الأطراف: كل ملاحظة تُكتب في ترويسة الفاتورة تُقيَّد هنا بتاريخها وكاتبها ومصدرها */
+  partyNotes: PartyNote[]
+  addPartyNote: (input: { partyKind: PartyNoteKind; partyId: number; text: string; userName: string; source?: string }) => PartyNote
+  deletePartyNote: (id: string) => void
   saleReturns: SaleReturn[]
   shifts: Shift[]
   journal: JournalEntry[] // دفتر اليومية — Append-Only (القرار 9)
@@ -2842,6 +2847,13 @@ export const useDataStore = create<DataState>()(
         return draft
       },
       deleteAdvancedInvoiceDraft: (id) => set((state) => ({ advancedInvoiceDrafts: state.advancedInvoiceDrafts.filter((draft) => draft.id !== id) })),
+      partyNotes: [],
+      addPartyNote: (input) => {
+        const note = buildPartyNote(input)
+        set((state) => ({ partyNotes: [...state.partyNotes, note] }))
+        return note
+      },
+      deletePartyNote: (id) => set((state) => ({ partyNotes: state.partyNotes.filter((note) => note.id !== id) })),
       saleReturns: [],
       shifts: [],
       journal: [],
