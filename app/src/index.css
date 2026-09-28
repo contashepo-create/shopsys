@@ -1262,6 +1262,13 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-amountcur { position: absolute; inset-inline-end: .3rem; border: 1px solid var(--doc-line); border-radius: .3rem; background: var(--doc-tint); padding: .05rem .3rem; color: var(--doc-muted); font-size: .6rem; font-weight: 900; letter-spacing: .02em; pointer-events: none; }
 .invoice-doc-panel-note { border-radius: .4rem; background: var(--doc-tint); padding: .25rem .45rem; color: var(--doc-faint); font-size: .55rem; line-height: 1.6; }
 .invoice-doc-panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(8rem, 100%), 1fr)); gap: .25rem .4rem; }
+.invoice-doc-panel-note.is-danger { background: color-mix(in oklab, #dc2626 12%, var(--doc-paper)); color: #b91c1c; font-weight: 700; }
+
+/* العملة الثانية داخل لوحة التحصيل/السداد — الدفتر يبقى أحادي العملة */
+.invoice-doc-fx { display: flex; flex-direction: column; gap: .25rem; border: 1px dashed var(--doc-line); border-radius: .45rem; padding: .3rem .4rem; }
+.invoice-doc-fx-toggle { display: flex; align-items: center; gap: .3rem; cursor: pointer; color: var(--doc-muted); font-size: .6rem; font-weight: 700; }
+.invoice-doc-fx-toggle input { accent-color: var(--doc-accent); block-size: .8rem; inline-size: .8rem; }
+.invoice-doc-fx-toggle small { color: var(--doc-faint); font-size: .52rem; font-weight: 600; }
 
 /* كشف الإجماليات: بند ونقاط موصولة ومبلغ على عمود واحد (شكل المستند المحاسبي) */
 .invoice-doc-sum { display: flex; flex-direction: column; }

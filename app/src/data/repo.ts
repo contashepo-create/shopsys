@@ -1046,6 +1046,8 @@ export interface PurchaseInvoice {
   inputVatMinor?: number
   notes: string
   journalEntryId: number | null // القيد المتولد (فواتير قديمة قبل الترحيل = null)
+  /** سداد الفاتورة بعملة أجنبية — توثيق على المستند، والقيد بعملة الدفتر */
+  fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 } | null
   /** سجل تدقيق التعديلات (طلب المالك) */
   editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
   /** المخزن الذي وردت إليه البضاعة — null = فاتورة مختلطة تُقرأ مخازنها من السطور أو سجل قديم */
@@ -1234,6 +1236,11 @@ export interface SaleInvoice {
   customerReference?: string
   dueDate?: string
   notes?: string
+  /**
+   * تحصيل الفاتورة بعملة أجنبية: المبلغ الأجنبي وسعر صرفه لحظة التحصيل.
+   * الدفتر يبقى أحادي العملة — القيد كله بعملة الدفتر وهذه الساق توثيق على المستند.
+   */
+  fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 } | null
 }
 
 /** مرتجع مبيعات — دائماً مربوط بفاتورته الأصلية وبقيده العاكس */
@@ -1580,6 +1587,10 @@ interface DataState {
     /** هل ضريبة مصروفات الشراء قابلة للاسترداد حسب صفة المنشأة */
     purchaseExpenseTaxRecoverable?: boolean
     notes: string
+    /** سداد بعملة أجنبية: المسدَّد بعملة الدفتر يجب أن يساوي حاصل التحويل */
+    fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 }
+    bookDecimals?: number
+    bookCurrencyCode?: string
   }) => PurchaseInvoice
   /**
    * ترحيل فاتورة بيع من الكاشير:
@@ -1615,6 +1626,15 @@ interface DataState {
     staffCommission?: { employeeId: number; amountMinor: number; description?: string }
     /** تقسيم العمولة على أكثر من موظف داخل نفس عملية الترحيل */
     staffCommissions?: { employeeId: number; amountMinor: number; description?: string }[]
+    /**
+     * تحصيل بعملة أجنبية: المبلغ الأجنبي وسعر الصرف.
+     * المحصَّل بعملة الدفتر يجب أن يساوي حاصل التحويل وإلا رُفضت الفاتورة.
+     */
+    fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 }
+    /** خانات عملة الدفتر العشرية — للتحقق من التحويل (افتراضي 2) */
+    bookDecimals?: number
+    /** رمز عملة الدفتر — لمنع «عملة أجنبية» تساوي عملة الدفتر (افتراضي EGP) */
+    bookCurrencyCode?: string
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -3020,6 +3040,17 @@ export const useDataStore = create<DataState>()(
         if (!cashPurchase && supplierDocument && state.purchases.some((purchase) => purchase.supplierId === inv.supplierId && purchase.supplierInvoiceNumber === supplierDocument)) throw new Error('رقم فاتورة المورد مسجل مسبقاً لهذا المورد')
         // P1: الخزينة/البنك المدفوع منه يجب أن يكون موجوداً (خزائن المصاريف كانت تُفحص والرئيسية لا)
         if (inv.treasury && !state.treasuries.some((t) => t.code === inv.treasury)) throw new Error('الخزينة/البنك المدفوع منه غير موجود')
+        // العملة الثانية في السداد: نفس عقد السند — المسدَّد بعملة الدفتر = حاصل التحويل
+        let purchaseFxLeg: FxLeg | null = null
+        if (inv.fx) {
+          const leg: FxLeg = { currencyCode: inv.fx.currencyCode.trim().toUpperCase(), amountMinor: inv.fx.amountMinor, ratePpm: inv.fx.ratePpm, decimals: inv.fx.decimals }
+          const fxErrors = validateFxLeg(leg, inv.bookCurrencyCode ?? 'EGP')
+          if (fxErrors.length) throw new Error(fxErrors.join(' — '))
+          const converted = convertFxToBookMinor(leg, inv.bookDecimals ?? 2)
+          if (converted <= 0) throw new Error('حاصل تحويل العملة صفر — راجع المبلغ وسعر الصرف')
+          if (converted !== inv.paidMinor) throw new Error(`المسدَّد بعملة الدفتر (${inv.paidMinor}) لا يساوي حاصل التحويل (${converted})`)
+          purchaseFxLeg = leg
+        }
         for (const l of inv.lines) {
           if (!state.items.some((it) => it.id === l.itemId)) throw new Error(`صنف غير موجود بالمخزون (#${l.itemId})`)
         }
@@ -3201,7 +3232,7 @@ export const useDataStore = create<DataState>()(
           id: entryId,
           entryNumber: entryId,
           date: inv.date,
-          description: `فاتورة شراء ${invoiceNumber}`,
+          description: `فاتورة شراء ${invoiceNumber}${purchaseFxLeg ? ` — ${describeFxLeg(purchaseFxLeg, inv.paidMinor, inv.bookDecimals ?? 2)}` : ''}`,
           sourceType: 'purchase',
           sourceId: purchaseId,
           lines: entryLines,
@@ -3252,6 +3283,7 @@ export const useDataStore = create<DataState>()(
           inputVatMinor,
           notes: inv.notes,
           journalEntryId: entryId,
+          fx: purchaseFxLeg,
         }
 
         // تحديث تكلفة الأصناف بالمتوسط المرجح + زيادة المخزون
@@ -3702,6 +3734,18 @@ export const useDataStore = create<DataState>()(
         // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
         const allocationPaid = args.paymentAllocations?.reduce((sum, allocation) => sum + allocation.amountMinor, 0)
         const paidM = allocationPaid ?? args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
+        // العملة الثانية: الدفتر أحادي العملة، فالمرحَّل هو حاصل التحويل — ويجب أن يطابق ما أرسلته الشاشة
+        let saleFxLeg: FxLeg | null = null
+        if (args.fx) {
+          if (args.terminalPayment) throw new Error('التحصيل بعملة أجنبية لا يجتمع مع ماكينة الدفع — افصل العمليتين')
+          const leg: FxLeg = { currencyCode: args.fx.currencyCode.trim().toUpperCase(), amountMinor: args.fx.amountMinor, ratePpm: args.fx.ratePpm, decimals: args.fx.decimals }
+          const fxErrors = validateFxLeg(leg, args.bookCurrencyCode ?? 'EGP')
+          if (fxErrors.length) throw new Error(fxErrors.join(' — '))
+          const converted = convertFxToBookMinor(leg, args.bookDecimals ?? 2)
+          if (converted <= 0) throw new Error('حاصل تحويل العملة صفر — راجع المبلغ وسعر الصرف')
+          if (converted !== paidM) throw new Error(`المحصَّل بعملة الدفتر (${paidM}) لا يساوي حاصل التحويل (${converted})`)
+          saleFxLeg = leg
+        }
         if (paidM > 0) {
           const checks = args.paymentAllocations?.length ? args.paymentAllocations : [{ accountCode: args.treasury ?? '1101', amountMinor: paidM }]
           const user = state.appUsers.find((candidate) => candidate.id === state.currentUserId)
@@ -3771,7 +3815,7 @@ export const useDataStore = create<DataState>()(
           id: entryId,
           entryNumber: entryId,
           date: now.slice(0, 10),
-          description: `فاتورة بيع ${invoiceNumber}`,
+          description: `فاتورة بيع ${invoiceNumber}${saleFxLeg ? ` — ${describeFxLeg(saleFxLeg, paidM, args.bookDecimals ?? 2)}` : ''}`,
           sourceType: 'sale',
           sourceId: saleId,
           lines: entryLines,
@@ -3807,6 +3851,7 @@ export const useDataStore = create<DataState>()(
           customerReference: args.customerReference?.trim() || undefined,
           dueDate: args.dueDate || undefined,
           notes: args.notes?.trim() || undefined,
+          fx: saleFxLeg,
         }
 
         const employeeCollections: EmployeeAdvance[] = (args.paymentAllocations ?? []).filter((row) => row.accountCode === '1107' && row.employeeId).map((row, index) => ({ id: nextId(state.employeeAdvances) + index, advanceNumber: `ADV-${String(nextId(state.employeeAdvances) + index).padStart(4, '0')}`, employeeId: row.employeeId!, date: now.slice(0, 10), amountMinor: row.amountMinor, recoveredMinor: 0, source: 'sale_collection', custodyFileId: null, treasury: (args.treasury ?? '1101') as TreasuryAccount, notes: `تحصيل فاتورة ${invoiceNumber} على حساب الموظف`, journalEntryId: entryId }))
