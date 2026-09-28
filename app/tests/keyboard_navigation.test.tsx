@@ -117,16 +117,13 @@ describe('التحكم بلوحة المفاتيح', () => {
     expect(posted).toBe(1)
   })
 
-  it('يفتح F3 فاتورة شراء في نافذة مستقلة دون مغادرة السجل', async () => {
+  it('يفتح F3 فاتورة الشراء صفحةً كاملة فوراً — لا نافذة ولا شاشة «جارٍ التحميل»', async () => {
     const { useWindowStore } = await import('../src/ui/windows/windowStore.ts')
     useWindowStore.setState({ windows: [], topZ: 700 })
     const view = render(<MemoryRouter initialEntries={['/purchases/invoices']}><KeyboardNavigation/><Routes><Route path="*" element={<Path/>}/></Routes></MemoryRouter>)
     fireEvent.keyDown(document, { key: 'F3' })
-    // الشاشة الخلفية تبقى كما هي — الفاتورة تفتح كنافذة مستقلة فوقها
-    expect(view.getByTestId('path').textContent).toBe('/purchases/invoices')
-    expect(useWindowStore.getState().windows.map((w) => w.kind)).toEqual(['purchase-invoice'])
-    fireEvent.keyDown(document, { key: 'F3' })
-    expect(useWindowStore.getState().windows.length).toBe(2)
-    useWindowStore.setState({ windows: [], topZ: 700 })
+    // طلب المالك: مستند الفاتورة صفحة كاملة يُفتح مباشرة، لا نافذة منبثقة فوق السجل
+    expect(view.getByTestId('path').textContent).toBe('/purchases/invoices/new')
+    expect(useWindowStore.getState().windows).toEqual([])
   })
 })

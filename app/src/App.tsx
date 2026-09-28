@@ -39,7 +39,7 @@ import { PriceListsPage } from './ui/pages/PriceListsPage.tsx'
 import { PromotionsPage } from './ui/pages/PromotionsPage.tsx'
 import { PosPage } from './ui/pages/PosPage.tsx'
 import { SalesInvoicesPage } from './ui/pages/SalesInvoicesPage.tsx'
-import { InvoiceWindowLauncher } from './ui/windows/InvoiceWindowLauncher.tsx'
+import { InvoiceDocumentRoute } from './ui/pages/InvoiceDocumentRoute.tsx'
 import { SaleReturnsPage } from './ui/pages/SaleReturnsPage.tsx'
 import { ShiftsPage } from './ui/pages/ShiftsPage.tsx'
 import { JournalPage } from './ui/pages/JournalPage.tsx'
@@ -181,7 +181,7 @@ function Shell() {
         {/* شاشات المراحل القادمة — كلها مسجلة في الراوتر منذ الآن */}
         <Route path="/pos" element={<PosPage />} />
         <Route path="/sales/invoices" element={<SalesInvoicesPage />} />
-        <Route path="/sales/invoices/new" element={<InvoiceWindowLauncher kind="sale" />} />
+        <Route path="/sales/invoices/new" element={<InvoiceDocumentRoute kind="sale" />} />
         <Route path="/sales/returns" element={<SaleReturnsPage />} />
         <Route path="/sales/shifts" element={<ShiftsPage />} />
         <Route path="/sales/price-lists" element={<PriceListsPage />} />
@@ -192,7 +192,7 @@ function Shell() {
         <Route path="/inventory/processing" element={<ProcessingPage />} />
         <Route path="/inventory/jewelry" element={<JewelryPage />} />
         <Route path="/purchases/invoices" element={<PurchasesPage />} />
-        <Route path="/purchases/invoices/new" element={<InvoiceWindowLauncher kind="purchase" />} />
+        <Route path="/purchases/invoices/new" element={<InvoiceDocumentRoute kind="purchase" />} />
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
         <Route path="/parties/employees" element={<EmployeesPage />} />
         <Route path="/parties/payroll" element={<EmployeesPage initialTab="payroll" />} />

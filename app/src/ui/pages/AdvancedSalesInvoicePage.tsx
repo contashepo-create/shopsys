@@ -4,7 +4,7 @@ import { Boxes, Calculator, CalendarClock, CalendarDays, CircleUser, Link2, Penc
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { DocSectionHead } from '../components/DocSection.tsx'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
-import { openItemEditorWindow, openItemLedgerWindow, openPartyEditorWindow, openSalesInvoiceWindow } from '../windows/windowStore.ts'
+import { openItemEditorWindow, openItemLedgerWindow, openPartyEditorWindow } from '../windows/windowStore.ts'
 import { useDataStore, type AdvancedInvoiceDraft } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -99,8 +99,8 @@ export function AdvancedSalesInvoicePage(){
   
   auditLabel={auditLine ?? undefined}
   onWarehouseReceipt={printWarehouseReceipt}
-  onPrevDocument={prevInvoice?()=>openSalesInvoiceWindow(prevInvoice.id):undefined}
-  onNextDocument={nextInvoice?()=>openSalesInvoiceWindow(nextInvoice.id):undefined}
+  onPrevDocument={prevInvoice?()=>nav(`/sales/invoices/new?edit=${prevInvoice.id}`):undefined}
+  onNextDocument={nextInvoice?()=>nav(`/sales/invoices/new?edit=${nextInvoice.id}`):undefined}
   
   headerFields={
    <>

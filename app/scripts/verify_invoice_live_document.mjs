@@ -178,7 +178,7 @@ const ruleOf = (selector) => {
   assert.ok(/repeat\(3, minmax\(0, 1fr\)\)/.test(ruleOf('.invoice-pos-document .invoice-totals-footer')), 'اللوحات الثلاث ليست في صف واحد كالنموذج')
   const panel = ruleOf('.invoice-pos-document .invoice-doc-panel')
   assert.ok(/max-height/.test(panel) && /overflow: hidden/.test(panel), 'اللوحات السفلية بلا سقف ارتفاع — تدفع شريط الحالة خارج الشاشة')
-  for (const narrow of ['1180px', '760px']) {
+  for (const narrow of ['820px', '620px']) {
     assert.ok(css.replace(/\s+/g, ' ').includes(`@media (max-width: ${narrow}) { .invoice-pos-document .invoice-totals-footer`), `لا تتكيف اللوحات مع مقاس ${narrow}`)
   }
   R.ok('خمس مناطق في ارتفاع الشاشة: شريط · ترويسة · بنود تتمدد وتُمرَّر داخلياً · ثلاث لوحات · شريط حالة')

@@ -106,10 +106,21 @@ const footerOf = (src) => {
   // النموذج المعتمد (2026-09-28): ستة حقول في سطر واحد ثم شريطان عرضيان، وتنكمش تدريجياً
   const fields = ruleOf('.invoice-doc-fields')
   assert.ok(/grid-template-columns:\s*1\.55fr 1fr 1fr 1\.2fr 1\.3fr 1fr/.test(fields), `حقول الرأس ليست ستة أعمدة كالنموذج المعتمد: ${fields}`)
-  assert.ok(/@media \(max-width: 1100px\)[^}]*\{[^}]*\.invoice-doc-fields \{ grid-template-columns: repeat\(3/.test(css.replace(/\s+/g, ' ')),
+  const flat = css.replace(/\s+/g, ' ')
+  // النوافذ المتوسطة (1000–1280px) لا تكسر الصف: يصغر مقياس الجذر بدل تكديس الحقول
+  assert.ok(/@media \(max-width: 1280px\) \{ html:has\(\.invoice-doc\.invoice-pos-root\) \{ font-size: clamp\(14\.5px/.test(flat),
+    'الشاشات المتوسطة تكسر صف الحقول بدل تصغير مقياس المستند')
+  assert.ok(/@media \(max-width: 900px\)[^}]*\{[^}]*\.invoice-doc-fields \{ grid-template-columns: repeat\(3/.test(flat),
     'لا تنكمش حقول الرأس إلى ثلاثة أعمدة على الشاشات المتوسطة')
-  assert.ok(/@media \(max-width: 760px\)[^}]*\{[^}]*\.invoice-doc-fields \{ grid-template-columns: repeat\(2/.test(css.replace(/\s+/g, ' ')),
+  assert.ok(/@media \(max-width: 660px\)[^}]*\{[^}]*\.invoice-doc-fields \{ grid-template-columns: repeat\(2/.test(flat),
     'لا تنكمش حقول الرأس إلى عمودين على الشاشات الضيقة')
+  // بطاقة رصيد الطرف تبقى مربعاً جانبياً في أقصى اليسار حتى 820px ولا تنزل أسفل الحقول قبلها
+  for (const [bp, col] of [['1280px', '11.5rem'], ['1100px', '10rem'], ['920px', '8.8rem']]) {
+    assert.ok(flat.includes(`@media (max-width: ${bp}) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) ${col}; } }`),
+      `بطاقة الطرف لا تبقى جانبية بعرض ${col} عند ${bp}`)
+  }
+  assert.ok(/@media \(max-width: 820px\) \{ \.invoice-doc \.invoice-doc-header-body \{ grid-template-columns: minmax\(0, 1fr\); \}/.test(flat),
+    'تكديس بطاقة الطرف يجب أن يبدأ عند 820px فقط')
   assert.ok(/repeat\(auto-fit/.test(ruleOf('.invoice-doc-side')), 'عمود المؤشرات ليس شبكة تنكمش')
   assert.ok(css.includes('.invoice-doc-party'), 'لا قاعدة لبطاقة رصيد الطرف')
   assert.ok(/13rem/.test(ruleOf('.invoice-doc-header-body')), 'عمود بطاقة الطرف ليس بعرض 13rem كالنموذج')

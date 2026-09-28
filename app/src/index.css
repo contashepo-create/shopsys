@@ -1329,20 +1329,22 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-online.is-warning i { background: #f59e0b; }
 .invoice-doc-online.is-danger i, .invoice-doc-online.is-error i { background: #ef4444; }
 
-@media (max-width: 1180px) {
+@media (max-width: 820px) {
   .invoice-doc .invoice-totals-footer { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
+  .invoice-doc-fields { grid-template-columns: 1.4fr 1fr 1fr 1.1fr 1.2fr 1fr; }
+}
+@media (max-width: 900px) {
   .invoice-doc-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-@media (max-width: 760px) {
+@media (max-width: 660px) {
   .invoice-doc-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 1000px) {
-  .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 620px) {
   .invoice-doc .invoice-totals-footer { grid-template-columns: minmax(0, 1fr); }
-  .invoice-doc-cardbar-session { display: none; }
 }
+@media (max-width: 1000px) { .invoice-doc-cardbar-session { display: none; } }
 
 /* ─────────────────────────────────────────────────────────────
    طبقة «المستند» الموحدة للسندات (تدقيق المالك — المرحلة 6)
@@ -1476,11 +1478,11 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 /* ④ ثلاث لوحات في صف واحد بارتفاع محكوم — بلا شريط تمرير للصفحة */
 .invoice-pos-document .invoice-doc-panel { display: flex; min-height: 8.6rem; max-height: 13.2rem; flex-direction: column; overflow: hidden; }
 .invoice-pos-document .invoice-doc-panel-body { min-height: 0; flex: 1; overflow: auto; }
-@media (max-width: 1180px) {
+@media (max-width: 820px) {
   .invoice-pos-document .invoice-totals-footer { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .invoice-pos-document .invoice-totals-footer > *:nth-child(3) { grid-column: 1 / -1; }
 }
-@media (max-width: 760px) {
+@media (max-width: 620px) {
   .invoice-pos-document .invoice-totals-footer { grid-template-columns: minmax(0, 1fr); max-height: 16rem; overflow: auto; }
   .invoice-pos-document .invoice-totals-footer > *:nth-child(3) { grid-column: auto; }
 }
@@ -1500,9 +1502,15 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-partymeta .invoice-doc-partynote { min-width: 0; overflow: hidden; border-inline-start: 1px solid var(--doc-line); padding-inline-start: .45rem; text-overflow: ellipsis; white-space: nowrap; }
 .invoice-doc-partymeta button { border: 1px solid var(--doc-line); border-radius: .35rem; background: var(--doc-paper); padding: .05rem .4rem; color: var(--doc-muted); font-size: .6rem; font-weight: 800; }
 .invoice-doc-partymeta button:hover { border-color: var(--doc-accent-soft); background: var(--doc-tint-strong); color: var(--doc-accent-deep); }
-@media (max-width: 1100px) {
-  .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr); }
-  .invoice-doc-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .35rem; }
+/* بطاقة رصيد الطرف تبقى **مربعاً صغيراً في أقصى اليسار** بجوار الحقول كالنموذج،
+   وتضيق تدريجياً (13rem ⇐ 11.5rem ⇐ 9.5rem) قبل أن تنزل أسفلها عند 820px فقط. */
+@media (max-width: 1280px) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) 11.5rem; } }
+@media (max-width: 1100px) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) 10rem; } }
+@media (max-width: 920px) { .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr) 8.8rem; } }
+@media (max-width: 820px) {
+  .invoice-doc .invoice-doc-header-body { grid-template-columns: minmax(0, 1fr); }
+  .invoice-doc-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: .35rem; }
+  .invoice-doc .invoice-doc-party { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .4rem; }
 }
 
 /* شاشات قصيرة (لابتوب 13" أو نافذة مصغَّرة): لا نقصّ أي جزء من الفاتورة —
@@ -1672,6 +1680,10 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
    بنفس نسبة النموذج بلا لمس بقية الصفحات.
    ═══════════════════════════════════════════════════════════════════════════ */
 html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .86vh), 32px); }
+/* نوافذ/معاينات أضيق من 1280px: يُخفَّض حدّ المقياس الأدنى بدل كسر الصفوف،
+   فتبقى الحقول الستة وبطاقة الطرف واللوحات الثلاث جنباً إلى جنب كالنموذج. */
+@media (max-width: 1280px) { html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(14.5px, calc(.72vw + .86vh), 32px); } }
+@media (max-width: 1000px) { html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(13px, calc(.72vw + .86vh), 32px); } }
 
 /* ميزانية الارتفاع بعد التكبير: المناطق الأربع الثابتة تأخذ نفس نسب النموذج
    (شريط 45px · ترويسة 126px · لوحات 185px · شريط حالة 30px من 1000px) فيبقى
@@ -1855,7 +1867,7 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 /* شاشات ضيقة (≤1100px): بطاقة الطرف تنزل تحت الحقول فتطول الترويسة ولا يبقى
    مكان لخمسة سطور — عندها يتحرر المستند من ارتفاع الشاشة ويُمرَّر كاملاً،
    تماماً كقاعدة الشاشات القصيرة، فلا ينضغط جدول البنود إلى لا شيء. */
-@media (max-width: 1100px) {
+@media (max-width: 820px) {
   .invoice-doc.invoice-pos-root { height: auto; max-height: none; min-height: 100dvh; overflow: auto; }
   .invoice-doc .invoice-doc-body { overflow: visible; }
   .invoice-pos-document .invoice-body-grid { height: auto; overflow: visible; }
@@ -1867,7 +1879,7 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 
 /* تحرير المستند من قيد الارتفاع (شاشات ضيقة أو قصيرة): يجب أن تتغلب القواعد
    على سلسلة `height:100%` المتخصصة، وإلا انضغطت البنود إلى صفر. */
-@media (max-width: 1100px), (max-height: 640px) {
+@media (max-width: 820px), (max-height: 640px) {
   .app-window.is-maximized[data-window-kind$="-invoice"] > .app-window-body { overflow: auto; }
   .app-window-body .invoice-doc.invoice-pos-root,
   .invoice-doc.invoice-pos-root { display: block; height: auto; min-height: 0; max-height: none; overflow: visible; }
