@@ -110,10 +110,10 @@ const ruleOf = (selector) => {
   assert.ok(!frame.includes('invoice-doc-entry'), 'عاد شريط البحث/الباركود المنفصل')
   assert.ok(table.includes('invoice-line-entry-cell'), 'مربع البحث ليس داخل خلية اسم الصنف')
   const min = table.match(/MIN_VISIBLE_ROWS\s*=\s*(\d+)/)
-  assert.ok(min && Number(min[1]) >= 5, 'أقل عدد سطور ظاهرة أقل من خمسة — الشاشة ستقفز مع أول صنف')
+  assert.ok(min && Number(min[1]) === 6, 'عدد السطور الظاهرة في جدول الأصناف ليس ستة')
   assert.ok(table.includes('invoice-line-ghost') && css.includes('.invoice-line-ghost'), 'السطور الفارغة الحقيقية غير موجودة')
   assert.ok(table.includes('مسح باركود'), 'زر مسح الباركود غير موجود في رأس جدول البنود')
-  R.ok('لا شريط بحث منفصل — البحث من خلية الاسم، وخمسة سطور فارغة حقيقية قابلة للتركيز')
+  R.ok('لا شريط بحث منفصل — البحث من خلية الاسم، وستة سطور في الجدول وما زاد يُمرَّر')
 }
 
 /* ⑥ الأسهم ودورة Enter وتوسيط الأعمدة */
@@ -172,12 +172,13 @@ const ruleOf = (selector) => {
      لا شجرة الصناديق — فالقاعدة وصفية لا بـ`>`، وإلا لم تُطبَّق أصلاً. */
   assert.ok(/display: contents/.test(ruleOf('.invoice-pos-document > .invoice-shell')), 'غلاف invoice-shell ما زال يقطع سلسلة الارتفاع')
   const docGrid = ruleOf('.invoice-pos-document .invoice-body-grid')
-  assert.ok(/grid-template-rows: minmax\(0, 1fr\) auto/.test(docGrid) && /align-items: stretch/.test(docGrid), 'البنود واللوحات ليستا صفّين ممدودين (بنود تتمدد ثم لوحات)')
+  assert.ok(/grid-template-rows: minmax\(0, auto\) minmax\(0, 1fr\)/.test(docGrid) && /align-items: stretch/.test(docGrid),
+    'صفّا الجسم ليسا: بنود بستة سطور ثم لوحات تملأ الباقي')
   const scroll = ruleOf('.invoice-editor .invoice-lines-panel .overflow-x-auto')
   assert.ok(/flex: 1/.test(scroll) && /max-height: none/.test(scroll) && /overflow: auto/.test(scroll), 'جدول البنود لا يُمرَّر داخلياً — سيدفع بقية الفاتورة خارج الشاشة')
   assert.ok(/repeat\(3, minmax\(0, 1fr\)\)/.test(ruleOf('.invoice-pos-document .invoice-totals-footer')), 'اللوحات الثلاث ليست في صف واحد كالنموذج')
   const panel = ruleOf('.invoice-pos-document .invoice-doc-panel')
-  assert.ok(/max-height/.test(panel) && /overflow: hidden/.test(panel), 'اللوحات السفلية بلا سقف ارتفاع — تدفع شريط الحالة خارج الشاشة')
+  assert.ok(/max-height: 100%/.test(panel) && /overflow: hidden/.test(panel), 'اللوحات السفلية لا تملأ المساحة المحرَّرة من الجدول')
   for (const narrow of ['820px', '620px']) {
     assert.ok(css.replace(/\s+/g, ' ').includes(`@media (max-width: ${narrow}) { .invoice-pos-document .invoice-totals-footer`), `لا تتكيف اللوحات مع مقاس ${narrow}`)
   }
@@ -205,16 +206,17 @@ const ruleOf = (selector) => {
   const scale = ruleOf('html:has(.invoice-doc.invoice-pos-root)')
   assert.ok(/clamp\(17px, calc\(\.72vw \+ \.86vh\), 32px\)/.test(scale), 'مقياس جذر النموذج غير مطبَّق — ستبقى الفاتورة أصغر من المعتمد')
   // السطور الفارغة في النموذج ورقة إكسل: مربعات إدخال مرئية في كل سطر لا فراغ
-  assert.ok(table.includes('invoice-line-ghost-in') && table.includes("ghostBox('qty')") && table.includes("ghostBox('price')"),
-    'السطور الفارغة بلا مربعات إدخال مرئية (كمية/سعر) كالنموذج')
+  // قرار المالك (⑩ز): السطور الفارغة نظيفة تماماً — لا مربعات ولا تسطيرات، والنقر عليها يفتح البحث
+  assert.ok(!table.includes('invoice-line-ghost-in') && !css.includes('.invoice-line-ghost-in'), 'عادت مربعات الإدخال (التسطيرات) في السطور الفارغة')
+  assert.ok(table.includes("ghostCell('qty'") && table.includes("ghostCell('price'"), 'خلايا السطر الفارغ غير مرسومة')
+  assert.ok(/data-ghost-field=\{label\}/.test(table) && /openPicker\(\)/.test(table), 'النقر على خلية فارغة لا يفتح بحث الصنف')
   assert.ok(!table.includes('colSpan={Math.max(1, columnCount'), 'عادت خلية colSpan العملاقة بدل خلايا السطر الحقيقية')
-  const ghostIn = ruleOf('.invoice-line-ghost-in')
-  assert.ok(/border: 1px solid var\(--doc-line\)/.test(ghostIn) && /monospace/.test(ghostIn), 'مربع السطر الفارغ ليس بمظهر خلية النموذج (.cell-in)')
+
   // عدد السطور يملأ منطقة البنود: أحد عشر على شاشة المرجع، وأكثر/أقل بحسب الارتفاع
-  assert.ok(table.includes('ResizeObserver') && table.includes('fitRows'), 'عدد السطور الفارغة لا يتكيّف مع ارتفاع منطقة البنود')
-  assert.ok(/TARGET_VISIBLE_ROWS = 11/.test(table), 'عدد سطور النموذج المرجعي ليس أحد عشر')
-  assert.ok(/MIN_VISIBLE_ROWS = 5/.test(table), 'اختفى الحد الأدنى: خمسة سطور فارغة دائماً')
-  R.ok('مقياس النموذج: جذر يكبر مع الشاشة · سطور فارغة بمربعات إدخال مرئية · عددها يملأ منطقة البنود بلا قصّ')
+  assert.ok(table.includes('ResizeObserver') && table.includes('boxMaxHeight'), 'ارتفاع الجدول لا يُقاس من ارتفاع سطر حقيقي — قد يظهر نصف سطر مقطوع')
+  assert.ok(/TARGET_VISIBLE_ROWS = 6/.test(table) && /MIN_VISIBLE_ROWS = 6/.test(table), 'عدد السطور الظاهرة ليس ستة')
+  assert.ok(/Math\.max\(1, VISIBLE_ROWS - lines\.length\)/.test(table), 'لا يبقى سطر إدخال واحد على الأقل عند امتلاء الجدول')
+  R.ok('مقياس النموذج: جذر يكبر مع الشاشة · ستة سطور نظيفة بلا تسطيرات · ما زاد يُمرَّر داخلياً')
 }
 
 R.done()

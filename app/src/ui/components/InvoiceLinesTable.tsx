@@ -158,9 +158,10 @@ function decimalDraft(value: string): string {
 }
 
 /** أقل عدد سطور ظاهرة في جدول البنود — تبقى الشاشة ثابتة ولا «تقفز» مع أول صنف */
-const MIN_VISIBLE_ROWS = 5
-/** عدد السطور الذي يملأ منطقة البنود في المستند الكامل — كالنموذج المعتمد */
-const TARGET_VISIBLE_ROWS = 11
+const MIN_VISIBLE_ROWS = 6
+/** ستة سطور ظاهرة في جدول الأصناف — وما زاد يُمرَّر داخلياً (قرار المالك) */
+const TARGET_VISIBLE_ROWS = 6
+const VISIBLE_ROWS = Math.max(MIN_VISIBLE_ROWS, TARGET_VISIBLE_ROWS)
 
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
@@ -174,21 +175,25 @@ export function InvoiceLinesTable({
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  /* النموذج المعتمد يُبقي أحد عشر سطراً مرئية لأن مقاساته كلها نسبية بالشاشة.
-     هنا نقيس منطقة البنود فعلياً ونرسم عدد السطور الذي يملؤها تماماً: أحد عشر
-     على شاشة المرجع، وأكثر على الشاشات الأطول، وأقل على القصيرة — فلا يختفي
-     سطر خلف شريط تمرير ولا يبقى فراغ ميت أسفل الجدول. */
+  /* قرار المالك (⑩ز): **ستة سطور** ظاهرة في جدول الأصناف وما زاد عليها يُمرَّر
+     داخلياً. الارتفاع يُقاس من ارتفاع سطر حقيقي لا من قيمة ثابتة، فيظهر ستة
+     سطور كاملة على كل مقاس شاشة بلا نصف سطر مقطوع، والمساحة الباقية تذهب
+     للوحات الثلاث أسفل الجدول. */
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [fitRows, setFitRows] = useState(TARGET_VISIBLE_ROWS)
+  const [boxMaxHeight, setBoxMaxHeight] = useState<number | undefined>(undefined)
   useEffect(() => {
     const box = scrollRef.current
     if (!box || typeof ResizeObserver === 'undefined') return
     const measure = () => {
       const head = box.querySelector('thead')?.getBoundingClientRect().height ?? 0
-      const sample = box.querySelector('tbody tr')?.getBoundingClientRect().height ?? 0
-      if (sample < 8) return
-      const fits = Math.floor((box.clientHeight - head) / sample)
-      setFitRows(Math.max(MIN_VISIBLE_ROWS, Math.min(24, fits)))
+      const rows = [...box.querySelectorAll<HTMLTableRowElement>('tbody tr')].slice(0, VISIBLE_ROWS)
+      if (rows.length === 0) return
+      const sum = rows.reduce((total, row) => total + row.getBoundingClientRect().height, 0)
+      const last = rows[rows.length - 1]?.getBoundingClientRect().height ?? 0
+      const filler = last * (VISIBLE_ROWS - rows.length)
+      const next = Math.ceil(head + sum + filler + 1)
+      if (next < 40) return
+      setBoxMaxHeight((current) => (current && Math.abs(current - next) <= 1 ? current : next))
     }
     measure()
     const observer = new ResizeObserver(measure)
@@ -286,7 +291,7 @@ export function InvoiceLinesTable({
           </div>}
         </div>
       </div>
-      <div className="overflow-x-auto" ref={scrollRef}>
+      <div className="overflow-x-auto" ref={scrollRef} style={boxMaxHeight ? { maxHeight: boxMaxHeight } : undefined}>
         <table className="invoice-lines-table w-full min-w-[58rem] table-fixed text-sm" data-columns={columnCount}>
           <thead className="bg-slate-50 dark:bg-slate-800/60">
             <tr className="text-[11px] font-black text-slate-500 dark:text-slate-300">
@@ -355,19 +360,13 @@ export function InvoiceLinesTable({
             {/* السطور الفارغة في النموذج المعتمد ليست فراغاً: لكل سطر نفس خلايا السطر
                 الحقيقي بمربعات إدخال مرئية (كمية · سعر · خصم) تماماً كورقة الإكسل،
                 والكتابة في أي منها تفتح بحث الصنف لأن الكمية بلا صنف لا معنى لها. */}
-            {Array.from({ length: Math.max(MIN_VISIBLE_ROWS, fitRows - lines.length) }, (_, ghostIndex) => {
+            {Array.from({ length: Math.max(1, VISIBLE_ROWS - lines.length) }, (_, ghostIndex) => {
               const openPicker = () => window.dispatchEvent(new Event('shopsys:open-item'))
-              const ghostBox = (label: string) => (
-                <input
-                  className="invoice-line-ghost-in"
-                  type="text"
-                  readOnly
-                  tabIndex={-1}
-                  aria-hidden="true"
-                  value=""
-                  onFocus={openPicker}
-                  onMouseDown={(event) => { event.preventDefault(); openPicker() }}
+              const ghostCell = (label: string, extra = '') => (
+                <td
+                  className={`p-1 align-middle ${extra}`}
                   data-ghost-field={label}
+                  onMouseDown={(event) => { event.preventDefault(); openPicker() }}
                 />
               )
               return (
@@ -387,12 +386,12 @@ export function InvoiceLinesTable({
                 </td>
                 {lineWarehouseMode && <td className={`p-1 ${COL.warehouse}`} />}
                 {kind === 'purchase' && mode !== 'simple'
-                  ? <><td className={`num-cell p-1 align-middle ${COL.qty}`}>{ghostBox('ordered')}</td><td className={`num-cell p-1 align-middle ${COL.qty}`}>{ghostBox('qty')}</td><td className={`num-cell p-1 align-middle ${COL.qty}`}>{ghostBox('rejected')}</td></>
-                  : <td className={`num-cell p-1 align-middle ${COL.qty}`}>{ghostBox('qty')}</td>}
+                  ? <>{ghostCell('ordered', `num-cell ${COL.qty}`)}{ghostCell('qty', `num-cell ${COL.qty}`)}{ghostCell('rejected', `num-cell ${COL.qty}`)}</>
+                  : ghostCell('qty', `num-cell ${COL.qty}`)}
                 {columns.unit && <td className={`unit-cell p-1 ${COL.unit}`} />}
-                <td className={`num-cell price-cell p-1 align-middle ${COL.price}`}>{ghostBox('price')}</td>
-                {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}>{ghostBox('discount')}</td>}
-                {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}>{ghostBox('vat')}</td>}
+                {ghostCell('price', `num-cell price-cell ${COL.price}`)}
+                {kind === 'sale' && ghostCell('discount', `num-cell ${COL.percent}`)}
+                {kind === 'purchase' && mode !== 'simple' && ghostCell('vat', `num-cell ${COL.percent}`)}
                 {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`p-1 ${COL.money}`} /><td className={`p-1 ${COL.money}`} /></>}
                 {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`p-1 ${COL.money}`} />}
                 {columns.tax && <td className={`p-1 ${COL.tax}`} />}

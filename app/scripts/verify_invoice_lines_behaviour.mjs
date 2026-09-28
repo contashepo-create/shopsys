@@ -58,5 +58,28 @@ check('سلسلة الإدخال بلا فأرة محفوظة في الجدول'
   assert.ok(/data-enter-native="true"/.test(pickers), 'Enter العام لا يُترك ينقل التركيز بعد الاختيار')
 })
 
-console.log(`✅ سلوك جدول الأصناف — ${checks.length}/5`)
+check('ستة سطور نظيفة والمساحة الباقية للوحات الثلاث (⑩ز)', () => {
+  assert.ok(/const VISIBLE_ROWS = Math\.max\(MIN_VISIBLE_ROWS, TARGET_VISIBLE_ROWS\)/.test(table) && /MIN_VISIBLE_ROWS = 6/.test(table),
+    'عدد السطور الظاهرة ليس ستة')
+  assert.ok(/rows\.reduce/.test(table) && /setBoxMaxHeight/.test(table), 'ارتفاع الجدول غير مقيس من ارتفاع السطور — قد يظهر نصف سطر')
+  assert.ok(!/invoice-line-ghost-in/.test(table) && !/invoice-line-ghost-in/.test(css), 'عادت مربعات (تسطيرات) السطور الفارغة')
+  assert.ok(/ghostCell = \(label: string/.test(table) && /onMouseDown=\{\(event\) => \{ event\.preventDefault\(\); openPicker\(\) \}\}/.test(table),
+    'خلايا السطر الفارغ لا تفتح بحث الصنف بالنقر')
+  const grid = css.match(/\.invoice-pos-document \.invoice-body-grid \{[^}]*\}/)?.[0] ?? ''
+  assert.ok(/grid-template-rows: minmax\(0, auto\) minmax\(0, 1fr\)/.test(grid), 'اللوحات لا تأخذ المساحة المحرَّرة من الجدول')
+  const panel = css.match(/\.invoice-pos-document \.invoice-doc-panel \{[^}]*\}/)?.[0] ?? ''
+  assert.ok(/max-height: 100%/.test(panel) && /height: 100%/.test(panel), 'اللوحات الثلاث لا تملأ ارتفاع صفّها')
+  assert.ok(/\.invoice-doc \.invoice-doc-amountfield \{ height: 2\.1rem; \}/.test(css), 'حقل المبلغ لم يكبر')
+})
+
+check('لا نص يُبتر بثلاث نقاط في المستند (تكيّف كامل مع المقاس)', () => {
+  for (const selector of ['.invoice-doc .invoice-doc-fields .field-head > label', '.invoice-doc .invoice-doc-identity > small, .invoice-doc .invoice-doc-identity small',
+    '.invoice-doc .invoice-lines-hint', '.invoice-doc .invoice-doc-party .invoice-doc-metric > b']) {
+    const head = selector.split(',')[0].trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const rule = css.match(new RegExp(`${head}[^{]*\\{[^}]*\\}`))?.[0] ?? ''
+    assert.ok(/text-overflow: clip/.test(rule) && /white-space: normal/.test(rule), `ما زال يُبتر: ${selector}`)
+  }
+})
+
+console.log(`✅ سلوك جدول الأصناف — ${checks.length}/7`)
 checks.forEach((name, i) => console.log(`   ${i + 1}. ${name}`))

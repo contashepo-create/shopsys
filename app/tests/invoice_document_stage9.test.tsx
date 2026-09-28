@@ -109,12 +109,15 @@ describe('جدول بنود الفاتورة في الوضع الحي', () => {
     />,
   )
 
-  it('يملأ الجدول أحد عشر سطراً كالنموذج المعتمد ولا يقلّ الفراغ عن خمسة سطور', () => {
+  it('ستة سطور في جدول الأصناف بلا مربعات في السطور الفارغة (قرار المالك ⑩ز)', () => {
     const view = renderTable()
-    /* النموذج المعتمد يبقي الجدول ممتلئاً (11 سطراً) فلا تقفز الشاشة مع أول صنف،
-       ومهما امتلأت البنود يبقى أمام الكاشير خمسة سطور فارغة جاهزة للكتابة. */
-    expect(view.container.querySelectorAll('tbody tr').length).toBe(11)
-    expect(view.container.querySelectorAll('tr.invoice-line-ghost').length).toBe(10)
+    /* ستة سطور ظاهرة فقط وما زاد عليها يُمرَّر داخلياً، والسطور الفارغة نظيفة
+       تماماً: لا مربعات إدخال ولا تسطيرات — والنقر على أي خلية يفتح بحث الصنف. */
+    const real = view.container.querySelectorAll('tr[data-entry-row]').length
+    expect(view.container.querySelectorAll('tbody tr').length).toBe(6)
+    expect(view.container.querySelectorAll('tr.invoice-line-ghost').length).toBe(6 - real)
+    expect(view.container.querySelectorAll('tr.invoice-line-ghost input').length).toBe(1)
+    expect(view.container.querySelectorAll('tr.invoice-line-ghost td[data-ghost-field]').length).toBeGreaterThan(0)
   })
 
   it('مربع البحث داخل خلية اسم أول سطر فارغ — لا شريط بحث منفصل', () => {
