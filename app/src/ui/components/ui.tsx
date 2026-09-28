@@ -67,9 +67,24 @@ export function Btn({
   )
 }
 
+/**
+ * حقل نموذج. `icon` و`badge` اختياريان ويُستعملان في لغة المستند (الفاتورة والسندات):
+ * أيقونة صغيرة قبل التسمية، وشارة معلومة في طرف السطر (كود العميل، «صافي 30»، «متوفر»…).
+ * بدونهما يبقى الشكل القديم حرفياً كي لا تتأثر بقية الشاشات.
+ */
 export function Field({
-  label, children, hint,
-}: { label: string; children: ReactNode; hint?: string }) {
+  label, children, hint, icon, badge, badgeTone,
+}: { label: string; children: ReactNode; hint?: string; icon?: ReactNode; badge?: ReactNode; badgeTone?: 'accent' | 'ok' | 'warn' }) {
+  if (icon || badge) return (
+    <div className="form-field">
+      <div className="field-head">
+        <label>{icon}{label}</label>
+        {badge && <span className={`field-badge${badgeTone ? ` is-${badgeTone}` : ''}`}>{badge}</span>}
+      </div>
+      {children}
+      {hint && <p className="text-[10px] text-slate-400 mt-1">{hint}</p>}
+    </div>
+  )
   return (
     <div className="form-field">
       <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">{label}</label>

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeft, CircleHelp, Eye, FileCheck2, FileClock, Fingerprint, Hash, MonitorSmartphone, MoreVertical, Printer, Save, Search, PackageSearch, ReceiptText } from 'lucide-react'
+import { ArrowLeft, Barcode, CheckCheck, CircleHelp, Eye, FileClock, FileText, Fingerprint, Hash, MessageSquare, MoreVertical, Printer, Save, Search, SlidersHorizontal } from 'lucide-react'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { Btn } from './ui.tsx'
@@ -13,7 +13,11 @@ type InvoicePOSFrameProps = {
   userLabel: string
   activityLabel: string
   headerFields: ReactNode
+  /** شريط المرجع الخارجي أسفل الحقول (أمر شراء العميل / بوليصة شحن) */
+  referenceBar?: ReactNode
   partyProfile?: ReactNode
+  /** بطاقة «الصنف المختار» بجانب بطاقة رصيد الطرف */
+  itemProfile?: ReactNode
   itemEntry: ReactNode
   /** رقم المستند إن وُجد (تعديل فاتورة مرحّلة)؛ وإلا «مسودة» */
   documentNumber?: string
@@ -33,17 +37,19 @@ type InvoicePOSFrameProps = {
 }
 
 /**
- * سطح الفاتورة بشكل «مستند مكتبي» (طلب المالك — الشكل المرجعي المرفق):
+ * سطح الفاتورة على **التصميم المرجعي الذي أرسله المالك** (2026-09-28):
  *
- *   ① شريط علوي **واحد** مضغوط: أدوات المستند · رقم الفاتورة وحالتها · أزرار
- *      حفظ المسودة والمعاينة والاعتماد (كان شريطين متراكمين يأكلان ثلث الشاشة).
- *   ② بطاقة رأس بشريط بيانات رفيع (الدفتر · الحالة · المسلسل · الرقم الضريبي)
- *      ثم **شريط الطرف** بعرض المستند (الاسم وحالته ومؤشراته في سطر) ثم شبكة
- *      الحقول بعرض كامل — كان عمود الطرف الجانبي يضغط الحقول في ثلاثة أسطر.
- *   ③ شريط إضافة صنف رفيع، ثم جدول البنود، ثم اللوحات الثلاث السفلية.
+ *   ① شريط علوي واحد: أدوات المستند · صندوق رقم الفاتورة بخط أحادي وشارة حالتها ·
+ *      ثلاثة أزرار (حفظ مسودة · معاينة · اعتماد وترحيل).
+ *   ② بطاقة الرأس: شريط بيانات رفيع (الدفتر · الحالة · المسلسل · الرقم الضريبي)
+ *      ثم شبكة: **حقول بعمودين/ثلاثة على اليمين** وبطاقتا مؤشرات على اليسار
+ *      (رصيد الطرف بشريط استهلاك الائتمان · الصنف المختار)، وتحتها شريط
+ *      المرجع الخارجي المتقطع.
+ *   ③ شريط بحث/باركود عريض، ثم جدول البنود، ثم ثلاث لوحات: الشروط · التحصيل ·
+ *      ملخص الحسابات.
  *   ④ شريط إجراءات لاصق أسفل الشاشة.
  *
- * كل المقاسات من طبقة `invoice-doc-*` في `index.css` — لا مقاسات محفورة هنا.
+ * كل المقاسات والألوان من طبقة `invoice-doc-*` في `index.css` (متغيرات `--doc-*`).
  */
 export function InvoicePOSFrame({
   kind,
@@ -54,7 +60,9 @@ export function InvoicePOSFrame({
   userLabel,
   activityLabel,
   headerFields,
+  referenceBar,
   partyProfile,
+  itemProfile,
   itemEntry,
   documentNumber,
   postAmountLabel,
@@ -91,12 +99,13 @@ export function InvoicePOSFrame({
 
   return (
     <div className={`invoice-doc invoice-editor invoice-pos-root invoice-pos-${kind}`} dir="rtl">
-      {/* ① شريط علوي واحد: أدوات + هوية المستند + أزرار الاعتماد */}
+      {/* ① الشريط العلوي: أدوات · رقم المستند وحالته · أزرار الاعتماد */}
       <header className="invoice-doc-topbar">
         <div className="invoice-doc-utility-tools">
           <button type="button" className="invoice-doc-close" onClick={onBack} aria-label="إغلاق المستند والعودة" title="إغلاق المستند"><ArrowLeft size={15} /></button>
           <button type="button" data-doc-menu aria-label="إجراءات المستند" title="إجراءات المستند" onClick={() => setMenuOpen((v) => !v)}><MoreVertical size={14} /></button>
-          <button type="button" aria-label="معاينة الطباعة" title="معاينة الطباعة" onClick={onPrint}><MonitorSmartphone size={14} /></button>
+          <button type="button" aria-label="معاينة الطباعة" title="معاينة الطباعة" onClick={onPrint}><Printer size={14} /></button>
+          <button type="button" aria-label="محادثة الدعم" title="الدعم الفني" onClick={() => onNavigate('/support')}><MessageSquare size={14} /></button>
           <button type="button" data-doc-help aria-label="مساعدة الفاتورة" title="كيف تُحرَّر الفاتورة؟" onClick={() => setHelpOpen((v) => !v)}><CircleHelp size={14} /></button>
           {menuOpen && (
             <div className="invoice-doc-menu" data-doc-menu-panel>
@@ -116,8 +125,7 @@ export function InvoicePOSFrame({
         </div>
 
         <div className="invoice-doc-identity">
-          <ReceiptText size={15} />
-          <b data-doc-number>{documentNumber || (sale ? 'فاتورة مبيعات جديدة' : 'فاتورة مشتريات جديدة')}</b>
+          <span className="invoice-doc-numberbox"><FileText size={12} /><b data-doc-number>{documentNumber || (sale ? 'INV — مسودة جديدة' : 'PUR — مسودة جديدة')}</b></span>
           <span className="invoice-doc-status" data-doc-status>{documentNumber ? 'تعديل' : 'مسودة'}</span>
           <small>{modeLabel} · {currencyLabel} · {dateLabel}</small>
         </div>
@@ -126,20 +134,20 @@ export function InvoicePOSFrame({
           <Btn variant="ghost" onClick={onRestoreDraft} title="فتح أي مسودة محفوظة باسم العميل"><FileClock size={13} /> المسودات{draftCount ? ` (${draftCount})` : ''}</Btn>
           <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={13} /> حفظ مسودة</Btn>
           <Btn variant="ghost" onClick={onPrint} shortcut="F6"><Eye size={13} /> معاينة</Btn>
-          <Btn onClick={onPost} shortcut="F9"><FileCheck2 size={13} /> اعتماد وترحيل</Btn>
+          <Btn onClick={onPost} shortcut="F9"><CheckCheck size={13} /> اعتماد وترحيل</Btn>
         </div>
       </header>
 
       <div className="invoice-doc-body">
-        {/* ② بطاقة الرأس: شريط بيانات رفيع ثم الحقول وبطاقة مؤشرات الطرف */}
+        {/* ② بطاقة الرأس: شريط بيانات ثم حقول + بطاقتا مؤشرات */}
         <section className="invoice-doc-card invoice-doc-header-card">
           <div className="invoice-doc-cardbar">
             <div className="invoice-doc-cardbar-main">
-              <span className="invoice-doc-cardbar-icon"><ReceiptText size={11} /></span>
+              <span className="invoice-doc-cardbar-icon"><FileText size={11} /></span>
               <b>بيانات الفاتورة والمعاملة</b>
               <i />
               <span>{ledgerLabel}</span>
-              <span className={`invoice-doc-chip ${documentNumber ? 'is-edit' : 'is-live'}`}>{documentNumber ? 'تعديل مستند مرحّل' : 'قيد التحرير'}</span>
+              <span className={`invoice-doc-chip ${documentNumber ? 'is-edit' : 'is-live'}`}><em />{documentNumber ? 'تعديل مستند مرحّل' : 'قيد التحرير'}</span>
             </div>
             <div className="invoice-doc-cardbar-meta">
               <span><Hash size={10} /> المسلسل: <strong>{serial}</strong></span>
@@ -147,18 +155,27 @@ export function InvoicePOSFrame({
             </div>
           </div>
           <div className="invoice-doc-header-body">
-            {partyProfile && <div className="invoice-doc-party">{partyProfile}</div>}
-            <div className="invoice-doc-fields">{headerFields}</div>
+            <div className="invoice-doc-form">
+              <div className="invoice-doc-fields">{headerFields}</div>
+              {referenceBar && <div className="invoice-doc-refbar">{referenceBar}</div>}
+            </div>
+            <aside className="invoice-doc-side">
+              {partyProfile && <div className="invoice-doc-party">{partyProfile}</div>}
+              {itemProfile && <div className="invoice-doc-itemcard">{itemProfile}</div>}
+            </aside>
           </div>
         </section>
 
-        {/* ③ شريط إضافة صنف سريع */}
+        {/* ③ شريط البحث والباركود */}
         <section className="invoice-doc-card invoice-doc-entry">
-          <div className="invoice-doc-entry-label"><PackageSearch size={14} /> إضافة صنف أو خدمة</div>
-          <div className="invoice-doc-entry-input">{itemEntry}</div>
+          <div className="invoice-doc-entry-input"><Barcode size={14} className="invoice-doc-entry-icon" />{itemEntry}</div>
           <div className="invoice-doc-entry-hints">
-            <button type="button" onClick={onItemSearch}><Search size={12} /> مسح باركود / بحث</button>
-            <span><kbd>Enter</kbd> إضافة · <kbd>F5</kbd> بحث · <kbd>F9</kbd> ترحيل</span>
+            <span className="invoice-doc-kbd">F5</span>
+            <span className="invoice-doc-ready"><i /> جاهز للمسح</span>
+          </div>
+          <div className="invoice-doc-entry-actions">
+            <button type="button" className="is-primary" onClick={onItemSearch}><Search size={12} /> بحث وإضافة</button>
+            <button type="button" onClick={onPartySearch}><SlidersHorizontal size={12} /> بحث {partyWord}</button>
           </div>
         </section>
 
@@ -174,9 +191,9 @@ export function InvoicePOSFrame({
           <span>الطباعة: {browserPrintAvailable ? (autoPrintEnabled ? 'تلقائية بعد البيع' : receipt.defaultTemplate) : 'غير متاحة'}</span>
         </div>
         <div className="invoice-doc-actionbar-buttons">
-          <Btn variant="ghost" onClick={onSaveDraft}>حفظ فقط</Btn>
+          <Btn variant="ghost" onClick={onSaveDraft}><Save size={13} /> حفظ فقط</Btn>
           <Btn variant="ghost" onClick={onPrint}><Printer size={13} /> حفظ ومعاينة</Btn>
-          <Btn onClick={onPost} shortcut="F9" className="invoice-doc-post"><FileCheck2 size={14} /> ترحيل {sale ? 'وتحصيل' : 'وسداد'} {postAmountLabel ?? ''}</Btn>
+          <Btn onClick={onPost} shortcut="F9" className="invoice-doc-post"><CheckCheck size={14} /> ترحيل {sale ? 'وتحصيل' : 'وسداد'} {postAmountLabel ?? ''}</Btn>
         </div>
       </footer>
     </div>

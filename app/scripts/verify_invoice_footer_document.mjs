@@ -93,40 +93,56 @@ const footerOf = (src) => {
   R.ok('قواعد اللوحات وألوان الحالة كلها متغيرات مستند لها بديل ليلي')
 }
 
-/* ④ الرأس مضغوط: عمود واحد، وشريط الطرف بعرض المستند، ولا تكرار للجلسة */
+/* ④ الرأس على تصميم المالك: حقول بثلاثة أعمدة + عمود مؤشرات ببطاقتين، ولا تكرار للجلسة
+      (التصميم المرجعي الذي أرسله المالك 2026-09-28: grid-cols-12 ⇒ 8 حقول + 4 مؤشرات) */
 {
   const body = ruleOf('.invoice-doc-header-body')
-  assert.ok(/flex-direction:\s*column/.test(body), 'رأس المستند ما زال عمودين — بطاقة الطرف تضغط الحقول فتتكدس أسطراً')
-  assert.ok(!/grid-template-columns/.test(body), 'شبكة العمودين عادت إلى رأس المستند')
+  assert.ok(/display:\s*grid/.test(body), 'رأس المستند فقد شبكته — المرجع: عمود حقول وعمود مؤشرات')
+  const cols = body.match(/grid-template-columns:\s*([^;]+);/)?.[1] ?? ''
+  assert.ok(/minmax\(0,\s*1fr\)/.test(cols), `عمود الحقول غير مرن: ${cols}`)
+  assert.ok(/minmax\(min\(/.test(cols), `عمود المؤشرات بحدّ صلب يُفيض الرأس: ${cols}`)
   const pad = Number(body.match(/padding:\s*([\d.]+)rem/)?.[1] ?? 9)
-  assert.ok(pad <= 0.4, `حشوة رأس المستند ${pad}rem كبيرة`)
+  assert.ok(pad <= 0.45, `حشوة رأس المستند ${pad}rem كبيرة`)
   const fields = ruleOf('.invoice-doc-fields')
   const colMin = Number(fields.match(/minmax\(min\(([\d.]+)rem/)?.[1] ?? 99)
-  assert.ok(colMin <= 9, `أدنى عرض لعمود الحقول ${colMin}rem — يفرض أسطراً إضافية في الرأس`)
-  const party = ruleOf('.invoice-doc-party')
-  assert.ok(/border-bottom/.test(party) && !/border-inline-start/.test(party), 'شريط الطرف ما زال عموداً جانبياً')
+  assert.ok(colMin <= 11.5, `أدنى عرض لعمود الحقول ${colMin}rem — لا يتسع لثلاثة حقول في السطر كالمرجع`)
+  assert.ok(/repeat\(auto-fit/.test(ruleOf('.invoice-doc-side')), 'عمود المؤشرات ليس شبكة تنكمش ببطاقتيها')
+  assert.ok(css.includes('.invoice-doc-party, .invoice-doc-itemcard'), 'بطاقتا الطرف والصنف لا تتقاسمان قاعدة واحدة')
+  assert.ok(/border:\s*1px dashed var\(--doc-line\)/.test(ruleOf('.invoice-doc-refbar')), 'شريط المرجع الخارجي بلا إطاره المتقطع')
+  // الإطار نفسه: حقول ثم شريط مرجع، وبجانبها بطاقتا المؤشرات
+  const header = frame.slice(frame.indexOf('invoice-doc-header-body'), frame.indexOf('invoice-doc-entry'))
+  for (const cls of ['invoice-doc-fields', 'invoice-doc-refbar', 'invoice-doc-side', 'invoice-doc-party', 'invoice-doc-itemcard']) {
+    assert.ok(header.includes(cls), `رأس الإطار ينقصه ${cls}`)
+  }
   // الجلسة والاتصال مرة واحدة فقط: في شريط الإجراءات السفلي
   const cardbar = frame.slice(frame.indexOf('invoice-doc-cardbar-meta'), frame.indexOf('invoice-doc-header-body'))
   assert.ok(!cardbar.includes('invoice-doc-cardbar-session'), 'بيانات الجلسة ما زالت مكرَّرة في شريط البطاقة وفي شريط الإجراءات')
   assert.ok(!cardbar.includes('invoice-doc-online'), 'مؤشر الاتصال مكرَّر في رأس المستند وأسفله')
   assert.ok(frame.slice(frame.indexOf('invoice-doc-actionbar-info')).includes('invoice-doc-cardbar-session'), 'بيانات الجلسة اختفت بدل أن تنتقل لشريط الإجراءات')
-  R.ok(`رأس المستند عمود واحد بحشوة ${pad}rem وحقول من ${colMin}rem، وبيانات الجلسة مرة واحدة أسفل الشاشة`)
+  R.ok(`رأس المستند عمودان: حقول من ${colMin}rem بحشوة ${pad}rem + بطاقتا مؤشرات، والجلسة مرة واحدة أسفل الشاشة`)
 }
 
-/* ⑤ حالة الطرف بجوار اسمه لا في خانة مستقلة */
+/* ⑤ بطاقتا المؤشرات كما في المرجع: حالة الطرف بجوار عنوانه وشريط استهلاك، ورقاقة كود للصنف */
 {
   for (const [label, src] of PAGES) {
-    const card = src.slice(src.indexOf('invoice-party-profile-card'), src.indexOf('invoice-party-profile-metrics'))
-    assert.ok(card.includes('invoice-party-state'), `${label}: لا شارة حالة بجوار اسم الطرف`)
+    const card = src.slice(src.indexOf('partyProfile={'), src.indexOf('itemProfile={'))
+    assert.ok(card.includes('invoice-doc-cardhead'), `${label}: بطاقة الطرف بلا رأس بطاقة`)
+    assert.ok(card.includes('invoice-party-state'), `${label}: لا شارة حالة بجوار عنوان بطاقة الطرف`)
     assert.ok(/is-off/.test(card) && /is-cash/.test(card), `${label}: شارة الحالة لا تميّز الموقوف عن النقدي`)
-    const metrics = src.slice(src.indexOf('invoice-party-profile-metrics'))
-    assert.ok(!metrics.slice(0, 1600).includes('<small>حالة الحساب</small>'), `${label}: خانة «حالة الحساب» ما زالت تأكل عموداً بعد نقلها بجوار الاسم`)
-    assert.ok(metrics.slice(0, 1600).includes('الرصيد بعد الترحيل'), `${label}: الخانة المحرَّرة لم تُستثمر في مؤشر الرصيد المتوقع`)
+    assert.ok(card.includes('invoice-doc-gauge'), `${label}: بطاقة الطرف بلا شريط نسبة (استهلاك ائتمان / نسبة سداد)`)
+    assert.ok(card.includes('الرصيد السابق'), `${label}: بطاقة الطرف بلا «الرصيد السابق»`)
+    assert.ok(card.includes('الرصيد بعد الترحيل'), `${label}: بطاقة الطرف بلا مؤشر الرصيد المتوقع`)
+    assert.ok(!card.includes('<small>حالة الحساب</small>'), `${label}: خانة «حالة الحساب» عادت تأكل سطراً بعد نقلها بجوار العنوان`)
     assert.ok(src.includes('partyCreditTone('), `${label}: نغمة الحالة لا تأتي من دالة واحدة`)
+    const item = src.slice(src.indexOf('itemProfile={'), src.indexOf('itemProfile={') + 2200)
+    assert.ok(item.includes('الصنف المختار'), `${label}: لا بطاقة «الصنف المختار» بجوار بطاقة الطرف`)
+    assert.ok(item.includes('field-badge is-accent'), `${label}: بطاقة الصنف بلا رقاقة كود SKU`)
+    assert.ok(item.includes('focusedItem'), `${label}: بطاقة الصنف لا تتبع آخر سطر مضاف`)
   }
   const state = ruleOf('.invoice-party-state')
   assert.ok(state.includes('--doc-ok'), 'شارة الحالة بلون محفور بدل متغير المستند')
-  R.ok('حالة الطرف شارة ملوّنة بجوار اسمه، والخانة المحرَّرة صارت «الرصيد بعد الترحيل»')
+  assert.ok(ruleOf('.invoice-doc-gauge-fill').includes('--doc-accent'), 'شريط النسبة بلون محفور')
+  R.ok('بطاقتا المؤشرات: حالة الطرف بجوار عنوانه مع شريط النسبة، وبطاقة الصنف المختار برقاقة كوده')
 }
 
 /* ⑥ فحص وظيفي: نغمة الحد الائتماني تحكم على الرصيد المتوقع لا الحالي */
