@@ -1,4 +1,6 @@
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
+import { documentKindLabel } from '../../core/openPartyDocuments.ts'
+import { COMMON_FX_CURRENCIES, convertFxToBookMinor, describeFxLeg, formatRate, parseRateToPpm, validateFxLeg, type FxLeg } from '../../core/foreignCurrency.ts'
 /**
  * سندات القبض والصرف (المرحلة 4) —
  * قبض: نقدية داخلة (سداد عميل، إيراد آخر، رأس مال…)
@@ -69,6 +71,11 @@ export function VouchersPage() {
   const [terminalPayment, setTerminalPayment] = useState<TerminalPaymentDraft>({ terminalId: '', providerReference: '', cardLast4: '' })
   const [counter, setCounter] = useState('')
   const [amount, setAmount] = useState('')
+  /* العملة الثانية داخل السند: يُدخل المبلغ الأجنبي وسعر الصرف، والمرحَّل حاصل التحويل بعملة الدفتر */
+  const [fxOn, setFxOn] = useState(false)
+  const [fxCode, setFxCode] = useState('USD')
+  const [fxAmount, setFxAmount] = useState('')
+  const [fxRate, setFxRate] = useState('')
   const [voucherDate, setVoucherDate] = useState(new Date().toISOString().slice(0, 10))
   const [desc, setDesc] = useState('')
   const [quickAccountOpen, setQuickAccountOpen] = useState(false)
@@ -229,7 +236,18 @@ export function VouchersPage() {
   // مورد أو راتب أو مسحوبات. مصروف فاتورة الشراء له حقله المستقل أدناه.
   const canLinkVehicle = kind === 'payment' && !isPurchaseExpense && (counter === '5108' || counter === '2117' || isCustomExpense)
   const canLinkCostCenter = kind === 'payment' && !isPurchaseExpense && (counter.startsWith('5') || isCustomExpense)
-  const parsedAmountMinor = (() => { try { return toMinor(amount || '0', cur.decimals) } catch { return 0 } })()
+  const manualAmountMinor = (() => { try { return toMinor(amount || '0', cur.decimals) } catch { return 0 } })()
+  /* ساق العملة الأجنبية: المبلغ بعملة الدفتر يُشتق من (المبلغ الأجنبي × سعر الصرف) فلا يختلف المعروض عن المرحَّل */
+  const fxDecimals = (COMMON_FX_CURRENCIES.find((row) => row.code === fxCode)?.decimals ?? 2) as 0 | 2 | 3
+  const fxLeg: FxLeg = {
+    currencyCode: fxCode.trim().toUpperCase(),
+    amountMinor: (() => { try { return toMinor(fxAmount || '0', fxDecimals) } catch { return 0 } })(),
+    ratePpm: parseRateToPpm(fxRate),
+    decimals: fxDecimals,
+  }
+  const fxErrors = fxOn ? validateFxLeg(fxLeg, cur.code) : []
+  const fxBookMinor = fxOn && fxErrors.length === 0 ? convertFxToBookMinor(fxLeg, cur.decimals) : 0
+  const parsedAmountMinor = fxOn ? fxBookMinor : manualAmountMinor
   const selectedPartyName = needsParty && partyId > 0
     ? (kind === 'receipt' ? customers.find((customer) => customer.id === partyId)?.nameAr : suppliers.find((supplier) => supplier.id === partyId)?.nameAr) ?? ''
     : ''
@@ -315,9 +333,12 @@ export function VouchersPage() {
         kind,
         treasury: selectedTerminal?.settlementAccountCode ?? treasury,
         counterAccountCode: counter,
-        amountMinor: toMinor(amount || '0', cur.decimals),
+        amountMinor: parsedAmountMinor,
         description: desc.trim(),
         date: voucherDate,
+        fx: fxOn ? fxLeg : undefined,
+        bookDecimals: cur.decimals,
+        bookCurrencyCode: cur.code,
         partyKind: needsParty ? (kind === 'receipt' ? 'customer' : 'supplier') : null,
         partyId: needsParty ? partyId : null,
         allocations: manualAllocations,
@@ -494,8 +515,31 @@ export function VouchersPage() {
               <div className="col-span-12 space-y-2 rounded-lg doc-tint p-3 lg:col-span-4">
                 <div className="flex items-center justify-between text-sm font-bold doc-ink"><span>{kind === 'receipt' ? 'المبلغ الإجمالي المقبوض' : 'قيمة سند الصرف'}</span><span className="rounded doc-band px-2 py-0.5 text-[10px] doc-accent-deep">{cur.code} · {cur.symbol}</span></div>
                 <div className="flex items-baseline gap-2 rounded-lg doc-card px-3 py-2 shadow-inner doc-ring">
-                  <input data-voucher-amount="true" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" className="w-full bg-transparent text-left font-mono text-3xl font-bold tracking-tight doc-ink outline-none" dir="ltr" inputMode="decimal" autoFocus />
+                  <input data-voucher-amount="true" value={fxOn ? (fxBookMinor ? (fxBookMinor / 10 ** cur.decimals).toFixed(cur.decimals) : '') : amount} onChange={(e) => setAmount(e.target.value)} readOnly={fxOn} title={fxOn ? 'المبلغ محسوب من العملة الأجنبية وسعر الصرف' : undefined} placeholder="0.00" className={`w-full bg-transparent text-left font-mono text-3xl font-bold tracking-tight doc-ink outline-none${fxOn ? ' opacity-80' : ''}`} dir="ltr" inputMode="decimal" autoFocus />
                   <span className="whitespace-nowrap text-sm font-bold doc-muted">{cur.symbol}</span>
+                </div>
+
+                {/* ── عملة ثانية داخل السند: الدفتر يبقى بعملته والمرحَّل حاصل التحويل ── */}
+                <div className="space-y-2 rounded-lg doc-card doc-ring p-2.5" data-voucher-fx>
+                  <label className="flex items-center gap-2 text-[11px] font-bold doc-ink">
+                    <input type="checkbox" checked={fxOn} onChange={(event) => { setFxOn(event.target.checked); if (!event.target.checked) { setFxAmount(''); setFxRate('') } }} className="h-4 w-4 accent-[color:var(--doc-accent)]" />
+                    {kind === 'receipt' ? 'التحصيل بعملة أجنبية' : 'السداد بعملة أجنبية'}
+                  </label>
+                  {fxOn && <>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <QuickSelect value={fxCode} onChange={(event) => setFxCode(event.target.value)} className="h-9 rounded border doc-line doc-card px-1.5 text-[11px] font-bold doc-ink" aria-label="عملة السند">
+                        {COMMON_FX_CURRENCIES.filter((row) => row.code !== cur.code).map((row) => <option key={row.code} value={row.code}>{row.code} — {row.nameAr}</option>)}
+                      </QuickSelect>
+                      <input value={fxAmount} onChange={(event) => setFxAmount(event.target.value)} placeholder="المبلغ" aria-label="المبلغ بالعملة الأجنبية" className="h-9 rounded border doc-line doc-card px-2 text-left font-mono text-xs font-bold doc-ink" dir="ltr" inputMode="decimal" />
+                      <input value={fxRate} onChange={(event) => setFxRate(event.target.value)} placeholder="سعر الصرف" aria-label="سعر صرف الوحدة بعملة الدفتر" className="h-9 rounded border doc-line doc-card px-2 text-left font-mono text-xs font-bold doc-ink" dir="ltr" inputMode="decimal" />
+                    </div>
+                    {fxErrors.length > 0
+                      ? <div className="rounded doc-tint px-2 py-1.5 text-[10px] font-bold text-rose-600">{fxErrors.join(' — ')}</div>
+                      : fxBookMinor > 0
+                        ? <div className="rounded doc-band px-2 py-1.5 text-[10px] font-bold doc-accent-deep" dir="ltr">{describeFxLeg(fxLeg, fxBookMinor, cur.decimals)} {cur.code}</div>
+                        : <div className="rounded doc-tint px-2 py-1.5 text-[10px] doc-muted">اكتب المبلغ الأجنبي وسعر صرف الوحدة ليُحسب المرحَّل بعملة الدفتر.</div>}
+                    <p className="text-[9.5px] leading-4 doc-faint">الدفتر أحادي العملة: القيد يُرحَّل بـ{cur.code} بحاصل التحويل، ويُحفظ المبلغ الأجنبي وسعره على السند وفي وصف القيد للمراجعة. الذمة تنقص بالمحوَّل فقط.</p>
+                  </>}
                 </div>
                 {parsedAmountMinor > 0 && <div className="flex items-start gap-1.5 rounded doc-band px-2 py-1.5 text-[10px] leading-5 doc-accent-deep"><FileText size={14} className="mt-0.5 shrink-0" /><span>{amountInWords(parsedAmountMinor, cur)}</span></div>}
               </div>
@@ -523,7 +567,7 @@ export function VouchersPage() {
 
             {needsParty && partyId > 0 && partyInvoices.length > 0 && <section className="overflow-hidden rounded-xl doc-card doc-ring">
               <div className="flex flex-wrap items-center justify-between gap-2 doc-band px-4 py-3">
-                <h3 className="flex items-center gap-2 text-sm font-bold doc-ink"><ReceiptText size={18} className="doc-accent" /> جدول تخصيص وتسوية {kind === 'receipt' ? 'فواتير البيع' : 'فواتير الشراء'}</h3>
+                <h3 className="flex items-center gap-2 text-sm font-bold doc-ink"><ReceiptText size={18} className="doc-accent" /> جدول تخصيص وتسوية {kind === 'receipt' ? 'مستندات العميل' : 'مستندات الشراء'}</h3>
                 <button type="button" className="rounded doc-card px-3 py-1.5 text-[10px] font-bold doc-accent hover:doc-sheet" onClick={() => setAllocationDraft(Object.fromEntries(partyInvoices.map((invoice) => [invoice.docKey, fmt(invoice.dueMinor - invoice.settledMinor).replaceAll(',', '')])))}>تسوية تلقائية FIFO</button>
               </div>
               <div className="max-h-64 overflow-auto">
@@ -533,7 +577,7 @@ export function VouchersPage() {
                     {partyInvoices.map((invoice) => {
                       const remaining = invoice.dueMinor - invoice.settledMinor
                       const applied = parseAllocationAmount(allocationDraft[invoice.docKey] || '')
-                      return <tr key={invoice.docKey} className="hover:opacity-90"><td className="px-3 py-2"><input type="checkbox" checked={applied > 0} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.checked ? fmt(remaining).replaceAll(',', '') : '' }))} className="h-4 w-4 accent-[color:var(--doc-accent)]" /></td><td className="px-3 py-2 font-bold doc-ink">{invoice.docLabel}</td><td className="px-3 py-2 font-mono doc-muted">{invoice.date.slice(0, 10)}</td><td className="px-3 py-2 text-left font-mono">{fmt(invoice.dueMinor + invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono doc-faint">{fmt(invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono font-bold text-rose-600">{fmt(remaining)}</td><td className="doc-band/50 px-3 py-2 text-left"><input className="h-8 w-28 rounded border doc-line doc-card px-2 text-left font-mono font-bold" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="0" inputMode="decimal" /></td><td className="px-3 py-2 text-left font-mono font-bold doc-accent">{fmt(Math.max(0, remaining - applied))}</td></tr>
+                      return <tr key={invoice.docKey} className="hover:opacity-90"><td className="px-3 py-2"><input type="checkbox" checked={applied > 0} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.checked ? fmt(remaining).replaceAll(',', '') : '' }))} className="h-4 w-4 accent-[color:var(--doc-accent)]" /></td><td className="px-3 py-2 font-bold doc-ink">{invoice.docLabel}<span className="ms-1.5 rounded doc-tint px-1.5 py-0.5 text-[9.5px] font-bold doc-muted">{documentKindLabel(invoice.docKey)}</span></td><td className="px-3 py-2 font-mono doc-muted">{invoice.date.slice(0, 10)}</td><td className="px-3 py-2 text-left font-mono">{fmt(invoice.dueMinor + invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono doc-faint">{fmt(invoice.settledMinor)}</td><td className="px-3 py-2 text-left font-mono font-bold text-rose-600">{fmt(remaining)}</td><td className="doc-band/50 px-3 py-2 text-left"><input className="h-8 w-28 rounded border doc-line doc-card px-2 text-left font-mono font-bold" value={allocationDraft[invoice.docKey] ?? ''} onChange={(event) => setAllocationDraft((draft) => ({ ...draft, [invoice.docKey]: event.target.value }))} placeholder="0" inputMode="decimal" /></td><td className="px-3 py-2 text-left font-mono font-bold doc-accent">{fmt(Math.max(0, remaining - applied))}</td></tr>
                     })}
                   </tbody>
                   <tfoot className="doc-tint-strong font-bold doc-ink"><tr><td colSpan={3} className="px-3 py-2">إجمالي التخصيص</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono text-rose-600">{fmt(partyInvoices.reduce((sum, invoice) => sum + invoice.dueMinor - invoice.settledMinor, 0))}</td><td className="px-3 py-2 text-left font-mono doc-ink">{fmt(manualAllocatedMinor)}</td><td className="px-3 py-2" /></tr></tfoot>
@@ -639,6 +683,9 @@ export function VouchersPage() {
                     <span className="text-[11px] doc-muted">{isReceipt ? 'المبلغ المقبوض' : 'المبلغ المصروف'}</span>
                     <b className={`block font-mono text-2xl ${isReceipt ? 'text-emerald-700' : 'text-rose-600'}`}>{fmt(viewing.amountMinor)} {cur.symbol}</b>
                     <span className="block text-[10px] leading-5 doc-accent-deep">فقط {amountInWords(viewing.amountMinor, cur)} لا غير</span>
+                    {viewing.fx && <span className="mt-1 block rounded doc-card px-2 py-1 text-[10px] font-bold doc-ink" dir="ltr" data-voucher-fx-view>
+                      {(viewing.fx.amountMinor / 10 ** viewing.fx.decimals).toFixed(viewing.fx.decimals)} {viewing.fx.currencyCode} × {formatRate(viewing.fx.ratePpm)}
+                    </span>}
                   </div>
                   <div className="space-y-1 rounded-xl doc-card doc-ring p-4 sm:col-span-3">
                     <span className="text-[11px] doc-faint">الخزينة / الحساب النقدي</span>

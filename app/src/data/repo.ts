@@ -70,6 +70,8 @@ import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/w
 import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
 import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
 import { customerStatement, supplierStatement, statementBalance, customerUnitDocs, supplierUnitDocs, type StatementRow } from '../core/statements.ts'
+import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments } from '../core/openPartyDocuments.ts'
+import { convertFxToBookMinor, describeFxLeg, validateFxLeg, type FxLeg } from '../core/foreignCurrency.ts'
 import { buildYearClosingLines, validateYearClose, dateInClosedYear, type FiscalYear } from '../core/fiscal.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
@@ -1109,6 +1111,11 @@ export interface Voucher {
   unallocatedMinor?: number
   /** سند الصرف الناتج عن سداد استحقاق مصروف فاتورة شراء، إن وُجد */
   purchaseExpensePayableId?: number | null
+  /**
+   * ساق العملة الأجنبية إن حُصِّل/سُدِّد بعملة غير عملة الدفتر.
+   * `amountMinor` أعلاه يبقى **بعملة الدفتر** (حاصل التحويل) — هو وحده ما يُرحَّل.
+   */
+  fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 } | null
   /** قيد العكس، إن عُكس السند من مسار التصحيح */
   reversalEntryId?: number | null
 }
@@ -1770,6 +1777,15 @@ interface DataState {
     allocations?: FifoAllocation[]
     /** مصروف التحويل بين الخزائن (رسوم بنكية) — يخرج من المصدر ويقيد 5108 (طلب المالك) */
     feeMinor?: number
+    /**
+     * تحصيل/سداد بعملة أجنبية: المبلغ الأجنبي وسعر الصرف.
+     * `amountMinor` يجب أن يساوي حاصل التحويل بعملة الدفتر وإلا رُفض السند.
+     */
+    fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 }
+    /** خانات عملة الدفتر العشرية — للتحقق من التحويل (افتراضي 2) */
+    bookDecimals?: number
+    /** رمز عملة الدفتر — لمنع «عملة أجنبية» تساوي عملة الدفتر (افتراضي EGP) */
+    bookCurrencyCode?: string
   }) => Voucher
   /** صرف سلفة لموظف: قيد 1107 ← خزينة، وتُسترد من مسيرات الرواتب */
   grantEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; notes: string }) => EmployeeAdvance
@@ -4875,6 +4891,18 @@ export const useDataStore = create<DataState>()(
         }
         if (args.partyKind === 'customer' && args.partyId != null && !state.customers.some((c) => c.id === args.partyId)) throw new Error('العميل غير موجود — سجّله أولاً')
         if (args.partyKind === 'supplier' && args.partyId != null && !state.suppliers.some((s) => s.id === args.partyId)) throw new Error('المورد غير موجود — سجّله أولاً')
+        // العملة الثانية: الدفتر أحادي العملة، فالمرحَّل هو حاصل التحويل — ويجب أن يطابق ما أرسلته الشاشة
+        let fxLeg: FxLeg | null = null
+        if (args.fx) {
+          const bookDecimals = args.bookDecimals ?? 2
+          const leg: FxLeg = { currencyCode: args.fx.currencyCode.trim().toUpperCase(), amountMinor: args.fx.amountMinor, ratePpm: args.fx.ratePpm, decimals: args.fx.decimals }
+          const fxErrors = validateFxLeg(leg, args.bookCurrencyCode ?? 'EGP')
+          if (fxErrors.length) throw new Error(fxErrors.join(' — '))
+          const converted = convertFxToBookMinor(leg, bookDecimals)
+          if (converted <= 0) throw new Error('حاصل تحويل العملة صفر — راجع المبلغ وسعر الصرف')
+          if (converted !== args.amountMinor) throw new Error(`مبلغ السند بعملة الدفتر (${args.amountMinor}) لا يساوي حاصل التحويل (${converted})`)
+          fxLeg = leg
+        }
         if (args.kind === 'receipt' && args.counterAccountCode === '1104' && (args.partyKind !== 'customer' || args.partyId == null)) throw new Error('سند قبض العملاء 1104 يتطلب اختيار عميل مسجل')
         if (args.kind === 'payment' && args.counterAccountCode === '2101' && (args.partyKind !== 'supplier' || args.partyId == null)) throw new Error('سداد الموردين 2101 يتطلب اختيار مورد مسجل')
         let partyAllocations: FifoAllocation[] | undefined
@@ -4932,7 +4960,7 @@ export const useDataStore = create<DataState>()(
           id: entryId,
           entryNumber: entryId,
           date: transactionAt.slice(0, 10),
-          description: `${kindAr} ${voucherNumber}${args.description ? ` — ${args.description}` : ''}`,
+          description: `${kindAr} ${voucherNumber}${args.description ? ` — ${args.description}` : ''}${fxLeg ? ` — ${describeFxLeg(fxLeg, args.amountMinor, args.bookDecimals ?? 2)}` : ''}`,
           sourceType: args.kind === 'receipt' ? 'receipt_voucher' : 'payment_voucher',
           sourceId: voucherId,
           lines: entryLines,
@@ -4956,6 +4984,7 @@ export const useDataStore = create<DataState>()(
           partyId: args.partyId ?? null,
           costCenterId: args.costCenterId ?? null,
           vehicleId: args.vehicleId ?? null,
+          fx: fxLeg,
           ...(partyAllocations ? { allocations: partyAllocations, unallocatedMinor: partyUnallocatedMinor ?? 0 } : {}),
           reversalEntryId: null,
         }
@@ -4967,7 +4996,20 @@ export const useDataStore = create<DataState>()(
         let clinicCollections = state.clinicCollections
         if (args.kind === 'receipt' && args.partyKind === 'customer' && args.partyId && args.counterAccountCode === '1104') {
           const linkedPatients = state.clinicPatients.filter((p) => p.linkedCustomerId === args.partyId)
-          let toAllocate = args.amountMinor
+          // ① تخصيص صريح على زيارة عيادة ⇒ تحصيل بنفس المبلغ لمريض تلك الزيارة.
+          //    قبل هذا الإصلاح كان السند يوزَّع على أرصدة المرضى بكامل قيمته حتى لو
+          //    خُصِّص كله لفاتورة بيع، فيُسدَّد مستندان بنفس النقود (ازدواج سجل فرعي).
+          for (const allocation of partyAllocations ?? []) {
+            if (!allocation.docKey.startsWith('visit:') || allocation.appliedMinor <= 0) continue
+            const visit = state.clinicVisits.find((row) => row.id === Number(allocation.docKey.slice('visit:'.length)))
+            if (!visit) continue
+            clinicCollections = [...clinicCollections, {
+              id: nextId(clinicCollections), patientId: visit.patientId, date: transactionAt,
+              amountMinor: allocation.appliedMinor, journalEntryId: entryId, viaVoucherId: voucherId,
+            }]
+          }
+          // ② الباقي غير المخصص على أي مستند ⇒ السلوك القديم: أقدم أرصدة المرضى.
+          let toAllocate = partyAllocations ? (partyUnallocatedMinor ?? 0) : args.amountMinor
           for (const pat of linkedPatients) {
             if (toAllocate <= 0) break
             const bal = patientBalance(
@@ -9166,6 +9208,23 @@ export const useDataStore = create<DataState>()(
           const key = `extract:${ex.id}`
           open.push({ docKey: key, docLabel: `مستخلص ${ex.extractNumber}`, date: ex.date, dueMinor: ex.totals.dueMinor, settledMinor: settled.get(key) ?? 0 })
         }
+        // مستندات الأنشطة المتخصصة (معمل · عيادة · تأجير · نقل · صيانة · محافظ ·
+        // معرض سيارات · وحدات عقارية) — بنفس قواعد استحقاق كشف الحساب حرفياً.
+        open.push(...openCustomerSpecializedDocuments({
+          customerId,
+          settledOf: (docKey) => settled.get(docKey) ?? 0,
+          labOrders: state.labOrders,
+          linkedLabPatientIds: state.labPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id),
+          clinicVisits: state.clinicVisits,
+          clinicCollections: state.clinicCollections,
+          linkedPatientIds: state.clinicPatients.filter((patient) => patient.linkedCustomerId === customerId).map((patient) => patient.id),
+          rentals: state.rentalContracts,
+          trips: state.trips,
+          tickets: state.tickets,
+          walletOps: state.walletOps,
+          cars: state.cars,
+          propertySales: state.propertySales,
+        }))
         return open.filter((inv) => inv.dueMinor - inv.settledMinor > 0).sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
       },
 
@@ -9199,7 +9258,18 @@ export const useDataStore = create<DataState>()(
               settledMinor: settled.get(docKey) ?? 0,
             }
           })
-        return [...purchaseInvoices, ...carInvoices]
+        const specialized = openSupplierSpecializedDocuments({
+          supplierId,
+          settledOf: (docKey) => settled.get(docKey) ?? 0,
+          carPurchaseInvoices: state.carPurchaseInvoices,
+          carPrepCosts: state.carPrepCosts,
+          projectCosts: state.projectCosts,
+          carLabel: (carId) => {
+            const car = state.cars.find((row) => row.id === carId)
+            return car ? `${car.make} ${car.model} (${car.plateOrVin})` : `سيارة #${carId}`
+          },
+        })
+        return [...purchaseInvoices, ...carInvoices, ...specialized]
           .filter((invoice) => invoice.dueMinor - invoice.settledMinor > 0)
           .sort((a, b) => a.date.localeCompare(b.date) || a.docKey.localeCompare(b.docKey))
       },
