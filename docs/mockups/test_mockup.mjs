@@ -60,7 +60,7 @@ ok('حقول الأرقام داخل الخلايا في المنتصف', /\.cel
 
 // ⑥ زر الترحيل = حفظ وترحيل فقط
 ok('زر الترحيل صار «حفظ وترحيل» بلا مبلغ', /حفظ وترحيل/.test($('#postBtn').textContent) && !$('#postAmount'))
-ok('زر تحصيل المبلغ كاملاً باقٍ في لوحة التحصيل', /تحصيل المبلغ كاملاً/.test($('#payFull').textContent))
+ok('زرا «تحصيل المبلغ كاملاً» و«بيع آجل» محذوفان', !$('#payFull') && !$('#payNone'))
 
 // ⑦ رأس الجدول: مسح باركود فقط · الشريط السفلي محذوف · المسح يضيف سطراً بالترتيب
 ok('شريط الأزرار أسفل الجدول محذوف', !d.querySelector('.lines-foot') && !d.querySelector('#addLineBtn'))
@@ -127,16 +127,16 @@ $('#multiPay').checked = false; $('#multiPay').dispatchEvent(new window.Event('c
 input(cell(0, 'qty'), '60')   // نكبّر الفاتورة حتى تتجاوز حد الائتمان
 input($('#payOne'), '0')
 const grandNow = num($('#grand').textContent), needed = Math.max(0, 12800 + grandNow - 15000)
-ok('الترحيل ممنوع قبل تغطية الحد', $('#postBtn').disabled === true && /حد الائتمان/.test($('#payNote').textContent), $('#payNote').textContent)
+ok('الترحيل ممنوع قبل تغطية الحد', $('#postBtn').disabled === true && /حد الائتمان/.test($('#payNote').textContent) && $('#payNote').className === 'paywarn', $('#payNote').textContent)
 ok('الرسالة تذكر المبلغ الواجب تحصيله', new RegExp(needed.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')).test($('#payNote').textContent), $('#payNote').textContent)
 input($('#payOne'), String(needed))
-ok('بعد تحصيل المبلغ المطلوب يُسمح بالترحيل', $('#postBtn').disabled === false && $('#payNote').hidden === true, 'disabled=' + $('#postBtn').disabled)
+ok('بعد تحصيله تظهر جملة أن الحد يسمح بالترحيل', $('#postBtn').disabled === false && /يُسمح بالترحيل/.test($('#payNote').textContent) && $('#payNote').className === 'payok', $('#payNote').textContent)
 
 // ⑬ العميل النقدي: محصَّل بالكامل ولا يقل عن الإجمالي
 click($('#customerField')); input($('#custQuery'), 'نقدي'); dbl(d.querySelectorAll('#custList .res')[0])
 ok('العميل النقدي: المستلم = إجمالي الفاتورة تلقائياً', $('#payOne').value === $('#grand').textContent, $('#payOne').value + ' / ' + $('#grand').textContent)
-ok('التحصيل الكامل يظهر في «المحصَّل» بلا أي جملة إضافية', $('#paidOut').textContent === $('#grand').textContent && $('#payNote').hidden === true, $('#paidOut').textContent)
-ok('زر «بيع آجل بلا تحصيل» معطّل للنقدي', $('#payNone').disabled === true)
+ok('التحصيل الكامل يظهر في «المحصَّل»', $('#paidOut').textContent === $('#grand').textContent, $('#paidOut').textContent)
+ok('لا أزرار تحصيل سريعة — الرسالة وحدها', !$('#payNone') && !$('#payFull'))
 input($('#payOne'), '5'); $('#payOne').dispatchEvent(new window.Event('change', { bubbles: true }))
 ok('محاولة تحصيل أقل تُرفع تلقائياً للإجمالي', $('#payOne').value === $('#grand').textContent, $('#payOne').value)
 ok('الترحيل مسموح بعد التحصيل الكامل', $('#postBtn').disabled === false)
@@ -218,13 +218,26 @@ click($('#wsClose')); key(d, 'Escape')
 
 // ⑲ لا رسالة خضراء في التحصيل ولا أشرطة تمرير في اللوحتين
 click($('#customerField')); input($('#custQuery'), 'نقدي'); dbl(d.querySelectorAll('#custList .res')[0])
-ok('جملة «عميل نقدي — محصَّل بالكامل» أُزيلت', $('#payNote').hidden === true && $('#payNote').textContent === '', $('#payNote').textContent)
+ok('النقدي المحصَّل بالكامل: جملة قصيرة تسمح بالترحيل', /التحصيل كامل/.test($('#payNote').textContent) && $('#payNote').className === 'payok', $('#payNote').textContent)
 ok('إجمالي المحصَّل ما زال ظاهراً أسفل اللوحة', !!$('#paidOut') && $('#paidOut').textContent !== '')
 ok('لوحتا التحصيل والإجمالي بلا شريط تمرير', /#payPanel\.panel-body,#totalsPanel\.panel-body\{overflow:hidden/.test(css))
 
 // ⑳ «القيد متزن» انتقل إلى شريط المستند
-ok('وسم اتزان القيد في شريط المستند بجانب اسم الفاتورة', !!d.querySelector('.topbar #balChip') && /متزن/.test($('#balChip').textContent))
+ok('وسم «القيد متزن» فقط بلا مدين = دائن', !!d.querySelector('.topbar #balChip') && $('#balChip').textContent.trim() === 'القيد متزن')
 ok('وحُذف من صندوق الإجمالي', !/قيد الفاتورة/.test($('#totalsPanel').textContent))
+
+// ㉑ شريط الحالة: بلا إجمالي/متبقٍ + سطر تدقيق التعديل في سطر واحد
+ok('الإجمالي والمتبقي أُزيلا من شريط الحالة', !$('#stTotal') && !$('#stDue') && !/المتبقي/.test($('.statusbar').textContent))
+ok('سطر حالة المستند موجود', !!$('#auditLine') && /لم يُحفظ بعد/.test($('#auditLine').textContent))
+click($('#btnEditMode'))
+ok('فتح فاتورة مرحّلة للتعديل يغيّر وسم المستند', /وضع التعديل/.test($('#docChip').textContent) && /أنشأها محمد عبده/.test($('#auditLine').textContent))
+input(cell(0, 'qty'), '9')
+ok('أول تعديل على مستند مرحّل يطلب السبب', !$('#reasonWin').hidden)
+$('#reasonText').value = 'تصحيح كمية الصنف بعد الجرد'; click($('#reasonSave'))
+const al = $('#auditLine').textContent
+ok('سطر واحد فيه الوقت والتاريخ والمستخدم والسبب', /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(al) && /محمد عبده/.test(al) && /تصحيح كمية الصنف/.test(al) && !al.includes('\n'), al)
+ok('ويتميّز بلون التنبيه', $('#auditLine').classList.contains('edited'))
+click($('#btnEditMode'))
 
 console.log('\n── الطلبات السابقة (عدم انكسار) ──')
 ok('لا يوجد شريط بحث أصناف مستقل', !d.querySelector('.entry'))

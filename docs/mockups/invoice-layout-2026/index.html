@@ -168,8 +168,8 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
 
 /* ⑤ شريط الحالة */
 .statusbar{display:flex;align-items:center;gap:.4rem;border:1px solid var(--doc-line);border-radius:.5rem;background:var(--doc-paper);padding:.18rem .5rem;font-size:0.64rem;color:var(--doc-faint)}
-.statusbar .totals{display:inline-flex;gap:.55rem;font-weight:800;color:var(--doc-muted)}
-.statusbar .totals b{direction:ltr;font-family:ui-monospace,monospace;color:var(--doc-ink)}
+.statusbar #auditLine{font-weight:800;color:var(--doc-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.statusbar #auditLine.edited{color:var(--doc-warn)}
 
 /* ═══ نوافذ عائمة: بلا تعتيم · تصغير · إغلاق · Esc ═══ */
 .win{position:fixed;z-index:60;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--doc-accent);
@@ -250,8 +250,8 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
     <div class="dots"><i></i><i></i><i></i></div><span class="sep"></span>
     <button class="iconbtn" title="رجوع">←</button><button class="iconbtn" title="قائمة">≡</button><button class="iconbtn" title="مساعدة">؟</button>
     <span class="sep"></span>
-    <span class="numberbox">فاتورة مبيعات · S-0042 <span class="chipS chip-warn">مسودة</span>
-      <span class="chipS chip-ok" id="balChip">القيد متزن — مدين = دائن</span></span>
+    <span class="numberbox">فاتورة مبيعات · S-0042 <span class="chipS chip-warn" id="docChip">مسودة</span>
+      <span class="chipS chip-ok" id="balChip">القيد متزن</span></span>
     <span class="spacer"></span>
     <button class="btn">المسودات (2)</button>
     <button class="btn" id="whBtn" title="طباعة إذن استلام من المستودع — كميات فقط بلا أسعار">📦 إذن استلام مستودع</button>
@@ -365,9 +365,6 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
           </div>
           <div class="f" style="margin-top:.2rem"><label>المبلغ المحصل</label>
             <div class="amountfield"><input class="num" id="payOne" value="0.00"><span class="chipS chip-ind">SAR</span></div></div>
-          <div class="terms" style="margin-top:.2rem">
-            <button class="chip" id="payFull">تحصيل المبلغ كاملاً</button><button class="chip" id="payNone">بيع آجل بلا تحصيل</button>
-          </div>
         </div>
         <div id="payNote"></div>
         <div id="multiPayBox" hidden>
@@ -405,8 +402,9 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
   <footer class="zone statusbar" data-zone="⑤ شريط الحالة">
     <span style="color:var(--doc-ok);font-weight:800"><span class="dot"></span> متصل — وضع محلي</span>
     <span>تمور وتعبئة · الفرع الواحد · محمد عبده · الطباعة: thermal</span>
+    <span class="sep"></span>
+    <span id="auditLine">مستند جديد — لم يُحفظ بعد</span>
     <span class="spacer"></span>
-    <span class="totals"><span>الإجمالي <b id="stTotal">0.00</b></span><span>المتبقي <b id="stDue" style="color:var(--doc-danger)">0.00</b></span></span>
     <button class="chip">تخصيص الحقول</button><button class="chip" id="printSetBtn">⚙ إعدادات الطباعة</button><button class="chip">تصدير PDF</button>
   </footer>
 </div>
@@ -459,6 +457,17 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
   <div class="formgrid" id="itemEditBody"></div>
   <div class="win-foot"><button class="btn primary sm" id="ieSave">حفظ</button><button class="btn sm" data-close>إلغاء</button>
     <span class="spacer"></span><span>يحدّث بيانات الصنف في البحث وفي سطور الفاتورة الحالية.</span></div>
+</div>
+
+<!-- ══ سبب تعديل مستند مرحّل ══ -->
+<div class="win" id="reasonWin" hidden style="inset-inline-start:50%;transform:translateX(-50%);top:26vh;width:min(28rem,92vw);z-index:79">
+  <div class="win-head" data-drag>✎ سبب تعديل المستند <span class="hint">إلزامي للمستندات المرحّلة</span>
+    <button class="wbtn x" data-close title="إغلاق">✕</button></div>
+  <div class="formgrid">
+    <div class="f" style="grid-column:1/-1"><label>السبب</label><input class="in" id="reasonText" placeholder="مثال: تصحيح كمية الصنف بعد مراجعة المخزن"></div>
+  </div>
+  <div class="win-foot"><button class="btn primary sm" id="reasonSave">حفظ السبب</button><button class="btn sm" data-close>إلغاء</button>
+    <span class="spacer"></span><span>يُسجَّل في سطر الحالة وفي سجل التدقيق.</span></div>
 </div>
 
 <!-- ══ إذن استلام من المستودع (كميات فقط) ══ -->
@@ -548,6 +557,7 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
   <span>اختبار:</span>
   <button id="btnZones">إظهار التقسيم</button>
   <button id="btnRows">عدد السطور: <b id="rowsNow">5</b></button>
+  <button id="btnEditMode">فتح فاتورة مرحّلة للتعديل</button>
   <span>الوضع الحي — كل الوظائف تعمل</span>
 </div>
 
@@ -674,6 +684,7 @@ function bindCells(){
     el.oninput=()=>{
       const v=parseFloat(el.value.replace(/,/g,''))||0
       if(c==='qty')state.lines[r].qty=v; else if(c==='price')state.lines[r].price=v; else state.lines[r].disc=v
+      pingEdit()
       const tds=el.closest('tr').children
       tds[tds.length-2].textContent=fmt(lineTotal(state.lines[r]))
       renderTotals()
@@ -729,6 +740,12 @@ function minCollect(t){
   if(limit<=0) return t.grand                                   // بلا حد ائتمان = بلا بيع آجل
   return Math.max(0, c.balance + t.grand - limit)               // ما يتجاوز حد الائتمان يُحصَّل الآن
 }
+let lastEditPing=0
+function pingEdit(){
+  if(!audit.posted) return
+  const now=Date.now(); if(now-lastEditPing<400) return; lastEditPing=now
+  if($('#reasonWin').hidden){ openWin('reasonWin'); $('#reasonText').value=''; $('#reasonText').focus() }
+}
 function renderTotals(){
   const c=curCust()
   // العميل النقدي: المبلغ المستلم = إجمالي الفاتورة دائماً في وضع الطريقة الواحدة
@@ -741,19 +758,23 @@ function renderTotals(){
   $('#sumTax').textContent=fmt(t.tax); $('#sumExp').textContent=fmt(t.exp); $('#sumProfit').textContent=fmt(t.profit)
   $('#grand').textContent=fmt(t.grand)
   $('#paidOut').textContent=fmt(t.paid); $('#dueOut').textContent=fmt(t.due)
-  $('#stTotal').textContent=fmt(t.grand); $('#stDue').textContent=fmt(t.due)
   $('#lineCount').textContent=state.lines.filter(l=>l.item).length+' بند'
   $('#linesValue').textContent='قيمة البنود '+fmt(t.lines)+' ر.س'
   $('#discEq').textContent=state.discKind==='pct'? '= '+fmt(t.disc)+' ر.س' : '= '+(t.lines? fmt(t.disc/t.lines*100):'0.00')+' %'
   // بوابة الترحيل
   const need=minCollect(t), short=Math.max(0,need-t.paid)
   const note=$('#payNote'), post=$('#postBtn')
-  if(short<=0.004){ note.className=''; note.textContent=''; note.hidden=true }
+  note.hidden=false
+  if(short<=0.004){
+    note.className='payok'
+    note.textContent = c.id===0? 'التحصيل كامل — يمكن الترحيل'
+      : (+c.limit>0? `ضمن حد الائتمان ${fmt(c.limit)} — يُسمح بالترحيل${t.due>0.004?' آجلاً بـ'+fmt(t.due)+' ر.س':''}`
+                   : 'مسدَّدة بالكامل — يمكن الترحيل')
+  }
   else if(c.id===0){
-    note.hidden=false; note.className='paywarn'
+    note.className='paywarn'
     note.textContent=`عميل نقدي — لا يقل التحصيل عن ${fmt(t.grand)} ر.س`
-  } else if(short>0.004){
-    note.hidden=false
+  } else {
     note.className='paywarn'
     note.textContent=!c.active? `عميل موقوف — يلزم تحصيل الفاتورة كاملة ${fmt(need)} ر.س`
       : (+c.limit>0? `حد الائتمان ${fmt(c.limit)} — يلزم تحصيل ${fmt(short)} ر.س قبل الترحيل`
@@ -761,7 +782,6 @@ function renderTotals(){
   }
   post.disabled=short>0.004
   post.title=short>0.004? `ممنوع الترحيل: ينقص ${fmt(short)} ر.س من التحصيل` : 'حفظ وترحيل'
-  $('#payFull').disabled=false; $('#payNone').disabled=(c.id===0)
   renderParty(t)
 }
 function renderParty(t){
@@ -876,7 +896,7 @@ function pickItem(i){
   const r=pending.row??state.selected
   while(state.lines.length<=r) state.lines.push(newLine())
   state.lines[r]={...state.lines[r],item:it,qty:state.lines[r].qty||1,price:it.price}
-  pending.row=null
+  pending.row=null; pingEdit()
   closeWin('itemWin'); renderLines(); focusCell(r,'qty')
 }
 $('#itemQuery').addEventListener('input',()=>{pending.cursor=0;renderItemList()})
@@ -979,8 +999,7 @@ $('#multiPay').onchange=e=>{
 $('#payOne').addEventListener('input',e=>{state.payOne=parseFloat(e.target.value.replace(/,/g,''))||0;renderTotals()})
 $$('.pay').forEach(inp=>inp.addEventListener('input',()=>{state.pays[inp.dataset.k]=parseFloat(String(inp.value).replace(/,/g,''))||0;renderTotals()}))
 $$('#paySeg button').forEach(b=>b.onclick=()=>{$$('#paySeg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.payMethod=b.dataset.m})
-$('#payFull').onclick=()=>{const t=totals();$('#payOne').value=fmt(t.grand);state.payOne=t.grand;renderTotals()}
-$('#payNone').onclick=()=>{ if(curCust().id===0)return; $('#payOne').value='0.00';state.payOne=0;renderTotals() }
+
 // العميل النقدي: أي مبلغ أقل يُرفع تلقائياً لإجمالي الفاتورة عند ترك الحقل
 $('#payOne').addEventListener('change',()=>{
   const t=totals()
@@ -998,6 +1017,32 @@ function setDiscKind(kind){
 $('#discPct').onclick=()=>setDiscKind('pct')
 $('#discAmt').onclick=()=>setDiscKind('amt')
 $('#discInput').addEventListener('input',e=>{state.discValue=parseFloat(e.target.value.replace(/,/g,''))||0;renderTotals()})
+
+// ═════ وضع تعديل مستند مرحّل + سطر التدقيق ═════
+const audit={posted:false,edits:[]}
+function stamp(){ const d=new Date()
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+
+         String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0') }
+function renderAudit(){
+  const el=$('#auditLine')
+  if(!audit.posted){ el.className=''; el.textContent='مستند جديد — لم يُحفظ بعد'; return }
+  if(!audit.edits.length){ el.className=''; el.textContent='مرحّلة 2026-09-28 10:15 · أنشأها محمد عبده'; return }
+  const e=audit.edits[audit.edits.length-1]
+  el.className='edited'
+  el.textContent=`عُدِّلت ${e.at} · بواسطة ${e.by} · السبب: ${e.why}${audit.edits.length>1?` · (${audit.edits.length} تعديلات)`:''}`
+}
+function markEdited(){ if(audit.posted && !$('#reasonWin').hidden===false){ openWin('reasonWin'); $('#reasonText').value=''; $('#reasonText').focus() } }
+$('#btnEditMode').onclick=e=>{
+  audit.posted=!audit.posted
+  e.target.classList.toggle('on',audit.posted)
+  $('#docChip').textContent=audit.posted?'مرحّلة — وضع التعديل':'مسودة'
+  $('#docChip').className='chipS '+(audit.posted?'chip-ind':'chip-warn')
+  renderAudit()
+}
+$('#reasonSave').onclick=()=>{
+  audit.edits.push({at:stamp(),by:'محمد عبده',why:$('#reasonText').value.trim()||'تعديل يدوي'})
+  closeWin('reasonWin'); renderAudit()
+}
 
 // ═════ إذن استلام المستودع + إعداداته المتقدمة ═════
 const WS=['wsHead','wsCode','wsBar','wsUnit','wsLoc','wsGot','wsNotes','wsSum','wsUser','wsSign','wsNote','wsCust']
@@ -1161,7 +1206,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='F9'){e.preventDefault();alert('حفظ وترحيل — نموذج تجريبي')}
 })
 
-applyMode(); renderLines(); renderTotals(); renderAddons(); renderCustMeta(false); setTimeout(()=>{recalcRows();focusCell(0,'name')},60)
+applyMode(); renderLines(); renderTotals(); renderAddons(); renderCustMeta(false); renderAudit(); setTimeout(()=>{recalcRows();focusCell(0,'name')},60)
 </script>
 </body>
 </html>
