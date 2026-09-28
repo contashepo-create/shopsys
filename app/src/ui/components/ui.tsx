@@ -1,7 +1,7 @@
 /** مكونات UI مشتركة — أزرار، مودال، حقول، توست */
 import { Children, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FocusEvent, type InputHTMLAttributes, type ReactNode, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Eye, EyeOff, FileText } from 'lucide-react'
+import { X, Eye, EyeOff, FileText, Maximize2, Minus } from 'lucide-react'
 import { create } from 'zustand'
 import { PIN_MAX_LENGTH } from '../../core/auth.ts'
 
@@ -216,7 +216,8 @@ export function Modal({
   open, onClose, title, subtitle, children, wide, extraWide, bare,
 }: { open: boolean; onClose: () => void; title: string; subtitle?: string; children: ReactNode; wide?: boolean; extraWide?: boolean; bare?: boolean }) {
   const [modalId] = useState(() => `modal-${++modalSeq}`)
-  const [nudge, setNudge] = useState(false)
+  /* قاعدة المالك: «النوافذ عادية» — تُصغَّر ولا تحجب العمل خلفها ولا تعتّم الشاشة */
+  const [minimized, setMinimized] = useState(false)
   const stack = useModalStack((state) => state.stack)
   const pushModal = useModalStack((state) => state.push)
   const popModal = useModalStack((state) => state.pop)
@@ -245,12 +246,22 @@ export function Modal({
   /* بلاغ المالك: نوافذ منبثقة كانت تُغطى جزئياً خلف الهيدر — السبب أن الصفحات تُغلَّف بـ
      anim-in/anim-up (animation تنشئ stacking context) فيصبح z-50 محلياً داخل الصفحة ويعلوه
      هيدر sticky z-20 الخارجي. الحل الجذري: createPortal إلى <body> فيخرج المودال من أي سياق. */
+  if (minimized) {
+    /* مصغَّرة: شريط صغير أسفل الشاشة لا يحجب شيئاً — يعود بالضغط عليه */
+    return createPortal(
+      <div className="layer-modal modal-min" dir="rtl" style={{ zIndex: 1000 + depth * 4 }} data-modal-id={modalId} data-modal-minimized="true">
+        <button type="button" className="modal-min-title" onClick={() => setMinimized(false)} title="استعادة النافذة"><Maximize2 size={12} /> {title}</button>
+        <button type="button" onClick={onClose} aria-label="إغلاق النافذة" className="modal-min-close"><X size={13} /></button>
+      </div>,
+      document.body,
+    )
+  }
+  /* بلا تعتيم وبلا عزل: الغلاف لا يلتقط الضغطات (pointer-events-none) والنافذة وحدها تلتقطها،
+     فيبقى العمل خلفها متاحاً تماماً كما طلب المالك. */
   return createPortal(
-    <div className="layer-modal fixed inset-0 flex items-center justify-center p-4" dir="rtl" style={{ zIndex: 1000 + depth * 4 }} data-modal-id={modalId} data-modal-depth={depth}>
-      {/* الضغط في الفراغ لا يُغلق (طلب المالك) — يهتز الإطار للتنبيه أن الإغلاق يدوي */}
-      <div className="absolute inset-0 bg-slate-900/55 anim-in" data-modal-backdrop onClick={() => { setNudge(true); window.setTimeout(() => setNudge(false), 320) }} />
+    <div className="layer-modal pointer-events-none fixed inset-0 flex items-center justify-center p-4" dir="rtl" style={{ zIndex: 1000 + depth * 4 }} data-modal-id={modalId} data-modal-depth={depth}>
       {/* لغة المستند نفسها التي في الفاتورة: ترويسة فاتحة بشارة نيلية ثم سطح مستند تُفرش عليه الأقسام */}
-      <div role="dialog" aria-modal={depth === 0} className={`doc-window relative anim-pop ${nudge ? 'modal-nudge' : ''} w-full ${extraWide ? 'max-w-6xl' : wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[92vh] overflow-y-auto rounded-2xl shadow-2xl`}>
+      <div role="dialog" aria-modal={false} className={`doc-window pointer-events-auto relative anim-pop w-full ${extraWide ? 'max-w-6xl' : wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[92vh] overflow-y-auto rounded-2xl`}>
         {bare ? children : <>
           <div className="doc-window-head sticky top-0 z-[70] flex items-center justify-between gap-3">
             <span className="doc-window-icon"><FileText size={13} /></span>
@@ -258,6 +269,7 @@ export function Modal({
               <h3 className="doc-window-title">{title}</h3>
               {subtitle && <p className="doc-window-sub">{subtitle}</p>}
             </div>
+            <button onClick={() => setMinimized(true)} aria-label="تصغير النافذة" title="تصغير — تبقى مفتوحة أسفل الشاشة" className="doc-window-close"><Minus size={16} /></button>
             <button onClick={onClose} aria-label="إغلاق النافذة" className="doc-window-close">
               <X size={16} />
             </button>

@@ -6,8 +6,9 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * (iframe يعرض نفس HTML الذي سيُطبع حرفياً، فلا مفاجآت على الورق).
  */
 import { useMemo, useRef } from 'react'
-import { Printer, FileText, ImagePlus, Trash2, Stamp, Eye, Palette, ClipboardList } from 'lucide-react'
+import { Printer, FileText, ImagePlus, Trash2, Stamp, Eye, Palette, ClipboardList, PackageCheck } from 'lucide-react'
 import { renderReportShell } from '../../core/reportPrint.ts'
+import { WAREHOUSE_RECEIPT_LABELS, buildWarehouseReceiptHtml, type WarehouseReceiptSettings } from '../../core/warehouseReceipt.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { buildReceiptModel, A4_STYLES, type PaperWidth, type InvoiceTemplate, type ReceiptSettings } from '../../core/receipt.ts'
@@ -63,7 +64,7 @@ function readLogoFile(file: File, onDone: (dataUrl: string) => void, onError: ()
 }
 
 export function PrintSettingsPage() {
-  const { setup, receipt, autoPrintAfterSale, updateReceipt, setAutoPrint, reportPrint, updateReportPrint } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale, updateReceipt, setAutoPrint, reportPrint, updateReportPrint, warehouseReceipt, updateWarehouseReceipt, resetWarehouseReceipt } = useAppStore()
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
   const cur = useMemo(
@@ -125,6 +126,56 @@ export function PrintSettingsPage() {
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
       {/* ─── عمود الإعدادات ─── */}
       <div className="anim-up space-y-4">
+        {/* إذن استلام المستودع — مطبوعة كميات فقط، تُفتح أيضاً من داخل الفاتورة (طلب المالك) */}
+        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+          <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+            <PackageCheck size={17} className="text-emerald-500" /> إذن استلام المستودع (كميات فقط)
+          </div>
+          <p className="text-[11px] text-slate-400 -mt-2">مطبوعة أمين المخزن: أصناف وكميات بلا أي سعر أو قيمة. الزر نفسه موجود داخل الفاتورة.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {(Object.keys(WAREHOUSE_RECEIPT_LABELS) as (keyof typeof WAREHOUSE_RECEIPT_LABELS)[]).map((key) => (
+              <label key={key} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 cursor-pointer">
+                <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">{WAREHOUSE_RECEIPT_LABELS[key]}</span>
+                <input type="checkbox" checked={warehouseReceipt[key]} onChange={(e) => updateWarehouseReceipt({ [key]: e.target.checked } as Partial<WarehouseReceiptSettings>)} className="w-4 h-4 accent-emerald-600" />
+              </label>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Field label="الورق">
+              <QuickSelect value={warehouseReceipt.paper} onChange={(e) => updateWarehouseReceipt({ paper: e.target.value as WarehouseReceiptSettings['paper'] })} className={inputCls}>
+                <option value="a4">A4</option><option value="a5">A5</option>
+              </QuickSelect>
+            </Field>
+            <Field label="عدد النسخ">
+              <QuickSelect value={warehouseReceipt.copies} onChange={(e) => updateWarehouseReceipt({ copies: Number(e.target.value) as WarehouseReceiptSettings['copies'] })} className={inputCls}>
+                <option value={1}>نسخة</option><option value={2}>نسختان</option><option value={3}>ثلاث نسخ</option>
+              </QuickSelect>
+            </Field>
+            <Field label="ترتيب البنود">
+              <QuickSelect value={warehouseReceipt.sort} onChange={(e) => updateWarehouseReceipt({ sort: e.target.value as WarehouseReceiptSettings['sort'] })} className={inputCls}>
+                <option value="entry">كما أُدخلت</option><option value="name">حسب الاسم</option><option value="qty">حسب الكمية</option>
+              </QuickSelect>
+            </Field>
+            <Field label="تجميع حسب المخزن">
+              <QuickSelect value={warehouseReceipt.groupByWarehouse ? '1' : '0'} onChange={(e) => updateWarehouseReceipt({ groupByWarehouse: e.target.value === '1' })} className={inputCls}>
+                <option value="0">بلا تجميع</option><option value="1">مجمَّع</option>
+              </QuickSelect>
+            </Field>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Btn variant="ghost" onClick={() => printHtml(buildWarehouseReceiptHtml({
+              title: 'إذن استلام من المستودع', docNumber: 'نموذج', dateLabel: new Date().toISOString().slice(0, 10),
+              partyLabel: 'جهة تجريبية', branchLabel: 'الفرع الرئيسي', companyName: setup.shopName || 'المنشأة',
+              userLabel: setup.ownerName || 'المالك', settings: warehouseReceipt,
+              lines: [
+                { nameAr: 'صنف تجريبي أول', qty: 10, unit: 'قطعة', code: 'A-001', barcode: '6221000000017', warehouseAr: 'المخزن الرئيسي', location: 'ممر 1 — رف 3' },
+                { nameAr: 'صنف تجريبي ثانٍ', qty: 2.5, unit: 'كرتونة', code: 'A-002', warehouseAr: 'المخزن الرئيسي' },
+              ],
+            }))}><Eye size={14} /> معاينة الإذن</Btn>
+            <Btn variant="ghost" onClick={() => { resetWarehouseReceipt(); toast.show('أُعيدت إعدادات إذن الاستلام للوضع الافتراضي ✓') }}><Trash2 size={14} /> إعادة الافتراضي</Btn>
+          </div>
+        </div>
+
         {/* إعدادات طباعة التقارير — معممة على كل مطبوعات النظام (طلب المالك) */}
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-4">
           <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">

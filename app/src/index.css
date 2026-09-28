@@ -1416,3 +1416,31 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .doc-accent-deep { color: var(--doc-accent-deep); }
 .doc-line { border-color: var(--doc-line); }
 .doc-footer { background: var(--doc-paper); border-top: 1px solid var(--doc-line); }
+
+/* ===== قاعدة «النوافذ عادية» (طلب المالك 2026-09-28) =====
+   لا تعتيم ولا عزل ولا ظل: النافذة سطح مستند بحدّ واضح، ولها زر تصغير يُبقيها
+   مفتوحة في شريط صغير أسفل الشاشة بينما يستمر العمل خلفها. */
+.doc-window { box-shadow: 0 0 0 1px var(--doc-line); }
+.modal-min { position: fixed; inset-inline-start: .75rem; bottom: .75rem; display: inline-flex; align-items: center; gap: .15rem; border: 1px solid var(--doc-line); border-radius: .5rem; background: var(--doc-surface); padding: .1rem .2rem; }
+.modal-min-title { display: inline-flex; align-items: center; gap: .3rem; max-width: 18rem; overflow: hidden; padding: .25rem .5rem; color: var(--doc-ink-soft); font-size: .68rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.modal-min-title:hover { color: var(--doc-accent-deep); }
+.modal-min-close { display: grid; width: 1.35rem; height: 1.35rem; place-items: center; border-radius: .35rem; color: var(--doc-faint); }
+.modal-min-close:hover { background: var(--doc-danger-tint); color: var(--doc-danger); }
+
+/* رقاقة «القيد متزن» بجوار رقم المستند */
+.invoice-doc-balanced { display: inline-flex; align-items: center; gap: .25rem; border: 1px solid #bbf7d0; border-radius: 999px; background: #dcfce7; padding: .02rem .5rem; color: #166534; font-size: .58rem; font-weight: 800; }
+.invoice-doc-balanced i { width: .36rem; height: .36rem; border-radius: 999px; background: currentColor; }
+.dark .invoice-doc-balanced { border-color: #14532d; background: #052e1a; color: #86efac; }
+
+/* سطر تدقيق الفاتورة المرحّلة — **سطر واحد** في شريط الحالة بلا إجمالي ولا متبقٍ */
+.invoice-doc-audit { flex: 1 1 14rem; min-width: 0; overflow: hidden; border-inline-start: 2px solid var(--doc-warn, #f59e0b); padding-inline-start: .4rem; color: #b45309; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.dark .invoice-doc-audit { color: #fcd34d; }
+.invoice-doc-actionbar-info { flex-wrap: nowrap; overflow: hidden; }
+
+/* السطور الفارغة الحقيقية: الشاشة ثابتة ولا «تقفز» مع أول صنف، والبحث من خلية الاسم */
+.invoice-lines-table tr.invoice-line-ghost td { height: 2.15rem; background: repeating-linear-gradient(135deg, transparent 0 6px, var(--doc-tint) 6px 7px); }
+.invoice-lines-table tr.invoice-line-ghost td:focus-visible { outline: 2px solid var(--doc-accent-soft); outline-offset: -2px; }
+.invoice-line-entry-cell { background: var(--doc-paper) !important; }
+.invoice-line-ghost-btn { width: 100%; border: 1px dashed var(--doc-line); border-radius: .35rem; background: transparent; padding: .2rem .4rem; color: var(--doc-faint); font-size: .66rem; font-weight: 700; text-align: start; }
+.invoice-line-ghost-btn:hover { border-color: var(--doc-accent-soft); background: var(--doc-tint-strong); color: var(--doc-accent-deep); }
+.invoice-lines-filter { min-width: 9rem; max-width: 14rem; }

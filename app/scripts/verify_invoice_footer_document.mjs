@@ -112,7 +112,7 @@ const footerOf = (src) => {
   assert.ok(css.includes('.invoice-doc-party, .invoice-doc-itemcard'), 'بطاقتا الطرف والصنف لا تتقاسمان قاعدة واحدة')
   assert.ok(/border:\s*1px dashed var\(--doc-line\)/.test(ruleOf('.invoice-doc-refbar')), 'شريط المرجع الخارجي بلا إطاره المتقطع')
   // الإطار نفسه: حقول ثم شريط مرجع، وبجانبها بطاقتا المؤشرات
-  const header = frame.slice(frame.indexOf('invoice-doc-header-body'), frame.indexOf('invoice-doc-entry'))
+  const header = frame.slice(frame.indexOf('invoice-doc-header-body'), frame.indexOf('invoice-pos-document'))
   for (const cls of ['invoice-doc-fields', 'invoice-doc-refbar', 'invoice-doc-side', 'invoice-doc-party', 'invoice-doc-itemcard']) {
     assert.ok(header.includes(cls), `رأس الإطار ينقصه ${cls}`)
   }
@@ -202,21 +202,21 @@ const footerOf = (src) => {
   const frameParts = [
     ['invoice-doc-dots', 'نقاط نافذة سطح المكتب الثلاث أعلى يمين المستند'],
     ['invoice-doc-nav', 'سهما المستند السابق/التالي داخل صندوق الرقم'],
-    ['invoice-doc-entry-filter', 'منتقي تصنيف الأصناف بجوار شريط الباركود'],
+    ['invoice-doc-balanced', 'رقاقة «القيد متزن» بجوار رقم المستند'],
   ]
   for (const [cls, label] of frameParts) {
     assert.ok(frame.includes(cls), `الإطار فقد ${label} (${cls})`)
     assert.ok(css.includes(`.${cls}`), `لا قاعدة CSS لـ ${cls}`)
   }
-  // الرقاقات داخل مربع البحث لا بجانبه (المرجع: F2 و«جاهز للمسح» داخل الحافة)
-  const entryInput = frame.slice(frame.indexOf('invoice-doc-entry-input'), frame.indexOf('invoice-doc-entry-actions'))
-  assert.ok(entryInput.includes('invoice-doc-entry-hints'), 'رقاقات الاختصار خرجت من داخل مربع البحث')
-  assert.ok(/position:\s*absolute/.test(ruleOf('.invoice-doc-entry-input > .invoice-doc-entry-hints')), 'رقاقات مربع البحث ليست داخل حافته')
-  // جدول البنود: الوحدة والضريبة وأدوات السطر
+  // قرار المالك (المرحلة ⑨): **لا شريط بحث أصناف منفصل** — البحث من خلية اسم الصنف
+  assert.ok(!frame.includes('invoice-doc-entry'), 'عاد شريط البحث/الباركود المنفصل إلى الإطار')
+  assert.ok(!frame.includes('itemEntry'), 'الإطار ما زال يستقبل مربع البحث بدل جدول البنود')
+  // جدول البنود: الوحدة والضريبة وأدوات السطر والبحث داخل خلية الاسم
   const table = readFileSync(`${ROOT}/src/ui/components/InvoiceLinesTable.tsx`, 'utf8')
-  for (const [needle, label] of [['COL.unit', 'عمود الوحدة'], ['COL.tax', 'عمود الضريبة'], ['COL.tools', 'عمود الإجراءات'], ['invoice-doc-linebar', 'شريط أدوات البنود أسفل الجدول'], ['onDuplicate', 'تكرار السطر']]) {
+  for (const [needle, label] of [['COL.unit', 'عمود الوحدة'], ['COL.tax', 'عمود الضريبة'], ['COL.tools', 'عمود الإجراءات'], ['invoice-line-entry-cell', 'مربع البحث داخل خلية اسم أول سطر فارغ'], ['onDuplicate', 'تكرار السطر']]) {
     assert.ok(table.includes(needle), `جدول البنود ينقصه ${label}`)
   }
+  assert.ok(!table.includes('invoice-doc-linebar'), 'عاد شريط أدوات البنود السفلي المكرر')
   assert.ok(/invoice-doc-taxchip/.test(table) && css.includes('.invoice-doc-taxchip'), 'رقاقة نسبة الضريبة على السطر غير موجودة')
   // البلاطات الثلاث وكتلة التسوية في صفحتي البيع والشراء
   const picker = readFileSync(`${ROOT}/src/ui/components/PaymentMethodPicker.tsx`, 'utf8')

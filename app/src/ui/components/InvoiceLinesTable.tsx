@@ -49,14 +49,14 @@ const COL = {
   index: 'w-9 text-center',
   code: 'w-24 text-center',
   name: 'min-w-[13rem] text-start',
-  warehouse: 'w-36 text-start',
+  warehouse: 'w-36 text-center',
   qty: 'w-[5.5rem] text-center',
   price: 'w-[7rem] text-center',
   percent: 'w-[4.75rem] text-center',
   unit: 'w-[4.5rem] text-center',
   tax: 'w-[5.5rem] text-center',
-  money: 'w-[7.5rem] text-left',
-  total: 'w-[8.5rem] text-left',
+  money: 'w-[7.5rem] text-center',
+  total: 'w-[8.5rem] text-center',
   tools: 'w-[4.5rem] text-center',
 } as const
 
@@ -90,6 +90,53 @@ type Props = {
   amountLabel?: (item: InvoiceLineItem) => string
   placeholder: string
   showPicker?: boolean
+  /** مربع البحث/الباركود نفسه — يُعرض **داخل خلية اسم أول سطر فارغ** (لا شريط بحث منفصل) */
+  entry?: ReactNode
+  /** تصفية التصنيف المصاحبة للبحث — تظهر فوق الجدول بجوار العدادات */
+  entryFilter?: ReactNode
+}
+
+/** خلايا السطر القابلة للتحرير بالترتيب — تُستعمل في التنقل بالأسهم */
+function rowCells(row: HTMLTableRowElement): HTMLElement[] {
+  return [...row.querySelectorAll<HTMLElement>('input:not([type="date"]):not([disabled]), td[tabindex="0"]')]
+    .filter((element) => element.dataset.arrowsNative !== 'true')
+}
+/**
+ * التنقل داخل جدول البنود بالأسهم فقط — لا تغيّر الأسهم أي قيمة:
+ * ↑/↓ نفس العمود بين السطور · ←/→ بين حقول السطر (وتنتقل للسطر المجاور عند الطرف).
+ */
+function gridArrowNavigation(event: React.KeyboardEvent<HTMLTableSectionElement>) {
+  if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return
+  const target = event.target as HTMLElement
+  if (target.dataset.arrowsNative === 'true' || target.tagName === 'SELECT') return
+  const row = target.closest('tr')
+  const body = target.closest('tbody')
+  if (!row || !body) return
+  const rows = [...body.querySelectorAll<HTMLTableRowElement>('tr')]
+  const rowIndex = rows.indexOf(row as HTMLTableRowElement)
+  const cells = rowCells(row as HTMLTableRowElement)
+  const cellIndex = cells.indexOf(target)
+  if (cellIndex < 0) return
+  event.preventDefault()
+  const focus = (element?: HTMLElement) => {
+    if (!element) return
+    element.focus()
+    if (element instanceof HTMLInputElement) element.select()
+  }
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    const nextRow = rows[rowIndex + (event.key === 'ArrowDown' ? 1 : -1)]
+    if (!nextRow) return
+    const nextCells = rowCells(nextRow)
+    focus(nextCells[Math.min(cellIndex, nextCells.length - 1)])
+    return
+  }
+  const step = event.key === 'ArrowLeft' ? 1 : -1
+  const next = cells[cellIndex + step]
+  if (next) { focus(next); return }
+  const neighbour = rows[rowIndex + step]
+  if (!neighbour) return
+  const neighbourCells = rowCells(neighbour)
+  focus(step > 0 ? neighbourCells[0] : neighbourCells[neighbourCells.length - 1])
 }
 
 const numberStyle = (value: number | string) => ({
@@ -110,10 +157,14 @@ function decimalDraft(value: string): string {
   return sign + unsigned.slice(0, dot + 1) + unsigned.slice(dot + 1).replace(/\./g, '')
 }
 
+/** أقل عدد سطور ظاهرة في جدول البنود — تبقى الشاشة ثابتة ولا «تقفز» مع أول صنف */
+const MIN_VISIBLE_ROWS = 5
+
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
   canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys, belowCostNotice,
   onPick, onPatch, onRemove, onDuplicate, documentTaxPercent = 0, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
+  entry, entryFilter,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
   /* أعمدة العرض الاختيارية — من زر «تخصيص الحقول»؛ إخفاؤها لا يغيّر أي حساب */
@@ -121,12 +172,6 @@ export function InvoiceLinesTable({
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  const selectedLine = selectedKey ? lines.find((line) => line.key === selectedKey) : undefined
-  const removeSelectedLine = () => {
-    if (!selectedLine) return
-    onRemove(selectedLine.key)
-    setSelectedKey(null)
-  }
   const draftValue = (key: string, value: string | number) => drafts[key] ?? String(value ?? '')
   const updateDraft = (key: string, raw: string, commit: (value: string) => void) => {
     const value = decimalDraft(raw)
@@ -160,8 +205,9 @@ export function InvoiceLinesTable({
         <div className="invoice-lines-toolbar-title">
           <div className="text-[11px] font-bold text-slate-400">بنود الفاتورة</div>
           <h2 className="text-sm font-black">الأصناف والكميات والأسعار</h2>
-          <button type="button" className="invoice-lines-delete" aria-label="حذف السطر المحدد" title="اختر سطراً ثم اضغط لحذفه" disabled={!selectedLine} onClick={removeSelectedLine}><Trash2 size={14} /> حذف السطر</button>
+          <button type="button" className="invoice-lines-delete" aria-label="مسح باركود" title="امسح الباركود لإضافة الصنف في سطر جديد" onClick={() => window.dispatchEvent(new Event('shopsys:focus-item'))}><Barcode size={14} /> مسح باركود</button>
         </div>
+        {entryFilter && <div className="invoice-lines-filter">{entryFilter}</div>}
         <div className="invoice-lines-kpis">
           <span className="invoice-lines-count">{lines.length} بند</span>
           <span className="invoice-lines-value" dir="ltr">{fmt(linesValueMinor)} {currencySymbol}</span>
@@ -204,7 +250,7 @@ export function InvoiceLinesTable({
               <th className={`p-2 ${COL.tools}`} scope="col">إجراءات</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody onKeyDown={gridArrowNavigation}>
             {lines.map((line, lineIndex) => {
               const item = items.find((row) => row.id === line.itemId)
               const warning = warnings?.get(line.key)
@@ -228,9 +274,9 @@ export function InvoiceLinesTable({
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`ordered:${line.key}`, line.orderedQty ?? line.qty)} onChange={(event) => updateDraft(`ordered:${line.key}`, event.target.value, (value) => patchDecimal(line, 'orderedQty', value))} onBlur={() => clearDraft(`ordered:${line.key}`)} /></td>
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty)} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
-                  </> : <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.qty)} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>}
+                  </> : <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.qty)} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const priceCell = event.currentTarget.closest('tr')?.querySelector<HTMLInputElement>('.price-cell input'); priceCell?.focus(); priceCell?.select() }} /></td>}
                   {columns.unit && <td className={`unit-cell p-1 align-middle ${COL.unit}`}>{item?.baseUnit || (item?.isService ? 'خدمة' : '—')}</td>}
-                  <td className={`num-cell p-1 align-middle ${COL.price}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.unitPriceMinor / 10 ** currencyDecimals)} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:focus-item')) } }} /></td>
+                  <td className={`num-cell price-cell p-1 align-middle ${COL.price}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.unitPriceMinor / 10 ** currencyDecimals)} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } window.dispatchEvent(new Event('shopsys:open-item')) }} /></td>
                   {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
                   {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
                   {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
@@ -239,6 +285,7 @@ export function InvoiceLinesTable({
                   <td className={`p-1 ${COL.total}`}><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
                   <td className={`p-1 ${COL.tools}`}>
                     <div className="invoice-doc-rowtools">
+                      <button type="button" title="إضافة صنف في سطر جديد" aria-label="إضافة صنف في سطر جديد" onClick={(event) => { event.stopPropagation(); window.dispatchEvent(new Event('shopsys:open-item')) }}><Plus size={11} /></button>
                       {onEdit && <button type="button" title="بطاقة الصنف" aria-label={`تعديل بطاقة ${line.nameAr || item?.nameAr || ''}`} onClick={(event) => { event.stopPropagation(); onEdit(line.itemId) }}><Pencil size={11} /></button>}
                       {onDuplicate && <button type="button" title="تكرار السطر" aria-label={`تكرار سطر ${line.nameAr || item?.nameAr || ''}`} onClick={(event) => { event.stopPropagation(); onDuplicate(line.key) }}><Copy size={11} /></button>}
                       <button type="button" className="is-danger" title="حذف السطر" aria-label={`حذف سطر ${line.nameAr || item?.nameAr || ''}`} onClick={(event) => { event.stopPropagation(); onRemove(line.key) }}><Trash2 size={11} /></button>
@@ -247,18 +294,31 @@ export function InvoiceLinesTable({
                 </tr>
               )
             })}
+            {Array.from({ length: Math.max(0, MIN_VISIBLE_ROWS - lines.length) }, (_, ghostIndex) => (
+              <tr key={`ghost-${ghostIndex}`} className="invoice-line-ghost border-t border-slate-100 dark:border-slate-800">
+                <td className={`p-2 font-mono text-[11px] font-black text-slate-300 ${COL.index}`}>{lines.length + ghostIndex + 1}</td>
+                {columns.code && <td className={`p-2 ${COL.code}`} />}
+                {/* البحث من خلية الاسم نفسها: أول سطر فارغ يحمل مربع البحث/الباركود */}
+                <td className={`invoice-line-entry-cell p-1 align-middle ${COL.name}`}>
+                  {ghostIndex === 0 && entry
+                    ? entry
+                    : <button
+                        type="button"
+                        className="invoice-line-ghost-btn"
+                        aria-label="سطر فارغ — اضغط لإضافة صنف"
+                        onClick={() => window.dispatchEvent(new Event('shopsys:open-item'))}
+                      >اكتب اسم الصنف أو امسح الباركود…</button>}
+                </td>
+                <td
+                  colSpan={20}
+                  tabIndex={0}
+                  aria-label="سطر فارغ"
+                  onFocus={() => window.dispatchEvent(new Event('shopsys:focus-item'))}
+                />
+              </tr>
+            ))}
           </tbody>
         </table>
-      </div>
-      {!lines.length && <div className="m-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-8 text-center dark:border-slate-700 dark:bg-slate-900/30"><div className="mb-2 text-3xl">🧾</div><div className="font-black">لم تتم إضافة أصناف بعد</div><div className="mt-1 text-xs text-slate-500">استخدم مربع البحث بالأعلى أو اضغط F5 للبدء وإضافة أول صنف إلى الفاتورة.</div></div>}
-          {/* شريط أدوات البنود أسفل الجدول — كما في التصميم المرجعي */}
-      <div className="invoice-doc-linebar">
-        <button type="button" className="is-add" onClick={() => window.dispatchEvent(new Event('shopsys:open-item'))}><Plus size={12} /> إضافة صنف أو خدمة</button>
-        <div className="invoice-doc-linebar-tools">
-          <button type="button" disabled={!selectedLine || !onDuplicate} onClick={() => { if (selectedLine && onDuplicate) onDuplicate(selectedLine.key) }}><Copy size={11} /> تكرار السطر</button>
-          <button type="button" disabled={!selectedLine} onClick={removeSelectedLine}><Trash2 size={11} /> حذف السطر</button>
-          <button type="button" onClick={() => window.dispatchEvent(new Event('shopsys:focus-item'))}><Barcode size={11} /> مسح باركود</button>
-        </div>
       </div>
 </section>
   )

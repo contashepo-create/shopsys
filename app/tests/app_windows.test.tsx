@@ -171,11 +171,24 @@ describe('النوافذ المنبثقة المتداخلة', () => {
     )
   }
 
-  it('الضغط في مكان فارغ لا يغلق أي نافذة', () => {
+  /* قاعدة المالك (2026-09-28): «لا نافذة تُعتّم الخلفية أو تعزلها أو تضع ظلاً» —
+     فلا طبقة تعتيم أصلاً، والغلاف لا يلتقط الضغطات كي يبقى العمل خلف النافذة متاحاً. */
+  it('لا طبقة تعتيم ولا عزل خلف النوافذ والعمل خلفها متاح', () => {
     render(<TwoModals />)
     expect(document.querySelectorAll('[data-modal-id]').length).toBe(2)
-    const backdrops = document.querySelectorAll('[data-modal-backdrop]')
-    fireEvent.click(backdrops[backdrops.length - 1])
+    expect(document.querySelectorAll('[data-modal-backdrop]').length).toBe(0)
+    const shells = [...document.querySelectorAll('[data-modal-id]')] as HTMLElement[]
+    shells.forEach((shell) => expect(shell.className).toContain('pointer-events-none'))
+    shells.forEach((shell) => expect(shell.querySelector('[role="dialog"]')?.getAttribute('aria-modal')).not.toBe('true'))
+    expect(document.querySelectorAll('.shadow-2xl').length).toBe(0)
+  })
+
+  it('لكل نافذة زر تصغير يُبقيها مفتوحة بلا حجب', () => {
+    render(<TwoModals />)
+    const minimize = [...document.querySelectorAll('button')].find((button) => button.getAttribute('aria-label') === 'تصغير النافذة')
+    expect(minimize).toBeTruthy()
+    fireEvent.click(minimize!)
+    expect(document.querySelector('[data-modal-minimized="true"]')).toBeTruthy()
     expect(document.querySelectorAll('[data-modal-id]').length).toBe(2)
   })
 

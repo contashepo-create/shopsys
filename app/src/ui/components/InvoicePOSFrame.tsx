@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeft, Barcode, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, Columns3, Eye, FileClock, FileDown, FileText, Fingerprint, Hash, MessageSquare, MoreVertical, Printer, RotateCcw, Save, Search, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, Columns3, Eye, FileClock, FileDown, FileText, Fingerprint, Hash, MessageSquare, MoreVertical, PackageCheck, Printer, RotateCcw, Save } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
@@ -20,16 +20,15 @@ type InvoicePOSFrameProps = {
   partyProfile?: ReactNode
   /** بطاقة «الصنف المختار» بجانب بطاقة رصيد الطرف */
   itemProfile?: ReactNode
-  itemEntry: ReactNode
-  /** منتقي تصنيف الأصناف بجوار شريط الباركود (تصفية ما يظهر في البحث السريع) */
-  entryFilter?: ReactNode
   /** فتح المستند السابق/التالي من نفس الدفتر — يُعطَّل السهم إن لم يوجد جار */
   onPrevDocument?: () => void
   onNextDocument?: () => void
   /** رقم المستند إن وُجد (تعديل فاتورة مرحّلة)؛ وإلا «مسودة» */
   documentNumber?: string
-  /** قيمة زر الترحيل: «ترحيل وتحصيل 25,000.00» */
-  postAmountLabel?: string
+  /** سطر تدقيق المستند: متى عُدِّل ومن عدّله ولماذا — يظهر في شريط الحالة سطراً واحداً */
+  auditLabel?: string
+  /** طباعة إذن استلام من المستودع (كميات فقط بلا أسعار) */
+  onWarehouseReceipt?: () => void
   /** عدد المسودات المحفوظة من هذا النوع — يظهر على زر «المسودات» */
   draftCount?: number
   onBack: () => void
@@ -72,12 +71,11 @@ export function InvoicePOSFrame({
   referenceBar,
   partyProfile,
   itemProfile,
-  itemEntry,
-  entryFilter,
   onPrevDocument,
   onNextDocument,
   documentNumber,
-  postAmountLabel,
+  auditLabel,
+  onWarehouseReceipt,
   draftCount = 0,
   onBack,
   onNavigate,
@@ -156,7 +154,7 @@ export function InvoicePOSFrame({
           {helpOpen && (
             <div className="invoice-doc-menu is-help" data-doc-help-panel>
               <b>ترتيب العمل في الفاتورة</b>
-              <span>① اختر {partyWord} · ② أضف الأصناف سطراً سطراً · ③ اكتب الخصم والضريبة إن وُجدت · ④ حدد المحصَّل الآن · ⑤ اضغط «اعتماد وترحيل».</span>
+              <span>① اختر {partyWord} · ② أضف الأصناف سطراً سطراً · ③ اكتب الخصم والضريبة إن وُجدت · ④ حدد المحصَّل الآن · ⑤ اضغط «حفظ وترحيل».</span>
               <span>الحفظ كمسودة لا يؤثر على المخزون ولا الحسابات، والترحيل هو ما يُنشئ القيد.</span>
             </div>
           )}
@@ -171,14 +169,16 @@ export function InvoicePOSFrame({
             </span>
           </span>
           <span className="invoice-doc-status" data-doc-status>{documentNumber ? 'تعديل' : 'مسودة'}</span>
+          <span className="invoice-doc-balanced" title="طرفا القيد متساويان قبل الترحيل"><i /> القيد متزن</span>
           <small>{modeLabel} · {currencyLabel} · {dateLabel}</small>
         </div>
 
         <div className="invoice-doc-head-actions">
           <Btn variant="ghost" onClick={onRestoreDraft} title="فتح أي مسودة محفوظة باسم العميل"><FileClock size={13} /> المسودات{draftCount ? ` (${draftCount})` : ''}</Btn>
+          {onWarehouseReceipt && <Btn variant="ghost" onClick={onWarehouseReceipt} title="إذن استلام من المستودع — كميات فقط بلا أسعار"><PackageCheck size={13} /> إذن استلام مستودع</Btn>}
           <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={13} /> حفظ مسودة</Btn>
           <Btn variant="ghost" onClick={onPrint} shortcut="F6"><Eye size={13} /> معاينة</Btn>
-          <Btn onClick={onPost} shortcut="F9"><CheckCheck size={13} /> اعتماد وترحيل</Btn>
+          <Btn onClick={onPost} shortcut="F9"><CheckCheck size={13} /> حفظ وترحيل</Btn>
         </div>
       </header>
 
@@ -210,24 +210,6 @@ export function InvoicePOSFrame({
           </div>
         </section>
 
-        {/* ③ شريط البحث والباركود */}
-        <section className="invoice-doc-card invoice-doc-entry">
-          <div className="invoice-doc-entry-input">
-            <Barcode size={14} className="invoice-doc-entry-icon" />
-            {itemEntry}
-            <span className="invoice-doc-entry-hints">
-              <span className="invoice-doc-kbd">F5</span>
-              <span className="invoice-doc-ready"><i /> جاهز للمسح</span>
-            </span>
-          </div>
-          {entryFilter && <div className="invoice-doc-entry-filter">{entryFilter}</div>}
-          <div className="invoice-doc-entry-actions">
-            <button type="button" className="is-primary" onClick={() => window.dispatchEvent(new Event('shopsys:focus-item'))}><Search size={12} /> إضافة سريعة</button>
-            <button type="button" onClick={onItemSearch}><SlidersHorizontal size={12} /> تصفية</button>
-            <button type="button" onClick={onPartySearch}>بحث {partyWord}</button>
-          </div>
-        </section>
-
         {/* ④ جدول البنود واللوحات السفلية */}
         <div className="invoice-pos-document">{children}</div>
       </div>
@@ -238,6 +220,7 @@ export function InvoicePOSFrame({
           <span className={`invoice-doc-online is-${connectivityInfo.tone}`}><i /> {connectivityInfo.nameAr}</span>
           <span className="invoice-doc-cardbar-session">{activityLabel} · {branchLabel} · {userLabel}</span>
           <span>الطباعة: {browserPrintAvailable ? (autoPrintEnabled ? 'تلقائية بعد البيع' : receipt.defaultTemplate) : 'غير متاحة'}</span>
+          {auditLabel && <span className="invoice-doc-audit" title={auditLabel}>{auditLabel}</span>}
         </div>
         <div className="invoice-doc-actionbar-buttons">
           {/* تخصيص أعمدة جدول البنود — عرضٌ فقط، والحسابات والقيد لا تتأثر */}
@@ -260,9 +243,6 @@ export function InvoicePOSFrame({
             )}
           </div>
           {onExportPdf && <Btn variant="ghost" onClick={onExportPdf} title="يفتح حوار الطباعة — اختر وجهة «حفظ كـ PDF»"><FileDown size={13} /> تصدير PDF</Btn>}
-          <Btn variant="ghost" onClick={onSaveDraft}><Save size={13} /> حفظ فقط</Btn>
-          <Btn variant="ghost" onClick={onPrint}><Printer size={13} /> حفظ ومعاينة</Btn>
-          <Btn onClick={onPost} shortcut="F9" className="invoice-doc-post"><CheckCheck size={14} /> ترحيل {sale ? 'وتحصيل' : 'وسداد'} {postAmountLabel ?? ''}</Btn>
         </div>
       </footer>
     </div>

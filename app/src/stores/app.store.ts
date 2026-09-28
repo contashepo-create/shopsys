@@ -3,6 +3,7 @@
  * (اليوم: localStorage — غداً: جدول settings في SQLite عبر نفس الواجهة)
  */
 import { create } from 'zustand'
+import { DEFAULT_WAREHOUSE_RECEIPT, type WarehouseReceiptSettings } from '../core/warehouseReceipt.ts'
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
 import { toggleModuleList, effectiveModules, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
@@ -123,6 +124,10 @@ interface AppState {
   invoiceColumns: InvoiceColumnPrefs
   toggleInvoiceColumn: (key: keyof InvoiceColumnPrefs) => void
   resetInvoiceColumns: () => void
+  /** إعدادات «إذن استلام المستودع» — كميات فقط، تُفتح من الفاتورة ومن إعدادات الطباعة */
+  warehouseReceipt: WarehouseReceiptSettings
+  updateWarehouseReceipt: (patch: Partial<WarehouseReceiptSettings>) => void
+  resetWarehouseReceipt: () => void
   updateReceipt: (patch: Partial<ReceiptSettings>) => void
   setAutoPrint: (v: boolean) => void
   appearance: AppearanceSettings
@@ -303,6 +308,9 @@ export const useAppStore = create<AppState>()(
       invoiceColumns: DEFAULT_INVOICE_COLUMNS,
       toggleInvoiceColumn: (key) => set((s) => ({ invoiceColumns: { ...s.invoiceColumns, [key]: !s.invoiceColumns[key] } })),
       resetInvoiceColumns: () => set({ invoiceColumns: DEFAULT_INVOICE_COLUMNS }),
+      warehouseReceipt: DEFAULT_WAREHOUSE_RECEIPT,
+      updateWarehouseReceipt: (patch) => set((s) => ({ warehouseReceipt: { ...s.warehouseReceipt, ...patch } })),
+      resetWarehouseReceipt: () => set({ warehouseReceipt: DEFAULT_WAREHOUSE_RECEIPT }),
       updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
       setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
       appearance: DEFAULT_APPEARANCE,

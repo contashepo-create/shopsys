@@ -1049,7 +1049,7 @@ export interface PurchaseInvoice {
   /** سداد الفاتورة بعملة أجنبية — توثيق على المستند، والقيد بعملة الدفتر */
   fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 } | null
   /** سجل تدقيق التعديلات (طلب المالك) */
-  editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
+  editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number; by?: string }[]
   /** المخزن الذي وردت إليه البضاعة — null = فاتورة مختلطة تُقرأ مخازنها من السطور أو سجل قديم */
   warehouseId?: number | null
 }
@@ -1219,7 +1219,7 @@ export interface SaleInvoice {
   approvedBy?: string | null
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
   /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
-  editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number }[]
+  editHistory?: { at: string; reason: string; previousEntryId: number; reversalEntryId: number; by?: string }[]
   /** المخزن الذي بيعت منه — يُطبّع للرئيسي عند غياب الاختيار في المسارات القديمة */
   warehouseId?: number | null
   /**
@@ -5574,7 +5574,7 @@ export const useDataStore = create<DataState>()(
           journalEntryId: newEntryId,
           editHistory: [
             ...(sale.editHistory ?? []),
-            { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId },
+            { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId, by: activeUserName(state) },
           ],
         }
         const editCustodyExpenseTxs: CustodyTx[] = internalExpenses.filter((expense) => expense.custodyFileId != null && expense.amountMinor > 0).map((expense, index) => ({
@@ -5755,7 +5755,7 @@ export const useDataStore = create<DataState>()(
           journalEntryId: newEntryId,
           editHistory: [
             ...(inv.editHistory ?? []),
-            { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId },
+            { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId, by: activeUserName(state) },
           ],
         }
         set({
