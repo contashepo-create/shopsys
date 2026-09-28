@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>التصميم المقترح لشاشة الفاتورة — قبل التنفيذ</title>
+<style>
+:root{
+  --doc-ink:#0f172a; --doc-ink-soft:#1e293b; --doc-surface:#f1f5f9; --doc-paper:#fff;
+  --doc-tint:#f8fafc; --doc-tint-strong:#eef2ff; --doc-band:#f1f5f9; --doc-line:#e2e8f0;
+  --doc-muted:#475569; --doc-faint:#64748b; --doc-accent:#4338ca; --doc-accent-deep:#3730a3;
+  --doc-ok:#047857; --doc-ok-tint:#ecfdf5; --doc-ok-line:#a7f3d0;
+  --doc-danger:#b91c1c; --doc-danger-tint:#fef2f2; --doc-danger-line:#fecaca;
+  --doc-warn:#b45309; --doc-warn-tint:#fffbeb; --doc-warn-line:#fde68a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:"Cairo","Segoe UI",Tahoma,sans-serif;background:var(--doc-surface);color:var(--doc-ink-soft);font-size:13px}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0}
+
+/* ═══ إطار الشاشة: شبكة ثابتة الارتفاع — لا تمرير للصفحة كلها ═══ */
+.app{height:100dvh;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto auto;gap:.4rem;padding:.4rem;background:var(--doc-surface)}
+.zone{position:relative}
+.zone[data-zone]::after{content:attr(data-zone);position:absolute;inset-block-start:-.35rem;inset-inline-start:.5rem;z-index:5;display:none;
+  background:#4338ca;color:#fff;border-radius:.3rem;padding:.05rem .3rem;font-size:.55rem;font-weight:800}
+body.zones .zone[data-zone]::after{display:block}
+body.zones .zone{outline:1.5px dashed #6366f1;outline-offset:2px}
+
+.card{border:1px solid var(--doc-line);border-radius:.6rem;background:var(--doc-paper);min-width:0}
+
+/* ① شريط المستند — زر الترحيل الوحيد في النظام */
+.topbar{display:flex;align-items:center;gap:.4rem;padding:.3rem .5rem}
+.dots{display:flex;gap:.25rem}.dots i{width:.7rem;height:.7rem;border-radius:999px;background:var(--doc-line);display:block}
+.sep{width:1px;height:1rem;background:var(--doc-line)}
+.iconbtn{display:grid;place-items:center;width:1.7rem;height:1.7rem;border-radius:.4rem;color:var(--doc-faint)}
+.iconbtn:hover{background:var(--doc-tint-strong);color:var(--doc-accent)}
+.numberbox{display:flex;align-items:center;gap:.3rem;border:1px solid var(--doc-line);border-radius:.4rem;background:var(--doc-tint);padding:.12rem .4rem;font-size:.66rem;font-weight:800;color:var(--doc-ink)}
+.status-chip{border-radius:.3rem;background:var(--doc-warn-tint);border:1px solid var(--doc-warn-line);color:var(--doc-warn);padding:.02rem .3rem;font-size:.55rem;font-weight:800}
+.spacer{flex:1}
+.btn{display:inline-flex;align-items:center;gap:.25rem;border:1px solid var(--doc-line);border-radius:.4rem;background:var(--doc-paper);padding:.22rem .5rem;font-size:.63rem;font-weight:700;color:var(--doc-muted)}
+.btn:hover{border-color:var(--doc-accent);color:var(--doc-accent)}
+.btn.primary{background:var(--doc-accent);border-color:var(--doc-accent);color:#fff;font-weight:800}
+.btn.primary:hover{background:var(--doc-accent-deep);color:#fff}
+.kbd{border:1px solid currentColor;border-radius:.2rem;padding:0 .18rem;font-size:.5rem;opacity:.75}
+
+/* ② ترويسة الفاتورة */
+.header{display:grid;grid-template-columns:minmax(0,1fr) 15rem;gap:.4rem;padding:.35rem .5rem}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));gap:.3rem .4rem}
+.f{display:flex;flex-direction:column;gap:.1rem;min-width:0}
+.f > label{font-size:.55rem;font-weight:800;color:var(--doc-muted)}
+.f > .in{height:1.65rem;border:1px solid var(--doc-line);border-radius:.35rem;background:var(--doc-paper);padding:0 .35rem;display:flex;align-items:center;font-size:.64rem;color:var(--doc-ink)}
+.party{border:1px solid var(--doc-line);border-radius:.5rem;background:var(--doc-tint);padding:.3rem .4rem;display:flex;flex-direction:column;gap:.18rem}
+.party b{font-size:.7rem;color:var(--doc-ink)}
+.party .row{display:flex;justify-content:space-between;font-size:.58rem;color:var(--doc-faint)}
+.tone{display:inline-flex;align-items:center;gap:.2rem;font-size:.55rem;font-weight:800;color:var(--doc-ok)}
+.tone i{width:.4rem;height:.4rem;border-radius:999px;background:currentColor}
+
+/* ③ شريط الإدخال */
+.entry{display:flex;align-items:center;gap:.35rem;padding:.25rem .4rem}
+.entry .scan{flex:1;display:flex;align-items:center;gap:.35rem;border:1px solid var(--doc-line);border-radius:.4rem;background:var(--doc-tint);padding:.2rem .4rem;font-size:.63rem;color:var(--doc-faint)}
+.ready{display:inline-flex;align-items:center;gap:.2rem;border-radius:999px;background:var(--doc-ok-tint);border:1px solid var(--doc-ok-line);color:var(--doc-ok);padding:.02rem .3rem;font-size:.53rem;font-weight:800}
+.ready i{width:.35rem;height:.35rem;border-radius:999px;background:currentColor}
+
+/* ④ البنود — المنطقة الوحيدة التي تتمدد وتُمرَّر داخلياً */
+.lines{display:flex;flex-direction:column;overflow:hidden}
+.lines-head{display:flex;align-items:center;gap:.4rem;border-bottom:1px solid var(--doc-line);background:var(--doc-band);padding:.22rem .5rem;font-size:.66rem;font-weight:800;color:var(--doc-ink-soft)}
+.pill{border-radius:.3rem;background:var(--doc-tint-strong);color:var(--doc-accent-deep);padding:.02rem .32rem;font-size:.55rem;font-weight:800}
+.pill.ok{background:var(--doc-ok-tint);color:var(--doc-ok);border:1px solid var(--doc-ok-line)}
+.lines-scroll{flex:1;overflow:auto;min-height:0}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+thead th{position:sticky;top:0;z-index:2;background:var(--doc-tint);border-bottom:1px solid var(--doc-line);
+  padding:.25rem .35rem;font-size:.58rem;font-weight:800;color:var(--doc-muted);text-align:right;white-space:nowrap}
+tbody td{border-bottom:1px solid var(--doc-line);padding:.16rem .35rem;font-size:.64rem;color:var(--doc-ink-soft);height:2.1rem}
+tbody tr:hover{background:var(--doc-tint)}
+.num{direction:ltr;text-align:left;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.cell-in{width:100%;height:1.5rem;border:1px solid var(--doc-line);border-radius:.3rem;background:var(--doc-paper);padding:0 .3rem;text-align:left;direction:ltr;
+  font-family:ui-monospace,monospace;font-size:.64rem;font-variant-numeric:tabular-nums}
+.cell-in:focus{outline:2px solid var(--doc-tint-strong);border-color:var(--doc-accent)}
+.desc b{display:block;font-size:.66rem;color:var(--doc-ink);font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.desc small{display:block;font-size:.53rem;color:var(--doc-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.taxchip{display:inline-block;border-radius:.25rem;background:var(--doc-tint);border:1px solid var(--doc-line);color:var(--doc-faint);padding:.02rem .28rem;font-size:.53rem;font-weight:800}
+.tools{display:flex;gap:.1rem;justify-content:flex-start}
+.tools button{width:1.25rem;height:1.25rem;display:grid;place-items:center;border-radius:.25rem;color:var(--doc-faint);font-size:.7rem}
+.tools button:hover{background:var(--doc-tint-strong);color:var(--doc-accent)}
+.tools button.del:hover{background:var(--doc-danger-tint);color:var(--doc-danger)}
+.lines-foot{display:flex;flex-wrap:wrap;align-items:center;gap:.25rem;border-top:1px solid var(--doc-line);background:var(--doc-tint);padding:.22rem .4rem}
+.chip{display:inline-flex;align-items:center;gap:.2rem;border:1px solid var(--doc-line);border-radius:.35rem;background:var(--doc-paper);padding:.12rem .38rem;font-size:.58rem;font-weight:700;color:var(--doc-muted)}
+.chip:hover{border-color:var(--doc-accent);color:var(--doc-accent)}
+.chip.amber{border-color:var(--doc-warn-line);background:var(--doc-warn-tint);color:var(--doc-warn)}
+.chip .count{border-radius:999px;background:var(--doc-tint-strong);color:var(--doc-accent-deep);padding:0 .25rem;font-size:.5rem;font-weight:800}
+
+/* ⑤ ثلاث لوحات متساوية الارتفاع */
+.panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:stretch;gap:.4rem}
+.panel{display:flex;flex-direction:column;height:100%;min-height:9.5rem;max-height:13rem;border:1px solid var(--doc-line);border-radius:.6rem;background:var(--doc-paper);overflow:hidden}
+.panel-head{display:flex;align-items:center;gap:.3rem;border-bottom:1px solid var(--doc-line);background:var(--doc-band);padding:.2rem .45rem;font-size:.63rem;font-weight:800;color:var(--doc-ink-soft)}
+.panel-head small{margin-inline-start:auto;font-size:.52rem;font-weight:700;color:var(--doc-faint)}
+.panel-body{flex:1;overflow:auto;padding:.3rem .45rem;display:flex;flex-direction:column;gap:.25rem}
+.panel-foot{display:flex;align-items:center;justify-content:space-between;gap:.3rem;border-top:1px solid var(--doc-line);background:var(--doc-tint);padding:.18rem .45rem;font-size:.58rem;font-weight:700;color:var(--doc-muted)}
+.panel-foot b{direction:ltr;font-family:ui-monospace,monospace}
+.terms{display:flex;flex-wrap:wrap;gap:.2rem}
+.terms .chip{font-size:.53rem}
+textarea.notes{flex:1;min-height:2.6rem;resize:none;border:1px solid var(--doc-line);border-radius:.35rem;background:var(--doc-paper);padding:.25rem .35rem;font-size:.6rem}
+.seg{display:flex;gap:.2rem}
+.seg button{flex:1;border:1px solid var(--doc-line);border-radius:.35rem;padding:.18rem 0;font-size:.58rem;font-weight:800;color:var(--doc-muted)}
+.seg button.on{border-color:var(--doc-accent);background:var(--doc-tint-strong);color:var(--doc-accent-deep)}
+.amountfield{display:flex;align-items:center;gap:.3rem;border:1px solid var(--doc-line);border-radius:.35rem;background:var(--doc-paper);padding:.1rem .35rem}
+.amountfield input{flex:1;border:0;outline:0;text-align:left;direction:ltr;font-family:ui-monospace,monospace;font-size:1rem;font-weight:800;color:var(--doc-ink);background:transparent}
+.amountfield span{border-radius:.25rem;background:var(--doc-tint);border:1px solid var(--doc-line);color:var(--doc-faint);padding:0 .25rem;font-size:.53rem;font-weight:800}
+.sum{display:flex;flex-direction:column;gap:.05rem}
+.sum .row{display:flex;align-items:baseline;gap:.3rem;font-size:.62rem;color:var(--doc-muted)}
+.sum .row .dots{flex:1;border-bottom:1px dotted var(--doc-line);transform:translateY(-.15rem)}
+.sum .row b{direction:ltr;font-family:ui-monospace,monospace;font-weight:700;color:var(--doc-ink-soft)}
+.grand{display:flex;align-items:center;justify-content:space-between;border:1px solid var(--doc-accent);border-radius:.4rem;background:var(--doc-tint-strong);padding:.18rem .4rem;font-size:.7rem;font-weight:800;color:var(--doc-accent-deep)}
+.grand b{direction:ltr;font-family:ui-monospace,monospace;font-size:.85rem}
+
+/* ⑥ شريط الحالة — بلا زر ترحيل مكرر */
+.statusbar{display:flex;align-items:center;gap:.4rem;border:1px solid var(--doc-line);border-radius:.5rem;background:var(--doc-paper);padding:.2rem .5rem;font-size:.57rem;color:var(--doc-faint)}
+.statusbar .live{display:inline-flex;align-items:center;gap:.2rem;color:var(--doc-ok);font-weight:800}
+.statusbar .live i{width:.35rem;height:.35rem;border-radius:999px;background:currentColor}
+.statusbar .totals{display:inline-flex;gap:.5rem;font-weight:800;color:var(--doc-muted)}
+.statusbar .totals b{direction:ltr;font-family:ui-monospace,monospace;color:var(--doc-ink)}
+
+/* ═══ نافذة عائمة «عادية»: بلا تعتيم وبلا عزل — ومعها Esc وزر إغلاق ═══ */
+.floatwrap{position:fixed;inset:0;z-index:60;pointer-events:none;display:flex;justify-content:center;padding-top:6vh}
+.floatwin{pointer-events:auto;width:min(44rem,92vw);max-height:70vh;display:flex;flex-direction:column;overflow:hidden;
+  border:1px solid var(--doc-accent);border-radius:.6rem;background:var(--doc-paper);box-shadow:0 8px 22px rgb(15 23 42 /.12)}
+.floatwin-head{display:flex;align-items:center;gap:.4rem;border-bottom:1px solid var(--doc-line);background:var(--doc-band);padding:.25rem .45rem;font-size:.66rem;font-weight:800;color:var(--doc-ink-soft)}
+.floatwin-head .hint{margin-inline-start:auto;font-size:.53rem;font-weight:700;color:var(--doc-faint)}
+.floatwin-body{overflow:auto;padding:.3rem}
+.res{display:flex;align-items:center;gap:.4rem;border-bottom:1px solid var(--doc-line);padding:.25rem .35rem;font-size:.63rem}
+.res:hover{background:var(--doc-tint-strong)}
+.res .code{font-family:ui-monospace,monospace;font-size:.57rem;color:var(--doc-faint)}
+.res .price{margin-inline-start:auto;direction:ltr;font-family:ui-monospace,monospace;font-weight:800}
+
+/* شريط أدوات المعاينة (ليس جزءاً من التطبيق) */
+.demo{position:fixed;inset-block-end:.4rem;inset-inline-start:.4rem;z-index:80;display:flex;gap:.25rem;background:#0f172a;color:#fff;border-radius:.5rem;padding:.25rem .35rem;font-size:.57rem;box-shadow:0 6px 18px rgb(15 23 42/.25)}
+.demo button{border:1px solid #334155;border-radius:.3rem;padding:.12rem .35rem;color:#e2e8f0;font-weight:700}
+.demo button.on{background:#4338ca;border-color:#4338ca;color:#fff}
+.demo span{opacity:.7;align-self:center;padding-inline:.2rem}
+
+/* ═══ الاستجابة: لا شيء يختفي — الأعمدة تتقلص ثم تنسدل ═══ */
+@media (max-width:1280px){ .header{grid-template-columns:minmax(0,1fr) 12rem} }
+@media (max-width:1080px){
+  .header{grid-template-columns:minmax(0,1fr)}
+  .party{flex-direction:row;align-items:center;gap:.5rem;flex-wrap:wrap}
+  .panels{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .panel{max-height:11rem}
+  .panels > .panel:nth-child(3){grid-column:1 / -1}
+}
+@media (max-width:760px){
+  .app{grid-template-rows:auto auto auto minmax(12rem,1fr) auto auto}
+  .panels{grid-template-columns:minmax(0,1fr);max-height:16rem;overflow:auto}
+  .panels > .panel:nth-child(3){grid-column:auto}
+  .col-code,.col-unit,.col-tax{display:none} /* تُنقل إلى سطر الوصف لا تُحذف */
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ① شريط المستند -->
+  <header class="card zone topbar" data-zone="① شريط المستند — 34px">
+    <div class="dots"><i></i><i></i><i></i></div>
+    <span class="sep"></span>
+    <button class="iconbtn" title="رجوع وإغلاق">←</button>
+    <button class="iconbtn" title="قائمة المستند">☰</button>
+    <button class="iconbtn" title="مساعدة">؟</button>
+    <span class="sep"></span>
+    <span class="numberbox">فاتورة مبيعات · S-0042 <span class="status-chip">مسودة</span></span>
+    <span class="spacer"></span>
+    <button class="btn">المسودات (2)</button>
+    <button class="btn">حفظ مسودة <span class="kbd">F8</span></button>
+    <button class="btn">معاينة <span class="kbd">F6</span></button>
+    <button class="btn primary">✓ ترحيل وتحصيل 11,200.00 <span class="kbd">F9</span></button>
+  </header>
+
+  <!-- ② ترويسة الفاتورة -->
+  <section class="card zone header" data-zone="② الترويسة — تتقلص ولا تُمرَّر">
+    <div class="fields">
+      <div class="f"><label>العميل</label><div class="in">مؤسسة النخيل التجارية — F4</div></div>
+      <div class="f"><label>التاريخ</label><div class="in num">2026-09-28</div></div>
+      <div class="f"><label>الاستحقاق</label><div class="in num">2026-10-28</div></div>
+      <div class="f"><label>المرجع / أمر الشراء</label><div class="in">PO-9841</div></div>
+      <div class="f"><label>المخزن</label><div class="in">المخزن الرئيسي</div></div>
+      <div class="f" id="f-mode"><label>نمط الفاتورة</label><div class="in" id="mode-label">قياسي</div></div>
+      <div class="f mode-advanced"><label>مركز التكلفة</label><div class="in">الفرع الرئيسي</div></div>
+      <div class="f mode-advanced"><label>المشروع</label><div class="in">بدون</div></div>
+    </div>
+    <aside class="party">
+      <b>مؤسسة النخيل التجارية <span class="tone"><i></i> نشط</span></b>
+      <div class="row"><span>الرصيد الحالي</span><b class="num">4,300.00</b></div>
+      <div class="row"><span>الرصيد بعد هذه الفاتورة</span><b class="num">15,500.00</b></div>
+      <div class="row"><span>حد الائتمان</span><b class="num">50,000.00</b></div>
+    </aside>
+  </section>
+
+  <!-- ③ شريط الإدخال -->
+  <section class="card zone entry" data-zone="③ شريط الإدخال — 30px">
+    <div class="scan">▮▯▮ امسح الباركود أو اكتب اسم الصنف / الكود السريع <span class="kbd">F5</span> <span class="ready"><i></i> جاهز للمسح</span></div>
+    <button class="btn">كل الأصناف ▾</button>
+    <button class="btn">تصفية</button>
+    <button class="btn primary" id="open-picker">🔍 إضافة سريعة</button>
+    <button class="btn">بحث العميل</button>
+  </section>
+
+  <!-- ④ البنود -->
+  <section class="card zone lines" data-zone="④ البنود — تأخذ كل الفراغ والتمرير داخلها فقط">
+    <div class="lines-head">
+      الأصناف والكميات والأسعار
+      <span class="pill">2 بند</span>
+      <span class="pill ok">قيمة البنود 11,200.00 ر.س</span>
+      <span class="spacer"></span>
+      <span style="font-size:.53rem;font-weight:700;color:var(--doc-faint)">Enter للسطر التالي · Ctrl+D تكرار · Del حذف</span>
+    </div>
+    <div class="lines-scroll">
+      <table>
+        <colgroup>
+          <col style="width:2.2rem"><col class="col-code" style="width:6rem"><col>
+          <col style="width:5.2rem"><col class="col-unit" style="width:4.6rem"><col style="width:6rem">
+          <col style="width:4.4rem"><col class="col-tax" style="width:5rem"><col class="col-cost mode-profit" style="width:5.6rem">
+          <col class="col-margin mode-profit" style="width:5rem"><col style="width:7rem"><col style="width:4.6rem">
+        </colgroup>
+        <thead><tr>
+          <th style="text-align:center">م</th>
+          <th class="col-code">كود الصنف</th>
+          <th>الصنف / الوصف</th>
+          <th class="num">الكمية</th>
+          <th class="col-unit">الوحدة</th>
+          <th class="num">السعر</th>
+          <th class="num">خصم %</th>
+          <th class="col-tax">الضريبة</th>
+          <th class="col-cost mode-profit num">التكلفة</th>
+          <th class="col-margin mode-profit num">الهامش %</th>
+          <th class="num">الإجمالي</th>
+          <th>إجراءات</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td style="text-align:center;color:var(--doc-faint)">1</td>
+            <td class="col-code num">ITM-1001</td>
+            <td class="desc"><b>تمر سكري فاخر</b><small>متاح 1000 كجم · المخزن الرئيسي</small></td>
+            <td><input class="cell-in" value="100"></td>
+            <td class="col-unit"><select class="cell-in" style="text-align:right;direction:rtl"><option>كجم</option><option>كرتونة</option></select></td>
+            <td><input class="cell-in" value="100.00"></td>
+            <td><input class="cell-in" value="0"></td>
+            <td class="col-tax"><span class="taxchip">معفى</span></td>
+            <td class="col-cost mode-profit num">62.00</td>
+            <td class="col-margin mode-profit num" style="color:var(--doc-ok);font-weight:800">38%</td>
+            <td class="num" style="font-weight:800;color:var(--doc-ink)">10,000.00</td>
+            <td><div class="tools"><button title="تفاصيل السطر">✎</button><button title="تكرار">⧉</button><button class="del" title="حذف">🗑</button></div></td>
+          </tr>
+          <tr>
+            <td style="text-align:center;color:var(--doc-faint)">2</td>
+            <td class="col-code num">ITM-1042</td>
+            <td class="desc"><b>عسل سدر جبلي</b><small>متاح 60 كجم · المخزن الرئيسي</small></td>
+            <td><input class="cell-in" value="10"></td>
+            <td class="col-unit"><select class="cell-in" style="text-align:right;direction:rtl"><option>كجم</option></select></td>
+            <td><input class="cell-in" value="120.00"></td>
+            <td><input class="cell-in" value="0"></td>
+            <td class="col-tax"><span class="taxchip">معفى</span></td>
+            <td class="col-cost mode-profit num">80.00</td>
+            <td class="col-margin mode-profit num" style="color:var(--doc-ok);font-weight:800">33%</td>
+            <td class="num" style="font-weight:800;color:var(--doc-ink)">1,200.00</td>
+            <td><div class="tools"><button title="تفاصيل السطر">✎</button><button title="تكرار">⧉</button><button class="del" title="حذف">🗑</button></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="lines-foot">
+      <button class="chip" id="open-picker-2">+ إضافة صنف أو خدمة</button>
+      <button class="chip">⧉ تكرار السطر</button>
+      <button class="chip">🗑 حذف السطر</button>
+      <button class="chip">▮▯▮ مسح باركود</button>
+      <span class="spacer" style="flex:1"></span>
+      <button class="chip amber mode-standard mode-advanced mode-profit">+ مصروف على العميل <span class="count">0</span></button>
+      <button class="chip amber mode-advanced">+ مصروف داخلي <span class="count">0</span></button>
+      <button class="chip mode-advanced">+ عمولة موظف</button>
+      <button class="chip mode-advanced">📎 مرفقات <span class="count">0</span></button>
+    </div>
+  </section>
+
+  <!-- ⑤ ثلاث لوحات متساوية -->
+  <section class="zone panels" data-zone="⑤ ثلاث لوحات بارتفاع واحد">
+    <div class="panel mode-standard mode-advanced mode-profit">
+      <div class="panel-head">📄 الملاحظات وشروط التعامل <small>تُطبع في نسخة العميل</small></div>
+      <div class="panel-body">
+        <div class="terms">
+          <button class="chip">+ السداد خلال 30 يوماً</button>
+          <button class="chip">+ لا يُرد ولا يُستبدل بعد 14 يوماً</button>
+          <button class="chip">+ التسليم من المخزن</button>
+          <button class="chip">+ ضمان سنة</button>
+        </div>
+        <textarea class="notes" placeholder="شروط السداد · موعد التسليم · أي تعهد يظهر للعميل…"></textarea>
+      </div>
+      <div class="panel-foot"><span>الاستحقاق</span><b>2026-10-28</b></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">👛 التحصيل الآن <small>نقدية / بنك</small></div>
+      <div class="panel-body">
+        <div class="seg"><button class="on">نقدي</button><button>تحويل بنكي</button><button>ماكينة دفع</button></div>
+        <div class="f"><label>الخزينة</label><div class="in">💰 الخزينة الرئيسية</div></div>
+        <div class="f"><label>المبلغ المحصل</label><div class="amountfield"><input value="0.00"><span>SAR</span></div></div>
+        <div class="terms"><button class="chip">تحصيل المبلغ كاملاً</button><button class="chip">بيع آجل بلا تحصيل</button><button class="chip">عملة أجنبية</button></div>
+      </div>
+      <div class="panel-foot"><span>المحصَّل <b>0.00</b></span><span style="color:var(--doc-danger)">المتبقي <b>11,200.00</b></span></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">🧮 إجمالي الفاتورة <small>ملخص الحساب</small></div>
+      <div class="panel-body">
+        <div class="seg"><button class="on">خصم نسبة %</button><button>خصم يدوي</button></div>
+        <div class="sum">
+          <div class="row"><span>إجمالي البنود</span><span class="dots"></span><b>11,200.00</b></div>
+          <div class="row"><span>الخصم</span><span class="dots"></span><b>0.00</b></div>
+          <div class="row"><span>مصاريف على العميل</span><span class="dots"></span><b>0.00</b></div>
+          <div class="row"><span>الضريبة</span><span class="dots"></span><b>0.00</b></div>
+          <div class="row mode-profit"><span>الربح المتوقع</span><span class="dots"></span><b style="color:var(--doc-ok)">3,800.00</b></div>
+        </div>
+        <div class="grand"><span>صافي إجمالي الفاتورة</span><b>11,200.00</b></div>
+      </div>
+      <div class="panel-foot"><span>قيد الفاتورة</span><span class="tone"><i></i> متزن — مدين = دائن</span></div>
+    </div>
+  </section>
+
+  <!-- ⑥ شريط الحالة -->
+  <footer class="zone statusbar" data-zone="⑥ شريط الحالة — بلا زر ترحيل">
+    <span class="live"><i></i> متصل — وضع محلي</span>
+    <span>تمور وتعبئة · الفرع الواحد · محمد عبده · الطباعة: thermal</span>
+    <span class="spacer" style="flex:1"></span>
+    <span class="totals"><span>الإجمالي <b>11,200.00</b></span><span>المتبقي <b style="color:var(--doc-danger)">11,200.00</b></span></span>
+    <button class="chip">تخصيص الحقول</button>
+    <button class="chip">تصدير PDF</button>
+  </footer>
+</div>
+
+<!-- نافذة اختيار صنف: بلا تعتيم ولا عزل · زر إغلاق · Esc -->
+<div class="floatwrap" id="picker" hidden>
+  <div class="floatwin" role="dialog" aria-label="نتائج بحث الأصناف">
+    <div class="floatwin-head">
+      🔍 نتائج بحث الأصناف — «تمر»
+      <span class="hint">Esc للإغلاق · ↑↓ للتنقل · Enter للإضافة</span>
+      <button class="iconbtn" id="close-picker" title="إغلاق">✕</button>
+    </div>
+    <div class="floatwin-body">
+      <div class="res"><span class="code">ITM-1001</span><span>تمر سكري فاخر — متاح 1000 كجم</span><span class="price">100.00</span></div>
+      <div class="res"><span class="code">ITM-1007</span><span>تمر عجوة — متاح 240 كجم</span><span class="price">180.00</span></div>
+      <div class="res"><span class="code">ITM-1019</span><span>تمر خلاص معبأ — متاح 75 كرتونة</span><span class="price">95.00</span></div>
+      <div class="res"><span class="code">SRV-2001</span><span>خدمة تعبئة وتغليف</span><span class="price">25.00</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="demo">
+  <span>معاينة التصميم:</span>
+  <button data-mode="simple">بسيط</button>
+  <button data-mode="standard" class="on">قياسي</button>
+  <button data-mode="profit">ربحية</button>
+  <button data-mode="advanced">متقدم</button>
+  <span>|</span>
+  <button id="toggle-zones">إظهار التقسيم</button>
+  <button id="toggle-picker">النافذة العائمة</button>
+</div>
+
+<script>
+const MODES={simple:'بسيط',standard:'قياسي',profit:'ربحية',advanced:'متقدم'}
+const CLASSES=['mode-simple','mode-standard','mode-profit','mode-advanced']
+function applyMode(mode){
+  document.getElementById('mode-label').textContent=MODES[mode]
+  document.querySelectorAll('.demo [data-mode]').forEach(b=>b.classList.toggle('on',b.dataset.mode===mode))
+  // كل عنصر يحمل mode-* يظهر فقط في الأنماط المذكورة عليه
+  document.querySelectorAll('['+CLASSES.map(c=>'class*="'+c+'"').join('],[')+']').forEach(el=>{
+    const tagged=CLASSES.filter(c=>el.classList.contains(c))
+    if(!tagged.length)return
+    el.style.display=tagged.includes('mode-'+mode)?'':'none'
+  })
+}
+document.querySelectorAll('.demo [data-mode]').forEach(b=>b.onclick=()=>applyMode(b.dataset.mode))
+const picker=document.getElementById('picker')
+const openPicker=()=>picker.hidden=false, closePicker=()=>picker.hidden=true
+document.getElementById('open-picker').onclick=openPicker
+document.getElementById('open-picker-2').onclick=openPicker
+document.getElementById('toggle-picker').onclick=()=>picker.hidden=!picker.hidden
+document.getElementById('close-picker').onclick=closePicker
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closePicker()})
+document.getElementById('toggle-zones').onclick=e=>{document.body.classList.toggle('zones');e.target.classList.toggle('on')}
+applyMode('standard')
+</script>
+</body>
+</html>
