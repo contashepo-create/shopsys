@@ -53,19 +53,30 @@ body.zones .zone[data-zone]::after{content:attr(data-zone);position:absolute;top
 .kbd{border:1px solid currentColor;border-radius:.2rem;padding:0 .18rem;font-size:0.57rem;opacity:.8}
 
 /* ② الترويسة */
-.header{display:grid;grid-template-columns:minmax(0,1fr) 13rem;gap:.4rem;padding:.26rem .45rem}
+.header{display:grid;grid-template-columns:minmax(0,1fr) 13rem;gap:.35rem;padding:.2rem .45rem}
 /* صف واحد للحقول + صف واحد لشريط المتابعة = ترويسة من صفّين فقط */
-.fields{display:grid;grid-template-columns:1.55fr 1fr 1fr 1.2fr 1.3fr 1fr;gap:.18rem .3rem;align-content:start}
+.fields{display:grid;grid-template-columns:1.55fr 1fr 1fr 1.2fr 1.3fr 1fr;gap:.13rem .3rem;align-content:start}
 .fields .f-strip{grid-column:1/-1}
-.selstrip{display:flex;align-items:center;flex-wrap:wrap;gap:.3rem;min-height:1.55rem;border:1px solid var(--doc-line);
+.selstrip{display:flex;align-items:center;flex-wrap:wrap;gap:.28rem;min-height:1.4rem;border:1px solid var(--doc-line);
   border-radius:.35rem;background:var(--doc-tint);padding:.1rem .4rem;overflow:hidden}
 .selstrip .k{font-size:0.62rem;font-weight:800;color:var(--doc-faint);white-space:nowrap}
 .selstrip .v{font-size:0.72rem;font-weight:800;color:var(--doc-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:12rem}
 .selstrip .sepv{width:1px;height:.95rem;background:var(--doc-line)}
+.selstrip .notewrap{display:flex;align-items:center;gap:.2rem;flex:1;min-width:10rem}
+.selstrip .notewrap.has #custNote{border-style:solid;border-color:var(--doc-warn-line);background:var(--doc-warn-tint);color:var(--doc-warn)}
+.selstrip #custNote{flex:1;min-width:6rem;height:1.35rem;border:1px dashed var(--doc-line);border-radius:.3rem;
+  background:var(--doc-paper);padding:0 .35rem;font-size:0.66rem;font-weight:700;color:var(--doc-ink-soft)}
+.selstrip #custNote:focus{border-style:solid;border-color:var(--doc-accent);background:var(--doc-paper);color:var(--doc-ink)}
+.selstrip .notebtn{height:1.35rem;border:1px solid var(--doc-line);border-radius:.3rem;background:var(--doc-paper);
+  padding:0 .3rem;font-size:0.6rem;font-weight:800;color:var(--doc-muted);white-space:nowrap}
+.selstrip .notebtn:hover{border-color:var(--doc-accent);color:var(--doc-accent)}
+.selstrip .notebtn.x:hover{border-color:var(--doc-danger);color:var(--doc-danger)}
+@keyframes noteflash{0%{box-shadow:0 0 0 0 rgb(180 83 9/.55)}100%{box-shadow:0 0 0 .5rem rgb(180 83 9/0)}}
+.selstrip .notewrap.flash #custNote{animation:noteflash 1.4s ease-out 2}
 .selstrip select{height:1.35rem;border:1px solid var(--doc-line);border-radius:.3rem;background:var(--doc-paper);font-size:0.66rem;font-weight:700;padding:0 .2rem}
 .f{display:flex;flex-direction:column;gap:.08rem;min-width:0}
-.f>label{font-size:0.62rem;font-weight:800;color:var(--doc-muted);display:flex;align-items:center;gap:.2rem}
-.in{height:1.6rem;width:100%;border:1px solid var(--doc-line);border-radius:.35rem;background:var(--doc-paper);padding:0 .35rem;display:flex;align-items:center;font-size:0.72rem;color:var(--doc-ink);font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.f>label{font-size:0.58rem;font-weight:800;color:var(--doc-muted);display:flex;align-items:center;gap:.2rem}
+.in{height:1.5rem;width:100%;border:1px solid var(--doc-line);border-radius:.35rem;background:var(--doc-paper);padding:0 .35rem;display:flex;align-items:center;font-size:0.72rem;color:var(--doc-ink);font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .in.ro{background:var(--doc-tint);color:var(--doc-faint);font-weight:700}
 .in.clickable{cursor:pointer}
 .in.clickable:hover{border-color:var(--doc-accent)}
@@ -116,7 +127,7 @@ tbody tr.ghost td{color:#94a3b8;height:2.15rem}
 
 /* ④ اللوحات الثلاث */
 .panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:stretch;gap:.4rem}
-.panel{display:flex;flex-direction:column;height:100%;min-height:9.6rem;max-height:13.5rem;border:1px solid var(--doc-line);border-radius:.6rem;background:var(--doc-paper);overflow:hidden}
+.panel{display:flex;flex-direction:column;height:100%;min-height:9.2rem;max-height:12.6rem;border:1px solid var(--doc-line);border-radius:.6rem;background:var(--doc-paper);overflow:hidden}
 .panel-head{display:flex;align-items:center;gap:.25rem;border-bottom:1px solid var(--doc-line);background:var(--doc-band);padding:.18rem .45rem;font-size:0.71rem;font-weight:800;color:var(--doc-ink-soft)}
 .panel-head small{margin-inline-start:auto;font-size:0.59rem;font-weight:700;color:var(--doc-faint)}
 .panel-body{flex:1;overflow:auto;padding:.28rem .45rem;display:flex;flex-direction:column;gap:.22rem}
@@ -186,7 +197,7 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
 .side .kv b{direction:ltr;font-family:ui-monospace,monospace;color:var(--doc-ink-soft)}
 .side .acts{display:flex;gap:.2rem;margin-top:auto;flex-wrap:wrap}
 .win-foot{display:flex;align-items:center;gap:.3rem;border-top:1px solid var(--doc-line);background:var(--doc-tint);padding:.2rem .4rem;font-size:0.62rem;color:var(--doc-faint);font-weight:700}
-.rescust{grid-template-columns:minmax(0,1fr) 6rem 6rem 4.6rem}
+.rescust{grid-template-columns:minmax(0,1fr) 7.5rem 6rem 6rem 4.6rem}
 .formgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.3rem;padding:.4rem}
 .dock{position:fixed;inset-block-end:.4rem;inset-inline-end:.4rem;z-index:70;display:flex;gap:.25rem}
 .dock button{border:1px solid var(--doc-accent);border-radius:.4rem;background:var(--doc-paper);padding:.15rem .45rem;font-size:0.67rem;font-weight:800;color:var(--doc-accent-deep);box-shadow:0 4px 12px rgb(15 23 42/.12)}
@@ -255,6 +266,20 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
         <span class="k" data-modes="advanced">مركز التكلفة</span>
         <select data-modes="advanced"><option>الفرع الرئيسي</option><option>فرع الخُبر</option></select>
         <span class="chipS chip-ind" id="modeHint">قياسي</span>
+      </div></div>
+      <!-- السطر الثالث: فئة العميل وخصمه المسجل + ملاحظة سريعة تُحفظ مع العميل -->
+      <div class="f f-strip"><div class="selstrip" id="custMeta">
+        <span class="k">فئة العميل</span><span class="v chipS chip-ind" id="custCat">أفراد</span>
+        <span class="sepv"></span>
+        <span class="k">خصمه المسجل</span><span class="v num" id="custDisc">0%</span>
+        <button class="btn sm" id="catEditBtn" title="تعديل فئة العميل وخصمه">✎ تعديل الفئة والخصم</button>
+        <span class="sepv"></span>
+        <span class="k">ملاحظة</span>
+        <span class="notewrap" id="noteWrap">
+          <input id="custNote" placeholder="سطر ملاحظة عن العميل… يُحفظ معه ويظهر عند اختياره">
+          <button class="notebtn" id="notePriv" title="من يرى الملاحظة">👥 للجميع</button>
+          <button class="notebtn x" id="noteClear" title="مسح الملاحظة">✕</button>
+        </span>
       </div></div>
     </div>
     <aside class="party" id="partyCard"></aside>
@@ -418,6 +443,22 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
     <span class="spacer"></span><span>يحدّث بيانات الصنف في البحث وفي سطور الفاتورة الحالية.</span></div>
 </div>
 
+<!-- ══ نافذة فئة العميل وخصمه ══ -->
+<div class="win" id="catWin" hidden style="inset-inline-start:50%;transform:translateX(-50%);top:22vh;width:min(28rem,92vw);z-index:76">
+  <div class="win-head" data-drag>✎ فئة العميل وخصمه <span class="hint">Esc للإغلاق</span>
+    <button class="wbtn x" data-close title="إغلاق">✕</button></div>
+  <div class="formgrid">
+    <div class="f"><label>العميل</label><div class="in ro" id="catCustName">—</div></div>
+    <div class="f"><label>الفئة</label><select class="in" id="catSelect">
+      <option>أفراد</option><option>جملة</option><option>جملة كبرى</option><option>عقود</option><option>موظفون</option></select></div>
+    <div class="f"><label>الخصم المسجل %</label><input class="in num" id="catDisc" value="0"></div>
+    <div class="f"><label>يُطبَّق على الفاتورة</label><select class="in" id="catApply">
+      <option value="1">نعم — فوراً عند الاختيار</option><option value="0">لا — يدوي</option></select></div>
+  </div>
+  <div class="win-foot"><button class="btn primary sm" id="catSave">حفظ</button><button class="btn sm" data-close>إلغاء</button>
+    <span class="spacer"></span><span>يُحفظ مع بطاقة العميل ويظهر في كل فاتورة له.</span></div>
+</div>
+
 <!-- ══ نافذة مسح الباركود ══ -->
 <div class="win" id="barWin" hidden style="inset-inline-start:50%;transform:translateX(-50%);top:20vh;width:min(30rem,92vw)">
   <div class="win-head" data-drag>▌▐ مسح باركود <span class="hint">امسح ثم Enter · Esc إغلاق</span>
@@ -462,12 +503,12 @@ const ITEMS=[
  {id:10,code:'SRV-2002',barcode:'62820020010',name:'خدمة توصيل داخل المدينة',unit:'خدمة',price:35,cost:18,stock:Infinity,cat:'خدمات',wh:'—'},
 ]
 const CUSTOMERS=[
- {id:0,name:'عميل نقدي',phone:'',balance:0,limit:0,active:1},
- {id:1,name:'مؤسسة النخيل التجارية',phone:'0551002030',balance:4300,limit:50000,active:1},
- {id:2,name:'بقالة الأمانة',phone:'0533445566',balance:12800,limit:15000,active:1},
- {id:3,name:'مطاعم الديرة',phone:'0567788990',balance:0,limit:20000,active:1},
- {id:4,name:'عميل موقوف — سعد',phone:'0500011122',balance:900,limit:1000,active:0},
- {id:5,name:'شركة الواحة (دفعة مقدمة)',phone:'0590001122',balance:-2500,limit:30000,active:1},
+ {id:0,name:'عميل نقدي',phone:'',balance:0,limit:0,active:1,cat:'أفراد',discount:0,note:'',notePrivate:0},
+ {id:1,name:'مؤسسة النخيل التجارية',phone:'0551002030',balance:4300,limit:50000,active:1,cat:'جملة',discount:5,note:'يستلم البضاعة صباحاً فقط — يفضّل التواصل مع الأستاذ خالد.',notePrivate:0},
+ {id:2,name:'بقالة الأمانة',phone:'0533445566',balance:12800,limit:15000,active:1,cat:'جملة',discount:3,note:'تأخر في السداد مرتين — لا تسليم قبل تحصيل دفعة.',notePrivate:0},
+ {id:3,name:'مطاعم الديرة',phone:'0567788990',balance:0,limit:20000,active:1,cat:'جملة كبرى',discount:8,note:'',notePrivate:0},
+ {id:4,name:'عميل موقوف — سعد',phone:'0500011122',balance:900,limit:1000,active:0,cat:'أفراد',discount:0,note:'موقوف بقرار الإدارة حتى سداد المتأخرات.',notePrivate:1},
+ {id:5,name:'شركة الواحة (دفعة مقدمة)',phone:'0590001122',balance:-2500,limit:30000,active:1,cat:'عقود',discount:10,note:'',notePrivate:0},
 ]
 const fmt=n=>(Math.round(n*100)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)]
@@ -812,6 +853,7 @@ function renderCustList(){
   $('#custList').innerHTML=list.map((c,i)=>`
     <div class="res rescust ${i===cust.cursor?'on':''}" data-i="${i}">
       <span class="nm">${c.active?'':'⛔ '}${c.name}<span style="font-size:0.6rem;color:var(--doc-faint)"> · ${c.phone||'بلا هاتف'}</span></span>
+      <span class="cell" style="color:var(--doc-accent-deep);font-weight:800">${c.cat}${+c.discount?' · خصم '+c.discount+'%':''}</span>
       <span class="cell">الرصيد ${fmt(c.balance)}</span>
       <span class="cell">الحد ${fmt(c.limit)}</span>
       <span><button class="btn sm" data-edit="${c.id}">✎ تعديل</button></span>
@@ -822,7 +864,13 @@ function renderCustList(){
   })
   $$('#custList [data-edit]').forEach(b=>b.onclick=e=>{e.stopPropagation();openCustEdit(+b.dataset.edit)})
 }
-function pickCustomer(i){ const c=cust.list[i]; if(!c)return; state.customerId=c.id; closeWin('custWin'); renderTotals(); focusCell(state.selected,'name') }
+function pickCustomer(i){
+  const c=cust.list[i]; if(!c)return
+  state.customerId=c.id; closeWin('custWin')
+  renderCustMeta(true)                 // الملاحظة تلمع للمستخدم عند اختيار العميل
+  applyCustDiscount(c)                 // خصم العميل المسجل يُطبَّق على الفاتورة
+  renderTotals(); focusCell(state.selected,'name')
+}
 $('#custQuery').addEventListener('input',()=>{cust.cursor=0;renderCustList()})
 $('#custQuery').addEventListener('keydown',e=>{
   if(e.key==='ArrowDown'){e.preventDefault();cust.cursor=Math.min(cust.cursor+1,cust.list.length-1);renderCustList()}
@@ -841,7 +889,7 @@ $('#ceSave').onclick=()=>{
   editingCust.name=$('#ceName').value||editingCust.name
   editingCust.phone=$('#cePhone').value; editingCust.limit=+$('#ceLimit').value||0
   editingCust.active=+$('#ceActive').value
-  closeWin('custEditWin'); renderCustList(); renderTotals()   // تحديث صامت بلا إغلاق البحث
+  closeWin('custEditWin'); renderCustList(); renderCustMeta(false); renderTotals()   // تحديث صامت بلا إغلاق البحث
 }
 $('#customerField').onclick=openCustSearch
 $('#customerField').onkeydown=e=>{ if(e.key==='Enter'||e.key.length===1){e.preventDefault();openCustSearch()} }
@@ -875,6 +923,39 @@ function setDiscKind(kind){
 $('#discPct').onclick=()=>setDiscKind('pct')
 $('#discAmt').onclick=()=>setDiscKind('amt')
 $('#discInput').addEventListener('input',e=>{state.discValue=parseFloat(e.target.value.replace(/,/g,''))||0;renderTotals()})
+
+// ═════ فئة العميل وخصمه وملاحظته ═════
+function renderCustMeta(flash){
+  const c=curCust()
+  $('#custCat').textContent=c.cat||'—'
+  $('#custDisc').textContent=(+c.discount||0)+'%'
+  const n=$('#custNote')
+  if(document.activeElement!==n) n.value=c.note||''
+  $('#notePriv').textContent=c.notePrivate?'🔒 لي فقط':'👥 للجميع'
+  $('#notePriv').title=c.notePrivate?'ملاحظة خاصة بي — لا يراها غيري':'تظهر لكل مستخدم يفتح فاتورة لهذا العميل'
+  const wrap=$('#noteWrap')
+  wrap.classList.toggle('has',!!c.note)
+  if(flash&&c.note){ wrap.classList.remove('flash'); void wrap.offsetWidth; wrap.classList.add('flash') }
+}
+function applyCustDiscount(c){
+  if(!c.applyOff){ state.discKind='pct'; state.discValue=+c.discount||0; $('#discInput').value=String(+c.discount||0); setDiscKind('pct') }
+  else renderTotals()
+}
+$('#custNote').addEventListener('input',e=>{ curCust().note=e.target.value; $('#noteWrap').classList.toggle('has',!!e.target.value) })
+$('#noteClear').onclick=()=>{ curCust().note=''; $('#custNote').value=''; $('#noteWrap').classList.remove('has'); $('#custNote').focus() }
+$('#notePriv').onclick=()=>{ const c=curCust(); c.notePrivate=c.notePrivate?0:1; renderCustMeta(false) }
+$('#catEditBtn').onclick=()=>{
+  const c=curCust()
+  $('#catCustName').textContent=c.name; $('#catSelect').value=c.cat||'أفراد'
+  $('#catDisc').value=String(+c.discount||0); $('#catApply').value=c.applyOff?'0':'1'
+  openWin('catWin'); $('#catSelect').focus()
+}
+$('#catSave').onclick=()=>{
+  const c=curCust()
+  c.cat=$('#catSelect').value; c.discount=parseFloat($('#catDisc').value.replace(/,/g,''))||0
+  c.applyOff=$('#catApply').value==='0'
+  closeWin('catWin'); renderCustMeta(false); applyCustDiscount(c); renderCustList()
+}
 
 // ═════ مسح الباركود: يضيف الصنف في سطر جديد بالترتيب ═════
 let scans=0
@@ -951,7 +1032,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='F9'){e.preventDefault();alert('حفظ وترحيل — نموذج تجريبي')}
 })
 
-applyMode(); renderLines(); renderTotals(); renderAddons(); setTimeout(()=>{recalcRows();focusCell(0,'name')},60)
+applyMode(); renderLines(); renderTotals(); renderAddons(); renderCustMeta(false); setTimeout(()=>{recalcRows();focusCell(0,'name')},60)
 </script>
 </body>
 </html>

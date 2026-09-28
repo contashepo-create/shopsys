@@ -142,6 +142,37 @@ ok('محاولة تحصيل أقل تُرفع تلقائياً للإجمالي'
 ok('الترحيل مسموح بعد التحصيل الكامل', $('#postBtn').disabled === false)
 ok('رصيد النقدي بعد الفاتورة صفر', num([...$('#partyCard').querySelectorAll('.pline b')][2].textContent) === 0)
 
+// ⑭ السطر الثالث: فئة العميل وخصمه + ملاحظة تُحفظ معه
+const metaStrip = d.querySelectorAll('.fields .f-strip .selstrip')[1]
+ok('سطر ثالث في الترويسة للفئة والخصم والملاحظة', !!metaStrip && ['custCat', 'custDisc', 'catEditBtn', 'custNote'].every((id) => !!metaStrip.querySelector('#' + id)))
+click($('#customerField')); input($('#custQuery'), 'الديرة'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('الفئة والخصم يتجاوبان مع العميل المختار', $('#custCat').textContent === 'جملة كبرى' && $('#custDisc').textContent === '8%',
+  $('#custCat').textContent + ' / ' + $('#custDisc').textContent)
+ok('خصم العميل المسجل يُطبَّق على الفاتورة تلقائياً', $('#discInput').value === '8' && $('#discPct').classList.contains('on'), $('#discInput').value)
+ok('الفئة والخصم يظهران أيضاً في نتائج بحث العملاء', /جملة كبرى/.test($('#custList')?.textContent || ''))
+// زر تعديل الفئة والخصم
+click($('#catEditBtn'))
+ok('زر التعديل يفتح نافذة الفئة والخصم', !$('#catWin').hidden && $('#catCustName').textContent === 'مطاعم الديرة')
+$('#catSelect').value = 'عقود'; $('#catDisc').value = '12'; click($('#catSave'))
+ok('الحفظ يحدّث الفئة والخصم في السطر', $('#custCat').textContent === 'عقود' && $('#custDisc').textContent === '12%')
+ok('الخصم الجديد ينعكس على الفاتورة فوراً', $('#discInput').value === '12')
+// الملاحظة
+ok('ملاحظة العميل تظهر عند اختياره', (click($('#customerField')), input($('#custQuery'), 'الأمانة'), dbl(d.querySelectorAll('#custList .res')[0]),
+  /تأخر في السداد/.test($('#custNote').value)), $('#custNote').value)
+ok('الملاحظة الممتلئة مميّزة بصرياً وتلمع', $('#noteWrap').classList.contains('has') && $('#noteWrap').classList.contains('flash'))
+input($('#custNote'), 'يفضل التسليم بعد العصر — تواصل مع أبو ياسر')
+ok('الكتابة عليها مباشرة تُحفظ مع العميل', /أبو ياسر/.test($('#custNote').value))
+click($('#customerField')); input($('#custQuery'), 'النخيل'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('ملاحظة كل عميل مستقلة', /صباحاً فقط/.test($('#custNote').value), $('#custNote').value)
+click($('#customerField')); input($('#custQuery'), 'الأمانة'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('الملاحظة المعدّلة محفوظة بعد العودة للعميل', /أبو ياسر/.test($('#custNote').value), $('#custNote').value)
+click($('#noteClear'))
+ok('زر المسح يفرغ الملاحظة', $('#custNote').value === '' && !$('#noteWrap').classList.contains('has'))
+click($('#notePriv'))
+ok('يمكن جعلها خاصة بالمستخدم أو للجميع', /لي فقط/.test($('#notePriv').textContent), $('#notePriv').textContent)
+click($('#notePriv'))
+ok('والعودة لإظهارها لكل المستخدمين', /للجميع/.test($('#notePriv').textContent))
+
 console.log('\n── الطلبات السابقة (عدم انكسار) ──')
 ok('لا يوجد شريط بحث أصناف مستقل', !d.querySelector('.entry'))
 ok('خمسة سطور ظاهرة على الأقل', d.querySelectorAll('#linesBody tr').length >= 5)
