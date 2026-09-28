@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, type ReactNode, useEffect, useRef } from 'react'
 import { Barcode, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { InvoiceEditorMode } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -174,6 +174,27 @@ export function InvoiceLinesTable({
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  /* النموذج المعتمد يُبقي أحد عشر سطراً مرئية لأن مقاساته كلها نسبية بالشاشة.
+     هنا نقيس منطقة البنود فعلياً ونرسم عدد السطور الذي يملؤها تماماً: أحد عشر
+     على شاشة المرجع، وأكثر على الشاشات الأطول، وأقل على القصيرة — فلا يختفي
+     سطر خلف شريط تمرير ولا يبقى فراغ ميت أسفل الجدول. */
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [fitRows, setFitRows] = useState(TARGET_VISIBLE_ROWS)
+  useEffect(() => {
+    const box = scrollRef.current
+    if (!box || typeof ResizeObserver === 'undefined') return
+    const measure = () => {
+      const head = box.querySelector('thead')?.getBoundingClientRect().height ?? 0
+      const sample = box.querySelector('tbody tr')?.getBoundingClientRect().height ?? 0
+      if (sample < 8) return
+      const fits = Math.floor((box.clientHeight - head) / sample)
+      setFitRows(Math.max(MIN_VISIBLE_ROWS, Math.min(24, fits)))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(box)
+    return () => observer.disconnect()
+  }, [])
   const draftValue = (key: string, value: string | number) => drafts[key] ?? String(value ?? '')
   const updateDraft = (key: string, raw: string, commit: (value: string) => void) => {
     const value = decimalDraft(raw)
@@ -246,8 +267,8 @@ export function InvoiceLinesTable({
           </div>}
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="invoice-lines-table w-full min-w-[58rem] table-fixed text-sm">
+      <div className="overflow-x-auto" ref={scrollRef}>
+        <table className="invoice-lines-table w-full min-w-[58rem] table-fixed text-sm" data-columns={columnCount}>
           <thead className="bg-slate-50 dark:bg-slate-800/60">
             <tr className="text-[11px] font-black text-slate-500 dark:text-slate-300">
               <th className={`p-2 ${COL.index}`} scope="col">م</th>
@@ -312,7 +333,25 @@ export function InvoiceLinesTable({
                 </tr>
               )
             })}
-            {Array.from({ length: Math.max(MIN_VISIBLE_ROWS, TARGET_VISIBLE_ROWS - lines.length) }, (_, ghostIndex) => (
+            {/* السطور الفارغة في النموذج المعتمد ليست فراغاً: لكل سطر نفس خلايا السطر
+                الحقيقي بمربعات إدخال مرئية (كمية · سعر · خصم) تماماً كورقة الإكسل،
+                والكتابة في أي منها تفتح بحث الصنف لأن الكمية بلا صنف لا معنى لها. */}
+            {Array.from({ length: Math.max(MIN_VISIBLE_ROWS, fitRows - lines.length) }, (_, ghostIndex) => {
+              const openPicker = () => window.dispatchEvent(new Event('shopsys:open-item'))
+              const ghostBox = (label: string) => (
+                <input
+                  className="invoice-line-ghost-in"
+                  type="text"
+                  readOnly
+                  tabIndex={-1}
+                  aria-hidden="true"
+                  value=""
+                  onFocus={openPicker}
+                  onMouseDown={(event) => { event.preventDefault(); openPicker() }}
+                  data-ghost-field={label}
+                />
+              )
+              return (
               <tr key={`ghost-${ghostIndex}`} className="invoice-line-ghost border-t border-slate-100 dark:border-slate-800">
                 <td className={`p-2 font-mono text-[11px] font-black text-slate-300 ${COL.index}`}>{lines.length + ghostIndex + 1}</td>
                 {columns.code && <td className={`p-2 ${COL.code}`} />}
@@ -324,17 +363,25 @@ export function InvoiceLinesTable({
                         type="button"
                         className="invoice-line-ghost-btn"
                         aria-label="سطر فارغ — اضغط لإضافة صنف"
-                        onClick={() => window.dispatchEvent(new Event('shopsys:open-item'))}
-                      >اكتب اسم الصنف أو امسح الباركود…</button>}
+                        onClick={openPicker}
+                      ><span className="sr-only">اكتب اسم الصنف أو امسح الباركود</span></button>}
                 </td>
-                <td
-                  colSpan={Math.max(1, columnCount - (columns.code ? 3 : 2))}
-                  tabIndex={0}
-                  aria-label="سطر فارغ"
-                  onFocus={() => window.dispatchEvent(new Event('shopsys:focus-item'))}
-                />
+                {lineWarehouseMode && <td className={`p-1 ${COL.warehouse}`} />}
+                {kind === 'purchase' && mode !== 'simple'
+                  ? <><td className={`num-cell p-1 align-middle ${COL.qty}`}>{ghostBox('ordered')}</td><td className={`num-cell p-1 align-middle ${COL.qty}`}>{ghostBox('qty')}</td><td className={`num-cell p-1 align-middle ${COL.qty}`}>{ghostBox('rejected')}</td></>
+                  : <td className={`num-cell p-1 align-middle ${COL.qty}`}>{ghostBox('qty')}</td>}
+                {columns.unit && <td className={`unit-cell p-1 ${COL.unit}`} />}
+                <td className={`num-cell price-cell p-1 align-middle ${COL.price}`}>{ghostBox('price')}</td>
+                {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}>{ghostBox('discount')}</td>}
+                {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}>{ghostBox('vat')}</td>}
+                {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`p-1 ${COL.money}`} /><td className={`p-1 ${COL.money}`} /></>}
+                {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`p-1 ${COL.money}`} />}
+                {columns.tax && <td className={`p-1 ${COL.tax}`} />}
+                <td className={`p-1 ${COL.total}`} />
+                <td className={`p-1 ${COL.tools}`} />
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

@@ -197,4 +197,24 @@ const ruleOf = (selector) => {
   R.ok('الترويسة ثلاثة صفوف: ستة حقول · شريط الصنف بجوار المستخدم · فئة الطرف وخصمه وملاحظته وزر تعديلها')
 }
 
+/* ⑪ مقياس النموذج: جذر متغير بالشاشة + سطور فارغة بصناديق إدخال + عدد سطور يملأ المساحة */
+{
+  /* السبب الجذري لعدم التطابق سابقاً: جذر التطبيق 16px بينما النموذج يربط كل
+     مقاساته بـ clamp(17px, .72vw + .86vh, 32px) ≈ 20px على 1600×1000، فكانت
+     الفاتورة تُرسم بنسبة 79% من النموذج. القاعدة تُطبَّق فقط ومستند الفاتورة مفتوح. */
+  const scale = ruleOf('html:has(.invoice-doc.invoice-pos-root)')
+  assert.ok(/clamp\(17px, calc\(\.72vw \+ \.86vh\), 32px\)/.test(scale), 'مقياس جذر النموذج غير مطبَّق — ستبقى الفاتورة أصغر من المعتمد')
+  // السطور الفارغة في النموذج ورقة إكسل: مربعات إدخال مرئية في كل سطر لا فراغ
+  assert.ok(table.includes('invoice-line-ghost-in') && table.includes("ghostBox('qty')") && table.includes("ghostBox('price')"),
+    'السطور الفارغة بلا مربعات إدخال مرئية (كمية/سعر) كالنموذج')
+  assert.ok(!table.includes('colSpan={Math.max(1, columnCount'), 'عادت خلية colSpan العملاقة بدل خلايا السطر الحقيقية')
+  const ghostIn = ruleOf('.invoice-line-ghost-in')
+  assert.ok(/border: 1px solid var\(--doc-line\)/.test(ghostIn) && /monospace/.test(ghostIn), 'مربع السطر الفارغ ليس بمظهر خلية النموذج (.cell-in)')
+  // عدد السطور يملأ منطقة البنود: أحد عشر على شاشة المرجع، وأكثر/أقل بحسب الارتفاع
+  assert.ok(table.includes('ResizeObserver') && table.includes('fitRows'), 'عدد السطور الفارغة لا يتكيّف مع ارتفاع منطقة البنود')
+  assert.ok(/TARGET_VISIBLE_ROWS = 11/.test(table), 'عدد سطور النموذج المرجعي ليس أحد عشر')
+  assert.ok(/MIN_VISIBLE_ROWS = 5/.test(table), 'اختفى الحد الأدنى: خمسة سطور فارغة دائماً')
+  R.ok('مقياس النموذج: جذر يكبر مع الشاشة · سطور فارغة بمربعات إدخال مرئية · عددها يملأ منطقة البنود بلا قصّ')
+}
+
 R.done()

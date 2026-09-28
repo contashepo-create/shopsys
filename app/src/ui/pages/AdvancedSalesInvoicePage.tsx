@@ -254,23 +254,17 @@ export function AdvancedSalesInvoicePage(){
       </span>
       <span className="invoice-doc-disceq" dir="ltr">= {formatMinor(totals?.discountMinor??0,cur,false)}</span>
      </div>
+     {/* صفوف الكشف كالنموذج المعتمد: بنود · خصم · ضريبة · مصروفات على العميل ثم الصافي.
+         المدفوع/المتبقي مكانهما حاشية لوحة التحصيل، وحالة القيد رقاقة في شريط المستند. */}
      <div className="invoice-doc-sum">
       <Row n="إجمالي البنود" v={totals?.grossMinor??0}/>
       <Row n="الخصم" v={-(totals?.discountMinor??0)} minus/>
-      <Row n="الصافي بعد الخصم" v={(totals?.netMinor??0)-customerCharges.reduce((s,c)=>s+c.amountMinor,0)}/>
-      <Row n="مصاريف على العميل" v={customerCharges.reduce((s,c)=>s+c.amountMinor,0)}/>
       <Row n="الضريبة" v={totals?.taxMinor??0}/>
-     </div>
-     <div className="invoice-doc-grand"><span>صافي إجمالي الفاتورة</span><b>{formatMinor(totals?.totalMinor??0,cur,false)} {cur.symbol}</b></div>
-     <div className="invoice-doc-settle">
-      <div className="is-paid"><span>المدفوع الآن</span><b>{formatMinor(Math.min(totalPaidMinor,totals?.totalMinor??0),cur,false)} {cur.symbol}</b></div>
-      <div className="is-due"><span>المتبقي على العميل</span><b>{formatMinor(Math.max(0,(totals?.totalMinor??0)-totalPaidMinor),cur,false)} {cur.symbol}</b></div>
-     </div>
-     <div className="invoice-doc-balance" title="المدين (المحصَّل + ذمة العميل) = الدائن (الإيراد + الضريبة)"><span>حالة قيد الفاتورة</span><b><i/>{(Math.min(totalPaidMinor,totals?.totalMinor??0)+Math.max(0,(totals?.totalMinor??0)-totalPaidMinor))===(totals?.totalMinor??0)?'متزن — مدين = دائن':'غير متزن'}</b></div>
-     {(internalTotal>0||(mode==='profit'&&canViewCost))&&<div className="invoice-doc-sum">
+      <Row n="مصروفات على العميل" v={customerCharges.reduce((s,c)=>s+c.amountMinor,0)}/>
       {internalTotal>0&&<Row n="مصاريف على المحل (خارج الإجمالي)" v={-internalTotal} minus/>}
       {mode==='profit'&&canViewCost&&<><Row n="تكلفة البضاعة" v={-cogs} minus/><Row n="الربح المتوقع" v={expectedProfit} strong/></>}
-     </div>}
+     </div>
+     <div className="invoice-doc-grand"><span>صافي إجمالي الفاتورة</span><b>{formatMinor(totals?.totalMinor??0,cur,false)} {cur.symbol}</b></div>
     </div>
    </div>
   </section>

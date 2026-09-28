@@ -138,25 +138,17 @@ export function AdvancedPurchaseInvoicePage(){const nav=useNavigate(),toast=useT
    <div className="invoice-doc-panel">
     <div className="invoice-doc-panel-head"><span className="invoice-doc-panel-icon"><Calculator size={11}/></span><b>إجمالي فاتورة الشراء</b><small>ملخص التكلفة</small></div>
     <div className="invoice-doc-panel-body">
+     {/* كشف التكلفة بصفوف النموذج المعتمد ثم الإجمالي الكبير؛ المستحق والمتبقي
+         في حاشية لوحة الدفع، وحالة القيد رقاقة في شريط المستند. */}
      <div className="invoice-doc-sum">
       <Row n="إجمالي الأصناف قبل الخصم" v={rawGoods}/>
       <Row n="الخصم" v={-discountMinor} minus/>
-      <Row n="صافي الأصناف بعد الخصم" v={goods}/>
       <Row n="مصاريف محمَّلة على المخزون" v={extra}/>
       <Row n="ضريبة المدخلات" v={inputVat}/>
       <Row n="مصروفات فترة" v={periodExpenses}/>
+      <Row n="مستحق المورد بعد مصادر المصروفات" v={supplierDue} strong/>
      </div>
      <div className="invoice-doc-grand"><span>التكلفة / الإجمالي</span><b>{formatMinor(total,cur,false)} {cur.symbol}</b></div>
-     <div className="invoice-doc-settle">
-      <div className="is-paid"><span>المدفوع الآن</span><b>{formatMinor(Math.min(totalPaidMinor,supplierDue),cur,false)} {cur.symbol}</b></div>
-      <div className="is-due"><span>المتبقي للمورد</span><b>{formatMinor(Math.max(0,supplierDue-totalPaidMinor),cur,false)} {cur.symbol}</b></div>
-     </div>
-     <div className="invoice-doc-balance" title="المدين (المخزون + الضريبة) = الدائن (المسدَّد + ذمة المورد)"><span>حالة قيد الفاتورة</span><b><i/>{(Math.min(totalPaidMinor,supplierDue)+Math.max(0,supplierDue-totalPaidMinor))===supplierDue?'متزن — مدين = دائن':'غير متزن'}</b></div>
-     <div className="invoice-doc-sum">
-      <Row n="مستحق المورد بعد مصادر المصروفات" v={supplierDue} strong/>
-      <Row n="المدفوع للمورد" v={-totalPaidMinor} minus/>
-      <Row n="المتبقي للمورد" v={supplierDue-totalPaidMinor} strong/>
-     </div>
     </div>
    </div>
   </section>

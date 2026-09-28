@@ -234,8 +234,14 @@ const footerOf = (src) => {
   assert.ok(picker.includes('invoice-doc-tiles') && /نقدي/.test(picker) && /ماكينة دفع/.test(picker), 'بلاطات وسيلة الدفع الثلاث غير موجودة')
   for (const [label, src] of PAGES) {
     assert.ok(src.includes('tiles'), `${label}: لوحة التحصيل بلا بلاطات وسيلة الدفع`)
-    assert.ok(src.includes('invoice-doc-settle'), `${label}: لا كتلة «المدفوع/المتبقي» أسفل الإجمالي`)
-    assert.ok(src.includes('invoice-doc-balance') && src.includes('متزن — مدين = دائن'), `${label}: لا سطر لحالة اتزان القيد`)
+    /* النموذج المعتمد ينهي لوحة الإجماليات عند «صافي إجمالي الفاتورة»:
+       المدفوع والمتبقي في حاشية لوحة التحصيل، وحالة اتزان القيد رقاقة في
+       شريط المستند — بلا تكرار لنفس الرقم في ثلاثة أماكن. */
+    const paidFoot = src.slice(src.indexOf('invoice-doc-panel-foot'), src.indexOf('invoice-doc-grand'))
+    assert.ok(/المحصَّل|المستحق للمورد/.test(paidFoot) && /المتبقي/.test(paidFoot), `${label}: حاشية لوحة التحصيل بلا المحصَّل/المتبقي`)
+    assert.ok(!src.includes('invoice-doc-settle') && !src.includes('متزن — مدين = دائن'), `${label}: عادت كتلة المدفوع/المتبقي وحالة القيد تكرّر نفسها داخل لوحة الإجماليات`)
+    const afterGrand = src.slice(src.indexOf('invoice-doc-grand'), src.indexOf('</section>', src.indexOf('invoice-doc-grand')))
+    assert.ok(!afterGrand.includes('<Row '), `${label}: صفوف كشف بعد «صافي إجمالي الفاتورة» — النموذج ينتهي عنده`)
     assert.ok(src.includes('invoice-doc-infield-chip'), `${label}: كود الطرف ليس رقاقة داخل حقله كالمرجع`)
   }
   R.ok('قطع التصميم المرجعي: نقاط النافذة · تصفّح الدفتر · تصفية التصنيف · رقاقات داخل الحقول · وحدة وضريبة وأدوات لكل سطر · بلاطات الدفع · كتلة التسوية')
