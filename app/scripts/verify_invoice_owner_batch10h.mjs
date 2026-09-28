@@ -183,4 +183,54 @@ const ruleOf = (selector) => {
   R.ok('اسم الملاحظة زر يفتح سجل كل الملاحظات (تعديل وحذف بختم المعدِّل) وآخر ملاحظة تبقى ظاهرة في الشريط')
 }
 
+/* ⑫ شريط «الصنف المحدد» يتبع السطر النشِط في الجدول (شكوى المالك: كان لا يتغيّر) */
+{
+  assert.ok(table.includes('onActiveItem?: (itemId: number | null) => void'), 'جدول البنود لا يبلّغ الصنف النشِط للأعلى')
+  assert.ok(/onFocusCapture=\{\(\) => setSelectedKey\(line\.key\)\}/.test(table), 'التنقل بالأسهم/Tab لا يغيّر السطر النشِط')
+  assert.ok(/onClick=\{\(\) => setSelectedKey\(line\.key\)\}/.test(table), 'النقر على السطر لا يحدّده')
+  assert.ok(/setSelectedKey\(lines\[lines\.length - 1\]\?\.key \?\? null\)/.test(table), 'السطر المضاف حديثاً لا يصبح النشِط')
+  assert.ok(/const activeItemId = \(lines\.find\(\(line\) => line\.key === selectedKey\) \?\? lines\[lines\.length - 1\]\)\?\.itemId/.test(table), 'الصنف النشِط لا يُشتق من السطر المحدد ثم آخر سطر')
+  for (const [label, src] of [['المبيعات', sales], ['المشتريات', purchase]]) {
+    assert.ok(src.includes('onActiveItem={setActiveItemId}'), `${label}: الصفحة لا تستقبل الصنف النشِط من الجدول`)
+    assert.ok(/const focusedItem=\(activeItemId!=null\?items\.find\(item=>item\.id===activeItemId\):null\)\?\?/.test(src), `${label}: شريط الصنف ما زال مربوطاً بآخر سطر فقط`)
+  }
+  R.ok('شريط «الصنف المحدد» يتبع السطر النشِط: بالنقر · بالأسهم · وعند إضافة سطر جديد')
+}
+
+/* ⑬ فاتورة الشراء أخذت نفس دفعة المالك: نمط · شروط · زر مصاريف · بلا شارات */
+{
+  assert.ok(/const fullFields=mode==='profit'\|\|mode==='advanced'/.test(purchase) && /const showStrips=mode!=='simple'/.test(purchase), 'فاتورة الشراء لا تتبع نمط المحرِّر في رأسها')
+  for (const field of ['الاستحقاق', 'المرجع']) {
+    const at = purchase.indexOf(`<Field label="${field}"`)
+    assert.ok(at > 0 && purchase.slice(at - 16, at).includes('fullFields&&'), `فاتورة الشراء: حقل «${field}» يظهر في النمط المبسط`)
+  }
+  assert.ok(purchase.includes('partyMeta={showStrips?') && purchase.includes('itemProfile={showStrips?'), 'فاتورة الشراء: الشريطان لا يتبعان النمط')
+  for (const badge of ['شراء نقدي', 'اليوم', 'فوري', 'يستلم البضاعة']) {
+    const head = purchase.slice(purchase.indexOf('<Field label="المورد"'), purchase.indexOf('partyMeta='))
+    assert.ok(!head.includes(`badge={!selectedSupplier?'${badge}'`) && !head.includes(`badge="${badge}"`), `فاتورة الشراء: شارة «${badge}» ما زالت في الترويسة`)
+  }
+  assert.ok(purchase.includes('invoice-doc-termsbox'), 'فاتورة الشراء بلا مربع شروط')
+  const panel = purchase.slice(purchase.indexOf('data-invoice-terms'), purchase.indexOf('data-invoice-terms') + 2600)
+  assert.ok(panel.indexOf('invoice-doc-termsbox') < panel.indexOf('invoice-doc-addons'), 'فاتورة الشراء: أزرار المصاريف ليست أسفل مربع الشروط')
+  assert.ok(panel.includes('مصاريف الشراء'), 'فاتورة الشراء: لا زر لإضافة المصاريف داخل بوكس الشروط')
+  assert.ok(purchase.includes('invoice-doc-notebtn') && purchase.includes('<PartyNotesLog kind="supplier"'), 'فاتورة الشراء: اسم الملاحظة ليس زراً يفتح سجل ملاحظات المورد')
+  R.ok('فاتورة الشراء: حقول حسب النمط · بلا شارات · مربع شروط بزر مصاريف داخله · سجل ملاحظات المورد')
+}
+
+/* ⑭ ما يتحمله المحل أو المخزون لا يدخل إجمالي فاتورة الطرف */
+{
+  // البيع: الإجمالي من totals (بنود − خصم + ضريبة + مصروفات العميل) والمصروف الداخلي سطر معلومة
+  assert.ok(/totalMinor:base\.totalMinor\+chargeNet\+chargeTax/.test(sales), 'إجمالي فاتورة البيع لا يقتصر على البنود ومصروفات العميل')
+  const totalsMemo = sales.slice(sales.indexOf('const totals=useMemo('), sales.indexOf('customerCharges]);'))
+  assert.ok(!/internal|expenses|commission/i.test(totalsMemo), 'المصروفات الداخلية/العمولات تسرّبت إلى حساب إجمالي فاتورة العميل')
+  assert.ok(sales.includes('مصاريف على المحل — لا تدخل إجمالي العميل'), 'فاتورة البيع: المصروف الداخلي غير معلَّم كخارج الإجمالي')
+  assert.ok(/<Row n="مصاريف على المحل — لا تدخل إجمالي العميل" v=\{internalTotal\} info\/>/.test(sales), 'المصروف الداخلي يجب أن يكون سطر معلومة لا مبلغاً يُطرح')
+  // الشراء: الإجمالي الكبير = مستحق المورد، والتحميل على المخزون/المحل خارجه
+  assert.ok(/invoice-doc-grand"><span>إجمالي فاتورة المورد<\/span><b>\{formatMinor\(supplierDue/.test(purchase), 'إجمالي فاتورة الشراء ليس مستحق المورد')
+  assert.ok(purchase.includes('مصاريف محمَّلة على المخزون (خارج الإجمالي)') && purchase.includes('invoice-doc-suminfo'), 'فاتورة الشراء: التحميل على المخزون ما زال داخل الإجمالي')
+  assert.ok(purchase.includes('تكلفة البضاعة بعد التحميل'), 'فاتورة الشراء: اختفت تكلفة البضاعة بعد التحميل (تلزم للتسعير)')
+  assert.ok(css.includes('.invoice-doc .invoice-doc-sum-row.is-info'), 'لا نمط لسطور «معلومة فقط» في كشف الإجماليات')
+  R.ok('الإجمالي = ما يطالب به الطرف فقط: مصاريف المحل والمخزون سطور معلومة خارج إجمالي الفاتورة')
+}
+
 R.done()

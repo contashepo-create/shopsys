@@ -275,7 +275,10 @@ const footerOf = (src) => {
     assert.ok(/المحصَّل|المستحق للمورد/.test(paidFoot) && /المتبقي/.test(paidFoot), `${label}: حاشية لوحة التحصيل بلا المحصَّل/المتبقي`)
     assert.ok(!src.includes('invoice-doc-settle') && !src.includes('متزن — مدين = دائن'), `${label}: عادت كتلة المدفوع/المتبقي وحالة القيد تكرّر نفسها داخل لوحة الإجماليات`)
     const afterGrand = src.slice(src.indexOf('invoice-doc-grand'), src.indexOf('</section>', src.indexOf('invoice-doc-grand')))
-    assert.ok(!afterGrand.includes('<Row '), `${label}: صفوف كشف بعد «صافي إجمالي الفاتورة» — النموذج ينتهي عنده`)
+    /* النموذج ينهي الكشف عند الإجمالي، والاستثناء الوحيد (قرار المالك ⑩ح):
+       سطور «معلومة فقط» لما يتحمله المحل أو المخزون — تُوسم بـ info ولا تدخل الإجمالي. */
+    const rowsAfterGrand = afterGrand.match(/<Row [^>]*\/>/g) ?? []
+    assert.ok(rowsAfterGrand.every((row) => / info\/>| info /.test(row)), `${label}: صفوف كشف تدخل الحساب بعد الإجمالي — المسموح فقط سطور معلومة (info)`)
     assert.ok(src.includes('invoice-doc-infield-chip'), `${label}: كود الطرف ليس رقاقة داخل حقله كالمرجع`)
   }
   R.ok('قطع التصميم المرجعي: نقاط النافذة · تصفّح الدفتر · تصفية التصنيف · رقاقات داخل الحقول · وحدة وضريبة وأدوات لكل سطر · بلاطات الدفع · كتلة التسوية')

@@ -78,6 +78,8 @@ type Props = {
   belowCostKeys?: Set<string>
   belowCostNotice?: (line: InvoiceTableLine) => ReactNode
   onPick: (id: number) => void
+  /** الصنف في السطر **النشِط** (بالنقر أو بالتنقل بالأسهم) — يتبعه شريط «الصنف المحدد» في الترويسة */
+  onActiveItem?: (itemId: number | null) => void
   onPatch: (key: string, patch: Partial<InvoiceTableLine>) => void
   onRemove: (key: string) => void
   /** نسخ السطر المحدد بكل قيمه — زر «تكرار السطر» في شريط أدوات البنود */
@@ -166,7 +168,7 @@ const VISIBLE_ROWS = Math.max(MIN_VISIBLE_ROWS, TARGET_VISIBLE_ROWS)
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
   canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys, belowCostNotice,
-  onPick, onPatch, onRemove, onDuplicate, documentTaxPercent = 0, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
+  onPick, onActiveItem, onPatch, onRemove, onDuplicate, documentTaxPercent = 0, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
   entry, entryFilter,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
@@ -175,6 +177,12 @@ export function InvoiceLinesTable({
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  /* شريط «الصنف المحدد» يتبع السطر الذي يقف عليه المستخدم: النقر على أي خلية
+     أو التنقل بالأسهم يغيّره، وإن لم يُحدَّد شيء بعد فآخر سطر مضاف. */
+  const activeItemId = (lines.find((line) => line.key === selectedKey) ?? lines[lines.length - 1])?.itemId ?? null
+  const activeItemRef = useRef(onActiveItem)
+  useEffect(() => { activeItemRef.current = onActiveItem })
+  useEffect(() => { activeItemRef.current?.(activeItemId) }, [activeItemId])
   /* قرار المالك (⑩ح): **خمسة سطور** ظاهرة في جدول الأصناف وما زاد عليها يُمرَّر
      داخلياً. الارتفاع يُقاس من ارتفاع سطر حقيقي لا من قيمة ثابتة، فيظهر ستة
      سطور كاملة على كل مقاس شاشة بلا نصف سطر مقطوع، والمساحة الباقية تذهب
@@ -208,6 +216,8 @@ export function InvoiceLinesTable({
     const grew = lines.length > lineCountRef.current
     lineCountRef.current = lines.length
     if (!grew) return
+    /* السطر المضاف حديثاً يصبح النشِط فوراً فيتبعه شريط «الصنف المحدد» */
+    setSelectedKey(lines[lines.length - 1]?.key ?? null)
     const frame = requestAnimationFrame(() => {
       const rows = scrollRef.current?.querySelectorAll<HTMLTableRowElement>('tbody tr[data-entry-row]')
       const row = rows?.[rows.length - 1]
@@ -320,7 +330,7 @@ export function InvoiceLinesTable({
               const belowCost = belowCostKeys?.has(line.key)
               const actualPrice = line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)
               return (
-                <tr key={line.key} data-entry-row aria-selected={selectedKey === line.key} onClick={() => setSelectedKey(line.key)} className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : belowCost ? 'bg-amber-500/10' : warning?.severity === 'error' ? 'bg-rose-500/5' : warning ? 'bg-amber-500/5' : ''}`}>
+                <tr key={line.key} data-entry-row aria-selected={selectedKey === line.key} onClick={() => setSelectedKey(line.key)} onFocusCapture={() => setSelectedKey(line.key)} className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : belowCost ? 'bg-amber-500/10' : warning?.severity === 'error' ? 'bg-rose-500/5' : warning ? 'bg-amber-500/5' : ''}`}>
                   <td className={`p-2 font-mono text-[11px] font-black text-slate-400 ${COL.index}`}>{lineIndex + 1}</td>
                   {columns.code && <td tabIndex={0} className={`p-2 font-mono text-[11px] font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40 ${COL.code}`} dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>}
                   <td className={`p-2 align-middle break-words ${COL.name}`}>

@@ -98,7 +98,10 @@ export function AdvancedSalesInvoicePage(){
  const selectedCustomerBalance=selectedCustomer ? getCustomerBalance(selectedCustomer.id) : 0
  const projectedCustomerBalance=selectedCustomerBalance+Math.max(0,(totals?.totalMinor??0)-totalPaidMinor)
  /** الصنف المعروض في بطاقة «الصنف المختار»: آخر سطر أُضيف إلى الفاتورة */
- const focusedItem=lines.length?items.find(item=>item.id===lines[lines.length-1].itemId)??null:null
+ /* «الصنف المحدد» يتبع السطر الذي يقف عليه المستخدم في الجدول (نقراً أو بالأسهم)
+    لا آخر سطر مضاف فقط — شكوى المالك: الشريط كان لا يتغيّر باختيار الصف. */
+ const [activeItemId,setActiveItemId]=useState<number|null>(null)
+ const focusedItem=(activeItemId!=null?items.find(item=>item.id===activeItemId):null)??(lines.length?items.find(item=>item.id===lines[lines.length-1].itemId)??null:null)
  /** تصفّح دفتر المبيعات من داخل المستند: الفاتورة الأقدم/الأحدث من المعروضة */
  /* تنبيه التحصيل كالنموذج المعتمد: الحد الأدنى الواجب تحصيله قبل الترحيل */
  const grandMinor=totals?.totalMinor??0
@@ -198,6 +201,7 @@ export function AdvancedSalesInvoicePage(){
    belowCostKeys={new Set(belowCostLines.map(line => line.key))}
    belowCostNotice={line => <div className="mt-1 text-xs font-black text-amber-700 dark:text-amber-300">⚠ بيع أقل من التكلفة: {formatMinor(Math.round(line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)), cur, false)} مقابل تكلفة {formatMinor(line.unitCostMinor ?? 0, cur, false)} — اعتماد مشرف مطلوب</div>}
    onPick={addItem}
+   onActiveItem={setActiveItemId}
    onPatch={(key, patchValue) => patch(key, patchValue as Partial<DraftLine>)}
    onRemove={key => setLines(lines.filter(line => line.key !== key))}
    onDuplicate={key => setLines(previous => { const source = previous.find(line => line.key === key); if (!source) return previous; const copy = { ...source, key: crypto.randomUUID() }; const at = previous.findIndex(line => line.key === key); return [...previous.slice(0, at + 1), copy, ...previous.slice(at + 1)] })}
@@ -293,7 +297,7 @@ export function AdvancedSalesInvoicePage(){
       <Row n="الخصم" v={-(totals?.discountMinor??0)} minus/>
       <Row n="الضريبة" v={totals?.taxMinor??0}/>
       <Row n="مصروفات على العميل" v={customerCharges.reduce((s,c)=>s+c.amountMinor,0)}/>
-      {internalTotal>0&&<Row n="مصاريف على المحل (خارج الإجمالي)" v={-internalTotal} minus/>}
+      {internalTotal>0&&<Row n="مصاريف على المحل — لا تدخل إجمالي العميل" v={internalTotal} info/>}
       {mode==='profit'&&canViewCost&&<><Row n="تكلفة البضاعة" v={-cogs} minus/><Row n="الربح المتوقع" v={expectedProfit} strong/></>}
      </div>
      <div className="invoice-doc-grand"><span>صافي إجمالي الفاتورة</span><b>{formatMinor(totals?.totalMinor??0,cur,false)} {cur.symbol}</b></div>
@@ -307,5 +311,5 @@ export function AdvancedSalesInvoicePage(){
   {unsaved.prompt}<InvoiceDraftsModal open={draftsOpen} onClose={()=>setDraftsOpen(false)} kind="sale" drafts={advancedInvoiceDrafts} currency={cur} currentDraftId={draftId} onPick={applyDraft} onDelete={deleteAdvancedInvoiceDraft}/>
   <PrintTemplateModal open={printOpen} onClose={()=>setPrintOpen(false)} defaultTemplate={receipt.defaultTemplate} title="معاينة نسخة العميل" onPrint={printDraft}/>
  </InvoicePOSFrame>
- function Row({n,v,strong,minus}:{n:string;v:number;strong?:boolean;minus?:boolean}){return <div className={`invoice-doc-sum-row${strong?' is-strong':''}${minus&&v!==0?' is-minus':''}`}><span>{n}</span><i/><b>{formatMinor(v,cur,false)} {cur.symbol}</b></div>}
+ function Row({n,v,strong,minus,info}:{n:string;v:number;strong?:boolean;minus?:boolean;info?:boolean}){return <div className={`invoice-doc-sum-row${strong?' is-strong':''}${minus&&v!==0?' is-minus':''}${info?' is-info':''}`}><span>{n}</span><i/><b>{formatMinor(v,cur,false)} {cur.symbol}</b></div>}
 }

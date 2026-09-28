@@ -2061,3 +2061,9 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 .invoice-doc .invoice-doc-panel-body > .form-field > .invoice-doc-amountfield { height: 2.1rem; }
 /* الملاحظات: مربع الشروط يملأ ما تبقى من اللوحة بدل الفراغ */
 .invoice-doc .invoice-doc-termsbox { flex: 1 1 auto; }
+
+/* ⑩ح-ب: سطور «معلومة فقط» في كشف الإجماليات — ما يتحمله المحل أو المخزون
+   يظهر للمعرفة ولا يدخل إجمالي فاتورة الطرف (قرار المالك). */
+.invoice-doc .invoice-doc-sum-row.is-info { color: var(--doc-muted); font-size: .68rem; font-style: normal; opacity: .9; }
+.invoice-doc .invoice-doc-sum-row.is-info > b { color: var(--doc-muted); font-weight: 700; }
+.invoice-doc .invoice-doc-suminfo { margin-top: .2rem; border-top: 1px dashed var(--doc-line); padding-top: .2rem; }
