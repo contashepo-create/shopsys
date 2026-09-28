@@ -20,6 +20,28 @@ beforeEach(() => {
 })
 afterEach(() => cleanup())
 
+describe('مسار الفاتورة يفتحها نافذة حرة (قرار المالك ⑩ي البند ⑮)', () => {
+  it('الدخول على /sales/invoices/new يفتح نافذة فاتورة بدل صفحة مدمجة، ويمكن فتح ثانية فوقها', async () => {
+    const { InvoiceDocumentRoute } = await import('../src/ui/pages/InvoiceDocumentRoute.tsx')
+    render(<MemoryRouter initialEntries={['/sales/invoices/new']}><InvoiceDocumentRoute kind="sale"/></MemoryRouter>)
+    await waitFor(() => expect(W().windows.filter((win) => win.kind === 'sales-invoice').length).toBe(1))
+    cleanup()
+    render(<MemoryRouter initialEntries={['/sales/invoices/new']}><InvoiceDocumentRoute kind="sale"/></MemoryRouter>)
+    await waitFor(() => expect(W().windows.filter((win) => win.kind === 'sales-invoice').length).toBe(2))
+    // النافذتان مستقلتان: تصغير الأولى لا يغلق الثانية
+    const [first, second] = W().windows
+    W().minimizeWindow(first.id)
+    expect(W().windows.find((win) => win.id === first.id)!.mode).toBe('minimized')
+    expect(W().windows.find((win) => win.id === second.id)!.mode).not.toBe('minimized')
+  })
+
+  it('فاتورة الشراء أيضاً نافذة حرة', async () => {
+    const { InvoiceDocumentRoute } = await import('../src/ui/pages/InvoiceDocumentRoute.tsx')
+    render(<MemoryRouter initialEntries={['/purchases/invoices/new']}><InvoiceDocumentRoute kind="purchase"/></MemoryRouter>)
+    await waitFor(() => expect(W().windows.filter((win) => win.kind === 'purchase-invoice').length).toBe(1))
+  })
+})
+
 describe('نظام النوافذ المستقلة', () => {
   it('يفتح أكثر من فاتورة في وقت واحد ولكل واحدة حالتها', () => {
     const first = openSalesInvoiceWindow()

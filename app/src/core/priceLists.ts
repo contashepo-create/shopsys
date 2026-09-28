@@ -26,6 +26,24 @@ export interface PriceListEntry {
   priceMinor: Minor
 }
 
+/**
+ * خصم لكل **فئة** داخل نفس القائمة (قرار المالك ⑩ي البند ⑧):
+ * العميل الواحد قد يشتري فئة أ بخصم وفئة ب بخصم آخر — بدل قائمة لكل فئة.
+ * الأولوية: سعر الصنف الخاص ⇐ خصم فئته ⇐ الخصم الافتراضي للقائمة ⇐ سعر التجزئة.
+ */
+export interface PriceListCategoryRule {
+  listId: number
+  categoryId: number
+  discountPercent: number
+}
+
+export function validateCategoryRule(discountPercent: number): string[] {
+  const errors: string[] = []
+  if (!Number.isFinite(discountPercent)) errors.push('نسبة الخصم غير صالحة')
+  else if (discountPercent < 0 || discountPercent > 100) errors.push('خصم الفئة بين 0 و100')
+  return errors
+}
+
 export function validatePriceList(nameAr: string, defaultDiscountPercent: number, existing: PriceList[], editingId?: number): string[] {
   const errors: string[] = []
   if (!nameAr.trim()) errors.push('اسم القائمة مطلوب')
@@ -46,14 +64,39 @@ export function resolvePrice(
   listId: number | null,
   lists: PriceList[],
   entries: PriceListEntry[],
+  categoryRules: PriceListCategoryRule[] = [],
+  categoryId: number | null = null,
 ): Minor {
   if (listId == null) return retailPriceMinor
   const list = lists.find((l) => l.id === listId && l.isActive)
   if (!list) return retailPriceMinor
   const entry = entries.find((e) => e.listId === listId && e.itemId === itemId)
   if (entry) return entry.priceMinor
+  /* ② خصم الفئة يسبق الخصم الافتراضي للقائمة (قرار المالك ⑩ي) */
+  const rule = categoryId == null ? undefined : categoryRules.find((row) => row.listId === listId && row.categoryId === categoryId)
+  if (rule && rule.discountPercent > 0) {
+    return Math.round(retailPriceMinor * (1 - rule.discountPercent / 100))
+  }
   if (list.defaultDiscountPercent > 0) {
     return Math.round(retailPriceMinor * (1 - list.defaultDiscountPercent / 100))
   }
   return retailPriceMinor
+}
+
+/** وصف مصدر السعر لعرضه في شاشة قوائم الأسعار (شفافية للمالك). */
+export function priceSource(
+  itemId: number,
+  listId: number | null,
+  lists: PriceList[],
+  entries: PriceListEntry[],
+  categoryRules: PriceListCategoryRule[] = [],
+  categoryId: number | null = null,
+): 'retail' | 'item' | 'category' | 'list' {
+  if (listId == null) return 'retail'
+  const list = lists.find((l) => l.id === listId && l.isActive)
+  if (!list) return 'retail'
+  if (entries.some((e) => e.listId === listId && e.itemId === itemId)) return 'item'
+  const rule = categoryId == null ? undefined : categoryRules.find((row) => row.listId === listId && row.categoryId === categoryId)
+  if (rule && rule.discountPercent > 0) return 'category'
+  return list.defaultDiscountPercent > 0 ? 'list' : 'retail'
 }

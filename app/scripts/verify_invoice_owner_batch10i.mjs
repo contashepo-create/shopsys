@@ -14,8 +14,10 @@
  *  ⑫ نقرة واحدة لا تفتح البحث — نقرتان أو الكتابة أو Enter.
  *  ⑬ سلسلة Enter: صنف ⇒ كمية ⇒ سعر ⇒ السطر التالي ينتظر الكتابة.
  *  ⑭ الأسهم للتنقل بين الخلايا فقط.
+ *  ⑮ الفاتورة نافذة حرة: مسار «فاتورة جديدة» يفتح نافذة لا صفحة مدمجة.
  *  ⑯ أزرار المصاريف ظاهرة داخل بوكس الشروط.
  *  ⑰ حذف زرَّي «تحصيل المبلغ كاملاً» و«بيع آجل بلا تحصيل».
+ *  ⑧ خصم لكل فئة أصناف داخل نفس قائمة الأسعار (لنفس العميل).
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -31,6 +33,10 @@ const css = read('src/index.css')
 const store = read('src/stores/app.store.ts')
 const sales = read('src/ui/pages/AdvancedSalesInvoicePage.tsx')
 const purchase = read('src/ui/pages/AdvancedPurchaseInvoicePage.tsx')
+const route = read('src/ui/pages/InvoiceDocumentRoute.tsx')
+const priceCore = read('src/core/priceLists.ts')
+const priceListsPage = read('src/ui/pages/PriceListsPage.tsx')
+const repo = read('src/data/repo.ts')
 const R = reporter('دفعة المالك ⑩ي على الفاتورة — الجدول والتخطيط')
 
 /* ① لا تقسيمات داخل السطور: الإطار يظهر عند التركيز فقط */
@@ -137,6 +143,28 @@ const R = reporter('دفعة المالك ⑩ي على الفاتورة — ال
   assert.ok(!sales.includes('تحصيل المبلغ كاملاً') && !sales.includes('بيع آجل بلا تحصيل'), 'عاد زرّا التحصيل السريع')
   assert.ok(!purchase.includes('سداد المستحق كاملاً') && !purchase.includes('شراء آجل بلا سداد'), 'عاد زرّا السداد السريع')
   R.ok('⑰ لوحة التحصيل/السداد بلا أزرار الملء غير العملية')
+}
+
+/* ⑮ الفاتورة نافذة حرة لا صفحة مدمجة */
+{
+  assert.ok(/openSalesInvoiceWindow\(editId\)/.test(route) && /openPurchaseInvoiceWindow\(editId\)/.test(route),
+    'مسار الفاتورة ما زال يرسم المستند مدمجاً بدل فتح نافذة حرة')
+  assert.ok(!/AdvancedSalesInvoicePage/.test(route), 'المسار ما زال يستورد صفحة الفاتورة مباشرة (تضمين لا نافذة)')
+  assert.ok(/dedupeKey: editId \? `sales-invoice:\$\{editId\}` : null/.test(read('src/ui/windows/windowStore.ts')),
+    'لا يمكن فتح أكثر من فاتورة بيع جديدة في وقت واحد')
+  R.ok('⑮ الفاتورة نافذة حرة: تُكبَّر وتُصغَّر وتتعدد بلا فقد النافذة الأم')
+}
+
+/* ⑧ خصم لكل فئة داخل قائمة الأسعار */
+{
+  assert.ok(/export interface PriceListCategoryRule/.test(priceCore), 'لا نموذج لخصم الفئة داخل القائمة')
+  assert.ok(/const rule = categoryId == null \? undefined : categoryRules\.find/.test(priceCore),
+    'خصم الفئة غير مطبَّق في تسعير الصنف')
+  assert.ok(/priceListCategoryRules/.test(repo) && /setPriceListCategoryRule/.test(repo), 'المخزن بلا قواعد خصم الفئات')
+  assert.ok(/state\.priceListCategoryRules, item\?\.categoryId \?\? null/.test(repo), 'getEffectivePrice لا يمرر فئة الصنف')
+  assert.ok(/data-category-rules/.test(priceListsPage) && /خصم لكل فئة/.test(priceListsPage),
+    'صفحة قوائم الأسعار بلا محرر خصم الفئات')
+  R.ok('⑧ خصم مستقل لكل فئة أصناف داخل نفس القائمة — الأولوية: صنف ⇐ فئة ⇐ القائمة ⇐ التجزئة')
 }
 
 R.done()

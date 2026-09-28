@@ -32,7 +32,7 @@ import { computeStocktake, buildAdjustmentEntry, type CountInput, type Stocktake
 import { validateRecipe, recipeIngredientsCostMinor, recipeUnitCostMinor, buildProductionEntry, explodeIngredientNeeds, type Recipe, type RecipeInput, type ProductionOrder, type ProductionExpense } from '../core/recipes.ts'
 import { validateProcessing, allocateProcessingCost, buildProcessingEntry, EMPTY_COMPLIANCE, PROCESSING_KIND_LABELS, type ProcessingOrder, type ProcessingInput } from '../core/processing.ts'
 import { validateProfile, jewelryPriceMinor, buildScrapPurchaseEntry, buildScrapSaleEntry, planScrapConsumption, computeTradeInNet, validateTradeIn, EMPTY_GRAM_PRICES, KARAT_LABELS, type GramPrices, type JewelryProfile, type Karat, type ScrapLot, type ScrapSale } from '../core/jewelry.ts'
-import { validatePriceList, resolvePrice, type PriceList, type PriceListEntry } from '../core/priceLists.ts'
+import { validatePriceList, validateCategoryRule, resolvePrice, type PriceList, type PriceListEntry, type PriceListCategoryRule } from '../core/priceLists.ts'
 import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotion, type PromotionInput } from '../core/promotions.ts'
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
@@ -1390,6 +1390,7 @@ interface DataState {
   equipmentCosts: EquipmentCost[] // مصاريف تشغيل المعدات (وقود/صيانة/إصلاح)
   priceLists: PriceList[] // قوائم الأسعار (جملة/نصف جملة/VIP)
   priceListEntries: PriceListEntry[] // أسعار خاصة لكل صنف داخل قائمة
+  priceListCategoryRules: PriceListCategoryRule[] // خصم لكل فئة داخل القائمة (قرار المالك ⑩ي)
   promotions: Promotion[] // العروض الترويجية/الباقات (سد فجوة السوق المصرية/السعودية)
   custodyFiles: CustodyFile[] // ملفات عهد الموظفين (طلب المالك — نظام متكامل بنمط pro-acc)
   custodyTxs: CustodyTx[] // حركات ملفات العهد (تعزيز/مصروف/فاتورة/مرتجع/عجز)
@@ -2266,6 +2267,8 @@ interface DataState {
   removePriceList: (id: number) => void
   /** سعر خاص لصنف في قائمة — priceMinor = null يحذف السعر الخاص */
   setPriceListEntry: (listId: number, itemId: number, priceMinor: number | null) => void
+  /** خصم فئة داخل قائمة — discountPercent = null يحذف القاعدة */
+  setPriceListCategoryRule: (listId: number, categoryId: number, discountPercent: number | null) => void
   /** السعر الفعلي لصنف حسب قائمة عميل (null = تجزئة) */
   getEffectivePrice: (itemId: number, listId: number | null) => number
   /** ربط عميل بقائمة أسعار */
@@ -2766,6 +2769,7 @@ export const useDataStore = create<DataState>()(
       equipmentCosts: [],
       priceLists: [],
       priceListEntries: [],
+      priceListCategoryRules: [],
       promotions: [],
       custodyFiles: [],
       custodyTxs: [],
@@ -9882,7 +9886,11 @@ export const useDataStore = create<DataState>()(
       removePriceList: (id) => {
         const state = get()
         if (state.customers.some((c) => c.priceListId === id)) throw new Error('عملاء مربوطون بهذه القائمة — انقلهم أولاً أو عطّلها')
-        set({ priceLists: state.priceLists.filter((l) => l.id !== id), priceListEntries: state.priceListEntries.filter((e) => e.listId !== id) })
+        set({
+          priceLists: state.priceLists.filter((l) => l.id !== id),
+          priceListEntries: state.priceListEntries.filter((e) => e.listId !== id),
+          priceListCategoryRules: state.priceListCategoryRules.filter((rule) => rule.listId !== id),
+        })
       },
       setPriceListEntry: (listId, itemId, priceMinor) => {
         const state = get()
@@ -9893,10 +9901,21 @@ export const useDataStore = create<DataState>()(
         if (!(priceMinor > 0)) throw new Error('السعر يجب أن يكون أكبر من صفر')
         set({ priceListEntries: [...rest, { listId, itemId, priceMinor }] })
       },
+      setPriceListCategoryRule: (listId, categoryId, discountPercent) => {
+        const state = get()
+        if (!state.priceLists.some((l) => l.id === listId)) throw new Error('القائمة غير موجودة')
+        if (!state.categories.some((category) => category.id === categoryId)) throw new Error('الفئة غير موجودة')
+        const rest = state.priceListCategoryRules.filter((rule) => !(rule.listId === listId && rule.categoryId === categoryId))
+        if (discountPercent == null) { set({ priceListCategoryRules: rest }); return }
+        const errors = validateCategoryRule(discountPercent)
+        if (errors.length) throw new Error(errors.join('، '))
+        set({ priceListCategoryRules: [...rest, { listId, categoryId, discountPercent }] })
+      },
       getEffectivePrice: (itemId, listId) => {
         const state = get()
-        const retail = state.items.find((it) => it.id === itemId)?.priceMinor ?? 0
-        return resolvePrice(itemId, retail, listId, state.priceLists, state.priceListEntries)
+        const item = state.items.find((it) => it.id === itemId)
+        const retail = item?.priceMinor ?? 0
+        return resolvePrice(itemId, retail, listId, state.priceLists, state.priceListEntries, state.priceListCategoryRules, item?.categoryId ?? null)
       },
       setCustomerPriceList: (customerId, listId) => {
         const state = get()
@@ -12009,6 +12028,7 @@ export const useDataStore = create<DataState>()(
           paymentTerminalTransactions: s.paymentTerminalTransactions ?? [],
           paymentTerminalSettlements: s.paymentTerminalSettlements ?? [],
           priceListEntries: s.priceListEntries ?? [],
+          priceListCategoryRules: s.priceListCategoryRules ?? [],
           custodyFiles: s.custodyFiles ?? [],
           custodyTxs: s.custodyTxs ?? [],
           employeeAdvances: (s.employeeAdvances ?? []).map((a: EmployeeAdvance) => ({

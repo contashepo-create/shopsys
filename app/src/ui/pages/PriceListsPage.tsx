@@ -4,7 +4,7 @@
  * والعميل المربوط بها يُسعَّر تلقائياً في الكاشير.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Tags, Power, Trash2, Users, Table2 } from 'lucide-react'
+import { Plus, Tags, Power, Trash2, Users, Table2, Layers } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -14,9 +14,9 @@ import { Modal, Field, Btn, EmptyState, inputCls, useToast } from '../components
 
 export function PriceListsPage() {
   const {
-    items, customers, priceLists, priceListEntries,
+    items, customers, categories, priceLists, priceListEntries, priceListCategoryRules,
     addPriceList, updatePriceList, updateItem, togglePriceList, removePriceList,
-    setPriceListEntry, setCustomerPriceList,
+    setPriceListEntry, setPriceListCategoryRule, setCustomerPriceList,
   } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
@@ -100,9 +100,24 @@ export function PriceListsPage() {
   const [linkFor, setLinkFor] = useState<number | null>(null)
   const linkList = priceLists.find((l) => l.id === linkFor)
 
+  /* خصم لكل فئة أصناف داخل نفس القائمة (قرار المالك ⑩ي البند ⑧):
+     العميل الواحد يأخذ خصماً لفئة «أ» وخصماً آخر لفئة «ب» بلا قوائم متعددة. */
+  const [categoryFor, setCategoryFor] = useState<number | null>(null)
+  const categoryList = priceLists.find((l) => l.id === categoryFor)
+  const ruleOf = (listId: number, categoryId: number) =>
+    priceListCategoryRules.find((rule) => rule.listId === listId && rule.categoryId === categoryId)
+  const saveCategoryRule = (listId: number, categoryId: number, raw: string) => {
+    const text = raw.trim()
+    try {
+      setPriceListCategoryRule(listId, categoryId, text === '' ? null : Number(text))
+      toast.show(text === '' ? 'حُذف خصم الفئة' : `خصم الفئة صار ${Number(text)}٪`)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
   const countFor = (listId: number) => ({
     entries: priceListEntries.filter((e) => e.listId === listId).length,
     customers: customers.filter((c) => c.priceListId === listId).length,
+    categoryRules: priceListCategoryRules.filter((rule) => rule.listId === listId).length,
   })
 
   return (
@@ -146,6 +161,14 @@ export function PriceListsPage() {
                     <Users className="w-3.5 h-3.5 inline ml-1" />العملاء ({c.customers})
                   </button>
                 </div>
+                <button
+                  onClick={() => setCategoryFor(l.id)}
+                  className="w-full py-2 rounded-xl bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 transition-colors text-[11px] font-bold"
+                  title="خصم مختلف لكل فئة أصناف داخل نفس القائمة — لنفس العميل"
+                  data-category-rules
+                >
+                  <Layers className="w-3.5 h-3.5 inline ml-1" />خصم لكل فئة ({c.categoryRules})
+                </button>
               </div>
             )
           })}
@@ -233,7 +256,7 @@ export function PriceListsPage() {
                         ) : fmt(item.priceMinor)}
                       </td>
                       {activePriceLists.flatMap((list) => {
-                        const price = resolvePrice(item.id, item.priceMinor, list.id, priceLists, priceListEntries)
+                        const price = resolvePrice(item.id, item.priceMinor, list.id, priceLists, priceListEntries, priceListCategoryRules, item.categoryId)
                         const discountPercent = discountFor(item.priceMinor, price)
                         const entry = priceListEntries.find((candidate) => candidate.listId === list.id && candidate.itemId === item.id)
                         const hasSpecialPrice = !!entry
@@ -288,7 +311,7 @@ export function PriceListsPage() {
             <div className="max-h-[26rem] overflow-y-auto space-y-1.5">
               {items.filter((it) => it.isActive && (!itemFilter || it.nameAr.includes(itemFilter) || it.sku.includes(itemFilter) || it.barcodes.some((barcode) => barcode.includes(itemFilter)))).slice(0, 60).map((it) => {
                 const entry = priceListEntries.find((e) => e.listId === pricingList.id && e.itemId === it.id)
-                const effective = resolvePrice(it.id, it.priceMinor, pricingList.id, priceLists, priceListEntries)
+                const effective = resolvePrice(it.id, it.priceMinor, pricingList.id, priceLists, priceListEntries, priceListCategoryRules, it.categoryId)
                 const below = effective < it.costMinor
                 return (
                   <div key={it.id} className="flex items-center gap-2 text-[12px] bg-slate-50 dark:bg-slate-800/50 rounded-xl px-3 py-2">
@@ -312,6 +335,48 @@ export function PriceListsPage() {
               })}
             </div>
             <div className="text-[11px] text-slate-400">اترك الخانة فارغة = يسري الخصم الافتراضي (أو سعر التجزئة). التحذير الأحمر: السعر تحت متوسط التكلفة.</div>
+          </div>
+        )}
+      </Modal>
+
+      {/* خصم لكل فئة أصناف داخل القائمة — قرار المالك ⑩ي البند ⑧ */}
+      <Modal open={!!categoryList} onClose={() => setCategoryFor(null)} title={categoryList ? `خصم الفئات في «${categoryList.nameAr}»` : ''} wide>
+        {categoryList && (
+          <div className="space-y-3" data-category-rules-modal>
+            <p className="text-[12px] text-slate-500">
+              لنفس العميل: فئة «أ» بخصم وفئة «ب» بخصم آخر. الأولوية: <b>سعر الصنف الخاص</b> ⇐ <b>خصم فئته</b> ⇐ الخصم الافتراضي للقائمة
+              {categoryList.defaultDiscountPercent > 0 ? ` (${categoryList.defaultDiscountPercent}٪)` : ' (بلا)'} ⇐ سعر التجزئة.
+            </p>
+            {categories.length === 0
+              ? <EmptyState icon="🗂️" title="لا فئات أصناف" sub="أنشئ فئات الأصناف أولاً من شاشة الأصناف" />
+              : <div className="max-h-[26rem] overflow-y-auto space-y-1.5">
+                  {categories.map((category) => {
+                    const rule = ruleOf(categoryList.id, category.id)
+                    const sample = items.find((item) => item.categoryId === category.id && item.isActive !== false)
+                    const effective = sample
+                      ? resolvePrice(sample.id, sample.priceMinor, categoryList.id, priceLists, priceListEntries, priceListCategoryRules, category.id)
+                      : null
+                    return (
+                      <div key={category.id} className="flex items-center gap-2 text-[12px] bg-slate-50 dark:bg-slate-800/50 rounded-xl px-3 py-2" data-category-rule-row>
+                        <span className="flex-1 font-bold">{category.nameAr}</span>
+                        <span className="text-slate-400">{items.filter((item) => item.categoryId === category.id).length} صنف</span>
+                        {sample && effective != null && (
+                          <span className="text-slate-400" title={`مثال: ${sample.nameAr}`}>تجزئة {fmt(sample.priceMinor)} ⇐ {fmt(effective)}</span>
+                        )}
+                        <input
+                          defaultValue={rule ? String(rule.discountPercent) : ''}
+                          placeholder={categoryList.defaultDiscountPercent > 0 ? `افتراضي ${categoryList.defaultDiscountPercent}٪` : 'بلا خصم'}
+                          inputMode="decimal"
+                          aria-label={`خصم فئة ${category.nameAr} ٪`}
+                          onBlur={(event) => saveCategoryRule(categoryList.id, category.id, event.target.value)}
+                          className={`${inputCls} w-28 text-center`}
+                        />
+                        <span className="text-slate-400">٪</span>
+                      </div>
+                    )
+                  })}
+                </div>}
+            <div className="text-[11px] text-slate-400">اترك الخانة فارغة لحذف خصم الفئة — عندها يسري الخصم الافتراضي للقائمة.</div>
           </div>
         )}
       </Modal>
