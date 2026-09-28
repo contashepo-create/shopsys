@@ -67,3 +67,18 @@ export function seedDeveloperDefaults(): void {
     loggedOut: false,
   })
 }
+
+/**
+ * منفذ فحص محلي (وضع المطور فقط): يتيح لأدوات المراجعة البصرية/الآلية قراءة
+ * حالة المتجر وبذر بيانات اختبار بسرعة بدل المرور بكل الشاشات. لا يُضمَّن في
+ * النسخة النهائية لأن `import.meta.env.DEV` تساوي false بعد `vite build`.
+ */
+export function exposeDeveloperStores(): void {
+  if (!import.meta.env.DEV || typeof globalThis === 'undefined') return
+  Object.defineProperty(globalThis, '__shopsysDev', {
+    value: { data: useDataStore, app: useAppStore },
+    configurable: true,
+    enumerable: false,
+    writable: false,
+  })
+}

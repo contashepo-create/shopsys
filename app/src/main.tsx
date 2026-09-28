@@ -3,10 +3,11 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { AppErrorBoundary } from './ui/AppErrorBoundary.tsx'
-import { seedDeveloperDefaults } from './dev/devDefaults.ts'
+import { seedDeveloperDefaults, exposeDeveloperStores } from './dev/devDefaults.ts'
 
 // يجهز الحساب التجريبي مرة واحدة في بيئة التطوير فقط؛ لا يُضمّن في النسخة النهائية.
 seedDeveloperDefaults()
+exposeDeveloperStores()
 
 /** حراسة واجهة النسخة النهائية فقط: لا رسالة ولا سلوك إضافي في وضع المطور. */
 if (import.meta.env.PROD) {

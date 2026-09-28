@@ -195,6 +195,25 @@ export function InvoiceLinesTable({
     observer.observe(box)
     return () => observer.disconnect()
   }, [])
+  /* سلسلة الإدخال بلا فأرة (طلب المالك): بمجرد اختيار الصنف من خلية الاسم ينتقل
+     التركيز تلقائياً إلى **كمية** السطر الجديد، ومنها Enter ⇐ السعر ⇐ السطر التالي.
+     قبل ذلك كان التركيز يسقط على body فتضيع الأرقام التي يكتبها البائع. */
+  const lineCountRef = useRef(lines.length)
+  useEffect(() => {
+    const grew = lines.length > lineCountRef.current
+    lineCountRef.current = lines.length
+    if (!grew) return
+    const frame = requestAnimationFrame(() => {
+      const rows = scrollRef.current?.querySelectorAll<HTMLTableRowElement>('tbody tr[data-entry-row]')
+      const row = rows?.[rows.length - 1]
+      const cell = row?.querySelector<HTMLInputElement>('td.num-cell input:not([readonly])')
+      if (!cell) return
+      cell.focus()
+      cell.select()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [lines.length])
+
   const draftValue = (key: string, value: string | number) => drafts[key] ?? String(value ?? '')
   const updateDraft = (key: string, raw: string, commit: (value: string) => void) => {
     const value = decimalDraft(raw)

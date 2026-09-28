@@ -1,4 +1,4 @@
-import { Children, isValidElement, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react'
+import { type CSSProperties, Children, isValidElement, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { Search, ChevronDown } from 'lucide-react'
 import { inputCls, OverlayPortal } from './ui.tsx'
 import { useAnchoredMenu } from './anchoredMenu.ts'
@@ -31,6 +31,26 @@ function flattenChoices(children: ReactNode): QuickChoice[] {
     choices.push(...flattenChoices((child.props as { children?: ReactNode }).children))
   })
   return choices
+}
+
+/**
+ * قائمة البحث **ملتصقة بالحقل** لا نافذة تعتّم الشاشة (قاعدة المالك: لا منبثقة
+ * تُعتّم الخلفية أو تعزلها). تُحسب تحت الحقل وتنقلب فوقه إن ضاق ما تحته.
+ */
+function anchoredPanelStyle(anchor: HTMLElement | null, preferredWidth = 520): CSSProperties {
+  if (!anchor || typeof window === 'undefined') return { position: 'fixed', insetInlineStart: '50%', top: '10vh' }
+  const rect = anchor.getBoundingClientRect()
+  const viewportWidth = window.innerWidth || 1024
+  const viewportHeight = window.innerHeight || 768
+  const width = Math.min(Math.max(rect.width, preferredWidth), viewportWidth - 16)
+  const below = viewportHeight - rect.bottom - 10
+  const above = rect.top - 10
+  const openUp = below < 220 && above > below
+  const maxHeight = Math.max(180, Math.min(openUp ? above : below, Math.round(viewportHeight * 0.66)))
+  const right = Math.min(Math.max(8, viewportWidth - rect.right), Math.max(8, viewportWidth - width - 8))
+  return openUp
+    ? { position: 'fixed', bottom: viewportHeight - rect.top + 4, right, width, maxHeight }
+    : { position: 'fixed', top: rect.bottom + 4, right, width, maxHeight }
 }
 
 /** بديل موحد للقائمة الأصلية: حقل كتابة وبحث واختيار Enter بلا قائمة HTML أصلية. */
@@ -97,6 +117,8 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [index, setIndex] = useState(0)
+  const [panelStyle, setPanelStyle] = useState<CSSProperties>({})
+  const panelWidth = 560
   const inputRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -134,11 +156,17 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
   useEffect(() => {
     if (!open) return
     const input = searchInputRef.current
-    if (!input) return
-    input.focus()
-    const position = input.value.length
-    input.setSelectionRange(position, position)
-  }, [open])
+    if (input) {
+      input.focus()
+      const position = input.value.length
+      input.setSelectionRange(position, position)
+    }
+    const place = () => setPanelStyle(anchoredPanelStyle(inputRef.current, panelWidth))
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true) }
+  }, [open, panelWidth])
   useEffect(() => {
     if (!listenForShortcut) return
     const focus = () => { inputRef.current?.focus(); inputRef.current?.select() }
@@ -160,11 +188,11 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
   return <div ref={pickerRef} className="relative invoice-picker-root" data-enter-native="true">
     {!open && <Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-brand-500"/>}
     <input ref={(node) => { inputRef.current = node; setExternalRef(node) }} className={`${inputCls} pr-9`} value={open ? '' : query} placeholder={open ? undefined : placeholder} aria-hidden={open || undefined} tabIndex={open ? -1 : undefined} onFocus={() => { if (!open) { setQuery(''); inputRef.current?.select() } }} onChange={(event) => { if (open) setQuery(event.target.value); else openSearch(event.target.value) }} onKeyDown={handleKeyDown}/>
-    {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-item-overlay bg-slate-950/35 p-4 sm:p-8" dir="rtl" onMouseDown={(event) => event.stopPropagation()}>
-      <div role="dialog" aria-label="نتائج بحث الأصناف" className="invoice-search-dialog mx-auto mt-[8vh] flex max-h-[78vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white shadow-2xl dark:border-brand-700/50 dark:bg-card-dark" onMouseDown={(event) => event.stopPropagation()}>
-      <div className="invoice-search-inputbar border-b border-slate-200 p-2 dark:border-slate-700"><div className="relative"><Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-brand-500"/><input ref={(node) => { searchInputRef.current = node; setExternalRef(node) }} className={`${inputCls} pr-9`} value={query} placeholder={placeholder} aria-label="بحث الصنف" onChange={(event) => { setQuery(event.target.value); setIndex(0) }} onKeyDown={handleKeyDown}/></div></div>
+    {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-item-overlay" dir="rtl" onMouseDown={(event) => event.stopPropagation()}>
+      <div role="dialog" aria-label="نتائج بحث الأصناف" style={panelStyle} className="invoice-search-dialog flex flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white dark:border-brand-700/50 dark:bg-card-dark" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="invoice-search-inputbar border-b border-slate-200 p-2 dark:border-slate-700"><div className="relative"><Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-brand-500"/><input ref={(node) => { searchInputRef.current = node; setExternalRef(node) }} className={`${inputCls} pr-9`} value={query} placeholder={placeholder} aria-label="بحث الصنف" role="combobox" aria-expanded aria-controls="invoice-item-results" aria-autocomplete="list" aria-activedescendant={matches[index] ? `invoice-item-option-${matches[index].id}` : undefined} onChange={(event) => { setQuery(event.target.value); setIndex(0) }} onKeyDown={handleKeyDown}/></div></div>
       {matches[index] && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-brand-500/5 px-3 py-2 dark:border-slate-700"><div className="min-w-0"><span className="ml-2 font-mono text-[10px] text-slate-500" dir="ltr">{matches[index].sku || matches[index].barcodes?.[0] || matches[index].id}</span><b className="block truncate">{matches[index].nameAr}</b></div><div className="flex items-center gap-1"><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onEdit?.(matches[index].id)} disabled={!onEdit} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-sky-700 enabled:hover:bg-sky-50 disabled:opacity-35 dark:border-slate-700 dark:text-sky-300">✎ تعديل</button><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onMovement?.(matches[index].id)} disabled={!onMovement} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-violet-700 enabled:hover:bg-violet-50 disabled:opacity-35 dark:border-slate-700 dark:text-violet-300">↗ حركة الصنف</button><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onPrices?.(matches[index].id)} disabled={!onPrices} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-emerald-700 enabled:hover:bg-emerald-50 disabled:opacity-35 dark:border-slate-700 dark:text-emerald-300">٪ الأسعار</button></div></div>}
-      <div className="invoice-search-results max-h-72 overflow-auto p-1">{matches.length ? matches.map((item, row) => <button type="button" key={item.id} onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(row)} onDoubleClick={() => pick(item)} className={`invoice-search-result-row invoice-item-result-row w-full grid grid-cols-[110px_1fr_auto] gap-2 p-2.5 rounded-lg text-right ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/40' : 'hover:bg-slate-500/10'}`}><span className="font-mono text-xs text-slate-500">{item.sku || item.barcodes?.[0] || item.id}</span><b>{item.nameAr}</b><span className="text-xs text-slate-500">{amountLabel?.(item) ?? ''}</span></button>) : <div className="p-4 text-center text-sm text-slate-400">لا توجد أصناف مطابقة</div>}</div>
+      <div id="invoice-item-results" role="listbox" aria-label="نتائج بحث الأصناف" className="invoice-search-results max-h-72 overflow-auto p-1">{matches.length ? matches.map((item, row) => <button type="button" key={item.id} id={`invoice-item-option-${item.id}`} role="option" aria-selected={row === index} onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(row)} onDoubleClick={() => pick(item)} className={`invoice-search-result-row invoice-item-result-row w-full grid grid-cols-[110px_1fr_auto] gap-2 p-2.5 rounded-lg text-right ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/40' : 'hover:bg-slate-500/10'}`}><span className="font-mono text-xs text-slate-500">{item.sku || item.barcodes?.[0] || item.id}</span><b>{item.nameAr}</b><span className="text-xs text-slate-500">{amountLabel?.(item) ?? ''}</span></button>) : <div className="p-4 text-center text-sm text-slate-400">لا توجد أصناف مطابقة</div>}</div>
       <div className="invoice-search-footer border-t border-slate-100 px-3 py-2 text-[10px] text-slate-400 dark:border-slate-800">اختر بالسهم ثم Enter، أو اضغط مرتين على الصنف لإضافته للفاتورة.</div>
       </div>
     </div></OverlayPortal>}
@@ -178,6 +206,8 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [index, setIndex] = useState(0)
+  const [panelStyle, setPanelStyle] = useState<CSSProperties>({})
+  const panelWidth = 520
   const inputRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -215,11 +245,17 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
   useEffect(() => {
     if (!open) return
     const input = searchInputRef.current
-    if (!input) return
-    input.focus()
-    const position = input.value.length
-    input.setSelectionRange(position, position)
-  }, [open])
+    if (input) {
+      input.focus()
+      const position = input.value.length
+      input.setSelectionRange(position, position)
+    }
+    const place = () => setPanelStyle(anchoredPanelStyle(inputRef.current, panelWidth))
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true) }
+  }, [open, panelWidth])
   useEffect(() => {
     const focus = () => { inputRef.current?.focus(); inputRef.current?.select(); setQuery('') }
     const openFromShortcut = () => {
@@ -278,11 +314,11 @@ export function PartyQuickPicker({ parties, value, onChange, cashLabel, label, o
   }
   return <div ref={pickerRef} className="relative invoice-picker-root" data-enter-native="true" data-party-picker="true">
     <input ref={inputRef} className={inputCls} value={open ? '' : (selected?.nameAr ?? cashLabel)} aria-label={open ? undefined : label} aria-hidden={open || undefined} tabIndex={open ? -1 : undefined} onFocus={() => { if (!open) { setQuery(''); inputRef.current?.select() } }} onChange={(event) => { if (open) { setQuery(event.target.value); setIndex(0) } else openSearch(event.target.value) }} onKeyDown={handleKeyDown} />
-    {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-party-overlay bg-slate-950/35 p-4 sm:p-8" dir="rtl" onMouseDown={(event) => event.stopPropagation()}>
-      <div role="dialog" aria-label={`${label} — نتائج البحث`} className="invoice-search-dialog mx-auto mt-[8vh] flex max-h-[78vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white shadow-2xl dark:border-brand-700/50 dark:bg-card-dark" onMouseDown={(event) => event.stopPropagation()}>
+    {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-party-overlay" dir="rtl" onMouseDown={(event) => event.stopPropagation()}>
+      <div role="dialog" aria-label={`${label} — نتائج البحث`} style={panelStyle} className="invoice-search-dialog flex flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white dark:border-brand-700/50 dark:bg-card-dark" onMouseDown={(event) => event.stopPropagation()}>
         <div className="invoice-search-header flex items-center justify-between gap-3 border-b border-slate-200 p-4 dark:border-slate-700"><div><b className="text-base">بحث {label.replace('بحث ', '')}</b><p className="text-xs text-slate-500">اكتب الاسم أو الهاتف أو الكود، ثم اختر بالأسهم أو الضغط مرتين</p></div><button type="button" aria-label="إغلاق البحث" className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-500/10" onClick={() => setOpen(false)}>✕</button></div>
         <div className="invoice-search-inputbar border-b border-slate-200 p-3 dark:border-slate-700"><input ref={searchInputRef} className={inputCls} value={query} placeholder={`ابحث في ${label.replace('بحث ', '')}`} aria-label={label} autoComplete="off" onChange={(event) => { setQuery(event.target.value); setIndex(0) }} onKeyDown={handleKeyDown} /></div>
-        <div className="invoice-search-results overflow-auto p-2">{showCash && <button type="button" data-quick-option="true" data-value={String(emptyValue)} onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(-1)} onDoubleClick={() => { onChange(emptyValue); setOpen(false); onConfirm?.() }} className={`invoice-search-result-row invoice-search-cash w-full rounded-xl border border-dashed border-brand-300 p-3 text-right font-bold text-brand-700 hover:bg-brand-500/10 dark:border-brand-700 dark:text-brand-300 ${index === -1 ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : ''}`}>{cashLabel}</button>}{matches.length ? matches.map(renderParty) : <div className="p-8 text-center text-sm text-slate-400">لا توجد نتائج مطابقة</div>}</div>
+        <div role="listbox" aria-label={`${label} — نتائج البحث`} className="invoice-search-results overflow-auto p-2">{showCash && <button type="button" data-quick-option="true" data-value={String(emptyValue)} onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(-1)} onDoubleClick={() => { onChange(emptyValue); setOpen(false); onConfirm?.() }} className={`invoice-search-result-row invoice-search-cash w-full rounded-xl border border-dashed border-brand-300 p-3 text-right font-bold text-brand-700 hover:bg-brand-500/10 dark:border-brand-700 dark:text-brand-300 ${index === -1 ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : ''}`}>{cashLabel}</button>}{matches.length ? matches.map(renderParty) : <div className="p-8 text-center text-sm text-slate-400">لا توجد نتائج مطابقة</div>}</div>
       </div>
     </div></OverlayPortal>}
   </div>

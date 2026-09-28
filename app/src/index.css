@@ -502,8 +502,10 @@ select { line-height: 1.25rem; }
 @media (max-width: 900px) { .invoice-pos-root { width: calc(100% + 2rem); margin: -1rem; padding-inline: .45rem; } }
 
 /* نوافذ البحث: شاشة مستقلة كثيفة، لا قائمة صغيرة تحت الحقل. */
-.invoice-search-overlay { background: rgb(2 16 35 / .66) !important; backdrop-filter: blur(3px); }
-.invoice-search-dialog { max-width: 900px !important; border: 1px solid #3e6e9c !important; border-radius: .45rem !important; background: #f4f7fb !important; box-shadow: 0 24px 70px rgb(0 15 35 / .48) !important; }
+/* قاعدة المالك: لا منبثقة تُعتّم الخلفية أو تعزلها أو تضع ظلاً — قائمة البحث
+   شفافة الغلاف وملتصقة بالحقل، والعمل خلفها مرئي ومتاح بالكامل. */
+.invoice-search-overlay { background: transparent !important; backdrop-filter: none !important; }
+.invoice-search-dialog { max-width: min(900px, calc(100vw - 1rem)) !important; border: 1px solid #3e6e9c !important; border-radius: .45rem !important; background: #f4f7fb !important; box-shadow: none !important; }
 .dark .invoice-search-dialog { background: #0f1d31 !important; border-color: #365b7d !important; }
 .invoice-search-dialog .invoice-search-header { min-height: 4.1rem; border-bottom: 1px solid #1d4773 !important; background: linear-gradient(105deg, #081a36, #154b7d) !important; padding: .75rem 1rem !important; color: #fff; }
 .invoice-search-dialog .invoice-search-header b { color: #fff; font-size: .9rem; }
@@ -543,7 +545,7 @@ select { line-height: 1.25rem; }
 .invoice-party-overlay .invoice-search-cash { padding: .6rem .75rem !important; background: #edf7ff; }
 .dark .invoice-party-overlay .invoice-search-cash { background: #123451; }
 @media (max-width: 700px) {
-  .invoice-search-dialog { margin-top: 2vh !important; max-height: 92vh !important; }
+  .invoice-search-dialog { max-height: 70vh !important; }
   .invoice-item-result-row { grid-template-columns: 6rem minmax(0, 1fr) !important; }
   .invoice-item-result-row > span:last-child { grid-column: 2; }
   .invoice-party-overlay .invoice-search-result-row > div { grid-template-columns: minmax(0, 1fr); gap: .25rem; }
@@ -553,6 +555,13 @@ select { line-height: 1.25rem; }
 /* النموذج المرجعي الكامل: chrome ثلاثي الطبقات + شريط تشغيل جانبي + ورقة POS. */
 .invoice-standalone-layout { min-height: 100vh; background: #f8f9ff; }
 .invoice-standalone-layout main { padding: 0 !important; }
+/* مستند الفاتورة مدمج في الشاشة الرئيسية: القوائم تبقى، والمستند يملأ ما تحتها تماماً */
+.invoice-embedded-layout { height: 100dvh; max-height: 100dvh; overflow: hidden; }
+.top-navigation-layout.invoice-embedded-layout { display: flex; flex-direction: column; }
+.invoice-embedded-layout > main.invoice-embedded-main,
+.invoice-embedded-layout main.invoice-embedded-main { min-height: 0; flex: 1; padding: 0 !important; overflow: hidden; }
+.invoice-embedded-layout .invoice-doc.invoice-pos-root { height: 100%; max-height: 100%; }
+.invoice-embedded-layout > div { min-height: 0; }
 .invoice-pos-root { width: 100%; min-height: 100vh; margin: 0; padding: 0 0 1.5rem; overflow-x: hidden; background: #f8f9ff; color: #0b1c30; }
 .dark .invoice-pos-root { background: #081222; color: #e7edf7; }
 .invoice-reference-header { position: fixed; top: 0; right: 0; left: 0; z-index: 60; box-shadow: 0 1px 8px rgb(0 0 0 / .08); }
