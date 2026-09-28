@@ -22,6 +22,10 @@ export interface PartyNote {
   userName: string
   /** مصدرها: رقم الفاتورة أو «بطاقة العميل» */
   source?: string
+  /** ISO — لحظة آخر تعديل على النص (إن عُدّل) */
+  editedAt?: string
+  /** من عدّلها */
+  editedBy?: string
 }
 
 /** أقصى طول للملاحظة الواحدة — سطر واضح لا مقال */

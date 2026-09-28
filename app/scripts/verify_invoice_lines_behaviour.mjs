@@ -58,8 +58,8 @@ check('سلسلة الإدخال بلا فأرة محفوظة في الجدول'
   assert.ok(/data-enter-native="true"/.test(pickers), 'Enter العام لا يُترك ينقل التركيز بعد الاختيار')
 })
 
-check('ستة سطور نظيفة والمساحة الباقية للوحات الثلاث (⑩ز)', () => {
-  assert.ok(/const VISIBLE_ROWS = Math\.max\(MIN_VISIBLE_ROWS, TARGET_VISIBLE_ROWS\)/.test(table) && /MIN_VISIBLE_ROWS = 6/.test(table),
+check('خمسة سطور نظيفة والمساحة الباقية للوحات الثلاث (⑩ح)', () => {
+  assert.ok(/const VISIBLE_ROWS = Math\.max\(MIN_VISIBLE_ROWS, TARGET_VISIBLE_ROWS\)/.test(table) && /MIN_VISIBLE_ROWS = 5/.test(table),
     'عدد السطور الظاهرة ليس ستة')
   assert.ok(/rows\.reduce/.test(table) && /setBoxMaxHeight/.test(table), 'ارتفاع الجدول غير مقيس من ارتفاع السطور — قد يظهر نصف سطر')
   assert.ok(!/invoice-line-ghost-in/.test(table) && !/invoice-line-ghost-in/.test(css), 'عادت مربعات (تسطيرات) السطور الفارغة')
@@ -77,7 +77,12 @@ check('لا نص يُبتر بثلاث نقاط في المستند (تكيّف 
     '.invoice-doc .invoice-lines-hint', '.invoice-doc .invoice-doc-party .invoice-doc-metric > b']) {
     const head = selector.split(',')[0].trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const rule = css.match(new RegExp(`${head}[^{]*\\{[^}]*\\}`))?.[0] ?? ''
-    assert.ok(/text-overflow: clip/.test(rule) && /white-space: normal/.test(rule), `ما زال يُبتر: ${selector}`)
+    /* قرار المالك ⑩ح: تسميات حقول الترويسة لا تلتف (سطر واحد) — وما عداها يلتف.
+       المشترك بينهما: لا بتر بثلاث نقاط أبداً. */
+    const noWrapLabel = selector.includes('invoice-doc-fields')
+    assert.ok(/text-overflow: clip/.test(rule), `ما زال يُبتر: ${selector}`)
+    assert.ok(new RegExp(noWrapLabel ? 'white-space: nowrap' : 'white-space: normal').test(rule), noWrapLabel ? `تسمية الحقل عادت تلتف: ${selector}` : `النص لا يلتف بل يُقصّ: ${selector}`)
+    if (noWrapLabel) assert.ok(/overflow: visible/.test(rule), `تسمية الحقل بلا التفاف يجب أن تبقى ظاهرة كاملة: ${selector}`)
   }
 })
 

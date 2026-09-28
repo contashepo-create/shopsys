@@ -109,13 +109,13 @@ describe('جدول بنود الفاتورة في الوضع الحي', () => {
     />,
   )
 
-  it('ستة سطور في جدول الأصناف بلا مربعات في السطور الفارغة (قرار المالك ⑩ز)', () => {
+  it('خمسة سطور في جدول الأصناف بلا مربعات في السطور الفارغة (قرار المالك ⑩ح)', () => {
     const view = renderTable()
-    /* ستة سطور ظاهرة فقط وما زاد عليها يُمرَّر داخلياً، والسطور الفارغة نظيفة
+    /* خمسة سطور ظاهرة فقط وما زاد عليها يُمرَّر داخلياً، والسطور الفارغة نظيفة
        تماماً: لا مربعات إدخال ولا تسطيرات — والنقر على أي خلية يفتح بحث الصنف. */
     const real = view.container.querySelectorAll('tr[data-entry-row]').length
-    expect(view.container.querySelectorAll('tbody tr').length).toBe(6)
-    expect(view.container.querySelectorAll('tr.invoice-line-ghost').length).toBe(6 - real)
+    expect(view.container.querySelectorAll('tbody tr').length).toBe(5)
+    expect(view.container.querySelectorAll('tr.invoice-line-ghost').length).toBe(5 - real)
     expect(view.container.querySelectorAll('tr.invoice-line-ghost input').length).toBe(1)
     expect(view.container.querySelectorAll('tr.invoice-line-ghost td[data-ghost-field]').length).toBeGreaterThan(0)
   })

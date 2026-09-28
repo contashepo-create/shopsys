@@ -1160,8 +1160,8 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc textarea { border-width: 1px; border-radius: .4rem; padding: .22rem .45rem; font-size: .69rem; }
 .invoice-doc input:not([type=checkbox]):not([type=radio]),
 .invoice-doc select { min-height: 1.75rem; }
-.invoice-doc .invoice-pos-edit-party, .invoice-doc .invoice-pos-check-field { min-height: 1.75rem; }
-.invoice-doc .invoice-pos-edit-party { border-radius: .4rem; }
+.invoice-doc .invoice-pos-check-field { min-height: 1.75rem; }
+.invoice-doc .invoice-pos-edit-party { width: 1.05rem; min-width: 1.05rem; height: 1.05rem; min-height: 0; padding: 0; border-radius: .25rem; }
 .invoice-doc textarea { min-height: 4.5rem; }
 
 /* ③ شريط إضافة صنف */
@@ -1487,7 +1487,7 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-pos-document .invoice-lines-panel { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; }
 .invoice-editor .invoice-lines-panel .overflow-x-auto { min-height: 0; max-height: none; flex: 1; overflow: auto; }
 /* ستة سطور ظاهرة فقط في مستند الفاتورة، وما زاد عليها يُمرَّر داخلياً (قرار المالك). */
-.invoice-doc { --doc-rows: 6; --doc-row-h: 2.05rem; --doc-head-h: 2.1rem; }
+.invoice-doc { --doc-rows: 5; --doc-row-h: 2.05rem; --doc-head-h: 2.1rem; }
 .invoice-doc .invoice-lines-panel .overflow-x-auto { flex: 0 1 auto; max-height: calc(var(--doc-rows) * var(--doc-row-h) + var(--doc-head-h)); }
 
 /* ④ ثلاث لوحات في صف واحد بارتفاع محكوم — بلا شريط تمرير للصفحة */
@@ -1553,10 +1553,10 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc .invoice-doc-header-body { padding: .2rem .35rem; gap: .25rem; }
 .invoice-doc .invoice-doc-form { gap: .22rem; }
 .invoice-doc .invoice-doc-fields { gap: .18rem .3rem; }
-.invoice-doc .invoice-doc-fields > .form-field { display: flex; min-width: 0; flex-direction: column; gap: .06rem; margin: 0; }
+.invoice-doc .invoice-doc-fields > .form-field { display: grid; min-width: 0; align-content: start; gap: .06rem; grid-template-rows: 1.02rem 1.9rem; margin: 0; }
 .invoice-doc .invoice-doc-fields .field-head { align-items: center; gap: .22rem; margin: 0; }
 .invoice-doc .invoice-doc-fields .field-head > label,
-.invoice-doc .invoice-doc-fields > .form-field > label { display: flex; align-items: center; gap: .18rem; color: var(--doc-muted); font-size: .58rem; font-weight: 800; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; line-height: 1.15; }
+.invoice-doc .invoice-doc-fields > .form-field > label { display: flex; align-items: center; gap: .18rem; color: var(--doc-muted); font-size: .56rem; font-weight: 800; overflow: visible; text-overflow: clip; white-space: nowrap; overflow-wrap: anywhere; line-height: 1.15; }
 .invoice-doc .invoice-doc-fields .field-badge { padding: 0 .24rem; font-size: .5rem; font-weight: 800; }
 .invoice-doc .invoice-doc-fields input:not([type=checkbox]),
 .invoice-doc .invoice-doc-fields select,
@@ -1565,7 +1565,7 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
   font-size: .72rem !important; font-weight: 600;
 }
 .invoice-doc .invoice-doc-fields .invoice-doc-static { display: flex; align-items: center; overflow: hidden; border: 1px solid var(--doc-line); background: var(--doc-tint); color: var(--doc-faint); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-.invoice-doc .invoice-doc-fields .invoice-pos-edit-party { min-height: 1.5rem; width: 1.35rem; padding: 0 !important; }
+.invoice-doc .invoice-doc-fields .invoice-pos-edit-party { min-height: 0; width: 1.05rem; padding: 0 !important; }
 .invoice-doc .invoice-doc-fields .invoice-doc-infield-chip { font-size: .52rem; }
 
 /* شريطا الترويسة: سطر واحد رفيع لكل منهما — مفتاح/قيمة كالنموذج */
@@ -1587,7 +1587,7 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 
 /* بطاقة رصيد الطرف: أسطر رفيعة كالنموذج (.party) */
 .invoice-doc .invoice-doc-side { align-content: start; }
-.invoice-doc .invoice-doc-party { gap: .12rem; border-radius: .45rem; background: var(--doc-tint); padding: .22rem .4rem; }
+.invoice-doc .invoice-doc-party { display: flex; height: 100%; flex-direction: column; justify-content: space-between; gap: .12rem; border-radius: .45rem; background: var(--doc-tint); padding: .22rem .4rem; }
 .invoice-doc .invoice-doc-party .invoice-doc-cardhead { padding: 0 0 .12rem; }
 .invoice-doc .invoice-doc-party .invoice-doc-cardhead > b { font-size: .66rem; }
 .invoice-doc .invoice-doc-party .invoice-doc-metric { min-height: 1.15rem; flex-wrap: nowrap; gap: .4rem; border: 0; border-radius: 0; background: transparent; padding: 0; }
@@ -1900,15 +1900,15 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
   .invoice-doc .invoice-pos-document .invoice-doc-panel { max-height: none; }
   .invoice-doc .invoice-pos-document .invoice-totals-footer { margin-top: .32rem; }
 }
-/* تسميات الحقول لا تتراكب على الحقل المجاور مهما طالت — تُقصّ بنقاط */
+/* تسمية الحقل سطر واحد لا يلتف (قرار المالك ⑩ح) وتبقى ظاهرة كاملة بلا بتر */
 .invoice-doc .invoice-doc-fields > .form-field > label,
-.invoice-doc .invoice-doc-fields .field-head > label { min-width: 0; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
-.invoice-doc .invoice-doc-fields .field-head { min-width: 0; overflow: hidden; }
+.invoice-doc .invoice-doc-fields .field-head > label { min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; overflow-wrap: normal; }
+.invoice-doc .invoice-doc-fields .field-head { min-width: 0; overflow: visible; }
 .invoice-doc .invoice-doc-partymeta button { white-space: nowrap; }
 
 /* ⑩هـ — تعديلات الترويسة بطلب المالك:
    رمز تعديل الطرف رقاقة صغيرة لا زر عريض · سطر ملاحظة الطرف حقل كتابة واضح يمتد بالباقي */
-.invoice-doc .invoice-doc-fields .invoice-pos-edit-party svg { width: 10px; height: 10px; }
+.invoice-doc .invoice-doc-fields .invoice-pos-edit-party svg { width: 8px; height: 8px; }
 .invoice-doc-noteline {
   display: flex; min-width: 14rem; flex: 1 1 22rem; align-items: center; gap: .3rem;
   border-inline-start: 1px solid var(--doc-line); padding-inline-start: .45rem;
@@ -1988,9 +1988,9 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 .invoice-doc .invoice-lines-hint { overflow: visible; text-overflow: clip; white-space: normal; line-height: 1.25; }
 .invoice-doc .invoice-lines-toolbar { flex-wrap: wrap; row-gap: .12rem; }
 .invoice-doc .invoice-doc-title small, .invoice-doc .invoice-doc-titlebar small { overflow: visible; text-overflow: clip; white-space: normal; line-height: 1.2; }
-/* الأسبقية: القواعد القديمة تبتر بثلاث نقاط بمحدِّدات أعلى — تُلغى صراحة */
+/* الأسبقية: القواعد القديمة تبتر بثلاث نقاط أو تلتف بمحدِّدات أعلى — تُلغى صراحة */
 .invoice-doc .invoice-doc-fields .field-head > label,
-.invoice-doc .invoice-doc-fields .form-field > label { min-width: 0; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+.invoice-doc .invoice-doc-fields .form-field > label { min-width: 0; overflow: visible; text-overflow: clip; white-space: nowrap; overflow-wrap: normal; }
 .invoice-doc .invoice-doc-identity { flex-wrap: wrap; row-gap: .1rem; overflow: visible; }
 .invoice-doc .invoice-doc-identity > small, .invoice-doc .invoice-doc-identity small { overflow: visible; text-overflow: clip; white-space: normal; }
 /* بطاقة رصيد الطرف: القيم تلتفّ ولا تُبتر على الشاشات الضيقة */
@@ -2000,3 +2000,64 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 /* بطاقة الطرف في ترويسة المستند: قيمة الرصيد تلتفّ بدل البتر */
 .invoice-doc .invoice-doc-metric b, .invoice-doc .invoice-doc-metric small,
 .invoice-doc .invoice-doc-party b, .invoice-doc .invoice-doc-party small { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; line-height: 1.2; }
+
+/* ═══ المرحلة ⑩ح — دفعة تعديلات المالك على الفاتورة ═══ */
+
+/* ① أزرار النافذة: وظيفة كل زر مرسومة داخله لا دوائر ملونة */
+.invoice-doc-winbtns { display: flex; align-items: center; gap: .2rem; }
+.invoice-doc-winbtns button { display: grid; width: 1.45rem; height: 1.35rem; place-items: center; border: 1px solid var(--doc-line); border-radius: .3rem; background: var(--doc-paper); color: var(--doc-ink-soft); }
+.invoice-doc-winbtns button:hover:not(:disabled) { border-color: var(--doc-accent-soft); background: var(--doc-tint-strong); color: var(--doc-accent-deep); }
+.invoice-doc-winbtns button:disabled { opacity: .45; }
+.invoice-doc-winbtns .is-close:hover { border-color: var(--doc-danger); background: var(--doc-danger-tint); color: var(--doc-danger); }
+
+/* ② رمز تعديل العميل صُغِّر في قاعدته الأصلية أعلاه (سطر 1163) — لا نسخة هنا */
+
+/* ③ بطاقة الطرف: الترتيب (حد ⇐ سابق ⇐ بعد الترحيل) وتلوين الرصيد كالنموذج.
+   ملء الارتفاع مدموج في قاعدتها الأصلية أعلاه حتى تقرأه البوابات النصية. */
+.invoice-doc .invoice-doc-metric > b.is-debit { color: var(--doc-danger); }
+.invoice-doc .invoice-doc-metric > b.is-credit { color: var(--doc-ok); }
+.invoice-doc .invoice-doc-metric > b.is-flat { color: var(--doc-ink-soft); }
+.invoice-doc .invoice-doc-cardfoot { border-top: 1px solid var(--doc-line); padding-top: .12rem; font-size: .68rem; }
+.invoice-doc .invoice-doc-cardfoot > b { font-size: .84rem; font-weight: 900; }
+.invoice-doc .invoice-doc-cardfoot > b.is-debit { color: var(--doc-danger); }
+.invoice-doc .invoice-doc-cardfoot > b.is-credit { color: var(--doc-ok); }
+.invoice-doc .invoice-doc-cardwarn { color: var(--doc-danger); font-size: .62rem; font-weight: 800; }
+
+/* ④ التسميات لا تلتفّ أبداً، وكل الحقول على مستوى واحد */
+.invoice-doc .invoice-doc-fields .field-head > label,
+.invoice-doc .invoice-doc-fields .form-field > label,
+.invoice-doc .invoice-doc-fields > .form-field > label { overflow: hidden; font-size: .56rem; white-space: nowrap; overflow-wrap: normal; line-height: 1.1; }
+.invoice-doc .invoice-doc-fields > .form-field > .field-head { display: flex; min-height: 0; align-items: center; }
+.invoice-doc .invoice-doc-fields > .form-field > *:not(label):not(.field-head) { height: 1.9rem; min-height: 0; }
+.invoice-doc .invoice-doc-fields input, .invoice-doc .invoice-doc-fields select,
+.invoice-doc .invoice-doc-fields .invoice-doc-static, .invoice-doc .invoice-doc-fields .invoice-doc-infield { height: 1.9rem !important; min-height: 0 !important; }
+.invoice-doc .invoice-doc-fields .party-quick-picker, .invoice-doc .invoice-doc-fields .party-quick-picker input { height: 1.9rem !important; min-height: 0 !important; }
+
+/* ⑤ لوحة التحصيل: صفوف التحصيل المتعدد وتنبيه بوابة الترحيل (من الفاتورة التجريبية) */
+.invoice-doc .invoice-doc-checkline { display: flex; align-items: center; gap: .3rem; color: var(--doc-ink-soft); font-size: .7rem; font-weight: 800; }
+.invoice-doc .invoice-doc-checkline input { width: .95rem; height: .95rem; min-height: 0 !important; }
+.invoice-doc .invoice-doc-payrows { display: grid; gap: .22rem; }
+.invoice-doc .invoice-doc-payrow { display: grid; align-items: center; gap: .3rem; grid-template-columns: minmax(0, 1fr) 7.5rem; }
+.invoice-doc .invoice-doc-payrow label { overflow: hidden; color: var(--doc-muted); font-size: .7rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.invoice-doc .invoice-doc-payrow input { height: 1.85rem !important; min-height: 0 !important; direction: ltr; font-family: ui-monospace, monospace; font-size: .8rem; text-align: left; }
+.invoice-doc .invoice-doc-paynote { border-radius: .35rem; padding: .25rem .45rem; font-size: .7rem; font-weight: 800; }
+.invoice-doc .invoice-doc-paynote.is-ok { border: 1px solid var(--doc-ok-line); background: var(--doc-ok-tint); color: var(--doc-ok); }
+.invoice-doc .invoice-doc-paynote.is-warn { border: 1px solid var(--doc-danger-line); background: var(--doc-danger-tint); color: var(--doc-danger); }
+
+/* ⑥ مربع الشروط ظاهر وكبير، وأزرار المصاريف أسفله */
+.invoice-doc .invoice-doc-termsbox { min-height: 4.2rem !important; font-size: .74rem; }
+.invoice-doc .invoice-doc-addons { margin-top: .18rem; }
+
+/* ⑦ اسم حقل الملاحظة زر يفتح سجل الملاحظات */
+.invoice-doc .invoice-doc-notebtn { border: 1px solid var(--doc-line); border-radius: .3rem; background: var(--doc-tint); padding: .05rem .4rem; color: var(--doc-accent-deep); font-size: .64rem; font-weight: 800; white-space: nowrap; }
+.invoice-doc .invoice-doc-notebtn:hover { border-color: var(--doc-accent-soft); background: var(--doc-tint-strong); }
+
+/* ⑧ «القيد متزن» انتقل إلى الشريط السفلي */
+.invoice-doc .invoice-doc-actionbar-buttons .invoice-doc-balanced { display: inline-flex; align-items: center; gap: .25rem; margin-inline-end: .3rem; color: var(--doc-ok); font-size: .64rem; font-weight: 800; }
+
+/* ⑨ حقول اللوحات السفلية بارتفاع محتواها (كانت ترث height:100%) فلا تتباعد */
+.invoice-doc .invoice-doc-panel-body > .form-field { height: auto; }
+.invoice-doc .invoice-doc-panel-body > .form-field > label { min-height: 0; margin-bottom: .1rem; font-size: .68rem; }
+.invoice-doc .invoice-doc-panel-body > .form-field > .invoice-doc-amountfield { height: 2.1rem; }
+/* الملاحظات: مربع الشروط يملأ ما تبقى من اللوحة بدل الفراغ */
+.invoice-doc .invoice-doc-termsbox { flex: 1 1 auto; }

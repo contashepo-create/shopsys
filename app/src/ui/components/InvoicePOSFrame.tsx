@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeft, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, Columns3, Eye, FileClock, FileDown, FileText, MessageSquare, MoreVertical, PackageCheck, Printer, RotateCcw, Save, Settings, UserRound } from 'lucide-react'
+import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
@@ -89,15 +89,14 @@ export function InvoicePOSFrame({
   children,
 }: InvoicePOSFrameProps) {
   const sale = kind === 'sale'
-  const partyWord = sale ? 'العميل' : 'المورد'
   /* نقاط سطح المكتب الثلاث: تعمل فعلاً على النافذة الحاوية (إغلاق · تصغير · تكبير) */
   const host = useWindowHost()
   const minimizeWindow = useWindowStore((state) => state.minimizeWindow)
   const toggleMaximize = useWindowStore((state) => state.toggleMaximizeWindow)
   const { sync, receipt, autoPrintAfterSale, einvoice, invoiceColumns, toggleInvoiceColumn, resetInvoiceColumns } = useAppStore()
   const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [helpOpen, setHelpOpen] = useState(false)
+  /* خصائص بقيت في الواجهة للتوافق مع الصفحات لكنها لم تعد تُرسم بعد تنظيف الشريط العلوي */
+  void modeLabel; void currencyLabel; void dateLabel; void onPartySearch; void onItemSearch
   const [columnsOpen, setColumnsOpen] = useState(false)
   const hiddenColumns = (Object.keys(INVOICE_COLUMN_LABELS) as (keyof InvoiceColumnPrefs)[]).filter((key) => !invoiceColumns[key]).length
   useEffect(() => {
@@ -131,33 +130,15 @@ export function InvoicePOSFrame({
     <div className={`invoice-doc invoice-editor invoice-pos-root invoice-pos-${kind}`} dir="rtl">
       {/* ① الشريط العلوي: أدوات · رقم المستند وحالته · أزرار الاعتماد */}
       <header className="invoice-doc-topbar">
-        <div className="invoice-doc-dots">
-          <button type="button" className="is-close" onClick={onBack} aria-label="إغلاق المستند" title="إغلاق المستند" />
-          <button type="button" className="is-min" onClick={() => { if (host) minimizeWindow(host.windowId) }} disabled={!host} aria-label="تصغير النافذة" title="تصغير النافذة" />
-          <button type="button" className="is-max" onClick={() => { if (host) toggleMaximize(host.windowId) }} disabled={!host} aria-label="تكبير النافذة" title="تكبير/استعادة النافذة" />
+        {/* أزرار النافذة: **وظيفة كل زر مرسومة داخله** لا دوائر ملونة (طلب المالك) */}
+        <div className="invoice-doc-winbtns">
+          <button type="button" className="is-min" onClick={() => { if (host) minimizeWindow(host.windowId) }} disabled={!host} aria-label="تصغير النافذة" title="تصغير النافذة"><Minus size={13} /></button>
+          <button type="button" className="is-max" onClick={() => { if (host) toggleMaximize(host.windowId) }} disabled={!host} aria-label="تكبير النافذة" title="تكبير/استعادة النافذة"><Square size={11} /></button>
+          <button type="button" className="is-close" onClick={onBack} aria-label="إغلاق المستند" title="إغلاق المستند"><X size={13} /></button>
         </div>
         <span className="invoice-doc-divider" />
         <div className="invoice-doc-utility-tools">
-          <button type="button" className="invoice-doc-close" onClick={onBack} aria-label="إغلاق المستند والعودة" title="رجوع وإغلاق المستند"><ArrowLeft size={15} /></button>
-          <button type="button" data-doc-menu aria-label="إجراءات المستند" title="إجراءات المستند" onClick={() => setMenuOpen((v) => !v)}><MoreVertical size={14} /></button>
-          <button type="button" aria-label="معاينة الطباعة" title="معاينة الطباعة" onClick={onPrint}><Printer size={14} /></button>
           <button type="button" aria-label="محادثة الدعم" title="الدعم الفني" onClick={() => onNavigate('/support')}><MessageSquare size={14} /></button>
-          <button type="button" data-doc-help aria-label="مساعدة الفاتورة" title="كيف تُحرَّر الفاتورة؟" onClick={() => setHelpOpen((v) => !v)}><CircleHelp size={14} /></button>
-          {menuOpen && (
-            <div className="invoice-doc-menu" data-doc-menu-panel>
-              <button type="button" onClick={() => { setMenuOpen(false); onRestoreDraft() }}>المسودات المحفوظة ({draftCount})</button>
-              <button type="button" onClick={() => { setMenuOpen(false); onPartySearch() }}>بحث {partyWord} (F2)</button>
-              <button type="button" onClick={() => { setMenuOpen(false); onItemSearch() }}>بحث صنف (F5)</button>
-              <button type="button" onClick={() => { setMenuOpen(false); onNavigate(sale ? '/sales/invoices' : '/purchases/invoices') }}>سجل الفواتير</button>
-            </div>
-          )}
-          {helpOpen && (
-            <div className="invoice-doc-menu is-help" data-doc-help-panel>
-              <b>ترتيب العمل في الفاتورة</b>
-              <span>① اختر {partyWord} · ② أضف الأصناف سطراً سطراً · ③ اكتب الخصم والضريبة إن وُجدت · ④ حدد المحصَّل الآن · ⑤ اضغط «حفظ وترحيل».</span>
-              <span>الحفظ كمسودة لا يؤثر على المخزون ولا الحسابات، والترحيل هو ما يُنشئ القيد.</span>
-            </div>
-          )}
         </div>
 
         <div className="invoice-doc-identity">
@@ -168,9 +149,7 @@ export function InvoicePOSFrame({
               <button type="button" onClick={onNextDocument} disabled={!onNextDocument} aria-label="المستند التالي" title="المستند التالي"><ChevronLeft size={11} /></button>
             </span>
           </span>
-          <span className="invoice-doc-status" data-doc-status>{documentNumber ? 'تعديل' : 'مسودة'}</span>
-          <span className="invoice-doc-balanced" title="طرفا القيد متساويان قبل الترحيل"><i /> القيد متزن</span>
-          <small>{modeLabel} · {currencyLabel} · {dateLabel}</small>
+          {documentNumber && <span className="invoice-doc-status" data-doc-status>تعديل</span>}
         </div>
 
         <div className="invoice-doc-head-actions">
@@ -218,6 +197,7 @@ export function InvoicePOSFrame({
           {auditLabel && <span className="invoice-doc-audit" title={auditLabel}>{auditLabel}</span>}
         </div>
         <div className="invoice-doc-actionbar-buttons">
+          <span className="invoice-doc-balanced" title="طرفا القيد متساويان قبل الترحيل"><i /> القيد متزن</span>
           {/* تخصيص أعمدة جدول البنود — عرضٌ فقط، والحسابات والقيد لا تتأثر */}
           <div className="invoice-doc-colmenu-wrap">
             <Btn variant="ghost" onClick={() => setColumnsOpen((value) => !value)} title="إظهار/إخفاء أعمدة العرض في جدول البنود">

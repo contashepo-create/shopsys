@@ -81,9 +81,21 @@ export function QuickSelect({ value, onChange, children, className, disabled = f
   }
   const fieldRef = useRef<HTMLDivElement>(null)
   const menuStyle = useAnchoredMenu(fieldRef, open)
+  /* القائمة المنسدلة تبقى منسدلة: النقر يعرض كل الخيارات والمحدد مظلَّل،
+     ولا يُجبَر المستخدم على الكتابة من جديد بعد أن اختار (قرار المالك). */
+  const openList = () => {
+    setQuery('')
+    const at = choices.findIndex((choice) => choice.value === selectedValue)
+    setIndex(at >= 0 ? at : 0)
+    setOpen(true)
+  }
   return <div ref={rootRef} className="relative" title={title} data-quick-select="true">
     <div className="relative" ref={fieldRef}>
-      <input ref={inputRef} disabled={disabled} aria-label={ariaLabel} className={`${className ?? inputCls} pl-8`} value={open ? query : (selected?.label ?? '')} placeholder={selected ? undefined : 'اكتب للبحث ثم Enter'} onFocus={() => { setQuery(''); setOpen(true) }} onChange={(event) => { setQuery(event.target.value); setIndex(0); setOpen(true) }} onKeyDown={(event) => {
+      <input ref={inputRef} disabled={disabled} aria-label={ariaLabel} role="combobox" aria-expanded={open} aria-autocomplete="list" className={`${className ?? inputCls} pl-8`}
+        value={open ? query : (selected?.label ?? '')}
+        placeholder={open ? (selected?.label ?? 'اختر من القائمة') : 'اختر من القائمة'}
+        onFocus={openList} onMouseDown={() => { if (!open) openList() }}
+        onChange={(event) => { setQuery(event.target.value); setIndex(0); setOpen(true) }} onKeyDown={(event) => {
         if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((current) => Math.min(Math.max(0, matches.length - 1), current + 1)) }
         else if (event.key === 'ArrowUp') { event.preventDefault(); setIndex((current) => Math.max(0, current - 1)) }
         else if (event.key === 'Enter') {

@@ -38,12 +38,15 @@ const ruleOf = (selector) => {
 /* ① رمز تعديل الطرف رقاقة صغيرة لا زر عريض */
 {
   for (const [label, src] of PAGES) {
-    assert.ok(/<Pencil size=\{10\}\/>/.test(src), `${label}: رمز تعديل الطرف ما زال كبيراً — المطلوب 10px`)
-    assert.ok(!/<Pencil size=\{1[1-9]\}\/>/.test(src), `${label}: بقي رمز قلم بحجم كبير في المستند`)
+    /* قرار المالك ⑩ح: صُغِّر رمز القلم أكثر — 8px داخل رقاقة لا تتجاوز 1.1rem */
+    assert.ok(/<Pencil size=\{8\}\/>/.test(src), `${label}: رمز تعديل الطرف ما زال كبيراً — المطلوب 8px`)
+    assert.ok(!/<Pencil size=\{(9|1[0-9])\}\/>/.test(src), `${label}: بقي رمز قلم بحجم كبير في المستند`)
   }
   const chip = ruleOf('.invoice-doc .invoice-doc-fields .invoice-pos-edit-party')
   assert.ok(/width: 1\.[0-4]\d*rem/.test(chip), `زر تعديل الطرف ليس رقاقة ضيقة: ${chip}`)
-  R.ok('رمز التعديل بجانب اسم الطرف رقاقة 10px ضيقة — لا زر عريض')
+  const smaller = ruleOf('.invoice-doc .invoice-pos-edit-party')
+  assert.ok(/width: 1\.0\d*rem/.test(smaller), `رقاقة تعديل الطرف لم تُصغَّر كما طلب المالك: ${smaller}`)
+  R.ok('رمز التعديل بجانب اسم الطرف رقاقة 8px أصغر من السابق — لا زر عريض')
 }
 
 /* ②③ ميزانية عرض الحقول: الطرف الأعرض · التواريخ والنمط والمرجع والمخزن أضيق · البطاقة أوسع */

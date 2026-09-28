@@ -155,11 +155,16 @@ const footerOf = (src) => {
     assert.ok(card.includes('invoice-doc-cardhead'), `${label}: بطاقة الطرف بلا رأس بطاقة`)
     assert.ok(card.includes('invoice-party-state'), `${label}: لا شارة حالة بجوار عنوان بطاقة الطرف`)
     assert.ok(/is-off/.test(card) && /is-cash/.test(card), `${label}: شارة الحالة لا تميّز الموقوف عن النقدي`)
-    assert.ok(card.includes('invoice-doc-gauge'), `${label}: بطاقة الطرف بلا شريط نسبة (استهلاك ائتمان / نسبة سداد)`)
+    /* قرار المالك ⑩ح: أُلغي شريط «استهلاك الحد الائتماني»، والترتيب ثابت:
+       الحد الائتماني/شروط السداد ⇐ الرصيد السابق ⇐ الرصيد بعد الترحيل في ذيل البطاقة. */
+    assert.ok(!card.includes('invoice-doc-gauge'), `${label}: شريط استهلاك الائتمان عاد إلى بطاقة الطرف بعد إلغائه`)
     assert.ok(card.includes('الرصيد السابق'), `${label}: بطاقة الطرف بلا «الرصيد السابق»`)
     assert.ok(card.includes('الرصيد بعد الترحيل'), `${label}: بطاقة الطرف بلا مؤشر الرصيد المتوقع`)
+    assert.ok(card.indexOf('الرصيد السابق') < card.indexOf('الرصيد بعد الترحيل'), `${label}: «الرصيد بعد الترحيل» يجب أن يكون آخر سطر في البطاقة`)
+    assert.ok(card.indexOf(label.includes('المبيعات') ? 'الحد الائتماني' : 'شروط السداد') < card.indexOf('الرصيد السابق'), `${label}: ترتيب بطاقة الطرف ليس: الحد/الشروط ⇐ الرصيد السابق ⇐ الرصيد بعد الترحيل`)
+    assert.ok(card.includes('invoice-doc-cardfoot'), `${label}: الرصيد بعد الترحيل ليس في ذيل البطاقة`)
     assert.ok(!card.includes('<small>حالة الحساب</small>'), `${label}: خانة «حالة الحساب» عادت تأكل سطراً بعد نقلها بجوار العنوان`)
-    assert.ok(src.includes('partyCreditTone('), `${label}: نغمة الحالة لا تأتي من دالة واحدة`)
+    assert.ok(/is-\$\{partyBalanceTone\(/.test(card), `${label}: تلوين الرصيد لا يأتي من دالة نغمة واحدة (partyBalanceTone)`)
     /* النموذج المعتمد يضع الصنف المحدد **شريطاً** في الترويسة لا بطاقة جانبية:
        الصنف · المتاح · تكلفة الشراء · سعر البيع، بجوار اسم المستخدم. */
     const item = src.slice(src.indexOf('itemProfile={'), src.indexOf('itemProfile={') + 2200)
@@ -170,20 +175,23 @@ const footerOf = (src) => {
   }
   const state = ruleOf('.invoice-party-state')
   assert.ok(state.includes('--doc-ok'), 'شارة الحالة بلون محفور بدل متغير المستند')
-  assert.ok(ruleOf('.invoice-doc-gauge-fill').includes('--doc-accent'), 'شريط النسبة بلون محفور')
-  R.ok('بطاقة رصيد الطرف بشريط النسبة، وشريط الصنف المحدد (المتاح · التكلفة · السعر) في الترويسة كالنموذج')
+  for (const tone of ['is-debit', 'is-credit']) {
+    assert.ok(css.includes(`.invoice-doc .invoice-doc-cardfoot > b.${tone}`), `لا لون للرصيد ${tone} في ذيل بطاقة الطرف`)
+  }
+  assert.ok(ruleOf('.invoice-doc .invoice-doc-metric > b.is-debit').includes('--doc-danger'), 'المدين في البطاقة ليس بلون الخطر من متغيرات المستند')
+  assert.ok(ruleOf('.invoice-doc .invoice-doc-metric > b.is-credit').includes('--doc-ok'), 'الدائن في البطاقة ليس بلون الأمان من متغيرات المستند')
+  R.ok('بطاقة رصيد الطرف: لا شريط استهلاك · الترتيب حد ⇐ سابق ⇐ بعد الترحيل · تلوين مدين/دائن، وشريط الصنف في الترويسة')
 }
 
-/* ⑥ فحص وظيفي: نغمة الحد الائتماني تحكم على الرصيد المتوقع لا الحالي */
+/* ⑥ فحص وظيفي: تلوين الرصيد في البطاقة — مدين أحمر · دائن أخضر · صفر محايد */
 {
-  const { partyCreditTone } = await import('../src/core/money.ts')
-  assert.equal(partyCreditTone(0, null, true), 'positive', 'المتزن يجب أن يكون أخضر')
-  assert.equal(partyCreditTone(-5000, null, true), 'positive', 'الدائن لنا ليس تحذيراً')
-  assert.equal(partyCreditTone(5000, null, true), 'warning', 'المديونية بلا حد ائتماني تحذير')
-  assert.equal(partyCreditTone(5000, 10000, true), 'warning', 'داخل الحد الائتماني تحذير لا خطر')
-  assert.equal(partyCreditTone(15000, 10000, true), 'danger', 'تجاوز الحد الائتماني يجب أن يكون خطراً')
-  assert.equal(partyCreditTone(0, 10000, false), 'danger', 'الحساب الموقوف خطر ولو كان متزناً')
-  R.ok('partyCreditTone: موقوف ⇒ خطر · تجاوز الحد ⇒ خطر · مديونية داخل الحد ⇒ تحذير · متزن/دائن ⇒ سليم')
+  const tone = (label, src) => {
+    const body = src.slice(src.indexOf('const partyBalanceTone'), src.indexOf('const partyBalanceTone') + 240).replace(/\s+/g, '')
+    assert.ok(/balanceMinor>0\?'debit':balanceMinor<0\?'credit':'flat'/.test(body), `${label}: نغمة الرصيد لا تفرّق المدين عن الدائن عن المتزن`)
+  }
+  tone('المبيعات', sales)
+  tone('المشتريات', purchase)
+  R.ok('نغمة الرصيد: عليه ⇒ أحمر · له ⇒ أخضر · متزن ⇒ محايد، بنفس الدالة في فاتورتي البيع والشراء')
 }
 
 /* ⑦ الشروط الجاهزة تُكتب بضغطة بدل إعادة كتابتها في كل مستند */
@@ -226,11 +234,21 @@ const footerOf = (src) => {
 
 /* ⑩ قطع التصميم المرجعي الذي أرسله المالك (2026-09-28) — سبع قطع لا تسقط بالصدفة */
 {
+  /* قرار المالك ⑩ح: النقاط الملونة استُبدلت بأزرار نافذة وظيفية (تصغير · تكبير · إغلاق)،
+     و«القيد متزن» انتقلت إلى الشريط السفلي قبل «تخصيص الحقول». */
   const frameParts = [
-    ['invoice-doc-dots', 'نقاط نافذة سطح المكتب الثلاث أعلى يمين المستند'],
+    ['invoice-doc-winbtns', 'أزرار النافذة الوظيفية (تصغير · تكبير · إغلاق) أعلى المستند'],
     ['invoice-doc-nav', 'سهما المستند السابق/التالي داخل صندوق الرقم'],
-    ['invoice-doc-balanced', 'رقاقة «القيد متزن» بجوار رقم المستند'],
+    ['invoice-doc-balanced', 'رقاقة «القيد متزن»'],
   ]
+  assert.ok(!frame.includes('invoice-doc-dots'), 'عادت النقاط الملونة الصمّاء بدل أزرار النافذة الوظيفية')
+  for (const label of ['تصغير النافذة', 'تكبير النافذة', 'إغلاق المستند']) {
+    assert.ok(frame.includes(label), `زر النافذة «${label}» مفقود من الشريط العلوي`)
+  }
+  {
+    const bar = frame.slice(frame.indexOf('invoice-doc-actionbar'))
+    assert.ok(bar.indexOf('invoice-doc-balanced') >= 0 && bar.indexOf('invoice-doc-balanced') < bar.indexOf('تخصيص الحقول'), '«القيد متزن» ليست في الشريط السفلي قبل «تخصيص الحقول»')
+  }
   for (const [cls, label] of frameParts) {
     assert.ok(frame.includes(cls), `الإطار فقد ${label} (${cls})`)
     assert.ok(css.includes(`.${cls}`), `لا قاعدة CSS لـ ${cls}`)

@@ -10,7 +10,7 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { appStorage } from './persistentStorage.ts'
 import type { Item, Category } from '../core/items.ts'
-import { buildPartyNote, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
+import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
 import { priceFloorViolations, PriceFloorError } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
@@ -1456,6 +1456,8 @@ interface DataState {
   partyNotes: PartyNote[]
   addPartyNote: (input: { partyKind: PartyNoteKind; partyId: number; text: string; userName: string; source?: string }) => PartyNote
   deletePartyNote: (id: string) => void
+  /** تعديل نص ملاحظة مسجَّلة — يبقى الكاتب والتاريخ ويُؤشَّر التعديل */
+  updatePartyNote: (id: string, text: string, editorName: string) => void
   saleReturns: SaleReturn[]
   shifts: Shift[]
   journal: JournalEntry[] // دفتر اليومية — Append-Only (القرار 9)
@@ -1627,6 +1629,8 @@ interface DataState {
     customerCharges?: DocumentCharge[]
     customerReference?: string
     dueDate?: string
+    /** تاريخ الفاتورة كما حرره المستخدم في رأس الفاتورة (YYYY-MM-DD) — يصبح تاريخ القيد */
+    documentDate?: string
     notes?: string
     staffCommission?: { employeeId: number; amountMinor: number; description?: string }
     /** تقسيم العمولة على أكثر من موظف داخل نفس عملية الترحيل */
@@ -2853,6 +2857,11 @@ export const useDataStore = create<DataState>()(
         set((state) => ({ partyNotes: [...state.partyNotes, note] }))
         return note
       },
+      updatePartyNote: (id, text, editorName) => set((state) => ({
+        partyNotes: state.partyNotes.map((note) => (note.id === id
+          ? { ...note, text: normalizePartyNoteText(text), editedAt: new Date().toISOString(), editedBy: editorName }
+          : note)),
+      })),
       deletePartyNote: (id) => set((state) => ({ partyNotes: state.partyNotes.filter((note) => note.id !== id) })),
       saleReturns: [],
       shifts: [],
@@ -3774,7 +3783,14 @@ export const useDataStore = create<DataState>()(
         if (paidM < totals.totalMinor && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
-        const postingDate = new Date().toISOString().slice(0, 10)
+        const systemDate = new Date().toISOString().slice(0, 10)
+        const chosenDate = (args.documentDate ?? '').slice(0, 10)
+        if (chosenDate && !/^\d{4}-\d{2}-\d{2}$/.test(chosenDate)) throw new Error('تاريخ الفاتورة غير صالح')
+        // يُسمح بتأريخ الفاتورة بيوم سابق (فواتير متأخرة الإدخال) ولا يُسمح بالمستقبل.
+        // المقارنة بيوم إضافي لأن ساعة الجهاز محلية وتاريخ النظام بتوقيت UTC.
+        const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
+        if (chosenDate && chosenDate > tomorrow) throw new Error('تاريخ الفاتورة لا يكون في المستقبل')
+        const postingDate = chosenDate || systemDate
         if (args.dueDate && args.dueDate < postingDate) throw new Error('تاريخ استحقاق البيع لا يسبق تاريخ الترحيل')
         if (args.dueDate && paidM >= totals.totalMinor) throw new Error('لا حاجة لتاريخ استحقاق لفاتورة محصلة بالكامل')
         // حارس حد الائتمان (مراجعة المبيعات — نمط SAP B1/أودو): البيع الآجل لعميل له حد
@@ -3819,7 +3835,8 @@ export const useDataStore = create<DataState>()(
         assertBalanced(entryLines)
         const saleId = nextId(state.sales)
         const entryId = nextId(state.journal)
-        const now = new Date().toISOString()
+        const stamp = new Date().toISOString()
+        const now = postingDate === stamp.slice(0, 10) ? stamp : `${postingDate}T${stamp.slice(11)}`
         const invoiceNumber = `S-${String(saleId).padStart(4, '0')}`
         const refCode = makeUniqueRefCode('SAL', now, usedRefCodes(state))
 

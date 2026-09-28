@@ -158,9 +158,9 @@ function decimalDraft(value: string): string {
 }
 
 /** أقل عدد سطور ظاهرة في جدول البنود — تبقى الشاشة ثابتة ولا «تقفز» مع أول صنف */
-const MIN_VISIBLE_ROWS = 6
-/** ستة سطور ظاهرة في جدول الأصناف — وما زاد يُمرَّر داخلياً (قرار المالك) */
-const TARGET_VISIBLE_ROWS = 6
+const MIN_VISIBLE_ROWS = 5
+/** خمسة سطور ظاهرة في جدول الأصناف — وما زاد يُمرَّر داخلياً (قرار المالك ⑩ح) */
+const TARGET_VISIBLE_ROWS = 5
 const VISIBLE_ROWS = Math.max(MIN_VISIBLE_ROWS, TARGET_VISIBLE_ROWS)
 
 export function InvoiceLinesTable({
@@ -175,7 +175,7 @@ export function InvoiceLinesTable({
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  /* قرار المالك (⑩ز): **ستة سطور** ظاهرة في جدول الأصناف وما زاد عليها يُمرَّر
+  /* قرار المالك (⑩ح): **خمسة سطور** ظاهرة في جدول الأصناف وما زاد عليها يُمرَّر
      داخلياً. الارتفاع يُقاس من ارتفاع سطر حقيقي لا من قيمة ثابتة، فيظهر ستة
      سطور كاملة على كل مقاس شاشة بلا نصف سطر مقطوع، والمساحة الباقية تذهب
      للوحات الثلاث أسفل الجدول. */

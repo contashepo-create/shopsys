@@ -110,10 +110,10 @@ const ruleOf = (selector) => {
   assert.ok(!frame.includes('invoice-doc-entry'), 'عاد شريط البحث/الباركود المنفصل')
   assert.ok(table.includes('invoice-line-entry-cell'), 'مربع البحث ليس داخل خلية اسم الصنف')
   const min = table.match(/MIN_VISIBLE_ROWS\s*=\s*(\d+)/)
-  assert.ok(min && Number(min[1]) === 6, 'عدد السطور الظاهرة في جدول الأصناف ليس ستة')
+  assert.ok(min && Number(min[1]) === 5, 'عدد السطور الظاهرة في جدول الأصناف ليس خمسة')
   assert.ok(table.includes('invoice-line-ghost') && css.includes('.invoice-line-ghost'), 'السطور الفارغة الحقيقية غير موجودة')
   assert.ok(table.includes('مسح باركود'), 'زر مسح الباركود غير موجود في رأس جدول البنود')
-  R.ok('لا شريط بحث منفصل — البحث من خلية الاسم، وستة سطور في الجدول وما زاد يُمرَّر')
+  R.ok('لا شريط بحث منفصل — البحث من خلية الاسم، وخمسة سطور في الجدول وما زاد يُمرَّر')
 }
 
 /* ⑥ الأسهم ودورة Enter وتوسيط الأعمدة */
@@ -173,7 +173,7 @@ const ruleOf = (selector) => {
   assert.ok(/display: contents/.test(ruleOf('.invoice-pos-document > .invoice-shell')), 'غلاف invoice-shell ما زال يقطع سلسلة الارتفاع')
   const docGrid = ruleOf('.invoice-pos-document .invoice-body-grid')
   assert.ok(/grid-template-rows: minmax\(0, auto\) minmax\(0, 1fr\)/.test(docGrid) && /align-items: stretch/.test(docGrid),
-    'صفّا الجسم ليسا: بنود بستة سطور ثم لوحات تملأ الباقي')
+    'صفّا الجسم ليسا: بنود بخمسة سطور ثم لوحات تملأ الباقي')
   const scroll = ruleOf('.invoice-editor .invoice-lines-panel .overflow-x-auto')
   assert.ok(/flex: 1/.test(scroll) && /max-height: none/.test(scroll) && /overflow: auto/.test(scroll), 'جدول البنود لا يُمرَّر داخلياً — سيدفع بقية الفاتورة خارج الشاشة')
   assert.ok(/repeat\(3, minmax\(0, 1fr\)\)/.test(ruleOf('.invoice-pos-document .invoice-totals-footer')), 'اللوحات الثلاث ليست في صف واحد كالنموذج')
@@ -214,9 +214,9 @@ const ruleOf = (selector) => {
 
   // عدد السطور يملأ منطقة البنود: أحد عشر على شاشة المرجع، وأكثر/أقل بحسب الارتفاع
   assert.ok(table.includes('ResizeObserver') && table.includes('boxMaxHeight'), 'ارتفاع الجدول لا يُقاس من ارتفاع سطر حقيقي — قد يظهر نصف سطر مقطوع')
-  assert.ok(/TARGET_VISIBLE_ROWS = 6/.test(table) && /MIN_VISIBLE_ROWS = 6/.test(table), 'عدد السطور الظاهرة ليس ستة')
+  assert.ok(/TARGET_VISIBLE_ROWS = 5/.test(table) && /MIN_VISIBLE_ROWS = 5/.test(table), 'عدد السطور الظاهرة ليس ستة')
   assert.ok(/Math\.max\(1, VISIBLE_ROWS - lines\.length\)/.test(table), 'لا يبقى سطر إدخال واحد على الأقل عند امتلاء الجدول')
-  R.ok('مقياس النموذج: جذر يكبر مع الشاشة · ستة سطور نظيفة بلا تسطيرات · ما زاد يُمرَّر داخلياً')
+  R.ok('مقياس النموذج: جذر يكبر مع الشاشة · خمسة سطور نظيفة بلا تسطيرات · ما زاد يُمرَّر داخلياً')
 }
 
 R.done()
