@@ -398,7 +398,7 @@ export function TripsPage() {
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
           </Field>
 
-          <DocOutcome>الأثر: <b>4105 إيراد النقل</b> دائناً بالأجرة · مصاريف الرحلة (وقود/سائق) على مركز تكلفة النقلة · والمتبقي على <b>1104</b>.</DocOutcome><div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>4105 إيراد النقل</b> دائناً بالأجرة · مصاريف الرحلة (وقود وعمولة سائق) مدينة على <b>5106 مصروفات نقلات</b> بمركز تكلفة النقلة · والمتبقي على <b>1104</b>.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} shortcut="F9" disabled={!fromLoc.trim() || !toLoc.trim() || !unitPrice.trim()}>💾 ترحيل النقلة وتوليد القيد</Btn>
           </div>

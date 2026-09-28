@@ -428,9 +428,9 @@ export function RentalContractsPage() {
       </Modal>
 
       {/* إقفال عقد */}
-      <Modal open={!!closing} onClose={() => setClosing(null)} title={closing ? `إقفال العقد ${closing.contractNumber}` : ''}>
+      <Modal open={!!closing} onClose={() => setClosing(null)} title={closing ? `إقفال العقد ${closing.contractNumber}` : ''} subtitle="مستند إقفال: تسوية الاستخدام الفعلي ثم ردّ التأمين أو خصم التلفيات منه">
         {closing && (
-          <div className="space-y-4">
+          <div className="space-y-4"><DocSectionHead step="١" title="تسوية الاستخدام والتلفيات والتأمين" hint="التأمين أمانة تُرد — لا يصير إيراداً إلا بقدر ما يُخصم فعلاً" />
             <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-[12.5px] flex items-center justify-between">
               <span className="text-slate-500">التأمين المحصَّل</span>
               <b className="text-amber-600">{fmt(closing.totals.depositMinor)} {cur.symbol}</b>
@@ -460,9 +460,10 @@ export function RentalContractsPage() {
               <p className="text-[12.5px] text-slate-400">لا تأمين على هذا العقد — سيُقفل بلا قيد إضافي.</p>
             )}
             <Field label="خزينة التسوية (ردّ التأمين / تحصيل التجاوز)"><TreasuryPicker value={closeTreasury} onChange={setCloseTreasury} compact /></Field>
-            <div className="flex justify-end gap-2">
+            <DocOutcome>الأثر: <b>2103 تأمينات مستردة</b> مديناً بقيمة التأمين · <b>الخزينة</b> دائناً بالمردود للعميل · وما يُخصم مقابل تلفيات أو تأخير يُقيَّد إيراداً على <b>4104 إيراد التأجير</b> — ولا يبقى تأمين معلق بعد الإقفال.</DocOutcome>
+              <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setClosing(null)}>إلغاء</Btn>
-              <Btn onClick={doClose} shortcut="F9">🔒 إقفال العقد</Btn>
+              <Btn onClick={doClose} shortcut="F9">إقفال العقد</Btn>
             </div>
           </div>
         )}

@@ -253,8 +253,8 @@ export function ProjectTasksPage() {
         </div>
       )}
 
-      <Modal open={addOpen} onClose={() => setAddOpen(false)} title={project ? `مهمة جديدة — ${project.nameAr}` : ''}>
-        <div className="space-y-3">
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title={project ? `مهمة جديدة — ${project.nameAr}` : ''} subtitle="مستند تخطيط: مهمة بجدول زمني تُربط ببند BOQ للمتابعة">
+        <div className="space-y-3"><DocSectionHead step="١" title="اسم المهمة ومدتها وارتباطها بالبنود" hint="التخطيط متابعة تنفيذية لا حركة مالية" />
           <Field label="اسم المهمة *"><input value={tName} onChange={(e) => setTName(e.target.value)} className={inputCls} placeholder="أعمال الحفر والأساسات…" /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="البداية *"><input type="date" value={tStart} onChange={(e) => setTStart(e.target.value)} className={inputCls} /></Field>
@@ -268,6 +268,7 @@ export function ProjectTasksPage() {
               </QuickSelect>
             </Field>
           )}
+          <DocOutcome>الأثر: <b>لا قيد</b> محاسبياً — المهمة خطة تنفيذ؛ التكلفة تُقيَّد من صرف المواد والأجور على <b>5110 تكاليف مشروعات مقاولات</b> والإيراد من المستخلصات على <b>4107 إيرادات مقاولات</b>.</DocOutcome>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setAddOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveTask} disabled={!tName.trim() || !tStart || !tEnd}>إضافة المهمة</Btn>

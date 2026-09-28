@@ -415,9 +415,9 @@ export function MaintenancePage() {
       </Modal>
 
       {/* تسليم */}
-      <Modal open={!!delivering} onClose={() => setDelivering(null)} title={delivering ? `تسليم ${delivering.ticketNumber} — ${delivering.deviceName}` : ''} wide>
+      <Modal open={!!delivering} onClose={() => setDelivering(null)} title={delivering ? `تسليم ${delivering.ticketNumber} — ${delivering.deviceName}` : ''} wide subtitle="مستند تسليم: أجرة الصيانة وقطع الغيار والتحصيل النهائي">
         {delivering && (
-          <div className="space-y-4">
+          <div className="space-y-4"><DocSectionHead step="١" title="أجرة الصيانة وقطع الغيار المستهلكة" hint="القطع تخرج من المخزون بتكلفتها وتُباع بسعرها" />
             <Field label={`أجرة الصيانة (${cur.symbol})`}>
               <input value={labor} onChange={(e) => setLabor(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
             </Field>
@@ -500,17 +500,18 @@ export function MaintenancePage() {
               </div>
             )}
 
+            <DocOutcome>الأثر: <b>4103 إيرادات صيانة وخدمات</b> دائناً بالأجرة وقيمة القطع · <b>الخزينة</b> مديناً بالمحصَّل و<b>1104 ذمم العملاء</b> مديناً بالباقي الآجل · و<b>2109 دفعات مقدمة من العملاء</b> مديناً بالعربون فيُخصم من المطلوب · وقطع الغيار تخرج من <b>1103 المخزون</b> إلى <b>5101 تكلفة المبيعات</b> · والضريبة على <b>2102</b>.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setDelivering(null)}>إلغاء</Btn>
-              <Btn onClick={doDeliver}>📦 تسليم وتوليد القيد</Btn>
+              <Btn onClick={doDeliver}>تسليم وتوليد القيد</Btn>
             </div>
           </div>
         )}
       </Modal>
 
       {/* كتالوج خدمات الصيانة (الأمر 23): تكلفة داخلية + سعر بيع — الربح محسوب تلقائياً */}
-      <Modal open={catalogOpen} onClose={() => setCatalogOpen(false)} title="كتالوج خدمات الصيانة" wide>
-        <div className="space-y-4">
+      <Modal open={catalogOpen} onClose={() => setCatalogOpen(false)} title="كتالوج خدمات الصيانة" wide subtitle="ملف تعريفي: خدمات جاهزة بتكلفتها وسعرها تُستدعى في كل تذكرة">
+        <div className="space-y-4"><DocSectionHead step="١" title="تعريف الخدمة وتكلفتها وسعرها" hint="التكلفة سرية لا تظهر في مطبوعات العميل" />
           <p className="text-[11.5px] text-slate-400">
             كل خدمة لها تكلفة داخلية (أجر فني/مواد) وسعر بيع — الربح يُحسب تلقائياً، والتكلفة لا تظهر أبداً في مطبوعات العميل.
           </p>
@@ -547,6 +548,7 @@ export function MaintenancePage() {
             </div>
           )}
         </div>
+        <DocOutcome>الأثر: <b>لا قيد</b> عند تعريف الخدمة — الكتالوج مرجع تسعير فقط؛ القيد يتولد عند تسليم التذكرة (<b>4103</b> إيراداً و<b>5101</b> تكلفةً للقطع).</DocOutcome>
       </Modal>
 
       {/* عرض */}

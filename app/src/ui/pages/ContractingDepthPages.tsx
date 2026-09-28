@@ -117,7 +117,7 @@ export function BoqPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="بند جدول كميات جديد">
+      <Modal open={open} onClose={() => setOpen(false)} title="بند جدول كميات جديد" subtitle="مستند تعريفي: بند تنفيذي يُقاس عليه الإنجاز">
         <div className="space-y-3">
           <div className="grid grid-cols-3 gap-3">
             <Field label="كود البند"><input value={code} onChange={(e) => setCode(e.target.value)} placeholder="1-2" className={inputCls} /></Field>
@@ -131,6 +131,7 @@ export function BoqPage() {
               <input value={estCost} onChange={(e) => setEstCost(e.target.value)} inputMode="decimal" className={inputCls} />
             </Field>
           </div>
+          <DocOutcome>الأثر: <b>لا قيد</b> عند إضافة البند — جدول الكميات مرجع قياس وتسعير؛ القيد يتولد عند اعتماد المستخلص الذي ينفّذ نسبة من هذا البند (<b>4107</b> إيراداً و<b>1104</b> ذمةً و<b>1105</b> محتجزاً).</DocOutcome>
           <Btn onClick={save} className="w-full">حفظ البند</Btn>
         </div>
       </Modal>
@@ -340,9 +341,9 @@ export function SubcontractorsPage() {
         </div>
       </Modal>
 
-      <Modal open={!!certFor} onClose={() => setCertFor(null)} title={certFor ? `شهادة أعمال — ${certFor.contractorName}` : ''}>
+      <Modal open={!!certFor} onClose={() => setCertFor(null)} title={certFor ? `شهادة أعمال — ${certFor.contractorName}` : ''} subtitle="مستند اعتماد: نسبة إنجاز المقاول تتحول تكلفةً ومستحقاً له">
         {certFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="قيمة الأعمال المعتمدة والمحتجز" hint="المحتجز يبقى دَيناً مؤجلاً حتى الاستلام النهائي" />
             <div className="text-[12px] text-slate-500 bg-orange-500/5 rounded-xl p-3">
               الاستقطاعات آلية: محتجز {certFor.retentionPercent}٪ (2108){certFor.taxWithholdPercent > 0 && <> + ضريبة استقطاع {certFor.taxWithholdPercent}٪ (2112)</>} + استرداد الدفعة المقدمة (1111): تلقائي بنسبة العقد {certFor.advanceRecoveryPercent > 0 ? `${certFor.advanceRecoveryPercent}٪` : '—'} أو يدوي أدناه — والتكلفة تُعترف فور الاعتماد
             </div>
@@ -364,31 +365,34 @@ export function SubcontractorsPage() {
                 <input value={certRecovery} onChange={(e) => setCertRecovery(e.target.value)} inputMode="decimal" className={inputCls} />
               </Field>
             )}
+            <DocOutcome>الأثر: <b>5110 تكلفة تنفيذ المشاريع</b> مديناً بقيمة الأعمال · <b>2101 موردون ومقاولون</b> دائناً بالصافي المستحق · <b>2108 محتجزات ضمان</b> دائناً بالمحتجز · <b>2112 ضريبة استقطاع مستحقة</b> دائناً إن وُجدت · و<b>1111 دفعات مقدمة للمقاولين</b> دائناً بما يُسترد منها — ولا نقدية تتحرك قبل صرف الدفعة.</DocOutcome>
             <Btn onClick={saveCert} shortcut="F9" className="w-full" disabled={certMode === 'percent' ? !certPercent : !certAmount}>اعتماد الشهادة</Btn>
           </div>
         )}
       </Modal>
 
-      <Modal open={!!payFor} onClose={() => setPayFor(null)} title={payFor ? `دفعة — ${payFor.contractorName}` : ''}>
+      <Modal open={!!payFor} onClose={() => setPayFor(null)} title={payFor ? `دفعة — ${payFor.contractorName}` : ''} subtitle="مستند صرف: سداد مستحق معتمد بشهادات أعمال سابقة">
         {payFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="المستحق الآن ومصدر الصرف" hint="الصرف تصفية دين لا تكلفة جديدة على المشروع" />
             <div className="text-[12px] text-slate-500">مستحقه الآن: <b className="text-rose-500">{fmt(stats(payFor).dueNow)}</b> (صافي الشهادات − المدفوع)</div>
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={payTreasury} onChange={setPayTreasury} /></Field>
+            <DocOutcome>الأثر: <b>2101 موردون ومقاولون</b> مديناً بالمبلغ · <b>الخزينة/البنك</b> دائناً — ولا يُحمَّل <b>5110</b> ثانيةً لأن التكلفة سُجلت وقت اعتماد الشهادة.</DocOutcome>
             <Btn onClick={savePay} shortcut="F9" className="w-full">صرف الدفعة</Btn>
           </div>
         )}
       </Modal>
 
-      <Modal open={!!advFor} onClose={() => setAdvFor(null)} title={advFor ? `دفعة مقدمة — ${advFor.contractorName}` : ''}>
+      <Modal open={!!advFor} onClose={() => setAdvFor(null)} title={advFor ? `دفعة مقدمة — ${advFor.contractorName}` : ''} subtitle="مستند دفعة مقدمة: مبلغ تحت الحساب يُستقطع من الشهادات القادمة">
         {advFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="قيمة الدفعة ونسبة استقطاعها" hint="المقدَّم ذمة على المقاول لا تكلفة على المشروع" />
             <div className="text-[12px] text-slate-500 bg-orange-500/5 rounded-xl p-3">
               تُصرف قبل بدء الأعمال وتُقيّد أصلاً (1111) — ثم تُسترد تلقائياً من شهادات أعماله.
               {getSubAdvanceBalance(advFor.id) > 0 && <> الرصيد القائم: <b>{fmt(getSubAdvanceBalance(advFor.id))}</b></>}
             </div>
             <Field label={`قيمة الدفعة المقدمة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={advTreasury} onChange={setAdvTreasury} /></Field>
+            <DocOutcome>الأثر: <b>1111 دفعات مقدمة للمقاولين</b> مديناً بالمبلغ · <b>الخزينة/البنك</b> دائناً — ويُسترد من كل شهادة أعمال قادمة حتى يُستهلك بالكامل.</DocOutcome>
             <Btn onClick={saveAdvance} shortcut="F9" className="w-full">صرف الدفعة المقدمة</Btn>
           </div>
         )}
@@ -532,8 +536,8 @@ export function BondsPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="إصدار خطاب ضمان">
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title="إصدار خطاب ضمان" subtitle="مستند بنكي: خطاب بغطاء نقدي ومصاريف إصدار">
+        <div className="space-y-3"><DocSectionHead step="١" title="بيانات الخطاب وغطائه ومصاريفه" hint="الغطاء نقدية مقيّدة لا مصروف" />
           <div className="grid grid-cols-2 gap-3">
             <Field label="رقم الخطاب"><input value={bondNumber} onChange={(e) => setBondNumber(e.target.value)} className={inputCls} /></Field>
             <Field label="النوع">
@@ -564,6 +568,7 @@ export function BondsPage() {
             </Field>
             <Field label="تاريخ الانتهاء"><input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={inputCls} /></Field>
           </div>
+          <DocOutcome>الأثر: <b>1109 هامش خطابات الضمان</b> مديناً بالهامش المحجوز · <b>5108 مصروفات عمومية</b> مديناً بمصاريف الإصدار · <b>البنك</b> دائناً بمجموعهما — وعند الإفراج يعود الهامش للبنك، وعند المصادرة يتحول إلى <b>5108</b>.</DocOutcome>
           <Btn onClick={save} shortcut="F9" className="w-full">إصدار الخطاب</Btn>
         </div>
       </Modal>
@@ -665,19 +670,20 @@ export function DailyWorkersPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="عامل يومية جديد">
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title="عامل يومية جديد" subtitle="ملف عامل: أجره اليومي الذي تُحسب به أيام العمل">
+        <div className="space-y-3"><DocSectionHead step="١" title="بيانات العامل وأجره اليومي" hint="التسجيل تعريف فقط — الأجر يُستحق بيوم العمل" />
           <Field label="الاسم"><input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="الهاتف (اختياري)"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} /></Field>
             <Field label={`الأجر اليومي (${cur.symbol})`}><input value={wage} onChange={(e) => setWage(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
+          <DocOutcome>الأثر: <b>لا قيد</b> عند تسجيل العامل — وأيام عمله تتراكم حتى التسوية، فتُقيَّد تكلفةً على المشروع (<b>5110</b>) أو مصروفاً عمومياً (<b>5108</b>) بحسب ارتباط كل يوم.</DocOutcome>
           <Btn onClick={saveWorker} className="w-full">تسجيل العامل</Btn>
         </div>
       </Modal>
 
-      <Modal open={recFor != null} onClose={() => setRecFor(null)} title="تسجيل يوم عمل">
-        <div className="space-y-3">
+      <Modal open={recFor != null} onClose={() => setRecFor(null)} title="تسجيل يوم عمل" subtitle="مستند عمالة: يوم عمل بأجره وربطه بمشروعه ثم صرفه أو تأجيله">
+        <div className="space-y-3"><DocSectionHead step="١" title="المشروع واليوم والأجر وطريقة الصرف" hint="بلا مشروع ⇒ تشغيل عام لا تكلفة مشروع" />
           <Field label="المشروع (اختياري)" hint="بلا مشروع = عمالة تشغيل عام — تُرحَّل مصروفاً عمومياً (5108) لا تكلفة مشروع">
             <QuickSelect value={recProject} onChange={(e) => setRecProject(e.target.value ? Number(e.target.value) : '')} className={inputCls}>
               <option value="">🏢 تشغيل عام (بلا مشروع)</option>
@@ -688,6 +694,7 @@ export function DailyWorkersPage() {
             <Field label="التاريخ"><input type="date" value={recDate} onChange={(e) => setRecDate(e.target.value)} className={inputCls} /></Field>
             <Field label="عدد الأيام" hint="نصف يوم = 0.5"><input value={recDays} onChange={(e) => setRecDays(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
+          <DocOutcome>الأثر: <b>لا قيد</b> لحظة تسجيل اليوم — يتراكم على العامل؛ وعند تسوية أيامه يُقيَّد <b>5110 تكلفة تنفيذ المشاريع</b> بما ارتبط بمشروع و<b>5108 مصروفات عمومية</b> بما كان تشغيلاً عاماً، مقابل <b>الخزينة</b> دائناً.</DocOutcome>
           <Btn onClick={saveRecord} shortcut="F9" className="w-full">تسجيل</Btn>
         </div>
       </Modal>

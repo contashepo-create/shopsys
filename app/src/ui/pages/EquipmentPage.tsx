@@ -285,8 +285,8 @@ export function EquipmentPage() {
       </Modal>
 
       {/* نافذة وردية مشغل */}
-      <Modal open={!!shiftFor} onClose={() => setShiftFor(null)} title={`وردية مشغل — ${shiftFor?.nameAr ?? ''}`}>
-        <div className="space-y-3">
+      <Modal open={!!shiftFor} onClose={() => setShiftFor(null)} title={`وردية مشغل — ${shiftFor?.nameAr ?? ''}`} subtitle="مستند وردية: ساعات التشغيل وقراءة العدّاد التي تُحاسب عليها العقود">
+        <div className="space-y-3"><DocSectionHead step="١" title="المشغل وتاريخ الوردية وقراءتا العدّاد" hint="فرق القراءتين هو ما يُحاسب عليه العقد ويستهلك الصيانة الدورية" />
           <div className="grid grid-cols-2 gap-3">
             <Field label="اسم المشغل *">
               <input value={opName} onChange={(e) => setOpName(e.target.value)} className={inputCls} autoFocus />
@@ -311,17 +311,18 @@ export function EquipmentPage() {
           <Field label="ملاحظات">
             <input value={shiftNotes} onChange={(e) => setShiftNotes(e.target.value)} className={inputCls} />
           </Field>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>لا قيد</b> عند تسجيل الوردية — ساعات التشغيل وقراءة العدّاد أساس فوترة العقد لاحقاً (<b>4104 إيراد التأجير</b>) واستحقاق الصيانة الدورية.</DocOutcome>
+            <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setShiftFor(null)}>إلغاء</Btn>
-            <Btn onClick={saveShift} shortcut="F9" disabled={!opName.trim() || !shiftEnd}>💾 تسجيل الوردية</Btn>
+            <Btn onClick={saveShift} shortcut="F9" disabled={!opName.trim() || !shiftEnd}>تسجيل الوردية</Btn>
           </div>
         </div>
       </Modal>
 
       {/* مصروف تشغيل معدة */}
-      <Modal open={!!costFor} onClose={() => setCostFor(null)} title={costFor ? `مصروف تشغيل — ${costFor.nameAr}` : ''}>
+      <Modal open={!!costFor} onClose={() => setCostFor(null)} title={costFor ? `مصروف تشغيل — ${costFor.nameAr}` : ''} subtitle="مستند مصروف: وقود أو صيانة أو قطع غيار تُحمَّل على ربحية المعدة">
         {costFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="نوع المصروف وقيمته ومصدر سداده" hint="المصروف يُخصم من ربحية المعدة نفسها لا من ربحية عامة" />
             <Field label="نوع المصروف">
               <div className="grid grid-cols-5 gap-1.5">
                 {(Object.keys(EQUIPMENT_COST_LABELS) as EquipmentCostKind[]).map((k) => (
@@ -340,6 +341,7 @@ export function EquipmentPage() {
               📒 القيد: مصروفات تشغيل معدات 5105 مدين / الخزينة دائن — ويُخصم من ربحية «{costFor.nameAr}»
               {equipmentCosts.filter((c) => c.equipmentId === costFor.id).length > 0 && ` (مصاريف سابقة: ${equipmentCosts.filter((c) => c.equipmentId === costFor.id).length})`}
             </div>
+            <DocOutcome>الأثر: <b>5105 مصروفات تشغيل المعدات</b> مديناً بالمبلغ · <b>الخزينة/البنك</b> دائناً — ويُخصم من ربحية هذه المعدة في تقريرها.</DocOutcome>
             <Btn onClick={saveCost} shortcut="F9" className="w-full" disabled={!costAmount}>قيد المصروف</Btn>
           </div>
         )}

@@ -468,8 +468,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </table>
             </div>
           )}
-          <Modal open={repayOpen} onClose={() => setRepayOpen(false)} title="سداد نقدي لسلفة (خارج المسير)">
-            <div className="space-y-4">
+          <Modal open={repayOpen} onClose={() => setRepayOpen(false)} title="سداد نقدي لسلفة (خارج المسير)" subtitle="مستند سداد: الموظف يردّ سلفته نقداً قبل المسير">
+            <div className="space-y-4"><DocSectionHead step="١" title="الموظف والمبلغ المسدَّد" hint="السداد يقلّل ذمة الموظف ولا يُعد إيراداً" />
               <Field label="الموظف *">
                 <PartyQuickPicker parties={employees} value={repayEmployeeId} onChange={setRepayEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
@@ -482,6 +482,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                 <input value={repayAmount} onChange={(e) => setRepayAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
               </Field>
               <Field label="إلى أي خزينة؟"><TreasuryPicker value={repayTreasury} onChange={setRepayTreasury} /></Field>
+              <DocOutcome>الأثر: <b>الخزينة/البنك</b> مديناً بالمبلغ · <b>1107 سلف وعهد الموظفين</b> دائناً — فيقل متبقي السلفة فوراً ولا يمسّ مصروف الرواتب.</DocOutcome>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setRepayOpen(false)}>إلغاء</Btn>
                 <Btn onClick={saveRepayment} shortcut="F9" disabled={!repayEmployeeId || !repayAmount.trim()}>💾 تسجيل السداد</Btn>
@@ -685,8 +686,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </table>
             </div>
           )}
-          <Modal open={comOpen} onClose={() => setComOpen(false)} title="استحقاق عمولة موظف عن عملية">
-            <div className="space-y-4">
+          <Modal open={comOpen} onClose={() => setComOpen(false)} title="استحقاق عمولة موظف عن عملية" subtitle="مستند استحقاق: عمولة مرتبطة بعمليتها تدخل الأرباح لحظة الاستحقاق">
+            <div className="space-y-4"><DocSectionHead step="١" title="الموظف والعملية المرتبطة" hint="لا عمولة معلّقة في الهواء — لكل عمولة مستندها" />
               <Field label="الموظف *">
                 <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={comEmployeeId} onChange={setComEmployeeId} cashLabel="اختر الموظف" label="بحث الموظف" showCash={false} />
               </Field>
@@ -711,6 +712,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   )}
                 </Field>
               </div>
+              <DocSectionHead step="٢" title="قيمة العمولة وبيانها" hint="البيان يظهر في القيد وكشف متابعة العمولات" />
               <Field label={`مبلغ العمولة (${cur.symbol}) *`}>
                 <input value={comAmount} onChange={(e) => setComAmount(e.target.value)} className={inputCls} dir="ltr" placeholder="0" />
               </Field>
@@ -721,20 +723,22 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                 💡 يتولد فوراً قيد استحقاق: <b>مصروف عمولات موظفين (5117)</b> ← <b>عمولات مستحقة (2116)</b>
                 — فتنخفض أرباح الفترة بالعمولة من لحظة العملية، والصرف لاحقاً تصفية لا مصروف جديد.
               </div>
+              <DocOutcome>الأثر: <b>5117 عمولات موظفين</b> مديناً · <b>2116 عمولات مستحقة</b> دائناً — ولا نقدية تتحرك الآن؛ الصرف لاحقاً يقفل الالتزام.</DocOutcome>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setComOpen(false)}>إلغاء</Btn>
                 <Btn onClick={saveCommission} shortcut="F9" disabled={!comEmployeeId || !comAmount.trim() || !comDesc.trim()}>💾 استحقاق العمولة</Btn>
               </div>
             </div>
           </Modal>
-          <Modal open={comPayId != null} onClose={() => setComPayId(null)} title="صرف عمولة منفردة">
-            <div className="space-y-4">
+          <Modal open={comPayId != null} onClose={() => setComPayId(null)} title="صرف عمولة منفردة" subtitle="مستند صرف: تصفية عمولة مستحقة سبق قيدها">
+            <div className="space-y-4"><DocSectionHead step="١" title="العمولة المستحقة ومصدر الصرف" hint="الصرف تصفية التزام لا مصروف جديد" />
               {(() => {
                 const c = staffCommissions.find((x) => x.id === comPayId)
                 if (!c) return null
                 return <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{c.code} — {employees.find((e) => e.id === c.employeeId)?.nameAr}: <span className="text-violet-600 font-black">{fmt(c.amountMinor)}</span></div>
               })()}
               <Field label="الصرف من *"><TreasuryPicker value={comPayTreasury} onChange={setComPayTreasury} /></Field>
+              <DocOutcome>الأثر: <b>2116 عمولات مستحقة</b> مديناً بقيمة العمولة · <b>الخزينة/البنك</b> دائناً — ولا يتكرر تحميل <b>5117</b> مرة ثانية.</DocOutcome>
               <div className="flex justify-end gap-2">
                 <Btn variant="ghost" onClick={() => setComPayId(null)}>إلغاء</Btn>
                 <Btn onClick={() => {
@@ -859,8 +863,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       )}
 
       {/* نموذج موظف */}
-      <Modal open={open} onClose={() => setOpen(false)} title={editing ? `تعديل «${editing.nameAr}»` : 'موظف جديد'} wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => setOpen(false)} title={editing ? `تعديل «${editing.nameAr}»` : 'موظف جديد'} wide subtitle="ملف موظف: بياناته وراتبه الأساسي وبدلاته — مرجع كل مسير قادم">
+        <div className="space-y-4"><DocSectionHead step="١" title="بيانات الموظف وراتبه" hint="الراتب والبدلات هنا هي ما يملأ المسير تلقائياً" />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="اسم الموظف *">
               <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} autoFocus />
@@ -907,7 +911,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
       {/* نموذج مسير الرواتب — أعيد تصميمه (طلب المالك): رأس مرتب، بحث داخل المسير،
           جدول عملي بأعمدة مجمّعة وصف إجماليات، ونمط «موظف واحد» ببطاقة راتب كاملة */}
-      <Modal open={runOpen} onClose={() => setRunOpen(false)} title={runScope === 'single' ? '👤 مسير راتب موظف واحد' : '👥 مسير رواتب شامل'} extraWide>
+      <Modal open={runOpen} onClose={() => setRunOpen(false)} title={runScope === 'single' ? 'مسير راتب موظف واحد' : 'مسير رواتب شامل'} extraWide subtitle="مستند مسير: استحقاق الشهر ثم خصم السلف والجزاءات ثم الصرف نقداً أو تأجيله استحقاقاً">
         <div className="space-y-4">
           {/* 1) بيانات المسير */}
           <section className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -1107,8 +1111,13 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                 <input value={runNotes} onChange={(e) => setRunNotes(e.target.value)} className={inputCls} placeholder="اختياري — يظهر في وصف القيد" />
               </Field>
             </div>
+            <div className="px-4 pb-3">
+              <DocOutcome>
+                الأثر: <b>5102 رواتب وأجور</b> مديناً بصافي المستحق مضافاً إليه ما استُرد من السلف · {payMode === 'cash' ? <><b>الخزينة/البنك</b> دائناً بصافي المصروف {fmt(draftTotals.payout)}</> : <><b>2104 رواتب مستحقة</b> دائناً بالصافي {fmt(draftTotals.net)} حتى السداد</>} · و<b>1107 سلف الموظفين</b> دائناً بما استُقطع{draftTotals.excess > 0 ? <> · و<b>2107 عهد مستحقة للموظفين</b> مديناً بتسوية الفائض</> : null}{draftTotals.commissions > 0 ? <> · و<b>2116 عمولات مستحقة</b> مديناً بتصفية عمولات الفترة</> : null}.
+              </DocOutcome>
+            </div>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-500/5 px-4 py-3 dark:border-slate-800">
-              <span className="text-[11px] text-slate-500">القيد: 5102 رواتب وأجور {payMode === 'cash' ? '← الخزينة/البنك' : '← 2104 رواتب مستحقة'}{draftTotals.excess > 0 ? ' + تصفية 2107' : ''}{draftTotals.commissions > 0 ? ' + تصفية 2116' : ''}</span>
+              <span className="text-[11px] text-slate-500">مرة واحدة لكل موظف في الشهر — التكرار مرفوض آلياً</span>
               <div className="flex gap-2">
                 <Btn variant="ghost" onClick={() => setRunOpen(false)}>إلغاء</Btn>
                 <Btn onClick={saveRun} shortcut="F9" disabled={draft.length === 0 || draftTotals.net <= 0}>💾 ترحيل المسير وتوليد القيد</Btn>

@@ -265,21 +265,22 @@ export function JewelryPage() {
       )}
 
       {/* نافذة أسعار اليوم */}
-      <Modal open={priceOpen} onClose={() => setPriceOpen(false)} title="أسعار الجرام اليوم">
-        <div className="space-y-3">
+      <Modal open={priceOpen} onClose={() => setPriceOpen(false)} title="أسعار الجرام اليوم" subtitle="مستند تسعير: سعر الجرام لكل عيار يُعاد على أساسه تسعير المحل">
+        <div className="space-y-3"><DocSectionHead step="١" title="سعر الجرام لكل عيار" hint="التسعير لا يمسّ المخزون ولا الحسابات" />
           <div className="grid grid-cols-3 gap-3">
             <Field label="عيار 18"><input value={p18} onChange={(e) => setP18(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="عيار 21"><input value={p21} onChange={(e) => setP21(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="عيار 24"><input value={p24} onChange={(e) => setP24(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
           <div className="text-[11px] text-slate-500 bg-yellow-500/5 rounded-xl p-2.5">بعد الحفظ يعاد تسعير كل الأصناف الموصوفة تلقائياً: الوزن × جرام العيار + المصنعية</div>
+          <DocOutcome>الأثر: <b>لا قيد</b> محاسبياً — يتغير سعر البيع المعروض فقط (الوزن × سعر العيار + المصنعية)؛ تكلفة المخزون تبقى كما اشتُريت.</DocOutcome>
           <Btn onClick={savePrices} className="w-full" disabled={!p18 || !p21 || !p24}>حفظ وإعادة تسعير المحل</Btn>
         </div>
       </Modal>
 
       {/* نافذة الوصف الذهبي */}
-      <Modal open={profileOpen} onClose={() => setProfileOpen(false)} title="الوصف الذهبي للصنف">
-        <div className="space-y-3">
+      <Modal open={profileOpen} onClose={() => setProfileOpen(false)} title="الوصف الذهبي للصنف" subtitle="ملف تعريفي: وزن القطعة وعيارها ومصنعيتها">
+        <div className="space-y-3"><DocSectionHead step="١" title="الصنف ووزنه وعياره ومصنعيته" hint="هذه البيانات تُسعّر القطعة آلياً مع كل تغيّر في سعر الجرام" />
           <Field label="الصنف *">
             <ItemQuickPicker items={items.filter((item) => item.isActive)} onPick={(id) => setProfItem(String(id))} placeholder="اكتب اسم الصنف ثم Enter" />
           </Field>
@@ -297,13 +298,14 @@ export function JewelryPage() {
               السعر المشتق: {fmt(Math.round(Number(profWeight) * gramPrices[profKarat]) + toMinor(profWork || '0', cur.decimals))}
             </div>
           )}
+          <DocOutcome>الأثر: <b>لا قيد</b> — بيانات تعريفية للصنف؛ أثرها يظهر في سعر البيع المحسوب لا في الحسابات.</DocOutcome>
           <Btn onClick={saveProfile} className="w-full" disabled={!profItem || !profWeight}>حفظ الوصف والتسعير</Btn>
         </div>
       </Modal>
 
       {/* نافذة الكسر */}
-      <Modal open={!!scrapMode} onClose={() => setScrapMode(null)} title={scrapMode === 'buy' ? 'شراء ذهب كسر من عميل' : 'بيع كسر للتاجر/المصنع'}>
-        <div className="space-y-3">
+      <Modal open={!!scrapMode} onClose={() => setScrapMode(null)} title={scrapMode === 'buy' ? 'شراء ذهب كسر من عميل' : 'بيع كسر للتاجر/المصنع'} subtitle={scrapMode === 'buy' ? 'مستند شراء كسر: وزن وعيار وسعر جرام يدخل المخزون بتكلفته' : 'مستند بيع كسر: يخرج بتكلفة FIFO والفرق ربح أو خسارة'}>
+        <div className="space-y-3"><DocSectionHead step="١" title="العيار والوزن وسعر الجرام" hint={scrapMode === 'buy' ? 'الكسر المشترى مخزون لا مصروف' : 'التكلفة تُستهلك من أقدم دفعة كسر'} />
           <div className="grid grid-cols-3 gap-3">
             <Field label="العيار">
               <QuickSelect value={scKarat} onChange={(e) => setScKarat(e.target.value as Karat)} className={inputCls}>
@@ -321,6 +323,10 @@ export function JewelryPage() {
               {scrapMode === 'sell' && ' — التكلفة تُستهلك من أقدم دفعات الكسر (FIFO) والفرق ربح/خسارة ظاهرة'}
             </div>
           )}
+          <DocOutcome>{scrapMode === 'buy'
+            ? <>الأثر: <b>1103 مخزون الكسر</b> مديناً بالقيمة · <b>الخزينة</b> دائناً — ولا مصروف ولا ضريبة مدخلات على شراء من غير مسجَّل.</>
+            : <>الأثر: <b>الخزينة</b> مديناً بحصيلة البيع · <b>1103 مخزون الكسر</b> دائناً بتكلفة FIFO · والفرق إلى <b>4101 إيراد المبيعات</b> ربحاً أو <b>5101 تكلفة المبيعات</b> خسارةً.</>}
+          </DocOutcome>
           <Btn onClick={saveScrap} shortcut="F9" className="w-full" disabled={!scWeight || !scPrice}>{scrapMode === 'buy' ? 'شراء وقيد' : 'بيع وقيد'}</Btn>
         </div>
       </Modal>

@@ -222,7 +222,7 @@ export function WalletServicesPage() {
               <span className={`font-black text-xl ${profitPreview >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{fmt(profitPreview)} {cur.symbol}</span>
             </div>
           )}
-          <DocOutcome>الأثر: <b>الخزينة/المحفظة</b> مديناً أو دائناً حسب اتجاه العملية · <b>4116 إيراد الخدمات</b> دائناً بالعمولة · <b>5118</b> مديناً بتكلفة المزود إن وُجدت.</DocOutcome><div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>الخزينة/المحفظة</b> مديناً أو دائناً حسب اتجاه العملية · <b>4103 إيرادات صيانة وخدمات</b> دائناً بهامش الخدمة (ومديناً إن كانت مجاملة بخسارة) · <b>2102</b> بضريبة الهامش · و<b>خزينة التمويل</b> دائنة بما دُفع للمزود · و<b>1104</b> مديناً بالآجل.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} shortcut="F9" disabled={!paidToProvider || !charge || !targetPhone.trim()}><Smartphone size={15} /> تسجيل العملية</Btn>
           </div>

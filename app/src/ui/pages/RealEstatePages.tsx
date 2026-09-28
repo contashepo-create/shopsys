@@ -330,7 +330,7 @@ export function PropertiesPage() {
               <button type="button" onClick={() => setInitialUnits((rows) => [...rows, { code: '', rent: '', cost: '', salePrice: '' }])} className="text-[11px] font-bold text-teal-600 hover:underline">+ إضافة وحدة مستقلة</button>
             </div>
           </Field>
-          <DocOutcome>الأثر: <b>1103</b> مديناً بتكلفة العقار عند الشراء · إيجار الوحدة دائناً في <b>4113</b> · وبيعها دائناً في <b>4115</b> مقابل تكلفتها مديناً في <b>5116</b>.</DocOutcome><div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>1113 عقارات مملوكة</b> مديناً بتكلفة العقار عند الاقتناء · إيجار الوحدة دائناً في <b>4113</b> · وبيعها دائناً في <b>4115</b> مقابل تكلفتها مديناً في <b>5116</b>.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveProperty} disabled={!nameAr.trim()}>إنشاء العقار</Btn>
           </div>
@@ -338,8 +338,8 @@ export function PropertiesPage() {
       </Modal>
 
       {/* وحدة جديدة */}
-      <Modal open={!!unitFor} onClose={() => setUnitFor(null)} title={unitFor ? `وحدة مستقلة جديدة — ${unitFor.nameAr}` : ''}>
-        <div className="space-y-3">
+      <Modal open={!!unitFor} onClose={() => setUnitFor(null)} title={unitFor ? `وحدة مستقلة جديدة — ${unitFor.nameAr}` : ''} subtitle="ملف وحدة: سجل مستقل داخل العقار يُؤجَّر أو يُباع وحده">
+        <div className="space-y-3"><DocSectionHead step="١" title="كود الوحدة ومواصفاتها وسعرها" hint="الوحدة سجل تعريفي — الحركة المالية من عقدها أو بيعها" />
           <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-[12px] text-slate-500">تُحفظ الوحدة كسجل مستقل ويمكن تأجيرها أو بيعها لاحقاً دون التأثير على باقي الوحدات.</div>
           <Field label="كود الوحدة *"><input value={uCode} onChange={(e) => setUCode(e.target.value)} className={inputCls} placeholder="شقة 5 — الدور الثاني" /></Field>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -348,26 +348,28 @@ export function PropertiesPage() {
             <Field label={`سعر البيع (${cur.symbol})`}><input value={uSalePrice} onChange={(e) => setUSalePrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
           {unitFor?.ownership === 'owned' && uCost && <Field label="طريقة دفع الاقتناء"><div className="flex gap-2">{(['cash', 'credit'] as const).map((m) => <button key={m} onClick={() => setUPay(m)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border ${uPay === m ? 'bg-teal-600 text-white border-teal-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>{m === 'cash' ? 'نقدي' : 'آجل'}</button>)}</div></Field>}
+          <DocOutcome>الأثر: <b>لا قيد</b> عند تعريف الوحدة — وعند تحصيل إيجارها يُقيَّد <b>4113 إيراد إيجار العقارات</b>، وعند بيعها <b>4115 إيراد بيع العقارات</b> مقابل تكلفتها <b>5116</b> وإخراجها من <b>1113 العقارات</b>.</DocOutcome>
           <div className="flex justify-end gap-2"><Btn variant="ghost" onClick={() => setUnitFor(null)}>إلغاء</Btn><Btn onClick={saveUnit} disabled={!uCode.trim()}>إضافة الوحدة وقيدها</Btn></div>
         </div>
       </Modal>
 
       {/* سداد مالك */}
-      <Modal open={!!payFor} onClose={() => setPayFor(null)} title={payFor ? `سداد للمالك — ${payFor.ownerName}` : ''}>
+      <Modal open={!!payFor} onClose={() => setPayFor(null)} title={payFor ? `سداد للمالك — ${payFor.ownerName}` : ''} subtitle="مستند سداد: تحويل صافي تحصيلات المالك بعد عمولتك ومصاريفه">
         {payFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="المستحق للمالك ومصدر السداد" hint="ما تحصّله باسم المالك أمانة عليك لا إيراداً لك" />
             <div className="text-[12px] text-slate-500">مستحقه الآن: <b className="text-rose-500">{fmt(getOwnerBalance(payFor.id))}</b> (تحصيلاته − سداداته − صيانة على حسابه)</div>
             <Field label={`المبلغ (${cur.symbol})`}><input value={payAmount} onChange={(e) => setPayAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <TreasuryPicker value={payTreasury} onChange={setPayTreasury} />
+            <DocOutcome>الأثر: <b>2115 نصيب ملاك العقارات</b> مديناً بالمبلغ · <b>الخزينة/البنك</b> دائناً — فتُصفّى أمانة المالك ولا تمسّ إيراد السعي <b>4114</b>.</DocOutcome>
             <Btn onClick={savePayout} shortcut="F9" className="w-full" disabled={!payAmount}>سداد وقيد 2115 ← الخزينة</Btn>
           </div>
         )}
       </Modal>
 
       {/* صيانة وحدة */}
-      <Modal open={!!maintFor} onClose={() => setMaintFor(null)} title={maintFor ? `صيانة وحدة — ${maintFor.nameAr}` : ''}>
+      <Modal open={!!maintFor} onClose={() => setMaintFor(null)} title={maintFor ? `صيانة وحدة — ${maintFor.nameAr}` : ''} subtitle="مستند صيانة: مصروف على حساب المالك أو على المنشأة">
         {maintFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="الوحدة وقيمة الصيانة ومن يتحملها" hint="الصيانة على حساب المالك تُخصم من مستحقه لا من أرباحك" />
             <Field label="الوحدة">
               <QuickSelect value={mUnitId} onChange={(e) => setMUnitId(Number(e.target.value))} className={inputCls}>
                 {propertyUnits.filter((u) => u.propertyId === maintFor.id).map((u) => <option key={u.id} value={u.id}>{u.code}</option>)}
@@ -384,15 +386,16 @@ export function PropertiesPage() {
               </Field>
             )}
             <TreasuryPicker value={mTreasury} onChange={setMTreasury} />
+            <DocOutcome>الأثر: على حساب المالك ⇒ <b>2115 نصيب ملاك العقارات</b> مديناً فيقل مستحقه · على المكتب ⇒ <b>5108 مصروفات عمومية</b> مديناً · والدائن في الحالتين <b>الخزينة/البنك</b>.</DocOutcome>
             <Btn onClick={saveMaint} shortcut="F9" className="w-full" disabled={!mAmount || mUnitId === ''}>تسجيل الصيانة وقيدها</Btn>
           </div>
         )}
       </Modal>
 
       {/* مستند بيع وحدات — سطر مستقل لكل وحدة */}
-      <Modal open={!!unitSaleFor} onClose={() => setUnitSaleFor(null)} title={unitSaleFor ? `مستند بيع وحدات — ${unitSaleFor.nameAr}` : ''} wide>
+      <Modal open={!!unitSaleFor} onClose={() => setUnitSaleFor(null)} title={unitSaleFor ? `مستند بيع وحدات — ${unitSaleFor.nameAr}` : ''} wide subtitle="مستند بيع: وحدة أو أكثر بثمنها وتكلفتها والمحصَّل منها">
         {unitSaleFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="الوحدات المباعة والمشتري والتحصيل" hint="أي جزء آجل يحتاج مشترياً مسجَّلاً بكشف حساب" />
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               {([
                 ['الوحدات المختارة', String(unitSalePicked.length)],
@@ -452,15 +455,16 @@ export function PropertiesPage() {
             <div className="rounded-xl bg-slate-50 p-2.5 text-[11px] text-slate-500 dark:bg-slate-800/50">
               القيد: {unitSalePaidMinor > 0 ? `الخزينة ${unitSaleTreasury} مدين ${fmt(unitSalePaidMinor)}` : ''}{unitSalePaidMinor > 0 && unitSaleDueMinor > 0 ? ' + ' : ''}{unitSaleDueMinor > 0 ? `1104 عملاء مدين ${fmt(unitSaleDueMinor)}` : ''} ← 4115 إيراد بسطر لكل وحدة{unitSaleVatMinor > 0 ? ` + 2102 ضريبة ${fmt(unitSaleVatMinor)}` : ''}، و5116 تكلفة ← 1113 بسطر لكل وحدة.
             </div>
+            <DocOutcome>الأثر: <b>4115 إيراد بيع العقارات</b> دائناً بثمن كل وحدة · <b>الخزينة</b> مديناً بالمحصَّل و<b>1104 ذمم العملاء</b> مديناً بالمتبقي · و<b>5116 تكلفة العقارات المباعة</b> مديناً مقابل إخراجها من <b>1113 العقارات</b> · والضريبة إن وُجدت على <b>2102</b>.</DocOutcome>
             <Btn onClick={saveUnitSale} shortcut="F9" className="w-full" disabled={unitSalePicked.length === 0 || (unitSaleDueMinor > 0 && !unitSaleBuyerId)}>ترحيل مستند البيع ({unitSalePicked.length} وحدة)</Btn>
           </div>
         )}
       </Modal>
 
       {/* بيع عقار */}
-      <Modal open={!!sellFor} onClose={() => setSellFor(null)} title={sellFor ? `بيع العقار — ${sellFor.nameAr}` : ''}>
+      <Modal open={!!sellFor} onClose={() => setSellFor(null)} title={sellFor ? `بيع العقار — ${sellFor.nameAr}` : ''} subtitle="مستند بيع عقار: الثمن والمشتري وعمولة المندوب">
         {sellFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="ثمن البيع والمشتري وطريقة السداد" hint="الربح = الثمن − تكلفة العقار الدفترية" />
             <div className="rounded-xl bg-teal-500/10 border border-teal-500/30 p-3 text-[12px] font-bold text-teal-700 dark:text-teal-300">
               التكلفة الدفترية {fmt(sellFor.costMinor)} — البيع يقيد الإيراد (4115) والتكلفة (5116) ويخرج العقار من الأصول (1113) — <b>بسطر مستقل لكل وحدة</b> يُوزَّع عليه السعر بنسبة تكلفتها. لا بيع وعلى العقار عقود نشطة.
             </div>
@@ -485,6 +489,7 @@ export function PropertiesPage() {
                 <input value={sCommAmount} onChange={(e) => setSCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder={`المبلغ (${cur.symbol})`} disabled={!sCommEmpId} />
               </div>
             </Field>
+            <DocOutcome>الأثر: <b>4115 إيراد بيع العقارات</b> دائناً بالثمن · <b>الخزينة</b> و/أو <b>1104 ذمم العملاء</b> مديناً · <b>5116 تكلفة العقارات المباعة</b> مديناً مقابل إخراج العقار من <b>1113</b> · وعمولة المندوب <b>5117</b> مديناً مقابل <b>2116</b>.</DocOutcome>
             <Btn onClick={saveSale} shortcut="F9" className="w-full" disabled={!sPrice || (sPay !== 'cash' && !sBuyerId) || (!!sCommEmpId && !sCommAmount.trim())}>بيع وقيد الربح</Btn>
           </div>
         )}
@@ -651,8 +656,9 @@ export function LeasesPage() {
       )}
 
       {/* عقد جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="عقد إيجار جديد" wide>
+      <Modal open={open} onClose={() => setOpen(false)} title="عقد إيجار جديد" wide subtitle="مستند عقد إيجار: وحدات ومدة وأقساط وتأمين">
         <div className="space-y-3">
+          <DocSectionHead step="١" title="العقار والوحدات والمستأجر" hint="سطر مستقل لكل وحدة — الأقساط تتولد آلياً من المدة والدورية" />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="العقار *">
               <QuickSelect value={propId} onChange={(e) => { const id = Number(e.target.value); setPropId(id); loadLeaseUnitRows(id, Number(months) || 12) }} className={inputCls}>
@@ -705,6 +711,7 @@ export function LeasesPage() {
             )}
           </div>
           {deposit && <TreasuryPicker value={leaseTreasury} onChange={setLeaseTreasury} />}
+          <DocOutcome>الأثر: <b>لا قيد</b> على قيمة العقد نفسه — الإيراد يتولد قسطاً قسطاً عند التحصيل؛ أما <b>التأمين المسترد</b> فيُقيَّد فور قبضه: <b>الخزينة</b> مديناً و<b>2103 تأمينات مستردة للغير</b> دائناً حتى الإخلاء.</DocOutcome>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveLease} shortcut="F9" disabled={!tenant.trim() || pickedLeaseUnits.length === 0 || leaseUnitsTotalMinor <= 0}>إنشاء العقد وتوليد الأقساط ({pickedLeaseUnits.length} وحدة)</Btn>
@@ -713,9 +720,9 @@ export function LeasesPage() {
       </Modal>
 
       {/* تحصيل الأقساط */}
-      <Modal open={!!collectFor} onClose={() => setCollectFor(null)} title={collectFor ? `تحصيل — ${collectFor.contractNumber} (${collectFor.tenantName})` : ''} wide>
+      <Modal open={!!collectFor} onClose={() => setCollectFor(null)} title={collectFor ? `تحصيل — ${collectFor.contractNumber} (${collectFor.tenantName})` : ''} wide subtitle="مستند تحصيل: أقساط الإيجار المستحقة قسطاً قسطاً">
         {collectFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="طريقة التحصيل وجدول الأقساط" hint="القسط المتأخر مُعلَّم بالأحمر — يُحصَّل بضغطة واحدة" />
             <PaymentMethodPicker value={{treasury:colTreasury,terminalPayment:colTerminal}} onChange={value=>{setColTreasury(value.treasury);setColTerminal(value.terminalPayment)}} operation="receipt"/>
             <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <table className="w-full text-[12px]">
@@ -745,14 +752,15 @@ export function LeasesPage() {
                 </tbody>
               </table>
             </div>
+            <DocOutcome>الأثر لكل قسط محصَّل: <b>الخزينة/البنك أو ماكينة الدفع</b> مديناً بقيمته · وللعقار المملوك <b>4113 إيراد إيجار العقارات</b> دائناً · ولعقار مالك خارجي يتوزع القسط: <b>2115 نصيب المالك</b> دائناً و<b>4114 إيراد السعي</b> دائناً بعمولتك · والضريبة على <b>2102</b>.</DocOutcome>
           </div>
         )}
       </Modal>
 
       {/* إنهاء / إخلاء */}
-      <Modal open={!!endFor} onClose={() => setEndFor(null)} title={endFor ? `إنهاء العقد — ${endFor.contractNumber}` : ''}>
+      <Modal open={!!endFor} onClose={() => setEndFor(null)} title={endFor ? `إنهاء العقد — ${endFor.contractNumber}` : ''} subtitle="مستند إنهاء: تسوية التأمين وردّه أو خصم المتأخرات منه">
         {endFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="تسوية التأمين والمتأخرات" hint="التأمين أمانة — لا يصير إيراداً إلا بقدر ما يُخصم" />
             {endFor.depositMinor > 0 && (
               <>
                 <div className="text-[12px] text-slate-500">التأمين المقبوض: <b>{fmt(endFor.depositMinor)}</b> — يُرد ناقص خصم الأضرار (يقيد إيراداً 4110)</div>
@@ -764,6 +772,7 @@ export function LeasesPage() {
               <input type="checkbox" checked={endEvicted} onChange={(e) => setEndEvicted(e.target.checked)} className="accent-rose-600" />
               <span className="text-[12px] font-bold text-rose-600 dark:text-rose-400">إخلاء (إنهاء قسري) — يُعلَّم العقد «مُخلى»</span>
             </label>
+            <DocOutcome>الأثر: <b>2103 تأمينات مستأجرين</b> مديناً بقيمة التأمين · <b>الخزينة</b> دائناً بالمردود · وما يُخصم مقابل أضرار أو متأخرات يُقيَّد إيراداً على <b>4110 إيرادات أخرى</b> — ولا يبقى تأمين معلق بعد الإخلاء.</DocOutcome>
             <Btn onClick={saveEnd} shortcut="F9" className="w-full">إنهاء العقد وتسوية التأمين</Btn>
           </div>
         )}

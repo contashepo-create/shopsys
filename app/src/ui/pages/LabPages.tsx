@@ -281,7 +281,7 @@ export function LabOrdersPage() {
       </Modal>
 
       {/* ─── دورة العينة والنتائج ─── */}
-      <Modal open={!!workingLive} onClose={() => setWorking(null)} title={workingLive ? `${workingLive.orderNumber} — ${workingLive.patientName}` : ''} wide>
+      <Modal open={!!workingLive} onClose={() => setWorking(null)} title={workingLive ? `${workingLive.orderNumber} — ${workingLive.patientName}` : ''} wide subtitle="مستند تشغيلي: إدخال نتائج التحاليل واعتمادها">
         {workingLive && (
           <div className="space-y-3">
             {workingLive.tests.map((t) => {
@@ -335,6 +335,7 @@ export function LabOrdersPage() {
                 </div>
               )
             })}
+            <DocOutcome>الأثر: <b>لا قيد</b> عند إدخال النتائج أو اعتمادها — الخطوات سريرية؛ القيد المالي تولَّد وقت تسجيل الطلب (<b>4106 إيراد تحاليل طبية</b> دائناً و<b>الخزينة/1104</b> مديناً)، وعمولة الطبيب المحيل على <b>5109</b> مقابل <b>2105</b>.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setWorking(null)}>إغلاق</Btn>
               <Btn onClick={() => doPrint(workingLive)}><Printer className="w-4 h-4" /> طباعة التقرير</Btn>
@@ -492,8 +493,8 @@ export function LabTestsPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title={editingId != null ? 'تعديل فحص' : 'فحص جديد'} wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => setOpen(false)} title={editingId != null ? 'تعديل فحص' : 'فحص جديد'} wide subtitle="ملف فحص: كوده وسعره ومداه المرجعي ومستهلكاته">
+        <div className="space-y-4"><DocSectionHead step="١" title="كود الفحص وسعره ومداه المرجعي" hint="السعر هنا هو ما يُحمَّل على طلب التحاليل" />
           <div className="grid grid-cols-3 gap-3">
             <Field label="الكود *" hint="CBC، FBS…"><input value={code} onChange={(e) => setCode(e.target.value)} className={inputCls} dir="ltr" /></Field>
             <Field label="اسم الفحص *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} /></Field>
@@ -524,7 +525,8 @@ export function LabTestsPage() {
             </div>
           </Field>
 
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>لا قيد</b> عند تعريف الفحص — البطاقة مرجع تسعير ونطاقات مرجعية؛ القيد يتولد عند تسجيل الطلب: <b>4106 إيراد تحاليل طبية</b> دائناً مقابل <b>الخزينة/1104</b> مديناً.</DocOutcome>
+            <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save}>{editingId != null ? 'حفظ التعديل' : 'إضافة الفحص'}</Btn>
           </div>
@@ -603,8 +605,8 @@ export function LabPatientsPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="تسجيل مريض">
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title="تسجيل مريض" subtitle="ملف مريض: بياناته التي تُطبع على التقرير وتُربط بحساب عميل عند أول دين">
+        <div className="space-y-3"><DocSectionHead step="١" title="بيانات المريض الأساسية" hint="أول متبقٍ يفتح له حساب عميل تلقائياً" />
           <Field label="الاسم *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} /></Field>
@@ -620,7 +622,8 @@ export function LabPatientsPage() {
           </div>
           <Field label="تاريخ الميلاد" hint="يحدد الشريحة العمرية للنطاقات"><input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} className={inputCls} /></Field>
           <Field label="ملاحظات طبية"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} placeholder="سكري، حساسية…" /></Field>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>لا قيد</b> عند التسجيل — الملف بيانات تعريفية؛ وعند أول طلب بمتبقٍ يُفتح للمريض حساب على <b>1104 ذمم العملاء</b> فلا يبقى دين بلا مدين.</DocOutcome>
+            <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} disabled={!nameAr.trim()}>تسجيل</Btn>
           </div>
@@ -739,15 +742,16 @@ export function LabReferrersPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="طبيب مُحيل جديد">
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title="طبيب مُحيل جديد" subtitle="ملف مُحيل: نسبة عمولته التي تُستحق آلياً مع كل طلب باسمه">
+        <div className="space-y-3"><DocSectionHead step="١" title="بيانات الطبيب ونسبة عمولته" hint="العمولة تُقيَّد مصروفاً لحظة الطلب لا عند صرفها" />
           <Field label="اسم الطبيب *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} /></Field>
             <Field label="نسبة العمولة ٪ *" hint="من صافي الطلب بعد الخصم (حد أقصى 50٪)"><input value={percent} onChange={(e) => setPercent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>لا قيد</b> عند إضافة الطبيب — ومع كل طلب باسمه تُقيَّد عمولته <b>5109 عمولات المحيلين</b> مديناً و<b>2105 عمولات مستحقة للمحيلين</b> دائناً.</DocOutcome>
+            <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} disabled={!nameAr.trim()}>إضافة</Btn>
           </div>
@@ -793,16 +797,17 @@ export function LabReferrersPage() {
       </Modal>
 
       {/* صرف عمولات محيل — باختيار الخزينة (طلب المالك) */}
-      <Modal open={!!payoutFor} onClose={() => setPayoutFor(null)} title={payoutFor ? `صرف عمولات د. ${payoutFor.name}` : ''}>
+      <Modal open={!!payoutFor} onClose={() => setPayoutFor(null)} title={payoutFor ? `صرف عمولات د. ${payoutFor.name}` : ''} subtitle="مستند صرف: تصفية عمولات محيل سبق استحقاقها">
         {payoutFor && (
-          <div className="space-y-4">
+          <div className="space-y-4"><DocSectionHead step="١" title="المستحق غير المدفوع ومصدر الصرف" hint="الصرف يقفل التزاماً قائماً ولا ينشئ مصروفاً جديداً" />
             <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
               المستحق غير المدفوع: {fmt(unpaidFor(payoutFor.id))} {cur.symbol}
             </div>
             <Field label="من أي خزينة/بنك؟"><TreasuryPicker value={payoutTreasury} onChange={setPayoutTreasury} compact /></Field>
+            <DocOutcome>الأثر: <b>2105 عمولات مستحقة للمحيلين</b> مديناً بالمبلغ · <b>الخزينة/البنك</b> دائناً — ولا يتكرر تحميل <b>5109</b>.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setPayoutFor(null)}>إلغاء</Btn>
-              <Btn onClick={doPayout} shortcut="F9">💸 صرف الآن</Btn>
+              <Btn onClick={doPayout} shortcut="F9">صرف الآن</Btn>
             </div>
           </div>
         )}
@@ -847,13 +852,14 @@ export function LabReferrersPage() {
       )}
 
       {/* نافذة جهة جديدة */}
-      <Modal open={insOpen} onClose={() => setInsOpen(false)} title="جهة تأمين / تعاقد جديدة">
-        <div className="space-y-3">
+      <Modal open={insOpen} onClose={() => setInsOpen(false)} title="جهة تأمين / تعاقد جديدة" subtitle="ملف تعاقد: نسبة تحمّل الجهة وما يدفعه المريض نقداً">
+        <div className="space-y-3"><DocSectionHead step="١" title="الجهة ونسبة تحمّلها وشروط التحصيل" hint="حصة الجهة ذمة عليها لا نقدية في الخزينة" />
           <Field label="اسم الجهة *"><input value={insName} onChange={(e) => setInsName(e.target.value)} placeholder="شركة مصر للتأمين…" className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="نسبة التحمل ٪ *" hint="ما تتحمله الجهة من الفاتورة"><input value={insPercent} onChange={(e) => setInsPercent(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="هاتف"><input value={insPhone} onChange={(e) => setInsPhone(e.target.value)} className={inputCls} dir="ltr" /></Field>
           </div>
+          <DocOutcome>الأثر: <b>لا قيد</b> عند التعاقد — ومع كل طلب مؤمَّن يتوزع الإيراد <b>4106</b>: حصة المريض تحصيلاً نقدياً وحصة الجهة ذمةً على <b>1104 ذمم العملاء</b> باسمها حتى التحصيل.</DocOutcome>
           <Btn onClick={saveIns} className="w-full" disabled={!insName.trim() || !insPercent}>إضافة الجهة</Btn>
         </div>
       </Modal>

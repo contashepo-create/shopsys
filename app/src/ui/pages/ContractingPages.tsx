@@ -544,9 +544,10 @@ export function ProjectsPage() {
       </Modal>
 
       {/* تكلفة */}
-      <Modal open={!!costFor} onClose={() => setCostFor(null)} title={costFor ? `تكلفة على — ${costFor.nameAr}` : ''}>
+      <Modal open={!!costFor} onClose={() => setCostFor(null)} title={costFor ? `تكلفة على — ${costFor.nameAr}` : ''} subtitle="مستند تكلفة مشروع: بند التكلفة ومصدر سدادها">
         {costFor && (
           <div className="space-y-3">
+            <DocSectionHead step="١" title="بند التكلفة وقيمته" hint="كل تكلفة تُنسب لمركز تكلفة المشروع فتظهر في ربحيته" />
             <Field label="بند التكلفة">
               <div className="grid grid-cols-5 gap-1.5">
                 {(Object.keys(COST_KIND_LABELS) as CostKind[]).map((k) => (
@@ -581,6 +582,7 @@ export function ProjectsPage() {
             <Field label={`ض.ق.م مدخلات قابلة للخصم (${cur.symbol}) — اختياري`} hint="للمنشآت المسجلة ضريبياً: تُعزل عن تكلفة المشروع (المبلغ أعلاه صافٍ) فتبقى ربحية المشروع صافية من الضريبة تماماً — غير المسجل يتركها فارغة">
               <input value={costVat} onChange={(e) => setCostVat(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
             </Field>
+            <DocOutcome>الأثر: <b>5110 تكاليف مشروعات مقاولات</b> مديناً بقيمة البند على مركز تكلفة المشروع · <b>2102</b> مديناً بضريبة المدخلات القابلة للخصم · <b>الخزينة</b> دائنة بالمدفوع نقداً و<b>2101 موردون ومقاولون</b> دائناً بالباقي الآجل.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setCostFor(null)}>إلغاء</Btn>
               <Btn onClick={saveCost} shortcut="F9" disabled={!costAmount}>تسجيل التكلفة</Btn>
@@ -659,7 +661,7 @@ export function ProjectsPage() {
 
       {/* الإفراج عن المحتجزات — باختيار الخزينة (طلب المالك) */}
       {/* دفعة مقدمة من العميل */}
-      <Modal open={!!advanceFor} onClose={() => setAdvanceFor(null)} title={advanceFor ? `دفعة مقدمة — ${advanceFor.nameAr}` : ''}>
+      <Modal open={!!advanceFor} onClose={() => setAdvanceFor(null)} title={advanceFor ? `دفعة مقدمة — ${advanceFor.nameAr}` : ''} subtitle="مستند دفعة مقدمة: تحصيل قبل تنفيذ الأعمال">
         {advanceFor && (
           <div className="space-y-3">
             <div className="text-[12px] text-slate-500 bg-sky-500/5 rounded-xl p-3">
@@ -668,13 +670,14 @@ export function ProjectsPage() {
             </div>
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury:advTreasury,terminalPayment:advTerminal}} onChange={value=>{setAdvTreasury(value.treasury);setAdvTerminal(value.terminalPayment)}} operation="receipt"/></div></Field>
+            <DocOutcome>الأثر: <b>الخزينة</b> أو حساب تسوية الماكينة مديناً بالمحصَّل · <b>2109 دفعات مقدمة من العملاء</b> دائناً بنفس القيمة — التزام لا إيراد، يُسترد تدريجياً من المستخلصات القادمة.</DocOutcome>
             <Btn onClick={saveAdvance} shortcut="F9" className="w-full" disabled={!advAmount}>استلام الدفعة</Btn>
           </div>
         )}
       </Modal>
 
       {/* أمر تغيير */}
-      <Modal open={!!coFor} onClose={() => setCoFor(null)} title={coFor ? `أمر تغيير — ${coFor.nameAr}` : ''}>
+      <Modal open={!!coFor} onClose={() => setCoFor(null)} title={coFor ? `أمر تغيير — ${coFor.nameAr}` : ''} subtitle="مستند أمر تغيير: تعديل نطاق العقد وقيمته">
         {coFor && (
           <div className="space-y-3">
             <div className="text-[12px] text-slate-500 bg-violet-500/5 rounded-xl p-3">
@@ -713,28 +716,30 @@ export function ProjectsPage() {
                 ))}
               </div>
             )}
+            <DocOutcome>الأثر: <b>لا قيد</b> عند إنشاء أمر التغيير أو اعتماده — يعدّل قيمة العقد ونسب الإنجاز فقط؛ القيد يتولد في المستخلص التالي (<b>4107</b> إيراداً و<b>1104</b> ذمةً و<b>1105</b> محتجزاً).</DocOutcome>
             <Btn onClick={saveChangeOrder} className="w-full" disabled={!coTitle.trim() || !coAmount}>إنشاء أمر التغيير (مسودة)</Btn>
           </div>
         )}
       </Modal>
 
-      <Modal open={!!releaseFor} onClose={() => setReleaseFor(null)} title={releaseFor ? `الإفراج عن محتجزات ${releaseFor.nameAr}` : ''}>
+      <Modal open={!!releaseFor} onClose={() => setReleaseFor(null)} title={releaseFor ? `الإفراج عن محتجزات ${releaseFor.nameAr}` : ''} subtitle="مستند إفراج: تحصيل ضمان انتهى أجله">
         {releaseFor && (
           <div className="space-y-4">
             <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
               سيُحصَّل المحتجز المتبقي {fmt(getProjectProfit(releaseFor.id).retentionHeldMinor)} {cur.symbol} ويُقفل المشروع نهائياً.
             </div>
             <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury:releaseTreasury,terminalPayment:releaseTerminal}} onChange={value=>{setReleaseTreasury(value.treasury);setReleaseTerminal(value.terminalPayment)}} operation="receipt"/></div></Field>
+            <DocOutcome>الأثر: <b>الخزينة</b> أو حساب تسوية الماكينة مديناً بقيمة المحتجز المُفرج عنه · <b>1105 محتجزات ضمان أعمال</b> دائناً بإقفال الأصل — تحصيل حق قائم لا إيراد جديد.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setReleaseFor(null)}>إلغاء</Btn>
-              <Btn onClick={doRelease} shortcut="F9">🏁 تحصيل وإقفال</Btn>
+              <Btn onClick={doRelease} shortcut="F9">تحصيل وإقفال</Btn>
             </div>
           </div>
         )}
       </Modal>
 
       {/* إشعار دائن على مستخلص (مراجعة المرتجعات) */}
-      <Modal open={!!refundingExtract} onClose={() => setRefundingExtract(null)} title={refundingExtract ? `إشعار دائن — ${refundingExtract.extractNumber}` : ''}>
+      <Modal open={!!refundingExtract} onClose={() => setRefundingExtract(null)} title={refundingExtract ? `إشعار دائن — ${refundingExtract.extractNumber}` : ''} subtitle="مستند إشعار دائن: عكس جزء معتمد من المستخلص">
         {refundingExtract && (
           <ServiceRefundBox
             grandMinor={refundingExtract.totals.dueMinor}
@@ -755,9 +760,12 @@ export function ProjectsPage() {
             }}
           />
         )}
+        {refundingExtract && (
+          <DocOutcome>الأثر: <b>4102 مرتجعات المبيعات</b> مديناً بصافي المرفوض و<b>2102</b> مديناً بحصته الضريبية · <b>الخزينة</b> دائنة عند الرد نقداً أو <b>1104 ذمم العملاء</b> دائنة عند التخفيض من حساب العميل.</DocOutcome>
+        )}
       </Modal>
-      {/* 🤝 عمولة موظف عن المشروع (تعميم أمر المالك) */}
-      <Modal open={!!commFor} onClose={() => setCommFor(null)} title={commFor ? `🤝 عمولة موظف — ${commFor.code}` : ''}>
+      {/* عمولة موظف عن المشروع (تعميم أمر المالك) */}
+      <Modal open={!!commFor} onClose={() => setCommFor(null)} title={commFor ? `عمولة موظف — ${commFor.code}` : ''} subtitle="مستند استحقاق عمولة: ربط موظف بمشروع">
         {commFor && (
           <div className="space-y-3">
             {staffCommissions.filter((c) => c.source === 'project' && c.sourceId === commFor.id && c.status !== 'cancelled').map((c) => (
@@ -772,11 +780,12 @@ export function ProjectsPage() {
               <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
             </Field>
             <div className="text-[11px] text-slate-400 rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 leading-relaxed">
-              💡 استحقاق فوري: مصروف عمولات (5117) ← مستحقة (2116) — مربوطة بالمشروع وتدخل ربحية الفترة، والصرف من شاشة الموظفين.
+              استحقاق فوري مربوط بالمشروع: يدخل ربحية الفترة، والصرف من شاشة الموظفين.
             </div>
+            <DocOutcome>الأثر: <b>5117 مصروف عمولات موظفين</b> مديناً على مركز تكلفة المشروع · <b>2116 عمولات موظفين مستحقة</b> دائناً حتى الصرف مع الراتب أو منفرداً.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setCommFor(null)}>إغلاق</Btn>
-              <Btn onClick={saveProjectCommission} shortcut="F9" disabled={!commEmpId || !commAmount.trim()}>💾 استحقاق العمولة</Btn>
+              <Btn onClick={saveProjectCommission} shortcut="F9" disabled={!commEmpId || !commAmount.trim()}>استحقاق العمولة</Btn>
             </div>
           </div>
         )}

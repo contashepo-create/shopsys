@@ -348,9 +348,9 @@ export function CarsPage() {
       </Modal>
 
       {/* تجهيز */}
-      <Modal open={!!prepFor} onClose={() => setPrepFor(null)} title={prepFor ? `تجهيز — ${prepFor.make} ${prepFor.model}` : ''}>
+      <Modal open={!!prepFor} onClose={() => setPrepFor(null)} title={prepFor ? `تجهيز — ${prepFor.make} ${prepFor.model}` : ''} subtitle="مستند تجهيز: تكلفة تُرسمل على السيارة قبل بيعها">
         {prepFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="تكلفة التجهيز وجهته وطريقة السداد" hint="التجهيز ليس مصروف فترة — يرفع تكلفة السيارة نفسها" />
             <Field label={`تكلفة التجهيز (${cur.symbol}) *`} hint="تُرسمل على السيارة وتدخل في ربحية بيعها"><input value={prepAmount} onChange={(e) => setPrepAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="الوصف"><input value={prepDesc} onChange={(e) => setPrepDesc(e.target.value)} className={inputCls} placeholder="سمكرة ودهان، قطع غيار…" /></Field>
             <Field label="السداد">
@@ -377,6 +377,7 @@ export function CarsPage() {
                 </div>
               )}
             </Field>
+            <DocOutcome>الأثر: <b>1103 مخزون السيارات</b> مديناً بتكلفة التجهيز · والدائن {`${prepPayment === 'cash' ? 'الخزينة/البنك' : prepPayment === 'credit' ? 'حساب جهة التجهيز (2101)' : 'الخزينة بالمدفوع وحساب الجهة بالباقي'}`} — فترتفع تكلفة السيارة وتقل ربحية بيعها لاحقاً.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setPrepFor(null)}>إلغاء</Btn>
               <Btn onClick={savePrep} shortcut="F9" disabled={!prepAmount || (prepPayment === 'mixed' && !prepPaidNow.trim()) || (prepPayment !== 'cash' && !prepSupplierId && !prepBeneficiary.trim())}>رسملة التكلفة</Btn>
@@ -433,9 +434,9 @@ export function CarsPage() {
       </Modal>
 
       {/* تحويل للتأجير */}
-      <Modal open={!!rentFor} onClose={() => setRentFor(null)} title={rentFor ? `تأجير — ${rentFor.make} ${rentFor.model}` : ''}>
+      <Modal open={!!rentFor} onClose={() => setRentFor(null)} title={rentFor ? `تأجير — ${rentFor.make} ${rentFor.model}` : ''} subtitle="مستند تحويل: نقل السيارة من مخزون البيع إلى أسطول التأجير">
         {rentFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="تسعيرة التأجير اليومية والشهرية" hint="التحويل تغيير غرض لا بيع" />
             <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-[12px] font-bold text-amber-700 dark:text-amber-400">
               ستظهر السيارة كمعدة في قسم «إيجار المعدات» بعقود يومية/شهرية وعدّاد كيلومترات
             </div>
@@ -443,6 +444,7 @@ export function CarsPage() {
               <Field label={`إيجار يومي (${cur.symbol})`}><input value={dailyRate} onChange={(e) => setDailyRate(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
               <Field label={`إيجار شهري (${cur.symbol})`}><input value={monthlyRate} onChange={(e) => setMonthlyRate(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             </div>
+            <DocOutcome>الأثر: لا قيد عند التحويل — السيارة تخرج من قائمة البيع وتظهر كمعدة في «إيجار المعدات»، وإيراد عقودها يُقيَّد على <b>4104 إيراد التأجير</b> عند كل عقد.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setRentFor(null)}>إلغاء</Btn>
               <Btn onClick={doRent} shortcut="F9" disabled={!dailyRate && !monthlyRate}>تحويل للتأجير</Btn>
@@ -530,8 +532,8 @@ export function CarsPage() {
       )}
 
       {/* نافذة استلام أمانة */}
-      <Modal open={cgOpen} onClose={() => setCgOpen(false)} title="استلام سيارة أمانة (بيع بالعمولة)">
-        <div className="space-y-3">
+      <Modal open={cgOpen} onClose={() => setCgOpen(false)} title="استلام سيارة أمانة (بيع بالعمولة)" subtitle="مستند أمانة: سيارة الغير تُعرض للبيع بعمولة ولا تدخل مخزونك">
+        <div className="space-y-3"><DocSectionHead step="١" title="السيارة ومالكها وصافي مستحقه" hint="الفرق بين سعر البيع وصافي المالك هو عمولتك" />
           <div className="text-[12px] text-slate-500 bg-violet-500/5 rounded-xl p-3">
             السيارة ملك الغير — لا تدخل مخزونك ولا قيد عند الاستلام. عند بيعها: صافي المالك التزام (2110) وما زاد عمولتك (4109).
           </div>
@@ -554,14 +556,15 @@ export function CarsPage() {
               عمولتك المتوقعة: {fmt(toMinor(cgAsk, cur.decimals) - toMinor(cgNet, cur.decimals))}
             </div>
           )}
+          <DocOutcome>الأثر: <b>لا قيد</b> عند الاستلام — السيارة ملك الغير خارج مخزونك (لا تدخل <b>1103</b>)؛ وعند بيعها يصير صافي المالك التزاماً على <b>2110</b> والزائد إيراد عمولة على <b>4109</b>.</DocOutcome>
           <Btn onClick={saveConsignment} shortcut="F9" className="w-full" disabled={!cgMake.trim() || !cgModel.trim() || !cgPlate.trim() || !cgOwner.trim() || !cgNet || !cgAsk}>تسجيل الأمانة</Btn>
         </div>
       </Modal>
 
       {/* نافذة بيع الأمانة */}
-      <Modal open={!!cgSellCar} onClose={() => setCgSellFor(null)} title={cgSellCar ? `بيع الأمانة — ${cgSellCar.make} ${cgSellCar.model}` : ''}>
+      <Modal open={!!cgSellCar} onClose={() => setCgSellFor(null)} title={cgSellCar ? `بيع الأمانة — ${cgSellCar.make} ${cgSellCar.model}` : ''} subtitle="مستند بيع أمانة: التحصيل للمالك والفرق عمولتك">
         {cgSellCar && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="سعر البيع والمشتري وطريقة التحصيل" hint="ذمة الآجل على المشتري لا على مالك السيارة" />
             <Field label={`سعر البيع (${cur.symbol}) *`} hint={`صافي المالك ${fmt(cgSellCar.ownerNetMinor)} — ما زاد عمولتك`}>
               <input value={cgSalePrice} onChange={(e) => setCgSalePrice(e.target.value)} inputMode="decimal" className={inputCls} />
             </Field>
@@ -586,6 +589,7 @@ export function CarsPage() {
                 📒 القيد: {cgPayment === 'cash' ? 'الخزينة' : 'العملاء'} {fmt(toMinor(cgSalePrice, cur.decimals))} / مستحق المالك {fmt(cgSellCar.ownerNetMinor)} + عمولتك {fmt(toMinor(cgSalePrice, cur.decimals) - cgSellCar.ownerNetMinor)}
               </div>
             )}
+            <DocOutcome>الأثر: <b>الخزينة</b> نقداً أو <b>1104 ذمم العملاء</b> آجلاً مديناً بسعر البيع · <b>2110 مستحق لملاك سيارات الأمانة</b> دائناً بصافي المالك · <b>4109 عمولات بيع بالأمانة</b> دائناً بالفرق (وضريبته على <b>2102</b>) — ولا تكلفة بضاعة لأن السيارة ليست مخزونك.</DocOutcome>
             <Btn onClick={doSellConsignment} shortcut="F9" className="w-full" disabled={!cgSalePrice}>بيع وقيد العمولة</Btn>
           </div>
         )}
