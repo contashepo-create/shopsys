@@ -56,6 +56,27 @@ interface SetupState {
   doctorSpecialty: string
 }
 
+/**
+ * تفضيلات أعمدة جدول البنود — أعمدة **عرضية** فقط (لا تحمل إدخالاً):
+ * كود الصنف · الوحدة · عمود الضريبة · سطر تفاصيل الصنف الرمادي.
+ */
+export interface InvoiceColumnPrefs {
+  code: boolean
+  unit: boolean
+  tax: boolean
+  details: boolean
+}
+
+export const DEFAULT_INVOICE_COLUMNS: InvoiceColumnPrefs = { code: true, unit: true, tax: true, details: true }
+
+/** أسماء الأعمدة كما تظهر في قائمة «تخصيص الحقول» */
+export const INVOICE_COLUMN_LABELS: Record<keyof InvoiceColumnPrefs, string> = {
+  code: 'كود الصنف',
+  unit: 'وحدة القياس',
+  tax: 'عمود الضريبة',
+  details: 'تفاصيل الصنف أسفل الاسم',
+}
+
 interface AppState {
   theme: ThemeMode
   toggleTheme: () => void
@@ -93,6 +114,15 @@ interface AppState {
   updateScaleRule: (id: number, patch: Partial<Omit<ScaleRule, 'id'>>) => void
   removeScaleRule: (id: number) => void
   autoPrintAfterSale: boolean
+  /**
+   * أعمدة جدول بنود الفاتورة القابلة للإخفاء (زر «تخصيص الحقول» في شريط الفاتورة).
+   * **إخفاء عمود عرضٌ فقط ولا يغيّر أي حساب**: الضريبة تُحتسب وتظهر في ملخص
+   * الحسابات وفي القيد سواء ظهر عمودها أم لا. لذلك تُمنع هنا الأعمدة التي
+   * تُدخَل منها القيم (الكمية/السعر/الخصم/المخزن) — تلك لا تُخفى أبداً.
+   */
+  invoiceColumns: InvoiceColumnPrefs
+  toggleInvoiceColumn: (key: keyof InvoiceColumnPrefs) => void
+  resetInvoiceColumns: () => void
   updateReceipt: (patch: Partial<ReceiptSettings>) => void
   setAutoPrint: (v: boolean) => void
   appearance: AppearanceSettings
@@ -270,6 +300,9 @@ export const useAppStore = create<AppState>()(
       }),
       removeScaleRule: (id) => set((s) => ({ scaleRules: s.scaleRules.filter((r) => r.id !== id) })),
       autoPrintAfterSale: false,
+      invoiceColumns: DEFAULT_INVOICE_COLUMNS,
+      toggleInvoiceColumn: (key) => set((s) => ({ invoiceColumns: { ...s.invoiceColumns, [key]: !s.invoiceColumns[key] } })),
+      resetInvoiceColumns: () => set({ invoiceColumns: DEFAULT_INVOICE_COLUMNS }),
       updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
       setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
       appearance: DEFAULT_APPEARANCE,

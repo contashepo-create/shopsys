@@ -1163,6 +1163,22 @@ export interface EmployeeAdvance {
 }
 
 /** مسودة محرر فاتورة متقدمة — تحفظ محلياً داخل مخزن التطبيق وتنتقل مع النسخ الاحتياطي. */
+/**
+ * مرفق مستند تجاري (فاتورة بيع/شراء): صورة أو PDF محفوظ كـ dataUrl بجوار المستند.
+ * نفس خط مرفقات ملف المريض: يُضغط قبل الحفظ ويُفحص نوعه وحجمه، والمسودة تحمل
+ * مرفقاتها داخل حمولتها حتى الترحيل فتُربط برقم المستند الحقيقي.
+ */
+export interface DocumentFile {
+  id: number
+  documentKind: 'sale' | 'purchase'
+  documentId: number
+  name: string
+  mime: string // image/jpeg | application/pdf
+  dataUrl: string
+  addedBy: string
+  addedAt: string
+}
+
 export interface AdvancedInvoiceDraft {
   id: string
   kind: 'sale' | 'purchase'
@@ -1364,6 +1380,7 @@ interface DataState {
   custodyTxs: CustodyTx[] // حركات ملفات العهد (تعزيز/مصروف/فاتورة/مرتجع/عجز)
   clinicPatients: ClinicPatient[] // العيادة (القرار 27)
   patientAttachments: PatientAttachment[] // مستندات المرضى: أشعة/تحاليل/تقارير
+  documentFiles: DocumentFile[] // مرفقات الفواتير (أمر شراء العميل · بوليصة · إيصال بنكي)
   clinicVisits: ClinicVisit[]
   treatmentPlans: TreatmentPlan[]
   clinicCollections: ClinicCollection[]
@@ -2224,6 +2241,9 @@ interface DataState {
   /** إرفاق مستند طبي (صورة/PDF) لملف المريض */
   addPatientAttachment: (a: Omit<PatientAttachment, 'id' | 'addedAt'>) => PatientAttachment
   removePatientAttachment: (id: number) => void
+  /** إرفاق مستند بفاتورة مرحّلة (صورة/PDF) — يُفحص نوعه وحجمه قبل الحفظ */
+  addDocumentFile: (file: Omit<DocumentFile, 'id' | 'addedAt'>) => DocumentFile
+  removeDocumentFile: (id: number) => void
   /** زيارة بملاحظات الكشف وقيمتها — سداد جزئي مدعوم، والمتبقي دين على المريض */
   addClinicVisit: (args: {
     patientId: number; kind: VisitKind; complaint: string; diagnosis: string; treatment: string
@@ -2706,6 +2726,7 @@ export const useDataStore = create<DataState>()(
       custodyTxs: [],
       clinicPatients: [],
       patientAttachments: [],
+      documentFiles: [],
       clinicVisits: [],
       treatmentPlans: [],
       clinicCollections: [],
@@ -9813,6 +9834,18 @@ export const useDataStore = create<DataState>()(
       },
       removePatientAttachment: (id) => {
         set({ patientAttachments: get().patientAttachments.filter((x) => x.id !== id) })
+      },
+      addDocumentFile: (file) => {
+        const state = get()
+        const errors = validateAttachment({ name: file.name, mime: file.mime, dataUrl: file.dataUrl })
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (!Number.isInteger(file.documentId) || file.documentId <= 0) throw new Error('المرفق بلا مستند — رحّل الفاتورة أولاً')
+        const saved: DocumentFile = { ...file, name: sanitizeText(file.name, 120), id: nextId(state.documentFiles), addedAt: new Date().toISOString() }
+        set({ documentFiles: [...state.documentFiles, saved] })
+        return saved
+      },
+      removeDocumentFile: (id) => {
+        set({ documentFiles: get().documentFiles.filter((row) => row.id !== id) })
       },
       addClinicVisit: (args) => {
         const state = get()

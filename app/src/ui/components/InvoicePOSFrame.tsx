@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ArrowLeft, Barcode, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, Eye, FileClock, FileText, Fingerprint, Hash, MessageSquare, MoreVertical, Printer, Save, Search, SlidersHorizontal } from 'lucide-react'
+import { ArrowLeft, Barcode, CheckCheck, ChevronLeft, ChevronRight, CircleHelp, Columns3, Eye, FileClock, FileDown, FileText, Fingerprint, Hash, MessageSquare, MoreVertical, Printer, RotateCcw, Save, Search, SlidersHorizontal } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
-import { useAppStore } from '../../stores/app.store.ts'
+import { INVOICE_COLUMN_LABELS, useAppStore, type InvoiceColumnPrefs } from '../../stores/app.store.ts'
 import { Btn } from './ui.tsx'
 
 type InvoicePOSFrameProps = {
@@ -39,6 +39,8 @@ type InvoicePOSFrameProps = {
   onSaveDraft: () => void
   onRestoreDraft: () => void
   onPrint: () => void
+  /** تصدير نسخة PDF — يفتح حوار الطباعة على قالب A4 ووجهة «حفظ كـ PDF» */
+  onExportPdf?: () => void
   onPost: () => void
   children: ReactNode
 }
@@ -84,6 +86,7 @@ export function InvoicePOSFrame({
   onSaveDraft,
   onRestoreDraft,
   onPrint,
+  onExportPdf,
   onPost,
   children,
 }: InvoicePOSFrameProps) {
@@ -93,10 +96,12 @@ export function InvoicePOSFrame({
   const host = useWindowHost()
   const minimizeWindow = useWindowStore((state) => state.minimizeWindow)
   const toggleMaximize = useWindowStore((state) => state.toggleMaximizeWindow)
-  const { sync, receipt, autoPrintAfterSale, einvoice } = useAppStore()
+  const { sync, receipt, autoPrintAfterSale, einvoice, invoiceColumns, toggleInvoiceColumn, resetInvoiceColumns } = useAppStore()
   const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === 'undefined' ? true : navigator.onLine)
   const [menuOpen, setMenuOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
+  const [columnsOpen, setColumnsOpen] = useState(false)
+  const hiddenColumns = (Object.keys(INVOICE_COLUMN_LABELS) as (keyof InvoiceColumnPrefs)[]).filter((key) => !invoiceColumns[key]).length
   useEffect(() => {
     const on = () => setBrowserOnline(true)
     const off = () => setBrowserOnline(false)
@@ -104,6 +109,19 @@ export function InvoicePOSFrame({
     window.addEventListener('offline', off)
     return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
   }, [])
+  /* إغلاق قائمة الأعمدة بالنقر خارجها أو بـEsc — كباقي القوائم المنسدلة في النظام */
+  useEffect(() => {
+    if (!columnsOpen) return
+    const away = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.invoice-doc-colmenu-wrap')) return
+      setColumnsOpen(false)
+    }
+    const esc = (event: KeyboardEvent) => { if (event.key === 'Escape') setColumnsOpen(false) }
+    document.addEventListener('mousedown', away)
+    document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc) }
+  }, [columnsOpen])
   const connectivity = connectivityStatus({ browserOnline, syncEnabled: sync.enabled, dirty: sync.dirty, lastResult: sync.lastResult })
   const connectivityInfo = CONNECTIVITY_LABELS[connectivity]
   const browserPrintAvailable = typeof window !== 'undefined' && typeof window.print === 'function'
@@ -222,6 +240,26 @@ export function InvoicePOSFrame({
           <span>الطباعة: {browserPrintAvailable ? (autoPrintEnabled ? 'تلقائية بعد البيع' : receipt.defaultTemplate) : 'غير متاحة'}</span>
         </div>
         <div className="invoice-doc-actionbar-buttons">
+          {/* تخصيص أعمدة جدول البنود — عرضٌ فقط، والحسابات والقيد لا تتأثر */}
+          <div className="invoice-doc-colmenu-wrap">
+            <Btn variant="ghost" onClick={() => setColumnsOpen((value) => !value)} title="إظهار/إخفاء أعمدة العرض في جدول البنود">
+              <Columns3 size={13} /> تخصيص الحقول{hiddenColumns ? ` (${hiddenColumns} مخفي)` : ''}
+            </Btn>
+            {columnsOpen && (
+              <div className="invoice-doc-colmenu" data-doc-columns-panel>
+                <b>أعمدة جدول البنود</b>
+                {(Object.keys(INVOICE_COLUMN_LABELS) as (keyof InvoiceColumnPrefs)[]).map((key) => (
+                  <label key={key}>
+                    <input type="checkbox" checked={invoiceColumns[key]} onChange={() => toggleInvoiceColumn(key)} />
+                    {INVOICE_COLUMN_LABELS[key]}
+                  </label>
+                ))}
+                <small>الإخفاء عرضٌ فقط: الضريبة والكميات والأسعار تبقى كما هي في الإجماليات والقيد المحاسبي.</small>
+                <button type="button" className="invoice-doc-colreset" onClick={() => { resetInvoiceColumns(); setColumnsOpen(false) }}><RotateCcw size={11} /> إعادة كل الأعمدة</button>
+              </div>
+            )}
+          </div>
+          {onExportPdf && <Btn variant="ghost" onClick={onExportPdf} title="يفتح حوار الطباعة — اختر وجهة «حفظ كـ PDF»"><FileDown size={13} /> تصدير PDF</Btn>}
           <Btn variant="ghost" onClick={onSaveDraft}><Save size={13} /> حفظ فقط</Btn>
           <Btn variant="ghost" onClick={onPrint}><Printer size={13} /> حفظ ومعاينة</Btn>
           <Btn onClick={onPost} shortcut="F9" className="invoice-doc-post"><CheckCheck size={14} /> ترحيل {sale ? 'وتحصيل' : 'وسداد'} {postAmountLabel ?? ''}</Btn>

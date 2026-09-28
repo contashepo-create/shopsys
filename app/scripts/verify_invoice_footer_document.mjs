@@ -230,4 +230,59 @@ const footerOf = (src) => {
   R.ok('قطع التصميم المرجعي: نقاط النافذة · تصفّح الدفتر · تصفية التصنيف · رقاقات داخل الحقول · وحدة وضريبة وأدوات لكل سطر · بلاطات الدفع · كتلة التسوية')
 }
 
+/* ⑪ المرفقات وتخصيص الحقول وتصدير PDF — قطع المرجع المتبقية، ولا زرّ منها شكلي */
+{
+  const attach = readFileSync(`${ROOT}/src/ui/components/DocumentAttachments.tsx`, 'utf8')
+  const repo = readFileSync(`${ROOT}/src/data/repo.ts`, 'utf8')
+  const store = readFileSync(`${ROOT}/src/stores/app.store.ts`, 'utf8')
+  const table = readFileSync(`${ROOT}/src/ui/components/InvoiceLinesTable.tsx`, 'utf8')
+
+  // (أ) خانة المرفقات موصولة بتخزين حقيقي لا واجهة فارغة
+  assert.ok(/documentFiles:\s*DocumentFile\[\]/.test(repo), 'لا جدول مرفقات في قاعدة البيانات — المرفقات ستضيع')
+  assert.ok(repo.includes('addDocumentFile:') && repo.includes('removeDocumentFile:'), 'قاعدة البيانات بلا إجراءات إضافة/حذف المرفق')
+  assert.ok(repo.includes('validateAttachment({ name: file.name'), 'المرفق يُحفظ بلا فحص نوع وحجم')
+  assert.ok(/رحّل الفاتورة أولاً/.test(repo), 'المرفق يُقبل بلا رقم مستند — مرفق يتيم')
+  assert.ok(attach.includes('addDocumentFile') && attach.includes('removeDocumentFile') && attach.includes('fileToAttachmentDataUrl'),
+    'مكوّن المرفقات لا يقرأ/يكتب في المخزن')
+  assert.ok(attach.includes('المرفقات والمستندات ('), 'زر المرفقات بلا عدّاد كما في المرجع')
+  assert.ok(css.includes('.invoice-doc-attachbtn') && css.includes('.invoice-doc-attachlist'), 'لا أنماط مستند لخانة المرفقات')
+  for (const [label, src] of PAGES) {
+    assert.ok(src.includes('DocumentAttachmentsBox'), `${label}: تذييل لوحة الملاحظات بلا خانة مرفقات`)
+    assert.ok(/attachments\.forEach/.test(src) && src.includes('addDocumentFile'), `${label}: مرفقات المسودة لا تُربط بالفاتورة عند الترحيل`)
+    assert.ok(/attachments\}\)\}\);unsaved\.markClean|,attachments\}\)/.test(src), `${label}: المرفقات لا تُحفظ داخل المسودة`)
+  }
+
+  // (ب) تخصيص الحقول: تفضيل محفوظ يقرؤه الجدول فعلاً — وأعمدة الإدخال ممنوعة من الإخفاء
+  assert.ok(store.includes('invoiceColumns') && store.includes('toggleInvoiceColumn') && store.includes('resetInvoiceColumns'),
+    'لا تفضيل محفوظ لأعمدة جدول البنود')
+  assert.ok(/DEFAULT_INVOICE_COLUMNS[\s\S]{0,120}code:\s*true/.test(store), 'الأعمدة لا تبدأ كلها ظاهرة')
+  assert.ok(table.includes('state.invoiceColumns'), 'جدول البنود لا يقرأ تفضيل الأعمدة')
+  for (const key of ['columns.code', 'columns.unit', 'columns.tax', 'columns.details']) {
+    assert.ok(table.includes(key), `عمود ${key} غير موصول بزر تخصيص الحقول`)
+  }
+  for (const guard of ['COL.qty', 'COL.price', 'COL.total', 'COL.tools']) {
+    const idx = table.indexOf(`${guard}}\`} scope="col"`)
+    assert.ok(idx > 0 || table.includes(guard), `عمود الإدخال ${guard} اختفى`)
+  }
+  assert.ok(!/columns\.(qty|price|total|tools|warehouse)/.test(table), 'أعمدة الإدخال (كمية/سعر/إجمالي/مخزن) لا يجوز إخفاؤها — الحساب يمر منها')
+  assert.ok(frame.includes('تخصيص الحقول') && frame.includes('data-doc-columns-panel') && css.includes('.invoice-doc-colmenu'),
+    'زر «تخصيص الحقول» غير موجود في شريط الإجراءات')
+  assert.ok(/الإخفاء عرضٌ فقط/.test(frame), 'قائمة الأعمدة بلا تنبيه أن الإخفاء لا يمس الحساب')
+
+  // (ج) تصدير PDF: زر موصول بمسار طباعة حقيقي مع تلميح الوجهة
+  assert.ok(frame.includes('onExportPdf') && frame.includes('تصدير PDF'), 'لا زر «تصدير PDF» في شريط الإجراءات')
+  for (const [label, src] of PAGES) {
+    assert.ok(src.includes('onExportPdf={exportPdf}'), `${label}: زر PDF غير موصول`)
+    assert.ok(/const exportPdf=\(\)=>\{[\s\S]{0,240}printDraft\('a4'\)/.test(src), `${label}: زر PDF لا يفتح قالب A4 فعلاً`)
+    assert.ok(src.includes('حفظ كـ PDF'), `${label}: لا تلميح لوجهة الحفظ كـ PDF`)
+  }
+
+  // (د) رقاقة العملة داخل حقل المبلغ (المرجع: EGP داخل الحافة)
+  assert.ok(css.includes('.invoice-doc-amountcur') && /position:\s*absolute/.test(ruleOf('.invoice-doc-amountcur')), 'رقاقة العملة ليست داخل حافة حقل المبلغ')
+  for (const [label, src] of PAGES) {
+    assert.ok(src.includes('invoice-doc-amountfield') && src.includes('invoice-doc-amountcur'), `${label}: حقل المبلغ بلا رقاقة العملة`)
+  }
+  R.ok('المرفقات بتخزين حقيقي وفحص · تخصيص الحقول لا يمس أعمدة الإدخال ولا الحساب · تصدير PDF يفتح قالب A4 · رقاقة العملة داخل حقل المبلغ')
+}
+
 R.done()

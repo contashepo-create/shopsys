@@ -9,6 +9,7 @@ import { Eye, BookOpenText, Printer, Pencil, FileMinus2, FilePlus2, FileSpreadsh
 import { useNavigate } from 'react-router-dom'
 import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
+import { DocumentAttachmentsBox } from '../components/DocumentAttachments.tsx'
 import type { DocumentCharge } from '../../core/documentCharges.ts'
 import type { InternalExpense } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -401,6 +402,12 @@ export function SalesInvoicesPage() {
                 </table>
               </div>
             )}
+
+            {/* مرفقات الفاتورة — أمر شراء العميل/بوليصة الشحن المحفوظة مع المستند */}
+            <div className="flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-2.5 dark:border-slate-700 dark:bg-slate-900/30">
+              <div className="text-[11px] font-bold text-slate-500">المرفقات والمستندات المحفوظة مع هذه الفاتورة</div>
+              <DocumentAttachmentsBox documentKind="sale" documentId={viewing.id} pending={[]} onPendingChange={() => {}} addedBy={printOperatorName} />
+            </div>
 
             {/* سجل تدقيق التعديلات — كل تعديل موثق بقيده العاكس (لا حذف أبداً) */}
             {viewing.editHistory?.length ? (
