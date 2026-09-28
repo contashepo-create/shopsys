@@ -72,9 +72,17 @@ body.zones .zone[data-zone]::after{content:attr(data-zone);position:absolute;top
 select.in{cursor:pointer}
 .party{border:1px solid var(--doc-line);border-radius:.5rem;background:var(--doc-tint);padding:.22rem .4rem;display:flex;flex-direction:column;justify-content:center;gap:.08rem;min-width:0}
 .party b{font-size:0.74rem;color:var(--doc-ink);display:flex;align-items:center;gap:.25rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.party .prow{display:flex;justify-content:space-between;gap:.25rem;font-size:0.62rem;color:var(--doc-faint);font-weight:700}
-.party .prow b{font-size:0.66rem;direction:ltr;font-family:ui-monospace,monospace}
+.party .pline{display:flex;align-items:baseline;justify-content:space-between;gap:.4rem;font-size:0.64rem;color:var(--doc-muted);font-weight:700;white-space:nowrap}
+.party .pline b{direction:ltr;font-family:ui-monospace,monospace;font-size:0.7rem;font-weight:800;color:var(--doc-ink-soft)}
+.party .pline.final{border-top:1px solid var(--doc-line);margin-top:.1rem;padding-top:.12rem;font-size:0.68rem;color:var(--doc-ink)}
+.party .pline.final b{font-size:0.82rem;font-weight:900}
+.party .cr{color:var(--doc-ok)!important}
+.party .dr{color:var(--doc-danger)!important}
 .party .warnline{font-size:0.62rem;color:var(--doc-danger);font-weight:800}
+.paywarn{border:1px solid var(--doc-danger-line);background:var(--doc-danger-tint);color:var(--doc-danger);
+  border-radius:.35rem;padding:.12rem .35rem;font-size:0.62rem;font-weight:800}
+.payok{border:1px solid var(--doc-ok-line);background:var(--doc-ok-tint);color:var(--doc-ok);
+  border-radius:.35rem;padding:.12rem .35rem;font-size:0.62rem;font-weight:800}
 .dot{width:.4rem;height:.4rem;border-radius:999px;background:var(--doc-ok);display:inline-block}
 .dot.warn{background:var(--doc-warn)}.dot.danger{background:var(--doc-danger)}
 
@@ -317,6 +325,7 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
             <button class="chip" id="payFull">تحصيل المبلغ كاملاً</button><button class="chip" id="payNone">بيع آجل بلا تحصيل</button>
           </div>
         </div>
+        <div id="payNote"></div>
         <div id="multiPayBox" hidden>
           <div class="payrow"><label>💵 نقدي — الخزينة الرئيسية</label><input type="text" inputmode="decimal" class="pay num" data-k="cash" value="0"></div>
           <div class="payrow"><label>🏦 تحويل بنكي</label><input type="text" inputmode="decimal" class="pay num" data-k="bank" value="0"></div>
@@ -340,6 +349,7 @@ textarea.notes{flex:1;min-height:2.4rem;resize:none;border:1px solid var(--doc-l
           <div class="row"><span>إجمالي البنود</span><span class="fill"></span><b id="sumLines">0.00</b></div>
           <div class="row"><span>الخصم</span><span class="fill"></span><b id="sumDisc">0.00</b></div>
           <div class="row"><span>الضريبة</span><span class="fill"></span><b id="sumTax">0.00</b></div>
+          <div class="row"><span>مصروفات على العميل</span><span class="fill"></span><b id="sumExp" style="color:var(--doc-warn)">0.00</b></div>
           <div class="row" data-modes="profit"><span>الربح المتوقع</span><span class="fill"></span><b id="sumProfit" style="color:var(--doc-ok)">0.00</b></div>
         </div>
         <div class="grand"><span>صافي إجمالي الفاتورة</span><b id="grand">0.00</b></div>
@@ -457,6 +467,7 @@ const CUSTOMERS=[
  {id:2,name:'بقالة الأمانة',phone:'0533445566',balance:12800,limit:15000,active:1},
  {id:3,name:'مطاعم الديرة',phone:'0567788990',balance:0,limit:20000,active:1},
  {id:4,name:'عميل موقوف — سعد',phone:'0500011122',balance:900,limit:1000,active:0},
+ {id:5,name:'شركة الواحة (دفعة مقدمة)',phone:'0590001122',balance:-2500,limit:30000,active:1},
 ]
 const fmt=n=>(Math.round(n*100)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)]
@@ -466,6 +477,7 @@ const state={
   multiPay:false, payOne:0, pays:{cash:0,bank:0,card:0,staff:0}, payMethod:'cash',
   discKind:'pct', discValue:0,
 }
+const addons={cust:[],intern:[],comm:[],att:[]}
 const newLine=()=>({item:null,qty:1,price:0,disc:0})
 state.lines=[newLine()]
 
@@ -488,13 +500,15 @@ function applyMode(){
 
 // ═════ جدول البنود ═════
 function lineTotal(l){ return l.item? l.qty*l.price*(1-(l.disc||0)/100) : 0 }
+function custExpenses(){ return addons.cust.reduce((a,x)=>a+(+x.amount||0),0) }
 function totals(){
   const lines=state.lines.reduce((s,l)=>s+lineTotal(l),0)
   const disc=state.discKind==='pct'? lines*state.discValue/100 : Math.min(state.discValue,lines)
-  const net=lines-disc, tax=0, grand=net+tax
+  const exp=custExpenses()
+  const net=lines-disc, tax=0, grand=net+tax+exp
   const cogs=state.lines.reduce((s,l)=>s+(l.item?l.qty*l.item.cost:0),0)
   const paid=state.multiPay? Object.values(state.pays).reduce((a,b)=>a+(+b||0),0) : (+state.payOne||0)
-  return {lines,disc,net,tax,grand,profit:net-cogs,paid,due:Math.max(0,grand-paid)}
+  return {lines,disc,net,tax,exp,grand,profit:net-cogs,paid,due:Math.max(0,grand-paid)}
 }
 function renderLines(){
   const body=$('#linesBody'); body.innerHTML=''
@@ -598,26 +612,60 @@ function renderSelectedInfo(){
   $('#selStock').textContent=it?(it.stock===Infinity?'∞':fmt(it.stock)+' '+it.unit):'—'
   $('#selCost').textContent=it?fmt(it.cost):'—'
 }
+function curCust(){ return CUSTOMERS.find(x=>x.id===state.customerId) }
+// أقل مبلغ يجب تحصيله قبل الترحيل
+function minCollect(t){
+  const c=curCust()
+  if(c.id===0) return t.grand                                   // عميل نقدي: التحصيل كامل
+  if(!c.active) return t.grand                                  // عميل موقوف: الآجل ممنوع
+  const limit=+c.limit||0
+  if(limit<=0) return t.grand                                   // بلا حد ائتمان = بلا بيع آجل
+  return Math.max(0, c.balance + t.grand - limit)               // ما يتجاوز حد الائتمان يُحصَّل الآن
+}
 function renderTotals(){
+  const c=curCust()
+  // العميل النقدي: المبلغ المستلم = إجمالي الفاتورة دائماً في وضع الطريقة الواحدة
+  if(c.id===0 && !state.multiPay){
+    const g=totals().grand
+    if(Math.abs(state.payOne-g)>0.004){ state.payOne=g; const el=$('#payOne'); if(el)el.value=fmt(g) }
+  }
   const t=totals()
   $('#sumLines').textContent=fmt(t.lines); $('#sumDisc').textContent=fmt(t.disc)
-  $('#sumTax').textContent=fmt(t.tax); $('#sumProfit').textContent=fmt(t.profit)
+  $('#sumTax').textContent=fmt(t.tax); $('#sumExp').textContent=fmt(t.exp); $('#sumProfit').textContent=fmt(t.profit)
   $('#grand').textContent=fmt(t.grand)
   $('#paidOut').textContent=fmt(t.paid); $('#dueOut').textContent=fmt(t.due)
   $('#stTotal').textContent=fmt(t.grand); $('#stDue').textContent=fmt(t.due)
   $('#lineCount').textContent=state.lines.filter(l=>l.item).length+' بند'
   $('#linesValue').textContent='قيمة البنود '+fmt(t.lines)+' ر.س'
   $('#discEq').textContent=state.discKind==='pct'? '= '+fmt(t.disc)+' ر.س' : '= '+(t.lines? fmt(t.disc/t.lines*100):'0.00')+' %'
-  renderParty()
+  // بوابة الترحيل
+  const need=minCollect(t), short=Math.max(0,need-t.paid)
+  const note=$('#payNote'), post=$('#postBtn')
+  if(c.id===0){
+    note.className='payok'
+    note.textContent=short>0.004? `عميل نقدي — لا يقل التحصيل عن إجمالي الفاتورة ${fmt(t.grand)} ر.س`
+                                : `عميل نقدي — محصَّل بالكامل ${fmt(t.paid)} ر.س`
+  } else if(short>0.004){
+    note.className='paywarn'
+    note.textContent=!c.active? `عميل موقوف — يلزم تحصيل الفاتورة كاملة ${fmt(need)} ر.س`
+      : (+c.limit>0? `حد الائتمان ${fmt(c.limit)} — يلزم تحصيل ${fmt(short)} ر.س قبل الترحيل`
+                   : `العميل بلا حد ائتمان — يلزم تحصيل الفاتورة كاملة`)
+  } else { note.className='payok'; note.textContent=need>0? `الحد مغطّى — يمكن الترحيل` : `ضمن حد الائتمان — يمكن الترحيل آجلاً` }
+  post.disabled=short>0.004
+  post.title=short>0.004? `ممنوع الترحيل: ينقص ${fmt(short)} ر.س من التحصيل` : 'حفظ وترحيل'
+  $('#payFull').disabled=false; $('#payNone').disabled=(c.id===0)
+  renderParty(t)
 }
-function renderParty(){
-  const c=CUSTOMERS.find(x=>x.id===state.customerId), t=totals()
-  const after=c.balance+t.due
-  const tone=!c.active?'danger':after>c.limit&&c.limit>0?'danger':after>0?'warn':'ok'
+function renderParty(t){
+  const c=curCust(); t=t||totals()
+  const before=c.balance, after=before+t.grand-t.paid
+  const cls=v=>v>0.004?'dr':v<-0.004?'cr':''          // موجب = عليه (أحمر) · سالب = له (أخضر)
+  const tone=!c.active?'danger':(c.limit>0&&after>c.limit)?'danger':after>0?'warn':'ok'
   $('#customerField').textContent=c.name
   $('#partyCard').innerHTML=`<b><span class="dot ${tone==='ok'?'':tone}"></span> ${c.name}</b>
-    <div class="prow"><span>الرصيد <b>${fmt(c.balance)}</b></span><span>الحد <b>${fmt(c.limit)}</b></span></div>
-    <div class="prow"><span>بعد الفاتورة <b style="color:${tone==='danger'?'var(--doc-danger)':tone==='warn'?'var(--doc-warn)':'inherit'}">${fmt(after)}</b></span></div>
+    <div class="pline"><span>الحد</span><b>${fmt(c.limit)}</b></div>
+    <div class="pline"><span>الرصيد قبل الفاتورة</span><b class="${cls(before)}">${fmt(Math.abs(before))}</b></div>
+    <div class="pline final"><span>الرصيد بعد الفاتورة</span><b class="${cls(after)}">${fmt(Math.abs(after))}</b></div>
     ${!c.active?'<div class="warnline">موقوف — الآجل ممنوع</div>':''}`
 }
 
@@ -809,7 +857,13 @@ $('#payOne').addEventListener('input',e=>{state.payOne=parseFloat(e.target.value
 $$('.pay').forEach(inp=>inp.addEventListener('input',()=>{state.pays[inp.dataset.k]=parseFloat(String(inp.value).replace(/,/g,''))||0;renderTotals()}))
 $$('#paySeg button').forEach(b=>b.onclick=()=>{$$('#paySeg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.payMethod=b.dataset.m})
 $('#payFull').onclick=()=>{const t=totals();$('#payOne').value=fmt(t.grand);state.payOne=t.grand;renderTotals()}
-$('#payNone').onclick=()=>{$('#payOne').value='0.00';state.payOne=0;renderTotals()}
+$('#payNone').onclick=()=>{ if(curCust().id===0)return; $('#payOne').value='0.00';state.payOne=0;renderTotals() }
+// العميل النقدي: أي مبلغ أقل يُرفع تلقائياً لإجمالي الفاتورة عند ترك الحقل
+$('#payOne').addEventListener('change',()=>{
+  const t=totals()
+  if(curCust().id===0 && state.payOne<t.grand-0.004){ state.payOne=t.grand; $('#payOne').value=fmt(t.grand) }
+  renderTotals()
+})
 
 // ═════ الخصم: نسبة / يدوي في سطر واحد ═════
 function setDiscKind(kind){
@@ -848,7 +902,6 @@ $('#barInput').addEventListener('keydown',e=>{
 })
 
 // ═════ مصروف على العميل / داخلي / عمولة / مرفقات — تحت محرر الشروط ═════
-const addons={cust:[],intern:[],comm:[],att:[]}
 const ADDON_META={cust:{t:'＋ مصروف على العميل',l:'بيان المصروف',n:'expCustN'},intern:{t:'＋ مصروف داخلي',l:'بيان المصروف',n:'expInN'},
   comm:{t:'＋ عمولة موظف',l:'اسم الموظف',n:'commN'},att:{t:'📎 إرفاق مستند',l:'اسم المرفق',n:'attN'}}
 let addonKind='cust'
@@ -868,7 +921,7 @@ $('#attBtn').onclick=()=>openAddon('att')
 $('#expSave').onclick=()=>{
   const note=$('#expNote').value.trim()||'بلا بيان'
   addons[addonKind].push({note,amount:parseFloat($('#expAmount').value.replace(/,/g,''))||0})
-  closeWin('expWin'); renderAddons()
+  closeWin('expWin'); renderAddons(); renderTotals()
 }
 
 // ═════ عدد السطور حسب ارتفاع الشاشة ═════

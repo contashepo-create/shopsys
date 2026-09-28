@@ -96,7 +96,51 @@ ok('حقول الترويسة صف واحد (٦ حقول في ٦ أعمدة)', f
 ok('شبكة الحقول ستة أعمدة ثابتة', /\.fields\{display:grid;grid-template-columns:1\.55fr1fr1fr1\.2fr1\.3fr1fr/.test(css))
 ok('الصف الثاني شريط واحد يمتد بعرض الترويسة', !!fields.querySelector('.f-strip .selstrip') && /\.fields\.f-strip\{grid-column:1\/-1\}/.test(css))
 ok('المستخدم والخانات الثلاث كلها داخل الشريط', ['selName', 'selStock', 'selCost'].every((id) => !!$('.selstrip #' + id)) && /محمد عبده/.test($('.selstrip').textContent))
-ok('بطاقة العميل مضغوطة في سطرين', $('#partyCard').querySelectorAll('.prow').length === 2)
+ok('بطاقة العميل مضغوطة في ثلاثة أسطر بند/قيمة', $('#partyCard').querySelectorAll('.pline').length === 3)
+
+// ⑩ المصروفات على العميل داخل الإجماليات
+const num = (x) => parseFloat(x.replace(/,/g, ''))
+const grandBefore = num($('#grand').textContent)
+click($('#expCustBtn')); $('#expNote').value = 'أجرة نقل'; $('#expAmount').value = '120'; click($('#expSave'))
+ok('سطر «مصروفات على العميل» يظهر في الإجماليات', num($('#sumExp').textContent) === 195, $('#sumExp').textContent)
+ok('المصروف يدخل في صافي إجمالي الفاتورة', Math.abs(num($('#grand').textContent) - (grandBefore + 120)) < 0.01,
+  grandBefore + ' → ' + $('#grand').textContent)
+
+// ⑪ بطاقة العميل: بند وقيمته في سطر واحد + ألوان + سطر نهائي سميك
+const plines = [...$('#partyCard').querySelectorAll('.pline')]
+ok('ثلاثة أسطر: الحد · قبل الفاتورة · بعد الفاتورة', plines.length === 3 &&
+  /الحد/.test(plines[0].textContent) && /قبل الفاتورة/.test(plines[1].textContent) && /بعد الفاتورة/.test(plines[2].textContent))
+ok('القيمة بجانب البند في نفس السطر', plines.every((l) => l.children.length === 2 && l.children[1].tagName === 'B'))
+ok('سطر «بعد الفاتورة» سميك ومميز', plines[2].classList.contains('final') && /\.partyy?\.pline\.finalb\{[^}]*font-weight:900/.test(css.replace(/\s/g, '')))
+// عميل عليه رصيد ← أحمر
+click($('#customerField')); input($('#custQuery'), 'الأمانة'); dbl(d.querySelectorAll('#custList .res')[0])
+const pl = () => [...$('#partyCard').querySelectorAll('.pline b')]
+ok('الرصيد المدين (عليه) بالأحمر', pl()[1].classList.contains('dr'), pl()[1].className)
+ok('الرصيد بعد الفاتورة يتفاعل ويظهر بالأحمر', pl()[2].classList.contains('dr'))
+// عميل له رصيد ← أخضر
+click($('#customerField')); input($('#custQuery'), 'الواحة'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('الرصيد الدائن (له) بالأخضر', pl()[1].classList.contains('cr'), pl()[1].className)
+
+// ⑫ حد الائتمان يمنع الترحيل حتى يُغطّى
+click($('#customerField')); input($('#custQuery'), 'الأمانة'); dbl(d.querySelectorAll('#custList .res')[0])
+$('#multiPay').checked = false; $('#multiPay').dispatchEvent(new window.Event('change', { bubbles: true }))
+input(cell(0, 'qty'), '60')   // نكبّر الفاتورة حتى تتجاوز حد الائتمان
+input($('#payOne'), '0')
+const grandNow = num($('#grand').textContent), needed = Math.max(0, 12800 + grandNow - 15000)
+ok('الترحيل ممنوع قبل تغطية الحد', $('#postBtn').disabled === true && /حد الائتمان/.test($('#payNote').textContent), $('#payNote').textContent)
+ok('الرسالة تذكر المبلغ الواجب تحصيله', new RegExp(needed.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')).test($('#payNote').textContent), $('#payNote').textContent)
+input($('#payOne'), String(needed))
+ok('بعد تحصيل المبلغ المطلوب يُسمح بالترحيل', $('#postBtn').disabled === false && /يمكن الترحيل/.test($('#payNote').textContent), $('#payNote').textContent)
+
+// ⑬ العميل النقدي: محصَّل بالكامل ولا يقل عن الإجمالي
+click($('#customerField')); input($('#custQuery'), 'نقدي'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('العميل النقدي: المستلم = إجمالي الفاتورة تلقائياً', $('#payOne').value === $('#grand').textContent, $('#payOne').value + ' / ' + $('#grand').textContent)
+ok('مكتوب أنه محصَّل بالكامل', /محصَّل بالكامل/.test($('#payNote').textContent) && $('#payNote').className === 'payok', $('#payNote').textContent)
+ok('زر «بيع آجل بلا تحصيل» معطّل للنقدي', $('#payNone').disabled === true)
+input($('#payOne'), '5'); $('#payOne').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('محاولة تحصيل أقل تُرفع تلقائياً للإجمالي', $('#payOne').value === $('#grand').textContent, $('#payOne').value)
+ok('الترحيل مسموح بعد التحصيل الكامل', $('#postBtn').disabled === false)
+ok('رصيد النقدي بعد الفاتورة صفر', num([...$('#partyCard').querySelectorAll('.pline b')][2].textContent) === 0)
 
 console.log('\n── الطلبات السابقة (عدم انكسار) ──')
 ok('لا يوجد شريط بحث أصناف مستقل', !d.querySelector('.entry'))
@@ -121,7 +165,7 @@ click(d.querySelector('#custList [data-edit]'))
 ok('تعديل العميل فوق البحث بلا إغلاقه', !$('#custEditWin').hidden && !$('#custWin').hidden)
 $('#ceName').value = 'مؤسسة النخيل — معدّلة'; click($('#ceSave'))
 ok('الحفظ يعيد للبحث محدَّثاً بصمت', $('#custEditWin').hidden && !$('#custWin').hidden && /معدّلة/.test($('#custList').textContent))
-dbl(d.querySelectorAll('#custList .res')[0])
+input($('#custQuery'), 'النخيل'); dbl(d.querySelectorAll('#custList .res')[0])
 $('#multiPay').checked = true; $('#multiPay').dispatchEvent(new window.Event('change', { bubbles: true }))
 const setPay = (k, v) => input(d.querySelector(`.pay[data-k="${k}"]`), v)
 setPay('cash', 100); setPay('card', 20)
