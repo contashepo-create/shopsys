@@ -10,6 +10,22 @@ import { ItemEditorWindowView, ItemLedgerWindowView, ItemPickerWindowView, ItemP
 const SalesInvoiceWindowView = lazy(() => import('../pages/AdvancedSalesInvoicePage.tsx').then((mod) => ({ default: mod.AdvancedSalesInvoicePage })))
 const PurchaseInvoiceWindowView = lazy(() => import('../pages/AdvancedPurchaseInvoicePage.tsx').then((mod) => ({ default: mod.AdvancedPurchaseInvoicePage })))
 
+/* بلاغ المالك: «فتح الفاتورة يأخذ وقتاً طويلاً ويكتب جارٍ الفتح».
+   السبب أن وحدة الفاتورة ضخمة وتُحمَّل عند أول فتح. الآن نسحبها مسبقاً في وقت
+   خمول المتصفح بعد إقلاع التطبيق، فتفتح النافذة فوراً بلا انتظار. */
+let invoiceModulesWarmed = false
+function warmInvoiceModules() {
+  if (invoiceModulesWarmed) return
+  invoiceModulesWarmed = true
+  const warm = () => {
+    void import('../pages/AdvancedSalesInvoicePage.tsx')
+    void import('../pages/AdvancedPurchaseInvoicePage.tsx')
+  }
+  const idle = (globalThis as { requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number }).requestIdleCallback
+  if (typeof idle === 'function') idle(warm, { timeout: 2500 })
+  else setTimeout(warm, 1200)
+}
+
 const ICONS: Record<AppWindowKind, typeof FileText> = {
   'sales-invoice': ReceiptText,
   'purchase-invoice': FileText,
@@ -50,6 +66,7 @@ export function WindowHost() {
      ولا تصطدم بمفاتيح المتصفح ولا باختصارات الفاتورة (F-keys):
      Ctrl+Alt+W تنقّل · Ctrl+Alt+1..9 قفز لنافذة · Ctrl+Alt+M تصغير ·
      Ctrl+Alt+↑ تكبير/استعادة · Ctrl+Alt+Q إغلاق النشطة. */
+  useEffect(() => { warmInvoiceModules() }, [])
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!event.ctrlKey || !event.altKey || event.metaKey) return

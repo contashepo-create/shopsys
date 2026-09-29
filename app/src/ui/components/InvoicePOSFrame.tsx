@@ -143,7 +143,8 @@ export function InvoicePOSFrame({
 
         <div className="invoice-doc-identity">
           <span className="invoice-doc-numberbox">
-            <FileText size={12} /><b data-doc-number>{documentNumber || (sale ? 'INV — مسودة جديدة' : 'PUR — مسودة جديدة')}</b>
+            {/* بلاغ المالك: اسم «مسودة جديدة» مكرَّر مع شريط عنوان النافذة — يبقى الرقم وحده */}
+            <FileText size={12} /><b data-doc-number>{documentNumber || (sale ? 'INV' : 'PUR')}</b>
             <span className="invoice-doc-nav">
               <button type="button" onClick={onPrevDocument} disabled={!onPrevDocument} aria-label="المستند السابق" title="المستند السابق"><ChevronRight size={11} /></button>
               <button type="button" onClick={onNextDocument} disabled={!onNextDocument} aria-label="المستند التالي" title="المستند التالي"><ChevronLeft size={11} /></button>

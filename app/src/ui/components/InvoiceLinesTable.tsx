@@ -1,4 +1,4 @@
-import { useState, type ReactNode, useEffect, useRef } from 'react'
+import { useState, type ReactNode, useEffect, useMemo, useRef } from 'react'
 import { Barcode, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { InvoiceEditorMode } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -296,23 +296,76 @@ export function InvoiceLinesTable({
   }
   /* عدد أعمدة الجدول الحقيقي: سطور الفراغ كانت تكتب colSpan=20 فتخلق أعمدة وهمية
      تسحق عمود «الصنف / الوصف» وتترك فراغاً هائلاً — الآن الفراغ بعرض الجدول تماماً. */
-  /* أدنى عرض للجدول = مجموع الأعمدة الظاهرة فعلاً + أرضية اسم الصنف (15rem).
-     في table-fixed لا تنفع min-width على الخلية: العمود بلا عرض يأخذ الباقي
-     ولو كان صفراً — لذلك نضمن المجموع هنا ويُمرَّر الجدول أفقياً عند الضيق. */
-  const minTableRem = COLW.index
-    + (columns.code ? COLW.code : 0)
-    + COLW.name
-    + (lineWarehouseMode ? COLW.warehouse : 0)
-    + (kind === 'purchase' && mode !== 'simple' ? COLW.qty * 3 : COLW.qty)
-    + (columns.unit ? COLW.unit : 0)
-    + COLW.price
-    + (kind === 'sale' ? COLW.percent : 0)
-    + (kind === 'purchase' && mode !== 'simple' ? COLW.percent : 0)
-    + (kind === 'sale' && mode === 'profit' && canViewCost ? COLW.money * 2 : 0)
-    + (kind === 'purchase' && mode === 'profit' && canViewCost ? COLW.money : 0)
-    + (showTaxColumn ? COLW.tax : 0)
-    + COLW.total
-    + COLW.tools
+  /* خطة الأعمدة: مصدر واحد للعرض الأدنى ولمجموعة <col> ولسحب الحدود.
+     بلاغ المالك: «اسمح لي بتغيير حجم الأعمدة يميناً ويساراً». */
+  const columnPlan = useMemo(() => {
+    const plan: { key: string; base: number }[] = [{ key: 'index', base: COLW.index }]
+    if (columns.code) plan.push({ key: 'code', base: COLW.code })
+    plan.push({ key: 'name', base: COLW.name })
+    if (lineWarehouseMode) plan.push({ key: 'warehouse', base: COLW.warehouse })
+    if (kind === 'purchase' && mode !== 'simple') plan.push({ key: 'ordered', base: COLW.qty }, { key: 'received', base: COLW.qty }, { key: 'rejected', base: COLW.qty })
+    else plan.push({ key: 'qty', base: COLW.qty })
+    if (columns.unit) plan.push({ key: 'unit', base: COLW.unit })
+    plan.push({ key: 'price', base: COLW.price })
+    if (kind === 'sale') plan.push({ key: 'discount', base: COLW.percent })
+    if (kind === 'purchase' && mode !== 'simple') plan.push({ key: 'vat', base: COLW.percent })
+    if (kind === 'sale' && mode === 'profit' && canViewCost) plan.push({ key: 'cost', base: COLW.money }, { key: 'margin', base: COLW.money })
+    if (kind === 'purchase' && mode === 'profit' && canViewCost) plan.push({ key: 'expenseShare', base: COLW.money })
+    if (showTaxColumn) plan.push({ key: 'tax', base: COLW.tax })
+    plan.push({ key: 'total', base: COLW.total }, { key: 'tools', base: COLW.tools })
+    return plan
+  }, [canViewCost, columns.code, columns.unit, kind, lineWarehouseMode, mode, showTaxColumn])
+
+  const widthsKey = `shopsys-invoice-cols-${kind}`
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem(widthsKey) ?? '{}') as Record<string, number> } catch { return {} }
+  })
+  const widthOf = (column: { key: string; base: number }) => colWidths[column.key] ?? column.base
+  const resizeRef = useRef<{ key: string; startX: number; startRem: number } | null>(null)
+  const rootFont = () => (typeof window === 'undefined' ? 16 : parseFloat(getComputedStyle(document.documentElement).fontSize) || 16)
+  /* السحب من حافة رأس العمود: يمين/يسار يوسّع أو يضيّق العمود ويُحفظ الاختيار */
+  const headPointerMove = (event: React.PointerEvent<HTMLTableSectionElement>) => {
+    if (resizeRef.current) return
+    const cell = (event.target as HTMLElement).closest('th')
+    if (!cell) return
+    const rect = cell.getBoundingClientRect()
+    const near = Math.min(Math.abs(event.clientX - rect.left), Math.abs(event.clientX - rect.right)) <= 5
+    cell.style.cursor = near ? 'col-resize' : ''
+  }
+  const headPointerDown = (event: React.PointerEvent<HTMLTableSectionElement>) => {
+    const cell = (event.target as HTMLElement).closest('th')
+    if (!cell) return
+    const cells = [...(cell.parentElement?.children ?? [])] as HTMLElement[]
+    const index = cells.indexOf(cell)
+    const column = columnPlan[index]
+    if (!column) return
+    const rect = cell.getBoundingClientRect()
+    const fromRight = Math.abs(event.clientX - rect.right) <= 5
+    const fromLeft = Math.abs(event.clientX - rect.left) <= 5
+    if (!fromRight && !fromLeft) return
+    event.preventDefault()
+    event.stopPropagation()
+    resizeRef.current = { key: column.key, startX: event.clientX, startRem: widthOf(column) }
+    const font = rootFont()
+    const move = (moveEvent: PointerEvent) => {
+      const state = resizeRef.current
+      if (!state) return
+      const deltaPx = fromRight ? moveEvent.clientX - state.startX : state.startX - moveEvent.clientX
+      const next = Math.max(2.25, Math.min(40, state.startRem + deltaPx / font))
+      setColWidths((current) => ({ ...current, [state.key]: Number(next.toFixed(2)) }))
+    }
+    const up = () => {
+      resizeRef.current = null
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      setColWidths((current) => { localStorage.setItem(widthsKey, JSON.stringify(current)); return current })
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const resetColumnWidths = () => { setColWidths({}); localStorage.removeItem(widthsKey) }
+
+  const minTableRem = columnPlan.reduce((sum, column) => sum + widthOf(column), 0)
   const columnCount = 1
     + (columns.code ? 1 : 0)
     + 1
@@ -326,7 +379,15 @@ export function InvoiceLinesTable({
     + (kind === 'purchase' && mode === 'profit' && canViewCost ? 1 : 0)
     + (showTaxColumn ? 1 : 0)
     + 2
-  const linesValueMinor = lines.reduce((sum, line) => sum + Math.round(line.qty * line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)), 0)
+  /* الوزن الإجمالي (بلاغ المالك): مجموع كميات الأصناف الموزونة + وزن الوحدة إن عُرِّف */
+  const totalWeight = lines.reduce((sum, line) => {
+    const item = items.find((row) => row.id === line.itemId)
+    const unitWeight = (item as { weightKg?: number } | undefined)?.weightKg ?? (item?.soldByWeight ? 1 : 0)
+    return sum + line.qty * unitWeight
+  }, 0)
+  const weightLabel = totalWeight > 0
+    ? `${totalWeight.toLocaleString('en-US', { maximumFractionDigits: 3 })} كجم`
+    : '—'
 
   return (
     <section className="invoice-lines-panel min-w-0 overflow-visible border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-card-dark">
@@ -337,11 +398,10 @@ export function InvoiceLinesTable({
           <button type="button" className="invoice-lines-delete" aria-label="مسح باركود" title="امسح الباركود لإضافة الصنف في سطر جديد" onClick={() => window.dispatchEvent(new Event('shopsys:focus-item'))}><Barcode size={14} /> مسح باركود</button>
         </div>
         {entryFilter && <div className="invoice-lines-filter">{entryFilter}</div>}
-        <span className="invoice-lines-hint">اكتب داخل خلية الصنف ← يفتح البحث · Enter: صنف ← كمية ← سعر ← السطر التالي · الأسهم للتنقل بين الحقول</span>
+        {/* بلاغ المالك: احذف التلميحات وقيمة البنود، وأبقِ عدد البنود مع الوزن الإجمالي */}
         <div className="invoice-lines-kpis">
           <span className="invoice-lines-count">{lines.length} بند</span>
-          <span className="invoice-lines-value" dir="ltr">{fmt(linesValueMinor)} {currencySymbol}</span>
-          <span className="invoice-lines-value-label">قيمة البنود الحالية</span>
+          <span className="invoice-lines-weight" title="مجموع أوزان البنود (للأصناف ذات الوزن)">⚖ {weightLabel}</span>
         </div>
         <div className="flex w-full items-center gap-2 sm:w-auto">
           {showPicker && <span className="invoice-lines-search-label">إضافة صنف</span>}
@@ -360,9 +420,12 @@ export function InvoiceLinesTable({
       </div>
       <div className="overflow-x-auto" ref={scrollRef} style={boxMaxHeight ? { maxHeight: boxMaxHeight } : undefined}>
         <table className="invoice-lines-table w-full table-fixed text-sm" data-columns={columnCount}
-          style={{ minWidth: `${minTableRem}rem` }}>
-          <thead className="bg-slate-50 dark:bg-slate-800/60">
-            <tr className="text-[11px] font-black text-slate-500 dark:text-slate-300">
+          style={{ minWidth: `${minTableRem}rem` }} data-resizable-columns>
+          <colgroup>{columnPlan.map((column) => <col key={column.key} data-col={column.key} style={{ width: `${widthOf(column)}rem` }} />)}</colgroup>
+          <thead className="bg-slate-50 dark:bg-slate-800/60" onPointerMove={headPointerMove} onPointerDown={headPointerDown}
+            title="اسحب حافة رأس العمود لتوسيعه أو تضييقه — نقرتان على الحافة تُعيد المقاس">
+
+            <tr className="text-[11px] font-black text-slate-500 dark:text-slate-300" onDoubleClick={(event) => { if ((event.target as HTMLElement).closest('th')) resetColumnWidths() }}>
               <th className={`p-2 ${COL.index}`} scope="col">م</th>
               {columns.code && <th className={`p-2 ${COL.code}`} scope="col">كود الصنف</th>}
               <th className={`p-2 ${COL.name}`} scope="col">الصنف / الوصف</th>

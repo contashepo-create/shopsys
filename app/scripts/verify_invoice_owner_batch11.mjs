@@ -123,7 +123,9 @@ const R = reporter('دفعة المالك ⑪ — النوافذ الحرة وا
 {
   assert.ok(/const COLW = \{/.test(table) && /name: 15,/.test(table),
     'لا أرضية لعرض عمود «الصنف / الوصف» بالـrem')
-  assert.ok(/const minTableRem = COLW\.index/.test(table) && /style=\{\{ minWidth: `\$\{minTableRem\}rem` \}\}/.test(table),
+  /* صار المجموع يُحسب من خطة الأعمدة القابلة للتحجيم (دفعة ⑯) */
+  assert.ok(/const minTableRem = columnPlan\.reduce\(\(sum, column\) => sum \+ widthOf\(column\)/.test(table)
+    && /style=\{\{ minWidth: `\$\{minTableRem\}rem` \}\}/.test(table),
     'عرض الجدول الأدنى ثابت لا يتبع الأعمدة الظاهرة، فينسحق اسم الصنف عند إضافة التكلفة/الهامش/الضريبة')
   assert.ok(!/min-w-\[58rem\]/.test(table), 'ما زال الجدول يستعمل أدنى عرض ثابت 58rem')
   assert.ok(/name: 'w-\[15rem\] text-center'/.test(table),

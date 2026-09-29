@@ -330,13 +330,15 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
     /* الأسهم للتنقل بين خلايا الجدول فقط (قرار المالك) — لا تفتح قائمة الأصناف.
        القائمة تُفتح بالكتابة أو Enter أو النقر المزدوج. */
     if (event.key === 'Enter') { event.preventDefault(); openSearch(query.trim()) }
+    /* المسطرة تفتح منتقي الصنف مباشرة (بلاغ المالك) بلا إدخال فراغ في الخلية */
+    else if (event.key === ' ' || event.code === 'Space') { event.preventDefault(); openSearch(query.trim()) }
     else if (event.key === 'Escape') { event.preventDefault(); setOpen(false) }
   }
   return <div ref={pickerRef} className="relative invoice-picker-root" data-enter-native="true">
     <input ref={(node) => { inputRef.current = node; setExternalRef(node) }} className={`${inputCls} invoice-line-entry-input`} value={open ? '' : query} placeholder="" aria-label="اسم الصنف — اكتب أو اضغط مرتين للبحث"
       title={placeholder}
       onDoubleClick={() => openSearch(query.trim())}
-      onChange={(event) => { const value = event.target.value; setQuery(value); if (value.trim()) openSearch(value) }}
+      onChange={(event) => { const value = event.target.value; setQuery(value); if (value.length) openSearch(value.trim()) }}
       onKeyDown={handleKeyDown} />
     {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-item-overlay" dir="rtl" onMouseDown={(event) => event.stopPropagation()}>
       <div role="dialog" aria-label="نتائج بحث الأصناف" style={panelStyle} className="invoice-search-dialog flex flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white dark:border-brand-700/50 dark:bg-card-dark">

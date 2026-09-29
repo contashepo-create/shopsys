@@ -2366,3 +2366,43 @@ input, textarea, select, option,
 @keyframes prepostFlash { 0%, 100% { box-shadow: none; } 30% { box-shadow: 0 0 0 3px rgb(220 38 38 / .35); } }
 @media (prefers-reduced-motion: reduce) { .prepost-panel, .prepost-flash { animation-duration: .01ms; } }
 
+/* ===== دفعة المالك ⑯: نبضات حيّة وتحسينات بصرية (بلا تغيير في التقسيم) ===== */
+/* ① النقطة الخضراء للاتصال ونقطة «القيد متزن» تنبضان بدل الثبات */
+@keyframes livePulse {
+  0% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+  70% { box-shadow: 0 0 0 .32rem transparent; opacity: .85; }
+  100% { box-shadow: 0 0 0 0 transparent; opacity: 1; }
+}
+.invoice-doc-online i { animation: livePulse 2s ease-out infinite; color: #22c55e; }
+.invoice-doc-online.is-warning i { color: #f59e0b; }
+.invoice-doc-online.is-danger i, .invoice-doc-online.is-error i { color: #ef4444; animation-duration: 1.2s; }
+.invoice-doc-balanced i { animation: livePulse 2.2s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) { .invoice-doc-online i, .invoice-doc-balanced i { animation: none; } }
+
+/* ② زر تعديل الطرف: أصغر وأنعم وبلون مميّز */
+.invoice-pos-edit-party,
+.invoice-doc .invoice-pos-edit-party,
+.invoice-doc .invoice-doc-fields .invoice-pos-edit-party,
+.invoice-doc-infield > .invoice-pos-edit-party {
+  flex: 0 0 auto !important;
+  min-height: 1.25rem !important; width: 1.25rem !important; min-width: 1.25rem !important; max-width: 1.25rem !important; height: 1.25rem !important;
+  padding: 0 !important; border-radius: .42rem !important;
+  border-color: color-mix(in srgb, var(--doc-accent) 35%, var(--doc-line)) !important;
+  background: color-mix(in srgb, var(--doc-accent) 12%, transparent) !important;
+  color: var(--doc-accent-deep) !important;
+  transition: transform .15s cubic-bezier(.16, 1.02, .3, 1), background .15s ease, color .15s ease;
+}
+.invoice-pos-edit-party:hover:not(:disabled), .invoice-doc .invoice-pos-edit-party:hover:not(:disabled) { transform: scale(1.12); background: var(--doc-accent) !important; color: #fff !important; }
+.invoice-pos-edit-party:active:not(:disabled) { transform: scale(.94); }
+.invoice-doc .invoice-pos-edit-party svg, .invoice-doc .invoice-doc-fields .invoice-pos-edit-party svg { width: 9px !important; height: 9px !important; }
+
+/* ③ تدريج بصري لصفوف حقول الترويسة — يخفّف إحساس الازدحام في النمط المتقدم */
+.invoice-doc .invoice-doc-fields > .form-field { border-radius: .4rem; padding: .05rem .18rem; transition: background .16s ease; }
+.invoice-doc .invoice-doc-fields > .form-field:nth-child(even) { background: color-mix(in srgb, var(--doc-tint) 55%, transparent); }
+.invoice-doc .invoice-doc-fields > .form-field:focus-within { background: color-mix(in srgb, var(--doc-accent) 9%, transparent); }
+.invoice-doc .invoice-doc-strip { border-radius: .4rem; }
+.invoice-doc .invoice-doc-strip:nth-of-type(even) { background: color-mix(in srgb, var(--doc-tint) 45%, transparent); }
+
+/* ④ وزن البنود في شريط رأس الجدول */
+.invoice-lines-weight { font-size: .62rem; font-weight: 800; color: var(--doc-muted); white-space: nowrap; }
+

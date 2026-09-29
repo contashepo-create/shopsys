@@ -114,7 +114,8 @@ const R = reporter('دفعة المالك ⑩ي على الفاتورة — ال
   assert.ok(/placeholder=""/.test(input), 'خلية اسم الصنف ما زالت تحمل نصاً إرشادياً')
   assert.ok(/onDoubleClick=\{\(\) => openSearch\(/.test(input), 'النقر المزدوج لا يفتح البحث')
   assert.ok(!/{!open && <Search/.test(pickers), 'أيقونة البحث عادت داخل خلية الاسم')
-  assert.ok(/if \(value\.trim\(\)\) openSearch\(value\)/.test(input), 'الكتابة المباشرة لا تفتح البحث بأول حرف')
+  /* صار الفتح بأي حرف بما فيه المسطرة (دفعة ⑯) */
+  assert.ok(/if \(value\.length\) openSearch\(value\.trim\(\)\)/.test(input), 'الكتابة المباشرة لا تفتح البحث بأول حرف')
   const keys = pickers.slice(pickers.indexOf('const handleKeyDown'), pickers.indexOf('return <div ref={pickerRef}'))
   assert.ok(!/ArrowDown|ArrowUp/.test(keys), 'الأسهم ما زالت تفتح قائمة الأصناف بدل التنقل بين الخلايا')
   R.ok('⑪⑫⑭ خلية الاسم خالية، تفتح بنقرتين أو بالكتابة أو Enter، والأسهم للتنقل فقط')
