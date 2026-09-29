@@ -93,6 +93,8 @@ type Props = {
   onRemove: (key: string) => void
   /** نسخ السطر المحدد بكل قيمه — زر «تكرار السطر» في شريط أدوات البنود */
   onDuplicate?: (key: string) => void
+  /** نقل السطر لأعلى/أسفل بـAlt+↑/↓ (الموجة ① من خطة UX) */
+  onMoveLine?: (key: string, direction: -1 | 1) => void
   /** نسبة ضريبة المستند لعرض رقاقة الضريبة على كل سطر (المرجع: 14% VAT) */
   documentTaxPercent?: number
   onEdit?: (id: number) => void
@@ -176,7 +178,7 @@ const MIN_MARGIN_RATIO = 0.1
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
   canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys,
-  onPick, onActiveItem, onPatch, onRemove, onDuplicate, documentTaxPercent = 0, onReplaceLine, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
+  onPick, onActiveItem, onPatch, onRemove, onDuplicate, onMoveLine, documentTaxPercent = 0, onReplaceLine, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
   entry, entryFilter,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
@@ -379,7 +381,22 @@ export function InvoiceLinesTable({
               <th className={`p-2 ${COL.tools}`} scope="col">إجراءات</th>
             </tr>
           </thead>
-          <tbody onKeyDown={gridArrowNavigation}>
+          <tbody onKeyDown={(event) => {
+            /* اختصارات السطر (بلا أي تغيير في تقسيم الفاتورة):
+               Ctrl+D تكرار · Alt+↑/↓ نقل · Ctrl+Delete/Ctrl+Backspace حذف. */
+            const target = event.target as HTMLElement
+            const key = target.closest('tr')?.getAttribute('data-line-key') ?? ''
+            if (key && event.ctrlKey && event.key.toLowerCase() === 'd') {
+              event.preventDefault(); onDuplicate?.(key); return
+            }
+            if (key && event.ctrlKey && (event.key === 'Delete' || event.key === 'Backspace')) {
+              event.preventDefault(); onRemove(key); return
+            }
+            if (key && event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+              event.preventDefault(); onMoveLine?.(key, event.key === 'ArrowDown' ? 1 : -1); return
+            }
+            gridArrowNavigation(event)
+          }}>
             {lines.map((line, lineIndex) => {
               const item = items.find((row) => row.id === line.itemId)
               const warning = warnings?.get(line.key)
@@ -395,7 +412,7 @@ export function InvoiceLinesTable({
                 : ''
               const qtyTone = stockShort ? ' is-shortstock' : ''
               return (
-                <tr key={line.key} data-entry-row aria-selected={selectedKey === line.key} title={[warning?.message, belowCost ? 'بيع أقل من التكلفة — اعتماد مشرف مطلوب' : ''].filter(Boolean).join(' · ') || undefined} onClick={() => setSelectedKey(line.key)} onFocusCapture={() => setSelectedKey(line.key)} /* لا تظليل للسطر كله: التنبيه صار لوناً في الخلية المعنية وحدها (قرار المالك ⑩ي) */
+                <tr key={line.key} data-line-key={line.key} data-entry-row aria-selected={selectedKey === line.key} title={[warning?.message, belowCost ? 'بيع أقل من التكلفة — اعتماد مشرف مطلوب' : ''].filter(Boolean).join(' · ') || undefined} onClick={() => setSelectedKey(line.key)} onFocusCapture={() => setSelectedKey(line.key)} /* لا تظليل للسطر كله: التنبيه صار لوناً في الخلية المعنية وحدها (قرار المالك ⑩ي) */
                   className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : ''}`}>
                   <td className={`p-2 font-mono text-[11px] font-black text-slate-400 ${COL.index}`}>{lineIndex + 1}</td>
                   {columns.code && <td tabIndex={0} className={`p-2 font-mono text-[11px] font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40 ${COL.code}`} dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>}
@@ -420,7 +437,7 @@ export function InvoiceLinesTable({
                   {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
                   {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
                   {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`money-cell p-2 ${COL.money}`}>{fmt(costShares?.get(line.key) ?? 0)}</td>}
-                  {showTaxColumn && <td className={`p-1 text-center ${COL.tax}`}><span className="invoice-doc-taxchip">{(line.vatPercent ?? documentTaxPercent) > 0 ? `${line.vatPercent ?? documentTaxPercent}% ض.ق.م` : 'معفى'}</span></td>}
+                  {showTaxColumn && <td className={`p-1 text-center ${COL.tax}`}>{(line.vatPercent ?? documentTaxPercent) > 0 ? <span className="invoice-doc-taxchip">{`${line.vatPercent ?? documentTaxPercent}% ض.ق.م`}</span> : null}</td>}
                   <td className={`p-1 ${COL.total}`}><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
                   <td className={`p-1 ${COL.tools}`}>
                     <div className="invoice-doc-rowtools">

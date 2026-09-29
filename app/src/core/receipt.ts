@@ -191,11 +191,11 @@ export function buildReceiptModel(args: {
   const paid = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
   const remaining = totals.totalMinor - paid
   const vatSet = [...new Set(lines.map((l) => l.vatPercentOverride ?? args.taxPercent))].sort((a, b) => a - b)
-  const vatLabel = vatSet.length === 1
-    ? `${vatSet[0]}٪`
-    : vatSet.map((p) => (p > 0 ? `${p}٪` : 'معفى')).join(' / ')
+  /* قرار المالك: لا تُكتب «معفى» ولا ما شابهها في الفاتورة — النسب الصفرية
+     تُحذف من التسمية، وإن لم تبق نسبة موجبة فلا يُطبع سطر ضريبة أصلاً. */
+  const vatLabel = vatSet.filter((p) => p > 0).map((p) => `${p}٪`).join(' / ')
   const taxLabel =
-    settings.showTaxSummary && totals.taxMinor > 0
+    settings.showTaxSummary && totals.taxMinor > 0 && vatLabel
       ? `ض.ق.م من السطور ${vatLabel} ${args.taxInclusive ? '(مشمولة في الإجمالي)' : '(مضافة)'}`
       : null
   return {

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { SmartEntry } from '../components/smartEntry.ts'
 
 /**
  * نظام النوافذ المستقلة (طلب المالك):
@@ -316,7 +317,7 @@ export function openItemPickerWindow(input: {
   categories?: unknown
   amountLabel?: unknown
   onCreate?: unknown
-  onPick: (id: number) => void
+  onPick: (id: number, smart?: SmartEntry) => void
 }) {
   return useWindowStore.getState().openWindow({
     kind: 'item-picker',

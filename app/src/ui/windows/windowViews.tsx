@@ -12,6 +12,7 @@ import { ItemSearchPanel, type QuickItem, type QuickItemMeta } from '../componen
 import { resolvePrice, priceSource } from '../../core/priceLists.ts'
 import { useWindowHost } from './windowHostContext.ts'
 import { openItemEditorWindow, openItemLedgerWindow, openItemPricesWindow, openPartyLedgerWindow } from './windowStore.ts'
+import type { SmartEntry } from '../components/smartEntry.ts'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -325,7 +326,7 @@ export function ItemPickerWindowView() {
   const categories = props.categories as { id: number; nameAr: string }[] | undefined
   const amountLabel = props.amountLabel as ((item: QuickItem) => string) | undefined
   const onCreate = props.onCreate as ((name: string) => void) | undefined
-  const onPick = props.onPick as ((id: number) => void) | undefined
+  const onPick = props.onPick as ((id: number, smart?: SmartEntry) => void) | undefined
   const initialQuery = String(props.initialQuery ?? '')
   /* القائمة تُحدَّث حيّاً بعد التعديل في النافذة الابنة */
   const liveItems = useDataStore((state) => state.items)
@@ -343,7 +344,7 @@ export function ItemPickerWindowView() {
         onCreate={onCreate}
         initialQuery={initialQuery}
         onEscape={() => host?.close()}
-        onPick={(id) => { onPick?.(id); host?.close() }}
+        onPick={(id, smart) => { onPick?.(id, smart); host?.close() }}
         onEdit={(id) => openItemEditorWindow(id, host?.windowId ?? null)}
         onMovement={(id) => openItemLedgerWindow(id, host?.windowId ?? null)}
         onPrices={(id) => openItemPricesWindow(id, host?.windowId ?? null)}

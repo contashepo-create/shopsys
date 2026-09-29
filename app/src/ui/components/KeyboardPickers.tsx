@@ -2,6 +2,7 @@ import { type CSSProperties, Children, isValidElement, useEffect, useMemo, useRe
 import { Search, ChevronDown } from 'lucide-react'
 import { inputCls, OverlayPortal } from './ui.tsx'
 import { useAnchoredMenu } from './anchoredMenu.ts'
+import { parseSmartEntry, type SmartEntry } from './smartEntry.ts'
 import { matchesSearch } from '../../core/search.ts'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { openItemPickerWindow } from '../windows/windowStore.ts'
@@ -145,7 +146,7 @@ export type QuickItemMeta = { stock?: string; price?: string; cost?: string; uni
 
 type PickerProps = {
   items: QuickItem[]
-  onPick: (id: number) => void
+  onPick: (id: number, smart?: SmartEntry) => void
   placeholder?: string
   amountLabel?: (item: QuickItem) => string
   inputElementRef?: RefObject<HTMLInputElement | null>
@@ -174,7 +175,7 @@ export function ItemSearchPanel({
   initialQuery = '', onEscape, autoFocus = true,
 }: {
   items: QuickItem[]
-  onPick: (id: number) => void
+  onPick: (id: number, smart?: SmartEntry) => void
   onEdit?: (id: number) => void
   onMovement?: (id: number) => void
   onPrices?: (id: number) => void
@@ -191,14 +192,17 @@ export function ItemSearchPanel({
   const [catFilter, setCatFilter] = useState(0)
   const [availableOnly, setAvailableOnly] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  /* الإدخال الذكي: «أرز*3@65-5%» — نبحث بالمصطلح وحده ونحمل الباقي مع الاختيار */
+  const smart = useMemo(() => parseSmartEntry(query), [query])
   const matches = useMemo(() => {
-    const q = query.trim()
+    const q = smart.term
     let list = items
     if (catFilter) list = list.filter((item) => (item.categoryId ?? 0) === catFilter)
     if (availableOnly) list = list.filter((item) => item.isService || (item.stockQty ?? 0) > 0)
     if (!q) return list
     return list.filter((item) => matchesSearch([item.nameAr, item.sku, ...(item.barcodes ?? []), item.id], q))
-  }, [items, query, catFilter, availableOnly])
+  }, [items, smart, catFilter, availableOnly])
+  const pickSmart = (id: number) => onPick(id, smart.qty || smart.price || smart.discount ? smart : undefined)
   useEffect(() => {
     if (!autoFocus) return
     const input = searchInputRef.current
@@ -211,7 +215,7 @@ export function ItemSearchPanel({
   const keys = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') { event.preventDefault(); setIndex((v) => Math.min(Math.max(0, matches.length - 1), v + 1)) }
     else if (event.key === 'ArrowUp') { event.preventDefault(); setIndex((v) => Math.max(0, v - 1)) }
-    else if (event.key === 'Enter') { event.preventDefault(); if (current) onPick(current.id) }
+    else if (event.key === 'Enter') { event.preventDefault(); if (current) pickSmart(current.id) }
     else if (event.key === 'Escape') { event.preventDefault(); onEscape?.() }
   }
   return <div className="flex min-h-0 flex-1 flex-col" data-item-picker-panel>
@@ -248,7 +252,7 @@ export function ItemSearchPanel({
     <div id="invoice-item-results" role="listbox" aria-label="نتائج بحث الأصناف" className="invoice-search-results min-h-0 flex-1 overflow-auto p-1">{matches.length ? matches.map((item, row) => {
       const meta = itemMeta?.(item) ?? {}
       return <button type="button" key={item.id} id={`invoice-item-option-${item.id}`} role="option" aria-selected={row === index} data-quick-option
-        onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(row)} onDoubleClick={() => onPick(item.id)}
+        onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(row)} onDoubleClick={() => pickSmart(item.id)}
         className={`grid w-full grid-cols-[92px_1fr_88px_64px_72px_86px_86px] items-center gap-2 rounded-lg px-2.5 py-1.5 text-right ${row === index ? 'bg-brand-500/15' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
         <span className="truncate font-mono text-[11px] text-slate-500" dir="ltr">{item.sku || item.barcodes?.[0] || item.id}</span>
         <b className="truncate">{item.nameAr}</b>
@@ -298,7 +302,7 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
         categories,
         amountLabel,
         onCreate,
-        onPick: (id) => { onPick(id); requestAnimationFrame(() => inputRef.current?.focus()) },
+        onPick: (id, smart) => { onPick(id, smart); requestAnimationFrame(() => inputRef.current?.focus()) },
       })
       return
     }

@@ -118,7 +118,9 @@ const ruleOf = (selector) => {
 
 /* ⑥ الأسهم ودورة Enter وتوسيط الأعمدة */
 {
-  assert.ok(table.includes('gridArrowNavigation') && table.includes('onKeyDown={gridArrowNavigation}'), 'التنقل بالأسهم غير مربوط بجسم الجدول')
+  /* صار معالج الجسم يلفّ gridArrowNavigation ليضيف اختصارات السطر (دفعة ⑬) */
+  assert.ok(table.includes('gridArrowNavigation') && /<tbody onKeyDown=\{[\s\S]{0,900}gridArrowNavigation\(event\)/.test(table),
+    'التنقل بالأسهم غير مربوط بجسم الجدول')
   assert.ok(table.includes("data-arrows-native"), 'الحقول ذات التنقل الأصلي غير مستثناة من الأسهم')
   assert.ok(table.includes('.price-cell input'), 'دورة Enter لا تنتقل من الكمية إلى السعر')
   const col = table.slice(table.indexOf('const COL = {'), table.indexOf('} as const'))
