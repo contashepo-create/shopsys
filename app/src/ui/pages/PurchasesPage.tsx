@@ -682,7 +682,7 @@ export function PurchasesPage() {
                     title={`ضريبة هذا البند تلقائياً حسب البلد/استثناء الصنف: ${taxPolicy.effectivePercent === 0 ? 0 : l.vatPercent}٪`}
                     className="h-11 rounded-xl border-2 border-sky-200 dark:border-sky-800/70 bg-sky-500/[0.06] flex flex-col items-center justify-center text-center"
                   >
-                    <span className="text-[12px] font-black text-sky-700 dark:text-sky-300">{taxPolicy.effectivePercent > 0 && l.vatPercent > 0 ? `${l.vatPercent}٪` : 'معفى'}</span>
+                    <span className="text-[12px] font-black text-sky-700 dark:text-sky-300">{taxPolicy.effectivePercent > 0 && l.vatPercent > 0 ? `${l.vatPercent}٪` : ''}</span>
                     <span className="text-[9px] text-sky-500/80">{fmt(lineVatMinor(l))}</span>
                   </div>
                   {lineOptions.expiry && (lineItem?.trackExpiry ? (
@@ -857,7 +857,7 @@ export function PurchasesPage() {
                     {warehouses.length > 1 && <td className="px-3 py-2 text-slate-500">{warehouses.find((w) => w.id === (l.warehouseId ?? viewing.warehouseId ?? warehouses.find((ww) => ww.isMain)?.id))?.nameAr ?? '—'}</td>}
                     <td className="px-3 py-2">{l.qty}{l.orderedQty!=null&&<div className="text-[10px] text-slate-400">مطلوب {l.orderedQty}{(l.rejectedQty??0)>0?` · مرفوض ${l.rejectedQty}`:''}</div>}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
-                    <td className="px-3 py-2 text-sky-600 font-bold">{l.vatPercent != null ? (l.vatPercent > 0 ? `${l.vatPercent}٪ · ${fmt(l.inputVatMinor ?? 0)}` : 'معفى') : '—'}</td>
+                    <td className="px-3 py-2 text-sky-600 font-bold">{l.vatPercent != null ? (l.vatPercent > 0 ? `${l.vatPercent}٪ · ${fmt(l.inputVatMinor ?? 0)}` : '') : '—'}</td>
                     <td className="px-3 py-2 text-amber-600">{fmt(l.expenseShareMinor)}</td>
                     <td className="px-3 py-2 font-black text-emerald-600">{fmt(l.landedUnitCostMinor)}</td>
                   </tr>

@@ -2294,6 +2294,21 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 .doc-row-delete:active { transform: scale(.94); }
 .doc-row-delete:focus-visible { outline: 2px solid #e11d48; outline-offset: 2px; }
 
+/* ===== التطبيق ليس مستنداً نصياً (قرار المالك): لا تحديد في أي شاشة =====
+   الواجهة تُعامَل كبرنامج سطح مكتب: النقر والسحب لا ينتجان تظليل نص، والتحديد
+   متاح داخل حقول الإدخال فقط، أو في عنصر وُسم صراحة بـ[data-selectable]
+   (أرقام مرجعية يحتاج المستخدم نسخها). */
+html, body, #root {
+  -webkit-user-select: none; user-select: none;
+}
+input, textarea, select, option,
+[contenteditable="true"], [contenteditable=""],
+[data-selectable], [data-selectable] * {
+  -webkit-user-select: text; user-select: text;
+}
+/* الطباعة والمعاينة تبقى نصاً كاملاً */
+@media print { * { -webkit-user-select: text !important; user-select: text !important; } }
+
 /* ===== إلغاء تحديد نص المستند كله: التحديد داخل الحقول فقط (بلاغ المالك) ===== */
 .invoice-doc, .invoice-editor, .invoice-pos-document, .invoice-shell {
   -webkit-user-select: none; user-select: none;
@@ -2306,4 +2321,9 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 .invoice-doc [data-selectable], .invoice-editor [data-selectable] {
   -webkit-user-select: text; user-select: text;
 }
+
+/* عدّاد الأرقام الحي في الإجماليات (الموجة ①) — نبضة خفيفة عند التغيّر */
+.money-counter { display: inline-block; font-variant-numeric: tabular-nums; transition: transform .16s cubic-bezier(.16, 1.02, .3, 1); }
+.money-counter.is-bump { transform: scale(1.09); }
+@media (prefers-reduced-motion: reduce) { .money-counter { transition-duration: .01ms; } .money-counter.is-bump { transform: none; } }
 

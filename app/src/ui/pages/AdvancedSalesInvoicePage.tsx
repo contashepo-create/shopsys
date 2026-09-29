@@ -37,6 +37,7 @@ import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { buildWarehouseReceiptHtml } from '../../core/warehouseReceipt.ts'
 import { formatInvoiceAuditLine } from '../../core/invoiceAudit.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { AnimatedMinor } from '../components/AnimatedMinor.tsx'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { electronicInvoiceLockActive } from '../../core/invoiceEdit.ts'
 
@@ -300,7 +301,7 @@ export function AdvancedSalesInvoicePage(){
       {internalTotal>0&&<Row n="مصاريف على المحل — لا تدخل إجمالي العميل" v={internalTotal} info/>}
       {mode==='profit'&&canViewCost&&<><Row n="تكلفة البضاعة" v={-cogs} minus/><Row n="الربح المتوقع" v={expectedProfit} strong/></>}
      </div>
-     <div className="invoice-doc-grand"><span>صافي إجمالي الفاتورة</span><b>{formatMinor(totals?.totalMinor??0,cur,false)} {cur.symbol}</b></div>
+     <div className="invoice-doc-grand"><span>صافي إجمالي الفاتورة</span><b><AnimatedMinor value={totals?.totalMinor??0} format={minor=>formatMinor(minor,cur,false)}/> {cur.symbol}</b></div>
     </div>
    </div>
   </section>
@@ -311,5 +312,6 @@ export function AdvancedSalesInvoicePage(){
   {unsaved.prompt}<InvoiceDraftsModal open={draftsOpen} onClose={()=>setDraftsOpen(false)} kind="sale" drafts={advancedInvoiceDrafts} currency={cur} currentDraftId={draftId} onPick={applyDraft} onDelete={deleteAdvancedInvoiceDraft}/>
   <PrintTemplateModal open={printOpen} onClose={()=>setPrintOpen(false)} defaultTemplate={receipt.defaultTemplate} title="معاينة نسخة العميل" onPrint={printDraft}/>
  </InvoicePOSFrame>
- function Row({n,v,strong,minus,info}:{n:string;v:number;strong?:boolean;minus?:boolean;info?:boolean}){return <div className={`invoice-doc-sum-row${strong?' is-strong':''}${minus&&v!==0?' is-minus':''}${info?' is-info':''}`}><span>{n}</span><i/><b>{formatMinor(v,cur,false)} {cur.symbol}</b></div>}
+ /* عدّاد حي للأرقام (الموجة ①): القيمة تعدّ حتى الجديدة بدل القفز */
+ function Row({n,v,strong,minus,info}:{n:string;v:number;strong?:boolean;minus?:boolean;info?:boolean}){return <div className={`invoice-doc-sum-row${strong?' is-strong':''}${minus&&v!==0?' is-minus':''}${info?' is-info':''}`}><span>{n}</span><i/><b><AnimatedMinor value={v} format={minor=>formatMinor(minor,cur,false)}/> {cur.symbol}</b></div>}
 }

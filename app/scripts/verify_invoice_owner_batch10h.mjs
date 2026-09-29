@@ -226,7 +226,9 @@ const ruleOf = (selector) => {
   assert.ok(sales.includes('مصاريف على المحل — لا تدخل إجمالي العميل'), 'فاتورة البيع: المصروف الداخلي غير معلَّم كخارج الإجمالي')
   assert.ok(/<Row n="مصاريف على المحل — لا تدخل إجمالي العميل" v=\{internalTotal\} info\/>/.test(sales), 'المصروف الداخلي يجب أن يكون سطر معلومة لا مبلغاً يُطرح')
   // الشراء: الإجمالي الكبير = مستحق المورد، والتحميل على المخزون/المحل خارجه
-  assert.ok(/invoice-doc-grand"><span>إجمالي فاتورة المورد<\/span><b>\{formatMinor\(supplierDue/.test(purchase), 'إجمالي فاتورة الشراء ليس مستحق المورد')
+  /* صار الرقم يمر بعدّاد حي (دفعة ⑭) فيُقرأ من AnimatedMinor بدل formatMinor مباشرة */
+  assert.ok(/invoice-doc-grand"><span>إجمالي فاتورة المورد<\/span><b><AnimatedMinor value=\{supplierDue\}/.test(purchase),
+    'إجمالي فاتورة الشراء ليس مستحق المورد')
   assert.ok(purchase.includes('مصاريف محمَّلة على المخزون (خارج الإجمالي)') && purchase.includes('invoice-doc-suminfo'), 'فاتورة الشراء: التحميل على المخزون ما زال داخل الإجمالي')
   assert.ok(purchase.includes('تكلفة البضاعة بعد التحميل'), 'فاتورة الشراء: اختفت تكلفة البضاعة بعد التحميل (تلزم للتسعير)')
   assert.ok(css.includes('.invoice-doc .invoice-doc-sum-row.is-info'), 'لا نمط لسطور «معلومة فقط» في كشف الإجماليات')

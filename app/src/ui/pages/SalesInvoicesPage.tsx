@@ -365,7 +365,7 @@ export function SalesInvoicesPage() {
                     <td className="px-3 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}</td>
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
-                    <td className="px-3 py-2 text-sky-600 font-bold">{(l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent}٪` : 'معفى'}</td>
+                    <td className="px-3 py-2 text-sky-600 font-bold">{(l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent}٪` : ''}</td>
                     <td className="px-3 py-2">{l.discountPercent ? `${l.discountPercent}٪` : '—'}</td>
                     <td className="px-3 py-2 font-bold">{fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}</td>
                   </tr>
@@ -466,7 +466,7 @@ export function SalesInvoicesPage() {
                           className={inputCls + ' !py-1.5 !text-[12px]'} dir="ltr"
                         />
                       </td>
-                      <td className="px-3 py-2 text-sky-600 font-bold text-center">{(l.vatPercentOverride ?? editing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? editing.taxPercent ?? countryVatPercent}٪` : 'معفى'}</td>
+                      <td className="px-3 py-2 text-sky-600 font-bold text-center">{(l.vatPercentOverride ?? editing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? editing.taxPercent ?? countryVatPercent}٪` : ''}</td>
                       <td className="px-3 py-2">
                         <input
                           value={l.discountPercent || ''}

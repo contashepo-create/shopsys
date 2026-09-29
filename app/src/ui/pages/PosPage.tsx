@@ -803,7 +803,7 @@ export function PosPage() {
                 <span>الصنف</span>
                 <span className="text-center">الكمية</span>
                 <span className="text-center">السعر</span>
-                <span className="text-center" title="النسبة الفعلية لكل سطر: نسبة البلد تلقائياً أو استثناء الصنف إن كان معفى">ضريبة</span>
+                <span className="text-center" title="النسبة الفعلية لكل سطر: نسبة البلد تلقائياً أو النسبة الخاصة بالصنف">ضريبة</span>
                 <span className="text-center">خصم ٪</span>
                 <span className="text-left">الإجمالي</span>
               </div>
@@ -913,12 +913,12 @@ export function PosPage() {
                   </div>
                   )}
                   <input ref={(node) => { priceRefs.current[i] = node }} value={String(l.unitPriceMinor / 10 ** cur.decimals)} inputMode="decimal" onFocus={(e) => e.target.select()} onChange={(e) => { const raw = e.target.value; if (!/^\d*\.?\d*$/.test(raw)) return; try { const value = Math.max(0, toMinor(raw || '0', cur.decimals)); setCart((current) => current.map((line, index) => index === i ? { ...line, unitPriceMinor: value } : line)) } catch { /* قيمة انتقالية */ } }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select() } }} className="h-9 text-center font-bold bg-transparent border border-slate-200 dark:border-slate-700 outline-none" aria-label={`سعر ${l.nameAr}`}/>
-                  {/* ضريبة السطر — تلقائية من بلد المنشأة أو استثناء الصنف (معفى/نسبة خاصة) */}
+                  {/* ضريبة السطر — تلقائية من بلد المنشأة أو النسبة الخاصة بالصنف (صفر = بلا نسبة تُعرض) */}
                   <div
                     title={`نسبة الضريبة لهذا السطر: ${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪ — ${country?.nameAr ?? 'حسب بلد المنشأة'}`}
                     className="h-9 rounded-xl border-2 border-sky-200 dark:border-sky-800/70 bg-sky-500/[0.06] text-center flex items-center justify-center text-[11px] font-black text-sky-700 dark:text-sky-300"
                   >
-                    {(l.vatPercentOverride ?? itemVatPercent(l.itemId)) > 0 ? `${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪` : 'معفى'}
+                    {(l.vatPercentOverride ?? itemVatPercent(l.itemId)) > 0 ? `${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪` : ''}
                   </div>
                   {/* خصم السطر */}
                   <input
