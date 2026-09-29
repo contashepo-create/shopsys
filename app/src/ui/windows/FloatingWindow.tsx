@@ -3,13 +3,13 @@ import { Maximize2, Minus, Square, X, GripVertical } from 'lucide-react'
 import { OverlayPortal } from '../components/ui.tsx'
 import { useWindowStore, clampRect, type AppWindow } from './windowStore.ts'
 
-type ResizeDir = 'e' | 'w' | 's' | 'se' | 'sw'
+type ResizeDir = 'e' | 'w' | 's' | 'se' | 'sw' | 'n' | 'ne' | 'nw'
 
 /**
  * إطار النافذة المستقلة: شريط عنوان يُسحب، أزرار تصغير/تكبير/إغلاق، ومقابض تحجيم.
  * لا توجد طبقة تعتيم ولا إغلاق بالضغط في مكان فارغ — تماماً كنوافذ برامج سطح المكتب.
  */
-export function FloatingWindow({ win, children }: { win: AppWindow; children: ReactNode }) {
+export function FloatingWindow({ win, children, active = true }: { win: AppWindow; children: ReactNode; active?: boolean }) {
   const focusWindow = useWindowStore((s) => s.focusWindow)
   const moveWindow = useWindowStore((s) => s.moveWindow)
   const setWindowRect = useWindowStore((s) => s.setWindowRect)
@@ -75,6 +75,7 @@ export function FloatingWindow({ win, children }: { win: AppWindow; children: Re
       if (dir.includes('e')) w = origin.w + dx
       if (dir.includes('s')) h = origin.h + dy
       if (dir.includes('w')) { w = origin.w - dx; x = origin.x + dx }
+      if (dir.includes('n')) { h = origin.h - dy; y = origin.y + dy }
       setWindowRect(win.id, { x, y, w, h })
     }
     const up = () => {
@@ -96,7 +97,7 @@ export function FloatingWindow({ win, children }: { win: AppWindow; children: Re
       data-app-window={win.id}
       data-window-kind={win.kind}
       data-window-mode={win.mode}
-      className={`app-window layer-window ${dragging ? 'is-dragging' : ''} ${maximized ? 'is-maximized' : ''}`}
+      className={`app-window layer-window ${dragging ? 'is-dragging' : ''} ${maximized ? 'is-maximized' : ''} ${active ? 'is-active' : 'is-inactive'}`}
       style={style}
       dir="rtl"
       tabIndex={-1}
@@ -164,6 +165,9 @@ export function FloatingWindow({ win, children }: { win: AppWindow; children: Re
         <span className="app-window-resize is-s" onPointerDown={(e) => startResize(e, 's')} />
         <span className="app-window-resize is-se" onPointerDown={(e) => startResize(e, 'se')} />
         <span className="app-window-resize is-sw" onPointerDown={(e) => startResize(e, 'sw')} />
+        <span className="app-window-resize is-n" onPointerDown={(e) => startResize(e, 'n')} />
+        <span className="app-window-resize is-ne" onPointerDown={(e) => startResize(e, 'ne')} />
+        <span className="app-window-resize is-nw" onPointerDown={(e) => startResize(e, 'nw')} />
       </>}
     </div>
   )

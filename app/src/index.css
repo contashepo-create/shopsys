@@ -904,6 +904,31 @@ select { line-height: 1.25rem; }
 .app-window.is-maximized[data-window-kind$="-invoice"] > .app-window-bar { display: none; }
 .app-window.is-maximized[data-window-kind$="-invoice"] > .app-window-body { overflow: hidden; background: var(--doc-surface); }
 .app-window.is-dragging { user-select: none; }
+/* تمييز النافذة النشطة كما في أنظمة سطح المكتب: الظل والحدّ أعمق، والخاملة
+   تهدأ قليلاً فيعرف المستخدم أين هو التركيز دون أن تختفي خلفه. */
+.app-window.is-active {
+  border-color: #9fb4dd;
+  box-shadow: 0 34px 80px -22px rgba(15, 23, 42, .55), 0 0 0 1px rgba(56, 96, 178, .22), 0 0 0 4px rgba(79, 124, 214, .10);
+}
+.app-window.is-inactive {
+  box-shadow: 0 16px 36px -22px rgba(15, 23, 42, .38), 0 0 0 1px rgba(15, 23, 42, .05);
+}
+.app-window.is-inactive > .app-window-bar { background: linear-gradient(90deg, #f2f5fa, #fafbfe); color: #64748b; }
+.app-window.is-inactive > .app-window-bar .app-window-grip { color: #b6c0d3; }
+.dark .app-window.is-active { border-color: #47618f; }
+.dark .app-window.is-inactive > .app-window-bar { background: linear-gradient(90deg, #141d30, #101725); }
+.app-window-bar, .app-window { transition: box-shadow .18s ease, border-color .18s ease, background-color .18s ease; }
+.app-window-task-key {
+  display: inline-grid; place-items: center; min-width: 1rem; height: 1rem; margin-inline-start: .15rem;
+  border-radius: .3rem; background: rgb(100 116 139 / .16); color: #475569;
+  font-family: ui-monospace, monospace; font-size: .58rem; font-weight: 800;
+}
+.dark .app-window-task-key { background: rgb(148 163 184 / .2); color: #cbd5e1; }
+.app-window-task.is-active .app-window-task-key { background: rgb(79 124 214 / .22); color: #1d4ed8; }
+@media (prefers-reduced-motion: reduce) {
+  .app-window { animation-duration: .01ms; }
+  .app-window, .app-window-bar { transition-duration: .01ms; }
+}
 @keyframes windowPop { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
 
 .app-window-bar {
@@ -939,6 +964,10 @@ select { line-height: 1.25rem; }
 .app-window-resize.is-s { inset-inline: 12px; bottom: -3px; height: 8px; cursor: ns-resize; }
 .app-window-resize.is-se { right: -3px; bottom: -3px; width: 16px; height: 16px; cursor: nwse-resize; }
 .app-window-resize.is-sw { left: -3px; bottom: -3px; width: 16px; height: 16px; cursor: nesw-resize; }
+/* حواف الأعلى: النافذة تُحجَّم من جهاتها الثماني كنوافذ سطح المكتب */
+.app-window-resize.is-n { inset-inline: 12px; top: -3px; height: 8px; cursor: ns-resize; }
+.app-window-resize.is-ne { right: -3px; top: -3px; width: 16px; height: 16px; cursor: nesw-resize; }
+.app-window-resize.is-nw { left: -3px; top: -3px; width: 16px; height: 16px; cursor: nwse-resize; }
 
 /* بلاغ المالك: رأس جدول الأصناف ظهر فوق نافذة تأكيد الإغلاق.
    السبب: رأس الجدول `position: sticky; z-index: 2` عنصر مُموضَع، بينما غطاء التأكيد
