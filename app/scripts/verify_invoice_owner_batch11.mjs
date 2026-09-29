@@ -71,6 +71,11 @@ const R = reporter('دفعة المالك ⑪ — النوافذ الحرة وا
   assert.ok(/data-window-autofocus/.test(floating) && /else frame\.focus\(\)/.test(floating),
     'النافذة الجديدة لا تسحب التركيز فيظل المفتاح يصل إلى الأم')
   assert.ok(/requestCloseWindow\(win\.id\)/.test(floating), 'زر/مفتاح الإغلاق لا يغلق النافذة نفسها فقط')
+  /* النافذة الابنة كانت تهبط تحت حافة الشاشة على 1024×680 فتختفي أزرار الحفظ */
+  assert.ok(/const TASKBAR_H = 38/.test(store) && /vh - TOP_GUARD - TASKBAR_H/.test(store),
+    'ارتفاع النافذة لا يُحدّ بمساحة العمل فوق شريط النوافذ')
+  assert.ok(/const y = Math\.min\(Math\.max\(TOP_GUARD, rect\.y\), Math\.max\(TOP_GUARD, vh - TASKBAR_H - height\)\)/.test(store),
+    'النافذة قد تهبط أسفل الشاشة فتضيع أزرارها')
   R.ok('④ كل نافذة تغلق نفسها فقط — منتقي الصنف يبقى بعد إغلاق «تعديل الصنف» أو «حركة الصنف»')
 }
 

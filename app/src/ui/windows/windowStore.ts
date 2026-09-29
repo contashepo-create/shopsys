@@ -102,13 +102,20 @@ const viewport = () => ({
   h: typeof window === 'undefined' ? 900 : window.innerHeight,
 })
 
+/** مساحة العمل: أعلى الشاشة بهامش صغير، وأسفلها فوق شريط النوافذ المفتوحة */
+const TOP_GUARD = 8
+const TASKBAR_H = 38
+
 export function clampRect(rect: WindowRect): WindowRect {
   const { w: vw, h: vh } = viewport()
-  const width = Math.max(MIN_W, Math.min(rect.w, Math.max(MIN_W, vw - 16)))
-  const height = Math.max(MIN_H, Math.min(rect.h, Math.max(MIN_H, vh - 16)))
-  // يبقى جزء من شريط العنوان ظاهراً دائماً حتى لا تضيع النافذة خارج الشاشة
-  const x = Math.max(-(width - 140), Math.min(rect.x, vw - 140))
-  const y = Math.max(0, Math.min(rect.y, vh - 48))
+  const maxW = Math.max(MIN_W, vw - 16)
+  const maxH = Math.max(MIN_H, vh - TOP_GUARD - TASKBAR_H)
+  const width = Math.max(MIN_W, Math.min(rect.w, maxW))
+  const height = Math.max(MIN_H, Math.min(rect.h, maxH))
+  /* النافذة تبقى كاملة داخل مساحة العمل: لا يهبط أسفلها تحت شريط النوافذ
+     (كانت أزرار الحفظ في نوافذ «تعديل الصنف» تخرج من الشاشة على 1024×680). */
+  const x = Math.min(Math.max(8, rect.x), Math.max(8, vw - 8 - width))
+  const y = Math.min(Math.max(TOP_GUARD, rect.y), Math.max(TOP_GUARD, vh - TASKBAR_H - height))
   return { x, y, w: width, h: height }
 }
 
