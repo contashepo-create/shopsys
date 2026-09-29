@@ -97,32 +97,40 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
 <style>
   @page { size: ${w} auto; margin: 0; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { width: ${w}; font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; color: #000; padding: 2mm 1mm; }
+  /* بلاغ المالك: «الخطوط الصغيرة الفرعية لا تُطبع بوضوح».
+     رؤوس الطابعات الحرارية 203dpi أحادية اللون: الرمادي يتفكك والخط تحت 10px
+     يتشوّه. لذلك: **كل النصوص سوداء صريحة** (لا #333)، وأصغر مقاس 10.5px،
+     وأوزان لا تقل عن 600 للنص الفرعي، مع منع المتصفح من تفتيح الألوان. */
+  body {
+    width: ${w}; font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; color: #000; padding: 2mm 1mm;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact; text-rendering: geometricPrecision;
+    font-weight: 600; line-height: 1.45; -webkit-font-smoothing: none;
+  }
   .center { text-align: center; }
-  .shop { font-size: ${wide ? '16px' : '13px'}; font-weight: 900; letter-spacing: -0.2px; }
-  .hdr { font-size: ${wide ? '10px' : '9px'}; }
-  .title { margin: 1.5mm 0; padding: 1mm 0; background: #000; color: #fff; text-align: center; font-size: ${wide ? '12px' : '10px'}; font-weight: 900; letter-spacing: 0.5px; }
-  .kv { display: flex; justify-content: space-between; gap: 2mm; font-size: ${wide ? '10px' : '9px'}; padding: 0.3mm 0; }
-  .kv .k { color: #333; white-space: nowrap; }
-  .kv .k.op { font-weight: 700; color: #000; }
-  .kv .v { text-align: left; }
+  .shop { font-size: ${wide ? '17px' : '15px'}; font-weight: 900; letter-spacing: -0.2px; }
+  .hdr { font-size: ${wide ? '11.5px' : '11px'}; font-weight: 700; }
+  .title { margin: 1.5mm 0; padding: 1.2mm 0; background: #000; color: #fff; text-align: center; font-size: ${wide ? '13px' : '12px'}; font-weight: 900; letter-spacing: 0.5px; }
+  .kv { display: flex; justify-content: space-between; gap: 2mm; font-size: ${wide ? '11.5px' : '11px'}; padding: 0.35mm 0; font-weight: 700; }
+  .kv .k { color: #000; white-space: nowrap; }
+  .kv .k.op { font-weight: 800; color: #000; }
+  .kv .v { text-align: left; font-weight: 800; }
   hr { border: none; border-top: 1px dashed #000; margin: 1.5mm 0; }
-  table { width: 100%; border-collapse: collapse; font-size: ${wide ? '11px' : '10px'}; }
-  thead td { font-size: ${wide ? '9px' : '8px'}; font-weight: 900; border-bottom: 1px solid #000; padding-bottom: 0.6mm; }
-  td { padding: 0.8mm 0; vertical-align: top; }
-  .idx { width: 5mm; text-align: center; font-size: ${wide ? '9px' : '8px'}; color: #333; }
-  .name { font-weight: 700; }
-  .sub { font-size: ${wide ? '9px' : '8px'}; font-weight: 400; color: #333; }
-  .disc { font-size: 9px; font-weight: 400; }
+  table { width: 100%; border-collapse: collapse; font-size: ${wide ? '12px' : '11.5px'}; }
+  thead td { font-size: ${wide ? '11px' : '10.5px'}; font-weight: 900; color: #000; border-bottom: 1.4px solid #000; padding-bottom: 0.7mm; }
+  td { padding: 0.9mm 0; vertical-align: top; color: #000; }
+  .idx { width: 5.5mm; text-align: center; font-size: ${wide ? '11px' : '10.5px'}; font-weight: 800; color: #000; }
+  .name { font-weight: 800; }
+  .sub { font-size: ${wide ? '11px' : '10.5px'}; font-weight: 700; color: #000; }
+  .disc { font-size: ${wide ? '11px' : '10.5px'}; font-weight: 700; color: #000; }
   .amt { text-align: left; font-weight: 900; white-space: nowrap; padding-right: 2mm; }
-  .tot { display: flex; justify-content: space-between; font-size: ${wide ? '10px' : '9px'}; padding: 0.4mm 0; }
-  .grand { font-size: ${wide ? '16px' : '13px'}; font-weight: 900; display: flex; justify-content: space-between; align-items: center; margin: 1mm 0; padding: 1mm 1.5mm; border: 2px solid #000; }
-  .words { font-size: ${wide ? '9.5px' : '8.5px'}; text-align: center; margin-top: 1mm; line-height: 1.5; }
+  .tot { display: flex; justify-content: space-between; font-size: ${wide ? '11.5px' : '11px'}; padding: 0.45mm 0; font-weight: 700; }
+  .grand { font-size: ${wide ? '17px' : '15px'}; font-weight: 900; display: flex; justify-content: space-between; align-items: center; margin: 1mm 0; padding: 1.2mm 1.5mm; border: 2.2px solid #000; }
+  .words { font-size: ${wide ? '11px' : '10.5px'}; font-weight: 700; text-align: center; margin-top: 1mm; line-height: 1.5; }
   .barcode { margin-top: 2mm; }
   .barcode svg { max-width: 100%; height: auto; }
-  .bc { font-size: ${wide ? '9px' : '8px'}; letter-spacing: 1px; }
-  .foot { text-align: center; font-size: ${wide ? '10px' : '9px'}; margin-top: 2mm; font-weight: 700; }
-  .stamp { text-align: center; font-size: ${wide ? '8.5px' : '7.5px'}; color: #333; margin-top: 1.5mm; }
+  .bc { font-size: ${wide ? '11px' : '10.5px'}; font-weight: 800; letter-spacing: 1px; }
+  .foot { text-align: center; font-size: ${wide ? '11.5px' : '11px'}; margin-top: 2mm; font-weight: 800; }
+  .stamp { text-align: center; font-size: ${wide ? '11px' : '10.5px'}; font-weight: 700; color: #000; margin-top: 1.5mm; }
 </style></head><body>
   ${logo}
   <div class="center shop">${esc(model.shopName)}</div>

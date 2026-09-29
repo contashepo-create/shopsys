@@ -180,13 +180,13 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     expect(view.getAllByRole('dialog').some((dialog) => dialog.textContent?.includes('اختصارات'))).toBe(false)
   })
 
-  it('بعد اعتماد النمط بـ Enter لا يعيد النمط الأول وينقل Enter التالي إلى العميل', () => {
+  it('القائمة القصيرة (≤١٠) تُعرض منسدلة أصلية ويختار منها Enter الحقل التالي', () => {
     const onChange = vi.fn()
-    const view = render(<MemoryRouter><KeyboardNavigation/><main><QuickSelect value="simple" onChange={onChange}><option value="simple">مبسط</option><option value="professional">احترافي</option></QuickSelect><input aria-label="العميل التالي" /></main></MemoryRouter>)
-    const mode = view.getByDisplayValue('مبسط')
-    fireEvent.focus(mode)
-    fireEvent.keyDown(mode, { key: 'ArrowDown' })
-    fireEvent.keyDown(mode, { key: 'Enter' })
+    const view = render(<MemoryRouter><KeyboardNavigation/><main><QuickSelect value="simple" onChange={onChange}><option value="simple">مبسط</option><option value="professional">احترافي</option></QuickSelect><input aria-label="العميل التالي"/></main></MemoryRouter>)
+    const mode = view.getByDisplayValue('مبسط') as HTMLSelectElement
+    expect(mode.tagName).toBe('SELECT')
+    expect(mode.closest('[data-quick-native]')).toBeTruthy()
+    fireEvent.change(mode, { target: { value: 'professional' } })
     expect(onChange).toHaveBeenCalledWith({ target: { value: 'professional' } })
     fireEvent.keyDown(mode, { key: 'Enter' })
     expect(document.activeElement).toBe(view.getByLabelText('العميل التالي'))

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/react'
+import { chooseQuickValue } from './quickSelectHelpers.ts'
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -77,12 +78,7 @@ describe('نافذة مصاريف فاتورة الشراء بنمط السند�
     expect(text).toContain('لا مصروف على هذه الفاتورة بعد')
     // اختيار قالب يضيف بنداً كاملاً للمصروف
     // QuickSelect منتقٍ بحثي: التركيز يفتح القائمة ثم يُختار الخيار من الطبقة المنبثقة
-    const search = view.getByLabelText('بحث قالب المصروف') as HTMLInputElement
-    fireEvent.focus(search)
-    fireEvent.change(search, { target: { value: 'نولون' } })
-    const option = document.querySelector('[data-quick-option][data-value="1"]') as HTMLElement
-    expect(option).toBeTruthy()
-    fireEvent.click(option)
+    expect(chooseQuickValue(document, '1'), 'لم يُعثر على قالب المصروف في القائمة').toBe(true)
     expect(expenses).toHaveLength(1)
     expect((expenses[0] as { nameAr: string }).nameAr).toBe('نولون')
   })

@@ -22,14 +22,21 @@ describe('الحساب المقابل في السندات', () => {
     expect(dialog).toBeTruthy()
     expect(dialog.textContent).not.toContain('اختر الحساب المقابل من القائمة')
 
-    const search = view.getByLabelText('بحث الحساب المقابل') as HTMLInputElement
-    fireEvent.focus(search)
-    fireEvent.change(search, { target: { value: 'رواتب' } })
-    const options = [...document.querySelectorAll('[data-quick-option]')] as HTMLElement[]
-    expect(options.length).toBeGreaterThan(0)
-    expect(options.every((option) => option.textContent?.includes('رواتب'))).toBe(true)
-
-    fireEvent.click(options[0])
+    /* القوائم ≤١٠ بنود صارت منسدلة أصلية (قرار المالك)، والأطول تبقى بحثاً */
+    const native = document.querySelector('[data-quick-native] select[aria-label="بحث الحساب المقابل"]') as HTMLSelectElement | null
+    if (native) {
+      const option = [...native.options].find((row) => row.textContent?.includes('رواتب'))
+      expect(option, 'حساب الرواتب غير معروض في القائمة المنسدلة').toBeTruthy()
+      fireEvent.change(native, { target: { value: option!.value } })
+    } else {
+      const search = view.getByLabelText('بحث الحساب المقابل') as HTMLInputElement
+      fireEvent.focus(search)
+      fireEvent.change(search, { target: { value: 'رواتب' } })
+      const options = [...document.querySelectorAll('[data-quick-option]')] as HTMLElement[]
+      expect(options.length).toBeGreaterThan(0)
+      expect(options.every((option) => option.textContent?.includes('رواتب'))).toBe(true)
+      fireEvent.click(options[0])
+    }
     // شريط التأكيد يعرض الحساب المختار بالكود والاسم
     expect(dialog.textContent).toContain('الحساب المختار')
     expect(dialog.textContent).toContain('رواتب')

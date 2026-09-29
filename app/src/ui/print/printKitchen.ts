@@ -27,14 +27,14 @@ export function renderKitchenTicketHtml(args: {
     @page { size: 80mm auto; margin: 3mm; }
     body { font-family: 'Segoe UI', Tahoma, sans-serif; width: 72mm; margin: 0; color: #000; }
     .head { text-align: center; border-bottom: 2px dashed #000; padding-bottom: 6px; margin-bottom: 6px; }
-    .shop { font-size: 13px; font-weight: 700; }
+    .shop { font-size: 14px; font-weight: 800; }
     .ord { font-size: 22px; font-weight: 900; letter-spacing: 1px; }
     .meta { font-size: 12px; font-weight: 700; margin-top: 2px; }
     table { width: 100%; border-collapse: collapse; }
-    td { padding: 5px 2px; border-bottom: 1px dotted #999; font-size: 15px; font-weight: 700; }
+    td { padding: 5px 2px; border-bottom: 1px dotted #000; font-size: 15px; font-weight: 800; color: #000; }
     .q { width: 34px; font-size: 17px; font-weight: 900; }
     .notes { margin-top: 8px; border: 2px solid #000; padding: 5px; font-size: 13px; font-weight: 700; }
-    .foot { text-align: center; font-size: 10px; margin-top: 8px; }
+    .foot { text-align: center; font-size: 11.5px; font-weight: 700; color: #000; margin-top: 8px; }
   </style></head><body>
     <div class="head">
       <div class="shop">${esc(args.shopName)} — 🍳 بون مطبخ</div>

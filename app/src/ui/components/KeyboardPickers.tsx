@@ -19,6 +19,16 @@ type QuickSelectProps = {
   [attribute: string]: unknown
 }
 
+/** نص الخيار مهما كان تركيبه (نص · مصفوفة عقد · عنصر بداخله نص) — تعتمد عليه
+ *  القائمة الأصلية القصيرة والبحث معاً، فلا يظهر «[object Object]». */
+function nodeText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(nodeText).join('')
+  if (isValidElement(node)) return nodeText((node.props as { children?: ReactNode }).children)
+  return ''
+}
+
 function flattenChoices(children: ReactNode): QuickChoice[] {
   const choices: QuickChoice[] = []
   Children.forEach(children, (child) => {
@@ -26,7 +36,7 @@ function flattenChoices(children: ReactNode): QuickChoice[] {
     if (child.type === 'option') {
       const props = child.props as { value?: string | number; children?: ReactNode }
       const content = props.children ?? ''
-      const label = String(content).replace(/<[^>]+>/g, '')
+      const label = nodeText(content).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
       choices.push({ value: String(props.value ?? ''), content, label, searchText: `${label} ${String(props.value ?? '')}`.toLowerCase() })
       return
     }
@@ -83,6 +93,23 @@ export function QuickSelect({ value, onChange, children, className, disabled = f
   }
   const fieldRef = useRef<HTMLDivElement>(null)
   const menuStyle = useAnchoredMenu(fieldRef, open)
+  /* بلاغ المالك: «الحقول ذات القوائم لا تبدو كخلية كتابة — اجعلها قوائم منسدلة
+     أختار منها إذا كانت بنودها ≤ ١٠». القوائم القصيرة تُعرض قائمة أصلية حقيقية
+     (سهم + فتح بالنقر + اختيار بلوحة المفاتيح)، والطويلة تبقى قائمة بحث. */
+  if (choices.length > 0 && choices.length <= 10) {
+    return <div className="quick-native" title={title} data-quick-select="true" data-quick-native="true">
+      <select
+        disabled={disabled}
+        aria-label={ariaLabel}
+        className={`${className ?? inputCls} quick-native-select`}
+        value={selectedValue}
+        onChange={(event) => onChange?.({ target: { value: event.target.value } })}
+      >
+        {choices.map((choice, row) => <option key={`${choice.value}:${row}`} value={choice.value}>{choice.label}</option>)}
+      </select>
+      <ChevronDown size={14} className="quick-native-arrow" aria-hidden="true" />
+    </div>
+  }
   /* القائمة المنسدلة تبقى منسدلة: النقر يعرض كل الخيارات والمحدد مظلَّل،
      ولا يُجبَر المستخدم على الكتابة من جديد بعد أن اختار (قرار المالك). */
   const openList = () => {

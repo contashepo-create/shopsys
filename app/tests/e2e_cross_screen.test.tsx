@@ -37,13 +37,24 @@ function quickOptionsScope(root: Element): Element[] {
 }
 
 function quickOptions(root: Element): Element[] {
-  return quickOptionsScope(root).flatMap((scope) => [...scope.querySelectorAll('[data-quick-option]')])
+  /* القوائم القصيرة (≤١٠) صارت منسدلة أصلية بقرار المالك، فتُقرأ خياراتها من <option> */
+  return quickOptionsScope(root).flatMap((scope) => [
+    ...scope.querySelectorAll('[data-quick-native] option'),
+    ...scope.querySelectorAll('[data-quick-option]'),
+  ])
 }
 
 function openQuickByOptionText(text: string, occurrence = 0) {
   let found = 0
   const roots = [...new Set([...document.querySelectorAll('[data-quick-select], [data-enter-native]')])]
   for (const root of roots) {
+    const native = root.querySelector('select') as HTMLSelectElement | null
+    if (native) {
+      if ([...native.options].some((option) => option.textContent?.includes(text))) {
+        if (found++ === occurrence) return root
+      }
+      continue
+    }
     const input = root.querySelector('input') as HTMLInputElement | null
     if (!input) continue
     fireEvent.focus(input)
@@ -58,7 +69,12 @@ function openQuickByOptionText(text: string, occurrence = 0) {
 }
 
 function chooseQuick(root: Element, value: string) {
-  const option = quickOptions(root).find((node) => node.getAttribute('data-value') === value)
+  const native = root.querySelector('select') as HTMLSelectElement | null
+  if (native && [...native.options].some((option) => option.value === value)) {
+    fireEvent.change(native, { target: { value } })
+    return
+  }
+  const option = quickOptions(root).find((node) => node.getAttribute('data-value') === value || (node as HTMLOptionElement).value === value)
   expect(option, `لم يُعثر على خيار ${value}`).toBeTruthy()
   if (option!.closest('[data-quick-select]')) fireEvent.click(option!)
   else fireEvent.doubleClick(option!)

@@ -2274,3 +2274,36 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 .shortcut-row kbd { border: 1px solid rgb(148 163 184 / .45); border-radius: .4rem; padding: .08rem .35rem; font-family: ui-monospace, monospace; font-size: .66rem; font-weight: 800; text-align: center; }
 @media (prefers-reduced-motion: reduce) { .command-palette, .shortcut-map { animation-duration: .01ms; } }
 
+/* ===== القوائم القصيرة (≤١٠ بنود) قائمة منسدلة أصلية لا حقل كتابة (بلاغ المالك) ===== */
+.quick-native { position: relative; min-width: 0; }
+.quick-native-select {
+  width: 100%; padding-inline-end: 1.6rem !important; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+}
+.quick-native-arrow { position: absolute; inset-inline-start: .5rem; top: 50%; transform: translateY(-50%); pointer-events: none; color: #94a3b8; }
+.invoice-doc .quick-native-arrow { inset-inline-start: .3rem; }
+
+/* ===== أزرار حذف صفوف المصروفات/العمولات: هدف نقر مريح وواضح (بلاغ المالك) ===== */
+.doc-row-delete {
+  display: inline-grid; place-items: center; flex: 0 0 auto;
+  width: 1.9rem; height: 1.9rem; border-radius: .6rem;
+  border: 1px solid rgb(244 63 94 / .35); background: rgb(244 63 94 / .08); color: #e11d48;
+  cursor: pointer; transition: background .15s ease, transform .15s ease, color .15s ease;
+}
+.doc-row-delete:hover { background: #e11d48; color: #fff; }
+.doc-row-delete:active { transform: scale(.94); }
+.doc-row-delete:focus-visible { outline: 2px solid #e11d48; outline-offset: 2px; }
+
+/* ===== إلغاء تحديد نص المستند كله: التحديد داخل الحقول فقط (بلاغ المالك) ===== */
+.invoice-doc, .invoice-editor, .invoice-pos-document, .invoice-shell {
+  -webkit-user-select: none; user-select: none;
+}
+.invoice-doc input, .invoice-doc textarea, .invoice-doc select,
+.invoice-editor input, .invoice-editor textarea, .invoice-editor select,
+.invoice-pos-document input, .invoice-pos-document textarea, .invoice-pos-document select,
+.invoice-shell input, .invoice-shell textarea, .invoice-shell select,
+.invoice-doc [contenteditable="true"], .invoice-editor [contenteditable="true"],
+.invoice-doc [data-selectable], .invoice-editor [data-selectable] {
+  -webkit-user-select: text; user-select: text;
+}
+

@@ -17,6 +17,18 @@ export const V = () => [Number(process.env.W || 1600), Number(process.env.H || 1
 
 /** اختيار قيمة من قائمة QuickSelect (ليست <select> أصلية بل combobox + أزرار) */
 export async function selectQuick(page, ariaLabel, optionText, wait = 700) {
+  /* القوائم ≤١٠ بنود صارت <select> أصلية (قرار المالك)، والأطول تبقى منتقياً بحثياً */
+  const native = await page.evaluate(({ aria, text }) => {
+    const select = document.querySelector(`[data-quick-native] select[aria-label="${aria}"]`)
+    if (!select) return null
+    const option = [...select.options].find((row) => (row.textContent ?? '').includes(text))
+    if (!option) return false
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set
+    setter.call(select, option.value)
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    return true
+  }, { aria: ariaLabel, text: optionText })
+  if (native !== null) { await new Promise((r) => setTimeout(r, wait)); return native }
   const opened = await page.evaluate((aria) => {
     const input = document.querySelector(`input[aria-label="${aria}"]`)
     if (!input) return false

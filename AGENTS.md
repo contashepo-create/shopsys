@@ -2394,3 +2394,29 @@ git push origin "$(git branch --show-current)"
 اللوحة لا تمسّ بنية الفاتورة) + `tests/command_palette.test.tsx` (٦ اختبارات) +
 `scripts/visual/palette.mjs` (٩ فحوص حيّة).
 **الحصيلة**: `verify:all` **212** · vitest **427** · sweep 28/28 · فيض الفاتورة صفر.
+
+## 46) بلاغات المالك ⑫ — الطباعة الحرارية · حذف المصروف · التحديد · القوائم
+
+1. **خطوط الإيصال الحراري تُطبع بوضوح**: رأس الطابعة 203dpi أحادي اللون يفكّك
+   الرمادي ويشوّه ما دون 10px. الآن في `ui/print/printReceipt.ts`: **كل النصوص
+   `#000`** (حُذف `#333` نهائياً)، وأصغر مقاس **10.5px** بدل 7.5px، ووزن الجسم
+   600 والنصوص الفرعية 700–800، مع `print-color-adjust: exact` و
+   `text-rendering: geometricPrecision`. وطُبّق المثل على تذكرة المطبخ.
+2. **زر حذف المصروف يعمل ويُرى**: السبب الحقيقي أن الزر كان **16×16px بلا تسمية
+   ولا تلميح** فيخطئه المستخدم (القياس الحي أثبت أن المنطق سليم). الآن صنف موحّد
+   `.doc-row-delete` بهدف **1.9rem (34px مقيسة)** وحدّ وخلفية ورديّة وتفاعل
+   `hover/active`، مع `aria-label` و`title` و**إشعار «حُذف المصروف»** بعد الحذف،
+   في المواضع الثلاثة: مصروف على العميل · مصروف داخلي · عمولة موظف، وفي
+   `PurchaseExpenseManager`.
+3. **لا تحديد لنص المستند**: `.invoice-doc/.invoice-editor/.invoice-pos-document/
+   .invoice-shell { user-select: none }` مع استثناء `input/textarea/select/
+   [contenteditable]/[data-selectable]` ⇒ التحديد داخل الخلايا التي تحتاجه فقط.
+4. **القوائم ≤ ١٠ بنود منسدلة أصلية**: `QuickSelect` يعرض `<select>` حقيقياً بسهم
+   (`.quick-native`) بدل حقل الكتابة، والأطول تبقى منتقياً بحثياً. وأُضيفت
+   `nodeText()` لاستخراج نص الخيار مهما كان تركيبه فلا يظهر `[object Object]`.
+   حُدِّثت الاختبارات المعتمدة على الشكل القديم عبر `tests/quickSelectHelpers.ts`،
+   وحُدِّثت `selectQuick()` في أدوات القياس لتدعم الشكلين.
+
+**الحراسة**: `scripts/verify_owner_fix_batch12.mjs` (٤ فحوص) + فحص حيّ
+`scripts/visual/ownerfix4.mjs` (١٢ فحصاً بينها بناء الإيصال فعلياً وتصويره).
+**الحصيلة**: `verify:all` **213** · vitest **427** · sweep 28/28 · فيض الفاتورة صفر.

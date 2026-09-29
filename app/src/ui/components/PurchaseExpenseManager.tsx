@@ -199,7 +199,7 @@ export function PurchaseExpenseManager({
           </div>
           <div className="flex items-center gap-2">
             <span className="rounded-lg doc-card doc-ring px-2.5 py-1 text-[11px] font-bold doc-ink">{money(parts.total)}</span>
-            <button type="button" aria-label="حذف المصروف" className="rounded-lg p-1.5 doc-faint transition hover:bg-rose-500 hover:text-white" onClick={() => onChange(expenses.filter((_, row) => row !== index))}><Trash2 size={15} /></button>
+            <button type="button" aria-label="حذف المصروف" title="حذف هذا المصروف" className="doc-row-delete" onClick={() => { onChange(expenses.filter((_, row) => row !== index)); toast.show('حُذف المصروف') }}><Trash2 size={15} /></button>
           </div>
         </div>
 
