@@ -2226,3 +2226,51 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
   .invoice-doc .invoice-doc-header-body { padding: .12rem .3rem; gap: .16rem; }
   .invoice-doc .invoice-doc-body { gap: .24rem; }
 }
+
+/* ===== لوحة الأوامر Ctrl+K وخريطة الاختصارات Ctrl+/ (الموجة ① من خطة UX) =====
+   طبقة عائمة أعلى الشاشة بلا تعتيم للخلفية ولا عزل — قاعدة المالك محفوظة. */
+.command-palette {
+  position: fixed; inset-inline: 0; top: 9vh; margin-inline: auto; width: min(620px, 92vw);
+  display: flex; flex-direction: column; max-height: 66vh; overflow: hidden;
+  border: 1px solid rgb(148 163 184 / .45); border-radius: 1rem;
+  background: rgb(255 255 255 / .92); backdrop-filter: saturate(180%) blur(22px);
+  box-shadow: 0 34px 80px -28px rgb(15 23 42 / .55), 0 0 0 1px rgb(15 23 42 / .05);
+  animation: cmdIn .16s cubic-bezier(.16, 1.02, .3, 1);
+}
+.dark .command-palette { background: rgb(16 24 41 / .93); border-color: rgb(71 97 143 / .5); }
+@keyframes cmdIn { from { opacity: 0; transform: translateY(-10px) scale(.985); } to { opacity: 1; transform: none; } }
+.command-palette-head { display: flex; align-items: center; gap: .5rem; padding: .55rem .75rem; border-bottom: 1px solid rgb(148 163 184 / .28); }
+.command-palette-head input { flex: 1; min-width: 0; border: none; background: transparent; outline: none; font-size: .92rem; font-family: inherit; color: inherit; }
+.command-kbd { border: 1px solid rgb(148 163 184 / .4); border-radius: .4rem; padding: .05rem .3rem; font-size: .6rem; font-weight: 800; color: #64748b; }
+.command-palette-list { flex: 1; min-height: 0; overflow: auto; padding: .25rem; }
+.command-opt {
+  display: grid; grid-template-columns: 1fr auto auto; gap: .5rem; align-items: center; width: 100%;
+  padding: .38rem .55rem; border: 1px solid transparent; border-radius: .6rem; background: transparent;
+  text-align: start; font-size: .78rem; color: inherit; cursor: pointer;
+}
+.command-opt.is-on { background: rgb(47 98 196 / .12); border-color: rgb(47 98 196 / .3); font-weight: 800; }
+.command-opt-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.command-opt-group { font-size: .64rem; color: #64748b; }
+.command-opt-keys { font-size: .6rem; color: #94a3b8; }
+.command-empty { padding: 1.1rem; text-align: center; font-size: .78rem; color: #94a3b8; }
+.command-palette-foot { display: flex; align-items: center; gap: .8rem; padding: .35rem .7rem; border-top: 1px solid rgb(148 163 184 / .28); font-size: .63rem; color: #94a3b8; }
+.command-palette-foot span { display: inline-flex; align-items: center; gap: .2rem; }
+.command-count { margin-inline-start: auto; }
+
+.shortcut-map {
+  position: fixed; inset-inline: 0; top: 10vh; margin-inline: auto; width: min(560px, 92vw); max-height: 70vh;
+  display: flex; flex-direction: column; overflow: hidden; border-radius: 1rem;
+  border: 1px solid rgb(148 163 184 / .45); background: rgb(255 255 255 / .95); backdrop-filter: blur(20px);
+  box-shadow: 0 34px 80px -28px rgb(15 23 42 / .5); animation: cmdIn .16s cubic-bezier(.16, 1.02, .3, 1);
+}
+.dark .shortcut-map { background: rgb(16 24 41 / .95); border-color: rgb(71 97 143 / .5); }
+.shortcut-map-head { display: flex; align-items: center; justify-content: space-between; padding: .5rem .75rem; border-bottom: 1px solid rgb(148 163 184 / .28); font-size: .85rem; }
+.shortcut-map-head b { display: inline-flex; align-items: center; gap: .35rem; }
+.shortcut-map-head button { border: none; background: transparent; cursor: pointer; color: inherit; font-size: .9rem; }
+.shortcut-map-body { flex: 1; min-height: 0; overflow: auto; padding: .6rem .75rem; }
+.shortcut-group { margin-bottom: .7rem; }
+.shortcut-group h4 { margin: 0 0 .25rem; font-size: .68rem; color: #94a3b8; font-weight: 800; letter-spacing: .05em; }
+.shortcut-row { display: grid; grid-template-columns: 8.5rem 1fr; gap: .5rem; align-items: center; padding: .16rem 0; font-size: .76rem; }
+.shortcut-row kbd { border: 1px solid rgb(148 163 184 / .45); border-radius: .4rem; padding: .08rem .35rem; font-family: ui-monospace, monospace; font-size: .66rem; font-weight: 800; text-align: center; }
+@media (prefers-reduced-motion: reduce) { .command-palette, .shortcut-map { animation-duration: .01ms; } }
+
