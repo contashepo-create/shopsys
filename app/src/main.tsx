@@ -1,3 +1,4 @@
+import './dev/demoBoot.ts' // يجب أن يسبق أي استيراد لمتجر (مسح البيانات التجريبية قبل الترطيب)
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'

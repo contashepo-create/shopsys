@@ -13,7 +13,9 @@
     "verify:all": "node --experimental-strip-types scripts/run_verify_all.mjs",
     "verify:security": "node --experimental-strip-types scripts/verify_support_security.mjs",
     "preview": "vite preview",
-    "test:e2e": "vitest run"
+    "test:e2e": "vitest run",
+    "demo:build": "node demo-db/build.mjs",
+    "demo:dump": "node demo-db/dump.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.45.0",
