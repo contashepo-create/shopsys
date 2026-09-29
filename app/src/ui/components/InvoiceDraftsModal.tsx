@@ -19,7 +19,7 @@ const when = (iso: string) => {
  * وعدد البنود وقيمتها ووقت آخر حفظ، وتُفتح أو تُحذف بضغطة.
  */
 export function InvoiceDraftsModal({
-  open, onClose, kind, drafts, currency, currentDraftId, onPick, onDelete,
+  open, onClose, kind, drafts, currency, currentDraftId, onPick, onDelete, templatesOnly = false,
 }: {
   open: boolean
   onClose: () => void
@@ -29,6 +29,8 @@ export function InvoiceDraftsModal({
   currentDraftId?: string
   onPick: (draft: AdvancedInvoiceDraft) => void
   onDelete: (id: string) => void
+  /** وضع القوالب: يعرض القوالب المحفوظة فقط (سلال متكررة) */
+  templatesOnly?: boolean
 }) {
   const [query, setQuery] = useState('')
   const partyWord = kind === 'sale' ? 'العميل' : 'المورد'
@@ -36,12 +38,13 @@ export function InvoiceDraftsModal({
     const needle = query.trim().toLowerCase()
     return drafts
       .filter((draft) => draft.kind === kind)
+      .filter((draft) => (templatesOnly ? draft.isTemplate === true : draft.isTemplate !== true))
       .filter((draft) => !needle || draft.name.toLowerCase().includes(needle))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-  }, [drafts, kind, query])
+  }, [drafts, kind, query, templatesOnly])
 
   return (
-    <Modal open={open} onClose={onClose} title={`مسودات ${kind === 'sale' ? 'المبيعات' : 'المشتريات'} المحفوظة`} wide>
+    <Modal open={open} onClose={onClose} title={templatesOnly ? `قوالب ${kind === 'sale' ? 'المبيعات' : 'المشتريات'} الجاهزة` : `مسودات ${kind === 'sale' ? 'المبيعات' : 'المشتريات'} المحفوظة`} wide>
       <div className="space-y-3" dir="rtl">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[12px] leading-6 text-slate-500 dark:text-slate-400">

@@ -1196,6 +1196,8 @@ export interface AdvancedInvoiceDraft {
   payload: string
   createdAt: string
   updatedAt: string
+  /** قالب فاتورة قابل لإعادة الاستخدام (سلة متكررة) — لا مسودة عمل جارية */
+  isTemplate?: boolean
 }
 
 /* ─── فواتير البيع (الكاشير) ─── */

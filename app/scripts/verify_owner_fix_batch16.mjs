@@ -57,4 +57,20 @@ const frame = read('ui/components/InvoicePOSFrame.tsx')
   assert.ok(/\.invoice-doc \.invoice-doc-fields > \.form-field:focus-within/.test(css), 'الحقل النشط غير مميّز')
   R.ok('تدريج بصري لحقول الترويسة يخفّف الازدحام')
 }
+/* ⑧ توسيط خانة الإجمالي + فحوص الائتمان + قوالب الفواتير (دفعة ⑰) */
+{
+  assert.ok(/\.invoice-editor \.invoice-lines-table \.invoice-table-total \{[^}]*text-align: center/.test(css),
+    'خانة الإجمالي ما زالت محاذية لليسار')
+  const sales = read('ui/pages/AdvancedSalesInvoicePage.tsx')
+  assert.ok(/id:'credit-limit'/.test(sales) && /تجاوز حد الائتمان/.test(sales), 'لا فحص لتجاوز حد الائتمان قبل الترحيل')
+  assert.ok(/id:'collect-short'/.test(sales), 'لا فحص لنقص التحصيل قبل الترحيل')
+  assert.ok(/const allPrePostIssues=useMemo/.test(sales), 'الفحوص المالية غير مدمجة في لوحة المراجعة')
+  assert.ok(/const saveAsTemplate=\(\)=>/.test(sales) && /const applyTemplate=/.test(sales), 'قوالب الفواتير غير منفَّذة')
+  assert.ok(/isTemplate:true/.test(sales), 'القالب لا يُحفظ بعلم القالب')
+  const modal = read('ui/components/InvoiceDraftsModal.tsx')
+  assert.ok(/templatesOnly\?: boolean/.test(modal) && /draft\.isTemplate === true/.test(modal), 'نافذة القوالب لا تفصل القوالب عن المسودات')
+  const repo = read('data/repo.ts')
+  assert.ok(/isTemplate\?: boolean/.test(repo), 'نوع المسودة بلا علم القالب')
+  R.ok('الإجمالي موسَّط · فحص الائتمان والتحصيل · قوالب فواتير كاملة')
+}
 R.done()
