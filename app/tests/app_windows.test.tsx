@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))))
 const { useDataStore } = await import('../src/data/repo.ts')
 const { useAppStore } = await import('../src/stores/app.store.ts')
-const { useWindowStore, openSalesInvoiceWindow, openItemEditorWindow, openPartyLedgerWindow } = await import('../src/ui/windows/windowStore.ts')
+const { useWindowStore, openSalesInvoiceWindow, openItemEditorWindow, openPartyLedgerWindow, openItemLedgerWindow } = await import('../src/ui/windows/windowStore.ts')
 const { WindowHost } = await import('../src/ui/windows/WindowHost.tsx')
 const { Modal, Btn } = await import('../src/ui/components/ui.tsx')
 
@@ -225,5 +225,37 @@ describe('النوافذ المنبثقة المتداخلة', () => {
     expect(document.querySelector('[data-testid="first-body"]')).toBeTruthy()
     act(() => { fireEvent.keyDown(window, { key: 'Escape' }) })
     expect(document.querySelectorAll('[data-modal-id]').length).toBe(0)
+  })
+})
+
+describe('نافذة حركة الصنف بفلاترها (قرار المالك ⑩ي البند ⑦)', () => {
+  it('تفتح فوق الفاتورة بفلتر فترة يبدأ من أول السنة المالية حتى اليوم + فلتر مخزن ونوع حركة', async () => {
+    const app = useAppStore.getState()
+    useAppStore.setState({ ...app, fiscalYears: [{ id: 1, nameAr: '2026', startDate: '2026-01-01', endDate: '2026-12-31', status: 'open' }] })
+    act(() => { S().seed(['basic']) })
+    act(() => {
+      S().addItem({
+        nameAr: 'زيت عباد', sku: 'OIL-1', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [],
+        costMinor: 5000, stockQty: 40, priceMinor: 7000, minQty: 0, trackExpiry: false, trackSerial: false,
+        warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true,
+      })
+    })
+    const item = S().items.at(-1)!
+    act(() => { openItemLedgerWindow(item.id, null) })
+    render(<MemoryRouter><WindowHost /></MemoryRouter>)
+    const filters = document.querySelector('[data-ledger-filters]') as HTMLElement
+    expect(filters).toBeTruthy()
+    const from = filters.querySelector('[data-ledger-from]') as HTMLInputElement
+    const to = filters.querySelector('[data-ledger-to]') as HTMLInputElement
+    expect(from.value).toBe('2026-01-01')
+    expect(to.value).toBe(new Date().toISOString().slice(0, 10))
+    expect(filters.querySelector('[data-ledger-warehouse]')).toBeTruthy()
+    expect(filters.querySelector('[data-ledger-flow]')).toBeTruthy()
+    expect(filters.querySelector('[data-ledger-doctype]')).toBeTruthy()
+    // النافذة الأم (الفاتورة) لا تُفقد عند فتح حركة الصنف فوقها
+    act(() => { openSalesInvoiceWindow(null) })
+    act(() => { openItemLedgerWindow(item.id, null) })
+    expect(W().windows.filter((win) => win.kind === 'sales-invoice').length).toBe(1)
+    expect(W().windows.filter((win) => win.kind === 'item-ledger').length).toBe(1)
   })
 })

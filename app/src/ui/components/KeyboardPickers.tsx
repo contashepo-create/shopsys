@@ -110,7 +110,9 @@ export function QuickSelect({ value, onChange, children, className, disabled = f
   </div>
 }
 
-export type QuickItem = { id: number; nameAr: string; sku?: string; barcodes?: string[]; stockQty?: number; priceMinor?: number; costMinor?: number }
+export type QuickItem = { id: number; nameAr: string; sku?: string; barcodes?: string[]; stockQty?: number; priceMinor?: number; costMinor?: number; baseUnit?: string; categoryId?: number | null; isService?: boolean }
+/** بطاقة الصنف الغنية داخل نافذة الاختيار (دفعة المالك ⑩ي البند ⑦) */
+export type QuickItemMeta = { stock?: string; price?: string; cost?: string; unit?: string; category?: string; low?: boolean }
 
 type PickerProps = {
   items: QuickItem[]
@@ -122,15 +124,23 @@ type PickerProps = {
   onEdit?: (id: number) => void
   onMovement?: (id: number) => void
   onPrices?: (id: number) => void
+  /** بيانات العرض الغنية لكل صنف (الرصيد/السعر/التكلفة/الوحدة/الفئة) */
+  itemMeta?: (item: QuickItem) => QuickItemMeta
+  /** فئات الأصناف لفلترة النافذة */
+  categories?: { id: number; nameAr: string }[]
+  /** إنشاء صنف جديد من داخل نافذة الاختيار */
+  onCreate?: (name: string) => void
 }
 
 /** منتقي صنف موحد: يفتح نافذة البحث عند أول حرف، ثم ينقل الكتابة إلى حقل النافذة. */
-export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود أو اسم الصنف ثم Enter', amountLabel, inputElementRef, listenForShortcut = true, onEdit, onMovement, onPrices }: PickerProps) {
+export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود أو اسم الصنف ثم Enter', amountLabel, inputElementRef, listenForShortcut = true, onEdit, onMovement, onPrices, itemMeta, categories, onCreate }: PickerProps) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [index, setIndex] = useState(0)
   const [panelStyle, setPanelStyle] = useState<CSSProperties>({})
-  const panelWidth = 560
+  const panelWidth = 720
+  const [catFilter, setCatFilter] = useState(0)
+  const [availableOnly, setAvailableOnly] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const pickerRef = useRef<HTMLDivElement>(null)
@@ -147,9 +157,12 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
   }, [])
   const matches = useMemo(() => {
     const q = query.trim()
-    if (!q) return items
-    return items.filter((item) => matchesSearch([item.nameAr, item.sku, ...(item.barcodes ?? []), item.id], q))
-  }, [items, query])
+    let list = items
+    if (catFilter) list = list.filter((item) => (item.categoryId ?? 0) === catFilter)
+    if (availableOnly) list = list.filter((item) => item.isService || (item.stockQty ?? 0) > 0)
+    if (!q) return list
+    return list.filter((item) => matchesSearch([item.nameAr, item.sku, ...(item.barcodes ?? []), item.id], q))
+  }, [items, query, catFilter, availableOnly])
   const focusSearch = (initialQuery: string) => {
     requestAnimationFrame(() => {
       const input = searchInputRef.current
@@ -208,8 +221,31 @@ export function ItemQuickPicker({ items, onPick, placeholder = 'اكتب كود 
     {open && <OverlayPortal><div className="layer-picker fixed inset-0 invoice-search-overlay invoice-item-overlay" dir="rtl" onMouseDown={(event) => event.stopPropagation()}>
       <div role="dialog" aria-label="نتائج بحث الأصناف" style={panelStyle} className="invoice-search-dialog flex flex-col overflow-hidden rounded-2xl border border-brand-300/50 bg-white dark:border-brand-700/50 dark:bg-card-dark" onMouseDown={(event) => event.stopPropagation()}>
       <div className="invoice-search-inputbar border-b border-slate-200 p-2 dark:border-slate-700"><div className="relative"><Search size={15} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-brand-500"/><input ref={(node) => { searchInputRef.current = node; setExternalRef(node) }} className={`${inputCls} pr-9`} value={query} placeholder={placeholder} aria-label="بحث الصنف" role="combobox" aria-expanded aria-controls="invoice-item-results" aria-autocomplete="list" aria-activedescendant={matches[index] ? `invoice-item-option-${matches[index].id}` : undefined} onChange={(event) => { setQuery(event.target.value); setIndex(0) }} onKeyDown={handleKeyDown}/></div></div>
-      {matches[index] && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-brand-500/5 px-3 py-2 dark:border-slate-700"><div className="min-w-0"><span className="ml-2 font-mono text-[10px] text-slate-500" dir="ltr">{matches[index].sku || matches[index].barcodes?.[0] || matches[index].id}</span><b className="block truncate">{matches[index].nameAr}</b></div><div className="flex items-center gap-1"><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onEdit?.(matches[index].id)} disabled={!onEdit} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-sky-700 enabled:hover:bg-sky-50 disabled:opacity-35 dark:border-slate-700 dark:text-sky-300">✎ تعديل</button><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onMovement?.(matches[index].id)} disabled={!onMovement} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-violet-700 enabled:hover:bg-violet-50 disabled:opacity-35 dark:border-slate-700 dark:text-violet-300">↗ حركة الصنف</button><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onPrices?.(matches[index].id)} disabled={!onPrices} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-emerald-700 enabled:hover:bg-emerald-50 disabled:opacity-35 dark:border-slate-700 dark:text-emerald-300">٪ الأسعار</button></div></div>}
-      <div id="invoice-item-results" role="listbox" aria-label="نتائج بحث الأصناف" className="invoice-search-results max-h-72 overflow-auto p-1">{matches.length ? matches.map((item, row) => <button type="button" key={item.id} id={`invoice-item-option-${item.id}`} role="option" aria-selected={row === index} onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(row)} onDoubleClick={() => pick(item)} className={`invoice-search-result-row invoice-item-result-row w-full grid grid-cols-[110px_1fr_auto] gap-2 p-2.5 rounded-lg text-right ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/40' : 'hover:bg-slate-500/10'}`}><span className="font-mono text-xs text-slate-500">{item.sku || item.barcodes?.[0] || item.id}</span><b>{item.nameAr}</b><span className="text-xs text-slate-500">{amountLabel?.(item) ?? ''}</span></button>) : <div className="p-4 text-center text-sm text-slate-400">لا توجد أصناف مطابقة</div>}</div>
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-2 py-1.5 text-[11px] dark:border-slate-700" data-item-picker-filters>
+        {!!categories?.length && <select className={`${inputCls} h-7 w-40 py-0 text-[11px]`} value={catFilter} onChange={(event) => { setCatFilter(Number(event.target.value)); setIndex(0) }} aria-label="فئة الأصناف" data-item-picker-category>
+          <option value={0}>كل الفئات</option>
+          {categories.map((cat) => <option key={cat.id} value={cat.id}>{cat.nameAr}</option>)}
+        </select>}
+        <label className="flex cursor-pointer items-center gap-1 text-slate-600 dark:text-slate-300"><input type="checkbox" checked={availableOnly} onChange={(event) => { setAvailableOnly(event.target.checked); setIndex(0) }} data-item-picker-available/>المتاح فقط</label>
+        <span className="ms-auto text-slate-400">{matches.length} صنف</span>
+        {onCreate && <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => onCreate(query.trim())} className="rounded-lg border border-emerald-300 px-2 py-0.5 font-bold text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-300" data-item-picker-create>+ صنف جديد</button>}
+      </div>
+      {matches[index] && <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-brand-500/5 px-3 py-2 dark:border-slate-700"><div className="min-w-0"><span className="ml-2 font-mono text-[10px] text-slate-500" dir="ltr">{matches[index].sku || matches[index].barcodes?.[0] || matches[index].id}</span><b className="block truncate">{matches[index].nameAr}</b></div><div className="flex items-center gap-1"><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setOpen(false); onEdit?.(matches[index].id) }} disabled={!onEdit} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-sky-700 enabled:hover:bg-sky-50 disabled:opacity-35 dark:border-slate-700 dark:text-sky-300">✎ تعديل</button><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setOpen(false); onMovement?.(matches[index].id) }} disabled={!onMovement} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-violet-700 enabled:hover:bg-violet-50 disabled:opacity-35 dark:border-slate-700 dark:text-violet-300">↗ حركة الصنف</button><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setOpen(false); onPrices?.(matches[index].id) }} disabled={!onPrices} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-emerald-700 enabled:hover:bg-emerald-50 disabled:opacity-35 dark:border-slate-700 dark:text-emerald-300">٪ الأسعار</button></div></div>}
+      <div className="grid grid-cols-[92px_1fr_88px_64px_72px_86px_86px] gap-2 border-b border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-500 dark:border-slate-700 dark:bg-slate-800/50" data-item-picker-head>
+        <span>الكود</span><span>اسم الصنف</span><span>الفئة</span><span>الوحدة</span><span className="text-center">المتاح</span><span className="text-center">سعر البيع</span><span className="text-center">آخر تكلفة</span>
+      </div>
+      <div id="invoice-item-results" role="listbox" aria-label="نتائج بحث الأصناف" className="invoice-search-results max-h-72 overflow-auto p-1">{matches.length ? matches.map((item, row) => {
+        const meta = itemMeta?.(item) ?? {}
+        return <button type="button" key={item.id} id={`invoice-item-option-${item.id}`} role="option" aria-selected={row === index} onMouseDown={(event) => event.preventDefault()} onClick={() => setIndex(row)} onDoubleClick={() => pick(item)} className={`invoice-search-result-row invoice-item-result-row w-full grid grid-cols-[92px_1fr_88px_64px_72px_86px_86px] items-center gap-2 p-2 rounded-lg text-right ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/40' : 'hover:bg-slate-500/10'}`}>
+          <span className="truncate font-mono text-[11px] text-slate-500" dir="ltr">{item.sku || item.barcodes?.[0] || item.id}</span>
+          <b className="truncate">{item.nameAr}</b>
+          <span className="truncate text-[10px] text-slate-500">{meta.category ?? ''}</span>
+          <span className="truncate text-[10px] text-slate-500">{meta.unit ?? ''}</span>
+          <span className={`text-center text-[11px] font-bold ${meta.low ? 'text-rose-600' : 'text-emerald-600'}`}>{meta.stock ?? ''}</span>
+          <span className="text-center text-[11px] font-bold">{meta.price ?? amountLabel?.(item) ?? ''}</span>
+          <span className="text-center text-[11px] text-slate-500">{meta.cost ?? ''}</span>
+        </button>
+      }) : <div className="p-4 text-center text-sm text-slate-400">لا توجد أصناف مطابقة</div>}</div>
       <div className="invoice-search-footer border-t border-slate-100 px-3 py-2 text-[10px] text-slate-400 dark:border-slate-800">اختر بالسهم ثم Enter، أو اضغط مرتين على الصنف لإضافته للفاتورة.</div>
       </div>
     </div></OverlayPortal>}

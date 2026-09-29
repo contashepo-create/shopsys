@@ -18,6 +18,7 @@
  *  ⑯ أزرار المصاريف ظاهرة داخل بوكس الشروط.
  *  ⑰ حذف زرَّي «تحصيل المبلغ كاملاً» و«بيع آجل بلا تحصيل».
  *  ⑧ خصم لكل فئة أصناف داخل نفس قائمة الأسعار (لنفس العميل).
+ *  ⑦ نافذة اختيار الصنف الغنية + نافذة حركة الصنف بفلاترها فوق الفاتورة.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -165,6 +166,26 @@ const R = reporter('دفعة المالك ⑩ي على الفاتورة — ال
   assert.ok(/data-category-rules/.test(priceListsPage) && /خصم لكل فئة/.test(priceListsPage),
     'صفحة قوائم الأسعار بلا محرر خصم الفئات')
   R.ok('⑧ خصم مستقل لكل فئة أصناف داخل نفس القائمة — الأولوية: صنف ⇐ فئة ⇐ القائمة ⇐ التجزئة')
+}
+
+/* ⑦ نافذة اختيار الصنف الغنية ونافذة حركة الصنف */
+{
+  const pickers = read('src/ui/components/KeyboardPickers.tsx')
+  assert.ok(/data-item-picker-head/.test(pickers), 'نافذة اختيار الصنف بلا رأس أعمدة (ما زالت بسيطة)')
+  assert.ok(/data-item-picker-category/.test(pickers) && /data-item-picker-available/.test(pickers),
+    'نافذة اختيار الصنف بلا فلتر فئة أو «المتاح فقط»')
+  assert.ok(/itemMeta\?\.\(item\)/.test(pickers), 'صفوف النتائج لا تعرض الرصيد والسعر والتكلفة')
+  for (const [file, src] of [['البيع', sales], ['الشراء', purchase]])
+    assert.ok(/itemMeta=\{item =>/.test(src), `صفحة ${file} لا تغذي نافذة الاختيار بالبيانات الغنية`)
+  assert.ok(/setOpen\(false\); onMovement\?\./.test(pickers), 'فتح نافذة حركة الصنف لا يُخفي لوحة البحث فوقها')
+  const views = read('src/ui/windows/windowViews.tsx')
+  assert.ok(/data-ledger-filters/.test(views) && /data-ledger-warehouse/.test(views) && /data-ledger-flow/.test(views),
+    'نافذة حركة الصنف بلا فلاتر مخزن/نوع حركة')
+  assert.ok(/fiscalYears\.find\(\(fy\) => fy\.status === 'open'\)/.test(views),
+    'فلتر تاريخ حركة الصنف لا يبدأ من أول السنة المالية')
+  assert.ok(/useItemLedgerInput/.test(views) && /useItemLedgerInput/.test(read('src/ui/pages/ItemsPage.tsx')),
+    'دفتر حركة الصنف مكرر بدل خطّاف مشترك')
+  R.ok('⑦ نافذة صنف غنية (أعمدة وفلاتر) + حركة الصنف بفلتر السنة المالية والمخزن فوق الفاتورة')
 }
 
 R.done()

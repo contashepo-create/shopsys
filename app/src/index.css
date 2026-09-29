@@ -525,13 +525,21 @@ select { line-height: 1.25rem; }
 .dark .invoice-search-dialog .invoice-search-result-row:hover { border-color: #4f8ab4; background: #183451; }
 .dark .invoice-search-dialog .invoice-search-result-row.bg-brand-500\/15 { border-color: #4b9bd2; background: #173957; }
 .invoice-search-dialog .invoice-search-results::before { display: block; margin: 0 .2rem .25rem; border-bottom: 1px solid #c5d4e2; padding: .2rem .55rem; color: #60768d; content: 'الكود                           البيان / الاسم                              الرصيد والمخزون'; font-size: .58rem; font-weight: 900; }
+.invoice-item-overlay .invoice-search-results::before { display: none !important; }
+/* فلاتر نافذة حركة الصنف (البند ⑦): خمسة فلاتر متجاورة بلا قصّ لأي تاريخ */
+[data-ledger-filters] { grid-template-columns: repeat(auto-fit, minmax(8.2rem, 1fr)); }
+[data-ledger-filters] input, [data-ledger-filters] select { min-width: 0; height: 1.9rem; padding-inline: .35rem; font-size: .66rem; }
+[data-ledger-filters] label, [data-ledger-filters] .form-field > span { font-size: .58rem; white-space: nowrap; }
 .dark .invoice-search-dialog .invoice-search-results::before { border-color: #2d4863; color: #91a9c0; }
 .invoice-search-dialog .invoice-search-footer { background: #e3ebf4; color: #5c7187; }
 .dark .invoice-search-dialog .invoice-search-footer { border-color: #2d4863 !important; background: #13263d; color: #9eb4c9; }
-.invoice-item-result-row { display: grid !important; grid-template-columns: 9rem minmax(0, 1fr) minmax(10rem, .7fr) !important; align-items: center; gap: .7rem !important; min-height: 2.7rem; }
+/* نافذة اختيار الصنف الغنية (دفعة المالك ⑩ي البند ⑦): سبعة أعمدة مطابقة لرأس الجدول */
+.invoice-item-result-row, [data-item-picker-head] { display: grid !important; grid-template-columns: 86px minmax(0, 1fr) 86px 58px 68px 82px 82px !important; align-items: center; gap: .45rem !important; }
+.invoice-item-result-row { min-height: 2.4rem; }
 .invoice-item-result-row > span:first-child { color: #315a7c; font-size: .66rem; font-weight: 900; }
 .invoice-item-result-row > b { overflow: hidden; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .invoice-item-result-row > span:last-child { color: #547087; font-size: .62rem; font-weight: 800; }
+.invoice-item-result-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dark .invoice-item-result-row > span:first-child { color: #8fc5e8; }
 .dark .invoice-item-result-row > span:last-child { color: #9db7cc; }
 .invoice-party-overlay .invoice-search-results::before { content: 'الكود                           العميل / المورد                         الهاتف والرصيد'; }
@@ -546,8 +554,10 @@ select { line-height: 1.25rem; }
 .dark .invoice-party-overlay .invoice-search-cash { background: #123451; }
 @media (max-width: 700px) {
   .invoice-search-dialog { max-height: 70vh !important; }
-  .invoice-item-result-row { grid-template-columns: 6rem minmax(0, 1fr) !important; }
-  .invoice-item-result-row > span:last-child { grid-column: 2; }
+  /* شاشة ضيقة: يبقى الكود والاسم والمتاح والسعر — بلا اختفاء أي بيان مهم */
+  .invoice-item-result-row, [data-item-picker-head] { grid-template-columns: 76px minmax(0, 1fr) 62px 78px !important; }
+  .invoice-item-result-row > span:nth-child(3), .invoice-item-result-row > span:nth-child(4), .invoice-item-result-row > span:nth-child(7),
+  [data-item-picker-head] > span:nth-child(3), [data-item-picker-head] > span:nth-child(4), [data-item-picker-head] > span:nth-child(7) { display: none; }
   .invoice-party-overlay .invoice-search-result-row > div { grid-template-columns: minmax(0, 1fr); gap: .25rem; }
   .invoice-party-overlay .invoice-search-result-row .text-left { text-align: right; }
 }

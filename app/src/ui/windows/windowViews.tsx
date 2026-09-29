@@ -6,6 +6,8 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
+import { buildItemLedger } from '../../core/itemLedger.ts'
+import { useItemLedgerInput } from '../hooks/useItemLedgerInput.ts'
 import { useWindowHost } from './windowHostContext.ts'
 import { openItemLedgerWindow, openPartyLedgerWindow } from './windowStore.ts'
 
@@ -87,44 +89,114 @@ export function ItemLedgerWindowView() {
   const host = useWindowHost()
   const itemId = Number(host?.props.itemId ?? 0)
   const cur = useCur()
-  const { items, stockMoves } = useDataStore()
+  const { items, warehouses } = useDataStore()
+  const { fiscalYears } = useAppStore()
   const item = items.find((row) => row.id === itemId) ?? null
+  const today = new Date().toISOString().slice(0, 10)
+  /* الافتراضي المطلوب من المالك: من بداية السنة المالية حتى اليوم */
+  const yearStart = useMemo(() => {
+    const open = fiscalYears.find((fy) => fy.status === 'open') ?? fiscalYears.at(-1)
+    return open?.startDate ?? `${today.slice(0, 4)}-01-01`
+  }, [fiscalYears, today])
+  const [from, setFrom] = useState(yearStart)
+  const [to, setTo] = useState(today)
+  const [warehouseId, setWarehouseId] = useState(0)
+  const [flow, setFlow] = useState<'all' | 'in' | 'out'>('all')
+  const [docType, setDocType] = useState('')
+
+  const ledgerInput = useItemLedgerInput(itemId || null)
+  const ledger = useMemo(() => {
+    if (!ledgerInput) return null
+    const scoped = warehouseId
+      ? {
+          ...ledgerInput,
+          purchases: ledgerInput.purchases.filter((p) => (p.warehouseId ?? 0) === warehouseId),
+          purchaseReturns: ledgerInput.purchaseReturns.filter((r) => (r.warehouseId ?? 0) === warehouseId),
+          sales: ledgerInput.sales.filter((sl) => (sl.warehouseId ?? 0) === warehouseId),
+          saleReturns: ledgerInput.saleReturns.filter((r) => (r.warehouseId ?? 0) === warehouseId),
+          stocktakes: ledgerInput.stocktakes.filter((st) => (st.warehouseId ?? 0) === warehouseId),
+          materialRequisitions: ledgerInput.materialRequisitions.filter((mr) => (mr.warehouseId ?? 0) === warehouseId),
+          transfers: (ledgerInput.transfers ?? []).filter((t) => t.fromWarehouseId === warehouseId || t.toWarehouseId === warehouseId),
+        }
+      : ledgerInput
+    const all = buildItemLedger(scoped)
+    const opening = Math.round(((item?.stockQty ?? 0) - (all.totalIn - all.totalOut)) * 1000) / 1000
+    return buildItemLedger({ ...scoped, openingQty: opening }, from || undefined, to || undefined)
+  }, [ledgerInput, warehouseId, from, to, item])
+
   const rows = useMemo(
-    () => stockMoves.filter((move) => move.itemId === itemId).slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 300),
-    [stockMoves, itemId],
+    () => (ledger?.rows ?? []).filter((r) => (flow === 'in' ? r.inQty > 0 : flow === 'out' ? r.outQty > 0 : true))
+      .filter((r) => !docType || r.docType === docType)
+      .slice().reverse(),
+    [ledger, flow, docType],
   )
-  const totalIn = rows.filter((row) => row.qtyDelta > 0).reduce((sum, row) => sum + row.qtyDelta, 0)
-  const totalOut = rows.filter((row) => row.qtyDelta < 0).reduce((sum, row) => sum - row.qtyDelta, 0)
+  const docTypes = useMemo(() => Array.from(new Set((ledger?.rows ?? []).map((r) => r.docType))).sort(), [ledger])
+  const totalIn = rows.reduce((sum, r) => sum + r.inQty, 0)
+  const totalOut = rows.reduce((sum, r) => sum + r.outQty, 0)
   if (!item) return <div className="p-6 text-sm text-slate-500">الصنف غير موجود.</div>
   return (
     <div className="space-y-3 p-5" data-window-view="item-ledger">
+      {/* فلاتر حركة الصنف (دفعة المالك ⑩ي البند ⑦): فترة تبدأ من بداية السنة المالية + مخزن + نوع الحركة + نوع المستند */}
+      <div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-700 dark:bg-slate-800/40" data-ledger-filters>
+        <Field label="من تاريخ">
+          <input type="date" className={inputCls} value={from} onChange={(e) => setFrom(e.target.value)} data-ledger-from aria-label="من تاريخ" />
+        </Field>
+        <Field label="إلى تاريخ">
+          <input type="date" className={inputCls} value={to} onChange={(e) => setTo(e.target.value)} data-ledger-to aria-label="إلى تاريخ" />
+        </Field>
+        <Field label="المخزن">
+          <select className={inputCls} value={warehouseId} onChange={(e) => setWarehouseId(Number(e.target.value))} data-ledger-warehouse aria-label="المخزن">
+            <option value={0}>كل المخازن</option>
+            {warehouses.map((w) => <option key={w.id} value={w.id}>{w.nameAr}</option>)}
+          </select>
+        </Field>
+        <Field label="نوع الحركة">
+          <select className={inputCls} value={flow} onChange={(e) => setFlow(e.target.value as 'all' | 'in' | 'out')} data-ledger-flow aria-label="نوع الحركة">
+            <option value="all">الكل</option>
+            <option value="in">وارد فقط</option>
+            <option value="out">منصرف فقط</option>
+          </select>
+        </Field>
+        <Field label="المستند">
+          <select className={inputCls} value={docType} onChange={(e) => setDocType(e.target.value)} data-ledger-doctype aria-label="المستند">
+            <option value="">كل المستندات</option>
+            {docTypes.map((d) => <option key={d} value={d}>{DOC_LABELS[d] ?? d}</option>)}
+          </select>
+        </Field>
+      </div>
       <div className="grid gap-2 sm:grid-cols-4">
-        <Stat label="الرصيد الحالي" value={`${item.stockQty ?? 0} ${item.baseUnit}`} />
+        <Stat label="رصيد أول المدة" value={`${ledger?.openingQty ?? 0} ${item.baseUnit}`} />
         <Stat label="إجمالي الوارد" value={String(totalIn)} tone="in" />
         <Stat label="إجمالي المنصرف" value={String(totalOut)} tone="out" />
-        <Stat label="متوسط التكلفة" value={`${formatMinor(item.costMinor ?? 0, cur, false)} ${cur.symbol}`} />
+        <Stat label={warehouseId ? 'رصيد المخزن الحالي' : 'الرصيد الحالي'} value={`${ledger?.closingQty ?? item.stockQty ?? 0} ${item.baseUnit}`} />
       </div>
       <div className="overflow-auto rounded-2xl border border-slate-200 dark:border-slate-700">
         <table className="w-full text-[12px]">
-          <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800/60"><tr><th className="p-2 text-start">التاريخ</th><th className="p-2 text-start">المستند</th><th className="p-2">وارد</th><th className="p-2">منصرف</th><th className="p-2">الرصيد بعدها</th><th className="p-2 text-start">المستخدم</th></tr></thead>
+          <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800/60"><tr><th className="p-2 text-start">التاريخ</th><th className="p-2 text-start">المستند</th><th className="p-2 text-center">وارد</th><th className="p-2 text-center">منصرف</th><th className="p-2 text-center">الرصيد</th><th className="p-2 text-start">القيمة</th></tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-slate-400">لا توجد حركات مسجلة لهذا الصنف بعد.</td></tr>}
-            {rows.map((row) => (
-              <tr key={row.id} data-ledger-row className="border-t border-slate-100 dark:border-slate-800">
-                <td className="p-2" dir="ltr">{row.date.slice(0, 16).replace('T', ' ')}</td>
-                <td className="p-2">{row.reason}</td>
-                <td className="p-2 text-center font-bold text-emerald-600">{row.qtyDelta > 0 ? row.qtyDelta : '—'}</td>
-                <td className="p-2 text-center font-bold text-rose-600">{row.qtyDelta < 0 ? -row.qtyDelta : '—'}</td>
-                <td className="p-2 text-center" dir="ltr">{row.balanceAfter}</td>
-                <td className="p-2 text-slate-500">{row.byUser || '—'}</td>
+            {rows.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-slate-400">لا توجد حركات في النطاق المحدد.</td></tr>}
+            {rows.map((row, idx) => (
+              <tr key={`${row.date}-${row.docLabel}-${idx}`} data-ledger-row className="border-t border-slate-100 dark:border-slate-800">
+                <td className="p-2" dir="ltr">{row.date}</td>
+                <td className="p-2">{row.docLabel}{row.userName ? ` — ${row.userName}` : ''}</td>
+                <td className="p-2 text-center font-bold text-emerald-600">{row.inQty || '—'}</td>
+                <td className="p-2 text-center font-bold text-rose-600">{row.outQty || '—'}</td>
+                <td className="p-2 text-center" dir="ltr">{row.balance}</td>
+                <td className="p-2 text-slate-500">{formatMinor(row.valueMinor, cur, false)} {cur.symbol}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-slate-500">تُعرض آخر 300 حركة. كارت الصنف الكامل بفلاتر الفترة والمخزن موجود في شاشة الأصناف.</p>
+      <p className="text-[11px] text-slate-500">دفتر الحركة مبني من المستندات نفسها (شراء · بيع · مرتجعات · جرد · إنتاج · تحويلات)، فلا تفوت حركة.</p>
     </div>
   )
+}
+
+const DOC_LABELS: Record<string, string> = {
+  purchase: 'فاتورة شراء', sale: 'فاتورة بيع', purchase_return: 'مرتجع شراء', sale_return: 'مرتجع بيع',
+  stocktake: 'جرد', production: 'إنتاج', processing: 'تجهيز/تفكيك', material_issue: 'صرف مواد',
+  transfer_in: 'تحويل وارد', transfer_out: 'تحويل منصرف', opening: 'رصيد افتتاحي',
 }
 
 /* ═══════════ تعديل عميل/مورد ═══════════ */
