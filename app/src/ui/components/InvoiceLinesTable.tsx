@@ -5,6 +5,8 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { inputCls } from './ui.tsx'
 import { ItemQuickPicker, QuickSelect } from './KeyboardPickers.tsx'
+import { useWindowHost } from '../windows/windowHostContext.ts'
+import { openItemPickerWindow } from '../windows/windowStore.ts'
 
 type InvoiceLineItem = {
   id: number
@@ -88,6 +90,8 @@ type Props = {
   onEdit?: (id: number) => void
   onMovement?: (id: number) => void
   onPrices?: (id: number) => void
+  /** نقرتان على اسم صنف في الجدول ⇒ نافذة اختيار صنف تستبدله (بلاغ المالك) */
+  onReplaceLine?: (key: string, itemId: number) => void
   amountLabel?: (item: InvoiceLineItem) => string
   placeholder: string
   showPicker?: boolean
@@ -140,11 +144,6 @@ function gridArrowNavigation(event: React.KeyboardEvent<HTMLTableSectionElement>
   focus(step > 0 ? neighbourCells[0] : neighbourCells[neighbourCells.length - 1])
 }
 
-const numberStyle = (value: number | string) => ({
-  width: `${Math.max(6, String(value ?? '').replace(/[^0-9]/g, '').length + 1)}ch`,
-  minWidth: '6ch',
-})
-
 function decimalDraft(value: string): string {
   const translated = value
     .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
@@ -169,7 +168,7 @@ const MIN_MARGIN_RATIO = 0.1
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
   canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys,
-  onPick, onActiveItem, onPatch, onRemove, onDuplicate, documentTaxPercent = 0, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
+  onPick, onActiveItem, onPatch, onRemove, onDuplicate, documentTaxPercent = 0, onReplaceLine, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
   entry, entryFilter,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
@@ -179,6 +178,33 @@ export function InvoiceLinesTable({
      (قرار المالك): البيع المباشر والمبسط بلا عمود ضريبة أصلاً. */
   const showTaxColumn = columns.tax && taxEnabled && (mode === 'profit' || mode === 'advanced')
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
+  const windowHost = useWindowHost()
+  /**
+   * نقرتان على اسم الصنف تفتحان نافذة اختيار الصنف لاستبداله (بلاغ المالك).
+   * داخل نافذة ⇒ منتقٍ مستقل يُكدَّس فوق الفاتورة ويبقى بعد إغلاق نوافذ
+   * التعديل/الحركة/الأسعار؛ خارجها ⇒ تُفتح قائمة خلية الإدخال.
+   */
+  const openReplacePicker = (lineKey: string, currentName: string) => {
+    if (!onReplaceLine) return
+    if (!windowHost) { window.dispatchEvent(new Event('shopsys:open-item')); return }
+    openItemPickerWindow({
+      parentId: windowHost.windowId,
+      initialQuery: currentName,
+      items,
+      itemMeta: (row: { id: number }) => {
+        const full = items.find((entry) => entry.id === row.id)
+        return {
+          unit: full?.baseUnit ?? '',
+          stock: full?.isService ? 'خدمة' : String(full?.stockQty ?? 0),
+          low: !full?.isService && (full?.stockQty ?? 0) <= 0,
+          price: fmt(full?.priceMinor ?? 0),
+          cost: fmt(full?.costMinor ?? 0),
+        }
+      },
+      onPick: (itemId: number) => onReplaceLine(lineKey, itemId),
+    })
+  }
+
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   /* شريط «الصنف المحدد» يتبع السطر الذي يقف عليه المستخدم: النقر على أي خلية
@@ -349,7 +375,8 @@ export function InvoiceLinesTable({
                   {columns.code && <td tabIndex={0} className={`p-2 font-mono text-[11px] font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40 ${COL.code}`} dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>}
                   {/* اسم الصنف وحده في الخلية (قرار المالك ⑩ي): لا سطر فرعي ولا تحذير نصي —
                       التحذير صار لوناً داخل خلية الكمية/السعر ونصاً في تلميح السطر وشريط التدقيق. */}
-                  <td className={`p-2 align-middle break-words ${COL.name}`}>
+                  <td className={`p-2 align-middle break-words ${COL.name}`} data-line-name-cell
+                    onDoubleClick={() => openReplacePicker(line.key, line.nameAr || item?.nameAr || '')}>
                     <b>{line.nameAr || item?.nameAr}</b>
                     {kind === 'purchase' && item?.trackExpiry && (
                       <input type="date" className={`${inputCls} mt-1.5`} value={line.expiryDate ?? ''} onChange={(event) => onPatch(line.key, { expiryDate: event.target.value })} />
@@ -357,14 +384,14 @@ export function InvoiceLinesTable({
                   </td>
                   {lineWarehouseMode && <td className={`p-1 align-middle ${COL.warehouse}`}><QuickSelect data-arrows-native="true" className={inputCls} value={line.warehouseId ?? ''} onChange={(event) => onPatch(line.key, { warehouseId: Number(event.target.value) || null, warehouseSource: 'manual' })}><option value="">اختر المخزن</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect></td>}
                   {kind === 'purchase' && mode !== 'simple' ? <>
-                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`ordered:${line.key}`, line.orderedQty ?? line.qty)} onChange={(event) => updateDraft(`ordered:${line.key}`, event.target.value, (value) => patchDecimal(line, 'orderedQty', value))} onBlur={() => clearDraft(`ordered:${line.key}`)} /></td>
-                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty)} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>
-                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
-                  </> : <td className={`num-cell p-1 align-middle ${COL.qty}${qtyTone}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.qty)} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const priceCell = event.currentTarget.closest('tr')?.querySelector<HTMLInputElement>('.price-cell input'); priceCell?.focus(); priceCell?.select() }} /></td>}
+                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`ordered:${line.key}`, line.orderedQty ?? line.qty)} onChange={(event) => updateDraft(`ordered:${line.key}`, event.target.value, (value) => patchDecimal(line, 'orderedQty', value))} onBlur={() => clearDraft(`ordered:${line.key}`)} /></td>
+                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty)} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>
+                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
+                  </> : <td className={`num-cell p-1 align-middle ${COL.qty}${qtyTone}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const priceCell = event.currentTarget.closest('tr')?.querySelector<HTMLInputElement>('.price-cell input'); priceCell?.focus(); priceCell?.select() }} /></td>}
                   {columns.unit && <td className={`unit-cell p-1 align-middle ${COL.unit}`}>{item?.baseUnit || (item?.isService ? 'خدمة' : '—')}</td>}
-                  <td className={`num-cell price-cell p-1 align-middle ${COL.price}${priceTone}`}><input className={`${inputCls} !w-auto`} style={numberStyle(line.unitPriceMinor / 10 ** currencyDecimals)} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } /* قرار المالك: Enter من السعر ينزل للسطر التالي **وينتظر الكتابة** ولا يفتح البحث تلقائياً */ const entryInput = event.currentTarget.closest('tbody')?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input'); entryInput?.focus(); entryInput?.select() }} /></td>
-                  {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
-                  {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
+                  <td className={`num-cell price-cell p-1 align-middle ${COL.price}${priceTone}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } /* قرار المالك: Enter من السعر ينزل للسطر التالي **وينتظر الكتابة** ولا يفتح البحث تلقائياً */ const entryInput = event.currentTarget.closest('tbody')?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input'); entryInput?.focus(); entryInput?.select() }} /></td>
+                  {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
+                  {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
                   {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
                   {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`money-cell p-2 ${COL.money}`}>{fmt(costShares?.get(line.key) ?? 0)}</td>}
                   {showTaxColumn && <td className={`p-1 text-center ${COL.tax}`}><span className="invoice-doc-taxchip">{(line.vatPercent ?? documentTaxPercent) > 0 ? `${line.vatPercent ?? documentTaxPercent}% ض.ق.م` : 'معفى'}</span></td>}

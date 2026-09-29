@@ -32,6 +32,7 @@ import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/Ke
 import { partyCode } from '../../core/partyCodes.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { rowOpenProps } from '../components/rowOpen.ts'
+import { openItemPricesWindow } from '../windows/windowStore.ts'
 
 export function SalesInvoicesPage() {
   const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance, appUsers, currentUserId } = useDataStore()
@@ -487,7 +488,7 @@ export function SalesInvoicesPage() {
                     onPick={setEditAddItemId}
                     onEdit={(id) => goTo(`/inventory/items?edit=${id}`)}
                     onMovement={(id) => goTo(`/inventory/items?card=${id}`)}
-                    onPrices={(id) => goTo(`/sales/price-lists?item=${id}`)}
+                    onPrices={(id) => openItemPricesWindow(id)}
                     placeholder="اكتب صنفاً ثم اختر بالسهم + Enter أو مرتين"
                     amountLabel={(it) => `متاح ${it.stockQty ?? 0} · قطاعي ${fmt(it.priceMinor ?? 0)}`}
                   />

@@ -29,6 +29,7 @@ import { partyCode } from '../../core/partyCodes.ts'
 import { PurchaseExpenseManager } from '../components/PurchaseExpenseManager.tsx'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { rowOpenProps } from '../components/rowOpen.ts'
+import { openItemPricesWindow } from '../windows/windowStore.ts'
 
 /**
  * سطر شراء (تدقيق المالك — الشراء بالكرتونة):
@@ -638,7 +639,7 @@ export function PurchasesPage() {
                       onPick={(nextId) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: nextId, unitName: '', vatPercent: itemVatPercent(nextId) } : x)))}
                       onEdit={(id) => goTo(`/inventory/items?edit=${id}`)}
                       onMovement={(id) => goTo(`/inventory/items?card=${id}`)}
-                      onPrices={(id) => goTo(`/sales/price-lists?item=${id}`)}
+                      onPrices={(id) => openItemPricesWindow(id)}
                       placeholder={lineItem?.nameAr ?? 'اكتب الصنف ثم اختر بالسهم + Enter أو مرتين'}
                     />
                   </div>
@@ -1049,7 +1050,7 @@ export function PurchasesPage() {
                     onPick={setEditAddItemId}
 onEdit={(id) => goTo(`/inventory/items?edit=${id}`)}
                         onMovement={(id) => goTo(`/inventory/items?card=${id}`)}
-                        onPrices={(id) => goTo(`/sales/price-lists?item=${id}`)}
+                        onPrices={(id) => openItemPricesWindow(id)}
                     placeholder="اكتب صنفاً ثم اختر بالسهم + Enter أو مرتين"
                   />
                 </div>

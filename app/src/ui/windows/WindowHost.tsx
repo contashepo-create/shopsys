@@ -4,7 +4,7 @@ import { OverlayPortal } from '../components/ui.tsx'
 import { useWindowStore, type AppWindow, type AppWindowKind } from './windowStore.ts'
 import { WindowHostProvider } from './WindowContext.tsx'
 import { FloatingWindow } from './FloatingWindow.tsx'
-import { ItemEditorWindowView, ItemLedgerWindowView, PartyEditorWindowView, PartyLedgerWindowView } from './windowViews.tsx'
+import { ItemEditorWindowView, ItemLedgerWindowView, ItemPickerWindowView, ItemPricesWindowView, PartyEditorWindowView, PartyLedgerWindowView } from './windowViews.tsx'
 
 /* الفواتير ثقيلة — تُحمَّل عند أول فتح نافذة فقط */
 const SalesInvoiceWindowView = lazy(() => import('../pages/AdvancedSalesInvoicePage.tsx').then((mod) => ({ default: mod.AdvancedSalesInvoicePage })))
@@ -13,6 +13,8 @@ const PurchaseInvoiceWindowView = lazy(() => import('../pages/AdvancedPurchaseIn
 const ICONS: Record<AppWindowKind, typeof FileText> = {
   'sales-invoice': ReceiptText,
   'purchase-invoice': FileText,
+  'item-picker': PackageSearch,
+  'item-prices': ReceiptText,
   'item-editor': PackageSearch,
   'item-ledger': PackageSearch,
   'party-editor': UserRound,
@@ -23,6 +25,8 @@ function WindowContent({ win }: { win: AppWindow }) {
   switch (win.kind) {
     case 'sales-invoice': return <SalesInvoiceWindowView />
     case 'purchase-invoice': return <PurchaseInvoiceWindowView />
+    case 'item-picker': return <ItemPickerWindowView />
+    case 'item-prices': return <ItemPricesWindowView />
     case 'item-editor': return <ItemEditorWindowView />
     case 'item-ledger': return <ItemLedgerWindowView />
     case 'party-editor': return <PartyEditorWindowView />

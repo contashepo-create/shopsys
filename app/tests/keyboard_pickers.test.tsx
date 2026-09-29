@@ -15,12 +15,17 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
   it('يبحث عن الصنف بالاسم والكود والباركود والرقم ويختار أول نتيجة بـ Enter', () => {
     const onPick = vi.fn()
     const view = render(<ItemQuickPicker items={items} onPick={onPick}/>)
-    const input = view.getByLabelText(/اسم الصنف/)
+    const cell = view.getByLabelText(/اسم الصنف/)
+    /* الكتابة في الخلية تفتح لوحة البحث وتنقل إليها الحرف والتركيز،
+       والاختيار بـEnter يتم داخل اللوحة ثم تُغلق — فتُفتح من جديد لكل بحث. */
     for (const query of ['سكر', 'SUG-1', '622100', '1']) {
-      fireEvent.change(input, { target: { value: query } })
+      fireEvent.change(cell, { target: { value: query.slice(0, 1) } })
+      const search = view.getByLabelText('بحث الصنف')
+      fireEvent.change(search, { target: { value: query } })
       expect(view.getAllByText('سكر أبيض').length).toBeGreaterThan(0)
-      fireEvent.keyDown(input, { key: 'Enter' })
+      fireEvent.keyDown(search, { key: 'Enter' })
       expect(onPick).toHaveBeenLastCalledWith(1)
+      expect(view.queryByLabelText('بحث الصنف')).toBeNull()
     }
   })
 
@@ -68,14 +73,17 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
   it('يحدد أول نتيجة افتراضياً ويتنقل بالأسهم ثم يغلق بـ Escape', () => {
     const onPick = vi.fn()
     const view = render(<ItemQuickPicker items={items} onPick={onPick}/>)
-    const input = view.getByLabelText(/اسم الصنف/)
-    fireEvent.change(input, { target: { value: 'ص' } })
-    fireEvent.keyDown(input, { key: 'ArrowDown' })
-    fireEvent.keyDown(input, { key: 'Enter' })
+    const cell = view.getByLabelText(/اسم الصنف/)
+    fireEvent.change(cell, { target: { value: 'ص' } })
+    const search = view.getByLabelText('بحث الصنف')
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    fireEvent.keyDown(search, { key: 'Enter' })
     expect(onPick).toHaveBeenCalledWith(2)
-    fireEvent.change(input, { target: { value: 'س' } })
+    /* الاختيار يغلق اللوحة؛ ونفتحها ثانيةً لنتأكد أن Escape يغلقها بلا اختيار */
+    fireEvent.change(cell, { target: { value: 'س' } })
+    const reopened = view.getByLabelText('بحث الصنف')
     expect(view.getAllByText('سكر أبيض').length).toBeGreaterThan(0)
-    fireEvent.keyDown(input, { key: 'Escape' })
+    fireEvent.keyDown(reopened, { key: 'Escape' })
     expect(view.queryByText('سكر أبيض')).toBeNull()
   })
 

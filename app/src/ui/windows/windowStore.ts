@@ -13,6 +13,8 @@ import { create } from 'zustand'
 export type AppWindowKind =
   | 'sales-invoice'
   | 'purchase-invoice'
+  | 'item-picker'
+  | 'item-prices'
   | 'item-editor'
   | 'item-ledger'
   | 'party-editor'
@@ -248,6 +250,13 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
 
 /* ─── مساعدات فتح جاهزة تُستعمل من أي شاشة ─── */
 
+/** مقاس الفاتورة الحرة: تملأ الشاشة إلا هامشاً يُظهر أنها نافذة تُحرَّك وتُصغَّر */
+function invoiceWindowSize() {
+  const vw = typeof window === 'undefined' ? 1440 : window.innerWidth
+  const vh = typeof window === 'undefined' ? 900 : window.innerHeight
+  return { width: Math.max(MIN_W, Math.round(vw * 0.94)), height: Math.max(MIN_H, Math.round(vh * 0.9)) }
+}
+
 export function openSalesInvoiceWindow(editId?: number) {
   return useWindowStore.getState().openWindow({
     kind: 'sales-invoice',
@@ -255,8 +264,10 @@ export function openSalesInvoiceWindow(editId?: number) {
     subtitle: 'نافذة مستقلة — تبقى مفتوحة حتى تحفظها أو تغلقها',
     props: editId ? { editId } : {},
     dedupeKey: editId ? `sales-invoice:${editId}` : null,
-    /* الفاتورة مستند ملء الشاشة كالنموذج المعتمد — تفتح مكبَّرة بلا إطار نافذة */
-    mode: 'maximized',
+    /* نافذة حرة لا صفحة ملتصقة (بلاغ المالك): تفتح بإطار نافذة كامل يُحرَّك ويُكبَّر
+       ويُصغَّر، ويمكن فتح فاتورة أخرى فوقها وحفظ الاثنتين. */
+    mode: 'normal',
+    ...invoiceWindowSize(),
   })
 }
 
@@ -267,7 +278,8 @@ export function openPurchaseInvoiceWindow(editId?: number) {
     subtitle: 'نافذة مستقلة — تبقى مفتوحة حتى تحفظها أو تغلقها',
     props: editId ? { editId } : {},
     dedupeKey: editId ? `purchase-invoice:${editId}` : null,
-    mode: 'maximized',
+    mode: 'normal',
+    ...invoiceWindowSize(),
   })
 }
 
@@ -282,6 +294,48 @@ export function openItemLedgerWindow(itemId: number, parentId?: string | null) {
   return useWindowStore.getState().openWindow({
     kind: 'item-ledger', title: 'حركة صنف', subtitle: 'كارت الحركة بالوارد والمنصرف',
     props: { itemId }, parentId: parentId ?? null, dedupeKey: `item-ledger:${itemId}`, width: 880, height: 640,
+  })
+}
+
+/**
+ * نافذة اختيار الصنف: تُفتح من خلية اسم الصنف فتصير أماً لنوافذ التعديل/الحركة/
+ * الأسعار، فإغلاق أي منها يعيدك إليها بدل أن يبتلعها (بلاغ المالك).
+ */
+export function openItemPickerWindow(input: {
+  parentId?: string | null
+  initialQuery?: string
+  items: unknown
+  itemMeta?: unknown
+  categories?: unknown
+  amountLabel?: unknown
+  onCreate?: unknown
+  onPick: (id: number) => void
+}) {
+  return useWindowStore.getState().openWindow({
+    kind: 'item-picker',
+    title: 'اختيار صنف',
+    subtitle: 'ابحث بالاسم أو الكود — التعديل والحركة والأسعار تفتح فوقها',
+    props: {
+      initialQuery: input.initialQuery ?? '',
+      items: input.items,
+      itemMeta: input.itemMeta,
+      categories: input.categories,
+      amountLabel: input.amountLabel,
+      onCreate: input.onCreate,
+      onPick: input.onPick,
+    },
+    parentId: input.parentId ?? null,
+    dedupeKey: input.parentId ? `item-picker:${input.parentId}` : null,
+    width: 860,
+    height: 560,
+  })
+}
+
+/** أسعار الصنف: القطاعي والتكلفة والهامش وقوائم الأسعار وخصومات الفئات وآخر شراء */
+export function openItemPricesWindow(itemId: number, parentId?: string | null) {
+  return useWindowStore.getState().openWindow({
+    kind: 'item-prices', title: 'أسعار الصنف', subtitle: 'القطاعي والتكلفة والهامش وقوائم الأسعار',
+    props: { itemId }, parentId: parentId ?? null, dedupeKey: `item-prices:${itemId}`, width: 820, height: 600,
   })
 }
 

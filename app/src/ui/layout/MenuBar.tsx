@@ -10,7 +10,7 @@
  */
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { ChevronDown, PanelRight, Check } from 'lucide-react'
+import { ChevronDown, PanelRight, Check, MoreHorizontal } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
@@ -43,6 +43,12 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
   const [, forceReposition] = useState(0)
   const barRef = useRef<HTMLDivElement>(null)
   const titleRefs = useRef(new Map<string, HTMLButtonElement>())
+  /* بلاغ المالك: «في الشاشة الصغيرة أقسام تختفي من الشريط».
+     لا نخفي شيئاً: ما لا يتسع ينتقل إلى قائمة «المزيد» فيبقى كل قسم على بُعد نقرة. */
+  const stripRef = useRef<HTMLDivElement>(null)
+  const moreRef = useRef<HTMLButtonElement>(null)
+  const widthsRef = useRef(new Map<string, number>())
+  const [visibleCount, setVisibleCount] = useState(Number.POSITIVE_INFINITY)
 
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, setup.activityId))
@@ -61,7 +67,43 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
     }))
     .filter((sec) => sec.children.length > 0)
 
+  const sectionIds = sections.map((sec) => sec.id).join('|')
+  /* قياس عرض كل عنوان مرة واحدة (العناوين ثابتة)، ثم حساب كم عنواناً يتسع فعلاً.
+     العناوين الزائدة تنتقل إلى «المزيد» — لا يختفي قسم أبداً مهما صغرت الشاشة. */
+  useEffect(() => {
+    const strip = stripRef.current
+    if (!strip || typeof ResizeObserver === 'undefined') return
+    const GAP = 2
+    const measure = () => {
+      for (const [id, node] of titleRefs.current) {
+        const w = node.offsetWidth
+        if (w > 0) widthsRef.current.set(id, w)
+      }
+      const known = sections.filter((sec) => widthsRef.current.has(sec.id))
+      if (known.length < sections.length) { setVisibleCount(Number.POSITIVE_INFINITY); return }
+      const total = sections.reduce((sum, sec) => sum + (widthsRef.current.get(sec.id) ?? 0) + GAP, 0)
+      const available = strip.clientWidth
+      if (total <= available) { setVisibleCount(Number.POSITIVE_INFINITY); return }
+      const moreWidth = (moreRef.current?.offsetWidth ?? 0) || 74
+      let used = moreWidth + GAP
+      let fit = 0
+      for (const sec of sections) {
+        used += (widthsRef.current.get(sec.id) ?? 0) + GAP
+        if (used > available) break
+        fit += 1
+      }
+      setVisibleCount(Math.max(1, fit))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(strip)
+    return () => observer.disconnect()
+  }, [sectionIds, sections])
+
+  const visibleSections = Number.isFinite(visibleCount) ? sections.slice(0, visibleCount) : sections
+  const hiddenSections = Number.isFinite(visibleCount) ? sections.slice(visibleCount) : []
   const openSection = sections.find((sec) => sec.id === openId) ?? null
+  const overflowOpen = openId === '__more__'
 
   // إغلاق عند النقر خارج الشريط أو القائمة، وإعادة القياس عند التمرير/تغيير المقاس
   useEffect(() => {
@@ -138,8 +180,8 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
     >
       <img src="/app-icon.png?v=3" className="ms-1 me-1.5 h-5 w-5 shrink-0 rounded" alt="TAHAKAM ERP" />
 
-      <div className="menubar-scroll flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-        {sections.map((sec) => {
+      <div ref={stripRef} className="menubar-scroll flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
+        {visibleSections.map((sec) => {
           const colors = SECTION_COLORS[sec.color]
           const isOpen = openId === sec.id
           const hasActive = sec.children.some((child) => child.path === location.pathname)
@@ -167,6 +209,26 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
             </button>
           )
         })}
+        {hiddenSections.length > 0 && (
+          <button
+            ref={moreRef}
+            type="button"
+            role="menuitem"
+            aria-haspopup="menu"
+            aria-expanded={overflowOpen}
+            data-menubar-more="true"
+            title={`أقسام إضافية: ${hiddenSections.map((sec) => sec.nameAr).join('، ')}`}
+            onClick={(event) => (overflowOpen ? closeMenu(false) : openMenu('__more__', event.currentTarget))}
+            onMouseEnter={(event) => { if (openId && !overflowOpen) openMenu('__more__', event.currentTarget) }}
+            className={`flex shrink-0 items-center gap-1 whitespace-nowrap rounded px-2 py-1.5 text-[12.5px] font-bold transition-colors ${
+              overflowOpen ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+            }`}
+          >
+            <MoreHorizontal size={14} />
+            المزيد
+            <span className="rounded bg-slate-200 px-1 font-mono text-[10px] text-slate-600 dark:bg-slate-700 dark:text-slate-200">{hiddenSections.length}</span>
+          </button>
+        )}
       </div>
 
       <span className="mx-1 hidden h-4 w-px shrink-0 bg-slate-200 sm:block dark:bg-slate-700" />
@@ -183,6 +245,44 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
         <PanelRight size={13} />
         <span className="hidden sm:inline">شريط جانبي</span>
       </button>
+
+      {overflowOpen && hiddenSections.length > 0 && (
+        <OverlayPortal>
+          <div
+            data-menubar-menu="__more__"
+            role="menu"
+            aria-label="أقسام إضافية"
+            style={menuStyleFor(anchorEl)}
+            className="layer-picker min-w-[16rem] overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+            dir="rtl"
+          >
+            {hiddenSections.map((sec) => (
+              <div key={sec.id} data-menubar-more-section={sec.id}>
+                <div className={`mb-1 mt-1 flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-black ${SECTION_COLORS[sec.color].bgSoft} ${SECTION_COLORS[sec.color].text}`}>
+                  <sec.icon size={12} /> {sec.nameAr}
+                  <span className="ms-auto font-mono opacity-60">{sec.children.length}</span>
+                </div>
+                {sec.children.map((child) => (
+                  <NavLink
+                    key={child.id}
+                    to={child.path}
+                    role="menuitem"
+                    data-menubar-item={child.id}
+                    onClick={(event) => onItemClick(event, child.path)}
+                    className={`flex items-center gap-2 rounded px-2.5 py-1.5 text-[12px] transition-colors hover:bg-slate-100 dark:hover:bg-slate-800 ${
+                      child.path === location.pathname ? 'font-bold' : ''
+                    }`}
+                  >
+                    <child.icon size={14} className="shrink-0 opacity-70" />
+                    <span className="flex-1 truncate">{child.nameAr}</span>
+                    {child.path === location.pathname && <Check size={13} className="shrink-0 text-emerald-500" />}
+                  </NavLink>
+                ))}
+              </div>
+            ))}
+          </div>
+        </OverlayPortal>
+      )}
 
       {openSection && (
         <OverlayPortal>

@@ -21,6 +21,20 @@ export function FloatingWindow({ win, children }: { win: AppWindow; children: Re
   const [dragging, setDragging] = useState(false)
   const frameRef = useRef<HTMLDivElement | null>(null)
 
+  /* النافذة المفتوحة حديثاً تأخذ التركيز: بلاغ المالك «Escape أغلق نافذة التعديل
+     ومعها نافذة اختيار الصنف» — سببه بقاء التركيز في الأم فيصلها المفتاح هي. */
+  useEffect(() => {
+    const frame = frameRef.current
+    if (!frame) return
+    const timer = window.setTimeout(() => {
+      if (frame.contains(document.activeElement)) return
+      const first = frame.querySelector<HTMLElement>('[data-window-autofocus], input:not([type="hidden"]):not([disabled]), select, textarea, button:not([data-window-button])')
+      if (first) first.focus()
+      else frame.focus()
+    }, 30)
+    return () => window.clearTimeout(timer)
+  }, [win.id])
+
   /* إعادة ضبط الموضع عند تغيير مقاس المتصفح حتى لا تخرج النافذة عن الشاشة */
   useEffect(() => {
     const onResize = () => { const next = clampRect(win.rect); if (next.x !== win.rect.x || next.y !== win.rect.y || next.w !== win.rect.w || next.h !== win.rect.h) moveWindow(win.id, next.x, next.y) }
@@ -85,7 +99,15 @@ export function FloatingWindow({ win, children }: { win: AppWindow; children: Re
       className={`app-window layer-window ${dragging ? 'is-dragging' : ''} ${maximized ? 'is-maximized' : ''}`}
       style={style}
       dir="rtl"
+      tabIndex={-1}
       onPointerDownCapture={() => focusWindow(win.id)}
+      onKeyDown={(event) => {
+        /* كل نافذة تستجيب لـEscape وتغلق نفسها وحدها (قاعدة المالك)؛ ولو عالجه
+           عنصر بداخلها (منتقٍ مثلاً) فلا نغلق مرتين. */
+        if (event.key !== 'Escape' || event.defaultPrevented) return
+        event.stopPropagation()
+        requestCloseWindow(win.id)
+      }}
       role="dialog"
       aria-label={win.title}
     >

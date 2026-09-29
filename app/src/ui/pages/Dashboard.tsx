@@ -127,7 +127,7 @@ export function Dashboard() {
     <div className="space-y-6">
       {/* رأس الترحيب — هوية النشاط */}
       <div className={`anim-up relative overflow-hidden rounded-3xl border bg-gradient-to-l ${persona.hero} px-6 py-5`}>
-        <div className="absolute -left-4 -bottom-8 text-[7rem] opacity-10 select-none">{theme.heroEmoji}</div>
+        <div aria-hidden="true" className="absolute -left-4 -bottom-8 text-[7rem] opacity-10 select-none">{theme.heroEmoji}</div>
         <div className="relative flex items-center gap-4">
           <div className="text-4xl">{theme.heroEmoji}</div>
           <div>

@@ -112,11 +112,11 @@ const R = reporter('دفعة المالك ⑩ي على الفاتورة — ال
 {
   const input = pickers.match(/<input ref=\{\(node\) => \{ inputRef\.current = node; setExternalRef\(node\) \}\}[^/]*\/>/)?.[0] ?? ''
   assert.ok(/placeholder=""/.test(input), 'خلية اسم الصنف ما زالت تحمل نصاً إرشادياً')
-  assert.ok(/onDoubleClick=\{\(\) => \{ if \(!open\) openSearch\(\) \}\}/.test(input), 'النقر المزدوج لا يفتح البحث')
+  assert.ok(/onDoubleClick=\{\(\) => openSearch\(/.test(input), 'النقر المزدوج لا يفتح البحث')
   assert.ok(!/{!open && <Search/.test(pickers), 'أيقونة البحث عادت داخل خلية الاسم')
-  assert.ok(/else openSearch\(event\.target\.value\)/.test(input), 'الكتابة المباشرة لا تفتح البحث بأول حرف')
+  assert.ok(/if \(value\.trim\(\)\) openSearch\(value\)/.test(input), 'الكتابة المباشرة لا تفتح البحث بأول حرف')
   const keys = pickers.slice(pickers.indexOf('const handleKeyDown'), pickers.indexOf('return <div ref={pickerRef}'))
-  assert.ok(/if \(!open\) return/.test(keys), 'الأسهم ما زالت تفتح قائمة الأصناف بدل التنقل بين الخلايا')
+  assert.ok(!/ArrowDown|ArrowUp/.test(keys), 'الأسهم ما زالت تفتح قائمة الأصناف بدل التنقل بين الخلايا')
   R.ok('⑪⑫⑭ خلية الاسم خالية، تفتح بنقرتين أو بالكتابة أو Enter، والأسهم للتنقل فقط')
 }
 
@@ -177,7 +177,12 @@ const R = reporter('دفعة المالك ⑩ي على الفاتورة — ال
   assert.ok(/itemMeta\?\.\(item\)/.test(pickers), 'صفوف النتائج لا تعرض الرصيد والسعر والتكلفة')
   for (const [file, src] of [['البيع', sales], ['الشراء', purchase]])
     assert.ok(/itemMeta=\{item =>/.test(src), `صفحة ${file} لا تغذي نافذة الاختيار بالبيانات الغنية`)
-  assert.ok(/setOpen\(false\); onMovement\?\./.test(pickers), 'فتح نافذة حركة الصنف لا يُخفي لوحة البحث فوقها')
+  /* تصحيح المالك: المنتقي نفسه نافذة مستقلة — فتح «تعديل/حركة/أسعار» فوقه
+     لا يغلقه، وإغلاق أي منها يعيد المنتقي للواجهة بدل أن يختفي معها. */
+  assert.ok(/openItemPickerWindow\(\{/.test(pickers) && /parentId: host\.windowId/.test(pickers),
+    'خلية الصنف لا تفتح المنتقي كنافذة مستقلة داخل مضيف النوافذ')
+  const store = read('src/ui/windows/windowStore.ts')
+  assert.ok(/'item-picker'/.test(store) && /'item-prices'/.test(store), 'نوعا نافذة المنتقي والأسعار غير معرَّفين')
   const views = read('src/ui/windows/windowViews.tsx')
   assert.ok(/data-ledger-filters/.test(views) && /data-ledger-warehouse/.test(views) && /data-ledger-flow/.test(views),
     'نافذة حركة الصنف بلا فلاتر مخزن/نوع حركة')
@@ -185,6 +190,11 @@ const R = reporter('دفعة المالك ⑩ي على الفاتورة — ال
     'فلتر تاريخ حركة الصنف لا يبدأ من أول السنة المالية')
   assert.ok(/useItemLedgerInput/.test(views) && /useItemLedgerInput/.test(read('src/ui/pages/ItemsPage.tsx')),
     'دفتر حركة الصنف مكرر بدل خطّاف مشترك')
+  const pickerView = views.slice(views.indexOf('ItemPickerWindowView'), views.indexOf('ItemPricesWindowView'))
+  for (const [label, fn] of [['تعديل الصنف', 'openItemEditorWindow'], ['حركة الصنف', 'openItemLedgerWindow'], ['أسعار الصنف', 'openItemPricesWindow']])
+    assert.ok(new RegExp(`${fn}\\(id, host\\?\\.windowId`).test(pickerView), `نافذة «${label}» لا تُفتح ابنةً للمنتقي فتغلقه`)
+  assert.ok(/data-window-view="item-prices"/.test(views) && /data-item-prices-summary/.test(views),
+    'نافذة أسعار الصنف فارغة — لا ملخص سعر/تكلفة/هامش')
   R.ok('⑦ نافذة صنف غنية (أعمدة وفلاتر) + حركة الصنف بفلتر السنة المالية والمخزن فوق الفاتورة')
 }
 

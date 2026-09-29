@@ -8,8 +8,10 @@ import { partyCode } from '../../core/partyCodes.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { buildItemLedger } from '../../core/itemLedger.ts'
 import { useItemLedgerInput } from '../hooks/useItemLedgerInput.ts'
+import { ItemSearchPanel, type QuickItem, type QuickItemMeta } from '../components/KeyboardPickers.tsx'
+import { resolvePrice, priceSource } from '../../core/priceLists.ts'
 import { useWindowHost } from './windowHostContext.ts'
-import { openItemLedgerWindow, openPartyLedgerWindow } from './windowStore.ts'
+import { openItemEditorWindow, openItemLedgerWindow, openItemPricesWindow, openPartyLedgerWindow } from './windowStore.ts'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -309,6 +311,115 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'in
       <div className="text-[11px] text-slate-500">{label}</div>
       <div className={`flex items-center gap-1 text-sm font-black ${tone === 'in' ? 'text-emerald-600' : tone === 'out' ? 'text-rose-600' : ''}`} dir="auto">
         {tone === 'in' && <ArrowDownLeft size={14} />}{tone === 'out' && <ArrowUpRight size={14} />}{value}
+      </div>
+    </div>
+  )
+}
+
+/* ═══════════ اختيار صنف — نافذة أم لنوافذ التعديل/الحركة/الأسعار ═══════════ */
+export function ItemPickerWindowView() {
+  const host = useWindowHost()
+  const props = host?.props ?? {}
+  const items = (props.items as QuickItem[] | undefined) ?? []
+  const itemMeta = props.itemMeta as ((item: QuickItem) => QuickItemMeta) | undefined
+  const categories = props.categories as { id: number; nameAr: string }[] | undefined
+  const amountLabel = props.amountLabel as ((item: QuickItem) => string) | undefined
+  const onCreate = props.onCreate as ((name: string) => void) | undefined
+  const onPick = props.onPick as ((id: number) => void) | undefined
+  const initialQuery = String(props.initialQuery ?? '')
+  /* القائمة تُحدَّث حيّاً بعد التعديل في النافذة الابنة */
+  const liveItems = useDataStore((state) => state.items)
+  const merged = items.map((row) => {
+    const live = liveItems.find((entry) => entry.id === row.id)
+    return live ? { ...row, nameAr: live.nameAr, sku: live.sku, stockQty: live.stockQty, priceMinor: live.priceMinor, costMinor: live.costMinor, baseUnit: live.baseUnit } : row
+  })
+  return (
+    <div className="flex h-full min-h-0 flex-col" data-window-view="item-picker">
+      <ItemSearchPanel
+        items={merged}
+        itemMeta={itemMeta}
+        categories={categories}
+        amountLabel={amountLabel}
+        onCreate={onCreate}
+        initialQuery={initialQuery}
+        onEscape={() => host?.close()}
+        onPick={(id) => { onPick?.(id); host?.close() }}
+        onEdit={(id) => openItemEditorWindow(id, host?.windowId ?? null)}
+        onMovement={(id) => openItemLedgerWindow(id, host?.windowId ?? null)}
+        onPrices={(id) => openItemPricesWindow(id, host?.windowId ?? null)}
+      />
+    </div>
+  )
+}
+
+/* ═══════════ أسعار الصنف — القطاعي والتكلفة والهامش وقوائم الأسعار ═══════════ */
+export function ItemPricesWindowView() {
+  const host = useWindowHost()
+  const itemId = Number(host?.props.itemId ?? 0)
+  const cur = useCur()
+  const { items, categories, priceLists, priceListEntries, priceListCategoryRules, purchases } = useDataStore()
+  const item = items.find((row) => row.id === itemId) ?? null
+  const money = (value: number) => formatMinor(value, cur)
+  const lastPurchase = (() => {
+    if (!item) return null
+    for (let index = purchases.length - 1; index >= 0; index--) {
+      const line = purchases[index].lines.find((row) => row.itemId === item.id)
+      if (line) return { date: purchases[index].date, priceMinor: line.landedUnitCostMinor || line.unitPriceMinor, qty: line.qty }
+    }
+    return null
+  })()
+  if (!item) return <div className="p-6 text-sm text-slate-500">الصنف غير موجود (ربما حُذف).</div>
+  const retail = item.priceMinor ?? 0
+  const cost = item.costMinor ?? 0
+  const marginMinor = retail - cost
+  const marginPercent = cost > 0 ? Math.round((marginMinor / cost) * 1000) / 10 : null
+  const categoryName = categories.find((cat) => cat.id === item.categoryId)?.nameAr ?? '—'
+  const rows = priceLists.map((list) => {
+    const price = resolvePrice(item.id, retail, list.id, priceLists, priceListEntries, priceListCategoryRules, item.categoryId ?? null)
+    const source = priceSource(item.id, list.id, priceLists, priceListEntries, priceListCategoryRules, item.categoryId ?? null)
+    const rule = priceListCategoryRules.find((entry) => entry.listId === list.id && entry.categoryId === (item.categoryId ?? 0))
+    return { list, price, source, rule }
+  })
+  const sourceLabel: Record<string, string> = { item: 'سعر خاص للصنف', category: 'خصم فئة', list: 'خصم القائمة', retail: 'سعر التجزئة' }
+  return (
+    <div className="space-y-4 p-5" data-window-view="item-prices">
+      <div className="flex items-center gap-3 rounded-2xl bg-emerald-500/8 p-3">
+        <span className="grid h-10 w-10 place-items-center rounded-xl bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"><PackageSearch size={18} /></span>
+        <div className="min-w-0">
+          <b className="block truncate">{item.nameAr}</b>
+          <small className="text-slate-500">كود {item.sku || item.id} · فئة {categoryName} · وحدة {item.baseUnit}</small>
+        </div>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-4" data-item-prices-summary>
+        <div className="rounded-xl border border-slate-200 p-2.5 text-center dark:border-slate-700"><small className="block text-slate-500">سعر التجزئة</small><b className="text-base text-brand-600">{money(retail)}</b></div>
+        <div className="rounded-xl border border-slate-200 p-2.5 text-center dark:border-slate-700"><small className="block text-slate-500">التكلفة</small><b className="text-base">{money(cost)}</b></div>
+        <div className="rounded-xl border border-slate-200 p-2.5 text-center dark:border-slate-700"><small className="block text-slate-500">الهامش</small><b className={`text-base ${marginMinor < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{money(marginMinor)}</b></div>
+        <div className="rounded-xl border border-slate-200 p-2.5 text-center dark:border-slate-700"><small className="block text-slate-500">نسبة الهامش</small><b className={`text-base ${marginPercent != null && marginPercent < 0 ? 'text-rose-600' : ''}`}>{marginPercent == null ? '—' : `${marginPercent}%`}</b></div>
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700">
+        <table className="w-full text-sm" data-item-prices-table>
+          <thead className="bg-slate-50 text-[11px] font-black text-slate-500 dark:bg-slate-800/60">
+            <tr><th className="p-2 text-right">قائمة الأسعار</th><th className="p-2">السعر للصنف</th><th className="p-2">مصدر السعر</th><th className="p-2">خصم فئة «{categoryName}»</th></tr>
+          </thead>
+          <tbody>
+            {rows.length ? rows.map(({ list, price, source, rule }) => (
+              <tr key={list.id} className="border-t border-slate-100 text-center dark:border-slate-800" data-item-prices-row>
+                <td className="p-2 text-right font-bold">{list.nameAr}{!list.isActive && <small className="ms-1 text-rose-500">(موقوفة)</small>}</td>
+                <td className="p-2 font-black tabular-nums">{money(price)}</td>
+                <td className="p-2 text-[11px] text-slate-500">{sourceLabel[source] ?? source}</td>
+                <td className="p-2 text-[11px]">{rule ? `${rule.discountPercent}%` : <span className="text-slate-400">—</span>}</td>
+              </tr>
+            )) : <tr><td colSpan={4} className="p-4 text-center text-sm text-slate-400">لا قوائم أسعار — سعر التجزئة يسري على الجميع</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      <div className="rounded-2xl border border-slate-200 p-3 text-[12px] dark:border-slate-700">
+        <b className="text-slate-600 dark:text-slate-300">آخر شراء: </b>
+        {lastPurchase ? <span>{money(lastPurchase.priceMinor)} للوحدة · كمية {lastPurchase.qty} · بتاريخ {lastPurchase.date}</span> : <span className="text-slate-400">لا مشتريات مسجلة لهذا الصنف</span>}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 dark:border-slate-700">
+        <Btn variant="ghost" onClick={() => openItemEditorWindow(item.id, host?.windowId ?? null)}><PackageSearch size={14} /> تعديل سعر الصنف</Btn>
+        <Btn variant="ghost" onClick={() => host?.close()}>إغلاق</Btn>
       </div>
     </div>
   )
