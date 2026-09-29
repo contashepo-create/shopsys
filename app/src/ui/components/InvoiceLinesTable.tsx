@@ -49,25 +49,25 @@ type Warehouse = { id: number; nameAr: string }
  */
 const COL = {
   index: 'w-9 text-center',
-  code: 'w-24 text-center',
+  code: 'w-[5.25rem] text-center',
   name: 'w-[15rem] text-center',
   warehouse: 'w-36 text-center',
   qty: 'w-[5.5rem] text-center',
   price: 'w-[7rem] text-center',
-  percent: 'w-[4.75rem] text-center',
-  unit: 'w-[4.5rem] text-center',
+  percent: 'w-[4.5rem] text-center',
+  unit: 'w-[4.25rem] text-center',
   tax: 'w-[5.5rem] text-center',
   money: 'w-[6.75rem] text-center',
   total: 'w-[8rem] text-center',
-  tools: 'w-[4.25rem] text-center',
+  tools: 'w-[4rem] text-center',
 } as const
 
 /** عرض كل عمود بالـrem — نفس أرقام COL أعلاه. يُحسب منها أدنى عرض للجدول
  *  حتى لا ينسحق عمود «الصنف / الوصف» عند إضافة أعمدة الأنماط الأعلى
  *  (التكلفة/الهامش/الضريبة/المخزن). بلاغ المالك: «اسم الصنف يختفي». */
 const COLW = {
-  index: 2.25, code: 6, name: 15, warehouse: 9, qty: 5.5, price: 7,
-  percent: 4.75, unit: 4.5, tax: 5.5, money: 6.75, total: 8, tools: 4.25,
+  index: 2.25, code: 5.25, name: 15, warehouse: 9, qty: 5.5, price: 7,
+  percent: 4.5, unit: 4.25, tax: 5.5, money: 6.75, total: 8, tools: 4,
 } as const
 
 
