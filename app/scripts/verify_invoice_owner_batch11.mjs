@@ -114,6 +114,23 @@ const R = reporter('دفعة المالك ⑪ — النوافذ الحرة وا
   R.ok('⑧⑨ كل الأقسام تتكيّف: اللوحات الثلاث والبنود داخل النافذة بلا تمرير ولا قصّ حتى 1024×680')
 }
 
+/* ⑪ اسم الصنف محفوظ في الأنماط الأعلى من «بيع مباشر» (بلاغ المالك) */
+{
+  assert.ok(/const COLW = \{/.test(table) && /name: 15,/.test(table),
+    'لا أرضية لعرض عمود «الصنف / الوصف» بالـrem')
+  assert.ok(/const minTableRem = COLW\.index/.test(table) && /style=\{\{ minWidth: `\$\{minTableRem\}rem` \}\}/.test(table),
+    'عرض الجدول الأدنى ثابت لا يتبع الأعمدة الظاهرة، فينسحق اسم الصنف عند إضافة التكلفة/الهامش/الضريبة')
+  assert.ok(!/min-w-\[58rem\]/.test(table), 'ما زال الجدول يستعمل أدنى عرض ثابت 58rem')
+  assert.ok(/name: 'w-\[15rem\] text-center'/.test(table),
+    'عمود الاسم بلا عرض صريح — min-width لا تعمل في table-fixed')
+  for (const key of ['index', 'code', 'name', 'warehouse', 'qty', 'price', 'percent', 'unit', 'tax', 'money', 'total', 'tools'])
+    assert.ok(new RegExp(`${key}:`).test(table.slice(table.indexOf('const COLW'), table.indexOf('const COLW') + 260)),
+      `عرض العمود ${key} غير معرَّف في COLW`)
+  assert.ok(/input\[type="date"\] \{\s*box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%/.test(css),
+    'حقل التاريخ يفيض على الحقل المجاور في شبكة الترويسة')
+  R.ok('⑪ اسم الصنف لا ينسحق في «احترافي — ربحية/متقدم»: عرض الجدول يتبع أعمدته الظاهرة')
+}
+
 /* ⑩ لا يختفي قسم من الشريط العلوي */
 {
   assert.ok(/data-menubar-more="true"/.test(menubar) && /hiddenSections/.test(menubar),

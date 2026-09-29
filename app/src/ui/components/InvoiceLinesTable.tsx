@@ -50,16 +50,24 @@ type Warehouse = { id: number; nameAr: string }
 const COL = {
   index: 'w-9 text-center',
   code: 'w-24 text-center',
-  name: 'min-w-[13rem] text-center',
+  name: 'w-[15rem] text-center',
   warehouse: 'w-36 text-center',
   qty: 'w-[5.5rem] text-center',
   price: 'w-[7rem] text-center',
   percent: 'w-[4.75rem] text-center',
   unit: 'w-[4.5rem] text-center',
   tax: 'w-[5.5rem] text-center',
-  money: 'w-[7.5rem] text-center',
-  total: 'w-[8.5rem] text-center',
-  tools: 'w-[4.5rem] text-center',
+  money: 'w-[6.75rem] text-center',
+  total: 'w-[8rem] text-center',
+  tools: 'w-[4.25rem] text-center',
+} as const
+
+/** عرض كل عمود بالـrem — نفس أرقام COL أعلاه. يُحسب منها أدنى عرض للجدول
+ *  حتى لا ينسحق عمود «الصنف / الوصف» عند إضافة أعمدة الأنماط الأعلى
+ *  (التكلفة/الهامش/الضريبة/المخزن). بلاغ المالك: «اسم الصنف يختفي». */
+const COLW = {
+  index: 2.25, code: 6, name: 15, warehouse: 9, qty: 5.5, price: 7,
+  percent: 4.75, unit: 4.5, tax: 5.5, money: 6.75, total: 8, tools: 4.25,
 } as const
 
 
@@ -286,6 +294,23 @@ export function InvoiceLinesTable({
   }
   /* عدد أعمدة الجدول الحقيقي: سطور الفراغ كانت تكتب colSpan=20 فتخلق أعمدة وهمية
      تسحق عمود «الصنف / الوصف» وتترك فراغاً هائلاً — الآن الفراغ بعرض الجدول تماماً. */
+  /* أدنى عرض للجدول = مجموع الأعمدة الظاهرة فعلاً + أرضية اسم الصنف (15rem).
+     في table-fixed لا تنفع min-width على الخلية: العمود بلا عرض يأخذ الباقي
+     ولو كان صفراً — لذلك نضمن المجموع هنا ويُمرَّر الجدول أفقياً عند الضيق. */
+  const minTableRem = COLW.index
+    + (columns.code ? COLW.code : 0)
+    + COLW.name
+    + (lineWarehouseMode ? COLW.warehouse : 0)
+    + (kind === 'purchase' && mode !== 'simple' ? COLW.qty * 3 : COLW.qty)
+    + (columns.unit ? COLW.unit : 0)
+    + COLW.price
+    + (kind === 'sale' ? COLW.percent : 0)
+    + (kind === 'purchase' && mode !== 'simple' ? COLW.percent : 0)
+    + (kind === 'sale' && mode === 'profit' && canViewCost ? COLW.money * 2 : 0)
+    + (kind === 'purchase' && mode === 'profit' && canViewCost ? COLW.money : 0)
+    + (showTaxColumn ? COLW.tax : 0)
+    + COLW.total
+    + COLW.tools
   const columnCount = 1
     + (columns.code ? 1 : 0)
     + 1
@@ -332,7 +357,8 @@ export function InvoiceLinesTable({
         </div>
       </div>
       <div className="overflow-x-auto" ref={scrollRef} style={boxMaxHeight ? { maxHeight: boxMaxHeight } : undefined}>
-        <table className="invoice-lines-table w-full min-w-[58rem] table-fixed text-sm" data-columns={columnCount}>
+        <table className="invoice-lines-table w-full table-fixed text-sm" data-columns={columnCount}
+          style={{ minWidth: `${minTableRem}rem` }}>
           <thead className="bg-slate-50 dark:bg-slate-800/60">
             <tr className="text-[11px] font-black text-slate-500 dark:text-slate-300">
               <th className={`p-2 ${COL.index}`} scope="col">م</th>

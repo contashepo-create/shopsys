@@ -1619,6 +1619,8 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc .invoice-doc-form { gap: .22rem; }
 .invoice-doc .invoice-doc-fields { gap: .18rem .3rem; }
 .invoice-doc .invoice-doc-fields > .form-field { display: grid; min-width: 0; align-content: start; gap: .06rem; grid-template-rows: 1.02rem 1.9rem; margin: 0; }
+.invoice-doc .invoice-doc-fields > .form-field > * { min-width: 0; max-width: 100%; }
+.invoice-doc .invoice-doc-fields input, .invoice-doc .invoice-doc-fields select { box-sizing: border-box; width: 100%; min-width: 0; }
 .invoice-doc .invoice-doc-fields .field-head { align-items: center; gap: .22rem; margin: 0; }
 .invoice-doc .invoice-doc-fields .field-head > label,
 .invoice-doc .invoice-doc-fields > .form-field > label { display: flex; align-items: center; gap: .18rem; color: var(--doc-muted); font-size: .56rem; font-weight: 800; overflow: visible; text-overflow: clip; white-space: nowrap; overflow-wrap: anywhere; line-height: 1.15; }
@@ -2007,7 +2009,12 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
 }
 .invoice-doc .invoice-doc-party .invoice-doc-cardhead > b { min-width: 0; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 /* حقول التاريخ ضاقت بطلب المالك — يُصغَّر خطها حتى لا يُقصّ قناع التاريخ */
-.invoice-doc .invoice-doc-fields input[type="date"] { padding: 0 .25rem !important; font-size: .64rem !important; }
+/* حقل التاريخ الأصلي له عرض ذاتي أكبر من عمود الشبكة، فكان يفيض على الحقل
+   المجاور («الاستحقاق» فوق «التاريخ») — نُلزمه بعرض عموده تماماً. */
+.invoice-doc .invoice-doc-fields input[type="date"] {
+  box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%;
+  padding: 0 .25rem !important; font-size: .64rem !important;
+}
 .invoice-doc .invoice-doc-fields input[type="date"]::-webkit-calendar-picker-indicator { margin: 0; padding: 0; opacity: .55; }
 
 /* ═══ المرحلة ⑩ز — قرار المالك: ستة سطور في جدول الأصناف بلا «تسطيرات»،
@@ -2158,6 +2165,10 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
    الهدف: «لا يختفي أي جزء ولا يتداخل» — نكسب ~45px من الحشو والفجوات
    فتتسع اللوحات الثلاث وخمسة سطور البنود داخل النافذة بلا تمرير. */
 @media (max-height: 820px) {
+  /* أرضية سطور البنود تنزل إلى سطرين عند شحّ الارتفاع: الجدول يتمدد تلقائياً
+     إلى خمسة سطور كلما اتسعت المساحة، وما زاد يُمرَّر داخله — والأهم أن
+     اللوحات الثلاث تظهر كاملة بلا قصّ في كل الأنماط. */
+  .invoice-doc { --doc-min-rows: 2; }
   .invoice-doc .invoice-doc-panel-body { gap: .14rem; padding: .18rem .35rem; }
   .invoice-doc .invoice-doc-panel-head { min-height: 1.3rem; padding: .08rem .4rem; }
   .invoice-doc .invoice-doc-panel-foot { min-height: 1.2rem; padding: .08rem .4rem; }
@@ -2170,4 +2181,19 @@ html:has(.invoice-doc.invoice-pos-root) { font-size: clamp(17px, calc(.72vw + .8
   .invoice-doc .invoice-doc-strip { min-height: 1.2rem; padding: .04rem .35rem; }
   .invoice-doc .invoice-doc-sumrow { min-height: 1.15rem; }
   .invoice-doc .invoice-doc-panel textarea { min-height: 1.7rem !important; }
+  /* الأنماط الأعلى تضيف سطري «تكلفة البضاعة» و«الربح المتوقع» وشريط ترويسة ثانياً:
+     نضغط سطور الملخص والإجمالي الكبير بدل أن يُقصّ أسفل اللوحة. */
+  .invoice-doc .invoice-doc-sum-row { padding: .04rem 0; font-size: .63rem; }
+  .invoice-doc .invoice-doc-sum-row.is-strong { margin-top: .1rem; padding-top: .14rem; }
+  .invoice-doc .invoice-doc-grand { padding: .12rem .4rem; }
+  .invoice-doc .invoice-doc-discline { margin-bottom: .1rem; }
+}
+
+/* ارتفاع شديد الشحّ (680px وأقل): آخر قرش من الميزانية — شرائح الترويسة
+   وفجوات النموذج، حتى يظهر النمط «احترافي — متقدم» كاملاً بلا تمرير. */
+@media (max-height: 700px) {
+  .invoice-doc .invoice-doc-strip { min-height: 1.1rem; padding: .02rem .3rem; }
+  .invoice-doc .invoice-doc-form { gap: .12rem; }
+  .invoice-doc .invoice-doc-header-body { padding: .12rem .3rem; gap: .16rem; }
+  .invoice-doc .invoice-doc-body { gap: .24rem; }
 }
