@@ -86,7 +86,7 @@ interface DraftLine {
 }
 
 export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions' }) {
-  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
+  const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
   // العفو عن جزاء عملية حساسة — نفس صلاحية الاعتماد
@@ -302,15 +302,18 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
   const toM = (s: string) => (s.trim() ? toMinor(s, cur.decimals) : 0)
   const draftTotals = useMemo(() => {
-    let gross = 0, ded = 0, excess = 0, commissions = 0
+    let gross = 0, ded = 0, excess = 0, commissions = 0, driverDues = 0
     for (const l of draft) {
       gross += toM(l.base) + toM(l.allowances) + toM(l.overtime)
       ded += toM(l.deductions) + toM(l.advances)
       excess += toM(l.excessPaid)
-      if (l.payCommissions) commissions += getStaffCommissionsDue(l.employeeId).totalMinor
+      if (l.payCommissions) {
+        commissions += getStaffCommissionsDue(l.employeeId).totalMinor
+        driverDues += getDriverDueBalance(l.employeeId) // عمولات نقلات السائقين (2111)
+      }
     }
     const net = gross - ded
-    return { gross, ded, excess, commissions, net, payout: net + excess + commissions }
+    return { gross, ded, excess, commissions, driverDues, net, payout: net + excess + commissions + driverDues }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, cur.decimals])
 
@@ -318,14 +321,17 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const payrollRowData = (line: DraftLine) => {
     const gross = toM(line.base) + toM(line.allowances) + toM(line.overtime)
     const cut = toM(line.deductions) + toM(line.advances)
-    const commissionsDue = getStaffCommissionsDue(line.employeeId).totalMinor
+    const salesCommissionsDue = getStaffCommissionsDue(line.employeeId).totalMinor
+    // بلاغ المالك: عمولة سائق اللوجستيات (مستحقات النقلات على 2111) لم تكن تظهر بالمسير
+    const driverDuesDue = getDriverDueBalance(line.employeeId)
+    const commissionsDue = salesCommissionsDue + driverDuesDue
     const excessDue = getEmployeeExcessDue(line.employeeId)
     const advanceBalance = getEmployeeAdvanceBalance(line.employeeId)
     const deductionBalance = getEmployeeDeductionBalance(line.employeeId)
     const net = gross - cut
     return {
       employee: employees.find((e) => e.id === line.employeeId),
-      gross, cut, net, commissionsDue, excessDue, advanceBalance, deductionBalance,
+      gross, cut, net, commissionsDue, salesCommissionsDue, driverDuesDue, excessDue, advanceBalance, deductionBalance,
       payout: net + toM(line.excessPaid) + (line.payCommissions ? commissionsDue : 0),
       advanceReasons: advanceBalance.advances.filter((a) => a.amountMinor > a.recoveredMinor)
         .map((a) => `${a.advanceNumber}${a.source === 'custody_shortage' ? ' (عجز عهدة)' : ''}: متبقٍ ${fmt(a.amountMinor - a.recoveredMinor)}${a.notes ? ` — ${a.notes}` : ''}`)
@@ -358,6 +364,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
         advancesMinor: toM(l.advances),
         excessPaidMinor: toM(l.excessPaid),
         commissionsPaidMinor: l.payCommissions ? getStaffCommissionsDue(l.employeeId).totalMinor : 0,
+        driverDuesPaidMinor: l.payCommissions ? getDriverDueBalance(l.employeeId) : 0,
       }))
       const post = (overrideBy?: string) => {
         const run = postPayroll({
@@ -1046,9 +1053,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                           </td>
                           <td className="px-1 py-2 text-center">
                             {row.commissionsDue === 0 ? <span className="text-[10px] text-slate-300">—</span> : (
-                              <label className="flex cursor-pointer flex-col items-center gap-0.5" title={`عمولات مستحقة: ${fmt(row.commissionsDue)} — تُصرف كاملة مع الراتب (تصفية لا مصروف جديد)`}>
+                              <label className="flex cursor-pointer flex-col items-center gap-0.5" title={`عمولات مستحقة: ${fmt(row.commissionsDue)} — تُصرف كاملة مع الراتب (تصفية لا مصروف جديد)`
+                                + (row.driverDuesDue > 0 ? `\nمنها عمولات نقلات السائق: ${fmt(row.driverDuesDue)} (تصفية 2111)` : '')
+                                + (row.salesCommissionsDue > 0 && row.driverDuesDue > 0 ? `\nوعمولات مبيعات: ${fmt(row.salesCommissionsDue)} (تصفية 2116)` : '')}>
                                 <input type="checkbox" checked={l.payCommissions} onChange={(e) => patchDraft(l.employeeId, { payCommissions: e.target.checked })} className="accent-brand-600" />
                                 <span className="text-[9.5px] font-bold text-violet-600">{fmt(row.commissionsDue)}</span>
+                                {row.driverDuesDue > 0 && <span data-driver-dues className="text-[8.5px] font-bold text-sky-600">نقلات {fmt(row.driverDuesDue)}</span>}
                               </label>
                             )}
                           </td>
@@ -1113,7 +1123,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
             </div>
             <div className="px-4 pb-3">
               <DocOutcome>
-                الأثر: <b>5102 رواتب وأجور</b> مديناً بصافي المستحق مضافاً إليه ما استُرد من السلف · {payMode === 'cash' ? <><b>الخزينة/البنك</b> دائناً بصافي المصروف {fmt(draftTotals.payout)}</> : <><b>2104 رواتب مستحقة</b> دائناً بالصافي {fmt(draftTotals.net)} حتى السداد</>} · و<b>1107 سلف الموظفين</b> دائناً بما استُقطع{draftTotals.excess > 0 ? <> · و<b>2107 عهد مستحقة للموظفين</b> مديناً بتسوية الفائض</> : null}{draftTotals.commissions > 0 ? <> · و<b>2116 عمولات مستحقة</b> مديناً بتصفية عمولات الفترة</> : null}.
+                الأثر: <b>5102 رواتب وأجور</b> مديناً بصافي المستحق مضافاً إليه ما استُرد من السلف · {payMode === 'cash' ? <><b>الخزينة/البنك</b> دائناً بصافي المصروف {fmt(draftTotals.payout)}</> : <><b>2104 رواتب مستحقة</b> دائناً بالصافي {fmt(draftTotals.net)} حتى السداد</>} · و<b>1107 سلف الموظفين</b> دائناً بما استُقطع{draftTotals.excess > 0 ? <> · و<b>2107 عهد مستحقة للموظفين</b> مديناً بتسوية الفائض</> : null}{draftTotals.commissions > 0 ? <> · و<b>2116 عمولات مستحقة</b> مديناً بتصفية عمولات الفترة</> : null}{draftTotals.driverDues > 0 ? <> · و<b>2111 مستحقات سائقين</b> مديناً بتصفية عمولات النقلات {fmt(draftTotals.driverDues)}</> : null}.
               </DocOutcome>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-500/5 px-4 py-3 dark:border-slate-800">
@@ -1162,7 +1172,14 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
             <div className="flex items-center justify-between text-[13px] px-1">
               <span className="text-slate-500">الصرف: {viewingRun.payMode === 'cash' ? `نقدي من ${ACCOUNT_NAMES[viewingRun.treasury]}` : 'استحقاق على رواتب مستحقة'}</span>
-              <span className="font-black text-lg text-brand-600">{fmt(viewingRun.totals.netMinor)} {cur.symbol}</span>
+              <span className="flex items-baseline gap-2">
+                {(viewingRun.totals.driverDuesPaidMinor ?? 0) > 0 && (
+                  <span data-run-driver-dues className="text-[11px] font-bold text-sky-600">
+                    منها عمولات نقلات {fmt(viewingRun.totals.driverDuesPaidMinor ?? 0)} (تصفية 2111)
+                  </span>
+                )}
+                <span className="font-black text-lg text-brand-600">{fmt(viewingRun.totals.netMinor)} {cur.symbol}</span>
+              </span>
             </div>
 
             {runEntry && (

@@ -6571,6 +6571,15 @@ export const useDataStore = create<DataState>()(
             throw new Error(`«${emp?.nameAr ?? l.employeeId}»: تُصرف العمولات المستحقة كاملة مع الراتب (${due}) أو لا تُصرف — للصرف الجزئي استخدم الصرف المنفرد من شاشة العمولات`)
           }
         }
+        // تحقق مستحقات سائقي النقلات (بلاغ المالك: عمولة السائق لم تكن تظهر بالمسير أصلاً)
+        for (const l of computed) {
+          const dues = l.driverDuesPaidMinor ?? 0
+          if (dues <= 0) continue
+          const due = get().getDriverDueBalance(l.employeeId)
+          const emp = state.employees.find((e) => e.id === l.employeeId)
+          if (dues > due) throw new Error(`«${emp?.nameAr ?? l.employeeId}»: مستحقات النقلات المصروفة (${dues}) أكبر من رصيده (${due})`)
+          if (dues !== due) throw new Error(`«${emp?.nameAr ?? l.employeeId}»: تُصرف مستحقات النقلات كاملة مع الراتب (${due}) أو لا تُصرف`)
+        }
         // مصدر الصرف: خزينة/بنك أو ملف عهدة موظف مفتوح برصيد كافٍ (طلب المالك)
         let payCustodyFile: CustodyFile | null = null
         let payAccount: TreasuryAccount = args.treasury
@@ -6588,12 +6597,13 @@ export const useDataStore = create<DataState>()(
         const advancesRecovered = computed.reduce((a, l) => a + l.advancesMinor, 0)
         const excessPaid = computed.reduce((a, l) => a + (l.excessPaidMinor ?? 0), 0)
         const commissionsPaid = computed.reduce((a, l) => a + (l.commissionsPaidMinor ?? 0), 0)
-        const totalOut = totals.netMinor + excessPaid + commissionsPaid
+        const driverDuesPaid = computed.reduce((a, l) => a + (l.driverDuesPaidMinor ?? 0), 0)
+        const totalOut = totals.netMinor + excessPaid + commissionsPaid + driverDuesPaid
         if (payCustodyFile) {
           const remaining = summarizeCustody(state.custodyTxs.filter((t) => t.fileId === payCustodyFile!.id)).remainingMinor
           if (totalOut > remaining) throw new Error(`المسير (${totalOut}) أكبر من المتبقي في ملف العهدة (${remaining})`)
         }
-        const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, payAccount, label, advancesRecovered, excessPaid, commissionsPaid)
+        const entryLines = buildPayrollEntry(totals.netMinor, args.payMode, payAccount, label, advancesRecovered, excessPaid, commissionsPaid, driverDuesPaid)
 
         const runId = nextId(state.payrollRuns)
         const entryId = nextId(state.journal)
@@ -6677,7 +6687,15 @@ export const useDataStore = create<DataState>()(
               : c,
           )
         }
-        set({ payrollRuns: [...state.payrollRuns, run], journal: [...state.journal, entry], employeeAdvances, employeeDeductions, custodyTxs, staffCommissions })
+        // مستحقات النقلات المصروفة مع الراتب: تُسوّى بقيد المسير نفسه فلا تُصرف مرتين
+        let driverDues = state.driverDues
+        for (const l of computed) {
+          if ((l.driverDuesPaidMinor ?? 0) <= 0) continue
+          driverDues = driverDues.map((d) =>
+            d.driverId === l.employeeId && !d.settled ? { ...d, settled: true, settlementEntryId: entryId } : d,
+          )
+        }
+        set({ payrollRuns: [...state.payrollRuns, run], journal: [...state.journal, entry], employeeAdvances, employeeDeductions, custodyTxs, staffCommissions, driverDues })
         return run
       },
 

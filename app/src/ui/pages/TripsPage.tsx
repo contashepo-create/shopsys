@@ -499,6 +499,9 @@ export function TripsPage() {
               التسوية من: <TreasuryPicker value={settleTreasury} onChange={setSettleTreasury} compact />
             </span>
           </div>
+          <div data-driver-dues-hint className="border-t border-amber-200/60 px-4 py-1.5 text-[11px] font-bold text-slate-500 dark:border-amber-900/40">
+            أو تُصرف مع الراتب: تظهر في «مسير الرواتب» بعمود العمولات ويصفّيها قيد المسير (2111) فلا تُصرف مرتين.
+          </div>
           <table className="w-full text-sm">
             <tbody>
               {driversWithDues.map((d) => (

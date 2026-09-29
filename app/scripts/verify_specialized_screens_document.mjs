@@ -141,7 +141,7 @@ const ruleOf = (selector) => {
   const ENGINE = {
     'PaymentTerminalsPage.tsx': ['5112', '5113'], // recordPaymentTerminalSettlement: بنك/حساب تسوية الماكينة + عمولة + فروق
     'RentalContractsPage.tsx': ['1104', '2103', '2109', '4104'], // rental.ts: إيجار + تأمين + إقفال
-    'EmployeesPage.tsx': ['1107', '2104', '2107', '2116', '5102', '5117'], // payroll.ts + staffCommissions.ts
+    'EmployeesPage.tsx': ['1107', '2104', '2107', '2111', '2116', '5102', '5117'], // payroll.ts + staffCommissions.ts + مستحقات سائقي النقلات
     'ClinicPages.tsx': ['1104', '2102', '4102', '4108'], // clinic.ts (زيارة) + serviceRefund.ts (مرتجع)
     'LabPages.tsx': ['1104', '2105', '4106', '5109'], // lab.ts: 4106 إيراد تحاليل + عمولة المحيلين
     'ContractingPages.tsx': ['1104', '1105', '2101', '2102', '2109', '2116', '4102', '4107', '5110', '5117'],
