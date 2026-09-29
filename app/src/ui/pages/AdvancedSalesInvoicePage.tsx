@@ -38,6 +38,7 @@ import { buildWarehouseReceiptHtml } from '../../core/warehouseReceipt.ts'
 import { formatInvoiceAuditLine } from '../../core/invoiceAudit.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { AnimatedMinor } from '../components/AnimatedMinor.tsx'
+import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { electronicInvoiceLockActive } from '../../core/invoiceEdit.ts'
 
@@ -70,6 +71,22 @@ export function AdvancedSalesInvoicePage(){
  const invoiceDiscountPercent=useMemo(()=>{const percent=Math.min(100,Math.max(0,Number(discount)||0));try{const manual=toMinor(discountAmount||'0',cur.decimals);const base=lines.reduce((sum,line)=>sum+Math.round(line.qty*line.unitPriceMinor*(1-line.discountPercent/100)),0);return manual>0&&base>0?Math.min(100,Math.max(0,manual/base*100)):percent}catch{return percent}},[lines,discount,discountAmount,cur.decimals])
  const totals=useMemo(()=>{try{const effectiveTaxPercent=editingInvoice?.taxPercent??taxPolicy.effectivePercent;const effectiveTaxInclusive=editingInvoice?.taxInclusive??false;const base=computeTotals(lines,invoiceDiscountPercent,effectiveTaxPercent,effectiveTaxInclusive),chargeNet=customerCharges.reduce((s,c)=>s+c.amountMinor,0),chargeTax=customerCharges.filter(c=>c.taxable).reduce((s,c)=>s+Math.round(c.amountMinor*effectiveTaxPercent/100),0);return{...base,netMinor:base.netMinor+chargeNet,taxBaseMinor:base.taxBaseMinor+customerCharges.filter(c=>c.taxable).reduce((s,c)=>s+c.amountMinor,0),taxMinor:base.taxMinor+chargeTax,totalMinor:base.totalMinor+chargeNet+chargeTax}}catch{return null}},[lines,invoiceDiscountPercent,taxPolicy.effectivePercent,editingInvoice?.taxPercent,editingInvoice?.taxInclusive,customerCharges]);useEffect(()=>{if(customerId===0&&!paidTouched.current&&totals)setPaid(String(totals.totalMinor/10**cur.decimals))},[customerId,totals,cur.decimals]);const fxMeta=COMMON_FX_CURRENCIES.find(row=>row.code===fxCode)??COMMON_FX_CURRENCIES[0];const fxLeg:FxLeg={currencyCode:fxCode,amountMinor:(()=>{try{return toMinor(fxAmount||'0',fxMeta.decimals)}catch{return 0}})(),ratePpm:parseRateToPpm(fxRate),decimals:fxMeta.decimals};const fxErrors=fxOn?validateFxLeg(fxLeg,cur.code):[];const fxBookMinor=fxOn&&!fxErrors.length?convertFxToBookMinor(fxLeg,cur.decimals):0;
  const cashPaidMinor=fxOn?fxBookMinor:toMinor(paid||'0',cur.decimals),terminalPaidMinor=terminal.terminalId?toMinor(terminalPaid||'0',cur.decimals):0,employeePaidMinor=collectionEmployeeId?toMinor(employeePaid||'0',cur.decimals):0,bankPaidMinor=multiPay?toMinor(bankPaid||'0',cur.decimals):0,totalPaidMinor=cashPaidMinor+terminalPaidMinor+employeePaidMinor+bankPaidMinor;const stockWarnings=inventoryWarnings(lines.map(l=>({id:l.key,itemId:l.itemId,description:l.nameAr,warehouseId:l.warehouseId??null,warehouseSource:l.warehouseSource,qty:l.qty,unitPriceMinor:l.unitPriceMinor,lineDiscountMinor:Math.round(l.qty*l.unitPriceMinor*l.discountPercent/100),taxPercent:l.vatPercentOverride??taxPolicy.effectivePercent,availableQty:items.find(i=>i.id===l.itemId)?.stockQty??0})),allowNegative);const belowCostLines=lines.filter(l=>!items.find(i=>i.id===l.itemId)?.isService&&l.unitPriceMinor*(1-l.discountPercent/100)<l.unitCostMinor)
+ /* لوحة «الأخطاء قبل الترحيل» (الموجة ①): كل ما قد يمنع الترحيل أو يستحق انتباهاً
+    في مكان واحد، وكل ملاحظة تقفز إلى مصدرها — بلا أي تغيير في تقسيم المستند. */
+ const [checksOpen,setChecksOpen]=useState(false)
+ const prePostIssues=useMemo<PrePostIssue[]>(()=>{
+  const list:PrePostIssue[]=[]
+  if(!lines.length)list.push({id:'no-lines',level:'blocking',text:'لا بنود في الفاتورة',hint:'أضف صنفاً واحداً على الأقل',focus:'.invoice-line-entry-cell input'})
+  lines.forEach((line,index)=>{
+   const item=items.find(i=>i.id===line.itemId)
+   if(!line.itemId)list.push({id:`empty-${line.key}`,level:'blocking',text:`السطر ${index+1}: بلا صنف`,focus:`[data-line-key="${line.key}"] input`})
+   else if(line.qty<=0)list.push({id:`qty-${line.key}`,level:'blocking',text:`السطر ${index+1}: الكمية صفر`,hint:item?.nameAr,focus:`[data-line-key="${line.key}"] input`})
+   else if(line.unitPriceMinor<=0)list.push({id:`price-${line.key}`,level:'warning',text:`السطر ${index+1}: السعر صفر`,hint:item?.nameAr,focus:`[data-line-key="${line.key}"] input`})
+  })
+  belowCostLines.forEach(line=>list.push({id:`cost-${line.key}`,level:'warning',text:`بيع تحت التكلفة: ${line.nameAr}`,hint:'يحتاج اعتماد مشرف عند الترحيل',focus:`[data-line-key="${line.key}"] input`}))
+  stockWarnings.forEach(warning=>list.push({id:`stock-${warning.lineId}`,level:warning.severity==='error'?'blocking':'warning',text:warning.message,focus:`[data-line-key="${warning.lineId}"] input`}))
+  return list
+ },[belowCostLines,items,lines,stockWarnings])
  const internalTotal=expenses.filter(e=>e.affectsProfit).reduce((s,e)=>s+e.amountMinor,0);const cogs=lines.reduce((s,l)=>s+Math.round(l.qty*l.unitCostMinor),0);const expectedProfit=totals?totals.netMinor-cogs-internalTotal:0;const commissionValue=(basis:InvoiceCommissionBasis,value:string)=>calculateInvoiceCommissionMinor({basis,value:basis==='fixed'?toMinor(value||'0',cur.decimals):Number(value||0),grossMinor:totals?.grossMinor??0,netMinor:totals?.netMinor??0,profitMinor:expectedProfit});const commissionMinor=commissionEmployeeId&&commissionAmount?commissionValue(commissionBasis,commissionAmount):0;const allCommissionInputs=[...(commissionEmployeeId&&commissionMinor?[{employeeId:commissionEmployeeId,amountMinor:commissionMinor}]:[]),...additionalCommissions.filter(c=>c.employeeId&&c.value).map(c=>({employeeId:c.employeeId,amountMinor:commissionValue(c.basis,c.value)})).filter(c=>c.amountMinor>0)]
  const addExpense=()=>{const template=expenseTemplates.find(row=>row.isActive);setExpenses([...expenses,{id:crypto.randomUUID(),label:template?.nameAr??'شحن وتوصيل',amountMinor:0,accountCode:template?.accountCode??'5108',settlement:template?.settlement??'payable_later',treasury:'1101',payableAccountCode:'2117',projectId:null,costCenterId:null,custodyFileId:null,vehicleId:null,taxTreatment:template?.taxTreatment??'exempt',taxPercent:template?.taxPercent??0,affectsProfit:template?.affectsProfit??true,landedCostAllocation:template?.landedCostAllocation??'none'}])}
  // Hydrate once when the edit target changes; subsequent user edits must not reapply source values.
@@ -240,7 +257,9 @@ export function AdvancedSalesInvoicePage(){
       <button type="button" className="is-amber" onClick={()=>setChargesOpen(true)} title="مصروف يتحمله العميل ويُضاف لإجمالي الفاتورة">＋ مصروف على العميل <span className="invoice-doc-count">{customerCharges.length}</span></button>
       {mode==='advanced'&&<button type="button" className="is-amber" onClick={()=>setInternalExpensesOpen(true)} title="مصروف على المنشأة يُخصم من ربح الفاتورة">＋ مصروف داخلي <span className="invoice-doc-count">{expenses.length}</span></button>}
       {mode==='advanced'&&<button type="button" onClick={()=>setInternalExpensesOpen(true)} title="عمولة موظف على هذه الفاتورة">＋ عمولة موظف <span className="invoice-doc-count">{allCommissionInputs.length}</span></button>}
+      <button type="button" className={`invoice-doc-review${prePostIssues.some(i=>i.level==='blocking')?' is-blocking':prePostIssues.length?' is-warning':''}`} onClick={()=>setChecksOpen(v=>!v)} title="مراجعة الفاتورة قبل الترحيل: مخزون · تكلفة · تحصيل" data-prepost-open>✓ مراجعة قبل الترحيل {prePostIssues.length>0&&<span className="invoice-doc-count">{prePostIssues.length}</span>}</button>
      </div>
+     <PrePostChecks issues={prePostIssues} open={checksOpen} onClose={()=>setChecksOpen(false)}/>
     </div>
     <div className="invoice-doc-panel-foot"><DocumentAttachmentsBox documentKind="sale" documentId={editingInvoice?.id??null} pending={attachments} onPendingChange={setAttachments} addedBy={currentUser?.nameAr??setup.ownerName??'المالك'}/><span>الاستحقاق</span><b>{dueDate||'غير محدد'}</b></div>
    </div>

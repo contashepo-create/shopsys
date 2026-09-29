@@ -47,4 +47,29 @@ const counter = read('ui/components/AnimatedMinor.tsx')
   assert.ok(/\.money-counter \{[\s\S]{0,180}tabular-nums/.test(css), 'أرقام العدّاد غير ثابتة العرض فتهتزّ')
   R.ok('إجماليات الفاتورتين تعدّ حيّاً بنبضة خفيفة وبأرقام ثابتة العرض')
 }
+/* ④ حراسة التفاعل: السحب لا يظلّل نصاً ولو مرّ فوق حقل */
+{
+  const guards = read('ui/interactionGuards.ts')
+  const main = read('main.tsx')
+  assert.ok(/export function installNoTextSelection/.test(guards), 'حراسة منع التحديد غير موجودة')
+  assert.ok(/addEventListener\('selectstart', onSelectStart, true\)/.test(guards), 'بدء التحديد غير ممنوع خارج الحقول')
+  assert.ok(/if \(startedInField\) return/.test(guards), 'السحب الذي يبدأ داخل حقل يجب أن يُظلِّل نصه')
+  assert.ok(/key\.toLowerCase\(\) !== 'a'/.test(guards) || /'a'/.test(guards), 'Ctrl+A غير محروس')
+  assert.ok(/installNoTextSelection\(\)/.test(main), 'الحراسة غير مركَّبة عند الإقلاع')
+  R.ok('سحب الفأرة لا يظلّل شيئاً ولو مرّ فوق حقل — والتحديد داخل الحقل يعمل')
+}
+/* ⑤ لوحة الأخطاء قبل الترحيل */
+{
+  const panel = read('ui/components/PrePostChecks.tsx')
+  const sales2 = read('ui/pages/AdvancedSalesInvoicePage.tsx')
+  assert.ok(/export function PrePostChecks/.test(panel), 'لوحة المراجعة قبل الترحيل مفقودة')
+  assert.ok(/data-prepost-issue=\{issue\.level\}/.test(panel) && /prepost-goto/.test(panel), 'الملاحظات بلا تصنيف أو بلا قفز')
+  assert.ok(/const prePostIssues=useMemo<PrePostIssue\[\]>/.test(sales2), 'الفاتورة لا تحسب ملاحظات ما قبل الترحيل')
+  for (const rx of [/no-lines/, /بيع تحت التكلفة/, /stockWarnings\.forEach/])
+    assert.ok(rx.test(sales2), 'فحص ناقص في ملاحظات ما قبل الترحيل')
+  assert.ok(/data-prepost-open/.test(sales2), 'لا زر يفتح لوحة المراجعة')
+  assert.ok(/\.prepost-panel \{[\s\S]{0,400}position: absolute/.test(css) && !/\.prepost-panel[\s\S]{0,300}inset: 0/.test(css),
+    'لوحة المراجعة يجب أن تكون عائمة بلا تعتيم')
+  R.ok('لوحة «الأخطاء قبل الترحيل»: مانع/تنبيه + قفز إلى المصدر + بلا تعتيم')
+}
 R.done()

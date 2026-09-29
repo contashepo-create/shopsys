@@ -62,8 +62,14 @@ if (!fieldOk) bad++
 console.log(`${fieldOk ? '✓' : '✗'} الحقول ما زالت قابلة للتحديد والنسخ — ${JSON.stringify(field)}`)
 
 /* Ctrl+A لا يظلّل الشاشة */
-await page.evaluate(() => { location.hash = '#/'; document.activeElement?.blur?.() })
-await wait(1200)
+/* أغلق النوافذ أولاً: Ctrl+A داخل حقل مركَّز يجب أن يحدد نص الحقل (سلوك صحيح) */
+await page.evaluate(() => {
+  document.querySelectorAll('[data-window-close]').forEach((button) => button.click())
+  location.hash = '#/'
+  document.activeElement?.blur?.()
+})
+await wait(1600)
+await page.evaluate(() => document.activeElement?.blur?.())
 await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control')
 await wait(400)
 const selectedAll = await page.evaluate(() => (window.getSelection()?.toString() ?? '').trim().length)

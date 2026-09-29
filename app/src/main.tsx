@@ -5,10 +5,15 @@ import './index.css'
 import App from './App.tsx'
 import { AppErrorBoundary } from './ui/AppErrorBoundary.tsx'
 import { seedDeveloperDefaults, exposeDeveloperStores } from './dev/devDefaults.ts'
+import { installNoTextSelection } from './ui/interactionGuards.ts'
 
 // يجهز الحساب التجريبي مرة واحدة في بيئة التطوير فقط؛ لا يُضمّن في النسخة النهائية.
 seedDeveloperDefaults()
 exposeDeveloperStores()
+
+/* التطبيق يُعامَل كبرنامج سطح مكتب: لا تظليل نص بالسحب في أي شاشة (قرار المالك)،
+   والتحديد يبقى كاملاً داخل حقول الإدخال وحدها. */
+installNoTextSelection()
 
 /** حراسة واجهة النسخة النهائية فقط: لا رسالة ولا سلوك إضافي في وضع المطور. */
 if (import.meta.env.PROD) {

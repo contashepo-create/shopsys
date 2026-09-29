@@ -2327,3 +2327,42 @@ input, textarea, select, option,
 .money-counter.is-bump { transform: scale(1.09); }
 @media (prefers-reduced-motion: reduce) { .money-counter { transition-duration: .01ms; } .money-counter.is-bump { transform: none; } }
 
+/* ===== لوحة «الأخطاء قبل الترحيل» (الموجة ①) — عائمة بلا تعتيم ===== */
+.invoice-doc-review {
+  display: inline-flex; align-items: center; gap: .25rem; border: 1px dashed rgb(100 116 139 / .45);
+  border-radius: .5rem; padding: .1rem .4rem; font-size: .62rem; font-weight: 800; color: #475569; background: transparent;
+  cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.invoice-doc-review:hover { background: rgb(100 116 139 / .1); }
+.invoice-doc-review.is-warning { border-color: rgb(217 119 6 / .5); color: #b45309; background: rgb(217 119 6 / .08); }
+.invoice-doc-review.is-blocking { border-color: rgb(220 38 38 / .55); color: #b91c1c; background: rgb(220 38 38 / .1); border-style: solid; }
+.dark .invoice-doc-review { color: #cbd5e1; }
+.prepost-panel {
+  position: absolute; inset-inline-start: .5rem; bottom: 2.4rem; width: min(24rem, 92%); max-height: 16rem;
+  display: flex; flex-direction: column; overflow: hidden; border-radius: .8rem;
+  border: 1px solid rgb(148 163 184 / .45); background: rgb(255 255 255 / .97); backdrop-filter: blur(14px);
+  box-shadow: 0 24px 60px -24px rgb(15 23 42 / .5); animation: cmdIn .16s cubic-bezier(.16, 1.02, .3, 1);
+}
+.dark .prepost-panel { background: rgb(16 24 41 / .97); border-color: rgb(71 97 143 / .5); }
+.prepost-head { display: flex; align-items: center; gap: .4rem; padding: .35rem .5rem; border-bottom: 1px solid rgb(148 163 184 / .3); font-size: .7rem; }
+.prepost-head b { display: inline-flex; align-items: center; gap: .25rem; }
+.prepost-count { margin-inline-start: auto; font-size: .6rem; color: #94a3b8; }
+.prepost-head button { border: none; background: transparent; cursor: pointer; color: inherit; display: grid; place-items: center; }
+.prepost-body { flex: 1; min-height: 0; overflow: auto; padding: .25rem; }
+.prepost-row {
+  display: flex; align-items: flex-start; gap: .4rem; width: 100%; text-align: start; padding: .3rem .4rem;
+  border: 1px solid transparent; border-radius: .5rem; background: transparent; font-size: .69rem; color: inherit; cursor: default;
+}
+.prepost-row.is-jump { cursor: pointer; }
+.prepost-row.is-jump:hover { background: rgb(47 98 196 / .1); border-color: rgb(47 98 196 / .25); }
+.prepost-row.is-blocking { color: #b91c1c; }
+.prepost-row.is-warning { color: #b45309; }
+.prepost-text { min-width: 0; }
+.prepost-text small { display: block; font-size: .6rem; color: #94a3b8; font-weight: 500; }
+.prepost-goto { margin-inline-start: auto; font-size: .58rem; color: #2f62c4; font-weight: 800; }
+.prepost-ok { display: grid; place-items: center; gap: .2rem; padding: .9rem; text-align: center; color: #16a34a; font-size: .72rem; }
+.prepost-ok span { color: #94a3b8; font-size: .64rem; }
+.prepost-flash { animation: prepostFlash .9s ease; }
+@keyframes prepostFlash { 0%, 100% { box-shadow: none; } 30% { box-shadow: 0 0 0 3px rgb(220 38 38 / .35); } }
+@media (prefers-reduced-motion: reduce) { .prepost-panel, .prepost-flash { animation-duration: .01ms; } }
+
