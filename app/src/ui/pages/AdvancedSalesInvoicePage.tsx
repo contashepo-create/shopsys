@@ -120,7 +120,7 @@ export function AdvancedSalesInvoicePage(){
  }
  const printSwitches=usePrintSwitches()
  /* معاينة الإيصال الحراري قبل الطباعة (طلب المالك) — تظهر ما لم تكن الطباعة صامتة */
- const [thermalPreview,setThermalPreview]=useState<string|null>(null)
+ const [thermalPreview,setThermalPreview]=useState<{html:string;wide:boolean}|null>(null)
  const [projectId,setProjectId]=useState(0)
  /* الدرج الجانبي (طلب المالك): «عميل جديد» بلا مغادرة الفاتورة — Ctrl+Shift+N */
  const [newPartySheet,setNewPartySheet]=useState(false)
@@ -181,7 +181,8 @@ export function AdvancedSalesInvoicePage(){
  }
  const applyDraft=(draft:AdvancedInvoiceDraft)=>{try{const d=JSON.parse(draft.payload);setMode(d.mode??'simple');setCustomerId(d.customerId??0);setCustomerReference(d.customerReference??'');setDueDate(d.dueDate??'');setNotes(d.notes??'');setWarehouseId(d.warehouseId??null);setLines(d.lines??[]);setDiscount(d.discount??'0');setDiscountAmount(d.discountAmount??'');paidTouched.current=true;setPaid(d.paid??'');setTerminalPaid(d.terminalPaid??'');setEmployeePaid(d.employeePaid??'');setCollectionEmployeeId(d.collectionEmployeeId??0);setTreasury(d.treasury??'1101');setTerminal(d.terminal??{terminalId:'',providerReference:'',cardLast4:''});setExpenses(d.expenses??[]);setCustomerCharges(d.customerCharges??[]);setAllowNegative(d.allowNegative??false);setCommissionEmployeeId(d.commissionEmployeeId??0);setCommissionBasis(d.commissionBasis??'fixed');setCommissionAmount(d.commissionAmount??'');setAdditionalCommissions(d.additionalCommissions??[]);setAttachments(d.attachments??[]);toast.show(`استُعيدت «${draft.name}» ✓`)}catch{toast.show('تعذر قراءة المسودة المحفوظة','error')}};const restoreDraft=()=>setDraftsOpen(true)
  const printDraft=(template:InvoiceTemplate)=>{if(!totals||!lines.length)return toast.show('أضف بنوداً قبل المعاينة','error');const model=buildReceiptModel({invoiceNumber:'مسودة',refCode:'DRAFT',dateIso:new Date().toISOString(),lines:[...lines.map(l=>({...l,nameAr:`${items.find(i=>i.id===l.itemId)?.sku||items.find(i=>i.id===l.itemId)?.barcodes?.[0]||l.itemId} — ${l.nameAr}`})),...customerCharges.map((charge,index)=>({itemId:-(index+1),nameAr:charge.nameAr,qty:1,unitPriceMinor:charge.amountMinor,unitCostMinor:0,discountPercent:0,soldByWeight:false,vatPercentOverride:charge.taxable?taxPolicy.effectivePercent:0}))],totals,payment:totalPaidMinor>=totals.totalMinor?'cash':'credit',paidMinor:Math.min(totalPaidMinor,totals.totalMinor),operatorName:currentUser?.nameAr??setup.ownerName??'المالك',customerName:customers.find(c=>c.id===customerId)?.nameAr??null,taxPercent:taxPolicy.effectivePercent,taxInclusive:false,settings:receipt});if(customerReference||dueDate)model.footerText=`${customerReference?`مرجع العميل: ${customerReference}`:''}${customerReference&&dueDate?' — ':''}${dueDate?`الاستحقاق: ${dueDate}`:''}${receipt.footerText?' — '+receipt.footerText:''}`;/* حراري + غير صامت ⇒ معاينة صغيرة بأزرار طباعة/إلغاء/إعدادات (طلب المالك) */
-  if(template==='thermal'&&!printSwitches.silentPrint){setThermalPreview(buildModelHtml(model,cur,receipt,'thermal'));return}
+  /* غير صامت ⇒ معاينة حرة في منتصف الشاشة (حراري أو كبيرة) — طلب المالك */
+  if(!printSwitches.silentPrint){setThermalPreview({html:buildModelHtml(model,cur,receipt,template),wide:template!=='thermal'});return}
   printModelWithTemplate(model,cur,receipt,template)}
  /* «تصدير PDF» = نفس قالب A4 عبر حوار الطباعة ووجهة «حفظ كـ PDF» — بلا مكتبة خارجية ولا إنترنت */
  const exportPdf=()=>{if(!totals||!lines.length)return toast.show('أضف بنوداً قبل التصدير','error');toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️');printDraft('a4')}
@@ -323,13 +324,16 @@ export function AdvancedSalesInvoicePage(){
   draftCount={advancedInvoiceDrafts.filter(d=>d.kind==='sale').length} onRestoreDraft={restoreDraft}
   onPrint={() => setPrintOpen(true)}
   onExportPdf={exportPdf}
+  onQuickPrint={()=>printDraft(printSwitches.cashierPrint?'thermal':'a4')}
   reviewSlot={<><button type="button" className={`invoice-doc-review${allPrePostIssues.some(i=>i.level==='blocking')?' is-blocking':allPrePostIssues.length?' is-warning':''}`} onClick={()=>setChecksOpen(v=>!v)} title="مراجعة الفاتورة قبل الترحيل: مخزون · تكلفة · تحصيل" data-prepost-open>✓ مراجعة قبل الترحيل {allPrePostIssues.length>0&&<span className="invoice-doc-count">{allPrePostIssues.length}</span>}</button><PrePostChecks issues={allPrePostIssues} open={checksOpen} onClose={()=>setChecksOpen(false)}/></>}
   onPost={save}
   documentNumber={editingInvoice?editingInvoice.invoiceNumber:undefined}
 >
   <section className="invoice-shell invoice-reference-shell overflow-visible rounded-b-2xl border-x border-b border-slate-300 bg-white shadow-lg dark:border-slate-700 dark:bg-card-dark">
-  <ThermalPreview open={!!thermalPreview} html={thermalPreview ?? ''} onClose={()=>setThermalPreview(null)}
-   onPrint={()=>{const html=thermalPreview;setThermalPreview(null);if(html)printHtml(html,{silent:printSwitches.silentPrint})}}
+  <ThermalPreview open={!!thermalPreview} html={thermalPreview?.html ?? ''} wide={thermalPreview?.wide ?? false}
+   title={thermalPreview?.wide?'معاينة الفاتورة قبل الطباعة':'معاينة الإيصال الحراري'}
+   onClose={()=>setThermalPreview(null)}
+   onPrint={()=>{const doc=thermalPreview;setThermalPreview(null);if(doc)printHtml(doc.html,{silent:printSwitches.silentPrint})}}
    onSettings={()=>{setThermalPreview(null);nav('/settings/printing')}}/>
   <SheetPanel open={newPartySheet} onClose={()=>setNewPartySheet(false)} title="عميل جديد" subtitle="يُضاف ويُختار في الفاتورة فوراً — الفاتورة تبقى ظاهرة خلف الدرج"
    footer={<><Btn variant="ghost" onClick={()=>setNewPartySheet(false)}>إلغاء (Esc)</Btn><span className="flex-1"/><Btn onClick={saveNewParty}>حفظ واختيار</Btn></>}>

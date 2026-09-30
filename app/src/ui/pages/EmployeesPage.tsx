@@ -26,6 +26,7 @@ import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../com
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { jobTitlesFor, jobTitleLabel } from '../../core/jobTitles.ts'
 
 /** قسم البيانات الموسعة القابل للطي — نفس نمط العملاء والموردين */
 function ExtendedFields({ ext, setExt }: { ext: PartyExtended; setExt: (e: PartyExtended) => void }) {
@@ -108,6 +109,8 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const payPayrollSlip = useDataStore((state) => state.payPayrollSlip)
   const [slipMonth, setSlipMonth] = useState(() => new Date().toISOString().slice(0, 7))
   const [slipDraftOpen, setSlipDraftOpen] = useState(false)
+  const [slipSearch, setSlipSearch] = useState('')
+  const [slipScope, setSlipScope] = useState<'all' | 'selected'>('all')
   const [slipRows, setSlipRows] = useState<{ employeeId: number; name: string; on: boolean; gross: number; allowances: number; deductions: number; advance: number }[]>([])
   useEffect(() => {
     if (!slipDraftOpen) return
@@ -116,6 +119,13 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       gross: employee.baseSalaryMinor ?? 0, allowances: 0, deductions: 0, advance: 0,
     })))
   }, [employees, slipDraftOpen])
+  /* بحث الموظف داخل المسير: تُعرض قسيمته وحده (طلب المالك) */
+  const visibleSlipRows = slipRows.filter((row) => {
+    const term = slipSearch.trim()
+    if (term && !row.name.includes(term)) return false
+    if (slipScope === 'selected' && !row.on) return false
+    return true
+  })
   const patchSlipRow = (employeeId: number, patch: Partial<{ on: boolean; gross: number; allowances: number; deductions: number; advance: number }>) =>
     setSlipRows((rows) => rows.map((row) => (row.employeeId === employeeId ? { ...row, ...patch } : row)))
   const accrueSlips = () => {
@@ -226,6 +236,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [jobTitle, setJobTitle] = useState('')
+  /* المسمى الوظيفي يتبع مجال النشاط (طلب المالك) */
+  const jobTitleSuggestions = jobTitlesFor(setup.activityId)
+  const jobFieldLabel = jobTitleLabel(setup.activityId)
   const [roleId, setRoleId] = useState('')
   const [hireDate, setHireDate] = useState('')
   const [baseSalary, setBaseSalary] = useState('')
@@ -869,14 +882,33 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
             </div>
 
-            {slipDraftOpen && (
-              <div className="mt-3 rounded-xl border border-slate-200 p-2 dark:border-slate-700" data-slip-draft>
+            <Modal open={slipDraftOpen} onClose={() => setSlipDraftOpen(false)} title="مسير رواتب — قسائم الموظفين" wide>
+              <div className="space-y-3" dir="rtl" data-slip-draft>
+                <div className="grid gap-2 md:grid-cols-3">
+                  <Field label="شهر الاستحقاق">
+                    <input type="month" className={inputCls} value={slipMonth} onChange={(event) => setSlipMonth(event.target.value)} aria-label="شهر المسير" />
+                  </Field>
+                  <Field label="ابحث عن موظف" hint="اكتب اسم الموظف — تُعرض قسيمته وحده">
+                    <input className={inputCls} value={slipSearch} onChange={(event) => setSlipSearch(event.target.value)}
+                      placeholder="اسم الموظف…" aria-label="بحث الموظف في المسير" data-slip-search />
+                  </Field>
+                  <Field label="نطاق المسير">
+                    <QuickSelect className={inputCls} aria-label="نطاق المسير" value={slipScope} onChange={(event) => setSlipScope(event.target.value as 'all' | 'selected')}>
+                      <option value="all">كل الموظفين النشطين</option>
+                      <option value="selected">المحدَّدون فقط</option>
+                    </QuickSelect>
+                  </Field>
+                </div>
+
                 <table className="w-full text-[12px]">
                   <thead className="text-[11px] font-black text-slate-500">
-                    <tr><th className="p-1">الموظف</th><th className="p-1 w-24">الأساسي</th><th className="p-1 w-24">بدلات</th><th className="p-1 w-24">خصومات</th><th className="p-1 w-24">سلف</th><th className="p-1 w-24">الصافي</th><th className="p-1 w-10" /></tr>
+                    <tr><th className="p-1">الموظف</th><th className="p-1 w-24">الأساسي</th><th className="p-1 w-24">بدلات</th><th className="p-1 w-24">خصومات</th><th className="p-1 w-24">سلف</th><th className="p-1 w-24">الصافي</th></tr>
                   </thead>
                   <tbody>
-                    {slipRows.map((row) => {
+                    {visibleSlipRows.length === 0 && (
+                      <tr><td colSpan={6} className="p-4 text-center text-slate-400">لا موظف مطابق لبحثك</td></tr>
+                    )}
+                    {visibleSlipRows.map((row) => {
                       const net = Math.max(0, row.gross + row.allowances - row.deductions - row.advance)
                       return (
                         <tr key={row.employeeId} data-slip-row={row.employeeId}>
@@ -894,18 +926,24 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                             </td>
                           ))}
                           <td className="p-1 text-center font-mono font-bold">{fmt(net)}</td>
-                          <td className="p-1" />
                         </tr>
                       )
                     })}
                   </tbody>
                 </table>
-                <div className="mt-2 flex items-center justify-end gap-2">
-                  <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
-                  <Btn onClick={accrueSlips}>ترحيل الاستحقاق</Btn>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[12px] text-slate-500">
+                    المحدَّد: <b>{slipRows.filter((row) => row.on).length}</b> موظف · إجمالي الصافي{' '}
+                    <b className="font-mono">{fmt(slipRows.filter((row) => row.on).reduce((sum, row) => sum + Math.max(0, row.gross + row.allowances - row.deductions - row.advance), 0))}</b>
+                  </span>
+                  <div className="flex gap-2">
+                    <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
+                    <Btn onClick={accrueSlips}>ترحيل الاستحقاق</Btn>
+                  </div>
                 </div>
               </div>
-            )}
+            </Modal>
 
             <table className="mt-3 w-full text-[12px]" data-slips-table>
               <thead className="text-[11px] font-black text-slate-500">
@@ -998,8 +1036,14 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
             <Field label="الهاتف">
               <input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} />
             </Field>
-            <Field label="المسمى الوظيفي">
-              <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className={inputCls} placeholder="كاشير، بائع، محاسب…" />
+            <Field label={jobFieldLabel}>
+              {/* المسميات تتغيّر حسب النشاط (طلب المالك) — والحقل يبقى حراً */}
+              <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} className={inputCls}
+                list="job-titles-by-activity" data-job-title
+                placeholder={jobTitleSuggestions.slice(0, 3).join('، ') + '…'} />
+              <datalist id="job-titles-by-activity">
+                {jobTitleSuggestions.map((title) => <option key={title} value={title} />)}
+              </datalist>
             </Field>
             <Field label="الفئة / الدور التشغيلي *" hint="يحدد صلاحيات حساب الدخول تلقائياً عند إنشائه من الإعدادات — لا ينشئ حساباً أو رقماً سرياً هنا">
               <QuickSelect value={roleId} onChange={(e) => setRoleId(e.target.value)} className={inputCls}>

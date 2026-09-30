@@ -52,7 +52,8 @@ const css = read('index.css')
   assert.ok(/export function ThermalPreview/.test(preview), 'معاينة الإيصال الحراري مفقودة')
   for (const attr of ['data-thermal-print', 'data-thermal-cancel', 'data-thermal-settings'])
     assert.ok(preview.includes(attr), `زر ${attr} مفقود من المعاينة`)
-  assert.ok(/template==='thermal'&&!printSwitches\.silentPrint/.test(sales), 'الحراري غير الصامت لا يعرض معاينة')
+  /* صارت المعاينة لكل طباعة غير صامتة (حراري أو كبيرة) في نافذة حرة — دفعة ㉖ */
+  assert.ok(/if\(!printSwitches\.silentPrint\)\{setThermalPreview\(/.test(sales), 'الطباعة غير الصامتة لا تعرض معاينة')
   R.ok('معاينة الإيصال الحراري بأزرار طباعة/إلغاء/إعدادات قبل الطبع')
 }
 R.done()

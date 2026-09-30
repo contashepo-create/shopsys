@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X } from 'lucide-react'
+import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X, Printer } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
@@ -28,6 +28,8 @@ type InvoicePOSFrameProps = {
   documentNumber?: string
   /** زر «مراجعة قبل الترحيل» ولوحته — يظهر في شريط التذييل دائماً (طلب المالك) */
   reviewSlot?: ReactNode
+  /** طباعة فورية من شريط الفاتورة دون إغلاقها — تتبع مفاتيح الطباعة الثلاثة */
+  onQuickPrint?: () => void
   /** سطر تدقيق المستند: متى عُدِّل ومن عدّله ولماذا — يظهر في شريط الحالة سطراً واحداً */
   auditLabel?: string
   /** طباعة إذن استلام من المستودع (كميات فقط بلا أسعار) */
@@ -78,6 +80,7 @@ export function InvoicePOSFrame({
   onNextDocument,
   documentNumber,
   reviewSlot,
+  onQuickPrint,
   auditLabel,
   onWarehouseReceipt,
   draftCount = 0,
@@ -158,6 +161,14 @@ export function InvoicePOSFrame({
         </div>
 
         <div className="invoice-doc-head-actions">
+          {onQuickPrint && (
+            <span data-quick-print>
+              <Btn variant="ghost" onClick={onQuickPrint}
+                title="طباعة الفاتورة الآن دون إغلاقها — تتبع مفاتيح الطباعة الثلاثة أسفل المستند">
+                <Printer size={13} /> طباعة
+              </Btn>
+            </span>
+          )}
           <Btn variant="ghost" onClick={onRestoreDraft} title="فتح أي مسودة محفوظة باسم العميل"><FileClock size={13} /> المسودات{draftCount ? ` (${draftCount})` : ''}</Btn>
           {onWarehouseReceipt && <Btn variant="ghost" onClick={onWarehouseReceipt} title="إذن استلام من المستودع — كميات فقط بلا أسعار"><PackageCheck size={13} /> إذن استلام مستودع</Btn>}
           <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={13} /> حفظ مسودة</Btn>
