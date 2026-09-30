@@ -5,6 +5,7 @@ import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { INVOICE_COLUMN_LABELS, useAppStore, type InvoiceColumnPrefs } from '../../stores/app.store.ts'
 import { Btn } from './ui.tsx'
+import { PrintSwitches } from './PrintSwitches.tsx'
 
 type InvoicePOSFrameProps = {
   kind: 'sale' | 'purchase'
@@ -218,6 +219,7 @@ export function InvoicePOSFrame({
               </div>
             )}
           </div>
+          <PrintSwitches compact/>
           <Btn variant="ghost" onClick={() => onNavigate('/settings/printing')} title="قوالب الطباعة وإعداد إذن الاستلام والحرارية"><Settings size={13} /> إعدادات الطباعة</Btn>
           {onExportPdf && <Btn variant="ghost" onClick={onExportPdf} title="يفتح حوار الطباعة — اختر وجهة «حفظ كـ PDF»"><FileDown size={13} /> تصدير PDF</Btn>}
         </div>

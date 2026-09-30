@@ -79,6 +79,14 @@ export interface ReceiptSettings {
   showFooter: boolean
   /** خيار عابر لقالب إذن التسليم/الاستلام؛ لا يُحفظ في الإعدادات */
   hidePrices?: boolean
+  /* ─── مفاتيح الطباعة الثلاثة (طلب المالك) — تُعرض كأزرار «مفتاح كهرباء» ───
+     كلها **مطفأة افتراضياً**؛ يمكن تغيير الافتراضي من إعدادات الطباعة. */
+  /** طباعة مباشرة صامتة بلا مربع حوار ويندوز */
+  silentPrint: boolean
+  /** طباعة كاشير حرارية مباشرة بدل الفاتورة الكبيرة */
+  cashierPrint: boolean
+  /** طباعة تلقائية فور حفظ الفاتورة (بالنمط الذي يحدده الزران الآخران) */
+  printAfterSave: boolean
 }
 
 export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
@@ -111,6 +119,9 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   showWords: true,
   showSignatures: true,
   showFooter: true,
+  silentPrint: false,
+  cashierPrint: false,
+  printAfterSave: false
 }
 
 export interface ReceiptRow {

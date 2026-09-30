@@ -2454,7 +2454,9 @@ input, textarea, select, option,
    شريط الأزرار أسفل الشروط يبقى **سطراً واحداً** يُمرَّر أفقياً بدل أن يتمدد
    رأسياً، والشرائح تنضغط قليلاً — فيبقى الفيض صفراً في كل الأنماط. */
 .invoice-doc .invoice-doc-addons {
-  flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; gap: .22rem; padding-bottom: .05rem;
+  /* الأصل شبكة عمودين؛ نحوّلها صفاً واحداً يُمرَّر أفقياً فلا تتمدد رأسياً */
+  display: flex !important; flex-wrap: nowrap !important; overflow-x: auto; scrollbar-width: thin;
+  align-items: center; gap: .22rem; padding-bottom: .05rem;
 }
 .invoice-doc .invoice-doc-addons > * { flex: 0 0 auto; }
 @media (max-height: 820px) {
@@ -2519,4 +2521,57 @@ input, textarea, select, option,
 .app-sheet-body { flex: 1; min-height: 0; overflow: auto; padding: .7rem; }
 .app-sheet-foot { display: flex; align-items: center; gap: .4rem; padding: .55rem .7rem; border-top: 1px solid rgb(148 163 184 / .3); background: rgb(148 163 184 / .06); }
 @media (prefers-reduced-motion: reduce) { .app-sheet { animation: none; } }
+
+/* ===== مفاتيح الطباعة الثلاثة بمظهر «مفتاح كهرباء» (طلب المالك) ===== */
+.print-switches { display: inline-flex; align-items: center; gap: .22rem; flex: 0 0 auto; }
+.print-switch {
+  display: inline-flex; align-items: center; gap: .2rem; padding: .08rem .35rem;
+  border: 1px solid rgb(148 163 184 / .45); border-radius: .42rem; cursor: pointer;
+  font-size: .57rem; font-weight: 800; color: #64748b; white-space: nowrap;
+  background: linear-gradient(180deg, #ffffff, #eef2f7);
+  box-shadow: 0 1px 0 rgb(255 255 255 / .9) inset, 0 1.5px 0 rgb(148 163 184 / .5), 0 2px 3px rgb(15 23 42 / .12);
+  transition: transform .12s ease, box-shadow .12s ease, background .15s ease, color .15s ease;
+}
+.print-switch:hover { color: #334155; }
+.print-switch.is-on {
+  color: #166534; border-color: rgb(22 163 74 / .55);
+  background: linear-gradient(180deg, #dcfce7, #bbf7d0);
+  box-shadow: 0 1px 2px rgb(15 23 42 / .22) inset, 0 0 0 1px rgb(22 163 74 / .18);
+  transform: translateY(1.5px);
+}
+.print-switch-led { width: .3rem; height: .3rem; border-radius: 999px; background: #cbd5e1; box-shadow: 0 0 0 1px rgb(148 163 184 / .5) inset; }
+.print-switch.is-on .print-switch-led { background: #16a34a; box-shadow: 0 0 .28rem #22c55e; }
+.dark .print-switch { background: linear-gradient(180deg, #1e293b, #131c2e); color: #94a3b8; border-color: rgb(71 97 143 / .5); }
+.dark .print-switch.is-on { background: linear-gradient(180deg, #14532d, #052e1a); color: #86efac; }
+.print-switches.is-compact .print-switch span { font-size: .55rem; }
+@media (prefers-reduced-motion: reduce) { .print-switch { transition: none; } }
+
+/* ===== شريحة نقاط الولاء داخل لوحة التحصيل (طلب المالك) ===== */
+.invoice-doc-loyalty {
+  display: flex; align-items: center; gap: .35rem; flex-wrap: wrap;
+  padding: .12rem .35rem; border-radius: .42rem; font-size: .6rem; font-weight: 700;
+  border: 1px dashed rgb(236 72 153 / .45); background: rgb(236 72 153 / .08); color: #be185d;
+}
+.dark .invoice-doc-loyalty { color: #f9a8d4; }
+.invoice-doc-loyalty-val { font-family: ui-monospace, monospace; font-weight: 800; }
+.invoice-doc-loyalty button {
+  margin-inline-start: auto; border: 1px solid rgb(236 72 153 / .5); border-radius: .35rem;
+  padding: 0 .3rem; font-size: .56rem; font-weight: 800; color: inherit; background: transparent; cursor: pointer;
+}
+.invoice-doc-loyalty button:hover:not(:disabled) { background: #be185d; color: #fff; }
+.invoice-doc-loyalty button:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-height: 820px) {
+  /* شريحة الولاء ومفاتيح الطباعة تنضغطان مع باقي اللوحة فيبقى الفيض صفراً */
+  .invoice-doc .invoice-doc-loyalty { padding: .04rem .3rem; font-size: .56rem; }
+  .invoice-doc .print-switch { padding: .02rem .28rem; font-size: .53rem; }
+  .invoice-doc .invoice-doc-quick { gap: .16rem; }
+  .invoice-doc .invoice-doc-addons { padding-bottom: 0; }
+}
+@media (max-height: 820px) {
+  /* النمط المتقدم مع شريحة الولاء: آخر 18px من الميزانية */
+  .invoice-doc .invoice-doc-loyalty { padding: .02rem .28rem; font-size: .54rem; line-height: 1.3; }
+  .invoice-doc .invoice-doc-addonlist { padding-block: 0; }
+  .invoice-doc .invoice-doc-panel-body > * + * { margin-top: .08rem; }
+  .invoice-doc .invoice-doc-termsbox { min-height: 1.3rem !important; }
+}
 

@@ -156,7 +156,15 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
 }
 
 /** يطبع HTML عبر iframe مخفي ثم يزيله */
-export function printHtml(html: string): void {
+/**
+ * الطباعة الصامتة (طلب المالك): عندما يكون مفتاح «طباعة مباشرة» مفعّلاً نطبع
+ * بلا مربع حوار حيثما يسمح المتصفح/الغلاف (Electron)، وإلا نفتح الحوار كالمعتاد.
+ * المتصفح لا يسمح بإلغاء الحوار، لذلك نمرّر النية عبر خاصية على النافذة ليستعملها
+ * غلاف سطح المكتب (webContents.print({ silent: true })).
+ */
+export function printHtml(html: string, options?: { silent?: boolean }): void {
+  const bridge = (globalThis as { shopsysPrint?: (html: string, silent: boolean) => void }).shopsysPrint
+  if (options?.silent && typeof bridge === 'function') { bridge(html, true); return }
   const frame = document.createElement('iframe')
   frame.style.position = 'fixed'
   frame.style.left = '-9999px'
