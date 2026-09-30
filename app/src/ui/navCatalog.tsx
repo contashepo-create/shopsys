@@ -105,6 +105,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     id: 'purchases', nameAr: 'المشتريات', icon: Truck, color: 'cyan', module: 'purchases',
     children: [
+      { id: 'orders', nameAr: 'أوامر الشراء', icon: ClipboardList, path: '/purchases/orders' },
       { id: 'invoices', nameAr: 'فواتير الشراء', icon: Receipt, path: '/purchases/invoices' },
       { id: 'returns', nameAr: 'مرتجعات الشراء', icon: RotateCcw, path: '/purchases/returns' },
       { id: 'suppliers', nameAr: 'الموردون', icon: Building2, path: '/purchases/suppliers' },
@@ -234,6 +235,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'general', nameAr: 'عامة (بلد/عملة/ضريبة)', icon: Percent, path: '/settings/general' },
       { id: 'profile', nameAr: 'حسابي (بياناتي ورقمي السري)', icon: UserCircle2, path: '/settings/profile' },
       { id: 'permissions', nameAr: 'المستخدمون والصلاحيات', icon: ShieldCheck, path: '/settings/permissions' },
+      { id: 'approvals', nameAr: 'اعتماد المستندات', icon: ShieldCheck, path: '/settings/approvals' },
       { id: 'audit', nameAr: 'سجل النشاطات (للمالك)', icon: ScrollText, path: '/settings/audit' },
       { id: 'issues', nameAr: 'بلاغات المشاكل الداخلية', icon: MessageSquareWarning, path: '/settings/issues' },
       { id: 'guides', nameAr: 'الشروحات (دليل نشاطك)', icon: BookOpenText, path: '/settings/guides' },

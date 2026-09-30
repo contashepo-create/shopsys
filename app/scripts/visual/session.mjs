@@ -1,0 +1,17 @@
+/* استعادة جلسة النوافذ بعد إعادة التحميل */
+import { open } from './lib.mjs'
+const { browser, page } = await open(`http://localhost:${process.env.PORT}/#/sales/invoices`, 1366, 800, 6000)
+const wait=(ms=900)=>new Promise(r=>setTimeout(r,ms))
+await page.evaluate(() => { const s=()=>globalThis.__shopsysDev.data.getState(); if(!s().items.length) s().seed(['basic']) })
+await wait(1500)
+await page.evaluate(() => { const b=[...document.querySelectorAll('button,a')].filter(x=>x.textContent.includes('فاتورة مبيعات جديدة')&&!x.disabled).pop(); b?.click() })
+await wait(3200)
+const before = await page.evaluate(() => ({ wins: document.querySelectorAll('[data-app-window]').length, saved: JSON.parse(localStorage.getItem('shopsys-window-session-v1')??'[]').length }))
+console.log('قبل التحديث: نوافذ=', before.wins, '· محفوظ=', before.saved)
+await page.goto(`http://localhost:${process.env.PORT}/#/sales/invoices`, { waitUntil: 'domcontentloaded', timeout: 60000 })
+await wait(5000)
+const after = await page.evaluate(() => ({ wins: document.querySelectorAll('[data-app-window]').length, kinds: [...document.querySelectorAll('[data-app-window]')].map(w=>w.dataset.windowKind), toast: document.querySelector('.layer-toast')?.textContent?.trim().slice(0,40) }))
+console.log('بعد التحديث: نوافذ=', after.wins, '·', after.kinds.join('،'), '· إشعار:', after.toast ?? '—')
+console.log(after.wins >= 1 ? '✅ استُعيدت الجلسة' : '❌ لم تُستعد')
+await page.screenshot({ path:'/home/user/session.png' })
+await browser.close()

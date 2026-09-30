@@ -117,9 +117,13 @@ describe('التحكم بلوحة المفاتيح', () => {
     expect(posted).toBe(1)
   })
 
-  it('يفتح F3 فاتورة شراء جديدة من قسم المشتريات', () => {
+  it('يفتح F3 فاتورة الشراء صفحةً كاملة فوراً — لا نافذة ولا شاشة «جارٍ التحميل»', async () => {
+    const { useWindowStore } = await import('../src/ui/windows/windowStore.ts')
+    useWindowStore.setState({ windows: [], topZ: 700 })
     const view = render(<MemoryRouter initialEntries={['/purchases/invoices']}><KeyboardNavigation/><Routes><Route path="*" element={<Path/>}/></Routes></MemoryRouter>)
     fireEvent.keyDown(document, { key: 'F3' })
+    // طلب المالك: مستند الفاتورة صفحة كاملة يُفتح مباشرة، لا نافذة منبثقة فوق السجل
     expect(view.getByTestId('path').textContent).toBe('/purchases/invoices/new')
+    expect(useWindowStore.getState().windows).toEqual([])
   })
 })

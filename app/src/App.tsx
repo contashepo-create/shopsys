@@ -29,8 +29,10 @@ import { WarehousesPage } from './ui/pages/WarehousesPage.tsx'
 import { BranchesPage } from './ui/pages/BranchesPage.tsx'
 import { CustomersPage, SuppliersPage } from './ui/pages/PartiesPages.tsx'
 import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
-import { AdvancedPurchaseInvoicePage } from './ui/pages/AdvancedPurchaseInvoicePage.tsx'
+
 import { PurchaseReturnsPage } from './ui/pages/PurchaseReturnsPage.tsx'
+import { PurchaseOrdersPage } from './ui/pages/PurchaseOrdersPage.tsx'
+import { ApprovalsPage as DocApprovalsPage } from './ui/pages/ApprovalsPage.tsx'
 import { StocktakePage } from './ui/pages/StocktakePage.tsx'
 import { RecipesPage } from './ui/pages/RecipesPage.tsx'
 import { ProcessingPage } from './ui/pages/ProcessingPage.tsx'
@@ -39,7 +41,7 @@ import { PriceListsPage } from './ui/pages/PriceListsPage.tsx'
 import { PromotionsPage } from './ui/pages/PromotionsPage.tsx'
 import { PosPage } from './ui/pages/PosPage.tsx'
 import { SalesInvoicesPage } from './ui/pages/SalesInvoicesPage.tsx'
-import { AdvancedSalesInvoicePage } from './ui/pages/AdvancedSalesInvoicePage.tsx'
+import { InvoiceDocumentRoute } from './ui/pages/InvoiceDocumentRoute.tsx'
 import { SaleReturnsPage } from './ui/pages/SaleReturnsPage.tsx'
 import { ShiftsPage } from './ui/pages/ShiftsPage.tsx'
 import { JournalPage } from './ui/pages/JournalPage.tsx'
@@ -181,7 +183,7 @@ function Shell() {
         {/* شاشات المراحل القادمة — كلها مسجلة في الراوتر منذ الآن */}
         <Route path="/pos" element={<PosPage />} />
         <Route path="/sales/invoices" element={<SalesInvoicesPage />} />
-        <Route path="/sales/invoices/new" element={<AdvancedSalesInvoicePage />} />
+        <Route path="/sales/invoices/new" element={<InvoiceDocumentRoute kind="sale" />} />
         <Route path="/sales/returns" element={<SaleReturnsPage />} />
         <Route path="/sales/shifts" element={<ShiftsPage />} />
         <Route path="/sales/price-lists" element={<PriceListsPage />} />
@@ -192,7 +194,9 @@ function Shell() {
         <Route path="/inventory/processing" element={<ProcessingPage />} />
         <Route path="/inventory/jewelry" element={<JewelryPage />} />
         <Route path="/purchases/invoices" element={<PurchasesPage />} />
-        <Route path="/purchases/invoices/new" element={<AdvancedPurchaseInvoicePage />} />
+        <Route path="/purchases/invoices/new" element={<InvoiceDocumentRoute kind="purchase" />} />
+        <Route path="/purchases/orders" element={<PurchaseOrdersPage />} />
+        <Route path="/settings/approvals" element={<DocApprovalsPage />} />
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
         <Route path="/parties/employees" element={<EmployeesPage />} />
         <Route path="/parties/payroll" element={<EmployeesPage initialTab="payroll" />} />

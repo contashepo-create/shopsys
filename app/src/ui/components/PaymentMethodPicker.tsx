@@ -19,6 +19,8 @@ export interface PaymentMethodDraft {
  * حساب نقدي/بنك/محفظة/فرع تابع في قائمة واحدة، أو ماكينة دفع عند التحصيل.
  * لا يخلط بين اختيار الحساب ومبلغ السداد؛ المبلغ يبقى في الحقل المجاور.
  */
+/** بلاغ المالك: عند اختيار «نقدي» لا تظهر البنوك ولا الماكينات داخل القائمة —
+ *  يُمرَّر `restrictTo` فتُعرض وسائل ذلك النوع فقط. */
 export function PaymentMethodPicker({
   value,
   onChange,
@@ -26,19 +28,29 @@ export function PaymentMethodPicker({
   allowTerminal = operation === 'receipt',
   allowCredit = false,
   terminalOptions,
-}: {
+  tiles = false, restrictTo }: {
   value: PaymentMethodDraft
   onChange: (value: PaymentMethodDraft) => void
   operation: TreasuryOperation
   allowTerminal?: boolean
   allowCredit?: boolean
   terminalOptions?: readonly { id: string; nameAr: string }[]
+  /** بلاطات «نقدي · تحويل بنكي · ماكينة» فوق القائمة (شكل الفاتورة المرجعي) */
+  tiles?: boolean
+  /** فلترة الوسائل حسب نوع الطريقة (بلاغ المالك) */
+  restrictTo?: 'cash' | 'bank' | 'terminal' | null
 }) {
   const { treasuries: allTreasuries, appUsers, currentUserId, paymentTerminals } = useDataStore()
   const currentUser = appUsers.find((user) => user.id === currentUserId)
   const allowed = allowedTreasuryCodes(currentUser?.treasuryAccess, operation)
-  const treasuries = allowed == null ? allTreasuries : allTreasuries.filter((treasury) => allowed.includes(treasury.code))
-  const terminals = allowTerminal ? (terminalOptions ?? eligiblePaymentTerminals(paymentTerminals, currentUser, 'charge')) : []
+  const permitted = allowed == null ? allTreasuries : allTreasuries.filter((treasury) => allowed.includes(treasury.code))
+  /* الفلترة حسب نوع الطريقة: نقدي ⇒ خزائن نقدية فقط · بنكي ⇒ بنوك فقط · ماكينة ⇒ لا خزائن */
+  const treasuries = restrictTo === 'terminal' ? []
+    : restrictTo === 'cash' ? permitted.filter((treasury) => treasury.kind === 'cash')
+    : restrictTo === 'bank' ? permitted.filter((treasury) => treasury.kind === 'bank')
+    : permitted
+  const allTerminals = allowTerminal ? (terminalOptions ?? eligiblePaymentTerminals(paymentTerminals, currentUser, 'charge')) : []
+  const terminals = restrictTo && restrictTo !== 'terminal' ? [] : allTerminals
   const selectedValue = value.kind === 'credit' ? 'credit' : value.terminalPayment.terminalId ? `terminal:${value.terminalPayment.terminalId}` : `treasury:${value.treasury}`
   const fallbackTreasury = treasuries.find((treasury) => treasury.code === value.treasury)?.code ?? treasuries[0]?.code ?? ''
 
@@ -69,8 +81,24 @@ export function PaymentMethodPicker({
     return <div className="text-[11px] font-bold text-rose-500">لا توجد وسيلة دفع مسموحة لهذه العملية</div>
   }
 
+  const firstCash = treasuries.find((treasury) => treasury.kind === 'cash')
+  const firstBank = treasuries.find((treasury) => treasury.kind === 'bank')
+  const firstTerminal = terminals[0]
+  const activeTreasury = treasuries.find((treasury) => treasury.code === value.treasury)
+  const tileMode: 'cash' | 'bank' | 'terminal' | null = value.kind === 'credit' ? null
+    : value.terminalPayment.terminalId ? 'terminal'
+    : activeTreasury?.kind === 'bank' ? 'bank'
+    : activeTreasury ? 'cash' : null
+
   return (
     <div className="space-y-2">
+      {tiles && (
+        <div className="invoice-doc-tiles" role="group" aria-label="طريقة الدفع السريعة">
+          <button type="button" aria-pressed={tileMode === 'cash'} disabled={!firstCash} onClick={() => firstCash && selectMethod(`treasury:${firstCash.code}`)}>نقدي</button>
+          <button type="button" aria-pressed={tileMode === 'bank'} disabled={!firstBank} onClick={() => firstBank && selectMethod(`treasury:${firstBank.code}`)}>تحويل بنكي</button>
+          <button type="button" aria-pressed={tileMode === 'terminal'} disabled={!firstTerminal} onClick={() => firstTerminal && selectMethod(`terminal:${firstTerminal.id}`)}>ماكينة دفع</button>
+        </div>
+      )}
       <QuickSelect aria-label="طريقة الدفع" value={selectedValue} onChange={(event) => selectMethod(event.target.value)} className={inputCls}>
         <option value="">اختر طريقة الدفع…</option>
         {treasuries.length > 0 && (

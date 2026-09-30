@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { guardNavigation } from './ui.tsx'
+import { OverlayPortal } from './ui.tsx'
 
 const selector = 'input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),[tabindex]:not([tabindex="-1"])'
 const rowFieldSelector = 'input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]'
@@ -49,8 +49,8 @@ export function KeyboardNavigation() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'F3') {
         event.preventDefault()
-        const nextPath = pathname.startsWith('/purchases') ? '/purchases/invoices/new' : '/sales/invoices/new'
-        if (!guardNavigation(() => navigate(nextPath))) navigate(nextPath)
+        // F3 يفتح مستند فاتورة جديداً في **صفحة كاملة** (طلب المالك: لا نافذة منبثقة)
+        navigate(pathname.startsWith('/purchases') ? '/purchases/invoices/new' : '/sales/invoices/new')
         return
       }
       if (event.key === 'F4') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:open-party')); return }
@@ -130,5 +130,5 @@ export function KeyboardNavigation() {
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [navigate, pathname])
 
-  return helpOpen ? <div className="fixed inset-0 z-[100] bg-slate-950/60 flex items-center justify-center p-4" onMouseDown={() => setHelpOpen(false)}><div role="dialog" className="w-full max-w-lg rounded-2xl border bg-white dark:bg-card-dark p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><div className="flex justify-between"><h2 className="font-black text-lg">اختصارات لوحة المفاتيح</h2><button onClick={() => setHelpOpen(false)}>Esc</button></div><div className="grid grid-cols-2 gap-2 mt-4 text-sm">{[['F2','بحث سريع'],['F3','فاتورة جديدة'],['F4','بحث عميل/مورد'],['F5','بحث صنف'],['F6','طباعة'],['F7','بحث عميل/مورد'],['F8','حفظ مسودة'],['F9','ترحيل/اعتماد/دفع العملية'],['F10','الخصم'],['F11','ملء الشاشة'],['F12','دليل الاختصارات']].map(([key,label])=><div key={key} className="flex items-center gap-2 rounded-lg bg-slate-500/10 p-2"><kbd className="font-mono font-black text-brand-600">{key}</kbd><span>{label}</span></div>)}</div></div></div> : null
+  return helpOpen ? <OverlayPortal><div className="layer-approval pointer-events-none fixed inset-0 flex items-center justify-center p-4" onMouseDown={(event) => event.stopPropagation()}><div role="dialog" className="pointer-events-auto w-full max-w-lg rounded-2xl border bg-white dark:bg-card-dark p-5" onMouseDown={(event) => event.stopPropagation()}><div className="flex justify-between"><h2 className="font-black text-lg">اختصارات لوحة المفاتيح</h2><button onClick={() => setHelpOpen(false)}>Esc</button></div><div className="grid grid-cols-2 gap-2 mt-4 text-sm">{[['F2','بحث سريع'],['F3','فاتورة جديدة'],['F4','بحث عميل/مورد'],['F5','بحث صنف'],['F6','طباعة'],['F7','بحث عميل/مورد'],['F8','حفظ مسودة'],['F9','ترحيل/اعتماد/دفع العملية'],['F10','الخصم'],['F11','ملء الشاشة'],['F12','دليل الاختصارات']].map(([key,label])=><div key={key} className="flex items-center gap-2 rounded-lg bg-slate-500/10 p-2"><kbd className="font-mono font-black text-brand-600">{key}</kbd><span>{label}</span></div>)}</div></div></div></OverlayPortal> : null
 }

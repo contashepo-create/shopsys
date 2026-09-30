@@ -145,7 +145,7 @@ export function WastagePage() {
       )}
 
       {/* مستند جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="🗑️ مستند إتلاف مخزون" wide>
+      <Modal open={open} onClose={() => setOpen(false)} title="مستند إتلاف مخزون" wide>
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="سبب الإتلاف *" hint="التوثيق إلزامي — يظهر في القيد والسجل">

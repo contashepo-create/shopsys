@@ -470,7 +470,7 @@ export function PermissionsPage() {
       </div>
 
       {/* 🔐 تعيين/تغيير رقم المالك السري */}
-      <Modal open={ownerPinModal} onClose={() => { setOwnerPinModal(false); setOPin(''); setOPin2('') }} title="🔐 الرقم السري للمالك">
+      <Modal open={ownerPinModal} onClose={() => { setOwnerPinModal(false); setOPin(''); setOPin2('') }} title="الرقم السري للمالك">
         <div className="space-y-3">
           <p className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
             من أول تعيين تُفعَّل شاشة الدخول: لا أحد يفتح التطبيق بلا رقمه السري، وكل دخول وخروج يُسجل.
@@ -567,7 +567,7 @@ export function PermissionsPage() {
       </Modal>
 
       {/* ➕ فئة موظفين جديدة — الحساب والرقم السري يظلان في إعدادات المستخدمين فقط */}
-      <Modal open={roleModal} onClose={() => { setRoleModal(false); setNewRoleName('') }} title="🛡️ فئة موظفين جديدة">
+      <Modal open={roleModal} onClose={() => { setRoleModal(false); setNewRoleName('') }} title="فئة موظفين جديدة">
         <div className="space-y-4">
           <p className="text-[11.5px] text-slate-500 dark:text-slate-400 leading-relaxed bg-sky-500/5 rounded-xl p-3">
             أنشئ فئة باسمك أنت — «مشرف مساء»، «أمين مخزن»، «مشرفة صالة»… تبدأ بنسخة من صلاحيات
@@ -590,7 +590,7 @@ export function PermissionsPage() {
         </div>
       </Modal>
 
-      <Modal open={renameRoleId != null} onClose={() => { setRenameRoleId(null); setRenameRoleName('') }} title="✏️ إعادة تسمية فئة الموظفين">
+      <Modal open={renameRoleId != null} onClose={() => { setRenameRoleId(null); setRenameRoleName('') }} title="إعادة تسمية فئة الموظفين">
         <div className="space-y-4">
           <Field label="اسم الفئة *">
             <input value={renameRoleName} onChange={(e) => setRenameRoleName(e.target.value)} className={inputCls} autoFocus autoComplete="off" />
@@ -723,7 +723,7 @@ export function PermissionsPage() {
       </Modal>
 
       {/* مستخدم جديد — يُبنى على موظف مسجل (سياسة المالك) */}
-      <Modal open={userModal} onClose={() => setUserModal(false)} title="👤 حساب دخول جديد (من الموظفين)">
+      <Modal open={userModal} onClose={() => setUserModal(false)} title="حساب دخول جديد (من الموظفين)">
         <div className="space-y-4">
           <p className="text-[11.5px] text-slate-500 dark:text-slate-400 leading-relaxed bg-sky-500/5 rounded-xl p-3">
             🧾 الحساب يُبنى على <b>موظف مسجل</b>: سجله أولاً في «شاشة الموظفين» ببياناته المالية

@@ -134,7 +134,7 @@ function itemsTable(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, op
       <td class="name">${esc(r.nameAr)}${r.serials.length ? `<div style="font-size:9px;color:#64748b;direction:ltr;text-align:right">${r.serials.map(esc).join(' · ')}</div>` : ''}</td>
       <td class="c">${esc(r.qtyLabel)}</td>
       ${s.hidePrices ? '' : `<td class="c">${fmt(r.unitPriceMinor)}</td>`}
-      ${showVat ? `<td class="c">${r.vatPercent == null ? '—' : r.vatPercent > 0 ? `${r.vatPercent}٪` : 'معفى'}</td>` : ''}
+      ${showVat ? `<td class="c">${r.vatPercent != null && r.vatPercent > 0 ? `${r.vatPercent}٪` : ''}</td>` : ''}
       ${showDisc ? `<td class="c">${r.discountPercent ? `${r.discountPercent}٪` : '—'}</td>` : ''}
       ${s.hidePrices ? '' : `<td class="c b">${fmt(r.totalMinor)}</td>`}
     </tr>`,

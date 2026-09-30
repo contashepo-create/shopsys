@@ -15,18 +15,42 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
   it('يبحث عن الصنف بالاسم والكود والباركود والرقم ويختار أول نتيجة بـ Enter', () => {
     const onPick = vi.fn()
     const view = render(<ItemQuickPicker items={items} onPick={onPick}/>)
-    const input = view.getByPlaceholderText(/اكتب كود أو اسم/)
+    const cell = view.getByLabelText(/اسم الصنف/)
+    /* الكتابة في الخلية تفتح لوحة البحث وتنقل إليها الحرف والتركيز،
+       والاختيار بـEnter يتم داخل اللوحة ثم تُغلق — فتُفتح من جديد لكل بحث. */
     for (const query of ['سكر', 'SUG-1', '622100', '1']) {
-      fireEvent.change(input, { target: { value: query } })
+      fireEvent.change(cell, { target: { value: query.slice(0, 1) } })
+      const search = view.getByLabelText('بحث الصنف')
+      fireEvent.change(search, { target: { value: query } })
       expect(view.getAllByText('سكر أبيض').length).toBeGreaterThan(0)
-      fireEvent.keyDown(input, { key: 'Enter' })
+      fireEvent.keyDown(search, { key: 'Enter' })
       expect(onPick).toHaveBeenLastCalledWith(1)
+      expect(view.queryByLabelText('بحث الصنف')).toBeNull()
     }
+  })
+
+  it('خلية اسم الصنف خالية تماماً: بلا نص إرشادي ولا أيقونة، ونقرة واحدة لا تفتح البحث (قرار المالك ⑩ي)', () => {
+    const view = render(<ItemQuickPicker items={items} onPick={() => undefined}/>)
+    const cell = view.getByLabelText(/اسم الصنف/) as HTMLInputElement
+    expect(cell.getAttribute('placeholder')).toBe('')
+    expect(cell.parentElement?.querySelector('svg')).toBeNull()
+    fireEvent.click(cell)
+    expect(view.queryByRole('dialog')).toBeNull()
+    fireEvent.doubleClick(cell)
+    expect(view.getByRole('dialog')).toBeTruthy()
+  })
+
+  it('الأسهم في خلية الاسم لا تفتح قائمة الأصناف — التنقل بين الخلايا فقط (قرار المالك ⑩ي)', () => {
+    const view = render(<ItemQuickPicker items={items} onPick={() => undefined}/>)
+    const cell = view.getByLabelText(/اسم الصنف/)
+    fireEvent.keyDown(cell, { key: 'ArrowDown' })
+    fireEvent.keyDown(cell, { key: 'ArrowUp' })
+    expect(view.queryByRole('dialog')).toBeNull()
   })
 
   it('ينقل أول حرف إلى حقل البحث داخل نافذة الصنف', () => {
     const view = render(<ItemQuickPicker items={items} onPick={() => undefined}/>)
-    const trigger = view.getByPlaceholderText(/اكتب كود أو اسم/)
+    const trigger = view.getByLabelText(/اسم الصنف/)
     fireEvent.change(trigger, { target: { value: 'س' } })
     const search = view.getByLabelText('بحث الصنف') as HTMLInputElement
     expect(search.value).toBe('س')
@@ -36,7 +60,7 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
   it('لا يخفي الأصناف أو الموردين بعد أول 30 نتيجة', () => {
     const manyItems = Array.from({ length: 35 }, (_, index) => ({ id: index + 1, nameAr: `صنف ${index + 1}`, sku: `SKU-${index + 1}`, barcodes: [] }))
     const itemView = render(<ItemQuickPicker items={manyItems} onPick={() => undefined}/>)
-    fireEvent.change(itemView.getByPlaceholderText(/اكتب كود أو اسم/), { target: { value: 'صنف' } })
+    fireEvent.change(itemView.getByLabelText(/اسم الصنف/), { target: { value: 'صنف' } })
     expect(itemView.getByText('صنف 35')).toBeTruthy()
     cleanup()
 
@@ -49,14 +73,17 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
   it('يحدد أول نتيجة افتراضياً ويتنقل بالأسهم ثم يغلق بـ Escape', () => {
     const onPick = vi.fn()
     const view = render(<ItemQuickPicker items={items} onPick={onPick}/>)
-    const input = view.getByPlaceholderText(/اكتب كود أو اسم/)
-    fireEvent.change(input, { target: { value: 'ص' } })
-    fireEvent.keyDown(input, { key: 'ArrowDown' })
-    fireEvent.keyDown(input, { key: 'Enter' })
+    const cell = view.getByLabelText(/اسم الصنف/)
+    fireEvent.change(cell, { target: { value: 'ص' } })
+    const search = view.getByLabelText('بحث الصنف')
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    fireEvent.keyDown(search, { key: 'Enter' })
     expect(onPick).toHaveBeenCalledWith(2)
-    fireEvent.change(input, { target: { value: 'س' } })
+    /* الاختيار يغلق اللوحة؛ ونفتحها ثانيةً لنتأكد أن Escape يغلقها بلا اختيار */
+    fireEvent.change(cell, { target: { value: 'س' } })
+    const reopened = view.getByLabelText('بحث الصنف')
     expect(view.getAllByText('سكر أبيض').length).toBeGreaterThan(0)
-    fireEvent.keyDown(input, { key: 'Escape' })
+    fireEvent.keyDown(reopened, { key: 'Escape' })
     expect(view.queryByText('سكر أبيض')).toBeNull()
   })
 
@@ -90,13 +117,13 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     await waitFor(() => expect(document.activeElement).toBe(party))
     fireEvent.change(party, { target: { value: 'أحمد' } })
     fireEvent.keyDown(party, { key: 'Enter' })
-    await waitFor(() => expect(document.activeElement).toBe(view.getByPlaceholderText(/اكتب كود أو اسم/)))
+    await waitFor(() => expect(document.activeElement).toBe(view.getByLabelText(/اسم الصنف/)))
     expect(onChange).toHaveBeenCalledWith(10)
   })
 
   it('يغلق قائمة الصنف عند النقر خارجها', () => {
     const view = render(<ItemQuickPicker items={items} onPick={() => undefined}/>)
-    const input = view.getByPlaceholderText(/اكتب كود أو اسم/)
+    const input = view.getByLabelText(/اسم الصنف/)
     fireEvent.change(input, { target: { value: 'س' } })
     expect(view.getAllByText('سكر أبيض').length).toBeGreaterThan(0)
     fireEvent.pointerDown(document.body)
@@ -108,7 +135,7 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     const view = render(<><PartyQuickPicker parties={[{ id: 10, nameAr: 'أحمد' }]} value={-1} onChange={onChange} cashLabel="مورد نقدي" label="المورد" onConfirm={() => window.dispatchEvent(new Event('shopsys:focus-item'))} autoFocus/><ItemQuickPicker items={items} onPick={() => undefined}/></>)
     await waitFor(() => expect(document.activeElement).toBe(view.getByLabelText('المورد')))
     fireEvent.keyDown(view.getByLabelText('المورد'), { key: 'Enter' })
-    await waitFor(() => expect(document.activeElement).toBe(view.getByPlaceholderText(/اكتب كود أو اسم/)))
+    await waitFor(() => expect(document.activeElement).toBe(view.getByLabelText(/اسم الصنف/)))
     expect(onChange).toHaveBeenCalledWith(-1)
   })
 
@@ -141,9 +168,9 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
 
   it('يفتح منتقي الصنف عبر F5 ويبدل دليل الاختصارات عبر F12', () => {
     const view = render(<MemoryRouter><KeyboardNavigation/><ItemQuickPicker items={items} onPick={() => undefined}/></MemoryRouter>)
-    const trigger = view.getByPlaceholderText(/اكتب كود أو اسم/)
+    const trigger = view.getByLabelText(/اسم الصنف/)
     fireEvent.keyDown(document, { key: 'F5' })
-    const input = view.getByPlaceholderText(/اكتب كود أو اسم/)
+    const input = view.getByLabelText('بحث الصنف')
     expect(trigger).not.toBe(input)
     expect(document.activeElement).toBe(input)
     fireEvent.keyDown(document, { key: 'F12' })
@@ -153,13 +180,13 @@ describe('منتقيات لوحة المفاتيح الموحدة', () => {
     expect(view.getAllByRole('dialog').some((dialog) => dialog.textContent?.includes('اختصارات'))).toBe(false)
   })
 
-  it('بعد اعتماد النمط بـ Enter لا يعيد النمط الأول وينقل Enter التالي إلى العميل', () => {
+  it('القائمة القصيرة (≤١٠) تُعرض منسدلة أصلية ويختار منها Enter الحقل التالي', () => {
     const onChange = vi.fn()
-    const view = render(<MemoryRouter><KeyboardNavigation/><main><QuickSelect value="simple" onChange={onChange}><option value="simple">مبسط</option><option value="professional">احترافي</option></QuickSelect><input aria-label="العميل التالي" /></main></MemoryRouter>)
-    const mode = view.getByDisplayValue('مبسط')
-    fireEvent.focus(mode)
-    fireEvent.keyDown(mode, { key: 'ArrowDown' })
-    fireEvent.keyDown(mode, { key: 'Enter' })
+    const view = render(<MemoryRouter><KeyboardNavigation/><main><QuickSelect value="simple" onChange={onChange}><option value="simple">مبسط</option><option value="professional">احترافي</option></QuickSelect><input aria-label="العميل التالي"/></main></MemoryRouter>)
+    const mode = view.getByDisplayValue('مبسط') as HTMLSelectElement
+    expect(mode.tagName).toBe('SELECT')
+    expect(mode.closest('[data-quick-native]')).toBeTruthy()
+    fireEvent.change(mode, { target: { value: 'professional' } })
     expect(onChange).toHaveBeenCalledWith({ target: { value: 'professional' } })
     fireEvent.keyDown(mode, { key: 'Enter' })
     expect(document.activeElement).toBe(view.getByLabelText('العميل التالي'))

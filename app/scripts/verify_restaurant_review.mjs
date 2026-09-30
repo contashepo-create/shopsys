@@ -41,7 +41,6 @@ throws('رسوم بصفر تُرفض', () => feeLine('x', 0))
 ok('orderSubtotal يحسب الخصومات', orderSubtotalMinor([{ itemId: 1, nameAr: 'x', qty: 2, unitPriceMinor: 1_000, unitCostMinor: 0, discountPercent: 50, soldByWeight: false }]) === 1_000)
 
 console.log('\n2️⃣ فتح وتعديل وإلغاء (لا أثر دفتري)')
-const journalBefore = S().journal.length
 const o1 = S().openRestaurantOrder({ type: 'dine_in', tableName: '5' })
 ok('ORD-0001 مفتوح لطاولة 5', o1.orderNumber === 'ORD-0001' && o1.status === 'open')
 throws('نفس الطاولة لا تُفتح مرتين', () => S().openRestaurantOrder({ type: 'dine_in', tableName: '5' }), 'مفتوح بالفعل')
@@ -59,10 +58,12 @@ S().setRestaurantOrderLines(o1.id, [
   { itemId: cola.id, nameAr: 'كولا', qty: 2, unitPriceMinor: 2_000, unitCostMinor: 800, discountPercent: 0, soldByWeight: false },
 ])
 ok('السطور محفوظة على الأمر', S().restaurantOrders.find((o) => o.id === o1.id).lines.length === 2)
-ok('لا قيود ولا فواتير قبل القفل', S().journal.length === journalBefore && S().sales.length === 0)
+// قيود «بضاعة أول المدة» للأصناف المضافة برصيد ابتدائي (AUDIT-005) ليست من أثر الأمر — نلتقط الخط الأساسي بعدها
+const journalBeforeOrder = S().journal.length
+ok('لا قيود ولا فواتير قبل القفل', S().journal.length === journalBeforeOrder && S().sales.length === 0)
 const o2 = S().openRestaurantOrder({ type: 'takeaway' })
 S().cancelRestaurantOrder(o2.id, 'العميل غادر')
-ok('الإلغاء يوثق السبب بلا أثر دفتري', S().restaurantOrders.find((o) => o.id === o2.id).status === 'cancelled' && S().journal.length === journalBefore)
+ok('الإلغاء يوثق السبب بلا أثر دفتري', S().restaurantOrders.find((o) => o.id === o2.id).status === 'cancelled' && S().journal.length === journalBeforeOrder)
 throws('إلغاء بلا سبب يُرفض', () => { const t = S().openRestaurantOrder({ type: 'takeaway' }); S().cancelRestaurantOrder(t.id, ' ') }, 'سبب')
 
 console.log('\n3️⃣ القفل بفاتورة (المحاسبة تبدأ هنا)')

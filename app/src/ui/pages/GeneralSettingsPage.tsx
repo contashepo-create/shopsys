@@ -503,7 +503,7 @@ export function GeneralSettingsPage() {
         )}
       </Modal>
 
-      <Modal open={newYearOpen} onClose={() => setNewYearOpen(false)} title="📅 فتح سنة مالية جديدة">
+      <Modal open={newYearOpen} onClose={() => setNewYearOpen(false)} title="فتح سنة مالية جديدة">
         <div className="space-y-4">
           <Field label="اسم السنة *"><input value={fyName} onChange={(e) => setFyName(e.target.value)} className={inputCls} placeholder="2027" /></Field>
           <div className="grid grid-cols-2 gap-3">

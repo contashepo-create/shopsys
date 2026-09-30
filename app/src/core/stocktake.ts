@@ -72,9 +72,14 @@ export function computeStocktake(counts: CountInput[]): StocktakeResult {
 }
 
 /**
- * قيد تسوية الجرد (sourceType: adjustment):
- *   عجز: مدين مصروفات عمومية (5108) / دائن مخزون (1103)
- *   زيادة: مدين مخزون (1103) / دائن مصروفات عمومية (5108)
+ * قيد تسوية الجرد (sourceType: adjustment) — AUDIT-001 (2026-09-27):
+ *   عجز: مدين **5111 هالك وتوالف مخزون** / دائن 1103 المخزون
+ *   زيادة: مدين 1103 المخزون / دائن **4110 إيرادات أخرى (فوائض عدّ)**
+ *
+ * لماذا تغيّرت الحسابات: كان الطرفان يضربان 5108 «مصروفات عمومية» فتختفي خسائر
+ * المخزون داخل المصروفات العامة ولا تُقاس، وتظهر الزيادة تخفيضاً وهمياً للمصروف
+ * بدل إيراد. المعيار (وسلوك بقية مسارات المخزون هنا: الهالك 5111 والتسويات النقدية 5112)
+ * يفصل خسارة المخزون عن المصروف العمومي، ويعترف بالفائض إيراداً آخر.
  * يُبنى قيد واحد صافٍ بطرفي العجز والزيادة معاً — ويرمي خطأ لو لا فوارق.
  */
 export function buildAdjustmentEntry(result: StocktakeResult): JournalLine[] {
@@ -82,12 +87,12 @@ export function buildAdjustmentEntry(result: StocktakeResult): JournalLine[] {
   if (sh === 0 && su === 0) throw new RangeError('لا فوارق — لا حاجة لقيد تسوية')
   const lines: JournalLine[] = []
   if (sh > 0) {
-    lines.push({ accountCode: '5108', debit: sh, credit: 0, note: 'عجز جرد' })
+    lines.push({ accountCode: '5111', debit: sh, credit: 0, note: 'عجز جرد — هالك/فقد مخزون' })
     lines.push({ accountCode: '1103', debit: 0, credit: sh, note: 'تخفيض المخزون بالعجز' })
   }
   if (su > 0) {
     lines.push({ accountCode: '1103', debit: su, credit: 0, note: 'زيادة جرد للمخزون' })
-    lines.push({ accountCode: '5108', debit: 0, credit: su, note: 'زيادة جرد (تخفيض مصروف)' })
+    lines.push({ accountCode: '4110', debit: 0, credit: su, note: 'فائض جرد — إيراد آخر' })
   }
   assertBalanced(lines)
   return lines

@@ -8,6 +8,25 @@ import type { CurrencyConfig } from '../../core/money.ts'
 import { renderReceiptHtml, printHtml } from './printReceipt.ts'
 import { renderInvoiceA4Html } from './printInvoiceA4.ts'
 
+/** يبني HTML المستند بالقالب المطلوب بلا طباعة — للمعاينة قبل الطبع (طلب المالك) */
+export function buildModelHtml(
+  model: ReceiptModel,
+  cur: CurrencyConfig,
+  settings: ReceiptSettings,
+  template: InvoiceTemplate,
+): string {
+  const effective: ReceiptSettings = template === 'delivery'
+    ? { ...settings, hidePrices: true, showDiscount: false, showTaxSummary: false, showWords: false, a4Style: 'classic' }
+    : template === 'compact'
+      ? { ...settings, a4Style: 'compact', showWords: false }
+      : template === 'tax'
+        ? { ...settings, showTaxSummary: true }
+        : settings
+  return template === 'thermal'
+    ? renderReceiptHtml(model, cur, effective)
+    : renderInvoiceA4Html(model, cur, effective, template === 'a5' ? 'a5' : 'a4')
+}
+
 export function printModelWithTemplate(
   model: ReceiptModel,
   cur: CurrencyConfig,

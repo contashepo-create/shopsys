@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Eye, BookOpenText, Printer, Pencil, FileMinus2, FilePlus2, FileSpreadsheet, Trash2, History, HandCoins } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useDataStore, type SaleInvoice } from '../../data/repo.ts'
+import { DocumentAttachmentsBox } from '../components/DocumentAttachments.tsx'
 import type { DocumentCharge } from '../../core/documentCharges.ts'
 import type { InternalExpense } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -30,6 +31,8 @@ import { normalizeRefQuery } from '../../core/refcode.ts'
 import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 import { partyCode } from '../../core/partyCodes.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
+import { rowOpenProps } from '../components/rowOpen.ts'
+import { openItemPricesWindow } from '../windows/windowStore.ts'
 
 export function SalesInvoicesPage() {
   const { sales, customers, journal, items, saleReturns, serials, installmentPlans, clientSettlements, vouchers, shifts, advancedInvoiceDrafts, deleteAdvancedInvoiceDraft, editSale, employees, costCenters, staffCommissions, addStaffCommission, getCustomerBalance, appUsers, currentUserId } = useDataStore()
@@ -109,7 +112,7 @@ export function SalesInvoicesPage() {
     const blocks = blocksOf(s)
     if (blocks.length) return toast.show(`لا يمكن تعديل ${s.invoiceNumber}: ${blocks[0]}`, 'error')
     // يفتح نفس محرر الفاتورة المتقدم؛ الصلاحية/اعتماد المشرف يُتحقق عند الحفظ داخل المحرر.
-    goTo(`/sales/invoices/new?edit=${s.id}`)
+    navigate(`/sales/invoices/new?edit=${s.id}`)
   }
   const removeSelectedEditLine = () => {
     if (selectedEditLine == null || !editLines[selectedEditLine]) return
@@ -286,7 +289,7 @@ export function SalesInvoicesPage() {
           </thead>
           <tbody>
             {filtered.map((s, i) => (
-              <tr key={s.id} style={{ animationDelay: `${i * 30}ms` }} className={`anim-in border-b transition-colors duration-150 ${returnStateOf(s)==='full'?'bg-rose-500/12 border-rose-300 dark:bg-rose-950/35':returnStateOf(s)==='partial'?'bg-amber-500/12 border-amber-300 dark:bg-amber-950/30':'border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/[0.04]'}`}>
+              <tr key={s.id} {...rowOpenProps(() => setViewing(s), `انقر مرتين لفتح الفاتورة ${s.invoiceNumber}`)} style={{ animationDelay: `${i * 30}ms` }} className={`anim-in border-b transition-colors duration-150 ${returnStateOf(s)==='full'?'bg-rose-500/12 border-rose-300 dark:bg-rose-950/35':returnStateOf(s)==='partial'?'bg-amber-500/12 border-amber-300 dark:bg-amber-950/30':'border-slate-50 dark:border-slate-800/50 hover:bg-emerald-500/[0.04]'}`}>
                 <td className="px-4 py-3">
                   <div className="font-bold text-slate-800 dark:text-white flex items-center gap-1.5">{s.invoiceNumber}{returnStateOf(s)!=='none'&&<span className={`text-[9px] px-1.5 py-0.5 rounded-full ${returnStateOf(s)==='full'?'bg-rose-600 text-white':'bg-amber-500 text-white'}`}>{returnStateOf(s)==='full'?'مرتجع كلي':'مرتجع جزئي'}</span>}</div>
                   {s.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{s.refCode}</div>}
@@ -362,7 +365,7 @@ export function SalesInvoicesPage() {
                     <td className="px-3 py-2 font-bold"><span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.nameAr}</td>
                     <td className="px-3 py-2">{l.qty}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
-                    <td className="px-3 py-2 text-sky-600 font-bold">{(l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent}٪` : 'معفى'}</td>
+                    <td className="px-3 py-2 text-sky-600 font-bold">{(l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? viewing.taxPercent ?? countryVatPercent}٪` : ''}</td>
                     <td className="px-3 py-2">{l.discountPercent ? `${l.discountPercent}٪` : '—'}</td>
                     <td className="px-3 py-2 font-bold">{fmt(Math.round(l.unitPriceMinor * l.qty * (1 - l.discountPercent / 100)))}</td>
                   </tr>
@@ -399,6 +402,12 @@ export function SalesInvoicesPage() {
                 </table>
               </div>
             )}
+
+            {/* مرفقات الفاتورة — أمر شراء العميل/بوليصة الشحن المحفوظة مع المستند */}
+            <div className="flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50/60 px-4 py-2.5 dark:border-slate-700 dark:bg-slate-900/30">
+              <div className="text-[11px] font-bold text-slate-500">المرفقات والمستندات المحفوظة مع هذه الفاتورة</div>
+              <DocumentAttachmentsBox documentKind="sale" documentId={viewing.id} pending={[]} onPendingChange={() => {}} addedBy={printOperatorName} />
+            </div>
 
             {/* سجل تدقيق التعديلات — كل تعديل موثق بقيده العاكس (لا حذف أبداً) */}
             {viewing.editHistory?.length ? (
@@ -457,7 +466,7 @@ export function SalesInvoicesPage() {
                           className={inputCls + ' !py-1.5 !text-[12px]'} dir="ltr"
                         />
                       </td>
-                      <td className="px-3 py-2 text-sky-600 font-bold text-center">{(l.vatPercentOverride ?? editing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? editing.taxPercent ?? countryVatPercent}٪` : 'معفى'}</td>
+                      <td className="px-3 py-2 text-sky-600 font-bold text-center">{(l.vatPercentOverride ?? editing.taxPercent ?? countryVatPercent) > 0 ? `${l.vatPercentOverride ?? editing.taxPercent ?? countryVatPercent}٪` : ''}</td>
                       <td className="px-3 py-2">
                         <input
                           value={l.discountPercent || ''}
@@ -479,7 +488,7 @@ export function SalesInvoicesPage() {
                     onPick={setEditAddItemId}
                     onEdit={(id) => goTo(`/inventory/items?edit=${id}`)}
                     onMovement={(id) => goTo(`/inventory/items?card=${id}`)}
-                    onPrices={(id) => goTo(`/sales/price-lists?item=${id}`)}
+                    onPrices={(id) => openItemPricesWindow(id)}
                     placeholder="اكتب صنفاً ثم اختر بالسهم + Enter أو مرتين"
                     amountLabel={(it) => `متاح ${it.stockQty ?? 0} · قطاعي ${fmt(it.priceMinor ?? 0)}`}
                   />

@@ -100,14 +100,19 @@ export const COST_KIND_LABELS: Record<CostKind, { nameAr: string; icon: string }
  * تُقيَّد مدينة على 2102 — للمنشآت المسجلة ضريبياً. غير المسجل يتركها 0
  * فتبقى الضريبة ضمن التكلفة (المعالجة المحاسبية الصحيحة لغير المسجل).
  */
-export function buildProjectCostEntry(amountMinor: Minor, payment: 'cash' | 'credit', label: string, treasury = '1101', inputVatMinor: Minor = 0): JournalLine[] {
+export function buildProjectCostEntry(amountMinor: Minor, payment: 'cash' | 'credit' | 'mixed', label: string, treasury = '1101', inputVatMinor: Minor = 0, paidMinor?: Minor): JournalLine[] {
   if (!Number.isInteger(amountMinor) || amountMinor <= 0) throw new Error('قيمة التكلفة يجب أن تكون موجبة')
   if (!Number.isInteger(inputVatMinor) || inputVatMinor < 0) throw new Error('ضريبة المدخلات لا تكون سالبة')
+  const grossMinor = amountMinor + inputVatMinor
+  // توحيد قاعدة السداد في كل الأنشطة: ادفع جزءاً الآن والباقي على المورد
+  const paid = paidMinor ?? (payment === 'cash' ? grossMinor : 0)
+  if (!Number.isInteger(paid) || paid < 0 || paid > grossMinor) throw new Error('المدفوع يجب أن يكون بين صفر وإجمالي التكلفة')
   const lines: JournalLine[] = [
     { accountCode: '5110', debit: amountMinor, credit: 0, note: `تكلفة ${label}` },
   ]
   if (inputVatMinor > 0) lines.push({ accountCode: '2102', debit: inputVatMinor, credit: 0, note: 'ض.ق.م مدخلات قابلة للخصم' })
-  lines.push({ accountCode: payment === 'cash' ? treasury : '2101', debit: 0, credit: amountMinor + inputVatMinor, note: payment === 'cash' ? 'سداد نقدي' : 'مستحق للمورد' })
+  if (paid > 0) lines.push({ accountCode: treasury, debit: 0, credit: paid, note: 'سداد نقدي/بنكي' })
+  if (grossMinor - paid > 0) lines.push({ accountCode: '2101', debit: 0, credit: grossMinor - paid, note: 'مستحق للمورد' })
   assertBalanced(lines)
   return lines
 }
@@ -179,8 +184,38 @@ export interface QuotationLine {
   qty: number
   unitAr: string // م2، م.ط، مقطوعية…
   unitPriceMinor: Minor
+  /** نسبة ضريبة البند (طلب المالك: العرض كالفاتورة) — 0 = بلا ضريبة */
+  vatPercent?: number
+  /** السعر شامل الضريبة؟ true = مستخرجة من السعر، false/غياب = مضافة عليه */
+  taxIncluded?: boolean
   /** التكلفة التقديرية للوحدة — أساس موازنة البند وتحليل EVM */
   estCostMinor: Minor
+}
+
+/** صافي البند قبل الضريبة (يستخرجها إن كان السعر شاملاً) */
+export function quotationLineNetMinor(line: QuotationLine): Minor {
+  const gross = Math.round(line.qty * line.unitPriceMinor)
+  const percent = line.vatPercent ?? 0
+  if (!percent) return gross
+  return line.taxIncluded ? Math.round(gross * 100 / (100 + percent)) : gross
+}
+/** ضريبة البند — مستخرجة من السعر الشامل أو مضافة على الصافي */
+export function quotationLineTaxMinor(line: QuotationLine): Minor {
+  const percent = line.vatPercent ?? 0
+  if (!percent) return 0
+  return Math.round(quotationLineNetMinor(line) * percent / 100)
+}
+/** إجمالي البند شاملاً الضريبة */
+export function quotationLineGrossMinor(line: QuotationLine): Minor {
+  return quotationLineNetMinor(line) + quotationLineTaxMinor(line)
+}
+/** إجماليات العرض: صافٍ · ضريبة · شامل (طلب المالك: كالفاتورة) */
+export function quotationTotals(lines: QuotationLine[]): { netMinor: Minor; taxMinor: Minor; grossMinor: Minor } {
+  return lines.reduce((sum, line) => ({
+    netMinor: sum.netMinor + quotationLineNetMinor(line),
+    taxMinor: sum.taxMinor + quotationLineTaxMinor(line),
+    grossMinor: sum.grossMinor + quotationLineGrossMinor(line),
+  }), { netMinor: 0, taxMinor: 0, grossMinor: 0 })
 }
 
 /** إجمالي بند = كمية × سعر وحدة (مقرَّب) */

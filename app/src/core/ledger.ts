@@ -30,6 +30,12 @@ export interface JournalLine {
   note?: string
   /** مركز التكلفة العام على سطر المصروف؛ لا يخلط مع مركز تكلفة المركبة */
   costCenterId?: number | null
+  /**
+   * AUDIT-011 — الطرف على سطر حساب المراقبة (1104 عملاء / 2101 موردون):
+   * إلزامي في القيد اليدوي حتى يدخل السطر كشف حساب الطرف فلا ينفصل الدفتر عن الكشف.
+   */
+  partyKind?: 'customer' | 'supplier' | null
+  partyId?: number | null
 }
 
 export interface CostCenterAllocationWeight {
@@ -69,7 +75,8 @@ export type SourceType =
   | 'cheque_issue' | 'cheque_clear' | 'cheque_cancel'
   | 'lease' | 'lease_collection' | 'owner_payout' | 'lease_end' | 'unit_maintenance' | 'property_acquisition' | 'property_sale'
   | 'staff_commission' | 'staff_commission_payout' | 'staff_commission_cancel'
-  | 'opening' | 'manual' | 'year_closing' | 'asset_purchase' | 'asset_payment' | 'depreciation' | 'external_commission' | 'laundry' | 'reversal'
+  | 'party_offset'
+  | 'opening' | 'manual' | 'year_closing' | 'asset_purchase' | 'asset_payment' | 'asset_disposal' | 'depreciation' | 'external_commission' | 'laundry' | 'reversal'
 
 export interface JournalEntry {
   id: number
@@ -117,7 +124,12 @@ export function accountBalance(rootType: AccountRootType, totalDebit: Minor, tot
 
 /** توليد القيد العاكس (التصحيح الوحيد المسموح — القاعدة 2) */
 export function buildReversalLines(original: JournalLine[]): JournalLine[] {
-  return original.map((l) => ({ accountCode: l.accountCode, debit: l.credit, credit: l.debit, note: l.note }))
+  // الطرف ومركز التكلفة يُنقلان مع العكس وإلا بقي كشف الطرف بصف بلا مقابل (AUDIT-011)
+  return original.map((l) => ({
+    accountCode: l.accountCode, debit: l.credit, credit: l.debit, note: l.note,
+    ...(l.costCenterId != null ? { costCenterId: l.costCenterId } : {}),
+    ...(l.partyKind ? { partyKind: l.partyKind, partyId: l.partyId ?? null } : {}),
+  }))
 }
 
 /**
@@ -181,6 +193,7 @@ export const STANDARD_COA: Account[] = [
   { code: '4113', nameAr: 'إيرادات إيجار عقارات', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'property_rent_revenue' },
   { code: '4114', nameAr: 'سعي وعمولات إدارة أملاك', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'property_commission_revenue' },
   { code: '4115', nameAr: 'إيرادات بيع عقارات', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'property_sale_revenue' },
+  { code: '4116', nameAr: 'أرباح بيع أصول ثابتة', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'asset_disposal_gain' },
   { code: '5', nameAr: 'المصروفات', rootType: 'expenses', parentCode: null, isPostable: false },
   { code: '5101', nameAr: 'تكلفة البضاعة المباعة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'cogs' },
   { code: '5102', nameAr: 'رواتب وأجور', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'salaries' },
@@ -199,4 +212,5 @@ export const STANDARD_COA: Account[] = [
   { code: '5115', nameAr: 'مصروف برنامج الولاء', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'loyalty_expense' },
   { code: '5116', nameAr: 'تكلفة عقارات مباعة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'property_cogs' },
   { code: '5117', nameAr: 'مصروف عمولات موظفين', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'staff_commission_expense' },
+  { code: '5118', nameAr: 'خسائر بيع واستبعاد أصول ثابتة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'asset_disposal_loss' },
 ]

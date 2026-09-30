@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>مختبر النوافذ — محاكاة حية كاملة</title>
+<link rel="stylesheet" href="lab.css" />
+</head>
+<body>
+<div class="lab-bar">
+  <div class="lab-title">مختبر النوافذ <small>محاكاة حية كاملة — بيانات حقيقية تُعدَّل وتُحفظ محلياً</small></div>
+  <span class="chip" id="count">0 نوافذ</span>
+  <span class="sync"><i></i><span id="syncDot">محفوظ محلياً · متزامن</span></span>
+  <div class="spacer"></div>
+  <button class="btn ghost" data-act="palette">⌘ لوحة الأوامر <kbd>Ctrl+K</kbd></button>
+  <button class="btn ghost" data-act="cascade">▨ تتالي</button>
+  <button class="btn ghost" data-act="tileH">▤ تجانب أفقي</button>
+  <button class="btn ghost" data-act="tileV">▥ تجانب رأسي</button>
+  <button class="btn ghost" data-act="minimizeAll">⤓ تصغير الكل</button>
+  <button class="btn ghost" data-act="closeAll">✕ إغلاق الكل</button>
+  <button class="btn" data-act="theme">◐ الوضع</button>
+</div>
+
+<div class="lab-main">
+  <aside class="lab-side">
+    <div class="side-group">
+      <h3>شاشات حية قابلة للتعديل</h3>
+      <button class="side-item" data-open="invoice"><span class="ic">ف</span><span>الفاتورة<small>ترويسة ذكية · جدول مكثف · إجماليات حية</small></span></button>
+      <button class="side-item" data-open="items"><span class="ic">ص</span><span>الأصناف<small>أضف وعدّل واحذف — يُحفظ فوراً</small></span></button>
+      <button class="side-item" data-open="customers"><span class="ic">ع</span><span>العملاء<small>رصيد وحد ائتمان قابلان للتعديل</small></span></button>
+      <button class="side-item" data-open="report"><span class="ic">ت</span><span>تقرير اليوم<small>محسوب من فواتيرك الفعلية</small></span></button>
+      <button class="side-item" data-open="receipt"><span class="ic">▤</span><span>إيصال حراري<small>طباعة صامتة بلا حوار طابعة</small></span></button>
+      <button class="side-item" data-open="customerDisplay"><span class="ic">◧</span><span>شاشة العميل<small>شاشة ثانوية تعرض السلة لحظياً</small></span></button>
+    </div>
+    <div class="side-group">
+      <h3>أنماط النوافذ المقترحة</h3>
+      <button class="side-item" data-open="prices"><span class="ic">س</span><span>نافذة ابنة (أسعار الصنف)<small>سلسلة نوافذ Breadcrumb</small></span></button>
+      <button class="side-item" data-open="undo"><span class="ic">↺</span><span>حذف بلا سؤال + تراجع<small>بديل «هل أنت متأكد؟»</small></span></button>
+      <button class="side-item" data-open="skeleton"><span class="ic">⋯</span><span>تحميل هيكلي<small>بدل «جارٍ الفتح…»</small></span></button>
+      <button class="side-item" data-open="emptyState"><span class="ic">▦</span><span>حالة فارغة مصمَّمة<small>رسم + جملة + إجراء واحد</small></span></button>
+    </div>
+    <div class="side-group">
+      <h3>تجارب تعدد النوافذ</h3>
+      <button class="side-item" data-open="demoStack"><span class="ic">٣</span><span>افتح ٣ نوافذ معاً<small>فاتورة + أصناف + شاشة عميل</small></span></button>
+      <button class="side-item" data-act="tileV"><span class="ic">◲</span><span>تجانب رأسي فوري<small>ترتيب MDI كلاسيكي</small></span></button>
+      <button class="side-item" data-act="reset"><span class="ic">↻</span><span>إعادة البيانات<small>يعيد الأصناف والعملاء للأصل</small></span></button>
+    </div>
+    <div class="side-group">
+      <h3>لوحة المفاتيح</h3>
+      <div style="font-size:.66rem;color:var(--muted);line-height:1.95;padding:0 .3rem">
+        <kbd>Enter</kbd> الحقل التالي · <kbd>F2</kbd> سطر جديد<br>
+        <kbd>F3</kbd> بحث صنف/عميل · <kbd>F4</kbd> خصم السطر<br>
+        <kbd>F8</kbd> تعليق · <kbd>F9</kbd>/<kbd>Ctrl+S</kbd> حفظ وإصدار<br>
+        <kbd>F12</kbd>/<kbd>Ctrl+P</kbd> طباعة حرارية<br>
+        <kbd>Ctrl+Shift+N</kbd> عميل جديد (درج)<br>
+        <kbd>Ctrl+K</kbd> لوحة الأوامر · <kbd>Ctrl+T</kbd> سلة جديدة<br>
+        <kbd>Ctrl+Tab</kbd> تبديل السلات · أسهم + <kbd>Delete</kbd> في الجدول<br>
+        <kbd>Ctrl+Alt+W</kbd>/<kbd>1..9</kbd>/<kbd>M</kbd>/<kbd>↑</kbd>/<kbd>Q</kbd> النوافذ
+      </div>
+    </div>
+  </aside>
+
+  <main class="stage" id="stage">
+    <div class="stage-hint" id="hint"><b>محاكاة حية — كل شيء قابل للتعديل</b>أضف بنوداً، عدّل الأسعار، أصدر فاتورة، وشاهد المخزون والتقرير يتغيّران فعلاً</div>
+    <div class="toasts" id="toasts"></div>
+    <div class="taskbar" id="taskbar"></div>
+  </main>
+</div>
+<script src="lab.js"></script>
+</body>
+</html>

@@ -24,16 +24,18 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 import { buildItemLedger } from '../../core/itemLedger.ts'
+import { useItemLedgerInput } from '../hooks/useItemLedgerInput.ts'
 import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 import { renderItemLedgerHtml } from '../print/printItemLedger.ts'
 import { renderItemLabelsHtml } from '../print/printProLabels.ts'
 import type { ItemLabelData } from '../../core/labels.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { rowOpenProps } from '../components/rowOpen.ts'
 
 const ALL_FEATURES: ItemFeature[] = ['expiry_batches', 'serial_warranty', 'variants', 'weight_scale', 'multi_unit', 'price_lists']
 
 export function ItemsPage() {
-  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, materialRequisitions, recipes, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers, journal, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
+  const { items, categories, addItem, updateItem, removeItem, addCategory, updateCategory, removeCategory, purchases, purchaseReturns, sales, saleReturns, productionOrders, processingOrders, batches, serials, variantStocks, setVariantStock, getUndistributedQty, warehouses, transfers, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
   const { setup, labelSettings } = useAppStore()
   const toast = useToast()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -126,34 +128,11 @@ export function ItemsPage() {
   const [ledgerWarehouseId, setLedgerWarehouseId] = useState<number | 0>(0)
   const [ledgerUser, setLedgerUser] = useState('')
 
-  const journalUser = useCallback((sourceType: string, sourceId: number | null | undefined) =>
-    journal.find((j) => j.sourceType === sourceType && j.sourceId === sourceId)?.createdBy ?? null, [journal])
   const openItemCard = (it: Item) => {
     setCardFor(it); setLedgerFrom(''); setLedgerTo(''); setLedgerWarehouseId(0); setLedgerUser('')
   }
 
-  const ledgerInput = useMemo(() => {
-    if (!cardFor) return null
-    return {
-      itemId: cardFor.id,
-      openingQty: 0, // يُحسب عكسياً بالأسفل من الرصيد الحالي
-      purchases: purchases.map((p) => ({ invoiceNumber: p.invoiceNumber, date: p.date, warehouseId: p.warehouseId ?? null, userName: journalUser('purchase', p.id), lines: p.lines })),
-      purchaseReturns: purchaseReturns.map((r) => ({ returnNumber: r.returnNumber, date: r.date, warehouseId: purchases.find((p) => p.id === r.purchaseId)?.warehouseId ?? null, userName: journalUser('purchase_return', r.id), lines: r.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitCostMinor: l.landedUnitCostMinor })) })),
-      sales: sales.map((sl) => ({ invoiceNumber: sl.invoiceNumber, date: sl.date, warehouseId: sl.warehouseId ?? null, userName: journalUser('sale', sl.id), lines: sl.lines })),
-      saleReturns: saleReturns.map((r) => ({ returnNumber: r.returnNumber, date: r.date, warehouseId: sales.find((sl) => sl.id === r.saleId)?.warehouseId ?? null, userName: journalUser('sale_return', r.id), lines: r.lines })),
-      stocktakes: stocktakes.map((st) => ({ stocktakeNumber: st.stocktakeNumber, date: st.date, warehouseId: null, userName: journal.find((j) => j.id === st.journalEntryId)?.createdBy ?? null, rows: st.result.variances.map((v) => ({ itemId: v.itemId, systemQty: v.expectedQty, countedQty: v.countedQty })) })),
-      productionOrders: productionOrders.map((po) => {
-        const recipe = recipes.find((rc) => rc.id === po.recipeId)
-        return {
-          orderNumber: po.orderNumber, date: po.date, productItemId: po.productItemId, qty: po.producedQty,
-          ingredients: (recipe?.ingredients ?? []).map((ing) => ({ itemId: ing.itemId, qty: ing.qty * po.batches })),
-        }
-      }),
-      materialRequisitions: materialRequisitions.map((mr) => ({ reqNumber: mr.reqNumber, date: mr.date, warehouseId: warehouses.find((w) => w.isMain)?.id ?? null, userName: journal.find((j) => j.id === mr.journalEntryId)?.createdBy ?? null, lines: mr.lines.map((l) => ({ itemId: l.itemId, qty: l.qty })) })),
-      processingOrders: processingOrders.map((pr) => ({ orderNumber: pr.orderNumber, date: pr.date.slice(0, 10), sourceItemId: pr.sourceItemId, sourceQty: pr.sourceQty, outputs: pr.outputs.map((o) => ({ itemId: o.itemId, qty: o.qty })) })),
-      transfers: transfers.map((tr) => ({ transferNumber: tr.transferNumber, date: tr.date, fromWarehouseId: tr.fromWarehouseId, toWarehouseId: tr.toWarehouseId, userName: null, lines: tr.lines })),
-    }
-  }, [cardFor, purchases, purchaseReturns, sales, saleReturns, stocktakes, productionOrders, processingOrders, recipes, materialRequisitions, transfers, warehouses, journal, journalUser])
+  const ledgerInput = useItemLedgerInput(cardFor?.id ?? null)
 
   const itemLedger = useMemo(() => {
     if (!cardFor || !ledgerInput) return null
@@ -759,7 +738,7 @@ export function ItemsPage() {
       </Modal>
 
       {/* 🏷️ ملصقات الباركود — شبكة A4 (اسم + سعر + Code128) */}
-      <Modal open={labelsOpen} onClose={() => setLabelsOpen(false)} title="🏷️ طباعة ملصقات باركود" wide>
+      <Modal open={labelsOpen} onClose={() => setLabelsOpen(false)} title="طباعة ملصقات باركود" wide>
         <div className="space-y-3">
           <p className="text-[11.5px] text-slate-400">حدد عدد الملصقات لكل صنف — تُطبع شبكة A4 (4 أعمدة) باسم الصنف وسعره وباركود Code128 قابل للمسح.</p>
           <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden max-h-[50vh] overflow-y-auto">
@@ -771,7 +750,7 @@ export function ItemsPage() {
               </thead>
               <tbody>
                 {items.filter((it) => it.isActive).map((it) => (
-                  <tr key={it.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                  <tr key={it.id} {...rowOpenProps(() => openEditItem(it), `انقر مرتين لفتح بطاقة ${it.nameAr}`)} className="border-b border-slate-50 dark:border-slate-800/50">
                     <td className="px-4 py-1.5 font-bold">{it.nameAr}</td>
                     <td className="px-4 py-1.5 font-mono text-[11px] text-slate-400" dir="ltr">{it.barcodes.find(Boolean) || it.sku || it.id}</td>
                     <td className="px-4 py-1.5 text-emerald-600 font-bold">{formatMinor(it.priceMinor, cur, false)}</td>

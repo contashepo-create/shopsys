@@ -22,10 +22,11 @@ import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
 import { renderExtractHtml } from '../print/printExtract.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function ProjectsPage() {
   const {
-    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, employees, boqItems, costCenters, paymentTerminals, paymentTerminalTransactions,
+    projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, costCenters, paymentTerminals, paymentTerminalTransactions,
     addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission,
@@ -159,7 +160,9 @@ export function ProjectsPage() {
   const [costKind, setCostKind] = useState<CostKind>('materials')
   const [costAmount, setCostAmount] = useState('')
   const [costDesc, setCostDesc] = useState('')
-  const [costPayment, setCostPayment] = useState<'cash' | 'credit'>('cash')
+  const [costPayment, setCostPayment] = useState<'cash' | 'credit' | 'mixed'>('cash')
+  const [costPaidNow, setCostPaidNow] = useState('')
+  const [costSupplierId, setCostSupplierId] = useState(0)
   const [costPaySource, setCostPaySource] = useState<PaySourceValue>(DEFAULT_PAY_SOURCE)
   const [costVat, setCostVat] = useState('')
   const [costCenterId, setCostCenterId] = useState<number | null>(null)
@@ -167,16 +170,19 @@ export function ProjectsPage() {
   const saveCost = () => {
     if (!costFor) return
     try {
+      const grossMinor = toMinor(costAmount, cur.decimals) + (costVat ? toMinor(costVat, cur.decimals) : 0)
+      const paidMinor = costPayment === 'cash' ? grossMinor : costPayment === 'credit' ? 0 : toMinor(costPaidNow || '0', cur.decimals)
+      if (grossMinor - paidMinor > 0 && !costSupplierId) throw new Error('الجزء الآجل يتطلب اختيار المورد/مقاول الباطن — ليظهر في كشف حسابه')
       addProjectCost({
         projectId: costFor.id, kind: costKind, amountMinor: toMinor(costAmount, cur.decimals),
         inputVatMinor: costVat ? toMinor(costVat, cur.decimals) : 0,
-        payment: costPayment, description: costDesc.trim(),
+        payment: costPayment, paidMinor, supplierId: costSupplierId || null, description: costDesc.trim(),
         treasury: costPaySource.kind === 'treasury' ? costPaySource.treasury : undefined,
         custodyFileId: costPayment === 'cash' && costPaySource.kind === 'custody' ? costPaySource.custodyFileId : null,
         costCenterId,
       })
       toast.show('سُجلت التكلفة على المشروع بقيد متوازن ✅')
-      setCostFor(null); setCostAmount(''); setCostDesc(''); setCostVat(''); setCostCenterId(null)
+      setCostFor(null); setCostAmount(''); setCostDesc(''); setCostVat(''); setCostCenterId(null); setCostPaidNow(''); setCostSupplierId(0); setCostPayment('cash')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -350,8 +356,8 @@ export function ProjectsPage() {
       )}
 
       {/* مشروع جديد — نموذج مقسّم أقساماً (أمر التعديل: نماذج احترافية) */}
-      <Modal open={open} onClose={() => setOpen(false)} title="مشروع مقاولات جديد" wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => setOpen(false)} title="مشروع مقاولات جديد" wide subtitle="مستند مشروع: عقد وقيمة ومحتجز ومدة">
+        <div className="space-y-4"><DocSectionHead step="١" title="أساسيات العقد وأطرافه" hint="المشروع مركز تكلفة مستقل: كل مستخلص وتكلفة يُنسبان إليه" />
           {/* القسم 1: أساسيات العقد */}
           <div className="rounded-2xl border border-orange-500/20 p-4 space-y-3">
             <div className="text-[11.5px] font-black text-orange-600 dark:text-orange-400">📋 بيانات العقد الأساسية</div>
@@ -437,7 +443,7 @@ export function ProjectsPage() {
               <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
             </div>
           </div>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: لا قيد عند فتح المشروع · القيود تبدأ من أول دفعة مقدمة أو مستخلص، وكلها منسوبة لمركز تكلفة هذا المشروع.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveProject} disabled={!nameAr.trim() || (valueMode === 'manual' ? !contractValue : validBoqLines.length === 0)}>إنشاء المشروع</Btn>
           </div>
@@ -445,9 +451,9 @@ export function ProjectsPage() {
       </Modal>
 
       {/* مستخلص */}
-      <Modal open={!!extractFor} onClose={() => setExtractFor(null)} title={extractFor ? `مستخلص جديد — ${extractFor.nameAr}` : ''}>
+      <Modal open={!!extractFor} onClose={() => setExtractFor(null)} title={extractFor ? `مستخلص جديد — ${extractFor.nameAr}` : ''} subtitle="مستند مستخلص: أعمال منفَّذة ومحتجز وضريبة">
         {extractFor && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="بنود المستخلص ونسب التنفيذ" hint="المحتجز أصل لدى العميل لا خسارة" />
             {extractBoq.length > 0 && (
               <div className="flex gap-2">
                 {([['lines', 'بندي من جدول الكميات'], ['gross', 'مبلغ إجمالي']] as const).map(([m, label]) => (
@@ -529,7 +535,7 @@ export function ProjectsPage() {
               <input type="checkbox" checked={exFinal} onChange={(e) => setExFinal(e.target.checked)} className="accent-rose-600" />
               <span className="text-[12px] font-bold text-rose-600 dark:text-rose-400">مستخلص ختامي — لا مستخلصات بعده (يمهد للتسليم والإفراج عن المحتجز)</span>
             </label>
-            <div className="flex justify-end gap-2">
+            <DocOutcome>الأثر: <b>1104 العميل</b> مديناً بصافي المستخلص · <b>4107 إيراد المقاولات</b> دائناً · <b>1105 محتجز لدى العملاء</b> بالنسبة المحتجزة · والضريبة على <b>2102</b>.</DocOutcome><div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setExtractFor(null)}>إلغاء</Btn>
               <Btn onClick={saveExtract} shortcut="F9" disabled={exMode === 'lines' ? exLinesPreview.grossMinor <= 0 : !exGross}>تسجيل المستخلص وقيده</Btn>
             </div>
@@ -538,9 +544,10 @@ export function ProjectsPage() {
       </Modal>
 
       {/* تكلفة */}
-      <Modal open={!!costFor} onClose={() => setCostFor(null)} title={costFor ? `تكلفة على — ${costFor.nameAr}` : ''}>
+      <Modal open={!!costFor} onClose={() => setCostFor(null)} title={costFor ? `تكلفة على — ${costFor.nameAr}` : ''} subtitle="مستند تكلفة مشروع: بند التكلفة ومصدر سدادها">
         {costFor && (
           <div className="space-y-3">
+            <DocSectionHead step="١" title="بند التكلفة وقيمته" hint="كل تكلفة تُنسب لمركز تكلفة المشروع فتظهر في ربحيته" />
             <Field label="بند التكلفة">
               <div className="grid grid-cols-5 gap-1.5">
                 {(Object.keys(COST_KIND_LABELS) as CostKind[]).map((k) => (
@@ -555,13 +562,19 @@ export function ProjectsPage() {
               <Field label={`المبلغ (${cur.symbol}) *`}><input value={costAmount} onChange={(e) => setCostAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
               <Field label="السداد">
                 <div className="flex gap-2">
-                  {(['cash', 'credit'] as const).map((p) => (
-                    <button key={p} onClick={() => setCostPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${costPayment === p ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
-                      {p === 'cash' ? 'نقدي' : 'آجل (مورد)'}
+                  {([['cash', 'نقدي'], ['mixed', 'مدفوع + آجل'], ['credit', 'آجل (مورد)']] as const).map(([mode, label]) => (
+                    <button key={mode} onClick={() => setCostPayment(mode)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border transition-all ${costPayment === mode ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
+                      {label}
                     </button>
                   ))}
                 </div>
-                {costPayment === 'cash' && <div className="mt-2"><PaySourcePicker value={costPaySource} onChange={setCostPaySource} /></div>}
+                {costPayment !== 'credit' && <div className="mt-2"><PaySourcePicker value={costPaySource} onChange={setCostPaySource} /></div>}
+                {costPayment === 'mixed' && <div className="mt-2"><Field label={`المدفوع الآن (${cur.symbol}) *`} hint="الباقي يُرحَّل على حساب المورد"><input value={costPaidNow} onChange={(e) => setCostPaidNow(e.target.value)} inputMode="decimal" className={inputCls} /></Field></div>}
+                {costPayment !== 'cash' && (
+                  <div className="mt-2"><Field label="المورد / مقاول الباطن *" hint="الجزء الآجل يظهر في كشف حسابه ويُسدَّد بسند صرف">
+                    <PartyQuickPicker parties={suppliers} value={costSupplierId} onChange={setCostSupplierId} cashLabel="اختر المورد" label="بحث المورد" cashValue={0} showCash={false} />
+                  </Field></div>
+                )}
               </Field>
             </div>
             <Field label="الوصف"><input value={costDesc} onChange={(e) => setCostDesc(e.target.value)} className={inputCls} placeholder="حديد تسليح، أجور نجارين…" /></Field>
@@ -569,6 +582,7 @@ export function ProjectsPage() {
             <Field label={`ض.ق.م مدخلات قابلة للخصم (${cur.symbol}) — اختياري`} hint="للمنشآت المسجلة ضريبياً: تُعزل عن تكلفة المشروع (المبلغ أعلاه صافٍ) فتبقى ربحية المشروع صافية من الضريبة تماماً — غير المسجل يتركها فارغة">
               <input value={costVat} onChange={(e) => setCostVat(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
             </Field>
+            <DocOutcome>الأثر: <b>5110 تكاليف مشروعات مقاولات</b> مديناً بقيمة البند على مركز تكلفة المشروع · <b>2102</b> مديناً بضريبة المدخلات القابلة للخصم · <b>الخزينة</b> دائنة بالمدفوع نقداً و<b>2101 موردون ومقاولون</b> دائناً بالباقي الآجل.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setCostFor(null)}>إلغاء</Btn>
               <Btn onClick={saveCost} shortcut="F9" disabled={!costAmount}>تسجيل التكلفة</Btn>
@@ -647,7 +661,7 @@ export function ProjectsPage() {
 
       {/* الإفراج عن المحتجزات — باختيار الخزينة (طلب المالك) */}
       {/* دفعة مقدمة من العميل */}
-      <Modal open={!!advanceFor} onClose={() => setAdvanceFor(null)} title={advanceFor ? `دفعة مقدمة — ${advanceFor.nameAr}` : ''}>
+      <Modal open={!!advanceFor} onClose={() => setAdvanceFor(null)} title={advanceFor ? `دفعة مقدمة — ${advanceFor.nameAr}` : ''} subtitle="مستند دفعة مقدمة: تحصيل قبل تنفيذ الأعمال">
         {advanceFor && (
           <div className="space-y-3">
             <div className="text-[12px] text-slate-500 bg-sky-500/5 rounded-xl p-3">
@@ -656,13 +670,14 @@ export function ProjectsPage() {
             </div>
             <Field label={`قيمة الدفعة (${cur.symbol})`}><input value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
             <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury:advTreasury,terminalPayment:advTerminal}} onChange={value=>{setAdvTreasury(value.treasury);setAdvTerminal(value.terminalPayment)}} operation="receipt"/></div></Field>
+            <DocOutcome>الأثر: <b>الخزينة</b> أو حساب تسوية الماكينة مديناً بالمحصَّل · <b>2109 دفعات مقدمة من العملاء</b> دائناً بنفس القيمة — التزام لا إيراد، يُسترد تدريجياً من المستخلصات القادمة.</DocOutcome>
             <Btn onClick={saveAdvance} shortcut="F9" className="w-full" disabled={!advAmount}>استلام الدفعة</Btn>
           </div>
         )}
       </Modal>
 
       {/* أمر تغيير */}
-      <Modal open={!!coFor} onClose={() => setCoFor(null)} title={coFor ? `أمر تغيير — ${coFor.nameAr}` : ''}>
+      <Modal open={!!coFor} onClose={() => setCoFor(null)} title={coFor ? `أمر تغيير — ${coFor.nameAr}` : ''} subtitle="مستند أمر تغيير: تعديل نطاق العقد وقيمته">
         {coFor && (
           <div className="space-y-3">
             <div className="text-[12px] text-slate-500 bg-violet-500/5 rounded-xl p-3">
@@ -701,28 +716,30 @@ export function ProjectsPage() {
                 ))}
               </div>
             )}
+            <DocOutcome>الأثر: <b>لا قيد</b> عند إنشاء أمر التغيير أو اعتماده — يعدّل قيمة العقد ونسب الإنجاز فقط؛ القيد يتولد في المستخلص التالي (<b>4107</b> إيراداً و<b>1104</b> ذمةً و<b>1105</b> محتجزاً).</DocOutcome>
             <Btn onClick={saveChangeOrder} className="w-full" disabled={!coTitle.trim() || !coAmount}>إنشاء أمر التغيير (مسودة)</Btn>
           </div>
         )}
       </Modal>
 
-      <Modal open={!!releaseFor} onClose={() => setReleaseFor(null)} title={releaseFor ? `الإفراج عن محتجزات ${releaseFor.nameAr}` : ''}>
+      <Modal open={!!releaseFor} onClose={() => setReleaseFor(null)} title={releaseFor ? `الإفراج عن محتجزات ${releaseFor.nameAr}` : ''} subtitle="مستند إفراج: تحصيل ضمان انتهى أجله">
         {releaseFor && (
           <div className="space-y-4">
             <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-3 text-[13px] font-bold text-amber-700 dark:text-amber-300">
               سيُحصَّل المحتجز المتبقي {fmt(getProjectProfit(releaseFor.id).retentionHeldMinor)} {cur.symbol} ويُقفل المشروع نهائياً.
             </div>
             <Field label="طريقة التحصيل"><div className="space-y-2"><PaymentMethodPicker value={{treasury:releaseTreasury,terminalPayment:releaseTerminal}} onChange={value=>{setReleaseTreasury(value.treasury);setReleaseTerminal(value.terminalPayment)}} operation="receipt"/></div></Field>
+            <DocOutcome>الأثر: <b>الخزينة</b> أو حساب تسوية الماكينة مديناً بقيمة المحتجز المُفرج عنه · <b>1105 محتجزات ضمان أعمال</b> دائناً بإقفال الأصل — تحصيل حق قائم لا إيراد جديد.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setReleaseFor(null)}>إلغاء</Btn>
-              <Btn onClick={doRelease} shortcut="F9">🏁 تحصيل وإقفال</Btn>
+              <Btn onClick={doRelease} shortcut="F9">تحصيل وإقفال</Btn>
             </div>
           </div>
         )}
       </Modal>
 
       {/* إشعار دائن على مستخلص (مراجعة المرتجعات) */}
-      <Modal open={!!refundingExtract} onClose={() => setRefundingExtract(null)} title={refundingExtract ? `إشعار دائن — ${refundingExtract.extractNumber}` : ''}>
+      <Modal open={!!refundingExtract} onClose={() => setRefundingExtract(null)} title={refundingExtract ? `إشعار دائن — ${refundingExtract.extractNumber}` : ''} subtitle="مستند إشعار دائن: عكس جزء معتمد من المستخلص">
         {refundingExtract && (
           <ServiceRefundBox
             grandMinor={refundingExtract.totals.dueMinor}
@@ -743,9 +760,12 @@ export function ProjectsPage() {
             }}
           />
         )}
+        {refundingExtract && (
+          <DocOutcome>الأثر: <b>4102 مرتجعات المبيعات</b> مديناً بصافي المرفوض و<b>2102</b> مديناً بحصته الضريبية · <b>الخزينة</b> دائنة عند الرد نقداً أو <b>1104 ذمم العملاء</b> دائنة عند التخفيض من حساب العميل.</DocOutcome>
+        )}
       </Modal>
-      {/* 🤝 عمولة موظف عن المشروع (تعميم أمر المالك) */}
-      <Modal open={!!commFor} onClose={() => setCommFor(null)} title={commFor ? `🤝 عمولة موظف — ${commFor.code}` : ''}>
+      {/* عمولة موظف عن المشروع (تعميم أمر المالك) */}
+      <Modal open={!!commFor} onClose={() => setCommFor(null)} title={commFor ? `عمولة موظف — ${commFor.code}` : ''} subtitle="مستند استحقاق عمولة: ربط موظف بمشروع">
         {commFor && (
           <div className="space-y-3">
             {staffCommissions.filter((c) => c.source === 'project' && c.sourceId === commFor.id && c.status !== 'cancelled').map((c) => (
@@ -760,11 +780,12 @@ export function ProjectsPage() {
               <input value={commAmount} onChange={(e) => setCommAmount(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" placeholder="0" />
             </Field>
             <div className="text-[11px] text-slate-400 rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 leading-relaxed">
-              💡 استحقاق فوري: مصروف عمولات (5117) ← مستحقة (2116) — مربوطة بالمشروع وتدخل ربحية الفترة، والصرف من شاشة الموظفين.
+              استحقاق فوري مربوط بالمشروع: يدخل ربحية الفترة، والصرف من شاشة الموظفين.
             </div>
+            <DocOutcome>الأثر: <b>5117 مصروف عمولات موظفين</b> مديناً على مركز تكلفة المشروع · <b>2116 عمولات موظفين مستحقة</b> دائناً حتى الصرف مع الراتب أو منفرداً.</DocOutcome>
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setCommFor(null)}>إغلاق</Btn>
-              <Btn onClick={saveProjectCommission} shortcut="F9" disabled={!commEmpId || !commAmount.trim()}>💾 استحقاق العمولة</Btn>
+              <Btn onClick={saveProjectCommission} shortcut="F9" disabled={!commEmpId || !commAmount.trim()}>استحقاق العمولة</Btn>
             </div>
           </div>
         )}

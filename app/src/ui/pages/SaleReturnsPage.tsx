@@ -26,6 +26,7 @@ import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { rowOpenProps } from '../components/rowOpen.ts'
 
 /** حالة سطر واحد في المعالج */
 interface WizardLine {
@@ -277,7 +278,7 @@ export function SaleReturnsPage() {
                 const orig = sales.find((s) => s.id === r.saleId)
                 const hasDamaged = r.lines.some((l) => l.condition === 'damaged')
                 return (
-                  <tr key={r.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-rose-500/[0.03] transition-colors">
+                  <tr key={r.id} {...rowOpenProps(() => setViewing(r), `انقر مرتين لفتح المرتجع ${r.returnNumber}`)} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-rose-500/[0.03] transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-800 dark:text-white">{r.returnNumber}</div>
                       <div className="text-[11px] text-slate-400">{r.date.slice(0, 16).replace('T', ' ')}</div>
@@ -392,16 +393,16 @@ export function SaleReturnsPage() {
                 حدد <b>كل سطر</b> على حدة — يمكن إرجاع بند واحد فقط أو جزء من كميته. البضاعة
                 <b className="text-emerald-600"> السليمة</b> تعود للمخزون؛ <b className="text-rose-500">التالفة</b> لا تدخل المخزون وتُقيَّد هالكاً (5111) تلقائياً.
               </p>
-              <table className="w-full text-[13px]">
+              <table className="invoice-lines-table w-full text-[13px]">
                 <thead>
-                  <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                    <th className="px-3 py-2">#</th>
-                    <th className="px-3 py-2">الصنف</th>
-                    <th className="px-3 py-2">المباع</th>
-                    <th className="px-3 py-2">سعر/خصم</th>
-                    <th className="px-3 py-2">المتبقي</th>
-                    <th className="px-3 py-2 w-24">كمية الإرجاع</th>
-                    <th className="px-3 py-2 w-40">الحالة ومستودع الاستلام</th>
+                  <tr className="text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
+                    <th className="px-3 py-2 text-center">#</th>
+                    <th className="px-3 py-2 text-start">الصنف</th>
+                    <th className="px-3 py-2 text-center">المباع</th>
+                    <th className="px-3 py-2 text-center">سعر/خصم</th>
+                    <th className="px-3 py-2 text-center">المتبقي</th>
+                    <th className="px-3 py-2 w-24 text-center">كمية الإرجاع</th>
+                    <th className="px-3 py-2 w-40 text-center">الحالة ومستودع الاستلام</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -410,15 +411,15 @@ export function SaleReturnsPage() {
                     const w = wiz[idx]
                     return (
                       <tr key={idx} data-entry-row className={`border-b border-slate-50 dark:border-slate-800/50 ${Number(w?.qty) > 0 ? 'bg-rose-500/[0.03]' : ''}`}>
-                        <td className="px-3 py-2 text-slate-400 text-[11px]">{idx + 1}</td>
+                        <td className="px-3 py-2 text-center text-slate-400 text-[11px]">{idx + 1}</td>
                         <td tabIndex={0} className="px-3 py-2 font-bold outline-none focus:ring-2 focus:ring-brand-500/40">
                           <span className="ml-2 font-mono text-[10px] text-slate-400" dir="ltr">{items.find((item) => item.id === l.itemId)?.sku || items.find((item) => item.id === l.itemId)?.barcodes?.[0] || l.itemId}</span>{l.soldByWeight && '⚖️ '}{l.nameAr}
                           {(l.variantColor || l.variantSize) && <span className="text-[10px] text-fuchsia-500 mr-1">({[l.variantColor, l.variantSize].filter(Boolean).join('/')})</span>}
                           {l.unitLabel && <span className="text-[10px] text-sky-500 mr-1">[{l.unitLabel}]</span>}
                         </td>
-                        <td className="px-3 py-2">{l.qty}</td>
-                        <td className="px-3 py-2 text-[11px] text-slate-500">{fmt(l.unitPriceMinor)}{l.discountPercent > 0 && <span className="text-rose-400"> −{l.discountPercent}٪</span>}</td>
-                        <td className={`px-3 py-2 font-bold ${rem > 0 ? 'text-emerald-600' : 'text-slate-300'}`}>{rem}</td>
+                        <td className="px-3 py-2 text-center">{l.qty}</td>
+                        <td className="px-3 py-2 text-center text-[11px] text-slate-500">{fmt(l.unitPriceMinor)}{l.discountPercent > 0 && <span className="text-rose-400"> −{l.discountPercent}٪</span>}</td>
+                        <td className={`px-3 py-2 text-center font-bold ${rem > 0 ? 'text-emerald-600' : 'text-slate-300'}`}>{rem}</td>
                         <td className="px-3 py-2">
                           <input
                             value={w?.qty ?? ''}

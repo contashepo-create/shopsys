@@ -22,6 +22,7 @@ import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import { renderReportShell } from '../../core/reportPrint.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 const STATUS_STYLE: Record<LaundryStatus, string> = {
   received: 'bg-sky-500/10 text-sky-600',
@@ -218,8 +219,8 @@ export function LaundryPage() {
       )}
 
       {/* أمر جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="🧺 أمر غسيل جديد" wide>
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title="أمر غسيل جديد" wide subtitle="مستند أمر غسيل: قطع وخدمة وموعد تسليم">
+        <div className="space-y-3"><DocSectionHead step="١" title="العميل والقطع والخدمة" hint="العربون التزام على المغسلة حتى التسليم" />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="عميل مسجل (اختياري)">
               <PartyQuickPicker parties={customers} value={customerId ? Number(customerId) : 0} onChange={(id) => setCustomerId(id ? String(id) : '')} cashLabel="عميل نقدي عابر" label="بحث العميل" cashValue={0} />
@@ -281,7 +282,7 @@ export function LaundryPage() {
           <Field label="ملاحظات">
             <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} placeholder="بقعة على الكم، زر مفقود…" />
           </Field>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: الخزينة مديناً بالعربون مقابل <b>2109 إيراد مؤجل</b> دائناً · وعند التسليم يُقفل <b>2109</b> مديناً مقابل <b>4103 إيراد الغسيل</b> دائناً بكامل القيمة.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} disabled={parsedLines.length === 0}>💾 فتح الأمر{toM(prepaid) > 0 ? ' وقيد العربون' : ''}</Btn>
           </div>

@@ -16,6 +16,7 @@ import { APPROVAL_ACTION_LABELS, type ApprovalAction, type IssueLineInput } from
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { eligiblePaymentTerminals } from '../../core/paymentTerminalEligibility.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800'
 
@@ -120,8 +121,8 @@ export function MaterialIssuesPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="إذن صرف مواد لمشروع" wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => setOpen(false)} title="إذن صرف مواد لمشروع" wide subtitle="مستند إذن صرف: خروج مواد من المخزن إلى مشروع">
+        <div className="space-y-4"><DocSectionHead step="١" title="المشروع والمواد المنصرفة" hint="صرف المواد تكلفة مشروع لا مصروف عام" />
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="المشروع *">
               <QuickSelect value={projectId} onChange={(e) => setProjectId(e.target.value)} className={inputCls}>
@@ -169,7 +170,7 @@ export function MaterialIssuesPage() {
           </div>
 
           <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} placeholder="صبّة القواعد — بلوك أ…" /></Field>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>5110 تكاليف مشروعات مقاولات</b> مديناً بتكلفة المنصرف على مركز تكلفة المشروع · <b>1103 المخزون</b> دائناً بها بالمتوسط المرجح لحظة الصرف.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} shortcut="F9" disabled={!projectId || !issuedBy || !receivedBy || lines.every((l) => !l.itemId)}>📦 صرف المواد</Btn>
           </div>
@@ -529,8 +530,8 @@ export function ApprovalsPage() {
       )}
 
       {/* ضبط مسار */}
-      <Modal open={editAction != null} onClose={() => setEditAction(null)} title={editAction ? `مسار: ${APPROVAL_ACTION_LABELS[editAction]}` : ''}>
-        <div className="space-y-3">
+      <Modal open={editAction != null} onClose={() => setEditAction(null)} title={editAction ? `مسار: ${APPROVAL_ACTION_LABELS[editAction]}` : ''} subtitle="مستند صلاحيات: من يعتمد هذا الإجراء وبأي ترتيب">
+        <div className="space-y-3"><DocSectionHead step="١" title="خطوات الاعتماد بالترتيب" hint="لا تنفيذ قبل اكتمال كل خطوة موقَّعة" />
           {steps.map((s, i) => (
             <div key={i} className="grid grid-cols-[24px_1fr_1fr_32px] gap-2 items-center">
               <span className="text-[12px] font-black text-slate-400 text-center">{i + 1}</span>
@@ -544,16 +545,17 @@ export function ApprovalsPage() {
             <input type="checkbox" checked={flowActive} onChange={(e) => setFlowActive(e.target.checked)} className="accent-violet-600 w-4 h-4" />
             المسار نشط — الإجراء لا يُنفَّذ إلا باعتماد مكتمل
           </label>
+          <DocOutcome>الأثر: <b>لا قيد</b> محاسبياً — المسار ضابط تشغيلي يمنع تنفيذ الإجراء قبل اعتماده، والقيد يتولد من المستند نفسه بعد الاعتماد.</DocOutcome>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setEditAction(null)}>إلغاء</Btn>
-            <Btn onClick={saveFlow}>💾 حفظ المسار</Btn>
+            <Btn onClick={saveFlow}>حفظ المسار</Btn>
           </div>
         </div>
       </Modal>
 
       {/* طلب اعتماد */}
-      <Modal open={reqOpen} onClose={() => setReqOpen(false)} title="طلب اعتماد جديد">
-        <div className="space-y-3">
+      <Modal open={reqOpen} onClose={() => setReqOpen(false)} title="طلب اعتماد جديد" subtitle="مستند طلب: إجراء ينتظر توقيع أصحاب الصلاحية قبل تنفيذه">
+        <div className="space-y-3"><DocSectionHead step="١" title="الإجراء وموضوعه ومستنده المرجعي" hint="رقم المستند يُطابق آلياً عند التنفيذ" />
           <Field label="الإجراء">
             <QuickSelect value={reqAction} onChange={(e) => setReqAction(e.target.value as ApprovalAction)} className={inputCls}>
               {ALL_ACTIONS.map((a) => <option key={a} value={a}>{APPROVAL_ACTION_LABELS[a]}</option>)}
@@ -563,6 +565,7 @@ export function ApprovalsPage() {
           <Field label="رقم المستند المرجعي" hint="معرف المشروع/العرض/عقد الباطن المعني — يجب أن يطابق عند التنفيذ">
             <input value={reqRef} onChange={(e) => setReqRef(e.target.value)} inputMode="numeric" className={inputCls} dir="ltr" />
           </Field>
+          <DocOutcome>الأثر: <b>لا قيد</b> عند الطلب — يُسجَّل بانتظار الاعتماد؛ وبعد اكتمال التوقيعات يُنفَّذ المستند الأصلي فيولّد قيده.</DocOutcome>
           <Btn onClick={saveRequest} className="w-full" disabled={!reqRef}>إنشاء الطلب</Btn>
         </div>
       </Modal>

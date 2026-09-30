@@ -16,6 +16,7 @@ import type { CartLine } from '../../core/pos.ts'
 import { renderKitchenTicketHtml } from '../print/printKitchen.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function RestaurantOrdersPage() {
   const { restaurantOrders, items, treasuries, paymentTerminals, appUsers, currentUserId, openRestaurantOrder, setRestaurantOrderLines, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, getEffectivePrice } = useDataStore()
@@ -206,7 +207,8 @@ export function RestaurantOrdersPage() {
       )}
 
       {/* أمر جديد */}
-      <Modal open={newOpen} onClose={() => setNewOpen(false)} title="أمر جديد">
+      <Modal open={newOpen} onClose={() => setNewOpen(false)} title="أمر جديد" subtitle="مستند أمر: صالة أو تيك أواي أو توصيل">
+        <DocSectionHead step="١" title="نوع الأمر وبياناته" hint="الأمر لا يُقيَّد حتى الإغلاق والتحصيل" />
         <div className="flex gap-2">
           {(Object.keys(ORDER_TYPE_LABELS) as RestaurantOrderType[]).map((t) => (
             <button key={t} onClick={() => setNType(t)}
@@ -222,13 +224,14 @@ export function RestaurantOrdersPage() {
         {nType === 'delivery' && (
           <Field label="بيانات التوصيل" hint="اسم / هاتف / عنوان — تُطبع على البون"><input value={nDelivery} onChange={(e) => setNDelivery(e.target.value)} className={inputCls} autoFocus /></Field>
         )}
+        <DocOutcome>الأثر: <b>لا قيد</b> عند فتح الأمر — الأمر مفتوح حتى القفل؛ وعندها يُرحَّل كفاتورة بيع: <b>4101 المبيعات</b> دائناً و<b>2102</b> بالضريبة مقابل <b>الخزينة/1104</b> مديناً، واستهلاك المكوّنات من <b>1103</b> إلى <b>5101</b> بوصفة الصنف.</DocOutcome>
         <Btn onClick={create} className="w-full mt-2">فتح الأمر</Btn>
       </Modal>
 
       {/* القفل والدفع */}
-      <Modal open={settleFor != null} onClose={() => setSettleFor(null)} title={`فاتورة ${settleOrder?.orderNumber ?? ''}`}>
+      <Modal open={settleFor != null} onClose={() => setSettleFor(null)} title={`فاتورة ${settleOrder?.orderNumber ?? ''}`} subtitle="مستند قفل أمر: رسوم الخدمة والتوصيل والخصم ثم التحصيل">
         {settleOrder && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="قيمة الأصناف والرسوم والخصم" hint="رسوم الخدمة إيراد للمنشأة لا إكرامية للعامل" />
             <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 px-4 py-3 flex justify-between text-[12.5px] font-bold">
               <span className="text-slate-400">الأصناف</span>
               <span dir="ltr">{fmt(orderSubtotalMinor(settleOrder.lines))} {cur.symbol}</span>
@@ -252,15 +255,16 @@ export function RestaurantOrdersPage() {
               {terminalId && <><Field label="مرجع إيصال الماكينة (اختياري)"><input value={terminalReference} onChange={(e) => setTerminalReference(e.target.value)} className={inputCls}/></Field><Field label="آخر 4 أرقام (اختياري)"><input value={cardLast4} onChange={(e) => setCardLast4(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" maxLength={4} className={inputCls}/></Field></>}
             </div>
             <p className="text-[11px] text-slate-400">الضريبة والوصفات وخصم الخامات كلها عبر فاتورة الكاشير نفسها — قيد واحد متوازن.</p>
+            <DocOutcome>الأثر: يُرحَّل الأمر كفاتورة بيع: <b>4101 المبيعات</b> دائناً بوعاء الأصناف والرسوم · <b>2102</b> دائناً بالضريبة · <b>الخزينة/ماكينة الدفع</b> مديناً بالمحصَّل و<b>1104 ذمم العملاء</b> بالباقي الآجل · والمواد المستهلكة تخرج من <b>1103 المخزون</b> إلى <b>5101 تكلفة المبيعات</b> حسب وصفة كل صنف.</DocOutcome>
             <Btn onClick={settle} shortcut="F9" className="w-full">قفل الأمر وإصدار الفاتورة</Btn>
           </div>
         )}
       </Modal>
 
       {/* حوار تقسيم الحساب: اختر السطور المفصولة لأمر جديد يُفوتر مستقلاً */}
-      <Modal open={splitOpen && !!active} onClose={() => setSplitOpen(false)} title="✂️ تقسيم الحساب">
+      <Modal open={splitOpen && !!active} onClose={() => setSplitOpen(false)} title="تقسيم الحساب" subtitle="مستند تقسيم: فصل أصناف إلى أمر مستقل يُقفل بفاتورته">
         {active && (
-          <div className="space-y-3">
+          <div className="space-y-3"><DocSectionHead step="١" title="الأصناف المنقولة إلى الأمر الجديد" hint="التقسيم لا يُنشئ إيراداً — الإيراد عند قفل كل أمر بفاتورته" />
             <p className="text-[11.5px] text-slate-400 leading-relaxed">
               اختر الأصناف التي يدفعها الطرف الآخر — تُفصل لأمر جديد مستقل يُقفل بفاتورته،
               والباقي يبقى على {active.type === 'dine_in' ? `طاولة ${active.tableName}` : 'الأمر الأصلي'}.
@@ -284,6 +288,7 @@ export function RestaurantOrdersPage() {
               <span className="text-slate-500">المفصول: {splitSel.length} من {active.lines.length}</span>
               <span className="text-orange-600">{fmt(active.lines.filter((_, i) => splitSel.includes(i)).reduce((s, l) => s + Math.round(l.unitPriceMinor * l.qty), 0))} {cur.symbol}</span>
             </div>
+            <DocOutcome>الأثر: <b>لا قيد</b> عند التقسيم — الأصناف تنتقل لأمر جديد مفتوح، وكل أمر يولّد قيده عند قفله (<b>4101</b> إيراداً و<b>5101</b> تكلفةً).</DocOutcome>
             <Btn onClick={doSplit} shortcut="F9" className="w-full" disabled={splitSel.length === 0 || splitSel.length === active.lines.length}>
               <Scissors size={14} /> فصل المحدد لفاتورة مستقلة
             </Btn>

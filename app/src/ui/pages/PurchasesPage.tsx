@@ -28,6 +28,8 @@ import { ItemQuickPicker, PartyQuickPicker, QuickSelect } from '../components/Ke
 import { partyCode } from '../../core/partyCodes.ts'
 import { PurchaseExpenseManager } from '../components/PurchaseExpenseManager.tsx'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
+import { rowOpenProps } from '../components/rowOpen.ts'
+import { openItemPricesWindow } from '../windows/windowStore.ts'
 
 /**
  * سطر شراء (تدقيق المالك — الشراء بالكرتونة):
@@ -231,7 +233,7 @@ export function PurchasesPage() {
   const openEdit = (p: PurchaseInvoice) => {
     // يفتح نفس محرر الفاتورة المتقدم؛ الصلاحية/اعتماد المشرف يُتحقق عند الحفظ داخل المحرر.
     // editApproval.request تبقى بوابة الصلاحية للمحرر المتقدم عند الحفظ.
-    goTo(`/purchases/invoices/new?edit=${p.id}`)
+    navigate(`/purchases/invoices/new?edit=${p.id}`)
   }
   const removeSelectedEditLine = () => {
     if (selectedEditLine == null || !editLines[selectedEditLine]) return
@@ -479,7 +481,7 @@ export function PurchasesPage() {
             </thead>
             <tbody>
               {purchases.map((p, i) => (
-                <tr key={p.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.04] transition-colors duration-150">
+                <tr key={p.id} {...rowOpenProps(() => setViewing(p), `انقر مرتين لفتح فاتورة الشراء ${p.invoiceNumber}`)} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.04] transition-colors duration-150">
                   <td className="px-4 py-3">
                     <div className="font-bold text-slate-800 dark:text-white">{p.invoiceNumber}</div>
                     {p.refCode && <div className="text-[10px] font-mono text-sky-600 dark:text-sky-400" dir="ltr">{p.refCode}</div>}
@@ -637,7 +639,7 @@ export function PurchasesPage() {
                       onPick={(nextId) => setLines((arr) => arr.map((x, j) => (j === i ? { ...x, itemId: nextId, unitName: '', vatPercent: itemVatPercent(nextId) } : x)))}
                       onEdit={(id) => goTo(`/inventory/items?edit=${id}`)}
                       onMovement={(id) => goTo(`/inventory/items?card=${id}`)}
-                      onPrices={(id) => goTo(`/sales/price-lists?item=${id}`)}
+                      onPrices={(id) => openItemPricesWindow(id)}
                       placeholder={lineItem?.nameAr ?? 'اكتب الصنف ثم اختر بالسهم + Enter أو مرتين'}
                     />
                   </div>
@@ -680,7 +682,7 @@ export function PurchasesPage() {
                     title={`ضريبة هذا البند تلقائياً حسب البلد/استثناء الصنف: ${taxPolicy.effectivePercent === 0 ? 0 : l.vatPercent}٪`}
                     className="h-11 rounded-xl border-2 border-sky-200 dark:border-sky-800/70 bg-sky-500/[0.06] flex flex-col items-center justify-center text-center"
                   >
-                    <span className="text-[12px] font-black text-sky-700 dark:text-sky-300">{taxPolicy.effectivePercent > 0 && l.vatPercent > 0 ? `${l.vatPercent}٪` : 'معفى'}</span>
+                    <span className="text-[12px] font-black text-sky-700 dark:text-sky-300">{taxPolicy.effectivePercent > 0 && l.vatPercent > 0 ? `${l.vatPercent}٪` : ''}</span>
                     <span className="text-[9px] text-sky-500/80">{fmt(lineVatMinor(l))}</span>
                   </div>
                   {lineOptions.expiry && (lineItem?.trackExpiry ? (
@@ -732,7 +734,7 @@ export function PurchasesPage() {
             </div>
             {managedExpenses.length > 0 && <div className="mt-2 flex flex-wrap gap-2">{managedExpenses.map((expense, index) => <span key={index} className="rounded-lg bg-white/70 px-2 py-1 text-[11px] dark:bg-slate-900/40">{expense.nameAr}: {fmt(expense.amountMinor)} {expense.paidBy === 'payable' ? '· مستحق' : ''}</span>)}</div>}
           </div>
-          <Modal open={expensesOpen} onClose={() => setExpensesOpen(false)} title="تفاصيل مصاريف الشراء" wide>
+          <Modal open={expensesOpen} onClose={() => setExpensesOpen(false)} title="تفاصيل مصاريف الشراء" extraWide>
             <PurchaseExpenseManager
               expenses={managedExpenses}
               onChange={setManagedExpenses}
@@ -814,7 +816,7 @@ export function PurchasesPage() {
       <PartyQuickEditModal open={partyEditorOpen} target={supplierId > 0 && suppliers.find((supplier) => supplier.id === supplierId) ? { kind: 'supplier', party: suppliers.find((supplier) => supplier.id === supplierId)! } : null} currencyDecimals={cur.decimals} currencySymbol={cur.symbol} onClose={() => setPartyEditorOpen(false)} />
 
       {/* ⚡ إضافة صنف سريعة داخل الفاتورة (الأمر 6) — التكلفة تتحدد من الفاتورة نفسها */}
-      <Modal open={quickOpen} onClose={() => setQuickOpen(false)} title="⚡ صنف جديد سريع">
+      <Modal open={quickOpen} onClose={() => setQuickOpen(false)} title="صنف جديد سريع">
         <div className="space-y-3">
           <Field label="اسم الصنف *"><input value={qName} onChange={(e) => setQName(e.target.value)} className={inputCls} autoFocus /></Field>
           <div className="grid grid-cols-2 gap-3">
@@ -855,7 +857,7 @@ export function PurchasesPage() {
                     {warehouses.length > 1 && <td className="px-3 py-2 text-slate-500">{warehouses.find((w) => w.id === (l.warehouseId ?? viewing.warehouseId ?? warehouses.find((ww) => ww.isMain)?.id))?.nameAr ?? '—'}</td>}
                     <td className="px-3 py-2">{l.qty}{l.orderedQty!=null&&<div className="text-[10px] text-slate-400">مطلوب {l.orderedQty}{(l.rejectedQty??0)>0?` · مرفوض ${l.rejectedQty}`:''}</div>}</td>
                     <td className="px-3 py-2">{fmt(l.unitPriceMinor)}</td>
-                    <td className="px-3 py-2 text-sky-600 font-bold">{l.vatPercent != null ? (l.vatPercent > 0 ? `${l.vatPercent}٪ · ${fmt(l.inputVatMinor ?? 0)}` : 'معفى') : '—'}</td>
+                    <td className="px-3 py-2 text-sky-600 font-bold">{l.vatPercent != null ? (l.vatPercent > 0 ? `${l.vatPercent}٪ · ${fmt(l.inputVatMinor ?? 0)}` : '') : '—'}</td>
                     <td className="px-3 py-2 text-amber-600">{fmt(l.expenseShareMinor)}</td>
                     <td className="px-3 py-2 font-black text-emerald-600">{fmt(l.landedUnitCostMinor)}</td>
                   </tr>
@@ -1048,7 +1050,7 @@ export function PurchasesPage() {
                     onPick={setEditAddItemId}
 onEdit={(id) => goTo(`/inventory/items?edit=${id}`)}
                         onMovement={(id) => goTo(`/inventory/items?card=${id}`)}
-                        onPrices={(id) => goTo(`/sales/price-lists?item=${id}`)}
+                        onPrices={(id) => openItemPricesWindow(id)}
                     placeholder="اكتب صنفاً ثم اختر بالسهم + Enter أو مرتين"
                   />
                 </div>

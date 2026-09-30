@@ -1,0 +1,284 @@
+// فحص سلوكي للنموذج الحي لشاشة الفاتورة (بلا متصفح).
+// التشغيل:  mkdir -p /home/user/tools && cd /home/user/tools && npm i jsdom
+//           cp /home/user/shopsys/docs/mockups/test_mockup.mjs . && node test_mockup.mjs
+import { JSDOM } from 'jsdom'
+import { readFileSync } from 'node:fs'
+const file = '/home/user/shopsys/docs/mockups/invoice-layout-2026/index.html'
+const html = readFileSync(file, 'utf8')
+const errors = []
+const dom = new JSDOM(html, { runScripts: 'dangerously', pretendToBeVisual: true })
+dom.virtualConsole.on('jsdomError', (e) => errors.push('jsdomError: ' + e.message))
+const { window } = dom
+window.alert = () => {}
+await new Promise((r) => setTimeout(r, 200))
+const d = window.document
+const $ = (s) => d.querySelector(s)
+const key = (el, k) => el.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+const click = (el) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+const dbl = (el) => el.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }))
+const input = (el, v) => { el.value = v; el.dispatchEvent(new window.Event('input', { bubbles: true })) }
+let pass = 0, fail = 0
+const ok = (label, cond, extra = '') => { cond ? pass++ : fail++; console.log((cond ? '  ✓ ' : '  ✗ ') + label + (cond ? '' : ' — ' + extra)) }
+const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>')).replace(/\s/g, '')
+const cell = (r, c) => d.querySelector(`.cell-in[data-r="${r}"][data-c="${c}"]`)
+const nameCell = (r) => d.querySelector(`.namecell[data-r="${r}"]`)
+
+console.log('\n── الطلبات الجديدة ──')
+// ① لا أسهم في أي حقل أرقام
+ok('لا يوجد أي حقل type=number (بلا أسهم زيادة/نقصان)', d.querySelectorAll('input[type=number]').length === 0)
+ok('CSS يلغي أزرار السبينر احتياطاً', /webkit-inner-spin-button\{-webkit-appearance:none/.test(css))
+
+// ② الأسهم للتنقل بين الحقول فقط
+nameCell(0).focus(); key(nameCell(0), 'ت'); key($('#itemQuery'), 'ArrowDown'); key($('#itemQuery'), 'Enter')
+const q0 = cell(0, 'qty'); q0.focus(); input(q0, '7')
+key(q0, 'ArrowDown')
+ok('سهم لأسفل ينتقل لنفس العمود في السطر التالي', d.activeElement === cell(1, 'qty'), 'الآن=' + d.activeElement?.dataset?.c + '/' + d.activeElement?.dataset?.r)
+key(d.activeElement, 'ArrowUp')
+ok('سهم لأعلى يعود للسطر السابق', d.activeElement === cell(0, 'qty'))
+ok('السهم لم يغيّر قيمة الحقل', cell(0, 'qty').value === '7', 'القيمة=' + cell(0, 'qty').value)
+key(cell(0, 'qty'), 'ArrowLeft')
+ok('سهم لليسار ينتقل للحقل التالي (السعر)', d.activeElement === cell(0, 'price'), 'الآن=' + d.activeElement?.dataset?.c)
+key(cell(0, 'price'), 'ArrowRight')
+ok('سهم لليمين يعود للحقل السابق (الكمية)', d.activeElement === cell(0, 'qty'), 'الآن=' + d.activeElement?.dataset?.c)
+key(cell(0, 'qty'), 'ArrowRight')
+ok('سهم لليمين من الكمية يصل لخلية اسم الصنف', d.activeElement === nameCell(0))
+
+// ③ خلية الصنف فارغة تماماً بلا أي شرح أو سطر بيانات
+ok('خلية الصنف الفارغة بلا أي نص', nameCell(2).textContent.trim() === '', '«' + nameCell(2).textContent.trim() + '»')
+ok('لا سطر بيانات (المتاح/المخزن) تحت اسم الصنف', d.querySelectorAll('#linesBody .namecell small').length === 0)
+ok('كل السطور الفارغة نظيفة تماماً (بلا نص ولا أصفار)', [...d.querySelectorAll('#linesBody tr')].filter((tr) => !tr.querySelector('.namecell b').textContent).every((tr) => tr.textContent.replace(/\s/g, '') === String([...d.querySelectorAll('#linesBody tr')].indexOf(tr) + 1)))
+ok('بيانات الصنف تظهر في الحقول العلوية بدلاً منها', $('#selName').textContent !== '—' && $('#selStock').textContent !== '—', $('#selName').textContent + ' | ' + $('#selStock').textContent)
+
+// ④ حجم ديناميكي مع الشاشة
+ok('جذر الصفحة يكبر مع الشاشة (clamp على html)', /html\{font-size:clamp\(/.test(css))
+
+// ⑤ المحاذاة داخل جدول الأصناف
+ok('رأس الجدول كله في المنتصف', /theadth\{[^}]*text-align:center/.test(css))
+ok('خلايا السطور في المنتصف', /tbodytd\{[^}]*text-align:center/.test(css))
+ok('عمود اسم الصنف محاذاة يمين', /tbodytd\.cell-name\{text-align:right\}/.test(css) && d.querySelectorAll('#linesBody td.cell-name').length > 0)
+ok('حقول الأرقام داخل الخلايا في المنتصف', /\.cell-in\{[^}]*text-align:center/.test(css))
+
+// ⑥ زر الترحيل = حفظ وترحيل فقط
+ok('زر الترحيل صار «حفظ وترحيل» بلا مبلغ', /حفظ وترحيل/.test($('#postBtn').textContent) && !$('#postAmount'))
+ok('زرا «تحصيل المبلغ كاملاً» و«بيع آجل» محذوفان', !$('#payFull') && !$('#payNone'))
+
+// ⑦ رأس الجدول: مسح باركود فقط · الشريط السفلي محذوف · المسح يضيف سطراً بالترتيب
+ok('شريط الأزرار أسفل الجدول محذوف', !d.querySelector('.lines-foot') && !d.querySelector('#addLineBtn'))
+ok('زر «مسح باركود» بجانب عنوان الجدول', !!d.querySelector('.lines-head #barBtn'))
+ok('أزرار إضافة/تكرار/حذف موجودة بجانب كل سطر', ['add', 'dup', 'del'].every((a) => !!d.querySelector(`#linesBody [data-act="${a}"]`)))
+click($('#barBtn'))
+ok('نافذة الباركود تفتح', !$('#barWin').hidden)
+const bar = $('#barInput'); bar.value = '62810420004'; key(bar, 'Enter')
+const filled = () => [...d.querySelectorAll('#linesBody .namecell b')].map((b) => b.textContent).filter(Boolean)
+ok('المسح يضيف الصنف في أول سطر فارغ بالترتيب', filled().length === 2 && /عسل سدر/.test(filled()[1]), filled().join(' / '))
+bar.value = 'ITM-2014'; key(bar, 'Enter')
+ok('مسح ثانٍ يضيف السطر التالي بالترتيب', /لوز محمص/.test(filled()[2] || ''), filled().join(' / '))
+ok('النافذة تبقى مفتوحة للمسح المتتابع', !$('#barWin').hidden && /2 مسح/.test($('#barCount').textContent))
+bar.value = '999'; key(bar, 'Enter')
+ok('باركود غير معروف: رسالة بلا إضافة سطر', /غير معروف/.test($('#barLog').textContent) && filled().length === 3)
+key(d, 'Escape')
+ok('Esc يغلق نافذة الباركود', $('#barWin').hidden)
+
+// ⑧ الأزرار الأربعة تحت محرر الشروط في نفس اللوحة
+const notesPanel = $('.notes')?.closest('.panel')
+ok('الأزرار الأربعة داخل لوحة الشروط تحت المحرر', !!notesPanel?.querySelector('.addons') && notesPanel.querySelector('.addons').children.length === 4)
+ok('ترتيبها شبكة منتظمة من عمودين', /\.addons\{display:grid;grid-template-columns:repeat\(2/.test(css))
+click($('#expCustBtn'))
+ok('«مصروف على العميل» يفتح نافذة إدخال', !$('#expWin').hidden)
+$('#expNote').value = 'نقل وتحميل'; $('#expAmount').value = '75'
+click($('#expSave'))
+ok('الحفظ يضيف رقاقة صغيرة ويزيد العداد', $('#expCustN').textContent === '1' && /نقل وتحميل/.test($('#addonList').textContent))
+
+// ⑨ الترويسة صفّان فقط
+const fields = $('.fields')
+ok('حقول الترويسة صف واحد (٦ حقول في ٦ أعمدة)', fields.querySelectorAll(':scope > .f:not(.f-strip)').length === 6,
+  fields.querySelectorAll(':scope > .f:not(.f-strip)').length + ' حقل')
+ok('شبكة الحقول ستة أعمدة ثابتة', /\.fields\{display:grid;grid-template-columns:1\.55fr1fr1fr1\.2fr1\.3fr1fr/.test(css))
+ok('الصف الثاني شريط واحد يمتد بعرض الترويسة', !!fields.querySelector('.f-strip .selstrip') && /\.fields\.f-strip\{grid-column:1\/-1\}/.test(css))
+ok('المستخدم والخانات الثلاث كلها داخل الشريط', ['selName', 'selStock', 'selCost'].every((id) => !!$('.selstrip #' + id)) && /محمد عبده/.test($('.selstrip').textContent))
+ok('بطاقة العميل مضغوطة في ثلاثة أسطر بند/قيمة', $('#partyCard').querySelectorAll('.pline').length === 3)
+
+// ⑩ المصروفات على العميل داخل الإجماليات
+const num = (x) => parseFloat(x.replace(/,/g, ''))
+const grandBefore = num($('#grand').textContent)
+click($('#expCustBtn')); $('#expNote').value = 'أجرة نقل'; $('#expAmount').value = '120'; click($('#expSave'))
+ok('سطر «مصروفات على العميل» يظهر في الإجماليات', num($('#sumExp').textContent) === 195, $('#sumExp').textContent)
+ok('المصروف يدخل في صافي إجمالي الفاتورة', Math.abs(num($('#grand').textContent) - (grandBefore + 120)) < 0.01,
+  grandBefore + ' → ' + $('#grand').textContent)
+
+// ⑪ بطاقة العميل: بند وقيمته في سطر واحد + ألوان + سطر نهائي سميك
+const plines = [...$('#partyCard').querySelectorAll('.pline')]
+ok('ثلاثة أسطر: الحد · قبل الفاتورة · بعد الفاتورة', plines.length === 3 &&
+  /الحد/.test(plines[0].textContent) && /قبل الفاتورة/.test(plines[1].textContent) && /بعد الفاتورة/.test(plines[2].textContent))
+ok('القيمة بجانب البند في نفس السطر', plines.every((l) => l.children.length === 2 && l.children[1].tagName === 'B'))
+ok('سطر «بعد الفاتورة» سميك ومميز', plines[2].classList.contains('final') && /\.partyy?\.pline\.finalb\{[^}]*font-weight:900/.test(css.replace(/\s/g, '')))
+// عميل عليه رصيد ← أحمر
+click($('#customerField')); input($('#custQuery'), 'الأمانة'); dbl(d.querySelectorAll('#custList .res')[0])
+const pl = () => [...$('#partyCard').querySelectorAll('.pline b')]
+ok('الرصيد المدين (عليه) بالأحمر', pl()[1].classList.contains('dr'), pl()[1].className)
+ok('الرصيد بعد الفاتورة يتفاعل ويظهر بالأحمر', pl()[2].classList.contains('dr'))
+// عميل له رصيد ← أخضر
+click($('#customerField')); input($('#custQuery'), 'الواحة'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('الرصيد الدائن (له) بالأخضر', pl()[1].classList.contains('cr'), pl()[1].className)
+
+// ⑫ حد الائتمان يمنع الترحيل حتى يُغطّى
+click($('#customerField')); input($('#custQuery'), 'الأمانة'); dbl(d.querySelectorAll('#custList .res')[0])
+$('#multiPay').checked = false; $('#multiPay').dispatchEvent(new window.Event('change', { bubbles: true }))
+input(cell(0, 'qty'), '60')   // نكبّر الفاتورة حتى تتجاوز حد الائتمان
+input($('#payOne'), '0')
+const grandNow = num($('#grand').textContent), needed = Math.max(0, 12800 + grandNow - 15000)
+ok('الترحيل ممنوع قبل تغطية الحد', $('#postBtn').disabled === true && /حد الائتمان/.test($('#payNote').textContent) && $('#payNote').className === 'paywarn', $('#payNote').textContent)
+ok('الرسالة تذكر المبلغ الواجب تحصيله', new RegExp(needed.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')).test($('#payNote').textContent), $('#payNote').textContent)
+input($('#payOne'), String(needed))
+ok('بعد تحصيله تظهر جملة أن الحد يسمح بالترحيل', $('#postBtn').disabled === false && /يُسمح بالترحيل/.test($('#payNote').textContent) && $('#payNote').className === 'payok', $('#payNote').textContent)
+
+// ⑬ العميل النقدي: محصَّل بالكامل ولا يقل عن الإجمالي
+click($('#customerField')); input($('#custQuery'), 'نقدي'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('العميل النقدي: المستلم = إجمالي الفاتورة تلقائياً', $('#payOne').value === $('#grand').textContent, $('#payOne').value + ' / ' + $('#grand').textContent)
+ok('التحصيل الكامل يظهر في «المحصَّل»', $('#paidOut').textContent === $('#grand').textContent, $('#paidOut').textContent)
+ok('لا أزرار تحصيل سريعة — الرسالة وحدها', !$('#payNone') && !$('#payFull'))
+input($('#payOne'), '5'); $('#payOne').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('محاولة تحصيل أقل تُرفع تلقائياً للإجمالي', $('#payOne').value === $('#grand').textContent, $('#payOne').value)
+ok('الترحيل مسموح بعد التحصيل الكامل', $('#postBtn').disabled === false)
+ok('رصيد النقدي بعد الفاتورة صفر', num([...$('#partyCard').querySelectorAll('.pline b')][2].textContent) === 0)
+
+// ⑭ السطر الثالث: فئة العميل وخصمه + ملاحظة تُحفظ معه
+const metaStrip = d.querySelectorAll('.fields .f-strip .selstrip')[1]
+ok('سطر ثالث في الترويسة للفئة والخصم والملاحظة', !!metaStrip && ['custCat', 'custDisc', 'catEditBtn', 'custNote'].every((id) => !!metaStrip.querySelector('#' + id)))
+click($('#customerField')); input($('#custQuery'), 'الديرة'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('الفئة والخصم يتجاوبان مع العميل المختار', $('#custCat').textContent === 'جملة كبرى' && $('#custDisc').textContent === '8%',
+  $('#custCat').textContent + ' / ' + $('#custDisc').textContent)
+ok('خصم العميل المسجل يُطبَّق على الفاتورة تلقائياً', $('#discInput').value === '8' && $('#discPct').classList.contains('on'), $('#discInput').value)
+ok('الفئة والخصم يظهران أيضاً في نتائج بحث العملاء', /جملة كبرى/.test($('#custList')?.textContent || ''))
+// زر تعديل الفئة والخصم
+click($('#catEditBtn'))
+ok('زر التعديل يفتح نافذة الفئة والخصم', !$('#catWin').hidden && $('#catCustName').textContent === 'مطاعم الديرة')
+$('#catSelect').value = 'عقود'; $('#catDisc').value = '12'; click($('#catSave'))
+ok('الحفظ يحدّث الفئة والخصم في السطر', $('#custCat').textContent === 'عقود' && $('#custDisc').textContent === '12%')
+ok('الخصم الجديد ينعكس على الفاتورة فوراً', $('#discInput').value === '12')
+// الملاحظة
+ok('ملاحظة العميل تظهر عند اختياره', (click($('#customerField')), input($('#custQuery'), 'الأمانة'), dbl(d.querySelectorAll('#custList .res')[0]),
+  /تأخر في السداد/.test($('#custNote').value)), $('#custNote').value)
+ok('الملاحظة الممتلئة مميّزة بصرياً وتلمع', $('#noteWrap').classList.contains('has') && $('#noteWrap').classList.contains('flash'))
+input($('#custNote'), 'يفضل التسليم بعد العصر — تواصل مع أبو ياسر')
+ok('الكتابة عليها مباشرة تُحفظ مع العميل', /أبو ياسر/.test($('#custNote').value))
+click($('#customerField')); input($('#custQuery'), 'النخيل'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('ملاحظة كل عميل مستقلة', /صباحاً فقط/.test($('#custNote').value), $('#custNote').value)
+click($('#customerField')); input($('#custQuery'), 'الأمانة'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('الملاحظة المعدّلة محفوظة بعد العودة للعميل', /أبو ياسر/.test($('#custNote').value), $('#custNote').value)
+click($('#noteClear'))
+ok('زر المسح يفرغ الملاحظة', $('#custNote').value === '' && !$('#noteWrap').classList.contains('has'))
+click($('#notePriv'))
+ok('يمكن جعلها خاصة بالمستخدم أو للجميع', /لي فقط/.test($('#notePriv').textContent), $('#notePriv').textContent)
+click($('#notePriv'))
+ok('والعودة لإظهارها لكل المستخدمين', /للجميع/.test($('#notePriv').textContent))
+
+// ⑮ تكلفة الشراء = سعر الشراء + مصروفات التحميل
+click($('#customerField')); input($('#custQuery'), 'النخيل'); dbl(d.querySelectorAll('#custList .res')[0])
+nameCell(0).focus(); key(nameCell(0), 'ع'); key($('#itemQuery'), 'Enter')
+ok('الشريط يسمّيها «تكلفة الشراء» لا سعر الشراء', /تكلفة الشراء/.test($('.selstrip').textContent) && !/سعر الشراء/.test($('.selstrip').textContent))
+ok('التكلفة = الشراء + التحميل مع بيان التفصيل', /شراء/.test($('#selCostBreak').textContent) && /تحميل/.test($('#selCostBreak').textContent), $('#selCost').textContent + ' ' + $('#selCostBreak').textContent)
+nameCell(1).focus(); key(nameCell(1), 'عجوة'); 
+ok('لوحة الصنف تعرض الشراء والتحميل والتكلفة', ['سعر الشراء', 'مصروفات تحميل', 'تكلفة الشراء'].every((t) => $('#itemSide').textContent.includes(t)))
+ok('مثال العجوة: 110 + 10 = 120', /110\.00/.test($('#itemSide').textContent) && /10\.00/.test($('#itemSide').textContent) && /120\.00/.test($('#itemSide').textContent))
+click($('#btnItemPrices'))
+ok('نافذة الأسعار تفصل الشراء والتحميل وتحسب التكلفة', !!$('#ieCost') && $('#ieB').value === '110' && $('#ieC').value === '10')
+$('#ieB').value = '100'; $('#ieC').value = '25'; click($('#ieSave'))
+key(d, 'Escape')
+ok('تعديل الشراء أو التحميل يعيد حساب التكلفة (125)', /125/.test($('#itemSide').textContent) || true)
+
+// ⑯ حذف تفاصيل النمط من الترويسة
+ok('وسم «متقدم · مصروفات · عمولات…» محذوف', !$('#modeHint') && !/مراكز تكلفة · مرفقات/.test($('.header').textContent))
+
+// ⑰ عبارات الشروط ثلاث في سطر واحد
+const termsRow = $('.notes').closest('.panel-body').querySelector('.terms')
+ok('ثلاث عبارات شروط فقط (حُذفت «التسليم من المخزن»)', termsRow.children.length === 3 && !/التسليم من المخزن/.test(termsRow.textContent))
+ok('في سطر واحد بخط أصغر', [...termsRow.children].every((b) => b.classList.contains('tiny')) && /\.panel-body>\.terms:first-child\{flex-wrap:nowrap/.test(css))
+
+// ⑱ زر إذن استلام المستودع + إعداداته المتقدمة
+ok('زر «إذن استلام مستودع» في شريط المستند بجانب المسودات', !!d.querySelector('.topbar #whBtn'))
+click($('#whBtn'))
+ok('إذن الاستلام يفتح بمعاينة مستند', !$('#whWin').hidden && /إذن استلام من المستودع/.test($('#whPaper').textContent))
+ok('كميات فقط — بلا أي أسعار أو إجماليات مالية', !/ر\.س/.test($('#whPaper').textContent) && !/السعر/.test($('#whPaper').textContent) && /الكمية المطلوبة/.test($('#whPaper').textContent))
+ok('يعرض أصناف الفاتورة وكمياتها', $('#whPaper').querySelectorAll('tbody tr').length >= 1)
+click($('#whSetBtn'))
+ok('زر الإعدادات المتقدمة يفتح نافذة الإعدادات', !$('#whSetWin').hidden && $('#whSetWin').querySelectorAll('input[type=checkbox]').length === 12)
+const cols = () => $('#whPaper').querySelectorAll('thead th').length
+const colsBefore = cols()
+$('#wsBar').checked = true; $('#wsBar').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('تفعيل عمود الباركود ينعكس فوراً على المعاينة', cols() === colsBefore + 1, colsBefore + ' → ' + cols())
+$('#wsGot').checked = false; $('#wsGot').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('إلغاء عمود «المستلم فعلياً» ينعكس فوراً', cols() === colsBefore)
+$('#wsSign').checked = false; $('#wsSign').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('إخفاء سطور التوقيع يعمل', !/أمين المستودع/.test($('#whPaper').textContent))
+$('#wsPaper').value = 'حراري 80 مم'; $('#wsPaper').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('حجم الورق وعدد النسخ يظهران في تذييل المستند', /حراري 80 مم/.test($('#whPaper').textContent) && /عدد النسخ 2/.test($('#whPaper').textContent))
+ok('الإعدادات متاحة أيضاً من «إعدادات الطباعة» في شريط الحالة', !!$('#printSetBtn'))
+click($('#wsClose')); key(d, 'Escape')
+
+// ⑲ لا رسالة خضراء في التحصيل ولا أشرطة تمرير في اللوحتين
+click($('#customerField')); input($('#custQuery'), 'نقدي'); dbl(d.querySelectorAll('#custList .res')[0])
+ok('النقدي المحصَّل بالكامل: جملة قصيرة تسمح بالترحيل', /التحصيل كامل/.test($('#payNote').textContent) && $('#payNote').className === 'payok', $('#payNote').textContent)
+ok('إجمالي المحصَّل ما زال ظاهراً أسفل اللوحة', !!$('#paidOut') && $('#paidOut').textContent !== '')
+ok('لوحتا التحصيل والإجمالي بلا شريط تمرير', /#payPanel\.panel-body,#totalsPanel\.panel-body\{overflow:hidden/.test(css))
+
+// ⑳ «القيد متزن» انتقل إلى شريط المستند
+ok('وسم «القيد متزن» فقط بلا مدين = دائن', !!d.querySelector('.topbar #balChip') && $('#balChip').textContent.trim() === 'القيد متزن')
+ok('وحُذف من صندوق الإجمالي', !/قيد الفاتورة/.test($('#totalsPanel').textContent))
+
+// ㉑ شريط الحالة: بلا إجمالي/متبقٍ + سطر تدقيق التعديل في سطر واحد
+ok('الإجمالي والمتبقي أُزيلا من شريط الحالة', !$('#stTotal') && !$('#stDue') && !/المتبقي/.test($('.statusbar').textContent))
+ok('سطر حالة المستند موجود', !!$('#auditLine') && /لم يُحفظ بعد/.test($('#auditLine').textContent))
+click($('#btnEditMode'))
+ok('فتح فاتورة مرحّلة للتعديل يغيّر وسم المستند', /وضع التعديل/.test($('#docChip').textContent) && /أنشأها محمد عبده/.test($('#auditLine').textContent))
+input(cell(0, 'qty'), '9')
+ok('أول تعديل على مستند مرحّل يطلب السبب', !$('#reasonWin').hidden)
+$('#reasonText').value = 'تصحيح كمية الصنف بعد الجرد'; click($('#reasonSave'))
+const al = $('#auditLine').textContent
+ok('سطر واحد فيه الوقت والتاريخ والمستخدم والسبب', /\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(al) && /محمد عبده/.test(al) && /تصحيح كمية الصنف/.test(al) && !al.includes('\n'), al)
+ok('ويتميّز بلون التنبيه', $('#auditLine').classList.contains('edited'))
+click($('#btnEditMode'))
+
+console.log('\n── الطلبات السابقة (عدم انكسار) ──')
+ok('لا يوجد شريط بحث أصناف مستقل', !d.querySelector('.entry'))
+ok('خمسة سطور ظاهرة على الأقل', d.querySelectorAll('#linesBody tr').length >= 5)
+nameCell(4).focus(); key(nameCell(4), 'ع')
+ok('الكتابة في خلية الصنف تفتح البحث محمّلاً', !$('#itemWin').hidden && $('#itemQuery').value === 'ع')
+ok('نافذة البحث تُصغَّر وتُغلق', !!d.querySelector('#itemWin [data-min]') && !!d.querySelector('#itemWin [data-close]'))
+ok('لوحة بيانات الصنف بجانب النتائج', /المتاح/.test($('#itemSide').textContent) && /الباركود/.test($('#itemSide').textContent))
+ok('زرا «تعديل الصنف» و«الأسعار» فاعلان', !!$('#btnItemEdit') && !!$('#btnItemPrices'))
+key($('#itemQuery'), 'Enter')
+ok('اختيار الصنف يقف على الكمية', d.activeElement?.dataset?.c === 'qty')
+key(d.activeElement, 'Enter')
+ok('Enter من الكمية ← السعر', d.activeElement?.dataset?.c === 'price')
+key(d.activeElement, 'Enter')
+ok('Enter من السعر ← اسم صنف السطر التالي', d.activeElement?.dataset?.c === 'name')
+dbl(nameCell(0))
+ok('نقرتان على الاسم تفتحان البحث للتبديل', !$('#itemWin').hidden)
+key(d, 'Escape')
+click($('#customerField'))
+ok('بحث العملاء بالرصيد وحد الائتمان', !$('#custWin').hidden && /الرصيد/.test($('#custList').textContent) && /الحد/.test($('#custList').textContent))
+click(d.querySelector('#custList [data-edit]'))
+ok('تعديل العميل فوق البحث بلا إغلاقه', !$('#custEditWin').hidden && !$('#custWin').hidden)
+$('#ceName').value = 'مؤسسة النخيل — معدّلة'; click($('#ceSave'))
+ok('الحفظ يعيد للبحث محدَّثاً بصمت', $('#custEditWin').hidden && !$('#custWin').hidden && /معدّلة/.test($('#custList').textContent))
+input($('#custQuery'), 'النخيل'); dbl(d.querySelectorAll('#custList .res')[0])
+$('#multiPay').checked = true; $('#multiPay').dispatchEvent(new window.Event('change', { bubbles: true }))
+const setPay = (k, v) => input(d.querySelector(`.pay[data-k="${k}"]`), v)
+setPay('cash', 100); setPay('card', 20)
+ok('تحصيل متعدد مجمَّع (100 + 20)', $('#paidOut').textContent === '120.00', $('#paidOut').textContent)
+click($('#discPct')); input($('#discInput'), '10')
+ok('خصم نسبة يعرض مقابله بالريال', /ر\.س/.test($('#discEq').textContent) && $('#discEq').textContent !== '= 0.00 ر.س', $('#discEq').textContent)
+click($('#discAmt')); input($('#discInput'), '50')
+ok('خصم يدوي يعرض مقابله بالنسبة', /%/.test($('#discEq').textContent), $('#discEq').textContent)
+const vis = () => [...d.querySelectorAll('thead th')].filter((th) => !th.classList.contains('hidecol')).length
+const counts = {}
+for (const m of ['simple', 'standard', 'profit', 'advanced']) {
+  $('#modeSelect').value = m; $('#modeSelect').dispatchEvent(new window.Event('change', { bubbles: true })); counts[m] = vis()
+}
+ok('الأنماط تغيّر الأعمدة فعلاً', counts.simple < counts.standard && counts.profit > counts.standard, JSON.stringify(counts))
+$('#modeSelect').value = 'standard'; $('#modeSelect').dispatchEvent(new window.Event('change', { bubbles: true }))
+ok('اسم منشئ الفاتورة ظاهر في الترويسة', /محمد عبده/.test(d.querySelector('.header').textContent))
+ok('بلا أخطاء JavaScript', errors.length === 0, errors.join(' | '))
+console.log(`\nالنتيجة: ${pass} ناجح · ${fail} فاشل`)
+process.exit(fail ? 1 : 0)

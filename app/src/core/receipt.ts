@@ -70,6 +70,8 @@ export interface ReceiptSettings {
   showItemCounts: boolean
   showDiscount: boolean
   showTaxSummary: boolean
+  /** اسم القائم بالطباعة على الإيصال الحراري (طلب المالك: قابل للإظهار والإخفاء) */
+  showOperator: boolean
   /** المبلغ كتابةً (تفقيط) — فاتورة A4 */
   showWords: boolean
   /** خانتا التوقيع — فاتورة A4 */
@@ -77,6 +79,14 @@ export interface ReceiptSettings {
   showFooter: boolean
   /** خيار عابر لقالب إذن التسليم/الاستلام؛ لا يُحفظ في الإعدادات */
   hidePrices?: boolean
+  /* ─── مفاتيح الطباعة الثلاثة (طلب المالك) — تُعرض كأزرار «مفتاح كهرباء» ───
+     كلها **مطفأة افتراضياً**؛ يمكن تغيير الافتراضي من إعدادات الطباعة. */
+  /** طباعة مباشرة صامتة بلا مربع حوار ويندوز */
+  silentPrint: boolean
+  /** طباعة كاشير حرارية مباشرة بدل الفاتورة الكبيرة */
+  cashierPrint: boolean
+  /** طباعة تلقائية فور حفظ الفاتورة (بالنمط الذي يحدده الزران الآخران) */
+  printAfterSave: boolean
 }
 
 export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
@@ -105,9 +115,13 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   showItemCounts: true,
   showDiscount: true,
   showTaxSummary: true,
+  showOperator: true,
   showWords: true,
   showSignatures: true,
   showFooter: true,
+  silentPrint: false,
+  cashierPrint: false,
+  printAfterSave: false
 }
 
 export interface ReceiptRow {
@@ -188,11 +202,11 @@ export function buildReceiptModel(args: {
   const paid = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
   const remaining = totals.totalMinor - paid
   const vatSet = [...new Set(lines.map((l) => l.vatPercentOverride ?? args.taxPercent))].sort((a, b) => a - b)
-  const vatLabel = vatSet.length === 1
-    ? `${vatSet[0]}٪`
-    : vatSet.map((p) => (p > 0 ? `${p}٪` : 'معفى')).join(' / ')
+  /* قرار المالك: لا تُكتب «معفى» ولا ما شابهها في الفاتورة — النسب الصفرية
+     تُحذف من التسمية، وإن لم تبق نسبة موجبة فلا يُطبع سطر ضريبة أصلاً. */
+  const vatLabel = vatSet.filter((p) => p > 0).map((p) => `${p}٪`).join(' / ')
   const taxLabel =
-    settings.showTaxSummary && totals.taxMinor > 0
+    settings.showTaxSummary && totals.taxMinor > 0 && vatLabel
       ? `ض.ق.م من السطور ${vatLabel} ${args.taxInclusive ? '(مشمولة في الإجمالي)' : '(مضافة)'}`
       : null
   return {

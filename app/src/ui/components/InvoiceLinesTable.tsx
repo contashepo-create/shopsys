@@ -1,9 +1,12 @@
-import { useState, type ReactNode } from 'react'
-import { Trash2 } from 'lucide-react'
+import { useState, type ReactNode, useEffect, useMemo, useRef } from 'react'
+import { Barcode, Copy, Pencil, Plus, Trash2 } from 'lucide-react'
 import type { InvoiceEditorMode } from '../../core/advancedInvoice.ts'
+import { useAppStore } from '../../stores/app.store.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { inputCls } from './ui.tsx'
 import { ItemQuickPicker, QuickSelect } from './KeyboardPickers.tsx'
+import { useWindowHost } from '../windows/windowHostContext.ts'
+import { openItemPickerWindow } from '../windows/windowStore.ts'
 
 type InvoiceLineItem = {
   id: number
@@ -16,6 +19,8 @@ type InvoiceLineItem = {
   soldByWeight?: boolean
   trackExpiry?: boolean
   isActive?: boolean
+  baseUnit?: string
+  isService?: boolean
 }
 
 export type InvoiceTableLine = {
@@ -36,6 +41,36 @@ export type InvoiceTableLine = {
 
 type Warehouse = { id: number; nameAr: string }
 
+/**
+ * أعمدة جدول البنود — **مقاس ومحاذاة واحدة للرأس والخلية**.
+ * بلاغ المالك: «تقسيم الحقول بجانب بعضها به عدم تناسق». السبب أن كل خلية كانت
+ * تكتب عرضها ومحاذاتها يدوياً (th بلا عرض وtd بـ w-[7rem]…)، فتختلف حدود العمود
+ * عن حدود رأسه. الآن كل عمود معرَّف مرة واحدة هنا ويُقرأ منه الاثنان.
+ */
+const COL = {
+  index: 'w-9 text-center',
+  code: 'w-[5.25rem] text-center',
+  name: 'w-[15rem] text-center',
+  warehouse: 'w-36 text-center',
+  qty: 'w-[5.5rem] text-center',
+  price: 'w-[7rem] text-center',
+  percent: 'w-[4.5rem] text-center',
+  unit: 'w-[4.25rem] text-center',
+  tax: 'w-[5.5rem] text-center',
+  money: 'w-[6.75rem] text-center',
+  total: 'w-[8rem] text-center',
+  tools: 'w-[4rem] text-center',
+} as const
+
+/** عرض كل عمود بالـrem — نفس أرقام COL أعلاه. يُحسب منها أدنى عرض للجدول
+ *  حتى لا ينسحق عمود «الصنف / الوصف» عند إضافة أعمدة الأنماط الأعلى
+ *  (التكلفة/الهامش/الضريبة/المخزن). بلاغ المالك: «اسم الصنف يختفي». */
+const COLW = {
+  index: 2.25, code: 5.25, name: 15, warehouse: 9, qty: 5.5, price: 7,
+  percent: 4.5, unit: 4.25, tax: 5.5, money: 6.75, total: 8, tools: 4,
+} as const
+
+
 type Props = {
   kind: 'sale' | 'purchase'
   mode: InvoiceEditorMode
@@ -51,22 +86,73 @@ type Props = {
   warnings?: Map<string, { message: string; severity: 'warning' | 'error' }>
   costShares?: Map<string, number>
   belowCostKeys?: Set<string>
-  belowCostNotice?: (line: InvoiceTableLine) => ReactNode
   onPick: (id: number) => void
+  /** الصنف في السطر **النشِط** (بالنقر أو بالتنقل بالأسهم) — يتبعه شريط «الصنف المحدد» في الترويسة */
+  onActiveItem?: (itemId: number | null) => void
   onPatch: (key: string, patch: Partial<InvoiceTableLine>) => void
   onRemove: (key: string) => void
+  /** نسخ السطر المحدد بكل قيمه — زر «تكرار السطر» في شريط أدوات البنود */
+  onDuplicate?: (key: string) => void
+  /** نقل السطر لأعلى/أسفل بـAlt+↑/↓ (الموجة ① من خطة UX) */
+  onMoveLine?: (key: string, direction: -1 | 1) => void
+  /** نسبة ضريبة المستند لعرض رقاقة الضريبة على كل سطر (المرجع: 14% VAT) */
+  documentTaxPercent?: number
   onEdit?: (id: number) => void
   onMovement?: (id: number) => void
   onPrices?: (id: number) => void
+  /** نقرتان على اسم صنف في الجدول ⇒ نافذة اختيار صنف تستبدله (بلاغ المالك) */
+  onReplaceLine?: (key: string, itemId: number) => void
   amountLabel?: (item: InvoiceLineItem) => string
   placeholder: string
   showPicker?: boolean
+  /** مربع البحث/الباركود نفسه — يُعرض **داخل خلية اسم أول سطر فارغ** (لا شريط بحث منفصل) */
+  entry?: ReactNode
+  /** تصفية التصنيف المصاحبة للبحث — تظهر فوق الجدول بجوار العدادات */
+  entryFilter?: ReactNode
 }
 
-const numberStyle = (value: number | string) => ({
-  width: `${Math.max(6, String(value ?? '').replace(/[^0-9]/g, '').length + 1)}ch`,
-  minWidth: '6ch',
-})
+/** خلايا السطر القابلة للتحرير بالترتيب — تُستعمل في التنقل بالأسهم */
+function rowCells(row: HTMLTableRowElement): HTMLElement[] {
+  return [...row.querySelectorAll<HTMLElement>('input:not([type="date"]):not([disabled]), td[tabindex="0"]')]
+    .filter((element) => element.dataset.arrowsNative !== 'true')
+}
+/**
+ * التنقل داخل جدول البنود بالأسهم فقط — لا تغيّر الأسهم أي قيمة:
+ * ↑/↓ نفس العمود بين السطور · ←/→ بين حقول السطر (وتنتقل للسطر المجاور عند الطرف).
+ */
+function gridArrowNavigation(event: React.KeyboardEvent<HTMLTableSectionElement>) {
+  if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return
+  const target = event.target as HTMLElement
+  if (target.dataset.arrowsNative === 'true' || target.tagName === 'SELECT') return
+  const row = target.closest('tr')
+  const body = target.closest('tbody')
+  if (!row || !body) return
+  const rows = [...body.querySelectorAll<HTMLTableRowElement>('tr')]
+  const rowIndex = rows.indexOf(row as HTMLTableRowElement)
+  const cells = rowCells(row as HTMLTableRowElement)
+  const cellIndex = cells.indexOf(target)
+  if (cellIndex < 0) return
+  event.preventDefault()
+  const focus = (element?: HTMLElement) => {
+    if (!element) return
+    element.focus()
+    if (element instanceof HTMLInputElement) element.select()
+  }
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    const nextRow = rows[rowIndex + (event.key === 'ArrowDown' ? 1 : -1)]
+    if (!nextRow) return
+    const nextCells = rowCells(nextRow)
+    focus(nextCells[Math.min(cellIndex, nextCells.length - 1)])
+    return
+  }
+  const step = event.key === 'ArrowLeft' ? 1 : -1
+  const next = cells[cellIndex + step]
+  if (next) { focus(next); return }
+  const neighbour = rows[rowIndex + step]
+  if (!neighbour) return
+  const neighbourCells = rowCells(neighbour)
+  focus(step > 0 ? neighbourCells[0] : neighbourCells[neighbourCells.length - 1])
+}
 
 function decimalDraft(value: string): string {
   const translated = value
@@ -81,21 +167,108 @@ function decimalDraft(value: string): string {
   return sign + unsigned.slice(0, dot + 1) + unsigned.slice(dot + 1).replace(/\./g, '')
 }
 
+/** أقل عدد سطور ظاهرة في جدول البنود — تبقى الشاشة ثابتة ولا «تقفز» مع أول صنف */
+const MIN_VISIBLE_ROWS = 5
+/** خمسة سطور ظاهرة في جدول الأصناف — وما زاد يُمرَّر داخلياً (قرار المالك ⑩ح) */
+const TARGET_VISIBLE_ROWS = 5
+const VISIBLE_ROWS = Math.max(MIN_VISIBLE_ROWS, TARGET_VISIBLE_ROWS)
+/** هامش الربح الأدنى الذي يُنبَّه تحته بلون برتقالي (10% فوق التكلفة) */
+const MIN_MARGIN_RATIO = 0.1
+
 export function InvoiceLinesTable({
   kind, mode, lines, items, warehouses, warehouseId, currencyCode = 'EGP', currencyDecimals, currencySymbol,
-  canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys, belowCostNotice,
-  onPick, onPatch, onRemove, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
+  canViewCost = false, taxEnabled = false, warnings, costShares, belowCostKeys,
+  onPick, onActiveItem, onPatch, onRemove, onDuplicate, onMoveLine, documentTaxPercent = 0, onReplaceLine, onEdit, onMovement, onPrices, amountLabel, placeholder, showPicker = true,
+  entry, entryFilter,
 }: Props) {
   const lineWarehouseMode = warehouseId == null
+  /* أعمدة العرض الاختيارية — من زر «تخصيص الحقول»؛ إخفاؤها لا يغيّر أي حساب */
+  const columns = useAppStore((state) => state.invoiceColumns)
+  /* عمود الضريبة لا يظهر إلا إذا كانت الضريبة مفعَّلة **وفي نمط الربحية أو المتقدم**
+     (قرار المالك): البيع المباشر والمبسط بلا عمود ضريبة أصلاً. */
+  const showTaxColumn = columns.tax && taxEnabled && (mode === 'profit' || mode === 'advanced')
   const fmt = (minor: number) => formatMinor(minor, { code: currencyCode, symbol: currencySymbol, decimals: currencyDecimals as 0 | 2 | 3, name: '' }, false)
+  const windowHost = useWindowHost()
+  /**
+   * نقرتان على اسم الصنف تفتحان نافذة اختيار الصنف لاستبداله (بلاغ المالك).
+   * داخل نافذة ⇒ منتقٍ مستقل يُكدَّس فوق الفاتورة ويبقى بعد إغلاق نوافذ
+   * التعديل/الحركة/الأسعار؛ خارجها ⇒ تُفتح قائمة خلية الإدخال.
+   */
+  const openReplacePicker = (lineKey: string, currentName: string) => {
+    if (!onReplaceLine) return
+    if (!windowHost) { window.dispatchEvent(new Event('shopsys:open-item')); return }
+    openItemPickerWindow({
+      parentId: windowHost.windowId,
+      initialQuery: currentName,
+      items,
+      itemMeta: (row: { id: number }) => {
+        const full = items.find((entry) => entry.id === row.id)
+        return {
+          unit: full?.baseUnit ?? '',
+          stock: full?.isService ? 'خدمة' : String(full?.stockQty ?? 0),
+          low: !full?.isService && (full?.stockQty ?? 0) <= 0,
+          price: fmt(full?.priceMinor ?? 0),
+          cost: fmt(full?.costMinor ?? 0),
+        }
+      },
+      onPick: (itemId: number) => onReplaceLine(lineKey, itemId),
+    })
+  }
+
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
-  const selectedLine = selectedKey ? lines.find((line) => line.key === selectedKey) : undefined
-  const removeSelectedLine = () => {
-    if (!selectedLine) return
-    onRemove(selectedLine.key)
-    setSelectedKey(null)
-  }
+  /* شريط «الصنف المحدد» يتبع السطر الذي يقف عليه المستخدم: النقر على أي خلية
+     أو التنقل بالأسهم يغيّره، وإن لم يُحدَّد شيء بعد فآخر سطر مضاف. */
+  const activeItemId = (lines.find((line) => line.key === selectedKey) ?? lines[lines.length - 1])?.itemId ?? null
+  const activeItemRef = useRef(onActiveItem)
+  useEffect(() => { activeItemRef.current = onActiveItem })
+  useEffect(() => { activeItemRef.current?.(activeItemId) }, [activeItemId])
+  /* قرار المالك (⑩ح): **خمسة سطور** ظاهرة في جدول الأصناف وما زاد عليها يُمرَّر
+     داخلياً. الارتفاع يُقاس من ارتفاع سطر حقيقي لا من قيمة ثابتة، فيظهر ستة
+     سطور كاملة على كل مقاس شاشة بلا نصف سطر مقطوع، والمساحة الباقية تذهب
+     للوحات الثلاث أسفل الجدول. */
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const [boxMaxHeight, setBoxMaxHeight] = useState<number | undefined>(undefined)
+  useEffect(() => {
+    const box = scrollRef.current
+    if (!box || typeof ResizeObserver === 'undefined') return
+    const measure = () => {
+      const head = box.querySelector('thead')?.getBoundingClientRect().height ?? 0
+      const rows = [...box.querySelectorAll<HTMLTableRowElement>('tbody tr')].slice(0, VISIBLE_ROWS)
+      if (rows.length === 0) return
+      const sum = rows.reduce((total, row) => total + row.getBoundingClientRect().height, 0)
+      const last = rows[rows.length - 1]?.getBoundingClientRect().height ?? 0
+      const filler = last * (VISIBLE_ROWS - rows.length)
+      const next = Math.ceil(head + sum + filler + 1)
+      if (next < 40) return
+      setBoxMaxHeight((current) => (current && Math.abs(current - next) <= 1 ? current : next))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(box)
+    return () => observer.disconnect()
+  }, [])
+  /* سلسلة الإدخال بلا فأرة (طلب المالك): بمجرد اختيار الصنف من خلية الاسم ينتقل
+     التركيز تلقائياً إلى **كمية** السطر الجديد، ومنها Enter ⇐ السعر ⇐ السطر التالي.
+     قبل ذلك كان التركيز يسقط على body فتضيع الأرقام التي يكتبها البائع. */
+  const lineCountRef = useRef(lines.length)
+  useEffect(() => {
+    const grew = lines.length > lineCountRef.current
+    lineCountRef.current = lines.length
+    if (!grew) return
+    /* السطر المضاف حديثاً يصبح النشِط فوراً فيتبعه شريط «الصنف المحدد» */
+    setSelectedKey(lines[lines.length - 1]?.key ?? null)
+    const frame = requestAnimationFrame(() => {
+      const rows = scrollRef.current?.querySelectorAll<HTMLTableRowElement>('tbody tr[data-entry-row]')
+      const row = rows?.[rows.length - 1]
+      const cell = row?.querySelector<HTMLInputElement>('td.num-cell input:not([readonly])')
+      if (!cell) return
+      cell.focus()
+      cell.select()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [lines.length])
+
   const draftValue = (key: string, value: string | number) => drafts[key] ?? String(value ?? '')
   const updateDraft = (key: string, raw: string, commit: (value: string) => void) => {
     const value = decimalDraft(raw)
@@ -121,7 +294,100 @@ export function InvoiceLinesTable({
     const next = value === '' || value === '-' || value === '.' || value === '-.' ? 0 : Math.min(100, Math.max(0, Number(value) || 0))
     onPatch(line.key, { [field]: next })
   }
-  const linesValueMinor = lines.reduce((sum, line) => sum + Math.round(line.qty * line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)), 0)
+  /* عدد أعمدة الجدول الحقيقي: سطور الفراغ كانت تكتب colSpan=20 فتخلق أعمدة وهمية
+     تسحق عمود «الصنف / الوصف» وتترك فراغاً هائلاً — الآن الفراغ بعرض الجدول تماماً. */
+  /* خطة الأعمدة: مصدر واحد للعرض الأدنى ولمجموعة <col> ولسحب الحدود.
+     بلاغ المالك: «اسمح لي بتغيير حجم الأعمدة يميناً ويساراً». */
+  const columnPlan = useMemo(() => {
+    const plan: { key: string; base: number }[] = [{ key: 'index', base: COLW.index }]
+    if (columns.code) plan.push({ key: 'code', base: COLW.code })
+    plan.push({ key: 'name', base: COLW.name })
+    if (lineWarehouseMode) plan.push({ key: 'warehouse', base: COLW.warehouse })
+    if (kind === 'purchase' && mode !== 'simple') plan.push({ key: 'ordered', base: COLW.qty }, { key: 'received', base: COLW.qty }, { key: 'rejected', base: COLW.qty })
+    else plan.push({ key: 'qty', base: COLW.qty })
+    if (columns.unit) plan.push({ key: 'unit', base: COLW.unit })
+    plan.push({ key: 'price', base: COLW.price })
+    if (kind === 'sale') plan.push({ key: 'discount', base: COLW.percent })
+    if (kind === 'purchase' && mode !== 'simple') plan.push({ key: 'vat', base: COLW.percent })
+    if (kind === 'sale' && mode === 'profit' && canViewCost) plan.push({ key: 'cost', base: COLW.money }, { key: 'margin', base: COLW.money })
+    if (kind === 'purchase' && mode === 'profit' && canViewCost) plan.push({ key: 'expenseShare', base: COLW.money })
+    if (showTaxColumn) plan.push({ key: 'tax', base: COLW.tax })
+    plan.push({ key: 'total', base: COLW.total }, { key: 'tools', base: COLW.tools })
+    return plan
+  }, [canViewCost, columns.code, columns.unit, kind, lineWarehouseMode, mode, showTaxColumn])
+
+  const widthsKey = `shopsys-invoice-cols-${kind}`
+  const [colWidths, setColWidths] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem(widthsKey) ?? '{}') as Record<string, number> } catch { return {} }
+  })
+  const widthOf = (column: { key: string; base: number }) => colWidths[column.key] ?? column.base
+  const resizeRef = useRef<{ key: string; startX: number; startRem: number } | null>(null)
+  const rootFont = () => (typeof window === 'undefined' ? 16 : parseFloat(getComputedStyle(document.documentElement).fontSize) || 16)
+  /* السحب من حافة رأس العمود: يمين/يسار يوسّع أو يضيّق العمود ويُحفظ الاختيار */
+  const headPointerMove = (event: React.PointerEvent<HTMLTableSectionElement>) => {
+    if (resizeRef.current) return
+    const cell = (event.target as HTMLElement).closest('th')
+    if (!cell) return
+    const rect = cell.getBoundingClientRect()
+    const near = Math.min(Math.abs(event.clientX - rect.left), Math.abs(event.clientX - rect.right)) <= 5
+    cell.style.cursor = near ? 'col-resize' : ''
+  }
+  const headPointerDown = (event: React.PointerEvent<HTMLTableSectionElement>) => {
+    const cell = (event.target as HTMLElement).closest('th')
+    if (!cell) return
+    const cells = [...(cell.parentElement?.children ?? [])] as HTMLElement[]
+    const index = cells.indexOf(cell)
+    const column = columnPlan[index]
+    if (!column) return
+    const rect = cell.getBoundingClientRect()
+    const fromRight = Math.abs(event.clientX - rect.right) <= 5
+    const fromLeft = Math.abs(event.clientX - rect.left) <= 5
+    if (!fromRight && !fromLeft) return
+    event.preventDefault()
+    event.stopPropagation()
+    resizeRef.current = { key: column.key, startX: event.clientX, startRem: widthOf(column) }
+    const font = rootFont()
+    const move = (moveEvent: PointerEvent) => {
+      const state = resizeRef.current
+      if (!state) return
+      const deltaPx = fromRight ? moveEvent.clientX - state.startX : state.startX - moveEvent.clientX
+      const next = Math.max(2.25, Math.min(40, state.startRem + deltaPx / font))
+      setColWidths((current) => ({ ...current, [state.key]: Number(next.toFixed(2)) }))
+    }
+    const up = () => {
+      resizeRef.current = null
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      setColWidths((current) => { localStorage.setItem(widthsKey, JSON.stringify(current)); return current })
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const resetColumnWidths = () => { setColWidths({}); localStorage.removeItem(widthsKey) }
+
+  const minTableRem = columnPlan.reduce((sum, column) => sum + widthOf(column), 0)
+  const columnCount = 1
+    + (columns.code ? 1 : 0)
+    + 1
+    + (lineWarehouseMode ? 1 : 0)
+    + (kind === 'purchase' && mode !== 'simple' ? 3 : 1)
+    + (columns.unit ? 1 : 0)
+    + 1
+    + (kind === 'sale' ? 1 : 0)
+    + (kind === 'purchase' && mode !== 'simple' ? 1 : 0)
+    + (kind === 'sale' && mode === 'profit' && canViewCost ? 2 : 0)
+    + (kind === 'purchase' && mode === 'profit' && canViewCost ? 1 : 0)
+    + (showTaxColumn ? 1 : 0)
+    + 2
+  /* الوزن الإجمالي (بلاغ المالك): مجموع كميات الأصناف الموزونة + وزن الوحدة إن عُرِّف */
+  const totalWeight = lines.reduce((sum, line) => {
+    const item = items.find((row) => row.id === line.itemId)
+    const unitWeight = (item as { weightKg?: number } | undefined)?.weightKg ?? (item?.soldByWeight ? 1 : 0)
+    return sum + line.qty * unitWeight
+  }, 0)
+  const weightLabel = totalWeight > 0
+    ? `${totalWeight.toLocaleString('en-US', { maximumFractionDigits: 3 })} كجم`
+    : '—'
 
   return (
     <section className="invoice-lines-panel min-w-0 overflow-visible border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-card-dark">
@@ -129,12 +395,13 @@ export function InvoiceLinesTable({
         <div className="invoice-lines-toolbar-title">
           <div className="text-[11px] font-bold text-slate-400">بنود الفاتورة</div>
           <h2 className="text-sm font-black">الأصناف والكميات والأسعار</h2>
-          <button type="button" className="invoice-lines-delete" aria-label="حذف السطر المحدد" title="اختر سطراً ثم اضغط لحذفه" disabled={!selectedLine} onClick={removeSelectedLine}><Trash2 size={14} /> حذف السطر</button>
+          <button type="button" className="invoice-lines-delete" aria-label="مسح باركود" title="امسح الباركود لإضافة الصنف في سطر جديد" onClick={() => window.dispatchEvent(new Event('shopsys:focus-item'))}><Barcode size={14} /> مسح باركود</button>
         </div>
+        {entryFilter && <div className="invoice-lines-filter">{entryFilter}</div>}
+        {/* بلاغ المالك: احذف التلميحات وقيمة البنود، وأبقِ عدد البنود مع الوزن الإجمالي */}
         <div className="invoice-lines-kpis">
           <span className="invoice-lines-count">{lines.length} بند</span>
-          <span className="invoice-lines-value" dir="ltr">{fmt(linesValueMinor)} {currencySymbol}</span>
-          <span className="invoice-lines-value-label">قيمة البنود الحالية</span>
+          <span className="invoice-lines-weight" title="مجموع أوزان البنود (للأصناف ذات الوزن)">⚖ {weightLabel}</span>
         </div>
         <div className="flex w-full items-center gap-2 sm:w-auto">
           {showPicker && <span className="invoice-lines-search-label">إضافة صنف</span>}
@@ -151,60 +418,155 @@ export function InvoiceLinesTable({
           </div>}
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="invoice-lines-table w-full min-w-[900px] table-auto text-sm">
-          <thead className="bg-slate-500/10">
-            <tr className="text-right text-[11px] font-black text-slate-500 dark:text-slate-300">
-              <th className="w-10 p-3 text-center">م</th>
-              <th className="p-3">كود الصنف</th>
-              <th className="p-3">الصنف</th>
-              {lineWarehouseMode && <th className="p-3">المخزن</th>}
-              {kind === 'purchase' && mode !== 'simple' ? <><th className="p-3">المطلوب</th><th className="p-3">المستلم</th><th className="p-3">المرفوض</th></> : <th className="p-3">الكمية</th>}
-              <th className="p-3">{kind === 'sale' ? 'السعر' : 'سعر الشراء'}</th>
-              {kind === 'sale' && <th className="p-3">خصم %</th>}
-              {kind === 'purchase' && mode !== 'simple' && <th className="p-3">ضريبة مدخلات %</th>}
-              {kind === 'sale' && mode === 'profit' && canViewCost && <><th className="p-3">التكلفة</th><th className="p-3">الهامش</th></>}
-              {kind === 'purchase' && mode === 'profit' && canViewCost && <th className="p-3">نصيبه من المصروفات</th>}
-              <th className="p-3">الإجمالي</th>
+      <div className="overflow-x-auto" ref={scrollRef} style={boxMaxHeight ? { maxHeight: boxMaxHeight } : undefined}>
+        <table className="invoice-lines-table w-full table-fixed text-sm" data-columns={columnCount}
+          style={{ minWidth: `${minTableRem}rem` }} data-resizable-columns>
+          <colgroup>{columnPlan.map((column) => <col key={column.key} data-col={column.key} style={{ width: `${widthOf(column)}rem` }} />)}</colgroup>
+          <thead className="bg-slate-50 dark:bg-slate-800/60" onPointerMove={headPointerMove} onPointerDown={headPointerDown}
+            title="اسحب حافة رأس العمود لتوسيعه أو تضييقه — نقرتان على الحافة تُعيد المقاس">
+
+            <tr className="text-[11px] font-black text-slate-500 dark:text-slate-300" onDoubleClick={(event) => { if ((event.target as HTMLElement).closest('th')) resetColumnWidths() }}>
+              <th className={`p-2 ${COL.index}`} scope="col">م</th>
+              {columns.code && <th className={`p-2 ${COL.code}`} scope="col">كود الصنف</th>}
+              <th className={`p-2 ${COL.name}`} scope="col">الصنف / الوصف</th>
+              {lineWarehouseMode && <th className={`p-2 ${COL.warehouse}`} scope="col">المخزن</th>}
+              {kind === 'purchase' && mode !== 'simple'
+                ? <><th className={`p-2 ${COL.qty}`} scope="col">المطلوب</th><th className={`p-2 ${COL.qty}`} scope="col">المستلم</th><th className={`p-2 ${COL.qty}`} scope="col">المرفوض</th></>
+                : <th className={`p-2 ${COL.qty}`} scope="col">الكمية</th>}
+              {columns.unit && <th className={`p-2 ${COL.unit}`} scope="col">الوحدة</th>}
+              <th className={`p-2 ${COL.price}`} scope="col">{kind === 'sale' ? 'السعر' : 'سعر الشراء'}</th>
+              {kind === 'sale' && <th className={`p-2 ${COL.percent}`} scope="col">خصم %</th>}
+              {kind === 'purchase' && mode !== 'simple' && <th className={`p-2 ${COL.percent}`} scope="col">ضريبة %</th>}
+              {kind === 'sale' && mode === 'profit' && canViewCost && <><th className={`p-2 ${COL.money}`} scope="col">التكلفة</th><th className={`p-2 ${COL.money}`} scope="col">الهامش</th></>}
+              {kind === 'purchase' && mode === 'profit' && canViewCost && <th className={`p-2 ${COL.money}`} scope="col">نصيبه من المصروفات</th>}
+              {showTaxColumn && <th className={`p-2 ${COL.tax}`} scope="col">الضريبة</th>}
+              <th className={`p-2 ${COL.total}`} scope="col">الإجمالي</th>
+              <th className={`p-2 ${COL.tools}`} scope="col">إجراءات</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody onKeyDown={(event) => {
+            /* اختصارات السطر (بلا أي تغيير في تقسيم الفاتورة):
+               Ctrl+D تكرار · Alt+↑/↓ نقل · Ctrl+Delete/Ctrl+Backspace حذف. */
+            const target = event.target as HTMLElement
+            const key = target.closest('tr')?.getAttribute('data-line-key') ?? ''
+            if (key && event.ctrlKey && event.key.toLowerCase() === 'd') {
+              event.preventDefault(); onDuplicate?.(key); return
+            }
+            if (key && event.ctrlKey && (event.key === 'Delete' || event.key === 'Backspace')) {
+              event.preventDefault(); onRemove(key); return
+            }
+            if (key && event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+              event.preventDefault(); onMoveLine?.(key, event.key === 'ArrowDown' ? 1 : -1); return
+            }
+            gridArrowNavigation(event)
+          }}>
             {lines.map((line, lineIndex) => {
               const item = items.find((row) => row.id === line.itemId)
               const warning = warnings?.get(line.key)
               const belowCost = belowCostKeys?.has(line.key)
               const actualPrice = line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)
+              /* تلوين تحذيري داخل الخلية (قرار المالك):
+                 الكمية حمراء فاتحة إذا تجاوزت المتاح فيصير الرصيد سالباً،
+                 والسعر برتقالي إذا نزل تحت هامش الربح الأدنى وأحمر إذا نزل عن التكلفة. */
+              const stockShort = kind === 'sale' && !item?.isService && line.qty > (item?.stockQty ?? 0)
+              const unitCost = line.unitCostMinor ?? item?.costMinor ?? 0
+              const priceTone = kind === 'sale' && unitCost > 0
+                ? (actualPrice < unitCost ? ' is-loss' : actualPrice < unitCost * (1 + MIN_MARGIN_RATIO) ? ' is-thin' : '')
+                : ''
+              const qtyTone = stockShort ? ' is-shortstock' : ''
               return (
-                <tr key={line.key} data-entry-row aria-selected={selectedKey === line.key} onClick={() => setSelectedKey(line.key)} className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : belowCost ? 'bg-amber-500/10' : warning?.severity === 'error' ? 'bg-rose-500/5' : warning ? 'bg-amber-500/5' : ''}`}>
-                  <td className="w-10 p-3 text-center font-mono text-xs font-black text-slate-400">{lineIndex + 1}</td>
-                  <td tabIndex={0} className="min-w-[100px] p-3 font-mono text-xs font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40" dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>
-                  <td className="min-w-[180px] p-3 align-top break-words">
+                <tr key={line.key} data-line-key={line.key} data-entry-row aria-selected={selectedKey === line.key} title={[warning?.message, belowCost ? 'بيع أقل من التكلفة — اعتماد مشرف مطلوب' : ''].filter(Boolean).join(' · ') || undefined} onClick={() => setSelectedKey(line.key)} onFocusCapture={() => setSelectedKey(line.key)} /* لا تظليل للسطر كله: التنبيه صار لوناً في الخلية المعنية وحدها (قرار المالك ⑩ي) */
+                  className={`border-t border-slate-100 dark:border-slate-800 ${selectedKey === line.key ? 'invoice-line-selected' : ''}`}>
+                  <td className={`p-2 font-mono text-[11px] font-black text-slate-400 ${COL.index}`}>{lineIndex + 1}</td>
+                  {columns.code && <td tabIndex={0} className={`p-2 font-mono text-[11px] font-bold text-slate-500 outline-none focus:ring-2 focus:ring-brand-500/40 ${COL.code}`} dir="ltr">{item?.sku || item?.barcodes?.[0] || item?.id}</td>}
+                  {/* اسم الصنف وحده في الخلية (قرار المالك ⑩ي): لا سطر فرعي ولا تحذير نصي —
+                      التحذير صار لوناً داخل خلية الكمية/السعر ونصاً في تلميح السطر وشريط التدقيق. */}
+                  <td className={`p-2 align-middle break-words ${COL.name}`} data-line-name-cell
+                    onDoubleClick={() => openReplacePicker(line.key, line.nameAr || item?.nameAr || '')}>
                     <b>{line.nameAr || item?.nameAr}</b>
-                    {warning && <div className={warning.severity === 'error' ? 'text-xs text-rose-600' : 'text-xs text-amber-600'}>{warning.message}</div>}
-                    {belowCost && belowCostNotice?.(line)}
                     {kind === 'purchase' && item?.trackExpiry && (
                       <input type="date" className={`${inputCls} mt-1.5`} value={line.expiryDate ?? ''} onChange={(event) => onPatch(line.key, { expiryDate: event.target.value })} />
                     )}
                   </td>
-                  {lineWarehouseMode && <td className="min-w-[150px] p-1 align-top"><QuickSelect data-arrows-native="true" className={inputCls} value={line.warehouseId ?? ''} onChange={(event) => onPatch(line.key, { warehouseId: Number(event.target.value) || null, warehouseSource: 'manual' })}><option value="">اختر المخزن</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect></td>}
+                  {lineWarehouseMode && <td className={`p-1 align-middle ${COL.warehouse}`}><QuickSelect data-arrows-native="true" className={inputCls} value={line.warehouseId ?? ''} onChange={(event) => onPatch(line.key, { warehouseId: Number(event.target.value) || null, warehouseSource: 'manual' })}><option value="">اختر المخزن</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.nameAr}</option>)}</QuickSelect></td>}
                   {kind === 'purchase' && mode !== 'simple' ? <>
-                    <td className="w-[7rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`ordered:${line.key}`, line.orderedQty ?? line.qty)} onChange={(event) => updateDraft(`ordered:${line.key}`, event.target.value, (value) => patchDecimal(line, 'orderedQty', value))} onBlur={() => clearDraft(`ordered:${line.key}`)} /></td>
-                    <td className="w-[7rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty)} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>
-                    <td className="w-[7rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
-                  </> : <td className="w-[7rem] p-1 align-top"><input className={`${inputCls} !w-auto`} style={numberStyle(line.qty)} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>}
-                  <td className="w-[8rem] p-1 align-top"><input className={`${inputCls} !w-auto`} style={numberStyle(line.unitPriceMinor / 10 ** currencyDecimals)} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); window.dispatchEvent(new Event('shopsys:focus-item')) } }} /></td>
-                  {kind === 'sale' && <td className="w-[6rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
-                  {kind === 'purchase' && mode !== 'simple' && <td className="w-[6rem] p-1 align-top"><input className={`${inputCls} !w-auto`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
-                  {kind === 'sale' && mode === 'profit' && canViewCost && <><td className="p-3">{fmt(line.unitCostMinor ?? 0)}</td><td className="p-3">{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
-                  {kind === 'purchase' && mode === 'profit' && canViewCost && <td className="p-3">{fmt(costShares?.get(line.key) ?? 0)}</td>}
-                  <td className="w-[9rem] p-1"><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
+                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`ordered:${line.key}`, line.orderedQty ?? line.qty)} onChange={(event) => updateDraft(`ordered:${line.key}`, event.target.value, (value) => patchDecimal(line, 'orderedQty', value))} onBlur={() => clearDraft(`ordered:${line.key}`)} /></td>
+                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty)} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} /></td>
+                    <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
+                  </> : <td className={`num-cell p-1 align-middle ${COL.qty}${qtyTone}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const priceCell = event.currentTarget.closest('tr')?.querySelector<HTMLInputElement>('.price-cell input'); priceCell?.focus(); priceCell?.select() }} /></td>}
+                  {columns.unit && <td className={`unit-cell p-1 align-middle ${COL.unit}`}>{item?.baseUnit || (item?.isService ? 'خدمة' : '—')}</td>}
+                  <td className={`num-cell price-cell p-1 align-middle ${COL.price}${priceTone}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } /* قرار المالك: Enter من السعر ينزل للسطر التالي **وينتظر الكتابة** ولا يفتح البحث تلقائياً */ const entryInput = event.currentTarget.closest('tbody')?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input'); entryInput?.focus(); entryInput?.select() }} /></td>
+                  {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
+                  {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
+                  {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
+                  {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`money-cell p-2 ${COL.money}`}>{fmt(costShares?.get(line.key) ?? 0)}</td>}
+                  {showTaxColumn && <td className={`p-1 text-center ${COL.tax}`}>{(line.vatPercent ?? documentTaxPercent) > 0 ? <span className="invoice-doc-taxchip">{`${line.vatPercent ?? documentTaxPercent}% ض.ق.م`}</span> : null}</td>}
+                  <td className={`p-1 ${COL.total}`}><div className="invoice-table-total">{fmt(Math.round(line.qty * actualPrice) + (kind === 'purchase' ? (costShares?.get(line.key) ?? 0) : 0))}</div></td>
+                  <td className={`p-1 ${COL.tools}`}>
+                    <div className="invoice-doc-rowtools">
+                      <button type="button" title="إضافة صنف في سطر جديد" aria-label="إضافة صنف في سطر جديد" onClick={(event) => { event.stopPropagation(); window.dispatchEvent(new Event('shopsys:open-item')) }}><Plus size={11} /></button>
+                      {onEdit && <button type="button" title="بطاقة الصنف" aria-label={`تعديل بطاقة ${line.nameAr || item?.nameAr || ''}`} onClick={(event) => { event.stopPropagation(); onEdit(line.itemId) }}><Pencil size={11} /></button>}
+                      {onDuplicate && <button type="button" title="تكرار السطر" aria-label={`تكرار سطر ${line.nameAr || item?.nameAr || ''}`} onClick={(event) => { event.stopPropagation(); onDuplicate(line.key) }}><Copy size={11} /></button>}
+                      <button type="button" className="is-danger" title="حذف السطر" aria-label={`حذف سطر ${line.nameAr || item?.nameAr || ''}`} onClick={(event) => { event.stopPropagation(); onRemove(line.key) }}><Trash2 size={11} /></button>
+                    </div>
+                  </td>
                 </tr>
+              )
+            })}
+            {/* السطور الفارغة في النموذج المعتمد ليست فراغاً: لكل سطر نفس خلايا السطر
+                الحقيقي بمربعات إدخال مرئية (كمية · سعر · خصم) تماماً كورقة الإكسل،
+                والكتابة في أي منها تفتح بحث الصنف لأن الكمية بلا صنف لا معنى لها. */}
+            {Array.from({ length: Math.max(1, VISIBLE_ROWS - lines.length) }, (_, ghostIndex) => {
+              const openPicker = () => window.dispatchEvent(new Event('shopsys:open-item'))
+              /* نقرة واحدة تحدّد الخلية فقط (بلا نافذة)، والنقر المزدوج يفتح بحث
+                 الصنف — قرار المالك: «لا تفتح البحث بنقرة واحدة». */
+              const focusEntry = () => {
+                const input = scrollRef.current?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input')
+                input?.focus()
+              }
+              const ghostCell = (label: string, extra = '') => (
+                <td
+                  className={`p-1 align-middle ${extra}`}
+                  data-ghost-field={label}
+                  onClick={focusEntry}
+                  onDoubleClick={openPicker}
+                />
+              )
+              return (
+              <tr key={`ghost-${ghostIndex}`} className="invoice-line-ghost border-t border-slate-100 dark:border-slate-800">
+                <td className={`p-2 font-mono text-[11px] font-black text-slate-300 ${COL.index}`}>{lines.length + ghostIndex + 1}</td>
+                {columns.code && <td className={`p-2 ${COL.code}`} />}
+                {/* البحث من خلية الاسم نفسها: أول سطر فارغ يحمل مربع البحث/الباركود */}
+                <td className={`invoice-line-entry-cell p-1 align-middle ${COL.name}`}>
+                  {ghostIndex === 0 && entry
+                    ? entry
+                    : <button
+                        type="button"
+                        className="invoice-line-ghost-btn"
+                        aria-label="سطر فارغ — اكتب اسم الصنف أو اضغط مرتين لفتح البحث"
+                        onClick={focusEntry}
+                        onDoubleClick={openPicker}
+                      ><span className="sr-only">اكتب اسم الصنف أو امسح الباركود</span></button>}
+                </td>
+                {lineWarehouseMode && <td className={`p-1 ${COL.warehouse}`} />}
+                {kind === 'purchase' && mode !== 'simple'
+                  ? <>{ghostCell('ordered', `num-cell ${COL.qty}`)}{ghostCell('qty', `num-cell ${COL.qty}`)}{ghostCell('rejected', `num-cell ${COL.qty}`)}</>
+                  : ghostCell('qty', `num-cell ${COL.qty}`)}
+                {columns.unit && <td className={`unit-cell p-1 ${COL.unit}`} />}
+                {ghostCell('price', `num-cell price-cell ${COL.price}`)}
+                {kind === 'sale' && ghostCell('discount', `num-cell ${COL.percent}`)}
+                {kind === 'purchase' && mode !== 'simple' && ghostCell('vat', `num-cell ${COL.percent}`)}
+                {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`p-1 ${COL.money}`} /><td className={`p-1 ${COL.money}`} /></>}
+                {kind === 'purchase' && mode === 'profit' && canViewCost && <td className={`p-1 ${COL.money}`} />}
+                {showTaxColumn && <td className={`p-1 ${COL.tax}`} />}
+                <td className={`p-1 ${COL.total}`} />
+                <td className={`p-1 ${COL.tools}`} />
+              </tr>
               )
             })}
           </tbody>
         </table>
       </div>
-      {!lines.length && <div className="m-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 px-4 py-8 text-center dark:border-slate-700 dark:bg-slate-900/30"><div className="mb-2 text-3xl">🧾</div><div className="font-black">لم تتم إضافة أصناف بعد</div><div className="mt-1 text-xs text-slate-500">استخدم مربع البحث بالأعلى أو اضغط F5 للبدء وإضافة أول صنف إلى الفاتورة.</div></div>}
-    </section>
+</section>
   )
 }

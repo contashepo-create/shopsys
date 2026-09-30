@@ -3,12 +3,14 @@
  * (اليوم: localStorage — غداً: جدول settings في SQLite عبر نفس الواجهة)
  */
 import { create } from 'zustand'
+import { DEFAULT_WAREHOUSE_RECEIPT, type WarehouseReceiptSettings } from '../core/warehouseReceipt.ts'
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
 import { toggleModuleList, effectiveModules, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
+import { DEFAULT_APPROVALS, type ApprovalSettings } from '../core/approvals.ts'
 import { generateDeviceId, type LicensePayload } from '../core/license.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
@@ -56,6 +58,26 @@ interface SetupState {
   doctorSpecialty: string
 }
 
+/**
+ * تفضيلات أعمدة جدول البنود — أعمدة **عرضية** فقط (لا تحمل إدخالاً):
+ * كود الصنف · الوحدة · عمود الضريبة. (سطر التفاصيل أسفل الاسم أُلغي نهائياً
+ * بقرار المالك ⑩ي: خلية الاسم تحمل اسم الصنف فقط.)
+ */
+export interface InvoiceColumnPrefs {
+  code: boolean
+  unit: boolean
+  tax: boolean
+}
+
+export const DEFAULT_INVOICE_COLUMNS: InvoiceColumnPrefs = { code: true, unit: true, tax: true }
+
+/** أسماء الأعمدة كما تظهر في قائمة «تخصيص الحقول» */
+export const INVOICE_COLUMN_LABELS: Record<keyof InvoiceColumnPrefs, string> = {
+  code: 'كود الصنف',
+  unit: 'وحدة القياس',
+  tax: 'عمود الضريبة (الربحية والمتقدمة فقط)',
+}
+
 interface AppState {
   theme: ThemeMode
   toggleTheme: () => void
@@ -80,6 +102,8 @@ interface AppState {
   receipt: ReceiptSettings
   /** برنامج نقاط الولاء (نمط Lightspeed Loyalty) — الكسب والاستبدال من الكاشير */
   loyalty: LoyaltySettings
+  approvals: ApprovalSettings
+  updateApprovals: (patch: Partial<ApprovalSettings>) => void
   updateLoyalty: (patch: Partial<LoyaltySettings>) => void
   /** إعدادات طباعة التقارير المعممة (طلب المالك): كل تقارير النظام لا الفواتير فقط */
   reportPrint: ReportPrintSettings
@@ -93,6 +117,19 @@ interface AppState {
   updateScaleRule: (id: number, patch: Partial<Omit<ScaleRule, 'id'>>) => void
   removeScaleRule: (id: number) => void
   autoPrintAfterSale: boolean
+  /**
+   * أعمدة جدول بنود الفاتورة القابلة للإخفاء (زر «تخصيص الحقول» في شريط الفاتورة).
+   * **إخفاء عمود عرضٌ فقط ولا يغيّر أي حساب**: الضريبة تُحتسب وتظهر في ملخص
+   * الحسابات وفي القيد سواء ظهر عمودها أم لا. لذلك تُمنع هنا الأعمدة التي
+   * تُدخَل منها القيم (الكمية/السعر/الخصم/المخزن) — تلك لا تُخفى أبداً.
+   */
+  invoiceColumns: InvoiceColumnPrefs
+  toggleInvoiceColumn: (key: keyof InvoiceColumnPrefs) => void
+  resetInvoiceColumns: () => void
+  /** إعدادات «إذن استلام المستودع» — كميات فقط، تُفتح من الفاتورة ومن إعدادات الطباعة */
+  warehouseReceipt: WarehouseReceiptSettings
+  updateWarehouseReceipt: (patch: Partial<WarehouseReceiptSettings>) => void
+  resetWarehouseReceipt: () => void
   updateReceipt: (patch: Partial<ReceiptSettings>) => void
   setAutoPrint: (v: boolean) => void
   appearance: AppearanceSettings
@@ -248,6 +285,8 @@ export const useAppStore = create<AppState>()(
         })),
       receipt: DEFAULT_RECEIPT_SETTINGS,
       loyalty: DEFAULT_LOYALTY,
+      approvals: DEFAULT_APPROVALS,
+      updateApprovals: (patch) => set((s) => ({ approvals: { ...s.approvals, ...patch } })),
       updateLoyalty: (patch) => set((s) => ({ loyalty: { ...s.loyalty, ...patch } })),
       reportPrint: DEFAULT_REPORT_PRINT,
       updateReportPrint: (patch) => set((s) => ({ reportPrint: { ...s.reportPrint, ...patch } })),
@@ -270,6 +309,12 @@ export const useAppStore = create<AppState>()(
       }),
       removeScaleRule: (id) => set((s) => ({ scaleRules: s.scaleRules.filter((r) => r.id !== id) })),
       autoPrintAfterSale: false,
+      invoiceColumns: DEFAULT_INVOICE_COLUMNS,
+      toggleInvoiceColumn: (key) => set((s) => ({ invoiceColumns: { ...s.invoiceColumns, [key]: !s.invoiceColumns[key] } })),
+      resetInvoiceColumns: () => set({ invoiceColumns: DEFAULT_INVOICE_COLUMNS }),
+      warehouseReceipt: DEFAULT_WAREHOUSE_RECEIPT,
+      updateWarehouseReceipt: (patch) => set((s) => ({ warehouseReceipt: { ...s.warehouseReceipt, ...patch } })),
+      resetWarehouseReceipt: () => set({ warehouseReceipt: DEFAULT_WAREHOUSE_RECEIPT }),
       updateReceipt: (patch) => set((s) => ({ receipt: { ...s.receipt, ...patch } })),
       setAutoPrint: (v) => set({ autoPrintAfterSale: v }),
       appearance: DEFAULT_APPEARANCE,
@@ -359,6 +404,7 @@ export const useAppStore = create<AppState>()(
           state.setup.allowNegativeTreasury = state.setup.allowNegativeTreasury ?? false
           state.setup.requireOpenShiftForSales = state.setup.requireOpenShiftForSales ?? true
           state.loyalty = { ...DEFAULT_LOYALTY, ...(state.loyalty ?? {}) }
+          state.approvals = { ...DEFAULT_APPROVALS, ...(state.approvals ?? {}) }
           state.setup.allowNegativeStock = state.setup.allowNegativeStock ?? false
           state.setup.defaultWarehouseId = state.setup.defaultWarehouseId ?? null
           // ترحيل: تخصص الطبيب (طلب المالك — لا يُفرض «أسنان»)
@@ -379,6 +425,12 @@ export const useAppStore = create<AppState>()(
         if (state && (!state.scaleRules || state.scaleRules.length === 0)) state.scaleRules = DEFAULT_SCALE_RULES
         // ترحيل: حسابات قبل ميزة المظهر تحصل على الافتراضيات (مع تنقية القيم)
         if (state) state.appearance = sanitizeAppearance(state.appearance)
+        // ترحيل لمرة واحدة (طلب المالك): شريط القوائم العلوي صار نمط التنقل الافتراضي.
+        // يُطبَّق مرة واحدة فقط، وبعدها يظل اختيار المستخدم (جانبي/علوي) محفوظاً كما هو.
+        if (state && typeof localStorage !== 'undefined' && localStorage.getItem('shopsys:menubar-default') !== '1') {
+          state.appearance = { ...state.appearance, navigationMode: 'topbar' }
+          try { localStorage.setItem('shopsys:menubar-default', '1') } catch { /* وضع خاص بلا تخزين */ }
+        }
         // ترحيل: حسابات قبل ميزة التليجرام تحصل على الافتراضيات
         if (state) state.telegram = { ...DEFAULT_TELEGRAM_SETTINGS, ...state.telegram }
         // ترحيل: حسابات قبل ميزة المزامنة السحابية تحصل على الافتراضيات

@@ -3,14 +3,15 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  * كشوف الحساب (طلب المالك) — عميل / مورد / موظف
  * كل صف بتاريخه ومستنده والرصيد التراكمي، مع رصيد نهائي واضح وطباعة.
  */
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { FileSpreadsheet, UserRound, Building2, UserCog, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
+import { PartyNotesLog } from '../components/PartyNotesLog.tsx'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { customerStatement, customerUnitDocs, supplierStatement, employeeStatement, statementBalance, type StatementRow } from '../../core/statements.ts'
+import { employeeStatement, statementBalance, type StatementRow } from '../../core/statements.ts'
 import { renderStatementHtml } from '../print/printStatement.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { EmptyState, Btn, useToast } from '../components/ui.tsx'
@@ -24,7 +25,9 @@ const KINDS: { id: Kind; nameAr: string; icon: typeof UserRound; debitLabel: str
 ]
 
 export function StatementsPage() {
-  const { customers, suppliers, employees, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, clientSettlements, openingBalances, settlements, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, advanceRepayments, employeeDeductions, laundryOrders, cars, consignmentCars, staffCommissions, custodyFiles, custodyTxs } = useDataStore()
+  const { customers, suppliers, employees, employeeAdvances, payrollRuns, advanceRepayments, employeeDeductions,
+    staffCommissions, custodyFiles, custodyTxs,
+    getCustomerStatementRows, getSupplierStatementRows } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -40,56 +43,27 @@ export function StatementsPage() {
   const parties = kind === 'customer' ? customers : kind === 'supplier' ? suppliers : employees
   const meta = KINDS.find((k) => k.id === kind)!
 
-  const rows: StatementRow[] = useMemo(() => {
-    if (!partyId) return []
-    if (kind === 'customer') {
-      return customerStatement({
-        customerId: partyId,
-        openingMinor: openingBalances[`customer:${partyId}`] ?? 0,
-        adjustments: settlements.filter((st) => st.section === 'customer' && Number(st.refId) === partyId).map((st) => ({
-          docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
-          debitMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
-          creditMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
-        })),
-        sales, saleReturns,
-        allSales: sales,
-        // إصلاح المالك: مستندات الوحدات الأخرى (نقلات/صيانة/إيجار) كانت غائبة عن الكشف
-        extraDocs: customerUnitDocs({ customerId: partyId, trips, tickets, rentals: rentalContracts, clinicVisits, clinicCollections, linkedPatientIds: clinicPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), labOrders, linkedLabPatientIds: labPatients.filter((p) => p.linkedCustomerId === partyId).map((p) => p.id), walletOps, projectExtracts, linkedProjectIds: projects.filter((p) => p.clientId === partyId).map((p) => p.id), installmentPlans, laundryOrders, cars, consignmentCars }),
-        // تسويات التحصيل FIFO تدخل الكشف كسندات قبض — كانت غائبة (إصلاح تقرير المديونيات)
-        vouchers: [
-          ...vouchers,
-          ...clientSettlements.map((st) => ({ voucherNumber: st.settlementNumber, kind: 'receipt', date: st.date, partyKind: 'customer', partyId: st.customerId, amountMinor: st.amountMinor })),
-        ],
-        cheques,
-      })
-    }
-    if (kind === 'supplier') {
-      return supplierStatement({
-        supplierId: partyId,
-        openingMinor: openingBalances[`supplier:${partyId}`] ?? 0,
-        adjustments: settlements.filter((st) => st.section === 'supplier' && Number(st.refId) === partyId).map((st) => ({
-          docLabel: `تسوية ${st.settlementNumber}`, date: st.date.slice(0, 10),
-          debitMinor: st.varianceMinor < 0 ? -st.varianceMinor : 0,
-          creditMinor: st.varianceMinor > 0 ? st.varianceMinor : 0,
-        })),
-        purchases, purchaseReturns,
-        allPurchases: purchases,
-        vouchers, cheques,
-      })
-    }
-    return employeeStatement({
-      employeeId: partyId,
-      advances: employeeAdvances,
-      payrollRuns,
-      advanceRepayments,
-      deductions: employeeDeductions,
-      commissions: staffCommissions,
-      custodyTransactions: custodyTxs.flatMap((tx) => {
-        const file = custodyFiles.find((item) => item.id === tx.fileId)
-        return file ? [{ date: tx.date, employeeId: file.employeeId, type: tx.type, amountMinor: tx.amountMinor, description: tx.description }] : []
-      }),
-    })
-  }, [kind, partyId, sales, saleReturns, purchases, purchaseReturns, vouchers, cheques, employeeAdvances, payrollRuns, advanceRepayments, clientSettlements, openingBalances, settlements, labOrders, labPatients, walletOps, projectExtracts, projects, installmentPlans, trips, tickets, rentalContracts, clinicVisits, clinicCollections, clinicPatients, laundryOrders, cars, consignmentCars, employeeDeductions, staffCommissions, custodyFiles, custodyTxs])
+  // AUDIT-013: مصدر واحد للكشف — دوال المتجر نفسها التي تغذي الأرصدة والتقارير
+  // (كانت الصفحة تعيد تركيب الكشف يدوياً فتسقط منها نقاط الولاء والمقاصات).
+  // بلا useMemo عمداً: الدوال مستقرة المرجع فكان الكشف يتجمد على لقطة قديمة بعد كل مستند جديد.
+  const rows: StatementRow[] = !partyId
+    ? []
+    : kind === 'customer'
+      ? getCustomerStatementRows(partyId)
+      : kind === 'supplier'
+        ? getSupplierStatementRows(partyId)
+        : employeeStatement({
+            employeeId: partyId,
+            advances: employeeAdvances,
+            payrollRuns,
+            advanceRepayments,
+            deductions: employeeDeductions,
+            commissions: staffCommissions,
+            custodyTransactions: custodyTxs.flatMap((tx) => {
+              const file = custodyFiles.find((item) => item.id === tx.fileId)
+              return file ? [{ date: tx.date, employeeId: file.employeeId, type: tx.type, amountMinor: tx.amountMinor, description: tx.description }] : []
+            }),
+          })
 
   const balance = statementBalance(rows)
   const partyName = parties.find((p) => p.id === partyId)?.nameAr ?? ''
@@ -144,6 +118,11 @@ export function StatementsPage() {
           <><Btn variant="ghost" onClick={print}><Printer size={15} /> طباعة الكشف</Btn><Btn variant="ghost" onClick={exportStatement}><FileSpreadsheet size={15} /> Excel</Btn></>
         )}
       </div>
+
+      {/* سجل ملاحظات الطرف: تاريخ ما كُتب عنه في الفواتير وفي بطاقته (طلب المالك) */}
+      {partyId > 0 && kind !== 'employee' && (
+        <PartyNotesLog kind={kind} partyId={partyId} partyName={parties.find((party) => party.id === partyId)?.nameAr ?? ''} />
+      )}
 
       {!partyId ? (
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800">

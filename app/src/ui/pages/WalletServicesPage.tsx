@@ -19,6 +19,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function WalletServicesPage() {
   const { walletOps, customers, journal, paymentTerminals, paymentTerminalTransactions, postWalletService, returnWalletService } = useDataStore()
@@ -169,8 +170,8 @@ export function WalletServicesPage() {
       )}
 
       {/* عملية جديدة */}
-      <Modal open={open} onClose={() => setOpen(false)} title="📲 عملية محافظ جديدة" wide>
-        <div className="space-y-4">
+      <Modal open={open} onClose={() => setOpen(false)} title="عملية محافظ جديدة" wide subtitle="مستند خدمة: إيداع أو سحب أو تحويل برسوم وعمولة">
+        <div className="space-y-4"><DocSectionHead step="١" title="نوع الخدمة ومبلغها" hint="رصيد المحفظة والخزينة يتحركان معاً — لا عملية بلا مصدر نقدي" />
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             {WALLET_SERVICE_TYPES.map((t) => (
               <button key={t.id} onClick={() => setType(t.id)} className={`p-2.5 rounded-xl border-2 text-[12px] font-bold transition-all ${type === t.id ? 'border-brand-500/60 bg-brand-500/10 text-brand-700 dark:text-brand-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
@@ -221,7 +222,7 @@ export function WalletServicesPage() {
               <span className={`font-black text-xl ${profitPreview >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{fmt(profitPreview)} {cur.symbol}</span>
             </div>
           )}
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: <b>الخزينة/المحفظة</b> مديناً أو دائناً حسب اتجاه العملية · <b>4103 إيرادات صيانة وخدمات</b> دائناً بهامش الخدمة (ومديناً إن كانت مجاملة بخسارة) · <b>2102</b> بضريبة الهامش · و<b>خزينة التمويل</b> دائنة بما دُفع للمزود · و<b>1104</b> مديناً بالآجل.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} shortcut="F9" disabled={!paidToProvider || !charge || !targetPhone.trim()}><Smartphone size={15} /> تسجيل العملية</Btn>
           </div>

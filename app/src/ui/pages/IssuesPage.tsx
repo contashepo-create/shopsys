@@ -102,7 +102,7 @@ export function IssuesPage() {
       )}
 
       {/* بلاغ جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="📮 بلاغ عن مشكلة">
+      <Modal open={open} onClose={() => setOpen(false)} title="بلاغ عن مشكلة">
         <div className="space-y-4">
           <p className="text-[11.5px] text-slate-400 p-3 rounded-xl bg-sky-500/5 border border-sky-500/20 leading-relaxed">
             💡 هذا البلاغ داخلي: يصل للمدير/المحاسب في نفس المحل ليصحح العملية. لمراسلة المطوّر عن عطل تقني استخدم شاشة «الدعم الفني».
@@ -127,7 +127,7 @@ export function IssuesPage() {
       </Modal>
 
       {/* توثيق الحل */}
-      <Modal open={resolving != null} onClose={() => setResolving(null)} title="✓ توثيق حل المشكلة">
+      <Modal open={resolving != null} onClose={() => setResolving(null)} title="توثيق حل المشكلة">
         <div className="space-y-4">
           <Field label="ماذا فعلت لحلها؟" hint="يُحفظ في البلاغ ليعرف المُبلغ أن مشكلته حُلت وكيف">
             <input value={resolution} onChange={(e) => setResolution(e.target.value)} className={inputCls} placeholder="عُدلت الفاتورة بقيد عاكس / أُلغي السند المكرر…" />

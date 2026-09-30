@@ -26,17 +26,42 @@ const party = (nameAr: string) => ({ nameAr, phone: '', notes: '', taxNumber: ''
 
 const ui = (el: React.ReactElement) => render(<MemoryRouter>{el}<ToastHost /></MemoryRouter>)
 
+/**
+ * نافذة بحث الأطراف/الأصناف تُركَّب الآن على <body> عبر بوابة عرض (طلب المالك:
+ * لا يختفي جزء من أي نافذة خلف حقل)، لذلك تُقرأ خياراتها من الطبقة العائمة
+ * المفتوحة وليس من داخل جذر المنتقي.
+ */
+function quickOptionsScope(root: Element): Element[] {
+  const overlay = document.querySelector('.invoice-search-overlay')
+  return overlay ? [root, overlay] : [root]
+}
+
+function quickOptions(root: Element): Element[] {
+  /* القوائم القصيرة (≤١٠) صارت منسدلة أصلية بقرار المالك، فتُقرأ خياراتها من <option> */
+  return quickOptionsScope(root).flatMap((scope) => [
+    ...scope.querySelectorAll('[data-quick-native] option'),
+    ...scope.querySelectorAll('[data-quick-option]'),
+  ])
+}
+
 function openQuickByOptionText(text: string, occurrence = 0) {
   let found = 0
   const roots = [...new Set([...document.querySelectorAll('[data-quick-select], [data-enter-native]')])]
   for (const root of roots) {
+    const native = root.querySelector('select') as HTMLSelectElement | null
+    if (native) {
+      if ([...native.options].some((option) => option.textContent?.includes(text))) {
+        if (found++ === occurrence) return root
+      }
+      continue
+    }
     const input = root.querySelector('input') as HTMLInputElement | null
     if (!input) continue
     fireEvent.focus(input)
-    if (![...root.querySelectorAll('[data-quick-option]')].some((option) => option.textContent?.includes(text))) {
+    if (!quickOptions(root).some((option) => option.textContent?.includes(text))) {
       fireEvent.change(input, { target: { value: text.slice(0, 1) } })
     }
-    if ([...root.querySelectorAll('[data-quick-option]')].some((option) => option.textContent?.includes(text))) {
+    if (quickOptions(root).some((option) => option.textContent?.includes(text))) {
       if (found++ === occurrence) return root
     }
   }
@@ -44,7 +69,12 @@ function openQuickByOptionText(text: string, occurrence = 0) {
 }
 
 function chooseQuick(root: Element, value: string) {
-  const option = [...root.querySelectorAll('[data-quick-option]')].find((node) => node.getAttribute('data-value') === value)
+  const native = root.querySelector('select') as HTMLSelectElement | null
+  if (native && [...native.options].some((option) => option.value === value)) {
+    fireEvent.change(native, { target: { value } })
+    return
+  }
+  const option = quickOptions(root).find((node) => node.getAttribute('data-value') === value || (node as HTMLOptionElement).value === value)
   expect(option, `لم يُعثر على خيار ${value}`).toBeTruthy()
   if (option!.closest('[data-quick-select]')) fireEvent.click(option!)
   else fireEvent.doubleClick(option!)
@@ -80,15 +110,15 @@ describe('تكامل الشاشات: المنسدلات تجلب أسماء وم
     fireEvent.click(r.getAllByText('مشروع جديد')[0])
     // المنتقي المنبثق يجب أن يحتوي أسماء العملاء الحقيقية من القاعدة
     const clientSelect = openQuickByOptionText('شركة الدلتا للتطوير')
-    const options = [...clientSelect.querySelectorAll('[data-quick-option]')].map((o) => o.textContent)
+    const options = quickOptions(clientSelect).map((o) => o.textContent)
     expect(options).toContain('شركة الدلتا للتطوير')
     const clientInput = clientSelect.querySelector('input') as HTMLInputElement
     fireEvent.change(clientInput, { target: { value: 'م' } })
-    expect([...clientSelect.querySelectorAll('[data-quick-option]')].map((o) => o.textContent)).toContain('مؤسسة المنصورة الحديثة')
+    expect(quickOptions(clientSelect).map((o) => o.textContent)).toContain('مؤسسة المنصورة الحديثة')
     // القيمة الأجنبية الحقيقية محفوظة على زر الخيار
     const dalta = S().customers.find((c) => c.nameAr === 'شركة الدلتا للتطوير')!
     fireEvent.change(clientInput, { target: { value: 'ش' } })
-    expect([...clientSelect.querySelectorAll('[data-quick-option]')].some((o) => o.getAttribute('data-value') === String(dalta.id))).toBe(true)
+    expect(quickOptions(clientSelect).some((o) => o.getAttribute('data-value') === String(dalta.id))).toBe(true)
     cleanup()
   })
 
@@ -97,7 +127,7 @@ describe('تكامل الشاشات: المنسدلات تجلب أسماء وم
     fireEvent.click(r.getByText('إذن صرف'))
     // المنتقيات تعرض المشروع والأطراف والأصناف من السجل الحي
     const projectSelect = openQuickByOptionText('برج المنصورة')
-    expect([...projectSelect.querySelectorAll('[data-quick-option]')].some((o) => o.textContent!.includes('برج المنصورة'))).toBe(true)
+    expect(quickOptions(projectSelect).some((o) => o.textContent!.includes('برج المنصورة'))).toBe(true)
     // تنفيذ سير العمل كاملاً: اختيار وربط وحفظ ثم التحقق من أثر حقيقي في القاعدة
     const project = S().projects.find((p) => p.nameAr === 'برج المنصورة')!
     const issuer = S().employees.find((e) => e.nameAr.includes('حمدي'))!
@@ -156,7 +186,7 @@ describe('تكامل الشاشات: المنسدلات تجلب أسماء وم
     const r = ui(<SubcontractorsPage />)
     fireEvent.click(r.getByText('عقد باطن جديد'))
     const supplierSelect = openQuickByOptionText('شركة أسمنت الدلتا')
-    const opts = [...supplierSelect.querySelectorAll('[data-quick-option]')].map((o) => o.textContent)
+    const opts = quickOptions(supplierSelect).map((o) => o.textContent)
     expect(opts).toContain('شركة أسمنت الدلتا')
     cleanup()
   })

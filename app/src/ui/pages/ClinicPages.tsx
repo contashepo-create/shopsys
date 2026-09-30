@@ -32,6 +32,7 @@ import { renderPrescriptionHtml, parsePrescriptionText } from '../print/printPre
 import { renderPatientRecordHtml } from '../print/printPatientRecord.ts'
 import { partyCode, partySearchFilter } from '../../core/partyCodes.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 function useCur() {
   const { setup } = useAppStore()
@@ -495,8 +496,8 @@ export function ClinicPatientsPage() {
       )}
 
       {/* ملف مريض جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="فتح ملف مريض" wide>
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title="فتح ملف مريض" wide subtitle="ملف مريض يُربط بحساب عميل عند أول دين">
+        <div className="space-y-3"><DocSectionHead step="١" title="بيانات المريض الأساسية" hint="لا دين بلا مدين — الملف يفتح حساباً للمريض عند أول متبقٍ" />
           <Field label="الاسم *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} /></Field>
           <div className="grid grid-cols-3 gap-3">
             <Field label="الهاتف"><input value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} dir="ltr" placeholder={phonePlaceholder(useAppStore.getState().setup.countryCode)} /></Field>
@@ -519,7 +520,7 @@ export function ClinicPatientsPage() {
             <input type="checkbox" checked={linkCustomer} onChange={(e) => setLinkCustomer(e.target.checked)} className="accent-cyan-600 w-4 h-4" />
             <Link2 className="w-4 h-4 text-cyan-500" /> إنشاء/ربط حساب عميل مالي تلقائياً (يُنصح به — الزيارات تظهر في كشف الحساب)
           </label>
-          <div className="flex justify-end gap-2">
+          <DocOutcome>الأثر: لا قيد عند فتح الملف · أول زيارة بمتبقٍ تُنشئ ذمة على <b>1104</b> باسم المريض نفسه.</DocOutcome><div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={savePatient} disabled={!nameAr.trim()}>فتح الملف</Btn>
           </div>
@@ -674,7 +675,7 @@ export function ClinicPatientsPage() {
       </Modal>
 
       {/* مرتجع زيارة (مراجعة المرتجعات) */}
-      <Modal open={!!refundingVisit} onClose={() => setRefundingVisit(null)} title={refundingVisit ? `مرتجع زيارة ${refundingVisit.visitNumber}` : ''}>
+      <Modal open={!!refundingVisit} onClose={() => setRefundingVisit(null)} title={refundingVisit ? `مرتجع زيارة ${refundingVisit.visitNumber}` : ''} subtitle="مستند مرتجع: ردّ قيمة خدمة لم تُؤدَّ أو أُديت جزئياً">
         {refundingVisit && (
           <ServiceRefundBox
             grandMinor={refundingVisit.totals.totalMinor}
@@ -699,12 +700,14 @@ export function ClinicPatientsPage() {
             }}
           />
         )}
+      <DocOutcome>الأثر: <b>4102 مرتجعات المبيعات</b> مديناً بصافي المردود و<b>2102</b> مديناً بحصته الضريبية (عكس الإيراد) · <b>الخزينة</b> دائناً بالمردود نقداً أو <b>1104 ذمم العملاء</b> دائناً عند الردّ على حساب المريض — والمرتجع لا يتجاوز المتبقي القابل للرد من المستند.</DocOutcome>
       </Modal>
 
       {/* تعديل التاريخ المرضي */}
-      <Modal open={histOpen} onClose={() => setHistOpen(false)} title={liveFile ? `التاريخ المرضي — ${liveFile.nameAr}` : ''} wide>
-        <div className="space-y-3">
+      <Modal open={histOpen} onClose={() => setHistOpen(false)} title={liveFile ? `التاريخ المرضي — ${liveFile.nameAr}` : ''} wide subtitle="ملف طبي: أمراض مزمنة وحساسية وأدوية دائمة تُنبّه الطبيب في كل زيارة">
+        <div className="space-y-3"><DocSectionHead step="١" title="التاريخ المرضي والتحذيرات الدوائية" hint="بيانات سريرية تبقى محلية على الجهاز" />
           <HistoryEditor value={histDraft} onChange={setHistDraft} />
+          <DocOutcome>الأثر: <b>لا قيد</b> محاسبياً — بيانات سريرية تظهر كتنبيه أعلى ملف المريض وفي نافذة الزيارة.</DocOutcome>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setHistOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveHistory}>حفظ</Btn>
@@ -724,8 +727,8 @@ export function ClinicPatientsPage() {
       </Modal>
 
       {/* زيارة جديدة — روشتة منظمة كالفاتورة */}
-      <Modal open={visitOpen} onClose={() => setVisitOpen(false)} title={liveFile ? `زيارة جديدة — ${liveFile.nameAr}` : ''} wide>
-        <div className="space-y-3">
+      <Modal open={visitOpen} onClose={() => setVisitOpen(false)} title={liveFile ? `زيارة جديدة — ${liveFile.nameAr}` : ''} wide subtitle="مستند زيارة: كشف أو إجراء بأتعابه وتحصيله أو تأجيله ديناً">
+        <div className="space-y-3"><DocSectionHead step="١" title="نوع الزيارة وأتعابها والتحصيل" hint="المتبقي يفتح للمريض حساب عميل — لا دين بلا مدين" />
           {fileHistory.allergies.length > 0 && (
             <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 px-3 py-2 text-[12px] font-bold text-rose-600">
               ⚠️ حساسية مسجلة: {fileHistory.allergies.join('، ')} — راجع قبل الوصف
@@ -801,6 +804,7 @@ export function ClinicPatientsPage() {
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">ض.ق.م {setup.vatPercent}٪</span>
             </label>
           </Field>
+          <DocOutcome>الأثر: <b>4108 إيراد كشف وعلاج</b> دائناً بالأتعاب · <b>الخزينة</b> مديناً بالمحصَّل الآن · <b>1104 ذمم العملاء</b> مديناً بالمتبقي بعد فتح حساب للمريض آلياً · والضريبة إن وُجدت على <b>2102</b>.</DocOutcome>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setVisitOpen(false)}>إلغاء</Btn>
             <Btn onClick={saveVisit} shortcut="F9" disabled={!vFee}>تسجيل الزيارة وقيدها</Btn>
@@ -809,13 +813,14 @@ export function ClinicPatientsPage() {
       </Modal>
 
       {/* خطة علاج */}
-      <Modal open={planOpen} onClose={() => setPlanOpen(false)} title={liveFile ? `خطة علاج — ${liveFile.nameAr}` : ''}>
-        <div className="space-y-3">
+      <Modal open={planOpen} onClose={() => setPlanOpen(false)} title={liveFile ? `خطة علاج — ${liveFile.nameAr}` : ''} subtitle="مستند خطة: جلسات متعددة بسعر إجمالي يُقسَّم بلا فقد قرش">
+        <div className="space-y-3"><DocSectionHead step="١" title="عنوان الخطة وعدد جلساتها وقيمتها" hint="الإيراد يُعترف به جلسةً جلسةً لا دفعة واحدة" />
           <Field label="عنوان الخطة *"><input value={pTitle} onChange={(e) => setPTitle(e.target.value)} className={inputCls} placeholder="خطة علاج متعددة الجلسات — مثال: جلسات ليزر، تقويم، علاج طبيعي…" /></Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="عدد الجلسات *"><input value={pSessions} onChange={(e) => setPSessions(e.target.value)} inputMode="numeric" className={inputCls} /></Field>
             <Field label={`إجمالي الخطة (${cur.symbol}) *`} hint="يقسم على الجلسات تلقائياً بلا فقد قرش"><input value={pFee} onChange={(e) => setPFee(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
           </div>
+          <DocOutcome>الأثر: <b>لا قيد</b> عند إنشاء الخطة — كل جلسة تُنفَّذ تولّد إيرادها على <b>4108 إيراد العيادة</b> بحصتها، وما يُحصَّل مقدماً يبقى التزاماً حتى تُؤدى الجلسة.</DocOutcome>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setPlanOpen(false)}>إلغاء</Btn>
             <Btn onClick={savePlan} disabled={!pTitle.trim() || !pFee}>إنشاء الخطة</Btn>
@@ -894,8 +899,8 @@ export function ClinicAppointmentsPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="حجز موعد">
-        <div className="space-y-3">
+      <Modal open={open} onClose={() => setOpen(false)} title="حجز موعد" subtitle="مستند حجز: موعد في جدول الطبيب قبل تنفيذ الزيارة">
+        <div className="space-y-3"><DocSectionHead step="١" title="المريض وموعده والطبيب" hint="الحجز تنظيم وقت لا حركة مالية" />
           <Field label="المريض *">
             <QuickSelect value={patientId} onChange={(e) => setPatientId(e.target.value)} className={inputCls}>
               <option value="">— اختر —</option>
@@ -907,6 +912,7 @@ export function ClinicAppointmentsPage() {
             <Field label="الوقت"><input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} /></Field>
           </div>
           <Field label="الغرض"><input value={purpose} onChange={(e) => setPurpose(e.target.value)} className={inputCls} placeholder="متابعة، جلسة تقويم…" /></Field>
+          <DocOutcome>الأثر: <b>لا قيد</b> عند الحجز — القيد يتولد عند تسجيل الزيارة فعلياً (<b>4108</b> إيراداً و<b>الخزينة</b> أو ذمة المريض مديناً).</DocOutcome>
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
             <Btn onClick={save} disabled={!patientId}>حجز</Btn>

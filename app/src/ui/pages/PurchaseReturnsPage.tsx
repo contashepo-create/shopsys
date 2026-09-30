@@ -21,6 +21,7 @@ import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
+import { rowOpenProps } from '../components/rowOpen.ts'
 
 export function PurchaseReturnsPage() {
   const { purchases, purchaseReturns, suppliers, items, warehouses, journal, postPurchaseReturn, getSupplierBalance, appUsers, currentUserId } = useDataStore()
@@ -170,7 +171,7 @@ export function PurchaseReturnsPage() {
               {[...purchaseReturns].reverse().map((r, i) => {
                 const orig = purchases.find((p) => p.id === r.purchaseId)
                 return (
-                  <tr key={r.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.03] transition-colors">
+                  <tr key={r.id} {...rowOpenProps(() => setViewing(r), `انقر مرتين لفتح مرتجع المشتريات ${r.returnNumber}`)} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-cyan-500/[0.03] transition-colors">
                     <td className="px-4 py-3">
                       <div className="font-bold text-slate-800 dark:text-white">{r.returnNumber}</div>
                       <div className="text-[11px] text-slate-400">{r.date.slice(0, 16).replace('T', ' ')}</div>
@@ -244,14 +245,14 @@ export function PurchaseReturnsPage() {
         {purchase && (
           <div className="space-y-4">
             {purchase.supplierId > 0 && suppliers.find((row) => row.id === purchase.supplierId) && (() => { const supplier = suppliers.find((row) => row.id === purchase.supplierId)!; return <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50/60 px-3 py-2 text-xs dark:border-sky-900/60 dark:bg-sky-950/20"><div className="flex flex-wrap items-center gap-2"><b>{supplier.nameAr}</b><span className="font-mono text-slate-500" dir="ltr">{partyCode('SUP', supplier.id)}</span><span>الرصيد: {fmt(Math.abs(getSupplierBalance(supplier.id)))} {cur.symbol}</span>{supplier.address && <span className="text-slate-500">{supplier.address}</span>}</div><button type="button" title="تعديل بيانات المورد" onClick={() => setPartyEditorOpen(true)} className="rounded-lg border border-sky-300 p-1.5 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300">تعديل المورد</button></div> })()}
-            <table className="w-full text-[13px]">
+            <table className="invoice-lines-table w-full text-[13px]">
               <thead>
                 <tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                  <th className="px-3 py-2">الصنف</th>
-                  <th className="px-3 py-2">المشترى</th>
-                  <th className="px-3 py-2">التكلفة النهائية/وحدة</th>
-                  <th className="px-3 py-2">المتبقي القابل للإرجاع</th>
-                  <th className="px-3 py-2 w-28">كمية الإرجاع</th>
+                  <th className="px-3 py-2 text-start">الصنف</th>
+                  <th className="px-3 py-2 text-center">المشترى</th>
+                  <th className="px-3 py-2 text-center">التكلفة النهائية/وحدة</th>
+                  <th className="px-3 py-2 text-center">المتبقي القابل للإرجاع</th>
+                  <th className="px-3 py-2 w-28 text-center">كمية الإرجاع</th>
                 </tr>
               </thead>
               <tbody>

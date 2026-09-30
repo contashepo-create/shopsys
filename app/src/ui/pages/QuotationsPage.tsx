@@ -10,10 +10,10 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { quotationTotal, quotationEstCost, quotationPipeline, QUOTATION_STATUS_LABELS, type Quotation, type QuotationLine } from '../../core/contracting.ts'
+import { quotationTotals, quotationTotal, quotationEstCost, quotationPipeline, QUOTATION_STATUS_LABELS, type Quotation, type QuotationLine } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
-interface DraftLine { nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string }
+interface DraftLine { nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string; vat: string; incl: boolean }
 
 const UNITS = ['مقطوعية', 'م2', 'م3', 'م.ط', 'طن', 'عدد', 'يوم عمل']
 
@@ -44,7 +44,7 @@ export function QuotationsPage() {
     setKind('quotation'); setTitleAr(''); setClientName(''); setClientId('')
     const d = new Date(); d.setMonth(d.getMonth() + 1)
     setValidUntil(d.toISOString().slice(0, 10))
-    setQLines([{ nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '' }])
+    setQLines([{ nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '', vat: '0', incl: false }])
     setNotes(''); setOpen(true)
   }
 
@@ -58,8 +58,11 @@ export function QuotationsPage() {
       unitAr: l.unitAr,
       unitPriceMinor: safeMinor(l.unitPrice),
       estCostMinor: safeMinor(l.estCost),
+      vatPercent: Math.min(100, Math.max(0, Number(l.vat) || 0)),
+      taxIncluded: !!l.incl,
     }))
   const draftTotal = quotationTotal(parsedLines)
+  const draftTax = quotationTotals(parsedLines)
   const draftEstCost = quotationEstCost(parsedLines)
 
   const save = () => {
@@ -206,7 +209,7 @@ export function QuotationsPage() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">بنود الأعمال</span>
-              <Btn variant="soft" onClick={() => setQLines((l) => [...l, { nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '' }])}>+ بند</Btn>
+              <Btn variant="soft" onClick={() => setQLines((l) => [...l, { nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '', vat: '0', incl: false }])}>+ بند</Btn>
             </div>
             {/* إدخال بنود عالمي (طلب المالك): كل خانة مسماة فوق حقلها في كل المقاسات —
                 لا اعتماد على صف عناوين يختفي في الشاشات الصغيرة */}
@@ -225,6 +228,8 @@ export function QuotationsPage() {
                         </QuickSelect>
                       </Field>
                       <Field label={`سعر الوحدة (${cur.symbol}) *`}><input value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" /></Field>
+                      <Field label="ضريبة %" hint="0 = بلا ضريبة"><input value={l.vat} inputMode="decimal" onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, vat: e.target.value } : x)))} className={inputCls} /></Field>
+                      <Field label="السعر شامل الضريبة؟"><label className="flex items-center gap-1 text-[12px]"><input type="checkbox" checked={l.incl} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, incl: e.target.checked } : x)))} /> شامل</label></Field>
                       <Field label="تكلفة تقديرية/وحدة" hint=""><input value={l.estCost} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, estCost: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} placeholder="للموازنة" className={inputCls} dir="ltr" /></Field>
                     </div>
                     <div className="flex items-center justify-between mt-2">
@@ -239,7 +244,9 @@ export function QuotationsPage() {
 
           {draftTotal > 0 && (
             <div className="anim-pop p-3 rounded-xl bg-orange-500/5 border border-orange-500/20 text-[13px] font-bold text-orange-700 dark:text-orange-300 grid grid-cols-3 gap-2 text-center">
-              <span>الإجمالي: <b className="font-black">{fmt(draftTotal)}</b></span>
+              <span>الصافي: <b className="font-black">{fmt(draftTax.netMinor)}</b></span>
+              <span>الضريبة: <b className="font-black">{fmt(draftTax.taxMinor)}</b></span>
+              <span>الإجمالي شامل الضريبة: <b className="font-black">{fmt(draftTax.grossMinor)}</b></span>
               <span>التكلفة التقديرية: <b className="font-black">{fmt(draftEstCost)}</b></span>
               <span className={draftTotal - draftEstCost >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}>هامش متوقع: <b className="font-black">{fmt(draftTotal - draftEstCost)}</b></span>
             </div>

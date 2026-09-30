@@ -121,7 +121,9 @@ ok('الميزان متوازن', balanced())
 console.log('\n5️⃣ب G6: عقد يومي بضريبة وتجاوز — الوعاء يشمل ضريبة التجاوز')
 // عقد يومي 2 × 1000 بضريبة 14٪ (grand=2280) — يُقفل بعد 3 أيام ⇒ تجاوز 1000 + ض 140
 const rc2 = S().openRental({ customerId: cust.id, equipmentId: null, input: { equipmentName: 'سقالة', days: 2, dailyRateMinor: 100000, vatPercent: 14, depositMinor: 0, payment: 'cash' }, notes: '' })
-S().closeRental(rc2.id, 0, { endDate: rc2.date.slice(0, 10).replace(/\d{2}$/, (d) => String(Number(d) + 3).padStart(2, '0')) }, '1101')
+// +3 أيام بحساب تقويمي سليم (الجمع النصي كان ينتج 2026-09-32 في أواخر الشهر ويكسر البوابة)
+const rc2End = new Date(Date.parse(`${rc2.date.slice(0, 10)}T00:00:00Z`) + 3 * 86_400_000).toISOString().slice(0, 10)
+S().closeRental(rc2.id, 0, { endDate: rc2End }, '1101')
 const rc2b = S().rentalContracts.find((c) => c.id === rc2.id)
 ok('التجاوز سُجل (extra=1000)', rc2b.extraMinor === 100000, `فعلي ${rc2b.extraMinor}`)
 // الوعاء الكلي = 2280 + 1000 + 140 = 3420 والضريبة الكلية = 420 — رد الكل دفعة واحدة

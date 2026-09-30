@@ -182,8 +182,33 @@ export function buildTransferEntry(
  * التحقق من قيد يدوي قبل الحفظ (زر الحفظ يظل معطلاً حتى تختفي الأخطاء):
  * حسابات ورقية موجودة، سطران فأكثر، توازن تام، لا سطر صفري أو مزدوج.
  */
+/**
+ * AUDIT-011 — حسابات المراقبة (Control/Reconciliation Accounts):
+ * أرصدتها تُبنى من الدفاتر المساعدة (كشوف الأطراف والموظفين والشيكات والمخزون)
+ * لا من القيد اليدوي. أي قيد يدوي عليها يفصل الدفتر عن الكشف ويكسر الثابت السابع —
+ * فنمنعه ونرشد للمستند الصحيح (نفس سياسة SAP/Odoo في «حساب مطابقة»).
+ */
+/** حسابات مراقبة لها كشف طرف: يجوز القيد اليدوي عليها **بشرط تحديد الطرف** فيدخل كشفه */
+export const PARTY_CONTROL_ACCOUNTS: Record<string, 'customer' | 'supplier'> = {
+  '1104': 'customer',
+  '2101': 'supplier',
+}
+
+/** حسابات مراقبة دفترها المساعد مستندي بالكامل — لا قيد يدوي عليها إطلاقاً */
+/**
+ * ملاحظة: المخزون 1103 ليس هنا عن قصد — دفتره المساعد ليس «طرفاً» بل تقييم الأصناف،
+ * وكل حركة تشغيلية له لها مستندها (شراء/بيع/جرد/هالك/صرف داخلي)، بينما يحتاج المحاسب
+ * أحياناً قيد تسوية سنوية أو هبوط قيمة لا مستند تشغيلياً له. الثابت الخامس يكشف أي انحراف.
+ */
+export const LOCKED_CONTROL_ACCOUNTS: Record<string, string> = {
+  '1106': 'أوراق القبض — تنشأ من استلام الشيك وتُقفل بتحصيله أو ارتداده',
+  '1107': 'سلف الموظفين — استخدم صرف سلفة أو استقطاعها في المسير',
+  '1108': 'عهد الموظفين — استخدم تمويل العهدة ومصروفاتها وتسويتها',
+  '2116': 'عمولات الموظفين المستحقة — تنشأ من عمولة الفاتورة وتُقفل بصرفها',
+}
+
 export function validateManualEntry(
-  lines: { accountCode: string; debit: Minor; credit: Minor }[],
+  lines: { accountCode: string; debit: Minor; credit: Minor; partyKind?: 'customer' | 'supplier' | null; partyId?: number | null }[],
   coa: Account[],
 ): string[] {
   const errors: string[] = []
@@ -193,6 +218,12 @@ export function validateManualEntry(
     const acc = coa.find((a) => a.code === l.accountCode)
     if (!acc) { errors.push(`حساب غير معروف: ${l.accountCode || '(فارغ)'}`); continue }
     if (!acc.isPostable) errors.push(`«${acc.nameAr}» حساب تجميعي لا يقبل قيوداً مباشرة`)
+    const lockedHint = LOCKED_CONTROL_ACCOUNTS[l.accountCode]
+    if (lockedHint) errors.push(`«${acc.nameAr}» حساب مراقبة يتغذى من دفتره المساعد — لا قيد يدوي عليه: ${lockedHint}`)
+    const partyControl = PARTY_CONTROL_ACCOUNTS[l.accountCode]
+    if (partyControl && !(l.partyId && l.partyId > 0 && l.partyKind === partyControl)) {
+      errors.push(`سطر «${acc.nameAr}» حساب مراقبة — حدد ${partyControl === 'customer' ? 'العميل' : 'المورد'} على السطر ليدخل كشف حسابه`)
+    }
     if (l.debit < 0 || l.credit < 0) errors.push('المبالغ السالبة مرفوضة — استخدم الطرف المقابل')
     if (l.debit > 0 && l.credit > 0) errors.push(`سطر «${acc.nameAr}» لا يكون مديناً ودائناً معاً`)
   }
