@@ -35,10 +35,13 @@ import { partyCode } from '../../core/partyCodes.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { SheetPanel } from '../components/SheetPanel.tsx'
 import { usePrintSwitches } from '../components/PrintSwitches.tsx'
+import { ThermalPreview } from '../components/ThermalPreview.tsx'
+import { needsApproval } from '../../core/approvals.ts'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { buildWarehouseReceiptHtml } from '../../core/warehouseReceipt.ts'
 import { formatInvoiceAuditLine } from '../../core/invoiceAudit.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { buildModelHtml } from '../print/printDoc.ts'
 import { AnimatedMinor } from '../components/AnimatedMinor.tsx'
 import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
 import { FillFromPicker, type FillSource } from '../components/FillFromPicker.tsx'
@@ -55,15 +58,15 @@ const modeNames:Record<InvoiceEditorMode,string>={simple:'مبسط',standard:'ب
 const SALE_TERMS=['السداد خلال 30 يوماً من تاريخ الفاتورة','البضاعة المباعة لا تُرد ولا تُستبدل بعد 14 يوماً','الضمان سنة على عيوب الصناعة فقط']
 
 export function AdvancedSalesInvoicePage(){
- const nav=useNavigate(),toast=useToast();const [searchParams]=useSearchParams();const host=useWindowHost();const editId=Number((host?.props.editId as number|undefined)??searchParams.get('edit')??0);const {setup,receipt,einvoice,activatedPayload,trialStartedAt,lastSeenAt,warehouseReceipt,loyalty}=useAppStore();const cur=(setup.countryCode&&getCountry(setup.countryCode)?.currency)||{code:'EGP',symbol:'ج.م',decimals:2 as const,name:''};const taxPolicy=resolveBusinessTax(setup.taxRegistrationStatus,setup.vatPercent)
- const {items,categories,customers,warehouses,branches,treasuries,custodyFiles,vehicles,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,priceLists,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,editSale,sales,getEffectivePrice,getCustomerBalance,addDocumentFile,partyNotes,addPartyNote,quotations,boqItems,addCustomer,redeemLoyaltyPoints}=useDataStore();const [partyNote,setPartyNote]=useState('');const [attachments,setAttachments]=useState<PendingAttachment[]>([]);const [draftsOpen,setDraftsOpen]=useState(false);const [draftId,setDraftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);const [mode,setMode]=useState<InvoiceEditorMode>('simple');const [customerId,setCustomerId]=useState(0);const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [invoiceDate,setInvoiceDate]=useState(()=>new Date().toISOString().slice(0,10))
+ const nav=useNavigate(),toast=useToast();const [searchParams]=useSearchParams();const host=useWindowHost();const editId=Number((host?.props.editId as number|undefined)??searchParams.get('edit')??0);const {setup,receipt,einvoice,activatedPayload,trialStartedAt,lastSeenAt,warehouseReceipt,loyalty,approvals}=useAppStore();const cur=(setup.countryCode&&getCountry(setup.countryCode)?.currency)||{code:'EGP',symbol:'ج.م',decimals:2 as const,name:''};const taxPolicy=resolveBusinessTax(setup.taxRegistrationStatus,setup.vatPercent)
+ const {items,categories,customers,warehouses,branches,treasuries,custodyFiles,vehicles,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,priceLists,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,editSale,sales,getEffectivePrice,getCustomerBalance,addDocumentFile,partyNotes,addPartyNote,quotations,boqItems,addCustomer,redeemLoyaltyPoints,submitDocForApproval}=useDataStore();const [partyNote,setPartyNote]=useState('');const [attachments,setAttachments]=useState<PendingAttachment[]>([]);const [draftsOpen,setDraftsOpen]=useState(false);const [draftId,setDraftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);const [mode,setMode]=useState<InvoiceEditorMode>('simple');const [customerId,setCustomerId]=useState(0);const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [invoiceDate,setInvoiceDate]=useState(()=>new Date().toISOString().slice(0,10))
  const [customerReference,setCustomerReference]=useState(''),[dueDate,setDueDate]=useState(''),[notes,setNotes]=useState('');const [discount,setDiscount]=useState('0'),[discountAmount,setDiscountAmount]=useState('');const [discByAmount,setDiscByAmount]=useState(false);const [notesLogOpen,setNotesLogOpen]=useState(false);const [multiPay,setMultiPay]=useState(false);const [bankPaid,setBankPaid]=useState('');const [paid,setPaid]=useState('');const [fxOn,setFxOn]=useState(false);const [fxCode,setFxCode]=useState('USD');const [fxAmount,setFxAmount]=useState('');const [fxRate,setFxRate]=useState('');const paidTouched=useRef(false);const [terminalPaid,setTerminalPaid]=useState('');const [employeePaid,setEmployeePaid]=useState('');const [collectionEmployeeId,setCollectionEmployeeId]=useState(0);const [treasury,setTreasury]=useState(()=>effectiveDefaultTreasury(appUsers.find(u=>u.id===currentUserId)?.treasuryAccess,'receipt','1101'));const [terminal,setTerminal]=useState<TerminalPaymentDraft>({terminalId:'',providerReference:'',cardLast4:''});const [expenses,setExpenses]=useState<InternalExpense[]>([]);const [customerCharges,setCustomerCharges]=useState<DocumentCharge[]>([]);const [allowNegative,setAllowNegative]=useState(setup.allowNegativeStock);const [chargesOpen,setChargesOpen]=useState(false);const [internalExpensesOpen,setInternalExpensesOpen]=useState(false);const [categoryFilter,setCategoryFilter]=useState(0);const [printOpen,setPrintOpen]=useState(false);const [partyEditorOpen,setPartyEditorOpen]=useState(false);const [editReason,setEditReason]=useState('')
  /** ملاحظات طرف بعينه من السجل — الأحدث أولاً (تظهر في بروفايل العميل وكشف حسابه) */
  const partyNotesOf=(kind:'customer'|'supplier',id:number)=>partyNotesFor(partyNotes,kind,id)
  /** تقييد ملاحظة الترويسة في سجل ملاحظات العميل بتاريخها وكاتبها ورقم الفاتورة */
  const commitPartyNote=(source:string)=>{const text=partyNote.trim();if(!text)return;if(!customerId){toast.show('الملاحظة لم تُحفظ: البيع النقدي بلا سجل عميل','error');return}
   try{addPartyNote({partyKind:'customer',partyId:customerId,text,userName:currentUser?.nameAr??setup.ownerName??'المالك',source});setPartyNote('')}catch(e){toast.show((e as Error).message,'error')}}
- const editingInvoice=sales.find(invoice=>invoice.id===editId)??null;const lic=evaluateLicense({activatedPayload,trialStartedAt,lastSeenAt,today:new Date().toISOString()});const einvoiceActive=electronicInvoiceLockActive({licensed:hasFeature(lic,'einvoice_sa')||hasFeature(lic,'einvoice_eg'),enabled:einvoice.enabled===true,taxNumber:einvoice.taxNumber});const currentUser=appUsers.find(u=>u.id===currentUserId)??null;const canViewCost=effectivePermissionsFor(currentUser,rolesWithOverrides(roleOverrides,customRoles,setup.activityId)).has('inv.cost.view')
+ const editingInvoice=sales.find(invoice=>invoice.id===editId)??null;const lic=evaluateLicense({activatedPayload,trialStartedAt,lastSeenAt,today:new Date().toISOString()});const einvoiceActive=electronicInvoiceLockActive({licensed:hasFeature(lic,'einvoice_sa')||hasFeature(lic,'einvoice_eg'),enabled:einvoice.enabled===true,taxNumber:einvoice.taxNumber});const currentUser=appUsers.find(u=>u.id===currentUserId)??null;const invoicePerms=effectivePermissionsFor(currentUser,rolesWithOverrides(roleOverrides,customRoles,setup.activityId));const canViewCost=invoicePerms.has('inv.cost.view')
  const customerPriceListId=(id:number)=>customers.find(customer=>customer.id===id)?.priceListId??null
  const selectCustomer=(id:number)=>{setCustomerId(id);const listId=customerPriceListId(id);setLines(previous=>previous.map(line=>({...line,unitPriceMinor:getEffectivePrice(line.itemId,listId)})));if(id!==0&&!paidTouched.current){setPaid('');setTerminalPaid('')}}
  const customerPickerInfo=(party:{id:number;active?:boolean})=>{const balance=getCustomerBalance(party.id);return{code:partyCode('CUS',party.id),balance:`الرصيد ${formatMinor(Math.abs(balance),cur,false)} ${cur.symbol} ${balance>0?'عليه':balance<0?'له':''}`}}
@@ -99,7 +102,25 @@ export function AdvancedSalesInvoicePage(){
  const saveDraft=()=>{const draft=upsertAdvancedInvoiceDraft({id:draftId,kind:'sale',name:`مسودة مبيعات — ${customers.find(c=>c.id===customerId)?.nameAr??'عميل نقدي'}`,payload:JSON.stringify({mode,customerId,customerReference,dueDate,notes,warehouseId,lines,discount,discountAmount,paid,terminalPaid,employeePaid,collectionEmployeeId,treasury,terminal,expenses,customerCharges,allowNegative,commissionEmployeeId,commissionBasis,commissionAmount,additionalCommissions,attachments})});unsaved.markClean();toast.show(`حُفظت المسودة محلياً ${new Date(draft.updatedAt).toLocaleTimeString('ar-EG')} ✓`)}
  /* قوالب الفواتير (الموجة ①): «حفظ كقالب» يخزّن السلة الحالية باسم يختاره
     المستخدم، و«ابدأ من قالب» ينسخها إلى فاتورة جديدة بتاريخ اليوم. */
+ /* طرق التحصيل كقوائم منسدلة (بلاغ المالك) — مصدر واحد للتسميات والقيم */
+ const PAY_METHODS=[
+  {id:'cash' as const,label:'💵 نقدي',hint:treasuries.find(t=>t.code===treasury)?.nameAr??'الخزينة الرئيسية'},
+  {id:'bank' as const,label:'🏦 تحويل بنكي',hint:treasuries.find(t=>t.kind==='bank')?.nameAr??'البنك الرئيسي'},
+  {id:'card' as const,label:'💳 ماكينة دفع',hint:paymentTerminals.find(t=>t.id===terminal.terminalId)?.nameAr??'اختر ماكينة'},
+  {id:'staff' as const,label:'👤 حساب موظف',hint:employees.find(e=>e.id===collectionEmployeeId)?.nameAr??'اختر موظفاً'},
+ ]
+ type PayMethodId='cash'|'bank'|'card'|'staff'
+ const [payRows,setPayRows]=useState<{id:string;method:PayMethodId}[]>([{id:crypto.randomUUID(),method:'cash'}])
+ const payAmount=(method:PayMethodId)=>method==='cash'?paid:method==='bank'?bankPaid:method==='card'?terminalPaid:employeePaid
+ const setPayAmount=(method:PayMethodId,value:string)=>{
+  if(method==='cash')setPaid(value)
+  else if(method==='bank')setBankPaid(value)
+  else if(method==='card')setTerminalPaid(value)
+  else setEmployeePaid(value)
+ }
  const printSwitches=usePrintSwitches()
+ /* معاينة الإيصال الحراري قبل الطباعة (طلب المالك) — تظهر ما لم تكن الطباعة صامتة */
+ const [thermalPreview,setThermalPreview]=useState<string|null>(null)
  const [projectId,setProjectId]=useState(0)
  /* الدرج الجانبي (طلب المالك): «عميل جديد» بلا مغادرة الفاتورة — Ctrl+Shift+N */
  const [newPartySheet,setNewPartySheet]=useState(false)
@@ -159,11 +180,31 @@ export function AdvancedSalesInvoicePage(){
   toast.show(`بدأت فاتورة من القالب «${draft.name}»`)
  }
  const applyDraft=(draft:AdvancedInvoiceDraft)=>{try{const d=JSON.parse(draft.payload);setMode(d.mode??'simple');setCustomerId(d.customerId??0);setCustomerReference(d.customerReference??'');setDueDate(d.dueDate??'');setNotes(d.notes??'');setWarehouseId(d.warehouseId??null);setLines(d.lines??[]);setDiscount(d.discount??'0');setDiscountAmount(d.discountAmount??'');paidTouched.current=true;setPaid(d.paid??'');setTerminalPaid(d.terminalPaid??'');setEmployeePaid(d.employeePaid??'');setCollectionEmployeeId(d.collectionEmployeeId??0);setTreasury(d.treasury??'1101');setTerminal(d.terminal??{terminalId:'',providerReference:'',cardLast4:''});setExpenses(d.expenses??[]);setCustomerCharges(d.customerCharges??[]);setAllowNegative(d.allowNegative??false);setCommissionEmployeeId(d.commissionEmployeeId??0);setCommissionBasis(d.commissionBasis??'fixed');setCommissionAmount(d.commissionAmount??'');setAdditionalCommissions(d.additionalCommissions??[]);setAttachments(d.attachments??[]);toast.show(`استُعيدت «${draft.name}» ✓`)}catch{toast.show('تعذر قراءة المسودة المحفوظة','error')}};const restoreDraft=()=>setDraftsOpen(true)
- const printDraft=(template:InvoiceTemplate)=>{if(!totals||!lines.length)return toast.show('أضف بنوداً قبل المعاينة','error');const model=buildReceiptModel({invoiceNumber:'مسودة',refCode:'DRAFT',dateIso:new Date().toISOString(),lines:[...lines.map(l=>({...l,nameAr:`${items.find(i=>i.id===l.itemId)?.sku||items.find(i=>i.id===l.itemId)?.barcodes?.[0]||l.itemId} — ${l.nameAr}`})),...customerCharges.map((charge,index)=>({itemId:-(index+1),nameAr:charge.nameAr,qty:1,unitPriceMinor:charge.amountMinor,unitCostMinor:0,discountPercent:0,soldByWeight:false,vatPercentOverride:charge.taxable?taxPolicy.effectivePercent:0}))],totals,payment:totalPaidMinor>=totals.totalMinor?'cash':'credit',paidMinor:Math.min(totalPaidMinor,totals.totalMinor),operatorName:currentUser?.nameAr??setup.ownerName??'المالك',customerName:customers.find(c=>c.id===customerId)?.nameAr??null,taxPercent:taxPolicy.effectivePercent,taxInclusive:false,settings:receipt});if(customerReference||dueDate)model.footerText=`${customerReference?`مرجع العميل: ${customerReference}`:''}${customerReference&&dueDate?' — ':''}${dueDate?`الاستحقاق: ${dueDate}`:''}${receipt.footerText?' — '+receipt.footerText:''}`;printModelWithTemplate(model,cur,receipt,template)}
+ const printDraft=(template:InvoiceTemplate)=>{if(!totals||!lines.length)return toast.show('أضف بنوداً قبل المعاينة','error');const model=buildReceiptModel({invoiceNumber:'مسودة',refCode:'DRAFT',dateIso:new Date().toISOString(),lines:[...lines.map(l=>({...l,nameAr:`${items.find(i=>i.id===l.itemId)?.sku||items.find(i=>i.id===l.itemId)?.barcodes?.[0]||l.itemId} — ${l.nameAr}`})),...customerCharges.map((charge,index)=>({itemId:-(index+1),nameAr:charge.nameAr,qty:1,unitPriceMinor:charge.amountMinor,unitCostMinor:0,discountPercent:0,soldByWeight:false,vatPercentOverride:charge.taxable?taxPolicy.effectivePercent:0}))],totals,payment:totalPaidMinor>=totals.totalMinor?'cash':'credit',paidMinor:Math.min(totalPaidMinor,totals.totalMinor),operatorName:currentUser?.nameAr??setup.ownerName??'المالك',customerName:customers.find(c=>c.id===customerId)?.nameAr??null,taxPercent:taxPolicy.effectivePercent,taxInclusive:false,settings:receipt});if(customerReference||dueDate)model.footerText=`${customerReference?`مرجع العميل: ${customerReference}`:''}${customerReference&&dueDate?' — ':''}${dueDate?`الاستحقاق: ${dueDate}`:''}${receipt.footerText?' — '+receipt.footerText:''}`;/* حراري + غير صامت ⇒ معاينة صغيرة بأزرار طباعة/إلغاء/إعدادات (طلب المالك) */
+  if(template==='thermal'&&!printSwitches.silentPrint){setThermalPreview(buildModelHtml(model,cur,receipt,'thermal'));return}
+  printModelWithTemplate(model,cur,receipt,template)}
  /* «تصدير PDF» = نفس قالب A4 عبر حوار الطباعة ووجهة «حفظ كـ PDF» — بلا مكتبة خارجية ولا إنترنت */
  const exportPdf=()=>{if(!totals||!lines.length)return toast.show('أضف بنوداً قبل التصدير','error');toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️');printDraft('a4')}
  const approval=useSupervisorApproval('sales.price.edit')
- const postInvoice=(approvedBy?:string|null)=>{try{if(!lines.length)throw new Error('أضف بنداً واحداً على الأقل');if(new Set(allCommissionInputs.map(c=>c.employeeId)).size!==allCommissionInputs.length)throw new Error('لا تكرر الموظف في تقسيم العمولة');if(stockWarnings.some(w=>w.severity==='error'))throw new Error('يوجد عجز مخزون يمنع الترحيل');const selectedTerminal=paymentTerminals.find(t=>t.id===terminal.terminalId);const paidMinor=Math.min(totalPaidMinor,totals?.totalMinor??0);if(totalPaidMinor>=(totals?.totalMinor??0)+1)throw new Error('إجمالي التحصيل أكبر من الفاتورة');const bankAccount=(treasuries.find(t=>t.kind==='bank')?.code??'1102') as typeof treasury;const paymentAllocations=[...(cashPaidMinor>0?[{accountCode:treasury,amountMinor:cashPaidMinor,note:'تحصيل نقدي/بنكي'}]:[]),...(bankPaidMinor>0?[{accountCode:bankAccount,amountMinor:bankPaidMinor,note:'تحويل بنكي'}]:[]),...(selectedTerminal&&terminalPaidMinor>0?[{accountCode:selectedTerminal.settlementAccountCode,amountMinor:terminalPaidMinor,note:`ماكينة ${selectedTerminal.nameAr}`}]:[]),...(collectionEmployeeId&&employeePaidMinor>0?[{accountCode:'1107',amountMinor:employeePaidMinor,note:`على حساب الموظف ${employees.find(e=>e.id===collectionEmployeeId)?.nameAr??''}`,employeeId:collectionEmployeeId}]:[])];if(fxOn){if(fxErrors.length)throw new Error(fxErrors.join(' — '));if(fxBookMinor<=0)throw new Error('أكمل المبلغ بالعملة الأجنبية وسعر صرفه');if(employeePaidMinor>0)throw new Error('التحصيل بعملة أجنبية يكون على الخزينة/البنك فقط — أزل التحصيل على حساب الموظف')}
+ /* بوابة الاعتماد (طلب المالك): لا قيد قبل الاعتماد — المستند يُحفظ طلباً */
+ const submitForApprovalIfNeeded=()=>{
+  const amount=totals?.totalMinor??0
+  const gate=needsApproval({settings:approvals,kind:'sale',amountMinor:amount,userId:currentUserId,userPermissions:invoicePerms})
+  if(!gate)return false
+  submitDocForApproval({
+   kind:'sale',
+   title:`فاتورة مبيعات — ${lines.length} بند`,
+   partyName:selectedCustomer?.nameAr??'عميل نقدي',
+   amountMinor:amount,
+   payload:JSON.stringify({mode,customerId,warehouseId,lines,discount,discountAmount,notes,customerReference,dueDate,projectId}),
+   requestedBy:currentUserId,
+   requestedByName:currentUser?.nameAr??setup.ownerName??'مستخدم',
+  })
+  toast.show('أُرسلت الفاتورة للاعتماد — لن تُقيَّد حتى يعتمدها المخوَّل')
+  finishDocument()
+  return true
+ }
+ const postInvoice=(approvedBy?:string|null)=>{try{if(!lines.length)throw new Error('أضف بنداً واحداً على الأقل');if(!approvedBy&&submitForApprovalIfNeeded())return;if(new Set(allCommissionInputs.map(c=>c.employeeId)).size!==allCommissionInputs.length)throw new Error('لا تكرر الموظف في تقسيم العمولة');if(stockWarnings.some(w=>w.severity==='error'))throw new Error('يوجد عجز مخزون يمنع الترحيل');const selectedTerminal=paymentTerminals.find(t=>t.id===terminal.terminalId);const paidMinor=Math.min(totalPaidMinor,totals?.totalMinor??0);if(totalPaidMinor>=(totals?.totalMinor??0)+1)throw new Error('إجمالي التحصيل أكبر من الفاتورة');const bankAccount=(treasuries.find(t=>t.kind==='bank')?.code??'1102') as typeof treasury;const paymentAllocations=[...(cashPaidMinor>0?[{accountCode:treasury,amountMinor:cashPaidMinor,note:'تحصيل نقدي/بنكي'}]:[]),...(bankPaidMinor>0?[{accountCode:bankAccount,amountMinor:bankPaidMinor,note:'تحويل بنكي'}]:[]),...(selectedTerminal&&terminalPaidMinor>0?[{accountCode:selectedTerminal.settlementAccountCode,amountMinor:terminalPaidMinor,note:`ماكينة ${selectedTerminal.nameAr}`}]:[]),...(collectionEmployeeId&&employeePaidMinor>0?[{accountCode:'1107',amountMinor:employeePaidMinor,note:`على حساب الموظف ${employees.find(e=>e.id===collectionEmployeeId)?.nameAr??''}`,employeeId:collectionEmployeeId}]:[])];if(fxOn){if(fxErrors.length)throw new Error(fxErrors.join(' — '));if(fxBookMinor<=0)throw new Error('أكمل المبلغ بالعملة الأجنبية وسعر صرفه');if(employeePaidMinor>0)throw new Error('التحصيل بعملة أجنبية يكون على الخزينة/البنك فقط — أزل التحصيل على حساب الموظف')}
   const sale=postSale({projectId:projectId||null,lines:lines.map((line) => { const { key, warehouseSource, ...l } = line; void key; void warehouseSource; return { ...l, vatPercentOverride: taxPolicy.effectivePercent === 0 ? 0 : l.vatPercentOverride } }),customerId:customerId||null,customerReference,dueDate,documentDate:invoiceDate||undefined,notes,approvedBy:approvedBy??null,payment:paidMinor>=(totals?.totalMinor??0)?'cash':'credit',paidMinor,invoiceDiscountPercent,taxPercent:taxPolicy.effectivePercent,taxInclusive:false,treasury, paymentAllocations,warehouseId,allowNegativeStock:allowNegative,priceFloorOverrideBy:approvedBy??null,internalExpenses:expenses.map(e=>taxPolicy.effectivePercent===0?{...e,taxTreatment:'exempt',taxPercent:0}:e),customerCharges:customerCharges.map(c=>taxPolicy.effectivePercent===0?{...c,taxable:false}:c),staffCommissions:allCommissionInputs,terminalPayment:selectedTerminal&&terminalPaidMinor>0?{terminalId:selectedTerminal.id,providerReference:terminal.providerReference.trim(),cardLast4:terminal.cardLast4||undefined}:undefined,fx:fxOn?{currencyCode:fxLeg.currencyCode,amountMinor:fxLeg.amountMinor,ratePpm:fxLeg.ratePpm,decimals:fxLeg.decimals}:undefined,bookDecimals:cur.decimals,bookCurrencyCode:cur.code});attachments.forEach(file=>{try{addDocumentFile({documentKind:'sale',documentId:sale.id,name:file.name,mime:file.mime,dataUrl:file.dataUrl,addedBy:currentUser?.nameAr??setup.ownerName??'المالك'})}catch{/* مرفق تالف لا يمنع ترحيل الفاتورة */}});setAttachments([]);commitPartyNote(sale.invoiceNumber);deleteAdvancedInvoiceDraft(draftId);toast.show(`تم ترحيل ${sale.invoiceNumber} وقيدها ومخزونها ذرياً ✓`)
   /* مفاتيح الطباعة (طلب المالك): «طباعة بعد الحفظ» تطبع فوراً بالنمط الذي
      يحدده مفتاح «طباعة كاشير» (حراري) أو الفاتورة الكبيرة. */
@@ -286,6 +327,9 @@ export function AdvancedSalesInvoicePage(){
   documentNumber={editingInvoice?editingInvoice.invoiceNumber:undefined}
 >
   <section className="invoice-shell invoice-reference-shell overflow-visible rounded-b-2xl border-x border-b border-slate-300 bg-white shadow-lg dark:border-slate-700 dark:bg-card-dark">
+  <ThermalPreview open={!!thermalPreview} html={thermalPreview ?? ''} onClose={()=>setThermalPreview(null)}
+   onPrint={()=>{const html=thermalPreview;setThermalPreview(null);if(html)printHtml(html,{silent:printSwitches.silentPrint})}}
+   onSettings={()=>{setThermalPreview(null);nav('/settings/printing')}}/>
   <SheetPanel open={newPartySheet} onClose={()=>setNewPartySheet(false)} title="عميل جديد" subtitle="يُضاف ويُختار في الفاتورة فوراً — الفاتورة تبقى ظاهرة خلف الدرج"
    footer={<><Btn variant="ghost" onClick={()=>setNewPartySheet(false)}>إلغاء (Esc)</Btn><span className="flex-1"/><Btn onClick={saveNewParty}>حفظ واختيار</Btn></>}>
    <div className="space-y-2" data-new-party-sheet>
@@ -368,12 +412,37 @@ export function AdvancedSalesInvoicePage(){
       <PaymentMethodPicker tiles value={{treasury,terminalPayment:terminal}} onChange={value=>{setTreasury(value.treasury);setTerminal(value.terminalPayment);if(value.terminalPayment.terminalId){setPaid('')}else{setTerminalPaid('')}}} operation="receipt"/>
       <Field label={terminal.terminalId ? "المبلغ المحصل على الماكينة" : (fxOn ? `المبلغ المحصل بعملة الدفتر (محسوب من ${fxCode})` : "المبلغ المحصل")}><div className="invoice-doc-amountfield"><input data-invoice-paid="true" className={inputCls} readOnly={fxOn&&!terminal.terminalId} value={terminal.terminalId ? terminalPaid : (fxOn ? formatMinor(fxBookMinor,cur,false) : paid)} onChange={e=>{paidTouched.current=true;if(terminal.terminalId){setTerminalPaid(e.target.value)}else{setPaid(e.target.value)}}} inputMode="decimal" placeholder="0.00"/><span className="invoice-doc-amountcur">{cur.code}</span></div></Field>
      </>}
-     {multiPay&&<div className="invoice-doc-payrows">
-      <div className="invoice-doc-payrow"><label htmlFor="pay-cash" title={`نقدي — ${treasuries.find(t=>t.code===treasury)?.nameAr??'الخزينة الرئيسية'}`}>💵 نقدي<small> — {treasuries.find(t=>t.code===treasury)?.nameAr??'الخزينة الرئيسية'}</small></label><input id="pay-cash" className={inputCls} dir="ltr" inputMode="decimal" value={paid} onChange={e=>{paidTouched.current=true;setPaid(e.target.value)}} placeholder="0.00"/></div>
-      <div className="invoice-doc-payrow"><label htmlFor="pay-bank" title={`تحويل بنكي — ${treasuries.find(t=>t.kind==='bank')?.nameAr??'البنك الرئيسي'}`}>🏦 تحويل بنكي<small> — {treasuries.find(t=>t.kind==='bank')?.nameAr??'البنك الرئيسي'}</small></label><input id="pay-bank" className={inputCls} dir="ltr" inputMode="decimal" value={bankPaid} onChange={e=>{paidTouched.current=true;setBankPaid(e.target.value)}} placeholder="0.00"/></div>
-      <div className="invoice-doc-payrow"><label htmlFor="pay-card" title={terminal.terminalId?`ماكينة دفع — ${paymentTerminals.find(t=>t.id===terminal.terminalId)?.nameAr??''}`:'اختر ماكينة الدفع أولاً'}>💳 ماكينة دفع<small>{terminal.terminalId?` — ${paymentTerminals.find(t=>t.id===terminal.terminalId)?.nameAr??''}`:' (اختر ماكينة أولاً)'}</small></label><input id="pay-card" className={inputCls} dir="ltr" inputMode="decimal" disabled={!terminal.terminalId} value={terminalPaid} onChange={e=>{paidTouched.current=true;setTerminalPaid(e.target.value)}} placeholder="0.00"/></div>
-      <div className="invoice-doc-payrow"><label htmlFor="pay-staff" title={collectionEmployeeId>0?`على حساب موظف — ${employees.find(e=>e.id===collectionEmployeeId)?.nameAr??''}`:'اختر الموظف من الحقل أسفله'}>👤 حساب موظف<small>{collectionEmployeeId>0?` — ${employees.find(e=>e.id===collectionEmployeeId)?.nameAr??''}`:' (اختر موظفاً أسفله)'}</small></label><input id="pay-staff" className={inputCls} dir="ltr" inputMode="decimal" disabled={!collectionEmployeeId} value={employeePaid} onChange={e=>{paidTouched.current=true;setEmployeePaid(e.target.value)}} placeholder="0.00"/></div>
-      <PaymentMethodPicker value={{treasury,terminalPayment:terminal}} onChange={value=>{setTreasury(value.treasury);setTerminal(value.terminalPayment)}} operation="receipt"/>
+     {multiPay&&<div className="invoice-doc-paylist" data-invoice-paylist>
+      {/* بلاغ المالك: لا أزرار متجاورة تتزاحم — قائمة منسدلة صغيرة لكل طريقة
+          وحقل مبلغ **ثابت العرض** يتغيّر معناه حسب الاختيار. */}
+      {payRows.map((row,index)=>{
+       const method=PAY_METHODS.find(m=>m.id===row.method)
+       const disabled=(row.method==='card'&&!terminal.terminalId)||(row.method==='staff'&&!collectionEmployeeId)
+       return <div className="invoice-doc-payline" key={row.id} data-pay-line={row.method}>
+        <QuickSelect className={inputCls} aria-label={`طريقة التحصيل ${index+1}`} value={row.method}
+         onChange={e=>setPayRows(rows=>rows.map(r=>r.id===row.id?{...r,method:e.target.value as PayMethodId}:r))}>
+         {PAY_METHODS.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
+        </QuickSelect>
+        <div className="invoice-doc-amountfield is-fixed">
+         <input className={inputCls} dir="ltr" inputMode="decimal" disabled={disabled}
+          aria-label={`مبلغ ${method?.label ?? ''}`}
+          title={disabled?(row.method==='card'?'اختر ماكينة الدفع أولاً':'اختر الموظف أولاً'):`${method?.label} — ${method?.hint??''}`}
+          value={payAmount(row.method)} placeholder="0.00"
+          onChange={e=>{paidTouched.current=true;setPayAmount(row.method,e.target.value)}}/>
+         <span className="invoice-doc-amountcur">{cur.code}</span>
+        </div>
+        <button type="button" className="invoice-doc-payline-x" aria-label="حذف طريقة التحصيل" title="حذف هذه الطريقة"
+         onClick={()=>{setPayAmount(row.method,'');setPayRows(rows=>rows.length>1?rows.filter(r=>r.id!==row.id):rows)}}>✕</button>
+       </div>
+      })}
+      <div className="invoice-doc-payline-add">
+       <button type="button" onClick={()=>{
+        const used=new Set(payRows.map(r=>r.method))
+        const next=PAY_METHODS.find(m=>!used.has(m.id))
+        if(next)setPayRows(rows=>[...rows,{id:crypto.randomUUID(),method:next.id}])
+       }} disabled={payRows.length>=PAY_METHODS.length} title="أضف طريقة تحصيل أخرى لنفس الفاتورة">＋ طريقة أخرى</button>
+       <PaymentMethodPicker value={{treasury,terminalPayment:terminal}} onChange={value=>{setTreasury(value.treasury);setTerminal(value.terminalPayment)}} operation="receipt"/>
+      </div>
      </div>}
      <p className={collectNote.ok?'invoice-doc-paynote is-ok':'invoice-doc-paynote is-warn'} data-invoice-paynote>{collectNote.text}</p>
      {loyalty.enabled&&selectedCustomer&&<div className="invoice-doc-loyalty" data-invoice-loyalty>

@@ -2575,3 +2575,67 @@ input, textarea, select, option,
   .invoice-doc .invoice-doc-termsbox { min-height: 1.3rem !important; }
 }
 
+/* ===== طرق التحصيل: قوائم منسدلة صغيرة بدل الأزرار المتزاحمة (بلاغ المالك) =====
+   كل سطر = قائمة الطريقة + حقل مبلغ **ثابت العرض** (٦.٦rem) + زر حذف. */
+.invoice-doc-paylist { display: grid; gap: .18rem; }
+.invoice-doc-payline {
+  display: grid; grid-template-columns: minmax(0, 1fr) 6.6rem 1.15rem; gap: .25rem; align-items: center;
+}
+.invoice-doc-payline select, .invoice-doc-payline .quick-native-select { width: 100%; min-width: 0; }
+.invoice-doc-amountfield.is-fixed { width: 6.6rem; min-width: 6.6rem; }
+.invoice-doc-payline input { text-align: center; }
+.invoice-doc-payline-x {
+  display: grid; place-items: center; width: 1.15rem; height: 1.15rem; border-radius: .3rem;
+  border: 1px solid rgb(244 63 94 / .3); background: rgb(244 63 94 / .07); color: #e11d48;
+  font-size: .55rem; font-weight: 900; cursor: pointer; transition: background .15s ease, color .15s ease;
+}
+.invoice-doc-payline-x:hover { background: #e11d48; color: #fff; }
+.invoice-doc-payline-add { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+.invoice-doc-payline-add > button {
+  border: 1px dashed rgb(47 98 196 / .45); border-radius: .4rem; padding: .04rem .35rem;
+  font-size: .58rem; font-weight: 800; color: #2f62c4; background: transparent; cursor: pointer; white-space: nowrap;
+}
+.invoice-doc-payline-add > button:hover:not(:disabled) { background: rgb(47 98 196 / .12); }
+.invoice-doc-payline-add > button:disabled { opacity: .4; cursor: not-allowed; }
+@media (max-height: 820px) {
+  .invoice-doc .invoice-doc-payline { gap: .18rem; }
+  .invoice-doc .invoice-doc-payline select, .invoice-doc .invoice-doc-payline input { height: 1.4rem !important; }
+}
+
+/* ===== معاينة الإيصال الحراري قبل الطباعة (طلب المالك) ===== */
+.thermal-preview {
+  position: fixed; inset-inline-end: 1.2rem; bottom: 3.2rem;
+  width: 21rem; max-height: 78vh; display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 1rem; border: 1px solid rgb(148 163 184 / .5);
+  background: rgb(255 255 255 / .98); backdrop-filter: blur(18px);
+  box-shadow: 0 30px 70px -26px rgb(15 23 42 / .55);
+  animation: cmdIn .18s cubic-bezier(.16, 1.02, .3, 1);
+}
+.dark .thermal-preview { background: rgb(16 24 41 / .98); border-color: rgb(71 97 143 / .55); }
+.thermal-preview header { display: grid; grid-template-columns: 1fr auto; gap: .15rem .4rem; padding: .5rem .65rem; border-bottom: 1px solid rgb(148 163 184 / .3); }
+.thermal-preview header b { display: inline-flex; align-items: center; gap: .3rem; font-size: .8rem; }
+.thermal-preview header small { grid-column: 1; font-size: .62rem; color: #94a3b8; }
+.thermal-preview header button { grid-row: 1 / span 2; display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border: 1px solid rgb(148 163 184 / .35); border-radius: .45rem; background: transparent; color: inherit; cursor: pointer; }
+.thermal-preview header button:hover { background: rgb(244 63 94 / .12); color: #e11d48; }
+.thermal-preview-paper { flex: 1; min-height: 0; overflow: auto; padding: .5rem; background: repeating-linear-gradient(45deg, rgb(148 163 184 / .06) 0 6px, transparent 6px 12px); }
+.thermal-preview-paper iframe { width: 302px; min-height: 320px; height: 46vh; border: 0; background: #fff; box-shadow: 0 6px 18px -8px rgb(15 23 42 / .4); display: block; margin-inline: auto; }
+.thermal-preview footer { display: flex; align-items: center; gap: .35rem; padding: .5rem .6rem; border-top: 1px solid rgb(148 163 184 / .3); }
+.thermal-preview footer .spacer { flex: 1; }
+.thermal-preview footer button { display: inline-flex; align-items: center; gap: .25rem; border-radius: .5rem; padding: .22rem .5rem; font-size: .7rem; font-weight: 800; cursor: pointer; border: 1px solid rgb(148 163 184 / .4); background: transparent; color: inherit; }
+.thermal-preview footer .is-primary { background: #2f62c4; border-color: #2f62c4; color: #fff; }
+.thermal-preview footer .is-primary:hover { filter: brightness(1.08); }
+.thermal-preview footer .is-ghost:hover { background: rgb(148 163 184 / .14); }
+@media (prefers-reduced-motion: reduce) { .thermal-preview { animation: none; } }
+
+/* ===== شارة طلبات الاعتماد المعلّقة في الشريط العلوي (طلب المالك) ===== */
+.menubar-approvals {
+  display: inline-flex; align-items: center; gap: .25rem; margin-inline: .2rem;
+  border: 1px solid rgb(217 119 6 / .5); border-radius: .5rem; padding: .08rem .4rem;
+  background: rgb(217 119 6 / .12); color: #b45309; font-size: .66rem; font-weight: 800; cursor: pointer;
+  animation: livePulse 2.4s ease-out infinite; white-space: nowrap;
+}
+.menubar-approvals:hover { background: #b45309; color: #fff; }
+.menubar-approvals span { background: rgb(180 83 9 / .2); border-radius: 999px; padding: 0 .28rem; font-size: .6rem; }
+.dark .menubar-approvals { color: #fcd34d; border-color: rgb(217 119 6 / .45); }
+@media (prefers-reduced-motion: reduce) { .menubar-approvals { animation: none; } }
+

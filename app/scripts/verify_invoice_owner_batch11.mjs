@@ -31,13 +31,12 @@ const R = reporter('دفعة المالك ⑪ — النوافذ الحرة وا
   const rows = css.match(/\.invoice-doc \.invoice-doc-payrows \{[^}]*\}/)?.[0] ?? ''
   assert.ok(/grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/.test(rows),
     'صفوف التحصيل المتعدد ما زالت أربعة أسطر تُطيل اللوحة فتنضغط وتتداخل')
-  assert.ok(/\.invoice-doc \.invoice-doc-payrows > \*:not\(\.invoice-doc-payrow\) \{ grid-column: 1 \/ -1/.test(css),
-    'منتقي الخزينة داخل صفوف التحصيل لا يمتد على العمودين')
-  assert.ok(/<label htmlFor="pay-cash" title=\{/.test(sales) && /<small> — \{treasuries\.find/.test(sales),
-    'تسمية طريقة التحصيل بلا تلميح يحمل اسم الخزينة الكامل')
-  assert.ok(/@media \(max-width: 1500px\) \{ \.invoice-doc \.invoice-doc-payrow label small \{ display: none/.test(css),
-    'تفصيل الخزينة لا يُطوى عند ضيق اللوحة فيزاحم خانة المبلغ')
-  R.ok('① التحصيل الآن: طريقتان في كل سطر، والتفصيل يظهر عند الاتساع فقط — بلا تداخل')
+  /* صارت طرق التحصيل قوائم منسدلة صغيرة بحقل مبلغ ثابت العرض (دفعة ㉓) */
+  assert.ok(/data-pay-line=\{row\.method\}/.test(sales), 'أسطر التحصيل بلا معرّف طريقة')
+  assert.ok(/aria-label=\{`مبلغ \$\{method\?\.label \?\? ''\}`\}/.test(sales), 'حقل المبلغ بلا تسمية وصول')
+  assert.ok(/\.invoice-doc-amountfield\.is-fixed \{ width: 6\.6rem/.test(css), 'حقل المبلغ غير ثابت العرض')
+  assert.ok(/grid-template-columns: minmax\(0, 1fr\) 6\.6rem 1\.15rem/.test(css), 'سطر التحصيل بلا تخطيط ثابت بلا تداخل')
+  R.ok('① التحصيل الآن: قوائم منسدلة صغيرة وحقل مبلغ ثابت — بلا تداخل')
 }
 
 /* ② شريط ترويسة البنود: لا ينضغط ولا يُقصّ */

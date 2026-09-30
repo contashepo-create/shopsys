@@ -81,6 +81,9 @@ export const PERMISSIONS: PermissionDef[] = [
   { id: 'sales.expiry.override', nameAr: 'تجاوز حظر بيع منتهي الصلاحية', section: 'sales', sensitive: true },
   { id: 'sales.credit.override', nameAr: 'تجاوز حد ائتمان العميل (بيع آجل فوق الحد)', section: 'sales', sensitive: true },
   { id: 'sales.shift.close', nameAr: 'إقفال وردية', section: 'sales' },
+  // اعتماد المستندات (طلب المالك) — التحكم كله من قسم الصلاحيات
+  { id: 'docs.approve', nameAr: 'اعتماد المستندات المعلّقة قبل ترحيلها', section: 'sales', sensitive: true },
+  { id: 'docs.autoApproved', nameAr: 'مستنداته معتمدة تلقائياً (تتجاوز نظام الاعتماد)', section: 'sales', sensitive: true },
   // المخزون
   { id: 'inv.view', nameAr: 'عرض الكميات', section: 'inventory' },
   { id: 'inv.cost.view', nameAr: 'رؤية سعر التكلفة', section: 'inventory', sensitive: true },

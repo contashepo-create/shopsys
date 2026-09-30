@@ -10,6 +10,7 @@ import { toggleModuleList, effectiveModules, type ActivityTemplate, type ItemFea
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
+import { DEFAULT_APPROVALS, type ApprovalSettings } from '../core/approvals.ts'
 import { generateDeviceId, type LicensePayload } from '../core/license.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
@@ -101,6 +102,8 @@ interface AppState {
   receipt: ReceiptSettings
   /** برنامج نقاط الولاء (نمط Lightspeed Loyalty) — الكسب والاستبدال من الكاشير */
   loyalty: LoyaltySettings
+  approvals: ApprovalSettings
+  updateApprovals: (patch: Partial<ApprovalSettings>) => void
   updateLoyalty: (patch: Partial<LoyaltySettings>) => void
   /** إعدادات طباعة التقارير المعممة (طلب المالك): كل تقارير النظام لا الفواتير فقط */
   reportPrint: ReportPrintSettings
@@ -282,6 +285,8 @@ export const useAppStore = create<AppState>()(
         })),
       receipt: DEFAULT_RECEIPT_SETTINGS,
       loyalty: DEFAULT_LOYALTY,
+      approvals: DEFAULT_APPROVALS,
+      updateApprovals: (patch) => set((s) => ({ approvals: { ...s.approvals, ...patch } })),
       updateLoyalty: (patch) => set((s) => ({ loyalty: { ...s.loyalty, ...patch } })),
       reportPrint: DEFAULT_REPORT_PRINT,
       updateReportPrint: (patch) => set((s) => ({ reportPrint: { ...s.reportPrint, ...patch } })),
@@ -399,6 +404,7 @@ export const useAppStore = create<AppState>()(
           state.setup.allowNegativeTreasury = state.setup.allowNegativeTreasury ?? false
           state.setup.requireOpenShiftForSales = state.setup.requireOpenShiftForSales ?? true
           state.loyalty = { ...DEFAULT_LOYALTY, ...(state.loyalty ?? {}) }
+          state.approvals = { ...DEFAULT_APPROVALS, ...(state.approvals ?? {}) }
           state.setup.allowNegativeStock = state.setup.allowNegativeStock ?? false
           state.setup.defaultWarehouseId = state.setup.defaultWarehouseId ?? null
           // ترحيل: تخصص الطبيب (طلب المالك — لا يُفرض «أسنان»)

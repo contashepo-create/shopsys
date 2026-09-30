@@ -111,6 +111,7 @@ import { DEFAULT_TREASURIES, nextTreasuryCode, validateTreasury, type TreasuryDe
 import { validateCostCenter, validateCostCenterBudget, type CostCenter, type CostCenterBudget } from '../core/costCenters.ts'
 import { validateExpenseTemplate, type ExpenseTemplate } from '../core/expenseCatalog.ts'
 import type { JournalEntry } from '../core/ledger.ts'
+import type { DocApprovalRequest, ApprovalDocKind, DocApprovalStatus } from '../core/approvals.ts'
 import {
   type PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderStatus,
   validatePurchaseOrder, derivePurchaseOrderStatus,
@@ -1357,6 +1358,12 @@ interface DataState {
   labOrders: LabOrder[]
   projects: Project[] // مشروعات المقاولات (القرار 27)
   /* ─── أوامر الشراء (طلب المالك): التزام تجاري بلا قيد محاسبي ─── */
+  /* ─── طلبات اعتماد المستندات (طلب المالك): لا قيد قبل الاعتماد ─── */
+  docApprovals: DocApprovalRequest[]
+  submitDocForApproval: (input: { kind: ApprovalDocKind; title: string; partyName: string; amountMinor: number; payload: string; requestedBy: number | null; requestedByName: string }) => DocApprovalRequest
+  decideDocApproval: (id: number, decision: { status: Exclude<DocApprovalStatus, 'pending'>; by: number | null; byName: string; reason?: string }) => DocApprovalRequest
+  markDocApprovalPosted: (id: number, documentId: number) => void
+  deleteDocApproval: (id: number) => void
   purchaseOrders: PurchaseOrder[]
   addPurchaseOrder: (input: { supplierId: number | null; supplierName: string; date: string; expectedDate: string; warehouseId: number | null; lines: PurchaseOrderLine[]; notes: string }) => PurchaseOrder
   setPurchaseOrderStatus: (id: number, status: PurchaseOrderStatus) => void
@@ -2750,6 +2757,46 @@ export const useDataStore = create<DataState>()(
       labPatients: [],
       labOrders: [],
       projects: [],
+      docApprovals: [],
+      submitDocForApproval: (input) => {
+        const state = get()
+        const request: DocApprovalRequest = {
+          id: nextId(state.docApprovals),
+          kind: input.kind,
+          title: input.title,
+          partyName: input.partyName,
+          amountMinor: input.amountMinor,
+          payload: input.payload,
+          requestedBy: input.requestedBy,
+          requestedByName: input.requestedByName,
+          requestedAt: new Date().toISOString(),
+          status: 'pending',
+          postedDocumentId: null,
+        }
+        set({ docApprovals: [...state.docApprovals, request] })
+        return request
+      },
+      decideDocApproval: (id, decision) => {
+        const state = get()
+        const target = state.docApprovals.find((row) => row.id === id)
+        if (!target) throw new Error('طلب الاعتماد غير موجود')
+        if (target.status !== 'pending') throw new Error('هذا الطلب مُقرَّر فيه بالفعل')
+        if (decision.status === 'rejected' && !(decision.reason ?? '').trim()) throw new Error('سبب الرفض مطلوب')
+        const updated: DocApprovalRequest = {
+          ...target,
+          status: decision.status,
+          decidedBy: decision.by,
+          decidedByName: decision.byName,
+          decidedAt: new Date().toISOString(),
+          reason: decision.reason?.trim() || undefined,
+        }
+        set({ docApprovals: state.docApprovals.map((row) => (row.id === id ? updated : row)) })
+        return updated
+      },
+      markDocApprovalPosted: (id, documentId) => set((state) => ({
+        docApprovals: state.docApprovals.map((row) => (row.id === id ? { ...row, postedDocumentId: documentId } : row)),
+      })),
+      deleteDocApproval: (id) => set((state) => ({ docApprovals: state.docApprovals.filter((row) => row.id !== id) })),
       purchaseOrders: [],
       addPurchaseOrder: (input) => {
         const state = get()

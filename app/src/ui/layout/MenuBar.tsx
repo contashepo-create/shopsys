@@ -14,6 +14,7 @@ import { ChevronDown, PanelRight, Check, MoreHorizontal } from 'lucide-react'
 import { NAV_SECTIONS, SECTION_COLORS } from '../navCatalog.tsx'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
+import { pendingForUser, canApprove } from '../../core/approvals.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../../core/permissions.ts'
 import { labelFor } from '../../core/activityLabels.ts'
 import { guardNavigation, OverlayPortal } from '../components/ui.tsx'
@@ -37,6 +38,8 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
   const navigate = useNavigate()
   const { setup } = useAppStore()
   const { appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
+  const docApprovals = useDataStore((state) => state.docApprovals)
+  const approvalSettings = useAppStore((state) => state.approvals)
   const [openId, setOpenId] = useState<string | null>(null)
   const [activeIndex, setActiveIndex] = useState(0)
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
@@ -66,6 +69,10 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
         .map((c) => ({ ...c, nameAr: labelFor(setup.activityId, `${sec.id}.${c.id}`, c.nameAr) })),
     }))
     .filter((sec) => sec.children.length > 0)
+
+  /* شارة «طلبات الاعتماد المعلّقة» للمخوَّل (طلب المالك) */
+  const canApproveDocs = canApprove({ settings: approvalSettings, userId: currentUserId, userPermissions: perms })
+  const pendingApprovals = canApproveDocs ? pendingForUser(docApprovals, currentUserId, perms.has('docs.approve')).length : 0
 
   const sectionIds = sections.map((sec) => sec.id).join('|')
   /* قياس عرض كل عنوان مرة واحدة (العناوين ثابتة)، ثم حساب كم عنواناً يتسع فعلاً.
@@ -209,6 +216,12 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
             </button>
           )
         })}
+        {pendingApprovals > 0 && (
+          <button type="button" className="menubar-approvals" data-approvals-alert title={`${pendingApprovals} مستند بانتظار اعتمادك`}
+            onClick={() => go('/settings/approvals')}>
+            ⏳ اعتماد <span>{pendingApprovals}</span>
+          </button>
+        )}
         {hiddenSections.length > 0 && (
           <button
             ref={moreRef}

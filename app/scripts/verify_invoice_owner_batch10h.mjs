@@ -55,11 +55,11 @@ const ruleOf = (selector) => {
 {
   assert.ok(mockup.includes('تحصيل متعدد (أكثر من طريقة في فاتورة واحدة)'), 'النموذج المرجعي تغيّر: نص «تحصيل متعدد» غير موجود')
   assert.ok(sales.includes('تحصيل متعدد (أكثر من طريقة في فاتورة واحدة)'), 'نص «تحصيل متعدد» لم يُنقل من النموذج حرفياً')
-  for (const id of ['pay-cash', 'pay-bank', 'pay-card', 'pay-staff']) {
-    assert.ok(sales.includes(`id="${id}"`), `صف التحصيل ${id} مفقود من لوحة التحصيل المتعدد`)
-  }
+  for (const method of ['cash', 'bank', 'card', 'staff'])
+    assert.ok(new RegExp(`id:'${method}' as const`).test(sales), `طريقة التحصيل ${method} مفقودة من القائمة`)
   assert.ok(/const \[multiPay,setMultiPay\]=useState\(false\)/.test(sales), 'حالة التحصيل المتعدد غير موجودة')
-  assert.ok(sales.includes('{!multiPay&&<>') && sales.includes('{multiPay&&<div className="invoice-doc-payrows">'), 'المفرد والمتعدد لا يتبادلان الظهور كما في النموذج')
+  assert.ok(sales.includes('{!multiPay&&<>') && sales.includes('{multiPay&&<div className="invoice-doc-paylist"'),
+    'المفرد والمتعدد لا يتبادلان الظهور كما في النموذج')
   // المبلغ البنكي يدخل المحصَّل والتوزيع المحاسبي
   assert.ok(/bankPaidMinor/.test(sales) && /kind==='bank'/.test(sales), 'الشق البنكي من التحصيل المتعدد لا يُرحَّل على حساب البنك')
   assert.ok(sales.includes('invoice-doc-paynote'), 'لا رسالة بوابة تحصيل أسفل اللوحة')

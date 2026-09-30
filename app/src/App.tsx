@@ -32,6 +32,7 @@ import { PurchasesPage } from './ui/pages/PurchasesPage.tsx'
 
 import { PurchaseReturnsPage } from './ui/pages/PurchaseReturnsPage.tsx'
 import { PurchaseOrdersPage } from './ui/pages/PurchaseOrdersPage.tsx'
+import { ApprovalsPage as DocApprovalsPage } from './ui/pages/ApprovalsPage.tsx'
 import { StocktakePage } from './ui/pages/StocktakePage.tsx'
 import { RecipesPage } from './ui/pages/RecipesPage.tsx'
 import { ProcessingPage } from './ui/pages/ProcessingPage.tsx'
@@ -195,6 +196,7 @@ function Shell() {
         <Route path="/purchases/invoices" element={<PurchasesPage />} />
         <Route path="/purchases/invoices/new" element={<InvoiceDocumentRoute kind="purchase" />} />
         <Route path="/purchases/orders" element={<PurchaseOrdersPage />} />
+        <Route path="/settings/approvals" element={<DocApprovalsPage />} />
         <Route path="/purchases/returns" element={<PurchaseReturnsPage />} />
         <Route path="/parties/employees" element={<EmployeesPage />} />
         <Route path="/parties/payroll" element={<EmployeesPage initialTab="payroll" />} />
