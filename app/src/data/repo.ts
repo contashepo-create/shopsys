@@ -2614,6 +2614,11 @@ function activeUserName(state: Pick<DataState, 'appUsers' | 'currentUserId'>): s
   return state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
 }
 
+/** تنسيق مبلغ بفواصل آلاف بلا رمز عملة — لبيانات كشوف الموظفين */
+function fmtMinorPlain(minor: number): string {
+  return (minor / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })
+}
+
 function approvalStamp(state: Pick<DataState, 'appUsers' | 'currentUserId'>, approvedBy?: string): { approvedBy: string; requestedBy: string } {
   const requester = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
   return { approvedBy: approvedBy ?? requester, requestedBy: requester }
@@ -7482,27 +7487,71 @@ export const useDataStore = create<DataState>()(
       getEmployeeStatementRows: (employeeId) => {
         const state = get()
         const rows: { date: string; ref: string; description: string; debitMinor: number; creditMinor: number }[] = []
-        /* قسائم الرواتب: الاستحقاق دائن للموظف، والصرف مدين يصفّي ذمته */
+        /* ── كشف حساب الموظف الموحّد (طلب المالك: ككشف العميل — يظهر كل شيء) ──
+         * القاعدة المحاسبية: 2104 يحمل **الصافي** فقط، والسلفة (1107) أصل مستقل.
+         *   • استحقاق القسيمة: دائن بالصافي (الخصومات والسلف لم تدخل ذمته أصلاً)
+         *   • استرداد السلفة من الراتب: دائن (يسدد دين السلفة المدين أعلاه)
+         *   • الخصومات: بند توثيقي داخل البيان — لا دين ولا دفع
+         *   • الصرف: مدين بالصافي
+         * بهذا لا يتكرر الاسترداد مرتين ولا يختفي — والرصيد يطابق 2104/1107. */
         for (const slip of state.payrollSlips.filter((row) => row.employeeId === employeeId && row.status !== 'cancelled')) {
-          /* الدائن = المستحق قبل الاقتطاعات، ثم تظهر الخصومات والسلف مديناً
-             فيكون صافي الأثر = صافي القسيمة بلا ازدواج. */
-          rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: `استحقاق راتب ${slip.month}`, debitMinor: 0, creditMinor: slip.grossMinor + slip.allowancesMinor })
-          if (slip.deductionsMinor > 0) rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: 'خصومات على الراتب', debitMinor: slip.deductionsMinor, creditMinor: 0 })
-          if (slip.advanceMinor > 0) rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: 'استقطاع سلفة من الراتب', debitMinor: slip.advanceMinor, creditMinor: 0 })
-          if (slip.status === 'paid' && slip.paidAt) rows.push({ date: slip.paidAt.slice(0, 10), ref: slip.slipNumber, description: 'صرف الراتب', debitMinor: slip.netMinor, creditMinor: 0 })
+          const slipMonth = monthLabelAr(slip.month)
+          rows.push({
+            date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber,
+            description: `استحقاق راتب ${slipMonth} — إجمالي ${fmtMinorPlain(slip.grossMinor + slip.allowancesMinor)}${slip.deductionsMinor > 0 ? ` · خصومات ${fmtMinorPlain(slip.deductionsMinor)}` : ''}${slip.advanceMinor > 0 ? ` · سلف مستقطعة ${fmtMinorPlain(slip.advanceMinor)}` : ''} · صافي ${fmtMinorPlain(slip.netMinor)}`,
+            debitMinor: 0, creditMinor: slip.netMinor,
+          })
+          if (slip.advanceMinor > 0) rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: 'سلفة استُردت من الراتب (سداد دين السلفة)', debitMinor: 0, creditMinor: slip.advanceMinor })
+          if (slip.status === 'paid' && slip.paidAt) rows.push({ date: slip.paidAt.slice(0, 10), ref: slip.slipNumber, description: `صرف راتب ${slipMonth}${slip.paidFrom ? ` — من ${slip.paidFrom}` : ''}`, debitMinor: slip.netMinor, creditMinor: 0 })
         }
-        /* السلف النقدية: مدين على الموظف حتى تُسترد */
+        /* ── المسيرات القديمة (postPayroll المباشر): استحقاق وصرف في مستند واحد.
+         * آجل (accrue): 2104 دائن بالصافي + رد السلف المستقطع.
+         * نقدي (cash): أثر الذمة = رد السلف المستقطع فقط (الصرف خرج من الخزينة فوراً). */
+        for (const run of state.payrollRuns) {
+          const line = run.lines.find((row) => row.employeeId === employeeId)
+          if (!line) continue
+          const runMonth = monthLabelAr(run.month)
+          if (run.payMode === 'accrue') {
+            rows.push({ date: run.date, ref: run.runNumber, description: `مسير ${runMonth} (استحقاق آجل) — إجمالي ${fmtMinorPlain(line.grossMinor)} · صافي ${fmtMinorPlain(line.netMinor)}`, debitMinor: 0, creditMinor: line.netMinor })
+          } else {
+            rows.push({ date: run.date, ref: run.runNumber, description: `مسير ${runMonth} (نقدي فوري) — إجمالي ${fmtMinorPlain(line.grossMinor)} · صافي ${fmtMinorPlain(line.netMinor)}`, debitMinor: 0, creditMinor: 0 })
+          }
+          if (line.advancesMinor > 0) rows.push({ date: run.date, ref: run.runNumber, description: 'سلفة استُردت من المسير (سداد دين السلفة)', debitMinor: 0, creditMinor: line.advancesMinor })
+        }
+        /* ── السلف النقدية: مدين على الموظف (أصل 1107) — تُصفّى من مستنداتها ── */
         for (const advance of state.employeeAdvances.filter((row) => row.employeeId === employeeId)) {
-          rows.push({ date: advance.date, ref: `ADV-${advance.id}`, description: advance.notes || 'سلفة موظف', debitMinor: advance.amountMinor, creditMinor: 0 })
-          if ((advance.recoveredMinor ?? 0) > 0) rows.push({ date: advance.date, ref: `ADV-${advance.id}`, description: 'استرداد من السلفة', debitMinor: 0, creditMinor: advance.recoveredMinor ?? 0 })
+          rows.push({ date: advance.date, ref: advance.advanceNumber, description: advance.notes || 'سلفة موظف', debitMinor: advance.amountMinor, creditMinor: 0 })
         }
-        /* سندات القبض والصرف المحرَّرة باسم الموظف */
+        /* ── سداد نقدي لسلفة خارج المسير: دائن (يسدد دين السلفة) ── */
+        for (const repayment of state.advanceRepayments.filter((row) => row.employeeId === employeeId)) {
+          rows.push({ date: repayment.date, ref: repayment.repayNumber, description: 'سداد نقدي لسلفة خارج المسير', debitMinor: 0, creditMinor: repayment.amountMinor })
+        }
+        /* ── سندات القبض والصرف المحرَّرة باسم الموظف (سلفة/راتب/استرداد) ── */
         for (const voucher of state.vouchers.filter((row) => row.partyKind === 'employee' && row.partyId === employeeId && !row.reversalEntryId)) {
           rows.push({
             date: voucher.date, ref: voucher.voucherNumber, description: voucher.description || (voucher.kind === 'payment' ? 'سند صرف للموظف' : 'سند قبض من الموظف'),
             debitMinor: voucher.kind === 'payment' ? voucher.amountMinor : 0,
             creditMinor: voucher.kind === 'receipt' ? voucher.amountMinor : 0,
           })
+        }
+        /* ── العمولات: مستحقة = دائن، مصروفة = محايدة (صرفها النقدي يظهر بسند باسمه أو بالمسير) ── */
+        for (const commission of state.staffCommissions.filter((row) => row.employeeId === employeeId)) {
+          const amount = Math.max(0, commission.amountMinor)
+          if (amount <= 0 || commission.status === 'cancelled') continue
+          if (commission.status === 'accrued') rows.push({ date: commission.date, ref: commission.code, description: `عمولة مستحقة — ${commission.description}`, debitMinor: 0, creditMinor: amount })
+          else rows.push({ date: commission.date, ref: commission.code, description: `عمولة مصروفة — ${commission.description}`, debitMinor: amount, creditMinor: amount })
+        }
+        /* ── حركات العهدة: تعزيز/عجز مدين، تسوية/مردود دائن ── */
+        for (const tx of state.custodyTxs) {
+          const file = state.custodyFiles.find((row) => row.id === tx.fileId)
+          if (!file || file.employeeId !== employeeId || tx.amountMinor <= 0) continue
+          const isDebit = tx.type === 'fund' || tx.type === 'shortage'
+          rows.push({ date: tx.date, ref: `CT-${tx.id}`, description: `${tx.description || 'حركة عهدة'} (${tx.type})`, debitMinor: isDebit ? tx.amountMinor : 0, creditMinor: isDebit ? 0 : tx.amountMinor })
+        }
+        /* ── الجزاءات: توثيقية بمبلغ صفري — تُعلّم القارئ ولا تلوث الرصيد ── */
+        for (const deduction of state.employeeDeductions.filter((row) => row.employeeId === employeeId)) {
+          const status = (deduction.waivedMinor ?? 0) > 0 ? 'معفو عنه' : deduction.recoveredMinor >= deduction.amountMinor ? 'خُصم بالكامل' : deduction.recoveredMinor > 0 ? 'خُصم جزئياً' : 'قائم'
+          rows.push({ date: deduction.date.slice(0, 10), ref: deduction.dedNumber, description: `جزاء (${deduction.reason}) — ${status} · ${fmtMinorPlain(deduction.amountMinor)}`, debitMinor: 0, creditMinor: 0 })
         }
         return rows.sort((a, b) => a.date.localeCompare(b.date))
       },

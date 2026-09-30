@@ -18,8 +18,7 @@ import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
-import { ThermalPreview } from '../components/ThermalPreview.tsx'
-import { printHtml } from '../print/printReceipt.ts'
+import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../components/PrintSwitches.tsx'
 
 interface DraftLine { key: string; nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string; vat: string; incl: boolean }
@@ -52,7 +51,6 @@ export function QuotationsPage() {
   const [notes, setNotes] = useState('')
   const [winProb, setWinProb] = useState('50')
   const [bidBond, setBidBond] = useState('')
-  const [previewHtml, setPreviewHtml] = useState<{ html: string; wide: boolean } | null>(null)
 
   const openNew = () => {
     setKind('quotation'); setTitleAr(''); setClientName(''); setClientId('')
@@ -104,7 +102,7 @@ export function QuotationsPage() {
       settings: useAppStore.getState().receipt,
       extraFooter: notes.trim() || undefined,
     })
-    if (!printSwitches.silentPrint) { setPreviewHtml({ html: buildModelHtml(model, cur, useAppStore.getState().receipt, template), wide: template !== 'thermal' }); return }
+    if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, useAppStore.getState().receipt, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال', rebuild: () => buildModelHtml(model, cur, useAppStore.getState().receipt, template) }); return }
     printModelWithTemplate(model, cur, useAppStore.getState().receipt, template)
   }
 
@@ -284,12 +282,7 @@ export function QuotationsPage() {
               </div>
             </section>
           </section>
-          <ThermalPreview open={!!previewHtml} html={previewHtml?.html ?? ''} wide={previewHtml?.wide ?? false}
-            title={previewHtml?.wide ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال'}
-            onClose={() => setPreviewHtml(null)}
-            onPrint={() => { const doc = previewHtml; setPreviewHtml(null); if (doc) printHtml(doc.html, { silent: printSwitches.silentPrint }) }}
-            onSettings={() => setPreviewHtml(null)} />
-        </InvoicePOSFrame>
+                  </InvoicePOSFrame>
       </div>
     )
   }

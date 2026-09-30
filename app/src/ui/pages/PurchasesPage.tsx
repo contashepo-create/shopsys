@@ -506,7 +506,23 @@ export function PurchasesPage() {
                       {fmt(p.paidMinor)}
                     </span>
                   </td>
-                  <td className="px-4 py-3">{p.paidMinor >= (p.supplierDueMinor ?? p.grandTotalMinor) ? <span className="text-emerald-600 font-bold">مدفوعة</span> : p.dueDate ? <span className={p.dueDate < today ? 'text-rose-600 font-bold' : 'text-amber-600 font-bold'}>{p.dueDate < today ? 'متأخرة' : p.dueDate}</span> : <span className="text-slate-400">غير محدد</span>}</td>
+                  <td className="px-4 py-3" data-payment-status>
+                    {(() => {
+                      /* حالة السداد الحقيقية (بلاغ المالك): مدفوعة · جزئية · من عهدة موظف · آجلة */
+                      const due = p.supplierDueMinor ?? p.grandTotalMinor
+                      const paid = p.paidMinor
+                      const fromCustody = p.custodyFileId != null
+                      if (paid >= due && due > 0) return fromCustody
+                        ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 font-bold" title="مسددة بالكامل من ملف عهدة موظف">من عهدة</span>
+                        : <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">مدفوعة</span>
+                      if (paid > 0) return fromCustody
+                        ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold" title={`مسدد ${fmt(paid)} من ${fmt(due)} — من ملف عهدة موظف`}>جزئية · عهدة</span>
+                        : <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold" title={`مسدد ${fmt(paid)} من ${fmt(due)}`}>جزئية</span>
+                      return p.dueDate
+                        ? <span className={`text-[11px] font-bold ${p.dueDate < today ? 'text-rose-600' : 'text-amber-600'}`}>{p.dueDate < today ? 'متأخرة' : p.dueDate}</span>
+                        : <span className="text-slate-400">غير محدد</span>
+                    })()}
+                  </td>
                   <td className="px-4 py-3 text-left whitespace-nowrap">
                     {editPolicy.canEdit ? (
                       /* تعديل متاح — الفاتورة الإلكترونية غير مفعلة (سياسة المالك) */

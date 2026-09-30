@@ -7,6 +7,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  */
 import { useState } from 'react'
 import { ChevronDown, Crown, Lock, ShieldCheck, Plus, Users, UserX, SlidersHorizontal, KeyRound, Landmark, CreditCard, Pencil } from 'lucide-react'
+import { ApprovalSettingsCard } from '../components/ApprovalSettingsCard.tsx'
 import { crudMatrixForModules, rolesWithOverrides, visibleRolesForModules, permissionsForModules, permissionSectionsForModules, type CrudOperation } from '../../core/permissions.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -211,6 +212,9 @@ export function PermissionsPage() {
 
       {/* شبكة الصلاحيات */}
       <div className="lg:col-span-3 space-y-3">
+        {/* نظام اعتماد المستندات (طلب المالك): التحكم كله من قسم الصلاحيات —
+            التفعيل والنطاق وحد المبلغ والمعتمِدون ومن مستنداته معتمدة تلقائياً */}
+        <ApprovalSettingsCard />
         {isOwner && (
           <div className="anim-pop flex items-center gap-3 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-700 dark:text-amber-400 text-sm">
             <Lock size={18} className="shrink-0" />

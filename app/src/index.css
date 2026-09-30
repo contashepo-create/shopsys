@@ -2658,3 +2658,68 @@ input, textarea, select, option,
 .dark .menubar-approvals { color: #fcd34d; border-color: rgb(217 119 6 / .45); }
 @media (prefers-reduced-motion: reduce) { .menubar-approvals { animation: none; } }
 
+
+/* ─── معاينة الطباعة الحية: لوحة الإعدادات السريعة + الوضع المصغّر (طلب المالك) ─── */
+.thermal-preview-quick {
+  border-bottom: 1px solid rgb(148 163 184 / .3);
+  padding: .55rem .6rem;
+  display: grid;
+  gap: .45rem;
+  background: rgb(248 250 252 / .92);
+}
+.dark .thermal-preview-quick { background: rgb(15 23 42 / .92); }
+.thermal-preview-quick-title {
+  display: flex; align-items: center; gap: .35rem;
+  font-size: .68rem; font-weight: 900; color: #0f766e;
+}
+.dark .thermal-preview-quick-title { color: #5eead4; }
+.thermal-preview-quick-title button {
+  margin-inline-start: auto; border: 0; background: transparent; cursor: pointer;
+  color: #94a3b8; border-radius: .35rem; padding: .1rem .25rem;
+}
+.thermal-preview-quick-title button:hover { background: rgb(244 63 94 / .12); color: #e11d48; }
+.thermal-preview-quick-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.4fr); gap: .45rem; align-items: end; }
+.thermal-preview-quick-grid label, .thermal-preview-quick-style {
+  display: grid; gap: .2rem; font-size: .62rem; font-weight: 800; color: #64748b;
+}
+.thermal-preview-quick-input {
+  border: 1px solid rgb(148 163 184 / .45); border-radius: .45rem;
+  background: #fff; color: #0f172a; padding: .3rem .4rem; font-size: .72rem; width: 100%;
+}
+.dark .thermal-preview-quick-input { background: rgb(30 41 59); color: #e2e8f0; border-color: rgb(71 85 105 / .7); }
+.thermal-preview-quick-color { width: 100%; height: 1.85rem; border: 1px solid rgb(148 163 184 / .45); border-radius: .45rem; background: #fff; padding: .1rem; cursor: pointer; }
+.thermal-preview-quick-wide { grid-column: span 1; }
+.thermal-preview-quick-toggles { display: flex; flex-wrap: wrap; gap: .3rem .55rem; }
+.thermal-preview-quick-toggle {
+  display: inline-flex; align-items: center; gap: .25rem;
+  font-size: .63rem; font-weight: 800; color: #475569; cursor: pointer;
+  border: 1px solid rgb(148 163 184 / .4); border-radius: 999px; padding: .18rem .5rem;
+  background: #fff;
+}
+.dark .thermal-preview-quick-toggle { background: rgb(30 41 59); color: #cbd5e1; border-color: rgb(71 85 105 / .6); }
+.thermal-preview-quick-toggle:has(input:checked) { border-color: #14b8a6; color: #0f766e; background: rgb(20 184 166 / .08); }
+.dark .thermal-preview-quick-toggle:has(input:checked) { color: #5eead4; }
+.thermal-preview-quick-extra {
+  display: inline-flex; align-items: center; gap: .3rem; justify-content: center;
+  border: 1px dashed rgb(20 184 166 / .6); border-radius: .5rem;
+  background: rgb(20 184 166 / .07); color: #0f766e;
+  font-size: .65rem; font-weight: 800; padding: .35rem .5rem; cursor: pointer;
+}
+.dark .thermal-preview-quick-extra { color: #5eead4; }
+.thermal-preview-quick-extra:hover { background: rgb(20 184 166 / .15); }
+
+/* الوضع المصغّر: شريط حي أسفل الشاشة أثناء تعديل قسم الطباعة الكامل */
+.thermal-preview-mini { position: fixed; border-radius: .9rem; overflow: hidden; }
+.thermal-preview-mini header {
+  display: flex; align-items: center; gap: .4rem; padding: .35rem .55rem;
+  font-size: .68rem; cursor: default;
+}
+.thermal-preview-mini header b { display: inline-flex; align-items: center; gap: .25rem; color: #f8fafc; }
+.thermal-preview-mini header button {
+  border: 0; background: transparent; cursor: pointer; color: #cbd5e1;
+  border-radius: .35rem; padding: .15rem .3rem; display: inline-flex; align-items: center;
+}
+.thermal-preview-mini header button:hover { background: rgb(244 63 94 / .15); color: #fff; }
+.thermal-preview-mini-paper { background: #fff; border-block: 1px solid rgb(148 163 184 / .25); }
+.dark .thermal-preview-mini-paper { background: #f8fafc; }
+.thermal-preview-mini footer { display: flex; justify-content: center; padding: .35rem .5rem; }

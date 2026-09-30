@@ -22,8 +22,7 @@ import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { InvoiceLinesTable } from '../components/InvoiceLinesTable.tsx'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
-import { ThermalPreview } from '../components/ThermalPreview.tsx'
-import { printHtml } from '../print/printReceipt.ts'
+import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../components/PrintSwitches.tsx'
 import { partyCode } from '../../core/partyCodes.ts'
 import { useNavigate } from 'react-router-dom'
@@ -54,7 +53,6 @@ export function PurchaseOrdersPage() {
   const [notes, setNotes] = useState('')
   const [lines, setLines] = useState<DraftLine[]>([])
   const [statusFilter, setStatusFilter] = useState<'all' | PurchaseOrderStatus>('all')
-  const [previewHtml, setPreviewHtml] = useState<{ html: string; wide: boolean } | null>(null)
 
   const totals = useMemo(() => purchaseOrderTotals(lines), [lines])
   const rows = useMemo(
@@ -113,7 +111,7 @@ export function PurchaseOrdersPage() {
       settings: receipt,
       extraFooter: notes.trim() || undefined,
     })
-    if (!printSwitches.silentPrint) { setPreviewHtml({ html: buildModelHtml(model, cur, receipt, template), wide: template !== 'thermal' }); return }
+    if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, receipt, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة أمر الشراء قبل الطباعة' : 'معاينة الإيصال', rebuild: () => buildModelHtml(model, cur, useAppStore.getState().receipt, template) }); return }
     printModelWithTemplate(model, cur, receipt, template)
   }
 
@@ -217,12 +215,7 @@ export function PurchaseOrdersPage() {
               </div>
             </section>
           </section>
-          <ThermalPreview open={!!previewHtml} html={previewHtml?.html ?? ''} wide={previewHtml?.wide ?? false}
-            title={previewHtml?.wide ? 'معاينة أمر الشراء قبل الطباعة' : 'معاينة الإيصال'}
-            onClose={() => setPreviewHtml(null)}
-            onPrint={() => { const doc = previewHtml; setPreviewHtml(null); if (doc) printHtml(doc.html, { silent: printSwitches.silentPrint }) }}
-            onSettings={() => setPreviewHtml(null)} />
-        </InvoicePOSFrame>
+                  </InvoicePOSFrame>
       </div>
     )
   }

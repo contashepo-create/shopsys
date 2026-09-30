@@ -21,10 +21,12 @@ const printSwitchesFile = readFileSync(new URL('../src/ui/components/PrintSwitch
 /* ② فاتورة الشراء تستهلك المفاتيح بمسار البيع نفسه */
 {
   assert.ok(purchasePage.includes('usePrintSwitches'), 'فاتورة الشراء لا تستهلك مفاتيح الطباعة')
-  assert.ok(purchasePage.includes('ThermalPreview'), 'لا معاينة حرة (ThermalPreview) في فاتورة الشراء')
+  assert.ok(purchasePage.includes('openPrintPreview'), 'لا معاينة حرة (openPrintPreview) في فاتورة الشراء')
   assert.ok(purchasePage.includes('printModelWithTemplate'), 'لا طباعة صامتة عبر محرك القوالب')
   assert.ok(purchasePage.includes('buildModelHtml'), 'لا بناء HTML للمعاينة')
-  assert.ok(/silentPrint\)\}/.test(purchasePage) || /silent:printSwitches\.silentPrint/.test(purchasePage), 'المعاينة لا تحترم الطباعة الصامتة عند الطباعة')
+  /* الطباعة من المعاينة العامة الآن (ThermalPreview) — تتبع مفتاح الطباعة الصامتة مركزياً */
+  const previewComponent = readFileSync(new URL('../src/ui/components/ThermalPreview.tsx', import.meta.url), 'utf8')
+  assert.ok(/silent: switches\.silentPrint/.test(previewComponent), 'المعاينة لا تحترم الطباعة الصامتة عند الطباعة')
   assert.ok(purchasePage.includes('cashierPrint?\'thermal\':\'a4\''), 'الطباعة السريعة لا تتبع مفتاح الكاشير (thermal/a4)')
   assert.ok(purchasePage.includes('onQuickPrint'), 'زر الطباعة السريعة مفقود')
   R.ok('فاتورة الشراء: معاينة/صامت + طباعة سريعة بمفتاح الكاشير')
@@ -40,7 +42,7 @@ const printSwitchesFile = readFileSync(new URL('../src/ui/components/PrintSwitch
 
 /* ④ التكافؤ مع فاتورة البيع: نفس الأنماط الأربعة */
 {
-  for (const pattern of ['usePrintSwitches', 'ThermalPreview', 'printModelWithTemplate', 'buildModelHtml', 'onQuickPrint']) {
+  for (const pattern of ['usePrintSwitches', 'openPrintPreview', 'printModelWithTemplate', 'buildModelHtml', 'onQuickPrint']) {
     assert.ok(salesPage.includes(pattern), `فاتورة البيع نفسها فقدت ${pattern} — التكافؤ انكسر`)
     assert.ok(purchasePage.includes(pattern), `فاتورة الشراء تفتقد ${pattern} الموجود في البيع`)
   }

@@ -31,7 +31,7 @@ const css = read('index.css')
   assert.ok(draftsAt > printAt && draftsAt - printAt < 700, 'زر الطباعة ليس بجوار «المسودات» في الشريط')
   assert.ok(/onQuickPrint=\{\(\)=>printDraft\(printSwitches\.cashierPrint\?'thermal':'a4'\)\}/.test(sales),
     'زر الطباعة لا يتبع مفتاح الكاشير')
-  assert.ok(/if\(!printSwitches\.silentPrint\)\{setThermalPreview\(/.test(sales), 'الطباعة غير الصامتة لا تعرض المعاينة أولاً')
+  assert.ok(/if\(!printSwitches\.silentPrint\)\{openPrintPreview\(\{/.test(sales), 'الطباعة غير الصامتة لا تعرض المعاينة أولاً')
   R.ok('زر «طباعة» بجوار المسودات يتبع مفاتيح الكاشير/الصامت ويعرض المعاينة أولاً')
 }
 {
@@ -51,5 +51,25 @@ const css = read('index.css')
   assert.ok(/list="job-titles-by-activity"/.test(employees) && /jobTitlesFor\(setup\.activityId\)/.test(employees),
     'شاشة الموظف لا تستعمل مسميات النشاط')
   R.ok('المسميات الوظيفية تتغيّر من نشاط لآخر والحقل يبقى حراً')
+}
+{
+  /* المعاينة الحية العالمية (طلب المالك): متجر عام + نافذة واحدة فوق المسارات،
+     إعدادات سريعة فورية، وزر إعدادات إضافية يصغّرها ويفتح قسم الطباعة */
+  const store = read('ui/components/printPreviewStore.ts')
+  const app = read('App.tsx')
+  assert.ok(/export const usePrintPreview/.test(store) && /openPreview:/.test(store), 'متجر المعاينة العامة مفقود')
+  assert.ok(/rebuild\?\: \(\) => string/.test(store) && /refresh: \(\) => void/.test(store), 'المعاينة الحية بلا إعادة بناء')
+  assert.ok(/openPrintPreview\(\{[\s\S]*rebuild:/.test(sales), 'فاتورة البيع تفتح المعاينة بلا إعادة بناء حية')
+  assert.ok(app.includes('<ThermalPreview />'), 'المعاينة العامة لا تُرندر فوق كل المسارات')
+  assert.ok(/data-thermal-quick/.test(preview) && /data-quick-paper/.test(preview), 'لا لوحة إعدادات سريعة داخل المعاينة')
+  assert.ok(/data-thermal-extra-settings/.test(preview), 'لا زر «إعدادات إضافية»')
+  assert.ok(/setMini\(true\); nav\('\/settings\/printing'\)/.test(preview), 'الإعدادات الإضافية لا تصغّر المعاينة وتفتح قسم الطباعة')
+  assert.ok(/data-thermal-mini/.test(preview) && /data-thermal-expand/.test(preview), 'لا وضع مصغّر حي أسفل الشاشة')
+  assert.ok(/receipt === receiptRef\.current\) return/.test(preview) && /refresh\(\)/.test(preview), 'المعاينة لا تتحدث فورياً مع إعدادات الطباعة')
+  assert.ok(preview.includes('usePrintSwitches'), 'الطباعة من المعاينة لا تتبع مفاتيح الطباعة')
+  for (const page of ['ui/pages/AdvancedPurchaseInvoicePage.tsx', 'ui/pages/PurchaseOrdersPage.tsx', 'ui/pages/QuotationsPage.tsx']) {
+    assert.ok(/openPrintPreview\(\{\s*html:\s*buildModelHtml/.test(read(page)), `${page} لا يفتح المعاينة العامة بحمولة قابلة لإعادة البناء`)
+  }
+  R.ok('معاينة حية عالمية: متجر + نافذة فوق المسارات + إعدادات سريعة فورية + مصغّرة حية أثناء قسم الطباعة')
 }
 R.done()

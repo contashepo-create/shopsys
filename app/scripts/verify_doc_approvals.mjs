@@ -60,11 +60,18 @@ const css = read('index.css')
   assert.ok(/const submitForApprovalIfNeeded=/.test(sales) && /if\(!approvedBy&&submitForApprovalIfNeeded\(saleArgs\)\)return;const sale=postSale\(saleArgs\);/.test(sales),
     'فاتورة البيع لا تمرّ ببوابة الاعتماد قبل الترحيل')
   assert.ok(/payload:JSON\.stringify\(saleArgs\)/.test(sales), 'حمولة اعتماد البيع ليست وسيط الترحيل الكامل')
-  assert.ok(/data-approvals-settings/.test(page) && /data-approvals-toggle/.test(page) && /data-approvals-threshold/.test(page),
+  /* بطاقة الإعدادات مكون مشترك (طلب المالك: التحكم من قسم الصلاحيات أيضاً) */
+  const card = read('ui/components/ApprovalSettingsCard.tsx')
+  const permsPage = read('ui/pages/PermissionsPage.tsx')
+  assert.ok(/data-approvals-settings/.test(card) && /data-approvals-toggle/.test(card) && /data-approvals-threshold/.test(card),
     'بطاقة إعدادات الاعتماد ناقصة')
-  assert.ok(/data-approvals-scope=/.test(page) && /APPROVAL_DOC_KINDS\.map/.test(page), 'نطاق الأنواع غير قابل للتحكم من الشاشة')
-  assert.ok(/data-approvals-user-approver=/.test(page) && /data-approvals-user-auto=/.test(page), 'قائمتا المعتمِدين والتجاوز مفقودتان')
-  assert.ok(/updateApprovals/.test(page), 'الشاشة لا تحفظ الإعدادات')
+  assert.ok(/data-approvals-scope=/.test(card) && /APPROVAL_DOC_KINDS\.map/.test(card), 'نطاق الأنواع غير قابل للتحكم')
+  assert.ok(/data-approvals-user-approver=/.test(card) && /data-approvals-user-auto=/.test(card), 'قائمتا المعتمِدين والتجاوز مفقودتان')
+  assert.ok(/updateApprovals/.test(card), 'البطاقة لا تحفظ الإعدادات')
+  /* الشاشتان تستخدمان نفس البطاقة المشتركة — مصدر واحد لا نسختان */
+  assert.ok(/ApprovalSettingsCard/.test(page), 'شاشة الاعتماد لا تستخدم بطاقة الإعدادات المشتركة')
+  assert.ok(/ApprovalSettingsCard/.test(permsPage), 'قسم الصلاحيات لا يعرض التحكم بنظام الاعتماد')
+  assert.ok(/data-approvals-alert/.test(menu) || /فواتير بانتظار اعتمادك/.test(menu), 'لا إشعار للمعتمِد عند وصول مستندات')
   assert.ok(/data-approval-posted-ref/.test(page) && /postedDocumentRef/.test(page), 'مرجع المستند المرحَّل لا يظهر في السجل')
   R.ok('شاشة الطلبات + شارة التنبيه + بوابة البيع بحمولة كاملة + بطاقة إعدادات بكل مفاتيحها')
 }
@@ -80,7 +87,7 @@ const css = read('index.css')
   for (const attr of ['data-thermal-print', 'data-thermal-cancel', 'data-thermal-settings'])
     assert.ok(preview.includes(attr), `زر ${attr} مفقود من المعاينة`)
   /* صارت المعاينة لكل طباعة غير صامتة (حراري أو كبيرة) في نافذة حرة — دفعة ㉖ */
-  assert.ok(/if\(!printSwitches\.silentPrint\)\{setThermalPreview\(/.test(sales), 'الطباعة غير الصامتة لا تعرض معاينة')
+  assert.ok(/if\(!printSwitches\.silentPrint\)\{openPrintPreview\(\{/.test(sales), 'الطباعة غير الصامتة لا تعرض معاينة')
   R.ok('معاينة الإيصال الحراري بأزرار طباعة/إلغاء/إعدادات قبل الطبع')
 }
 R.done()

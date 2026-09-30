@@ -103,6 +103,7 @@ import { TelegramPage } from './ui/pages/TelegramPage.tsx'
 import { AssetsPage } from './ui/pages/AssetsPage.tsx'
 import { ExternalCommissionsPage } from './ui/pages/ExternalCommissionsPage.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
+import { ThermalPreview } from './ui/components/ThermalPreview.tsx'
 import { KeyboardNavigation } from './ui/components/KeyboardNavigation.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
 
@@ -524,6 +525,9 @@ export default function App() {
     <HashRouter>
       {setup.completed ? <Shell /> : <FirstRunWizard />}
       <ToastHost />
+      {/* معاينة الطباعة الحية — نافذة حرة فوق كل المسارات (طلب المالك):
+          تبقى حية أثناء فتح قسم إعدادات الطباعة وتتحدث فوراً مع كل تغيير */}
+      <ThermalPreview />
     </HashRouter>
   )
 }
