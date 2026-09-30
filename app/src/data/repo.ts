@@ -1110,7 +1110,8 @@ export interface Voucher {
   description: string
   journalEntryId: number
   // ربط السند بطرفه — يغذي كشوف حساب العميل/المورد (طلب المالك)
-  partyKind?: 'customer' | 'supplier' | null
+  /** الطرف على السند: عميل أو مورد أو موظف (سلفة/استرداد) — طلب المالك */
+  partyKind?: 'customer' | 'supplier' | 'employee' | null
   partyId?: number | null
   /** مركز التكلفة العام؛ مستقل عن مركز تكلفة المركبة */
   costCenterId?: number | null
@@ -1836,7 +1837,8 @@ interface DataState {
     description: string
     /** تاريخ المستند الذي يظهر في اليومية والكشوف؛ غيابه يستخدم لحظة الترحيل. */
     date?: string
-    partyKind?: 'customer' | 'supplier' | null
+    /** الطرف: عميل أو مورد أو **موظف** (سلفة/استرداد) — طلب المالك */
+    partyKind?: 'customer' | 'supplier' | 'employee' | null
     partyId?: number | null
     /** مركز التكلفة العام؛ مستقل عن مركز تكلفة المركبة */
     costCenterId?: number | null
@@ -1981,6 +1983,14 @@ interface DataState {
   closeFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { entryId: number; netProfitMinor: number }
   /** رصيد العميل الموحّد من كل الأنشطة — مصدر حقيقة واحد لكل الشاشات */
   getCustomerBalance: (customerId: number) => number
+  /**
+   * رصيد الموظف كطرف كامل (طلب المالك): موجب = له علينا (دائن — رواتب مستحقة
+   * أو مبالغ قبضناها منه)، سالب = عليه لنا (مدين — سلف لم تُسترد).
+   */
+  getEmployeeBalance: (employeeId: number) => number
+  /** كشف حساب الموظف: قسائم الرواتب والسلف والسندات — كما كشف العميل */
+  getEmployeeStatementRows: (employeeId: number) => { date: string; ref: string; description: string; debitMinor: number; creditMinor: number }[]
+
   /**
    * استبدال نقاط ولاء برصيد دائن في حساب العميل (نمط Lightspeed Loyalty):
    * قيد 5115 مصروف ولاء ← 1104 دائن — الرصيد يخصم من مشترياته القادمة تلقائياً.
@@ -7045,6 +7055,36 @@ export const useDataStore = create<DataState>()(
       },
 
       getCustomerBalance: (customerId) => statementBalance(get().getCustomerStatementRows(customerId)),
+      getEmployeeStatementRows: (employeeId) => {
+        const state = get()
+        const rows: { date: string; ref: string; description: string; debitMinor: number; creditMinor: number }[] = []
+        /* قسائم الرواتب: الاستحقاق دائن للموظف، والصرف مدين يصفّي ذمته */
+        for (const slip of state.payrollSlips.filter((row) => row.employeeId === employeeId && row.status !== 'cancelled')) {
+          /* الدائن = المستحق قبل الاقتطاعات، ثم تظهر الخصومات والسلف مديناً
+             فيكون صافي الأثر = صافي القسيمة بلا ازدواج. */
+          rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: `استحقاق راتب ${slip.month}`, debitMinor: 0, creditMinor: slip.grossMinor + slip.allowancesMinor })
+          if (slip.deductionsMinor > 0) rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: 'خصومات على الراتب', debitMinor: slip.deductionsMinor, creditMinor: 0 })
+          if (slip.advanceMinor > 0) rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: 'استقطاع سلفة من الراتب', debitMinor: slip.advanceMinor, creditMinor: 0 })
+          if (slip.status === 'paid' && slip.paidAt) rows.push({ date: slip.paidAt.slice(0, 10), ref: slip.slipNumber, description: 'صرف الراتب', debitMinor: slip.netMinor, creditMinor: 0 })
+        }
+        /* السلف النقدية: مدين على الموظف حتى تُسترد */
+        for (const advance of state.employeeAdvances.filter((row) => row.employeeId === employeeId)) {
+          rows.push({ date: advance.date, ref: `ADV-${advance.id}`, description: advance.notes || 'سلفة موظف', debitMinor: advance.amountMinor, creditMinor: 0 })
+          if ((advance.recoveredMinor ?? 0) > 0) rows.push({ date: advance.date, ref: `ADV-${advance.id}`, description: 'استرداد من السلفة', debitMinor: 0, creditMinor: advance.recoveredMinor ?? 0 })
+        }
+        /* سندات القبض والصرف المحرَّرة باسم الموظف */
+        for (const voucher of state.vouchers.filter((row) => row.partyKind === 'employee' && row.partyId === employeeId && !row.reversalEntryId)) {
+          rows.push({
+            date: voucher.date, ref: voucher.voucherNumber, description: voucher.description || (voucher.kind === 'payment' ? 'سند صرف للموظف' : 'سند قبض من الموظف'),
+            debitMinor: voucher.kind === 'payment' ? voucher.amountMinor : 0,
+            creditMinor: voucher.kind === 'receipt' ? voucher.amountMinor : 0,
+          })
+        }
+        return rows.sort((a, b) => a.date.localeCompare(b.date))
+      },
+      getEmployeeBalance: (employeeId) => get().getEmployeeStatementRows(employeeId)
+        .reduce((sum, row) => sum + row.creditMinor - row.debitMinor, 0),
+
       redeemLoyaltyPoints: (customerId, points) => {
         const state = get()
         const cust = state.customers.find((c) => c.id === customerId)

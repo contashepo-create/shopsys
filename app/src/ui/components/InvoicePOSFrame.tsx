@@ -26,6 +26,8 @@ type InvoicePOSFrameProps = {
   onNextDocument?: () => void
   /** رقم المستند إن وُجد (تعديل فاتورة مرحّلة)؛ وإلا «مسودة» */
   documentNumber?: string
+  /** زر «مراجعة قبل الترحيل» ولوحته — يظهر في شريط التذييل دائماً (طلب المالك) */
+  reviewSlot?: ReactNode
   /** سطر تدقيق المستند: متى عُدِّل ومن عدّله ولماذا — يظهر في شريط الحالة سطراً واحداً */
   auditLabel?: string
   /** طباعة إذن استلام من المستودع (كميات فقط بلا أسعار) */
@@ -75,6 +77,7 @@ export function InvoicePOSFrame({
   onPrevDocument,
   onNextDocument,
   documentNumber,
+  reviewSlot,
   auditLabel,
   onWarehouseReceipt,
   draftCount = 0,
@@ -219,6 +222,7 @@ export function InvoicePOSFrame({
               </div>
             )}
           </div>
+          {reviewSlot}
           <PrintSwitches compact/>
           <Btn variant="ghost" onClick={() => onNavigate('/settings/printing')} title="قوالب الطباعة وإعداد إذن الاستلام والحرارية"><Settings size={13} /> إعدادات الطباعة</Btn>
           {onExportPdf && <Btn variant="ghost" onClick={onExportPdf} title="يفتح حوار الطباعة — اختر وجهة «حفظ كـ PDF»"><FileDown size={13} /> تصدير PDF</Btn>}

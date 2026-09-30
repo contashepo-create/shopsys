@@ -323,6 +323,7 @@ export function AdvancedSalesInvoicePage(){
   draftCount={advancedInvoiceDrafts.filter(d=>d.kind==='sale').length} onRestoreDraft={restoreDraft}
   onPrint={() => setPrintOpen(true)}
   onExportPdf={exportPdf}
+  reviewSlot={<><button type="button" className={`invoice-doc-review${allPrePostIssues.some(i=>i.level==='blocking')?' is-blocking':allPrePostIssues.length?' is-warning':''}`} onClick={()=>setChecksOpen(v=>!v)} title="مراجعة الفاتورة قبل الترحيل: مخزون · تكلفة · تحصيل" data-prepost-open>✓ مراجعة قبل الترحيل {allPrePostIssues.length>0&&<span className="invoice-doc-count">{allPrePostIssues.length}</span>}</button><PrePostChecks issues={allPrePostIssues} open={checksOpen} onClose={()=>setChecksOpen(false)}/></>}
   onPost={save}
   documentNumber={editingInvoice?editingInvoice.invoiceNumber:undefined}
 >
@@ -397,9 +398,8 @@ export function AdvancedSalesInvoicePage(){
       {mode==='advanced'&&<button type="button" onClick={()=>setInternalExpensesOpen(true)} title="عمولة موظف على هذه الفاتورة">＋ عمولة موظف <span className="invoice-doc-count">{allCommissionInputs.length}</span></button>}
       <button type="button" onClick={saveAsTemplate} title="احفظ بنود هذه الفاتورة وشروطها كقالب جاهز لإعادة الاستخدام">⭑ حفظ كقالب</button>
       <button type="button" onClick={()=>setTemplatesOpen(true)} title="ابدأ فاتورة جديدة من قالب محفوظ (سلة متكررة)">⭑ ابدأ من قالب <span className="invoice-doc-count">{advancedInvoiceDrafts.filter(d=>d.kind==='sale'&&d.isTemplate).length}</span></button>
-      <button type="button" className={`invoice-doc-review${allPrePostIssues.some(i=>i.level==='blocking')?' is-blocking':allPrePostIssues.length?' is-warning':''}`} onClick={()=>setChecksOpen(v=>!v)} title="مراجعة الفاتورة قبل الترحيل: مخزون · تكلفة · تحصيل" data-prepost-open>✓ مراجعة قبل الترحيل {allPrePostIssues.length>0&&<span className="invoice-doc-count">{allPrePostIssues.length}</span>}</button>
      </div>
-     <PrePostChecks issues={allPrePostIssues} open={checksOpen} onClose={()=>setChecksOpen(false)}/>
+     
     </div>
     <div className="invoice-doc-panel-foot"><DocumentAttachmentsBox documentKind="sale" documentId={editingInvoice?.id??null} pending={attachments} onPendingChange={setAttachments} addedBy={currentUser?.nameAr??setup.ownerName??'المالك'}/><span>الاستحقاق</span><b>{dueDate||'غير محدد'}</b></div>
    </div>
@@ -441,7 +441,7 @@ export function AdvancedSalesInvoicePage(){
         const next=PAY_METHODS.find(m=>!used.has(m.id))
         if(next)setPayRows(rows=>[...rows,{id:crypto.randomUUID(),method:next.id}])
        }} disabled={payRows.length>=PAY_METHODS.length} title="أضف طريقة تحصيل أخرى لنفس الفاتورة">＋ طريقة أخرى</button>
-       <PaymentMethodPicker value={{treasury,terminalPayment:terminal}} onChange={value=>{setTreasury(value.treasury);setTerminal(value.terminalPayment)}} operation="receipt"/>
+       <PaymentMethodPicker restrictTo={payRows.some(r=>r.method==='card')?'terminal':payRows.some(r=>r.method==='bank')?'bank':'cash'} value={{treasury,terminalPayment:terminal}} onChange={value=>{setTreasury(value.treasury);setTerminal(value.terminalPayment)}} operation="receipt"/>
       </div>
      </div>}
      <p className={collectNote.ok?'invoice-doc-paynote is-ok':'invoice-doc-paynote is-warn'} data-invoice-paynote>{collectNote.text}</p>

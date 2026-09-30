@@ -19,6 +19,8 @@ export interface PaymentMethodDraft {
  * حساب نقدي/بنك/محفظة/فرع تابع في قائمة واحدة، أو ماكينة دفع عند التحصيل.
  * لا يخلط بين اختيار الحساب ومبلغ السداد؛ المبلغ يبقى في الحقل المجاور.
  */
+/** بلاغ المالك: عند اختيار «نقدي» لا تظهر البنوك ولا الماكينات داخل القائمة —
+ *  يُمرَّر `restrictTo` فتُعرض وسائل ذلك النوع فقط. */
 export function PaymentMethodPicker({
   value,
   onChange,
@@ -26,8 +28,7 @@ export function PaymentMethodPicker({
   allowTerminal = operation === 'receipt',
   allowCredit = false,
   terminalOptions,
-  tiles = false,
-}: {
+  tiles = false, restrictTo }: {
   value: PaymentMethodDraft
   onChange: (value: PaymentMethodDraft) => void
   operation: TreasuryOperation
@@ -36,12 +37,20 @@ export function PaymentMethodPicker({
   terminalOptions?: readonly { id: string; nameAr: string }[]
   /** بلاطات «نقدي · تحويل بنكي · ماكينة» فوق القائمة (شكل الفاتورة المرجعي) */
   tiles?: boolean
+  /** فلترة الوسائل حسب نوع الطريقة (بلاغ المالك) */
+  restrictTo?: 'cash' | 'bank' | 'terminal' | null
 }) {
   const { treasuries: allTreasuries, appUsers, currentUserId, paymentTerminals } = useDataStore()
   const currentUser = appUsers.find((user) => user.id === currentUserId)
   const allowed = allowedTreasuryCodes(currentUser?.treasuryAccess, operation)
-  const treasuries = allowed == null ? allTreasuries : allTreasuries.filter((treasury) => allowed.includes(treasury.code))
-  const terminals = allowTerminal ? (terminalOptions ?? eligiblePaymentTerminals(paymentTerminals, currentUser, 'charge')) : []
+  const permitted = allowed == null ? allTreasuries : allTreasuries.filter((treasury) => allowed.includes(treasury.code))
+  /* الفلترة حسب نوع الطريقة: نقدي ⇒ خزائن نقدية فقط · بنكي ⇒ بنوك فقط · ماكينة ⇒ لا خزائن */
+  const treasuries = restrictTo === 'terminal' ? []
+    : restrictTo === 'cash' ? permitted.filter((treasury) => treasury.kind === 'cash')
+    : restrictTo === 'bank' ? permitted.filter((treasury) => treasury.kind === 'bank')
+    : permitted
+  const allTerminals = allowTerminal ? (terminalOptions ?? eligiblePaymentTerminals(paymentTerminals, currentUser, 'charge')) : []
+  const terminals = restrictTo && restrictTo !== 'terminal' ? [] : allTerminals
   const selectedValue = value.kind === 'credit' ? 'credit' : value.terminalPayment.terminalId ? `terminal:${value.terminalPayment.terminalId}` : `treasury:${value.treasury}`
   const fallbackTreasury = treasuries.find((treasury) => treasury.code === value.treasury)?.code ?? treasuries[0]?.code ?? ''
 
