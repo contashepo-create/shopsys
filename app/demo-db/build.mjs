@@ -38,7 +38,24 @@ export function buildDemoDatabase(target = DB_PATH) {
   const insertSale = db.prepare('INSERT INTO sales (activity, ref, doc_date, customer_ref, warehouse_ref, payment, paid_minor, treasury_ref, notes) VALUES (?,?,?,?,?,?,?,?,?)')
   const insertSaleLine = db.prepare('INSERT INTO sale_lines (activity, sale_ref, item_ref, qty, unit_price_minor, discount_percent) VALUES (?,?,?,?,?,?)')
   const insertPurchase = db.prepare('INSERT INTO purchases (activity, ref, doc_date, supplier_ref, warehouse_ref, supplier_doc, paid_minor, treasury_ref, notes) VALUES (?,?,?,?,?,?,?,?,?)')
-  const insertPurchaseLine = db.prepare('INSERT INTO purchase_lines (activity, purchase_ref, item_ref, qty, unit_price_minor) VALUES (?,?,?,?,?)')
+  const insertPurchaseLine = db.prepare('INSERT INTO purchase_lines (activity, purchase_ref, item_ref, qty, unit_price_minor, expiry_date) VALUES (?,?,?,?,?,?)')
+  /* ─── توسعة المرحلة ⑥: موارد بشرية ومستندات تجارية ─── */
+  const insertEmployee = db.prepare('INSERT INTO employees (activity, ref, name_ar, phone, job_title, hire_date, base_salary_minor, allowances_minor, active, notes) VALUES (?,?,?,?,?,?,?,?,?,?)')
+  const insertAttendance = db.prepare('INSERT INTO attendance_records (activity, ref, employee_ref, date, status, check_in, check_out, notes) VALUES (?,?,?,?,?,?,?,?)')
+  const insertLeave = db.prepare('INSERT INTO leave_requests (activity, ref, employee_ref, type_id, from_date, to_date, status, reason) VALUES (?,?,?,?,?,?,?,?)')
+  const insertPayrollMonth = db.prepare('INSERT INTO payroll_months (activity, ref, month, pay_employee_refs, treasury_ref) VALUES (?,?,?,?,?)')
+  const insertQuotation = db.prepare('INSERT INTO quotations (activity, ref, kind, client_name, client_ref, title_ar, valid_until, status, win_probability, bid_bond_minor, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+  const insertQuotationLine = db.prepare('INSERT INTO quotation_lines (activity, quotation_ref, name_ar, description_ar, unit_ar, qty, unit_price_minor, est_cost_minor, vat_percent, tax_included) VALUES (?,?,?,?,?,?,?,?,?,?)')
+  const insertPurchaseOrder = db.prepare('INSERT INTO purchase_orders (activity, ref, supplier_ref, order_date, expected_date, warehouse_ref, notes) VALUES (?,?,?,?,?,?,?)')
+  const insertPurchaseOrderLine = db.prepare('INSERT INTO purchase_order_lines (activity, order_ref, item_ref, qty, unit_price_minor, vat_percent) VALUES (?,?,?,?,?,?)')
+  const insertWastageDoc = db.prepare('INSERT INTO wastage_docs (activity, ref, doc_date, reason, notes) VALUES (?,?,?,?,?)')
+  const insertWastageLine = db.prepare('INSERT INTO wastage_lines (activity, doc_ref, item_ref, qty) VALUES (?,?,?,?)')
+  /* ─── تعميق المرحلة ⑥: معدات وعقود إيجار ومقاولو باطن ومستخلصات ─── */
+  const insertEquipment = db.prepare('INSERT INTO equipment (activity, ref, name_ar, code, daily_rate_minor, hourly_rate_minor, monthly_rate_minor, meter_reading, service_every_hours, notes) VALUES (?,?,?,?,?,?,?,?,?,?)')
+  const insertRentalContract = db.prepare('INSERT INTO rental_contracts (activity, ref, customer_ref, equipment_ref, days, daily_rate_minor, deposit_minor, payment, paid_minor, vat_percent, start_date, notes, close_deduct_minor, close_end_date, treasury_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+  const insertEquipmentCost = db.prepare('INSERT INTO equipment_costs (activity, ref, equipment_ref, date, kind, amount_minor, description, treasury_ref) VALUES (?,?,?,?,?,?,?,?)')
+  const insertSubContract = db.prepare('INSERT INTO sub_contracts (activity, ref, quotation_ref, contractor_name, supplier_ref, scope_ar, contract_value_minor, retention_percent, tax_withhold_percent, advance_percent, start_date, advance_minor, advance_treasury_ref, certificate_amount_minor, certificate_description) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+  const insertProjectExtract = db.prepare('INSERT INTO project_extracts (activity, ref, quotation_ref, percent, vat_percent, payment, description, treasury_ref) VALUES (?,?,?,?,?,?,?,?)')
 
   db.exec('BEGIN')
   DEMO_ACTIVITIES.forEach((activity, order) => {
@@ -67,8 +84,41 @@ export function buildDemoDatabase(target = DB_PATH) {
     for (const purchase of activity.purchases ?? []) {
       insertPurchase.run(activity.id, purchase.ref, purchase.doc_date, purchase.supplier_ref ?? '', purchase.warehouse_ref ?? '', purchase.supplier_doc ?? '', purchase.paid_minor ?? 0, purchase.treasury_ref ?? '', purchase.notes ?? '')
       for (const line of purchase.lines ?? [])
-        insertPurchaseLine.run(activity.id, purchase.ref, line.item_ref, line.qty, line.unit_price_minor)
+        insertPurchaseLine.run(activity.id, purchase.ref, line.item_ref, line.qty, line.unit_price_minor, line.expiry_date ?? '')
     }
+    for (const employee of activity.employees ?? [])
+      insertEmployee.run(activity.id, employee.ref, employee.name_ar, employee.phone ?? '', employee.job_title ?? '', employee.hire_date ?? '', employee.base_salary_minor ?? 0, employee.allowances_minor ?? 0, employee.active === false ? 0 : 1, employee.notes ?? '')
+    for (const row of activity.attendance ?? [])
+      insertAttendance.run(activity.id, row.ref, row.employee_ref, row.date, row.status ?? 'present', row.check_in ?? '', row.check_out ?? '', row.notes ?? '')
+    for (const row of activity.leaves ?? [])
+      insertLeave.run(activity.id, row.ref, row.employee_ref, row.type_id ?? 'annual', row.from_date, row.to_date, row.status ?? 'approved', row.reason ?? '')
+    for (const row of activity.payroll_months ?? [])
+      insertPayrollMonth.run(activity.id, row.ref, row.month, row.pay_employee_refs ?? '', row.treasury_ref ?? '')
+    for (const quotation of activity.quotations ?? []) {
+      insertQuotation.run(activity.id, quotation.ref, quotation.kind ?? 'quotation', quotation.client_name, quotation.client_ref ?? '', quotation.title_ar, quotation.valid_until ?? '', quotation.status ?? 'draft', quotation.win_probability ?? 50, quotation.bid_bond_minor ?? 0, quotation.notes ?? '')
+      for (const line of quotation.lines ?? [])
+        insertQuotationLine.run(activity.id, quotation.ref, line.name_ar ?? '', line.description_ar, line.unit_ar ?? 'مقطوعية', line.qty ?? 1, line.unit_price_minor ?? 0, line.est_cost_minor ?? 0, line.vat_percent ?? 0, line.tax_included ? 1 : 0)
+    }
+    for (const order of activity.purchase_orders ?? []) {
+      insertPurchaseOrder.run(activity.id, order.ref, order.supplier_ref ?? '', order.order_date, order.expected_date ?? '', order.warehouse_ref ?? '', order.notes ?? '')
+      for (const line of order.lines ?? [])
+        insertPurchaseOrderLine.run(activity.id, order.ref, line.item_ref, line.qty, line.unit_price_minor ?? 0, line.vat_percent ?? 0)
+    }
+    for (const doc of activity.wastage ?? []) {
+      insertWastageDoc.run(activity.id, doc.ref, doc.doc_date, doc.reason ?? 'انتهاء صلاحية', doc.notes ?? '')
+      for (const line of doc.lines ?? [])
+        insertWastageLine.run(activity.id, doc.ref, line.item_ref, line.qty)
+    }
+    for (const row of activity.equipment ?? [])
+      insertEquipment.run(activity.id, row.ref, row.name_ar, row.code ?? '', row.daily_rate_minor ?? 0, row.hourly_rate_minor ?? 0, row.monthly_rate_minor ?? 0, row.meter_reading ?? 0, row.service_every_hours ?? 0, row.notes ?? '')
+    for (const row of activity.rental_contracts ?? [])
+      insertRentalContract.run(activity.id, row.ref, row.customer_ref ?? '', row.equipment_ref, row.days, row.daily_rate_minor, row.deposit_minor ?? 0, row.payment ?? 'cash', row.paid_minor ?? 0, row.vat_percent ?? 0, row.start_date ?? '', row.notes ?? '', row.close_deduct_minor ?? 0, row.close_end_date ?? '', row.treasury_ref ?? '')
+    for (const row of activity.equipment_costs ?? [])
+      insertEquipmentCost.run(activity.id, row.ref, row.equipment_ref, row.date, row.kind ?? 'fuel', row.amount_minor, row.description ?? '', row.treasury_ref ?? '')
+    for (const row of activity.sub_contracts ?? [])
+      insertSubContract.run(activity.id, row.ref, row.quotation_ref ?? '', row.contractor_name, row.supplier_ref ?? '', row.scope_ar, row.contract_value_minor, row.retention_percent ?? 5, row.tax_withhold_percent ?? 0, row.advance_percent ?? 0, row.start_date ?? '', row.advance_minor ?? 0, row.advance_treasury_ref ?? '', row.certificate_amount_minor ?? 0, row.certificate_description ?? '')
+    for (const row of activity.project_extracts ?? [])
+      insertProjectExtract.run(activity.id, row.ref, row.quotation_ref ?? '', row.percent ?? 0, row.vat_percent ?? 14, row.payment ?? 'credit', row.description ?? '', row.treasury_ref ?? '')
     for (const sale of activity.sales ?? []) {
       insertSale.run(activity.id, sale.ref, sale.doc_date, sale.customer_ref ?? '', sale.warehouse_ref ?? '', sale.payment ?? 'cash', sale.paid_minor ?? 0, sale.treasury_ref ?? '', sale.notes ?? '')
       for (const line of sale.lines ?? [])
@@ -78,7 +128,7 @@ export function buildDemoDatabase(target = DB_PATH) {
   db.exec('COMMIT')
 
   const counts = Object.fromEntries(
-    ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines']
+    ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']
       .map((table) => [table, db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n]),
   )
   db.close()

@@ -4,7 +4,7 @@ import { Boxes, Calculator, CalendarClock, CalendarDays, CircleUser, Link2, Penc
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { DocSectionHead } from '../components/DocSection.tsx'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
-import { openItemEditorWindow, openItemLedgerWindow, openItemPricesWindow, openPartyEditorWindow } from '../windows/windowStore.ts'
+import { openItemEditorWindow, openItemLedgerWindow, openItemPricesWindow, openPartyEditorWindow, type SalesInvoicePrefill } from '../windows/windowStore.ts'
 import { EMPTY_EXTENDED,useDataStore, type AdvancedInvoiceDraft } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -99,6 +99,9 @@ export function AdvancedSalesInvoicePage(){
  // Hydrate once when the edit target changes; subsequent user edits must not reapply source values.
  // oxlint-disable-next-line react-hooks/exhaustive-deps
  useEffect(()=>{if(!editingInvoice)return;setMode('advanced');setCustomerId(editingInvoice.customerId??0);setWarehouseId(editingInvoice.warehouseId??setup.defaultWarehouseId??warehouses[0]?.id??null);setLines(editingInvoice.lines.map(line=>({...line,key:crypto.randomUUID(),warehouseId:line.warehouseId??editingInvoice.warehouseId??warehouseId,warehouseSource:'manual' as const})));setCustomerReference(editingInvoice.customerReference??'');setDueDate(editingInvoice.dueDate??'');setNotes(editingInvoice.notes??'');setDiscount(String(editingInvoice.invoiceDiscountPercent??0));setDiscountAmount('');paidTouched.current=true;setPaid(String((editingInvoice.paidMinor??(editingInvoice.payment==='cash'?editingInvoice.totals.totalMinor:0))/10**cur.decimals));setTreasury(editingInvoice.treasury??'1101');setExpenses(editingInvoice.internalExpenses??[]);setCustomerCharges(editingInvoice.customerCharges??[]);setAllowNegative(setup.allowNegativeStock);setEditReason('')},[editingInvoice?.id])
+ /* تعبئة أولية من نافذة «منتهي الصلاحية» (طلب المالك ㉘): بيع دفعات منتهية بضوابطها */
+ const salesPrefill=host?.props.prefill as SalesInvoicePrefill|undefined
+ useEffect(()=>{if(editingInvoice||!salesPrefill?.lines?.length)return;setLines(salesPrefill.lines.map(row=>{const item=items.find(i=>i.id===row.itemId);return{key:crypto.randomUUID(),itemId:row.itemId,nameAr:item?.nameAr??`صنف #${row.itemId}`,qty:row.qty,unitPriceMinor:row.unitPriceMinor??item?.priceMinor??0,unitCostMinor:item?.costMinor??0,discountPercent:0,soldByWeight:item?.soldByWeight??false,warehouseId,warehouseSource:'default' as const}}));if(salesPrefill.notes)setNotes(salesPrefill.notes);paidTouched.current=true;setPaid('')/* بيع منتهي الصلاحية غالباً آجل/متفاوض — لا يملأ النقدي تلقائياً */},[editingInvoice?.id,salesPrefill])
  const saveDraft=()=>{const draft=upsertAdvancedInvoiceDraft({id:draftId,kind:'sale',name:`مسودة مبيعات — ${customers.find(c=>c.id===customerId)?.nameAr??'عميل نقدي'}`,payload:JSON.stringify({mode,customerId,customerReference,dueDate,notes,warehouseId,lines,discount,discountAmount,paid,terminalPaid,employeePaid,collectionEmployeeId,treasury,terminal,expenses,customerCharges,allowNegative,commissionEmployeeId,commissionBasis,commissionAmount,additionalCommissions,attachments})});unsaved.markClean();toast.show(`حُفظت المسودة محلياً ${new Date(draft.updatedAt).toLocaleTimeString('ar-EG')} ✓`)}
  /* قوالب الفواتير (الموجة ①): «حفظ كقالب» يخزّن السلة الحالية باسم يختاره
     المستخدم، و«ابدأ من قالب» ينسخها إلى فاتورة جديدة بتاريخ اليوم. */

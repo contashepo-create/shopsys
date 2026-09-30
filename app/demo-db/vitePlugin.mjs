@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
 const DB_PATH = join(here, 'demo.sqlite')
 
-const TABLES = ['branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines']
+const TABLES = ['branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']
 
 function openDb() {
   if (!existsSync(DB_PATH)) return null
@@ -32,6 +32,8 @@ function readActivity(db, activity) {
   if (!info) return null
   const sales = rows('sales')
   const purchases = rows('purchases')
+  const quotations = rows('quotations')
+  const purchaseOrders = rows('purchase_orders')
   return {
     activity: info,
     branches: rows('branches'),
@@ -42,6 +44,18 @@ function readActivity(db, activity) {
     items: rows('items'),
     customers: rows('customers'),
     suppliers: rows('suppliers'),
+    employees: rows('employees'),
+    attendance: rows('attendance_records'),
+    leaves: rows('leave_requests'),
+    payrollMonths: rows('payroll_months'),
+    quotations: quotations.map((quotation) => ({ ...quotation, lines: db.prepare('SELECT * FROM quotation_lines WHERE activity = ? AND quotation_ref = ?').all(activity, quotation.ref) })),
+    purchaseOrders: purchaseOrders.map((order) => ({ ...order, lines: db.prepare('SELECT * FROM purchase_order_lines WHERE activity = ? AND order_ref = ?').all(activity, order.ref) })),
+    wastage: db.prepare('SELECT * FROM wastage_docs WHERE activity = ?').all(activity).map((doc) => ({ ...doc, lines: db.prepare('SELECT * FROM wastage_lines WHERE activity = ? AND doc_ref = ?').all(activity, doc.ref) })),
+    equipment: rows('equipment'),
+    rentalContracts: rows('rental_contracts'),
+    equipmentCosts: rows('equipment_costs'),
+    subContracts: rows('sub_contracts'),
+    projectExtracts: rows('project_extracts'),
     sales: sales.map((sale) => ({ ...sale, lines: db.prepare('SELECT * FROM sale_lines WHERE activity = ? AND sale_ref = ?').all(activity, sale.ref) })),
     purchases: purchases.map((purchase) => ({ ...purchase, lines: db.prepare('SELECT * FROM purchase_lines WHERE activity = ? AND purchase_ref = ?').all(activity, purchase.ref) })),
   }
@@ -59,6 +73,9 @@ function listActivities(db) {
     terminals: db.prepare('SELECT COUNT(*) AS n FROM payment_terminals WHERE activity = ?').get(row.id).n,
     sales: db.prepare('SELECT COUNT(*) AS n FROM sales WHERE activity = ?').get(row.id).n,
     purchases: db.prepare('SELECT COUNT(*) AS n FROM purchases WHERE activity = ?').get(row.id).n,
+    employees: db.prepare('SELECT COUNT(*) AS n FROM employees WHERE activity = ?').get(row.id).n,
+    quotations: db.prepare('SELECT COUNT(*) AS n FROM quotations WHERE activity = ?').get(row.id).n,
+    purchaseOrders: db.prepare('SELECT COUNT(*) AS n FROM purchase_orders WHERE activity = ?').get(row.id).n,
   }))
 }
 
@@ -99,6 +116,28 @@ function writeActivity(db, payload) {
       insertRows('purchases', [purchase])
       insertRows('purchase_lines', (purchase.lines ?? []).map((line) => ({ ...line, purchase_ref: purchase.ref })))
     }
+    /* ─── توسعة المرحلة ⑥: موارد بشرية ومستندات تجارية ─── */
+    insertRows('employees', payload.employees)
+    insertRows('attendance_records', payload.attendance)
+    insertRows('leave_requests', payload.leaves)
+    insertRows('payroll_months', payload.payrollMonths)
+    for (const quotation of payload.quotations ?? []) {
+      insertRows('quotations', [quotation])
+      insertRows('quotation_lines', (quotation.lines ?? []).map((line) => ({ ...line, quotation_ref: quotation.ref })))
+    }
+    for (const order of payload.purchaseOrders ?? []) {
+      insertRows('purchase_orders', [order])
+      insertRows('purchase_order_lines', (order.lines ?? []).map((line) => ({ ...line, order_ref: order.ref })))
+    }
+    for (const doc of payload.wastage ?? []) {
+      insertRows('wastage_docs', [doc])
+      insertRows('wastage_lines', (doc.lines ?? []).map((line) => ({ ...line, doc_ref: doc.ref })))
+    }
+    insertRows('equipment', payload.equipment)
+    insertRows('rental_contracts', payload.rentalContracts)
+    insertRows('equipment_costs', payload.equipmentCosts)
+    insertRows('sub_contracts', payload.subContracts)
+    insertRows('project_extracts', payload.projectExtracts)
     db.exec('COMMIT')
   } catch (error) {
     db.exec('ROLLBACK')

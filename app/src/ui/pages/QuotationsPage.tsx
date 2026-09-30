@@ -1,8 +1,11 @@
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
 /**
- * عروض الأسعار والمناقصات + عُهد المشاريع (طلب المالك — مرجعية pro-acc)
+ * عروض الأسعار والمناقصات + عُهد المشاريع (طلب المالك — مرجعية pro-acc).
  * العرض مستند غير محاسبي ببنود أعمال؛ الفائز يتحول مشروعاً بضغطة.
  * العهدة تُصرف لمشرف الموقع (1107) وتُسوَّى: منصرف = تكلفة مشروع، ومرتجع للخزينة.
+ *
+ * **مستندي بالكامل (طلب المالك ㉘)**: المحرر صار بنفس هيئة فاتورة البيع —
+ * إطار InvoicePOSFrame (نفس الترويسة والبنود واللوحات) بدل النافذة البسيطة.
  */
 import { useMemo, useState } from 'react'
 import { Plus, FileText, Trophy, XCircle, Send, ArrowLeftCircle, Trash2, CheckCircle2 } from 'lucide-react'
@@ -12,15 +15,25 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { quotationTotals, quotationTotal, quotationEstCost, quotationPipeline, QUOTATION_STATUS_LABELS, type Quotation, type QuotationLine } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
+import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
+import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { ThermalPreview } from '../components/ThermalPreview.tsx'
+import { printHtml } from '../print/printReceipt.ts'
+import { usePrintSwitches } from '../components/PrintSwitches.tsx'
 
-interface DraftLine { nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string; vat: string; incl: boolean }
+interface DraftLine { key: string; nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string; vat: string; incl: boolean }
 
 const UNITS = ['مقطوعية', 'م2', 'م3', 'م.ط', 'طن', 'عدد', 'يوم عمل']
+
+/** شروط جاهزة تُضاف بضغطة إلى شروط العرض — نمط لوحة شروط الفاتورة */
+const QUOTE_TERMS = ['الأسعار سارية حتى تاريخ صلاحية العرض', 'الدفع 40% مقدماً و60% عند التسليم', 'مدة التنفيذ تبدأ من تاريخ التوقيع والمقدم', 'لا تشمل الأسعار أي أعمال تخطيط خارج نطاق البنود']
 
 export function QuotationsPage() {
   const { quotations, projects, customers, addQuotation, setQuotationStatus, convertQuotationToProject } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
+  const printSwitches = usePrintSwitches()
   const cur = useMemo(
     () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
     [setup.countryCode],
@@ -39,13 +52,14 @@ export function QuotationsPage() {
   const [notes, setNotes] = useState('')
   const [winProb, setWinProb] = useState('50')
   const [bidBond, setBidBond] = useState('')
+  const [previewHtml, setPreviewHtml] = useState<{ html: string; wide: boolean } | null>(null)
 
   const openNew = () => {
     setKind('quotation'); setTitleAr(''); setClientName(''); setClientId('')
     const d = new Date(); d.setMonth(d.getMonth() + 1)
     setValidUntil(d.toISOString().slice(0, 10))
-    setQLines([{ nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '', vat: '0', incl: false }])
-    setNotes(''); setOpen(true)
+    setQLines([{ key: crypto.randomUUID(), nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '', vat: '0', incl: false }])
+    setNotes(''); setWinProb('50'); setBidBond(''); setOpen(true)
   }
 
   const safeMinor = (v: string) => { try { return toMinor(v || '0', cur.decimals) } catch { return 0 } }
@@ -73,6 +87,27 @@ export function QuotationsPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
+  /* معاينة وطباعة العرض بنفس محرك قوالب الفواتير (طلب المالك: شكل مطابق للفاتورة) */
+  const printDraft = (template: InvoiceTemplate) => {
+    if (!parsedLines.length) return toast.show('أضف بنوداً قبل المعاينة', 'error')
+    const model = buildSimpleDocModel({
+      docTitle: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر',
+      invoiceNumber: 'مسودة',
+      refCode: 'DRAFT',
+      dateIso: new Date().toISOString().slice(0, 10),
+      partyLabel: clientName.trim() || 'عميل غير محدد',
+      paymentLabel: `ساري حتى ${validUntil || '—'}`,
+      rows: parsedLines.map((l) => ({ nameAr: `${l.nameAr} — ${l.descriptionAr}`, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
+      totalMinor: draftTax.grossMinor,
+      paidMinor: 0,
+      operatorName: setup.ownerName ?? 'المالك',
+      settings: useAppStore.getState().receipt,
+      extraFooter: notes.trim() || undefined,
+    })
+    if (!printSwitches.silentPrint) { setPreviewHtml({ html: buildModelHtml(model, cur, useAppStore.getState().receipt, template), wide: template !== 'thermal' }); return }
+    printModelWithTemplate(model, cur, useAppStore.getState().receipt, template)
+  }
+
   const transition = (q: Quotation, status: 'submitted' | 'won' | 'lost') => {
     try {
       setQuotationStatus(q.id, status)
@@ -91,6 +126,175 @@ export function QuotationsPage() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
+  /* ════ محرر المستند (نفس هيئة الفاتورة — طلب المالك ㉘) ════ */
+  if (open) {
+    const selectedClient = customers.find((c) => c.id === Number(clientId))
+    const margin = draftTotal - draftEstCost
+    return (
+      <div data-quotation-doc-editor>
+        <InvoicePOSFrame
+          kind="sale"
+          modeLabel={kind === 'tender' ? 'مناقصة' : 'عرض سعر'}
+          currencyLabel={`${cur.code} · ${cur.symbol}`}
+          dateLabel={new Date().toISOString().slice(0, 10)}
+          branchLabel={setup.shopName ?? ''}
+          userLabel={setup.ownerName ?? 'المالك'}
+          activityLabel={setup.activityId ?? 'نشاط عام'}
+          documentNumber="QT-DRAFT"
+          onBack={() => setOpen(false)}
+          onNavigate={() => { /* لا تنقل أثناء التحرير */ }}
+          onPartySearch={() => document.getElementById('quotation-client-field')?.focus()}
+          onItemSearch={() => document.getElementById('quotation-first-line')?.focus()}
+          onSaveDraft={() => toast.show('اضغط «اعتماد وترحيل» لحفظ العرض — العروض لا تُرحَّل محاسبياً')}
+          onRestoreDraft={() => toast.show('لا مسودات محفوظة للعروض')}
+          onPrint={() => printDraft('a4')}
+          onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); printDraft('a4') }}
+          onPost={save}
+          headerFields={
+            <>
+              <Field label="نوع المستند">
+                <QuickSelect className={inputCls} value={kind} onChange={(e) => setKind(e.target.value as 'quotation' | 'tender')} aria-label="نوع المستند">
+                  <option value="quotation">عرض سعر</option>
+                  <option value="tender">مناقصة / عطاء</option>
+                </QuickSelect>
+              </Field>
+              <Field label="عنوان الأعمال *" icon={<FileText size={11} />}>
+                <input id="quotation-first-line" className={inputCls} value={titleAr} onChange={(e) => setTitleAr(e.target.value)} placeholder="تشطيب فيلا — الدور الأول…" />
+              </Field>
+              <Field label="العميل / الجهة *">
+                <div id="quotation-client-field" className="invoice-doc-infield flex gap-1">
+                  <input className={inputCls} value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="اسم الجهة" aria-label="اسم العميل" />
+                  <PartyQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = customers.find((x) => x.id === id); if (c && !clientName.trim()) setClientName(c.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />
+                </div>
+              </Field>
+              <Field label="ساري حتى *">
+                <input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className={inputCls} dir="ltr" />
+              </Field>
+              <Field label="احتمالية الفوز ٪" hint="أساس القيمة المتوقعة">
+                <input value={winProb} onChange={(e) => setWinProb(e.target.value)} inputMode="numeric" className={inputCls} />
+              </Field>
+              {kind === 'tender' && (
+                <Field label={`التأمين الابتدائي (${cur.symbol})`} hint="للمتابعة — إصداره من خطابات الضمان">
+                  <input value={bidBond} onChange={(e) => setBidBond(e.target.value)} inputMode="decimal" className={inputCls} />
+                </Field>
+              )}
+            </>
+          }
+          partyMeta={
+            <div className="invoice-doc-partymeta">
+              <span>النوع: <b>{kind === 'tender' ? '🏛️ مناقصة' : '📄 عرض سعر'}</b></span>
+              <span>العميل: <b>{clientName.trim() || 'غير محدد'}</b></span>
+              {selectedClient && <span>الربط: <b>{selectedClient.nameAr} — للمتابعة فقط بلا أثر محاسبي</b></span>}
+              <span>الصلاحية: <b>{validUntil || '—'}</b></span>
+              <span>البنود: <b>{parsedLines.length}</b></span>
+            </div>
+          }
+        >
+          <section className="invoice-shell invoice-reference-shell overflow-visible rounded-b-2xl border-x border-b border-slate-300 bg-white shadow-lg dark:border-slate-700 dark:bg-card-dark" data-quotation-lines>
+            {/* بنود الأعمال — نفس جدول بنود الفاتورة هيئةً وقياساً */}
+            <div className="invoice-lines-panel min-w-0 overflow-visible border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-card-dark">
+              <div className="invoice-lines-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-l from-slate-500/10 to-transparent p-3 dark:border-slate-700">
+                <div className="invoice-lines-toolbar-title"><b>بنود الأعمال</b><small>بند لكل سطر — الاسم والوصف والوحدة والكمية وسعر الوحدة</small></div>
+                <div className="invoice-lines-kpis">
+                  <span className="invoice-lines-count">{parsedLines.length} بند</span>
+                  <span className="invoice-lines-weight">الصافي {fmt(draftTax.netMinor)} {cur.symbol}</span>
+                </div>
+                <Btn variant="soft" onClick={() => setQLines((l) => [...l, { key: crypto.randomUUID(), nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '', vat: '0', incl: false }])}><Plus size={14} /> بند</Btn>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="invoice-lines-table w-full table-fixed text-sm">
+                  <thead className="bg-slate-50 dark:bg-slate-800/60">
+                    <tr className="text-[10.5px] font-black text-slate-500">
+                      <th className="w-9 px-1 py-2 text-center">#</th>
+                      <th className="w-[9rem] px-1 py-2 text-center">اسم البند</th>
+                      <th className="px-1 py-2 text-center">الوصف التفصيلي</th>
+                      <th className="w-[5rem] px-1 py-2 text-center">الوحدة</th>
+                      <th className="w-[5.5rem] px-1 py-2 text-center">الكمية</th>
+                      <th className="w-[7rem] px-1 py-2 text-center">سعر الوحدة</th>
+                      <th className="w-[8rem] px-1 py-2 text-center">إجمالي البند</th>
+                      <th className="w-[4rem] px-1 py-2 text-center"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {qLines.map((l, i) => {
+                      const lineTotal = Math.round((Number(l.qty) || 0) * safeMinor(l.unitPrice))
+                      return (
+                        <tr key={l.key} className="border-t border-slate-100 dark:border-slate-800">
+                          <td className="p-1 text-center text-[11px] font-mono text-slate-400">{i + 1}</td>
+                          <td className="p-1"><input className={inputCls} value={l.nameAr} onChange={(e) => setQLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, nameAr: e.target.value } : x)))} placeholder="حفر وأساسات" /></td>
+                          <td className="p-1"><input className={inputCls} value={l.descriptionAr} onChange={(e) => setQLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, descriptionAr: e.target.value } : x)))} placeholder="حفر حتى منسوب التأسيس مع نقل المخلفات…" /></td>
+                          <td className="p-1">
+                            <QuickSelect value={l.unitAr} onChange={(e) => setQLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, unitAr: e.target.value } : x)))} className={inputCls}>
+                              {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                            </QuickSelect>
+                          </td>
+                          <td className="p-1"><input className={inputCls} dir="ltr" value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, qty: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} /></td>
+                          <td className="p-1"><input className={inputCls} dir="ltr" value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x) => (x.key === l.key ? { ...x, unitPrice: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} /></td>
+                          <td className="p-1"><div className="invoice-table-total font-mono">{lineTotal > 0 ? fmt(lineTotal) : '—'}</div></td>
+                          <td className="p-1">
+                            <div className="invoice-doc-rowtools">
+                              <button type="button" className="doc-row-delete" aria-label="حذف البند" title="حذف هذا البند" onClick={() => setQLines((arr) => arr.filter((x) => x.key !== l.key))}><Trash2 size={13} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {qLines.length === 0 && (
+                      <tr><td colSpan={8} className="p-6 text-center text-[12px] text-slate-400">لا بنود بعد — أضف أول بند أعمال من زر «بند»</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* اللوحات الثلاث: الشروط · التكلفة التقديرية · الإجماليات — نفس تخطيط الفاتورة */}
+            <section className="invoice-totals-footer">
+              <div className="invoice-doc-panel" data-quotation-notes>
+                <div className="invoice-doc-panel-head"><b>الشروط والملاحظات</b><small>تُطبع في نسخة العميل</small></div>
+                <div className="invoice-doc-panel-body">
+                  <div className="invoice-doc-quick">
+                    {QUOTE_TERMS.map((term) => (
+                      <button key={term} type="button" onClick={() => setNotes(notes.trim() ? `${notes.trim()}\n${term}` : term)}>+ {term}</button>
+                    ))}
+                  </div>
+                  <textarea className={`${inputCls} invoice-doc-termsbox`} value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="شروط العرض" placeholder="شروط العرض — تظهر في النسخة المطبوعة" />
+                </div>
+              </div>
+              <div className="invoice-doc-panel" data-quotation-estimate>
+                <div className="invoice-doc-panel-head"><b>التكلفة التقديرية</b><small>أساس الموازنة عند الفوز</small></div>
+                <div className="invoice-doc-panel-body space-y-2">
+                  {qLines.map((l) => safeMinor(l.estCost) > 0 && (
+                    <div key={l.key} className="flex items-center justify-between text-[11.5px]">
+                      <span className="truncate">{l.nameAr || l.descriptionAr.slice(0, 30) || `بند ${qLines.indexOf(l) + 1}`}</span>
+                      <span className="font-mono">{fmt(Math.round((Number(l.qty) || 0) * safeMinor(l.estCost)))}</span>
+                    </div>
+                  ))}
+                  <div className="invoice-doc-sum-row is-strong"><span>إجمالي التكلفة التقديرية</span><i /><b className="font-mono">{fmt(draftEstCost)} {cur.symbol}</b></div>
+                </div>
+              </div>
+              <div className="invoice-doc-panel" data-quotation-totals>
+                <div className="invoice-doc-panel-head"><b>إجماليات العرض</b><small>{kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر'}</small></div>
+                <div className="invoice-doc-panel-body">
+                  <div className="invoice-doc-sum-row"><span>الصافي</span><i /><b className="font-mono">{fmt(draftTax.netMinor)}</b></div>
+                  <div className="invoice-doc-sum-row"><span>الضريبة</span><i /><b className="font-mono">{fmt(draftTax.taxMinor)}</b></div>
+                  <div className="invoice-doc-sum-row is-strong"><span>الإجمالي شامل الضريبة</span><i /><b className="font-mono">{fmt(draftTax.grossMinor)} {cur.symbol}</b></div>
+                  <div className="invoice-doc-sum-row"><span>التكلفة التقديرية</span><i /><b className="font-mono">{fmt(draftEstCost)}</b></div>
+                  <div className={`invoice-doc-sum-row${margin < 0 ? ' is-minus' : ''}`}><span>هامش متوقع</span><i /><b className="font-mono">{fmt(margin)}</b></div>
+                </div>
+              </div>
+            </section>
+          </section>
+          <ThermalPreview open={!!previewHtml} html={previewHtml?.html ?? ''} wide={previewHtml?.wide ?? false}
+            title={previewHtml?.wide ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال'}
+            onClose={() => setPreviewHtml(null)}
+            onPrint={() => { const doc = previewHtml; setPreviewHtml(null); if (doc) printHtml(doc.html, { silent: printSwitches.silentPrint }) }}
+            onSettings={() => setPreviewHtml(null)} />
+        </InvoicePOSFrame>
+      </div>
+    )
+  }
+
+  /* ════ قائمة العروض ════ */
   return (
     <div className="space-y-4">
       <div className="anim-up flex items-center justify-between flex-wrap gap-2">
@@ -182,83 +386,6 @@ export function QuotationsPage() {
         </>
       )}
 
-      {/* عرض جديد */}
-      <Modal open={open} onClose={() => setOpen(false)} title="عرض سعر / مناقصة جديدة" wide>
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => setKind('quotation')} className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${kind === 'quotation' ? 'border-orange-500/60 bg-orange-500/10 text-orange-700 dark:text-orange-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>📄 عرض سعر</button>
-            <button onClick={() => setKind('tender')} className={`p-3 rounded-xl border-2 font-bold text-[13px] transition-all ${kind === 'tender' ? 'border-orange-500/60 bg-orange-500/10 text-orange-700 dark:text-orange-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>🏛️ مناقصة</button>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="عنوان الأعمال *"><input value={titleAr} onChange={(e) => setTitleAr(e.target.value)} className={inputCls} placeholder="تشطيب فيلا…" autoFocus /></Field>
-            <Field label="العميل / الجهة *"><input value={clientName} onChange={(e) => setClientName(e.target.value)} className={inputCls} /></Field>
-            <Field label="ربط بسجل عميل (إداري)" hint="للمتابعة فقط — لا يؤثر على رصيد العميل إطلاقاً؛ الذمة تنشأ من الفاتورة/المستخلص">
-              <PartyQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = customers.find((x) => x.id === id); if (c && !clientName.trim()) setClientName(c.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />
-            </Field>
-            <Field label="ساري حتى"><input type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} className={inputCls} dir="ltr" /></Field>
-            <Field label="احتمالية الفوز ٪" hint="أساس «القيمة المتوقعة» في ملخص المناقصات المقدمة">
-              <input value={winProb} onChange={(e) => setWinProb(e.target.value)} inputMode="numeric" className={inputCls} />
-            </Field>
-            {kind === 'tender' && (
-              <Field label={`التأمين الابتدائي (${cur.symbol})`} hint="للمتابعة — إصدار خطاب الضمان من قسم خطابات الضمان">
-                <input value={bidBond} onChange={(e) => setBidBond(e.target.value)} inputMode="decimal" className={inputCls} />
-              </Field>
-            )}
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">بنود الأعمال</span>
-              <Btn variant="soft" onClick={() => setQLines((l) => [...l, { nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '', vat: '0', incl: false }])}>+ بند</Btn>
-            </div>
-            {/* إدخال بنود عالمي (طلب المالك): كل خانة مسماة فوق حقلها في كل المقاسات —
-                لا اعتماد على صف عناوين يختفي في الشاشات الصغيرة */}
-            <div className="space-y-2">
-              {qLines.map((l, i) => {
-                const lineTotal = Math.round((Number(l.qty) || 0) * safeMinor(l.unitPrice))
-                return (
-                  <div key={i} className="anim-in p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
-                    <div className="grid grid-cols-2 lg:grid-cols-[130px_1fr_80px_100px_110px_110px] gap-2 items-end">
-                      <Field label="اسم البند *"><input value={l.nameAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, nameAr: e.target.value } : x)))} placeholder="حفر وأساسات" className={inputCls} /></Field>
-                      <Field label="الوصف التفصيلي *"><input value={l.descriptionAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, descriptionAr: e.target.value } : x)))} placeholder="حفر حتى منسوب التأسيس مع نقل المخلفات…" className={inputCls} /></Field>
-                      <Field label="الكمية *"><input value={l.qty} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" /></Field>
-                      <Field label="الوحدة *">
-                        <QuickSelect value={l.unitAr} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitAr: e.target.value } : x)))} className={inputCls}>
-                          {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                        </QuickSelect>
-                      </Field>
-                      <Field label={`سعر الوحدة (${cur.symbol}) *`}><input value={l.unitPrice} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, unitPrice: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} className={inputCls} dir="ltr" /></Field>
-                      <Field label="ضريبة %" hint="0 = بلا ضريبة"><input value={l.vat} inputMode="decimal" onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, vat: e.target.value } : x)))} className={inputCls} /></Field>
-                      <Field label="السعر شامل الضريبة؟"><label className="flex items-center gap-1 text-[12px]"><input type="checkbox" checked={l.incl} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, incl: e.target.checked } : x)))} /> شامل</label></Field>
-                      <Field label="تكلفة تقديرية/وحدة" hint=""><input value={l.estCost} onChange={(e) => setQLines((arr) => arr.map((x, j) => (j === i ? { ...x, estCost: e.target.value } : x)))} type="number" inputMode="decimal" step="any" min={0} placeholder="للموازنة" className={inputCls} dir="ltr" /></Field>
-                    </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-[12px] font-black text-emerald-600 dark:text-emerald-400">إجمالي البند: {lineTotal > 0 ? `${fmt(lineTotal)} ${cur.symbol}` : '—'}</span>
-                      <button onClick={() => setQLines((arr) => arr.filter((_, j) => j !== i))} title="حذف البند" className="p-1.5 rounded-lg text-slate-300 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"><Trash2 size={15} /></button>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          {draftTotal > 0 && (
-            <div className="anim-pop p-3 rounded-xl bg-orange-500/5 border border-orange-500/20 text-[13px] font-bold text-orange-700 dark:text-orange-300 grid grid-cols-3 gap-2 text-center">
-              <span>الصافي: <b className="font-black">{fmt(draftTax.netMinor)}</b></span>
-              <span>الضريبة: <b className="font-black">{fmt(draftTax.taxMinor)}</b></span>
-              <span>الإجمالي شامل الضريبة: <b className="font-black">{fmt(draftTax.grossMinor)}</b></span>
-              <span>التكلفة التقديرية: <b className="font-black">{fmt(draftEstCost)}</b></span>
-              <span className={draftTotal - draftEstCost >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}>هامش متوقع: <b className="font-black">{fmt(draftTotal - draftEstCost)}</b></span>
-            </div>
-          )}
-          <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
-          <div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={save} disabled={!titleAr.trim() || !clientName.trim() || parsedLines.length === 0}>💾 حفظ العرض</Btn>
-          </div>
-        </div>
-      </Modal>
-
       {/* تحويل عرض فائز لمشروع */}
       <Modal open={!!convertFor} onClose={() => setConvertFor(null)} title={convertFor ? `🏗️ تحويل ${convertFor.quoteNumber} لمشروع` : ''}>
         {convertFor && (
@@ -278,7 +405,6 @@ export function QuotationsPage() {
           </div>
         )}
       </Modal>
-
     </div>
   )
 }

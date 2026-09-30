@@ -11,7 +11,8 @@ import {
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
   FileText, ListChecks, Users2, ChefHat, Scissors, Gem, Tags, PackageMinus, HandCoins, Gauge,
-  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2, Gift, GitBranch, Calculator } from 'lucide-react'
+  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2, Gift, GitBranch, Calculator,
+  CalendarCheck2, Fingerprint, CalendarRange, Settings2, FileDown } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule, ItemFeature } from '../core/activities.ts'
 import { INVOICE_FIRST_ACTIVITIES } from '../core/activities.ts'
@@ -122,6 +123,17 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'employee-commissions', nameAr: 'عمولات الموظفين', icon: HandCoins, path: '/parties/employee-commissions' },
       { id: 'custody', nameAr: 'ملفات عهد الموظفين', icon: Wallet2, path: '/parties/custody' },
       { id: 'installments', nameAr: 'الأقساط', icon: CreditCard, path: '/parties/installments', module: 'installments' },
+    ],
+  },
+  {
+    // شؤون الموظفين (طلب المالك ㉘) — قسم مستقل بتابات داخلية: حضور/بصمة/إجازات/ورديات/تقارير
+    id: 'hr', nameAr: 'شؤون الموظفين (حضور وإجازات)', icon: CalendarCheck2, color: 'teal',
+    children: [
+      { id: 'hr-attendance', nameAr: 'الحضور والانصراف', icon: CalendarCheck2, path: '/hr/attendance' },
+      { id: 'hr-fingerprint', nameAr: 'استيراد البصمة', icon: Fingerprint, path: '/hr/fingerprint' },
+      { id: 'hr-leaves', nameAr: 'الإجازات وأرصدتها', icon: CalendarRange, path: '/hr/leaves' },
+      { id: 'hr-shifts', nameAr: 'الورديات وقواعد الاحتساب', icon: Settings2, path: '/hr/shifts' },
+      { id: 'hr-reports', nameAr: 'تقارير الحضور والرواتب', icon: FileDown, path: '/hr/reports' },
     ],
   },
   {

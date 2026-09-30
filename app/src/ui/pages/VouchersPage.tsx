@@ -7,7 +7,7 @@ import { COMMON_FX_CURRENCIES, convertFxToBookMinor, describeFxLeg, formatRate, 
  * صرف: نقدية خارجة (سداد مورد، مصروف، مسحوبات…)
  * كل سند يولّد قيده المتوازن فوراً ويظهر في اليومية.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowDownCircle, ArrowUpCircle, BookOpenText, CheckCircle2, Eye, FileSpreadsheet, FileText, Landmark, Paperclip, Pencil, Printer, ReceiptText, Save, Search, Stamp, Undo2, WalletCards, X } from 'lucide-react'
 import { useDataStore, type Voucher } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -57,7 +57,7 @@ const PAYMENT_COUNTERS = [
 const escapePrintText = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, vehicles , employees, getEmployeeBalance } = useDataStore()
+  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, vehicles , employees, getEmployeeBalance, getUnpaidPayrollSlips, payrollSlips } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup, receipt } = useAppStore()
   const toast = useToast()
@@ -82,6 +82,23 @@ export function VouchersPage() {
   const [quickAccountCode, setQuickAccountCode] = useState('')
   const [quickAccountName, setQuickAccountName] = useState('')
   const [employeePartyId, setEmployeePartyId] = useState(0)
+  /* سداد قسائم رواتب محددة من السند (طلب المالك ㉘): كل قسيمة تُسدَّد باسمها
+     فلا يختلط راتب موظف صُرف اليوم بآخر يُصرف غداً */
+  const [settleSlipIds, setSettleSlipIds] = useState<number[]>([])
+  const isPayrollSettlement = kind === 'payment' && counter === '2104'
+  const unpaidSlips = useMemo(
+    () => (isPayrollSettlement && employeePartyId ? getUnpaidPayrollSlips(employeePartyId) : []),
+    [isPayrollSettlement, employeePartyId, getUnpaidPayrollSlips, vouchers, payrollSlips],
+  )
+  useEffect(() => { setSettleSlipIds([]) }, [employeePartyId, counter, kind])
+  const toggleSlip = (id: number) =>
+    setSettleSlipIds((ids) => (ids.includes(id) ? ids.filter((row) => row !== id) : [...ids, id]))
+  const settledTotalMinor = unpaidSlips.filter((s) => settleSlipIds.includes(s.id)).reduce((sum, s) => sum + s.netMinor, 0)
+  const selectAllSlips = () => {
+    const ids = unpaidSlips.map((s) => s.id)
+    setSettleSlipIds(ids)
+    if (ids.length) setAmount(String(unpaidSlips.reduce((sum, s) => sum + s.netMinor, 0) / 10 ** cur.decimals))
+  }
   const [partyId, setPartyId] = useState(0) // العميل (قبض 1104) أو المورد (صرف 2101) — يغذي كشف الحساب
   const [purchaseId, setPurchaseId] = useState(0) // فاتورة الشراء عند «مصروف على فاتورة شراء»
   const [expMethod, setExpMethod] = useState<'value' | 'qty'>('qty') // توزيع مصروف الفاتورة
@@ -353,8 +370,9 @@ export function VouchersPage() {
         vehicleId: canLinkVehicle ? vehicleId : null,
         vehicleCostCategory: canLinkVehicle && vehicleId != null ? vehicleCostCategory : undefined,
         terminalPayment: kind === 'receipt' && selectedTerminal ? { terminalId: selectedTerminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
+        settleSlipIds: isPayrollSettlement && settleSlipIds.length ? settleSlipIds : undefined,
       })
-      toast.show(`تم ${kind === 'receipt' ? 'سند القبض' : 'سند الصرف'} ${v.voucherNumber} — تولد قيده تلقائياً ✓`)
+      toast.show(`تم ${kind === 'receipt' ? 'سند القبض' : 'سند الصرف'} ${v.voucherNumber} — تولد قيده تلقائياً ✓${settleSlipIds.length ? ` · سُدِّدت ${settleSlipIds.length} قسيمة رواتب` : ''}`)
       clearDraft(kind)
       setOpen(false)
     } catch (e) {
@@ -518,6 +536,32 @@ export function VouchersPage() {
                         <b className={getEmployeeBalance(employeePartyId) < 0 ? 'text-rose-600' : 'text-emerald-600'} data-employee-balance>
                           {fmt(Math.abs(getEmployeeBalance(employeePartyId)))} {getEmployeeBalance(employeePartyId) < 0 ? '(عليه)' : '(له)'}
                         </b>
+                      </div>
+                    )}
+                    {/* قسائم رواتب غير مصروفة (طلب المالك ㉘): سداد موجه بالاسم والشهر */}
+                    {unpaidSlips.length > 0 && (
+                      <div className="mt-1 space-y-1 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2" data-unpaid-slips>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-amber-700 dark:text-amber-300">قسائم رواتب مستحقة لهذا الموظف</span>
+                          <button type="button" className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 hover:bg-amber-500/25 dark:text-amber-300" onClick={selectAllSlips}>تسديد الكل</button>
+                        </div>
+                        {unpaidSlips.map((slip) => (
+                          <label key={slip.id} className="flex cursor-pointer items-center justify-between gap-2 rounded-md bg-white/60 px-2 py-1 text-[11px] dark:bg-slate-800/60">
+                            <span className="flex items-center gap-1.5">
+                              <input type="checkbox" checked={settleSlipIds.includes(slip.id)} onChange={() => toggleSlip(slip.id)} className="size-3.5 accent-amber-600" />
+                              <b className="font-mono">{slip.slipNumber}</b>
+                              <span className="text-slate-500">{slip.month}</span>
+                            </span>
+                            <b className="font-mono">{fmt(slip.netMinor)} {cur.symbol}</b>
+                          </label>
+                        ))}
+                        {settledTotalMinor > 0 && (
+                          <div className="flex items-center justify-between border-t border-amber-500/20 pt-1 text-[11px] font-black text-amber-700 dark:text-amber-300">
+                            <span>المحدد للتسديد</span>
+                            <span className="font-mono">{fmt(settledTotalMinor)} {cur.symbol}</span>
+                          </div>
+                        )}
+                        <p className="text-[10px] text-slate-500">اختر قسيمة فأكثر ثم اجعل مبلغ السند مساوياً لمجموعها (زر «تسديد الكل» يفعل ذلك) — تُوسم القسائم مصروفة باسم هذا السند.</p>
                       </div>
                     )}
                   </div>

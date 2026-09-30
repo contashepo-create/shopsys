@@ -270,12 +270,18 @@ function invoiceWindowSize() {
   return { width: Math.max(MIN_W, Math.round(vw * 0.94)), height: Math.max(MIN_H, Math.round(vh * 0.9)) }
 }
 
-export function openSalesInvoiceWindow(editId?: number) {
+/** تعبئة أولية لفاتورة بيع (طلب المالك ㉘): بيع أصناف منتهية الصلاحية من شاشة الإتلاف */
+export interface SalesInvoicePrefill {
+  lines: { itemId: number; qty: number; unitPriceMinor?: number }[]
+  notes?: string
+}
+
+export function openSalesInvoiceWindow(editId?: number, prefill?: SalesInvoicePrefill) {
   return useWindowStore.getState().openWindow({
     kind: 'sales-invoice',
-    title: editId ? `تعديل فاتورة مبيعات #${editId}` : 'فاتورة مبيعات جديدة',
+    title: editId ? `تعديل فاتورة مبيعات #${editId}` : prefill ? 'فاتورة مبيعات — أصناف محددة' : 'فاتورة مبيعات جديدة',
     subtitle: 'نافذة مستقلة — تبقى مفتوحة حتى تحفظها أو تغلقها',
-    props: editId ? { editId } : {},
+    props: editId ? { editId } : prefill ? { prefill } : {},
     dedupeKey: editId ? `sales-invoice:${editId}` : null,
     /* نافذة حرة لا صفحة ملتصقة (بلاغ المالك): تفتح بإطار نافذة كامل يُحرَّك ويُكبَّر
        ويُصغَّر، ويمكن فتح فاتورة أخرى فوقها وحفظ الاثنتين. */

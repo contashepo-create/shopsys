@@ -37,7 +37,8 @@ export function DemoDataPanel() {
     loadDemoActivity(pending)
       .then((result) => {
         setCurrent(pending)
-        setNote(`تم تحميل النشاط: ${result.items} صنفاً · ${result.purchases} فاتورة شراء · ${result.sales} فاتورة بيع.`
+        setNote(`تم تحميل النشاط: ${result.items} صنفاً · ${result.purchases} فاتورة شراء · ${result.sales} فاتورة بيع`
+          + ` · ${result.employees} موظفاً · ${result.attendance} بصمة حضور · ${result.leaves} إجازة · ${result.payrollMonths} مسير رواتب · ${result.quotations} عرض سعر · ${result.purchaseOrders} أمر شراء · ${result.wastage} هالك · ${result.subContracts} باطن · ${result.projectExtracts} مستخلص · ${result.equipment} معدة · ${result.rentals} عقد إيجار.`
           + (result.skipped.length ? ` — تخطّينا: ${result.skipped.join(' | ')}` : ''))
       })
       .catch((error: Error) => setNote(error.message))
@@ -113,7 +114,8 @@ export function DemoDataPanel() {
                       void run(activity.id, async () => {
                         const result = await loadDemoActivity(activity.id)
                         setCurrent(activity.id)
-                        return `تم تحميل «${activity.name_ar}»: ${result.items} صنفاً · ${result.purchases} فاتورة شراء · ${result.sales} فاتورة بيع.`
+                        return `تم تحميل «${activity.name_ar}»: ${result.items} صنفاً · ${result.purchases} فاتورة شراء · ${result.sales} فاتورة بيع`
+                          + ` · ${result.employees} موظفاً · ${result.attendance} بصمة · ${result.payrollMonths} مسير · ${result.quotations} عرض · ${result.purchaseOrders} أمر · ${result.wastage} هالك · ${result.rentals} إيجار · ${result.projectExtracts} مستخلص.`
                           + (result.skipped.length ? ` — تخطّينا: ${result.skipped.join(' | ')}` : '')
                       })
                     }}
@@ -126,7 +128,7 @@ export function DemoDataPanel() {
                   <span>{activity.items} صنف</span>·<span>{activity.customers} عميل</span>·<span>{activity.suppliers} مورد</span>
                   ·<span>{activity.warehouses} مخزن</span>·<span>{activity.branches} فرع</span>
                   ·<span>{activity.treasuries} خزينة/بنك/محفظة</span>·<span>{activity.terminals} ماكينة دفع</span>
-                  ·<span>{activity.sales} بيع</span>·<span>{activity.purchases} شراء</span>
+                  ·<span>{activity.sales} بيع</span>·<span>{activity.purchases} شراء</span>·<span>{activity.employees} موظف</span>·<span>{activity.quotations} عرض</span>·<span>{activity.purchaseOrders} أمر</span>
                 </div>
               </div>
             ))}

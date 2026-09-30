@@ -116,6 +116,12 @@ import {
   type PayrollSlip, slipNetMinor, validateSlipDraft, buildSlipAccrualLines, buildSlipPaymentLines,
 } from '../core/payrollSlips.ts'
 import {
+  DEFAULT_HR_RULES, DEFAULT_LEAVE_TYPES, normalizeHrRules, monthlySummary, attendancePayrollImpact,
+  leaveBalances, leaveDaysBetween, validateLeaveRequest, leaveDates,
+  type AttendanceRecord, type AttendanceStatus, type HrRules, type LeaveRequest, type LeaveTypeDef,
+  type MonthlyAttendanceSummary, type AttendancePayrollImpact, type LeaveBalanceRow,
+} from '../core/attendance.ts'
+import {
   type PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderStatus,
   validatePurchaseOrder, derivePurchaseOrderStatus,
 } from '../core/purchaseOrders.ts'
@@ -1421,6 +1427,43 @@ interface DataState {
   cancelPayrollSlip: (slipId: number, reason: string) => void
   /** القسائم غير المصروفة — يعرضها سند الصرف لكل موظف على حدة */
   getUnpaidPayrollSlips: (employeeId?: number) => PayrollSlip[]
+  /* ─── شؤون الموظفين: حضور وانصراف وإجازات واستيراد بصمة (طلب المالك ㉘) ─── */
+  /** سجل الحضور اليومي — سجل واحد للموظف في اليوم */
+  attendanceRecords: AttendanceRecord[]
+  /** طلبات الإجازات: معلّقة ⇐ معتمدة/مرفوضة */
+  leaveRequests: LeaveRequest[]
+  /** أنواع الإجازات وأرصدتها السنوية (قابلة للتعديل) */
+  leaveTypes: LeaveTypeDef[]
+  /** قواعد الاحتساب: الوردية · سماح التأخير · خصم الغياب · أجر الإضافي */
+  hrRules: HrRules
+  /** ورديات خاصة لكل موظف تتجاوز وردية المنشأة الافتراضية */
+  employeeShifts: { employeeId: number; startMin: number; endMin: number; graceMinutes: number }[]
+  /** سجل عمليات استيراد البصمة — يمنع التكرار ويوثق المصدر */
+  attendanceImports: { id: number; at: string; fileName: string; rows: number; matched: number; unmatched: number; inserted: number; updated: number; by: string }[]
+  /** إدخال/تعديل حضور يوم واحد لموظف (يدوي) — يدمج فوق أي سجل موجود */
+  setAttendanceDay: (args: { employeeId: number; date: string; status: AttendanceStatus; checkIn?: string | null; checkOut?: string | null; notes?: string }) => void
+  /** حذف سجل حضور يوم واحد */
+  clearAttendanceDay: (employeeId: number, date: string) => void
+  /** اعتماد استيراد بصمة معتمد (بعد المعاينة والمطابقة): إدخال/تحديث سجلات اليوم */
+  importAttendance: (args: { rows: { employeeId: number; date: string; status: AttendanceStatus; checkIn?: string | null; checkOut?: string | null }[]; fileName: string; by: string }) => { inserted: number; updated: number; importId: number }
+  /** طلب إجازة جديد — يُتحقق من الرصيد والتعارض قبل الحفظ */
+  addLeaveRequest: (args: { employeeId: number; typeId: string; from: string; to: string; reason: string }) => LeaveRequest
+  /** اعتماد أو رفض إجازة معلقة (باسم صاحب القرار) */
+  decideLeaveRequest: (id: number, approve: boolean, by: string) => LeaveRequest
+  /** حذف طلب إجازة معلّق */
+  deleteLeaveRequest: (id: number) => void
+  /** تحديث قواعد الاحتساب (وردية المنشأة وخصوماتها) */
+  updateHrRules: (patch: Partial<HrRules>) => void
+  /** تعديل أنواع الإجازات وأرصدتها */
+  updateLeaveTypes: (types: LeaveTypeDef[]) => void
+  /** وردية خاصة لموظف (أو حذفها بالقيمة null للعودة لوردية المنشأة) */
+  setEmployeeShift: (employeeId: number, shift: { startMin: number; endMin: number; graceMinutes: number } | null) => void
+  /** أرصدة إجازات موظف لسنة معينة */
+  getLeaveBalances: (employeeId: number, year: number) => LeaveBalanceRow[]
+  /** ملخص حضور موظف لشهر معين */
+  getMonthlyAttendance: (employeeId: number, month: string) => MonthlyAttendanceSummary
+  /** أثر الحضور على رواتب الشهر — بنود مرئية تُعرض في مسار القسيمة قبل الترحيل */
+  getAttendancePayrollImpact: (month: string, employeeIds?: number[]) => AttendancePayrollImpact[]
   approvalRequests: ApprovalRequest[] // طلبات الاعتماد الجارية والمحسومة
   recipes: Recipe[] // وصفات الأطباق والتصنيع (مطاعم)
   productionOrders: ProductionOrder[] // أوامر الإنتاج المسبق
@@ -1861,6 +1904,13 @@ interface DataState {
     bookDecimals?: number
     /** رمز عملة الدفتر — لمنع «عملة أجنبية» تساوي عملة الدفتر (افتراضي EGP) */
     bookCurrencyCode?: string
+    /**
+     * سداد قسائم رواتب محددة من سند الصرف (طلب المالك ㉘): عند الصرف على
+     * 2104 لموظف تُحدَّد القسائم المستهدفة فتُوسم «مصروفة» بهذا السند —
+     * فيُسدَّد راتب موظف اليوم وآخر غداً بلا خلط. مجموعها يجب أن يساوي مبلغ
+     * السند أو أقل منه (الباقي يبقى رصيداً عاماً على 2104 للموظف).
+     */
+    settleSlipIds?: number[]
   }) => Voucher
   /** صرف سلفة لموظف: قيد 1107 ← خزينة، وتُسترد من مسيرات الرواتب */
   grantEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; notes: string }) => EmployeeAdvance
@@ -2872,6 +2922,162 @@ export const useDataStore = create<DataState>()(
       getUnpaidPayrollSlips: (employeeId) => get().payrollSlips
         .filter((slip) => slip.status === 'accrued' && (employeeId == null || slip.employeeId === employeeId)),
 
+      /* ─── شؤون الموظفين: حضور وإجازات وبصمة (طلب المالك ㉘) — لا قيود هنا؛
+            كل الأثر المالي عبر قسائم الرواتب في مسارها الرسمي ─── */
+      attendanceRecords: [],
+      leaveRequests: [],
+      leaveTypes: DEFAULT_LEAVE_TYPES,
+      hrRules: DEFAULT_HR_RULES,
+      employeeShifts: [],
+      attendanceImports: [],
+      setAttendanceDay: (args) => {
+        const state = get()
+        if (!state.employees.some((e) => e.id === args.employeeId)) throw new Error('الموظف غير موجود')
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error('تاريخ غير سليم (YYYY-MM-DD)')
+        const existing = state.attendanceRecords.find((r) => r.employeeId === args.employeeId && r.date === args.date)
+        if (existing) {
+          set({ attendanceRecords: state.attendanceRecords.map((r) => (r.id === existing.id
+            ? { ...r, status: args.status, checkIn: args.checkIn ?? null, checkOut: args.checkOut ?? null, notes: args.notes ?? r.notes, source: 'manual' as const }
+            : r)) })
+        } else {
+          set({ attendanceRecords: [...state.attendanceRecords, { id: nextId(state.attendanceRecords), employeeId: args.employeeId, date: args.date, status: args.status, checkIn: args.checkIn ?? null, checkOut: args.checkOut ?? null, source: 'manual' as const, importBatch: null, notes: args.notes }] })
+        }
+      },
+      clearAttendanceDay: (employeeId, date) => {
+        const state = get()
+        set({ attendanceRecords: state.attendanceRecords.filter((r) => !(r.employeeId === employeeId && r.date === date)) })
+      },
+      importAttendance: (args) => {
+        const state = get()
+        if (!args.rows.length) throw new Error('لا صفوف للاستيراد — راجع المعاينة')
+        const byDate = new Map(state.attendanceRecords.map((r) => [`${r.employeeId}|${r.date}`, r]))
+        let inserted = 0
+        let updated = 0
+        const importId = nextId(state.attendanceImports)
+        const nextRecords = [...state.attendanceRecords]
+        for (const row of args.rows) {
+          if (!state.employees.some((e) => e.id === row.employeeId)) throw new Error(`موظف رقم ${row.employeeId} غير موجود — أعد المطابقة`)
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date)) throw new Error(`تاريخ غير سليم في الاستيراد: ${row.date}`)
+          const existing = byDate.get(`${row.employeeId}|${row.date}`)
+          if (existing) {
+            updated += 1
+            const idx = nextRecords.findIndex((r) => r.id === existing.id)
+            nextRecords[idx] = { ...existing, status: row.status, checkIn: row.checkIn ?? existing.checkIn, checkOut: row.checkOut ?? existing.checkOut, source: 'import' as const, importBatch: importId }
+          } else {
+            inserted += 1
+            const record: AttendanceRecord = { id: nextId(nextRecords), employeeId: row.employeeId, date: row.date, status: row.status, checkIn: row.checkIn ?? null, checkOut: row.checkOut ?? null, source: 'import' as const, importBatch: importId }
+            byDate.set(`${row.employeeId}|${row.date}`, record)
+            nextRecords.push(record)
+          }
+        }
+        set({
+          attendanceRecords: nextRecords,
+          attendanceImports: [...state.attendanceImports, { id: importId, at: new Date().toISOString(), fileName: args.fileName, rows: args.rows.length, matched: args.rows.length, unmatched: 0, inserted, updated, by: args.by || 'المالك' }],
+        })
+        return { inserted, updated, importId }
+      },
+      addLeaveRequest: (args) => {
+        const state = get()
+        const days = leaveDaysBetween(args.from, args.to)
+        const errors = validateLeaveRequest({ employeeId: args.employeeId, typeId: args.typeId, from: args.from, to: args.to, leaves: state.leaveRequests, types: state.leaveTypes })
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (days <= 0) throw new Error('نطاق التاريخ غير سليم')
+        const request: LeaveRequest = {
+          id: nextId(state.leaveRequests),
+          employeeId: args.employeeId, typeId: args.typeId, from: args.from, to: args.to, days,
+          status: 'pending', reason: args.reason.trim(), requestedAt: new Date().toISOString(),
+        }
+        set({ leaveRequests: [...state.leaveRequests, request] })
+        return request
+      },
+      decideLeaveRequest: (id, approve, by) => {
+        const state = get()
+        const request = state.leaveRequests.find((l) => l.id === id)
+        if (!request) throw new Error('طلب الإجازة غير موجود')
+        if (request.status !== 'pending') throw new Error('هذا الطلب محسوم بالفعل')
+        const now = new Date().toISOString()
+        const decided: LeaveRequest = { ...request, status: approve ? 'approved' : 'rejected', decidedBy: by || 'المالك', decidedAt: now }
+        /* عند الاعتماد: تُعلَّم أيام الإجازة في شبكة الحضور تلقائياً (فوق أي «حاضر» سابق) */
+        if (approve) {
+          const dates = leaveDates(request)
+          const byDay = new Map(state.attendanceRecords.map((r) => [`${r.employeeId}|${r.date}`, r]))
+          const nextRecords = [...state.attendanceRecords]
+          for (const date of dates) {
+            const existing = byDay.get(`${request.employeeId}|${date}`)
+            if (existing) {
+              const idx = nextRecords.findIndex((r) => r.id === existing.id)
+              nextRecords[idx] = { ...existing, status: 'leave' as const, notes: `إجازة معتمدة #${request.id}` }
+            } else {
+              nextRecords.push({ id: nextId(nextRecords), employeeId: request.employeeId, date, status: 'leave' as const, checkIn: null, checkOut: null, source: 'manual' as const, importBatch: null, notes: `إجازة معتمدة #${request.id}` })
+            }
+          }
+          set({ leaveRequests: state.leaveRequests.map((l) => (l.id === id ? decided : l)), attendanceRecords: nextRecords })
+          return decided
+        }
+        set({ leaveRequests: state.leaveRequests.map((l) => (l.id === id ? decided : l)) })
+        return decided
+      },
+      deleteLeaveRequest: (id) => {
+        const state = get()
+        const request = state.leaveRequests.find((l) => l.id === id)
+        if (!request) throw new Error('طلب الإجازة غير موجود')
+        if (request.status === 'approved') throw new Error('لا يُحذف طلب معتمد — راسل طلباً معاكساً أو عدّل شبكة الحضور')
+        set({ leaveRequests: state.leaveRequests.filter((l) => l.id !== id) })
+      },
+      updateHrRules: (patch) => {
+        const state = get()
+        set({ hrRules: normalizeHrRules({ ...state.hrRules, ...patch }) })
+      },
+      updateLeaveTypes: (types) => {
+        if (!types.length) throw new Error('لا تُفرَّغ أنواع الإجازات — نوع واحد على الأقل')
+        for (const type of types) {
+          if (!type.id.trim() || !type.nameAr.trim()) throw new Error('كل نوع إجازة يحتاج كوداً واسماً')
+          if (!Number.isFinite(type.annualQuotaDays) || type.annualQuotaDays < 0) throw new Error(`رصيد ${type.nameAr || type.id} غير سليم`)
+        }
+        const ids = new Set(types.map((t) => t.id))
+        if (ids.size !== types.length) throw new Error('أكواد الإجازات مكررة')
+        set({ leaveTypes: types })
+      },
+      setEmployeeShift: (employeeId, shift) => {
+        const state = get()
+        if (shift) {
+          const clean = {
+            employeeId,
+            startMin: Math.max(0, Math.min(24 * 60, Math.round(shift.startMin))),
+            endMin: Math.max(0, Math.min(24 * 60, Math.round(shift.endMin))),
+            graceMinutes: Math.max(0, Math.min(240, Math.round(shift.graceMinutes))),
+          }
+          if (clean.endMin <= clean.startMin) throw new Error('نهاية الوردية يجب أن تكون بعد بدايتها')
+          const existing = state.employeeShifts.find((s) => s.employeeId === employeeId)
+          set({ employeeShifts: existing
+            ? state.employeeShifts.map((s) => (s.employeeId === employeeId ? clean : s))
+            : [...state.employeeShifts, clean] })
+        } else {
+          set({ employeeShifts: state.employeeShifts.filter((s) => s.employeeId !== employeeId) })
+        }
+      },
+      getLeaveBalances: (employeeId, year) => {
+        const state = get()
+        return leaveBalances(state.leaveRequests, state.leaveTypes, employeeId, year)
+      },
+      getMonthlyAttendance: (employeeId, month) => {
+        const state = get()
+        return monthlySummary({ employeeId, month, records: state.attendanceRecords, leaves: state.leaveRequests, types: state.leaveTypes })
+      },
+      getAttendancePayrollImpact: (month, employeeIds) => {
+        const state = get()
+        const targets = state.employees.filter((e) => e.active && (employeeIds == null || employeeIds.includes(e.id)))
+        return targets.map((employee) => attendancePayrollImpact({
+          employeeId: employee.id,
+          month,
+          grossMinor: employee.baseSalaryMinor + employee.allowancesMinor,
+          rules: state.hrRules,
+          records: state.attendanceRecords,
+          leaves: state.leaveRequests,
+          types: state.leaveTypes,
+        }))
+      },
+
       installmentPlans: [],
       vehicles: [],
       vehicleCostEntries: [],
@@ -2951,9 +3157,18 @@ export const useDataStore = create<DataState>()(
         set({ purchaseOrders: [...state.purchaseOrders, order] })
         return order
       },
-      setPurchaseOrderStatus: (id, status) => set((state) => ({
-        purchaseOrders: state.purchaseOrders.map((order) => (order.id === id ? { ...order, status } : order)),
-      })),
+      setPurchaseOrderStatus: (id, status) => set((state) => {
+        const order = state.purchaseOrders.find((o) => o.id === id)
+        if (!order) throw new Error('أمر الشراء غير موجود')
+        /* حرس سلامة دورة الأمر: الحالات المستلمة (partial/closed) تُشتق من الاستلام
+           لا تُضبط يدوياً، والأمر المكتمل أو المرتبط بفواتير لا يُلغى */
+        if ((status === 'partial' || status === 'closed') && status !== order.status) throw new Error('حالة الاستلام تُحدَّث تلقائياً من فواتير الشراء — لا تُضبط يدوياً')
+        if (status === 'cancelled') {
+          if (order.status === 'closed') throw new Error('أمر الشراء مكتمل الاستلام — لا يُلغى')
+          if ((order.invoiceIds ?? []).length > 0) throw new Error('الأمر مرتبط بفواتير شراء مسجلة — لا يُلغى')
+        }
+        return { purchaseOrders: state.purchaseOrders.map((o) => (o.id === id ? { ...o, status } : o)) }
+      }),
       receivePurchaseOrder: (id, received, invoiceId) => set((state) => ({
         purchaseOrders: state.purchaseOrders.map((order) => {
           if (order.id !== id) return order
@@ -5220,6 +5435,23 @@ export const useDataStore = create<DataState>()(
         }
         if (args.kind === 'receipt' && args.counterAccountCode === '1104' && (args.partyKind !== 'customer' || args.partyId == null)) throw new Error('سند قبض العملاء 1104 يتطلب اختيار عميل مسجل')
         if (args.kind === 'payment' && args.counterAccountCode === '2101' && (args.partyKind !== 'supplier' || args.partyId == null)) throw new Error('سداد الموردين 2101 يتطلب اختيار مورد مسجل')
+        /* سداد قسائم رواتب محددة (طلب المالك ㉘): تحقق قبل أي كتابة — لا قسيمة إلا لموظف السند نفسه */
+        let settleSlips: PayrollSlip[] = []
+        if (args.settleSlipIds?.length) {
+          if (args.kind !== 'payment' || args.counterAccountCode !== '2104' || args.partyKind !== 'employee' || args.partyId == null)
+            throw new Error('سداد القسائم متاح في سند صرف على «رواتب مستحقة 2104» لموظف محدد')
+          settleSlips = args.settleSlipIds
+            .map((id) => state.payrollSlips.find((slip) => slip.id === id))
+            .filter((slip): slip is PayrollSlip => !!slip)
+          if (settleSlips.length !== args.settleSlipIds.length) throw new Error('قسيمة غير موجودة في سداد القسائم')
+          for (const slip of settleSlips) {
+            if (slip.employeeId !== args.partyId) throw new Error(`القسيمة ${slip.slipNumber} ليست لهذا الموظف — ${slip.employeeName}`)
+            if (slip.status === 'paid') throw new Error(`القسيمة ${slip.slipNumber} مصروفة بالفعل — لا يُسدَّد مرتين`)
+            if (slip.status === 'cancelled') throw new Error(`القسيمة ${slip.slipNumber} ملغاة`)
+          }
+          const settledTotal = settleSlips.reduce((sum, slip) => sum + slip.netMinor, 0)
+          if (settledTotal > args.amountMinor) throw new Error(`مجموع القسائم المحددة (${settledTotal}) أكبر من مبلغ السند (${args.amountMinor}) — ارفع المبلغ أو أزل قسيمة`)
+        }
         let partyAllocations: FifoAllocation[] | undefined
         let partyUnallocatedMinor: number | undefined
         if (args.kind === 'receipt' && args.counterAccountCode === '1104' && args.partyId != null) {
@@ -5350,6 +5582,17 @@ export const useDataStore = create<DataState>()(
             }]
           : state.vehicleCostEntries
         set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        /* وسْم القسائم المسدَّدة بهذا السند — بعد نجاح ترحيله (ذريّ: أي فشل قبله لا يترك أثراً).
+           القيد نفسه فوق 2104/الخزينة من مسار السند الرسمي؛ الوسم تسوية دفتر مساعد فقط. */
+        if (settleSlips.length) {
+          const settledIds = new Set(settleSlips.map((slip) => slip.id))
+          const settledNow = new Date().toISOString()
+          set({
+            payrollSlips: get().payrollSlips.map((slip) => (settledIds.has(slip.id)
+              ? { ...slip, status: 'paid' as const, paidAt: settledNow, paidEntryId: entryId, paidFrom: `سند صرف ${voucherNumber}` }
+              : slip)),
+          })
+        }
         return voucher
       },
 
@@ -7188,6 +7431,19 @@ export const useDataStore = create<DataState>()(
               docLabel: `مقاصة ${o.offsetNumber}`, date: o.date,
               debitMinor: o.amountMinor, creditMinor: 0,
             })),
+            // مقاولو الباطن المرتبطون بهذا المورد (تكامل الموردين): شهادات الأعمال
+            // تلزمه بصافي مستحقاته (2101 دائن) ودفعاته تخفضه (2101 مدين) —
+            // وإلا انفصل الدفتر المساعد للعقد عن كشف المورد (ث7) ودُفع مرتين.
+            ...state.subContracts.filter((sc) => sc.supplierId === supplierId).flatMap((sc) => [
+              ...state.subCertificates.filter((cert) => cert.contractId === sc.id).map((cert) => ({
+                docLabel: `شهادة باطن ${sc.contractNumber} #${cert.number} — ${cert.descriptionAr}`, date: cert.date,
+                debitMinor: 0, creditMinor: cert.netMinor,
+              })),
+              ...state.subPayments.filter((pay) => pay.contractId === sc.id && pay.kind === 'payment').map((pay) => ({
+                docLabel: `دفعة باطن ${sc.contractNumber} — ${sc.contractorName}`, date: pay.date,
+                debitMinor: pay.amountMinor, creditMinor: 0,
+              })),
+            ]),
             // قيود يدوية تحمل هذا المورد على 2101 (AUDIT-011)
             ...state.journal.flatMap((entry) => entry.lines
               .filter((line) => line.partyKind === 'supplier' && line.partyId === supplierId && line.accountCode === '2101')
@@ -8240,6 +8496,9 @@ export const useDataStore = create<DataState>()(
           unitAr: l.unitAr,
           unitPriceMinor: l.unitPriceMinor,
           estCostMinor: Number.isInteger(l.estCostMinor) && (l.estCostMinor ?? 0) >= 0 ? (l.estCostMinor as number) : 0,
+          // الضريبة جزء من بند العرض (طلب المالك ㉘): تُحفظ وإلا ضاعت إجماليات العرض عند التخزين
+          vatPercent: Math.min(100, Math.max(0, l.vatPercent ?? 0)),
+          taxIncluded: !!l.taxIncluded,
         }))
         const errors = validateQuotation({ ...q, lines: fullLines })
         if (errors.length) throw new Error(errors.join(' — '))
@@ -12368,6 +12627,13 @@ export const useDataStore = create<DataState>()(
           maintenanceServices: s.maintenanceServices ?? [],
           walletOps: s.walletOps ?? [],
           loyaltyRedemptions: s.loyaltyRedemptions ?? [],
+          // الإصدار 26: شؤون الموظفين — حضور وإجازات وبصمة وقواعد احتساب
+          attendanceRecords: s.attendanceRecords ?? [],
+          leaveRequests: (s.leaveRequests ?? []).map((l) => ({ ...l, decidedBy: l.decidedBy ?? null, decidedAt: l.decidedAt ?? null })),
+          leaveTypes: s.leaveTypes && s.leaveTypes.length ? s.leaveTypes : DEFAULT_LEAVE_TYPES,
+          hrRules: normalizeHrRules(s.hrRules),
+          employeeShifts: s.employeeShifts ?? [],
+          attendanceImports: s.attendanceImports ?? [],
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],
           serials: s.serials ?? [],

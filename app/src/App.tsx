@@ -56,6 +56,7 @@ import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
 import { CostCentersPage } from './ui/pages/CostCentersPage.tsx'
 import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
+import { HrPage } from './ui/pages/HrPage.tsx'
 import { InstallmentsPage } from './ui/pages/InstallmentsPage.tsx'
 import { ReportsPage } from './ui/pages/ReportsPage.tsx'
 import { NasqPage } from './ui/pages/NasqPage.tsx'
@@ -203,6 +204,15 @@ function Shell() {
         <Route path="/parties/employee-advances" element={<EmployeesPage initialTab="advances" />} />
         <Route path="/parties/employee-deductions" element={<EmployeesPage initialTab="deductions" />} />
         <Route path="/parties/employee-commissions" element={<EmployeesPage initialTab="commissions" />} />
+        {/* شؤون الموظفين — قسم مستقل بتابات داخلية (حضور/بصمة/إجازات/ورديات/تقارير) */}
+        <Route path="/hr" element={<HrPage />} />
+        <Route path="/hr/:tab" element={<HrPage />} />
+        {/* مسارات صريحة لتبويبات شؤون الموظفين — كتالوج التنقل يعلنها بالاسم فلا شاشة بيضاء */}
+        <Route path="/hr/attendance" element={<HrPage />} />
+        <Route path="/hr/fingerprint" element={<HrPage />} />
+        <Route path="/hr/leaves" element={<HrPage />} />
+        <Route path="/hr/shifts" element={<HrPage />} />
+        <Route path="/hr/reports" element={<HrPage />} />
         <Route path="/parties/installments" element={<InstallmentsPage />} />
         <Route path="/maintenance/tickets" element={<MaintenancePage />} />
         <Route path="/laundry/orders" element={<LaundryPage />} />

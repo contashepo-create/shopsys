@@ -6,6 +6,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * الاسترداد: نقدي من المورد أو تخفيض دينه.
  */
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { RotateCcw, Search, BookOpenText, Eye, Printer } from 'lucide-react'
 import { useDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -104,6 +105,26 @@ export function PurchaseReturnsPage() {
       .reduce((a, r) => a + (r.supplierValueMinor ?? r.totalMinor) + (r.inputVatShareMinor ?? 0), 0)
     return Math.max(0, (purchase.supplierDueMinor ?? purchase.grandTotalMinor) - purchase.paidMinor - priorDebt)
   }, [purchase, purchaseReturns])
+
+  /* تعبئة من شاشة «منتهي الصلاحية» (طلب المالك ㉘): ?purchase=<id>&item=<id>&qty=<n>
+     تختار فاتورة الشراء وتملأ الكمية المرتجعة مباشرة */
+  const [searchParams, setSearchParams] = useSearchParams()
+  const prefillPurchaseId = Number(searchParams.get('purchase')) || 0
+  const prefillItemId = Number(searchParams.get('item')) || 0
+  const prefillQty = Number(searchParams.get('qty')) || 0
+  useEffect(() => {
+    if (!prefillPurchaseId || purchase) return
+    const target = purchases.find((p) => p.id === prefillPurchaseId)
+    if (!target) return
+    startReturn(target)
+    if (prefillItemId && prefillQty > 0) {
+      setQtys((q) => ({ ...q, [prefillItemId]: String(prefillQty) }))
+      const wh = target.lines.find((l) => l.itemId === prefillItemId)?.warehouseId
+      if (wh) setReturnWarehouses((r) => ({ ...r, [prefillItemId]: wh }))
+      setReason('انتهاء صلاحية — إرجاع للمورد')
+    }
+    setSearchParams({}, { replace: true })
+  }, [prefillPurchaseId, prefillItemId, prefillQty, purchase, purchases])
 
   const startReturn = (p: PurchaseInvoice) => {
     setPurchase(p)

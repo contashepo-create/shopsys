@@ -7,7 +7,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  */
 import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download, UserSearch } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download, UserSearch, CalendarCheck2, UserCog, Banknote, HandCoins, Percent } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
 import { rolesWithOverrides, visibleRolesForModules } from '../../core/permissions.ts'
 import { suggestRoleForJobTitle } from '../../core/audit.ts'
@@ -87,6 +87,10 @@ interface DraftLine {
 }
 
 export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions' }) {
+  /* قسم مستقل بتابات داخلية (طلب المالك ㉘): التابات تُبدَّل من الشاشة نفسها،
+     والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
+  const [tab, setTab] = useState(initialTab)
+  useEffect(() => { setTab(initialTab) }, [initialTab])
   const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
@@ -102,11 +106,12 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const fmt = (m: number) => formatMinor(m, cur, false)
   const toMajor = (m: number) => (m ? String(m / 10 ** cur.decimals) : '')
 
-  const tab = initialTab
   /* ── حالة قسائم الرواتب (طلب المالك) ── */
   const payrollSlips = useDataStore((state) => state.payrollSlips)
   const accruePayrollSlips = useDataStore((state) => state.accruePayrollSlips)
   const payPayrollSlip = useDataStore((state) => state.payPayrollSlip)
+  /* الربط بالحضور (طلب المالك ㉘): خصومات وأجر إضافي من بيانات الحضور والإجازات */
+  const getAttendancePayrollImpact = useDataStore((state) => state.getAttendancePayrollImpact)
   const [slipMonth, setSlipMonth] = useState(() => new Date().toISOString().slice(0, 7))
   /* كشف حساب الموظف (طلب المالك: يُعامل كالعميل) */
   const getEmployeeBalance = useDataStore((state) => state.getEmployeeBalance)
@@ -132,6 +137,28 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   })
   const patchSlipRow = (employeeId: number, patch: Partial<{ on: boolean; gross: number; allowances: number; deductions: number; advance: number }>) =>
     setSlipRows((rows) => rows.map((row) => (row.employeeId === employeeId ? { ...row, ...patch } : row)))
+  /**
+   * «احتساب من الحضور» (طلب المالك ㉘): يملأ خصومات الغياب/التأخير والإجازة بلا
+   * أجر وبدل الإضافي من بيانات الشبكة الشهرية — بنود مرئية قابلة للتعديل قبل
+   * الترحيل، لا خصم صامت. يعمل فوق أي قيم يدوية موجودة (يستبدل الخصومات).
+   */
+  const applyAttendanceImpact = () => {
+    const impacts = new Map(getAttendancePayrollImpact(slipMonth).map((row) => [row.employeeId, row]))
+    let touched = 0
+    setSlipRows((rows) => rows.map((row) => {
+      const impact = impacts.get(row.employeeId)
+      if (!impact) return row
+      touched += 1
+      return {
+        ...row,
+        deductions: impact.absenceDeductionMinor + impact.unpaidLeaveDeductionMinor + impact.lateDeductionMinor,
+        allowances: (row.allowances || 0) + impact.overtimeAllowanceMinor,
+      }
+    }))
+    toast.show(touched
+      ? `احتُسبت بنود الحضور لـ${touched} موظف — راجعها قبل الترحيل (خصم غياب/تأخير + بدل إضافي)`
+      : 'لا بيانات حضور لهذا الشهر — سجّلها من «شؤون الموظفين» أولاً')
+  }
   const accrueSlips = () => {
     try {
       const rows = slipRows.filter((row) => row.on).map((row) => ({
@@ -463,6 +490,26 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between"><h1 className="text-xl font-black">{sectionMeta[tab][0]}</h1><Btn variant="ghost" onClick={exportSection}><Download size={14}/> تصدير Excel</Btn></div>
+      {/* إدارة القسم بالكامل من مكان واحد (طلب المالك ㉘): تابات داخلية للتبديل الفوري
+          بين سجلات الموظفين ورواتبهم وسلفهم وخصوماتهم وعمولاتهم */}
+      <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm dark:border-slate-700 dark:bg-card-dark" role="tablist" data-employees-tabs>
+        {([
+          ['staff', 'الموظفون', UserCog], ['payroll', 'المرتبات والقسائم', Banknote], ['advances', 'السلف', HandCoins],
+          ['deductions', 'الخصومات والجزاءات', Percent], ['commissions', 'العمولات', BadgeCheck],
+        ] as const).map(([id, label, Icon]) => (
+          <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
+            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12.5px] font-bold transition-all ${
+              tab === id ? 'bg-violet-500/15 text-violet-700 ring-1 ring-violet-500/30 dark:text-violet-300' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+            }`}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+        <span className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" aria-hidden="true" />
+        <button type="button" role="tab" aria-selected={false} onClick={() => navigate('/hr/attendance')}
+          className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12.5px] font-bold text-teal-600 transition-all hover:bg-teal-500/10 dark:text-teal-300">
+          <CalendarCheck2 size={14} /> الحضور والإجازات
+        </button>
+      </div>
       {tab === 'advances' && (
         <>
           <div className="anim-up flex items-center justify-between flex-wrap gap-2">
@@ -946,7 +993,11 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     المحدَّد: <b>{slipRows.filter((row) => row.on).length}</b> موظف · إجمالي الصافي{' '}
                     <b className="font-mono">{fmt(slipRows.filter((row) => row.on).reduce((sum, row) => sum + Math.max(0, row.gross + row.allowances - row.deductions - row.advance), 0))}</b>
                   </span>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    {/* الربط بالحضور (طلب المالك ㉘): بنود مرئية من الشبكة الشهرية — لا خصم صامت */}
+                    <Btn variant="soft" onClick={applyAttendanceImpact} data-apply-attendance title="يملأ خصم الغياب والتأخير والإجازة بلا أجر وبدل الإضافي من بيانات الحضور لهذا الشهر">
+                      <span className="flex items-center gap-1.5"><CalendarCheck2 size={15} /> احتساب من الحضور</span>
+                    </Btn>
                     <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
                     <Btn onClick={accrueSlips}>ترحيل الاستحقاق</Btn>
                   </div>

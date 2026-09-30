@@ -243,6 +243,8 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/parties/employee-deductions', perm: 'party.employee.manage' },
   { prefix: '/parties/employee-commissions', perm: 'party.employee.manage' },
   { prefix: '/parties/custody', perm: 'party.employee.manage' },
+  // شؤون الموظفين (حضور/بصمة/إجازات/ورديات/تقارير) — نفس صلاحية إدارة الموظفين
+  { prefix: '/hr', perm: 'party.employee.manage' },
   { prefix: '/parties', perm: 'party.customer.manage' },
   // شاشات النشاط التخصصي (صيانة/رحلات/معمل/عيادة/مقاولات/سيارات/محافظ/تأجير)
   { prefix: '/maintenance', perm: 'ops.activity.use' },
