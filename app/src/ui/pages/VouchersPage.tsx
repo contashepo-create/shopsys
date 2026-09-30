@@ -57,7 +57,7 @@ const PAYMENT_COUNTERS = [
 const escapePrintText = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, vehicles } = useDataStore()
+  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, vehicles , employees, getEmployeeBalance } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup, receipt } = useAppStore()
   const toast = useToast()
@@ -81,6 +81,7 @@ export function VouchersPage() {
   const [quickAccountOpen, setQuickAccountOpen] = useState(false)
   const [quickAccountCode, setQuickAccountCode] = useState('')
   const [quickAccountName, setQuickAccountName] = useState('')
+  const [employeePartyId, setEmployeePartyId] = useState(0)
   const [partyId, setPartyId] = useState(0) // العميل (قبض 1104) أو المورد (صرف 2101) — يغذي كشف الحساب
   const [purchaseId, setPurchaseId] = useState(0) // فاتورة الشراء عند «مصروف على فاتورة شراء»
   const [expMethod, setExpMethod] = useState<'value' | 'qty'>('qty') // توزيع مصروف الفاتورة
@@ -215,9 +216,14 @@ export function VouchersPage() {
 
   // سداد عميل (1104) في القبض أو سداد مورد (2101) في الصرف ⇒ نطلب تحديد الطرف
   const needsParty = (kind === 'receipt' && counter === '1104') || (kind === 'payment' && counter === '2101')
+  /* الموظف طرف كامل (طلب المالك): سلفة/راتب في الصرف واسترداد في القبض
+     تُسجَّل باسمه فتظهر في حسابه وكشفه مثل العميل تماماً. */
+  const needsEmployee = counter === '1107' || (kind === 'payment' && counter === '2104')
+  const employeeLabel = counter === '2104' ? 'الموظف صاحب الراتب' : kind === 'payment' ? 'الموظف المستلم للسلفة' : 'الموظف المسدِّد'
   const partyInvoices = !needsParty || partyId <= 0
     ? []
     : kind === 'receipt' ? getOpenClientInvoices(partyId) : getOpenSupplierInvoices(partyId)
+  const employeeOptions = employees.filter((employee) => employee.active !== false)
   const parseAllocationAmount = (value: string) => {
     try { return toMinor(value.replaceAll(',', ''), cur.decimals) } catch { return 0 }
   }
@@ -304,6 +310,7 @@ export function VouchersPage() {
   }
   const doSave = () => {
     try {
+      if (needsEmployee && !employeePartyId) throw new Error('اختر الموظف صاحب الحركة')
       if (needsParty && !partyId) throw new Error(kind === 'receipt' ? 'اختر العميل الذي سدد' : 'اختر المورد المسدد له')
       // مصروف على فاتورة شراء: يذهب لمحرك Landed Cost لا لسند عادي —
       // يوزَّع على أصنافها ويرفع تكلفتها ويتولد قيده (دائن الخزينة المختارة)
@@ -339,8 +346,8 @@ export function VouchersPage() {
         fx: fxOn ? fxLeg : undefined,
         bookDecimals: cur.decimals,
         bookCurrencyCode: cur.code,
-        partyKind: needsParty ? (kind === 'receipt' ? 'customer' : 'supplier') : null,
-        partyId: needsParty ? partyId : null,
+        partyKind: needsEmployee ? 'employee' : needsParty ? (kind === 'receipt' ? 'customer' : 'supplier') : null,
+        partyId: needsEmployee ? (employeePartyId || null) : needsParty ? partyId : null,
         allocations: manualAllocations,
         costCenterId: canLinkCostCenter ? costCenterId : null,
         vehicleId: canLinkVehicle ? vehicleId : null,
@@ -494,6 +501,25 @@ export function VouchersPage() {
                       <option value="">ابحث بالاسم أو الكود ثم Enter…</option>
                       {counters.map((c) => <option key={c.code} value={c.code}>{c.code} — {c.label}</option>)}
                     </QuickSelect>
+                  </div>
+                )}
+                {/* الموظف طرف كامل (طلب المالك): اختره فتُسجَّل الحركة في حسابه وكشفه */}
+                {needsEmployee && (
+                  <div className="space-y-1 rounded-lg doc-tint p-2" data-voucher-employee>
+                    <label className="text-[11px] font-bold doc-ink">{employeeLabel} *</label>
+                    <QuickSelect aria-label="موظف السند" className={inputCls} value={employeePartyId}
+                      onChange={(event) => setEmployeePartyId(Number(event.target.value) || 0)}>
+                      <option value={0}>اختر الموظف…</option>
+                      {employeeOptions.map((employee) => <option key={employee.id} value={employee.id}>{employee.nameAr}{employee.jobTitle ? ` — ${employee.jobTitle}` : ''}</option>)}
+                    </QuickSelect>
+                    {employeePartyId > 0 && (
+                      <div className="flex items-center justify-between text-[11px] font-bold">
+                        <span>رصيده الحالي</span>
+                        <b className={getEmployeeBalance(employeePartyId) < 0 ? 'text-rose-600' : 'text-emerald-600'} data-employee-balance>
+                          {fmt(Math.abs(getEmployeeBalance(employeePartyId)))} {getEmployeeBalance(employeePartyId) < 0 ? '(عليه)' : '(له)'}
+                        </b>
+                      </div>
+                    )}
                   </div>
                 )}
                 {!needsParty && (

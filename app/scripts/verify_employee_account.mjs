@@ -43,4 +43,17 @@ const sales = read('ui/pages/AdvancedSalesInvoicePage.tsx')
   assert.ok(/reviewSlot=\{<>/.test(sales) && /data-prepost-open/.test(sales), 'الفاتورة لا تمرّر زر المراجعة للتذييل')
   R.ok('زر «مراجعة قبل الترحيل» ظاهر دائماً أسفل بجوار «تصدير PDF»')
 }
+{
+  const vouchers = read('ui/pages/VouchersPage.tsx')
+  const employeesPage = read('ui/pages/EmployeesPage.tsx')
+  assert.ok(/const needsEmployee = counter === '1107' \|\| \(kind === 'payment' && counter === '2104'\)/.test(vouchers),
+    'شاشة السندات لا تطلب الموظف عند السلف/الرواتب')
+  assert.ok(/data-voucher-employee/.test(vouchers) && /aria-label="موظف السند"/.test(vouchers), 'لا حقل اختيار موظف في السند')
+  assert.ok(/partyKind: needsEmployee \? 'employee'/.test(vouchers), 'السند لا يُرحَّل باسم الموظف')
+  assert.ok(/if \(needsEmployee && !employeePartyId\) throw new Error/.test(vouchers), 'يمكن ترحيل سند موظف بلا موظف')
+  assert.ok(/data-employee-statement-open=\{e\.id\}/.test(employeesPage) && /data-employee-statement/.test(employeesPage),
+    'لا زر/نافذة كشف حساب للموظف')
+  assert.ok(/data-statement-balance/.test(employeesPage) && /له على المنشأة/.test(employeesPage), 'الكشف بلا رصيد جارٍ مفسَّر')
+  R.ok('واجهة: كشف حساب الموظف من قائمته · واختياره طرفاً في سندَي القبض والصرف')
+}
 R.done()

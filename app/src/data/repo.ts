@@ -6700,7 +6700,14 @@ export const useDataStore = create<DataState>()(
           const role = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId).find((r) => r.id === e.roleId)
           if (!role || role.isOwner) throw new Error('تصنيف الموظف غير صالح — اختر دوراً موظفاً من القائمة')
         }
-        set((s) => ({ employees: [...s.employees, { ...e, roleId: e.roleId ?? null, nameAr, id: nextId(s.employees) }] }))
+        /* تحصين: أي حقل مبلغ ناقص يصير صفراً بدل NaN يكسر شاشة الموظفين لاحقاً */
+        const money = (value: unknown) => (Number.isFinite(value) ? Math.round(value as number) : 0)
+        set((s) => ({ employees: [...s.employees, {
+          ...e, roleId: e.roleId ?? null, nameAr, id: nextId(s.employees),
+          baseSalaryMinor: money(e.baseSalaryMinor),
+          allowancesMinor: money((e as { allowancesMinor?: number }).allowancesMinor),
+          deductionsMinor: money((e as { deductionsMinor?: number }).deductionsMinor),
+        }] }))
       },
       updateEmployee: (id, patch) => {
         const state = get()

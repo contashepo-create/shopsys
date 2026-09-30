@@ -108,6 +108,10 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const accruePayrollSlips = useDataStore((state) => state.accruePayrollSlips)
   const payPayrollSlip = useDataStore((state) => state.payPayrollSlip)
   const [slipMonth, setSlipMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  /* كشف حساب الموظف (طلب المالك: يُعامل كالعميل) */
+  const getEmployeeBalance = useDataStore((state) => state.getEmployeeBalance)
+  const getEmployeeStatementRows = useDataStore((state) => state.getEmployeeStatementRows)
+  const [statementFor, setStatementFor] = useState<number | null>(null)
   const [slipDraftOpen, setSlipDraftOpen] = useState(false)
   const [slipSearch, setSlipSearch] = useState('')
   const [slipScope, setSlipScope] = useState<'all' | 'selected'>('all')
@@ -851,6 +855,11 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                       <td className="px-4 py-3 text-left whitespace-nowrap">
                         {/* كشف حساب فوري بجانب كل موظف (طلب المالك) */}
                         <button title="كشف حساب الموظف (سلف واستقطاعات)" onClick={() => navigate(`/reports/statements?kind=employee&id=${e.id}`)} className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all duration-200 hover:scale-110"><FileSpreadsheet size={14} /></button>
+                        <button title="كشف حساب الموظف — رواتب وسلف وسندات" aria-label={`كشف حساب ${e.nameAr}`}
+                          data-employee-statement-open={e.id} onClick={() => setStatementFor(e.id)}
+                          className="p-2 rounded-lg text-slate-400 hover:bg-emerald-500/10 hover:text-emerald-600">
+                          <FileSpreadsheet size={16} />
+                        </button>
                         <button title="تعديل بيانات الموظف" onClick={() => openEdit(e)} className="p-2 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-brand-500/10 transition-all duration-200 hover:scale-110"><Pencil size={14} /></button>
                         <button title="حذف الموظف" onClick={() => remove(e)} className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all duration-200 hover:scale-110"><Trash2 size={14} /></button>
                       </td>
@@ -882,7 +891,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
             </div>
 
-            <Modal open={slipDraftOpen} onClose={() => setSlipDraftOpen(false)} title="مسير رواتب — قسائم الموظفين" wide>
+      <Modal open={slipDraftOpen} onClose={() => setSlipDraftOpen(false)} title="مسير رواتب — قسائم الموظفين" wide>
               <div className="space-y-3" dir="rtl" data-slip-draft>
                 <div className="grid gap-2 md:grid-cols-3">
                   <Field label="شهر الاستحقاق">
@@ -1027,6 +1036,49 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       )}
 
       {/* نموذج موظف */}
+      {/* كشف حساب الموظف — نفس منطق كشف العميل */}
+      <Modal open={statementFor != null} onClose={() => setStatementFor(null)} wide
+        title={`كشف حساب — ${employees.find((employee) => employee.id === statementFor)?.nameAr ?? ''}`}>
+        {statementFor != null && (() => {
+          const rows = getEmployeeStatementRows(statementFor)
+          let running = 0
+          return (
+            <div className="space-y-2" dir="rtl" data-employee-statement>
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl doc-tint p-2 text-[12px]">
+                <span>عدد الحركات: <b>{rows.length}</b></span>
+                <span>
+                  الرصيد الحالي:{' '}
+                  <b className={getEmployeeBalance(statementFor) < 0 ? 'text-rose-600' : 'text-emerald-600'} data-statement-balance>
+                    {fmt(Math.abs(getEmployeeBalance(statementFor)))} {getEmployeeBalance(statementFor) < 0 ? '(عليه للمنشأة)' : '(له على المنشأة)'}
+                  </b>
+                </span>
+              </div>
+              <table className="w-full text-[12px]">
+                <thead className="text-[11px] font-black text-slate-500">
+                  <tr><th className="p-1">التاريخ</th><th className="p-1">المرجع</th><th className="p-1">البيان</th><th className="p-1 w-24">مدين</th><th className="p-1 w-24">دائن</th><th className="p-1 w-28">الرصيد</th></tr>
+                </thead>
+                <tbody>
+                  {rows.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-slate-400">لا حركات على حساب هذا الموظف بعد</td></tr>}
+                  {rows.map((row, index) => {
+                    running += row.creditMinor - row.debitMinor
+                    return (
+                      <tr key={`${row.ref}-${index}`} className="border-t border-slate-200/70 dark:border-slate-700/60" data-statement-row>
+                        <td className="p-1 text-center font-mono text-[11px]">{row.date}</td>
+                        <td className="p-1 text-center font-mono">{row.ref}</td>
+                        <td className="p-1">{row.description}</td>
+                        <td className="p-1 text-center font-mono">{row.debitMinor ? fmt(row.debitMinor) : '—'}</td>
+                        <td className="p-1 text-center font-mono">{row.creditMinor ? fmt(row.creditMinor) : '—'}</td>
+                        <td className={`p-1 text-center font-mono font-bold ${running < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{fmt(Math.abs(running))}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
+        })()}
+      </Modal>
+
       <Modal open={open} onClose={() => setOpen(false)} title={editing ? `تعديل «${editing.nameAr}»` : 'موظف جديد'} wide subtitle="ملف موظف: بياناته وراتبه الأساسي وبدلاته — مرجع كل مسير قادم">
         <div className="space-y-4"><DocSectionHead step="١" title="بيانات الموظف وراتبه" hint="الراتب والبدلات هنا هي ما يملأ المسير تلقائياً" />
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
