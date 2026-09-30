@@ -105,6 +105,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     id: 'purchases', nameAr: 'المشتريات', icon: Truck, color: 'cyan', module: 'purchases',
     children: [
+      { id: 'orders', nameAr: 'أوامر الشراء', icon: ClipboardList, path: '/purchases/orders' },
       { id: 'invoices', nameAr: 'فواتير الشراء', icon: Receipt, path: '/purchases/invoices' },
       { id: 'returns', nameAr: 'مرتجعات الشراء', icon: RotateCcw, path: '/purchases/returns' },
       { id: 'suppliers', nameAr: 'الموردون', icon: Building2, path: '/purchases/suppliers' },

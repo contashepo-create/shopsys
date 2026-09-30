@@ -111,6 +111,10 @@ import { DEFAULT_TREASURIES, nextTreasuryCode, validateTreasury, type TreasuryDe
 import { validateCostCenter, validateCostCenterBudget, type CostCenter, type CostCenterBudget } from '../core/costCenters.ts'
 import { validateExpenseTemplate, type ExpenseTemplate } from '../core/expenseCatalog.ts'
 import type { JournalEntry } from '../core/ledger.ts'
+import {
+  type PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderStatus,
+  validatePurchaseOrder, derivePurchaseOrderStatus,
+} from '../core/purchaseOrders.ts'
 
 export interface Warehouse {
   id: number
@@ -1350,6 +1354,13 @@ interface DataState {
   labPatients: LabPatient[]
   labOrders: LabOrder[]
   projects: Project[] // مشروعات المقاولات (القرار 27)
+  /* ─── أوامر الشراء (طلب المالك): التزام تجاري بلا قيد محاسبي ─── */
+  purchaseOrders: PurchaseOrder[]
+  addPurchaseOrder: (input: { supplierId: number | null; supplierName: string; date: string; expectedDate: string; warehouseId: number | null; lines: PurchaseOrderLine[]; notes: string }) => PurchaseOrder
+  setPurchaseOrderStatus: (id: number, status: PurchaseOrderStatus) => void
+  /** تسجيل ما استُلم من أمر شراء عند تعبئة فاتورة منه */
+  receivePurchaseOrder: (id: number, received: { itemId: number; qty: number }[], invoiceId?: number) => void
+  deletePurchaseOrder: (id: number) => void
   projectExtracts: ProjectExtract[]
   projectCosts: ProjectCost[]
   retentionReleases: RetentionRelease[]
@@ -2735,6 +2746,51 @@ export const useDataStore = create<DataState>()(
       labPatients: [],
       labOrders: [],
       projects: [],
+      purchaseOrders: [],
+      addPurchaseOrder: (input) => {
+        const state = get()
+        const lines = input.lines
+          .filter((line) => line.qty > 0 && (line.itemId || line.nameAr.trim()))
+          .map((line) => ({ ...line, receivedQty: 0, nameAr: line.nameAr.trim() || (state.items.find((item) => item.id === line.itemId)?.nameAr ?? '') }))
+        const errors = validatePurchaseOrder({ supplierName: input.supplierName, date: input.date, lines })
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (input.supplierId != null && !state.suppliers.find((row) => row.id === input.supplierId)) throw new Error('المورد غير موجود')
+        const id = nextId(state.purchaseOrders)
+        const order: PurchaseOrder = {
+          id,
+          orderNumber: `PO-${String(id).padStart(4, '0')}`,
+          supplierId: input.supplierId ?? null,
+          supplierName: input.supplierName.trim(),
+          date: input.date,
+          expectedDate: input.expectedDate || input.date,
+          warehouseId: input.warehouseId ?? null,
+          status: 'draft',
+          lines,
+          notes: input.notes ?? '',
+          invoiceIds: [],
+          createdAt: new Date().toISOString(),
+        }
+        set({ purchaseOrders: [...state.purchaseOrders, order] })
+        return order
+      },
+      setPurchaseOrderStatus: (id, status) => set((state) => ({
+        purchaseOrders: state.purchaseOrders.map((order) => (order.id === id ? { ...order, status } : order)),
+      })),
+      receivePurchaseOrder: (id, received, invoiceId) => set((state) => ({
+        purchaseOrders: state.purchaseOrders.map((order) => {
+          if (order.id !== id) return order
+          const next: PurchaseOrder = {
+            ...order,
+            lines: order.lines.map((line) => {
+              const hit = received.find((row) => row.itemId === line.itemId)
+              return hit ? { ...line, receivedQty: Math.min(line.qty, (line.receivedQty || 0) + Math.max(0, hit.qty)) } : line
+            }),
+            invoiceIds: invoiceId != null && !order.invoiceIds.includes(invoiceId) ? [...order.invoiceIds, invoiceId] : order.invoiceIds,
+          }
+          return { ...next, status: derivePurchaseOrderStatus(next) }
+        }),
+      })),
+      deletePurchaseOrder: (id) => set((state) => ({ purchaseOrders: state.purchaseOrders.filter((order) => order.id !== id) })),
       projectExtracts: [],
       projectCosts: [],
       retentionReleases: [],

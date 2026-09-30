@@ -39,6 +39,8 @@ import { formatInvoiceAuditLine } from '../../core/invoiceAudit.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { AnimatedMinor } from '../components/AnimatedMinor.tsx'
 import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
+import { FillFromPicker, type FillSource } from '../components/FillFromPicker.tsx'
+import { quotationTotal } from '../../core/contracting.ts'
 import { evaluateLicense, hasFeature } from '../../core/license.ts'
 import { electronicInvoiceLockActive } from '../../core/invoiceEdit.ts'
 
@@ -52,7 +54,7 @@ const SALE_TERMS=['السداد خلال 30 يوماً من تاريخ الفا�
 
 export function AdvancedSalesInvoicePage(){
  const nav=useNavigate(),toast=useToast();const [searchParams]=useSearchParams();const host=useWindowHost();const editId=Number((host?.props.editId as number|undefined)??searchParams.get('edit')??0);const {setup,receipt,einvoice,activatedPayload,trialStartedAt,lastSeenAt,warehouseReceipt}=useAppStore();const cur=(setup.countryCode&&getCountry(setup.countryCode)?.currency)||{code:'EGP',symbol:'ج.م',decimals:2 as const,name:''};const taxPolicy=resolveBusinessTax(setup.taxRegistrationStatus,setup.vatPercent)
- const {items,categories,customers,warehouses,branches,treasuries,custodyFiles,vehicles,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,priceLists,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,editSale,sales,getEffectivePrice,getCustomerBalance,addDocumentFile,partyNotes,addPartyNote}=useDataStore();const [partyNote,setPartyNote]=useState('');const [attachments,setAttachments]=useState<PendingAttachment[]>([]);const [draftsOpen,setDraftsOpen]=useState(false);const [draftId,setDraftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);const [mode,setMode]=useState<InvoiceEditorMode>('simple');const [customerId,setCustomerId]=useState(0);const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [invoiceDate,setInvoiceDate]=useState(()=>new Date().toISOString().slice(0,10))
+ const {items,categories,customers,warehouses,branches,treasuries,custodyFiles,vehicles,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,priceLists,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,editSale,sales,getEffectivePrice,getCustomerBalance,addDocumentFile,partyNotes,addPartyNote,quotations,boqItems}=useDataStore();const [partyNote,setPartyNote]=useState('');const [attachments,setAttachments]=useState<PendingAttachment[]>([]);const [draftsOpen,setDraftsOpen]=useState(false);const [draftId,setDraftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);const [mode,setMode]=useState<InvoiceEditorMode>('simple');const [customerId,setCustomerId]=useState(0);const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [invoiceDate,setInvoiceDate]=useState(()=>new Date().toISOString().slice(0,10))
  const [customerReference,setCustomerReference]=useState(''),[dueDate,setDueDate]=useState(''),[notes,setNotes]=useState('');const [discount,setDiscount]=useState('0'),[discountAmount,setDiscountAmount]=useState('');const [discByAmount,setDiscByAmount]=useState(false);const [notesLogOpen,setNotesLogOpen]=useState(false);const [multiPay,setMultiPay]=useState(false);const [bankPaid,setBankPaid]=useState('');const [paid,setPaid]=useState('');const [fxOn,setFxOn]=useState(false);const [fxCode,setFxCode]=useState('USD');const [fxAmount,setFxAmount]=useState('');const [fxRate,setFxRate]=useState('');const paidTouched=useRef(false);const [terminalPaid,setTerminalPaid]=useState('');const [employeePaid,setEmployeePaid]=useState('');const [collectionEmployeeId,setCollectionEmployeeId]=useState(0);const [treasury,setTreasury]=useState(()=>effectiveDefaultTreasury(appUsers.find(u=>u.id===currentUserId)?.treasuryAccess,'receipt','1101'));const [terminal,setTerminal]=useState<TerminalPaymentDraft>({terminalId:'',providerReference:'',cardLast4:''});const [expenses,setExpenses]=useState<InternalExpense[]>([]);const [customerCharges,setCustomerCharges]=useState<DocumentCharge[]>([]);const [allowNegative,setAllowNegative]=useState(setup.allowNegativeStock);const [chargesOpen,setChargesOpen]=useState(false);const [internalExpensesOpen,setInternalExpensesOpen]=useState(false);const [categoryFilter,setCategoryFilter]=useState(0);const [printOpen,setPrintOpen]=useState(false);const [partyEditorOpen,setPartyEditorOpen]=useState(false);const [editReason,setEditReason]=useState('')
  /** ملاحظات طرف بعينه من السجل — الأحدث أولاً (تظهر في بروفايل العميل وكشف حسابه) */
  const partyNotesOf=(kind:'customer'|'supplier',id:number)=>partyNotesFor(partyNotes,kind,id)
@@ -96,6 +98,26 @@ export function AdvancedSalesInvoicePage(){
  /* قوالب الفواتير (الموجة ①): «حفظ كقالب» يخزّن السلة الحالية باسم يختاره
     المستخدم، و«ابدأ من قالب» ينسخها إلى فاتورة جديدة بتاريخ اليوم. */
  const [templatesOpen,setTemplatesOpen]=useState(false)
+ /* «تعبئة من» (طلب المالك): بنود الفاتورة تُنسخ من عرض سعر أو من بنود مشروع */
+ const fillSources=useMemo<FillSource[]>(()=>{
+  const list:FillSource[]=[]
+  const asLine=(nameAr:string,qty:number,unitPriceMinor:number)=>{
+   const match=items.find(item=>item.nameAr.trim()===nameAr.trim())
+   return {key:crypto.randomUUID(),itemId:match?.id??0,nameAr,qty:qty||1,unitPriceMinor,unitCostMinor:match?.costMinor??0,discountPercent:0,soldByWeight:match?.soldByWeight??false,warehouseId,warehouseSource:'default' as const}
+  }
+  for(const quote of quotations.filter(q=>q.status!=='lost'&&q.lines.length))
+   list.push({id:`qt-${quote.id}`,group:'عروض الأسعار',title:`${quote.quoteNumber} — ${quote.titleAr}`,hint:`${quote.clientName} · ${formatMinor(quotationTotal(quote.lines),cur,false)} ${cur.symbol}`,lineCount:quote.lines.length,
+    apply:()=>{if(quote.clientId)setCustomerId(quote.clientId);setLines(quote.lines.map(line=>asLine(line.nameAr||line.descriptionAr,line.qty,line.unitPriceMinor)));toast.show(`عُبِّئت الفاتورة من ${quote.quoteNumber}`)}})
+  for(const project of projects.filter(p=>p.status!=='completed'))
+   list.push({id:`prj-${project.id}`,group:'المشاريع',title:`${project.code} — ${project.nameAr}`,hint:`${project.clientName} · قيمة العقد ${formatMinor(project.contractValueMinor,cur,false)} ${cur.symbol}`,lineCount:boqItems.filter(b=>b.projectId===project.id).length,
+    apply:()=>{
+     const boq=boqItems.filter(b=>b.projectId===project.id)
+     if(project.clientId)setCustomerId(project.clientId)
+     setLines(boq.length?boq.map(item=>asLine(item.descriptionAr,item.qty,item.unitPriceMinor)):[asLine(project.nameAr,1,project.contractValueMinor)])
+     toast.show(`عُبِّئت الفاتورة من ${project.code}`)
+    }})
+  return list
+ },[boqItems,cur,items,projects,quotations,toast,warehouseId])
  const saveAsTemplate=()=>{
   if(!lines.length){toast.show('أضف بنوداً قبل حفظ القالب','error');return}
   const suggested=`قالب ${customers.find(c=>c.id===customerId)?.nameAr??'عميل نقدي'} — ${lines.length} بند`
@@ -179,7 +201,7 @@ export function AdvancedSalesInvoicePage(){
   
   headerFields={
    <>
-    <Field label="العميل" icon={<CircleUser size={11}/>} badge={selectedCustomer?.active===false?'حساب موقوف':undefined} badgeTone={selectedCustomer?.active===false?'warn':undefined}><div className="invoice-pos-party-field invoice-doc-infield"><button type="button" className="invoice-pos-edit-party" onClick={()=>{if(host&&selectedCustomer){openPartyEditorWindow('customer',selectedCustomer.id,host.windowId);return}setPartyEditorOpen(true)}} disabled={!selectedCustomer} title="تعديل بيانات العميل"><Pencil size={8}/></button><PartyQuickPicker parties={customers} value={customerId} onChange={selectCustomer} cashLabel="عميل نقدي" label="بحث العميل — F4" partyInfo={customerPickerInfo} onConfirm={()=>window.dispatchEvent(new Event('shopsys:focus-item'))} autoFocus/><span className="invoice-doc-infield-chip">{selectedCustomer?partyCode('CUS',selectedCustomer.id):'CASH'}</span></div></Field>
+    <Field label="العميل" icon={<CircleUser size={11}/>} extra={<FillFromPicker sources={fillSources}/>} badge={selectedCustomer?.active===false?'حساب موقوف':undefined} badgeTone={selectedCustomer?.active===false?'warn':undefined}><div className="invoice-pos-party-field invoice-doc-infield"><button type="button" className="invoice-pos-edit-party" onClick={()=>{if(host&&selectedCustomer){openPartyEditorWindow('customer',selectedCustomer.id,host.windowId);return}setPartyEditorOpen(true)}} disabled={!selectedCustomer} title="تعديل بيانات العميل"><Pencil size={8}/></button><PartyQuickPicker parties={customers} value={customerId} onChange={selectCustomer} cashLabel="عميل نقدي" label="بحث العميل — F4" partyInfo={customerPickerInfo} onConfirm={()=>window.dispatchEvent(new Event('shopsys:focus-item'))} autoFocus/><span className="invoice-doc-infield-chip">{selectedCustomer?partyCode('CUS',selectedCustomer.id):'CASH'}</span></div></Field>
     <Field label="التاريخ" icon={<CalendarDays size={11}/>}><input type="date" className={inputCls} value={invoiceDate} onChange={e=>setInvoiceDate(e.target.value)} aria-label="تاريخ الفاتورة — يمكن إنشاء فاتورة بتاريخ سابق أو لاحق"/></Field>
     {fullFields&&<Field label="الاستحقاق" icon={<CalendarClock size={11}/>}><input type="date" className={inputCls} value={dueDate} onChange={e=>setDueDate(e.target.value)} aria-label="تاريخ استحقاق الفاتورة"/></Field>}
     <Field label="المخزن" icon={<WarehouseIcon size={11}/>}><QuickSelect className={inputCls} value={warehouseId??''} onChange={e=>changeWarehouse(e.target.value?Number(e.target.value):null)}><option value="">كل المخازن — اختيار لكل سطر</option>{warehouses.map(w=><option key={w.id} value={w.id}>{w.nameAr}</option>)}</QuickSelect></Field>

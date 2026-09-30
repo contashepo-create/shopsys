@@ -73,12 +73,13 @@ export function Btn({
  * بدونهما يبقى الشكل القديم حرفياً كي لا تتأثر بقية الشاشات.
  */
 export function Field({
-  label, children, hint, icon, badge, badgeTone,
-}: { label: string; children: ReactNode; hint?: string; icon?: ReactNode; badge?: ReactNode; badgeTone?: 'accent' | 'ok' | 'warn' }) {
-  if (icon || badge) return (
+  label, children, hint, icon, badge, badgeTone, extra,
+}: { label: string; children: ReactNode; hint?: string; icon?: ReactNode; badge?: ReactNode; badgeTone?: 'accent' | 'ok' | 'warn'; extra?: ReactNode }) {
+  if (icon || badge || extra) return (
     <div className="form-field">
       <div className="field-head">
         <label>{icon}{label}</label>
+        {extra}
         {badge && <span className={`field-badge${badgeTone ? ` is-${badgeTone}` : ''}`}>{badge}</span>}
       </div>
       {children}

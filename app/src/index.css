@@ -2410,3 +2410,33 @@ input, textarea, select, option,
 /* ④ وزن البنود في شريط رأس الجدول */
 .invoice-lines-weight { font-size: .62rem; font-weight: 800; color: var(--doc-muted); white-space: nowrap; }
 
+/* ===== زر «تعبئة من» فوق حقل الطرف (طلب المالك) — لوحة عائمة بلا تعتيم ===== */
+.fillfrom { position: relative; display: inline-flex; margin-inline-start: auto; }
+.fillfrom-btn {
+  display: inline-flex; align-items: center; gap: .18rem; border: 1px dashed rgb(47 98 196 / .45);
+  border-radius: .42rem; padding: .02rem .3rem; font-size: .57rem; font-weight: 800;
+  color: #2f62c4; background: rgb(47 98 196 / .08); cursor: pointer; white-space: nowrap;
+  transition: background .15s ease, transform .15s cubic-bezier(.16, 1.02, .3, 1);
+}
+.fillfrom-btn:hover:not(:disabled) { background: rgb(47 98 196 / .18); transform: translateY(-1px); }
+.fillfrom-btn:disabled { opacity: .4; cursor: not-allowed; }
+.fillfrom-count { background: rgb(47 98 196 / .2); border-radius: 999px; padding: 0 .22rem; font-size: .52rem; }
+.fillfrom-panel {
+  position: absolute; top: calc(100% + .25rem); inset-inline-start: 0; width: min(22rem, 70vw); max-height: 15rem;
+  overflow: auto; padding: .25rem; border-radius: .7rem; border: 1px solid rgb(148 163 184 / .45);
+  background: rgb(255 255 255 / .98); backdrop-filter: blur(14px);
+  box-shadow: 0 24px 60px -24px rgb(15 23 42 / .5); animation: cmdIn .16s cubic-bezier(.16, 1.02, .3, 1);
+}
+.dark .fillfrom-panel { background: rgb(16 24 41 / .98); border-color: rgb(71 97 143 / .5); }
+.fillfrom-group h5 { display: flex; align-items: center; gap: .25rem; margin: .25rem .3rem .15rem; font-size: .6rem; font-weight: 800; color: #94a3b8; }
+.fillfrom-row {
+  display: flex; align-items: center; gap: .4rem; width: 100%; text-align: start; padding: .3rem .4rem;
+  border: 1px solid transparent; border-radius: .5rem; background: transparent; cursor: pointer; font-size: .68rem; color: inherit;
+}
+.fillfrom-row:hover { background: rgb(47 98 196 / .1); border-color: rgb(47 98 196 / .25); }
+.fillfrom-title { min-width: 0; font-weight: 700; }
+.fillfrom-title small { display: block; font-size: .58rem; color: #94a3b8; font-weight: 500; }
+.fillfrom-lines { margin-inline-start: auto; font-size: .56rem; font-weight: 800; color: #2f62c4; white-space: nowrap; }
+.fillfrom-empty { padding: .8rem; text-align: center; font-size: .66rem; color: #94a3b8; }
+@media (prefers-reduced-motion: reduce) { .fillfrom-panel { animation-duration: .01ms; } }
+
