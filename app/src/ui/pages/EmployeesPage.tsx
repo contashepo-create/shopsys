@@ -5,7 +5,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * 2) مسيرات الرواتب: مسير شهري (أساسي + بدلات + إضافي − خصومات − سلف)
  *    يترحّل بقيد متوازن بنيوياً: 5102 → خزينة (نقدي) أو 2104 (استحقاق)
  */
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download, UserSearch } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
@@ -102,6 +102,39 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const toMajor = (m: number) => (m ? String(m / 10 ** cur.decimals) : '')
 
   const tab = initialTab
+  /* ── حالة قسائم الرواتب (طلب المالك) ── */
+  const payrollSlips = useDataStore((state) => state.payrollSlips)
+  const accruePayrollSlips = useDataStore((state) => state.accruePayrollSlips)
+  const payPayrollSlip = useDataStore((state) => state.payPayrollSlip)
+  const [slipMonth, setSlipMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [slipDraftOpen, setSlipDraftOpen] = useState(false)
+  const [slipRows, setSlipRows] = useState<{ employeeId: number; name: string; on: boolean; gross: number; allowances: number; deductions: number; advance: number }[]>([])
+  useEffect(() => {
+    if (!slipDraftOpen) return
+    setSlipRows(employees.filter((employee) => employee.active !== false).map((employee) => ({
+      employeeId: employee.id, name: employee.nameAr, on: true,
+      gross: employee.baseSalaryMinor ?? 0, allowances: 0, deductions: 0, advance: 0,
+    })))
+  }, [employees, slipDraftOpen])
+  const patchSlipRow = (employeeId: number, patch: Partial<{ on: boolean; gross: number; allowances: number; deductions: number; advance: number }>) =>
+    setSlipRows((rows) => rows.map((row) => (row.employeeId === employeeId ? { ...row, ...patch } : row)))
+  const accrueSlips = () => {
+    try {
+      const rows = slipRows.filter((row) => row.on).map((row) => ({
+        employeeId: row.employeeId, grossMinor: row.gross, allowancesMinor: row.allowances,
+        deductionsMinor: row.deductions, advanceMinor: row.advance,
+      }))
+      const slips = accruePayrollSlips({ month: slipMonth, rows })
+      toast.show(`استُحقت ${slips.length} قسيمة لشهر ${slipMonth} — كل موظف بذمة مستقلة`)
+      setSlipDraftOpen(false)
+    } catch (error) { toast.show((error as Error).message, 'error') }
+  }
+  const paySlip = (slipId: number) => {
+    try {
+      const slip = payPayrollSlip(slipId, { treasury: '1101' })
+      toast.show(`صُرف راتب ${slip.employeeName} (${slip.slipNumber}) بقيد مستقل`)
+    } catch (error) { toast.show((error as Error).message, 'error') }
+  }
   const roleOptions = useMemo(
     () => visibleRolesForModules(rolesWithOverrides(roleOverrides, customRoles, setup.activityId), setup.modules).filter((role) => !role.isOwner),
     [roleOverrides, customRoles, setup.activityId, setup.modules],
@@ -819,6 +852,92 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
 
       {tab === 'payroll' && (
         <>
+          {/* ── قسائم الرواتب: ذمة مستقلة لكل موظف (طلب المالك) ── */}
+          <section className="anim-up rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-card-dark" data-payroll-slips>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-black">قسائم الرواتب — لكل موظف ذمة مستقلة</h3>
+                <p className="text-[11px] text-slate-500">
+                  الاستحقاق قيد واحد بسطر دائن لكل موظف على 2104، والصرف قيد مستقل لكل قسيمة — فتصرف راتب موظف اليوم وآخر غداً بلا خلل.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="month" className={inputCls + ' w-36'} value={slipMonth} onChange={(event) => setSlipMonth(event.target.value)} aria-label="شهر الاستحقاق" />
+                <Btn onClick={() => setSlipDraftOpen(true)} disabled={!employees.length}>
+                  <span className="flex items-center gap-1.5"><Plus size={15} /> استحقاق قسائم</span>
+                </Btn>
+              </div>
+            </div>
+
+            {slipDraftOpen && (
+              <div className="mt-3 rounded-xl border border-slate-200 p-2 dark:border-slate-700" data-slip-draft>
+                <table className="w-full text-[12px]">
+                  <thead className="text-[11px] font-black text-slate-500">
+                    <tr><th className="p-1">الموظف</th><th className="p-1 w-24">الأساسي</th><th className="p-1 w-24">بدلات</th><th className="p-1 w-24">خصومات</th><th className="p-1 w-24">سلف</th><th className="p-1 w-24">الصافي</th><th className="p-1 w-10" /></tr>
+                  </thead>
+                  <tbody>
+                    {slipRows.map((row) => {
+                      const net = Math.max(0, row.gross + row.allowances - row.deductions - row.advance)
+                      return (
+                        <tr key={row.employeeId} data-slip-row={row.employeeId}>
+                          <td className="p-1">
+                            <label className="flex items-center gap-1">
+                              <input type="checkbox" checked={row.on} onChange={(event) => patchSlipRow(row.employeeId, { on: event.target.checked })} aria-label={`اختيار ${row.name}`} />
+                              {row.name}
+                            </label>
+                          </td>
+                          {(['gross', 'allowances', 'deductions', 'advance'] as const).map((field) => (
+                            <td className="p-1" key={field}>
+                              <input className={inputCls} inputMode="decimal" value={String(row[field] / 100)}
+                                aria-label={`${field} ${row.name}`}
+                                onChange={(event) => patchSlipRow(row.employeeId, { [field]: Math.round((Number(event.target.value) || 0) * 100) })} />
+                            </td>
+                          ))}
+                          <td className="p-1 text-center font-mono font-bold">{fmt(net)}</td>
+                          <td className="p-1" />
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+                <div className="mt-2 flex items-center justify-end gap-2">
+                  <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
+                  <Btn onClick={accrueSlips}>ترحيل الاستحقاق</Btn>
+                </div>
+              </div>
+            )}
+
+            <table className="mt-3 w-full text-[12px]" data-slips-table>
+              <thead className="text-[11px] font-black text-slate-500">
+                <tr><th className="p-1">القسيمة</th><th className="p-1">الموظف</th><th className="p-1">الشهر</th><th className="p-1">الصافي</th><th className="p-1">الحالة</th><th className="p-1">إجراء</th></tr>
+              </thead>
+              <tbody>
+                {payrollSlips.length === 0 && (
+                  <tr><td colSpan={6} className="p-4 text-center text-[12px] text-slate-400">لا قسائم بعد — استحق مسيراً لموظف أو أكثر وستظهر هنا بذمة مستقلة لكل موظف.</td></tr>
+                )}
+                {payrollSlips.slice().reverse().map((slip) => (
+                  <tr key={slip.id} className="border-t border-slate-200/70 dark:border-slate-700/60" data-slip={slip.slipNumber}>
+                    <td className="p-1 text-center font-mono font-bold">{slip.slipNumber}</td>
+                    <td className="p-1 text-center">{slip.employeeName}</td>
+                    <td className="p-1 text-center font-mono">{slip.month}</td>
+                    <td className="p-1 text-center font-mono font-bold">{fmt(slip.netMinor)}</td>
+                    <td className="p-1 text-center">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${slip.status === 'paid' ? 'bg-emerald-500/10 text-emerald-600' : slip.status === 'cancelled' ? 'bg-slate-500/10 text-slate-500' : 'bg-amber-500/10 text-amber-600'}`}>
+                        {slip.status === 'paid' ? 'مصروفة' : slip.status === 'cancelled' ? 'ملغاة' : 'مستحقة'}
+                      </span>
+                    </td>
+                    <td className="p-1 text-center">
+                      {slip.status === 'accrued' && (
+                        <Btn variant="ghost" onClick={() => paySlip(slip.id)} data-pay-slip={slip.slipNumber}>صرف الآن</Btn>
+                      )}
+                      {slip.status === 'paid' && <span className="text-[11px] text-slate-400">{(slip.paidAt ?? '').slice(0, 10)}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+
           <div className="anim-up flex flex-wrap justify-end gap-2">
             <Btn variant="ghost" onClick={openSingleRun}><span className="flex items-center gap-1.5"><UserSearch size={15} /> مسير راتب موظف واحد</span></Btn>
             <Btn onClick={openRun}><span className="flex items-center gap-1.5"><Plus size={15} /> مسير رواتب لكل الموظفين</span></Btn>

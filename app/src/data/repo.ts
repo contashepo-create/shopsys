@@ -113,6 +113,9 @@ import { validateExpenseTemplate, type ExpenseTemplate } from '../core/expenseCa
 import type { JournalEntry } from '../core/ledger.ts'
 import type { DocApprovalRequest, ApprovalDocKind, DocApprovalStatus } from '../core/approvals.ts'
 import {
+  type PayrollSlip, slipNetMinor, validateSlipDraft, buildSlipAccrualLines, buildSlipPaymentLines,
+} from '../core/payrollSlips.ts'
+import {
   type PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderStatus,
   validatePurchaseOrder, derivePurchaseOrderStatus,
 } from '../core/purchaseOrders.ts'
@@ -1401,6 +1404,22 @@ interface DataState {
   clientSettlements: { id: number; settlementNumber: string; customerId: number; date: string; amountMinor: number; treasury: string; allocations: FifoAllocation[]; unallocatedMinor: number; notes: string; journalEntryId: number }[]
   subAdvances: SubAdvance[] // دفعات مقدمة لمقاولي الباطن (1111)
   approvalFlows: ApprovalFlow[] // مسارات الموافقات المعرفة
+  /* ─── قسائم الرواتب: ذمة مستقلة لكل موظف (طلب المالك) ─── */
+  payrollSlips: PayrollSlip[]
+  /** استحقاق مسير لموظف واحد أو عدة موظفين: قيد واحد بسطر دائن لكل موظف */
+  accruePayrollSlips: (args: {
+    month: string
+    date?: string
+    notes?: string
+    overrideBy?: string | null
+    rows: { employeeId: number; grossMinor: number; allowancesMinor: number; deductionsMinor: number; advanceMinor: number; notes?: string }[]
+  }) => PayrollSlip[]
+  /** صرف قسيمة واحدة (اليوم أو غداً) — قيدها مستقل فلا يختلط بغيرها */
+  payPayrollSlip: (slipId: number, args: { treasury: TreasuryAccount; date?: string }) => PayrollSlip
+  /** إلغاء قسيمة لم تُصرف (بقيد عكسي للاستحقاق) */
+  cancelPayrollSlip: (slipId: number, reason: string) => void
+  /** القسائم غير المصروفة — يعرضها سند الصرف لكل موظف على حدة */
+  getUnpaidPayrollSlips: (employeeId?: number) => PayrollSlip[]
   approvalRequests: ApprovalRequest[] // طلبات الاعتماد الجارية والمحسومة
   recipes: Recipe[] // وصفات الأطباق والتصنيع (مطاعم)
   productionOrders: ProductionOrder[] // أوامر الإنتاج المسبق
@@ -2745,6 +2764,104 @@ export const useDataStore = create<DataState>()(
       suppliers: [],
       employees: [],
       payrollRuns: [],
+      payrollSlips: [],
+      accruePayrollSlips: (args) => {
+        const state = get()
+        if (!/^\d{4}-\d{2}$/.test(args.month)) throw new Error('الشهر غير صحيح (YYYY-MM)')
+        if (!args.rows.length) throw new Error('اختر موظفاً واحداً على الأقل')
+        const drafts = args.rows.map((row) => {
+          const employee = state.employees.find((e) => e.id === row.employeeId)
+          if (!employee) throw new Error('موظف غير موجود في المسير')
+          const errors = validateSlipDraft({ ...row, overrideBy: args.overrideBy })
+          if (errors.length) throw new Error(`${employee.nameAr}: ${errors.join(' — ')}`)
+          return { ...row, employeeName: employee.nameAr, netMinor: slipNetMinor(row) }
+        })
+        /* منع تكرار استحقاق نفس الموظف لنفس الشهر */
+        for (const draft of drafts) {
+          const twice = state.payrollSlips.some((slip) => slip.month === args.month && slip.employeeId === draft.employeeId && slip.status !== 'cancelled')
+          if (twice) throw new Error(`${draft.employeeName}: له قسيمة مستحقة لهذا الشهر بالفعل`)
+        }
+        const runId = nextId(state.payrollRuns)
+        const baseId = nextId(state.payrollSlips)
+        const now = args.date ? `${args.date}T09:00:00.000Z` : new Date().toISOString()
+        const numbered = drafts.map((draft, index) => ({ ...draft, slipNumber: `PS-${String(baseId + index).padStart(4, '0')}` }))
+        const monthLabel = monthLabelAr(args.month)
+        const lines = buildSlipAccrualLines(numbered, monthLabel)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `استحقاق رواتب ${monthLabel} — ${numbered.length} موظف`,
+          sourceType: 'payroll', sourceId: runId, lines,
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const slips: PayrollSlip[] = numbered.map((draft, index) => ({
+          id: baseId + index,
+          slipNumber: draft.slipNumber,
+          runId,
+          month: args.month,
+          employeeId: draft.employeeId,
+          employeeName: draft.employeeName,
+          grossMinor: draft.grossMinor,
+          allowancesMinor: draft.allowancesMinor,
+          deductionsMinor: draft.deductionsMinor,
+          advanceMinor: draft.advanceMinor,
+          netMinor: draft.netMinor,
+          status: 'accrued',
+          accruedAt: now,
+          accrualEntryId: entryId,
+          notes: draft.notes ?? '',
+        }))
+        set({ payrollSlips: [...state.payrollSlips, ...slips], journal: [...state.journal, entry] })
+        return slips
+      },
+      payPayrollSlip: (slipId, args) => {
+        const state = get()
+        const slip = state.payrollSlips.find((row) => row.id === slipId)
+        if (!slip) throw new Error('القسيمة غير موجودة')
+        if (slip.status === 'paid') throw new Error('هذه القسيمة مصروفة بالفعل')
+        if (slip.status === 'cancelled') throw new Error('القسيمة ملغاة')
+        const now = args.date ? `${args.date}T12:00:00.000Z` : new Date().toISOString()
+        const lines = buildSlipPaymentLines(slip, args.treasury)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `صرف راتب ${slip.employeeName} — ${slip.slipNumber}`,
+          sourceType: 'payroll', sourceId: slip.runId, lines,
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const updated: PayrollSlip = { ...slip, status: 'paid', paidAt: now, paidEntryId: entry.id, paidFrom: args.treasury }
+        set({
+          payrollSlips: state.payrollSlips.map((row) => (row.id === slipId ? updated : row)),
+          journal: [...state.journal, entry],
+        })
+        return updated
+      },
+      cancelPayrollSlip: (slipId, reason) => {
+        const state = get()
+        const slip = state.payrollSlips.find((row) => row.id === slipId)
+        if (!slip) throw new Error('القسيمة غير موجودة')
+        if (slip.status === 'paid') throw new Error('لا تُلغى قسيمة مصروفة — سجّل تسوية بدلاً منها')
+        if (!reason.trim()) throw new Error('سبب الإلغاء مطلوب')
+        const reverse = [
+          { accountCode: '2104', debit: slip.netMinor, credit: 0, note: `إلغاء ${slip.slipNumber} — ${reason.trim()}` },
+          { accountCode: '5102', debit: 0, credit: slip.netMinor, note: `عكس استحقاق ${slip.employeeName}` },
+        ]
+        const nowIso = new Date().toISOString()
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: nowIso.slice(0, 10),
+          description: `إلغاء قسيمة ${slip.slipNumber}`,
+          sourceType: 'payroll', sourceId: slip.runId, lines: reverse,
+          createdBy: activeUserName(state), createdAt: nowIso, reversedByEntryId: null, reversesEntryId: slip.accrualEntryId,
+        }
+        set({
+          payrollSlips: state.payrollSlips.map((row) => (row.id === slipId ? { ...row, status: 'cancelled' as const, notes: `${row.notes ?? ''} · ألغيت: ${reason.trim()}` } : row)),
+          journal: [...state.journal, entry],
+        })
+      },
+      getUnpaidPayrollSlips: (employeeId) => get().payrollSlips
+        .filter((slip) => slip.status === 'accrued' && (employeeId == null || slip.employeeId === employeeId)),
+
       installmentPlans: [],
       vehicles: [],
       vehicleCostEntries: [],
