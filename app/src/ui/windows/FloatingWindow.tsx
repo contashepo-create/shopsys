@@ -19,6 +19,7 @@ export function FloatingWindow({ win, children, active = true }: { win: AppWindo
   const cancelCloseWindow = useWindowStore((s) => s.cancelCloseWindow)
   const discardAndCloseWindow = useWindowStore((s) => s.discardAndCloseWindow)
   const [dragging, setDragging] = useState(false)
+  const [snapZone, setSnapZone] = useState<string | null>(null)
   const frameRef = useRef<HTMLDivElement | null>(null)
 
   /* النافذة المفتوحة حديثاً تأخذ التركيز: بلاغ المالك «Escape أغلق نافذة التعديل
@@ -42,6 +43,35 @@ export function FloatingWindow({ win, children, active = true }: { win: AppWindo
     return () => window.removeEventListener('resize', onResize)
   }, [win.id, win.rect, moveWindow])
 
+  /* الالتقاط بالحواف (Snap) — من مختبر النوافذ إلى التطبيق بطلب المالك:
+     سحب النافذة إلى حافة الشاشة يعرض معاينة، والإفلات يثبّتها نصف الشاشة أو
+     ربعها أو ملء المساحة. لا شيء يتغيّر ما لم يصل المؤشر إلى الحافة. */
+  const snapRect = useCallback((zone: string) => {
+    const vw = window.innerWidth
+    const vh = window.innerHeight - 46
+    const half = Math.round(vw / 2)
+    const halfH = Math.round(vh / 2)
+    switch (zone) {
+      case 'max': return { x: 8, y: 8, w: vw - 16, h: vh - 8 }
+      case 'right': return { x: half, y: 8, w: half - 8, h: vh - 8 }
+      case 'left': return { x: 8, y: 8, w: half - 8, h: vh - 8 }
+      case 'tr': return { x: half, y: 8, w: half - 8, h: halfH - 8 }
+      case 'br': return { x: half, y: halfH, w: half - 8, h: halfH - 8 }
+      case 'tl': return { x: 8, y: 8, w: half - 8, h: halfH - 8 }
+      case 'bl': return { x: 8, y: halfH, w: half - 8, h: halfH - 8 }
+      default: return null
+    }
+  }, [])
+  const zoneAt = useCallback((x: number, y: number) => {
+    const edge = 26
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    if (y <= edge) return 'max'
+    if (x <= edge) return y < vh / 2 ? 'tl' : 'bl'
+    if (x >= vw - edge) return y < vh / 2 ? 'tr' : 'br'
+    return null
+  }, [])
+
   const startDrag = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return
     if ((event.target as HTMLElement).closest('[data-window-button]')) return
@@ -51,15 +81,23 @@ export function FloatingWindow({ win, children, active = true }: { win: AppWindo
     const startY = event.clientY
     const origin = { ...win.rect }
     setDragging(true)
-    const move = (ev: PointerEvent) => moveWindow(win.id, origin.x + (ev.clientX - startX), origin.y + (ev.clientY - startY))
+    let zone: string | null = null
+    const move = (ev: PointerEvent) => {
+      moveWindow(win.id, origin.x + (ev.clientX - startX), origin.y + (ev.clientY - startY))
+      const next = zoneAt(ev.clientX, ev.clientY)
+      if (next !== zone) { zone = next; setSnapZone(next) }
+    }
     const up = () => {
       setDragging(false)
+      setSnapZone(null)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      const rect = zone && snapRect(zone)
+      if (rect) setWindowRect(win.id, rect)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
-  }, [focusWindow, moveWindow, win.id, win.mode, win.rect])
+  }, [focusWindow, moveWindow, setWindowRect, snapRect, win.id, win.mode, win.rect, zoneAt])
 
   const startResize = useCallback((event: React.PointerEvent<HTMLElement>, dir: ResizeDir) => {
     event.stopPropagation()
@@ -92,6 +130,16 @@ export function FloatingWindow({ win, children, active = true }: { win: AppWindo
     : { left: win.rect.x, top: win.rect.y, width: win.rect.w, height: win.rect.h, zIndex: win.z }
 
   return (
+    <>
+    {snapZone && (() => {
+      const preview = snapRect(snapZone)
+      return preview ? (
+        <OverlayPortal>
+          <span className="app-window-snap" data-window-snap={snapZone} aria-hidden="true"
+            style={{ left: preview.x, top: preview.y, width: preview.w, height: preview.h }} />
+        </OverlayPortal>
+      ) : null
+    })()}
     <div
       ref={frameRef}
       data-app-window={win.id}
@@ -170,5 +218,6 @@ export function FloatingWindow({ win, children, active = true }: { win: AppWindo
         <span className="app-window-resize is-nw" onPointerDown={(e) => startResize(e, 'nw')} />
       </>}
     </div>
+    </>
   )
 }

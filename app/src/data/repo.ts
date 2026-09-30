@@ -1248,6 +1248,8 @@ export interface SaleInvoice {
    * الدفتر يبقى أحادي العملة — القيد كله بعملة الدفتر وهذه الساق توثيق على المستند.
    */
   fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 } | null
+  /** مشروع المقاولات المرتبط — يُنسب إليه إيراد الفاتورة وربحيتها (طلب المالك) */
+  projectId?: number | null
 }
 
 /** مرتجع مبيعات — دائماً مربوط بفاتورته الأصلية وبقيده العاكس */
@@ -1658,6 +1660,8 @@ interface DataState {
     bookDecimals?: number
     /** رمز عملة الدفتر — لمنع «عملة أجنبية» تساوي عملة الدفتر (افتراضي EGP) */
     bookCurrencyCode?: string
+    /** ربط فاتورة البيع بمشروع مقاولات — يُنسب إليه إيرادها وربحيتها (طلب المالك) */
+    projectId?: number | null
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -3943,6 +3947,7 @@ export const useDataStore = create<DataState>()(
           dueDate: args.dueDate || undefined,
           notes: args.notes?.trim() || undefined,
           fx: saleFxLeg,
+          projectId: args.projectId ?? null,
         }
 
         const employeeCollections: EmployeeAdvance[] = (args.paymentAllocations ?? []).filter((row) => row.accountCode === '1107' && row.employeeId).map((row, index) => ({ id: nextId(state.employeeAdvances) + index, advanceNumber: `ADV-${String(nextId(state.employeeAdvances) + index).padStart(4, '0')}`, employeeId: row.employeeId!, date: now.slice(0, 10), amountMinor: row.amountMinor, recoveredMinor: 0, source: 'sale_collection', custodyFileId: null, treasury: (args.treasury ?? '1101') as TreasuryAccount, notes: `تحصيل فاتورة ${invoiceNumber} على حساب الموظف`, journalEntryId: entryId }))

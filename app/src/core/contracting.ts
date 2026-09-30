@@ -184,8 +184,38 @@ export interface QuotationLine {
   qty: number
   unitAr: string // م2، م.ط، مقطوعية…
   unitPriceMinor: Minor
+  /** نسبة ضريبة البند (طلب المالك: العرض كالفاتورة) — 0 = بلا ضريبة */
+  vatPercent?: number
+  /** السعر شامل الضريبة؟ true = مستخرجة من السعر، false/غياب = مضافة عليه */
+  taxIncluded?: boolean
   /** التكلفة التقديرية للوحدة — أساس موازنة البند وتحليل EVM */
   estCostMinor: Minor
+}
+
+/** صافي البند قبل الضريبة (يستخرجها إن كان السعر شاملاً) */
+export function quotationLineNetMinor(line: QuotationLine): Minor {
+  const gross = Math.round(line.qty * line.unitPriceMinor)
+  const percent = line.vatPercent ?? 0
+  if (!percent) return gross
+  return line.taxIncluded ? Math.round(gross * 100 / (100 + percent)) : gross
+}
+/** ضريبة البند — مستخرجة من السعر الشامل أو مضافة على الصافي */
+export function quotationLineTaxMinor(line: QuotationLine): Minor {
+  const percent = line.vatPercent ?? 0
+  if (!percent) return 0
+  return Math.round(quotationLineNetMinor(line) * percent / 100)
+}
+/** إجمالي البند شاملاً الضريبة */
+export function quotationLineGrossMinor(line: QuotationLine): Minor {
+  return quotationLineNetMinor(line) + quotationLineTaxMinor(line)
+}
+/** إجماليات العرض: صافٍ · ضريبة · شامل (طلب المالك: كالفاتورة) */
+export function quotationTotals(lines: QuotationLine[]): { netMinor: Minor; taxMinor: Minor; grossMinor: Minor } {
+  return lines.reduce((sum, line) => ({
+    netMinor: sum.netMinor + quotationLineNetMinor(line),
+    taxMinor: sum.taxMinor + quotationLineTaxMinor(line),
+    grossMinor: sum.grossMinor + quotationLineGrossMinor(line),
+  }), { netMinor: 0, taxMinor: 0, grossMinor: 0 })
 }
 
 /** إجمالي بند = كمية × سعر وحدة (مقرَّب) */

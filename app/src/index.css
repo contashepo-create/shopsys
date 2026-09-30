@@ -2440,3 +2440,63 @@ input, textarea, select, option,
 .fillfrom-empty { padding: .8rem; text-align: center; font-size: .66rem; color: #94a3b8; }
 @media (prefers-reduced-motion: reduce) { .fillfrom-panel { animation-duration: .01ms; } }
 
+/* ===== الالتقاط بالحواف: معاينة قبل الإفلات (طلب المالك) ===== */
+.app-window-snap {
+  position: fixed; z-index: 690; pointer-events: none; border-radius: 1rem;
+  border: 2px dashed rgb(47 98 196 / .65); background: rgb(47 98 196 / .12);
+  backdrop-filter: blur(2px); transition: all .12s cubic-bezier(.2, .8, .2, 1);
+  animation: snapIn .14s ease-out;
+}
+@keyframes snapIn { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .app-window-snap { animation: none; transition: none; } }
+
+/* ===== ميزانية الارتفاع بعد إضافة حقل المشروع وأزرار القوالب والمراجعة =====
+   شريط الأزرار أسفل الشروط يبقى **سطراً واحداً** يُمرَّر أفقياً بدل أن يتمدد
+   رأسياً، والشرائح تنضغط قليلاً — فيبقى الفيض صفراً في كل الأنماط. */
+.invoice-doc .invoice-doc-addons {
+  flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; gap: .22rem; padding-bottom: .05rem;
+}
+.invoice-doc .invoice-doc-addons > * { flex: 0 0 auto; }
+@media (max-height: 820px) {
+  .invoice-doc .invoice-doc-addons button, .invoice-doc .invoice-doc-review { font-size: .56rem; padding: .04rem .3rem; }
+  .invoice-doc .invoice-doc-strip { min-height: 1.12rem; padding-block: .01rem; }
+  .invoice-doc .invoice-doc-stripfield select, .invoice-doc .invoice-doc-stripfield input { height: 1.25rem !important; }
+}
+@media (max-height: 820px) {
+  /* النمط المتقدم يضيف شريحة ثالثة ولوحة أطول — نضغط الملخص والمرفقات قليلاً */
+  .invoice-doc .invoice-doc-sum-row { padding: .02rem 0; font-size: .615rem; }
+  .invoice-doc .invoice-doc-panel-foot { min-height: 1.1rem; padding-block: .02rem; }
+  .invoice-doc .invoice-doc-quick button { font-size: .56rem; padding: .03rem .3rem; }
+  .invoice-doc .invoice-doc-termsbox { min-height: 1.5rem !important; }
+}
+@media (max-height: 820px) {
+  /* آخر ضغط لميزانية النمط المتقدم: رؤوس اللوحات وسطور التحصيل والإجمالي */
+  .invoice-doc .invoice-doc-panel-head { min-height: 1.15rem; padding-block: .02rem; }
+  .invoice-doc .invoice-doc-payrow { min-height: 1.35rem; }
+  .invoice-doc .invoice-doc-payrows { gap: .16rem .4rem; }
+  .invoice-doc .invoice-doc-grand { padding: .08rem .35rem; }
+  .invoice-doc .invoice-doc-paynote { padding: .04rem .3rem; font-size: .58rem; }
+  .invoice-doc .invoice-doc-addonlist { font-size: .56rem; }
+}
+@media (max-height: 820px) {
+  /* لوحة التحصيل هي الأطول في النمط المتقدم — نضغط صفوفها الثانوية */
+  .invoice-doc .invoice-doc-fx { padding-block: .01rem; font-size: .58rem; }
+  .invoice-doc .invoice-doc-panel-grid { gap: .18rem; }
+  .invoice-doc .invoice-doc-panel-grid input, .invoice-doc .invoice-doc-panel-grid select { height: 1.35rem !important; }
+  .invoice-doc .invoice-doc-panel-body > .space-y-2 > * + * { margin-top: .16rem; }
+  .invoice-doc .invoice-doc-panel-body .form-field { gap: .04rem; }
+}
+/* أرضية سطور البنود تُضبط مع الأنماط الأعلى: بدل أن يفيض المستند 9–17px،
+   يتنازل الجدول عن جزء من أرضيته (وما زاد يُمرَّر داخله) وتظل اللوحات كاملة. */
+@media (max-height: 820px) {
+  .invoice-doc { --doc-row-h: 1.95rem; --doc-lines-min: calc(var(--doc-min-rows) * var(--doc-row-h) + var(--doc-head-h) + 1.85rem); }
+}
+@media (max-height: 700px) {
+  .invoice-doc { --doc-lines-min: calc(var(--doc-min-rows) * var(--doc-row-h) + var(--doc-head-h) + 1.5rem); }
+}
+@media (max-height: 700px) {
+  /* بكسل أخير على 1024×680 في النمط المتقدم */
+  .invoice-doc { --doc-lines-min: calc(var(--doc-min-rows) * var(--doc-row-h) + var(--doc-head-h) + 1.35rem); }
+  .invoice-doc .invoice-doc-panel-body { gap: .12rem; }
+}
+
