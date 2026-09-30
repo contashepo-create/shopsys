@@ -1,17 +1,19 @@
 /**
- * شاشة «اعتماد المستندات» (طلب المالك).
- * تعرض المستندات المعلّقة التي سجّلها موظفون آخرون، فيعتمدها صاحب الصلاحية
- * فتُرحَّل بقيدها الكامل، أو يرفضها بسبب مكتوب فلا يبقى لها أي أثر محاسبي.
+ * شاشة «اعتماد المستندات» (طلب المالك — خطة ③).
+ * تعرض المستندات المعلّقة التي سجّلها الموظفون، فيعتمدها صاحب الصلاحية
+ * **فتُرحَّل فوراً بقيدها ومخزونها الكامل**، أو يرفضها بسبب مكتوب فلا يبقى
+ * لها أي أثر محاسبي. أعلى الشاشة إعدادات النظام نفسها: تفعيل/إيقاف، النطاق،
+ * حد المبلغ، المعتمِدون الإضافيون، ومن مستنداته معتمدة تلقائياً.
  */
 import { useMemo, useState } from 'react'
-import { BadgeCheck, ShieldCheck, ShieldX, Clock, FileText } from 'lucide-react'
+import { BadgeCheck, ShieldCheck, ShieldX, Clock, FileText, SlidersHorizontal } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
-import { formatMinor } from '../../core/money.ts'
+import { formatMinor, toMinor } from '../../core/money.ts'
 import { getCountry } from '../../core/countries.ts'
-import { APPROVAL_DOC_LABELS, canApprove, pendingForUser, type DocApprovalStatus } from '../../core/approvals.ts'
+import { APPROVAL_DOC_KINDS, APPROVAL_DOC_LABELS, canApprove, pendingForUser, type ApprovalDocKind, type DocApprovalStatus } from '../../core/approvals.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../../core/permissions.ts'
 
 export function ApprovalsPage() {
@@ -19,16 +21,20 @@ export function ApprovalsPage() {
   const { docApprovals, decideDocApproval, appUsers, currentUserId, roleOverrides, customRoles } = useDataStore()
   const setup = useAppStore((s) => s.setup)
   const approvals = useAppStore((s) => s.approvals)
+  const updateApprovals = useAppStore((s) => s.updateApprovals)
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const card = 'rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900'
 
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, setup.activityId))
   const allowed = canApprove({ settings: approvals, userId: currentUserId, userPermissions: perms })
+  /* الإعدادات يراها المالك وأصحاب صلاحية الاعتماد فقط — الموظف يرى قائمته */
+  const canConfigure = allowed || currentUserId == null
 
   const [filter, setFilter] = useState<'pending' | DocApprovalStatus | 'all'>('pending')
   const [reason, setReason] = useState('')
   const [rejecting, setRejecting] = useState<number | null>(null)
+  const [thresholdText, setThresholdText] = useState(() => (approvals.thresholdMinor > 0 ? String(approvals.thresholdMinor / 10 ** cur.decimals) : '0'))
 
   const rows = useMemo(() => {
     const list = filter === 'all' ? docApprovals : docApprovals.filter((row) => row.status === filter)
@@ -38,10 +44,21 @@ export function ApprovalsPage() {
 
   const decide = (id: number, status: 'approved' | 'rejected') => {
     try {
-      decideDocApproval(id, { status, by: currentUserId, byName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك', reason: status === 'rejected' ? reason : undefined })
-      toast.show(status === 'approved' ? 'اعتُمد المستند — يمكن ترحيله الآن' : 'رُفض المستند ولم يُقيَّد شيء')
+      const updated = decideDocApproval(id, { status, by: currentUserId, byName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك', reason: status === 'rejected' ? reason : undefined })
+      toast.show(status === 'approved' ? `اعتُمد المستند ورُحِّل ${updated.postedDocumentRef ?? ''} بقيده ومخزونه ✓` : 'رُفض المستند ولم يُقيَّد شيء')
       setRejecting(null); setReason('')
     } catch (error) { toast.show((error as Error).message, 'error') }
+  }
+
+  const toggleScope = (kind: ApprovalDocKind) =>
+    updateApprovals({ scope: approvals.scope.includes(kind) ? approvals.scope.filter((row) => row !== kind) : [...approvals.scope, kind] })
+  const toggleUserList = (list: 'approverUserIds' | 'autoApprovedUserIds', userId: number) =>
+    updateApprovals({ [list]: approvals[list].includes(userId) ? approvals[list].filter((row) => row !== userId) : [...approvals[list], userId] })
+  const commitThreshold = () => {
+    const minor = toMinor(thresholdText || '0', cur.decimals)
+    if (!Number.isFinite(minor) || minor < 0) { toast.show('حد مبلغ غير صالح', 'error'); setThresholdText('0'); return }
+    updateApprovals({ thresholdMinor: Math.round(minor) })
+    toast.show(minor > 0 ? `المستندات تحت ${formatMinor(minor, cur, false)} تُرحَّل فوراً` : 'كل المستندات ضمن النطاق تحتاج اعتماداً')
   }
 
   return (
@@ -52,7 +69,7 @@ export function ApprovalsPage() {
           <p className="text-xs text-slate-500">
             {approvals.enabled
               ? 'النظام مفعّل — المستندات الخاضعة له لا تُقيَّد في الدفتر حتى تُعتمد.'
-              : 'النظام موقوف حالياً — كل المستندات تُرحَّل فوراً. فعّله من الإعدادات العامة.'}
+              : 'النظام موقوف حالياً — كل المستندات تُرحَّل فوراً. فعّله من بطاقة الإعدادات أدناه.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -72,6 +89,88 @@ export function ApprovalsPage() {
         <div className={`${card} p-4 text-sm text-amber-700 dark:text-amber-300`}>
           ليست لديك صلاحية «اعتماد المستندات». اطلب من المالك تفعيل <b>docs.approve</b> لحسابك من قسم الصلاحيات.
         </div>
+      )}
+
+      {canConfigure && (
+        <section className={`${card} space-y-3 p-4`} data-approvals-settings>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <b className="flex items-center gap-1 text-sm"><SlidersHorizontal size={14} /> إعدادات نظام الاعتماد</b>
+            <label className="flex cursor-pointer items-center gap-2 text-xs font-black" data-approvals-enabled>
+              <input
+                type="checkbox"
+                className="size-4 accent-emerald-600"
+                data-approvals-toggle
+                checked={approvals.enabled}
+                onChange={(event) => {
+                  updateApprovals({ enabled: event.target.checked })
+                  toast.show(event.target.checked ? 'فُعِّل نظام الاعتماد — النطاق الخاضع يقف حتى يُعتمد' : 'أُوقف النظام — كل المستندات تُرحَّل فوراً')
+                }}
+              />
+              {approvals.enabled ? 'مفعّل' : 'موقوف'}
+            </label>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1">
+              <div className="text-[11px] font-black text-slate-500 dark:text-slate-400">أنواع المستندات الخاضعة للاعتماد</div>
+              <div className="flex flex-wrap gap-1.5">
+                {APPROVAL_DOC_KINDS.map((kind) => (
+                  <label
+                    key={kind}
+                    className={`flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold transition ${approvals.scope.includes(kind) ? 'border-emerald-400 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 text-slate-500 dark:border-slate-700 dark:text-slate-400'}`}
+                  >
+                    <input type="checkbox" className="size-3.5 accent-emerald-600" data-approvals-scope={kind} checked={approvals.scope.includes(kind)} onChange={() => toggleScope(kind)} />
+                    {APPROVAL_DOC_LABELS[kind]}
+                  </label>
+                ))}
+              </div>
+              <div className="text-[10px] text-slate-400">التحويل بين الخزائن ليس مستند طرف خارجي — لا يدخل النطاق.</div>
+            </div>
+            <div className="space-y-2">
+              <label className="block text-[11px] font-black text-slate-500 dark:text-slate-400">
+                حد المبلغ: ما دونه يُرحَّل فوراً (0 = كل المستندات ضمن النطاق)
+                <div className="mt-1 flex items-center gap-1">
+                  <input
+                    className={`${inputCls} w-32`}
+                    data-approvals-threshold
+                    inputMode="decimal"
+                    value={thresholdText}
+                    onChange={(event) => setThresholdText(event.target.value)}
+                    onBlur={commitThreshold}
+                    onKeyDown={(event) => { if (event.key === 'Enter') commitThreshold() }}
+                  />
+                  <span className="text-[11px] text-slate-400">{cur.symbol}</span>
+                </div>
+              </label>
+              <div className="text-[10px] text-slate-400">المالك وصاحب صلاحية docs.approve يعتمدان؛ من هنا تضيف معتمِدين بلا تعديل الأدوار.</div>
+            </div>
+          </div>
+          {appUsers.length > 0 && (
+            <div className="grid gap-3 border-t border-slate-100 pt-2 md:grid-cols-2 dark:border-slate-800">
+              <div>
+                <div className="mb-1 text-[11px] font-black text-slate-500 dark:text-slate-400">معتمِدون إضافيون (بلا تعديل الأدوار)</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {appUsers.map((user) => (
+                    <label key={`appr-${user.id}`} className={`flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${approvals.approverUserIds.includes(user.id) ? 'border-sky-400 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-slate-200 text-slate-500 dark:border-slate-700 dark:text-slate-400'}`}>
+                      <input type="checkbox" className="size-3 accent-sky-600" data-approvals-user-approver={user.id} checked={approvals.approverUserIds.includes(user.id)} onChange={() => toggleUserList('approverUserIds', user.id)} />
+                      {user.nameAr}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-[11px] font-black text-slate-500 dark:text-slate-400">مستنداتهم معتمدة تلقائياً (تجاوز صريح)</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {appUsers.map((user) => (
+                    <label key={`auto-${user.id}`} className={`flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${approvals.autoApprovedUserIds.includes(user.id) ? 'border-violet-400 bg-violet-500/10 text-violet-700 dark:text-violet-300' : 'border-slate-200 text-slate-500 dark:border-slate-700 dark:text-slate-400'}`}>
+                      <input type="checkbox" className="size-3 accent-violet-600" data-approvals-user-auto={user.id} checked={approvals.autoApprovedUserIds.includes(user.id)} onChange={() => toggleUserList('autoApprovedUserIds', user.id)} />
+                      {user.nameAr}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
       )}
 
       <section className={`${card} overflow-hidden`} data-approvals-list>
@@ -99,9 +198,10 @@ export function ApprovalsPage() {
                 <td className="p-2 text-center font-mono text-[11px]">{row.requestedAt.slice(0, 16).replace('T', ' ')}</td>
                 <td className="p-2 text-center">
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${row.status === 'approved' ? 'bg-emerald-500/10 text-emerald-600' : row.status === 'rejected' ? 'bg-rose-500/10 text-rose-600' : 'bg-amber-500/10 text-amber-600'}`}>
-                    {row.status === 'approved' ? 'معتمد' : row.status === 'rejected' ? 'مرفوض' : 'بانتظار الاعتماد'}
+                    {row.status === 'approved' ? 'معتمد ورُحِّل' : row.status === 'rejected' ? 'مرفوض' : 'بانتظار الاعتماد'}
                   </span>
                   {row.reason && <div className="text-[10px] text-rose-500">{row.reason}</div>}
+                  {row.status === 'approved' && row.postedDocumentRef && <div className="text-[10px] text-emerald-600" data-approval-posted-ref>{row.postedDocumentRef}</div>}
                 </td>
                 <td className="p-2">
                   {row.status === 'pending' && allowed && (
@@ -127,8 +227,9 @@ export function ApprovalsPage() {
 
       <section className={`${card} p-3 text-[12px] leading-6 text-slate-500 dark:text-slate-400`}>
         <b className="text-slate-700 dark:text-slate-200">كيف يعمل النظام؟</b>
-        <div>• التفعيل والنطاق وحد المبلغ والمعتمِدون من <b>الإعدادات العامة</b>، والصلاحيتان <b>docs.approve</b> و<b>docs.autoApproved</b> من قسم الصلاحيات.</div>
+        <div>• التفعيل والنطاق وحد المبلغ والمعتمِدون من بطاقة <b>الإعدادات</b> أعلاه، والصلاحيتان <b>docs.approve</b> و<b>docs.autoApproved</b> من قسم الصلاحيات.</div>
         <div>• مستند المستخدم صاحب <b>docs.autoApproved</b> يُرحَّل فوراً حتى لو كان النظام مفعّلاً.</div>
+        <div>• <b>الاعتماد يرحّل المستند فوراً</b> بقيده ومخزونه كاملاً؛ إن تعذّر الترحيل (مخزون تغيّر مثلاً) يظهر السبب ويبقى الطلب معلقاً.</div>
         <div>• عند إيقاف النظام تُرحَّل كل المستندات مباشرة بلا رجوع لأحد.</div>
         <div>• <b>لا قيد محاسبي ولا حركة مخزون قبل الاعتماد</b> — الرفض لا يترك أثراً.</div>
       </section>

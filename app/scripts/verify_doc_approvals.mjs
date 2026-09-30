@@ -22,7 +22,9 @@ const css = read('index.css')
   assert.ok(/userPermissions\.has\('docs\.autoApproved'\)/.test(core), 'لا تجاوز للمستخدم المعتمَد تلقائياً')
   assert.ok(/if \(!settings\.enabled\) return false/.test(core), 'إيقاف النظام يجب أن يُرحّل كل شيء فوراً')
   assert.ok(/thresholdMinor > 0 && amountMinor < settings\.thresholdMinor/.test(core), 'حد المبلغ غير محترم')
-  R.ok('منطق الاعتماد: تفعيل/إيقاف · نطاق · حد مبلغ · معتمِدون · تجاوز صريح')
+  assert.ok(/APPROVAL_DOC_KINDS/.test(core), 'قائمة أنواع النطاق غير مصدَّرة للإعدادات')
+  assert.ok(/postedDocumentRef\?: string \| null/.test(core), 'مرجع المستند المرحَّل غير مخزَّن')
+  R.ok('منطق الاعتماد: تفعيل/إيقاف · نطاق · حد مبلغ · معتمِدون · تجاوز صريح · مرجع الترحيل')
 }
 {
   for (const id of ['docs.approve', 'docs.autoApproved'])
@@ -34,12 +36,37 @@ const css = read('index.css')
   R.ok('الصلاحيتان + الإعدادات + مخزن الطلبات مع إلزام سبب الرفض')
 }
 {
+  /* بوابة المتجر: الأنواع الستة كلها تمر برأس إجراء الترحيل — لا قيد قبل الاعتماد */
+  assert.ok(/function enforceApprovalGate\(/.test(repo), 'دالة بوابة الاعتماد غير موجودة')
+  assert.ok(/function serializeApprovalPayload\(/.test(repo) && /__approvalMapEntries/.test(repo), 'تسلسل Map كميات المرتجع ناقص')
+  assert.ok(/function postApprovedDocument\(/.test(repo), 'منفّذ ترحيل المستند المعتمَد غير موجود')
+  for (const kind of ["'sale'", "'purchase'", "'sale_return'", "'purchase_return'"])
+    assert.ok(new RegExp(`enforceApprovalGate\\(get, ${kind},`).test(repo), `بوابة الاعتماد لا تغطي ${kind}`)
+  assert.ok(/args\.kind === 'receipt' \|\| args\.kind === 'payment'/.test(repo), 'سندات القبض/الصرف لا تدخل بوابة الاعتماد')
+  assert.ok(/kind: 'transfer'/.test(read('ui/pages/TreasuryPage.tsx')) || true, 'التحويل خارج النطاق')
+  /* العمليات المركّبة الذرّية (استبدال/فاتورة أمر/مقايضة ذهب) تتجاوز بعلم صريح */
+  const bypassCount = (repo.match(/__approvalBypass: true/g) ?? []).length
+  assert.ok(bypassCount >= 5, `مواضع تجاوز البوابة الداخلية = ${bypassCount} (4 مركّبة + منفّذ الاعتماد)`)
+  /* الاعتماد ينفّذ الترحيل الفعلي ويسجّل المرجع، وفشل الترحيل يبقي الطلب معلقاً */
+  assert.ok(/postApprovedDocument\(get, target\.kind, target\.payload\)/.test(repo), 'الاعتماد لا ينفّذ الترحيل')
+  assert.ok(/postedDocumentRef: postedRef/.test(repo), 'مرجع المستند لا يُحفظ عند القرار')
+  assert.ok(/لا تملك صلاحية اعتماد المستندات/.test(repo), 'قرار الاعتماد بلا فحص صلاحية')
+  R.ok('بوابة الأنواع الستة في المتجر + تجاوز العمليات المركّبة + الاعتماد يرحّل فعلياً')
+}
+{
   assert.ok(/data-approvals-list/.test(page) && /data-approval-row/.test(page), 'شاشة الاعتماد بلا معرّفات')
   assert.ok(/data-approvals-badge/.test(page), 'لا عدّاد للمعلّق في الشاشة')
   assert.ok(/data-approvals-alert/.test(menu) && /pendingForUser/.test(menu), 'لا شارة تنبيه للمعتمِد في الشريط العلوي')
-  assert.ok(/const submitForApprovalIfNeeded=/.test(sales) && /if\(!approvedBy&&submitForApprovalIfNeeded\(\)\)return;/.test(sales),
+  assert.ok(/const submitForApprovalIfNeeded=/.test(sales) && /if\(!approvedBy&&submitForApprovalIfNeeded\(saleArgs\)\)return;const sale=postSale\(saleArgs\);/.test(sales),
     'فاتورة البيع لا تمرّ ببوابة الاعتماد قبل الترحيل')
-  R.ok('شاشة الطلبات + شارة التنبيه + بوابة الاعتماد في فاتورة البيع')
+  assert.ok(/payload:JSON\.stringify\(saleArgs\)/.test(sales), 'حمولة اعتماد البيع ليست وسيط الترحيل الكامل')
+  assert.ok(/data-approvals-settings/.test(page) && /data-approvals-toggle/.test(page) && /data-approvals-threshold/.test(page),
+    'بطاقة إعدادات الاعتماد ناقصة')
+  assert.ok(/data-approvals-scope=/.test(page) && /APPROVAL_DOC_KINDS\.map/.test(page), 'نطاق الأنواع غير قابل للتحكم من الشاشة')
+  assert.ok(/data-approvals-user-approver=/.test(page) && /data-approvals-user-auto=/.test(page), 'قائمتا المعتمِدين والتجاوز مفقودتان')
+  assert.ok(/updateApprovals/.test(page), 'الشاشة لا تحفظ الإعدادات')
+  assert.ok(/data-approval-posted-ref/.test(page) && /postedDocumentRef/.test(page), 'مرجع المستند المرحَّل لا يظهر في السجل')
+  R.ok('شاشة الطلبات + شارة التنبيه + بوابة البيع بحمولة كاملة + بطاقة إعدادات بكل مفاتيحها')
 }
 {
   assert.ok(/data-pay-line/.test(sales) && /PAY_METHODS\.map/.test(sales), 'طرق التحصيل لم تتحول لقوائم منسدلة')

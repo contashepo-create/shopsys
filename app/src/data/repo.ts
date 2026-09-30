@@ -111,7 +111,7 @@ import { DEFAULT_TREASURIES, nextTreasuryCode, validateTreasury, type TreasuryDe
 import { validateCostCenter, validateCostCenterBudget, type CostCenter, type CostCenterBudget } from '../core/costCenters.ts'
 import { validateExpenseTemplate, type ExpenseTemplate } from '../core/expenseCatalog.ts'
 import type { JournalEntry } from '../core/ledger.ts'
-import type { DocApprovalRequest, ApprovalDocKind, DocApprovalStatus } from '../core/approvals.ts'
+import { needsApproval, canApprove, type DocApprovalRequest, type ApprovalDocKind, type DocApprovalStatus } from '../core/approvals.ts'
 import {
   type PayrollSlip, slipNetMinor, validateSlipDraft, buildSlipAccrualLines, buildSlipPaymentLines,
 } from '../core/payrollSlips.ts'
@@ -1684,6 +1684,8 @@ interface DataState {
     fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 }
     bookDecimals?: number
     bookCurrencyCode?: string
+    /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
+    __approvalBypass?: boolean
   }) => PurchaseInvoice
   /**
    * ترحيل فاتورة بيع من الكاشير:
@@ -1732,6 +1734,8 @@ interface DataState {
     bookCurrencyCode?: string
     /** ربط فاتورة البيع بمشروع مقاولات — يُنسب إليه إيرادها وربحيتها (طلب المالك) */
     projectId?: number | null
+    /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
+    __approvalBypass?: boolean
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -1759,6 +1763,8 @@ interface DataState {
     approvedBy?: string
     /** رد ماكينة يُحفظ ذرياً مع المرتجع ويُربط بتحصيل الفاتورة الأصلي. */
     terminalRefund?: { originalTransactionId: string; providerReference: string }
+    /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
+    __approvalBypass?: boolean
   }) => SaleReturn
   /**
    * مصروف لاحق على فاتورة شراء مرحّلة (Landed Cost Voucher — طلب المالك):
@@ -1797,6 +1803,8 @@ interface DataState {
     treasury?: string
     /** موافقة المشرف (قاعدة المالك المعممة: كل المرتجعات باعتماد) — اسم المعتمد يُسجل على المستند */
     approvedBy?: string
+    /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
+    __approvalBypass?: boolean
   }) => PurchaseReturn
   /**
    * ترحيل جلسة جرد: يقارن المعدود بالدفتري، يضبط المخزون على المعدود،
@@ -1911,6 +1919,8 @@ interface DataState {
      * السند أو أقل منه (الباقي يبقى رصيداً عاماً على 2104 للموظف).
      */
     settleSlipIds?: number[]
+    /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
+    __approvalBypass?: boolean
   }) => Voucher
   /** صرف سلفة لموظف: قيد 1107 ← خزينة، وتُسترد من مسيرات الرواتب */
   grantEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; notes: string }) => EmployeeAdvance
@@ -2609,6 +2619,85 @@ function approvalStamp(state: Pick<DataState, 'appUsers' | 'currentUserId'>, app
   return { approvedBy: approvedBy ?? requester, requestedBy: requester }
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * بوابة اعتماد المستندات (خطة ③): لا قيد قبل الاعتماد.
+ * المستند الخاضع للنظام لا يُرحَّل من بوابة postSale/postPurchase/postVoucher/
+ * المرتجعات — يُخزَّن طلباً كاملاً (payload = وسيط الترحيل نفسه) ويرمى خطأ عربي
+ * يشرح ما حدث. عند الاعتماد ينفّذ decideDocApproval الترحيل الفعلي بعلم التجاوز
+ * الداخلي، والعمليات المركّبة (الاستبدال/فاتورة الأمر/مقايضة الذهب) تمرّ بعلم
+ * __approvalBypass لأنها ذرّية ولا يصح شطرها على طابور الاعتماد.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** تسلسل حمولة الاعتماد: Map (كميات مرتجع مجمّعة بالصنف) تتحول مدخلات قابلة للـJSON */
+function serializeApprovalPayload(value: unknown): string {
+  return JSON.stringify(value, (_key, row) => (row instanceof Map ? { __approvalMapEntries: [...row.entries()] } : row))
+}
+/** عكس التسلسل: يعيد بناء Map الكميات كما كانت لحظة التقديم */
+function deserializeApprovalPayload<T>(payload: string): T {
+  return JSON.parse(payload, (_key, row) =>
+    row && typeof row === 'object' && Array.isArray((row as { __approvalMapEntries?: unknown }).__approvalMapEntries)
+      ? new Map((row as { __approvalMapEntries: [number, number][] }).__approvalMapEntries)
+      : row,
+  ) as T
+}
+
+/**
+ * بوابة الاعتماد: إن كان نوع المستند خاضعاً للنظام والمُدخِل لا يملك تجاوزاً،
+ * يُسجَّل الطلب بلا أي كتابة في الدفتر أو المخزون ثم يُرمى خطأ إخباري.
+ * لا تُستدعى إلا من رؤوس إجراءات الترحيل المباشرة (بيع/شراء/سندات/مرتجعات).
+ */
+function enforceApprovalGate(
+  get: () => DataState,
+  kind: ApprovalDocKind,
+  amountMinor: number,
+  meta: { title: string; partyName: string; payload: string },
+): void {
+  const state = get()
+  const settings = useAppStore.getState().approvals
+  if (!settings.enabled) return
+  const activeUser = state.appUsers.find((u) => u.id === state.currentUserId) ?? null
+  const roles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
+  const userPermissions = effectivePermissionsFor(activeUser, roles)
+  if (!needsApproval({ settings, kind, amountMinor, userId: state.currentUserId, userPermissions })) return
+  get().submitDocForApproval({
+    kind,
+    title: meta.title,
+    partyName: meta.partyName,
+    amountMinor: Math.round(amountMinor),
+    payload: meta.payload,
+    requestedBy: state.currentUserId,
+    requestedByName: activeUserName(state),
+  })
+  throw new Error('أُرسل المستند للاعتماد — لن يُقيَّد في الدفتر ولا المخزون حتى يعتمده صاحب الصلاحية من «طلبات الاعتماد»')
+}
+
+/** تنفيذ ترحيل مستند معتمَد من طابور الاعتماد — بتجاوز البوابة (القرار اتُّخذ) */
+function postApprovedDocument(get: () => DataState, kind: ApprovalDocKind, payload: string): { id: number; ref: string } {
+  switch (kind) {
+    case 'sale': {
+      const sale = get().postSale({ ...deserializeApprovalPayload<Parameters<DataState['postSale']>[0]>(payload), __approvalBypass: true })
+      return { id: sale.id, ref: sale.invoiceNumber }
+    }
+    case 'purchase': {
+      const purchase = get().postPurchase({ ...deserializeApprovalPayload<Parameters<DataState['postPurchase']>[0]>(payload), __approvalBypass: true })
+      return { id: purchase.id, ref: purchase.invoiceNumber }
+    }
+    case 'receipt':
+    case 'payment': {
+      const voucher = get().postVoucher({ ...deserializeApprovalPayload<Parameters<DataState['postVoucher']>[0]>(payload), __approvalBypass: true })
+      return { id: voucher.id, ref: voucher.voucherNumber }
+    }
+    case 'sale_return': {
+      const ret = get().postSaleReturn({ ...deserializeApprovalPayload<Parameters<DataState['postSaleReturn']>[0]>(payload), __approvalBypass: true })
+      return { id: ret.id, ref: ret.refCode }
+    }
+    case 'purchase_return': {
+      const ret = get().postPurchaseReturn({ ...deserializeApprovalPayload<Parameters<DataState['postPurchaseReturn']>[0]>(payload), __approvalBypass: true })
+      return { id: ret.id, ref: ret.refCode }
+    }
+  }
+}
+
 /** كل الأكواد المرجعية المستخدمة حالياً — لضمان تفرد الكود الجديد */
 /**
  * حارس حد الائتمان الموحد (مراجعة البيع الشامل — نمط SAP B1: الحد يُفحص على أي
@@ -3115,6 +3204,21 @@ export const useDataStore = create<DataState>()(
         if (!target) throw new Error('طلب الاعتماد غير موجود')
         if (target.status !== 'pending') throw new Error('هذا الطلب مُقرَّر فيه بالفعل')
         if (decision.status === 'rejected' && !(decision.reason ?? '').trim()) throw new Error('سبب الرفض مطلوب')
+        // صلاحية القرار: لا يعتمد/يرفض إلا صاحب docs.approve أو المالك أو من أُضيف صراحة
+        const decider = state.appUsers.find((u) => u.id === decision.by) ?? null
+        const deciderRoles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
+        if (!canApprove({ settings: useAppStore.getState().approvals, userId: decision.by, userPermissions: effectivePermissionsFor(decider, deciderRoles) })) {
+          throw new Error('لا تملك صلاحية اعتماد المستندات — القرار لصاحب docs.approve أو المالك')
+        }
+        /* الاعتماد ينفّذ الترحيل الفعلي (pending → approved → posted): أي فشل
+         * (مخزون تغيّر، حد ائتمان…) يُبلَّغ للمعتمِد ويبقى الطلب معلقاً كما هو. */
+        let postedId: number | null = null
+        let postedRef: string | null = null
+        if (decision.status === 'approved') {
+          const posted = postApprovedDocument(get, target.kind, target.payload)
+          postedId = posted.id
+          postedRef = posted.ref
+        }
         const updated: DocApprovalRequest = {
           ...target,
           status: decision.status,
@@ -3122,6 +3226,8 @@ export const useDataStore = create<DataState>()(
           decidedByName: decision.byName,
           decidedAt: new Date().toISOString(),
           reason: decision.reason?.trim() || undefined,
+          postedDocumentId: postedId,
+          postedDocumentRef: postedRef,
         }
         set({ docApprovals: state.docApprovals.map((row) => (row.id === id ? updated : row)) })
         return updated
@@ -3506,6 +3612,17 @@ export const useDataStore = create<DataState>()(
 
       postPurchase: (inv) => {
         const state = get()
+        // بوابة اعتماد المستندات (خطة ③): شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
+        if (!inv.__approvalBypass) {
+          const approvalGoodsMinor = inv.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 + (line.vatPercent ?? 0) / 100), 0)
+            + inv.expenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
+            + (inv.inputVatMinor ?? 0) - (inv.discountMinor ?? 0)
+          enforceApprovalGate(get, 'purchase', approvalGoodsMinor, {
+            title: `فاتورة مشتريات — ${inv.lines.length} بند`,
+            partyName: inv.supplierId !== 0 ? state.suppliers.find((row) => row.id === inv.supplierId)?.nameAr ?? 'مورد' : 'شراء نقدي',
+            payload: serializeApprovalPayload(inv),
+          })
+        }
         // تحقق صارم قبل أي كتابة: سطور موجودة وكميات وأسعار سليمة (حماية من إفساد المخزون)
         if (!inv.lines.length) throw new Error('الفاتورة بلا أصناف')
         // الشراء النقدي الحقيقي يحمل supplierId=0: لا يُجبر المستخدم على إنشاء مورد وهمي،
@@ -4047,6 +4164,16 @@ export const useDataStore = create<DataState>()(
 
       postSale: (args) => {
         const state = get()
+        // بوابة اعتماد المستندات (خطة ③): بيع خاضع للنظام ⇒ يُخزَّن طلباً كاملاً
+        // ولا يُخصم مخزون ولا يُنشأ قيد حتى يعتمده صاحب الصلاحية.
+        if (!args.__approvalBypass) {
+          const approvalNetMinor = args.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100), 0) * (1 - args.invoiceDiscountPercent / 100)
+          enforceApprovalGate(get, 'sale', approvalNetMinor * (args.taxInclusive ? 1 : 1 + args.taxPercent / 100), {
+            title: `فاتورة مبيعات — ${args.lines.length} بند`,
+            partyName: args.customerId != null ? state.customers.find((c) => c.id === args.customerId)?.nameAr ?? 'عميل نقدي' : 'عميل نقدي',
+            payload: serializeApprovalPayload(args),
+          })
+        }
         // سياسة الورديات مرتبطة بالمستخدم الفعلي: المالك تلميح فقط، والكاشير حسب
         // إعداد الكاشير، وبقية الأدوار ملزمة في سياق البيع. نفس القرار تستخدمه الواجهة.
         const shiftPolicy = salesShiftPolicyForState(state)
@@ -4414,6 +4541,21 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        // بوابة اعتماد المستندات (خطة ③): مرتجع خاضع للنظام ⇒ طلب اعتماد بلا قيد
+        if (!args.__approvalBypass) {
+          const returnedMinor = args.lineSpecs?.length
+            ? args.lineSpecs.reduce((sum, spec) => {
+                const line = sale.lines[spec.lineIndex]
+                return sum + (line ? spec.qty * line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100) : 0)
+              }, 0)
+            : [...(args.qtyByItem ?? new Map<number, number>()).entries()].reduce(
+                (sum, [itemId, qty]) => sum + qty * (sale.lines.find((line) => line.itemId === itemId)?.unitPriceMinor ?? 0), 0)
+          enforceApprovalGate(get, 'sale_return', returnedMinor, {
+            title: `مرتجع مبيعات عن ${sale.invoiceNumber}`,
+            partyName: sale.customerId != null ? state.customers.find((c) => c.id === sale.customerId)?.nameAr ?? 'عميل نقدي' : 'عميل نقدي',
+            payload: serializeApprovalPayload(args),
+          })
+        }
         if ((args.refund === 'credit' || args.refund === 'store_credit') && sale.customerId === null) {
           throw new Error('فاتورة عميل نقدي — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
         }
@@ -4646,6 +4788,21 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const purchase = state.purchases.find((p) => p.id === args.purchaseId)
         if (!purchase) throw new Error('فاتورة الشراء الأصلية غير موجودة')
+        // بوابة اعتماد المستندات (خطة ③): مرتجع شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
+        if (!args.__approvalBypass) {
+          const returnedMinor = args.lineSpecs?.length
+            ? args.lineSpecs.reduce((sum, spec) => {
+                const line = purchase.lines[spec.lineIndex]
+                return sum + (line ? spec.qty * (line.unitPriceMinor ?? 0) : 0)
+              }, 0)
+            : [...(args.qtyByItem ?? new Map<number, number>()).entries()].reduce(
+                (sum, [itemId, qty]) => sum + qty * (purchase.lines.find((line) => line.itemId === itemId)?.unitPriceMinor ?? 0), 0)
+          enforceApprovalGate(get, 'purchase_return', returnedMinor, {
+            title: `مرتجع شراء عن ${purchase.invoiceNumber ?? purchase.refCode}`,
+            partyName: purchase.supplierId !== 0 ? state.suppliers.find((row) => row.id === purchase.supplierId)?.nameAr ?? 'مورد' : 'شراء نقدي',
+            payload: serializeApprovalPayload(args),
+          })
+        }
         // فاتورة مشروع: بضاعتها حُمّلت تكلفة موقع 5110 لا مخزوناً — مرتجعها يُسوَّى
         // بسند قبض من المورد أو تسوية تكلفة على المشروع، لا بمرتجع مخزني يفسد 1103
         if (purchase.projectId != null) {
@@ -5229,6 +5386,7 @@ export const useDataStore = create<DataState>()(
           const treasury = args.treasury ?? sale.treasury ?? '1101'
           const isCreditSale = sale.payment === 'credit' && sale.customerId != null
           const ret = get().postSaleReturn({
+            __approvalBypass: true, // عملية الاستبدال ذرّية: المرتجع والبيع الجديد معاً لا يشطرهما طابور الاعتماد
             saleId: sale.id,
             ...(args.returnLineSpecs?.length
               ? { lineSpecs: args.returnLineSpecs }
@@ -5247,6 +5405,7 @@ export const useDataStore = create<DataState>()(
           // البيع الجديد يتبع الفاتورة الأصلية أيضاً: آجلة ⇒ على حساب العميل
           // (المرتجع خفض دينه والجديد يضيف له — الحركة الصافية على الذمم = الفرق)
           const newSale = get().postSale({
+            __approvalBypass: true, // جزء الاستبدال المركّب — لا يمرّ ببوابة الاعتماد
             lines: args.newLines,
             customerId: sale.customerId,
             payment: isCreditSale ? 'credit' : 'cash',
@@ -5381,6 +5540,7 @@ export const useDataStore = create<DataState>()(
         }
         // فاتورة واحدة تتولى الوصفات/المخزون/الضريبة/القيد — المحاسبة تبدأ هنا فقط
         const sale = get().postSale({
+          __approvalBypass: true, // إقفال أمر الطلب تدفق مركّب على شاشته — خارج طابور الاعتماد
           lines,
           customerId: args.customerId ?? null,
           payment: args.payment,
@@ -5402,6 +5562,20 @@ export const useDataStore = create<DataState>()(
 
       postVoucher: (args) => {
         const state = get()
+        // بوابة اعتماد المستندات (خطة ③): سندات القبض والصرف الخاضعة للنظام تقف
+        // بطلب اعتماد — التحويل بين الخزائن ليس مستند طرف خارجي فلا يخضع للنطاق.
+        if (!args.__approvalBypass && (args.kind === 'receipt' || args.kind === 'payment')) {
+          const approvalPartyName =
+            args.partyKind === 'customer' && args.partyId != null ? state.customers.find((c) => c.id === args.partyId)?.nameAr
+            : args.partyKind === 'supplier' && args.partyId != null ? state.suppliers.find((row) => row.id === args.partyId)?.nameAr
+            : args.partyKind === 'employee' && args.partyId != null ? state.employees.find((row) => row.id === args.partyId)?.nameAr
+            : null
+          enforceApprovalGate(get, args.kind, args.amountMinor, {
+            title: `${args.kind === 'receipt' ? 'سند قبض' : 'سند صرف'} — ${args.description}`,
+            partyName: approvalPartyName ?? args.description,
+            payload: serializeApprovalPayload(args),
+          })
+        }
         // ماكينة الدفع مسار قبض وارد فقط؛ الصرف الخارجي ليس refund لماكينة بلا أصل.
         if (args.terminalPayment && args.kind !== 'receipt') throw new Error('ماكينة الدفع مخصصة لسندات القبض؛ رد الماكينة يتم من المستند الأصلي')
         const terminal = args.terminalPayment ? state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId) : undefined
@@ -10377,6 +10551,7 @@ export const useDataStore = create<DataState>()(
           const treasury = args.treasury ?? '1101'
           // 1) بيع المشغول الجديد نقداً كاملاً في الخزينة (قيد بيع كامل: 4101/2102/5101)
           const sale = get().postSale({
+            __approvalBypass: true, // المقايضة ذرّية: البيع وشراء الكسر معاً — خارج طابور الاعتماد
             lines: args.lines,
             customerId: args.customerId ?? null,
             payment: 'cash',
