@@ -5,7 +5,7 @@ import { useWindowHost } from '../windows/windowHostContext.ts'
 import { DocSectionHead } from '../components/DocSection.tsx'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
 import { openItemEditorWindow, openItemLedgerWindow, openItemPricesWindow, openPartyEditorWindow } from '../windows/windowStore.ts'
-import { useDataStore, type AdvancedInvoiceDraft } from '../../data/repo.ts'
+import { EMPTY_EXTENDED,useDataStore, type AdvancedInvoiceDraft } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { getActivity } from '../../core/activities.ts'
@@ -33,6 +33,7 @@ import { InvoiceLinesTable } from '../components/InvoiceLinesTable.tsx'
 import { DocumentAttachmentsBox, type PendingAttachment } from '../components/DocumentAttachments.tsx'
 import { partyCode } from '../../core/partyCodes.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
+import { SheetPanel } from '../components/SheetPanel.tsx'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { buildWarehouseReceiptHtml } from '../../core/warehouseReceipt.ts'
 import { formatInvoiceAuditLine } from '../../core/invoiceAudit.ts'
@@ -54,7 +55,7 @@ const SALE_TERMS=['السداد خلال 30 يوماً من تاريخ الفا�
 
 export function AdvancedSalesInvoicePage(){
  const nav=useNavigate(),toast=useToast();const [searchParams]=useSearchParams();const host=useWindowHost();const editId=Number((host?.props.editId as number|undefined)??searchParams.get('edit')??0);const {setup,receipt,einvoice,activatedPayload,trialStartedAt,lastSeenAt,warehouseReceipt}=useAppStore();const cur=(setup.countryCode&&getCountry(setup.countryCode)?.currency)||{code:'EGP',symbol:'ج.م',decimals:2 as const,name:''};const taxPolicy=resolveBusinessTax(setup.taxRegistrationStatus,setup.vatPercent)
- const {items,categories,customers,warehouses,branches,treasuries,custodyFiles,vehicles,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,priceLists,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,editSale,sales,getEffectivePrice,getCustomerBalance,addDocumentFile,partyNotes,addPartyNote,quotations,boqItems}=useDataStore();const [partyNote,setPartyNote]=useState('');const [attachments,setAttachments]=useState<PendingAttachment[]>([]);const [draftsOpen,setDraftsOpen]=useState(false);const [draftId,setDraftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);const [mode,setMode]=useState<InvoiceEditorMode>('simple');const [customerId,setCustomerId]=useState(0);const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [invoiceDate,setInvoiceDate]=useState(()=>new Date().toISOString().slice(0,10))
+ const {items,categories,customers,warehouses,branches,treasuries,custodyFiles,vehicles,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,priceLists,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,editSale,sales,getEffectivePrice,getCustomerBalance,addDocumentFile,partyNotes,addPartyNote,quotations,boqItems,addCustomer}=useDataStore();const [partyNote,setPartyNote]=useState('');const [attachments,setAttachments]=useState<PendingAttachment[]>([]);const [draftsOpen,setDraftsOpen]=useState(false);const [draftId,setDraftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);const [mode,setMode]=useState<InvoiceEditorMode>('simple');const [customerId,setCustomerId]=useState(0);const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [invoiceDate,setInvoiceDate]=useState(()=>new Date().toISOString().slice(0,10))
  const [customerReference,setCustomerReference]=useState(''),[dueDate,setDueDate]=useState(''),[notes,setNotes]=useState('');const [discount,setDiscount]=useState('0'),[discountAmount,setDiscountAmount]=useState('');const [discByAmount,setDiscByAmount]=useState(false);const [notesLogOpen,setNotesLogOpen]=useState(false);const [multiPay,setMultiPay]=useState(false);const [bankPaid,setBankPaid]=useState('');const [paid,setPaid]=useState('');const [fxOn,setFxOn]=useState(false);const [fxCode,setFxCode]=useState('USD');const [fxAmount,setFxAmount]=useState('');const [fxRate,setFxRate]=useState('');const paidTouched=useRef(false);const [terminalPaid,setTerminalPaid]=useState('');const [employeePaid,setEmployeePaid]=useState('');const [collectionEmployeeId,setCollectionEmployeeId]=useState(0);const [treasury,setTreasury]=useState(()=>effectiveDefaultTreasury(appUsers.find(u=>u.id===currentUserId)?.treasuryAccess,'receipt','1101'));const [terminal,setTerminal]=useState<TerminalPaymentDraft>({terminalId:'',providerReference:'',cardLast4:''});const [expenses,setExpenses]=useState<InternalExpense[]>([]);const [customerCharges,setCustomerCharges]=useState<DocumentCharge[]>([]);const [allowNegative,setAllowNegative]=useState(setup.allowNegativeStock);const [chargesOpen,setChargesOpen]=useState(false);const [internalExpensesOpen,setInternalExpensesOpen]=useState(false);const [categoryFilter,setCategoryFilter]=useState(0);const [printOpen,setPrintOpen]=useState(false);const [partyEditorOpen,setPartyEditorOpen]=useState(false);const [editReason,setEditReason]=useState('')
  /** ملاحظات طرف بعينه من السجل — الأحدث أولاً (تظهر في بروفايل العميل وكشف حسابه) */
  const partyNotesOf=(kind:'customer'|'supplier',id:number)=>partyNotesFor(partyNotes,kind,id)
@@ -98,6 +99,28 @@ export function AdvancedSalesInvoicePage(){
  /* قوالب الفواتير (الموجة ①): «حفظ كقالب» يخزّن السلة الحالية باسم يختاره
     المستخدم، و«ابدأ من قالب» ينسخها إلى فاتورة جديدة بتاريخ اليوم. */
  const [projectId,setProjectId]=useState(0)
+ /* الدرج الجانبي (طلب المالك): «عميل جديد» بلا مغادرة الفاتورة — Ctrl+Shift+N */
+ const [newPartySheet,setNewPartySheet]=useState(false)
+ const [newParty,setNewParty]=useState({nameAr:'',phone:'',creditLimit:'',notes:''})
+ useEffect(()=>{
+  const onKey=(event:KeyboardEvent)=>{
+   if(!event.ctrlKey||!event.shiftKey||event.key.toLowerCase()!=='n')return
+   event.preventDefault();setNewPartySheet(true)
+  }
+  window.addEventListener('keydown',onKey)
+  return()=>window.removeEventListener('keydown',onKey)
+ },[])
+ const saveNewParty=()=>{
+  const nameAr=newParty.nameAr.trim()
+  if(!nameAr){toast.show('اسم العميل مطلوب','error');return}
+  try{
+   addCustomer({...EMPTY_EXTENDED,nameAr,phone:newParty.phone.trim(),notes:newParty.notes.trim(),creditLimitMinor:toMinor(newParty.creditLimit||'0',cur.decimals),priceListId:null,active:true})
+   const created=useDataStore.getState().customers.find(c=>c.nameAr===nameAr)
+   if(created)setCustomerId(created.id)
+   setNewParty({nameAr:'',phone:'',creditLimit:'',notes:''});setNewPartySheet(false)
+   toast.show(`أُضيف العميل «${nameAr}» واختير في الفاتورة`)
+  }catch(error){toast.show((error as Error).message,'error')}
+ }
  const [templatesOpen,setTemplatesOpen]=useState(false)
  /* «تعبئة من» (طلب المالك): بنود الفاتورة تُنسخ من عرض سعر أو من بنود مشروع */
  const fillSources=useMemo<FillSource[]>(()=>{
@@ -257,6 +280,15 @@ export function AdvancedSalesInvoicePage(){
   documentNumber={editingInvoice?editingInvoice.invoiceNumber:undefined}
 >
   <section className="invoice-shell invoice-reference-shell overflow-visible rounded-b-2xl border-x border-b border-slate-300 bg-white shadow-lg dark:border-slate-700 dark:bg-card-dark">
+  <SheetPanel open={newPartySheet} onClose={()=>setNewPartySheet(false)} title="عميل جديد" subtitle="يُضاف ويُختار في الفاتورة فوراً — الفاتورة تبقى ظاهرة خلف الدرج"
+   footer={<><Btn variant="ghost" onClick={()=>setNewPartySheet(false)}>إلغاء (Esc)</Btn><span className="flex-1"/><Btn onClick={saveNewParty}>حفظ واختيار</Btn></>}>
+   <div className="space-y-2" data-new-party-sheet>
+    <Field label="اسم العميل *"><input className={inputCls} value={newParty.nameAr} onChange={e=>setNewParty({...newParty,nameAr:e.target.value})} aria-label="اسم العميل الجديد" placeholder="مثال: شركة الأمل للتجارة"/></Field>
+    <Field label="الهاتف"><input className={inputCls} value={newParty.phone} onChange={e=>setNewParty({...newParty,phone:e.target.value})} placeholder="01xxxxxxxxx"/></Field>
+    <Field label={`حد الائتمان (${cur.symbol})`} hint="صفر = بيع نقدي فقط"><input className={inputCls} inputMode="decimal" value={newParty.creditLimit} onChange={e=>setNewParty({...newParty,creditLimit:e.target.value})}/></Field>
+    <Field label="ملاحظات"><input className={inputCls} value={newParty.notes} onChange={e=>setNewParty({...newParty,notes:e.target.value})}/></Field>
+   </div>
+  </SheetPanel>
   <PartyQuickEditModal open={partyEditorOpen} target={selectedCustomer ? { kind: 'customer', party: selectedCustomer } : null} currencyDecimals={cur.decimals} currencySymbol={cur.symbol} onClose={() => setPartyEditorOpen(false)} />
 
   <div className="invoice-body-grid">

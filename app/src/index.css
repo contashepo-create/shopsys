@@ -2500,3 +2500,23 @@ input, textarea, select, option,
   .invoice-doc .invoice-doc-panel-body { gap: .12rem; }
 }
 
+/* ===== الدرج الجانبي (Slide-over Sheet) — بلا تعتيم ولا عزل ===== */
+.app-sheet {
+  position: fixed; inset-block: 0; inset-inline-end: 0; z-index: 1000;
+  display: flex; flex-direction: column; overflow: hidden;
+  border-inline-start: 1px solid rgb(148 163 184 / .45);
+  background: rgb(255 255 255 / .97); backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: -24px 0 60px -24px rgb(15 23 42 / .45);
+  animation: sheetSlide .2s cubic-bezier(.16, 1.02, .3, 1);
+}
+.dark .app-sheet { background: rgb(16 24 41 / .97); border-color: rgb(71 97 143 / .5); }
+@keyframes sheetSlide { from { transform: translateX(-26px); opacity: 0; } to { transform: none; opacity: 1; } }
+.app-sheet-head { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .3rem .5rem; padding: .55rem .7rem; border-bottom: 1px solid rgb(148 163 184 / .3); }
+.app-sheet-head b { display: inline-flex; align-items: center; gap: .35rem; font-size: .85rem; }
+.app-sheet-head small { grid-column: 1 / -1; font-size: .64rem; color: #94a3b8; }
+.app-sheet-head button { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border: 1px solid rgb(148 163 184 / .35); border-radius: .45rem; background: transparent; color: inherit; cursor: pointer; transition: background .15s ease; }
+.app-sheet-head button:hover { background: rgb(244 63 94 / .12); color: #e11d48; }
+.app-sheet-body { flex: 1; min-height: 0; overflow: auto; padding: .7rem; }
+.app-sheet-foot { display: flex; align-items: center; gap: .4rem; padding: .55rem .7rem; border-top: 1px solid rgb(148 163 184 / .3); background: rgb(148 163 184 / .06); }
+@media (prefers-reduced-motion: reduce) { .app-sheet { animation: none; } }
+

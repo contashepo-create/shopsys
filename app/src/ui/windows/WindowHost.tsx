@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { AppWindow as WindowIcon, FileText, PackageSearch, ReceiptText, UserRound, X } from 'lucide-react'
-import { OverlayPortal } from '../components/ui.tsx'
-import { useWindowStore, type AppWindow, type AppWindowKind } from './windowStore.ts'
+import { OverlayPortal, useToast } from '../components/ui.tsx'
+import { useWindowStore, restoreWindowSession, watchWindowSession, type AppWindow, type AppWindowKind } from './windowStore.ts'
 import { WindowHostProvider } from './WindowContext.tsx'
 import { FloatingWindow } from './FloatingWindow.tsx'
 import { ItemEditorWindowView, ItemLedgerWindowView, ItemPickerWindowView, ItemPricesWindowView, PartyEditorWindowView, PartyLedgerWindowView } from './windowViews.tsx'
@@ -67,6 +67,13 @@ export function WindowHost() {
      Ctrl+Alt+W تنقّل · Ctrl+Alt+1..9 قفز لنافذة · Ctrl+Alt+M تصغير ·
      Ctrl+Alt+↑ تكبير/استعادة · Ctrl+Alt+Q إغلاق النشطة. */
   useEffect(() => { warmInvoiceModules() }, [])
+  /* استعادة جلسة النوافذ بعد التحديث (طلب المالك): ما كان مفتوحاً يعود بمقاسه
+     وموضعه، ثم يُحفظ أي تغيير تلقائياً. */
+  useEffect(() => {
+    const restored = restoreWindowSession()
+    if (restored > 0) useToast.getState().show(`استُعيدت ${restored} نافذة من جلستك السابقة`)
+    return watchWindowSession()
+  }, [])
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!event.ctrlKey || !event.altKey || event.metaKey) return

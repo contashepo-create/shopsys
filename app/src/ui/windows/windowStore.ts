@@ -76,6 +76,9 @@ export interface OpenWindowInput {
   dedupeKey?: string | null
   width?: number
   height?: number
+  /** موضع محفوظ (استعادة جلسة النوافذ) — بلا قيمة يُحسب بالتتالي */
+  x?: number
+  y?: number
 }
 
 const MIN_W = 360
@@ -159,7 +162,9 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       if (existing) { get().focusWindow(existing.id); return existing.id }
     }
     const id = `win-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
-    const rect = cascadeRect(state.windows.length, input.width ?? 1180, input.height ?? 760)
+    const rect = input.x != null && input.y != null
+      ? clampRect({ x: input.x, y: input.y, w: input.width ?? 1180, h: input.height ?? 760 })
+      : cascadeRect(state.windows.length, input.width ?? 1180, input.height ?? 760)
     const z = state.topZ + 1
     const win: AppWindow = {
       id,
@@ -359,4 +364,48 @@ export function openPartyLedgerWindow(kind: 'customer' | 'supplier', partyId: nu
     kind: 'party-ledger', title: kind === 'customer' ? 'كشف حساب عميل' : 'كشف حساب مورد', subtitle: 'الحركة والرصيد الجاري',
     props: { partyKind: kind, partyId }, parentId: parentId ?? null, dedupeKey: `party-ledger:${kind}:${partyId}`, width: 900, height: 640,
   })
+}
+
+/* ═══════════════ استعادة جلسة النوافذ بعد التحديث (طلب المالك) ═══════════════
+   عند إعادة تحميل الصفحة كانت كل النوافذ تضيع. الآن تُحفظ النوافذ **القابلة
+   للاستعادة** (التي تُوصف ببيانات لا بدوال) وتُفتح تلقائياً عند الإقلاع بنفس
+   مقاسها وموضعها. المنتقيات المعتمدة على ردود نداء (item-picker) لا تُحفظ. */
+const SESSION_KEY = 'shopsys-window-session-v1'
+const RESTORABLE: AppWindowKind[] = ['sales-invoice', 'purchase-invoice', 'item-editor', 'item-ledger', 'item-prices', 'party-editor']
+type SessionWindow = { kind: AppWindowKind; title: string; subtitle: string; props: Record<string, unknown>; mode: AppWindowMode; rect: WindowRect }
+
+export function saveWindowSession(): void {
+  if (typeof localStorage === 'undefined') return
+  const rows: SessionWindow[] = useWindowStore.getState().windows
+    .filter((win) => RESTORABLE.includes(win.kind))
+    .map((win) => ({ kind: win.kind, title: win.title, subtitle: win.subtitle, props: win.props, mode: win.mode, rect: win.rect }))
+  if (rows.length) localStorage.setItem(SESSION_KEY, JSON.stringify(rows))
+  else localStorage.removeItem(SESSION_KEY)
+}
+
+/** يُستدعى مرة عند الإقلاع — يعيد فتح ما كان مفتوحاً ويرجع عددها */
+export function restoreWindowSession(): number {
+  if (typeof localStorage === 'undefined') return 0
+  let rows: SessionWindow[] = []
+  try { rows = JSON.parse(localStorage.getItem(SESSION_KEY) ?? '[]') as SessionWindow[] } catch { return 0 }
+  if (!Array.isArray(rows) || !rows.length) return 0
+  const store = useWindowStore.getState()
+  if (store.windows.length) return 0
+  let opened = 0
+  for (const row of rows) {
+    if (!RESTORABLE.includes(row.kind)) continue
+    store.openWindow({
+      kind: row.kind, title: row.title, subtitle: row.subtitle, props: row.props ?? {},
+      mode: row.mode === 'minimized' ? 'normal' : row.mode,
+      width: row.rect?.w, height: row.rect?.h, x: row.rect?.x, y: row.rect?.y,
+    })
+    opened += 1
+  }
+  return opened
+}
+
+/** يبدأ حفظ الجلسة تلقائياً مع كل تغيّر (نافذة تُفتح/تُغلق/تُحرَّك) */
+export function watchWindowSession(): () => void {
+  saveWindowSession()
+  return useWindowStore.subscribe(() => saveWindowSession())
 }
