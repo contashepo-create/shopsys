@@ -4,6 +4,9 @@ import { createPortal } from 'react-dom'
 import { X, Eye, EyeOff, FileText, Maximize2, Minus } from 'lucide-react'
 import { create } from 'zustand'
 import { PIN_MAX_LENGTH } from '../../core/auth.ts'
+import { useDataStore } from '../../data/repo.ts'
+import { userPrefsKey } from '../../core/userPreferences.ts'
+import { isFunctionKey, type ShortcutActionId } from '../../core/keyboardShortcuts.ts'
 
 let activeNavigationGuard: ((continueNavigation: () => void) => void) | null = null
 /** تستخدمها روابط التخطيط لمنع الانتقال الداخلي عندما توجد مسودة غير محفوظة. */
@@ -17,6 +20,17 @@ const F9_SAVE_WORDS = /حفظ|ترحيل|اعتماد|تسجيل|إنشاء|تن
 const F9_PAYMENT_PHRASES = /سداد|تحصيل وت|تحصيل وق|صرف الدفعة|صرف الآن|صرف المواد|دفع وق|الفاتورة والدفع|شراء وقيد|بيع وقيد/
 const shortcutActionIds = new WeakMap<() => void, number>()
 let nextShortcutActionId = 1
+
+/* تخصيص الاختصارات (طلب المالك): مفتاح الزر الظاهر والمسجَّل يتبع خريطة
+   المستخدم — F3/F6/F8/F9 في النداءات معرّفات أفعال قياسية لا قيماً ثابتة */
+const SHORTCUT_PROP_ACTIONS: Record<string, ShortcutActionId> = { F3: 'newInvoice', F6: 'print', F8: 'saveDraft', F9: 'post' }
+
+function useResolvedShortcutKey(explicit: string | undefined, autoPost: boolean): string | undefined {
+  const action: ShortcutActionId | undefined = explicit ? SHORTCUT_PROP_ACTIONS[explicit] : autoPost ? 'post' : undefined
+  const override = useDataStore((s) => (action ? s.userPrefs[userPrefsKey(s.currentUserId)]?.keyboardShortcuts?.[action] : undefined))
+  if (!action) return explicit
+  return isFunctionKey(override) ? override : (explicit ?? 'F9')
+}
 
 function textFromChildren(children: ReactNode): string {
   return Children.toArray(children).map((child) => {
@@ -36,7 +50,8 @@ export function Btn({
   title?: string
 }) {
   const actionText = textFromChildren(children)
-  const resolvedShortcut = shortcut ?? (F9_SAVE_WORDS.test(actionText) || F9_PAYMENT_PHRASES.test(actionText) ? 'F9' : undefined)
+  const autoPost = F9_SAVE_WORDS.test(actionText) || F9_PAYMENT_PHRASES.test(actionText)
+  const resolvedShortcut = useResolvedShortcutKey(shortcut, autoPost)
   let shortcutActionId: number | undefined
   if (resolvedShortcut && onClick) {
     shortcutActionId = shortcutActionIds.get(onClick)

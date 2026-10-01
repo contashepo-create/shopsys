@@ -6,6 +6,7 @@
  * فلا يرى مستخدم تفضيلات آخر ولا تتأثر بها.
  */
 import type { InvoiceEditorMode } from './advancedInvoice.ts'
+import type { ShortcutOverrides } from './keyboardShortcuts.ts'
 
 export interface UserPreferences {
   /** نمط محرر فاتورة البيع الذي يُفتح به المحرر تلقائياً (بسيط/قياسي/ربحي/متقدم) */
@@ -17,6 +18,11 @@ export interface UserPreferences {
    * كاشير» العام إن حُدد؛ غيابه = سلوك المفاتيح العامة كما هو.
    */
   preferredPrintTemplate?: 'thermal' | 'a4'
+  /**
+   * اختصارات لوحة المفاتيح المخصصة (طلب المالك): تجاوزات جزئية فعل ⇒ مفتاح
+   * وظيفة (F1..F12) فوق الافتراضي — تُدار من دليل F12 وتُحل بresolveShortcuts.
+   */
+  keyboardShortcuts?: ShortcutOverrides
 }
 
 /** مفتاح خريطة التفضيلات لمستخدم — 'owner' للمالك (بلا حساب دخول) */
