@@ -66,7 +66,13 @@ const css = read('index.css')
   assert.ok(/setMini\(true\); nav\('\/settings\/printing'\)/.test(preview), 'الإعدادات الإضافية لا تصغّر المعاينة وتفتح قسم الطباعة')
   assert.ok(/data-thermal-mini/.test(preview) && /data-thermal-expand/.test(preview), 'لا وضع مصغّر حي أسفل الشاشة')
   assert.ok(/receipt === receiptRef\.current\) return/.test(preview) && /refresh\(\)/.test(preview), 'المعاينة لا تتحدث فورياً مع إعدادات الطباعة')
-  assert.ok(preview.includes('usePrintSwitches'), 'الطباعة من المعاينة لا تتبع مفاتيح الطباعة')
+  assert.ok(/silent: useAppStore\.getState\(\)\.receipt\.silentPrint \?\? false/.test(preview), 'الطباعة من المعاينة لا تقرأ مفتاح الصامتة لحظة الطباعة')
+  /* الوضع المصغّر لا يختطق لوحة المفاتيح (المستخدم يعمل في قسم الطباعة)،
+     وحقول الإدخال لا تُفجّر الطباعة بEnter */
+  assert.ok(/if \(!open \|\| mini\) return/.test(preview), 'المعاينة المصغّرة تختطف لوحة مفاتيح قسم الطباعة')
+  assert.ok(/'INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'/.test(preview), 'Enter داخل حقول المعاينة قد يطبع بالخطأ')
+  /* تغيير عرض الورق لا يعيد تمركز النافذة المسحوبة */
+  assert.ok(/centeredRef/.test(preview), 'تغيير عرض الورق يعيد تمركز النافذة فيضيع مكانها المسحوب')
   for (const page of ['ui/pages/AdvancedPurchaseInvoicePage.tsx', 'ui/pages/PurchaseOrdersPage.tsx', 'ui/pages/QuotationsPage.tsx']) {
     assert.ok(/openPrintPreview\(\{\s*html:\s*buildModelHtml/.test(read(page)), `${page} لا يفتح المعاينة العامة بحمولة قابلة لإعادة البناء`)
   }

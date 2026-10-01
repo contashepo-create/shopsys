@@ -24,9 +24,10 @@ const printSwitchesFile = readFileSync(new URL('../src/ui/components/PrintSwitch
   assert.ok(purchasePage.includes('openPrintPreview'), 'لا معاينة حرة (openPrintPreview) في فاتورة الشراء')
   assert.ok(purchasePage.includes('printModelWithTemplate'), 'لا طباعة صامتة عبر محرك القوالب')
   assert.ok(purchasePage.includes('buildModelHtml'), 'لا بناء HTML للمعاينة')
-  /* الطباعة من المعاينة العامة الآن (ThermalPreview) — تتبع مفتاح الطباعة الصامتة مركزياً */
+  /* الطباعة من المعاينة العامة الآن (ThermalPreview) — المفتاح يُقرأ لحظة
+     الطباعة (getState) لا لحظة فتح المعاينة، فلا إغلاق قديم (stale) */
   const previewComponent = readFileSync(new URL('../src/ui/components/ThermalPreview.tsx', import.meta.url), 'utf8')
-  assert.ok(/silent: switches\.silentPrint/.test(previewComponent), 'المعاينة لا تحترم الطباعة الصامتة عند الطباعة')
+  assert.ok(/silent: useAppStore\.getState\(\)\.receipt\.silentPrint \?\? false/.test(previewComponent), 'المعاينة لا تقرأ مفتاح الطباعة الصامتة لحظة الطباعة')
   assert.ok(purchasePage.includes('cashierPrint?\'thermal\':\'a4\''), 'الطباعة السريعة لا تتبع مفتاح الكاشير (thermal/a4)')
   assert.ok(purchasePage.includes('onQuickPrint'), 'زر الطباعة السريعة مفقود')
   R.ok('فاتورة الشراء: معاينة/صامت + طباعة سريعة بمفتاح الكاشير')

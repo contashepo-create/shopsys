@@ -16,7 +16,6 @@ import { Printer, Settings2, SlidersHorizontal, Maximize2, PanelBottomOpen, X, G
 import { OverlayPortal } from './ui.tsx'
 import { usePrintPreview } from './printPreviewStore.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { usePrintSwitches } from './PrintSwitches.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 import type { PaperWidth } from '../../core/receipt.ts'
 
@@ -29,7 +28,6 @@ export function ThermalPreview() {
   const { open, handle, mini, closePreview, setMini, refresh } = usePrintPreview()
   const receipt = useAppStore((s) => s.receipt)
   const updateReceipt = useAppStore((s) => s.updateReceipt)
-  const switches = usePrintSwitches()
   const [quickOpen, setQuickOpen] = useState(false)
 
   const html = handle?.html ?? ''
@@ -58,30 +56,46 @@ export function ThermalPreview() {
     if (usePrintPreview.getState().open) refresh()
   }, [receipt, refresh])
 
-  /* الظهور في منتصف الشاشة أولاً، ثم يحرّكها المستخدم بحرية */
+  /* الظهور في منتصف الشاشة عند **الفتح أو التكبير من الوضع المصغّر** فقط —
+     تغيير عرض الورق (58↔80mm) من الإعدادات السريعة لا يعيد التمركز،
+     فتبقى النافذة حيث سحبها المستخدم */
+  const centeredRef = useRef(false)
+  useEffect(() => {
+    const active = open && !mini
+    if (active && !centeredRef.current) {
+      const width = paper + 28
+      setPos({ x: Math.max(12, Math.round((window.innerWidth - width) / 2)), y: Math.max(12, Math.round(window.innerHeight * 0.08)) })
+    }
+    centeredRef.current = active
+  }, [open, mini, paper])
+
+  const doPrint = useCallback(() => {
+    const current = usePrintPreview.getState().handle
+    if (!current) return
+    /* مفتاح الطباعة الصامتة يُقرأ لحظة الطباعة لا لحظة فتح المعاينة —
+       لو بدّله المستخدم والمعاينة مفتوحة (أو من قسم الطباعة والمصغّرة معلقة)
+       ننفّذ القيمة الجديدة */
+    printHtml(current.html, { silent: useAppStore.getState().receipt.silentPrint ?? false })
+    closePreview()
+  }, [closePreview])
+
+  /* اختصارات النافذة (Escape=إغلاق · Enter=طباعة) **في النافذة الكاملة فقط**:
+     في الوضع المصغّر لا نلمس لوحة المفاتيح إطلاقاً — المستخدم يعمل في قسم
+     إعدادات الطباعة (Enter يثبّت قيمة، Escape يغلق نافذة هناك) فلا نختطقها.
+     وحتى في النافذة الكاملة نتجاهل المفاتيح الصادرة من حقول الإدخال والأزرار
+     (كتابة التذييل مثلاً) فلا تطبع بالخطأ */
   useEffect(() => {
     if (!open || mini) return
-    const width = paper + 28
-    setPos({ x: Math.max(12, Math.round((window.innerWidth - width) / 2)), y: Math.max(12, Math.round(window.innerHeight * 0.08)) })
-  }, [open, paper, mini])
-
-  useEffect(() => {
-    if (!open) return
     const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      const editable = !!target && (target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(target.tagName))
+      if (editable) return
       if (event.key === 'Escape') { event.stopPropagation(); closePreview() }
       else if (event.key === 'Enter') { event.stopPropagation(); doPrint() }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [closePreview, open, html])
-
-  const doPrint = useCallback(() => {
-    const current = usePrintPreview.getState().handle
-    if (!current) return
-    printHtml(current.html, { silent: switches.silentPrint })
-    closePreview()
-  }, [closePreview, switches.silentPrint])
+  }, [closePreview, open, mini, doPrint])
 
   const startDrag = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if ((event.target as HTMLElement).closest('button')) return
@@ -149,7 +163,7 @@ export function ThermalPreview() {
         role="dialog"
         aria-label={title}
         data-thermal-preview
-        style={{ left: pos?.x ?? 0, top: pos?.y ?? 0, width: paper + 28 }}
+        style={{ left: Math.min(pos?.x ?? 40, Math.max(8, window.innerWidth - paper - 36)), top: pos?.y ?? 40, width: paper + 28 }}
       >
         <header onPointerDown={startDrag} data-thermal-drag>
           <span className="thermal-grip" aria-hidden="true"><GripVertical size={13} /></span>
