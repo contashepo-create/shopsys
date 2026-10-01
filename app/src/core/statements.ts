@@ -360,7 +360,10 @@ export function customerUnitDocs(args: {
     const exNet = ex.totals.dueMinor - recovery
     const cashPaid = ex.payment === 'cash' ? exNet : 0
     const status = cashPaid >= exNet ? 'نقدي/مسدد' : recovery > 0 ? 'مقدم/آجل' : 'آجل'
-    rows.push({ docLabel: `مستخلص ${ex.extractNumber} (${status})`, date: ex.date, operationMinor: ex.totals.dueMinor, debitMinor: exNet, creditMinor: recovery + cashPaid })
+    /* المدين بالمستحق الكامل (لا الصافي): القيد يدين 1104 بالصافي ويطفئ 2109
+       بالاسترداد، فلو حُمّل الصافي هنا وظهر الاسترداد دائناً لَخُصم مرتين
+       (مراجعة نواة المحاسبة §74: الكشف انفصل عن الدفتر بمقدار الاسترداد) */
+    rows.push({ docLabel: `مستخلص ${ex.extractNumber} (${status})`, date: ex.date, operationMinor: ex.totals.dueMinor, debitMinor: ex.totals.dueMinor, creditMinor: recovery + cashPaid })
     for (const r of ex.refunds ?? []) {
       if (r.mode === 'customer_credit') rows.push({ docLabel: `إشعار دائن مستخلص ${ex.extractNumber}`, date: r.date, operationMinor: r.amountMinor, debitMinor: 0, creditMinor: r.amountMinor })
     }

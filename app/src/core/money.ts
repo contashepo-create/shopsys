@@ -30,7 +30,14 @@ export function normalizeDigits(s: string): string {
   const lastDot = translated.lastIndexOf('.')
   const lastComma = translated.lastIndexOf(',')
   if (lastComma < 0) return translated
-  if (lastDot < 0) return translated.replace(/,/g, '.')
+  if (lastDot < 0) {
+    const commas = (translated.match(/,/g) ?? []).length
+    // فاصلة وحيدة بلا نقطة: فاصل عشري أرسلته لوحة مفاتيح عربية (سلوك مُوثق ومُختبَر)
+    if (commas === 1) return translated.replace(',', '.')
+    // فواصل متعددة بلا نقطة: فواصل آلاف إنجليزية (1,234,567) — كانت تُرفض خطأً
+    // «مدخل غير رقمي» لأن كل الفواصل كانت تتحول نقاطاً (مراجعة نواة المحاسبة §74)
+    return translated.replace(/,/g, '')
+  }
   return lastComma > lastDot
     ? translated.replace(/\./g, '').replace(',', '.')
     : translated.replace(/,/g, '')
