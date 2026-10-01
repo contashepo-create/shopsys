@@ -112,6 +112,10 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const payPayrollSlip = useDataStore((state) => state.payPayrollSlip)
   /* الربط بالحضور (طلب المالك ㉘): خصومات وأجر إضافي من بيانات الحضور والإجازات */
   const getAttendancePayrollImpact = useDataStore((state) => state.getAttendancePayrollImpact)
+  const getMonthlyAttendance = useDataStore((state) => state.getMonthlyAttendance)
+  const attendanceRecords = useDataStore((state) => state.attendanceRecords)
+  /* جسر الحضور ⑤: أسماء المحددين بلا أي سجل حضور في شهر المسير — تحذير صريح قبل الترحيل */
+  const [slipNoAttendance, setSlipNoAttendance] = useState<string[] | null>(null)
   const [slipMonth, setSlipMonth] = useState(() => new Date().toISOString().slice(0, 7))
   /* كشف حساب الموظف (طلب المالك: يُعامل كالعميل) */
   const getEmployeeBalance = useDataStore((state) => state.getEmployeeBalance)
@@ -160,6 +164,17 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       : 'لا بيانات حضور لهذا الشهر — سجّلها من «شؤون الموظفين» أولاً')
   }
   const accrueSlips = () => {
+    /* جسر الحضور ⑤ (جولة «اكمل ونفذ»): لا ترحيل أعمى لمسير شهرٍ بلا أي سجلات
+       حضور لمحددينه — تحذير صريح بالأسماء، والقرار النهائي للمالك بموافقة ثانية */
+    const chosen = slipRows.filter((row) => row.on)
+    const withRecords = new Set(attendanceRecords.filter((r) => r.date.startsWith(slipMonth)).map((r) => r.employeeId))
+    const missing = chosen.filter((row) => !withRecords.has(row.employeeId)).map((row) => row.name)
+    if (missing.length > 0 && slipNoAttendance == null) {
+      setSlipNoAttendance(missing)
+      toast.show(`تحذير: ${missing.length} من المحددَدين بلا أي سجل حضور في ${slipMonth} — أكّد الترحيل رغم ذلك`)
+      return
+    }
+    setSlipNoAttendance(null)
     try {
       const rows = slipRows.filter((row) => row.on).map((row) => ({
         employeeId: row.employeeId, grossMinor: row.gross, allowancesMinor: row.allowances,
@@ -1005,6 +1020,26 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
             </Modal>
 
+            {/* جسر الحضور ⑤: تحذير صريح قبل ترحيل مسير شهرٍ بلا سجلات حضور — لا خصم صامت ولا ترحيل أعمى */}
+            <Modal open={slipNoAttendance != null} onClose={() => setSlipNoAttendance(null)} title={`ترحيل مسير ${slipMonth} بلا بيانات حضور؟`}>
+              <div className="space-y-3" data-slip-attendance-warning>
+                <p className="text-[13px] font-bold text-amber-600">
+                  ⚠ {slipNoAttendance?.length ?? 0} من الموظفين المحددين ليس لديهم أي سجل حضور في هذا الشهر:
+                </p>
+                <p className="text-[12.5px] text-slate-600 dark:text-slate-300 rounded-xl bg-amber-500/10 p-2" data-slip-attendance-names>
+                  {slipNoAttendance?.join('، ')}
+                </p>
+                <p className="text-[11.5px] text-slate-500 leading-relaxed">
+                  معنى ذلك أن غيابهم وتأخيرهم لن يُحتسب في هذه القسائم. سجّل الحضور أولاً من «شؤون الموظفين ← الحضور اليومي»
+                  أو استورد ملف البصمة، ثم اضغط «احتساب من الحضور» — أو رحّل كما هو إن كان هذا قصدك.
+                </p>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Btn variant="ghost" onClick={() => setSlipNoAttendance(null)}>رجوع لمراجعة المسير</Btn>
+                  <Btn variant="danger" onClick={() => { accrueSlips() }} data-slip-force>الترحيل رغم ذلك</Btn>
+                </div>
+              </div>
+            </Modal>
+
             <table className="mt-3 w-full text-[12px]" data-slips-table>
               <thead className="text-[11px] font-black text-slate-500">
                 <tr><th className="p-1">القسيمة</th><th className="p-1">الموظف</th><th className="p-1">الشهر</th><th className="p-1">الصافي</th><th className="p-1">الحالة</th><th className="p-1">إجراء</th></tr>
@@ -1104,6 +1139,34 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   </b>
                 </span>
               </div>
+              {/* جسر الحضور ④ (جولة «اكمل ونفذ»): ملخص حضور الشهر الجاري وأثره المالي داخل الكشف الموحد */}
+              {(() => {
+                const monthNow = new Date().toISOString().slice(0, 7)
+                const employee = employees.find((e) => e.id === statementFor)
+                if (!employee || employee.active === false) return null
+                const summary = getMonthlyAttendance(statementFor, monthNow)
+                const impact = getAttendancePayrollImpact(monthNow, [statementFor])[0]
+                const net = impact?.netAdjustmentMinor ?? 0
+                const hasAny = summary.recordedDays > 0 || summary.paidLeaveDays > 0 || summary.unpaidLeaveDays > 0
+                return (
+                  <div className="rounded-xl border border-slate-200 p-2 text-[11.5px] leading-relaxed dark:border-slate-700" data-employee-attendance>
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <b>حضور {monthNow}:</b>
+                      {hasAny ? (
+                        <>
+                          <span>حاضر {summary.presentDays} · غياب {summary.absentDays} · إجازة مدفوعة {summary.paidLeaveDays} · بلا أجر {summary.unpaidLeaveDays} · مأمورية {summary.missionDays}</span>
+                          <span className={net < 0 ? 'text-rose-600 font-bold' : 'text-emerald-600 font-bold'}>
+                            أثر الشهر على الراتب: {net < 0 ? '−' : '+'}{fmt(Math.abs(net))}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-slate-400">لا سجلات حضور هذا الشهر — يُرحَّل الراتب كاملاً ما لم تُسجَّل الغيابات</span>
+                      )}
+                    </div>
+                    {impact && impact.notes.length > 0 && <p className="mt-1 text-slate-500">{impact.notes.join(' · ')} — تُطبَّق عبر زر «احتساب من الحضور» في مسير الرواتب</p>}
+                  </div>
+                )
+              })()}
               <table className="w-full text-[12px]">
                 <thead className="text-[11px] font-black text-slate-500">
                   <tr><th className="p-1">التاريخ</th><th className="p-1">المرجع</th><th className="p-1">البيان</th><th className="p-1 w-24">مدين</th><th className="p-1 w-24">دائن</th><th className="p-1 w-28">الرصيد</th></tr>

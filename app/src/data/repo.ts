@@ -3209,7 +3209,10 @@ export const useDataStore = create<DataState>()(
           employeeId: employee.id,
           month,
           grossMinor: employee.baseSalaryMinor + employee.allowancesMinor,
-          rules: state.hrRules,
+          /* جسر الحضور ① (جولة «اكمل ونفذ»): وردية الموظف الفردية تُحترم في
+             مسار الرواتب كما تحترمها شاشة HR — لا يُحتسب التأخير/الإضافي
+             للوردية الليلية على وردية المنشأة الافتراضية */
+          rules: { ...state.hrRules, shift: state.employeeShifts.find((s) => s.employeeId === employee.id) ?? state.hrRules.shift },
           records: state.attendanceRecords,
           leaves: state.leaveRequests,
           types: state.leaveTypes,

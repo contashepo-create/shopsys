@@ -805,10 +805,11 @@ function HrReportsTab() {
     ot: sum.ot + row.ot,
     overtime: sum.overtime + (row.impact?.overtimeAllowanceMinor ?? 0),
     deductions: sum.deductions + (row.impact ? row.impact.absenceDeductionMinor + row.impact.unpaidLeaveDeductionMinor + row.impact.lateDeductionMinor : 0),
-  }), { present: 0, absent: 0, late: 0, ot: 0, overtime: 0, deductions: 0 }), [rows])
+    net: sum.net + (row.impact?.netAdjustmentMinor ?? 0),
+  }), { present: 0, absent: 0, late: 0, ot: 0, overtime: 0, deductions: 0, net: 0 }), [rows])
 
   const exportCsv = () => {
-    const head = ['الكود', 'الموظف', 'حاضر', 'غياب', 'إجازة مدفوعة', 'إجازة بلا أجر', 'إذن', 'عطلة', 'مأمورية', 'دقائق تأخير', 'ساعات إضافي', `بدل إضافي (${cur.code})`, `خصم غياب (${cur.code})`, `خصم إجازة بلا أجر (${cur.code})`, `خصم تأخير (${cur.code})`]
+    const head = ['الكود', 'الموظف', 'حاضر', 'غياب', 'إجازة مدفوعة', 'إجازة بلا أجر', 'إذن', 'عطلة', 'مأمورية', 'دقائق تأخير', 'ساعات إضافي', `بدل إضافي (${cur.code})`, `خصم غياب (${cur.code})`, `خصم إجازة بلا أجر (${cur.code})`, `خصم تأخير (${cur.code})`, `صافي الأثر (${cur.code})`]
     const body = rows.map(({ employee, impact, late, ot }) => [
       partyCode('EMP', employee.id), employee.nameAr,
       impact?.summary.presentDays ?? 0, impact?.summary.absentDays ?? 0, impact?.summary.paidLeaveDays ?? 0, impact?.summary.unpaidLeaveDays ?? 0,
@@ -818,6 +819,7 @@ function HrReportsTab() {
       (impact?.absenceDeductionMinor ?? 0) / 10 ** cur.decimals,
       (impact?.unpaidLeaveDeductionMinor ?? 0) / 10 ** cur.decimals,
       (impact?.lateDeductionMinor ?? 0) / 10 ** cur.decimals,
+      (impact?.netAdjustmentMinor ?? 0) / 10 ** cur.decimals,
     ].join(','))
     const blob = new Blob([[head.join(','), ...body].join('\n')], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
@@ -833,15 +835,16 @@ function HrReportsTab() {
       <td class="n">${impact?.summary.paidLeaveDays ?? 0}</td><td class="n">${impact?.summary.unpaidLeaveDays ?? 0}</td>
       <td class="n">${impact?.summary.permissionDays ?? 0}</td><td class="n">${late}</td><td class="n">${(ot / 60).toFixed(1)}</td>
       <td class="n">${fmt(impact?.overtimeAllowanceMinor ?? 0)}</td><td class="n">${fmt((impact?.absenceDeductionMinor ?? 0) + (impact?.unpaidLeaveDeductionMinor ?? 0) + (impact?.lateDeductionMinor ?? 0))}</td>
+      <td class="n">${fmt(impact?.netAdjustmentMinor ?? 0)}</td>
     </tr>`).join('')
     printHtml(`<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>كشف الحضور ${month}</title>
       <style>body{font-family:system-ui,'Segoe UI',Tahoma;padding:24px;color:#0f172a}h1{font-size:18px;margin:0 0 4px}p{color:#64748b;font-size:12px;margin:0 0 14px}
       table{width:100%;border-collapse:collapse;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:center}th{background:#f1f5f9}
       td:first-child{text-align:right;font-weight:700}.n{font-variant-numeric:tabular-nums}tfoot td{font-weight:800;background:#f8fafc}</style></head><body>
       <h1>كشف الحضور والانصراف — ${monthLabelAr(month)}</h1><p>${setup.shopName ?? ''} · تاريخ الطباعة ${new Date().toISOString().slice(0, 10)}</p>
-      <table><thead><tr><th>الموظف</th><th>حاضر</th><th>غياب</th><th>إجازة مدفوعة</th><th>إجازة بلا أجر</th><th>إذن</th><th>دقائق تأخير</th><th>ساعات إضافي</th><th>بدل إضافي</th><th>إجمالي الخصومات</th></tr></thead>
+      <table><thead><tr><th>الموظف</th><th>حاضر</th><th>غياب</th><th>إجازة مدفوعة</th><th>إجازة بلا أجر</th><th>إذن</th><th>دقائق تأخير</th><th>ساعات إضافي</th><th>بدل إضافي</th><th>إجمالي الخصومات</th><th>صافي الأثر</th></tr></thead>
       <tbody>${body}</tbody>
-      <tfoot><tr><td>الإجمالي</td><td class="n">${totals.present}</td><td class="n">${totals.absent}</td><td></td><td></td><td></td><td class="n">${totals.late}</td><td class="n">${(totals.ot / 60).toFixed(1)}</td><td class="n">${fmt(totals.overtime)}</td><td class="n">${fmt(totals.deductions)}</td></tr></tfoot></table>
+      <tfoot><tr><td>الإجمالي</td><td class="n">${totals.present}</td><td class="n">${totals.absent}</td><td></td><td></td><td></td><td class="n">${totals.late}</td><td class="n">${(totals.ot / 60).toFixed(1)}</td><td class="n">${fmt(totals.overtime)}</td><td class="n">${fmt(totals.deductions)}</td><td class="n">${fmt(totals.net)}</td></tr></tfoot></table>
       </body></html>`)
   }
 
@@ -869,7 +872,7 @@ function HrReportsTab() {
                   <th className="p-1.5 text-right">الموظف</th><th className="p-1.5">حاضر</th><th className="p-1.5">غياب</th>
                   <th className="p-1.5">إجازة مدفوعة</th><th className="p-1.5">إجازة بلا أجر</th><th className="p-1.5">إذن</th><th className="p-1.5">مأمورية</th>
                   <th className="p-1.5">دقائق تأخير</th><th className="p-1.5">ساعات إضافي</th>
-                  <th className="p-1.5">بدل إضافي</th><th className="p-1.5">خصم غياب</th><th className="p-1.5">خصم بلا أجر</th><th className="p-1.5">خصم تأخير</th>
+                  <th className="p-1.5">بدل إضافي</th><th className="p-1.5">خصم غياب</th><th className="p-1.5">خصم بلا أجر</th><th className="p-1.5">خصم تأخير</th><th className="p-1.5">صافي الأثر</th>
                 </tr>
               </thead>
               <tbody>
@@ -888,6 +891,7 @@ function HrReportsTab() {
                     <td className="p-1.5 text-center font-mono text-rose-600">{fmt(impact?.absenceDeductionMinor ?? 0)}</td>
                     <td className="p-1.5 text-center font-mono text-rose-600">{fmt(impact?.unpaidLeaveDeductionMinor ?? 0)}</td>
                     <td className="p-1.5 text-center font-mono text-rose-600">{fmt(impact?.lateDeductionMinor ?? 0)}</td>
+                    <td className="p-1.5 text-center font-mono font-black {(impact?.netAdjustmentMinor ?? 0) < 0 ? 'text-rose-600' : 'text-emerald-600'}">{fmt(impact?.netAdjustmentMinor ?? 0)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -901,6 +905,7 @@ function HrReportsTab() {
                   <td className="p-1.5 text-center font-mono">{(totals.ot / 60).toFixed(1)}</td>
                   <td className="p-1.5 text-center font-mono">{fmt(totals.overtime)}</td>
                   <td className="p-1.5 text-center font-mono" colSpan={3}>{fmt(totals.deductions)}</td>
+                  <td className="p-1.5 text-center font-mono font-black">{fmt(totals.net)}</td>
                 </tr>
               </tfoot>
             </table>
