@@ -516,7 +516,7 @@ const printDraft=(template:InvoiceTemplate)=>{if(!totals||!lines.length)return t
     <div className="invoice-doc-panel-body">
      <label className="invoice-doc-checkline" title="أكثر من طريقة دفع في فاتورة واحدة"><input type="checkbox" checked={multiPay} onChange={e=>{const on=e.target.checked;setMultiPay(on);paidTouched.current=true;if(!on){setBankPaid('')}}}/> تحصيل متعدد (أكثر من طريقة في فاتورة واحدة)</label>
      {!multiPay&&<>
-      <PaymentMethodPicker tiles value={{treasury,terminalPayment:terminal}} onChange={value=>{setTreasury(value.treasury);setTerminal(value.terminalPayment);if(value.terminalPayment.terminalId){setPaid('')}else{setTerminalPaid('')}}} operation="receipt"/>
+      <PaymentMethodPicker value={{treasury,terminalPayment:terminal}} onChange={value=>{setTreasury(value.treasury);setTerminal(value.terminalPayment);if(value.terminalPayment.terminalId){setPaid('')}else{setTerminalPaid('')}}} operation="receipt"/>
       <Field label={terminal.terminalId ? "المبلغ المحصل على الماكينة" : (fxOn ? `المبلغ المحصل بعملة الدفتر (محسوب من ${fxCode})` : "المبلغ المحصل")}><div className="invoice-doc-amountfield"><input data-invoice-paid="true" className={inputCls} readOnly={fxOn&&!terminal.terminalId} value={terminal.terminalId ? terminalPaid : (fxOn ? formatMinor(fxBookMinor,cur,false) : paid)} onChange={e=>{paidTouched.current=true;if(terminal.terminalId){setTerminalPaid(e.target.value)}else{setPaid(e.target.value)}}} inputMode="decimal" placeholder="0.00"/><span className="invoice-doc-amountcur">{cur.code}</span></div></Field>
      </>}
      {multiPay&&<div className="invoice-doc-paylist" data-invoice-paylist>

@@ -165,7 +165,7 @@ const buildPrintModel=()=>{const live=useAppStore.getState().receipt;return buil
    <div className="invoice-doc-panel">
     <div className="invoice-doc-panel-head"><span className="invoice-doc-panel-icon"><Wallet size={11}/></span><b>الدفع الآن</b><small>نقدية / بنك</small></div>
     <div className="invoice-doc-panel-body">
-     <PaymentMethodPicker tiles value={{treasury,terminalPayment:{terminalId:'',providerReference:'',cardLast4:''}}} onChange={value=>setTreasury(value.treasury)} operation="payment" allowTerminal={false}/>
+     <PaymentMethodPicker value={{treasury,terminalPayment:{terminalId:'',providerReference:'',cardLast4:''}}} onChange={value=>setTreasury(value.treasury)} operation="payment" allowTerminal={false}/>
      <Field label={fxOn?`المبلغ المدفوع بعملة الدفتر (محسوب من ${fxCode})`:"المبلغ المدفوع الآن"}><div className="invoice-doc-amountfield"><input data-invoice-paid="true" className={inputCls} readOnly={fxOn} value={fxOn?formatMinor(fxBookMinor,cur,false):paid} onChange={e=>{paidTouched.current=true;setPaid(e.target.value)}} inputMode="decimal" placeholder="0.00"/><span className="invoice-doc-amountcur">{cur.code}</span></div></Field>
      <div className="invoice-doc-fx" data-invoice-fx="true">
       <label className="invoice-doc-fx-toggle"><input type="checkbox" checked={fxOn} onChange={e=>{const on=e.target.checked;setFxOn(on);paidTouched.current=true;if(on){setPaid('')}else{setFxAmount('');setFxRate('')}}}/><span>سداد بعملة أجنبية</span><small>القيد يبقى بعملة الدفتر {cur.code}</small></label>
