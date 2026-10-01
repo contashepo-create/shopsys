@@ -1759,13 +1759,13 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-addons-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .18rem; }
 .invoice-doc-addons-row.is-single { grid-template-columns: minmax(0, 1fr); }
 .invoice-doc-addons-row-label { color: var(--doc-faint); font-size: .52rem; font-weight: 800; padding-top: .05rem; }
-.invoice-doc-addons > button {
+.invoice-doc-addons .invoice-doc-addons-row > button {
   display: inline-flex; align-items: center; justify-content: center; gap: .2rem;
   border: 1px solid var(--doc-line); border-radius: .35rem; background: var(--doc-paper);
   padding: .1rem .3rem; color: var(--doc-muted); font-size: .63rem; font-weight: 700; white-space: nowrap;
 }
-.invoice-doc-addons > button:hover { border-color: var(--doc-accent); color: var(--doc-accent); }
-.invoice-doc-addons > button.is-amber { border-color: var(--doc-warn-line); background: var(--doc-warn-tint); color: var(--doc-warn); }
+.invoice-doc-addons .invoice-doc-addons-row > button:hover { border-color: var(--doc-accent); color: var(--doc-accent); }
+.invoice-doc-addons .invoice-doc-addons-row > button.is-amber { border-color: var(--doc-warn-line); background: var(--doc-warn-tint); color: var(--doc-warn); }
 .invoice-doc-count { border-radius: 999px; background: var(--doc-tint-strong); padding: 0 .22rem; color: var(--doc-accent-deep); font-size: .55rem; font-weight: 800; }
 
 /* سطر الخصم الواحد (طلب المالك: «الخصم كله في سطر واحد بأزرار صغيرة مرئية بالكامل») */

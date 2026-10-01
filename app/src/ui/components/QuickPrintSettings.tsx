@@ -77,7 +77,7 @@ export function QuickPrintSettings({ wide = false }: { wide?: boolean }) {
         <select
           className="thermal-preview-quick-input"
           data-quick-fontscale
-          value={receipt.fontScale ?? 'normal'}
+          value={receipt.fontScale ?? 'large'}
           onChange={(event) => updateReceipt({ fontScale: event.target.value as 'normal' | 'large' })}
         >
           <option value="normal">عادي</option>

@@ -78,8 +78,15 @@ console.log('⑤ لوحة الشروط: مربع أصغر + صفوف أزرار 
 {
   assert.ok(css.includes('.invoice-doc-termsbox { min-height: 3.1rem'), 'مربع الشروط لم يُصغَّر')
   assert.ok(css.includes('.invoice-doc-addons-row { display: grid;'), 'صفوف الأزرار غير معرفة')
+  assert.ok(css.includes('.invoice-doc-addons .invoice-doc-addons-row > button {'), 'أزرار الصفوف فقدت تنسيقها (محدد الابن المباشر القديم لا يطابق الأحفاد)')
   assert.ok(sales.includes('data-invoice-addons-expenses') && sales.includes('data-invoice-addons-commissions'), 'الأزرار ليست في صفين معنوين (مصروفات/عمولات)')
-  ok('مربع الشروط 3.1rem + صف مصروفات وصف عمولات/قوالب فوق بعضهما')
+  /* مراجعة المالك: إصلاحات ثلاثة تعودت كبوابات */
+  for (const page of [sales, purchase]) {
+    assert.ok(page.includes("mode!=='advanced'&&fxOn){setFxOn(false)"), 'مغادرة النمط المتقدم لا تطفئ العملة الأجنبية (fxOn يعلق فيعلّق حقل المبلغ)')
+  }
+  const quick = read('ui/components/QuickPrintSettings.tsx')
+  assert.ok(quick.includes("receipt.fontScale ?? 'large'"), 'قائمة حجم الخط تعرض normal للمستخدم القديم بينما المحرك يطبع large (تناقض عرض)')
+  ok('مربع الشروط 3.1rem + صفوف الأزرار منسقة + fxOn يُطفأ بمغادرة المتقدم + افتراض الخط متسق')
 }
 
 console.log('⑥ فحص حي: مخزن النوافذ + تحويلات الأسعار')
