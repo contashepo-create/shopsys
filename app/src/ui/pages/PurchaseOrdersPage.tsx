@@ -40,7 +40,6 @@ export function PurchaseOrdersPage() {
   const printSwitches = usePrintSwitches()
   const { purchaseOrders, addPurchaseOrder, setPurchaseOrderStatus, deletePurchaseOrder, suppliers, items, warehouses } = useDataStore()
   const setup = useAppStore((s) => s.setup)
-  const receipt = useAppStore((s) => s.receipt)
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur, false)
 
@@ -92,9 +91,9 @@ export function PurchaseOrdersPage() {
   }
 
   /** معاينة/طباعة أمر الشراء بنفس محرك قوالب الفواتير — شكل مطابق للفاتورة */
-  const printDraft = (template: InvoiceTemplate) => {
-    if (!lines.length) return toast.show('أضف أصنافاً قبل المعاينة', 'error')
-    const model = buildSimpleDocModel({
+  /* المعاينة الحية: الموديل يُبنى بإعدادات اللحظة وrebuild يعيد بناءه كاملاً —
+       فيتحدث التذييل (ملاحظات + تذييل الإعدادات) وكل حقول الإعدادات فوراً */
+    const buildPrintModel = () => buildSimpleDocModel({
       docTitle: 'أمر شراء (مسودة)',
       invoiceNumber: 'مسودة',
       refCode: 'DRAFT',
@@ -108,11 +107,15 @@ export function PurchaseOrdersPage() {
       totalMinor: totals.totalMinor,
       paidMinor: 0,
       operatorName: setup.ownerName ?? 'المالك',
-      settings: receipt,
+      settings: useAppStore.getState().receipt,
       extraFooter: notes.trim() || undefined,
     })
-    if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, receipt, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة أمر الشراء قبل الطباعة' : 'معاينة الإيصال', rebuild: () => buildModelHtml(model, cur, useAppStore.getState().receipt, template) }); return }
-    printModelWithTemplate(model, cur, receipt, template)
+    const printDraft = (template: InvoiceTemplate) => {
+      if (!lines.length) return toast.show('أضف أصنافاً قبل المعاينة', 'error')
+      const model = buildPrintModel()
+      const live = useAppStore.getState().receipt
+      if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة أمر الشراء قبل الطباعة' : 'معاينة الإيصال', rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(buildPrintModel(), cur, r, template) } }); return }
+      printModelWithTemplate(model, cur, live, template)
   }
 
   /* ════ محرر المستند (نفس هيئة فاتورة الشراء — طلب المالك ㉘) ════ */

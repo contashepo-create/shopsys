@@ -86,9 +86,9 @@ export function QuotationsPage() {
   }
 
   /* معاينة وطباعة العرض بنفس محرك قوالب الفواتير (طلب المالك: شكل مطابق للفاتورة) */
-  const printDraft = (template: InvoiceTemplate) => {
-    if (!parsedLines.length) return toast.show('أضف بنوداً قبل المعاينة', 'error')
-    const model = buildSimpleDocModel({
+  /* المعاينة الحية: الموديل يُبنى بإعدادات اللحظة وrebuild يعيد بناءه كاملاً —
+       فيتحدث التذييل (ملاحظات + تذييل الإعدادات) وكل حقول الإعدادات فوراً */
+    const buildPrintModel = () => buildSimpleDocModel({
       docTitle: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر',
       invoiceNumber: 'مسودة',
       refCode: 'DRAFT',
@@ -102,8 +102,12 @@ export function QuotationsPage() {
       settings: useAppStore.getState().receipt,
       extraFooter: notes.trim() || undefined,
     })
-    if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, useAppStore.getState().receipt, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال', rebuild: () => buildModelHtml(model, cur, useAppStore.getState().receipt, template) }); return }
-    printModelWithTemplate(model, cur, useAppStore.getState().receipt, template)
+    const printDraft = (template: InvoiceTemplate) => {
+      if (!parsedLines.length) return toast.show('أضف بنوداً قبل المعاينة', 'error')
+      const model = buildPrintModel()
+      const live = useAppStore.getState().receipt
+      if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال', rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(buildPrintModel(), cur, r, template) } }); return }
+      printModelWithTemplate(model, cur, live, template)
   }
 
   const transition = (q: Quotation, status: 'submitted' | 'won' | 'lost') => {
