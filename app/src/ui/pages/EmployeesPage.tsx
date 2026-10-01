@@ -5,7 +5,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * 2) مسيرات الرواتب: مسير شهري (أساسي + بدلات + إضافي − خصومات − سلف)
  *    يترحّل بقيد متوازن بنيوياً: 5102 → خزينة (نقدي) أو 2104 (استحقاق)
  */
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download, UserSearch, CalendarCheck2, UserCog, Banknote, HandCoins, Percent } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
@@ -21,6 +21,7 @@ import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../
 import { matchesSearch } from '../../core/search.ts'
 import { STAFF_COMMISSION_SOURCE_LABELS, STAFF_COMMISSION_STATUS_LABELS, type StaffCommissionSource } from '../../core/staffCommissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { parseEmployeesCsv, employeesImportTemplateCsv, type EmployeeImportResult } from '../../core/employeesImport.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -116,6 +117,37 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const attendanceRecords = useDataStore((state) => state.attendanceRecords)
   /* جسر الحضور ⑤: أسماء المحددين بلا أي سجل حضور في شهر المسير — تحذير صريح قبل الترحيل */
   const [slipNoAttendance, setSlipNoAttendance] = useState<string[] | null>(null)
+  /* استيراد الموظفين من Excel/CSV (البند ③ من «اكمل ونفذ»): قالب أعمدة + معاينة قبل الاعتماد */
+  const importEmployeesAction = useDataStore((state) => state.importEmployees)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importRaw, setImportRaw] = useState('')
+  const [importPreview, setImportPreview] = useState<EmployeeImportResult | null>(null)
+  const [importOutcome, setImportOutcome] = useState<{ added: number; addedNames: string[]; skipped: string[] } | null>(null)
+  const importFileRef = useRef<HTMLInputElement | null>(null)
+  const doImportParse = (text: string) => {
+    setImportRaw(text)
+    setImportOutcome(null)
+    setImportPreview(parseEmployeesCsv(text))
+  }
+  const downloadEmployeesTemplate = () => {
+    /* BOM حتى يفتح Excel العربية سليمة */
+    const blob = new Blob(['\uFEFF' + employeesImportTemplateCsv()], { type: 'text/csv;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'قالب-استيراد-الموظفين.csv'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+  const commitEmployeesImport = () => {
+    if (!importPreview?.rows.length) return
+    const outcome = importEmployeesAction(importPreview.rows)
+    setImportOutcome(outcome)
+    setImportPreview(null)
+    setImportRaw('')
+    toast.show(outcome.added
+      ? `أُضيف ${outcome.added} موظفاً${outcome.skipped.length ? ` — و${outcome.skipped.length} صفوف مرفوضة بأسبابها` : ''}`
+      : 'لم يُضف أي موظف — راجع الصفوف المرفوضة', outcome.added ? undefined : 'error')
+  }
   const [slipMonth, setSlipMonth] = useState(() => new Date().toISOString().slice(0, 7))
   /* كشف حساب الموظف (طلب المالك: يُعامل كالعميل) */
   const getEmployeeBalance = useDataStore((state) => state.getEmployeeBalance)
@@ -880,6 +912,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Search size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ابحث بالاسم أو الهاتف أو الوظيفة أو الكود (EMP-0001)…" className={`${inputCls} pr-10`} />
             </div>
+            <Btn variant="soft" onClick={() => { setImportOpen(true); setImportPreview(null); setImportOutcome(null); setImportRaw('') }} data-employees-import-open>
+              <span className="flex items-center gap-1.5"><FileSpreadsheet size={15} /> استيراد Excel/CSV</span>
+            </Btn>
             <Btn onClick={openNew}><span className="flex items-center gap-1.5"><Plus size={15} /> موظف جديد</span></Btn>
           </div>
 
@@ -1120,6 +1155,89 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
           )}
         </>
       )}
+
+            {/* استيراد الموظفين من Excel/CSV (البند ③): قالب أعمدة + معاينة قبل الاعتماد */}
+            <Modal open={importOpen} onClose={() => setImportOpen(false)} title="استيراد الموظفين من Excel/CSV" subtitle="نزّل القالب واملأه من Excel واحفظه CSV (أو انسخ الجدول والصقه هنا) ثم عاين قبل الاعتماد">
+              <div className="space-y-3" data-employees-import>
+                <div className="flex flex-wrap gap-2">
+                  <Btn variant="soft" onClick={downloadEmployeesTemplate} data-employees-template>
+                    <span className="flex items-center gap-1.5"><Download size={15} /> تنزيل قالب الأعمدة</span>
+                  </Btn>
+                  <input ref={importFileRef} type="file" accept=".csv,.txt" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void f.text().then(doImportParse); e.target.value = '' }} data-employees-file />
+                  <Btn variant="soft" onClick={() => importFileRef.current?.click()}>
+                    <span className="flex items-center gap-1.5"><FileSpreadsheet size={15} /> اختيار ملف CSV</span>
+                  </Btn>
+                  <Btn onClick={() => doImportParse(importRaw)} disabled={!importRaw.trim()}>تحليل ومعاينة</Btn>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  الأعمدة: <b>اسم الموظف · المسمى الوظيفي · الهاتف · تاريخ التعيين · الراتب الأساسي · البدلات · ملاحظات</b>.
+                  التاريخ يقبل 2026-01-15 أو 15/01/2026، والمبالغ تقبل الأرقام العربية (٥٠٠٠) والفواصل (5,000.50).
+                  بلا رأس أعمدة يُفهم الترتيب نفسه — والاسم المكرر يُرفض بحارس الإضافة.
+                </p>
+                <textarea
+                  className={inputCls + ' h-24 font-mono text-[11px]'}
+                  dir="ltr"
+                  value={importRaw}
+                  onChange={(e) => setImportRaw(e.target.value)}
+                  placeholder={'أحمد سعيد,كاشير,01000000001,2026-01-15,5000,500,\nمنى عبد الله,مشرفة,01000000002,15/01/2026,7500.50,0,'}
+                  aria-label="لصق بيانات الموظفين"
+                  data-employees-paste
+                />
+                {importPreview && (
+                  <div className="space-y-2" data-employees-preview>
+                    {importPreview.errors.length > 0 && (
+                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
+                        {importPreview.errors.slice(0, 5).map((error, i) => <div key={i}>⚠ {error}</div>)}
+                        {importPreview.errors.length > 5 && <div>…و{importPreview.errors.length - 5} سطر آخر مرفوض</div>}
+                      </div>
+                    )}
+                    {importPreview.rows.length > 0 ? (
+                      <>
+                        <div className="max-h-56 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                          <table className="w-full text-[11.5px]">
+                            <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800/60">
+                              <tr><th className="p-1.5 text-right">الاسم</th><th className="p-1.5">الوظيفة</th><th className="p-1.5">الهاتف</th><th className="p-1.5">التعيين</th><th className="p-1.5">الأساسي</th><th className="p-1.5">البدلات</th></tr>
+                            </thead>
+                            <tbody>
+                              {importPreview.rows.map((row, i) => (
+                                <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
+                                  <td className="p-1.5 font-bold">{row.nameAr}</td>
+                                  <td className="p-1.5 text-center">{row.jobTitle || '—'}</td>
+                                  <td className="p-1.5 text-center font-mono" dir="ltr">{row.phone || '—'}</td>
+                                  <td className="p-1.5 text-center font-mono">{row.hireDate}</td>
+                                  <td className="p-1.5 text-center font-mono">{fmt(row.baseSalaryMinor)}</td>
+                                  <td className="p-1.5 text-center font-mono">{fmt(row.allowancesMinor)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] text-slate-500">{importPreview.rows.length} موظفاً صالحاً للاستيراد — يُدخل كلٌّ عبر حراس الإضافة الرسمية</span>
+                          <Btn onClick={commitEmployeesImport} data-employees-commit>
+                            <span className="flex items-center gap-1.5"><FileSpreadsheet size={15} /> اعتماد الاستيراد</span>
+                          </Btn>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-[12px] text-slate-500">لا صفوف صالحة — صحّح الأخطاء أعلاه ثم أعد التحليل.</p>
+                    )}
+                  </div>
+                )}
+                {importOutcome && (
+                  <div className="space-y-2" data-employees-outcome>
+                    <p className="text-[12.5px] font-bold text-emerald-600">
+                      ✓ أُضيف {importOutcome.added} موظفاً{importOutcome.addedNames.length ? `: ${importOutcome.addedNames.slice(0, 5).join('، ')}${importOutcome.addedNames.length > 5 ? '…' : ''}` : ''}
+                    </p>
+                    {importOutcome.skipped.length > 0 && (
+                      <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-2 text-[11px] text-rose-600">
+                        {importOutcome.skipped.map((reason, i) => <div key={i}>✗ {reason}</div>)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </Modal>
 
       {/* نموذج موظف */}
       {/* كشف حساب الموظف — نفس منطق كشف العميل */}

@@ -41,14 +41,14 @@ function textFromChildren(children: ReactNode): string {
 }
 
 export function Btn({
-  children, onClick, variant = 'primary', disabled, type = 'button', className = '', shortcut, title,
+  children, onClick, variant = 'primary', disabled, type = 'button', className = '', shortcut, title, ...rest
 }: {
   children: ReactNode; onClick?: () => void; disabled?: boolean
   variant?: 'primary' | 'ghost' | 'danger' | 'soft'; type?: 'button' | 'submit'; className?: string
   shortcut?: string
   /** تلميح يظهر عند المرور — يشرح الزر المختصر دون إطالة نصه */
   title?: string
-}) {
+} & { [key: `data-${string}`]: string | number | boolean | undefined }) {
   const actionText = textFromChildren(children)
   const autoPost = F9_SAVE_WORDS.test(actionText) || F9_PAYMENT_PHRASES.test(actionText)
   const resolvedShortcut = useResolvedShortcutKey(shortcut, autoPost)
@@ -72,6 +72,7 @@ export function Btn({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      {...rest}
       className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 hover:scale-[1.03] active:scale-95 disabled:opacity-40 disabled:pointer-events-none ${styles[variant]} ${className}`}
       data-shortcut={resolvedShortcut}
       data-shortcut-action={shortcutActionId}

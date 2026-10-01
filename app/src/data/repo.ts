@@ -116,6 +116,7 @@ import { needsApproval, canApprove, type DocApprovalRequest, type ApprovalDocKin
 import {
   type PayrollSlip, slipNetMinor, validateSlipDraft, buildSlipAccrualLines, buildSlipPaymentLines,
 } from '../core/payrollSlips.ts'
+import { type EmployeeImportRow } from '../core/employeesImport.ts'
 import {
   DEFAULT_HR_RULES, DEFAULT_LEAVE_TYPES, normalizeHrRules, monthlySummary, attendancePayrollImpact,
   leaveBalances, leaveDaysBetween, validateLeaveRequest, leaveDates,
@@ -2021,6 +2022,8 @@ interface DataState {
   updateSupplier: (id: number, patch: Partial<Supplier>) => void
   removeSupplier: (id: number) => void
   addEmployee: (e: Omit<Employee, 'id'>) => void
+  /** استيراد دفعة موظفين من Excel/CSV (البند ③) — عبر addEmployee بحراسه، ويعيد ملخصاً بالمضاف والمرفوض وأسبابه */
+  importEmployees: (rows: EmployeeImportRow[]) => { added: number; addedNames: string[]; skipped: string[] }
   updateEmployee: (id: number, patch: Partial<Employee>) => void
   removeEmployee: (id: number) => void
   /**
@@ -7241,6 +7244,28 @@ export const useDataStore = create<DataState>()(
           allowancesMinor: money((e as { allowancesMinor?: number }).allowancesMinor),
           deductionsMinor: money((e as { deductionsMinor?: number }).deductionsMinor),
         }] }))
+      },
+      importEmployees: (rows) => {
+        /* استيراد الموظفين (البند ③ من «اكمل ونفذ»): يضيف الصفوف الصالحة عبر
+           addEmployee الرسمي فتمر بحراسه (الاسم المكرر/الفارغ)، والمرفوض يُعاد
+           بسببته — لا صف يُدخل جزئياً ولا يُمس ما قبله */
+        const addedNames: string[] = []
+        const skipped: string[] = []
+        for (const row of rows) {
+          try {
+            get().addEmployee({
+              ...EMPTY_EXTENDED,
+              nameAr: row.nameAr, phone: row.phone, jobTitle: row.jobTitle, roleId: null,
+              hireDate: row.hireDate || new Date().toISOString().slice(0, 10),
+              baseSalaryMinor: row.baseSalaryMinor, allowancesMinor: row.allowancesMinor,
+              active: true, notes: row.notes,
+            })
+            addedNames.push(row.nameAr)
+          } catch (e) {
+            skipped.push(`${row.nameAr}: ${(e as Error).message}`)
+          }
+        }
+        return { added: addedNames.length, addedNames, skipped }
       },
       updateEmployee: (id, patch) => {
         const state = get()
