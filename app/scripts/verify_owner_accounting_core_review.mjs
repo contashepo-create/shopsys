@@ -188,4 +188,127 @@ console.log('⑤ تعزيزات §75: فاصلة واعية بالخانات + �
   console.log('  ✓ فاصلة/خانات + حروف JS + تقويم + ث9-ممتد بتسامح ISO + يتامى الشجرة حتى الثبات')
 }
 
-console.log('✅ جولة المالك — مراجعة نواة المحاسبة والقيود: 5 فحوص ناجحة')
+/* ─── ⑥ §76: برهان بالممتلكات — ثوابت النواة بآلاف الحالات لا بحالات مختارة ─── */
+console.log('⑥ برهان بالممتلكات: شجرة/ذهاب-إياب/ضريبة/توازن/حارس/توزيع/إقفال/أعمار')
+{
+  let seed = 20261002
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
+  const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1))
+
+  const { toMinor, formatMinor, splitInclusiveTax, mulQty } = await import('../src/core/money.ts')
+  const { STANDARD_COA, assertBalanced, allocateJournalLine } = await import('../src/core/ledger.ts')
+  const { validateEntry, assertJournalIntegrity } = await import('../src/core/ledgerGuard.ts')
+  const { buildYearClosingLines, buildFiscalYearReport } = await import('../src/core/fiscal.ts')
+  const { agingFromStatement, employeeStatement } = await import('../src/core/statements.ts')
+
+  /* شجرة الحسابات: أبوة/طبيعة/مفاتيح فريدة/بادئات */
+  const codes = new Set(STANDARD_COA.map((a) => a.code))
+  const sysKeys = new Set()
+  for (const a of STANDARD_COA) {
+    assert.ok(a.parentCode === null || codes.has(a.parentCode), `أب مفقود ${a.code}`)
+    if (a.parentCode) assert.equal(a.rootType, STANDARD_COA.find((x) => x.code === a.parentCode).rootType, `طبيعة ${a.code}`)
+    if (a.systemKey) { assert.ok(!sysKeys.has(a.systemKey), `مفتاح مكرر ${a.systemKey}`); sysKeys.add(a.systemKey); assert.ok(a.isPostable) }
+    const rootDigit = { assets: '1', liabilities: '2', equity: '3', revenue: '4', expenses: '5' }[a.rootType]
+    if (a.code.length >= 2) assert.equal(a.code[0], rootDigit, `بادئة ${a.code}`)
+  }
+  assert.equal(sysKeys.size, 69, "عدد مفاتيح النظام — 69 حساباً نظامياً")
+
+  /* ذهاب/إياب بكل الخانات وحدودها */
+  const cfgs = { 0: { code: 'IQD', symbol: 'د.ع', decimals: 0, name: 'د' }, 2: { code: 'EGP', symbol: 'ج.م', decimals: 2, name: 'ج' }, 3: { code: 'KWD', symbol: 'د.ك', decimals: 3, name: 'د' } }
+  for (const d of [0, 2, 3]) {
+    for (const v of [0, 1, 99, 12345, 999999999, Number.MAX_SAFE_INTEGER]) {
+      for (let signed of [v, -v]) {
+        if (signed === 0) signed = 0
+        assert.equal(toMinor(formatMinor(signed, cfgs[d], false), d), signed, `ذهاب/إياب ${signed}`)
+      }
+    }
+    for (let i = 0; i < 150; i++) {
+      const v = ri(0, 99999999) * 10 ** d + ri(0, 10 ** d - 1)
+      assert.equal(toMinor(formatMinor(v, cfgs[d], false), d), v)
+      assert.equal(toMinor(formatMinor(-v, cfgs[d], false), d), -v)
+    }
+  }
+  /* الضريبة الشاملة لا تفقد قرشاً */
+  for (let p = 0; p <= 100; p += 5) for (let i = 0; i < 60; i++) {
+    const gross = ri(1, 500000000)
+    const [base, tax] = splitInclusiveTax(gross, p)
+    assert.equal(base + tax, gross, `ضريبة ${gross}@${p}`)
+  }
+  assert.equal(mulQty(1001, 0.5), 501, 'نصف صاعد: 500.5 → 501')
+
+  /* التوازن بالممتلكات: صحيح يقبل، وكل عبث يُرفض */
+  for (let i = 0; i < 250; i++) {
+    const n = ri(2, 6)
+    const lines = []
+    let credit = 0
+    for (let k = 0; k < n - 1; k++) { const t = k === 0 ? ri(1, 10 ** 7) : ri(0, 10 ** 7); lines.push({ accountCode: '1101', debit: t, credit: 0 }); credit += t }
+    lines.push({ accountCode: '4101', debit: 0, credit })
+    assertBalanced(lines)
+    const bad = lines.map((l) => ({ ...l }))
+    bad[0].debit += 1
+    assert.throws(() => assertBalanced(bad))
+  }
+  /* الحارس: كل طفرة تُكتشف */
+  const coa = [{ code: '1101', nameAr: 'خزينة', rootType: 'assets', parentCode: '11', isPostable: true }, { code: '4101', nameAr: 'مبيعات', rootType: 'revenue', parentCode: '4', isPostable: true }]
+  const mk = (over = {}) => ({ id: 1, entryNumber: 1, date: '2026-06-15', description: 'قيد', sourceType: 'manual', sourceId: null, lines: [{ accountCode: '1101', debit: 100, credit: 0 }, { accountCode: '4101', debit: 0, credit: 100 }], createdBy: 'x', createdAt: '', reversedByEntryId: null, reversesEntryId: null, ...over })
+  for (let i = 0; i < 250; i++) {
+    assert.equal(validateEntry(mk(), { coa }).length, 0)
+    const pick = ri(0, 5)
+    const bad = mk()
+    if (pick === 0) bad.lines = [{ accountCode: '1101', debit: 100, credit: 0 }, { accountCode: '4101', debit: 0, credit: 99 }]
+    else if (pick === 1) bad.lines[0].accountCode = '9999'
+    else if (pick === 2) bad.date = '2026-02-30'
+    else if (pick === 3) bad.lines[0].debit = 100.5
+    else if (pick === 4) bad.sourceType = ''
+    else bad.lines[0].debit = -100
+    assert.notEqual(validateEntry(bad, { coa }).length, 0, `طفرة ${pick}`)
+  }
+  /* التوزيع: المجموع محفوظ */
+  for (let i = 0; i < 200; i++) {
+    const amount = ri(1, 10 ** 6)
+    const weights = Array.from({ length: ri(1, 6) }, () => ri(1, 500))
+    const alloc = allocateJournalLine({ accountCode: '5108', debit: amount, credit: 0 }, weights.map((w, idx) => ({ costCenterId: idx + 1, weight: w })))
+    assert.equal(alloc.reduce((sum, l) => sum + l.debit, 0), amount)
+  }
+  /* الإقفال والتقرير: تصفير تام وتراكمية صحيحة */
+  for (let t = 0; t < 40; t++) {
+    const journal = []
+    let rev = 0, exp = 0
+    for (let i = 0; i < ri(2, 20); i++) {
+      const isRev = rnd() < 0.5
+      const amt = ri(1, 10 ** 6)
+      const date = `2026-${String(ri(1, 12)).padStart(2, '0')}-${String(ri(1, 28)).padStart(2, '0')}`
+      journal.push({ date, lines: [{ accountCode: isRev ? '4101' : '5101', debit: isRev ? 0 : amt, credit: isRev ? amt : 0 }, { accountCode: '1101', debit: isRev ? amt : 0, credit: isRev ? 0 : amt }] })
+      if (isRev) rev += amt; else exp += amt
+    }
+    const fy = { startDate: '2026-01-01', endDate: '2026-12-31', nameAr: '2026' }
+    const closing = buildYearClosingLines(journal, fy)
+    assert.equal(closing.lines.reduce((sum, l) => sum + l.debit, 0), closing.lines.reduce((sum, l) => sum + l.credit, 0), 'إقفال متوازن')
+    assert.equal(closing.totalRevenueMinor, rev)
+    assert.equal(closing.totalExpenseMinor, exp)
+    const rep = buildFiscalYearReport([...journal, { id: 999, date: '2026-12-31', lines: closing.lines.map((l) => ({ accountCode: l.accountCode, debit: l.debit, credit: l.credit })) }], fy, [999])
+    assert.equal(rep.totalRevenueMinor, rev, 'التقرير لا يحسب قيد الإقفال')
+    for (const row of rep.rows) assert.equal(row.closingMinor, row.openingMinor + row.movementMinor)
+  }
+  /* الأعمار: المجموع = القائم */
+  for (let t = 0; t < 250; t++) {
+    const rows = []
+    for (let i = 0; i < ri(1, 12); i++) rows.push({ date: `2026-${String(ri(1, 12)).padStart(2, '0')}-${String(ri(1, 28)).padStart(2, '0')}`, docLabel: '', debitMinor: rnd() < 0.6 ? ri(1, 99999) : 0, creditMinor: rnd() < 0.5 ? ri(1, 99999) : 0, balanceMinor: 0 })
+    const aging = agingFromStatement(rows, '2026-10-02')
+    const net = rows.reduce((sum, r) => sum + r.debitMinor - r.creditMinor, 0)
+    assert.equal(aging.totalMinor, Math.max(net, 0), 'الأعمار = القائم')
+    assert.equal(aging.currentMinor + aging.d31_60Minor + aging.d61_90Minor + aging.over90Minor, aging.totalMinor)
+  }
+  /* §76: بيانان المسير لا يعرضان خام الوحدة الصغرى (كان «إجمالي 300000») */
+  const empRows = employeeStatement({
+    employeeId: 1,
+    advances: [],
+    payrollRuns: [{ runNumber: 'PR-0001', date: '2026-09-30', lines: [{ employeeId: 1, baseMinor: 300000, allowancesMinor: 0, overtimeMinor: 0, advancesMinor: 50000, deductionsMinor: 0, grossMinor: 300000, netMinor: 250000 }] }],
+  })
+  assert.equal(empRows[0].docLabel, 'مسير PR-0001', 'بيان المسير بلا أرقام خام')
+  assert.equal(empRows[0].operationMinor, 300000, 'الإجمالي في عموده المنسق')
+  assert.equal(empRows[0].creditMinor, 50000, 'أثر استقطاع السلفة')
+  console.log('  ✓ ~4,000 حالة عشوائية + شجرة كاملة + بيان المسير نظيف — الثوابت برهانية')
+}
+
+console.log('✅ جولة المالك — مراجعة نواة المحاسبة والقيود: 6 فحوص ناجحة')

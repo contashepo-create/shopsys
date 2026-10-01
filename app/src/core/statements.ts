@@ -212,9 +212,10 @@ export function employeeStatement(input: EmployeeStatementInput): StatementRow[]
     const line = run.lines.find((l) => l.employeeId === input.employeeId)
     if (!line) continue
     // يظهر كل مسير للموظف، حتى لو لم يتضمن استقطاع سلفة؛ تفاصيل الراتب في البيان.
+    // (مراجعة §76: كان البيان يكرر الإجمالي والصافي خامَّين بالوحدة الصغرى
+    //  — «300000» بدل 3,000.00 — وهما موجودان منسقين في عمودَي العملية أصلاً)
     const payrollEffect = line.advancesMinor > 0 ? line.advancesMinor : 0
-    const payrollInfo = `مسير ${run.runNumber} — إجمالي ${line.grossMinor}، صافي ${line.netMinor}`
-    rows.push({ date: run.date, docLabel: payrollInfo, operationMinor: line.grossMinor, debitMinor: 0, creditMinor: payrollEffect })
+    rows.push({ date: run.date, docLabel: `مسير ${run.runNumber}`, operationMinor: line.grossMinor, debitMinor: 0, creditMinor: payrollEffect })
   }
   for (const rp of input.advanceRepayments ?? []) {
     if (rp.employeeId !== input.employeeId) continue
