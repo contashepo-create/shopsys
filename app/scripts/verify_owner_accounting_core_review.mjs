@@ -132,4 +132,60 @@ console.log('④ مصدرية النطاق')
   console.log(`  ✓ الملفات الثمانية موجودة والإصلاحان موثقان في مكانهما`)
 }
 
-console.log('✅ جولة المالك — مراجعة نواة المحاسبة والقيود: 4 فحوص ناجحة')
+/* ─── ⑤ مراجعة §75: تعزيزات الإدخال والحارس والشجرة ─── */
+console.log('⑤ تعزيزات §75: فاصلة واعية بالخانات + حروف JS مرفوضة + تواريخ حارس + يتامى الشجرة')
+{
+  const { toMinor } = await import('../src/core/money.ts')
+  /* الفاصلة الوحيدة تحسمها خانات العملة: مجموعة ثلاثية = آلاف (كانت تصير 1.50 بألف ضعف الخطأ) */
+  assert.equal(toMinor('1,5', 2), 150, 'فاصلة عشرية عربية (سلوك مُوثق لا يُكسر)')
+  assert.equal(toMinor('1,50', 2), 150)
+  assert.equal(toMinor('1,500', 2), 150000, 'مجموعة ثلاثية = فاصل آلاف إنجليزي')
+  assert.equal(toMinor('1,500', 3), 1500, 'عملة 3 خانات: الفاصلة العشرية العربية تبقى داخل الكسور')
+  assert.equal(toMinor('1,234,567,89', 2), 123456789, 'أوروبية: الأخيرة عشرية والباقي آلاف')
+  assert.equal(toMinor('1.234.567,89', 2), 123456789)
+  assert.equal(toMinor('+5.50', 2), 550, 'إشارة موجبة مقبولة')
+  for (const bad of ['0x10', '0b101', '1_000', '5%', 'abc']) {
+    assert.throws(() => toMinor(bad, 2), /غير رقمي/, `${bad} يجب أن يُرفض — حروف JS كانت تُقرأ بصمت`)
+  }
+
+  const { validateEntry, assertJournalIntegrity } = await import('../src/core/ledgerGuard.ts')
+  const coa = [{ code: '1101', nameAr: 'خزينة', rootType: 'assets', parentCode: '11', isPostable: true }, { code: '4101', nameAr: 'مبيعات', rootType: 'revenue', parentCode: '4', isPostable: true }]
+  const mk = (id, num, date, lines, description = 'قيد') => ({ id, entryNumber: num, date, description, sourceType: 'manual', sourceId: null, lines, createdBy: 'x', createdAt: '2026-01-05T00:00:00Z', reversedByEntryId: null, reversesEntryId: null })
+  const ok2 = [{ accountCode: '1101', debit: 50, credit: 0 }, { accountCode: '4101', debit: 0, credit: 50 }]
+  /* تاريخ غير موجود تقويمياً: 2026-02-30 كان يجتاز الاختبار النصي ويتدحرج لمارس */
+  assert.ok(validateEntry(mk(1, 1, '2026-02-30', ok2), { coa }).some((e) => e.includes('التقويم')), '2026-02-30 مرفوض')
+  assert.ok(validateEntry(mk(1, 1, '2026-13-01', ok2), { coa }).some((e) => e.includes('التقويم') || e.includes('غير صالح')), 'شهر 13 مرفوض')
+  assert.equal(validateEntry(mk(1, 1, '2024-02-29', ok2), { coa }).length, 0, '29 فبراير في سنة كبيسة مقبول')
+  /* ث9-ممتد: تحريك تاريخ قيد مرحّل أو تغيير وصفه مرفوض — والتطبيع ISO متسامح */
+  const posted = mk(1, 1, '2026-01-05', ok2, 'وصف أصلي')
+  const movedDate = mk(1, 1, '2026-03-05', ok2, 'وصف أصلي')
+  assert.throws(() => assertJournalIntegrity([posted], [movedDate], { coa }), /تاريخ/, 'تحريك التاريخ بين الفترات مرفوض')
+  const changedDesc = mk(1, 1, '2026-01-05', ok2, 'وصف محرر')
+  assert.throws(() => assertJournalIntegrity([posted], [changedDesc], { coa }), /وصف|مصدر/, 'تحرير الوصف مرفوض')
+  const isoPosted = mk(1, 1, '2026-01-05T09:00:00.000Z', ok2, 'وصف أصلي')
+  assert.doesNotThrow(() => assertJournalIntegrity([isoPosted], [posted], { coa }), 'تطبيع ISO إلى YYYY-MM-DD متسامح (يحدث داخل غلاف set)')
+  const linked = { ...posted, reversedByEntryId: 9 }
+  assert.doesNotThrow(() => assertJournalIntegrity([posted], [linked], { coa }), 'ربط العكس reversedByEntryId مسموح')
+
+  /* يتامى الشجرة: سلسلة مجموعات بلا أوراق تختفي كلها (كانت تبقى معلقة بمرور واحد) */
+  const { coaForModules } = await import('../src/core/coaVisibility.ts')
+  /* شجرة اصطناعية: سلسلة 4 ← 41 ← 4106 (تخصصي معمل في خريطة الوحدات) */
+  const tree = [
+    { code: '1', nameAr: 'أصول', rootType: 'assets', parentCode: null, isPostable: false },
+    { code: '11', nameAr: 'متداولة', rootType: 'assets', parentCode: '1', isPostable: false },
+    { code: '1101', nameAr: 'خزينة', rootType: 'assets', parentCode: '11', isPostable: true },
+    { code: '4', nameAr: 'إيرادات', rootType: 'revenue', parentCode: null, isPostable: false },
+    { code: '41', nameAr: 'مجموعة تخصصية', rootType: 'revenue', parentCode: '4', isPostable: false },
+    { code: '4106', nameAr: 'إيرادات تحاليل طبية', rootType: 'revenue', parentCode: '41', isPostable: true },
+  ]
+  const codesNoModules = coaForModules(tree, ['pos']).map((a) => a.code)
+  assert.ok(!codesNoModules.includes('4106'), 'الحساب التخصصي مخفي بلا وحدته')
+  assert.ok(!codesNoModules.includes('41'), 'أبوه المجموعة يختفي معه')
+  assert.ok(!codesNoModules.includes('4'), 'وسلسلة الأيتام كلها تختفي حتى نقطة الثبات')
+  assert.ok(codesNoModules.includes('1101') && codesNoModules.includes('11') && codesNoModules.includes('1'), 'الفروع العامة تبقى')
+  const codesUsed = coaForModules(tree, ['pos'], new Set(['4106'])).map((a) => a.code)
+  assert.ok(codesUsed.includes('4106') && codesUsed.includes('41') && codesUsed.includes('4'), 'صمام الأمان: حساب عليه حركة يبقى بسلسلته')
+  console.log('  ✓ فاصلة/خانات + حروف JS + تقويم + ث9-ممتد بتسامح ISO + يتامى الشجرة حتى الثبات')
+}
+
+console.log('✅ جولة المالك — مراجعة نواة المحاسبة والقيود: 5 فحوص ناجحة')

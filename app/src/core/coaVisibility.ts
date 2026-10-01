@@ -109,12 +109,21 @@ export function coaForModules(
     const name = ov ? ov(modules) : a.nameAr
     return name === a.nameAr ? a : { ...a, nameAr: name }
   })
-  // إخفاء الآباء اليتامى: أب غير ورقي كل أبنائه اختفوا (مثل «12 الأصول الثابتة» يبقى لوجود 1201)
-  const codes = new Set(visible.map((a) => a.code))
-  return visible.filter((a) => {
-    if (a.isPostable) return true
-    return visible.some((c) => c.parentCode === a.code && codes.has(c.code))
-  })
+  // إخفاء الآباء اليتامى تكراراً حتى الاستقرار: أب غير ورقي كل أبنائه اختفوا
+  // يختفي هو أيضاً — ثم أبٌ أعلى لم يبق له إلا هذا الأب يخفي بدوره (مراجعة §75:
+  // كان مروراً واحداً فتبقى سلسلة الأيتام معلقة بشجرة لا أوراق فيها)
+  let result = visible
+  let removed = true
+  while (removed) {
+    removed = false
+    result = result.filter((a) => {
+      if (a.isPostable) return true
+      const hasVisibleChild = result.some((c) => c.parentCode === a.code)
+      if (!hasVisibleChild) removed = true
+      return hasVisibleChild
+    })
+  }
+  return result
 }
 
 /* ─── حراسة المسارات حسب الوحدات (سد ثغرة الرابط المباشر) ───

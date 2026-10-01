@@ -164,17 +164,47 @@ export function PinInput({
   )
 }
 
-function normalizeDecimalDraft(value: string): string {
+/**
+ * تطبيع مسوّدة الحقل العشري أثناء الكتابة: أرقام عربية/فارسية وعلامة سالبة
+ * وحسم أدوار الفواصل قبل تسليم المسوّدة (مراجعة §75):
+ * - فاصلة ونقطة معاً: الأخيرة منهما هي العشرية والأخرى فواصل آلاف تُحذف
+ *   («1,234.56» كانت تصير 1.23456 لأن الفاصلة كانت تتحول نقطة ثم تحذف بقية النقاط).
+ * - فواصل متعددة: فواصل آلاف تُحذف كلها («1,234,567» كانت تصير 1.234567).
+ * - فاصلة وحيدة: فاصلة عشرية (لوحة المفاتيح العربية) — تحفظ كما هي ليحسمها
+ *   محرك النقود بخانات العملة عند الالتزام (حقل الأسعار) أو تحول نقطة هنا.
+ */
+function normalizeDecimalDraft(value: string, keepSingleComma = false): string {
   const translated = value
     .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
     .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
-    .replace(/[٫,]/g, '.')
-    .replace(/[^\d.-]/g, '')
+    .replace(/[٫]/g, '.')
+    .replace(/[٬]/g, '')
+    .replace(/[^\d.,-]/g, '')
   const sign = translated.startsWith('-') ? '-' : ''
   const unsigned = translated.replace(/-/g, '')
-  const dot = unsigned.indexOf('.')
-  if (dot < 0) return sign + unsigned
-  return sign + unsigned.slice(0, dot + 1) + unsigned.slice(dot + 1).replace(/\./g, '')
+  const lastDot = unsigned.lastIndexOf('.')
+  const lastComma = unsigned.lastIndexOf(',')
+  let out: string
+  if (lastComma < 0) {
+    // نقاط فقط: أكثر من نقطة = فواصل آلاف أوروبية تُحذف (كانت تبقى الأولى فتفسد القيمة)
+    out = (unsigned.match(/\./g) ?? []).length > 1 ? unsigned.replace(/\./g, '') : unsigned
+  } else if (lastDot < 0) {
+    const commas = (unsigned.match(/,/g) ?? []).length
+    if (commas > 1) {
+      // فواصل متعددة: إن كانت الخانات بعد الأخيرة ثلاثاً فكلها آلاف، وإلا فالأخيرة عشرية أوروبية
+      const digitsAfterLast = unsigned.length - lastComma - 1
+      const head = unsigned.slice(0, lastComma).replace(/,/g, '')
+      out = digitsAfterLast === 3 ? unsigned.replace(/,/g, '') : `${head}.${unsigned.slice(lastComma + 1)}`
+    } else {
+      out = keepSingleComma ? unsigned : unsigned.replace(',', '.') // فاصلة عشرية عربية
+    }
+  } else {
+    // الفاصل الأحدث هو العشري والآخر فواصل آلاف
+    out = lastComma > lastDot
+      ? unsigned.replace(/\./g, '').replace(/,(\d*)$/, '.$1')
+      : unsigned.replace(/,/g, '')
+  }
+  return sign + out
 }
 
 /**

@@ -154,17 +154,49 @@ function gridArrowNavigation(event: React.KeyboardEvent<HTMLTableSectionElement>
   focus(step > 0 ? neighbourCells[0] : neighbourCells[neighbourCells.length - 1])
 }
 
-function decimalDraft(value: string): string {
+/**
+ * تطبيع مسوّدة خانة جدول البنود أثناء الكتابة — نفس خوارزمية ui.tsx الموحدة
+ * (مراجعة §75): حسم أدوار الفواصل قبل الالتزام لا بعده. كان «1,234.56»
+ * يصير 1.23456 و«1,234,567» يصير 1.234567 — تلف صامت بمئة ضعف وأكثر.
+ * `keepSingleComma`: لحقل السعر — الفاصلة الوحيدة تبقى ليحسمها toMinor
+ * بخانات العملة (مجموعة ثلاثية = آلاف، وإلا فاصلة عشرية عربية).
+ */
+function decimalDraft(value: string, keepSingleComma = false): string {
   const translated = value
     .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
     .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
-    .replace(/[٫,]/g, '.')
-    .replace(/[^\d.-]/g, '')
+    .replace(/[٫]/g, '.')
+    .replace(/[٬]/g, '')
+    .replace(/[^\d.,-]/g, '')
   const sign = translated.startsWith('-') ? '-' : ''
   const unsigned = translated.replace(/-/g, '')
-  const dot = unsigned.indexOf('.')
-  if (dot < 0) return sign + unsigned
-  return sign + unsigned.slice(0, dot + 1) + unsigned.slice(dot + 1).replace(/\./g, '')
+  const lastDot = unsigned.lastIndexOf('.')
+  const lastComma = unsigned.lastIndexOf(',')
+  let out: string
+  if (lastComma < 0) {
+    out = (unsigned.match(/\./g) ?? []).length > 1 ? unsigned.replace(/\./g, '') : unsigned
+  } else if (lastDot < 0) {
+    const commas = (unsigned.match(/,/g) ?? []).length
+    if (commas > 1) {
+      if (keepSingleComma) {
+        /* حقل السعر: الفواصل المتعددة تبقى كما كُتبت — toMinor يفسرها عند الالتزام.
+           لو طوّعناها هنا بعد كل ضغطة مفتاح لانهارت الكتابة الحرفية:
+           «1,234,» تصير «1234.» ثم يكمل المستخدم فوقها فتضيع الملايين */
+        out = unsigned
+      } else {
+        const digitsAfterLast = unsigned.length - lastComma - 1
+        const head = unsigned.slice(0, lastComma).replace(/,/g, '')
+        out = digitsAfterLast === 3 ? unsigned.replace(/,/g, '') : `${head}.${unsigned.slice(lastComma + 1)}`
+      }
+    } else {
+      out = keepSingleComma ? unsigned : unsigned.replace(',', '.')
+    }
+  } else {
+    out = lastComma > lastDot
+      ? unsigned.replace(/\./g, '').replace(/,(\d*)$/, '.$1')
+      : unsigned.replace(/,/g, '')
+  }
+  return sign + out
 }
 
 /** أقل عدد سطور ظاهرة في جدول البنود — تبقى الشاشة ثابتة ولا «تقفز» مع أول صنف */
@@ -270,8 +302,8 @@ export function InvoiceLinesTable({
   }, [lines.length])
 
   const draftValue = (key: string, value: string | number) => drafts[key] ?? String(value ?? '')
-  const updateDraft = (key: string, raw: string, commit: (value: string) => void) => {
-    const value = decimalDraft(raw)
+  const updateDraft = (key: string, raw: string, commit: (value: string) => void, keepSingleComma = false) => {
+    const value = decimalDraft(raw, keepSingleComma)
     setDrafts((previous) => ({ ...previous, [key]: value }))
     commit(value)
   }
@@ -495,7 +527,7 @@ export function InvoiceLinesTable({
                     <td className={`num-cell p-1 align-middle ${COL.qty}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`rejected:${line.key}`, line.rejectedQty ?? 0)} onChange={(event) => updateDraft(`rejected:${line.key}`, event.target.value, (value) => patchDecimal(line, 'rejectedQty', value))} onBlur={() => clearDraft(`rejected:${line.key}`)} /></td>
                   </> : <td className={`num-cell p-1 align-middle ${COL.qty}${qtyTone}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`qty:${line.key}`, line.qty || '')} onChange={(event) => updateDraft(`qty:${line.key}`, event.target.value, (value) => patchDecimal(line, 'qty', value))} onBlur={() => clearDraft(`qty:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const priceCell = event.currentTarget.closest('tr')?.querySelector<HTMLInputElement>('.price-cell input'); priceCell?.focus(); priceCell?.select() }} /></td>}
                   {columns.unit && <td className={`unit-cell p-1 align-middle ${COL.unit}`}>{item?.baseUnit || (item?.isService ? 'خدمة' : '—')}</td>}
-                  <td className={`num-cell price-cell p-1 align-middle ${COL.price}${priceTone}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value))} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } /* قرار المالك: Enter من السعر ينزل للسطر التالي **وينتظر الكتابة** ولا يفتح البحث تلقائياً */ const entryInput = event.currentTarget.closest('tbody')?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input'); entryInput?.focus(); entryInput?.select() }} /></td>
+                  <td className={`num-cell price-cell p-1 align-middle ${COL.price}${priceTone}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" value={draftValue(`price:${line.key}`, line.unitPriceMinor ? line.unitPriceMinor / 10 ** currencyDecimals : '')} onChange={(event) => updateDraft(`price:${line.key}`, event.target.value, (value) => patchPrice(line, value), true)} onBlur={() => clearDraft(`price:${line.key}`)} onKeyDown={(event) => { if (event.key !== 'Enter') return; event.preventDefault(); const nextRow = event.currentTarget.closest('tr')?.nextElementSibling as HTMLTableRowElement | null; const nextQty = nextRow?.querySelector<HTMLInputElement>('.num-cell input'); if (nextQty) { nextQty.focus(); nextQty.select(); return } /* قرار المالك: Enter من السعر ينزل للسطر التالي **وينتظر الكتابة** ولا يفتح البحث تلقائياً */ const entryInput = event.currentTarget.closest('tbody')?.querySelector<HTMLInputElement>('.invoice-line-entry-cell input'); entryInput?.focus(); entryInput?.select() }} /></td>
                   {kind === 'sale' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" value={draftValue(`discount:${line.key}`, line.discountPercent ?? 0)} onChange={(event) => updateDraft(`discount:${line.key}`, event.target.value, (value) => patchPercent(line, 'discountPercent', value))} onBlur={() => clearDraft(`discount:${line.key}`)} /></td>}
                   {kind === 'purchase' && mode !== 'simple' && <td className={`num-cell p-1 align-middle ${COL.percent}`}><input className={`${inputCls} invoice-cell-input`} inputMode="decimal" type="text" min="0" max="100" disabled={!taxEnabled} value={draftValue(`vat:${line.key}`, taxEnabled ? (line.vatPercent ?? 0) : 0)} onChange={(event) => updateDraft(`vat:${line.key}`, event.target.value, (value) => patchPercent(line, 'vatPercent', value))} onBlur={() => clearDraft(`vat:${line.key}`)} /></td>}
                   {kind === 'sale' && mode === 'profit' && canViewCost && <><td className={`money-cell p-2 ${COL.money}`}>{fmt(line.unitCostMinor ?? 0)}</td><td className={`money-cell p-2 ${COL.money}`}>{fmt(Math.round(line.qty * ((line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100)) - (line.unitCostMinor ?? 0))))}</td></>}
