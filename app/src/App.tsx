@@ -205,15 +205,12 @@ function Shell() {
         <Route path="/parties/employee-advances" element={<EmployeesPage initialTab="advances" />} />
         <Route path="/parties/employee-deductions" element={<EmployeesPage initialTab="deductions" />} />
         <Route path="/parties/employee-commissions" element={<EmployeesPage initialTab="commissions" />} />
-        {/* شؤون الموظفين — قسم مستقل بتابات داخلية (حضور/بصمة/إجازات/ورديات/تقارير) */}
-        <Route path="/hr" element={<HrPage />} />
-        <Route path="/hr/:tab" element={<HrPage />} />
-        {/* مسارات صريحة لتبويبات شؤون الموظفين — كتالوج التنقل يعلنها بالاسم فلا شاشة بيضاء */}
-        <Route path="/hr/attendance" element={<HrPage />} />
-        <Route path="/hr/fingerprint" element={<HrPage />} />
-        <Route path="/hr/leaves" element={<HrPage />} />
-        <Route path="/hr/shifts" element={<HrPage />} />
-        <Route path="/hr/reports" element={<HrPage />} />
+    {/* شؤون الموظفين — قسم مستقل بتابات داخلية (حضور/بصمة/إجازات/ورديات/تقارير).
+        مسار واحد ديناميكي يغطي كل التابات: المسارات الصريحة المكررة كانت تطابَق
+        قبله فلا يصل :tab إلى useParams إطلاقاً — فتبقى الصفحة على «الحضور»
+        مهما نقر المستخدم من التابات (عطل المالك: «التابات لا تعمل»). */}
+    <Route path="/hr" element={<HrPage />} />
+    <Route path="/hr/:tab" element={<HrPage />} />
         <Route path="/parties/installments" element={<InstallmentsPage />} />
         <Route path="/maintenance/tickets" element={<MaintenancePage />} />
         <Route path="/laundry/orders" element={<LaundryPage />} />

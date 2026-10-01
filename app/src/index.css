@@ -1373,6 +1373,10 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-fx-toggle { display: flex; align-items: center; gap: .3rem; cursor: pointer; color: var(--doc-muted); font-size: .6rem; font-weight: 700; }
 .invoice-doc-fx-toggle input { accent-color: var(--doc-accent); block-size: .8rem; inline-size: .8rem; }
 .invoice-doc-fx-toggle small { color: var(--doc-faint); font-size: .52rem; font-weight: 600; }
+/* رقاقة «سعر اليوم» تحت منتقي العملة — تفتح نافذة أسعار الصرف المفلترة (طلب المالك 2026-10-01) */
+.invoice-doc-fx-today { display: inline-flex; align-items: center; gap: .25rem; margin-top: .15rem; padding: .18rem .45rem; border: 1px solid color-mix(in srgb, var(--doc-accent) 35%, transparent); border-radius: .4rem; background: color-mix(in srgb, var(--doc-accent) 8%, transparent); color: var(--doc-muted); font-size: .56rem; font-weight: 800; cursor: pointer; transition: all .12s; text-align: start; }
+.invoice-doc-fx-today:hover { background: color-mix(in srgb, var(--doc-accent) 16%, transparent); color: var(--doc-ink); }
+.invoice-doc-fx-today b { color: var(--doc-accent); font-size: .62rem; }
 
 /* كشف الإجماليات: بند ونقاط موصولة ومبلغ على عمود واحد (شكل المستند المحاسبي) */
 .invoice-doc-sum { display: flex; flex-direction: column; }
@@ -1402,6 +1406,8 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-quick button { border: 1px solid var(--doc-line); border-radius: .35rem; background: var(--doc-paper); padding: .1rem .4rem; color: var(--doc-muted); font-size: .55rem; font-weight: 700; }
 .invoice-doc-quick button:hover { border-color: var(--doc-accent-soft); background: var(--doc-tint-strong); color: var(--doc-accent-deep); }
 .invoice-doc-panel textarea { min-height: 4.6rem; resize: vertical; }
+/* طلب المالك 2026-10-01: مربع الشروط أصغر قليلاً */
+.invoice-doc-termsbox { min-height: 3.1rem !important; max-height: 5.2rem; }
 
 /* ⑤ شريط الإجراءات اللاصق */
 .invoice-doc-actionbar {
@@ -1748,7 +1754,11 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc .invoice-doc-head-actions .bg-gradient-to-l:hover { background: var(--doc-accent-deep) !important; }
 
 /* رقاقات المصروفات داخل لوحة الملاحظات (النموذج: .addons) — بدل الشريط العريض */
-.invoice-doc-addons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .18rem; border-top: 1px dashed var(--doc-line); padding-top: .22rem; }
+/* طلب المالك 2026-10-01: أزرار المصروفات في صف والعمولات في صف فوق بعضهما — لا شريط تمرير */
+.invoice-doc-addons { display: flex; flex-direction: column; gap: .18rem; border-top: 1px dashed var(--doc-line); padding-top: .22rem; }
+.invoice-doc-addons-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .18rem; }
+.invoice-doc-addons-row.is-single { grid-template-columns: minmax(0, 1fr); }
+.invoice-doc-addons-row-label { color: var(--doc-faint); font-size: .52rem; font-weight: 800; padding-top: .05rem; }
 .invoice-doc-addons > button {
   display: inline-flex; align-items: center; justify-content: center; gap: .2rem;
   border: 1px solid var(--doc-line); border-radius: .35rem; background: var(--doc-paper);

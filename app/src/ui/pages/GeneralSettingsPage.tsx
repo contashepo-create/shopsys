@@ -4,7 +4,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
 import { useState } from 'react'
-import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift } from 'lucide-react'
+import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
@@ -14,6 +14,8 @@ import { formatMinor } from '../../core/money.ts'
 import { resolveBusinessTax, type BusinessTaxStatus } from '../../core/taxRegistration.ts'
 import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 import { accountName } from './accountNames.ts'
+
+import { FxRatesManager } from '../components/FxRatesManager.tsx'
 
 export function GeneralSettingsPage() {
   const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty } = useAppStore()
@@ -116,6 +118,14 @@ export function GeneralSettingsPage() {
             البلد والنشاط مقفولان بعد الإعداد الأول — تغييرهما يتم عبر الدعم الفني (المطوّر) فقط.
           </p>
         </div>
+      </section>
+
+      {/* أسعار الصرف (طلب المالك 2026-10-01): يدوي أو API — المالك فقط وبالرقم السري */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '70ms' }} data-settings-fx-rates>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+          <Coins size={17} className="text-amber-500" /> أسعار الصرف (تحصيل/سداد بعملة أجنبية)
+        </h3>
+        <FxRatesManager />
       </section>
 
       {/* الضريبة */}

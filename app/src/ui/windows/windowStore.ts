@@ -204,7 +204,12 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     const win = get().windows.find((row) => row.id === id)
     if (!win) return
     if (!win.dirty) { get().closeWindow(id); return }
-    set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, askingClose: true } : row)) }))
+    /* بلاغ المالك: إغلاق نافذة «مصغَّرة» من شريط المهام لم يكن يظهر حوار
+       التأكيد لأن حوار الإغلاق يُرسم داخل النافذة نفسها — والمصغَّرة غير
+       مرسومة أصلاً. الحل: تُستعاد النافذة أولاً (تُرفع للأمام وحدها ولا
+       تُمس بقية النوافذ المفتوحة) ثم يظهر حوار تأكيدها فوقها مباشرة. */
+    if (win.mode === 'minimized') get().focusWindow(id)
+    set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, mode: row.mode === 'minimized' ? 'normal' : row.mode, askingClose: true } : row)) }))
   },
   setWindowClosePrompt: (id, prompt) => {
     set((state) => (state.windows.some((row) => row.id === id && row.closePrompt !== prompt)
