@@ -1977,7 +1977,7 @@ interface DataState {
     purchaseId: number
     /** المورد المحدد داخل نفس محرر الفاتورة؛ 0 = شراء نقدي */
     supplierId?: number
-    lines: { itemId: number; qty: number; unitPriceMinor: number }[]
+    lines: { itemId: number; qty: number; unitPriceMinor: number; warehouseId?: number | null; vatPercent?: number }[]
     expenses: PurchaseExpense[]
     paidMinor: number
     treasury: TreasuryAccount
@@ -1988,6 +1988,10 @@ interface DataState {
     notes?: string
     reason: string
     einvoiceActive: boolean
+    /** مخزن الرأس من المحرر — يُطبَّع مع مخازن السطور (توزيع فعلي ⇒ رأس فارغ) */
+    warehouseId?: number | null
+    /** ضريبة مدخلات السطور الجديدة كما حسبها المحرر — دونها تبقى ضريبة الأصل (توافق قديم) */
+    inputVatMinor?: number
   }) => PurchaseInvoice
   addWarehouse: (nameAr: string) => void
   /**
@@ -2618,6 +2622,40 @@ const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math
  */
 function activeUserName(state: Pick<DataState, 'appUsers' | 'currentUserId'>): string {
   return state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+}
+
+/**
+ * إعادة احتساب «المستلم» في أمر شراء من فواتيره الصافية — مجموع سطور فواتير الأمر
+ * المرتبطة بعد خصم مرتجعاتها — وتوزيعه توزيعاً متدرجاً على سطور الأمر (الأول أولاً).
+ * invoiceOverrides يمرّر كميات فاتورة تُعدَّل الآن بدل المخزّنة (تعديل فاتورة الأمر)،
+ * وextraReturn يمرّر مرتجعاً يُرحَّل الآن قبل أن يدخل الحالة.
+ * تُستخدم عند تعديل فاتورة مُعبَّأة من أمر وعند المرتجع منها حتى يظل «المستلم» صافياً.
+ */
+function recomputeOrderReceivedFromInvoices(
+  state: Pick<DataState, 'purchases' | 'purchaseReturns'>,
+  order: PurchaseOrder,
+  invoiceOverrides?: Map<number, { lines: { itemId: number; qty: number }[] }>,
+  extraReturn?: PurchaseReturn,
+): PurchaseOrder {
+  const receivedByItem = new Map<number, number>()
+  for (const invoiceId of order.invoiceIds) {
+    const source = invoiceOverrides?.get(invoiceId) ?? state.purchases.find((p) => p.id === invoiceId)
+    if (!source) continue
+    for (const l of source.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) + l.qty)
+  }
+  const orderReturns = state.purchaseReturns.filter((r) => order.invoiceIds.includes(r.purchaseId))
+  for (const ret of extraReturn ? [...orderReturns, extraReturn] : orderReturns) {
+    for (const l of ret.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) - l.qty)
+  }
+  const remaining = new Map(receivedByItem)
+  const lines = order.lines.map((line) => {
+    const left = remaining.get(line.itemId) ?? 0
+    const take = Math.max(0, Math.min(line.qty, left))
+    remaining.set(line.itemId, left - take)
+    return take === (line.receivedQty || 0) ? line : { ...line, receivedQty: take }
+  })
+  const next: PurchaseOrder = { ...order, lines }
+  return { ...next, status: derivePurchaseOrderStatus(next) }
 }
 
 /** تنسيق مبلغ بفواصل آلاف بلا رمز عملة — لبيانات كشوف الموظفين */
@@ -3289,12 +3327,25 @@ export const useDataStore = create<DataState>()(
       receivePurchaseOrder: (id, received, invoiceId) => set((state) => ({
         purchaseOrders: state.purchaseOrders.map((order) => {
           if (order.id !== id) return order
+          // إصلاح (مراجعة المالك 2026-10-01): المستلم يُجمَّع لكل صنف أولاً — سطور
+          // فاتورة متعددة لنفس الصنف كانت تُحتسب أولاها فقط — ثم يوزَّع متدرجاً على
+          // سطور الأمر المتكررة للصنف نفسه (الأول أولاً) بدل تكرار كامل الكمية لكل سطر.
+          const remaining = new Map<number, number>()
+          for (const row of received) {
+            if (!(row.qty > 0)) continue
+            remaining.set(row.itemId, (remaining.get(row.itemId) ?? 0) + row.qty)
+          }
+          const lines = order.lines.map((line) => {
+            const left = remaining.get(line.itemId) ?? 0
+            if (left <= 0) return line
+            const room = Math.max(0, line.qty - (line.receivedQty || 0))
+            const take = Math.min(room, left)
+            remaining.set(line.itemId, left - take)
+            return take > 0 ? { ...line, receivedQty: (line.receivedQty || 0) + take } : line
+          })
           const next: PurchaseOrder = {
             ...order,
-            lines: order.lines.map((line) => {
-              const hit = received.find((row) => row.itemId === line.itemId)
-              return hit ? { ...line, receivedQty: Math.min(line.qty, (line.receivedQty || 0) + Math.max(0, hit.qty)) } : line
-            }),
+            lines,
             invoiceIds: invoiceId != null && !order.invoiceIds.includes(invoiceId) ? [...order.invoiceIds, invoiceId] : order.invoiceIds,
           }
           return { ...next, status: derivePurchaseOrderStatus(next) }
@@ -3850,7 +3901,12 @@ export const useDataStore = create<DataState>()(
         const mainWarehouseId = state.warehouses.find((w) => w.isMain)?.id ?? state.warehouses[0]?.id ?? null
         const hasLineWarehouses = inv.lines.some((l) => l.warehouseId != null)
         if (hasLineWarehouses && inv.lines.some((l) => l.warehouseId == null)) throw new Error('فاتورة شراء مختلطة المخازن — حدد مخزناً لكل سطر')
-        const effectivePurchaseWarehouseId = hasLineWarehouses ? null : (inv.warehouseId ?? mainWarehouseId)
+        // إصلاح (مراجعة المالك للفواتير 2026-10-01): الرأس كان يُفرَّغ متى كان لأي سطر
+        // مخزن — والمحرر يختم مخزن الرأس على كل سطر افتراضياً، فتُخزَّن كل فاتورة عادية
+        // برأس فارغ وسطور كلها بمخزن واحد، ثم يرفض حارس التعديل الفاتورة بذريعة
+        // «متعددة المخازن». القاعدة الصحيحة: الرأس يخلو فقط عند توزيع فعلي على مخزنين فأكثر.
+        const distinctLineWarehouses = [...new Set(inv.lines.map((l) => l.warehouseId).filter((v): v is number => v != null))]
+        const effectivePurchaseWarehouseId = distinctLineWarehouses.length >= 2 ? null : (distinctLineWarehouses[0] ?? inv.warehouseId ?? mainWarehouseId)
         const invoice: PurchaseInvoice = {
           id: purchaseId,
           invoiceNumber,
@@ -4961,7 +5017,16 @@ export const useDataStore = create<DataState>()(
         for (const [itemId, qty] of qtyOut) {
           updatedSerials = markReturnedToSupplier(updatedSerials, purchase.id, itemId, qty)
         }
-        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials })
+        // إصلاح (مراجعة المالك 2026-10-01): مرتجع من فاتورة مُعبَّأة من أمر شراء كان
+        // يترك كميات «المستلم» في الأمر كما كانت — يُعاد احتسابها الآن صافية
+        const updatedOrdersAfterReturn = (() => {
+          const linked = state.purchaseOrders.filter((o) => (o.invoiceIds ?? []).includes(purchase.id))
+          if (!linked.length) return state.purchaseOrders
+          return state.purchaseOrders.map((order) =>
+            order.invoiceIds.includes(purchase.id) ? recomputeOrderReceivedFromInvoices(state, order, undefined, ret) : order,
+          )
+        })()
+        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials, purchaseOrders: updatedOrdersAfterReturn })
         return ret
       },
 
@@ -6327,8 +6392,12 @@ export const useDataStore = create<DataState>()(
         }
         if (inv.custodyFileId != null) throw new Error('فاتورة مدفوعة من عهدة — عدّلها بمرتجع وفاتورة جديدة حفاظاً على ملف العهدة')
         if (inv.projectId != null) throw new Error('فاتورة مشروع — تكاليف المشاريع تُصحح بمستند تكلفة عاكس لا بتعديل')
-        if (inv.warehouseId == null && inv.lines.some((l) => l.warehouseId != null)) {
-          throw new Error('فاتورة شراء متعددة المخازن — صحّحها بمرتجع/فاتورة جديدة حتى لا يضيع توزيع المخازن')
+        // إصلاح (مراجعة المالك 2026-10-01): الحارس القديم كان يرفض أي فاتورة لسطورها
+        // مخازن ولو كانت كلها بمخزن واحد — فتعذّر تعديل أي فاتورة أُنشئت بالمحرر
+        // المستندي. يُرفض فقط التوزيع الفعلي على مخزنين فأكثر (توزيع يضيع بإعادة البناء).
+        const distinctOldWarehouses = [...new Set(inv.lines.map((l) => l.warehouseId).filter((v): v is number => v != null))]
+        if (distinctOldWarehouses.length >= 2) {
+          throw new Error('فاتورة شراء موزعة على أكثر من مخزن — صحّحها بمرتجع/فاتورة جديدة حتى لا يضيع توزيع المخازن')
         }
         if (inv.expenses.some((e) => (e.paidBy ?? 'supplier') !== 'supplier')) {
           throw new Error('فيها مصاريف مدفوعة من خزائن/عهد — عدّلها بمرتجع وفاتورة جديدة')
@@ -6368,7 +6437,9 @@ export const useDataStore = create<DataState>()(
         }
         // N1 (المراجعة الثانية): ض.ق.م المدخلات المسجلة على الفاتورة تُحفظ في القيد المعاد بناؤه —
         // وإلا اختفى مدين 2102 بصمت واختل مستحق المورد
-        const keptInputVat = inv.inputVatMinor ?? 0
+        // إصلاح (مراجعة المالك 2026-10-01): تُؤخذ من المحرر عند تعديل الكميات/النسب —
+        // كانت تبقى ضريبة الأصل كما هي فلا يتبعها مستحق المورد ولا القيد
+        const keptInputVat = args.inputVatMinor ?? inv.inputVatMinor ?? 0
         const periodExpenseTotal = periodExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
         const editedSupplierDue = grandTotal + keptInputVat + periodExpenseTotal
         if (args.dueDate && args.paidMinor >= editedSupplierDue) throw new Error('الفاتورة مسددة بالكامل ولا تحتاج تاريخ استحقاق')
@@ -6386,6 +6457,13 @@ export const useDataStore = create<DataState>()(
         newEntryLines.push(...buildInternalExpenseLines(periodExpenses.map((expense) => ({ id: crypto.randomUUID(), label: expense.nameAr, amountMinor: expense.amountMinor, accountCode: expense.accountCode ?? '5108', settlement: 'payable_later' as const, payableAccountCode: expense.payableAccountCode ?? '2117', costCenterId: expense.costCenterId ?? null, taxTreatment: 'exempt' as const, taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' as const })), args.treasury))
         assertBalanced(newEntryLines)
         const now = new Date().toISOString()
+
+        // إصلاح (مراجعة المالك 2026-10-01): سطور الفاتورة المعدلة كانت تُبنى من الصفر
+        // فتضيع مخازن السطور وضريبتها وكميات الطلب/المرفوض — تُحفظ الآن من المحرر
+        // (مع رجوع لقيم الفاتورة الأصلية)، ويُطبَّع رأس المخزن كما في الترحيل الجديد.
+        const newLineWarehouses = args.lines.map((l, i) => l.warehouseId ?? inv.lines[i]?.warehouseId ?? null)
+        const distinctNewWarehouses = [...new Set(newLineWarehouses.filter((v): v is number => v != null))]
+        const newHeaderWarehouseId = distinctNewWarehouses.length >= 2 ? null : (distinctNewWarehouses[0] ?? args.warehouseId ?? inv.warehouseId ?? null)
 
         // ③ عكس القيد القديم + قيد جديد
         const oldEntry = state.journal.find((e) => e.id === inv.journalEntryId)
@@ -6426,20 +6504,25 @@ export const useDataStore = create<DataState>()(
         let nextBatchId = nextId(state.batches)
         const keptBatches = state.batches.filter((b) => b.purchaseId !== inv.id)
         const newBatches: StockBatch[] = []
-        for (const l of args.lines) {
+        args.lines.forEach((l, i) => {
           const item = state.items.find((it) => it.id === l.itemId)
           const oldBatch = state.batches.find((b) => b.purchaseId === inv.id && b.itemId === l.itemId)
-          if (!item?.trackExpiry) continue
-          newBatches.push({ id: nextBatchId++, itemId: l.itemId, warehouseId: inv.warehouseId ?? oldBatch?.warehouseId ?? null, expiryDate: oldBatch?.expiryDate ?? null, qty: l.qty, purchaseId: inv.id, receivedAt: now })
-        }
+          if (!item?.trackExpiry) return
+          newBatches.push({ id: nextBatchId++, itemId: l.itemId, warehouseId: newLineWarehouses[i] ?? newHeaderWarehouseId ?? oldBatch?.warehouseId ?? null, expiryDate: oldBatch?.expiryDate ?? null, qty: l.qty, purchaseId: inv.id, receivedAt: now })
+        })
 
         const updatedInv: PurchaseInvoice = {
           ...inv,
           supplierId: editedSupplierId,
-          lines: landed.map((l) => ({
+          lines: landed.map((l, i) => ({
             itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
             expenseShareMinor: l.expenseShareMinor, landedUnitCostMinor: l.landedUnitCostMinor,
+            warehouseId: newLineWarehouses[i] ?? newHeaderWarehouseId,
+            vatPercent: args.lines[i]?.vatPercent ?? inv.lines[i]?.vatPercent ?? 0,
+            orderedQty: inv.lines[i]?.orderedQty, rejectedQty: inv.lines[i]?.rejectedQty,
+            inputVatMinor: inv.lines[i]?.inputVatMinor,
           })),
+          warehouseId: newHeaderWarehouseId,
           expenses: args.expenses,
           goodsTotalMinor: goodsTotal,
           expensesTotalMinor: expensesTotal,
@@ -6457,6 +6540,17 @@ export const useDataStore = create<DataState>()(
             { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId, by: activeUserName(state) },
           ],
         }
+        // إصلاح (مراجعة المالك 2026-10-01): تعديل فاتورة مُعبَّأة من أمر شراء كان يترك
+        // كميات «المستلم» في الأمر كما كانت — تُعاد الآن من فواتير الأمر الصافية
+        // (بعد خصم مرتجعاتها) وتوزَّع على سطور الأمر توزيعاً متدرجاً.
+        const editedSourceOverride = new Map([[inv.id, updatedInv]] as [number, { lines: { itemId: number; qty: number }[] }][])
+        const updatedPurchaseOrders = (() => {
+          const linked = state.purchaseOrders.filter((o) => (o.invoiceIds ?? []).includes(inv.id))
+          if (!linked.length) return state.purchaseOrders
+          return state.purchaseOrders.map((order) =>
+            order.invoiceIds.includes(inv.id) ? recomputeOrderReceivedFromInvoices(state, order, editedSourceOverride) : order,
+          )
+        })()
         set({
           purchases: state.purchases.map((p) => (p.id === inv.id ? updatedInv : p)),
           journal: [
@@ -6466,6 +6560,7 @@ export const useDataStore = create<DataState>()(
           ],
           items: updatedItems,
           batches: [...keptBatches, ...newBatches],
+          purchaseOrders: updatedPurchaseOrders,
         })
         return updatedInv
       },

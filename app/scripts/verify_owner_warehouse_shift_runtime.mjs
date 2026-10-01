@@ -102,8 +102,8 @@ assert.throws(() => S().editPurchase({
   treasury: '1101',
   reason: 'اختبار منع تعديل متعدد المخازن',
   einvoiceActive: false,
-}), /متعددة المخازن/)
-ok('تعديل فاتورة شراء متعددة المخازن يُرفض حتى لا يمسح توزيع المخازن')
+}), /موزعة على أكثر من مخزن/)
+ok('تعديل فاتورة شراء موزعة على مخزنين يُرفض حتى لا يمسح توزيع المخازن')
 
 const projectDocs = buildWarehouseDocs([
   { id: 999, projectId: 77, warehouseId: coldWh, lines: [{ itemId, qty: 50 }] },

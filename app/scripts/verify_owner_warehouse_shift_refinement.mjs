@@ -35,7 +35,7 @@ ok(!purchases.includes('مخزن غير محدد') && !pos.includes('مخزن غ
 ok(purchases.includes('تحديد المخزن لكل سطر') && purchases.includes('lineWarehouseMode') && purchases.includes('warehouseId: lineWarehouseMode'), 'فاتورة الشراء المختلطة تُظهر خانة مخزن لكل سطر وتحفظها')
 ok(purchases.includes('warehouseId: lineWarehouseMode ? (d?.warehouseId ?? null) : undefined'), 'مخزن السطر لا يُرسل إلا في وضع تحديد المخزن لكل سطر')
 ok(repo.includes('warehouseId?: number | null') && repo.includes('warehouseId: inv.lines[i]?.warehouseId'), 'طبقة البيانات تحفظ مخزن سطر الشراء')
-ok(repo.includes('فاتورة شراء متعددة المخازن') && repo.includes('حتى لا يضيع توزيع المخازن'), 'تعديل فاتورة شراء متعددة المخازن محجوب حتى لا يمسح توزيع المخازن')
+ok(repo.includes('فاتورة شراء موزعة على أكثر من مخزن') && repo.includes('حتى لا يضيع توزيع المخازن'), 'تعديل فاتورة شراء موزعة على مخزنين محجوب حتى لا يمسح توزيع المخازن')
 ok(transfers.includes('lines: { itemId: number; qty: number; warehouseId?: number | null }') && transfers.includes('l.warehouseId ?? p.warehouseId'), 'حساب أرصدة المخازن يقرأ مخزن السطر قبل مخزن الفاتورة')
 ok(transfers.includes('p.projectId != null') && transfers.includes('تكلفة موقع مباشرة وليست رصيد مخزن'), 'مشتريات المشاريع لا تدخل أرصدة المخازن')
 

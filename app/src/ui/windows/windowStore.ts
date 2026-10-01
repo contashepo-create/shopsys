@@ -295,16 +295,24 @@ export function openSalesInvoiceWindow(editId?: number, prefill?: SalesInvoicePr
   })
 }
 
-export function openPurchaseInvoiceWindow(editId?: number) {
+export function openPurchaseInvoiceWindow(editId?: number, prefill?: PurchaseInvoicePrefill) {
   return useWindowStore.getState().openWindow({
     kind: 'purchase-invoice',
-    title: editId ? `تعديل فاتورة مشتريات #${editId}` : 'فاتورة مشتريات جديدة',
+    title: editId ? `تعديل فاتورة مشتريات #${editId}` : prefill ? 'فاتورة مشتريات — من أمر شراء' : 'فاتورة مشتريات جديدة',
     subtitle: 'نافذة مستقلة — تبقى مفتوحة حتى تحفظها أو تغلقها',
-    props: editId ? { editId } : {},
+    props: editId ? { editId } : prefill ? { prefill } : {},
     dedupeKey: editId ? `purchase-invoice:${editId}` : null,
     mode: 'normal',
     ...invoiceWindowSize(),
   })
+}
+
+/**
+ * تعبئة أولية لفاتورة مشتريات (مراجعة المالك 2026-10-01): زر «فاتورة استلام»
+ * في شاشة أوامر الشراء يفتح الفاتورة معبَّأة من الأمر مباشرة بدل التنقل الفارغ.
+ */
+export interface PurchaseInvoicePrefill {
+  purchaseOrderId: number
 }
 
 export function openItemEditorWindow(itemId: number, parentId?: string | null) {
