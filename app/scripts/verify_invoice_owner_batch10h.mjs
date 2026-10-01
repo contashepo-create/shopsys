@@ -68,9 +68,12 @@ const ruleOf = (selector) => {
 
 /* ②ب رسائل بوابة التحصيل بنصوص النموذج وحسابها الصحيح */
 {
-  for (const text of ['عميل نقدي — التحصيل كامل', 'ضمن حد الائتمان', 'مسدَّدة بالكامل']) {
+  for (const text of ['عميل نقدي — التحصيل كامل', 'ضمن حد الائتمان', 'بلا حد ائتمان مسجل']) {
     assert.ok(sales.includes(text), `رسالة التحصيل «${text}» غير منقولة من النموذج`)
   }
+  /* طلب المالك 2026-10-01: حد ائتمان صفر/غير مسجل = بلا حد — لا تحصيل كامل.
+     الفحص (والحد الأدنى للتحصيل) فقط عند حد محدد بقيمة موجبة. */
+  assert.ok(/!selectedCustomer\.creditLimitMinor\?0:/.test(sales), 'حد ائتمان صفر ما زال يفرض التحصيل الكامل')
   const logic = sales.slice(sales.indexOf('const minCollectMinor'), sales.indexOf('const minCollectMinor') + 420).replace(/\s+/g, '')
   assert.ok(/Math\.max\(0,selectedCustomerBalance\+grandMinor-/.test(logic), 'الحد الأدنى للتحصيل لا يُحسب من الرصيد + الفاتورة − حد الائتمان')
   assert.ok(/shortMinor/.test(sales), 'لا حساب لعجز التحصيل')

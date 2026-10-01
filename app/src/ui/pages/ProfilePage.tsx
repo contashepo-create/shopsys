@@ -9,8 +9,10 @@
  */
 import { useRef, useState } from 'react'
 import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/auth.ts'
-import { UserCircle2, KeyRound, Camera, Save, ShieldCheck } from 'lucide-react'
+import { UserCircle2, KeyRound, Camera, Save, ShieldCheck , SlidersHorizontal } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
+import { INVOICE_MODE_LABELS, userPrefsKey, type UserPreferences } from '../../core/userPreferences.ts'
+import type { InvoiceEditorMode } from '../../core/advancedInvoice.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { phonePlaceholder } from '../../core/countries.ts'
 import { hashPin, matchesOwnerIdentity, findUserByIdentifier } from '../../core/audit.ts'
@@ -38,7 +40,9 @@ function readAvatar(file: File): Promise<string> {
 }
 
 export function ProfilePage() {
-  const { appUsers, currentUserId, ownerProfile, updateOwnerProfile, changeMyPin, updateMyProfile } = useDataStore()
+  const { appUsers, currentUserId, ownerProfile, updateOwnerProfile, changeMyPin, updateMyProfile, userPrefs, updateMyPreferences } = useDataStore()
+  /* تفضيلاتي — بمفتاحي الخاص فلا يرى أحد تفضيلاتي ولا أرى تفضيلاته */
+  const myPrefs: UserPreferences = userPrefs[userPrefsKey(currentUserId)] ?? {}
   const { setup } = useAppStore()
   const toast = useToast()
   const isOwner = currentUserId == null
@@ -159,6 +163,35 @@ export function ProfilePage() {
           </Field>
         </div>
         <Btn className="mt-4" onClick={saveContact}><Save size={15} /> حفظ البيانات</Btn>
+      </section>
+
+      {/* تفضيلات عملي — لكل مستخدم تفضيلاته المنفصلة (طلب المالك 2026-10-01) */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" data-user-preferences style={{ animationDelay: '100ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          <SlidersHorizontal size={17} className="text-brand-500" /> تفضيلات عملي
+        </h3>
+        <p className="text-[11.5px] text-slate-400 mb-4 leading-relaxed">
+          اختياراتك هنا خاصة بحسابك وحدك — تُطبَّق تلقائياً كلما فتحت الفاتورة أو ضغطت زر الطباعة، ولا تؤثر على أي مستخدم آخر.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Field label="نمط فاتورة البيع" hint="يُفتح به محرر البيع تلقائياً">
+            <select className={inputCls} data-pref-sales-mode value={myPrefs.salesInvoiceMode ?? 'simple'} onChange={(e) => updateMyPreferences({ salesInvoiceMode: e.target.value as InvoiceEditorMode })}>
+              {(Object.keys(INVOICE_MODE_LABELS) as InvoiceEditorMode[]).map((m) => <option key={m} value={m}>{INVOICE_MODE_LABELS[m]}</option>)}
+            </select>
+          </Field>
+          <Field label="نمط فاتورة الشراء" hint="يُفتح به محرر الشراء تلقائياً">
+            <select className={inputCls} data-pref-purchase-mode value={myPrefs.purchaseInvoiceMode ?? 'simple'} onChange={(e) => updateMyPreferences({ purchaseInvoiceMode: e.target.value as InvoiceEditorMode })}>
+              {(Object.keys(INVOICE_MODE_LABELS) as InvoiceEditorMode[]).map((m) => <option key={m} value={m}>{INVOICE_MODE_LABELS[m]}</option>)}
+            </select>
+          </Field>
+          <Field label="قالب الطباعة المفضل" hint="يستعمله زر «طباعة» السريع — «تلقائي» يتبع مفاتيح الطباعة العامة">
+            <select className={inputCls} data-pref-print-template value={myPrefs.preferredPrintTemplate ?? ''} onChange={(e) => updateMyPreferences({ preferredPrintTemplate: (e.target.value || undefined) as 'thermal' | 'a4' | undefined })}>
+              <option value="">تلقائي (المفاتيح العامة)</option>
+              <option value="thermal">إيصال حراري</option>
+              <option value="a4">فاتورة كبيرة A4</option>
+            </select>
+          </Field>
+        </div>
       </section>
 
       {/* تغيير الرقم السري — ذاتي بالكامل */}

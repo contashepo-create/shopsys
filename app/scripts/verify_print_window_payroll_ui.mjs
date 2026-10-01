@@ -29,8 +29,9 @@ const css = read('index.css')
   const printAt = frame.indexOf('data-quick-print')
   const draftsAt = frame.indexOf('onRestoreDraft} title=', printAt)
   assert.ok(draftsAt > printAt && draftsAt - printAt < 700, 'زر الطباعة ليس بجوار «المسودات» في الشريط')
-  assert.ok(/onQuickPrint=\{\(\)=>printDraft\(printSwitches\.cashierPrint\?'thermal':'a4'\)\}/.test(sales),
-    'زر الطباعة لا يتبع مفتاح الكاشير')
+  /* قالب المستخدم المفضل أولاً (تفضيلات لكل مستخدم) وإلا مفتاح الكاشير العام */
+  assert.ok(/onQuickPrint=\{\(\)=>printDraft\(\(useDataStore\.getState\(\)\.userPrefs\[String\(currentUserId\?\?'owner'\)\]\?\.preferredPrintTemplate\)\?\?\(printSwitches\.cashierPrint\?'thermal':'a4'\)\)\}/.test(sales),
+    'زر الطباعة لا يتبع تفضيل المستخدم ثم مفتاح الكاشير')
   assert.ok(/if\(!printSwitches\.silentPrint\)\{openPrintPreview\(\{/.test(sales), 'الطباعة غير الصامتة لا تعرض المعاينة أولاً')
   R.ok('زر «طباعة» بجوار المسودات يتبع مفاتيح الكاشير/الصامت ويعرض المعاينة أولاً')
 }
@@ -64,7 +65,9 @@ const css = read('index.css')
      موديل لحظة الفتح الذي التقط التذييل وغيره فبقيت المعاينة ميتة رغم التحديث */
   assert.ok(/buildModelHtml\(buildPrintModel\(/.test(sales), 'إعادة البناء لا تعيد بناء الموديل — حقول الإعدادات المدمجة فيه (التذييل) تظل ميتة')
   assert.ok(app.includes('<ThermalPreview />'), 'المعاينة العامة لا تُرندر فوق كل المسارات')
-  assert.ok(/data-thermal-quick/.test(preview) && /data-quick-paper/.test(preview), 'لا لوحة إعدادات سريعة داخل المعاينة')
+  const quickSettings = read('ui/components/QuickPrintSettings.tsx')
+  assert.ok(/data-thermal-quick/.test(preview) && /QuickPrintSettings/.test(preview), 'لا لوحة إعدادات سريعة داخل المعاينة')
+  assert.ok(/data-quick-paper/.test(quickSettings) && /data-quick-fontscale/.test(quickSettings), 'الإعدادات السريعة المشتركة ناقصة')
   assert.ok(/data-thermal-extra-settings/.test(preview), 'لا زر «إعدادات إضافية»')
   assert.ok(/setMini\(true\); nav\('\/settings\/printing'\)/.test(preview), 'الإعدادات الإضافية لا تصغّر المعاينة وتفتح قسم الطباعة')
   assert.ok(/data-thermal-mini/.test(preview) && /data-thermal-expand/.test(preview), 'لا وضع مصغّر حي أسفل الشاشة')

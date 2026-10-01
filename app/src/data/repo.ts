@@ -19,6 +19,7 @@ import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, 
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
+import { userPrefsKey, type UserPreferences } from '../core/userPreferences.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../core/permissions.ts'
 import { isEligibleApprover, describeShiftContext } from '../core/refundApproval.ts'
 import {
@@ -1550,6 +1551,9 @@ interface DataState {
   /* ─── سجل النشاطات والمستخدمون والبلاغات (طلب المالك) ─── */
   auditLog: AuditEvent[] // «من فعل ماذا ومتى» — يُبنى تلقائياً من كل كتابة، يظهر للمالك فقط
   appUsers: AppUser[] // مستخدمو التطبيق (المالك + الفرعيون) برقم سري ودور
+  /* تفضيلات كل مستخدم الخاصة (طلب المالك): نمط محرر البيع/الشراء وقالب الطباعة —
+     خريطة بمفتاح مستقل لكل مستخدم ('owner' للمالك) فلا تختلط تفضيلات أحد بأحد */
+  userPrefs: Record<string, UserPreferences>
   /** تعديلات الأدوار المحفوظة (البند 4): roleId → قائمة صلاحيات — تعلو على الافتراضي (owner لا يُعدل أبداً) */
   roleOverrides: Record<string, string[]>
   setRolePermissions: (roleId: string, permissions: string[]) => void
@@ -1575,6 +1579,8 @@ interface DataState {
    */
   changeMyPin: (currentPin: string, newPinHash: string) => Promise<void>
   updateMyProfile: (patch: { phone?: string; email?: string; avatarDataUrl?: string }) => void
+  /** تحديث تفضيلاتي (المستخدم الحالي فقط) — نمط الفواتير وقالب الطباعة المفضل */
+  updateMyPreferences: (patch: Partial<UserPreferences>) => void
   /** true = لا أحد داخل — شاشة الدخول تحجب التطبيق كله (متى كانت المصادقة مطلوبة) */
   loggedOut: boolean
   /** حارس المحاولات الفاشلة (يبقى بعد تحديث الصفحة — لا تحايل) */
@@ -3434,6 +3440,7 @@ export const useDataStore = create<DataState>()(
       journal: [],
       auditLog: [],
       appUsers: [],
+      userPrefs: {},
       roleOverrides: {},
       customRoles: [],
       currentUserId: null,
@@ -6669,6 +6676,12 @@ export const useDataStore = create<DataState>()(
           auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: user.nameAr, kind: 'auth', title: `«${user.nameAr}» غيّر رقمه السري من بروفايله` }]),
         })
       },
+      updateMyPreferences: (patch) => {
+        /* تفضيلات المستخدم الحالي فقط — المفتاح خاص به فتفضيلات كل مستخدم
+           منفصلة تماماً عن غيره (طلب المالك: فصل إعدادات كل مستخدم عن الآخر) */
+        const key = userPrefsKey(get().currentUserId)
+        set({ userPrefs: { ...get().userPrefs, [key]: { ...get().userPrefs[key], ...patch } } })
+      },
       updateMyProfile: (patch) => {
         const state = get()
         if (state.currentUserId == null) {
@@ -7520,7 +7533,7 @@ export const useDataStore = create<DataState>()(
         }
         /* ── السلف النقدية: مدين على الموظف (أصل 1107) — تُصفّى من مستنداتها ── */
         for (const advance of state.employeeAdvances.filter((row) => row.employeeId === employeeId)) {
-          rows.push({ date: advance.date, ref: advance.advanceNumber, description: advance.notes || 'سلفة موظف', debitMinor: advance.amountMinor, creditMinor: 0 })
+          rows.push({ date: advance.date, ref: advance.advanceNumber, description: advance.source === 'sale_collection' ? `${advance.notes || 'تحصيل فاتورة على حساب الموظف'} — يسددها نقداً أو تُخصم من راتبه` : (advance.notes || 'سلفة موظف'), debitMinor: advance.amountMinor, creditMinor: 0 })
         }
         /* ── سداد نقدي لسلفة خارج المسير: دائن (يسدد دين السلفة) ── */
         for (const repayment of state.advanceRepayments.filter((row) => row.employeeId === employeeId)) {

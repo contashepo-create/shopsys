@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X, Printer } from 'lucide-react'
+import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X, Printer , Settings2 } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
@@ -30,6 +30,8 @@ type InvoicePOSFrameProps = {
   reviewSlot?: ReactNode
   /** طباعة فورية من شريط الفاتورة دون إغلاقها — تتبع مفاتيح الطباعة الثلاثة */
   onQuickPrint?: () => void
+  /** فتح نافذة إعدادات الطباعة السريعة المنبثقة (طلب المالك) */
+  onOpenPrintSettings?: () => void
   /** سطر تدقيق المستند: متى عُدِّل ومن عدّله ولماذا — يظهر في شريط الحالة سطراً واحداً */
   auditLabel?: string
   /** طباعة إذن استلام من المستودع (كميات فقط بلا أسعار) */
@@ -81,6 +83,7 @@ export function InvoicePOSFrame({
   documentNumber,
   reviewSlot,
   onQuickPrint,
+  onOpenPrintSettings,
   auditLabel,
   onWarehouseReceipt,
   draftCount = 0,
@@ -168,6 +171,12 @@ export function InvoicePOSFrame({
                 <Printer size={13} /> طباعة
               </Btn>
             </span>
+          )}
+          {onOpenPrintSettings && (
+            <Btn variant="ghost" onClick={onOpenPrintSettings} data-print-settings-button
+              title="إعدادات الطباعة السريعة — ورق/لون/تذييل/مفاتيح إظهار، والمزيد من قسم الطباعة">
+              <Settings2 size={13} /> إعدادات الطباعة
+            </Btn>
           )}
           <Btn variant="ghost" onClick={onRestoreDraft} title="فتح أي مسودة محفوظة باسم العميل"><FileClock size={13} /> المسودات{draftCount ? ` (${draftCount})` : ''}</Btn>
           {onWarehouseReceipt && <Btn variant="ghost" onClick={onWarehouseReceipt} title="إذن استلام من المستودع — كميات فقط بلا أسعار"><PackageCheck size={13} /> إذن استلام مستودع</Btn>}

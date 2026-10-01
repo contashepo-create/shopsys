@@ -17,7 +17,7 @@ import { OverlayPortal } from './ui.tsx'
 import { usePrintPreview } from './printPreviewStore.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { printHtml } from '../print/printReceipt.ts'
-import type { PaperWidth } from '../../core/receipt.ts'
+import { QuickPrintSettings } from './QuickPrintSettings.tsx'
 
 const PAPER_PX = 302 // رول 80mm عند 96dpi
 const PAPER_58_PX = 220 // رول 58mm
@@ -27,7 +27,6 @@ export function ThermalPreview() {
   const nav = useNavigate()
   const { open, handle, mini, closePreview, setMini, refresh } = usePrintPreview()
   const receipt = useAppStore((s) => s.receipt)
-  const updateReceipt = useAppStore((s) => s.updateReceipt)
   const [quickOpen, setQuickOpen] = useState(false)
 
   const html = handle?.html ?? ''
@@ -178,66 +177,8 @@ export function ThermalPreview() {
               <SlidersHorizontal size={12} /> إعدادات سريعة — تنعكس على المعاينة فوراً
               <button type="button" onClick={() => setQuickOpen(false)} aria-label="إغلاق الإعدادات السريعة"><X size={12} /></button>
             </div>
-            <div className="thermal-preview-quick-grid">
-              <label>
-                عرض الورق
-                <select
-                  className="thermal-preview-quick-input"
-                  data-quick-paper
-                  value={receipt.paperWidth}
-                  disabled={wide}
-                  onChange={(event) => updateReceipt({ paperWidth: event.target.value as PaperWidth })}
-                >
-                  <option value="80">رول 80mm</option>
-                  <option value="58">رول 58mm</option>
-                </select>
-              </label>
-              <label>
-                لون القالب
-                <input type="color" className="thermal-preview-quick-color" data-quick-accent value={receipt.accentColor} onChange={(event) => updateReceipt({ accentColor: event.target.value })} />
-              </label>
-              <label className="thermal-preview-quick-wide">
-                تذييل الفاتورة
-                <input className="thermal-preview-quick-input" data-quick-footer value={receipt.footerText} onChange={(event) => updateReceipt({ footerText: event.target.value })} />
-              </label>
-            </div>
-            <div className="thermal-preview-quick-toggles">
-              {([
-                ['showLogo', 'الشعار'],
-                ['showDate', 'التاريخ'],
-                ['showOperator', 'القائم بالطباعة'],
-                ['showTaxSummary', 'ملخص الضريبة'],
-                ['showFooter', 'التذييل'],
-                ...(wide ? ([['showWords', 'المبلغ كتابة'], ['showSignatures', 'التوقيعات']] as const) : []),
-              ] as const).map(([key, labelAr]) => (
-                <label key={key} className="thermal-preview-quick-toggle">
-                  <input
-                    type="checkbox"
-                    data-quick-toggle={key}
-                    checked={receipt[key] === true}
-                    onChange={(event) => updateReceipt({ [key]: event.target.checked })}
-                  />
-                  {labelAr}
-                </label>
-              ))}
-            </div>
-            {wide && (
-              <label className="thermal-preview-quick-style">
-                نمط الفاتورة الكبيرة
-                <select
-                  className="thermal-preview-quick-input"
-                  data-quick-a4style
-                  value={receipt.a4Style}
-                  onChange={(event) => updateReceipt({ a4Style: event.target.value as typeof receipt.a4Style })}
-                >
-                  <option value="modern">عصري</option>
-                  <option value="classic">كلاسيكي</option>
-                  <option value="compact">مضغوط</option>
-                  <option value="elegant">أنيق</option>
-                  <option value="royal">فخم</option>
-                </select>
-              </label>
-            )}
+            {/* نفس لوحة الإعدادات السريعة المشتركة (نافذة الفاتورة المنبثقة تستعملها أيضاً) */}
+            <QuickPrintSettings wide={wide} />
             <button
               type="button"
               className="thermal-preview-quick-extra"
