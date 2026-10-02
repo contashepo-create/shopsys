@@ -3277,7 +3277,7 @@ tsc ✓ · vitest 436 ✓ · verify:all 235 ✓ · build ✓.
 | نواة الشراء والبيع والمرتجعات | core/pos, purchases, costing, returns, pos, invoiceEdit, invoiceAudit | P0 | **مُراجع ✓ (هذه الجولة: pos/purchases/costing/returns-النصف الأول)** |
 | مستودع البيانات — ترحيل الفواتير | data/repo.ts: postSale/editSale/postPurchase/editPurchase/postPurchaseReturn/postSaleReturn + أوامر الشراء | P0 | **مُراجع ✓ (هذه الجولة: مسارات الشراء كاملة + حراس editSale/postSale)** — يتبقى: postSaleReturn/postWastage بعمق |
 | نواة المستندات | core/documentTotals, documentTax, documentCharges, documentSettlement, documentLifecycle, commercialDocument | P0 | مؤجل |
-| الخزينة والبنوك | core/treasury, treasuryAccess, cheques, exchange, walletServices, paymentTerminal* (٩ ملفات) | P0 | مؤجل |
+| الخزينة والبنوك | core/treasury, treasuryAccess, cheques, exchange, walletServices, paymentTerminal* (٩ ملفات) | P0 | **مُراجع ✓ كاملاً بقراءة حرفية (§78 — 13 ملفاً بإضافة treasuryUserReport وpaymentProviderReconciliation)** |
 | المخزون والأصناف | core/items, itemsCsv, batches, serials, transfers, stocktake, variants, recipes, processing, wastage, consumption | P1 | مؤجل |
 | الأطراف والحسابات | core/partyCodes, partyNotes, openPartyDocuments, statements | P1 | مؤجل |
 | الموارد البشرية | core/payroll, payrollSlips, attendance, shifts, staffCommissions, commissions | P1 | مؤجل |
@@ -3722,3 +3722,72 @@ chromium من حزمة npm (في هذه النسخة chromium.br يفك إلى �
 
 **النطاق التالي (§70-هـ): الخزينة والبنوك** — مراجعة الملفات الستة
 المتبقية من قائمة P0 بالبروتوكول الكامل (قراءة حرفية + عيوب + بوابة).
+
+## §78 — مراجعة الخزينة والبنوك ملفاً ملفاً (§70-هـ — نطاق P0 الثالث، أمر «اكمل» — 2026-10-02)
+
+**ما روجع (13 ملفاً، ~920 سطراً، قراءة حرفية كاملة):** `treasury.ts` ·
+`treasuryAccess.ts` · `treasuryUserReport.ts` · `cheques.ts` · `exchange.ts`
+· `walletServices.ts` · `paymentTerminals.ts` · `paymentTerminalAccess.ts`
+· `paymentTerminalCharge.ts` · `paymentTerminalEligibility.ts` ·
+`paymentTerminalRefund.ts` · `paymentTerminalReport.ts` ·
+`paymentTerminalSettlement.ts` · `paymentTerminalTransactions.ts` ·
+`paymentProviderReconciliation.ts` (صف المصفوفة قال 9؛ فُتحت كل عائلة
+paymentTerminal* كاملة + الملفان المرتبطان — أشمل دائماً).
+
+**ثلاثة عيوب حقيقية اكتُشفت وأُصلحت:**
+1. **حد الماكينة «0» كان يمنع كل شيء** (paymentTerminalAccess): واجهة
+   الصلاحيات تعِد «حد العملية (0 = بلا حد)» وتحفظ 0، لكن النواة فسّرت
+   `amountMinor > 0` تجاوزاً للحد الصفري — **كاشير ممنوع من كل عملية بلا
+   سبب ظاهر**، وعرضُ الحقل يُظهر الصفر فارغاً (كأنه بلا حد) بينما الحفظ
+   يمنع. الآن 0/غياب = بلا حد — مطابقة حرفية لدلالة treasuryAccess
+   الموثقة («صفر/غياب = بلا حد خاص») ولنص الواجهة.
+2. **شيكات بتواريخ وهمية تُقبل وتُحسب خطأً** (cheques.validateCheque):
+   التاريخ كان regex فقط فيمر «2026-02-30»، وDate.parse **يدوّره** إلى
+   2 مارس فيُحسب الاستحقاق بصمت في تنبيهات dueCheques. الآن فحص تقويم
+   حقيقي (roundtrip Y/M/D) — نفس منهج §75 في حارس القيود: 2024-02-29
+   مقبول، 2026-02-30/2026-04-31/2026-13-01 مرفوضة.
+3. **«to» بتاريخ فقط في تقرير الماكينة يستبعد يومه كله**
+   (paymentTerminalReport): المقارنة معجمية بين لحظة كاملة وتاريخ مجرد —
+   «2026-10-02T10:00» > «2026-10-02». الموقع الوحيد الحالي يمرر لحظات
+   كاملة فلم يظهر العيب، لكنها فخ لأي مستدعٍ مستقبلي. الآن تطبيع تلقائي
+   (from⇐T00:00:00 وto⇐T23:59:59.999 عند غياب T).
+
+**قراءات تأكدت سليمة (ببرهان، ليس انطباعاً):**
+- **walletServices متوازن جبرياً في كل الفروع** (3,000 حالة): الربح
+  السالب يقلب سطر 4103 للطرف المدين فيبقى المجموع = **الأكبر من المحصَّل
+  والتمويل** (هذا هو الثابت الصحيح — ليس «المحصَّل دائماً» كما ظننت أول
+  الأمر)؛ الضريبة شاملة نصف-صاعدة على الهامش الموجب فقط.
+- شيكات: القيود الست متوازنة (12,000 مبلغ عشوائي × كل الحسابات المقابلة)
+  والارتداد = عكس الاستلام حرفياً والإلغاء = عكس التحرير، ومصفوفة الحالات
+  7×7 مغلقة (7 مسموح + 42 ممنوع كلها تُرفض).
+- ماكينات: ردود متعددة بمجموع لا يتجاوز الأصل أبداً (500 محفظة عشوائية)،
+  والتسوية difference = deposited − (gross − fee − feeTax) بلا فقد،
+  ومطابقة المزود تغطي الحالات الخمس (مطابق/مكرر كشف/محلي مفقود/كشف بلا
+  محلي/فرق مبلغ — الردود بإشارة سالبة في الكشف) وcanClose لا يصح إلا
+  نظيفاً تماماً.
+- treasury: أكواد المخصصة من 1121 تسلسلياً، وfullCoa تدرجها بعد 1102
+  **حصراً** — ونقطة الإدراج مضمونة لأن 1102 غير مشروطة بأي وحدة في
+  coaVisibility (تحقق مصدري)؛ وتقرير المستخدم النقدي يحسب التحويل خروجاً
+  للمصدر ودخولاً للوجهة.
+- exchange (استبدال الملابس): صافي ثلاثي الاتجاه نظيف بلا قيود مختصرة.
+
+**بوابة جديدة `verify_owner_treasury_banks_review.mjs`** (تدخل verify:all
+آلياً) بثمانية أقسام (~17,500 فحصاً) + اختبارات vitest جديدة/موسعة:
+`tests/cheques.test.ts` (جديد — تقويم + آلة حالات + قيود + محفظة) وإلى
+payment_terminal_access وpayment_terminal_report اختبارا الانحدار.
+
+**قاعدة توسيع جديدة (مصفوفة المحرك):** فشل بوابة المصفوفة بعد تعديل
+cheques.ts كشف أن المولّد يسجل **أرقام أسطر** دوال القيود من كل ملفات
+core — فأي تعديل يزيح أسطر دالة قيد في أي ملف core يوجب إعادة التوليد،
+لا ledger/coaVisibility/activities فقط. (أعيد التوليد: 217/69/56 بأرقام
+أسطر الشيكات الجديدة +4.)
+
+**مسح بيئي خامس أثناء الجولة** (node_modules ثم git): الاستعادة
+الموثقة نجحت (npm install + fetch + reset --mixed origin) دون فقد أي عمل.
+
+**أرقام الجولة:** tsc ✓ · vitest **458**/94 (+8) ✓ · verify:all **243**
+(226+17) ✓ · build 1.34s ✓ · مصفوفة المحرك أعيد توليدها (217/69/56).
+
+**النطاق التالي (§70-هـ):** من جدول P0 المؤجلة يلي الخزينة: **مستودع
+البيانات — ترحيل الفواتير** (ما تبقى بعمق: postSaleReturn/postWastage)
+أو **المخزون والأصناف** (P1 الأول بالترتيب) — أبدأ بأولوية P0 المتبقية.
