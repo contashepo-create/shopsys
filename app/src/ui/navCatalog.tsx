@@ -159,6 +159,7 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'fleet', nameAr: 'المعدات', icon: Tractor, path: '/rental/fleet' },
       { id: 'contracts', nameAr: 'عقود الإيجار', icon: FileSpreadsheet, path: '/rental/contracts' },
+      { id: 'reports', nameAr: 'وحدة تقارير المعدات', icon: BarChart3, path: '/rental/reports' },
     ],
   },
   {
