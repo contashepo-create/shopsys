@@ -4671,7 +4671,17 @@ export const useDataStore = create<DataState>()(
           0,
         )
         const openCredit = sale.totals.totalMinor - paidAtSale - priorCreditRefunds - settledToThisSale
-        const received = paidAtSale + settledToThisSale - priorCashRefunds
+        // ردود ماكينة خارج مرتجعات المبيعات (سُجلت يدوياً بعد الرد في تطبيق المزود):
+        // نقود غادرت فعلاً عبر الماكينة — تُخصم من «المُحصَّل القابل للرد نقداً» وإلا رُد المال مرتين
+        // (ردود المرتجعات نفسها محسوبة في priorCashRefunds — تُستثنى بمستند sale_return).
+        // عيب §79: قبل هذا الخصم كان الدرج يرد كامل القيمة رغم رد الماكينة السابق.
+        const terminalRefundedExternally = state.paymentTerminalTransactions
+          .filter((row) => (row.kind === 'refund' || row.kind === 'void') && row.documentType !== 'sale_return')
+          .filter((row) => state.paymentTerminalTransactions.some(
+            (chg) => chg.id === row.originalTransactionId && chg.kind === 'charge' && chg.documentType === 'sale' && chg.documentId === String(sale.id),
+          ))
+          .reduce((a, row) => a + row.amountMinor, 0)
+        const received = paidAtSale + settledToThisSale - priorCashRefunds - terminalRefundedExternally
         // التوزيع الرباعي الموحد (طلب المالك — رد القيمة اختياري بحرية كاملة):
         // refund='custom' ⇒ توزيع المستخدم اليدوي بعد تحققه، وإلا التقسيم التلقائي القديم
         let alloc: RefundAllocation
@@ -4681,6 +4691,12 @@ export const useDataStore = create<DataState>()(
           alloc = args.allocation!
         } else {
           alloc = allocationOf(totals.totalMinor, args.refund, openCredit, received)
+          // فاتورة عميل نقدي: لا يقبل قيد دائن على 1104 بلا حساب عميل.
+          // لا يحدث إلا إذا كان جزء من التحصيل سبق رده خارجياً عبر الماكينة —
+          // فالتوزيع التلقائي يوجه الفائض فوق «المُحصَّل» إلى الذمم. الوزع اليدوي واضح.
+          if (sale.customerId === null && alloc.creditMinor + alloc.storeCreditMinor > 0) {
+            throw new Error('جزء من تحصيل هذه الفاتورة سبق رده عبر الماكينة خارج مرتجعات المبيعات، والفاتورة بلا عميل يسجل له الباقي — وزّع الرد يدوياً على النقدي والتنازل فقط')
+          }
         }
         // القيد العاكس المتوازن
         // الرد النقدي من نفس خزينة البيع الأصلية (فواتير قديمة بلا خزينة → الرئيسية)
