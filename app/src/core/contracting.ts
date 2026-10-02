@@ -163,6 +163,57 @@ export function projectProfit(
   }
 }
 
+/* ─── بطاقة تقرير المشروع الشاملة (مركز تقارير المقاولات — طلب المالك) ─── */
+
+/**
+ * تقرير واحد لكل مشروع يجمع كل ما يحتاجه المالك في مكان واحد:
+ * ربحية projectProfit (المستخلصات/التكاليف/الهامش/الإنجاز/المحتجز القائم)
+ * + قيمة العقد الفعلية بأوامر التغيير (effectiveContractValue)
+ * + المعلقة من أوامر التغيير (مسودات لم تدخل العقد بعد)
+ * + الدفعات المقدمة (مستلمة/مستردة/متبقية — التزام 2109)
+ * + ضريبة المستخلصات المحمّلة (معلومة ضريبية للإقرار).
+ */
+export interface ProjectReportCard extends ProjectProfit {
+  contractOriginalMinor: Minor
+  contractEffectiveMinor: Minor // الأصلية + أوامر التغيير المعتمدة/المستخلصة
+  changeOrdersPendingMinor: Minor // صافي المسودات — لم تدخل العقد بعد
+  changeOrdersApprovedCount: number
+  extractsCount: number
+  lastExtractDate: string | null
+  vatChargedMinor: Minor // ض.ق.م المحمّلة على العميل عبر المستخلصات
+  advancesReceivedMinor: Minor
+  advancesRecoveredMinor: Minor
+  advancesRemainingMinor: Minor
+}
+
+export function projectReportCard(
+  project: Pick<Project, 'contractValueMinor'>,
+  extracts: readonly { grossMinor: Minor; vatMinor: Minor; retentionMinor: Minor; date: string }[],
+  costs: readonly { kind: CostKind; amountMinor: Minor }[],
+  releasedRetentionMinor: Minor,
+  orders: readonly ChangeOrder[],
+  advances: readonly { amountMinor: Minor; recoveredMinor: Minor }[],
+): ProjectReportCard {
+  const base = projectProfit(project, extracts, costs, releasedRetentionMinor)
+  const pending = orders.filter((o) => o.status === 'draft').reduce((a, o) => a + o.amountMinor, 0)
+  const received = advances.reduce((a, x) => a + x.amountMinor, 0)
+  const recovered = advances.reduce((a, x) => a + x.recoveredMinor, 0)
+  const lastDate = extracts.reduce<string | null>((latest, e) => (!latest || e.date > latest ? e.date : latest), null)
+  return {
+    ...base,
+    contractOriginalMinor: project.contractValueMinor,
+    contractEffectiveMinor: effectiveContractValue(project.contractValueMinor, orders),
+    changeOrdersPendingMinor: pending,
+    changeOrdersApprovedCount: orders.filter((o) => o.status === 'approved' || o.status === 'invoiced').length,
+    extractsCount: extracts.length,
+    lastExtractDate: lastDate,
+    vatChargedMinor: extracts.reduce((a, e) => a + e.vatMinor, 0),
+    advancesReceivedMinor: received,
+    advancesRecoveredMinor: recovered,
+    advancesRemainingMinor: received - recovered,
+  }
+}
+
 /* ─── عروض الأسعار والمناقصات (طلب المالك — مرجعية pro-acc) ─── */
 
 /**

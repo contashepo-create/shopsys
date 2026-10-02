@@ -198,6 +198,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'budget', nameAr: 'موازنة المشروع والانحرافات', icon: Scale, path: '/contracting/budget' },
       { id: 'tasks', nameAr: 'الجدول الزمني للمهام', icon: CalendarClock, path: '/contracting/tasks' },
       { id: 'evm', nameAr: 'القيمة المكتسبة EVM', icon: Gauge, path: '/contracting/evm' },
+      { id: 'reports', nameAr: 'مركز تقارير المقاولات', icon: BarChart3, path: '/contracting/reports' },
       { id: 'approvals', nameAr: 'الموافقات التسلسلية', icon: ShieldCheck, path: '/contracting/approvals' },
     ],
   },

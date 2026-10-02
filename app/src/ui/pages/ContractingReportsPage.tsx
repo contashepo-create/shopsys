@@ -1,0 +1,356 @@
+import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
+/**
+ * مركز تقارير المقاولات (طلب المالك): وحدة تقارير مستقلة تخدم النشاط —
+ * لوحة كل المشاريع · بطاقة مشروع بعينه (العميل والمستخلصات والرصيد وكل شيء)
+ * · ذمم عملاء المقاولات ومتابعة التحصيل — بتصدير CSV احترافي لكل جدول.
+ * البطاقة نفسها من النواة الخالصة projectReportCard (قابلة للفحص ببوابة).
+ */
+import { useMemo, useState } from 'react'
+import { FileSpreadsheet, BarChart3, Users, Receipt } from 'lucide-react'
+import { useDataStore } from '../../data/repo.ts'
+import { useAppStore } from '../../stores/app.store.ts'
+import { getCountry } from '../../core/countries.ts'
+import { formatMinor } from '../../core/money.ts'
+import { COST_KIND_LABELS, type CostKind, projectReportCard } from '../../core/contracting.ts'
+import { toCsv } from '../../core/security.ts'
+import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
+import { EmptyState } from '../components/ui.tsx'
+
+const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-700'
+
+function downloadCsv(rows: readonly Record<string, unknown>[], filename: string) {
+  const blob = new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+export function ContractingReportsPage() {
+  const {
+    projects, projectExtracts, projectCosts, retentionReleases, changeOrders, customers, clientAdvances,
+    getOpenClientInvoices,
+  } = useDataStore()
+  const { setup } = useAppStore()
+  const cur = useMemo(
+    () => (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' },
+    [setup.countryCode],
+  )
+  const fmt = (m: number) => formatMinor(m, cur, false)
+  const [tab, setTab] = usePersistedSectionView('contracting-reports', 'projects', ['projects', 'project', 'dues'] as const)
+  const [projectId, setProjectId] = useState('')
+
+  /** بطاقة التقرير الخالصة لكل مشروع — من النواة مباشرة */
+  const cards = useMemo(() => projects.map((p) => {
+    const extracts = projectExtracts.filter((e) => e.projectId === p.id)
+    const costs = projectCosts.filter((c) => c.projectId === p.id)
+    const released = retentionReleases.filter((r) => r.projectId === p.id).reduce((a, r) => a + r.amountMinor, 0)
+    const orders = changeOrders.filter((o) => o.projectId === p.id)
+    const advances = clientAdvances.filter((a) => a.projectId === p.id)
+    const flat = extracts.map((e) => ({ grossMinor: e.totals.grossMinor, vatMinor: e.totals.vatMinor, retentionMinor: e.totals.retentionMinor, date: e.date }))
+    return { project: p, card: projectReportCard(p, flat, costs, released, orders, advances) }
+  }), [projects, projectExtracts, projectCosts, retentionReleases, changeOrders, clientAdvances])
+
+  /** المفتوح من المستخلصات لكل مشروع: من دفتر التوزيع (docKey = extract:<id>) */
+  const openByProject = useMemo(() => {
+    const settled = new Map<string, number>()
+    for (const p of projects) {
+      if (p.clientId == null) continue
+      for (const inv of getOpenClientInvoices(p.clientId)) settled.set(inv.docKey, inv.settledMinor)
+    }
+    return new Map(projects.map((p) => {
+      const open = projectExtracts
+        .filter((e) => e.projectId === p.id && e.payment === 'credit')
+        .reduce((sum, e) => sum + Math.max(0, e.totals.dueMinor - (settled.get(`extract:${e.id}`) ?? 0)), 0)
+      return [p.id, open]
+    }))
+  }, [projects, projectExtracts, getOpenClientInvoices])
+
+  const totals = useMemo(() => ({
+    contract: cards.reduce((a, r) => a + r.card.contractEffectiveMinor, 0),
+    extracted: cards.reduce((a, r) => a + r.card.extractedMinor, 0),
+    costs: cards.reduce((a, r) => a + r.card.costsMinor, 0),
+    profit: cards.reduce((a, r) => a + r.card.profitMinor, 0),
+    retention: cards.reduce((a, r) => a + r.card.retentionHeldMinor, 0),
+    advances: cards.reduce((a, r) => a + r.card.advancesRemainingMinor, 0),
+    open: cards.reduce((a, r) => a + (openByProject.get(r.project.id) ?? 0), 0),
+  }), [cards, openByProject])
+
+  /* ═══ تبويب: مشروع بعينه ═══ */
+  const selected = cards.find((r) => r.project.id === Number(projectId)) ?? null
+  const selectedExtracts = selected ? projectExtracts.filter((e) => e.projectId === selected.project.id) : []
+  const selectedCosts = selected ? projectCosts.filter((c) => c.projectId === selected.project.id) : []
+  const selectedOrders = selected ? changeOrders.filter((o) => o.projectId === selected.project.id) : []
+  const selectedOpenDocs = selected?.project.clientId != null
+    ? getOpenClientInvoices(selected.project.clientId).filter((inv) => selectedExtracts.some((e) => `extract:${e.id}` === inv.docKey))
+    : []
+
+  /* ═══ تبويب: ذمم عملاء المقاولات ═══ */
+  const clientDues = useMemo(() => {
+    const byClient = new Map<number, { nameAr: string; extractedMinor: number; retentionMinor: number; openMinor: number; openDocs: number }>()
+    for (const p of projects) {
+      if (p.clientId == null) continue
+      const row = byClient.get(p.clientId) ?? { nameAr: customers.find((c) => c.id === p.clientId)?.nameAr ?? '—', extractedMinor: 0, retentionMinor: 0, openMinor: 0, openDocs: 0 }
+      for (const e of projectExtracts.filter((x) => x.projectId === p.id)) {
+        row.extractedMinor += e.totals.grossMinor
+        row.retentionMinor += e.totals.retentionMinor
+      }
+      row.openMinor += openByProject.get(p.id) ?? 0
+      row.openDocs += projectExtracts.filter((x) => x.projectId === p.id && x.payment === 'credit').length
+      byClient.set(p.clientId, row)
+    }
+    return [...byClient.entries()].map(([customerId, row]) => ({ customerId, ...row })).sort((a, b) => b.openMinor - a.openMinor)
+  }, [projects, projectExtracts, customers, openByProject])
+
+  const kpi = (label: string, value: string, tone = 'text-slate-800 dark:text-slate-100') => (
+    <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-center"><div className="text-[10px] text-slate-400 font-bold">{label}</div><div className={`font-black text-[15px] ${tone}`}>{value}</div></div>
+  )
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h1 className="text-xl font-black flex items-center gap-2"><BarChart3 className="w-6 h-6 text-orange-500" /> مركز تقارير المقاولات</h1>
+        <div className="flex gap-1.5">
+          {([['projects', 'لوحة المشاريع'], ['project', 'مشروع بعينه'], ['dues', 'ذمم العملاء']] as const).map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)} className={`px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all ${tab === id ? 'bg-orange-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}>{label}</button>
+          ))}
+        </div>
+      </div>
+
+      {projects.length === 0 ? (
+        <EmptyState icon="🏗️" title="لا مشروعات بعد" sub="أنشئ مشروعاً من «المشروعات والمستخلصات» ثم عد هنا — كل التقارير تُبنى تلقائياً من القيود" />
+      ) : (
+        <>
+          {/* ═══ KPIs إجمالية دائمة ═══ */}
+          <div className="grid grid-cols-3 sm:grid-cols-7 gap-2">
+            {kpi('العقود الفعلية', fmt(totals.contract))}
+            {kpi('المستخلصات', fmt(totals.extracted), 'text-orange-600')}
+            {kpi('التكاليف', fmt(totals.costs), 'text-rose-600')}
+            {kpi('الأرباح', fmt(totals.profit), totals.profit >= 0 ? 'text-emerald-600' : 'text-rose-600')}
+            {kpi('محتجز قائم', fmt(totals.retention), 'text-amber-600')}
+            {kpi('دفعات مقدمة متبقية', fmt(totals.advances), 'text-sky-600')}
+            {kpi('ذمم مفتوحة', fmt(totals.open), 'text-rose-600')}
+          </div>
+
+          {/* ═══ ① لوحة المشاريع ═══ */}
+          {tab === 'projects' && (
+            <div className="anim-up space-y-3">
+              <div className="flex justify-end">
+                <button onClick={() => downloadCsv(cards.map((r) => ({
+                  'الكود': r.project.code, 'المشروع': r.project.nameAr, 'العميل': r.project.clientName || '—',
+                  'قيمة العقد الفعلية': fmt(r.card.contractEffectiveMinor), 'أوامر معلقة': fmt(r.card.changeOrdersPendingMinor),
+                  'المستخلصات': fmt(r.card.extractedMinor), 'الإنجاز ٪': r.card.progressPercent,
+                  'التكاليف': fmt(r.card.costsMinor), 'الربح': fmt(r.card.profitMinor), 'الهامش ٪': r.card.marginPercent,
+                  'محتجز قائم': fmt(r.card.retentionHeldMinor), 'دفعات مقدمة متبقية': fmt(r.card.advancesRemainingMinor),
+                  'ذمم مفتوحة': fmt(openByProject.get(r.project.id) ?? 0), 'الحالة': r.project.status === 'active' ? 'جارٍ' : 'مُسلَّم',
+                })), `تقرير-مشاريع-المقاولات-${new Date().toISOString().slice(0, 10)}.csv`)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير اللوحة CSV</button>
+              </div>
+              <div className={`${card} overflow-x-auto`}>
+                <table className="w-full text-[12.5px]">
+                  <thead className="bg-orange-500/10 text-orange-700 dark:text-orange-300">
+                    <tr>{['المشروع', 'العميل', 'العقد الفعلي', 'إنجاز', 'مستخلصات', 'تكاليف', 'ربح (هامش)', 'محتجز', 'ذمم مفتوحة', 'الحالة'].map((h) => <th key={h} className="px-3 py-2.5 text-right font-bold whitespace-nowrap">{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {cards.map(({ project: p, card: c }) => (
+                      <tr key={p.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-orange-500/5 transition-colors">
+                        <td className="px-3 py-2.5 font-black whitespace-nowrap">{p.code}<span className="block text-[10.5px] font-bold text-slate-400">{p.nameAr}</span></td>
+                        <td className="px-3 py-2.5">{p.clientName || '—'}</td>
+                        <td className="px-3 py-2.5 font-bold whitespace-nowrap">{fmt(c.contractEffectiveMinor)}{c.changeOrdersPendingMinor !== 0 && <span className="block text-[10px] text-violet-500 font-bold">+ معلق {fmt(c.changeOrdersPendingMinor)}</span>}</td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-14 h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden"><div className="h-full bg-orange-500" style={{ width: `${Math.min(100, c.progressPercent)}%` }} /></div>
+                            <span className="text-[11px] font-bold">{c.progressPercent}٪</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 text-orange-600 font-bold whitespace-nowrap">{fmt(c.extractedMinor)}</td>
+                        <td className="px-3 py-2.5 text-rose-600 font-bold whitespace-nowrap">{fmt(c.costsMinor)}</td>
+                        <td className={`px-3 py-2.5 font-black whitespace-nowrap ${c.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(c.profitMinor)}<span className="block text-[10px] font-bold opacity-70">{c.marginPercent}٪</span></td>
+                        <td className="px-3 py-2.5 text-amber-600 font-bold whitespace-nowrap">{fmt(c.retentionHeldMinor)}</td>
+                        <td className="px-3 py-2.5 font-bold whitespace-nowrap">{openByProject.get(p.id) ? <span className="text-rose-600">{fmt(openByProject.get(p.id)!)}</span> : <span className="text-emerald-600">✓</span>}</td>
+                        <td className="px-3 py-2.5"><span className={`px-2 py-1 rounded-lg text-[10.5px] font-bold ${p.status === 'active' ? 'bg-sky-500/10 text-sky-600' : 'bg-emerald-500/10 text-emerald-600'}`}>{p.status === 'active' ? 'جارٍ' : 'مُسلَّم'}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ═══ ② مشروع بعينه ═══ */}
+          {tab === 'project' && (
+            <div className="anim-up space-y-3">
+              <div className={`${card} p-4`}>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="min-w-64 flex-1"><PartyQuickPicker parties={projects.map((p) => ({ id: p.id, nameAr: `${p.code} — ${p.nameAr}` }))} value={projectId ? Number(projectId) : 0} onChange={(id) => setProjectId(id ? String(id) : '')} cashLabel="اختر مشروعاً" label="بحث المشروع" cashValue={0} /></div>
+                  {selected && (
+                    <button onClick={() => downloadCsv([
+                      { 'البند': 'قيمة العقد الأصلية', 'القيمة': fmt(selected.card.contractOriginalMinor) },
+                      { 'البند': 'أوامر التغيير المعتمدة (عدد)', 'القيمة': selected.card.changeOrdersApprovedCount },
+                      { 'البند': 'قيمة العقد الفعلية', 'القيمة': fmt(selected.card.contractEffectiveMinor) },
+                      { 'البند': 'أوامر تغيير معلقة (مسودات)', 'القيمة': fmt(selected.card.changeOrdersPendingMinor) },
+                      { 'البند': 'المستخلصات (عدد)', 'القيمة': selected.card.extractsCount },
+                      { 'البند': 'قيمة الأعمال المستخلصة', 'القيمة': fmt(selected.card.extractedMinor) },
+                      { 'البند': 'ض.ق.م محمّلة على العميل', 'القيمة': fmt(selected.card.vatChargedMinor) },
+                      { 'البند': 'نسبة الإنجاز ٪', 'القيمة': selected.card.progressPercent },
+                      { 'البند': 'التكاليف', 'القيمة': fmt(selected.card.costsMinor) },
+                      ...(Object.keys(COST_KIND_LABELS) as CostKind[]).map((k) => ({ 'البند': `تكاليف — ${COST_KIND_LABELS[k].nameAr}`, 'القيمة': fmt(selected.card.costsByKind[k]) })),
+                      { 'البند': 'الربح', 'القيمة': fmt(selected.card.profitMinor) },
+                      { 'البند': 'الهامش ٪', 'القيمة': selected.card.marginPercent },
+                      { 'البند': 'محتجز قائم', 'القيمة': fmt(selected.card.retentionHeldMinor) },
+                      { 'البند': 'دفعات مقدمة مستلمة', 'القيمة': fmt(selected.card.advancesReceivedMinor) },
+                      { 'البند': 'دفعات مقدمة مستردة', 'القيمة': fmt(selected.card.advancesRecoveredMinor) },
+                      { 'البند': 'دفعات مقدمة متبقية', 'القيمة': fmt(selected.card.advancesRemainingMinor) },
+                      { 'البند': 'ذمم مفتوحة (مستخلصات)', 'القيمة': fmt(openByProject.get(selected.project.id) ?? 0) },
+                    ], `تقرير-${selected.project.code}.csv`)}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير بطاقة المشروع</button>
+                  )}
+                </div>
+              </div>
+
+              {!selected ? (
+                <EmptyState icon="📊" title="اختر مشروعاً" sub="بطاقة كاملة: العقد وأوامر التغيير والمستخلصات والضريبة والتكاليف والربح والمحتجز والدفعات المقدمة والذمم" />
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+                    {kpi('العقد الفعلي', fmt(selected.card.contractEffectiveMinor))}
+                    {kpi('أوامر معلقة', fmt(selected.card.changeOrdersPendingMinor), 'text-violet-600')}
+                    {kpi('المستخلصات', `${fmt(selected.card.extractedMinor)}`, 'text-orange-600')}
+                    {kpi('ض.ق.م محمّلة', fmt(selected.card.vatChargedMinor))}
+                    {kpi('إنجاز', `${selected.card.progressPercent}٪`)}
+                    {kpi('التكاليف', fmt(selected.card.costsMinor), 'text-rose-600')}
+                    {kpi('الربح', fmt(selected.card.profitMinor), selected.card.profitMinor >= 0 ? 'text-emerald-600' : 'text-rose-600')}
+                    {kpi('الهامش', `${selected.card.marginPercent}٪`)}
+                    {kpi('محتجز قائم', fmt(selected.card.retentionHeldMinor), 'text-amber-600')}
+                    {kpi('مقدمة مستلمة', fmt(selected.card.advancesReceivedMinor), 'text-sky-600')}
+                    {kpi('مقدمة متبقية', fmt(selected.card.advancesRemainingMinor), 'text-sky-600')}
+                    {kpi('ذمم مفتوحة', fmt(openByProject.get(selected.project.id) ?? 0), 'text-rose-600')}
+                  </div>
+
+                  <div className="grid grid-cols-5 gap-1.5 text-center">
+                    {(Object.keys(COST_KIND_LABELS) as CostKind[]).map((k) => (
+                      <div key={k} className="rounded-xl bg-slate-500/5 p-2"><div className="text-[10px] text-slate-500">{COST_KIND_LABELS[k].icon} {COST_KIND_LABELS[k].nameAr}</div><div className="font-bold text-[12px]">{fmt(selected.card.costsByKind[k])}</div></div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    {selectedExtracts.length > 0 && (
+                      <div className={`${card} overflow-hidden`}>
+                        <div className="px-4 py-2.5 text-[12px] font-black text-slate-500 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1"><Receipt size={13} /> المستخلصات ({selectedExtracts.length})</div>
+                        <table className="w-full text-[12px]">
+                          <tbody>
+                            {[...selectedExtracts].reverse().map((e) => (
+                              <tr key={e.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                                <td className="px-3 py-2 font-bold">{e.extractNumber}{e.isFinal && <span className="text-[9.5px] bg-rose-500/10 text-rose-600 px-1.5 py-0.5 rounded mr-1">ختامي</span>}</td>
+                                <td className="px-3 py-2 text-slate-400 text-[11px]">{e.date.slice(0, 10)}</td>
+                                <td className="px-3 py-2">أعمال {fmt(e.totals.grossMinor)}</td>
+                                <td className="px-3 py-2 text-amber-600">محتجز {fmt(e.totals.retentionMinor)}</td>
+                                <td className="px-3 py-2 font-bold text-left">{fmt(e.totals.dueMinor)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {selectedOpenDocs.length > 0 && (
+                      <div className={`${card} overflow-hidden`}>
+                        <div className="px-4 py-2.5 text-[12px] font-black text-slate-500 border-b border-slate-100 dark:border-slate-800">ذمم المستخلصات المفتوحة — تُسدَّد من تحصيلات العملاء</div>
+                        <table className="w-full text-[12px]">
+                          <tbody>
+                            {selectedOpenDocs.map((inv) => {
+                              const remaining = inv.dueMinor - inv.settledMinor
+                              if (remaining <= 0) return null
+                              return (
+                                <tr key={inv.docKey} className="border-b border-slate-50 dark:border-slate-800/50">
+                                  <td className="px-3 py-2 font-bold">{inv.docLabel}</td>
+                                  <td className="px-3 py-2 text-slate-400 text-[11px]">{inv.date.slice(0, 10)}</td>
+                                  <td className="px-3 py-2 text-slate-500">محصّل {fmt(inv.settledMinor)}</td>
+                                  <td className="px-3 py-2 font-black text-rose-600 text-left">{fmt(remaining)}</td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {selectedOrders.length > 0 && (
+                      <div className={`${card} overflow-hidden`}>
+                        <div className="px-4 py-2.5 text-[12px] font-black text-slate-500 border-b border-slate-100 dark:border-slate-800">أوامر التغيير ({selectedOrders.length})</div>
+                        <table className="w-full text-[12px]">
+                          <tbody>
+                            {[...selectedOrders].reverse().map((o) => (
+                              <tr key={o.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                                <td className="px-3 py-2 font-bold">{o.number}</td>
+                                <td className="px-3 py-2">{o.titleAr}</td>
+                                <td className={`px-3 py-2 font-bold text-left ${o.amountMinor >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{o.amountMinor >= 0 ? '+' : '−'}{fmt(Math.abs(o.amountMinor))}</td>
+                                <td className="px-3 py-2 text-[10.5px]">{o.status === 'approved' ? '✅ معتمد' : o.status === 'invoiced' ? '🧾 مُستخلَص' : o.status === 'draft' ? '📝 مسودة' : '❌ مرفوض'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {selectedCosts.length > 0 && (
+                      <div className={`${card} overflow-hidden`}>
+                        <div className="px-4 py-2.5 text-[12px] font-black text-slate-500 border-b border-slate-100 dark:border-slate-800">آخر التكاليف ({selectedCosts.length})</div>
+                        <table className="w-full text-[12px]">
+                          <tbody>
+                            {[...selectedCosts].reverse().slice(0, 8).map((c) => (
+                              <tr key={c.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                                <td className="px-3 py-2">{COST_KIND_LABELS[c.kind].icon} {c.description}</td>
+                                <td className="px-3 py-2 font-bold text-rose-600 text-left">{fmt(c.amountMinor)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ═══ ③ ذمم عملاء المقاولات ═══ */}
+          {tab === 'dues' && (
+            <div className="anim-up space-y-3">
+              <div className="text-[12px] text-slate-500">
+                متابعة تحصيل المقاولات: لكل عميل — قيمة الأعمال المستخلصة والمحتجز لديه وما زال مفتوحاً من مستخلصاته (تُطفأ من «تحصيلات العملاء» FIFO أو بمطابقة محددة).
+              </div>
+              <div className="flex justify-end">
+                <button onClick={() => downloadCsv(clientDues.map((row) => ({
+                  'العميل': row.nameAr, 'الأعمال المستخلصة': fmt(row.extractedMinor), 'المحتجز لدى العميل': fmt(row.retentionMinor),
+                  'ذمم مفتوحة': fmt(row.openMinor), 'مستخلصات آجلة': row.openDocs,
+                })), `ذمم-عملاء-المقاولات-${new Date().toISOString().slice(0, 10)}.csv`)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير الذمم CSV</button>
+              </div>
+              <div className={`${card} overflow-x-auto`}>
+                <table className="w-full text-[12.5px]">
+                  <thead className="bg-rose-500/10 text-rose-700 dark:text-rose-300">
+                    <tr>{['العميل', 'الأعمال المستخلصة', 'المحتجز لديه', 'ذمم مفتوحة', 'مستخلصات آجلة', ''].map((h, i) => <th key={i} className="px-3 py-2.5 text-right font-bold">{h}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {clientDues.map((row) => (
+                      <tr key={row.customerId} className="border-t border-slate-100 dark:border-slate-800 hover:bg-rose-500/5 transition-colors">
+                        <td className="px-3 py-2.5 font-bold flex items-center gap-1.5"><Users size={13} className="text-slate-400" /> {row.nameAr}</td>
+                        <td className="px-3 py-2.5 text-orange-600 font-bold">{fmt(row.extractedMinor)}</td>
+                        <td className="px-3 py-2.5 text-amber-600 font-bold">{fmt(row.retentionMinor)}</td>
+                        <td className={`px-3 py-2.5 font-black ${row.openMinor > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{row.openMinor > 0 ? fmt(row.openMinor) : '✓ مسددة'}</td>
+                        <td className="px-3 py-2.5">{row.openDocs}</td>
+                        <td className="px-3 py-2.5 text-left">
+                          <button onClick={() => window.location.hash = `#/contracting/collections`} title="التحصيل من قسم تحصيلات العملاء" className="text-[11px] font-bold text-emerald-600 hover:underline">تحصيل ←</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}

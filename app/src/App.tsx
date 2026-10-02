@@ -69,6 +69,7 @@ import { EquipmentPage } from './ui/pages/EquipmentPage.tsx'
 import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
 import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from './ui/pages/LabPages.tsx'
 import { ProjectsPage } from './ui/pages/ContractingPages.tsx'
+import { ContractingReportsPage } from './ui/pages/ContractingReportsPage.tsx'
 import { QuotationsPage } from './ui/pages/QuotationsPage.tsx'
 import { BoqPage, SubcontractorsPage, BondsPage, DailyWorkersPage } from './ui/pages/ContractingDepthPages.tsx'
 import { MaterialIssuesPage, ClientCollectionsPage, EvmDashboardPage, ApprovalsPage } from './ui/pages/ProjectOpsPages.tsx'
@@ -229,6 +230,7 @@ function Shell() {
         <Route path="/contracting/material-issues" element={<MaterialIssuesPage />} />
         <Route path="/contracting/collections" element={<ClientCollectionsPage />} />
         <Route path="/contracting/evm" element={<EvmDashboardPage />} />
+        <Route path="/contracting/reports" element={<ContractingReportsPage />} />
         <Route path="/realestate/properties" element={<PropertiesPage />} />
         <Route path="/realestate/leases" element={<LeasesPage />} />
         <Route path="/contracting/budget" element={<ProjectBudgetPage />} />
