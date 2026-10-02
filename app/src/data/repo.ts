@@ -11,7 +11,7 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { appStorage } from './persistentStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
-import { priceFloorViolations, PriceFloorError } from '../core/items.ts'
+import { priceFloorViolations, PriceFloorError, itemBlockers } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
@@ -3520,6 +3520,13 @@ export const useDataStore = create<DataState>()(
       },
 
       addItem: (item) => {
+        // §81: حراس النواة داخل المستودع — الواجهة ليست المتصل الوحيد
+        // (الإضافة السريعة في فاتورة الشراء، الاستيراد، نوافذ التحرير، بوت التليجرام…):
+        // باركود مكرر بين صنفين يُنطق الكاشير بيع صنف بدل آخر، ومعامل وحدة < 1
+        // يفسد خصم المخزون بالوحدة الأساسية. التحذيرات (سعر صفر/خسارة) قرار شاشة.
+        const guardState = get()
+        const blockers = itemBlockers(item, guardState.items)
+        if (blockers.length) throw new Error(blockers[0])
         // AUDIT-005: الرصيد الابتدائي للصنف (كمية × تكلفة) كان يدخل المخزون **بلا قيد**
         // فينكسر ثابت «1103 = Σ كمية×متوسط» من اليوم الأول (وأبرز مسار: استيراد CSV).
         // الآن يُثبت بنفس مسار الأرصدة الافتتاحية: 1103 مدين / 3101 دائن، ويُسجَّل في
@@ -3554,8 +3561,15 @@ export const useDataStore = create<DataState>()(
           openingBalances: { ...state.openingBalances, [openingKey('item_stock', id)]: openingValueMinor },
         })
       },
-      updateItem: (id, patch) =>
-        set((s) => ({ items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) })),
+      updateItem: (id, patch) => {
+        const current = get().items.find((it) => it.id === id)
+        if (!current) return
+        // §81: التحرير الجزئي يُحرَس على الصورة المدموجة كاملة — لا يمر تحرير
+        // (نافذة سريعة/قائمة أسعار) بمعامل وحدة فاسد أو باركود مكرر أو سيريال+وزن.
+        const blockers = itemBlockers({ ...current, ...patch }, get().items.filter((it) => it.id !== id), id)
+        if (blockers.length) throw new Error(blockers[0])
+        set((s) => ({ items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) }))
+      },
       removeItem: (id, approval) => {
         const s = get()
         const it = s.items.find((x) => x.id === id)

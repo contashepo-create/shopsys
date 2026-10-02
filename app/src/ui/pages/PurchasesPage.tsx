@@ -158,6 +158,7 @@ export function PurchasesPage() {
     if (!qName.trim()) { toast.show('اكتب اسم الصنف', 'error'); return }
     const catId = qCat ? Number(qCat) : categories[0]?.id
     if (catId == null) { toast.show('أضف قسماً أولاً من شاشة الأصناف', 'error'); return }
+    try {
     addItem({
       nameAr: qName.trim(), sku: '', barcodes: qBarcode.trim() ? [qBarcode.trim()] : [], categoryId: catId,
       baseUnit: 'قطعة', extraUnits: [], costMinor: 0, stockQty: 0,
@@ -165,6 +166,7 @@ export function PurchasesPage() {
       trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false,
       variantColors: [], variantSizes: [], isActive: true,
     })
+    } catch (e) { toast.show((e as Error).message, 'error'); return } // §81: حراس المستودع (باركود مكرر…)
     const created = useDataStore.getState().items.at(-1)!
     setLines((l) => [...l, makeDraftLine(created.id)])
     setQuickOpen(false); setQName(''); setQBarcode(''); setQPrice(''); setQCat('')
