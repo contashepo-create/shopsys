@@ -38,5 +38,10 @@ export function allocateChargeByLineBase(amountMinor: number, lineBasesMinor: nu
 export function documentNetAfterCharges(subtotalMinor: number, charges: DocumentCharge[]): number {
   const errors = validateDocumentCharges(charges)
   if (errors.length) throw new RangeError(errors.join(' — '))
-  return charges.reduce((net, charge) => net + (charge.kind === 'discount' ? -charge.amountMinor : charge.amountMinor), subtotalMinor)
+  const net = charges.reduce((net, charge) => net + (charge.kind === 'discount' ? -charge.amountMinor : charge.amountMinor), subtotalMinor)
+  // إصلاح §84: الخصم الذي يلتهم الصافي كان يعيد صافياً سالباً بصمت — بينما
+  // calculateDocumentTotals تحرس القاعدة نفسها («الخصم يتجاوز قيمة المستند»).
+  // توحيد القاعدة في النواة كلها: لا صافٍ سالب لمستند تجاري.
+  if (net < 0) throw new RangeError('الخصم يتجاوز قيمة المستند')
+  return net
 }
