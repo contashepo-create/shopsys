@@ -75,6 +75,7 @@ export const NAV_SECTIONS: NavSection[] = [
       // «إنشاء فاتورة بيع» عبر ACTIVITY_LABELS (sales.pos) — ولا ورديات ولا استبدال
       { id: 'pos', nameAr: 'شاشة البيع (كاشير)', icon: Store, path: '/pos' },
       { id: 'restaurant-orders', nameAr: 'أوامر الطاولات والدليفري', icon: UtensilsCrossed, path: '/sales/restaurant-orders', module: 'recipes', activities: ['restaurant'] },
+      { id: 'restaurant-reports', nameAr: 'وحدة تقارير المطعم', icon: BarChart3, path: '/restaurant/reports', module: 'recipes', activities: ['restaurant'] },
       { id: 'invoices', nameAr: 'فواتير المبيعات', icon: Receipt, path: '/sales/invoices' },
       { id: 'returns', nameAr: 'مرتجعات المبيعات', icon: RotateCcw, path: '/sales/returns' },
       { id: 'exchange', nameAr: 'الاستبدال', icon: Repeat, path: '/sales/exchange', hideForActivities: INVOICE_FIRST_ACTIVITIES },

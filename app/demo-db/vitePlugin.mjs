@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
 const DB_PATH = join(here, 'demo.sqlite')
 
-const TABLES = ['branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']
+const TABLES = ['branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']
 
 function openDb() {
   if (!existsSync(DB_PATH)) return null
@@ -44,6 +44,7 @@ function readActivity(db, activity) {
     items: rows('items'),
     customers: rows('customers'),
     suppliers: rows('suppliers'),
+    costCenters: rows('cost_centers'),
     employees: rows('employees'),
     attendance: rows('attendance_records'),
     leaves: rows('leave_requests'),
@@ -108,6 +109,7 @@ function writeActivity(db, payload) {
     insertRows('items', payload.items)
     insertRows('customers', payload.customers)
     insertRows('suppliers', payload.suppliers)
+    insertRows('cost_centers', payload.costCenters)
     for (const sale of payload.sales ?? []) {
       insertRows('sales', [sale])
       insertRows('sale_lines', (sale.lines ?? []).map((line) => ({ ...line, sale_ref: sale.ref })))

@@ -21,6 +21,12 @@ export const DEMO_ACTIVITIES = [
     shop_name: 'سوبر ماركت المنصورة',
     owner_name: 'محمد عبده',
     note: 'نشاط تجزئة سريع الدوران: باركود، أوزان، صلاحية، وفروع متعددة.',
+    /* مراكز التكلفة (طلب المالك): شجرة تحليل مصاريف تخص مجال النشاط */
+    cost_centers: [
+      { ref: 'cc1', code: 'GR-01', name_ar: 'فرع المنصورة — التشغيل اليومي', notes: '' },
+      { ref: 'cc2', code: 'GR-02', name_ar: 'فرع طلخا', notes: '' },
+      { ref: 'cc3', code: 'GR-03', name_ar: 'المخزن المركزي والإدارة', notes: '' },
+    ],
     branches: [
       { ref: 'main', name_ar: 'الفرع الرئيسي — المنصورة', city: 'المنصورة', phone: '0502200110', is_main: 1 },
       { ref: 'talkha', name_ar: 'فرع طلخا', city: 'طلخا', phone: '0502200220' },
@@ -125,6 +131,12 @@ export const DEMO_ACTIVITIES = [
     shop_name: 'صيدلية الشفاء',
     owner_name: 'د. منار حسن',
     note: 'أصناف بتواريخ صلاحية وشرائح دوائية وتأمين طبي.',
+    /* مراكز التكلفة (طلب المالك): شجرة تحليل مصاريف تخص مجال النشاط */
+    cost_centers: [
+      { ref: 'cc1', code: 'PH-01', name_ar: 'الصيدلية الرئيسية', notes: '' },
+      { ref: 'cc2', code: 'PH-02', name_ar: 'مستودع الأدوية', notes: '' },
+      { ref: 'cc3', code: 'PH-03', name_ar: 'الإدارة والمتابعة', notes: '' },
+    ],
     branches: [
       { ref: 'main', name_ar: 'صيدلية الشفاء — المركز', city: 'المنصورة', phone: '0502244110', is_main: 1 },
       { ref: 'gomhoria', name_ar: 'فرع شارع الجمهورية', city: 'المنصورة', phone: '0502244220' },
@@ -199,6 +211,12 @@ export const DEMO_ACTIVITIES = [
     shop_name: 'مطعم البيت الدمياطي',
     owner_name: 'كريم فؤاد',
     note: 'وجبات وخامات مطبخ: تكلفة وصفة، صالة وتيك أواي وتطبيقات توصيل.',
+    /* مراكز التكلفة (طلب المالك): شجرة تحليل مصاريف تخص مجال النشاط */
+    cost_centers: [
+      { ref: 'cc1', code: 'RS-01', name_ar: 'المطبخ', notes: '' },
+      { ref: 'cc2', code: 'RS-02', name_ar: 'الصالة والتيك أواي', notes: '' },
+      { ref: 'cc3', code: 'RS-03', name_ar: 'الدليفري', notes: '' },
+    ],
     branches: [
       { ref: 'main', name_ar: 'الفرع الرئيسي — الصالة', city: 'المنصورة', phone: '0502277110', is_main: 1 },
       { ref: 'cloud', name_ar: 'مطبخ التوصيل (كلاود)', city: 'المنصورة', phone: '0502277220' },
@@ -283,6 +301,12 @@ export const DEMO_ACTIVITIES = [
     shop_name: 'بوتيك أزياء الدلتا',
     owner_name: 'هالة مصطفى',
     note: 'ألوان ومقاسات ومخزون معرض ومستودع، وبيع بالتقسيط.',
+    /* مراكز التكلفة (طلب المالك): شجرة تحليل مصاريف تخص مجال النشاط */
+    cost_centers: [
+      { ref: 'cc1', code: 'CL-01', name_ar: 'معرض البيع', notes: '' },
+      { ref: 'cc2', code: 'CL-02', name_ar: 'المخزن', notes: '' },
+      { ref: 'cc3', code: 'CL-03', name_ar: 'التفصيل والتعديلات', notes: '' },
+    ],
     branches: [
       { ref: 'main', name_ar: 'المعرض الرئيسي', city: 'المنصورة', phone: '0502300110', is_main: 1 },
       { ref: 'mall', name_ar: 'فرع المول', city: 'المنصورة', phone: '0502300220' },
@@ -373,6 +397,12 @@ export const DEMO_ACTIVITIES = [
     city: 'المنصورة',
     phone: '0502334455',
     note: 'بيع بالوزن والشيكارة: أعلاف دواجن ومواشي وحبوب مع خلطات خاصة.',
+    /* مراكز التكلفة (طلب المالك): شجرة تحليل مصاريف تخص مجال النشاط */
+    cost_centers: [
+      { ref: 'cc1', code: 'FD-01', name_ar: 'المطحنة والتعبئة', notes: '' },
+      { ref: 'cc2', code: 'FD-02', name_ar: 'مبيعات الجملة', notes: '' },
+      { ref: 'cc3', code: 'FD-03', name_ar: 'النقل والتوصيل', notes: '' },
+    ],
     branches: [
       { ref: 'main', name_ar: 'المخزن الرئيسي — طريق طلخا', city: 'المنصورة', phone: '0502334455', is_main: 1 },
       { ref: 'mitghamr', name_ar: 'فرع ميت غمر', city: 'ميت غمر', phone: '0502334466' },
@@ -453,6 +483,12 @@ export const DEMO_ACTIVITIES = [
     city: 'المنصورة',
     phone: '0502445566',
     note: 'مشاريع إنشاء بجداول كميات ومستخلصات وضمانات — الفائز من العروض يصير مشروعاً كاملاً.',
+    /* مراكز التكلفة (طلب المالك): شجرة تحليل مصاريف تخص مجال النشاط */
+    cost_centers: [
+      { ref: 'cc1', code: 'CN-01', name_ar: 'مشروع جامعة الدلتا — مبنى إداري', notes: '' },
+      { ref: 'cc2', code: 'CN-02', name_ar: 'المعدات والمخازن', notes: '' },
+      { ref: 'cc3', code: 'CN-03', name_ar: 'الإدارة والمتابعة الفنية', notes: '' },
+    ],
     branches: [
       { ref: 'main', name_ar: 'المكتب الرئيسي — شارع الجيش', city: 'المنصورة', phone: '0502445566', is_main: 1 },
       { ref: 'talkha', name_ar: 'مكتب موقع طلخا', city: 'طلخا', phone: '0502445570' },
@@ -549,6 +585,12 @@ export const DEMO_ACTIVITIES = [
     city: 'المنصورة',
     phone: '0502556677',
     note: 'إيجار لوادر وحفارات باليوم مع سائقين ووقود — عقود شهرية وفواتير خدمة.',
+    /* مراكز التكلفة (طلب المالك): شجرة تحليل مصاريف تخص مجال النشاط */
+    cost_centers: [
+      { ref: 'cc1', code: 'EQ-01', name_ar: 'اللودرات', notes: '' },
+      { ref: 'cc2', code: 'EQ-02', name_ar: 'الحفارات والرافعات', notes: '' },
+      { ref: 'cc3', code: 'EQ-03', name_ar: 'الورشة والإدارة', notes: '' },
+    ],
     branches: [
       { ref: 'main', name_ar: 'الجراج الرئيسي — الطريق الزراعي', city: 'المنصورة', phone: '0502556677', is_main: 1 },
       { ref: 'ringroad', name_ar: 'جراج الطريق الدائري', city: 'المنصورة', phone: '0502556680' },

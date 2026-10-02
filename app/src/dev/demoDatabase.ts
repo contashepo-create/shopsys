@@ -45,6 +45,7 @@ interface DemoPayload {
   items: Row[]
   customers: Row[]
   suppliers: Row[]
+  costCenters: Row[]
   sales: (Row & { lines: Row[] })[]
   purchases: (Row & { lines: Row[] })[]
   /* توسعة المرحلة ⑥: موارد بشرية ومستندات تجارية */
@@ -94,7 +95,7 @@ export function switchDemoActivity(activityId: string): void {
 }
 
 /** يحمّل نشاطاً كاملاً من قاعدة البيانات إلى المتجر (يستبدل البيانات الحالية للنشاط). */
-export async function loadDemoActivity(activityId: string): Promise<{ items: number; sales: number; purchases: number; skipped: string[]; employees: number; attendance: number; leaves: number; payrollMonths: number; quotations: number; purchaseOrders: number; wastage: number; subContracts: number; projectExtracts: number; equipment: number; rentals: number; equipmentCosts: number }> {
+export async function loadDemoActivity(activityId: string): Promise<{ items: number; sales: number; purchases: number; skipped: string[]; employees: number; attendance: number; leaves: number; payrollMonths: number; quotations: number; purchaseOrders: number; wastage: number; subContracts: number; projectExtracts: number; equipment: number; rentals: number; equipmentCosts: number; costCenters: number }> {
   if (!import.meta.env.DEV) throw new Error('البيانات التجريبية متاحة في وضع التطوير فقط')
   const skipped: string[] = []
   const payload = await api<DemoPayload>(`/__demo/data?activity=${encodeURIComponent(activityId)}`)
@@ -182,6 +183,15 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
         serialNumber: str(row.serial_number) || undefined,
         status: 'active',
       })
+    } catch { /* كود مكرر */ }
+  }
+
+  /* 4.5) مراكز التكلفة (طلب المالك): شجرة تحليل مصاريف تخص مجال النشاط */
+  let costCentersAdded = 0
+  for (const row of payload.costCenters) {
+    try {
+      data().addCostCenter({ code: str(row.code), nameAr: str(row.name_ar), notes: str(row.notes) || undefined })
+      costCentersAdded++
     } catch { /* كود مكرر */ }
   }
 
@@ -528,7 +538,7 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
     } catch (error) { skipped.push(`أمر شراء ${str(order.ref)}: ${(error as Error).message}`) }
   }
 
-  return { items: itemId.size, sales: salesPosted, purchases: purchasesPosted, skipped, employees: employeesAdded, attendance: attendanceMarked, leaves: leavesAdded, payrollMonths, quotations: quotationsAdded, purchaseOrders: ordersAdded, wastage: wastagePosted, subContracts, projectExtracts, equipment: equipmentAdded, rentals: rentalsOpened, equipmentCosts }
+  return { items: itemId.size, sales: salesPosted, purchases: purchasesPosted, skipped, employees: employeesAdded, attendance: attendanceMarked, leaves: leavesAdded, payrollMonths, quotations: quotationsAdded, purchaseOrders: ordersAdded, wastage: wastagePosted, subContracts, projectExtracts, equipment: equipmentAdded, rentals: rentalsOpened, equipmentCosts, costCenters: costCentersAdded }
 }
 
 /** يحفظ البيانات الرئيسية الحالية من المتجر إلى ملف قاعدة البيانات (تعديل حقيقي). */

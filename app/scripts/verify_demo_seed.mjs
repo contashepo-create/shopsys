@@ -16,11 +16,11 @@ const schema = readFileSync(new URL('../demo-db/schema.sql', import.meta.url), '
 
 /* ① المخطط: الجداول الجديدة السبعة + عمود الصلاحية في بنود الشراء */
 {
-  for (const table of ['employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']) {
+  for (const table of ['employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']) {
     assert.ok(schema.includes(`CREATE TABLE IF NOT EXISTS ${table} (`), `جدول ${table} مفقود من المخطط`)
   }
   assert.ok(/purchase_lines[\s\S]{0,400}expiry_date/.test(schema), 'عمود تاريخ الصلاحية مفقود من بنود الشراء')
-  for (const table of ['employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']) {
+  for (const table of ['employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']) {
     assert.ok(plugin.includes(`'${table}'`), `جدول ${table} خارج قائمة TABLES (الحذف عند إعادة الكتابة)`)
   }
   R.ok('المخطط: 15 جدولاً جديداً + expiry_date في بنود الشراء + كلها في قائمة المسح')

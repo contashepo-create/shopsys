@@ -53,6 +53,7 @@ export function buildDemoDatabase(target = DB_PATH) {
   /* ─── تعميق المرحلة ⑥: معدات وعقود إيجار ومقاولو باطن ومستخلصات ─── */
   const insertEquipment = db.prepare('INSERT INTO equipment (activity, ref, name_ar, code, daily_rate_minor, hourly_rate_minor, monthly_rate_minor, meter_reading, service_every_hours, notes) VALUES (?,?,?,?,?,?,?,?,?,?)')
   const insertRentalContract = db.prepare('INSERT INTO rental_contracts (activity, ref, customer_ref, equipment_ref, days, daily_rate_minor, deposit_minor, payment, paid_minor, vat_percent, start_date, notes, close_deduct_minor, close_end_date, treasury_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+  const insertCostCenter = db.prepare('INSERT INTO cost_centers (activity, ref, code, name_ar, parent_ref, is_active, notes) VALUES (?,?,?,?,?,?,?)')
   const insertEquipmentCost = db.prepare('INSERT INTO equipment_costs (activity, ref, equipment_ref, date, kind, amount_minor, description, treasury_ref) VALUES (?,?,?,?,?,?,?,?)')
   const insertSubContract = db.prepare('INSERT INTO sub_contracts (activity, ref, quotation_ref, contractor_name, supplier_ref, scope_ar, contract_value_minor, retention_percent, tax_withhold_percent, advance_percent, start_date, advance_minor, advance_treasury_ref, certificate_amount_minor, certificate_description) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
   const insertProjectExtract = db.prepare('INSERT INTO project_extracts (activity, ref, quotation_ref, percent, vat_percent, payment, description, treasury_ref) VALUES (?,?,?,?,?,?,?,?)')
@@ -109,6 +110,8 @@ export function buildDemoDatabase(target = DB_PATH) {
       for (const line of doc.lines ?? [])
         insertWastageLine.run(activity.id, doc.ref, line.item_ref, line.qty)
     }
+    for (const row of activity.cost_centers ?? [])
+      insertCostCenter.run(activity.id, row.ref, row.code, row.name_ar, row.parent_ref ?? '', row.is_active === false ? 0 : 1, row.notes ?? '')
     for (const row of activity.equipment ?? [])
       insertEquipment.run(activity.id, row.ref, row.name_ar, row.code ?? '', row.daily_rate_minor ?? 0, row.hourly_rate_minor ?? 0, row.monthly_rate_minor ?? 0, row.meter_reading ?? 0, row.service_every_hours ?? 0, row.notes ?? '')
     for (const row of activity.rental_contracts ?? [])
@@ -128,7 +131,7 @@ export function buildDemoDatabase(target = DB_PATH) {
   db.exec('COMMIT')
 
   const counts = Object.fromEntries(
-    ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']
+    ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']
       .map((table) => [table, db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n]),
   )
   db.close()

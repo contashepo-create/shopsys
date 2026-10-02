@@ -258,6 +258,8 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/clinic', perm: 'ops.activity.use' },
   { prefix: '/cars', perm: 'ops.activity.use' },
   { prefix: '/realestate', perm: 'ops.activity.use' },
+  // وحدة تقارير المطعم (عائلة /restaurant مستقلة كسائر وحدات التقارير)
+  { prefix: '/restaurant', perm: 'ops.activity.use' },
   { prefix: '/accounting/coa', perm: 'acc.coa.manage' },
   { prefix: '/accounting/opening-balances', perm: 'acc.coa.manage' },
   { prefix: '/accounting/assets', perm: 'acc.coa.manage' },

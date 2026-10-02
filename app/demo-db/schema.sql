@@ -394,3 +394,16 @@ CREATE TABLE IF NOT EXISTS project_extracts (
   treasury_ref  TEXT NOT NULL DEFAULT '',
   UNIQUE (activity, ref)
 );
+
+-- مراكز التكلفة: شجرة تجميع للمصاريف والتحليل (طلب المالك — بذور لكل نشاط)
+CREATE TABLE IF NOT EXISTS cost_centers (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity  TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref       TEXT NOT NULL,
+  code      TEXT NOT NULL,
+  name_ar   TEXT NOT NULL,
+  parent_ref TEXT NOT NULL DEFAULT '',
+  is_active INTEGER NOT NULL DEFAULT 1,
+  notes     TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
