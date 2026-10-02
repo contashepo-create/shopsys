@@ -12,6 +12,7 @@
  */
 import assert from 'node:assert/strict'
 import { freshCase, assertInvariants, expectReject, balanceOf, addSimpleItem, addParty, reporter } from './auditKit.mjs'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const R = reporter('المرحلة 2 — 2.3 المشتريات و2.4 المخزون')
 const money = (n) => `${(n / 100).toLocaleString('ar-EG')}ج`
@@ -307,11 +308,11 @@ R.section('— 2.4 المخزون —')
   const sup = addParty(c, 'supplier', 'مورد')
   const med = addSimpleItem(c, { nameAr: 'دواء', priceMinor: 5000, extra: { trackExpiry: true } })
   c.st().postPurchase({
-    supplierId: sup.id, date: '2026-04-12', lines: [{ itemId: med.id, qty: 20, unitPriceMinor: 3000, expiryDate: '2026-10-01' }],
+    supplierId: sup.id, date: '2026-04-12', lines: [{ itemId: med.id, qty: 20, unitPriceMinor: 3000, expiryDate: relDays(45) }],
     expenses: [], paidMinor: 0, treasury: '1101', notes: '',
   })
   c.st().postPurchase({
-    supplierId: sup.id, date: '2026-04-13', lines: [{ itemId: med.id, qty: 30, unitPriceMinor: 3000, expiryDate: '2027-01-01' }],
+    supplierId: sup.id, date: '2026-04-13', lines: [{ itemId: med.id, qty: 30, unitPriceMinor: 3000, expiryDate: relDays(400) }],
     expenses: [], paidMinor: 0, treasury: '1101', notes: '',
   })
   c.st().postSale({
@@ -319,8 +320,8 @@ R.section('— 2.4 المخزون —')
     customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: false, treasury: '1101',
   })
   const qtyOfBatch = (expiry) => c.st().batches.filter((b) => b.itemId === med.id && b.expiryDate === expiry).reduce((s, b) => s + b.qty, 0)
-  assert.equal(qtyOfBatch('2026-10-01'), 0, 'الأقرب انتهاءً استُهلك أولاً (والدفعة الفارغة تُطوى)')
-  assert.equal(qtyOfBatch('2027-01-01'), 25)
+  assert.equal(qtyOfBatch(relDays(45)), 0, 'الأقرب انتهاءً استُهلك أولاً (والدفعة الفارغة تُطوى)')
+  assert.equal(qtyOfBatch(relDays(400)), 25)
   const batchTotal = c.st().batches.filter((b) => b.itemId === med.id).reduce((s, b) => s + b.qty, 0)
   assert.equal(batchTotal, itemOf(c, med.id).stockQty, 'مجموع الدفعات = رصيد الصنف')
   assert.equal(valuation(c), bal(c, '1103'))

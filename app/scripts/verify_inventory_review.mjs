@@ -19,6 +19,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -78,8 +79,8 @@ console.log('\n— V2+V3) الجرد: القيد والرصيد ودفعات ا�
 {
   const milk = item('لبن', { trackExpiry: true })
   // دفعتان: 20 تنتهي قريباً + 30 بعيدة = 50
-  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: milk.id, qty: 20, unitPriceMinor: 2000, expiryDate: '2026-10-01' }], expenses: [], paidMinor: 0, notes: '' })
-  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: milk.id, qty: 30, unitPriceMinor: 2000, expiryDate: '2027-01-01' }], expenses: [], paidMinor: 0, notes: '' })
+  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: milk.id, qty: 20, unitPriceMinor: 2000, expiryDate: relDays(45) }], expenses: [], paidMinor: 0, notes: '' })
+  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: milk.id, qty: 30, unitPriceMinor: 2000, expiryDate: relDays(400) }], expenses: [], paidMinor: 0, notes: '' })
   const invBefore = bal('1103')
   // جرد فعلي: 45 (عجز 5)
   const stk = st().postStocktake([{ itemId: milk.id, nameAr: milk.nameAr, expectedQty: 50, countedQty: 45, unitCostMinor: 2000 }], 'جرد شهري')
@@ -90,8 +91,8 @@ console.log('\n— V2+V3) الجرد: القيد والرصيد ودفعات ا�
   assert.ok(entry.lines.some((l) => l.accountCode === '5111' && l.debit === 10000)) // AUDIT-001
   ok('V3: قيد العجز 5111 هالك مخزون مدين 100 / 1103 دائن 100 — متوازن')
   // V2: الدفعة القريبة نقصت 5 (FEFO) — كانت الفجوة: تبقى 20+30=50 والرصيد 45
-  const near = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === '2026-10-01')
-  const far = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === '2027-01-01')
+  const near = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === relDays(45))
+  const far = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === relDays(400))
   assert.equal(near.qty, 15)
   assert.equal(far.qty, 30)
   assert.equal(near.qty + far.qty, st().items.find((i) => i.id === milk.id).stockQty)

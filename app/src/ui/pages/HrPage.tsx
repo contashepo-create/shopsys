@@ -24,9 +24,10 @@ import { partyCode } from '../../core/partyCodes.ts'
 import {
   ATTENDANCE_STATUSES, ATTENDANCE_STATUS_AR, ATTENDANCE_STATUS_TONE,
   MONTHS_DAYS_AR, dayMetrics, formatClock, leaveDates, matchImportRows, monthDates, parseClock,
-  parseFingerprintCsv, weekdayIndex,
+  weekdayIndex,
   type AttendanceStatus, type FingerprintRow,
 } from '../../core/attendance.ts'
+import { FINGERPRINT_DEVICES, parseFingerprintDeviceCsv, type FingerprintDevice } from '../../core/fingerprintImport.ts'
 import { monthLabelAr } from '../../core/payroll.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
@@ -328,18 +329,20 @@ function FingerprintTab() {
   const toast = useToast()
   const [raw, setRaw] = useState('')
   const [fileName, setFileName] = useState('لصق يدوي')
-  const [preview, setPreview] = useState<{ matches: { employeeId: number | null; row: FingerprintRow }[]; errors: string[] } | null>(null)
+  const [deviceId, setDeviceId] = useState('generic')
+  const [preview, setPreview] = useState<{ matches: { employeeId: number | null; row: FingerprintRow }[]; errors: string[]; device: FingerprintDevice } | null>(null)
   const [overrides, setOverrides] = useState<Record<number, number>>({})
   const fileRef = useRef<HTMLInputElement>(null)
 
   const doParse = (text: string, name: string) => {
-    const parsed = parseFingerprintCsv(text)
+    const parsed = parseFingerprintDeviceCsv(text, deviceId)
     const matches = matchImportRows(parsed.rows, employees.filter((e) => e.active))
-    setPreview({ matches, errors: parsed.errors })
+    setPreview({ matches, errors: parsed.errors, device: parsed.device })
     setOverrides({})
     setFileName(name)
     const unmatched = matches.filter((m) => m.employeeId == null).length
-    toast.show(`تحليل الملف: ${parsed.rows.length} صف · مطابق ${parsed.rows.length - unmatched} · غير مطابق ${unmatched}${parsed.errors.length ? ` · ${parsed.errors.length} سطر مرفوض` : ''}`)
+    const deviceNote = parsed.manual ? ` بصيغة ${parsed.device.nameAr}` : parsed.device.id !== 'generic' ? ` ✓ تعرف تلقائياً على ${parsed.device.nameAr}` : ''
+    toast.show(`تحليل الملف: ${parsed.rows.length} صف · مطابق ${parsed.rows.length - unmatched} · غير مطابق ${unmatched}${parsed.errors.length ? ` · ${parsed.errors.length} سطر مرفوض` : ''}${deviceNote}`)
   }
 
   const readFile = (file: File) => {
@@ -382,6 +385,27 @@ function FingerprintTab() {
           الأعمدة المفهومة تلقائياً: <b>كود أو اسم الموظف</b> · <b>التاريخ</b> (2026-09-30 أو 30/09/2026) · <b>الدخول</b> · <b>الخروج</b> —
           بلا رأس أعمدة يُفترض الترتيب: كود، تاريخ، دخول، خروج. تُدمج بصمات اليوم المكررة (أول دخول وآخر خروج).
         </p>
+        {/* §77: العميل يستخدم أي جهاز — اختر جهازه أو اترك الكشف التلقائي */}
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300" htmlFor="fingerprint-device">جهاز البصمة:</label>
+          <select
+            id="fingerprint-device"
+            className={inputCls + ' w-auto min-w-44 text-[11px]'}
+            value={deviceId}
+            onChange={(e) => { setDeviceId(e.target.value); setPreview(null) }}
+            data-fingerprint-device
+          >
+            {FINGERPRINT_DEVICES.map((d) => <option key={d.id} value={d.id}>{d.nameAr}</option>)}
+          </select>
+          <span className="text-[10.5px] text-slate-500">
+            {FINGERPRINT_DEVICES.find((d) => d.id === deviceId)?.hintAr}
+          </span>
+        </div>
+        {preview && (
+          <p className="mt-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400" data-fingerprint-detected>
+            {preview.device.id === 'generic' ? 'لم يُتعرف على جهاز بعينه — فُهم الملف بالوضع العام ✓' : `فُهم الملف بصيغة ${preview.device.nameAr} (${preview.device.maker}) ✓`}
+          </p>
+        )}
         <div className="mt-3 grid gap-2 md:grid-cols-3">
           <div className="md:col-span-2">
             <textarea

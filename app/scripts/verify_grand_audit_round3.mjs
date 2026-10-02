@@ -19,6 +19,7 @@
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -405,20 +406,20 @@ console.log('\n💊 ملحق: FEFO في postInsuredSale وissueMaterials')
 {
   st().addItem({ ...item('شراب سعال', 'SY-1', 80_000), trackExpiry: true })
   const syrup = st().items.at(-1)
-  st().postPurchase({ supplierId: goldSup.id, date: '2026-02-07', lines: [{ itemId: syrup.id, qty: 10, unitPriceMinor: 40_000, expiryDate: '2027-03-31' }], expenses: [], paidMinor: 400_000, notes: '' })
-  st().postPurchase({ supplierId: goldSup.id, date: '2026-02-08', lines: [{ itemId: syrup.id, qty: 10, unitPriceMinor: 40_000, expiryDate: '2027-12-31' }], expenses: [], paidMinor: 400_000, notes: '' })
+  st().postPurchase({ supplierId: goldSup.id, date: '2026-02-07', lines: [{ itemId: syrup.id, qty: 10, unitPriceMinor: 40_000, expiryDate: relDays(180) }], expenses: [], paidMinor: 400_000, notes: '' })
+  st().postPurchase({ supplierId: goldSup.id, date: '2026-02-08', lines: [{ itemId: syrup.id, qty: 10, unitPriceMinor: 40_000, expiryDate: relDays(400) }], expenses: [], paidMinor: 400_000, notes: '' })
   const batchQty = (d) => st().batches.filter((b) => b.itemId === syrup.id && b.expiryDate === d).reduce((a, b) => a + b.qty, 0)
-  assert.equal(batchQty('2027-03-31'), 10)
+  assert.equal(batchQty(relDays(180)), 10)
   st().postInsuredSale({ lines: [cline(syrup, 4, 80_000)], providerId: prov.id, taxPercent: 0, taxInclusive: true, treasury: '1101' })
   core('ملحق: بيع مؤمَّن بدفعات')
-  assert.equal(batchQty('2027-03-31'), 6, 'FEFO: الأقرب انتهاءً يُستهلك أولاً')
-  assert.equal(batchQty('2027-12-31'), 10)
+  assert.equal(batchQty(relDays(180)), 6, 'FEFO: الأقرب انتهاءً يُستهلك أولاً')
+  assert.equal(batchQty(relDays(400)), 10)
   ok('البيع المؤمَّن استهلك دفعة مارس (الأقرب انتهاءً) أولاً — لا أرصدة دفعات وهمية')
 
   // صرف مواد لمشروع من صنف بدفعات — الدفعات تُخصم أيضاً
   const reqM = st().issueMaterials({ projectId: proj.id, issuedByEmployeeId: keeper.id, receivedByEmployeeId: engineer.id, lines: [{ itemId: syrup.id, qty: 3, unitAr: '' }], notes: 'مطهرات موقع' })
   core('ملحق: صرف مواد بدفعات')
-  assert.equal(batchQty('2027-03-31'), 3, 'إذن الصرف خصم من دفعة مارس FEFO')
+  assert.equal(batchQty(relDays(180)), 3, 'إذن الصرف خصم من دفعة مارس FEFO')
   ok('إذن صرف المواد يستهلك دفعات الصلاحية FEFO كما البيع تماماً')
 }
 console.log(`\n✅ الجولة الثالثة النهائية: ${pass} تحققاً + ${checkpoints} نقطة تفتيش`)

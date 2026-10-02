@@ -286,13 +286,24 @@ export interface ImportMatch {
   employeeId: number | null // null = غير مطابق
 }
 
+/** خيارات تحليل بصمة خاصة بجهاز بعينه (ملفات تعريف fingerprintImport.ts) */
+export interface FingerprintParseOptions {
+  /** مرادفات أعمدة إضافية من ملف تعريف الجهاز — تُفحص قبل المرادفات العامة */
+  extraSynonyms?: Partial<Record<'code' | 'name' | 'date' | 'in' | 'out' | 'time', string[]>>
+  /** الجهاز يصدّر التاريخ شهر/يوم/سنة (برامج Hikvision الأمريكية) بدل يوم/شهر/سنة */
+  monthFirst?: boolean
+  /** سجل نبضات: كل سطر نبضة واحدة بلا عمودَي دخول/خروج — أول نبضة دخولاً وآخرها خروجاً */
+  punchLog?: boolean
+}
+
 /**
  * تحليل ملف البصمة (CSV نصي — وأي تصدية Excel بتنسيق CSV):
  * يتقبل رؤوس أعمدة عربية/إنجليزية بمرادفات، وبلا رأس أصلاً (ترتيب:
  * الكود، التاريخ، الدخول، الخروج). يوحّد التاريخ إلى YYYY-MM-DD
  * (يقبل YYYY-MM-DD · DD/MM/YYYY · DD-MM-YYYY) والوقت إلى HH:MM.
+ * opts اختياري تماماً — بلا opts سلوك الجهاز العام كما كان.
  */
-export function parseFingerprintCsv(text: string): { rows: FingerprintRow[]; errors: string[] } {
+export function parseFingerprintCsv(text: string, opts: FingerprintParseOptions = {}): { rows: FingerprintRow[]; errors: string[] } {
   const errors: string[] = []
   const rows: FingerprintRow[] = []
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
@@ -301,23 +312,35 @@ export function parseFingerprintCsv(text: string): { rows: FingerprintRow[]; err
   const splitLine = (line: string): string[] =>
     line.includes('\t') ? line.split('\t') : line.split(',').map((c) => c.trim())
 
-  /* اكتشاف رؤوس الأعمدة بالمرادفات */
+  /* اكتشاف رؤوس الأعمدة بالمرادفات — مرادفات الجهاز أولاً ثم العامة */
   const header = splitLine(lines[0]).map((cell) => cell.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ''))
-  const colOf = (words: string[]): number =>
-    header.findIndex((cell) => words.some((w) => cell.includes(w) || w.includes(cell) && cell.length > 2))
+  const colOf = (words: string[], deviceWords?: string[]): number => {
+    if (deviceWords?.length) {
+      const deviceHit = header.findIndex((cell) => deviceWords.some((w) => cell.includes(w) || (w.includes(cell) && cell.length > 2)))
+      if (deviceHit >= 0) return deviceHit
+    }
+    return header.findIndex((cell) => words.some((w) => cell.includes(w) || (w.includes(cell) && cell.length > 2)))
+  }
+  const syn = opts.extraSynonyms ?? {}
 
-  const codeCol = colOf(['كودالموظف', 'الكود', 'الرقمالوظيفي', 'رقم', 'employee', 'code', 'id', 'empno'])
-  const nameCol = colOf(['الاسم', 'الموظف', 'name'])
-  const dateCol = colOf(['التاريخ', 'تاريخ', 'date'])
-  const inCol = colOf(['الدخول', 'حضور', 'بداية', 'checkin', 'in', 'starttime', 'from'])
-  const outCol = colOf(['الخروج', 'انصراف', 'نهاية', 'checkout', 'out', 'endtime', 'to'])
+  const codeCol = colOf(['كودالموظف', 'الكود', 'الرقمالوظيفي', 'رقم', 'employee', 'code', 'id', 'empno', 'empcode'], syn.code)
+  const nameCol = colOf(['الاسم', 'الموظف', 'name'], syn.name)
+  const dateCol = colOf(['التاريخ', 'تاريخ', 'date'], syn.date)
+  const inCol = colOf(['الدخول', 'دخول', 'حضور', 'بداية', 'checkin', 'in', 'starttime', 'from'], syn.in)
+  const outCol = colOf(['الخروج', 'خروج', 'انصراف', 'نهاية', 'checkout', 'out', 'endtime', 'to'], syn.out)
+  const timeCol = colOf(['الوقت', 'بصمة'], syn.time)
 
-  /* لا رأس مفهوم ⇐ الافتراضي: كود · تاريخ · دخول · خروج */
-  const hasHeader = [codeCol, nameCol, dateCol, inCol, outCol].some((i) => i >= 0)
+  /* لا رأس مفهوم ⇐ الافتراضي: كود · تاريخ · دخول · خروج — وسجل النبضات بلا رأس: كود · تاريخ · وقت */
+  const hasHeader = [codeCol, nameCol, dateCol, inCol, outCol, timeCol].some((i) => i >= 0)
   const cols = hasHeader
-    ? { code: codeCol, name: nameCol, date: dateCol, in: inCol, out: outCol }
-    : { code: 0, name: -1, date: 1, in: 2, out: 3 }
+    ? { code: codeCol, name: nameCol, date: dateCol, in: inCol, out: outCol, time: timeCol }
+    : opts.punchLog
+      ? { code: 0, name: -1, date: 1, in: -1, out: -1, time: 2 }
+      : { code: 0, name: -1, date: 1, in: 2, out: 3, time: -1 }
   const dataLines = hasHeader ? lines.slice(1) : lines
+
+  /* سجل نبضات: ملف تعريف الجهاز يسمح به ولا يوجد عمودا دخول/خروج */
+  const punchMode = Boolean(opts.punchLog) && cols.in < 0 && cols.out < 0
 
   const normDate = (raw: string, lineNo: number): string | null => {
     const v = raw.trim()
@@ -325,11 +348,11 @@ export function parseFingerprintCsv(text: string): { rows: FingerprintRow[]; err
     if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
     m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/.exec(v)
     if (m) {
-      // صيغة مصرية/عربية شائعة: يوم/شهر/سنة
-      const d = Number(m[1]), mo = Number(m[2])
-      const day = d > 12 ? d : d /* يوم أولاً */ , month = d > 12 && mo <= 12 ? mo : mo
-      if (month > 12 || day > 31) { errors.push(`سطر ${lineNo}: تاريخ غير مفهوم «${raw}»`); return null }
-      return `${m[3]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      // صيغة مصرية/عربية شائعة: يوم/شهر/سنة — إلا إذا صرّح الجهاز بشهر/يوم/سنة
+      let d = Number(m[1]), mo = Number(m[2])
+      if (opts.monthFirst && !(d > 12 && mo <= 12)) { const t = d; d = mo; mo = t }
+      if (mo > 12 || d > 31) { errors.push(`سطر ${lineNo}: تاريخ غير مفهوم «${raw}»`); return null }
+      return `${m[3]}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
     }
     errors.push(`سطر ${lineNo}: تاريخ غير مفهوم «${raw}»`)
     return null
@@ -337,7 +360,8 @@ export function parseFingerprintCsv(text: string): { rows: FingerprintRow[]; err
 
   const normTime = (raw: string | undefined): string => {
     if (!raw) return ''
-    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(ص|am)?\s*(م|pm)?/i.exec(raw.trim())
+    let m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(ص|am)?\s*(م|pm)?/i.exec(raw.trim())
+    if (!m) m = /^(\d{2})(\d{2})$/.exec(raw.trim()) /* 0852 مضغوطة */
     if (!m) return ''
     let h = Number(m[1])
     if ((m[5] ?? '').toLowerCase() === 'م' || m[5]?.toLowerCase() === 'pm') h = h % 12 + 12
@@ -351,6 +375,14 @@ export function parseFingerprintCsv(text: string): { rows: FingerprintRow[]; err
     if (!key) { errors.push(`سطر ${i + 1}: لا كود ولا اسم موظف`); continue }
     const date = cols.date >= 0 ? normDate(cells[cols.date] ?? '', i + 1) : null
     if (!date) continue
+    if (punchMode) {
+      /* نبضة واحدة: عمود وقت مستقل أو وقت ملحق بخانة التاريخ «2026-09-30 08:52:00» */
+      const punch = normTime(cols.time >= 0 ? cells[cols.time] : undefined) || normTime((cells[cols.date] ?? '').split(' ')[1] ?? (cells[cols.date] ?? '').split('T')[1])
+      if (!punch) { errors.push(`سطر ${i + 1}: وقت النبضة غير مفهوم`); continue }
+      /* الدخول والخروج معاً = وقت النبضة؛ الدمج أدناه يحفظ أولها دخولاً وآخرها خروجاً */
+      rows.push({ employeeKey: key.trim(), date, checkIn: punch, checkOut: punch })
+      continue
+    }
     const checkIn = normTime(cols.in >= 0 ? cells[cols.in] : undefined)
     const checkOut = normTime(cols.out >= 0 ? cells[cols.out] : undefined)
     rows.push({ employeeKey: key.trim(), date, checkIn, checkOut })
@@ -398,7 +430,10 @@ export function matchImportRows(
   for (const e of employees) byName.set(normalizeArabicName(e.nameAr), e.id)
   return rows.map((row) => {
     const key = row.employeeKey.trim()
-    const codeHit = byCode.get(key.toLowerCase()) ?? byCode.get(key.replace(/\D/g, '')) ?? null
+    /* §77: أجهزة البصمة تحشو الكود بأصفار بادئة (ZKTeco: 0001، Realtime: E03)
+       — نسقط الأحرف ثم الأصفار البادئة كي يطابق كود الموظف الرقمي */
+    const digits = key.replace(/\D/g, '').replace(/^0+(?=\d)/, '')
+    const codeHit = byCode.get(key.toLowerCase()) ?? byCode.get(digits) ?? null
     if (codeHit) return { row, employeeId: codeHit }
     const nameHit = byName.get(normalizeArabicName(key))
     return { row, employeeId: nameHit ?? null }

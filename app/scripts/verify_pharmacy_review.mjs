@@ -8,6 +8,7 @@
  * ⑤ FEFO مع الوحدات الكبرى: الخصم من الدفعات بالكمية الأساسية
  * تشغيل: node --experimental-strip-types scripts/verify_pharmacy_review.mjs
  */
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 const mem = new Map()
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) }
 globalThis.window = globalThis
@@ -76,8 +77,8 @@ S().addItem(item({ nameAr: 'شراب كحة', baseUnit: 'زجاجة', costMinor:
 const syrup = S().items.find((i) => i.nameAr === 'شراب كحة')
 useDataStore.setState({
   batches: [
-    { id: 9001, itemId: syrup.id, expiryDate: '2026-10-01', qty: 12, receivedAt: '2026-01-01' },
-    { id: 9002, itemId: syrup.id, expiryDate: '2027-05-01', qty: 12, receivedAt: '2026-02-01' },
+    { id: 9001, itemId: syrup.id, expiryDate: relDays(45), qty: 12, receivedAt: '2026-01-01' },
+    { id: 9002, itemId: syrup.id, expiryDate: relDays(400), qty: 12, receivedAt: '2026-02-01' },
   ],
 })
 const cartonLine = { itemId: syrup.id, nameAr: 'شراب كحة (كرتونة)', qty: 1, unitPriceMinor: 55_000, unitCostMinor: 36_000, discountPercent: 0, soldByWeight: false, unitFactor: 12, unitLabel: 'كرتونة' }
