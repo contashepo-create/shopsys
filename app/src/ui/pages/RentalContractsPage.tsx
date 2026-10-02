@@ -6,14 +6,18 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * يُعترف به إيراداً. تقرير بالفترات + التأمينات المحتجزة.
  */
 import { useMemo, useState } from 'react'
-import { Plus, FileSpreadsheet, Eye, BookOpenText, LockKeyhole, TrendingUp, Printer } from 'lucide-react'
+import { Plus, FileSpreadsheet, Eye, BookOpenText, LockKeyhole, TrendingUp, Printer, ReceiptText } from 'lucide-react'
 import { useDataStore, type RentalContract } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { computeRentalTotals, rentalReport, utilizationReport, isRentalOverdue, rentalExpectedEnd, type RentalPaymentMode } from '../../core/rental.ts'
+import { computeRentalTotals, rentalReport, utilizationReport, isRentalOverdue, rentalExpectedEnd, rentalInvoiceDoc, type RentalPaymentMode } from '../../core/rental.ts'
 import { renderRentalContractHtml } from '../print/printRentalContract.ts'
 import { printHtml } from '../print/printReceipt.ts'
+import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
+import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { usePrintSwitches } from '../components/PrintSwitches.tsx'
 import { RATE_TYPE_LABELS, type RateType } from '../../core/rentalMeter.ts'
 import { periodPresets, type Period } from '../../core/reports.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -68,6 +72,45 @@ export function RentalContractsPage() {
   }
 
   const [tab, setTab] = usePersistedSectionView('rental-contracts', 'list', ['list', 'report'] as const)
+
+  /* ─── فاتورة إيجار للعميل (طلب المالك): وثيقة استحقاق بشكل فاتورة البيع يسدّد منها المستأجر ─── */
+  const printSwitches = usePrintSwitches()
+  const printInvoice = (c: RentalContract, templateHint?: InvoiceTemplate) => {
+    const doc = rentalInvoiceDoc(c)
+    const template: InvoiceTemplate = templateHint ?? (printSwitches.cashierPrint ? 'thermal' : 'a4')
+    const dueLabel = doc.dueMinor > 0
+      ? `المتبقي على العميل: ${fmt(doc.dueMinor)} ${cur.symbol} — يُسدَّد من سند قبض / تحصيل العقد ${c.contractNumber}`
+      : 'مسدَّد بالكامل — شكراً لتعاملكم'
+    const model = buildSimpleDocModel({
+      docTitle: 'فاتورة إيجار معدات',
+      invoiceNumber: c.contractNumber,
+      refCode: `RC-${c.id}`,
+      dateIso: c.date.slice(0, 10),
+      partyLabel: custName(c.customerId),
+      paymentLabel: dueLabel,
+      rows: doc.rows.map((r) => ({ nameAr: r.nameAr, qty: r.qty, unitPriceMinor: r.unitPriceMinor, totalMinor: Math.round(r.qty * r.unitPriceMinor) })),
+      totalMinor: doc.totalMinor,
+      paidMinor: doc.paidMinor,
+      operatorName: setup.ownerName ?? 'المالك',
+      settings: useAppStore.getState().receipt,
+      extraFooter: [
+        ...(c.totals.depositMinor > 0 ? [`تأمين محتجز (يُرَدّ عند الإقفال بعد خصم الأضرار): ${fmt(c.totals.depositMinor)} ${cur.symbol} — التزام مستقل لا يدخل استحقاق هذه الفاتورة`] : []),
+        ...(c.vatPercent > 0 ? [`ض.ق.م ${c.vatPercent}٪ ضمن الإجمالي`] : []),
+        ...(c.notes ? [c.notes] : []),
+      ].join(' · ') || undefined,
+    })
+    const live = useAppStore.getState().receipt
+    if (!printSwitches.silentPrint) {
+      openPrintPreview({
+        html: buildModelHtml(model, cur, live, template),
+        wide: template !== 'thermal',
+        title: template !== 'thermal' ? `فاتورة إيجار ${c.contractNumber} — ${c.equipmentName}` : 'إيصال إيجار',
+        rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(model, cur, r, template) },
+      })
+      return
+    }
+    printModelWithTemplate(model, cur, live, template)
+  }
 
   /* ─── فتح عقد ─── */
   const [open, setOpen] = useState(false)
@@ -249,6 +292,7 @@ export function RentalContractsPage() {
                     </td>
                     <td className="px-4 py-3 text-left whitespace-nowrap">
                       <button onClick={() => setViewing(c)} className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all duration-200 hover:scale-110"><Eye size={15} /></button>
+                      <button onClick={() => printInvoice(c)} title="فاتورة إيجار للعميل (يسدّد منها)" className="p-2 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-500/10 transition-all duration-200 hover:scale-110"><ReceiptText size={15} /></button>
                       <button onClick={() => printContract(c)} title="طباعة العقد" className="p-2 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all duration-200 hover:scale-110"><Printer size={15} /></button>
                       {c.status === 'active' && (
                         <button onClick={() => { setClosing(c); setDeduct('') }} className="p-2 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all duration-200 hover:scale-110" title="إقفال وردّ التأمين"><LockKeyhole size={15} /></button>
@@ -473,6 +517,14 @@ export function RentalContractsPage() {
       <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing ? `العقد ${viewing.contractNumber}` : ''} wide>
         {viewing && (
           <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[11px] text-slate-400">فاتورة الاستحقاق يسدّد منها المستأجر — تتبع مفاتيح الطباعة الثلاثة (مباشرة/كاشير/صامتة)</div>
+              <div className="flex gap-2">
+                <Btn variant="ghost" className="!text-[12px] !px-3 !py-1.5" onClick={() => printInvoice(viewing, 'a4')}><ReceiptText size={14} /> فاتورة إيجار A4</Btn>
+                <Btn variant="ghost" className="!text-[12px] !px-3 !py-1.5" onClick={() => printInvoice(viewing, 'thermal')}><Printer size={14} /> إيصال حراري</Btn>
+                <Btn variant="ghost" className="!text-[12px] !px-3 !py-1.5" onClick={() => printContract(viewing)}><BookOpenText size={14} /> العقد</Btn>
+              </div>
+            </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[12px]">
               <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">المعدة</div><b>{viewing.equipmentName}</b></div>
               <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3"><div className="text-slate-400">العميل</div><b>{custName(viewing.customerId)}</b></div>
