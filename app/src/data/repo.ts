@@ -11711,6 +11711,13 @@ export const useDataStore = create<DataState>()(
       addAsset: (args) => {
         const state = get()
         const funding: AssetFunding = args.funding ?? 'cash'
+        // إصلاح §82 (قياس أثر): التمويل غير النقدي كان يقبل دفعة نقدية ويصفّرها بصمت —
+        // القيمة تختفي: لا تُخصم من الخزينة، لا تدفع للمورد، ولا تظهر في أي كشف،
+        // بينما يُحمَّل المورد بكامل التكلفة. القاتل الآن صريح في المستودع:
+        // «المقدم نقداً + الباقي آجل» هو مسار التمويل النقدي نفسه.
+        if ((funding === 'supplier_credit' || funding === 'capital' || funding === 'partner') && (args.paidMinor ?? 0) > 0) {
+          throw new Error('هذا التمويل لا يقبل دفعة نقدية عند الاقتناء — للشراء بمقدم نقدي وباقٍ آجل على المورد اختر تمويل «دفع من خزينة/بنك» وأدخل المقدم، أو اجعله آجلاً بالكامل وسدّده بالأقساط')
+        }
         // رأس مال/جاري شريك: لا دفع نقدياً من خزائن المنشأة إطلاقاً
         const paid = funding === 'capital' || funding === 'partner' ? 0 : funding === 'supplier_credit' ? 0 : args.paidMinor
         const errors = validateAsset({ ...args, paidMinor: paid })

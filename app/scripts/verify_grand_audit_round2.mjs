@@ -266,7 +266,7 @@ assert.equal(bal('2109'), 0)
 ok('الإلغاء ردّ العربون 500 نقداً وصفّر الالتزام')
 
 // أصل ثابت بتمويل جزئي وإهلاك شهري
-st().addAsset({ nameAr: 'مكواة بخار صناعية', costMinor: 1_200_000, salvageMinor: 0, lifeMonths: 60, paidMinor: 400_000, notes: '', supplierId: sup.id, funding: 'cash_supplier' })
+st().addAsset({ nameAr: 'مكواة بخار صناعية', costMinor: 1_200_000, salvageMinor: 0, lifeMonths: 60, paidMinor: 400_000, notes: '', supplierId: sup.id, funding: 'cash' })
 core('R4 اقتناء أصل بتمويل جزئي')
 assert.equal(bal('1201'), 1_200_000)
 ok('الأصل على 1201 بكامل تكلفته — 4000 نقداً والباقي دين مورد')
