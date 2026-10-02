@@ -2982,6 +2982,29 @@ export const useDataStore = create<DataState>()(
           const twice = state.payrollSlips.some((slip) => slip.month === args.month && slip.employeeId === draft.employeeId && slip.status !== 'cancelled')
           if (twice) throw new Error(`${draft.employeeName}: له قسيمة مستحقة لهذا الشهر بالفعل`)
         }
+        // إصلاح §83 (قياس أثر): السلفة المستقطعة بالقسيمة كانت تقيّد 1107 دائناً
+        // دون تحديث سجلات السلف — فتفترق السجلات عن الدفتر (المتبقي الوهمي يسمح
+        // باستقطاع فوق الحقيقة لاحقاً). الآن: حارس المتبقي + توزيع الأقدم أولاً
+        // (نفس منهج المسير والسداد النقدي).
+        let employeeAdvances = state.employeeAdvances
+        for (const draft of drafts) {
+          if ((draft.advanceMinor ?? 0) <= 0) continue
+          const remaining = employeeAdvances
+            .filter((a) => a.employeeId === draft.employeeId)
+            .reduce((sum, a) => sum + (a.amountMinor - a.recoveredMinor), 0)
+          if (draft.advanceMinor > remaining) {
+            throw new Error(`${draft.employeeName}: السلفة المستقطعة (${draft.advanceMinor}) أكبر من متبقي سلفه (${remaining})`)
+          }
+          let toRecover = draft.advanceMinor
+          employeeAdvances = employeeAdvances.map((a) => {
+            if (a.employeeId !== draft.employeeId || toRecover <= 0) return a
+            const open = a.amountMinor - a.recoveredMinor
+            if (open <= 0) return a
+            const take = Math.min(open, toRecover)
+            toRecover -= take
+            return { ...a, recoveredMinor: a.recoveredMinor + take }
+          })
+        }
         const runId = nextId(state.payrollRuns)
         const baseId = nextId(state.payrollSlips)
         const now = args.date ? `${args.date}T09:00:00.000Z` : new Date().toISOString()
@@ -3012,7 +3035,7 @@ export const useDataStore = create<DataState>()(
           accrualEntryId: entryId,
           notes: draft.notes ?? '',
         }))
-        set({ payrollSlips: [...state.payrollSlips, ...slips], journal: [...state.journal, entry] })
+        set({ payrollSlips: [...state.payrollSlips, ...slips], journal: [...state.journal, entry], ...(employeeAdvances !== state.employeeAdvances ? { employeeAdvances } : {}) })
         return slips
       },
       payPayrollSlip: (slipId, args) => {
@@ -3042,22 +3065,48 @@ export const useDataStore = create<DataState>()(
         const slip = state.payrollSlips.find((row) => row.id === slipId)
         if (!slip) throw new Error('القسيمة غير موجودة')
         if (slip.status === 'paid') throw new Error('لا تُلغى قسيمة مصروفة — سجّل تسوية بدلاً منها')
+        // إصلاح §83 (بوابة العمق): الملغاة كانت تُلغى مرة ثانية فيولَّد قيد عكسي
+        // مزدوج بلا مقابل — يفسد مصروف الرواتب والذمة معاً. القاتل في المستودع.
+        if (slip.status === 'cancelled') throw new Error('القسيمة ملغاة بالفعل — لا يُلغى مستند ملغى')
         if (!reason.trim()) throw new Error('سبب الإلغاء مطلوب')
+        // إصلاح §83 (ث9): كان القيد يحمل reversesEntryId لقيد الاستحقاق المجمَّع
+        // بلا تحديث الطرف الآخر — كسر التبادلية. والأدق محاسبياً: الإلغاء يعكس
+        // **سطر قسيمة واحد** من قيد مجمَّع (سطر 2104 باسم الموظف) لا القيد كله،
+        // فهو تسوية مستقلة تُربط بمصدرها (payroll/runId) ووصفها لا بعلاقة عكس.
+        // وإصلاح §83 الثاني هنا: سطر 1107 دائن (استقطاع السلفة) كان يُترك دون
+        // عكس — يُعاد الاستقطاع ديناً على الموظف ويُعكس في سجلات سلفه.
+        const advanceBack = slip.advanceMinor > 0
+          ? [{ accountCode: '1107', debit: slip.advanceMinor, credit: 0, note: `إعادة استقطاع سلفة ${slip.slipNumber} — ${slip.employeeName}` }]
+          : []
         const reverse = [
           { accountCode: '2104', debit: slip.netMinor, credit: 0, note: `إلغاء ${slip.slipNumber} — ${reason.trim()}` },
-          { accountCode: '5102', debit: 0, credit: slip.netMinor, note: `عكس استحقاق ${slip.employeeName}` },
+          ...advanceBack,
+          { accountCode: '5102', debit: 0, credit: slip.netMinor + slip.advanceMinor, note: `عكس استحقاق ${slip.employeeName}` },
         ]
+        // عكس توزيع السلفة على السجلات (بما استُرد بمقدارها، الأقدم أولاً)
+        let employeeAdvances = state.employeeAdvances
+        if (slip.advanceMinor > 0) {
+          let toGive = slip.advanceMinor
+          employeeAdvances = employeeAdvances.map((a) => {
+            if (a.employeeId !== slip.employeeId || toGive <= 0) return a
+            const give = Math.min(a.recoveredMinor, toGive)
+            if (give <= 0) return a
+            toGive -= give
+            return { ...a, recoveredMinor: a.recoveredMinor - give }
+          })
+        }
         const nowIso = new Date().toISOString()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: nowIso.slice(0, 10),
           description: `إلغاء قسيمة ${slip.slipNumber}`,
           sourceType: 'payroll', sourceId: slip.runId, lines: reverse,
-          createdBy: activeUserName(state), createdAt: nowIso, reversedByEntryId: null, reversesEntryId: slip.accrualEntryId,
+          createdBy: activeUserName(state), createdAt: nowIso, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
           payrollSlips: state.payrollSlips.map((row) => (row.id === slipId ? { ...row, status: 'cancelled' as const, notes: `${row.notes ?? ''} · ألغيت: ${reason.trim()}` } : row)),
           journal: [...state.journal, entry],
+          ...(employeeAdvances !== state.employeeAdvances ? { employeeAdvances } : {}),
         })
       },
       getUnpaidPayrollSlips: (employeeId) => get().payrollSlips
@@ -3119,6 +3168,8 @@ export const useDataStore = create<DataState>()(
       },
       addLeaveRequest: (args) => {
         const state = get()
+        // إصلاح §83: إجازة لموظف شبح كانت تُسجَّل وتعتمد وتلوث الأرصدة والتقارير
+        if (!state.employees.some((e) => e.id === args.employeeId)) throw new Error('الموظف غير موجود')
         const days = leaveDaysBetween(args.from, args.to)
         const errors = validateLeaveRequest({ employeeId: args.employeeId, typeId: args.typeId, from: args.from, to: args.to, leaves: state.leaveRequests, types: state.leaveTypes })
         if (errors.length) throw new Error(errors.join(' — '))
@@ -7347,6 +7398,10 @@ export const useDataStore = create<DataState>()(
 
       postPayroll: (args) => {
         const state = get()
+        // إصلاح §83 (قياس أثر): مسير بموظف شبح كان يمر — نقد حقيقي يخرج من
+        // الخزينة ومصروف 5102 يُحمَّل لمستفيد غير موجود في السجلات. القاتل في المستودع.
+        const ghost = [...new Set(args.lines.map((l) => l.employeeId))].filter((id) => !state.employees.some((e) => e.id === id))
+        if (ghost.length) throw new Error(`موظف غير موجود بالسجلات (رقم ${ghost.join('، ')}) — لا يُصرف راتب لمن ليس له ملف`)
         // 1) حساب كل سطر بالنواة الخالصة (يرمي لو صافي سطر سالب)
         const computed: PayrollLineComputed[] = args.lines.map(computePayrollLine)
         // 2) تحقق شامل قبل أي كتابة
