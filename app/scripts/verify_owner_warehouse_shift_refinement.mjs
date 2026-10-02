@@ -36,7 +36,7 @@ ok(purchases.includes('تحديد المخزن لكل سطر') && purchases.incl
 ok(purchases.includes('warehouseId: lineWarehouseMode ? (d?.warehouseId ?? null) : undefined'), 'مخزن السطر لا يُرسل إلا في وضع تحديد المخزن لكل سطر')
 ok(repo.includes('warehouseId?: number | null') && repo.includes('warehouseId: inv.lines[i]?.warehouseId'), 'طبقة البيانات تحفظ مخزن سطر الشراء')
 ok(repo.includes('فاتورة شراء موزعة على أكثر من مخزن') && repo.includes('حتى لا يضيع توزيع المخازن'), 'تعديل فاتورة شراء موزعة على مخزنين محجوب حتى لا يمسح توزيع المخازن')
-ok(transfers.includes('lines: { itemId: number; qty: number; warehouseId?: number | null }') && transfers.includes('l.warehouseId ?? p.warehouseId'), 'حساب أرصدة المخازن يقرأ مخزن السطر قبل مخزن الفاتورة')
+ok(transfers.includes('lines: { itemId: number; qty: number; unitFactor?: number; warehouseId?: number | null }') && transfers.includes('l.warehouseId ?? p.warehouseId'), 'حساب أرصدة المخازن يقرأ مخزن السطر قبل مخزن الفاتورة (التوقيع وُسّع بunitFactor في §80 للوحدة الأساسية)')
 ok(transfers.includes('p.projectId != null') && transfers.includes('تكلفة موقع مباشرة وليست رصيد مخزن'), 'مشتريات المشاريع لا تدخل أرصدة المخازن')
 
 ok(warehouses.includes('onDoubleClick') && warehouses.includes('محتويات مخزن') && warehouses.includes('فلترة بالاسم أو SKU أو الباركود'), 'صفحة المخازن تفتح محتويات المخزن بالضغط المزدوج مع فلترة')

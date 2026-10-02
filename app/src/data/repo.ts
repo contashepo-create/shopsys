@@ -5055,6 +5055,16 @@ export const useDataStore = create<DataState>()(
       postStocktake: (counts, notes) => {
         const state = get()
         if (!counts.length) throw new Error('لا أصناف في الجرد')
+        // حراسة §80: صنف غير مسجل يولّد قيد تسوية (5111/4110) بلا أثر مخزوني فعلي
+        // فينفصل 1103 الدفتري عن قيمة المخزون الحقيقية (قيس: عجز وهمي 50,000).
+        // كذلك «الدفتري» المُمرر يجب أن يطابق رصيد اللحظة وإلا كان الجرد على أساس قديم.
+        for (const c of counts) {
+          const it = state.items.find((row) => row.id === c.itemId)
+          if (!it) throw new Error(`«${c.nameAr}» (#${c.itemId}) ليس صنفاً مسجلاً — أزل سطر الجرد`)
+          if (Math.round((it.stockQty ?? 0) * 1000) !== Math.round(c.expectedQty * 1000)) {
+            throw new Error(`«${c.nameAr}»: الرصيد الدفتري تغير منذ العد (${it.stockQty ?? 0} حالياً) — أعد الجرد على الرصيد الحالي`)
+          }
+        }
         const result = computeStocktake(counts)
         const stocktakeId = nextId(state.stocktakes)
         const now = new Date().toISOString()
@@ -7159,9 +7169,11 @@ export const useDataStore = create<DataState>()(
         set({ treasuries: state.treasuries.filter((x) => x.code !== code) })
       },
       removeWarehouse: (id) => {
+        // حارس §80: الرئيسي لا يُحذف — كان الفلتر يبتلع الطلب بصمت فيوهم المستخدم بالحذف
+        if (get().warehouses.some((w) => w.id === id && w.isMain)) throw new Error('المخزن الرئيسي لا يُحذف — أنشئ مخزناً آخر وحوّل الأدوار إن أردت')
         const used = get().transfers.some((t) => t.fromWarehouseId === id || t.toWarehouseId === id)
         if (used) throw new Error('لا يمكن حذف مخزن له تحويلات مسجلة — احتفظ به للسجل')
-        set((s) => ({ warehouses: s.warehouses.filter((w) => w.id !== id || w.isMain) }))
+        set((s) => ({ warehouses: s.warehouses.filter((w) => w.id !== id) }))
       },
 
       addCustomer: (c) => {
