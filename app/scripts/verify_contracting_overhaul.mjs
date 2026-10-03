@@ -161,7 +161,8 @@ console.log('④ الواجهات: قسم الفواتير ونافذة المر
 
   ok('قسم «فواتير البيع» في ملاحة المقاولات بمسار مستقل', nav.includes("nameAr: 'فواتير البيع'") && nav.includes("path: '/contracting/invoices'"))
   ok('مسار الصفحة مربوط في التطبيق', app.includes('path="/contracting/invoices"'))
-  ok('مركز الفواتير: زر فاتورة لمشروع (تعبئة المشروع والعميل) وزر فاتورة حرة', invoicesPage.includes('data-contracting-project-invoice') && invoicesPage.includes('data-contracting-free-invoice') && invoicesPage.includes('data-contracting-invoice-review'))
+  ok('مركز الفواتير: زر واحد «فاتورة بيع جديدة» حرة — لا ربط مسبق من الصفحة (تصحيح المالك: الربط من داخل الفاتورة)', invoicesPage.includes('data-contracting-new-invoice') && !invoicesPage.includes('openSalesInvoiceWindow(undefined, { projectId') && invoicesPage.includes('data-contracting-invoice-review'))
+  ok('داخل الفاتورة: حقل المشروع يعبّئ عميله تلقائياً ويعرض العميل وقيمة العقد', adv.includes('data-invoice-project-select') && adv.includes('عُبّأ تلقائياً') && adv.includes('data-invoice-project'))
   ok('نافذة المراجعة تعرض الوثيقة كاملة (بنود + صافٍ + قيد + تعديل)', pages.includes('data-extract-view') && pages.includes('data-extract-view-lines') && pages.includes('data-extract-view-due') && pages.includes('data-extract-view-edit'))
   ok('زر مراجعة وزر تعديل على كل مستخلص في الجدول', pages.includes('data-extract-review') && pages.includes('data-extract-edit'))
   ok('محرر التعديل يطلب سبباً تدقيقياً ويعلن القيد العاكس', pages.includes('data-extract-edit-reason') && pages.includes('قيد عاكس وإعادة بناء'))

@@ -355,8 +355,9 @@ const minCollectMinor=!selectedCustomer?grandMinor:selectedCustomer.active===fal
    </span>
    <span className="invoice-doc-stripsep" aria-hidden="true" />
    <label className="invoice-doc-stripcheck" title="عند نفاد الرصيد: تحذير بدلاً من منع البيع"><input type="checkbox" checked={allowNegative} onChange={e=>setAllowNegative(e.target.checked)}/> بيع بمخزون سالب</label>
-   {setup.modules.includes('contracting')&&<span className="invoice-doc-stripfield">المشروع
-    <QuickSelect aria-label="مشروع الفاتورة" value={projectId} onChange={e=>setProjectId(Number(e.target.value))}><option value={0}>بدون مشروع</option>{projects.filter(p=>p.status==='active').map(p=><option key={p.id} value={p.id}>{p.nameAr}</option>)}</QuickSelect>
+   {setup.modules.includes('contracting')&&<span className="invoice-doc-stripfield" data-invoice-project title="اربط الفاتورة بمشروع من هنا — عميل المشروع يُعبأ تلقائياً إن لم تختر عميلاً">المشروع
+    <QuickSelect aria-label="مشروع الفاتورة" data-invoice-project-select value={projectId} onChange={e=>{const id=Number(e.target.value);setProjectId(id);/* §94 تصحيح بطلب المالك: الفاتورة حرة والربط من داخلها — اختيار المشروع يعبّئ عميله تلقائياً */if(id>0&&!customerId){const prj=projects.find((p)=>p.id===id);if(prj?.clientId){setPartyKind('customer');setCustomerId(prj.clientId);toast.show(`عميل المشروع «${prj.clientName}» عُبّأ تلقائياً — يمكنك تغييره`)}}}}><option value={0}>بدون مشروع</option>{projects.filter(p=>p.status==='active').map(p=><option key={p.id} value={p.id}>{p.code?p.code+' — ':''}{p.nameAr}</option>)}</QuickSelect>
+    {projectId>0&&(()=>{const prj=projects.find((p)=>p.id===projectId);return prj?<small className="text-[10px] text-slate-500 whitespace-nowrap">{prj.clientName?`${prj.clientName} · `:''}عقد {formatMinor(prj.contractValueMinor,cur,false)} {cur.symbol}</small>:null})()}
    </span>}
    {editingInvoice&&<span className="invoice-doc-stripfield is-warn">سبب التعديل<input value={editReason} onChange={e=>setEditReason(e.target.value)} placeholder="إلزامي — يُحفظ في سجل التدقيق" aria-label="سبب تعديل المستند"/></span>}
   </div>:undefined}

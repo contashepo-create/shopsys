@@ -13,7 +13,7 @@
  *      وطباعة بنفس قوالب الفواتير.
  */
 import { useMemo, useState } from 'react'
-import { FilePlus2, Printer, Pencil, ShoppingCart, HardHat, Receipt, Coins } from 'lucide-react'
+import { FilePlus2, Printer, Pencil, HardHat, Coins } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -146,13 +146,8 @@ export function ContractingInvoicesPage() {
           <input value={search} onChange={(e) => setSearch(e.target.value)} className={`${inputCls} w-56`} placeholder="بحث برقم الفاتورة أو العميل أو المشروع…" />
         </div>
         <div className="flex flex-wrap gap-2">
-          <Btn variant="ghost" data-contracting-free-invoice onClick={() => openSalesInvoiceWindow()} title="فاتورة بيع كاملة بدون ربط بمشروع — نفس نافذة الفاتورة المتقدمة"><Receipt size={15} /> فاتورة حرة (بلا مشروع)</Btn>
-          <Btn shortcut="F3" data-contracting-project-invoice onClick={() => {
-            const target = prjFilter ? projects.find((p) => p.id === prjFilter) : projects.find((p) => p.status === 'active')
-            if (!target) return toast.show('لا مشاريع بعد — أنشئ مشروعاً أولاً من «المشروعات والمستخلصات»', 'error')
-            openSalesInvoiceWindow(undefined, { projectId: target.id, customerId: target.clientId ?? undefined })
-            toast.show(`نافذة الفاتورة فُتحت مربوطة بـ ${target.code} — عميل المشروع مُعبأ مسبقاً`)
-          }}><ShoppingCart size={16} /> فاتورة بيع لمشروع</Btn>
+          {/* تصحيح بطلب المالك: الفاتورة تفتح حرة دوماً — والربط بالمشروع من حقل «المشروع» داخل الفاتورة نفسها */}
+          <Btn shortcut="F3" data-contracting-new-invoice onClick={() => { openSalesInvoiceWindow(); toast.show('الفاتورة تفتح حرة — اربط المشروع من حقل «المشروع» داخلها وسيُعبأ عميله تلقائياً') }} title="فاتورة بيع كاملة حرة — اربطها بمشروع من حقل المشروع داخل الفاتورة"><FilePlus2 size={16} /> فاتورة بيع جديدة</Btn>
         </div>
       </div>
 
@@ -173,7 +168,6 @@ export function ContractingInvoicesPage() {
                     <div className="text-[11px] text-slate-500 truncate">{p.clientName || 'بلا جهة مالكة'} · {p.status === 'active' ? 'نشط' : 'مكتمل'} · {boqCount} بند BOQ</div>
                   </div>
                 </div>
-                <Btn variant="ghost" onClick={() => openSalesInvoiceWindow(undefined, { projectId: p.id, customerId: p.clientId ?? undefined })} title="فاتورة بيع مربوطة بهذا المشروع وعميله"><FilePlus2 size={14} /> فاتورة</Btn>
               </div>
               <div className="grid grid-cols-4 gap-1.5 text-center text-[11px]">
                 <div className="rounded-xl bg-slate-500/5 p-2"><div className="text-slate-500">العقد الفعلي</div><b className="block text-[12px]">{fmt(effective)}</b></div>
@@ -200,7 +194,7 @@ export function ContractingInvoicesPage() {
           <span className="text-[11px] text-slate-500">— الفاتورة الكاملة مثل فواتير الأعلاف: أصناف وعمولات موظفين وتحصيل متعدد</span>
         </div>
         {invoices.length === 0 ? (
-          <div className="p-6"><EmptyState icon="🧾" title="لا فواتير مربوطة بمشروعات بعد" sub="استخدم زر «فاتورة بيع لمشروع» — أو أصدر فاتورة حرة بلا مشروع" /></div>
+          <div className="p-6"><EmptyState icon="🧾" title="لا فواتير مربوطة بمشروعات بعد" sub="افتح «فاتورة بيع جديدة» ثم اربط المشروع من حقل «المشروع» داخل الفاتورة" /></div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]" data-contracting-invoices-table>
@@ -240,8 +234,7 @@ export function ContractingInvoicesPage() {
 
       {/* إرشاد: أين المستخلصات؟ مراجعتها وتعديلها وطباعتها */}
       <div className="rounded-2xl bg-orange-500/5 border border-orange-500/20 p-3 text-[12px] text-orange-700 dark:text-orange-300 leading-relaxed">
-        <b>دليل الصفحة:</b> «فاتورة بيع لمشروع» تفتح نافذة الفاتورة المتقدمة كاملة (أصناف · عمولات موظفين · تحصيل متعدد · طباعة A4/A5/حراري) مربوطة بالمشروع وعميله، وتُحتسب قيمتها في ملخص المشروع هنا وفي تفاصيله بشاشة المشروعات.
-        الفاتورة الحرة بلا مشروع لنفس النشاط لا تربط بأي مشروع. <b>المستخلصات (PRX)</b> تُدار من شاشة «المشروعات والمستخلصات»: إصدار ومراجعة كاملة وتعديل بقيد عاكس وطباعة وثيقة رسمية للجهة المالكة.
+        <b>دليل الصفحة:</b> «فاتورة بيع جديدة» تفتح الفاتورة الكاملة <b>حرة</b> (أصناف · عمولات موظفين · تحصيل متعدد · طباعة A4/A5/حراري) — ثم اربط المشروع من حقل <b>«المشروع»</b> في شريط الفاتورة نفسها: يُعبأ عميل المشروع تلقائياً (إن لم تختر عميلاً) وتظهر قيمة عقده، وتُحتسب الفاتورة في ملخص المشروع هنا وفي تفاصيله بشاشة المشروعات. بلا ربط؟ تبقى فاتورة حرة. <b>المستخلصات (PRX)</b> تُدار من شاشة «المشروعات والمستخلصات»: إصدار ومراجعة كاملة وتعديل بقيد عاكس وطباعة وثيقة رسمية للجهة المالكة.
       </div>
     </div>
   )
