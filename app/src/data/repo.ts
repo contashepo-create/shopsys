@@ -2255,9 +2255,13 @@ interface DataState {
   payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
+  /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
+  updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[] }) => Project
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
   setQuotationStatus: (id: number, status: QuotationStatus) => void
+  /** §94-مراجعة: تعديل عرض/مناقصة محفوظ (فتحه وإصلاحه) — محظور بعد تحوله لمشروع */
+  updateQuotation: (id: number, changes: { kind?: 'quotation' | 'tender'; clientName?: string; clientId?: number | null; titleAr?: string; validUntil?: string; lines?: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes?: string; winProbability?: number; bidBondMinor?: number }) => Quotation
   /** تحويل عرض فائز لمشروع (يرث الاسم والعميل وقيمة العرض) */
   convertQuotationToProject: (id: number, retentionPercent: number) => Project
   /* ─── ملفات العهد المتكاملة (طلب المالك — نمط pro-acc) ─── */
@@ -2332,6 +2336,8 @@ interface DataState {
   getProjectProfit: (projectId: number) => ProjectProfit
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
   addBoqItem: (args: Omit<BoqItem, 'id' | 'progressPercent' | 'estCostMinor'> & { estCostMinor?: number }) => BoqItem
+  /** §94-مراجعة: تعديل بيانات بند BOQ — الكمية/السعر مقفولان بعد بدء التنفيذ (نسب المستخلصات تاريخية) */
+  updateBoqItem: (id: number, changes: { code?: string; descriptionAr?: string; unit?: string; qty?: number; unitPriceMinor?: number; estCostMinor?: number }) => BoqItem
   updateBoqProgress: (id: number, progressPercent: number) => void
   removeBoqItem: (id: number) => void
   addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number }) => ChangeOrder
@@ -9076,6 +9082,24 @@ export const useDataStore = create<DataState>()(
         set({ projects: [...state.projects, project] })
         return project
       },
+      /* ─── §94-مراجعة: تعديل بيانات المشروع (طلب المالك) — قيمة العقد قبل أول مستخلص فقط ─── */
+      updateProject: (id, changes) => {
+        const state = get()
+        const project = state.projects.find((p2) => p2.id === id)
+        if (!project) throw new Error('المشروع غير موجود')
+        const hasExtracts = state.projectExtracts.some((e) => e.projectId === id)
+        if (changes.contractValueMinor !== undefined && changes.contractValueMinor !== project.contractValueMinor && hasExtracts) {
+          throw new Error('صدرت مستخلصات على هذا المشروع — قيمة العقد لا تُعدَّل مباشرة؛ استخدم أمر تغيير (يدخل العقد الفعلي ونسب الإنجاز)')
+        }
+        const merged: Project = { ...project, ...changes }
+        const errors = validateProject(merged)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (merged.clientId != null && !state.customers.find((c) => c.id === merged.clientId)) throw new Error('العميل المربوط غير موجود')
+        if (merged.managerEmployeeId != null && !state.employees.find((e) => e.id === merged.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في سجل الموظفين')
+        /* الكود والحالة لا يتغيران — التعديل للبيانات فقط */
+        set({ projects: state.projects.map((p2) => (p2.id === id ? { ...merged, code: project.code, status: project.status } : p2)) })
+        return merged
+      },
 
       addQuotation: (q) => {
         const state = get()
@@ -9124,6 +9148,36 @@ export const useDataStore = create<DataState>()(
           throw new Error(`لا يمكن الانتقال من «${q.status}» إلى «${status}»`)
         }
         set({ quotations: state.quotations.map((x) => (x.id === id ? { ...x, status } : x)) })
+      },
+
+      /* ─── §94-مراجعة: فتح العرض المحفوظ وتعديله (طلب المالك: «لماذا لا يمكن فتحها وتعديلها؟») ─── */
+      updateQuotation: (id, changes) => {
+        const state = get()
+        const q = state.quotations.find((x) => x.id === id)
+        if (!q) throw new Error('العرض غير موجود')
+        if (q.projectId != null) throw new Error('العرض تحوّل لمشروع — لا يُعدَّل؛ بنوده صارت جدول كميات المشروع (أوامر التغيير من المشروع)')
+        const merged: Quotation = { ...q, ...changes, lines: q.lines } /* البنود تُستبدل بعد التطبيع أدناه — لا تتسرب بنود النوع الفضفاض */
+        const fullLines: QuotationLine[] = (changes.lines ?? q.lines).map((l) => ({
+          nameAr: (l.nameAr ?? '').trim() || l.descriptionAr.trim().slice(0, 40),
+          descriptionAr: l.descriptionAr,
+          qty: l.qty,
+          unitAr: l.unitAr,
+          unitPriceMinor: l.unitPriceMinor,
+          estCostMinor: Number.isInteger(l.estCostMinor) && (l.estCostMinor ?? 0) >= 0 ? (l.estCostMinor as number) : 0,
+          vatPercent: Math.min(100, Math.max(0, l.vatPercent ?? 0)),
+          taxIncluded: !!l.taxIncluded,
+        }))
+        merged.lines = fullLines.filter((l) => l.descriptionAr.trim() && l.qty > 0)
+        const errors = validateQuotation({ clientName: merged.clientName, titleAr: merged.titleAr, lines: merged.lines })
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (merged.clientId != null && !state.customers.find((c) => c.id === merged.clientId)) throw new Error('العميل المربوط غير موجود')
+        merged.clientName = merged.clientName.trim()
+        merged.titleAr = merged.titleAr.trim()
+        merged.winProbability = Math.min(100, Math.max(0, changes.winProbability ?? q.winProbability))
+        merged.bidBondMinor = Number.isInteger(changes.bidBondMinor ?? q.bidBondMinor) && (changes.bidBondMinor ?? q.bidBondMinor) >= 0 ? (changes.bidBondMinor ?? q.bidBondMinor) as number : 0
+        /* الرقم والحالة والتاريخ والمشروع المتولد لا تتغير — التعديل يصحح المحتوى فقط */
+        set({ quotations: state.quotations.map((x) => (x.id === id ? merged : x)) })
+        return merged
       },
 
       convertQuotationToProject: (id, retentionPercent) => {
@@ -10192,6 +10246,19 @@ export const useDataStore = create<DataState>()(
         const item: BoqItem = { ...args, estCostMinor: estCost, id: nextId(state.boqItems), progressPercent: 0 }
         set({ boqItems: [...state.boqItems, item] })
         return item
+      },
+      /* ─── §94-مراجعة: تعديل بيانات بند BOQ — الوصف والوحدة دائماً، الكمية/السعر قبل بدء التنفيذ فقط ─── */
+      updateBoqItem: (id, changes) => {
+        const state = get()
+        const boq = state.boqItems.find((b) => b.id === id)
+        if (!boq) throw new Error('بند الكميات غير موجود')
+        const priceQtyChange = (changes.qty !== undefined && changes.qty !== boq.qty) || (changes.unitPriceMinor !== undefined && changes.unitPriceMinor !== boq.unitPriceMinor)
+        if (priceQtyChange && boq.progressPercent > 0) throw new Error(`البند منفَّذ بنسبة ${boq.progressPercent}٪ — قيمته في مستخلصات مرحّلة؛ لا تُعدَّل الكمية ولا السعر (بند جديد أو أمر تغيير)`)
+        const merged: BoqItem = { ...boq, ...changes }
+        const errors = validateBoqItem({ descriptionAr: merged.descriptionAr, unit: merged.unit, qty: merged.qty, unitPriceMinor: merged.unitPriceMinor })
+        if (errors.length) throw new Error(errors.join(' — '))
+        set({ boqItems: state.boqItems.map((b) => (b.id === id ? merged : b)) })
+        return merged
       },
       updateBoqProgress: (id, progressPercent) => {
         if (progressPercent < 0 || progressPercent > 100) throw new Error('نسبة الإنجاز بين 0 و100')

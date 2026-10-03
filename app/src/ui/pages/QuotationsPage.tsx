@@ -15,6 +15,7 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { quotationTotals, quotationTotal, quotationEstCost, quotationPipeline, QUOTATION_STATUS_LABELS, type Quotation, type QuotationLine } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { Printer, Pencil } from 'lucide-react'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
@@ -32,7 +33,7 @@ const UNITS = ['مقطوعية', 'م2', 'م3', 'م.ط', 'طن', 'عدد', 'يو�
 const QUOTE_TERMS = ['الأسعار سارية حتى تاريخ صلاحية العرض', 'الدفع 40% مقدماً و60% عند التسليم', 'مدة التنفيذ تبدأ من تاريخ التوقيع والمقدم', 'لا تشمل الأسعار أي أعمال تخطيط خارج نطاق البنود']
 
 export function QuotationsPage() {
-  const { quotations, projects, customers, addQuotation, setQuotationStatus, convertQuotationToProject, advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft } = useDataStore()
+  const { quotations, projects, customers, addQuotation, setQuotationStatus, convertQuotationToProject, updateQuotation, advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const printSwitches = usePrintSwitches()
@@ -54,6 +55,8 @@ export function QuotationsPage() {
   const [notes, setNotes] = useState('')
   const [winProb, setWinProb] = useState('50')
   const [bidBond, setBidBond] = useState('')
+  /* §94-مراجعة (بلاغ المالك): فتح العرض المحفوظ وتعديله — لا إنشاء من جديد في كل مرة */
+  const [editingQuote, setEditingQuote] = useState<Quotation | null>(null)
   /* §92: مسودات العروض بنفس مخزن الفواتير (kind='quotation') + مراجعة قبل الاعتماد */
   const [draftsOpen, setDraftsOpen] = useState(false)
   const [draftId, setDraftId] = useState(() => crypto.randomUUID())
@@ -64,7 +67,16 @@ export function QuotationsPage() {
     const d = new Date(); d.setMonth(d.getMonth() + 1)
     setValidUntil(d.toISOString().slice(0, 10))
     setQLines([{ key: crypto.randomUUID(), nameAr: '', descriptionAr: '', qty: '1', unitAr: 'مقطوعية', unitPrice: '', estCost: '', vat: '0', incl: false }])
-    setNotes(''); setWinProb('50'); setBidBond(''); setOpen(true)
+    setNotes(''); setWinProb('50'); setBidBond(''); setEditingQuote(null); setOpen(true)
+  }
+
+  /** فتح عرض محفوظ للمراجعة والتعديل — يُحمَّل بالمحرر بنفس قيمه (رقمه وحالته لا يتغيران) */
+  const openEdit = (q: Quotation) => {
+    setEditingQuote(q)
+    setKind(q.kind); setTitleAr(q.titleAr); setClientName(q.clientName); setClientId(q.clientId != null ? String(q.clientId) : '')
+    setValidUntil(q.validUntil); setNotes(q.notes ?? ''); setWinProb(String(q.winProbability)); setBidBond(q.bidBondMinor ? String(q.bidBondMinor / 10 ** cur.decimals) : '')
+    setQLines(q.lines.map((l) => ({ key: crypto.randomUUID(), nameAr: l.nameAr, descriptionAr: l.descriptionAr, qty: String(l.qty), unitAr: l.unitAr, unitPrice: String(l.unitPriceMinor / 10 ** cur.decimals), estCost: String(l.estCostMinor / 10 ** cur.decimals), vat: String(l.vatPercent), incl: !!l.taxIncluded })))
+    setOpen(true)
   }
 
   const safeMinor = (v: string) => { try { return toMinor(v || '0', cur.decimals) } catch { return 0 } }
@@ -119,11 +131,18 @@ export function QuotationsPage() {
     /* §92: مراجعة قبل الاعتماد — المانع يفتح لوحة الأخطاء بدل رسالة واحدة مبعثرة (نمط الفاتورة) */
     if (blockingCount > 0) { setChecksOpen(true); return }
     try {
-      const q = addQuotation({ kind, clientName, clientId: clientId ? Number(clientId) : null, titleAr, validUntil, lines: parsedLines, notes: notes.trim(), winProbability: Number(winProb) || 0, bidBondMinor: bidBond ? toMinor(bidBond, cur.decimals) : 0 })
-      toast.show(`سُجل ${q.kind === 'tender' ? 'ملف المناقصة' : 'عرض السعر'} ${q.quoteNumber} — الإجمالي ${fmt(quotationTotal(q.lines))} ✅`)
-      deleteAdvancedInvoiceDraft(draftId)
-      setDraftId(crypto.randomUUID())
-      setOpen(false)
+      if (editingQuote) {
+        const q = updateQuotation(editingQuote.id, { kind, clientName, clientId: clientId ? Number(clientId) : null, titleAr, validUntil, lines: parsedLines, notes: notes.trim(), winProbability: Number(winProb) || 0, bidBondMinor: bidBond ? toMinor(bidBond, cur.decimals) : 0 })
+        toast.show(`عُدّل ${q.kind === 'tender' ? 'ملف المناقصة' : 'عرض السعر'} ${q.quoteNumber} — الإجمالي الآن ${fmt(quotationTotal(q.lines))} ✅`)
+        setEditingQuote(null)
+        setOpen(false)
+      } else {
+        const q = addQuotation({ kind, clientName, clientId: clientId ? Number(clientId) : null, titleAr, validUntil, lines: parsedLines, notes: notes.trim(), winProbability: Number(winProb) || 0, bidBondMinor: bidBond ? toMinor(bidBond, cur.decimals) : 0 })
+        toast.show(`سُجل ${q.kind === 'tender' ? 'ملف المناقصة' : 'عرض السعر'} ${q.quoteNumber} — الإجمالي ${fmt(quotationTotal(q.lines))} ✅`)
+        deleteAdvancedInvoiceDraft(draftId)
+        setDraftId(crypto.randomUUID())
+        setOpen(false)
+      }
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -132,8 +151,8 @@ export function QuotationsPage() {
        فيتحدث التذييل (ملاحظات + تذييل الإعدادات) وكل حقول الإعدادات فوراً */
     const buildPrintModel = () => buildSimpleDocModel({
       docTitle: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر',
-      invoiceNumber: 'مسودة',
-      refCode: 'DRAFT',
+      invoiceNumber: editingQuote?.quoteNumber ?? 'مسودة',
+      refCode: editingQuote ? 'QT' : 'DRAFT',
       dateIso: new Date().toISOString().slice(0, 10),
       partyLabel: clientName.trim() || 'عميل غير محدد',
       paymentLabel: `ساري حتى ${validUntil || '—'}`,
@@ -150,6 +169,30 @@ export function QuotationsPage() {
       const live = useAppStore.getState().receipt
       if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, template), wide: template !== 'thermal', title: template !== 'thermal' ? 'معاينة العرض قبل الطباعة' : 'معاينة الإيصال', rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(buildPrintModel(), cur, r, template) } }); return }
       printModelWithTemplate(model, cur, live, template)
+  }
+
+  /** طباعة عرض/مناقصة محفوظة من القائمة — قالب A4 كالفاتورة (بلاغ المالك: «لا يوجد زر طباعة») */
+  const printQuotation = (q: Quotation) => {
+    const model = buildSimpleDocModel({
+      docTitle: q.kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر',
+      invoiceNumber: q.quoteNumber,
+      refCode: 'QT',
+      dateIso: q.date,
+      partyLabel: q.clientName,
+      paymentLabel: `ساري حتى ${q.validUntil || '—'}`,
+      rows: q.lines.map((l) => ({ nameAr: `${l.nameAr} — ${l.descriptionAr}`, qty: l.qty, unitPriceMinor: l.unitPriceMinor, totalMinor: Math.round(l.qty * l.unitPriceMinor) })),
+      totalMinor: quotationTotals(q.lines).grossMinor,
+      paidMinor: 0,
+      operatorName: setup.ownerName ?? 'المالك',
+      settings: useAppStore.getState().receipt,
+      extraFooter: q.notes?.trim() || undefined,
+    })
+    const live = useAppStore.getState().receipt
+    if (!printSwitches.silentPrint) {
+      openPrintPreview({ html: buildModelHtml(model, cur, live, 'a4'), wide: true, title: `معاينة ${q.quoteNumber} قبل الطباعة`, rebuild: () => buildModelHtml(model, cur, useAppStore.getState().receipt, 'a4') })
+      return
+    }
+    printModelWithTemplate(model, cur, live, 'a4')
   }
 
   const transition = (q: Quotation, status: 'submitted' | 'won' | 'lost') => {
@@ -184,8 +227,8 @@ export function QuotationsPage() {
           branchLabel={setup.shopName ?? ''}
           userLabel={setup.ownerName ?? 'المالك'}
           activityLabel={setup.activityId ?? 'نشاط عام'}
-          documentNumber="QT-DRAFT"
-          onBack={() => setOpen(false)}
+          documentNumber={editingQuote ? editingQuote.quoteNumber : "QT-DRAFT"}
+          onBack={() => { setOpen(false); setEditingQuote(null) }}
           onNavigate={() => { /* لا تنقل أثناء التحرير */ }}
           onPartySearch={() => document.getElementById('quotation-client-field')?.focus()}
           onItemSearch={() => document.getElementById('quotation-first-line')?.focus()}
@@ -401,6 +444,12 @@ export function QuotationsPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1 justify-end">
+                          {q.projectId == null ? (
+                            <button onClick={() => openEdit(q)} title="فتح العرض وتعديله" data-quotation-open className="p-2 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all hover:scale-110"><Pencil size={15} /></button>
+                          ) : (
+                            <span title="العرض تحوّل لمشروع — بنوده جدول كميات المشروع؛ التعديل من المشروع" className="text-[10px] text-slate-400 px-1">🔒 مشروع</span>
+                          )}
+                          <button onClick={() => printQuotation(q)} title="طباعة العرض (A4)" data-quotation-print className="p-2 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all hover:scale-110"><Printer size={15} /></button>
                           {q.status === 'draft' && (
                             <button onClick={() => transition(q, 'submitted')} title="تقديم العرض" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Send size={15} /></button>
                           )}

@@ -8,12 +8,12 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * - أوامر التغيير والدفعات المقدمة داخل صفحة المشروعات نفسها
  */
 import { useMemo, useState } from 'react'
-import { Plus, Eye, ListChecks, Users2, ShieldCheck, CalendarClock } from 'lucide-react'
+import { Plus, Eye, ListChecks, Users2, ShieldCheck, CalendarClock, Pencil } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { boqItemTotal, BOND_TYPE_LABELS, type BondType, type SubContract, type Bond } from '../../core/contracting.ts'
+import { boqItemTotal, BOND_TYPE_LABELS, type BondType, type SubContract, type Bond, type BoqItem } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
@@ -30,7 +30,7 @@ const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dar
 
 /* ═══════════ جداول الكميات BOQ ═══════════ */
 export function BoqPage() {
-  const { projects, boqItems, addBoqItem, updateBoqProgress, removeBoqItem, getProjectWip } = useDataStore()
+  const { projects, boqItems, addBoqItem, updateBoqItem, updateBoqProgress, removeBoqItem, getProjectWip } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -42,6 +42,8 @@ export function BoqPage() {
   const [qty, setQty] = useState('')
   const [price, setPrice] = useState('')
   const [estCost, setEstCost] = useState('') // التكلفة التقديرية للوحدة — موازنة البند لتحليل EVM
+  /* §94-مراجعة (بلاغ المالك: «راجع كل شئ»): تعديل بند BOQ — الكمية/السعر قبل بدء التنفيذ فقط */
+  const [editingItem, setEditingItem] = useState<BoqItem | null>(null)
 
   const items = boqItems.filter((b) => projectId !== '' && b.projectId === projectId)
   const total = items.reduce((s, b) => s + boqItemTotal(b), 0)
@@ -53,6 +55,26 @@ export function BoqPage() {
       addBoqItem({ projectId: projectId as number, code: code.trim(), descriptionAr: desc.trim(), unit: unit.trim(), qty: Number(qty) || 0, unitPriceMinor: toMinor(price, cur.decimals), estCostMinor: toMinor(estCost || '0', cur.decimals) })
       toast.show('أُضيف البند لجدول الكميات ✅')
       setOpen(false); setCode(''); setDesc(''); setQty(''); setPrice(''); setEstCost('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const openItemEdit = (b: BoqItem) => {
+    setEditingItem(b)
+    setCode(b.code); setDesc(b.descriptionAr); setUnit(b.unit); setQty(String(b.qty))
+    setPrice(String(b.unitPriceMinor / 10 ** cur.decimals)); setEstCost(String(b.estCostMinor / 10 ** cur.decimals))
+  }
+  const saveItemEdit = () => {
+    if (!editingItem) return
+    try {
+      const locked = editingItem.progressPercent > 0
+      updateBoqItem(editingItem.id, {
+        code: code.trim(), descriptionAr: desc.trim(), unit: unit.trim(),
+        /* البند المنفَّذ لا تتغير كميته ولا سعره — نسب المستخلصات محسوبة عليها تاريخياً */
+        ...(locked ? {} : { qty: Number(qty) || 0, unitPriceMinor: toMinor(price, cur.decimals) }),
+        estCostMinor: toMinor(estCost || '0', cur.decimals),
+      })
+      toast.show(`عُدّل البند ${code.trim() || editingItem.code} ✓`)
+      setEditingItem(null); setCode(''); setDesc(''); setQty(''); setPrice(''); setEstCost('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -108,7 +130,12 @@ export function BoqPage() {
                       <span className="text-[11px] font-bold w-9">{b.progressPercent}٪</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3"><button onClick={() => removeBoqItem(b.id)} className="text-rose-500 text-[11px] font-bold hover:underline">حذف</button></td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2 justify-end">
+                      <button onClick={() => openItemEdit(b)} data-boq-edit title={b.progressPercent > 0 ? 'تعديل الوصف/الوحدة/الكود — الكمية والسعر مقفولان (البند منفَّذ)' : 'تعديل البند'} className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Pencil size={13} /></button>
+                      <button onClick={() => removeBoqItem(b.id)} className="text-rose-500 text-[11px] font-bold hover:underline">حذف</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -117,22 +144,31 @@ export function BoqPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="بند جدول كميات جديد" subtitle="مستند تعريفي: بند تنفيذي يُقاس عليه الإنجاز">
+      <Modal open={open || !!editingItem} onClose={() => { setOpen(false); setEditingItem(null) }} title={editingItem ? `تعديل البند ${editingItem.code || editingItem.id}` : 'بند جدول كميات جديد'} subtitle="مستند تعريفي: بند تنفيذي يُقاس عليه الإنجاز" data-boq-edit-modal>
         <div className="space-y-3">
+          {editingItem && editingItem.progressPercent > 0 && (
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-300 font-bold">
+              🔒 البند منفَّذ بنسبة {editingItem.progressPercent}٪ — الكمية وسعر الوحدة مقفولان (نِسَب المستخلصات محسوبة عليهما)؛ الوصف والوحدة والكود والتكلفة التقديرية متاحة دائماً
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-3">
             <Field label="كود البند"><input value={code} onChange={(e) => setCode(e.target.value)} placeholder="1-2" className={inputCls} /></Field>
             <Field label="الوحدة"><input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="م2 / م3 / طن / مقطوعية" className={inputCls} /></Field>
-            <Field label="الكمية"><input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label="الكمية" hint={editingItem && editingItem.progressPercent > 0 ? 'مقفولة — منفَّذ' : undefined}>
+              <input value={editingItem && editingItem.progressPercent > 0 ? String(editingItem.qty) : qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" disabled={!!(editingItem && editingItem.progressPercent > 0)} className={inputCls} />
+            </Field>
           </div>
           <Field label="وصف البند"><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="توريد وصب خرسانة مسلحة…" className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label={`سعر الوحدة (${cur.symbol})`}><input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label={`سعر الوحدة (${cur.symbol})`} hint={editingItem && editingItem.progressPercent > 0 ? 'مقفول — منفَّذ' : undefined}>
+              <input value={editingItem && editingItem.progressPercent > 0 ? String(editingItem.unitPriceMinor / 10 ** cur.decimals) : price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" disabled={!!(editingItem && editingItem.progressPercent > 0)} className={inputCls} />
+            </Field>
             <Field label={`تكلفة تقديرية/وحدة (${cur.symbol})`} hint="موازنة البند — تغذي لوحة القيمة المكتسبة EVM وتنبيهات التجاوز">
               <input value={estCost} onChange={(e) => setEstCost(e.target.value)} inputMode="decimal" className={inputCls} />
             </Field>
           </div>
-          <DocOutcome>الأثر: <b>لا قيد</b> عند إضافة البند — جدول الكميات مرجع قياس وتسعير؛ القيد يتولد عند اعتماد المستخلص الذي ينفّذ نسبة من هذا البند (<b>4107</b> إيراداً و<b>1104</b> ذمةً و<b>1105</b> محتجزاً).</DocOutcome>
-          <Btn onClick={save} className="w-full">حفظ البند</Btn>
+          <DocOutcome>الأثر: <b>لا قيد</b> — جدول الكميات مرجع قياس وتسعير؛ القيد يتولد عند اعتماد المستخلص الذي ينفّذ نسبة من هذا البند (<b>4107</b> إيراداً و<b>1104</b> ذمةً و<b>1105</b> محتجزاً).</DocOutcome>
+          <Btn onClick={editingItem ? saveItemEdit : save} className="w-full">{editingItem ? 'حفظ التعديلات' : 'حفظ البند'}</Btn>
         </div>
       </Modal>
     </div>

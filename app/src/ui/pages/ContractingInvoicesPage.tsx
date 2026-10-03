@@ -40,12 +40,11 @@ export function ContractingInvoicesPage() {
   const [prjFilter, setPrjFilter] = useState(0) // 0 = كل المشاريع
   const [search, setSearch] = useState('')
 
-  /* فواتير المقاولات: المرتبطة بمشروع + الحرة الصادرة من نشاط المقاولات (كل الفواتير عند بلا فلتر) */
-  const prjInvoiceIds = useMemo(() => new Set(projects.map((p) => p.id)), [projects])
+  /* §94-مراجعة (بلاغ المالك: «لماذا الفواتير لم تظهر بعد تسجيلها؟»): الجدول يعرض
+     كل فواتير البيع — الحرة والمرتبطة بمشروع — والمشروع عمود مميز لا شرط دخول */
   const invoices = useMemo(() => {
     const q = search.trim()
     return sales
-      .filter((s) => s.projectId != null && prjInvoiceIds.has(s.projectId))
       .filter((s) => (prjFilter ? s.projectId === prjFilter : true))
       .filter((s) => {
         if (!q) return true
@@ -54,7 +53,7 @@ export function ContractingInvoicesPage() {
         return s.invoiceNumber.includes(q) || customerName.includes(q) || projectName.includes(q)
       })
       .sort((a, b) => b.id - a.id)
-  }, [sales, projects, customers, prjFilter, search, prjInvoiceIds])
+  }, [sales, projects, customers, prjFilter, search])
 
   /* ملخص الفوترة لكل مشروع نشط: العقد الفعلي (بأوامر التغيير) مقابل المستخلصات والفواتير */
   const projectCards = useMemo(() => projects
@@ -83,6 +82,7 @@ export function ContractingInvoicesPage() {
     invoices: invoices.length,
     invoiced: invoices.reduce((a, s) => a + s.totals.totalMinor, 0),
     collected: invoices.reduce((a, s) => a + (s.paidMinor ?? 0), 0),
+    linked: invoices.filter((s) => s.projectId != null).length,
     extracts: projectExtracts.length,
     extracted: projectExtracts.reduce((a, e) => a + e.totals.grossMinor, 0),
   }), [invoices, projectExtracts])
@@ -115,9 +115,9 @@ export function ContractingInvoicesPage() {
       {/* رأس الصفحة: إجماليات دورة الفوترة */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-3">
-          <div className="text-[11px] text-slate-500">فواتير مشاريع</div>
+          <div className="text-[11px] text-slate-500">فواتير البيع (كلها)</div>
           <div className="font-black text-emerald-600">{fmt(totals.invoiced)}</div>
-          <div className="text-[10px] text-slate-400">{totals.invoices} فاتورة</div>
+          <div className="text-[10px] text-slate-400">{totals.invoices} فاتورة · منها {totals.linked} مربوطة بمشروع</div>
         </div>
         <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-3">
           <div className="text-[11px] text-slate-500">محصل من الفواتير</div>
@@ -140,7 +140,7 @@ export function ContractingInvoicesPage() {
       <div className="flex flex-wrap items-center gap-2 justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <QuickSelect aria-label="مشروع الفاتورة" className="h-10" value={prjFilter} onChange={(e) => setPrjFilter(Number(e.target.value))}>
-            <option value={0}>كل المشاريع</option>
+            <option value={0}>كل الفواتير (حرة ومربوطة)</option>
             {projects.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}
           </QuickSelect>
           <input value={search} onChange={(e) => setSearch(e.target.value)} className={`${inputCls} w-56`} placeholder="بحث برقم الفاتورة أو العميل أو المشروع…" />
@@ -190,11 +190,11 @@ export function ContractingInvoicesPage() {
       <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 overflow-hidden">
         <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2">
           <Coins size={16} className="text-emerald-600" />
-          <b className="text-[13px]">فواتير البيع المرتبطة بالمشروعات</b>
-          <span className="text-[11px] text-slate-500">— الفاتورة الكاملة مثل فواتير الأعلاف: أصناف وعمولات موظفين وتحصيل متعدد</span>
+          <b className="text-[13px]">فواتير البيع — كلها</b>
+          <span className="text-[11px] text-slate-500">المرتبطة بمشروع وغير المرتبطة (حرة) — الفاتورة الكاملة مثل فواتير الأعلاف</span>
         </div>
         {invoices.length === 0 ? (
-          <div className="p-6"><EmptyState icon="🧾" title="لا فواتير مربوطة بمشروعات بعد" sub="افتح «فاتورة بيع جديدة» ثم اربط المشروع من حقل «المشروع» داخل الفاتورة" /></div>
+          <div className="p-6"><EmptyState icon="🧾" title="لا فواتير بعد" sub="افتح «فاتورة بيع جديدة» — اربط المشروع من حقل «المشروع» داخل الفاتورة أو اتركها حرة" /></div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]" data-contracting-invoices-table>
@@ -210,7 +210,7 @@ export function ContractingInvoicesPage() {
                     <tr key={s.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-emerald-500/5">
                       <td className="px-3 py-2 font-bold">{s.invoiceNumber}</td>
                       <td className="px-3 py-2">{s.date.slice(0, 10)}</td>
-                      <td className="px-3 py-2">{prj ? <span title={prj.nameAr}>{prj.code}</span> : '—'}</td>
+                      <td className="px-3 py-2">{prj ? <span title={prj.nameAr} className="font-bold text-orange-600">{prj.code}</span> : <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-bold">حرة</span>}</td>
                       <td className="px-3 py-2">{customerName}</td>
                       <td className="px-3 py-2 font-bold">{fmt(s.totals.totalMinor)}</td>
                       <td className="px-3 py-2 text-emerald-600">{fmt(s.paidMinor ?? 0)}</td>

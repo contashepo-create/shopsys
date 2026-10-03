@@ -13,6 +13,9 @@
  * ④ الواجهات: قسم فواتير البيع في الملاحة + نافذة المراجعة + محرر التعديل
  *    + تعبئة نافذة الفاتورة بالمشروع وعميله.
  *
+ * ⑤ المراجعة الشاملة: كل فواتير البيع تظهر في مركز المقاولات (حرة/مربوطة) · فتح
+ *    وتعديل وطباعة العروض المحفوظة · تعديل مشروع وبند BOQ بحروس سلامة.
+ *
  * التشغيل: node --experimental-strip-types scripts/verify_contracting_overhaul.mjs
  */
 const mem = new Map()
@@ -172,6 +175,58 @@ console.log('④ الواجهات: قسم الفواتير ونافذة المر
   ok('زر «فاتورة بيع لهذا المشروع» من نافذة التفاصيل', pages.includes('data-project-new-invoice'))
 }
 
+/* ═══ ⑤ §94-مراجعة (بلاغ المالك: «الفواتير لم تظهر · العروض لا تُفتح ولا تُعدَّل ولا تُطبع · راجع كل شئ») ═══ */
+console.log('⑤ المراجعة الشاملة: ظهور كل الفواتير · فتح/تعديل/طباعة العروض · تعديل مشروع وبند BOQ')
+{
+  /* ── تعديل العرض: قبل التحويل يُعدَّل، بعده يُقفل ── */
+  const q1 = st().addQuotation({ kind: 'quotation', clientName: 'مجلس المدينة', clientId: null, titleAr: 'تشطيبات داخلية', validUntil: '2026-11-01', lines: [{ nameAr: 'دهانات', descriptionAr: 'دهان بلاستيك وجهين', qty: 500, unitAr: 'م2', unitPriceMinor: 120, estCostMinor: 80, vatPercent: 0, taxIncluded: false }], notes: 'الأسعار شاملة التشوين', winProbability: 60, bidBondMinor: 0 })
+  const q1e = st().updateQuotation(q1.id, { titleAr: 'تشطيبات داخلية (مراجعة 2)', lines: [{ nameAr: 'دهانات', descriptionAr: 'دهان بلاستيك وجهين + معجون', qty: 600, unitAr: 'م2', unitPriceMinor: 130, estCostMinor: 85, vatPercent: 0, taxIncluded: false }] })
+  ok('تعديل العرض: الرقم والتاريخ والحالة لا يتغيران والمحتوى يتغير', q1e.quoteNumber === q1.quoteNumber && q1e.date === q1.date && q1e.status === q1.status && q1e.titleAr.includes('مراجعة 2') && q1e.lines[0].qty === 600 && q1e.lines[0].unitPriceMinor === 130)
+  throws('تعديل عرض بنوده كلها فارغة يُرفض (تحقق البنود)', () => st().updateQuotation(q1.id, { lines: [{ nameAr: 'x', descriptionAr: '  ', qty: 1, unitAr: 'م2', unitPriceMinor: 100, estCostMinor: 0, vatPercent: 0, taxIncluded: false }] }), 'بند واحد')
+  /* ── تحويل عرض لمشروع يقفل تعديله (حرس السلامة المحاسبية) ── */
+  const won = st().addQuotation({ kind: 'quotation', clientName: 'مدرسة المستقبل', clientId: null, titleAr: 'سور مدرسة', validUntil: '2026-12-01', lines: [{ nameAr: 'سور', descriptionAr: 'سور بارتفاع 2.5م', qty: 200, unitAr: 'م.ط', unitPriceMinor: 900, estCostMinor: 700, vatPercent: 0, taxIncluded: false }], notes: '', winProbability: 90, bidBondMinor: 0 })
+  st().setQuotationStatus(won.id, 'submitted')
+  st().setQuotationStatus(won.id, 'won')
+  st().convertQuotationToProject(won.id, 5)
+  throws('بعد التحويل لمشروع: العرض يُقفل (🔒 لا يُعدَّل)', () => st().updateQuotation(won.id, { titleAr: 'x' }), 'تحوّل لمشروع')
+
+  /* ── تعديل المشروع: البيانات نعم، القيمة بعد أول مستخلص لا ── */
+  const prj5 = st().addProject({ nameAr: 'فيلا المرحلة الثانية', clientName: 'العميل ج', contractValueMinor: 1_000_000, retentionPercent: 5, startDate: '2026-10-01', notes: '' })
+  const prj5e = st().updateProject(prj5.id, { nameAr: 'فيلا المرحلة الثانية (الموسعة)', contractValueMinor: 1_200_000, location: 'القاهرة الجديدة', notes: 'بعد تعديلات المالك' })
+  ok('تعديل مشروع بلا مستخلصات: القيمة والبيانات تُحفظ (الكود والحالة كما هما)', prj5e.contractValueMinor === 1_200_000 && prj5e.nameAr.includes('الموسعة') && prj5e.code === prj5.code && prj5e.status === 'active' && prj5e.location === 'القاهرة الجديدة')
+  /* مشروع بمستخلص: القيمة مقفولة — استخدم proj (برج النيل) الذي صدرت له مستخلصات في ② */
+  throws('قيمة العقد بعد أول مستخلص مقفولة (أمر تغيير فقط)', () => st().updateProject(proj.id, { contractValueMinor: 2_500_000 }), 'مستخلصات')
+  const projEditOk = st().updateProject(proj.id, { notes: 'تحديث ملاحظات فقط' })
+  ok('بقية بيانات المشروع تُعدَّل حتى مع وجود مستخلصات', projEditOk.notes === 'تحديث ملاحظات فقط')
+
+  /* ── تعديل بند BOQ: قبل التنفيذ حر، بعده الوصف فقط ── */
+  const b5 = st().addBoqItem({ projectId: prj5.id, code: '3-1', descriptionAr: 'أرضيات', unit: 'م2', qty: 300, unitPriceMinor: 500 })
+  const b5e = st().updateBoqItem(b5.id, { descriptionAr: 'أرضيات بورسلين', qty: 350, unitPriceMinor: 550, estCostMinor: 400 })
+  ok('تعديل بند غير منفَّذ: كمية وسعر ووصف', b5e.descriptionAr === 'أرضيات بورسلين' && b5e.qty === 350 && b5e.unitPriceMinor === 550 && b5e.estCostMinor === 400)
+  st().updateBoqProgress(b5.id, 40)
+  const b5p = st().updateBoqItem(b5.id, { descriptionAr: 'أرضيات بورسلين (النوع أ)' })
+  ok('البند المنفَّذ: الوصف يُعدَّل دائماً', b5p.descriptionAr.includes('النوع أ'))
+  throws('البند المنفَّذ: الكمية لا تُعدَّل (نِسَب المستخلصات تاريخية)', () => st().updateBoqItem(b5.id, { qty: 999 }), 'منفَّذ')
+  throws('البند المنفَّذ: السعر لا يُعدَّل', () => st().updateBoqItem(b5.id, { unitPriceMinor: 100 }), 'منفَّذ')
+  throws('بند BOQ بكمية صفرية يُرفض (نفس تحقق الإضافة)', () => st().updateBoqItem(b5.id, { descriptionAr: 'x', unit: 'م2', qty: 0, unitPriceMinor: 100 }), 'كمية')
+
+  /* ── الواجهات: كل الفواتير تظهر + أزرار فتح/تعديل/طباعة ── */
+  const { readFileSync } = await import('node:fs')
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8')
+  const invoicesPage = read('../src/ui/pages/ContractingInvoicesPage.tsx')
+  const quotesPage = read('../src/ui/pages/QuotationsPage.tsx')
+  const pages = read('../src/ui/pages/ContractingPages.tsx')
+  const depth = read('../src/ui/pages/ContractingDepthPages.tsx')
+  ok('مركز الفواتير: لا فلتر projectId — كل فواتير البيع تدخل الجدول (بلاغ: «لم تظهر»)', !invoicesPage.includes('s.projectId != null && prjInvoiceIds.has') && invoicesPage.includes('حرة'))
+  ok('مركز الفواتير: شارة «حرة» للمفكوكة وعدّاد «منها N مربوطة»', invoicesPage.includes('منها {totals.linked} مربوطة') && invoicesPage.includes('كل الفواتير (حرة ومربوطة)'))
+  ok('قائمة العروض: زر فتح/تعديل + زر طباعة على كل صف', quotesPage.includes('data-quotation-open') && quotesPage.includes('data-quotation-print'))
+  ok('الطباعة من القائمة: نموذج A4 كامل برقم العرض وسريانه وملاحظاته', quotesPage.includes('const printQuotation') && quotesPage.includes('ساري حتى ${q.validUntil') && quotesPage.includes('quotationTotals(q.lines).grossMinor'))
+  ok('المحرر يفرّق إنشاء/تعديل ويحفظ رقم العرض المحفوظ', quotesPage.includes('editingQuote') && quotesPage.includes('updateQuotation(editingQuote.id') && quotesPage.includes("invoiceNumber: editingQuote?.quoteNumber ?? 'مسودة'"))
+  ok('العروض المحوّلة: قفل 🔒 مع بقاء الطباعة أرشيفية', quotesPage.includes('🔒 مشروع'))
+  ok('بطاقة المشروع: قلم تعديل + مودال بيانات العقد', pages.includes('data-project-edit') && pages.includes('data-project-edit-modal') && pages.includes('صدرت مستخلصات'))
+  ok('جدول الكميات: قلم تعديل لكل بند + قفل الكمية/السعر بعد التنفيذ', depth.includes('data-boq-edit') && depth.includes('الكمية والسعر مقفولان'))
+}
+
 console.log('─'.repeat(60))
 if (fails.length) { console.log(`❌ فشل ${fails.length} من ${pass + fails.length}:`); for (const f of fails) console.log(`   - ${f}`); process.exit(1) }
-console.log(`✅ بوابة التطوير الشامل للمقاولات §94: ${pass} فحصاً ناجحاً — فواتير مربوطة بالمشروع وأطرافه · تعديل مستخلصات بعكس موثق · مستند رسمي متوازن · واجهات مكتملة`)
+console.log(`✅ بوابة التطوير الشامل للمقاولات §94 (بمراجعتها): ${pass} فحصاً ناجحاً — فواتير مربوطة وحرة تظهر · تعديل مستخلصات بعكس موثق · مستند رسمي متوازن · عروض تُفتح وتُعدَّل وتُطبع · مشروع وبند BOQ قابلان للتعديل بحراس`)

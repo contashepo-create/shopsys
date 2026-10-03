@@ -35,7 +35,7 @@ import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 export function ProjectsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, costCenters, paymentTerminals, paymentTerminalTransactions,
-    addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
+    addProject, updateProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission, editProjectExtract, sales, purchases,
@@ -376,6 +376,32 @@ export function ProjectsPage() {
   const [refundingExtract, setRefundingExtract] = useState<(typeof projectExtracts)[number] | null>(null)
   // عمولة موظف عن المشروع (تعميم — أمر المالك): مهندس مبيعات جلب العقد مثلاً
   const [commFor, setCommFor] = useState<Project | null>(null)
+  /* §94-مراجعة (بلاغ المالك: «راجع كل شئ»): تعديل بيانات المشروع — قيمة العقد قبل أول مستخلص فقط */
+  const [editPrj, setEditPrj] = useState<Project | null>(null)
+  const [epName, setEpName] = useState(''); const [epClient, setEpClient] = useState(''); const [epClientId, setEpClientId] = useState('')
+  const [epValue, setEpValue] = useState(''); const [epRetention, setEpRetention] = useState('')
+  const [epStart, setEpStart] = useState(''); const [epEnd, setEpEnd] = useState(''); const [epLocation, setEpLocation] = useState('')
+  const [epContractNo, setEpContractNo] = useState(''); const [epNotes, setEpNotes] = useState('')
+  const openProjectEdit = (p: Project) => {
+    setEditPrj(p)
+    setEpName(p.nameAr); setEpClient(p.clientName); setEpClientId(p.clientId != null ? String(p.clientId) : '')
+    setEpValue(String(p.contractValueMinor / 10 ** cur.decimals)); setEpRetention(String(p.retentionPercent))
+    setEpStart(p.startDate); setEpEnd(p.expectedEndDate ?? ''); setEpLocation(p.location ?? '')
+    setEpContractNo(p.contractNumber ?? ''); setEpNotes(p.notes ?? '')
+  }
+  const saveProjectEdit = () => {
+    if (!editPrj) return
+    try {
+      const updated = updateProject(editPrj.id, {
+        nameAr: epName.trim(), clientName: epClient.trim(), clientId: epClientId ? Number(epClientId) : null,
+        ...(epValue ? { contractValueMinor: toMinor(epValue, cur.decimals) } : {}),
+        retentionPercent: Number(epRetention) || 0, startDate: epStart, expectedEndDate: epEnd || undefined,
+        location: epLocation.trim() || undefined, contractNumber: epContractNo.trim() || undefined, notes: epNotes.trim(),
+      })
+      toast.show(`عُدّلت بيانات ${updated.code} ✓`)
+      setEditPrj(null)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
   const [commEmpId, setCommEmpId] = useState('')
   const [commAmount, setCommAmount] = useState('')
   const saveProjectCommission = () => {
@@ -831,6 +857,7 @@ export function ProjectsPage() {
                           title={staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'عليه عمولة موظف — إدارتها من شاشة الموظفين' : 'عمولة موظف عن المشروع'}
                           className={`p-2 rounded-lg transition-all hover:scale-110 ${staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'text-violet-500 bg-violet-500/10' : 'text-slate-400 hover:text-violet-600 hover:bg-violet-500/10'}`}
                         ><HandCoins className="w-4 h-4" /></button>
+                        <button onClick={() => openProjectEdit(p)} data-project-edit title="تعديل بيانات المشروع (القيمة قبل أول مستخلص فقط)" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Pencil className="w-4 h-4" /></button>
                         <button onClick={() => setViewing(p)} title="التفاصيل والقيود" className="p-2 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all hover:scale-110"><Eye className="w-4 h-4" /></button>
                       </div>
                     </td>
@@ -1042,6 +1069,33 @@ export function ProjectsPage() {
             ))}
           </div>
         )}
+      </Modal>
+
+      {/* §94-مراجعة: تعديل بيانات المشروع — القيمة مقفولة بعد أول مستخلص (أوامر التغيير هي الباب) */}
+      <Modal open={!!editPrj} onClose={() => setEditPrj(null)} title={editPrj ? `تعديل ${editPrj.code} — ${editPrj.nameAr}` : ''} subtitle="بيانات العقد والمواعيد — الكود والحالة لا يتغيران">
+        {editPrj && (() => {
+          const locked = projectExtracts.some((e) => e.projectId === editPrj.id)
+          return (
+            <div className="grid grid-cols-2 gap-3" data-project-edit-modal>
+              <Field label="اسم المشروع *"><input className={inputCls} value={epName} onChange={(e) => setEpName(e.target.value)} aria-label="اسم المشروع" /></Field>
+              <Field label="الجهة المالكة (العميل) *"><input className={inputCls} value={epClient} onChange={(e) => setEpClient(e.target.value)} aria-label="الجهة المالكة" /></Field>
+              <Field label="ربط سجل العميل" hint="إداري بحت — لا قيد ولا ذمة"><input className={inputCls} type="number" value={epClientId} onChange={(e) => setEpClientId(e.target.value)} placeholder="رقم العميل (اختياري)" aria-label="ربط العميل" /></Field>
+              <Field label={`قيمة العقد (${cur.code})`} hint={locked ? '🔒 صدرت مستخلصات — تعديل القيمة بأمر تغيير فقط' : 'قبل أول مستخلص فقط'}>
+                <input className={inputCls} type="number" disabled={locked} value={locked ? String(editPrj.contractValueMinor / 10 ** cur.decimals) : epValue} onChange={(e) => setEpValue(e.target.value)} aria-label="قيمة العقد" />
+              </Field>
+              <Field label="محتجز ضمان الأعمال ٪" hint="يؤثر على المستخلصات القادمة فقط"><input className={inputCls} type="number" value={epRetention} onChange={(e) => setEpRetention(e.target.value)} aria-label="نسبة المحتجز" /></Field>
+              <Field label="رقم العقد الرسمي"><input className={inputCls} value={epContractNo} onChange={(e) => setEpContractNo(e.target.value)} aria-label="رقم العقد" /></Field>
+              <Field label="تاريخ التسليم لل site"><input className={inputCls} type="date" value={epStart} onChange={(e) => setEpStart(e.target.value)} aria-label="تاريخ التسليم" /></Field>
+              <Field label="موعد التسليم المتوقع"><input className={inputCls} type="date" value={epEnd} onChange={(e) => setEpEnd(e.target.value)} aria-label="موعد التسليم" /></Field>
+              <Field label="موقع الأعمال"><input className={inputCls} value={epLocation} onChange={(e) => setEpLocation(e.target.value)} aria-label="موقع الأعمال" /></Field>
+              <Field label="ملاحظات"><input className={inputCls} value={epNotes} onChange={(e) => setEpNotes(e.target.value)} aria-label="ملاحظات" /></Field>
+              <div className="col-span-2 flex gap-2 justify-end pt-1">
+                <Btn variant="ghost" onClick={() => setEditPrj(null)}>إلغاء</Btn>
+                <Btn onClick={saveProjectEdit} data-project-edit-save><Pencil size={14} /> حفظ التعديلات</Btn>
+              </div>
+            </div>
+          )
+        })()}
       </Modal>
 
       {/* الإفراج عن المحتجزات — باختيار الخزينة (طلب المالك) */}
