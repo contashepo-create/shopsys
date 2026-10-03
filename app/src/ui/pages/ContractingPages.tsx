@@ -579,7 +579,7 @@ export function ProjectsPage() {
               <div className="invoice-lines-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-l from-emerald-500/10 to-transparent p-3 dark:border-slate-700">
                 <div className="invoice-lines-toolbar-title"><b>قيمة العقد وجدول الكميات (BOQ)</b><small>كل بند: كود ووصف ووحدة وكمية وسعر — قيمة العقد تُحسب تلقائياً</small></div>
                 <div className="invoice-lines-kpis">
-                  <div className="invoice-kpi"><small>قيمة العقد</small><b className="text-emerald-600">{fmt(effectiveContractMinor)} {cur.symbol}</b></div>
+                  <div className="invoice-kpi"><small>قيمة العقد (بدون ضريبة)</small><b className="text-emerald-600">{fmt(effectiveContractMinor)} {cur.symbol}</b></div>
                   <div className="invoice-kpi"><small>البنود الصالحة</small><b>{validBoqLines.length}</b></div>
                   <div className="invoice-kpi"><small>محتجز الضمان</small><b>{Number(retention) || 0}٪</b></div>
                 </div>
@@ -593,7 +593,7 @@ export function ProjectsPage() {
               </div>
               {valueMode === 'manual' ? (
                 <div className="p-4">
-                  <Field label={`قيمة العقد الإجمالية (${cur.symbol}) *`} hint="لعقود المقطوعية بلا جدول كميات — يمكنك إضافة البنود لاحقاً من «جدول الكميات»">
+                  <Field label={`قيمة العقد الإجمالية — بدون ضريبة (${cur.symbol}) *`} hint="§95: العقد صافٍ بلا ض.ق.م (تظهر في العرض والمستخلص فقط) — لعقود المقطوعية بلا جدول كميات">
                     <input id="project-contract-value" value={contractValue} onChange={(e) => setContractValue(e.target.value)} inputMode="decimal" className={inputCls} />
                   </Field>
                 </div>
@@ -1080,7 +1080,7 @@ export function ProjectsPage() {
               <Field label="اسم المشروع *"><input className={inputCls} value={epName} onChange={(e) => setEpName(e.target.value)} aria-label="اسم المشروع" /></Field>
               <Field label="الجهة المالكة (العميل) *"><input className={inputCls} value={epClient} onChange={(e) => setEpClient(e.target.value)} aria-label="الجهة المالكة" /></Field>
               <Field label="ربط سجل العميل" hint="إداري بحت — لا قيد ولا ذمة"><input className={inputCls} type="number" value={epClientId} onChange={(e) => setEpClientId(e.target.value)} placeholder="رقم العميل (اختياري)" aria-label="ربط العميل" /></Field>
-              <Field label={`قيمة العقد (${cur.code})`} hint={locked ? '🔒 صدرت مستخلصات — تعديل القيمة بأمر تغيير فقط' : 'قبل أول مستخلص فقط'}>
+              <Field label={`قيمة العقد — بدون ضريبة (${cur.code})`} hint={locked ? '🔒 صدرت مستخلصات — تعديل القيمة بأمر تغيير فقط' : 'صافية بلا ض.ق.م · قبل أول مستخلص فقط'}>
                 <input className={inputCls} type="number" disabled={locked} value={locked ? String(editPrj.contractValueMinor / 10 ** cur.decimals) : epValue} onChange={(e) => setEpValue(e.target.value)} aria-label="قيمة العقد" />
               </Field>
               <Field label="محتجز ضمان الأعمال ٪" hint="يؤثر على المستخلصات القادمة فقط"><input className={inputCls} type="number" value={epRetention} onChange={(e) => setEpRetention(e.target.value)} aria-label="نسبة المحتجز" /></Field>

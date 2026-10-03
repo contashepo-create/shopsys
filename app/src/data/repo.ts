@@ -89,7 +89,7 @@ import {
   assertFileOpen, CUSTODY_ACCOUNT,
   type CustodyFile, type CustodyTx, type CustodySummary,
 } from '../core/custody.ts'
-import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
+import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotals, quotationLineNetMinor, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
@@ -446,7 +446,30 @@ export interface ProjectCost {
   dueMinor?: number
   /** المورد/مقاول الباطن المسجل الذي يُحمَّل عليه الآجل فيظهر في كشف حسابه */
   supplierId?: number | null
+  /** §95: مصدر بند التكلفة — التدفقات الآلية (شهادة باطن/أجور يومية/فاتورة شراء/إذن صرف)
+      تُوسَم لتفصيل بطاقة التكاليف بلا جمع مزدوج؛ الغياب = يدوي/سجل قديم */
+  source?: 'manual' | 'sub_certificate' | 'daily_work' | 'purchase' | 'material_issue'
   journalEntryId: number
+}
+
+/** §95 (محاذاة pro-acc): تفصيل تكاليف المشروع حسب **مصدر** كل بند —
+ *  التدفقات الآلية (شهادة باطن/أجور يومية/فاتورة شراء/إذن صرف) تُسجَّل أصلاً في
+ *  projectCosts بوسم source، فالتفصيل **تصنيف** لها لا جمع فوقها (لا ازدواج).
+ *  مرتجعات الشراء تعكس 5110 بالدفتر ولا تحذف البند — تُخصم هنا لتطابق الدفتر. */
+export interface ProjectCostBreakdown {
+  /** بنود مسجلة يدوياً بشاشة المشروع (أو سجلات قديمة بلا وسم مصدر) */
+  manual: { id: number; kind: CostKind; description: string; amountMinor: number; date: string }[]
+  /** شهادات أعمال مقاولي الباطن — بند تكلفة تلقائي بالاعتماد (source=sub_certificate) */
+  subCertificates: { id: number; description: string; amountMinor: number; date: string }[]
+  /** أجور يومية مسوّاة على المشروع — بند تلقائي بالتسوية (source=daily_work) */
+  dailyWork: { id: number; description: string; amountMinor: number; date: string }[]
+  /** فواتير شراء مربوطة — بند تلقائي بالترحيل (source=purchase) */
+  purchases: { id: number; description: string; amountMinor: number; date: string }[]
+  /** أذون صرف مواد من المخزن — بند تلقائي بالإصدار (source=material_issue) */
+  materialIssues: { id: number; description: string; amountMinor: number; date: string }[]
+  /** مرتجعات شراء لفواتير المشروع — تعكس 5110 فتُخصم من الإجمالي */
+  purchaseReturns: { returnNumber: string; totalMinor: number; date: string }[]
+  totals: { manualMinor: number; subMinor: number; dailyMinor: number; purchasesMinor: number; materialIssuesMinor: number; returnsMinor: number; allMinor: number }
 }
 
 /** إفراج عن محتجز ضمان */
@@ -1130,6 +1153,9 @@ export interface Voucher {
   costCenterId?: number | null
   /** مركز تكلفة مركبة الأسطول عند سند صرف مصروف صيانة/تشغيل */
   vehicleId?: number | null
+  /** §95 (محاذاة pro-acc — طلب المالك): مشروع المقاولات المرتبط بالسند —
+   *  إسناد تحليلي للربحية وتحصيلات المشروع؛ رصيد العميل ينزل من الطرف أياً كان المشروع */
+  projectId?: number | null
   /** توزيع قبض/سداد الطرف على عدة مستندات — يثبت كـFIFO تلقائياً إن غاب */
   allocations?: FifoAllocation[]
   /** المتبقي تحت الحساب بعد توزيع السند */
@@ -1942,6 +1968,8 @@ interface DataState {
     costCenterId?: number | null
     /** مركز تكلفة مركبة الأسطول عند سند صرف مصروف صيانة/تشغيل */
     vehicleId?: number | null
+    /** §95: مشروع مقاولات اختياري على السند — أثر تحليلي، لا يغيّر القيد ولا رصيد الطرف */
+    projectId?: number | null
     /** نوع مصروف مركز التكلفة في التقارير: صيانة/وقود/قطع غيار… */
     vehicleCostCategory?: string
     /** تحصيل وارد عبر ماكينة: يُحفظ charge مع السند والقيد ذَرّياً. */
@@ -2334,6 +2362,8 @@ interface DataState {
   releaseRetention: (projectId: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => { amount: number }
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
   getProjectProfit: (projectId: number) => ProjectProfit
+  /** §95: كل تكاليف المشروع بمصادرها الأربعة (يدوي/باطن/يومية/مشتريات) — تُطابق صافي 5110 بالدفتر */
+  getProjectCostBreakdown: (projectId: number) => ProjectCostBreakdown
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
   addBoqItem: (args: Omit<BoqItem, 'id' | 'progressPercent' | 'estCostMinor'> & { estCostMinor?: number }) => BoqItem
   /** §94-مراجعة: تعديل بيانات بند BOQ — الكمية/السعر مقفولان بعد بدء التنفيذ (نسب المستخلصات تاريخية) */
@@ -4197,7 +4227,7 @@ export const useDataStore = create<DataState>()(
             amountMinor: grandTotal, date: inv.date,
             description: `فاتورة شراء ${invoiceNumber}${custodyFile ? ` — من عهدة ${custodyFile.fileNumber}` : ''}`,
             payment: inv.paidMinor >= grandTotal ? 'cash' as const : 'credit' as const,
-            journalEntryId: entryId,
+            journalEntryId: entryId, source: 'purchase' as const,
           }]
         }
         const createdPayables: PurchaseExpensePayable[] = inv.expenses.flatMap((expense, expenseIndex) => expense.paidBy === 'payable' && expense.amountMinor > 0 ? [{ id: nextId(state.purchaseExpensePayables) + expenseIndex, purchaseId, expenseIndex, beneficiaryName: expense.beneficiaryName!.trim(), description: expense.nameAr, amountMinor: expensePayableAmount(expense), paidMinor: 0, payableAccountCode: expense.payableAccountCode ?? '2117', status: 'open' as const, createdAt: nowIso, settlementEntryIds: [], vehicleId: expense.vehicleId ?? null, vehicleCostEntryId: null }] : [])
@@ -5957,6 +5987,7 @@ export const useDataStore = create<DataState>()(
         const entryLines = args.costCenterId == null ? baseEntryLines : baseEntryLines.map((line) => line.debit > 0 && line.accountCode === args.counterAccountCode ? { ...line, costCenterId: args.costCenterId } : line)
 
         if (args.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error('تاريخ السند غير صالح')
+        if (args.projectId != null && !state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع المرتبط بالسند غير موجود')
         const voucherId = nextId(state.vouchers)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -5996,6 +6027,7 @@ export const useDataStore = create<DataState>()(
           partyId: args.partyId ?? null,
           costCenterId: args.costCenterId ?? null,
           vehicleId: args.vehicleId ?? null,
+          projectId: args.projectId ?? null,
           fx: fxLeg,
           ...(partyAllocations ? { allocations: partyAllocations, unallocatedMinor: partyUnallocatedMinor ?? 0 } : {}),
           reversalEntryId: null,
@@ -9194,16 +9226,21 @@ export const useDataStore = create<DataState>()(
         if (q.projectId != null) throw new Error('تحوّل هذا العرض لمشروع بالفعل')
         // بوابة الموافقات (أمر التعديل): مسار نشط ⇒ يتطلب اعتماداً مكتملاً غير مستهلك
         get().assertApproved('quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`)
+        /* §95 (محاذاة pro-acc — طلب المالك): قيمة عقد المشروع = صافي العرض **بلا ضريبة** —
+           الضريبة تظهر في إجماليات العرض فقط، والضريبة على الإيراد تحصّل وتُورَّد للدولة،
+           فلو دخلت قيمة العقد لتضخم سقف المستخلصات ونسب الإنجاز. البنود كذلك بأسعار صافية
+           (إن كان سعر العرض شاملاً الضريبة تُستخرج منه). */
+        const netContractMinor = quotationTotals(q.lines).netMinor
         const project = get().addProject({
           nameAr: q.titleAr,
           clientName: q.clientName,
           clientId: q.clientId ?? null, // الربط الإداري ينتقل مع التحويل — بلا أي أثر مالي
-          contractValueMinor: quotationTotal(q.lines),
+          contractValueMinor: netContractMinor,
           retentionPercent,
           startDate: new Date().toISOString().slice(0, 10),
-          notes: `متولد من ${q.quoteNumber}`,
+          notes: `متولد من ${q.quoteNumber}${quotationTotals(q.lines).taxMinor > 0 ? ' — قيمة العقد صافية بلا الضريبة' : ''}`,
         })
-        // تحويل بضغطة: كل بنود العرض تنتقل جدولَ كميات للمشروع بأكوادها وتكاليفها التقديرية
+        // تحويل بضغطة: كل بنود العرض تنتقل جدولَ كميات للمشروع بأكوادها وتكاليفها التقديرية — بأسعار صافية
         const startBoqId = nextId(get().boqItems)
         const boq: BoqItem[] = q.lines.map((l, i) => ({
           id: startBoqId + i,
@@ -9212,7 +9249,7 @@ export const useDataStore = create<DataState>()(
           descriptionAr: l.nameAr && l.nameAr !== l.descriptionAr ? `${l.nameAr} — ${l.descriptionAr}` : l.descriptionAr,
           unit: l.unitAr,
           qty: l.qty,
-          unitPriceMinor: l.unitPriceMinor,
+          unitPriceMinor: Math.round(quotationLineNetMinor(l) / l.qty), /* صافي سعر الوحدة = صافي البند ÷ كميته */
           estCostMinor: l.estCostMinor,
           progressPercent: 0,
         }))
@@ -9472,6 +9509,17 @@ export const useDataStore = create<DataState>()(
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
+        /* §95 (محاذاة pro-acc — طلب المالك): سقف صارم — المستخلصات المتراكمة لا تتجاوز
+           قيمة العقد الفعلية (الأصلية + أوامر التغيير المعتمدة/المستخلصة). الفارق؟ أمر تغيير. */
+        const extractCeiling = (newGross: number, excludeExtractId?: number) => {
+          const effective = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === project.id))
+          const claimed = state.projectExtracts
+            .filter((e) => e.projectId === project.id && e.id !== (excludeExtractId ?? -1))
+            .reduce((a, e) => a + e.totals.grossMinor, 0)
+          if (claimed + newGross > effective) {
+            throw new Error(`المستخلصات (${fmtMinorPlain(claimed + newGross)}) ستتجاوز قيمة العقد الفعلية (${fmtMinorPlain(effective)}) — المتبقي ${fmtMinorPlain(effective - claimed)}؛ اعتمد أمر تغيير بالفارق أولاً أو خفّض قيمة المستخلص`)
+          }
+        }
         // بوابة الموافقات: إصدار مستخلص العميل إجراء حرج (أمر التعديل)
         get().assertApproved('project_extract', project.id, `مستخلص جديد — ${project.nameAr}`)
         // بعد المستخلص الختامي لا مستخلصات — التسليم والإفراج عن المحتجز فقط
@@ -9488,6 +9536,7 @@ export const useDataStore = create<DataState>()(
           gross = r.grossMinor
         }
         if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
+        extractCeiling(gross)
         const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const id = nextId(state.projectExtracts)
         const extractNumber = `PRX-${String(id).padStart(4, '0')}`
@@ -9616,6 +9665,16 @@ export const useDataStore = create<DataState>()(
           gross = r.grossMinor
         }
         if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
+        /* سقف العقد مع إقصاء قيمة هذا المستخلص القديمة — التعديل يعيد حساب المتراكم كأنه استُبدل */
+        {
+          const effective = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === project.id))
+          const claimed = state.projectExtracts
+            .filter((e) => e.projectId === project.id && e.id !== extract.id)
+            .reduce((a, e) => a + e.totals.grossMinor, 0)
+          if (claimed + gross > effective) {
+            throw new Error(`بعد التعديل سيتجاوز المتراكم (${fmtMinorPlain(claimed + gross)}) قيمة العقد الفعلية (${fmtMinorPlain(effective)}) — المتبقي ${fmtMinorPlain(effective - claimed)}؛ اعتمد أمر تغيير أو خفّض القيمة`)
+          }
+        }
         const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const recovery = args.advanceRecoveryMinor ?? 0
         if (recovery > 0) {
@@ -10228,15 +10287,50 @@ export const useDataStore = create<DataState>()(
         })
         return { amount: remaining }
       },
+      getProjectCostBreakdown: (projectId) => {
+        const state = get()
+        /* تصنيف بنود projectCosts بوسم المصدر — لا جمع فوقها (التدفقات الآلية
+           تُنشئ بندها هنا مباشرة منذ نشأتها) */
+        const rows = state.projectCosts.filter((c) => c.projectId === projectId)
+        const manual = rows.filter((c) => !c.source || c.source === 'manual').map((c) => ({ id: c.id, kind: c.kind, description: c.description, amountMinor: c.amountMinor, date: c.date }))
+        const subCertificates = rows.filter((c) => c.source === 'sub_certificate').map((c) => ({ id: c.id, description: c.description, amountMinor: c.amountMinor, date: c.date }))
+        const dailyWork = rows.filter((c) => c.source === 'daily_work').map((c) => ({ id: c.id, description: c.description, amountMinor: c.amountMinor, date: c.date }))
+        const purchases = rows.filter((c) => c.source === 'purchase').map((c) => ({ id: c.id, description: c.description, amountMinor: c.amountMinor, date: c.date }))
+        const materialIssues = rows.filter((c) => c.source === 'material_issue').map((c) => ({ id: c.id, description: c.description, amountMinor: c.amountMinor, date: c.date }))
+        const projectPurchaseIds = new Set(state.purchases.filter((x) => x.projectId === projectId).map((x) => x.id))
+        const purchaseReturns = state.purchaseReturns
+          .filter((r) => projectPurchaseIds.has(r.purchaseId))
+          .map((r) => ({ returnNumber: r.returnNumber, totalMinor: r.totalMinor, date: r.date }))
+        const totals = {
+          manualMinor: manual.reduce((a, c) => a + c.amountMinor, 0),
+          subMinor: subCertificates.reduce((a, c) => a + c.amountMinor, 0),
+          dailyMinor: dailyWork.reduce((a, c) => a + c.amountMinor, 0),
+          purchasesMinor: purchases.reduce((a, c) => a + c.amountMinor, 0),
+          materialIssuesMinor: materialIssues.reduce((a, c) => a + c.amountMinor, 0),
+          returnsMinor: purchaseReturns.reduce((a, r) => a + r.totalMinor, 0),
+        }
+        return { manual, subCertificates, dailyWork, purchases, materialIssues, purchaseReturns, totals: { ...totals, allMinor: totals.manualMinor + totals.subMinor + totals.dailyMinor + totals.purchasesMinor + totals.materialIssuesMinor - totals.returnsMinor } }
+      },
+
       getProjectProfit: (projectId) => {
         const state = get()
         const project = state.projects.find((p) => p.id === projectId)
         if (!project) throw new Error('المشروع غير موجود')
         const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
+        /* §95 (محاذاة pro-acc): التكاليف من كل مصادرها — اليدوية + شهادات الباطن
+           (باطن) + أجور اليومية المسوّاة (عمالة) + المشتريات المرتبطة (مواد، بلا ض.مدخلات)
+           − مرتجعاتها. قبل هذا كان الربح يبدو أعلى من الحقيقة بقدر التكاليف المرحّلة تلقائياً. */
+        /* بنود projectCosts نفسها (بكل مصادرها الموسومة) − مرتجعات الشراء التي
+           عكست 5110 بالدفتر — فتطابق البطاقة صافي 5110 بلا جمع مزدوج */
+        const bd = get().getProjectCostBreakdown(projectId)
+        const costs = [
+          ...state.projectCosts.filter((c) => c.projectId === projectId).map((c) => ({ kind: c.kind, amountMinor: c.amountMinor })),
+          ...bd.purchaseReturns.map((r) => ({ kind: 'materials' as CostKind, amountMinor: -r.totalMinor })),
+        ]
         return projectProfit(
           project,
           state.projectExtracts.filter((e) => e.projectId === projectId).map((e) => ({ grossMinor: e.totals.grossMinor, retentionMinor: e.totals.retentionMinor })),
-          state.projectCosts.filter((c) => c.projectId === projectId).map((c) => ({ kind: c.kind, amountMinor: c.amountMinor })),
+          costs,
           released,
         )
       },
@@ -10467,7 +10561,7 @@ export const useDataStore = create<DataState>()(
         const cost = {
           id: nextId(state.projectCosts), projectId: contract.projectId, date: now.slice(0, 10),
           kind: 'subcontract' as CostKind, description: `شهادة ${label}: ${args.description}`,
-          amountMinor, payment: 'credit' as const, journalEntryId: entryId,
+          amountMinor, payment: 'credit' as const, journalEntryId: entryId, source: 'sub_certificate' as const,
         }
         const updatedContracts = newProgress !== null
           ? state.subContracts.map((c) => (c.id === contract.id ? { ...c, progressPercent: newProgress } : c))
@@ -10640,7 +10734,7 @@ export const useDataStore = create<DataState>()(
         for (const r of unsettled) if (r.projectId != null) byProject.set(r.projectId, (byProject.get(r.projectId) ?? 0) + r.wageMinor)
         const newCosts = [...byProject].map(([projectId, amountMinor]) => ({
           id: costId++, projectId, date: now.slice(0, 10), kind: 'labor' as CostKind,
-          description: `أجور يومية ${worker.nameAr}`, amountMinor, payment: 'cash' as const, journalEntryId: entryId,
+          description: `أجور يومية ${worker.nameAr}`, amountMinor, payment: 'cash' as const, journalEntryId: entryId, source: 'daily_work' as const,
         }))
         set({
           dailyWorkRecords: state.dailyWorkRecords.map((r) => (r.workerId === workerId && !r.settled ? { ...r, settled: true, settlementId: entryId } : r)),
@@ -10715,7 +10809,7 @@ export const useDataStore = create<DataState>()(
         const cost = {
           id: nextId(state.projectCosts), projectId: project.id, date: now.slice(0, 10),
           kind: 'materials' as CostKind, description: `مواد منصرفة ${reqNumber}`,
-          amountMinor: totalCost, payment: 'cash' as const, journalEntryId: entryId,
+          amountMinor: totalCost, payment: 'cash' as const, journalEntryId: entryId, source: 'material_issue' as const,
         }
         set({
           materialRequisitions: [...state.materialRequisitions, req],

@@ -107,6 +107,8 @@ export function VouchersPage() {
   const [expPayableAccount, setExpPayableAccount] = useState('2117')
   const [vehicleId, setVehicleId] = useState<number | null>(null)
   const [costCenterId, setCostCenterId] = useState<number | null>(null)
+  /* §95 (محاذاة pro-acc): ربط المشروع بالسند — إسناد تحليلي؛ الرصيد ينزل من الطرف أياً كان */
+  const [voucherProjectId, setVoucherProjectId] = useState<number | null>(null)
   const [vehicleCostCategory, setVehicleCostCategory] = useState('maintenance')
   const [allocationDraft, setAllocationDraft] = useState<Record<string, string>>({})
   const [viewing, setViewing] = useState<Voucher | null>(null)
@@ -204,6 +206,7 @@ export function VouchersPage() {
           expPayableAccount: string
           vehicleId: number | null
           costCenterId: number | null
+          voucherProjectId: number | null
           vehicleCostCategory: string
           allocationDraft: Record<string, string>
         }>
@@ -221,6 +224,7 @@ export function VouchersPage() {
         setExpPayableAccount(draft.expPayableAccount ?? '2117')
         setVehicleId(draft.vehicleId ?? null)
         setCostCenterId(draft.costCenterId ?? null)
+        setVoucherProjectId(draft.voucherProjectId ?? null)
         setVehicleCostCategory(draft.vehicleCostCategory ?? 'maintenance')
         setAllocationDraft(draft.allocationDraft ?? {})
         toast.show('استُعيدت آخر مسودة لهذا النوع من السندات ✓')
@@ -278,7 +282,7 @@ export function VouchersPage() {
     try {
       window.localStorage.setItem(`shopsys.voucher-draft.${kind}`, JSON.stringify({
         treasury, terminalPayment, counter, amount, voucherDate, desc, partyId, purchaseId, expMethod, expPaidBy,
-        expBeneficiary, expPayableAccount, vehicleId, costCenterId, vehicleCostCategory, allocationDraft,
+        expBeneficiary, expPayableAccount, vehicleId, costCenterId, vehicleCostCategory, allocationDraft, voucherProjectId,
       }))
       toast.show(`حُفظت مسودة سند ${kind === 'receipt' ? 'القبض' : 'الصرف'} محلياً ✓`)
     } catch {
@@ -368,6 +372,7 @@ export function VouchersPage() {
         allocations: manualAllocations,
         costCenterId: canLinkCostCenter ? costCenterId : null,
         vehicleId: canLinkVehicle ? vehicleId : null,
+        projectId: voucherProjectId,
         vehicleCostCategory: canLinkVehicle && vehicleId != null ? vehicleCostCategory : undefined,
         terminalPayment: kind === 'receipt' && selectedTerminal ? { terminalId: selectedTerminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
         settleSlipIds: isPayrollSettlement && settleSlipIds.length ? settleSlipIds : undefined,
@@ -662,6 +667,8 @@ export function VouchersPage() {
               return <section className="space-y-2 rounded-xl border doc-line doc-card p-4"><h3 className="flex items-center gap-2 text-sm font-bold doc-ink"><Landmark size={17} className="doc-accent" /> أقساط الأصول المستحقة لهذا المورد</h3>{supplierAssets.map(({ a, due }) => <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded doc-tint px-3 py-2 text-[11px]"><span>{a.assetNumber} — {a.nameAr}</span><b>متبقٍ {fmt(due.remainingMinor)} {cur.symbol}{due.nextInstallment ? ` · قسط ${fmt(due.nextInstallment.amountMinor - due.nextInstallment.paidMinor)} يستحق ${due.nextInstallment.dueDate}` : ''}</b></div>)}</section>
             })()}
 
+            {/* §95 (محاذاة pro-acc): ربط المشروع بالسند — أثر تحليلي على ربحية المشروع وتحصيلاته، ورصيد الطرف ينزل دائماً */}
+            {(kind === 'receipt' || kind === 'payment') && projects.length > 0 && <Field label="المشروع (اختياري — للربحية والتحصيلات)"><QuickSelect value={voucherProjectId ?? ''} onChange={(e) => setVoucherProjectId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card" data-voucher-project><option value="">بدون مشروع</option>{projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}</QuickSelect></Field>}
             {canLinkCostCenter && !canLinkVehicle && <Field label="مركز التكلفة العام (اختياري)"><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field>}
             {canLinkVehicle && <div className="grid gap-3 rounded-xl border doc-line doc-card p-4 sm:grid-cols-3"><Field label="مركز التكلفة العام (اختياري)"><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field><Field label="مركز تكلفة المركبة (اختياري)"><QuickSelect value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركبة</option>{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber} — {vehicle.vehicleType}</option>)}</QuickSelect></Field>{vehicleId != null && <Field label="نوع مصروف السيارة"><QuickSelect value={vehicleCostCategory} onChange={(e) => setVehicleCostCategory(e.target.value)} className="h-10 doc-line doc-card">{VEHICLE_COST_CATEGORIES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</QuickSelect></Field>}</div>}
 

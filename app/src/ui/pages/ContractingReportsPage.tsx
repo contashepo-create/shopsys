@@ -6,7 +6,7 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  * البطاقة نفسها من النواة الخالصة projectReportCard (قابلة للفحص ببوابة).
  */
 import { useMemo, useState } from 'react'
-import { FileSpreadsheet, BarChart3, Users, Receipt } from 'lucide-react'
+import { FileSpreadsheet, BarChart3, Users, Receipt, Calculator } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -31,7 +31,7 @@ function downloadCsv(rows: readonly Record<string, unknown>[], filename: string)
 export function ContractingReportsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, changeOrders, customers, clientAdvances,
-    getOpenClientInvoices,
+    getOpenClientInvoices, getProjectCostBreakdown,
   } = useDataStore()
   const { setup } = useAppStore()
   const cur = useMemo(
@@ -45,13 +45,20 @@ export function ContractingReportsPage() {
   /** بطاقة التقرير الخالصة لكل مشروع — من النواة مباشرة */
   const cards = useMemo(() => projects.map((p) => {
     const extracts = projectExtracts.filter((e) => e.projectId === p.id)
-    const costs = projectCosts.filter((c) => c.projectId === p.id)
     const released = retentionReleases.filter((r) => r.projectId === p.id).reduce((a, r) => a + r.amountMinor, 0)
     const orders = changeOrders.filter((o) => o.projectId === p.id)
     const advances = clientAdvances.filter((a) => a.projectId === p.id)
     const flat = extracts.map((e) => ({ grossMinor: e.totals.grossMinor, vatMinor: e.totals.vatMinor, retentionMinor: e.totals.retentionMinor, date: e.date }))
-    return { project: p, card: projectReportCard(p, flat, costs, released, orders, advances) }
-  }), [projects, projectExtracts, projectCosts, retentionReleases, changeOrders, clientAdvances])
+    /* §95 (محاذاة pro-acc — طلب المالك): التكاليف = بنود projectCosts نفسها (بكل
+       مصادرها الموسومة: يدوي/شهادة باطن/أجور يومية/فاتورة شراء/إذن صرف) − مرتجعات
+       الشراء التي عكست 5110 — فتطابق البطاقة صافي 5110 بالدفتر بلا جمع مزدوج. */
+    const bd = getProjectCostBreakdown(p.id)
+    const fullCosts = [
+      ...projectCosts.filter((c) => c.projectId === p.id).map((c) => ({ kind: c.kind, amountMinor: c.amountMinor })),
+      ...bd.purchaseReturns.map((r) => ({ kind: 'materials' as CostKind, amountMinor: -r.totalMinor })),
+    ]
+    return { project: p, card: projectReportCard(p, flat, fullCosts, released, orders, advances), breakdown: bd }
+  }), [projects, projectExtracts, projectCosts, retentionReleases, changeOrders, clientAdvances, getProjectCostBreakdown])
 
   /** المفتوح من المستخلصات لكل مشروع: من دفتر التوزيع (docKey = extract:<id>) */
   const openByProject = useMemo(() => {
@@ -234,6 +241,38 @@ export function ContractingReportsPage() {
                       <div key={k} className="rounded-xl bg-slate-500/5 p-2"><div className="text-[10px] text-slate-500">{COST_KIND_LABELS[k].icon} {COST_KIND_LABELS[k].nameAr}</div><div className="font-bold text-[12px]">{fmt(selected.card.costsByKind[k])}</div></div>
                     ))}
                   </div>
+
+                  {/* §95: مصادر التكاليف — مطابقة صافي 5110 بالدفتر */}
+                  {(() => {
+                    const bd = selected.breakdown
+                    const rows: [string, number][] = [
+                      ['تكاليف يدوية مسجّلة', bd.totals.manualMinor],
+                      ['شهادات مقاولي الباطن', bd.totals.subMinor],
+                      ['أجور يومية مسوّاة', bd.totals.dailyMinor],
+                      ['فواتير شراء مربوطة', bd.totals.purchasesMinor],
+                      ['أذون صرف مواد من المخزن', bd.totals.materialIssuesMinor],
+                      ['مرتجعات شراء (خافضة)', -bd.totals.returnsMinor],
+                    ]
+                    return (
+                      <div className={`${card} overflow-hidden`} data-cost-sources>
+                        <div className="px-4 py-2.5 text-[12px] font-black text-slate-500 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                          <span className="flex items-center gap-1"><Calculator size={13} /> مصادر التكاليف (تُطابق صافي 5110 بالدفتر)</span>
+                          <b className="text-rose-600">{fmt(bd.totals.allMinor)} {cur.symbol}</b>
+                        </div>
+                        <table className="w-full text-[12px]">
+                          <tbody>
+                            {rows.map(([label, value]) => (
+                              <tr key={label} className="border-b border-slate-50 dark:border-slate-800/50">
+                                <td className="px-4 py-2">{label}</td>
+                                <td className={`px-4 py-2 text-left font-bold ${value < 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{fmt(value)}</td>
+                              </tr>
+                            ))}
+                            <tr className="bg-slate-500/5 font-black"><td className="px-4 py-2">إجمالي تكاليف المشروع</td><td className="px-4 py-2 text-left text-rose-600">{fmt(bd.totals.allMinor)}</td></tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  })()}
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                     {selectedExtracts.length > 0 && (

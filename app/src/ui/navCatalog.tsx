@@ -160,6 +160,7 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'fleet', nameAr: 'المعدات', icon: Tractor, path: '/rental/fleet' },
       { id: 'contracts', nameAr: 'عقود الإيجار', icon: FileSpreadsheet, path: '/rental/contracts' },
+      { id: 'invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/rental/invoices' },
       { id: 'reports', nameAr: 'وحدة تقارير المعدات', icon: BarChart3, path: '/rental/reports' },
     ],
   },
@@ -168,6 +169,7 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'properties', nameAr: 'العقارات والملاك', icon: Building2, path: '/realestate/properties' },
       { id: 'leases', nameAr: 'عقود الإيجار', icon: KeyRound, path: '/realestate/leases' },
+      { id: 'invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/realestate/invoices' },
     ],
   },
   {
@@ -175,6 +177,7 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'trips', nameAr: 'النقلات', icon: Route, path: '/logistics/trips' },
       { id: 'fleet', nameAr: 'الأسطول والسائقون', icon: Truck, path: '/logistics/fleet' },
+      { id: 'invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/logistics/invoices' },
     ],
   },
   {

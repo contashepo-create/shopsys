@@ -484,8 +484,10 @@ export function QuotationsPage() {
           <div className="space-y-4">
             <div className="p-3.5 rounded-2xl bg-orange-500/5 border border-orange-500/20 text-[13px] leading-relaxed">
               سيُنشأ مشروع باسم «<b>{convertFor.titleAr}</b>» للعميل «<b>{convertFor.clientName}</b>»
-              بقيمة عقد <b>{fmt(quotationTotal(convertFor.lines))} {cur.symbol}</b> — وتنتقل بنوده الـ{convertFor.lines.length}
-              كاملةً إلى جدول كميات المشروع (بأسعارها وتكاليفها التقديرية) تمهيداً للمستخلصات ولوحة القيمة المكتسبة.
+              بقيمة عقد <b>{fmt(quotationTotals(convertFor.lines).netMinor)} {cur.symbol}</b>
+              <b>صافية بدون الضريبة</b> (ضريبة العرض {fmt(quotationTotals(convertFor.lines).taxMinor)} {cur.symbol} تُحصَّل مع المستخلصات وتُورَّد للدولة — لا تدخل العقد) —
+              وتنتقل بنوده الـ{convertFor.lines.length}
+              كاملةً إلى جدول كميات المشروع (بأسعارها الصافية وتكاليفها التقديرية) تمهيداً للمستخلصات ولوحة القيمة المكتسبة.
             </div>
             <Field label="نسبة محتجز ضمان الأعمال ٪" hint="تُخصم من كل مستخلص ويُفرج عنها عند التسليم">
               <input value={convRetention} onChange={(e) => setConvRetention(e.target.value)} inputMode="decimal" className={inputCls} dir="ltr" />

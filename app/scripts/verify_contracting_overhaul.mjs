@@ -17,6 +17,9 @@
  *    وتعديل وطباعة العروض المحفوظة · تعديل مشروع وبند BOQ بحروس سلامة.
  * ⑥ استكمال المراجعة: تعديل عقد باطن وخطاب ضمان وعامل يومية بحروس · طباعة
  *    شهادة الباطن A4.
+ * ⑦ محاذاة pro-acc (§95): قيمة العقد وبنوده صافية بلا ضريبة عند التحويل ·
+ *    سقف المستخلصات بقيمة العقد الفعلية (بأوامر التغيير) · بطاقة التكاليف من
+ *    كل المصادر (يدوي/باطن/يومية/مشتريات − مرتجعات) · سند قبض بمشروع اختياري.
  *
  * التشغيل: node --experimental-strip-types scripts/verify_contracting_overhaul.mjs
  */
@@ -25,6 +28,7 @@ globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) 
 globalThis.window = globalThis
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, requireOpenShiftForSales: false, allowNegativeTreasury: true, vatPercent: 14, taxInclusive: true, activityId: 'general', countryCode: 'EG' }, license: { plan: 'pro' } } }))
 const { useDataStore } = await import('../src/data/repo.ts')
+const { quotationTotals } = await import('../src/core/contracting.ts')
 const st = () => useDataStore.getState()
 
 let pass = 0, fails = []
@@ -279,6 +283,76 @@ console.log('⑥ استكمال المراجعة: تعديل عقد باطن و�
   ok('الدفتـر متوازن بعد جولة العمق', balanced())
 }
 
+/* ═══ ⑦ §95 (محاذاة pro-acc): عقد بلا ضريبة · سقف المستخلص · تكاليف كاملة · سند قبض بمشروع ═══ */
+console.log('⑦ محاذاة pro-acc: العقد صافٍ · سقف المستخلصات · تكاليف كل المصادر · سند قبض مرتبط بمشروع')
+{
+  /* ── ① عرض بأسعار شاملة الضريبة → المشروع وبنوده بالصافي ── */
+  const qTax = st().addQuotation({ kind: 'quotation', clientName: 'شركة البترول', clientId: null, titleAr: 'صيانة خزانات', validUntil: '2026-12-31', lines: [{ nameAr: 'صيانة', descriptionAr: 'صيانة شاملة', qty: 100, unitAr: 'م2', unitPriceMinor: 1140, estCostMinor: 700, vatPercent: 14, taxIncluded: true }], notes: '', winProbability: 80, bidBondMinor: 0 })
+  const grossQ = 100 * 1140 // السعر شامل الضريبة
+  const netQ = Math.round(grossQ * 100 / 114) // 100,000 صافي
+  ok('العرض الشامل: صافيه 100,000 وضريبته 14,000 (إجمالي 114,000)', quotationTotals(qTax.lines).netMinor === netQ && quotationTotals(qTax.lines).taxMinor === grossQ - netQ, quotationTotals(qTax.lines).netMinor)
+  st().setQuotationStatus(qTax.id, 'submitted')
+  st().setQuotationStatus(qTax.id, 'won')
+  const prjTax = st().convertQuotationToProject(qTax.id, 5)
+  ok('قيمة عقد المشروع = الصافي بلا الضريبة (100,000 لا 114,000)', prjTax.contractValueMinor === netQ, prjTax.contractValueMinor)
+  const boqTax = st().boqItems.filter((b) => b.projectId === prjTax.id)
+  ok('بنود BOQ بأسعار صافية (سعر الوحدة 1,000 لا 1,140)', boqTax.length === 1 && boqTax[0].unitPriceMinor === Math.round(1140 * 100 / 114), boqTax[0].unitPriceMinor)
+
+  /* ── ② سقف المستخلصات: الرفض ثم أمر التغيير يعتمد الفارق ── */
+  st().addProjectExtract({ projectId: prjTax.id, grossMinor: netQ, vatPercent: 0, payment: 'credit', description: 'المستخلص الأول — كامل العقد' })
+  throws('مستخلص يتجاوز قيمة العقد يُرفض (سقف pro-acc)', () => st().addProjectExtract({ projectId: prjTax.id, grossMinor: 5_000, vatPercent: 0, payment: 'credit', description: 'زيادة بلا أمر تغيير' }), 'تتجاوز قيمة العقد')
+  const co = st().addChangeOrder({ projectId: prjTax.id, titleAr: 'أعمال عزل إضافية', amountMinor: 20_000, date: '2026-10-01' })
+  st().setChangeOrderStatus(co.id, 'approved')
+  const exAfter = st().addProjectExtract({ projectId: prjTax.id, grossMinor: 20_000, vatPercent: 0, payment: 'credit', description: 'بعد اعتماد أمر التغيير' })
+  ok('بعد اعتماد أمر التغيير: المستخلص يمر حتى قيمته', exAfter.totals.grossMinor === 20_000)
+  throws('التجاوز يبقى مرفوضاً حتى بعد أمر التغيير بأقل من الفارق', () => st().addProjectExtract({ projectId: prjTax.id, grossMinor: 1, vatPercent: 0, payment: 'credit', description: 'درهم زيادة' }), 'تتجاوز')
+
+  /* ── ③ بطاقة التكاليف: كل المصادر تُطابق صافي 5110 ── */
+  const prjCost = st().addProject({ nameAr: 'مشروع التكاليف المركبة', clientName: 'العميل د', contractValueMinor: 1_000_000, retentionPercent: 5, startDate: '2026-10-01', notes: '' })
+  st().addProjectCost({ projectId: prjCost.id, kind: 'labor', descriptionAr: 'أجرة مباشرة', amountMinor: 10_000, payment: 'cash', date: '2026-10-01' })
+  const subC = st().addSubContract({ projectId: prjCost.id, contractorName: 'مقاول كهرباء', scopeAr: 'تغذية كهربائية', contractValueMinor: 200_000, retentionPercent: 5 })
+  st().addSubCertificate({ contractId: subC.id, newProgressPercent: 50, description: 'نصف الأعمال' }) // 100,000 على 5110
+  const wkr = st().addDailyWorker({ nameAr: 'عامل مركب', phone: '', dailyWageMinor: 300 })
+  st().addDailyWorkRecord({ workerId: wkr.id, projectId: prjCost.id, date: '2026-10-02', days: 4 }) // 1,200
+  st().settleDailyWorker(wkr.id, '1101')
+  /* فاتورة شراء مربوطة بالمشروع: بضاعة 50,000 بض.مدخلات 7,000 — 5110 يحمل 50,000 فقط */
+  const supp = st().suppliers[0]
+  st().postPurchase({ supplierId: supp.id, date: '2026-10-03', lines: [{ itemId: st().items[0].id, qty: 10, unitPriceMinor: 5_000, expenseShareMinor: 0, landedUnitCostMinor: 5_000 }], expenses: [], paidMinor: 0, payment: 'credit', inputVatMinor: 7_000, projectId: prjCost.id, notes: '' })
+  const bd = st().getProjectCostBreakdown(prjCost.id)
+  ok('التفصيل بلا ازدواج: يدوي 10,000 · باطن 100,000 · يومية 1,200 · مشتريات 50,000 (كل بند مصدره مرة واحدة)', bd.totals.manualMinor === 10_000 && bd.totals.subMinor === 100_000 && bd.totals.dailyMinor === 1_200 && bd.totals.purchasesMinor === 50_000 && bd.totals.allMinor === 161_200, JSON.stringify(bd.totals))
+  const profitCard = st().getProjectProfit(prjCost.id)
+  ok('ربحية المشروع = كل المصادر (161,200) وتطابق إجمالي التفصيل', profitCard.costsMinor === 161_200 && profitCard.costsMinor === bd.totals.allMinor, profitCard.costsMinor)
+  /* وسم المصدر في بنود التكاليف: أذون الصرف تُوسم أيضاً (فحص نوعي) */
+  ok('وسم المصدر مستقر: عينة الباطن تحمل source=sub_certificate', st().projectCosts.some((c) => c.projectId === prjCost.id && c.source === 'sub_certificate') && st().projectCosts.some((c) => c.projectId === prjCost.id && c.source === 'daily_work') && st().projectCosts.some((c) => c.projectId === prjCost.id && c.source === 'purchase'))
+  /* صافي 5110 بالدفتر = نفس التكاليف (بلا أي ضريبة) */
+  const net5110 = st().journal.reduce((a, e) => a + e.lines.filter((l) => l.accountCode === '5110' && e.sourceType !== 'reversal').reduce((x, l) => x + l.debit - l.credit, 0), 0)
+  ok('الدفتر 5110 (صافي بلا ضريبة المدخلات) يطابق مجموع كل مصادر التكاليف', net5110 >= bd.totals.allMinor, net5110)
+
+  /* ── ④ سند قبض مرتبط بمشروع: الرصيد ينزل والوسم يظهر ── */
+  let cust95 = st().customers.find((c) => c.nameAr === 'عميل السند §95')
+  if (!cust95) { st().addCustomer({ nameAr: 'عميل السند §95', phone: '', creditLimitMinor: 0, notes: '' }); cust95 = st().customers[st().customers.length - 1] }
+  const dueBefore = st().getCustomerBalance(cust95.id)
+  const v95 = st().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '1104', amountMinor: 1_000, description: 'تحصيل دفعة موسومة بمشروع الصيانة', partyKind: 'customer', partyId: cust95.id, projectId: prjTax.id, date: '2026-10-05' })
+  ok('السند حُفظ بوسم المشروع (إسناد تحليلي)', v95.projectId === prjTax.id)
+  ok('رصيد العميل انزل بتحصيل السند — أياً كان المشروع', st().getCustomerBalance(cust95.id) === dueBefore - 1_000, `${dueBefore} → ${st().getCustomerBalance(cust95.id)}`)
+  throws('سند بمشروع غير موجود يُرفض (أمان بيانات)', () => st().postVoucher({ kind: 'receipt', treasury: '1101', counterAccountCode: '1104', amountMinor: 100, description: 'x', partyKind: 'customer', partyId: cust95.id, projectId: 999_999 }), 'غير موجود')
+  ok('الدفتر متوازن بعد جولة §95', balanced())
+
+  /* ── واجهات: الوسوم والأدلة ── */
+  const { readFileSync } = await import('node:fs')
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8')
+  const pages = read('../src/ui/pages/ContractingPages.tsx')
+  const quotesPage = read('../src/ui/pages/QuotationsPage.tsx')
+  const vouchersPage = read('../src/ui/pages/VouchersPage.tsx')
+  const opsPages = read('../src/ui/pages/ProjectOpsPages.tsx')
+  const reportsPage = read('../src/ui/pages/ContractingReportsPage.tsx')
+  ok('نماذج المشروع: حقل القيمة معنون «بدون ضريبة» (إنشاء وتعديل)', pages.includes('بدون ضريبة'))
+  ok('مودال التحويل يعلن القيمة الصافية وضريبة العرض', quotesPage.includes('صافية بدون الضريبة') && quotesPage.includes('تُحصَّل مع المستخلصات'))
+  ok('سند القبض: حقل مشروع اختياري بيانياً (data-voucher-project)', vouchersPage.includes('data-voucher-project') && vouchersPage.includes('بدون مشروع'))
+  ok('تحصيلات العملاء: سندات القبض الموسومة بمشاريع تظهر بقسم خاص', opsPages.includes('data-project-receipt-vouchers'))
+  ok('تقارير المقاولات: بطاقة «مصادر التكاليف» تُطابق صافي 5110', reportsPage.includes('data-cost-sources') && reportsPage.includes('تُطابق صافي 5110'))
+}
+
 console.log('─'.repeat(60))
 if (fails.length) { console.log(`❌ فشل ${fails.length} من ${pass + fails.length}:`); for (const f of fails) console.log(`   - ${f}`); process.exit(1) }
-console.log(`✅ بوابة التطوير الشامل للمقاولات §94 (بمراجعتها): ${pass} فحصاً ناجحاً — فواتير مربوطة وحرة تظهر · تعديل مستخلصات بعكس موثق · مستند رسمي متوازن · عروض تُفتح وتُعدَّل وتُطبع · مشروع وبند BOQ قابلان للتعديل بحراس · عمق المقاولات (باطن/ضمان/يومية) يُعدَّل وشهادة الباطن تُطبع`)
+console.log(`✅ بوابة التطوير الشامل للمقاولات §94 (بمراجعتها): ${pass} فحصاً ناجحاً — فواتير مربوطة وحرة تظهر · تعديل مستخلصات بعكس موثق · مستند رسمي متوازن · عروض تُفتح وتُعدَّل وتُطبع · مشروع وبند BOQ قابلان للتعديل بحراس · عمق المقاولات (باطن/ضمان/يومية) يُعدَّل وشهادة الباطن تُطبع · محاذاة pro-acc: عقد صافٍ وسقف مستخلصات وتكاليف كل المصادر`)
