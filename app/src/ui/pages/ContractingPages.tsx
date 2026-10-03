@@ -14,6 +14,8 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, CHANGE_ORDER_STATUS_LABELS, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
+import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
+import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
@@ -33,6 +35,7 @@ export function ProjectsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, costCenters, paymentTerminals, paymentTerminalTransactions,
     addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
+    advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
     staffCommissions, addStaffCommission,
   } = useDataStore()
@@ -59,6 +62,10 @@ export function ProjectsPage() {
   const [expectedEnd, setExpectedEnd] = useState('')
   const [managerId, setManagerId] = useState('')
   const [tags, setTags] = useState('')
+  /* §92: مسودات المشروع (kind='project') + مراجعة قبل الإنشاء — مثل فاتورة الأعلاف */
+  const [projDraftsOpen, setProjDraftsOpen] = useState(false)
+  const [projDraftId, setProjDraftId] = useState(() => crypto.randomUUID())
+  const [projChecksOpen, setProjChecksOpen] = useState(false)
 
   /* البند العالمي (طلب المالك): المشروع يُنشأ بجدول كميات BOQ —
      قيمة العقد تُحسب من مجموع البنود (كمية × سعر) لا تُكتب يدوياً */
@@ -73,9 +80,54 @@ export function ProjectsPage() {
   const [valueMode, setValueMode] = useState<'boq' | 'manual'>('boq')
   const effectiveContractMinor = valueMode === 'boq' ? boqTotalMinor : toMinor(contractValue, cur.decimals)
 
+  /* §92: أخطاء مانعة وتحذيرات قبل إنشاء المشروع — لوحة مثل فاتورة الأعلاف */
+  const projectIssues: PrePostIssue[] = [
+    ...(nameAr.trim() === '' ? [{ id: 'name', level: 'blocking' as const, text: 'اسم المشروع مطلوب' }] : []),
+    ...(clientName.trim() === '' ? [{ id: 'client', level: 'warning' as const, text: 'المشروع بلا عميل/جهة — لن يظهر في تقارير ذمم العميل' }] : []),
+    ...(valueMode === 'boq' && validBoqLines.length === 0
+      ? [{ id: 'boq-empty', level: 'blocking' as const, text: 'أدخل بند جدول كميات واحداً على الأقل (وصف + كمية + سعر) — أو بدّل إلى «قيمة إجمالية»' }]
+      : []),
+    ...(valueMode === 'manual' && effectiveContractMinor <= 0
+      ? [{ id: 'value', level: 'blocking' as const, text: 'قيمة العقد الإجمالية مطلوبة (أكبر من صفر)' }]
+      : []),
+    ...(valueMode === 'boq' && boqTotalMinor <= 0 && validBoqLines.length > 0
+      ? [{ id: 'boq-zero', level: 'blocking' as const, text: 'بنود الجدول لا تنتج قيمة عقد — راجع الكميات والأسعار' }]
+      : []),
+    ...(expectedEnd && expectedEnd < startDate
+      ? [{ id: 'dates', level: 'warning' as const, text: 'تاريخ التسليم المتوقع يسبق تاريخ البدء' }]
+      : []),
+    ...boqDraft.filter((l) => l.descriptionAr.trim() && Number(l.qty) > 0 && Number(l.unitPrice) === 0).map((l) => ({
+      id: `free:${l.code || l.descriptionAr.slice(0, 20)}`, level: 'warning' as const, text: `البند «${l.descriptionAr.slice(0, 30)}» بسعر صفر`,
+    })),
+  ]
+  const projectBlocking = projectIssues.filter((issue) => issue.level === 'blocking').length
+
+  const saveProjectDraft = () => {
+    const draft = upsertAdvancedInvoiceDraft({
+      id: projDraftId, kind: 'project',
+      name: `مسودة مشروع — ${nameAr.trim() || 'بلا اسم'}`,
+      payload: JSON.stringify({ nameAr, clientName, clientId, contractValue, retention, startDate, notes, contractNumber, location, expectedEnd, managerId, tags, valueMode, boqDraft }),
+    })
+    toast.show(`حُفظت مسودة المشروع ${new Date(draft.updatedAt).toLocaleTimeString('ar-EG')} ✓`)
+  }
+  const applyProjectDraft = (draft: { payload: string }) => {
+    try {
+      const d = JSON.parse(draft.payload)
+      setNameAr(d.nameAr ?? ''); setClientName(d.clientName ?? ''); setClientId(d.clientId ?? ''); setContractValue(d.contractValue ?? '')
+      setRetention(d.retention ?? '5'); setStartDate(d.startDate ?? new Date().toISOString().slice(0, 10)); setNotes(d.notes ?? '')
+      setContractNumber(d.contractNumber ?? ''); setLocation(d.location ?? ''); setExpectedEnd(d.expectedEnd ?? ''); setManagerId(d.managerId ?? ''); setTags(d.tags ?? '')
+      setValueMode(d.valueMode ?? 'boq'); setBoqDraft(d.boqDraft?.length ? d.boqDraft : [emptyBoqLine()])
+      setOpen(true)
+      toast.show('استُعيدت مسودة المشروع — أكمل وأنشئه ✓')
+    } catch { toast.show('تعذر قراءة المسودة المحفوظة', 'error') }
+  }
+
   const saveProject = () => {
+    /* §92: المانع يفتح لوحة المراجعة بدل رسالة مبعثرة — نمط فاتورة الأعلاف */
+    if (projectBlocking > 0) { setProjChecksOpen(true); return }
     try {
       if (valueMode === 'boq' && validBoqLines.length === 0) throw new Error('أدخل بند جدول كميات واحداً على الأقل (وصف + كمية + سعر) — أو بدّل إلى «قيمة إجمالية»')
+
       const p = addProject({
         nameAr: nameAr.trim(), clientName: clientName.trim(),
         clientId: clientId ? Number(clientId) : null,
@@ -96,6 +148,8 @@ export function ProjectsPage() {
           })
         })
       }
+      deleteAdvancedInvoiceDraft(projDraftId)
+      setProjDraftId(crypto.randomUUID())
       toast.show(`أُنشئ المشروع ${p.code}${valueMode === 'boq' ? ` بجدول كميات من ${validBoqLines.length} بند — قيمة العقد ${fmt(effectiveContractMinor)}` : ''} ✅`)
       setOpen(false); setNameAr(''); setClientName(''); setClientId(''); setContractValue(''); setRetention('5'); setNotes('')
       setContractNumber(''); setLocation(''); setExpectedEnd(''); setManagerId(''); setTags(''); setBoqDraft([emptyBoqLine()]); setValueMode('boq')
@@ -374,8 +428,8 @@ export function ProjectsPage() {
           onNavigate={() => { /* لا تنقل أثناء التحرير */ }}
           onPartySearch={() => document.getElementById('project-client-field')?.focus()}
           onItemSearch={() => (document.getElementById('project-first-boq-line') ?? document.getElementById('project-contract-value'))?.focus()}
-          onSaveDraft={() => toast.show('المشروع يُنشأ بـ«حفظ وترحيل» مباشرة — لا مسودات للمشروعات')}
-          onRestoreDraft={() => toast.show('لا مسودات محفوظة للمشروعات')}
+          onSaveDraft={saveProjectDraft}
+          onRestoreDraft={() => setProjDraftsOpen(true)}
           onPrint={() => {
             if (valueMode === 'boq' && validBoqLines.length === 0) return toast.show('أضف بند جدول كميات واحداً على الأقل قبل المعاينة', 'error')
             previewDraftDoc(buildProjectDraftModel(), 'معاينة مستند المشروع — جدول الكميات')
@@ -492,6 +546,10 @@ export function ProjectsPage() {
             </div>
           </section>
         </InvoicePOSFrame>
+
+        {/* §92: مسودات المشروع + لوحة المراجعة قبل الإنشاء */}
+        <InvoiceDraftsModal open={projDraftsOpen} onClose={() => setProjDraftsOpen(false)} kind="project" drafts={advancedInvoiceDrafts} currency={cur} currentDraftId={projDraftId} onPick={applyProjectDraft} onDelete={deleteAdvancedInvoiceDraft} />
+        <PrePostChecks issues={projectIssues} open={projChecksOpen} onClose={() => setProjChecksOpen(false)} />
       </div>
     )
   }

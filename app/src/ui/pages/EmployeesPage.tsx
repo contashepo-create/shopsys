@@ -171,6 +171,13 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
     if (slipScope === 'selected' && !row.on) return false
     return true
   })
+  /* §92: إجماليات المسير الصلبة — لشريط الترحيل السفلي */
+  const slipTotals = useMemo(() => {
+    const sel = slipRows.filter((row) => row.on)
+    const gross = sel.reduce((sum, row) => sum + row.gross + row.allowances, 0)
+    const cut = sel.reduce((sum, row) => sum + row.deductions + row.advance, 0)
+    return { count: sel.length, gross, cut, net: Math.max(0, gross - cut) }
+  }, [slipRows])
   const patchSlipRow = (employeeId: number, patch: Partial<{ on: boolean; gross: number; allowances: number; deductions: number; advance: number }>) =>
     setSlipRows((rows) => rows.map((row) => (row.employeeId === employeeId ? { ...row, ...patch } : row)))
   /**
@@ -988,9 +995,35 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
             </div>
 
-      <Modal open={slipDraftOpen} onClose={() => setSlipDraftOpen(false)} title="مسير رواتب — قسائم الموظفين" wide>
-              <div className="space-y-3" dir="rtl" data-slip-draft>
-                <div className="grid gap-2 md:grid-cols-3">
+      <Modal open={slipDraftOpen} onClose={() => setSlipDraftOpen(false)} title="مسير رواتب — قسائم الموظفين" extraWide subtitle="مستند استحقاق شهري — قسيمة مستقلة باسم كل موظف تُصرف كلٌّ بيومه">
+              <div dir="rtl" data-slip-draft>
+                {/* ═══ §92: ترويسة مستند رسمي صلبة ═══ */}
+                <div className="payroll-doc-head rounded-2xl bg-slate-900 dark:bg-slate-950 text-white overflow-hidden shadow-lg shadow-slate-900/20" data-slip-head>
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="grid h-11 w-11 place-items-center rounded-xl bg-white/10 text-xl ring-1 ring-white/20">🧾</div>
+                      <div>
+                        <div className="text-[15px] font-black leading-tight">مسير رواتب — قسائم الموظفين</div>
+                        <div className="text-[11px] text-slate-300 mt-0.5">{setup.shopName || 'المنشأة'} · مستند استحقاق رقم <span className="font-mono font-bold text-white">PR-{slipMonth}</span></div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-lg bg-amber-400/15 px-3 py-1.5 text-[11px] font-bold text-amber-300 ring-1 ring-amber-400/30" data-slip-count>
+                        {slipTotals.count} قسيمة معتمدة
+                      </span>
+                      <span className="rounded-lg bg-white/10 px-3 py-1.5 text-[13px] font-black tabular-nums ring-1 ring-white/15" data-slip-head-net>
+                        {fmt(slipTotals.net)} {cur.symbol}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-white/10 bg-white/[0.04] px-5 py-1.5 text-[10.5px] font-bold text-slate-300">
+                    <span>الاستحقاق: أساسي + بدلات − خصومات − سلف مستقطعة</span>
+                    <span>القيد: 5102 رواتب وأجور · 2104 رواتب مستحقة · 1107 سلف الموظفين</span>
+                  </div>
+                </div>
+
+                {/* ═══ شريط الأدوات: الشهر والبحث والنطاق ═══ */}
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
                   <Field label="شهر الاستحقاق">
                     <input type="month" className={inputCls} value={slipMonth} onChange={(event) => setSlipMonth(event.target.value)} aria-label="شهر المسير" />
                   </Field>
@@ -1006,50 +1039,75 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   </Field>
                 </div>
 
-                <table className="w-full text-[12px]">
-                  <thead className="text-[11px] font-black text-slate-500">
-                    <tr><th className="p-1">الموظف</th><th className="p-1 w-24">الأساسي</th><th className="p-1 w-24">بدلات</th><th className="p-1 w-24">خصومات</th><th className="p-1 w-24">سلف</th><th className="p-1 w-24">الصافي</th></tr>
-                  </thead>
-                  <tbody>
-                    {visibleSlipRows.length === 0 && (
-                      <tr><td colSpan={6} className="p-4 text-center text-slate-400">لا موظف مطابق لبحثك</td></tr>
-                    )}
-                    {visibleSlipRows.map((row) => {
-                      const net = Math.max(0, row.gross + row.allowances - row.deductions - row.advance)
-                      return (
-                        <tr key={row.employeeId} data-slip-row={row.employeeId}>
-                          <td className="p-1">
-                            <label className="flex items-center gap-1">
-                              <input type="checkbox" checked={row.on} onChange={(event) => patchSlipRow(row.employeeId, { on: event.target.checked })} aria-label={`اختيار ${row.name}`} />
-                              {row.name}
+                {/* ═══ جدول القسائم — رأس صلب داكن ═══ */}
+                <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                  <table className="w-full text-[12px]">
+                    <thead className="bg-slate-800 text-[11px] font-black text-slate-100 dark:bg-slate-900">
+                      <tr>
+                        <th className="p-2.5 text-right">الموظف</th><th className="p-2.5 w-24">الأساسي</th><th className="p-2.5 w-24">بدلات</th><th className="p-2.5 w-24">خصومات</th><th className="p-2.5 w-24">سلف</th><th className="p-2.5 w-28">الصافي</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleSlipRows.length === 0 && (
+                        <tr><td colSpan={6} className="p-6 text-center text-[12px] text-slate-400">لا موظف مطابق لبحثك</td></tr>
+                      )}
+                      {visibleSlipRows.map((row, index) => {
+                        const net = Math.max(0, row.gross + row.allowances - row.deductions - row.advance)
+                        return (
+                          <tr key={row.employeeId} data-slip-row={row.employeeId} className={`border-t border-slate-100 dark:border-slate-800 ${row.on ? 'bg-white dark:bg-slate-900/40' : 'opacity-60'} hover:bg-brand-500/[0.04]`}>
+                          <td className="p-1.5 px-2.5">
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={row.on} onChange={(event) => patchSlipRow(row.employeeId, { on: event.target.checked })} aria-label={`اختيار ${row.name}`} className="h-4 w-4 accent-emerald-600" />
+                              <span className="font-bold text-slate-700 dark:text-slate-200">{row.name}</span>
+                              <span className="font-mono text-[10px] text-slate-400">#{index + 1}</span>
                             </label>
                           </td>
                           {(['gross', 'allowances', 'deductions', 'advance'] as const).map((field) => (
-                            <td className="p-1" key={field}>
-                              <input className={inputCls} inputMode="decimal" value={String(row[field] / 100)}
+                            <td className="p-1.5" key={field}>
+                              <input className={`${inputCls} h-8 text-center font-mono`} inputMode="decimal" value={String(row[field] / 100)}
                                 aria-label={`${field} ${row.name}`}
                                 onChange={(event) => patchSlipRow(row.employeeId, { [field]: Math.round((Number(event.target.value) || 0) * 100) })} />
                             </td>
                           ))}
-                          <td className="p-1 text-center font-mono font-bold">{fmt(net)}</td>
+                          <td className="p-1.5 text-center font-mono text-[13px] font-black text-emerald-600">{fmt(net)}</td>
                         </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[12px] text-slate-500">
-                    المحدَّد: <b>{slipRows.filter((row) => row.on).length}</b> موظف · إجمالي الصافي{' '}
-                    <b className="font-mono">{fmt(slipRows.filter((row) => row.on).reduce((sum, row) => sum + Math.max(0, row.gross + row.allowances - row.deductions - row.advance), 0))}</b>
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {/* الربط بالحضور (طلب المالك ㉘): بنود مرئية من الشبكة الشهرية — لا خصم صامت */}
-                    <Btn variant="soft" onClick={applyAttendanceImpact} data-apply-attendance title="يملأ خصم الغياب والتأخير والإجازة بلا أجر وبدل الإضافي من بيانات الحضور لهذا الشهر">
-                      <span className="flex items-center gap-1.5"><CalendarCheck2 size={15} /> احتساب من الحضور</span>
+                {/* ═══ §92: شريط الترحيل الصلب — الإجماليات الكبرى وزر الترحيل في مكان واحد ═══ */}
+                <div className="mt-3 overflow-hidden rounded-2xl border-2 border-slate-800 dark:border-slate-700 bg-slate-900 dark:bg-slate-950 text-white shadow-lg shadow-slate-900/20" data-slip-totals-bar>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-white/10 divide-x-reverse" dir="rtl">
+                    <div className="px-4 py-3">
+                      <div className="text-[10px] font-bold text-slate-400">إجمالي الاستحقاق</div>
+                      <div className="mt-0.5 text-lg font-black tabular-nums">{fmt(slipTotals.gross)}</div>
+                    </div>
+                    <div className="px-4 py-3">
+                      <div className="text-[10px] font-bold text-slate-400">خصومات وجزاءات</div>
+                      <div className="mt-0.5 text-lg font-black tabular-nums text-rose-400">−{fmt(slipTotals.cut)}</div>
+                    </div>
+                    <div className="px-4 py-3">
+                      <div className="text-[10px] font-bold text-slate-400">سلف مستقطعة (1107)</div>
+                      <div className="mt-0.5 text-lg font-black tabular-nums text-amber-300">{fmt(slipRows.filter((row) => row.on).reduce((sum, row) => sum + row.advance, 0))}</div>
+                    </div>
+                    <div className="px-4 py-3 bg-white/[0.06]">
+                      <div className="text-[10px] font-bold text-emerald-300">صافي المستحق ({slipTotals.count} قسيمة)</div>
+                      <div className="mt-0.5 text-2xl font-black tabular-nums text-emerald-400" data-slip-total-net>{fmt(slipTotals.net)} <span className="text-[12px] font-bold">{cur.symbol}</span></div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 px-4 py-2.5">
+                    <div className="flex flex-wrap gap-2">
+                      {/* الربط بالحضور (طلب المالك ㉘): بنود مرئية من الشبكة الشهرية — لا خصم صامت */}
+                      <Btn variant="soft" onClick={applyAttendanceImpact} data-apply-attendance title="يملأ خصم الغياب والتأخير والإجازة بلا أجر وبدل الإضافي من بيانات الحضور لهذا الشهر">
+                        <span className="flex items-center gap-1.5"><CalendarCheck2 size={15} /> احتساب من الحضور</span>
+                      </Btn>
+                      <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
+                    </div>
+                    <Btn onClick={accrueSlips} disabled={slipTotals.count === 0 || slipTotals.net <= 0} className="!bg-emerald-500 hover:!bg-emerald-400 !text-white font-black px-5" data-slip-post>
+                      💾 ترحيل المسير — {slipTotals.count} قسيمة بقيد متوازن
                     </Btn>
-                    <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
-                    <Btn onClick={accrueSlips}>ترحيل الاستحقاق</Btn>
                   </div>
                 </div>
               </div>

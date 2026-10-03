@@ -1208,7 +1208,8 @@ export interface DocumentFile {
 
 export interface AdvancedInvoiceDraft {
   id: string
-  kind: 'sale' | 'purchase'
+  /** §92: مسودات عروض الأسعار بنفس مخزن الفواتير — لكل نوع مسوداته المستقلة */
+  kind: 'sale' | 'purchase' | 'quotation' | 'project'
   name: string
   payload: string
   createdAt: string

@@ -20,6 +20,9 @@ import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../components/PrintSwitches.tsx'
+import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
+import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
+import { validateQuotation } from '../../core/contracting.ts'
 
 interface DraftLine { key: string; nameAr: string; descriptionAr: string; qty: string; unitAr: string; unitPrice: string; estCost: string; vat: string; incl: boolean }
 
@@ -29,7 +32,7 @@ const UNITS = ['مقطوعية', 'م2', 'م3', 'م.ط', 'طن', 'عدد', 'يو�
 const QUOTE_TERMS = ['الأسعار سارية حتى تاريخ صلاحية العرض', 'الدفع 40% مقدماً و60% عند التسليم', 'مدة التنفيذ تبدأ من تاريخ التوقيع والمقدم', 'لا تشمل الأسعار أي أعمال تخطيط خارج نطاق البنود']
 
 export function QuotationsPage() {
-  const { quotations, projects, customers, addQuotation, setQuotationStatus, convertQuotationToProject } = useDataStore()
+  const { quotations, projects, customers, addQuotation, setQuotationStatus, convertQuotationToProject, advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const printSwitches = usePrintSwitches()
@@ -51,6 +54,10 @@ export function QuotationsPage() {
   const [notes, setNotes] = useState('')
   const [winProb, setWinProb] = useState('50')
   const [bidBond, setBidBond] = useState('')
+  /* §92: مسودات العروض بنفس مخزن الفواتير (kind='quotation') + مراجعة قبل الاعتماد */
+  const [draftsOpen, setDraftsOpen] = useState(false)
+  const [draftId, setDraftId] = useState(() => crypto.randomUUID())
+  const [checksOpen, setChecksOpen] = useState(false)
 
   const openNew = () => {
     setKind('quotation'); setTitleAr(''); setClientName(''); setClientId('')
@@ -77,10 +84,45 @@ export function QuotationsPage() {
   const draftTax = quotationTotals(parsedLines)
   const draftEstCost = quotationEstCost(parsedLines)
 
+  /* §92: أخطاء النواة نفسها (validateQuotation — لا ازدواج منطق) + فحوص الواجهة */
+  const quoteIssues: PrePostIssue[] = [
+    ...validateQuotation({ titleAr, clientName, lines: parsedLines }).map((text) => ({ id: `core:${text}`, level: 'blocking' as const, text })),
+    ...(validUntil && validUntil < new Date().toISOString().slice(0, 10)
+      ? [{ id: 'expired', level: 'blocking' as const, text: 'صلاحية العرض انتهت — حدّث «ساري حتى» قبل الاعتماد', focus: 'input[type="date"]' }]
+      : []),
+    ...qLines.filter((l) => l.descriptionAr.trim() && Number(l.qty) > 0 && safeMinor(l.unitPrice) === 0).map((l) => ({
+      id: `price:${l.key}`, level: 'warning' as const, text: `البند «${l.nameAr || l.descriptionAr.slice(0, 30)}» بسعر صفر — عرض مجاني؟`,
+    })),
+    ...(notes.trim() === '' ? [{ id: 'terms', level: 'warning' as const, text: 'لا شروط مكتوبة — الشروط تحمي هامش العرض عند التفاوض' }] : []),
+  ]
+  const blockingCount = quoteIssues.filter((issue) => issue.level === 'blocking').length
+
+  const saveDraft = () => {
+    const draft = upsertAdvancedInvoiceDraft({
+      id: draftId, kind: 'quotation',
+      name: `مسودة ${kind === 'tender' ? 'مناقصة' : 'عرض'} — ${titleAr.trim() || clientName.trim() || 'بلا عنوان'}`,
+      payload: JSON.stringify({ kind, titleAr, clientName, clientId, validUntil, qLines, notes, winProb, bidBond }),
+    })
+    toast.show(`حُفظت المسودة محلياً ${new Date(draft.updatedAt).toLocaleTimeString('ar-EG')} ✓`)
+  }
+  const applyDraft = (draft: { payload: string }) => {
+    try {
+      const d = JSON.parse(draft.payload)
+      setKind(d.kind ?? 'quotation'); setTitleAr(d.titleAr ?? ''); setClientName(d.clientName ?? ''); setClientId(d.clientId ?? '')
+      setValidUntil(d.validUntil ?? ''); setQLines(d.qLines ?? []); setNotes(d.notes ?? ''); setWinProb(d.winProb ?? '50'); setBidBond(d.bidBond ?? '')
+      setOpen(true)
+      toast.show('استُعيدت المسودة — أكمل واعتمد العرض ✓')
+    } catch { toast.show('تعذر قراءة المسودة المحفوظة', 'error') }
+  }
+
   const save = () => {
+    /* §92: مراجعة قبل الاعتماد — المانع يفتح لوحة الأخطاء بدل رسالة واحدة مبعثرة (نمط الفاتورة) */
+    if (blockingCount > 0) { setChecksOpen(true); return }
     try {
       const q = addQuotation({ kind, clientName, clientId: clientId ? Number(clientId) : null, titleAr, validUntil, lines: parsedLines, notes: notes.trim(), winProbability: Number(winProb) || 0, bidBondMinor: bidBond ? toMinor(bidBond, cur.decimals) : 0 })
       toast.show(`سُجل ${q.kind === 'tender' ? 'ملف المناقصة' : 'عرض السعر'} ${q.quoteNumber} — الإجمالي ${fmt(quotationTotal(q.lines))} ✅`)
+      deleteAdvancedInvoiceDraft(draftId)
+      setDraftId(crypto.randomUUID())
       setOpen(false)
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
@@ -147,8 +189,8 @@ export function QuotationsPage() {
           onNavigate={() => { /* لا تنقل أثناء التحرير */ }}
           onPartySearch={() => document.getElementById('quotation-client-field')?.focus()}
           onItemSearch={() => document.getElementById('quotation-first-line')?.focus()}
-          onSaveDraft={() => toast.show('اضغط «اعتماد وترحيل» لحفظ العرض — العروض لا تُرحَّل محاسبياً')}
-          onRestoreDraft={() => toast.show('لا مسودات محفوظة للعروض')}
+          onSaveDraft={saveDraft}
+          onRestoreDraft={() => setDraftsOpen(true)}
           onPrint={() => printDraft('a4')}
           onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); printDraft('a4') }}
           onPost={save}
@@ -287,6 +329,10 @@ export function QuotationsPage() {
             </section>
           </section>
                   </InvoicePOSFrame>
+
+        {/* §92: مسودات العروض بنفس منظومة الفواتير + لوحة المراجعة قبل الاعتماد */}
+        <InvoiceDraftsModal open={draftsOpen} onClose={() => setDraftsOpen(false)} kind="quotation" drafts={advancedInvoiceDrafts} currency={cur} currentDraftId={draftId} onPick={applyDraft} onDelete={deleteAdvancedInvoiceDraft} />
+        <PrePostChecks issues={quoteIssues} open={checksOpen} onClose={() => setChecksOpen(false)} />
       </div>
     )
   }
