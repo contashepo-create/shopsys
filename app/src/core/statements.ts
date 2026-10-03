@@ -113,6 +113,11 @@ export function customerStatement(input: CustomerStatementInput): StatementRow[]
 
 export interface SupplierStatementInput {
   supplierId: number
+  /**
+   * §91 — فواتير البيع الآجلة للمورد (بيع له على حسابه 2101): كل فاتورة يزيد
+   * مديونيته لنا (debit) فيخفض ما علينا له أو يجعله مديناً — تظهر بالكشف كأي مستند.
+   */
+  sales?: { invoiceNumber: string; date: string; remainderMinor: Minor }[]
   /** رصيد افتتاحي مثبت بقيد 3101/2101 (اختياري) — دائن له علينا */
   openingMinor?: Minor
   // supplierDueMinor = مستحق المورد فقط (بضاعة + مصاريف على حسابه) — المصاريف
@@ -142,6 +147,11 @@ export function supplierStatement(input: SupplierStatementInput): StatementRow[]
   }
   for (const d of input.extraDocs ?? []) {
     rows.push({ date: d.date, docLabel: d.docLabel, debitMinor: d.debitMinor, creditMinor: d.creditMinor })
+  }
+  // §91: فواتير البيع الآجلة له — مديونية على حسابه تخفض ديننا له
+  for (const sale of input.sales ?? []) {
+    if (sale.remainderMinor <= 0) continue
+    rows.push({ date: sale.date.slice(0, 10), docLabel: `فاتورة بيع ${sale.invoiceNumber}`, operationMinor: sale.remainderMinor, debitMinor: sale.remainderMinor, creditMinor: 0 })
   }
   for (const p of input.purchases) {
     if (p.supplierId !== input.supplierId) continue
@@ -187,6 +197,11 @@ export function supplierStatement(input: SupplierStatementInput): StatementRow[]
 
 export interface EmployeeStatementInput {
   employeeId: number
+  /**
+   * §91 — فواتير البيع الآجلة للموظف (على جاريه 1107): تزيد مديونيته وتُسترد
+   * من مسير رواتبه كسائر السلف.
+   */
+  salesReceivable?: { invoiceNumber: string; date: string; amountMinor: Minor }[]
   advances: { advanceNumber: string; date: string; employeeId: number; amountMinor: Minor }[]
   payrollRuns: { runNumber: string; date: string; lines: { employeeId: number; baseMinor: Minor; allowancesMinor: Minor; overtimeMinor: Minor; advancesMinor: Minor; deductionsMinor: Minor; grossMinor: Minor; netMinor: Minor }[] }[]
   /** سداد نقدي لسلفة خارج المسير (إصلاح الترابط: كان يُسجَّل قيداً ولا يظهر بالكشف) */
@@ -204,6 +219,11 @@ export interface EmployeeStatementInput {
 
 export function employeeStatement(input: EmployeeStatementInput): StatementRow[] {
   const rows: Omit<StatementRow, 'balanceMinor'>[] = []
+  // §91: فواتير البيع الآجلة للموظف — على جاريه وتُسترد من المسير
+  for (const sale of input.salesReceivable ?? []) {
+    if (sale.amountMinor <= 0) continue
+    rows.push({ date: sale.date.slice(0, 10), docLabel: `فاتورة بيع ${sale.invoiceNumber}`, operationMinor: sale.amountMinor, debitMinor: sale.amountMinor, creditMinor: 0 })
+  }
   for (const a of input.advances) {
     if (a.employeeId !== input.employeeId) continue
     rows.push({ date: a.date, docLabel: `سلفة ${a.advanceNumber}`, operationMinor: a.amountMinor, debitMinor: a.amountMinor, creditMinor: 0 })

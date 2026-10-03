@@ -199,9 +199,27 @@ export function checkStock(
  */
 export interface SalePaymentAllocation { accountCode: string; amountMinor: number; note?: string }
 
+/**
+ * ذمم الجزء الآجل من فاتورة البيع حسب نوع الطرف (§91 — بيع لعميل أو مورد أو موظف):
+ * عميل ⇒ 1104 ذمم عملاء · مورد ⇒ 2101 يخفض دينه أو يجعله مديناً · موظف ⇒ 1107 جاري الموظفين.
+ */
+export type SalePartyKind = 'customer' | 'supplier' | 'employee'
+
+export const SALE_PARTY_RECEIVABLE: Record<SalePartyKind, { accountCode: string; noteAr: string }> = {
+  customer: { accountCode: '1104', noteAr: 'ذمم عملاء' },
+  supplier: { accountCode: '2101', noteAr: 'بيع آجل — حساب المورد' },
+  employee: { accountCode: '1107', noteAr: 'بيع آجل — حساب الموظف' },
+}
+
+/** حساب ووصف سطر الذمة في القيد — undefined = الافتراضي (1104 عملاء) */
+export interface SaleReceivableOptions {
+  receivableAccount?: string
+  receivableNote?: string
+}
+
 /** قيد بيع بتحصيل مختلط بين عدة خزائن/بنوك/ماكينات والباقي ذمم. */
-export function buildSaleEntryWithAllocations(totals: CartTotals, allocations: SalePaymentAllocation[]): JournalLine[] {
-  if (!allocations.length) return buildSaleEntry(totals, 'credit', '1101', 0)
+export function buildSaleEntryWithAllocations(totals: CartTotals, allocations: SalePaymentAllocation[], receivable?: SaleReceivableOptions): JournalLine[] {
+  if (!allocations.length) return buildSaleEntry(totals, 'credit', '1101', 0, receivable)
   const seen = new Set<string>()
   let paid = 0
   const lines: JournalLine[] = allocations.map((allocation) => {
@@ -213,7 +231,7 @@ export function buildSaleEntryWithAllocations(totals: CartTotals, allocations: S
     return { accountCode: allocation.accountCode, debit: allocation.amountMinor, credit: 0, note: allocation.note ?? 'تحصيل فاتورة' }
   })
   if (paid > totals.totalMinor) throw new RangeError('إجمالي التحصيل أكبر من إجمالي الفاتورة')
-  if (paid < totals.totalMinor) lines.push({ accountCode: '1104', debit: totals.totalMinor - paid, credit: 0, note: 'ذمم عملاء' })
+  if (paid < totals.totalMinor) lines.push({ accountCode: receivable?.receivableAccount ?? '1104', debit: totals.totalMinor - paid, credit: 0, note: receivable?.receivableNote ?? 'ذمم عملاء' })
   lines.push({ accountCode: '4101', debit: 0, credit: totals.taxBaseMinor, note: 'مبيعات' })
   if (totals.taxMinor > 0) lines.push({ accountCode: '2102', debit: 0, credit: totals.taxMinor, note: 'ض.ق.م مستحقة' })
   if (totals.cogsMinor > 0) {
@@ -229,6 +247,7 @@ export function buildSaleEntry(
   payment: PaymentMethod,
   treasury = '1101',
   paidMinorArg?: number,
+  receivable?: SaleReceivableOptions,
 ): JournalLine[] {
   // الدفع المجزأ (طلب المالك): جزء نقدي في الخزينة المختارة والباقي آجل على العميل —
   // كاش كامل (المدفوع = الإجمالي) أو آجل كامل (المدفوع = 0) حالتان خاصتان من نفس القاعدة
@@ -238,7 +257,7 @@ export function buildSaleEntry(
   const remainder = totals.totalMinor - paid
   const lines: JournalLine[] = []
   if (paid > 0) lines.push({ accountCode: treasury, debit: paid, credit: 0, note: 'نقدية' })
-  if (remainder > 0) lines.push({ accountCode: '1104', debit: remainder, credit: 0, note: 'ذمم عملاء' })
+  if (remainder > 0) lines.push({ accountCode: receivable?.receivableAccount ?? '1104', debit: remainder, credit: 0, note: receivable?.receivableNote ?? 'ذمم عملاء' })
   lines.push({ accountCode: '4101', debit: 0, credit: totals.taxBaseMinor, note: 'مبيعات' })
   if (totals.taxMinor > 0) {
     lines.push({ accountCode: '2102', debit: 0, credit: totals.taxMinor, note: 'ض.ق.م مستحقة' })

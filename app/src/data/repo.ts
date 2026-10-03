@@ -15,7 +15,7 @@ import { priceFloorViolations, PriceFloorError, itemBlockers } from '../core/ite
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
-import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
+import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, SALE_PARTY_RECEIVABLE, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
@@ -1236,6 +1236,16 @@ export interface SaleInvoice {
   expiryOverrideBy: string | null // من وافق على تجاوز الصلاحية (القرار 8)
   /** من اعتمد تجاوز حد ائتمان العميل (نمط SAP B1) — null = لم يتجاوز */
   creditLimitOverrideBy?: string | null
+  /**
+   * §91 — فاتورة البيع لأي طرف: نوع الطرف المدين للآجل.
+   * undefined = عميل (كل الفواتير التاريخية)؛ «supplier»/«employee» = البيع لمورد/موظف
+   * وعندها customerId = null ويُحفظ الطرف في partyId/partyName.
+   */
+  partyKind?: 'supplier' | 'employee' | null
+  /** معرف الطرف (مورد/موظف) عندما ليس العميل */
+  partyId?: number | null
+  /** اسم الطرف لحظة الترحيل — يظهر في القوائم والطباعة بلا بحث إضافي */
+  partyName?: string | null
   approvedBy?: string | null
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
   /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
@@ -1702,6 +1712,12 @@ interface DataState {
   postSale: (args: {
     lines: CartLine[]
     customerId: number | null
+    /** §91 — نوع الطرف: عميل (افتراضي) أو مورد (2101) أو موظف (1107) */
+    partyKind?: 'customer' | 'supplier' | 'employee'
+    /** معرف المورد/الموظف عند البيع لغير العميل */
+    partyId?: number | null
+    /** اسم الطرف (مورد/موظف) — يُخزن على الفاتورة للعرض والطباعة */
+    partyName?: string | null
     payment: PaymentMethod
     invoiceDiscountPercent: number
     taxPercent: number
@@ -4309,7 +4325,9 @@ export const useDataStore = create<DataState>()(
           const approvalNetMinor = args.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100), 0) * (1 - args.invoiceDiscountPercent / 100)
           enforceApprovalGate(get, 'sale', approvalNetMinor * (args.taxInclusive ? 1 : 1 + args.taxPercent / 100), {
             title: `فاتورة مبيعات — ${args.lines.length} بند`,
-            partyName: args.customerId != null ? state.customers.find((c) => c.id === args.customerId)?.nameAr ?? 'عميل نقدي' : 'عميل نقدي',
+            partyName: args.partyKind && args.partyKind !== 'customer'
+              ? args.partyName ?? (args.partyKind === 'supplier' ? state.suppliers.find((p) => p.id === args.partyId)?.nameAr : state.employees.find((p) => p.id === args.partyId)?.nameAr) ?? 'طرف خارجي'
+              : args.customerId != null ? state.customers.find((c) => c.id === args.customerId)?.nameAr ?? 'عميل نقدي' : 'عميل نقدي',
             payload: serializeApprovalPayload(args),
           })
         }
@@ -4501,7 +4519,16 @@ export const useDataStore = create<DataState>()(
             if (errors.length) throw new Error(errors.join(' — '))
           }
         }
-        if (paidM < totals.totalMinor && args.customerId == null) {
+        // §91: البيع الآجل لأي طرف — عميل (1104) أو مورد (2101) أو موظف (1107)؛
+        // بلا طرف محدد لا يُسجَّل دين على «نقدي»
+        const salePartyKind = args.partyKind ?? 'customer'
+        const salePartyId = salePartyKind === 'customer' ? args.customerId : args.partyId ?? null
+        if (salePartyKind !== 'customer' && paidM < totals.totalMinor) {
+          if (salePartyId == null) throw new Error('الجزء الآجل يحتاج اختيار الطرف — لا دين على طرف نقدي')
+          const pool = salePartyKind === 'supplier' ? state.suppliers : state.employees
+          if (!pool.some((p) => p.id === salePartyId)) throw new Error(salePartyKind === 'supplier' ? 'المورد غير موجود' : 'الموظف غير موجود')
+        }
+        if (paidM < totals.totalMinor && salePartyKind === 'customer' && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
         const systemDate = new Date().toISOString().slice(0, 10)
@@ -4517,7 +4544,7 @@ export const useDataStore = create<DataState>()(
         // حارس حد الائتمان (مراجعة المبيعات — نمط SAP B1/أودو): البيع الآجل لعميل له حد
         // يُفحص لحظة الترحيل — رصيده + الآجل الجديد ≤ حده، والتجاوز بموافقة مدير مسجلة
         const newCredit = totals.totalMinor - paidM
-        if (newCredit > 0 && args.customerId != null && !args.creditLimitOverrideBy) {
+        if (newCredit > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
           const cust = state.customers.find((c) => c.id === args.customerId)
           if (cust && cust.creditLimitMinor > 0) {
             const balance = get().getCustomerBalance(cust.id)
@@ -4526,7 +4553,11 @@ export const useDataStore = create<DataState>()(
             }
           }
         }
-        const entryLines = args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM)
+        const receivable = salePartyKind === 'customer' ? undefined : {
+          receivableAccount: SALE_PARTY_RECEIVABLE[salePartyKind].accountCode,
+          receivableNote: SALE_PARTY_RECEIVABLE[salePartyKind].noteAr,
+        }
+        const entryLines = args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, receivable) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM, receivable)
         const internalExpenses = args.internalExpenses ?? []
         for (const expense of internalExpenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
@@ -4580,7 +4611,12 @@ export const useDataStore = create<DataState>()(
           invoiceNumber,
           refCode,
           date: now,
-          customerId: args.customerId,
+          customerId: salePartyKind === 'customer' ? args.customerId : null,
+          partyKind: salePartyKind === 'customer' ? null : salePartyKind,
+          partyId: salePartyKind === 'customer' ? null : salePartyId,
+          partyName: salePartyKind === 'customer' ? null : args.partyName
+            ?? (salePartyKind === 'supplier' ? state.suppliers.find((p) => p.id === salePartyId)?.nameAr : state.employees.find((p) => p.id === salePartyId)?.nameAr)
+            ?? null,
           payment: args.payment,
           paidMinor: paidM,
           treasury: args.treasury ?? '1101',
@@ -6326,7 +6362,9 @@ export const useDataStore = create<DataState>()(
         const paidM = args.paidMinor
         if (!Number.isInteger(paidM) || paidM < 0) throw new Error('المدفوع لا يكون سالباً')
         if (paidM > totals.totalMinor) throw new Error('المدفوع أكبر من إجمالي الفاتورة المعدلة')
-        if (paidM < totals.totalMinor && args.customerId == null) {
+        // §91: التعديل يرث طرف الفاتورة الأصلية (عميل/مورد/موظف) — نوع الطرف لا يتغير بالتعديل
+        const salePartyKind = sale.partyKind ?? 'customer'
+        if (paidM < totals.totalMinor && salePartyKind === 'customer' && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
         if (args.dueDate && args.dueDate < new Date().toISOString().slice(0, 10)) throw new Error('تاريخ الاستحقاق لا يسبق تاريخ التعديل')
@@ -6334,7 +6372,7 @@ export const useDataStore = create<DataState>()(
         // حارس حد الائتمان (المراجعة التراجعية): التعديل قد يرفع الجزء الآجل —
         // الفحص على صافي الزيادة: (رصيد العميل − آجل الفاتورة القديم) + الآجل الجديد ≤ الحد
         const newCreditPart = totals.totalMinor - paidM
-        if (newCreditPart > 0 && args.customerId != null && !args.creditLimitOverrideBy) {
+        if (newCreditPart > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
           const cust = state.customers.find((c) => c.id === args.customerId)
           if (cust && cust.creditLimitMinor > 0) {
             const oldPaid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
@@ -6351,9 +6389,13 @@ export const useDataStore = create<DataState>()(
           const receiptErrors = validateTreasuryAccess(user?.treasuryAccess, args.treasury, 'receipt', paidM)
           if (receiptErrors.length) throw new Error(receiptErrors.join(' — '))
         }
+        const editReceivable = salePartyKind === 'customer' ? undefined : {
+          receivableAccount: SALE_PARTY_RECEIVABLE[salePartyKind].accountCode,
+          receivableNote: SALE_PARTY_RECEIVABLE[salePartyKind].noteAr,
+        }
         const newEntryLines = args.paymentAllocations?.length
-          ? buildSaleEntryWithAllocations(totals, args.paymentAllocations)
-          : buildSaleEntry(totals, args.payment, args.treasury, paidM)
+          ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, editReceivable)
+          : buildSaleEntry(totals, args.payment, args.treasury, paidM, editReceivable)
         const internalExpenses = args.internalExpenses ?? sale.internalExpenses ?? []
         for (const expense of internalExpenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
@@ -6420,7 +6462,8 @@ export const useDataStore = create<DataState>()(
 
         const updatedSale: SaleInvoice = {
           ...sale,
-          customerId: args.customerId,
+          // §91: التعديل يرث نوع الطرف — فاتورة مورد/موظف يبقى طرفها ولا يتحول لعميل
+          customerId: salePartyKind === 'customer' ? args.customerId : null,
           payment: args.payment,
           paidMinor: paidM,
           treasury: args.treasury,
@@ -7720,6 +7763,12 @@ export const useDataStore = create<DataState>()(
       getEmployeeStatementRows: (employeeId) => {
         const state = get()
         const rows: { date: string; ref: string; description: string; debitMinor: number; creditMinor: number }[] = []
+        /* ── §91: فواتير البيع الآجلة للموظف (على جاريه 1107) — تُسترد من مسير رواتبه ── */
+        for (const sale of state.sales.filter((sl) => sl.partyKind === 'employee' && sl.partyId === employeeId)) {
+          const remainder = sale.totals.totalMinor - (sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0))
+          if (remainder <= 0) continue
+          rows.push({ date: sale.date.slice(0, 10), ref: sale.invoiceNumber, description: `فاتورة بيع آجلة على حساب الموظف — تُسترد من مسير رواتبه`, debitMinor: remainder, creditMinor: 0 })
+        }
         /* ── كشف حساب الموظف الموحّد (طلب المالك: ككشف العميل — يظهر كل شيء) ──
          * القاعدة المحاسبية: 2104 يحمل **الصافي** فقط، والسلفة (1107) أصل مستقل.
          *   • استحقاق القسيمة: دائن بالصافي (الخصومات والسلف لم تدخل ذمته أصلاً)
@@ -7874,6 +7923,11 @@ export const useDataStore = create<DataState>()(
         return supplierStatement({
           supplierId,
           openingMinor: state.openingBalances[`supplier:${supplierId}`] ?? 0,
+          // §91: فواتير البيع الآجلة له (2101) — تظهر بكشفه
+          sales: state.sales.filter((sl) => sl.partyKind === 'supplier' && sl.partyId === supplierId).map((sl) => ({
+            invoiceNumber: sl.invoiceNumber, date: sl.date,
+            remainderMinor: sl.totals.totalMinor - (sl.paidMinor ?? (sl.payment === 'cash' ? sl.totals.totalMinor : 0)),
+          })),
           purchases: state.purchases, purchaseReturns: state.purchaseReturns, allPurchases: state.purchases,
           vouchers: state.vouchers, cheques: state.cheques,
           adjustments: [
