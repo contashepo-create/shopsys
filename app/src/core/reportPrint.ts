@@ -74,6 +74,33 @@ export const DEFAULT_REPORT_PRINT: ReportPrintSettings = {
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 /**
+ * §99: تهريب قيم المستخدم قبل إدخالها HTML — أسماء وقيم قد تحوي «<» أو «&».
+ * تُستعمل من كل بناة جداول تقارير الوحدات (تصدير PDF/Excel لكل تقارير الوحدات).
+ */
+export function escHtml(s: string): string {
+  return esc(s)
+}
+
+/**
+ * §99: جدول مطبوع موحّد لكل تقارير الوحدات (المقاولات/المعدات/المطعم) —
+ * نواة خالصة قابلة للفحص ببوابة: رؤوس + صفوف + صف إجمالي اختياري، وكل قيمة
+ * تُهرَّب. numCols = فهارس الأعمدة الرقمية (تضبط .num: أرقام لاتينية بمحاذاة
+ * يسار وtabular-nums كما في القوائم المالية).
+ */
+export function htmlTableHtml(args: {
+  headers: readonly string[]
+  rows: readonly (readonly (string | number)[])[]
+  totalRow?: readonly (string | number)[]
+  numCols?: readonly number[]
+}): string {
+  const cell = (value: string | number, col: number) => `<td${(args.numCols ?? []).includes(col) ? ' class="num"' : ''}>${esc(String(value))}</td>`
+  const head = args.headers.map((h) => `<th>${esc(h)}</th>`).join('')
+  const body = args.rows.map((row) => `<tr>${row.map((value, col) => cell(value, col)).join('')}</tr>`).join('')
+  const total = args.totalRow ? `<tr class="total">${args.totalRow.map((value, col) => cell(value, col)).join('')}</tr>` : ''
+  return `<table><thead><tr>${head}</tr></thead><tbody>${body}${total}</tbody></table>`
+}
+
+/**
  * الغلاف الموحّد لكل مطبوعات التقارير:
  * عنوان احترافي + ترويسة منشأة اختيارية + جسم HTML + تذييل — حسب الإعدادات.
  */

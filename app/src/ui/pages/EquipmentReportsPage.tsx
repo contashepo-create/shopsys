@@ -6,13 +6,15 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  * البطاقة نفسها من النواة الخالصة equipmentReportCard (قابلة للفحص ببوابة).
  */
 import { useMemo, useState } from 'react'
-import { FileSpreadsheet, BarChart3, Users, Tractor, Clock } from 'lucide-react'
+import { FileSpreadsheet, BarChart3, Users, Tractor, Clock, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { EQUIPMENT_COST_LABELS, usageHours, equipmentReportCard, type EquipmentCostKind } from '../../core/rentalMeter.ts'
 import { toCsv } from '../../core/security.ts'
+import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrint.ts'
+import { printHtml } from '../print/printReceipt.ts'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { EmptyState } from '../components/ui.tsx'
 
@@ -36,6 +38,12 @@ export function EquipmentReportsPage() {
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
+  /* §99: مطبوعات الوحدة بالغلاف الموحد (تصدير PDF/Excel لكل تقارير الوحدات) */
+  const printDoc = (title: string, subtitle: string, bodyHtml: string) => {
+    const { reportPrint, receipt } = useAppStore.getState()
+    printHtml(renderReportShell({ title, subtitle, companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint }))
+  }
+  const sectionHtml = (label: string) => `<p class="sec" style="margin:12px 0 4px;padding:6px 10px">${escHtml(label)}</p>`
   const [tab, setTab] = usePersistedSectionView('equipment-reports', 'fleet', ['fleet', 'equipment', 'dues'] as const)
   const [equipmentId, setEquipmentId] = useState('')
 
@@ -115,6 +123,77 @@ export function EquipmentReportsPage() {
     return [...byClient.entries()].map(([customerId, row]) => ({ customerId, ...row })).sort((a, b) => b.openMinor - a.openMinor)
   }, [rentalContracts, customers, getOpenClientInvoices])
 
+  /* ═══ §99: مطبوعات الأسطول / بطاقة المعدة / الذمم — كل جدول قابل للطباعة PDF ═══ */
+  const printFleet = () => printDoc('لوحة أسطول المعدات', 'ربحية كل معدة — الأرقام من العقود والقيود المرحّلة', htmlTableHtml({
+    headers: ['المعدة', 'الكود', 'الإيراد', 'المصاريف', 'الربح', 'ربح الساعة', 'ساعات', 'عقود (نشطة)', 'تأمينات محتجزة', 'ذمم مفتوحة'],
+    numCols: [2, 3, 4, 5, 6, 8, 9],
+    rows: cards.map(({ equipment: eq, report: r }) => [
+      eq.nameAr, eq.code || `#${eq.id}`, fmt(r.revenueMinor), fmt(r.costsMinor), fmt(r.profitMinor),
+      r.profitPerHourMinor != null ? fmt(r.profitPerHourMinor) : '—', r.hours,
+      `${r.contractsCount} (${r.activeContracts})`, fmt(r.depositsHeldMinor), fmt(openByEquipment.get(eq.id) ?? 0),
+    ]),
+    totalRow: ['الإجمالي', '', fmt(totals.revenue), fmt(totals.costs), fmt(totals.profit), '—', totals.hours, `${cards.reduce((a, r) => a + r.report.contractsCount, 0)} (${totals.active})`, fmt(totals.deposits), fmt(totals.open)],
+  }))
+
+  const printEquipmentCard = () => {
+    if (!selected) return
+    const r = selected.report
+    const body = [
+      htmlTableHtml({
+        headers: ['مؤشرات البطاقة', 'القيمة'], numCols: [1],
+        rows: [
+          ['إيراد الإيجار + التجاوز', fmt(r.revenueMinor)],
+          ['مصاريف التشغيل', fmt(r.costsMinor)],
+          ...(Object.keys(EQUIPMENT_COST_LABELS) as EquipmentCostKind[]).map((k) => [`مصاريف — ${EQUIPMENT_COST_LABELS[k]}`, fmt(selected.costs.filter((c) => c.kind === k).reduce((a, c) => a + c.amountMinor, 0))] as const),
+          ['الربح', fmt(r.profitMinor)],
+          ['ساعات التشغيل الموثقة', r.hours],
+          ['ربح الساعة', r.profitPerHourMinor != null ? fmt(r.profitPerHourMinor) : '—'],
+          ['العقود (نشطة)', `${r.contractsCount} (${r.activeContracts})`],
+          ['الوحدات المحجوزة', r.rentedUnits],
+          ['تأمينات محتجزة', fmt(r.depositsHeldMinor)],
+          ['ذمم مفتوحة', fmt(openByEquipment.get(selected.equipment.id) ?? 0)],
+          ['قراءة العدّاد', selected.equipment.meterReading],
+        ],
+      }),
+      ...(selected.contracts.length ? [
+        sectionHtml(`العقود (${selected.contracts.length})`),
+        htmlTableHtml({
+          headers: ['العقد', 'التاريخ', 'الأيام × اليومية', 'تجاوز', 'الإجمالي', 'الحالة'], numCols: [4, 5],
+          rows: selected.contracts.map((c) => [c.contractNumber, c.date.slice(0, 10), `${c.days} × ${fmt(c.dailyRateMinor)}`, c.extraMinor > 0 ? fmt(c.extraMinor) : '—', fmt(c.totals.grandMinor + c.extraMinor), c.status === 'active' ? 'نشط' : 'مُقفل']),
+        }),
+      ] : []),
+      ...(selectedOpenDocs.length ? [
+        sectionHtml('ذمم الإيجار المفتوحة — تُسدَّد من سند قبض/تحصيل العميل'),
+        htmlTableHtml({
+          headers: ['المستند', 'التاريخ', 'محصّل', 'المتبقي'], numCols: [2, 3],
+          rows: selectedOpenDocs.map((inv) => [inv.docLabel, inv.date.slice(0, 10), fmt(inv.settledMinor), fmt(inv.dueMinor - inv.settledMinor)]),
+        }),
+      ] : []),
+      ...(selected.costs.length ? [
+        sectionHtml(`مصاريف التشغيل (${selected.costs.length})`),
+        htmlTableHtml({
+          headers: ['البيان', 'النوع', 'التاريخ', 'المبلغ'], numCols: [3],
+          rows: selected.costs.map((c) => [c.description, EQUIPMENT_COST_LABELS[c.kind], c.date.slice(0, 10), fmt(c.amountMinor)]),
+        }),
+      ] : []),
+      ...(selectedShifts.length ? [
+        sectionHtml(`وردانيات المشغلين (${selectedShifts.length})`),
+        htmlTableHtml({
+          headers: ['المشغل', 'التاريخ', 'قراءة العدّاد', 'الساعات'], numCols: [3],
+          rows: selectedShifts.map((x) => [x.operatorName, x.date.slice(0, 10), `${x.startReading} ← ${x.endReading ?? '—'}`, `${usageHours(x.startReading, x.endReading)} س`]),
+        }),
+      ] : []),
+    ].join('')
+    printDoc(`بطاقة معدة — ${selected.equipment.code || `#${selected.equipment.id}`}`, selected.equipment.nameAr, body)
+  }
+
+  const printDues = () => printDoc('ذمم عملاء التأجير', 'متابعة التحصيل — المفتوح من مستحقات العقود', htmlTableHtml({
+    headers: ['العميل', 'العقود', 'إيراد الإيجار', 'ذمم مفتوحة'],
+    numCols: [1, 2, 3],
+    rows: renterDues.map((row) => [row.nameAr, row.contractsCount, fmt(row.revenueMinor), row.openMinor > 0 ? fmt(row.openMinor) : '✓ مسددة']),
+    totalRow: ['الإجمالي', renterDues.reduce((a, r) => a + r.contractsCount, 0), fmt(renterDues.reduce((a, r) => a + r.revenueMinor, 0)), fmt(renterDues.reduce((a, r) => a + r.openMinor, 0))],
+  }))
+
   const kpi = (label: string, value: string, tone = 'text-slate-800 dark:text-slate-100') => (
     <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-center"><div className="text-[10px] text-slate-400 font-bold">{label}</div><div className={`font-black text-[15px] ${tone}`}>{value}</div></div>
   )
@@ -148,7 +227,9 @@ export function EquipmentReportsPage() {
           {/* ═══ ① لوحة الأسطول ═══ */}
           {tab === 'fleet' && (
             <div className="anim-up space-y-3">
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-1.5">
+                <button onClick={printFleet} data-print="fleet"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
                 <button onClick={() => downloadCsv(cards.map((r) => ({
                   'المعدة': r.equipment.nameAr, 'الكود': r.equipment.code || '—',
                   'الإيراد': fmt(r.report.revenueMinor), 'مصاريف التشغيل': fmt(r.report.costsMinor),
@@ -192,6 +273,9 @@ export function EquipmentReportsPage() {
                 <div className="flex flex-wrap items-center gap-3">
                   <div className="min-w-64 flex-1"><PartyQuickPicker parties={equipment.map((eq) => ({ id: eq.id, nameAr: `${eq.code || `#${eq.id}`} — ${eq.nameAr}` }))} value={equipmentId ? Number(equipmentId) : 0} onChange={(id) => setEquipmentId(id ? String(id) : '')} cashLabel="اختر معدة" label="بحث المعدة" cashValue={0} /></div>
                   {selected && (
+                    <div className="flex gap-1.5">
+                    <button onClick={printEquipmentCard} data-print="equipment-card"
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
                     <button onClick={() => downloadCsv([
                       { 'البند': 'إيراد الإيجار + التجاوز', 'القيمة': fmt(selected.report.revenueMinor) },
                       { 'البند': 'مصاريف التشغيل', 'القيمة': fmt(selected.report.costsMinor) },
@@ -205,6 +289,7 @@ export function EquipmentReportsPage() {
                       { 'البند': 'ذمم مفتوحة', 'القيمة': fmt(openByEquipment.get(selected.equipment.id) ?? 0) },
                     ], `تقرير-${selected.equipment.code || `معدة-${selected.equipment.id}`}.csv`)}
                       className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير بطاقة المعدة</button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -314,7 +399,9 @@ export function EquipmentReportsPage() {
               <div className="text-[12px] text-slate-500">
                 متابعة تحصيل الإيجار: لكل عميل — عقوده وإيراده وما زال مفتوحاً من مستحقاته (تُطفأ من سند القبض أو تحصيل العميل FIFO).
               </div>
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-1.5">
+                <button onClick={printDues} data-print="dues"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
                 <button onClick={() => downloadCsv(renterDues.map((row) => ({
                   'العميل': row.nameAr, 'العقود': row.contractsCount, 'الإيراد': fmt(row.revenueMinor), 'ذمم مفتوحة': fmt(row.openMinor),
                 })), `ذمم-عملاء-التأجير-${new Date().toISOString().slice(0, 10)}.csv`)}

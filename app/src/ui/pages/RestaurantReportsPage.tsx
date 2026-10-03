@@ -5,13 +5,15 @@
  * البطاقة نفسها من النواة الخالصة restaurantReportCard (قابلة للفحص ببوابة).
  */
 import { useMemo, useState } from 'react'
-import { ChefHat, UtensilsCrossed, Factory } from 'lucide-react'
+import { ChefHat, UtensilsCrossed, Factory, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { restaurantReportCard, ORDER_TYPE_LABELS, type RestaurantOrderType } from '../../core/restaurant.ts'
 import { toCsv } from '../../core/security.ts'
+import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrint.ts'
+import { printHtml } from '../print/printReceipt.ts'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { EmptyState } from '../components/ui.tsx'
 
@@ -54,6 +56,12 @@ export function RestaurantReportsPage() {
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
+  /* §99: مطبوعات الوحدة بالغلاف الموحد (تصدير PDF/Excel لكل تقارير الوحدات) */
+  const printDoc = (title: string, subtitle: string, bodyHtml: string) => {
+    const { reportPrint, receipt } = useAppStore.getState()
+    printHtml(renderReportShell({ title, subtitle, companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint }))
+  }
+  const sectionHtml = (label: string) => `<p class="sec" style="margin:12px 0 4px;padding:6px 10px">${escHtml(label)}</p>`
   const [tab, setTab] = usePersistedSectionView('restaurant-reports', 'dishes', ['dishes', 'orders', 'production'] as const)
   const [period, setPeriod] = useState<Period>('month')
 
@@ -102,6 +110,62 @@ export function RestaurantReportsPage() {
     (a, p) => ({ ingredients: a.ingredients + p.ingredientsCostMinor, overhead: a.overhead + p.overheadMinor, total: a.total + p.totalCostMinor }),
     { ingredients: 0, overhead: 0, total: 0 },
   ), [periodProduction])
+
+  /* ═══ §99: مطبوعات الأطباق / الأوامر / الإنتاج — كل جدول قابل للطباعة PDF ═══ */
+  const orderValueMinor = (o: { lines: readonly { qty: number; unitPriceMinor: number; discountPercent: number }[] }) =>
+    o.lines.reduce((a, l) => a + Math.round(l.qty * l.unitPriceMinor * (100 - l.discountPercent) / 100), 0)
+
+  const printDishes = () => printDoc('أطباق المطعم وهوامشها', `فترة: ${PERIOD_LABELS[period]} — مرتبة بالربح`, htmlTableHtml({
+    headers: ['الصنف', 'المصدر', 'الكمية', 'الإيراد', 'تكلفة المواد', 'الربح', 'الهامش ٪'],
+    numCols: [2, 3, 4, 5, 6],
+    rows: report.dishes.map((d) => [
+      nameOf(d.itemId), d.hasRecipe ? 'يُحضَّر بالمطبخ' : 'جاهز', d.soldQty.toLocaleString('en-US'),
+      fmt(d.revenueMinor), fmt(d.costMinor), fmt(d.profitMinor),
+      d.marginPercent == null ? '—' : `${d.marginPercent.toLocaleString('en-US')}٪`,
+    ]),
+    totalRow: ['الإجمالي', '', report.dishes.reduce((a, d) => a + d.soldQty, 0).toLocaleString('en-US'), fmt(report.revenueMinor), fmt(report.cogsMinor), fmt(report.grossProfitMinor), report.foodCostPercent != null ? `Food Cost ${report.foodCostPercent.toLocaleString('en-US')}٪` : ''],
+  }))
+
+  const printOrders = () => printDoc('أوامر المطعم', `فترة: ${PERIOD_LABELS[period]}`, [
+    htmlTableHtml({
+      headers: ['النوع', 'مقفل', 'مفتوح', 'قيمة المفتوح'], numCols: [1, 2, 3],
+      rows: (Object.keys(ORDER_TYPE_LABELS) as RestaurantOrderType[]).map((t) => [
+        `${ORDER_TYPE_LABELS[t].icon} ${ORDER_TYPE_LABELS[t].nameAr}`, report.orders.byType[t].settled.toLocaleString('en-US'),
+        report.orders.byType[t].open.toLocaleString('en-US'), fmt(report.orders.byType[t].openValueMinor),
+      ]),
+      totalRow: ['الإجمالي', report.orders.settledCount.toLocaleString('en-US'), report.orders.openCount.toLocaleString('en-US'), fmt(report.orders.openValueMinor)],
+    }),
+    sectionHtml(`الأوامر — ${periodOrders.length.toLocaleString('en-US')} أمراً`),
+    htmlTableHtml({
+      headers: ['الأمر', 'النوع', 'الطاولة / التوصيل', 'الحالة', 'الفَتح', 'القفل', 'القيمة'], numCols: [6],
+      rows: periodOrders.map((o) => [
+        o.orderNumber, ORDER_TYPE_LABELS[o.type].nameAr, o.tableName || o.deliveryInfo || '—', STATUS_LABELS[o.status],
+        o.openedAt.slice(0, 16).replace('T', ' '), o.settledAt ? o.settledAt.slice(0, 16).replace('T', ' ') : '—', fmt(orderValueMinor(o)),
+      ]),
+    }),
+  ].join(''))
+
+  const printProduction = () => printDoc('أوامر الإنتاج المسبق', `فترة: ${PERIOD_LABELS[period]} — الخامات تُخصم والتكلفة تُرسمل على المنتج`, [
+    htmlTableHtml({
+      headers: ['المؤشر', 'القيمة'], numCols: [1],
+      rows: [
+        ['أوامر الإنتاج', periodProduction.length.toLocaleString('en-US')],
+        ['تكلفة الخامات', fmt(productionTotals.ingredients)],
+        ['مصاريف التشغيل (تُرسمل على المنتج)', fmt(productionTotals.overhead)],
+        ['إجمالي التكلفة', fmt(productionTotals.total)],
+      ],
+    }),
+    sectionHtml('التشغيلات وكمياتها وتكلفتها'),
+    htmlTableHtml({
+      headers: ['الأمر', 'التاريخ', 'المنتج', 'تشغيلات', 'الكمية', 'خامات', 'مصاريف', 'الإجمالي', 'تكلفة الوحدة'], numCols: [3, 4, 5, 6, 7, 8],
+      rows: periodProduction.map((p) => [
+        p.orderNumber, p.date.slice(0, 10), nameOf(p.productItemId), p.batches.toLocaleString('en-US'), p.producedQty.toLocaleString('en-US'),
+        fmt(p.ingredientsCostMinor), fmt(p.overheadMinor), fmt(p.totalCostMinor),
+        p.producedQty > 0 ? fmt(Math.round(p.totalCostMinor / p.producedQty)) : '—',
+      ]),
+      totalRow: ['الإجمالي', '', '', '', '', fmt(productionTotals.ingredients), fmt(productionTotals.overhead), fmt(productionTotals.total), ''],
+    }),
+  ].join(''))
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-7xl mx-auto" dir="rtl">
@@ -160,6 +224,9 @@ export function RestaurantReportsPage() {
         <div className={`${card} overflow-hidden`}>
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
             <b className="text-[13px] text-slate-700 dark:text-slate-200">الأطباق مرتبة بالربح — {report.dishCount.toLocaleString('en-US')} صنفاً في {PERIOD_LABELS[period]}</b>
+            <div className="flex items-center gap-1.5">
+            <button onClick={printDishes} data-print="dishes"
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={13} /> طباعة / PDF</button>
             <button
               onClick={() => downloadCsv(report.dishes.map((d) => ({
                 'الصنف': nameOf(d.itemId), 'وصفة مطبخ': d.hasRecipe ? 'نعم' : 'جاهز', 'الكمية': d.soldQty,
@@ -170,6 +237,7 @@ export function RestaurantReportsPage() {
             >
               ⬇ CSV
             </button>
+            </div>
           </div>
           {report.dishes.length === 0 ? (
             <div className="p-8"><EmptyState icon="🍽️" title="لا مبيعات في هذه الفترة" sub="قفل أوامر الطاولات أو رحّل فواتير بيع لتظهر الأطباق وهوامشها هنا" /></div>
@@ -228,6 +296,9 @@ export function RestaurantReportsPage() {
           <div className={`${card} overflow-hidden`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
               <b className="text-[13px] text-slate-700 dark:text-slate-200">الأوامر — {periodOrders.length.toLocaleString('en-US')} أمراً</b>
+              <div className="flex items-center gap-1.5">
+              <button onClick={printOrders} data-print="orders"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={13} /> طباعة / PDF</button>
               <button
                 onClick={() => downloadCsv(periodOrders.map((o) => ({
                   'الأمر': o.orderNumber, 'النوع': ORDER_TYPE_LABELS[o.type].nameAr,
@@ -240,6 +311,7 @@ export function RestaurantReportsPage() {
               >
                 ⬇ CSV
               </button>
+              </div>
             </div>
             {periodOrders.length === 0 ? (
               <div className="p-8"><EmptyState icon="🧾" title="لا أوامر في هذه الفترة" sub="افتح أوامر الطاولات والدليفري من شاشة البيع — تُقفل بفاتورة فتظهر هنا" /></div>
@@ -281,6 +353,9 @@ export function RestaurantReportsPage() {
           <div className={`${card} overflow-hidden`}>
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-700">
               <b className="text-[13px] text-slate-700 dark:text-slate-200">أوامر الإنتاج المسبق — التشغيلات وكمياتها وتكلفتها</b>
+              <div className="flex items-center gap-1.5">
+              <button onClick={printProduction} data-print="production"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={13} /> طباعة / PDF</button>
               <button
                 onClick={() => downloadCsv(periodProduction.map((p) => ({
                   'الأمر': p.orderNumber, 'التاريخ': p.date.slice(0, 10), 'المنتج': nameOf(p.productItemId),
@@ -292,6 +367,7 @@ export function RestaurantReportsPage() {
               >
                 ⬇ CSV
               </button>
+              </div>
             </div>
             {periodProduction.length === 0 ? (
               <div className="p-8"><EmptyState icon="🏭" title="لا أوامر إنتاج في هذه الفترة" sub="أوامر الإنتاج المسبق تخصم الخامات وترسمل التكلفة على المنتج — من «الوصفات والإنتاج»" /></div>

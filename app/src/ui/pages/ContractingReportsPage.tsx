@@ -6,13 +6,15 @@ import { PartyQuickPicker } from '../components/KeyboardPickers.tsx'
  * البطاقة نفسها من النواة الخالصة projectReportCard (قابلة للفحص ببوابة).
  */
 import { useMemo, useState } from 'react'
-import { FileSpreadsheet, BarChart3, Users, Receipt, Calculator } from 'lucide-react'
+import { FileSpreadsheet, BarChart3, Users, Receipt, Calculator, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, type CostKind, projectReportCard } from '../../core/contracting.ts'
 import { toCsv } from '../../core/security.ts'
+import { renderReportShell, htmlTableHtml, escHtml } from '../../core/reportPrint.ts'
+import { printHtml } from '../print/printReceipt.ts'
 import { usePersistedSectionView } from '../components/SectionViewPreference.ts'
 import { EmptyState } from '../components/ui.tsx'
 
@@ -39,6 +41,12 @@ export function ContractingReportsPage() {
     [setup.countryCode],
   )
   const fmt = (m: number) => formatMinor(m, cur, false)
+  /* §99: مطبوعات الوحدة بالغلاف الموحد (تصدير PDF/Excel لكل تقارير الوحدات) */
+  const printDoc = (title: string, subtitle: string, bodyHtml: string) => {
+    const { reportPrint, receipt } = useAppStore.getState()
+    printHtml(renderReportShell({ title, subtitle, companyName: setup.shopName || 'المنشأة', logoDataUrl: receipt.logoDataUrl, bodyHtml, settings: reportPrint }))
+  }
+  const sectionHtml = (label: string) => `<p class="sec" style="margin:12px 0 4px;padding:6px 10px">${escHtml(label)}</p>`
   const [tab, setTab] = usePersistedSectionView('contracting-reports', 'projects', ['projects', 'project', 'dues'] as const)
   const [projectId, setProjectId] = useState('')
 
@@ -111,6 +119,96 @@ export function ContractingReportsPage() {
     return [...byClient.entries()].map(([customerId, row]) => ({ customerId, ...row })).sort((a, b) => b.openMinor - a.openMinor)
   }, [projects, projectExtracts, customers, openByProject])
 
+  /* ═══ §99: مطبوعات لوحة المشاريع / بطاقة المشروع / الذمم — كل جدول قابل للطباعة PDF ═══ */
+  const printProjects = () => printDoc('لوحة مشاريع المقاولات', 'كل المشاريع — الأرقام من القيود المرحّلة', htmlTableHtml({
+    headers: ['المشروع', 'العميل', 'العقد الفعلي', 'إنجاز ٪', 'المستخلصات', 'التكاليف', 'الربح (هامش ٪)', 'محتجز قائم', 'مقدمة متبقية', 'ذمم مفتوحة', 'الحالة'],
+    numCols: [2, 3, 4, 5, 6, 7, 8, 9],
+    rows: cards.map(({ project: p, card: c }) => [
+      `${p.code} — ${p.nameAr}`, p.clientName || '—', fmt(c.contractEffectiveMinor), `${c.progressPercent}٪`,
+      fmt(c.extractedMinor), fmt(c.costsMinor), `${fmt(c.profitMinor)} (${c.marginPercent}٪)`,
+      fmt(c.retentionHeldMinor), fmt(c.advancesRemainingMinor), fmt(openByProject.get(p.id) ?? 0),
+      p.status === 'active' ? 'جارٍ' : 'مُسلَّم',
+    ]),
+    totalRow: ['الإجمالي', '', fmt(totals.contract), '', fmt(totals.extracted), fmt(totals.costs), fmt(totals.profit), fmt(totals.retention), fmt(totals.advances), fmt(totals.open), ''],
+  }))
+
+  const printProjectCard = () => {
+    if (!selected) return
+    const c = selected.card
+    const bd = selected.breakdown
+    const kpiRows: (readonly (string | number)[])[] = [
+      ['قيمة العقد الأصلية', fmt(c.contractOriginalMinor)],
+      ['أوامر التغيير المعتمدة (عدد)', c.changeOrdersApprovedCount],
+      ['قيمة العقد الفعلية', fmt(c.contractEffectiveMinor)],
+      ['أوامر تغيير معلقة (مسودات)', fmt(c.changeOrdersPendingMinor)],
+      ['المستخلصات (عدد)', c.extractsCount],
+      ['قيمة الأعمال المستخلصة', fmt(c.extractedMinor)],
+      ['ض.ق.م محمّلة على العميل', fmt(c.vatChargedMinor)],
+      ['نسبة الإنجاز ٪', `${c.progressPercent}٪`],
+      ['التكاليف', fmt(c.costsMinor)],
+      ...(Object.keys(COST_KIND_LABELS) as CostKind[]).map((k) => [`تكاليف — ${COST_KIND_LABELS[k].nameAr}`, fmt(c.costsByKind[k])] as const),
+      ['الربح', fmt(c.profitMinor)],
+      ['الهامش ٪', `${c.marginPercent}٪`],
+      ['محتجز قائم', fmt(c.retentionHeldMinor)],
+      ['دفعات مقدمة مستلمة', fmt(c.advancesReceivedMinor)],
+      ['دفعات مقدمة مستردة', fmt(c.advancesRecoveredMinor)],
+      ['دفعات مقدمة متبقية', fmt(c.advancesRemainingMinor)],
+      ['ذمم مفتوحة (مستخلصات)', fmt(openByProject.get(selected.project.id) ?? 0)],
+    ]
+    const body = [
+      htmlTableHtml({ headers: ['مؤشرات البطاقة', 'القيمة'], numCols: [1], rows: kpiRows }),
+      sectionHtml('مصادر التكاليف — تُطابق صافي 5110 بالدفتر'),
+      htmlTableHtml({
+        headers: ['المصدر', 'المبلغ'], numCols: [1],
+        rows: [
+          ['تكاليف يدوية مسجّلة', fmt(bd.totals.manualMinor)],
+          ['شهادات مقاولي الباطن', fmt(bd.totals.subMinor)],
+          ['أجور يومية مسوّاة', fmt(bd.totals.dailyMinor)],
+          ['فواتير شراء مربوطة', fmt(bd.totals.purchasesMinor)],
+          ['أذون صرف مواد من المخزن', fmt(bd.totals.materialIssuesMinor)],
+          ['مرتجعات شراء (خافضة)', fmt(-bd.totals.returnsMinor)],
+        ],
+        totalRow: ['إجمالي تكاليف المشروع', fmt(bd.totals.allMinor)],
+      }),
+      ...(selectedExtracts.length ? [
+        sectionHtml(`المستخلصات (${selectedExtracts.length})`),
+        htmlTableHtml({
+          headers: ['المستخلص', 'التاريخ', 'قيمة الأعمال', 'محتجز', 'المستحق'], numCols: [2, 3, 4],
+          rows: selectedExtracts.map((e) => [`${e.extractNumber}${e.isFinal ? ' (ختامي)' : ''}`, e.date.slice(0, 10), fmt(e.totals.grossMinor), fmt(e.totals.retentionMinor), fmt(e.totals.dueMinor)]),
+        }),
+      ] : []),
+      ...(selectedOpenDocs.length ? [
+        sectionHtml('ذمم المستخلصات المفتوحة — تُسدَّد من تحصيلات العملاء'),
+        htmlTableHtml({
+          headers: ['المستند', 'التاريخ', 'محصّل', 'المتبقي'], numCols: [2, 3],
+          rows: selectedOpenDocs.filter((inv) => inv.dueMinor - inv.settledMinor > 0).map((inv) => [inv.docLabel, inv.date.slice(0, 10), fmt(inv.settledMinor), fmt(inv.dueMinor - inv.settledMinor)]),
+        }),
+      ] : []),
+      ...(selectedOrders.length ? [
+        sectionHtml(`أوامر التغيير (${selectedOrders.length})`),
+        htmlTableHtml({
+          headers: ['الأمر', 'البيان', 'المبلغ', 'الحالة'], numCols: [2],
+          rows: selectedOrders.map((o) => [o.number, o.titleAr, `${o.amountMinor >= 0 ? '+' : '−'}${fmt(Math.abs(o.amountMinor))}`, o.status === 'approved' ? 'معتمد' : o.status === 'invoiced' ? 'مُستخلَص' : o.status === 'draft' ? 'مسودة' : 'مرفوض']),
+        }),
+      ] : []),
+      ...(selectedCosts.length ? [
+        sectionHtml(`تكاليف المشروع (${selectedCosts.length})`),
+        htmlTableHtml({
+          headers: ['البيان', 'النوع', 'المبلغ'], numCols: [2],
+          rows: selectedCosts.map((x) => [x.description, COST_KIND_LABELS[x.kind].nameAr, fmt(x.amountMinor)]),
+        }),
+      ] : []),
+    ].join('')
+    printDoc(`بطاقة مشروع — ${selected.project.code}`, `${selected.project.nameAr}${selected.project.clientName ? ` · العميل: ${selected.project.clientName}` : ''}`, body)
+  }
+
+  const printDues = () => printDoc('ذمم عملاء المقاولات', 'متابعة التحصيل — المفتوح من المستخلصات الآجلة', htmlTableHtml({
+    headers: ['العميل', 'الأعمال المستخلصة', 'المحتجز لديه', 'ذمم مفتوحة', 'مستخلصات آجلة'],
+    numCols: [1, 2, 3, 4],
+    rows: clientDues.map((row) => [row.nameAr, fmt(row.extractedMinor), fmt(row.retentionMinor), row.openMinor > 0 ? fmt(row.openMinor) : '✓ مسددة', row.openDocs]),
+    totalRow: ['الإجمالي', fmt(clientDues.reduce((a, r) => a + r.extractedMinor, 0)), fmt(clientDues.reduce((a, r) => a + r.retentionMinor, 0)), fmt(clientDues.reduce((a, r) => a + r.openMinor, 0)), clientDues.reduce((a, r) => a + r.openDocs, 0)],
+  }))
+
   const kpi = (label: string, value: string, tone = 'text-slate-800 dark:text-slate-100') => (
     <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3 text-center"><div className="text-[10px] text-slate-400 font-bold">{label}</div><div className={`font-black text-[15px] ${tone}`}>{value}</div></div>
   )
@@ -144,7 +242,9 @@ export function ContractingReportsPage() {
           {/* ═══ ① لوحة المشاريع ═══ */}
           {tab === 'projects' && (
             <div className="anim-up space-y-3">
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-1.5">
+                <button onClick={printProjects} data-print="projects"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
                 <button onClick={() => downloadCsv(cards.map((r) => ({
                   'الكود': r.project.code, 'المشروع': r.project.nameAr, 'العميل': r.project.clientName || '—',
                   'قيمة العقد الفعلية': fmt(r.card.contractEffectiveMinor), 'أوامر معلقة': fmt(r.card.changeOrdersPendingMinor),
@@ -193,6 +293,9 @@ export function ContractingReportsPage() {
                 <div className="flex flex-wrap items-center gap-3">
                   <div className="min-w-64 flex-1"><PartyQuickPicker parties={projects.map((p) => ({ id: p.id, nameAr: `${p.code} — ${p.nameAr}` }))} value={projectId ? Number(projectId) : 0} onChange={(id) => setProjectId(id ? String(id) : '')} cashLabel="اختر مشروعاً" label="بحث المشروع" cashValue={0} /></div>
                   {selected && (
+                    <div className="flex gap-1.5">
+                    <button onClick={printProjectCard} data-print="project-card"
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
                     <button onClick={() => downloadCsv([
                       { 'البند': 'قيمة العقد الأصلية', 'القيمة': fmt(selected.card.contractOriginalMinor) },
                       { 'البند': 'أوامر التغيير المعتمدة (عدد)', 'القيمة': selected.card.changeOrdersApprovedCount },
@@ -213,6 +316,7 @@ export function ContractingReportsPage() {
                       { 'البند': 'ذمم مفتوحة (مستخلصات)', 'القيمة': fmt(openByProject.get(selected.project.id) ?? 0) },
                     ], `تقرير-${selected.project.code}.csv`)}
                       className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 text-white text-[12px] font-bold hover:bg-emerald-700 transition-all"><FileSpreadsheet size={14} /> تصدير بطاقة المشروع</button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -358,7 +462,9 @@ export function ContractingReportsPage() {
               <div className="text-[12px] text-slate-500">
                 متابعة تحصيل المقاولات: لكل عميل — قيمة الأعمال المستخلصة والمحتجز لديه وما زال مفتوحاً من مستخلصاته (تُطفأ من «تحصيلات العملاء» FIFO أو بمطابقة محددة).
               </div>
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-1.5">
+                <button onClick={printDues} data-print="dues"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 text-white text-[12px] font-bold hover:bg-slate-800 transition-all"><Printer size={14} /> طباعة / PDF</button>
                 <button onClick={() => downloadCsv(clientDues.map((row) => ({
                   'العميل': row.nameAr, 'الأعمال المستخلصة': fmt(row.extractedMinor), 'المحتجز لدى العميل': fmt(row.retentionMinor),
                   'ذمم مفتوحة': fmt(row.openMinor), 'مستخلصات آجلة': row.openDocs,
