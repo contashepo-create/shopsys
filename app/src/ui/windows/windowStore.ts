@@ -275,16 +275,21 @@ function invoiceWindowSize() {
   return { width: Math.max(MIN_W, Math.round(vw * 0.94)), height: Math.max(MIN_H, Math.round(vh * 0.9)) }
 }
 
-/** تعبئة أولية لفاتورة بيع (طلب المالك ㉘): بيع أصناف منتهية الصلاحية من شاشة الإتلاف */
+/** تعبئة أولية لفاتورة بيع (طلب المالك ㉘): بيع أصناف منتهية الصلاحية من شاشة الإتلاف —
+ *  §94: ربط المشروع والعميل مسبقاً من مركز فواتير المقاولات (lines تصبح اختيارية: فاتورة مشروع قد تبدأ فارغة) */
 export interface SalesInvoicePrefill {
-  lines: { itemId: number; qty: number; unitPriceMinor?: number }[]
+  lines?: { itemId: number; qty: number; unitPriceMinor?: number }[]
   notes?: string
+  /** مشروع المقاولات الذي صُدرت الفاتورة من أجله — 0/undefined = بلا مشروع */
+  projectId?: number
+  /** عميل الفاتورة (يُشتق من عميل المشروع إن لم يُحدد) */
+  customerId?: number
 }
 
 export function openSalesInvoiceWindow(editId?: number, prefill?: SalesInvoicePrefill) {
   return useWindowStore.getState().openWindow({
     kind: 'sales-invoice',
-    title: editId ? `تعديل فاتورة مبيعات #${editId}` : prefill ? 'فاتورة مبيعات — أصناف محددة' : 'فاتورة مبيعات جديدة',
+    title: editId ? `تعديل فاتورة مبيعات #${editId}` : prefill?.projectId ? 'فاتورة بيع مقاولات — مربوطة بمشروع' : prefill ? 'فاتورة مبيعات — أصناف محددة' : 'فاتورة مبيعات جديدة',
     subtitle: 'نافذة مستقلة — تبقى مفتوحة حتى تحفظها أو تغلقها',
     props: editId ? { editId } : prefill ? { prefill } : {},
     dedupeKey: editId ? `sales-invoice:${editId}` : null,

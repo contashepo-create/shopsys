@@ -42,6 +42,7 @@ import { PromotionsPage } from './ui/pages/PromotionsPage.tsx'
 import { PosPage } from './ui/pages/PosPage.tsx'
 import { SalesInvoicesPage } from './ui/pages/SalesInvoicesPage.tsx'
 import { InvoiceDocumentRoute } from './ui/pages/InvoiceDocumentRoute.tsx'
+import { ContractingInvoicesPage } from './ui/pages/ContractingInvoicesPage.tsx'
 import { SaleReturnsPage } from './ui/pages/SaleReturnsPage.tsx'
 import { ShiftsPage } from './ui/pages/ShiftsPage.tsx'
 import { JournalPage } from './ui/pages/JournalPage.tsx'
@@ -223,7 +224,8 @@ function Shell() {
         <Route path="/lab/tests" element={<LabTestsPage />} />
         <Route path="/lab/patients" element={<LabPatientsPage />} />
         <Route path="/lab/referrers" element={<LabReferrersPage />} />
-        <Route path="/contracting/projects" element={<ProjectsPage />} />
+        <Route path="/contracting/invoices" element={<ContractingInvoicesPage />} />
+      <Route path="/contracting/projects" element={<ProjectsPage />} />
         <Route path="/contracting/quotations" element={<QuotationsPage />} />
         <Route path="/contracting/boq" element={<BoqPage />} />
         <Route path="/contracting/subcontractors" element={<SubcontractorsPage />} />

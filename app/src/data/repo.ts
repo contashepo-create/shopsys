@@ -423,6 +423,10 @@ export interface ProjectExtract {
   refundedMinor?: number
   refundedTaxMinor?: number
   refunds?: ServiceRefundRecord[]
+  /** §94: أثر التعديل بعد الإصدار — قيد عاكس ثم إعادة بناء بنفس الرقم (سجل تدقيق) */
+  lastEditReason?: string
+  editedAt?: string
+  editReversalEntryId?: number
 }
 
 /** تكلفة مسجلة على مشروع ببند */
@@ -2632,6 +2636,8 @@ interface DataState {
   refundRental: (args: { contractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => RentalContract
   /** إشعار دائن على مستخلص (رفض المالك/الاستشاري جزءاً من الأعمال بعد الاعتماد): يعكس 4102+2102 نسبياً */
   refundProjectExtract: (args: { extractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ProjectExtract
+  /** §94: تعديل مستخلص صادر — عكس قيده وإرجاع تقدم BOQ واسترداد الدفعة ثم إعادة بناء بنفس الرقم */
+  editProjectExtract: (args: { extractId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; reason: string }) => ProjectExtract
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
   /** إهلاك تلقائي (طلب المالك): يرحّل كل الأشهر المتأخرة دفعة واحدة بلا تدخل — يُستدعى عند فتح البرنامج. يعيد عدد القيود المرحّلة */
@@ -9481,6 +9487,121 @@ export const useDataStore = create<DataState>()(
         }
         set({ projectExtracts: [...state.projectExtracts, extract], clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return extract
+      },
+      /* ─── §94: تعديل مستخلص صادر (طلب المالك: «أصدرت مستخلصاً ولم أجد واجهة لمراجعته أو تعديله») ───
+         نفس نمط تعديل الفاتورة: قيد عاكس موثق السبب ثم إعادة بناء بنفس الرقم —
+         مع إرجاع كل أثر جانبي (تقدم بنود BOQ · استرداد الدفعة المقدمة) قبل البناء. ─── */
+      editProjectExtract: (args) => {
+        const state = get()
+        const extract = state.projectExtracts.find((e) => e.id === args.extractId)
+        if (!extract) throw new Error('المستخلص غير موجود')
+        const project = state.projects.find((p) => p.id === extract.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        if (project.status === 'completed') throw new Error('المشروع مقفل — لا تُعدَّل مستخلصاته')
+        if (extract.refunds?.length) throw new Error('على المستخلص إشعار دائن قائم — عالجه أولاً (إلغاؤه أو مستخلص بديل)')
+        if (state.paymentTerminalTransactions.some((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(extract.id))) throw new Error('المستخلص محصل بالماكينة — لا يُعدَّل؛ إشعار دائن ثم مستخلص جديد')
+        const reason = args.reason.trim()
+        if (!reason) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
+        /* النسب التراكمية: لا تعديل لملموس من مستخلص أحدث — التسلسل من الأحدث للأقدم
+           (فقط عند إعادة احتساب البنود؛ التعديل بمبلغ إجمالي لا يمس تقدم BOQ) */
+        const recomputeLines = !!(args.extractLines && args.extractLines.length > 0)
+        if (recomputeLines && extract.lines?.length) {
+          const mine = new Set(extract.lines.map((l) => l.boqItemId))
+          const later = state.projectExtracts.find((e) => e.projectId === extract.projectId && e.id > extract.id && e.lines?.some((l) => mine.has(l.boqItemId)))
+          if (later) throw new Error(`المستخلص ${later.extractNumber} الأحدث عدّل نسب بنود هذا المستخلص — عدّل الأحدث أولاً أو أصدر مستخلصاً بديلاً`)
+        }
+        get().assertApproved('project_extract', project.id, `تعديل مستخلص ${extract.extractNumber} — ${project.nameAr}`)
+        /* ① القيد الأصلي يُعكس بقيد موثق السبب (يبقى الرقم والتاريخ في الدفتر) */
+        const original = state.journal.find((e) => e.id === extract.journalEntryId)
+        if (!original) throw new Error('قيد المستخلص الأصلي غير موجود')
+        if (original.reversedByEntryId) throw new Error('قيد المستخلص معكوس مسبقاً — لا يُعدَّل مرتين')
+        const now = new Date().toISOString()
+        const reversalId = nextId(state.journal)
+        const reversal: JournalEntry = {
+          id: reversalId, entryNumber: reversalId, date: now.slice(0, 10),
+          description: `عكس ${extract.extractNumber} للتعديل — ${reason}`,
+          sourceType: 'reversal', sourceId: extract.id,
+          lines: buildReversalLines(original.lines),
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: original.id,
+        }
+        const journalAfterReversal = state.journal.map((e) => (e.id === original.id ? { ...e, reversedByEntryId: reversalId } : e))
+        /* ② تقدم بنود BOQ يرجع للنسب السابقة لهذا المستخلص — البناء الجديد ينطلق منها
+           (تعديل بمبلغ إجمالي على مستخلص بندي: الأعمال قائمة والتقدم لا يُمس) */
+        const boqAfterRevert = recomputeLines && extract.lines?.length
+          ? state.boqItems.map((b) => {
+              const l = extract.lines!.find((x) => x.boqItemId === b.id)
+              return l ? { ...b, progressPercent: l.prevProgressPercent } : b
+            })
+          : state.boqItems
+        /* ③ استرداد الدفعة المقدمة يُرجَع (إجمالي 2109 يظل مطابقاً — القيد العاكس عكس نصيبه) */
+        let toGiveBack = extract.advanceRecoveryMinor ?? 0
+        let advancesAfterRevert = state.clientAdvances
+        if (toGiveBack > 0) {
+          advancesAfterRevert = state.clientAdvances.map((a) => ({ ...a }))
+          for (let i = advancesAfterRevert.length - 1; i >= 0 && toGiveBack > 0; i--) {
+            const a = advancesAfterRevert[i]
+            if (a.projectId !== extract.projectId || a.recoveredMinor <= 0) continue
+            const give = Math.min(a.recoveredMinor, toGiveBack)
+            a.recoveredMinor -= give
+            toGiveBack -= give
+          }
+          if (toGiveBack > 0) throw new Error('خلل في إرجاع استرداد الدفعة المقدمة — راجع الدعم الفني')
+        }
+        /* ④ إعادة البناء من الحالة المرجَعة — نفس حراس الإصدار (نفس الرقم والمعرف) */
+        let extractLinesComputed: ExtractLineComputed[] | undefined
+        let gross = args.grossMinor ?? 0
+        if (recomputeLines) {
+          const r = computeExtractLines(args.extractLines!, boqAfterRevert.filter((b) => b.projectId === project.id))
+          extractLinesComputed = r.computed
+          gross = r.grossMinor
+        }
+        if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
+        const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
+        const recovery = args.advanceRecoveryMinor ?? 0
+        if (recovery > 0) {
+          const advBalance = advancesAfterRevert.filter((a) => a.projectId === project.id).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
+          if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
+        }
+        if (args.payment === 'credit') guardCreditLimit(get(), project.clientId ?? null, Math.max(totals.dueMinor - recovery, 0), args.creditLimitOverrideBy)
+        const lines = recovery > 0
+          ? buildExtractEntryWithAdvance(totals, args.payment, extract.extractNumber, args.treasury ?? '1101', recovery)
+          : buildExtractEntry(totals, args.payment, extract.extractNumber, args.treasury ?? '1101')
+        const entryId = reversalId + 1 /* القيد العاكس استولى على nextId — البديل بعده مباشرة */
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مستخلص ${extract.extractNumber} (معدَّل) — ${project.nameAr}`,
+          sourceType: 'project_extract', sourceId: extract.id, lines,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const rebuilt: ProjectExtract = {
+          ...extract,
+          date: now, description: args.description, payment: args.payment, totals, journalEntryId: entryId,
+          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor })),
+          ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : { advanceRecoveryMinor: undefined }),
+          ...(args.isFinal ? { isFinal: true } : { isFinal: undefined }),
+          lastEditReason: reason, editedAt: now, editReversalEntryId: reversalId,
+        }
+        /* ⑤ تقدم BOQ الجديد واسترداد الدفعة الجديد (FIFO الأقدم أولاً) */
+        const updatedBoq = extractLinesComputed
+          ? boqAfterRevert.map((b) => {
+              const c = extractLinesComputed.find((x) => x.boqItemId === b.id)
+              return c ? { ...b, progressPercent: c.newProgressPercent } : b
+            })
+          : boqAfterRevert
+        let toRecover = recovery
+        const updatedAdvances = advancesAfterRevert.map((a) => {
+          if (toRecover <= 0 || a.projectId !== project.id) return a
+          const room = a.amountMinor - a.recoveredMinor
+          const take = Math.min(room, toRecover)
+          toRecover -= take
+          return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
+        })
+        set({
+          projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? rebuilt : e)),
+          clientAdvances: updatedAdvances, boqItems: updatedBoq,
+          journal: [...journalAfterReversal, reversal, entry],
+        })
+        return rebuilt
       },
       /* موازنة تكاليف المشروع بالفئات (نمط pro-acc): تُدخل مرة وتقارن بالفعلي أولاً بأول */
       setProjectBudget: (projectId, budgetLines) => {

@@ -5,7 +5,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * كل قيد يظهر ويربط بالمشروع؛ الإفراج عن المحتجز يقفل المشروع.
  */
 import { useMemo, useState } from 'react'
-import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins } from 'lucide-react'
+import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins, Pencil, ShoppingCart, Truck, Users2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import type { Project } from '../../core/contracting.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -27,6 +27,7 @@ import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../com
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
+import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
 import { renderExtractHtml } from '../print/printExtract.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
@@ -37,7 +38,7 @@ export function ProjectsPage() {
     addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
     advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
-    staffCommissions, addStaffCommission,
+    staffCommissions, addStaffCommission, editProjectExtract, sales, purchases,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -169,17 +170,46 @@ export function ProjectsPage() {
   const [exMode, setExMode] = useState<'lines' | 'gross'>('gross')
   const [exFinal, setExFinal] = useState(false)
   const [exLines, setExLines] = useState<Record<number, string>>({}) // boqItemId → النسبة الجديدة كنص
+  /* §94: مراجعة المستخلص الصادر (وثيقة كاملة) وتعديله (قيد عاكس + إعادة بناء) */
+  const [viewExtract, setViewExtract] = useState<(typeof projectExtracts)[number] | null>(null)
+  const [editingExtract, setEditingExtract] = useState<(typeof projectExtracts)[number] | null>(null)
+  const [exReason, setExReason] = useState('')
   const extractBoq = useMemo(() => (extractFor ? boqItems.filter((b) => b.projectId === extractFor.id) : []), [boqItems, extractFor])
+  /** النسبة السابقة لبند: في التعديل تُقرأ من المستخلص (قبل إصداره) لا من BOQ الحي الذي يحمل نتيجة إصداره */
+  const exPrevPct = (b: { id: number; progressPercent: number }) => editingExtract?.lines?.find((l) => l.boqItemId === b.id)?.prevProgressPercent ?? b.progressPercent
   const exLinesPreview = useMemo(() => {
     const rows = extractBoq.map((b) => {
+      const prev = editingExtract?.lines?.find((l) => l.boqItemId === b.id)?.prevProgressPercent ?? b.progressPercent
       const raw = exLines[b.id]
       const np = raw === undefined || raw === '' ? null : Number(raw)
       const total = Math.round(b.qty * b.unitPriceMinor)
-      const slice = np !== null && Number.isFinite(np) && np > b.progressPercent && np <= 100 ? Math.round((total * (np - b.progressPercent)) / 100) : 0
-      return { boq: b, newPercent: np, sliceMinor: slice }
+      const slice = np !== null && Number.isFinite(np) && np > prev && np <= 100 ? Math.round((total * (np - prev)) / 100) : 0
+      return { boq: b, prevPercent: prev, newPercent: np, sliceMinor: slice }
     })
     return { rows, grossMinor: rows.reduce((sum, row) => sum + row.sliceMinor, 0) }
-  }, [extractBoq, exLines])
+  }, [extractBoq, exLines, editingExtract])
+  /** فتح محرر المستخلص محمّلاً بقيمه الصادرة — التعديل يعكس قيده ويعيد البناء بنفس الرقم */
+  const openExtractEditor = (ex: (typeof projectExtracts)[number]) => {
+    const prj = projects.find((p) => p.id === ex.projectId)
+    if (!prj) return
+    setViewExtract(null)
+    setEditingExtract(ex)
+    setExtractFor(prj)
+    setExDesc(ex.description)
+    setExPayment(ex.payment)
+    setExTreasury('1101')
+    setExVat(ex.totals.vatMinor > 0)
+    setExRecovery(ex.advanceRecoveryMinor ? formatMinor(ex.advanceRecoveryMinor, cur, false) : '')
+    setExFinal(!!ex.isFinal)
+    setExReason('')
+    if (ex.lines?.length) {
+      setExMode('lines')
+      setExLines(Object.fromEntries(ex.lines.map((l) => [l.boqItemId, String(l.newProgressPercent)])))
+    } else {
+      setExMode('gross')
+      setExGross(formatMinor(ex.totals.grossMinor, cur, false))
+    }
+  }
 
   // مستخلص آجل فوق حد ائتمان عميل المشروع — تجاوز باعتماد مدير
   const creditApproval = useSupervisorApproval('sales.credit.override')
@@ -256,7 +286,7 @@ export function ProjectsPage() {
             .map(([id, v]) => ({ boqItemId: Number(id), newProgressPercent: Number(v) }))
             .filter((l) => {
               const b = extractBoq.find((x) => x.id === l.boqItemId)
-              return b ? l.newProgressPercent > b.progressPercent : false
+              return b ? l.newProgressPercent > exPrevPct(b) : false
             })
         : undefined
       const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
@@ -271,9 +301,41 @@ export function ProjectsPage() {
         isFinal: exFinal,
       })
       toast.show(`سُجل المستخلص ${ex.extractNumber} — المستحق ${fmt(ex.totals.dueMinor)} والمحتجز ${fmt(ex.totals.retentionMinor)} ✅`)
+      /* §94: بعد الإصدار تفتح وثيقة المستخلص فوراً — البيانات والطباعة والتعديل في مكان واحد */
       setExtractFor(null); setExGross(''); setExDesc(''); setExRecovery(''); setExLines({}); setExFinal(false)
+      setViewExtract(ex)
     } catch (e) {
       if (e instanceof CreditLimitError) { creditApproval.request((by) => saveExtract(by ?? 'المشرف')); return }
+      toast.show((e as Error).message, 'error')
+    }
+  }
+
+  /* §94: حفظ تعديل مستخلص صادر — قيد عاكس موثق السبب ثم إعادة بناء بنفس الرقم */
+  const saveExtractEdit = (creditLimitOverrideBy?: string) => {
+    if (!extractFor || !editingExtract) return
+    try {
+      const linesInput = exMode === 'lines'
+        ? Object.entries(exLines)
+            .filter(([, v]) => v !== '')
+            .map(([id, v]) => ({ boqItemId: Number(id), newProgressPercent: Number(v) }))
+            .filter((l) => {
+              const b = extractBoq.find((x) => x.id === l.boqItemId)
+              return b ? l.newProgressPercent > exPrevPct(b) : false
+            })
+        : undefined
+      const ex = editProjectExtract({
+        extractId: editingExtract.id,
+        grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
+        extractLines: linesInput,
+        vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
+        advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null, isFinal: exFinal, reason: exReason.trim(),
+      })
+      toast.show(`عُدّل المستخلص ${ex.extractNumber}: قيد عاكس ثم إعادة بناء — الصافي الآن ${fmt(ex.totals.dueMinor)} ✅`)
+      setExtractFor(null); setEditingExtract(null); setExReason(''); setExGross(''); setExDesc(''); setExRecovery(''); setExLines({}); setExFinal(false)
+      setViewExtract(ex)
+    } catch (e) {
+      if (e instanceof CreditLimitError) { creditApproval.request((by) => saveExtractEdit(by ?? 'المشرف')); return }
       toast.show((e as Error).message, 'error')
     }
   }
@@ -356,8 +418,11 @@ export function ProjectsPage() {
       vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
       retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
       retentionPercent: prj.retentionPercent,
+      lines: (ex.lines ?? []).map((l) => ({ code: l.code, descriptionAr: l.descriptionAr, prevPercent: l.prevProgressPercent, newPercent: l.newProgressPercent, value: `${fmt(l.lineValueMinor)} ${cur.symbol}` })),
+      advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
       due: `${fmt(ex.totals.dueMinor)} ${cur.symbol}`,
       payment: ex.payment,
+      currencySymbol: cur.symbol,
     }))
   }
   const viewCosts = viewingLive ? projectCosts.filter((c) => c.projectId === viewingLive.id) : []
@@ -560,14 +625,14 @@ export function ProjectsPage() {
       <div data-extract-doc-editor>
         <InvoicePOSFrame
           kind="sale"
-          modeLabel="مستخلص أعمال"
+          modeLabel={editingExtract ? 'تعديل مستخلص صادر — قيد عاكس وإعادة بناء' : 'مستخلص أعمال'}
           currencyLabel={`${cur.code} · ${cur.symbol}`}
-          dateLabel={new Date().toISOString().slice(0, 10)}
+          dateLabel={editingExtract ? editingExtract.date.slice(0, 10) : new Date().toISOString().slice(0, 10)}
           branchLabel={setup.shopName ?? ''}
           userLabel={setup.ownerName ?? 'المالك'}
           activityLabel={setup.activityId ?? 'نشاط عام'}
-          documentNumber={`PRX-${extractFor.code}`}
-          onBack={() => setExtractFor(null)}
+          documentNumber={editingExtract ? `${editingExtract.extractNumber} (تعديل)` : `PRX-${extractFor.code}`}
+          onBack={() => { setEditingExtract(null); setExtractFor(null) }}
           onNavigate={() => { /* لا تنقل أثناء التحرير */ }}
           onPartySearch={() => document.getElementById('extract-desc-field')?.focus()}
           onItemSearch={() => document.getElementById('extract-first-percent')?.focus()}
@@ -579,9 +644,14 @@ export function ProjectsPage() {
             previewDraftDoc(buildExtractDraftModel(), `معاينة المستخلص — ${extractFor.nameAr}`)
           }}
           onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); const gross = exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals); if (gross > 0) previewDraftDoc(buildExtractDraftModel(), `مستخلص — ${extractFor.nameAr}`) }}
-          onPost={() => saveExtract()}
+          onPost={() => (editingExtract ? saveExtractEdit() : saveExtract())}
           headerFields={
             <>
+              {editingExtract && (
+                <Field label="سبب التعديل (سجل تدقيق)" hint="يُوثَّق على القيد العاكس — لا تعديل بلا سبب">
+                  <input data-extract-edit-reason value={exReason} onChange={(e) => setExReason(e.target.value)} className={inputCls} placeholder="تصحيح نسبة إنجاز بند / تعديل الاسترداد…" />
+                </Field>
+              )}
               <Field label="وصف الأعمال المنفذة">
                 <input id="extract-desc-field" value={exDesc} onChange={(e) => setExDesc(e.target.value)} className={inputCls} placeholder="أعمال الأساسات…" />
               </Field>
@@ -623,6 +693,7 @@ export function ProjectsPage() {
               <span>المشروع: <b>{extractFor.code} — {extractFor.nameAr}</b></span>
               <span>العميل: <b>{extractFor.clientName || 'الجهة المالكة'}</b></span>
               <span>النمط: <b>{exMode === 'lines' ? 'بندي من BOQ' : 'مبلغ إجمالي'}</b></span>
+              {editingExtract && <span className="text-amber-600 font-bold">تعديل مستخلص صادر — يعكس قيده ويعيد بناءه بنفس الرقم</span>}
               <span>محتجز: <b>{extractFor.retentionPercent}٪</b></span>
               <span>أعمال هذا المستخلص: <b className="text-emerald-600">{fmt(exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals))} {cur.symbol}</b></span>
             </div>
@@ -825,6 +896,9 @@ export function ProjectsPage() {
       <Modal open={!!viewingLive} onClose={() => setViewing(null)} title={viewingLive ? `${viewingLive.code} — ${viewingLive.nameAr}` : ''} wide>
         {viewingLive && profit && (
           <div className="space-y-4 text-sm">
+            <div className="flex justify-end">
+              <Btn variant="ghost" data-project-new-invoice onClick={() => openSalesInvoiceWindow(undefined, { projectId: viewingLive.id, customerId: viewingLive.clientId ?? undefined })} title="فاتورة بيع كاملة بنافذة الفاتورة المتقدمة — مربوطة بهذا المشروع وعميله"><ShoppingCart size={14} /> فاتورة بيع لهذا المشروع</Btn>
+            </div>
             <div className="grid grid-cols-4 gap-2 text-center">
               <div className="rounded-xl bg-emerald-500/10 p-3"><div className="text-[11px] text-slate-500">المستخلصات</div><div className="font-black text-emerald-600">{fmt(profit.extractedMinor)}</div></div>
               <div className="rounded-xl bg-rose-500/10 p-3"><div className="text-[11px] text-slate-500">التكاليف</div><div className="font-black text-rose-600">{fmt(profit.costsMinor)}</div></div>
@@ -859,6 +933,8 @@ export function ProjectsPage() {
                         <td className="px-3 py-2 text-amber-600">{fmt(e.totals.retentionMinor)}</td>
                         <td className="px-3 py-2 font-bold">{fmt(e.totals.dueMinor)}</td>
                         <td className="px-3 py-2 flex items-center gap-1">
+                          <button onClick={() => setViewExtract(e)} data-extract-review title="مراجعة المستخلص — كل البيانات والقيد والطباعة والتعديل" className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Eye size={13} /></button>
+                          <button onClick={() => openExtractEditor(e)} data-extract-edit title="تعديل المستخلص — قيد عاكس وإعادة بناء بنفس الرقم" className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all"><Pencil size={13} /></button>
                           <button onClick={() => printExtract(e)} title="طباعة المستخلص للجهة المالكة" className="p-1.5 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all"><Printer size={13} /></button>
                           <button onClick={() => setRefundingExtract(e)} title="إشعار دائن (رفض جزء من الأعمال بعد الاعتماد)" className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all text-[12px] font-black">↩️</button>
                         </td>
@@ -868,6 +944,85 @@ export function ProjectsPage() {
                 </table>
               </div>
             )}
+
+            {/* §94: المشروع مربوط بأطرافه — فواتير عملائه ومشتريات مورديه وعمولات موظفيه في مكان واحد */}
+            {(() => {
+              const prjSales = sales.filter((x) => x.projectId === viewingLive.id)
+              const prjPurchases = purchases.filter((x) => x.projectId === viewingLive.id)
+              const prjComms = staffCommissions.filter((c) => c.source === 'project' && c.sourceId === viewingLive.id)
+              if (!prjSales.length && !prjPurchases.length && !prjComms.length) return null
+              return (
+                <div className="space-y-3" data-project-parties>
+                  {prjSales.length > 0 && (
+                    <div>
+                      <div className="font-bold text-[12px] text-slate-500 mb-1 flex items-center justify-between">
+                        <span className="flex items-center gap-1"><ShoppingCart className="w-4 h-4" /> فواتير بيع المشروع (العملاء)</span>
+                        <b className="text-emerald-600">{fmt(prjSales.reduce((a, x) => a + x.totals.totalMinor, 0))} {cur.symbol}</b>
+                      </div>
+                      <div className="overflow-x-auto rounded-xl border border-emerald-500/20">
+                        <table className="w-full text-[12px]">
+                          <thead className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"><tr>{['الفاتورة', 'التاريخ', 'العميل', 'الإجمالي', 'المحصل'].map((h) => <th key={h} className="px-3 py-1.5 text-right font-bold">{h}</th>)}</tr></thead>
+                          <tbody>
+                            {prjSales.map((x) => (
+                              <tr key={x.id} className="border-t border-slate-100 dark:border-slate-800">
+                                <td className="px-3 py-1.5 font-bold">{x.invoiceNumber}</td>
+                                <td className="px-3 py-1.5">{x.date.slice(0, 10)}</td>
+                                <td className="px-3 py-1.5">{customers.find((c) => c.id === x.customerId)?.nameAr ?? x.partyName ?? 'نقدي'}</td>
+                                <td className="px-3 py-1.5 font-bold">{fmt(x.totals.totalMinor)}</td>
+                                <td className="px-3 py-1.5">{fmt(x.paidMinor ?? 0)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                  {prjPurchases.length > 0 && (
+                    <div>
+                      <div className="font-bold text-[12px] text-slate-500 mb-1 flex items-center justify-between">
+                        <span className="flex items-center gap-1"><Truck className="w-4 h-4" /> مشتريات المشروع (الموردون)</span>
+                        <b className="text-rose-600">{fmt(prjPurchases.reduce((a, x) => a + x.grandTotalMinor, 0))} {cur.symbol}</b>
+                      </div>
+                      <div className="overflow-x-auto rounded-xl border border-rose-500/20">
+                        <table className="w-full text-[12px]">
+                          <thead className="bg-rose-500/10 text-rose-700 dark:text-rose-300"><tr>{['الفاتورة', 'التاريخ', 'المورد', 'الإجمالي'].map((h) => <th key={h} className="px-3 py-1.5 text-right font-bold">{h}</th>)}</tr></thead>
+                          <tbody>
+                            {prjPurchases.map((x) => (
+                              <tr key={x.id} className="border-t border-slate-100 dark:border-slate-800">
+                                <td className="px-3 py-1.5 font-bold">{x.invoiceNumber}</td>
+                                <td className="px-3 py-1.5">{x.date.slice(0, 10)}</td>
+                                <td className="px-3 py-1.5">{suppliers.find((c) => c.id === x.supplierId)?.nameAr ?? '—'}</td>
+                                <td className="px-3 py-1.5 font-bold">{fmt(x.grandTotalMinor)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                  {prjComms.length > 0 && (
+                    <div>
+                      <div className="font-bold text-[12px] text-slate-500 mb-1 flex items-center gap-1"><Users2 className="w-4 h-4" /> عمولات موظفي المشروع</div>
+                      <div className="overflow-x-auto rounded-xl border border-sky-500/20">
+                        <table className="w-full text-[12px]">
+                          <thead className="bg-sky-500/10 text-sky-700 dark:text-sky-300"><tr>{['الكود', 'الموظف', 'القيمة', 'الحالة'].map((h) => <th key={h} className="px-3 py-1.5 text-right font-bold">{h}</th>)}</tr></thead>
+                          <tbody>
+                            {prjComms.map((c) => (
+                              <tr key={c.id} className="border-t border-slate-100 dark:border-slate-800">
+                                <td className="px-3 py-1.5 font-bold">{c.code}</td>
+                                <td className="px-3 py-1.5">{employees.find((e) => e.id === c.employeeId)?.nameAr ?? '—'}</td>
+                                <td className="px-3 py-1.5 font-bold">{fmt(c.amountMinor)}</td>
+                                <td className="px-3 py-1.5">{c.status === 'accrued' ? 'مستحقة' : c.status === 'paid' ? 'مصروفة ✅' : 'ملغاة'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
 
             {viewEntries.map((e) => (
               <div key={e.id} className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -966,6 +1121,93 @@ export function ProjectsPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* §94: مراجعة المستخلص الصادر — وثيقة كاملة: البيانات والبنود والإجماليات والقيد + تعديل وطباعة */}
+      <Modal open={!!viewExtract} onClose={() => setViewExtract(null)} title={viewExtract ? `المستخلص ${viewExtract.extractNumber} — مراجعة كاملة` : ''} subtitle="كل بيانات المستخلص بعد الإصدار — ومن هنا التعديل والطباعة وإشعار الدائن" wide>
+        {viewExtract && (() => {
+          const prj = projects.find((p) => p.id === viewExtract.projectId)
+          if (!prj) return null
+          const previous = projectExtracts.filter((e) => e.projectId === prj.id && e.id < viewExtract.id).reduce((a, e) => a + e.totals.grossMinor, 0)
+          const cumulative = previous + viewExtract.totals.grossMinor
+          const entry = journal.find((e) => e.id === viewExtract.journalEntryId)
+          const reversalEntry = viewExtract.editReversalEntryId ? journal.find((e) => e.id === viewExtract.editReversalEntryId) : null
+          const progress = prj.contractValueMinor > 0 ? Math.min(100, Math.round((cumulative / prj.contractValueMinor) * 100)) : null
+          return (
+            <div className="space-y-4 text-sm" data-extract-view>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">قيمة الأعمال</div><div className="font-black text-emerald-600" data-extract-view-gross>{fmt(viewExtract.totals.grossMinor)}</div></div>
+                <div className="rounded-xl bg-amber-500/10 p-3"><div className="text-[11px] text-slate-500">محتجز {prj.retentionPercent}٪</div><div className="font-black text-amber-600" data-extract-view-retention>{fmt(viewExtract.totals.retentionMinor)}</div></div>
+                <div className="rounded-xl bg-sky-500/10 p-3"><div className="text-[11px] text-slate-500">ض.ق.م</div><div className="font-black text-sky-600">{fmt(viewExtract.totals.vatMinor)}</div></div>
+                <div className="rounded-xl bg-orange-500/10 p-3"><div className="text-[11px] text-slate-500">الصافي المستحق</div><div className="font-black text-orange-600" data-extract-view-due>{fmt(viewExtract.totals.dueMinor)}</div></div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800 text-[12.5px]">
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">المشروع</span><b>{prj.code} — {prj.nameAr}</b></div>
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">الجهة المالكة / العميل</span><b>{prj.clientName || '—'}</b></div>
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">التاريخ · السداد</span><b>{viewExtract.date.slice(0, 10)} · {viewExtract.payment === 'cash' ? 'نقدي محصل' : 'آجل على العميل'}</b></div>
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">قيمة العقد · التراكمي</span><b>{fmt(prj.contractValueMinor)} ← {fmt(cumulative)} {progress !== null ? `(${progress}٪)` : ''}</b></div>
+                {viewExtract.advanceRecoveryMinor ? <div className="flex justify-between px-3 py-2"><span className="text-slate-500">استرداد دفعة مقدمة</span><b className="text-amber-600">{fmt(viewExtract.advanceRecoveryMinor)}</b></div> : null}
+                {viewExtract.description ? <div className="px-3 py-2"><span className="text-slate-500">بيان الأعمال: </span><b>{viewExtract.description}</b></div> : null}
+                <div className="flex flex-wrap gap-1.5 px-3 py-2">
+                  {viewExtract.isFinal && <span className="text-[11px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-bold">ختامي</span>}
+                  {viewExtract.editedAt && <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold" title={viewExtract.lastEditReason}>عُدّل: {viewExtract.editedAt.slice(0, 10)}</span>}
+                  {(viewExtract.refundedMinor ?? 0) > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold">إشعار دائن {fmt(viewExtract.refundedMinor ?? 0)}</span>}
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-bold">{viewExtract.lines?.length ? `${viewExtract.lines.length} بنود BOQ` : 'مبلغ إجمالي'}</span>
+                </div>
+              </div>
+
+              {viewExtract.lines && viewExtract.lines.length > 0 && (
+                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700" data-extract-view-lines>
+                  <table className="w-full text-[12px]">
+                    <thead className="bg-orange-500/10 text-orange-700 dark:text-orange-300"><tr>{['الكود', 'البند', 'سابق ٪', 'حالي ٪', 'قيمة الشريحة'].map((h) => <th key={h} className="px-3 py-2 text-right font-bold">{h}</th>)}</tr></thead>
+                    <tbody>
+                      {viewExtract.lines.map((l) => (
+                        <tr key={l.boqItemId} className="border-t border-slate-100 dark:border-slate-800">
+                          <td className="px-3 py-2 font-mono">{l.code}</td>
+                          <td className="px-3 py-2">{l.descriptionAr}</td>
+                          <td className="px-3 py-2 text-center font-bold">{l.prevProgressPercent}٪</td>
+                          <td className="px-3 py-2 text-center font-bold text-orange-600">{l.newProgressPercent}٪</td>
+                          <td className="px-3 py-2 font-bold">{fmt(l.lineValueMinor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {viewExtract.refunds?.length ? (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-[12px]">
+                  <b className="text-amber-700 dark:text-amber-300">إشعارات دائنة على المستخلص:</b>
+                  {viewExtract.refunds.map((r, i) => <div key={i} className="flex justify-between px-1 py-1"><span>{r.date.slice(0, 10)} — {r.reason}</span><b>{fmt(r.amountMinor)} {r.mode === 'cash' ? 'نقدي' : 'على العميل'}</b></div>)}
+                </div>
+              ) : null}
+
+              {entry && (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                  <div className="bg-sky-500/10 px-3 py-2 flex items-center gap-2 text-sky-700 dark:text-sky-300 font-bold text-[12px]"><BookOpenText className="w-4 h-4" /> القيد #{entry.entryNumber} — {entry.description}</div>
+                  <table className="w-full text-[12px]"><tbody>
+                    {entry.lines.map((l, i) => (
+                      <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
+                        <td className="px-3 py-1.5">{l.accountCode} — {ACCOUNT_NAMES[l.accountCode] ?? ''}</td>
+                        <td className="px-3 py-1.5 font-mono text-emerald-600">{l.debit ? fmt(l.debit) : ''}</td>
+                        <td className="px-3 py-1.5 font-mono text-rose-600">{l.credit ? fmt(l.credit) : ''}</td>
+                        <td className="px-3 py-1.5 text-slate-500">{l.note}</td>
+                      </tr>
+                    ))}
+                  </tbody></table>
+                  {reversalEntry && <div className="px-3 py-2 text-[11px] text-slate-500 border-t border-slate-100 dark:border-slate-800">قيد عاكس للتعديل #{reversalEntry.entryNumber} — {reversalEntry.description}</div>}
+                </div>
+              )}
+
+              <div className="flex flex-wrap justify-end gap-2 pb-1">
+                <Btn variant="ghost" onClick={() => printExtract(viewExtract)}><Printer size={14} /> طباعة المستخلص</Btn>
+                <Btn variant="ghost" onClick={() => setRefundingExtract(viewExtract)}>إشعار دائن</Btn>
+                <Btn onClick={() => openExtractEditor(viewExtract)} data-extract-view-edit><Pencil size={14} /> تعديل المستخلص</Btn>
+              </div>
+            </div>
+          )
+        })()}
       </Modal>
 
       {/* إشعار دائن على مستخلص (مراجعة المرتجعات) */}
