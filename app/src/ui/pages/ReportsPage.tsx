@@ -5,7 +5,7 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * أرصدة العملاء والموردين، تنبيهات وقيمة المخزون — بفترات جاهزة أو مخصصة.
  */
 import { useMemo, useState } from 'react'
-import { BarChart3, TrendingUp, PackageSearch, Users, Truck, AlertTriangle, Boxes, ReceiptText } from 'lucide-react'
+import { BarChart3, TrendingUp, PackageSearch, Users, Truck, AlertTriangle, Boxes, ReceiptText, Coins } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -20,12 +20,13 @@ import { expensesSummary, expenseDetails, invoiceExpensesByCostCenter, journalEx
 import { accountName } from './accountNames.ts'
 import { inputCls } from '../components/ui.tsx'
 import { FinancialReportsTab } from './FinancialReportsTab.tsx'
+import { FxTreasuryTab } from './FxTreasuryTab.tsx'
 import { renderReportShell } from '../../core/reportPrint.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { Printer } from 'lucide-react'
 import { Landmark } from 'lucide-react'
 
-type TabId = 'sales' | 'items' | 'parties' | 'inventory' | 'expenses' | 'financial'
+type TabId = 'sales' | 'items' | 'parties' | 'inventory' | 'expenses' | 'financial' | 'currencies'
 
 /** تسميات مصادر العمليات لتقرير المصروفات */
 const EXP_SOURCE_LABELS: Record<string, string> = {
@@ -243,6 +244,7 @@ export function ReportsPage() {
         <button onClick={() => setTab('inventory')} className={tabCls('inventory')}><PackageSearch size={14} className="inline -mt-0.5 me-1" /> المخزون</button>
         <button onClick={() => setTab('expenses')} className={tabCls('expenses')}><ReceiptText size={14} className="inline -mt-0.5 me-1" /> المصروفات</button>
         <button onClick={() => setTab('financial')} className={tabCls('financial')}><Landmark size={14} className="inline -mt-0.5 me-1" /> القوائم المالية</button>
+        <button onClick={() => setTab('currencies')} className={tabCls('currencies')}><Coins size={14} className="inline -mt-0.5 me-1" /> العملات</button>
       </div>
 
       {tab === 'sales' && (
@@ -668,6 +670,9 @@ export function ReportsPage() {
 
       {tab === 'financial' && (
         <FinancialReportsTab period={period} cur={cur} companyName={setup.shopName || 'المنشأة'} />
+      )}
+      {tab === 'currencies' && (
+        <FxTreasuryTab cur={cur} companyName={setup.shopName || 'المنشأة'} />
       )}
 
     </div>

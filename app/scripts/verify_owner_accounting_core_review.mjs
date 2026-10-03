@@ -211,7 +211,7 @@ console.log('⑥ برهان بالممتلكات: شجرة/ذهاب-إياب/ض�
     const rootDigit = { assets: '1', liabilities: '2', equity: '3', revenue: '4', expenses: '5' }[a.rootType]
     if (a.code.length >= 2) assert.equal(a.code[0], rootDigit, `بادئة ${a.code}`)
   }
-  assert.equal(sysKeys.size, 69, "عدد مفاتيح النظام — 69 حساباً نظامياً")
+  assert.equal(sysKeys.size, 71, "عدد مفاتيح النظام — 71 حساباً نظامياً (منها §93: fx_gain/fx_loss)")
 
   /* ذهاب/إياب بكل الخانات وحدودها */
   const cfgs = { 0: { code: 'IQD', symbol: 'د.ع', decimals: 0, name: 'د' }, 2: { code: 'EGP', symbol: 'ج.م', decimals: 2, name: 'ج' }, 3: { code: 'KWD', symbol: 'د.ك', decimals: 3, name: 'د' } }

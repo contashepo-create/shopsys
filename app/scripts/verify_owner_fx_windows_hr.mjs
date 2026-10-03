@@ -25,6 +25,7 @@ const winStore = read('ui/windows/windowStore.ts')
 const sales = read('ui/pages/AdvancedSalesInvoicePage.tsx')
 const purchase = read('ui/pages/AdvancedPurchaseInvoicePage.tsx')
 const fxManager = read('ui/components/FxRatesManager.tsx')
+const fxCollect = read('ui/components/FxCollectModal.tsx')
 const fxCore = read('core/fxRates.ts')
 const appStore = read('stores/app.store.ts')
 const settings = read('ui/pages/GeneralSettingsPage.tsx')
@@ -46,18 +47,23 @@ console.log('② إغلاق نافذة مصغَّرة من شريط المهام
   ok('طلب إغلاق مصغَّرة ⇒ استعادة (focus + normal) ثم حوار التأكيد — والبقية لا تُمس')
 }
 
-console.log('③ عملة أجنبية للفاتورة المتقدمة فقط + سعر اليوم + النافذة المفلترة')
+console.log('③ عملة أجنبية: زر واحد → نافذة منظمة (§93) للفاتورة المتقدمة فقط')
 {
   for (const [page, verb, panel] of [[sales, 'التحصيل', 'payment'], [purchase, 'السداد', 'purchase']]) {
-    const fxGate = page.includes('Sales') ? "{!terminal.terminalId&&mode==='advanced'&&<div className=\"invoice-doc-fx\"" : "{mode==='advanced'&&<div className=\"invoice-doc-fx\""
+    const fxGate = "<div className=\"invoice-doc-fx\""
     assert.ok(page.includes(fxGate), `${verb} بعملة أجنبية: كتلة FX غير مقيّدة بالنمط المتقدم في ${panel}`)
     assert.ok(page.includes('متاح في الفاتورة المتقدمة فقط'), `${panel}: لا صمام أمان يمنع ترحيل ساق FX من نمط غير متقدم`)
-    assert.ok(page.includes('data-fx-today'), `${panel}: رقاقة «سعر اليوم» تحت العملة مفقودة`)
-    assert.ok(page.includes('data-fx-rates-popup') && page.includes('<FxRatesManager focusCode={fxCode}'), `${panel}: النافذة المنبثقة المفلترة على العملة المختارة مفقودة`)
+    /* §93: طلب المالك — بدل الحقول المتداخلة داخل لوحة الدفع: زر يفتح نافذة منبثقة بكل الحقول */
+    assert.ok(page.includes('data-fx-open') && page.includes('<FxCollectModal'), `${panel}: زر العملة الأجنبية أو نافذتها مفقودان`)
+    assert.ok(page.includes('onApply={(leg)=>') && page.includes('data-fx-summary'), `${panel}: الحفظ لا يعيد التعبئة التلقائية أو شارة الملخص مفقودة`)
     assert.ok(page.includes('fxLegWithDefaultRate('), `${panel}: الساق لا تستعمل السعر المحفوظ افتراضياً`)
   }
-  assert.ok(/سعر اليوم:/.test(sales) && /اضغط للتعديل/.test(sales), 'نص رقاقة السعر غير موجود')
-  ok('البيع والشراء: FX للنمط المتقدم فقط + رقاقة سعر اليوم → نافذة مفلترة + السعر المحفوظ افتراضياً')
+  assert.ok(fxCollect.includes('data-fx-collect-modal'), 'المكوّن: جذر النافذة غير موسوم')
+  assert.ok(fxCollect.includes('data-fx-today') && fxCollect.includes('data-fx-rates-popup') && fxCollect.includes('<FxRatesManager focusCode={draft.currencyCode}'), 'المكوّن: رقاقة سعر اليوم → نافذة مفلترة غير موجودة')
+  assert.ok(fxCollect.includes('fxLegWithDefaultRate(') && fxCollect.includes('validateFxLeg(') && fxCollect.includes('convertFxToBookMinor('), 'المكوّن: التحقق/التحويل/الفحص غير محققة')
+  assert.ok(fxCollect.includes('data-fx-apply') && fxCollect.includes('data-fx-preview') && fxCollect.includes('data-fx-amount') && fxCollect.includes('data-fx-rate'), 'المكوّن: أزرار ومعاينات النافذة ناقصة')
+  assert.ok(css.includes('.invoice-doc-fx-open') && css.includes('.invoice-doc-fx-active'), 'CSS زر العملة/شارة الملخص مفقود')
+  ok('البيع والشراء: زر واحد → نافذة منظمة (عملة/مبلغ/سعر/سعر اليوم/معاينة) → تعبئة تلقائية + شارة ملخص قابلة للتعديل')
 }
 
 console.log('④ مدير أسعار الصرف: يدوي/API — المالك فقط وبالرقم السري')

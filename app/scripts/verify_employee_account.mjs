@@ -27,7 +27,9 @@ const sales = read('ui/pages/AdvancedSalesInvoicePage.tsx')
 {
   assert.ok(/partyKind\?: 'customer' \| 'supplier' \| 'employee' \| null/.test(repo), 'السندات لا تقبل الموظف كطرف')
   assert.ok(/state\.vouchers\.filter\(\(row\) => row\.partyKind === 'employee'/.test(repo), 'سندات الموظف لا تدخل كشفه')
-  assert.ok(/debitMinor: voucher\.kind === 'payment' \? voucher\.amountMinor : 0/.test(repo), 'سند الصرف للموظف لا يُقيَّد مديناً')
+  /* Â§93: مدين بكامل المبلغ إلا ما سدّد قسائم رواتب — سطر القسيمة نفسه موجود في الكشف فلا يزدوج */
+  assert.ok(/const settledByVoucher = voucher\.kind === 'payment'/.test(repo), 'لا استثناء لسند تسديد القسائم — الازدواج عاد')
+  assert.ok(/voucherDebit = voucher\.kind === 'payment' \? Math\.max\(0, voucher\.amountMinor - settledByVoucher\) : 0/.test(repo), 'سند الصرف للموظف لا يُقيَّد مديناً')
   assert.ok(/creditMinor: voucher\.kind === 'receipt' \? voucher\.amountMinor : 0/.test(repo), 'سند القبض من الموظف لا يُقيَّد دائناً')
   R.ok('سندا القبض والصرف يقبلان الموظف ويحدّثان رصيده مثل العميل')
 }

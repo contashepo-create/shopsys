@@ -74,6 +74,7 @@ import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMEN
 import { customerStatement, supplierStatement, statementBalance, customerUnitDocs, supplierUnitDocs, type StatementRow } from '../core/statements.ts'
 import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments } from '../core/openPartyDocuments.ts'
 import { convertFxToBookMinor, describeFxLeg, validateFxLeg, type FxLeg } from '../core/foreignCurrency.ts'
+import { buildFxConversionEntry, computeFxConversion, fxConversionFlows, fxHoldingsFromFlows, validateFxConversion, type FxConversionDoc, type FxFlow, type FxHolding } from '../core/fxTreasury.ts'
 import { buildYearClosingLines, validateYearClose, dateInClosedYear, type FiscalYear } from '../core/fiscal.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
@@ -1427,6 +1428,24 @@ interface DataState {
   /* ─── قسائم الرواتب: ذمة مستقلة لكل موظف (طلب المالك) ─── */
   payrollSlips: PayrollSlip[]
   /** استحقاق مسير لموظف واحد أو عدة موظفين: قيد واحد بسطر دائن لكل موظف */
+  /** §93: مستندات تحويل العملات — رصيد العملات بالخزائن مشتق من التدفقات بلا حالة منفصلة */
+  fxConversions: FxConversionDoc[]
+  getFxFlows: () => FxFlow[]
+  getFxHoldings: () => FxHolding[]
+  convertFx: (args: {
+    fromCurrency: string
+    fromDecimals: 0 | 2 | 3
+    toCurrency: string
+    toDecimals: 0 | 2 | 3
+    fromTreasury: string
+    toTreasury: string
+    fromAmountMinor: number
+    fromRatePpm: number
+    toRatePpm: number
+    feeMinor: number
+    date?: string
+    notes?: string
+  }) => FxConversionDoc
   accruePayrollSlips: (args: {
     month: string
     date?: string
@@ -2640,6 +2659,14 @@ const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math
  * «المالك» ثابتة حتى لو نفذه كاشير — الآن يُختم باسم المستخدم المسجل دخوله،
  * كما تفعل QuickBooks/Zoho (كل مستند باسم منشئه الحقيقي للتدقيق).
  */
+/**
+ * §93: عملة الدفتر من إعدادات المنشأة — تحاسبه كل منظومة العملات الأجنبية
+ */
+function bookCurrencyOf() {
+  const setup = useAppStore.getState().setup
+  return (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+}
+
 function activeUserName(state: Pick<DataState, 'appUsers' | 'currentUserId'>): string {
   return state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
 }
@@ -2983,6 +3010,7 @@ export const useDataStore = create<DataState>()(
       employees: [],
       payrollRuns: [],
       payrollSlips: [],
+      fxConversions: [],
       accruePayrollSlips: (args) => {
         const state = get()
         if (!/^\d{4}-\d{2}$/.test(args.month)) throw new Error('الشهر غير صحيح (YYYY-MM)')
@@ -3022,6 +3050,28 @@ export const useDataStore = create<DataState>()(
             return { ...a, recoveredMinor: a.recoveredMinor + take }
           })
         }
+        /* §93 (إصلاح سلسلة الرواتب): الخصومات المسجلة (الجزاءات) تُخصم من
+           سجلاتها الأقدم أولاً — كما يفعل المسير المجمّع تماماً. قبل هذا
+           الإصلاح كان الجزاء يُخصم فعلياً من الراتب ويبقى «قائماً» في سجله
+           للأبد فتتناقض التقارير مع الواقع. الفائض عن المسجل = خصم لحظي
+           (غياب/تأخير هذا الشهر) بلا سجل — مسموح بلا حراسة. */
+        let employeeDeductions = state.employeeDeductions
+        const recoveredDeductionsByEmployee = new Map<number, { deductionId: number; minor: number }[]>()
+        for (const draft of drafts) {
+          if ((draft.deductionsMinor ?? 0) <= 0) continue
+          let toRecover = draft.deductionsMinor
+          const taken: { deductionId: number; minor: number }[] = []
+          employeeDeductions = employeeDeductions.map((d) => {
+            if (d.employeeId !== draft.employeeId || toRecover <= 0) return d
+            const open = d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)
+            if (open <= 0) return d
+            const take = Math.min(open, toRecover)
+            toRecover -= take
+            taken.push({ deductionId: d.id, minor: take })
+            return { ...d, recoveredMinor: d.recoveredMinor + take }
+          })
+          if (taken.length) recoveredDeductionsByEmployee.set(draft.employeeId, taken)
+        }
         const runId = nextId(state.payrollRuns)
         const baseId = nextId(state.payrollSlips)
         const now = args.date ? `${args.date}T09:00:00.000Z` : new Date().toISOString()
@@ -3051,8 +3101,14 @@ export const useDataStore = create<DataState>()(
           accruedAt: now,
           accrualEntryId: entryId,
           notes: draft.notes ?? '',
+          recoveredDeductions: recoveredDeductionsByEmployee.get(draft.employeeId),
         }))
-        set({ payrollSlips: [...state.payrollSlips, ...slips], journal: [...state.journal, entry], ...(employeeAdvances !== state.employeeAdvances ? { employeeAdvances } : {}) })
+        set({
+          payrollSlips: [...state.payrollSlips, ...slips],
+          journal: [...state.journal, entry],
+          employeeAdvances,
+          employeeDeductions,
+        })
         return slips
       },
       payPayrollSlip: (slipId, args) => {
@@ -3100,6 +3156,11 @@ export const useDataStore = create<DataState>()(
           ...advanceBack,
           { accountCode: '5102', debit: 0, credit: slip.netMinor + slip.advanceMinor, note: `عكس استحقاق ${slip.employeeName}` },
         ]
+        // §93: عكس استرداد الجزاءات المسجلة — يعود الجزاء «قائماً» كما قبل المسير
+        let employeeDeductions = state.employeeDeductions
+        for (const rd of slip.recoveredDeductions ?? []) {
+          employeeDeductions = employeeDeductions.map((d) => (d.id === rd.deductionId ? { ...d, recoveredMinor: Math.max(0, d.recoveredMinor - rd.minor) } : d))
+        }
         // عكس توزيع السلفة على السجلات (بما استُرد بمقدارها، الأقدم أولاً)
         let employeeAdvances = state.employeeAdvances
         if (slip.advanceMinor > 0) {
@@ -3123,7 +3184,8 @@ export const useDataStore = create<DataState>()(
         set({
           payrollSlips: state.payrollSlips.map((row) => (row.id === slipId ? { ...row, status: 'cancelled' as const, notes: `${row.notes ?? ''} · ألغيت: ${reason.trim()}` } : row)),
           journal: [...state.journal, entry],
-          ...(employeeAdvances !== state.employeeAdvances ? { employeeAdvances } : {}),
+          employeeAdvances,
+          employeeDeductions,
         })
       },
       getUnpaidPayrollSlips: (employeeId) => get().payrollSlips
@@ -7809,11 +7871,23 @@ export const useDataStore = create<DataState>()(
         for (const repayment of state.advanceRepayments.filter((row) => row.employeeId === employeeId)) {
           rows.push({ date: repayment.date, ref: repayment.repayNumber, description: 'سداد نقدي لسلفة خارج المسير', debitMinor: 0, creditMinor: repayment.amountMinor })
         }
-        /* ── سندات القبض والصرف المحرَّرة باسم الموظف (سلفة/راتب/استرداد) ── */
+        /* ── سندات القبض والصرف المحرَّرة باسم الموظف (سلفة/راتب/استرداد) ──
+         * §93 (إصلاح ازدواج العد): سند الصرف الذي سدّد قسائم رواتب يظهر مرة
+         * واحدة فقط — سطر «صرف راتب» للقسيمة نفسها موجود أعلاه، فكان السند
+         * يُعدّ مديناً مرة ثانية بنفس المبلغ فينقلب رصيد الموظف سالباً بلا سبب.
+         * يُعرض من السند فقط ما زاد عن مجموع القسائم التي سددها. */
         for (const voucher of state.vouchers.filter((row) => row.partyKind === 'employee' && row.partyId === employeeId && !row.reversalEntryId)) {
+          const settledByVoucher = voucher.kind === 'payment'
+            ? state.payrollSlips
+              .filter((row) => row.employeeId === employeeId && row.status === 'paid' && row.paidEntryId === voucher.journalEntryId)
+              .reduce((sum, row) => sum + row.netMinor, 0)
+            : 0
+          const voucherDebit = voucher.kind === 'payment' ? Math.max(0, voucher.amountMinor - settledByVoucher) : 0
+          if (voucher.kind === 'payment' && voucherDebit === 0) continue
           rows.push({
-            date: voucher.date, ref: voucher.voucherNumber, description: voucher.description || (voucher.kind === 'payment' ? 'سند صرف للموظف' : 'سند قبض من الموظف'),
-            debitMinor: voucher.kind === 'payment' ? voucher.amountMinor : 0,
+            date: voucher.date, ref: voucher.voucherNumber,
+            description: voucher.description || (voucher.kind === 'payment' ? 'سند صرف للموظف' : 'سند قبض من الموظف'),
+            debitMinor: voucherDebit,
             creditMinor: voucher.kind === 'receipt' ? voucher.amountMinor : 0,
           })
         }
@@ -9232,6 +9306,100 @@ export const useDataStore = create<DataState>()(
       },
 
       getCustodySummary: (fileId) => summarizeCustody(get().custodyTxs.filter((t) => t.fileId === fileId)),
+
+      /* ═══ §93: خزائن العملات الأجنبية — أرصدة مذكرة مشتقة من المستندات (طلب المالك) ═══ */
+      getFxFlows: () => {
+        const state = get()
+        const book = bookCurrencyOf()
+        const flows: FxFlow[] = []
+        /* مبيعات حُصّلت بعملة أجنبية — دخول بسعر التحصيل (قيمته الدفترية يومها) */
+        for (const sale of state.sales) {
+          if (!sale.fx || sale.fx.amountMinor <= 0) continue
+          flows.push({
+            date: sale.date.slice(0, 10), seq: sale.journalEntryId, treasury: sale.treasury ?? '1101', currency: sale.fx.currencyCode,
+            amountMinor: sale.fx.amountMinor,
+            bookValueMinor: convertFxToBookMinor({ currencyCode: sale.fx.currencyCode, amountMinor: sale.fx.amountMinor, ratePpm: sale.fx.ratePpm, decimals: sale.fx.decimals }, book.decimals),
+            kind: 'in', ref: sale.invoiceNumber,
+          })
+        }
+        /* مشتريات سُدّدت بعملة أجنبية — خروج بسعر السداد */
+        for (const purchase of state.purchases) {
+          if (!purchase.fx || purchase.fx.amountMinor <= 0) continue
+          flows.push({
+            date: purchase.date.slice(0, 10), seq: purchase.journalEntryId ?? 0, treasury: purchase.treasury ?? '1101', currency: purchase.fx.currencyCode,
+            amountMinor: purchase.fx.amountMinor,
+            bookValueMinor: convertFxToBookMinor({ currencyCode: purchase.fx.currencyCode, amountMinor: purchase.fx.amountMinor, ratePpm: purchase.fx.ratePpm, decimals: purchase.fx.decimals }, book.decimals),
+            kind: 'out', ref: purchase.invoiceNumber,
+          })
+        }
+        /* سندات قبض/صرف بعملة أجنبية — المعكوس يُحسب من حركة العملة نفسها */
+        for (const voucher of state.vouchers) {
+          if (!voucher.fx || voucher.fx.amountMinor <= 0 || voucher.reversalEntryId) continue
+          flows.push({
+            date: voucher.date.slice(0, 10), seq: voucher.journalEntryId, treasury: voucher.treasury, currency: voucher.fx.currencyCode,
+            amountMinor: voucher.fx.amountMinor, bookValueMinor: voucher.amountMinor,
+            kind: voucher.kind === 'receipt' ? 'in' : 'out', ref: voucher.voucherNumber,
+          })
+        }
+        /* تحويلات العملة المسجلة — كل مستند حركتاه (خروج بمتوسط التكلفة/دخول بتكلفة الشراء) */
+        for (const doc of state.fxConversions) flows.push(...fxConversionFlows(doc, book.code, book.decimals))
+        return flows
+      },
+      getFxHoldings: () => fxHoldingsFromFlows(get().getFxFlows()),
+
+      convertFx: (args) => {
+        const state = get()
+        const book = bookCurrencyOf()
+        const from = args.fromCurrency.trim().toUpperCase()
+        const to = args.toCurrency.trim().toUpperCase()
+        const fromIsBook = from === book.code.toUpperCase()
+        const toIsBook = to === book.code.toUpperCase()
+        if (fromIsBook && toIsBook) throw new Error('تحويل عملة الدفتر إلى نفسها هو «تحويل خزينة» — من شاشة السندات')
+        if (!state.treasuries.some((t) => t.code === args.fromTreasury)) throw new Error('الخزينة المصروفة منها غير موجودة')
+        if (!state.treasuries.some((t) => t.code === args.toTreasury)) throw new Error('الخزينة المستلمة غير موجودة')
+        /* حارس الرصيد المذكرة: لا تحويل من عملة أجنبية أكثر من رصيدها الفعلي في الخزينة */
+        const holdings = get().getFxHoldings()
+        const holding = fromIsBook ? null : holdings.find((h) => h.treasury === args.fromTreasury && h.currency === from)
+        const acquisitionRatePpm = holding?.avgRatePpm ?? (fromIsBook ? 1_000_000 : 0)
+        const input = {
+          fromCurrency: from, fromDecimals: args.fromDecimals, toCurrency: to, toDecimals: args.toDecimals,
+          fromTreasury: args.fromTreasury, toTreasury: args.toTreasury,
+          fromAmountMinor: args.fromAmountMinor,
+          fromRatePpm: fromIsBook ? 1_000_000 : args.fromRatePpm,
+          toRatePpm: toIsBook ? 1_000_000 : args.toRatePpm,
+          feeMinor: args.feeMinor, bookDecimals: book.decimals, bookCurrencyCode: book.code, acquisitionRatePpm,
+        }
+        const errors = validateFxConversion(input, holding ? holding.amountMinor : null)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const computed = computeFxConversion(input)
+        const docId = nextId(state.fxConversions)
+        const docNumber = `FXC-${String(docId).padStart(4, '0')}`
+        const now = new Date().toISOString()
+        const date = args.date || now.slice(0, 10)
+        const fromTxt = (args.fromAmountMinor / 10 ** args.fromDecimals).toFixed(args.fromDecimals)
+        const toTxt = (computed.toAmountMinor / 10 ** args.toDecimals).toFixed(args.toDecimals)
+        const label = `${fromTxt} ${from} → ${toTxt} ${to}`
+        const lines = buildFxConversionEntry(input, computed, `${docNumber} — ${label}`)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date,
+          description: `تحويل عملة ${docNumber}: ${label}${args.feeMinor > 0 ? ` · مصاريف ${(args.feeMinor / 10 ** book.decimals).toFixed(book.decimals)}` : ''}${computed.gainMinor > 0 ? ` · ربح فرق عملة ${(computed.gainMinor / 10 ** book.decimals).toFixed(book.decimals)}` : ''}${computed.lossMinor > 0 ? ` · خسارة فرق عملة ${(computed.lossMinor / 10 ** book.decimals).toFixed(book.decimals)}` : ''}`,
+          sourceType: 'fx_conversion', sourceId: docId, lines,
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const doc: FxConversionDoc = {
+          id: docId, docNumber, date,
+          fromCurrency: from, fromDecimals: args.fromDecimals, toCurrency: to, toDecimals: args.toDecimals,
+          fromTreasury: args.fromTreasury, toTreasury: args.toTreasury,
+          fromAmountMinor: args.fromAmountMinor, toAmountMinor: computed.toAmountMinor,
+          fromRatePpm: input.fromRatePpm, toRatePpm: input.toRatePpm, acquisitionRatePpm,
+          feeMinor: args.feeMinor, gainMinor: computed.gainMinor, lossMinor: computed.lossMinor,
+          journalEntryId: entryId, notes: args.notes?.trim() || undefined,
+          createdBy: activeUserName(state), createdAt: now,
+        }
+        set({ fxConversions: [...state.fxConversions, doc], journal: [...state.journal, entry] })
+        return doc
+      },
 
       addProjectExtract: (args) => {
         const state = get()
@@ -13006,6 +13174,7 @@ export const useDataStore = create<DataState>()(
           suppliers: (s.suppliers ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           employees: (s.employees ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           payrollRuns: s.payrollRuns ?? [],
+          fxConversions: s.fxConversions ?? [],
           employeeDeductions: s.employeeDeductions ?? [],
           advanceRepayments: s.advanceRepayments ?? [],
           installmentPlans: s.installmentPlans ?? [],

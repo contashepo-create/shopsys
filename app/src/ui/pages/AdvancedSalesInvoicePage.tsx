@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Boxes, Calculator, CalendarClock, CalendarDays, CircleUser, Link2, Pencil, Plus, ScrollText, Trash2, UserRound, Wallet, Warehouse as WarehouseIcon, Users } from 'lucide-react'
+import { Banknote, Boxes, Calculator, CalendarClock, CalendarDays, CircleUser, Link2, Pencil, Plus, ScrollText, Trash2, UserRound, Wallet, Warehouse as WarehouseIcon, Users } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { DocSectionHead } from '../components/DocSection.tsx'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
@@ -12,7 +12,7 @@ import { getActivity } from '../../core/activities.ts'
 import { formatMinor, toMinor, partyBalanceText } from '../../core/money.ts'
 import { PartyNotesLog } from '../components/PartyNotesLog.tsx'
 import { partyNotesFor } from '../../core/partyNotes.ts'
-import { COMMON_FX_CURRENCIES, convertFxToBookMinor, describeFxLeg, formatRate, parseRateToPpm, validateFxLeg, type FxLeg } from '../../core/foreignCurrency.ts'
+import { COMMON_FX_CURRENCIES, convertFxToBookMinor, formatRate, parseRateToPpm, validateFxLeg, type FxLeg } from '../../core/foreignCurrency.ts'
 import { computeTotals, CreditLimitError, type CartLine, type CartTotals } from '../../core/pos.ts'
 import { PriceFloorError } from '../../core/items.ts'
 import { buildReceiptModel, type InvoiceTemplate } from '../../core/receipt.ts'
@@ -37,8 +37,8 @@ import { SheetPanel } from '../components/SheetPanel.tsx'
 import { usePrintSwitches } from '../components/PrintSwitches.tsx'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { PrintSettingsPopup } from '../components/PrintSettingsPopup.tsx'
-import { FxRatesManager } from '../components/FxRatesManager.tsx'
-import { fetchFxRates, fxLegWithDefaultRate, fxRateAgeLabel, fxRateIsFresh } from '../../core/fxRates.ts'
+import { FxCollectModal } from '../components/FxCollectModal.tsx'
+import { fetchFxRates, fxLegWithDefaultRate, fxRateIsFresh } from '../../core/fxRates.ts'
 import { needsApproval } from '../../core/approvals.ts'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { buildWarehouseReceiptHtml } from '../../core/warehouseReceipt.ts'
@@ -64,7 +64,7 @@ export function AdvancedSalesInvoicePage(){
  const nav=useNavigate(),toast=useToast();const [searchParams]=useSearchParams();const host=useWindowHost();const editId=Number((host?.props.editId as number|undefined)??searchParams.get('edit')??0);const {setup,receipt,einvoice,activatedPayload,trialStartedAt,lastSeenAt,warehouseReceipt,loyalty,approvals}=useAppStore();const cur=(setup.countryCode&&getCountry(setup.countryCode)?.currency)||{code:'EGP',symbol:'ج.م',decimals:2 as const,name:''};const taxPolicy=resolveBusinessTax(setup.taxRegistrationStatus,setup.vatPercent)
  const {items,categories,customers,suppliers,warehouses,branches,treasuries,custodyFiles,vehicles,projects,costCenters,expenseTemplates,paymentTerminals,employees,appUsers,currentUserId,roleOverrides,customRoles,priceLists,advancedInvoiceDrafts,upsertAdvancedInvoiceDraft,deleteAdvancedInvoiceDraft,postSale,editSale,sales,getEffectivePrice,getCustomerBalance,addDocumentFile,partyNotes,addPartyNote,quotations,boqItems,addCustomer,redeemLoyaltyPoints,submitDocForApproval}=useDataStore();const [partyNote,setPartyNote]=useState('');const [attachments,setAttachments]=useState<PendingAttachment[]>([]);const [draftsOpen,setDraftsOpen]=useState(false);const [draftId,setDraftId]=useState(()=>crypto.randomUUID());const [commissionEmployeeId,setCommissionEmployeeId]=useState(0),[commissionBasis,setCommissionBasis]=useState<InvoiceCommissionBasis>('fixed'),[commissionAmount,setCommissionAmount]=useState(''),[additionalCommissions,setAdditionalCommissions]=useState<CommissionDraft[]>([]);/* نمط المحرر الافتراضي = تفضيل المستخدم الحالي (طلب المالك) — لكل مستخدم نمطه */
 const myPrefs=useDataStore.getState().userPrefs[String(currentUserId??'owner')]??{};const [mode,setMode]=useState<InvoiceEditorMode>(()=>myPrefs.salesInvoiceMode??'simple');const [customerId,setCustomerId]=useState(0);/* §91 — البيع لأي طرف: عميل أو مورد (2101) أو موظف (1107) */const [partyKind,setPartyKind]=useState<'customer'|'supplier'|'employee'>('customer');const [warehouseId,setWarehouseId]=useState<number|null>(setup.defaultWarehouseId??warehouses[0]?.id??null);const [lines,setLines]=useState<DraftLine[]>([]);const [invoiceDate,setInvoiceDate]=useState(()=>new Date().toISOString().slice(0,10))
- const [customerReference,setCustomerReference]=useState(''),[dueDate,setDueDate]=useState(''),[notes,setNotes]=useState('');const [discount,setDiscount]=useState('0'),[discountAmount,setDiscountAmount]=useState('');const [discByAmount,setDiscByAmount]=useState(false);const [notesLogOpen,setNotesLogOpen]=useState(false);const [multiPay,setMultiPay]=useState(false);const [bankPaid,setBankPaid]=useState('');const [paid,setPaid]=useState('');const [fxOn,setFxOn]=useState(false);const [fxCode,setFxCode]=useState('USD');const [fxAmount,setFxAmount]=useState('');const [fxRate,setFxRate]=useState('');const paidTouched=useRef(false);const [terminalPaid,setTerminalPaid]=useState('');const [employeePaid,setEmployeePaid]=useState('');const [collectionEmployeeId,setCollectionEmployeeId]=useState(0);const [treasury,setTreasury]=useState(()=>effectiveDefaultTreasury(appUsers.find(u=>u.id===currentUserId)?.treasuryAccess,'receipt','1101'));const [terminal,setTerminal]=useState<TerminalPaymentDraft>({terminalId:'',providerReference:'',cardLast4:''});const [expenses,setExpenses]=useState<InternalExpense[]>([]);const [customerCharges,setCustomerCharges]=useState<DocumentCharge[]>([]);const [allowNegative,setAllowNegative]=useState(setup.allowNegativeStock);const [chargesOpen,setChargesOpen]=useState(false);const [internalExpensesOpen,setInternalExpensesOpen]=useState(false);const [expenseTab,setExpenseTab]=useState<'expenses'|'commissions'>('expenses');const [expandedExpenseId,setExpandedExpenseId]=useState<string|null>(null);const [categoryFilter,setCategoryFilter]=useState(0);const [printOpen,setPrintOpen]=useState(false);const [printSettingsOpen,setPrintSettingsOpen]=useState(false);const fxRates=useAppStore((s)=>s.fxRates);const [fxRatesOpen,setFxRatesOpen]=useState(false)
+ const [customerReference,setCustomerReference]=useState(''),[dueDate,setDueDate]=useState(''),[notes,setNotes]=useState('');const [discount,setDiscount]=useState('0'),[discountAmount,setDiscountAmount]=useState('');const [discByAmount,setDiscByAmount]=useState(false);const [notesLogOpen,setNotesLogOpen]=useState(false);const [multiPay,setMultiPay]=useState(false);const [bankPaid,setBankPaid]=useState('');const [paid,setPaid]=useState('');const [fxOn,setFxOn]=useState(false);const [fxCode,setFxCode]=useState('USD');const [fxAmount,setFxAmount]=useState('');const [fxRate,setFxRate]=useState('');const paidTouched=useRef(false);const [terminalPaid,setTerminalPaid]=useState('');const [employeePaid,setEmployeePaid]=useState('');const [collectionEmployeeId,setCollectionEmployeeId]=useState(0);const [treasury,setTreasury]=useState(()=>effectiveDefaultTreasury(appUsers.find(u=>u.id===currentUserId)?.treasuryAccess,'receipt','1101'));const [terminal,setTerminal]=useState<TerminalPaymentDraft>({terminalId:'',providerReference:'',cardLast4:''});const [expenses,setExpenses]=useState<InternalExpense[]>([]);const [customerCharges,setCustomerCharges]=useState<DocumentCharge[]>([]);const [allowNegative,setAllowNegative]=useState(setup.allowNegativeStock);const [chargesOpen,setChargesOpen]=useState(false);const [internalExpensesOpen,setInternalExpensesOpen]=useState(false);const [expenseTab,setExpenseTab]=useState<'expenses'|'commissions'>('expenses');const [expandedExpenseId,setExpandedExpenseId]=useState<string|null>(null);const [categoryFilter,setCategoryFilter]=useState(0);const [printOpen,setPrintOpen]=useState(false);const [printSettingsOpen,setPrintSettingsOpen]=useState(false);const fxRates=useAppStore((s)=>s.fxRates);/* §93: التحصيل الأجنبي نافذة منظمة ،لا حقول متداخلة داخل لوحة الدفع */const[fxCollectOpen,setFxCollectOpen]=useState(false)
 ;/* وضع API: سحب تلقائي لسعر العملة المختارة عند تفعيل التحصيل الأجنبي إن كان
    الإعداد مفعلاً والسعر المحفوظ تجاوز عمره المسموح — بلا رقم سري (قراءة من
    مزود معتمد في الإعدادات) ويحدّث المخزون المركزي فقط. */
@@ -513,9 +513,13 @@ const minCollectMinor=!selectedCustomer?grandMinor:selectedCustomer.active===fal
     {/* إعدادات الطباعة السريعة من الفاتورة (طلب المالك): نافذة منبثقة + «المزيد» لقسم الطباعة */}
     <PrintSettingsPopup open={printSettingsOpen} onClose={()=>setPrintSettingsOpen(false)} wide={!printSwitches.cashierPrint}/>
     {/* نافذة أسعار الصرف — مفلترة تلقائياً على العملة المختارة في الفاتورة (طلب المالك) */}
-    <Modal open={fxRatesOpen} onClose={()=>setFxRatesOpen(false)} title={`سعر ${fxCode} مقابل ${cur.code} — تعديل بأسعار الصرف`} data-fx-rates-popup>
-      <FxRatesManager focusCode={fxCode} onDone={()=>setFxRatesOpen(false)} />
-    </Modal>
+    {/* §93: نافذة التحصيل الأجنبي — زر واحد ثم كل الحقول جمعاً */}
+    <FxCollectModal
+      open={fxCollectOpen} onClose={()=>setFxCollectOpen(false)} verb="التحصيل"
+      bookCurrency={cur} leg={{code:fxCode,amount:fxAmount,rate:fxRate}} rates={fxRates} active={fxOn}
+      onApply={(leg)=>{setFxCode(leg.code);setFxAmount(leg.amount);setFxRate(leg.rate);setFxOn(true);paidTouched.current=true;setPaid('')}}
+      onClear={()=>{setFxOn(false);setFxAmount('');setFxRate('')}}
+    />
   <section className="invoice-totals-footer">
    {/* ① الشروط والملاحظات — لوحة مستند لا بطاقة ملوّنة */}
    <div className="invoice-doc-panel" data-invoice-notes>
@@ -591,19 +595,18 @@ const minCollectMinor=!selectedCustomer?grandMinor:selectedCustomer.active===fal
      </div>}
      {/* التحصيل بعملة أجنبية: للفاتورة المتقدمة فقط (طلب المالك 2026-10-01) */}
      {!terminal.terminalId&&mode==='advanced'&&<div className="invoice-doc-fx" data-invoice-fx="true">
-      <label className="invoice-doc-fx-toggle"><input type="checkbox" checked={fxOn} onChange={e=>{const on=e.target.checked;setFxOn(on);paidTouched.current=true;if(on){setPaid('')}else{setFxAmount('');setFxRate('')}}}/><span>تحصيل بعملة أجنبية</span><small>القيد يبقى بعملة الدفتر {cur.code}</small></label>
-      {fxOn&&<><div className="invoice-doc-panel-grid">
-       <div>
-        <Field label="العملة"><select data-invoice-fx-code="true" className={inputCls} value={fxCode} onChange={e=>setFxCode(e.target.value)}>{COMMON_FX_CURRENCIES.filter(row=>row.code!==cur.code).map(row=><option key={row.code} value={row.code}>{row.code} — {row.nameAr}</option>)}</select></Field>
-        {/* سعر اليوم المحفوظ تحت العملة المختارة — قابل للضغط: يفتح نافذة الأسعار مفلترة على هذه العملة (طلب المالك) */}
-        <button type="button" className="invoice-doc-fx-today" data-fx-today onClick={()=>setFxRatesOpen(true)} title="اضغط لفتح نافذة أسعار الصرف — مفلترة تلقائياً على هذه العملة">
-          {fxRates[fxCode]?<>سعر اليوم: <b dir="ltr">{formatRate(fxLeg.ratePpm||fxRates[fxCode].ratePpm)}</b> {fxCode}→{cur.code} · {fxRateAgeLabel(fxRates[fxCode])} · اضغط للتعديل</>:<>لا سعر محفوظ لـ{fxCode} — اضغط لتعيينه</>}
+      {/* §93: زر واحد للتحصيل الأجنبي — الحقول كلها في نافذة منبثقة */}
+      {fxOn ? (
+        <div className="invoice-doc-fx-active" data-fx-summary="true">
+          <span className="invoice-doc-fx-active-leg" dir="ltr">{fxAmount || '0'} {fxCode} × {formatRate(fxLeg.ratePpm)} = {formatMinor(fxBookMinor,cur,false)} {cur.code}</span>
+          <button type="button" className="invoice-doc-fx-edit" data-fx-edit onClick={()=>setFxCollectOpen(true)}>تعديل</button>
+          <button type="button" className="invoice-doc-fx-clear" data-fx-clear onClick={()=>{setFxOn(false);setFxAmount('');setFxRate('')}}>إزالة</button>
+        </div>
+      ) : (
+        <button type="button" className="invoice-doc-fx-open" data-fx-open onClick={()=>{paidTouched.current=true;setFxCollectOpen(true)}}>
+          <Banknote size={15}/> تحصيل بعملة أجنبية <small>زر واحد: العملة والمبلغ وسعر الصرف في نافذة منظمة — والمحصل يتعبأ تلقائياً بعملة الدفتر</small>
         </button>
-       </div>
-       <Field label={`المبلغ بالـ${fxCode}`}><input data-invoice-fx-amount="true" className={inputCls} value={fxAmount} onChange={e=>setFxAmount(e.target.value)} inputMode="decimal" placeholder="0.00" dir="ltr"/></Field>
-       <Field label={`سعر الصرف مقابل ${cur.code}`}><input data-invoice-fx-rate="true" className={inputCls} value={fxRate} onChange={e=>setFxRate(e.target.value)} inputMode="decimal" placeholder="0.000000" dir="ltr"/></Field>
-      </div>
-      <p className={fxErrors.length?"invoice-doc-panel-note is-danger":"invoice-doc-panel-note"} data-invoice-fx-note="true">{fxErrors.length?fxErrors.join(' — '):`${describeFxLeg(fxLeg,fxBookMinor,cur.decimals)} — يُرحَّل بعملة الدفتر ${cur.code}؛ الذمة تنقص بالمحوَّل ولا تُقيَّد فروق عملة`}</p></>}
+      )}
      </div>}
      <div className="invoice-doc-panel-grid">
       <Field label="على حساب موظف"><PartyQuickPicker parties={employees.filter(e=>e.active)} value={collectionEmployeeId} onChange={pickCollectionEmployee} cashLabel="بدون" label="بحث الموظف"/></Field>

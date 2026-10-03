@@ -2730,3 +2730,13 @@ input, textarea, select, option,
 .thermal-preview-mini-paper { background: #fff; border-block: 1px solid rgb(148 163 184 / .25); }
 .dark .thermal-preview-mini-paper { background: #f8fafc; }
 .thermal-preview-mini footer { display: flex; justify-content: center; padding: .35rem .5rem; }
+
+/* ═══ §93: زر التحصيل/السداد بعملة أجنبية — زر واحد ونافذة منظمة ═══ */
+.invoice-doc-fx-open { display: flex; align-items: center; gap: .35rem; width: 100%; padding: .4rem .55rem; border: 1px dashed color-mix(in srgb, var(--doc-accent) 45%, transparent); border-radius: .5rem; background: color-mix(in srgb, var(--doc-accent) 6%, transparent); color: var(--doc-accent); font-size: .66rem; font-weight: 900; cursor: pointer; transition: all .12s; text-align: start; }
+.invoice-doc-fx-open:hover { background: color-mix(in srgb, var(--doc-accent) 14%, transparent); }
+.invoice-doc-fx-open small { display: block; color: var(--doc-faint); font-size: .52rem; font-weight: 700; }
+.invoice-doc-fx-active { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding: .35rem .5rem; border: 1px solid color-mix(in srgb, #0d9488 45%, transparent); border-radius: .5rem; background: color-mix(in srgb, #0d9488 8%, transparent); }
+.invoice-doc-fx-active-leg { font-size: .68rem; font-weight: 900; color: var(--doc-ink); font-variant-numeric: tabular-nums; }
+.invoice-doc-fx-edit, .invoice-doc-fx-clear { border: none; border-radius: .4rem; padding: .15rem .5rem; font-size: .56rem; font-weight: 800; cursor: pointer; }
+.invoice-doc-fx-edit { background: color-mix(in srgb, var(--doc-accent) 15%, transparent); color: var(--doc-accent); }
+.invoice-doc-fx-clear { background: color-mix(in srgb, #e11d48 12%, transparent); color: #e11d48; }

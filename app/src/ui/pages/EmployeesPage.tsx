@@ -18,6 +18,7 @@ import { matchesPartyCode, partyCode } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { toCsv } from '../../core/security.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
+import type { PayrollSlip } from '../../core/payrollSlips.ts'
 import { matchesSearch } from '../../core/search.ts'
 import { STAFF_COMMISSION_SOURCE_LABELS, STAFF_COMMISSION_STATUS_LABELS, type StaffCommissionSource } from '../../core/staffCommissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
@@ -110,7 +111,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   /* ── حالة قسائم الرواتب (طلب المالك) ── */
   const payrollSlips = useDataStore((state) => state.payrollSlips)
   const accruePayrollSlips = useDataStore((state) => state.accruePayrollSlips)
-  const payPayrollSlip = useDataStore((state) => state.payPayrollSlip)
+  const postVoucher = useDataStore((state) => state.postVoucher)
   /* الربط بالحضور (طلب المالك ㉘): خصومات وأجر إضافي من بيانات الحضور والإجازات */
   const getAttendancePayrollImpact = useDataStore((state) => state.getAttendancePayrollImpact)
   const getMonthlyAttendance = useDataStore((state) => state.getMonthlyAttendance)
@@ -156,12 +157,13 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [slipDraftOpen, setSlipDraftOpen] = useState(false)
   const [slipSearch, setSlipSearch] = useState('')
   const [slipScope, setSlipScope] = useState<'all' | 'selected'>('all')
-  const [slipRows, setSlipRows] = useState<{ employeeId: number; name: string; on: boolean; gross: number; allowances: number; deductions: number; advance: number }[]>([])
+  const [slipRows, setSlipRows] = useState<{ employeeId: number; name: string; on: boolean; gross: number; allowances: number; deductions: number; advance: number; attDed: number; attAllw: number; regDed: number }[]>([])
   useEffect(() => {
     if (!slipDraftOpen) return
     setSlipRows(employees.filter((employee) => employee.active !== false).map((employee) => ({
       employeeId: employee.id, name: employee.nameAr, on: true,
       gross: employee.baseSalaryMinor ?? 0, allowances: 0, deductions: 0, advance: 0,
+      attDed: 0, attAllw: 0, regDed: 0,
     })))
   }, [employees, slipDraftOpen])
   /* بحث الموظف داخل المسير: تُعرض قسيمته وحده (طلب المالك) */
@@ -178,7 +180,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
     const cut = sel.reduce((sum, row) => sum + row.deductions + row.advance, 0)
     return { count: sel.length, gross, cut, net: Math.max(0, gross - cut) }
   }, [slipRows])
-  const patchSlipRow = (employeeId: number, patch: Partial<{ on: boolean; gross: number; allowances: number; deductions: number; advance: number }>) =>
+  const patchSlipRow = (employeeId: number, patch: Partial<{ on: boolean; gross: number; allowances: number; deductions: number; advance: number; attDed: number; attAllw: number; regDed: number }>) =>
     setSlipRows((rows) => rows.map((row) => (row.employeeId === employeeId ? { ...row, ...patch } : row)))
   /**
    * «احتساب من الحضور» (طلب المالك ㉘): يملأ خصومات الغياب/التأخير والإجازة بلا
@@ -192,15 +194,44 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       const impact = impacts.get(row.employeeId)
       if (!impact) return row
       touched += 1
+      /* §93: يستبدل نصيبه المحسوب سابقاً فقط — فلا يضاعف بالضغط مرتين
+         ولا يطمس الجزاءات المسجلة التي حمّلها زر «السلف والجزاءات» */
+      const attDed = impact.absenceDeductionMinor + impact.unpaidLeaveDeductionMinor + impact.lateDeductionMinor
+      const attAllw = impact.overtimeAllowanceMinor
       return {
         ...row,
-        deductions: impact.absenceDeductionMinor + impact.unpaidLeaveDeductionMinor + impact.lateDeductionMinor,
-        allowances: (row.allowances || 0) + impact.overtimeAllowanceMinor,
+        attDed, attAllw,
+        deductions: Math.max(0, row.deductions - (row.attDed ?? 0)) + attDed,
+        allowances: Math.max(0, row.allowances - (row.attAllw ?? 0)) + attAllw,
       }
     }))
     toast.show(touched
       ? `احتُسبت بنود الحضور لـ${touched} موظف — راجعها قبل الترحيل (خصم غياب/تأخير + بدل إضافي)`
       : 'لا بيانات حضور لهذا الشهر — سجّلها من «شؤون الموظفين» أولاً')
+  }
+  /**
+   * §93 (إصلاح سلسلة الرواتب): تحميل السلف والجزاءات القائمة من سجلاتها
+   * الرسمية — قبل هذا كان المالك يكتب المبالغ من ذاكرته فتبقى السجلات
+   * «قائمة» والكشف متناقضاً. الخانة تستبدل نصيبها المحمّل سابقاً فقط.
+   */
+  const loadOutstandingBalances = () => {
+    let advCount = 0, dedCount = 0, advSum = 0, dedSum = 0
+    setSlipRows((rows) => rows.map((row) => {
+      if (!row.on) return row
+      const advRemaining = getEmployeeAdvanceBalance(row.employeeId).remainingMinor
+      const dedRemaining = getEmployeeDeductionBalance(row.employeeId).remainingMinor
+      if (advRemaining > 0) { advCount += 1; advSum += advRemaining }
+      if (dedRemaining > 0) { dedCount += 1; dedSum += dedRemaining }
+      return {
+        ...row,
+        advance: advRemaining,
+        regDed: dedRemaining,
+        deductions: Math.max(0, row.deductions - (row.regDed ?? 0)) + dedRemaining,
+      }
+    }))
+    toast.show(advCount || dedCount
+      ? `حُمّلت المتأخرات من سجلاتها: سلف لـ${advCount} موظف (${fmt(advSum)}) وجزاءات لـ${dedCount} (${fmt(dedSum)}) — راجعها قبل الترحيل`
+      : 'لا سلف ولا جزاءات قائمة لأي من المحددين — القسائم صافية')
   }
   const accrueSlips = () => {
     /* جسر الحضور ⑤ (جولة «اكمل ونفذ»): لا ترحيل أعمى لمسير شهرٍ بلا أي سجلات
@@ -224,10 +255,24 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       setSlipDraftOpen(false)
     } catch (error) { toast.show((error as Error).message, 'error') }
   }
-  const paySlip = (slipId: number) => {
+  /* §93 (إصلاح سلسلة الرواتب): صرف القسيمة بمستند «سند صرف» رسمي على 2104
+     باسم الموظف — فيُسدَّد القسيمة بسندها القابل للطباعة بدل قيد مجهّل
+     من الخزينة الرئيسية فقط، ويعرض كشف الحساب القيمة مرة واحدة صحيحة. */
+  const [paySlipFor, setPaySlipFor] = useState<PayrollSlip | null>(null)
+  const [paySlipTreasury, setPaySlipTreasury] = useState('1101')
+  const [paySlipDate, setPaySlipDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const postSlipVoucher = () => {
+    if (!paySlipFor) return
     try {
-      const slip = payPayrollSlip(slipId, { treasury: '1101' })
-      toast.show(`صُرف راتب ${slip.employeeName} (${slip.slipNumber}) بقيد مستقل`)
+      const voucher = postVoucher({
+        kind: 'payment', treasury: paySlipTreasury as never, counterAccountCode: '2104',
+        amountMinor: paySlipFor.netMinor,
+        description: `صرف راتب ${paySlipFor.month} — ${paySlipFor.slipNumber} · ${paySlipFor.employeeName}`,
+        partyKind: 'employee', partyId: paySlipFor.employeeId,
+        settleSlipIds: [paySlipFor.id], date: paySlipDate || undefined,
+      })
+      toast.show(`سند صرف ${voucher.voucherNumber} سدّد القسيمة ${paySlipFor.slipNumber} بقيد متوازن ✓`)
+      setPaySlipFor(null)
     } catch (error) { toast.show((error as Error).message, 'error') }
   }
   const roleOptions = useMemo(
@@ -1061,6 +1106,20 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                               <span className="font-bold text-slate-700 dark:text-slate-200">{row.name}</span>
                               <span className="font-mono text-[10px] text-slate-400">#{index + 1}</span>
                             </label>
+                            {/* §93: متبقي السلف والجزاءات المسجلة — مرئي قبل الترحيل لا من الذاكرة */}
+                            {(() => {
+                              const adv = getEmployeeAdvanceBalance(row.employeeId)
+                              const ded = getEmployeeDeductionBalance(row.employeeId)
+                              if (adv.remainingMinor <= 0 && ded.remainingMinor <= 0) return null
+                              const advWhy = adv.advances.filter((a) => a.amountMinor > a.recoveredMinor).map((a) => `${a.advanceNumber}${a.source === 'custody_shortage' ? ' (عجز عهدة)' : a.source === 'sale_collection' ? ' (تحصيل على حسابه)' : ''}: متبقٍ ${fmt(a.amountMinor - a.recoveredMinor)}${a.notes ? ` — ${a.notes}` : ''}`).join('\n')
+                              const dedWhy = ded.deductions.filter((d) => d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0) > 0).map((d) => `${d.dedNumber}: ${d.reason} — متبقٍ ${fmt(d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0))}`).join('\n')
+                              return (
+                                <div className="mt-1 flex flex-wrap gap-1" data-slip-hints={row.employeeId}>
+                                  {adv.remainingMinor > 0 && <span title={advWhy} className="cursor-help rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 dark:text-amber-300">سلف متبقية {fmt(adv.remainingMinor)}</span>}
+                                  {ded.remainingMinor > 0 && <span title={dedWhy} className="cursor-help rounded-md bg-rose-500/10 px-1.5 py-0.5 text-[9.5px] font-bold text-rose-600 dark:text-rose-300">جزاءات قائمة {fmt(ded.remainingMinor)}</span>}
+                                </div>
+                              )
+                            })()}
                           </td>
                           {(['gross', 'allowances', 'deductions', 'advance'] as const).map((field) => (
                             <td className="p-1.5" key={field}>
@@ -1103,6 +1162,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                       <Btn variant="soft" onClick={applyAttendanceImpact} data-apply-attendance title="يملأ خصم الغياب والتأخير والإجازة بلا أجر وبدل الإضافي من بيانات الحضور لهذا الشهر">
                         <span className="flex items-center gap-1.5"><CalendarCheck2 size={15} /> احتساب من الحضور</span>
                       </Btn>
+                      <Btn variant="soft" onClick={loadOutstandingBalances} data-load-outstanding title="يملأ خانتي السلف والخصومات من سجلات السلف والجزاءات القائمة — لا تكتبها من ذاكرتك">
+                        <span className="flex items-center gap-1.5"><HandCoins size={15} /> تحميل السلف والجزاءات القائمة</span>
+                      </Btn>
                       <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
                     </div>
                     <Btn onClick={accrueSlips} disabled={slipTotals.count === 0 || slipTotals.net <= 0} className="!bg-emerald-500 hover:!bg-emerald-400 !text-white font-black px-5" data-slip-post>
@@ -1111,6 +1173,32 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   </div>
                 </div>
               </div>
+            </Modal>
+
+            {/* §93: سند صرف القسيمة — تسديد رسمي بمستند مطبوع على 2104 باسم الموظف */}
+            <Modal open={paySlipFor != null} onClose={() => setPaySlipFor(null)} title={`سند صرف راتب — ${paySlipFor?.employeeName ?? ''}`} subtitle={`تسديد القسيمة ${paySlipFor?.slipNumber ?? ''} · ${paySlipFor ? monthLabelAr(paySlipFor.month) : ''} بمستند رسمي يسددها باسمها`}>
+              {paySlipFor && (
+                <div className="space-y-3" data-slip-voucher>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Field label="الخزينة / البنك المصروف منه">
+                      <TreasuryPicker value={paySlipTreasury} onChange={setPaySlipTreasury} operation="payment" />
+                    </Field>
+                    <Field label="تاريخ السند">
+                      <input type="date" className={inputCls} value={paySlipDate} onChange={(event) => setPaySlipDate(event.target.value)} aria-label="تاريخ سند صرف الراتب" />
+                    </Field>
+                    <Field label={`صافي القسيمة (${cur.symbol})`}>
+                      <input className={inputCls + ' text-center font-mono font-black'} readOnly value={fmt(paySlipFor.netMinor)} aria-label="مبلغ سند صرف الراتب" />
+                    </Field>
+                  </div>
+                  <DocOutcome>الأثر: سند صرف PV يُقفل «رواتب مستحقة 2104» مديناً باسم الموظف والخزينة دائنةً بالنقد المصروف — القسيمة تُوسم «مصروفة» باسم هذا السند، وتظهر في كشف حساب الموظف مرة واحدة بلا ازدواج.</DocOutcome>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Btn variant="ghost" onClick={() => setPaySlipFor(null)}>رجوع</Btn>
+                    <Btn onClick={postSlipVoucher} className="!bg-teal-600 hover:!bg-teal-500 !text-white font-black px-5" data-slip-voucher-post>
+                      💸 ترحيل سند الصرف وتسديد {paySlipFor.slipNumber}
+                    </Btn>
+                  </div>
+                </div>
+              )}
             </Modal>
 
             {/* جسر الحضور ⑤: تحذير صريح قبل ترحيل مسير شهرٍ بلا سجلات حضور — لا خصم صامت ولا ترحيل أعمى */}
@@ -1154,7 +1242,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     </td>
                     <td className="p-1 text-center">
                       {slip.status === 'accrued' && (
-                        <Btn variant="ghost" onClick={() => paySlip(slip.id)} data-pay-slip={slip.slipNumber}>صرف الآن</Btn>
+                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(new Date().toISOString().slice(0, 10)) }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
                       )}
                       {slip.status === 'paid' && <span className="text-[11px] text-slate-400">{(slip.paidAt ?? '').slice(0, 10)}</span>}
                     </td>
@@ -1164,9 +1252,11 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
             </table>
           </section>
 
-          <div className="anim-up flex flex-wrap justify-end gap-2">
-            <Btn variant="ghost" onClick={openSingleRun}><span className="flex items-center gap-1.5"><UserSearch size={15} /> مسير راتب موظف واحد</span></Btn>
-            <Btn onClick={openRun}><span className="flex items-center gap-1.5"><Plus size={15} /> مسير رواتب لكل الموظفين</span></Btn>
+          <div className="anim-up flex flex-wrap items-center justify-end gap-2">
+            {/* §93: القسائم المستقلة هي المسار الرسمي — المجمّع القديم للتوافق فقط */}
+            <span className="hidden sm:block text-[10.5px] font-bold text-slate-400">المسار الرسمي: قسيمة مستقلة لكل موظف تُسدَّد بسند صرفها</span>
+            <Btn variant="ghost" onClick={openSingleRun} title="الطريقة القديمة: مستند مسير واحد لراتب موظف"><span className="flex items-center gap-1.5"><UserSearch size={15} /> مسير مجمّع لموظف (قديم)</span></Btn>
+            <Btn variant="ghost" onClick={openRun} title="الطريقة القديمة: مستند مسير واحد بكل الموظفين"><span className="flex items-center gap-1.5"><Plus size={15} /> مسير مجمّع للجميع (قديم)</span></Btn>
           </div>
 
           {listedRuns.length === 0 ? (
