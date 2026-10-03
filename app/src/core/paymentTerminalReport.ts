@@ -38,9 +38,13 @@ export function terminalReportCsv(rows: TerminalReportRow[]): string {
 
 export function summarizeTerminalTransactions(transactions: PaymentTerminalTransaction[], from?: string, to?: string): TerminalReportRow[] {
   const rows = new Map<string, TerminalReportRow>()
+  // (§78) تطبيع تاريخ فقط ⇐ لحظة كاملة: «to» بتاريخ فقط كانت تستبعد يومه كله
+  // لأن occurredAt اللحظي أكبر نصياً من التاريخ المجرد (المقارنة معجمية)
+  const normFrom = from && !from.includes('T') ? `${from}T00:00:00` : from
+  const normTo = to && !to.includes('T') ? `${to}T23:59:59.999` : to
   for (const transaction of transactions) {
-    if (from && transaction.occurredAt < from) continue
-    if (to && transaction.occurredAt > to) continue
+    if (normFrom && transaction.occurredAt < normFrom) continue
+    if (normTo && transaction.occurredAt > normTo) continue
     const key = `${transaction.terminalId}:${transaction.branchId}:${transaction.userId}`
     const row = rows.get(key) ?? { terminalId: transaction.terminalId, branchId: transaction.branchId, userId: transaction.userId, chargeMinor: 0, refundMinor: 0, voidMinor: 0, netMinor: 0, transactionCount: 0 }
     row.transactionCount++

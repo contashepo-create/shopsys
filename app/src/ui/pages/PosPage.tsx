@@ -23,6 +23,8 @@ import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.t
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
+import { userPrefsKey } from '../../core/userPreferences.ts'
+import { resolveShortcuts } from '../../core/keyboardShortcuts.ts'
 import { isInvoiceFirst } from '../../core/activities.ts'
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
@@ -154,14 +156,18 @@ export function PosPage() {
   useEffect(() => { const focusItem = () => { searchRef.current?.focus(); searchRef.current?.select() }; window.addEventListener('shopsys:focus-item', focusItem); window.addEventListener('shopsys:open-item', focusItem); return () => { window.removeEventListener('shopsys:focus-item', focusItem); window.removeEventListener('shopsys:open-item', focusItem) } }, [])
 
   // F9 = فتح الدفع مباشرة (الاختصار المكتوب على الزر يعمل فعلاً)
+  // تخصيص الاختصارات (طلب المالك): مفتاحا البحث والترحيل هنا يتبعان خريطة
+  // المستخدم؛ يبقى F8 تحصيلاً نقدياً سريعاً خاصاً بالكاشير (موثّقاً على الزر).
+  const savedShortcutOverrides = useDataStore((s) => s.userPrefs[userPrefsKey(s.currentUserId)]?.keyboardShortcuts)
+  const posShortcuts = useMemo(() => resolveShortcuts(savedShortcutOverrides), [savedShortcutOverrides])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'F2') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); return }
+      if (e.key === posShortcuts.quickSearch) { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); return }
       if (e.key === 'Escape') { setPayOpen(false); setQuickPrintOpen(false); searchRef.current?.focus(); return }
-      if (e.key === 'F8' || e.key === 'F9') {
+      if (e.key === posShortcuts.post || e.key === 'F8') {
         e.preventDefault()
         if (!cart.length) return
-        // F8 تحصيل نقدي سريع، وF9 فتح الدفع مع احترام سياسة المستخدم/الدور
+        // F8 تحصيل نقدي سريع، ومفتاح الترحيل يفتح الدفع مع احترام سياسة المستخدم/الدور
         if (shiftPolicy.required && !currentOpenShift(useDataStore.getState().shifts)) { setShiftOpenModal(true); return }
         if (e.key === 'F8') setPayment('cash')
         setPayOpen(true)
@@ -169,7 +175,7 @@ export function PosPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [cart.length, shiftPolicy.required])
+  }, [cart.length, shiftPolicy.required, posShortcuts])
 
   const sellable = useMemo(() => items.filter((it) => it.isActive), [items])
 

@@ -117,6 +117,61 @@ export function buildExtraUsageEntry(
   return lines
 }
 
+/* ─── بطاقة تقرير المعدة الشاملة (وحدة تقارير المعدات — طلب المالك) ─── */
+
+/**
+ * تقرير واحد لكل معدة عبر كامل تاريخها: ربحية equipmentProfitability
+ * (إيراد الإيجار + التجاوز − مصاريف التشغيل، وساعات العدّاد الموثقة
+ * ووردانيات المشغلين، وربح الساعة) + عدد العقود والنشطة منها والوحدات
+ * المحجوزة والتأمينات المحتجزة القائمة (النشطة فقط — المقفلة صُفّيت،
+ * بنفس منطق تقرير الإيجارات rentalReport).
+ */
+export interface EquipmentReportCard {
+  revenueMinor: number
+  costsMinor: number
+  profitMinor: number
+  hours: number
+  profitPerHourMinor: number | null
+  contractsCount: number
+  activeContracts: number
+  rentedUnits: number // Σ الوحدات المحجوزة (يوم/ساعة عدّاد محجوزة/شهر)
+  depositsHeldMinor: number
+}
+
+export function equipmentReportCard(args: {
+  contracts: readonly {
+    days: number
+    status: 'active' | 'closed'
+    extraMinor: number
+    rateType?: 'hourly' | 'daily' | 'monthly'
+    startReading?: number | null
+    endReading?: number | null
+    totals: { rentMinor: number; depositMinor: number }
+  }[]
+  costs: readonly { amountMinor: number }[]
+  /** ساعات وردانيات المشغلين على هذه المعدة (موثقة بقراءات صالحة عند الإدخال) */
+  shiftHours: number
+}): EquipmentReportCard {
+  const rentMinor = args.contracts.reduce((a, c) => a + c.totals.rentMinor, 0)
+  const extraMinor = args.contracts.reduce((a, c) => a + c.extraMinor, 0)
+  const costsMinor = args.costs.reduce((a, c) => a + c.amountMinor, 0)
+  // ساعات العدّاد الموثقة: العقود الساعية المقفلة فقط (قراءتا تسليم وإرجاع)
+  let contractHours = 0
+  for (const c of args.contracts) {
+    if (c.rateType === 'hourly' && c.startReading != null && c.endReading != null) {
+      contractHours += usageHours(c.startReading, c.endReading)
+    }
+  }
+  const base = equipmentProfitability({ rentMinor, extraMinor, costsMinor, contractHours, shiftHours: args.shiftHours })
+  return {
+    ...base,
+    contractsCount: args.contracts.length,
+    activeContracts: args.contracts.filter((c) => c.status === 'active').length,
+    rentedUnits: args.contracts.reduce((a, c) => a + c.days, 0),
+    depositsHeldMinor: args.contracts.filter((c) => c.status === 'active').reduce((a, c) => a + c.totals.depositMinor, 0),
+  }
+}
+
 /* ─── الوردانيات (ورديات المشغلين) ─── */
 
 export interface OperatorShift {

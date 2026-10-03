@@ -29,9 +29,10 @@ const css = read('index.css')
   const printAt = frame.indexOf('data-quick-print')
   const draftsAt = frame.indexOf('onRestoreDraft} title=', printAt)
   assert.ok(draftsAt > printAt && draftsAt - printAt < 700, 'زر الطباعة ليس بجوار «المسودات» في الشريط')
-  assert.ok(/onQuickPrint=\{\(\)=>printDraft\(printSwitches\.cashierPrint\?'thermal':'a4'\)\}/.test(sales),
-    'زر الطباعة لا يتبع مفتاح الكاشير')
-  assert.ok(/if\(!printSwitches\.silentPrint\)\{setThermalPreview\(/.test(sales), 'الطباعة غير الصامتة لا تعرض المعاينة أولاً')
+  /* قالب المستخدم المفضل أولاً (تفضيلات لكل مستخدم) وإلا مفتاح الكاشير العام */
+  assert.ok(/onQuickPrint=\{\(\)=>printDraft\(\(useDataStore\.getState\(\)\.userPrefs\[String\(currentUserId\?\?'owner'\)\]\?\.preferredPrintTemplate\)\?\?\(printSwitches\.cashierPrint\?'thermal':'a4'\)\)\}/.test(sales),
+    'زر الطباعة لا يتبع تفضيل المستخدم ثم مفتاح الكاشير')
+  assert.ok(/if\(!printSwitches\.silentPrint\)\{openPrintPreview\(\{/.test(sales), 'الطباعة غير الصامتة لا تعرض المعاينة أولاً')
   R.ok('زر «طباعة» بجوار المسودات يتبع مفاتيح الكاشير/الصامت ويعرض المعاينة أولاً')
 }
 {
@@ -51,5 +52,37 @@ const css = read('index.css')
   assert.ok(/list="job-titles-by-activity"/.test(employees) && /jobTitlesFor\(setup\.activityId\)/.test(employees),
     'شاشة الموظف لا تستعمل مسميات النشاط')
   R.ok('المسميات الوظيفية تتغيّر من نشاط لآخر والحقل يبقى حراً')
+}
+{
+  /* المعاينة الحية العالمية (طلب المالك): متجر عام + نافذة واحدة فوق المسارات،
+     إعدادات سريعة فورية، وزر إعدادات إضافية يصغّرها ويفتح قسم الطباعة */
+  const store = read('ui/components/printPreviewStore.ts')
+  const app = read('App.tsx')
+  assert.ok(/export const usePrintPreview/.test(store) && /openPreview:/.test(store), 'متجر المعاينة العامة مفقود')
+  assert.ok(/rebuild\?\: \(\) => string/.test(store) && /refresh: \(\) => void/.test(store), 'المعاينة الحية بلا إعادة بناء')
+  assert.ok(/openPrintPreview\(\{[\s\S]*rebuild:/.test(sales), 'فاتورة البيع تفتح المعاينة بلا إعادة بناء حية')
+  /* إعادة البناء تعيد بناء **الموديل نفسه** بإعدادات اللحظة — لا إعادة استخدام
+     موديل لحظة الفتح الذي التقط التذييل وغيره فبقيت المعاينة ميتة رغم التحديث */
+  assert.ok(/buildModelHtml\(buildPrintModel\(/.test(sales), 'إعادة البناء لا تعيد بناء الموديل — حقول الإعدادات المدمجة فيه (التذييل) تظل ميتة')
+  assert.ok(app.includes('<ThermalPreview />'), 'المعاينة العامة لا تُرندر فوق كل المسارات')
+  const quickSettings = read('ui/components/QuickPrintSettings.tsx')
+  assert.ok(/data-thermal-quick/.test(preview) && /QuickPrintSettings/.test(preview), 'لا لوحة إعدادات سريعة داخل المعاينة')
+  assert.ok(/data-quick-paper/.test(quickSettings) && /data-quick-fontscale/.test(quickSettings), 'الإعدادات السريعة المشتركة ناقصة')
+  assert.ok(/data-thermal-extra-settings/.test(preview), 'لا زر «إعدادات إضافية»')
+  assert.ok(/setMini\(true\); nav\('\/settings\/printing'\)/.test(preview), 'الإعدادات الإضافية لا تصغّر المعاينة وتفتح قسم الطباعة')
+  assert.ok(/data-thermal-mini/.test(preview) && /data-thermal-expand/.test(preview), 'لا وضع مصغّر حي أسفل الشاشة')
+  assert.ok(/receipt === receiptRef\.current\) return/.test(preview) && /refresh\(\)/.test(preview), 'المعاينة لا تتحدث فورياً مع إعدادات الطباعة')
+  assert.ok(/silent: useAppStore\.getState\(\)\.receipt\.silentPrint \?\? false/.test(preview), 'الطباعة من المعاينة لا تقرأ مفتاح الصامتة لحظة الطباعة')
+  /* الوضع المصغّر لا يختطق لوحة المفاتيح (المستخدم يعمل في قسم الطباعة)،
+     وحقول الإدخال لا تُفجّر الطباعة بEnter */
+  assert.ok(/if \(!open \|\| mini\) return/.test(preview), 'المعاينة المصغّرة تختطف لوحة مفاتيح قسم الطباعة')
+  assert.ok(/'INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'/.test(preview), 'Enter داخل حقول المعاينة قد يطبع بالخطأ')
+  /* تغيير عرض الورق لا يعيد تمركز النافذة المسحوبة */
+  assert.ok(/centeredRef/.test(preview), 'تغيير عرض الورق يعيد تمركز النافذة فيضيع مكانها المسحوب')
+  for (const page of ['ui/pages/AdvancedPurchaseInvoicePage.tsx', 'ui/pages/PurchaseOrdersPage.tsx', 'ui/pages/QuotationsPage.tsx']) {
+    assert.ok(/openPrintPreview\(\{\s*html:\s*buildModelHtml/.test(read(page)), `${page} لا يفتح المعاينة العامة بحمولة قابلة لإعادة البناء`)
+    assert.ok(/buildModelHtml\(buildPrintModel\(/.test(read(page)), `${page} لا يعيد بناء الموديل عند تحديث الإعدادات`)
+  }
+  R.ok('معاينة حية عالمية: متجر + نافذة فوق المسارات + إعدادات سريعة فورية + مصغّرة حية أثناء قسم الطباعة')
 }
 R.done()

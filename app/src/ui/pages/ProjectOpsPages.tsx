@@ -183,7 +183,7 @@ export function MaterialIssuesPage() {
 /* ═══════════════ تحصيلات العملاء FIFO ═══════════════ */
 
 export function ClientCollectionsPage() {
-  const { customers, clientSettlements, paymentTerminals, appUsers, currentUserId, getOpenClientInvoices, receiveClientPayment } = useDataStore()
+  const { customers, clientSettlements, paymentTerminals, appUsers, currentUserId, getOpenClientInvoices, receiveClientPayment, vouchers, projects } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -286,6 +286,29 @@ export function ClientCollectionsPage() {
         <Btn onClick={collect} shortcut="F9" disabled={!customerId || !amount} className="w-full">💰 تحصيل وتوزيع تلقائي</Btn>
       </div>
 
+      {/* §95 (محاذاة pro-acc): سندات القبض المرتبطة بمشروع — أثر تحليلي على المشروع، ورصيد العميل نُزل من طرف السند */}
+      {vouchers.filter((v) => v.kind === 'receipt' && !v.reversalEntryId && v.projectId != null).length > 0 && (
+        <div className={`anim-up ${card} overflow-hidden`} data-project-receipt-vouchers>
+          <div className="px-4 py-3 text-[12px] font-black text-slate-500 border-b border-slate-100 dark:border-slate-800">سندات قبض مرتبطة بمشاريع — تحصيلات وُسمت على مشروع بعينه (لربحية المشروع وتحصيلاته)</div>
+          <table className="w-full text-sm">
+            <tbody>
+              {[...vouchers].reverse().filter((v) => v.kind === 'receipt' && !v.reversalEntryId && v.projectId != null).slice(0, 30).map((v) => {
+                const prj = projects.find((p) => p.id === v.projectId)
+                const customerName = v.partyKind === 'customer' && v.partyId ? customers.find((c) => c.id === v.partyId)?.nameAr ?? '—' : v.description || 'قبض عام'
+                return (
+                  <tr key={v.id} className="border-b border-slate-50 dark:border-slate-800/50">
+                    <td className="px-4 py-2.5">
+                      <div className="font-bold">{v.voucherNumber} — {customerName}</div>
+                      <div className="text-[11px] text-slate-400">{v.date.slice(0, 10)} · {prj ? `${prj.code} — ${prj.nameAr}` : '—'}</div>
+                    </td>
+                    <td className="px-4 py-2.5 text-left font-black text-emerald-600">{fmt(v.amountMinor)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
       {clientSettlements.length > 0 && (
         <div className={`anim-up ${card} overflow-hidden`}>
           <div className="px-4 py-3 text-[12px] font-black text-slate-500 border-b border-slate-100 dark:border-slate-800">سجل التحصيلات</div>

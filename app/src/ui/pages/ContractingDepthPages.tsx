@@ -8,15 +8,19 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * - أوامر التغيير والدفعات المقدمة داخل صفحة المشروعات نفسها
  */
 import { useMemo, useState } from 'react'
-import { Plus, Eye, ListChecks, Users2, ShieldCheck, CalendarClock } from 'lucide-react'
+import { Plus, Eye, ListChecks, Users2, ShieldCheck, CalendarClock, Pencil, Printer } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { boqItemTotal, BOND_TYPE_LABELS, type BondType, type SubContract, type Bond } from '../../core/contracting.ts'
+import { boqItemTotal, BOND_TYPE_LABELS, type BondType, type SubContract, type SubCertificate, type Bond, type BoqItem, type DailyWorker } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
+import { buildSimpleDocModel } from '../../core/receipt.ts'
+import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { usePrintSwitches } from '../components/PrintSwitches.tsx'
 
 const useCur = () => {
   const { setup } = useAppStore()
@@ -30,7 +34,7 @@ const card = 'rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dar
 
 /* ═══════════ جداول الكميات BOQ ═══════════ */
 export function BoqPage() {
-  const { projects, boqItems, addBoqItem, updateBoqProgress, removeBoqItem, getProjectWip } = useDataStore()
+  const { projects, boqItems, addBoqItem, updateBoqItem, updateBoqProgress, removeBoqItem, getProjectWip } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -42,6 +46,8 @@ export function BoqPage() {
   const [qty, setQty] = useState('')
   const [price, setPrice] = useState('')
   const [estCost, setEstCost] = useState('') // التكلفة التقديرية للوحدة — موازنة البند لتحليل EVM
+  /* §94-مراجعة (بلاغ المالك: «راجع كل شئ»): تعديل بند BOQ — الكمية/السعر قبل بدء التنفيذ فقط */
+  const [editingItem, setEditingItem] = useState<BoqItem | null>(null)
 
   const items = boqItems.filter((b) => projectId !== '' && b.projectId === projectId)
   const total = items.reduce((s, b) => s + boqItemTotal(b), 0)
@@ -53,6 +59,26 @@ export function BoqPage() {
       addBoqItem({ projectId: projectId as number, code: code.trim(), descriptionAr: desc.trim(), unit: unit.trim(), qty: Number(qty) || 0, unitPriceMinor: toMinor(price, cur.decimals), estCostMinor: toMinor(estCost || '0', cur.decimals) })
       toast.show('أُضيف البند لجدول الكميات ✅')
       setOpen(false); setCode(''); setDesc(''); setQty(''); setPrice(''); setEstCost('')
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  const openItemEdit = (b: BoqItem) => {
+    setEditingItem(b)
+    setCode(b.code); setDesc(b.descriptionAr); setUnit(b.unit); setQty(String(b.qty))
+    setPrice(String(b.unitPriceMinor / 10 ** cur.decimals)); setEstCost(String(b.estCostMinor / 10 ** cur.decimals))
+  }
+  const saveItemEdit = () => {
+    if (!editingItem) return
+    try {
+      const locked = editingItem.progressPercent > 0
+      updateBoqItem(editingItem.id, {
+        code: code.trim(), descriptionAr: desc.trim(), unit: unit.trim(),
+        /* البند المنفَّذ لا تتغير كميته ولا سعره — نسب المستخلصات محسوبة عليها تاريخياً */
+        ...(locked ? {} : { qty: Number(qty) || 0, unitPriceMinor: toMinor(price, cur.decimals) }),
+        estCostMinor: toMinor(estCost || '0', cur.decimals),
+      })
+      toast.show(`عُدّل البند ${code.trim() || editingItem.code} ✓`)
+      setEditingItem(null); setCode(''); setDesc(''); setQty(''); setPrice(''); setEstCost('')
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
@@ -108,7 +134,12 @@ export function BoqPage() {
                       <span className="text-[11px] font-bold w-9">{b.progressPercent}٪</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3"><button onClick={() => removeBoqItem(b.id)} className="text-rose-500 text-[11px] font-bold hover:underline">حذف</button></td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2 justify-end">
+                      <button onClick={() => openItemEdit(b)} data-boq-edit title={b.progressPercent > 0 ? 'تعديل الوصف/الوحدة/الكود — الكمية والسعر مقفولان (البند منفَّذ)' : 'تعديل البند'} className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Pencil size={13} /></button>
+                      <button onClick={() => removeBoqItem(b.id)} className="text-rose-500 text-[11px] font-bold hover:underline">حذف</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -117,22 +148,31 @@ export function BoqPage() {
         </div>
       )}
 
-      <Modal open={open} onClose={() => setOpen(false)} title="بند جدول كميات جديد" subtitle="مستند تعريفي: بند تنفيذي يُقاس عليه الإنجاز">
+      <Modal open={open || !!editingItem} onClose={() => { setOpen(false); setEditingItem(null) }} title={editingItem ? `تعديل البند ${editingItem.code || editingItem.id}` : 'بند جدول كميات جديد'} subtitle="مستند تعريفي: بند تنفيذي يُقاس عليه الإنجاز" data-boq-edit-modal>
         <div className="space-y-3">
+          {editingItem && editingItem.progressPercent > 0 && (
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-300 font-bold">
+              🔒 البند منفَّذ بنسبة {editingItem.progressPercent}٪ — الكمية وسعر الوحدة مقفولان (نِسَب المستخلصات محسوبة عليهما)؛ الوصف والوحدة والكود والتكلفة التقديرية متاحة دائماً
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-3">
             <Field label="كود البند"><input value={code} onChange={(e) => setCode(e.target.value)} placeholder="1-2" className={inputCls} /></Field>
             <Field label="الوحدة"><input value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="م2 / م3 / طن / مقطوعية" className={inputCls} /></Field>
-            <Field label="الكمية"><input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label="الكمية" hint={editingItem && editingItem.progressPercent > 0 ? 'مقفولة — منفَّذ' : undefined}>
+              <input value={editingItem && editingItem.progressPercent > 0 ? String(editingItem.qty) : qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" disabled={!!(editingItem && editingItem.progressPercent > 0)} className={inputCls} />
+            </Field>
           </div>
           <Field label="وصف البند"><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="توريد وصب خرسانة مسلحة…" className={inputCls} /></Field>
           <div className="grid grid-cols-2 gap-3">
-            <Field label={`سعر الوحدة (${cur.symbol})`}><input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+            <Field label={`سعر الوحدة (${cur.symbol})`} hint={editingItem && editingItem.progressPercent > 0 ? 'مقفول — منفَّذ' : undefined}>
+              <input value={editingItem && editingItem.progressPercent > 0 ? String(editingItem.unitPriceMinor / 10 ** cur.decimals) : price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" disabled={!!(editingItem && editingItem.progressPercent > 0)} className={inputCls} />
+            </Field>
             <Field label={`تكلفة تقديرية/وحدة (${cur.symbol})`} hint="موازنة البند — تغذي لوحة القيمة المكتسبة EVM وتنبيهات التجاوز">
               <input value={estCost} onChange={(e) => setEstCost(e.target.value)} inputMode="decimal" className={inputCls} />
             </Field>
           </div>
-          <DocOutcome>الأثر: <b>لا قيد</b> عند إضافة البند — جدول الكميات مرجع قياس وتسعير؛ القيد يتولد عند اعتماد المستخلص الذي ينفّذ نسبة من هذا البند (<b>4107</b> إيراداً و<b>1104</b> ذمةً و<b>1105</b> محتجزاً).</DocOutcome>
-          <Btn onClick={save} className="w-full">حفظ البند</Btn>
+          <DocOutcome>الأثر: <b>لا قيد</b> — جدول الكميات مرجع قياس وتسعير؛ القيد يتولد عند اعتماد المستخلص الذي ينفّذ نسبة من هذا البند (<b>4107</b> إيراداً و<b>1104</b> ذمةً و<b>1105</b> محتجزاً).</DocOutcome>
+          <Btn onClick={editingItem ? saveItemEdit : save} className="w-full">{editingItem ? 'حفظ التعديلات' : 'حفظ البند'}</Btn>
         </div>
       </Modal>
     </div>
@@ -141,10 +181,58 @@ export function BoqPage() {
 
 /* ═══════════ مقاولو الباطن ═══════════ */
 export function SubcontractorsPage() {
-  const { projects, subContracts, subCertificates, subPayments, journal, suppliers, boqItems, addSubContract, addSubCertificate, paySubContractor, releaseSubRetention, addSubAdvance, getSubAdvanceBalance } = useDataStore()
+  const { projects, subContracts, subCertificates, subPayments, journal, suppliers, boqItems, addSubContract, updateSubContract, addSubCertificate, paySubContractor, releaseSubRetention, addSubAdvance, getSubAdvanceBalance } = useDataStore()
   const cur = useCur()
   const toast = useToast()
+  const printSwitches = usePrintSwitches()
   const fmt = (m: number) => formatMinor(m, cur, false)
+
+  /* §94-مراجعة-2: تعديل عقد باطن — القيمة مقفولة بعد أول شهادة، والنِّسَب على الشهادات القادمة */
+  const [editSub, setEditSub] = useState<SubContract | null>(null)
+  const [esName, setEsName] = useState(''); const [esScope, setEsScope] = useState(''); const [esSupplier, setEsSupplier] = useState('')
+  const [esValue, setEsValue] = useState(''); const [esRetention, setEsRetention] = useState(''); const [esWithhold, setEsWithhold] = useState(''); const [esAdvPct, setEsAdvPct] = useState('')
+  const openSubEdit = (c: SubContract) => {
+    setEditSub(c)
+    setEsName(c.contractorName); setEsScope(c.scopeAr); setEsSupplier(c.supplierId != null ? String(c.supplierId) : '')
+    setEsValue(String(c.contractValueMinor / 10 ** cur.decimals)); setEsRetention(String(c.retentionPercent)); setEsWithhold(String(c.taxWithholdPercent)); setEsAdvPct(String(c.advanceRecoveryPercent))
+  }
+  const saveSubEdit = () => {
+    if (!editSub) return
+    try {
+      const updated = updateSubContract(editSub.id, {
+        contractorName: esName.trim(), scopeAr: esScope.trim(), supplierId: esSupplier ? Number(esSupplier) : null,
+        ...(esValue ? { contractValueMinor: toMinor(esValue, cur.decimals) } : {}),
+        retentionPercent: Number(esRetention) || 0, taxWithholdPercent: Number(esWithhold) || 0, advanceRecoveryPercent: Number(esAdvPct) || 0,
+      })
+      toast.show(`عُدّل عقد ${updated.contractNumber} ✓`)
+      setEditSub(null)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  /** طباعة شهادة أعمال باطن — نموذج A4 بالمستحق وكل الاستقطاعات (نفس محرك الفواتير) */
+  const printSubCertificate = (c: SubContract, cert: SubCertificate) => {
+    const rows = [{ nameAr: cert.descriptionAr || `قيمة الأعمال المعتمدة — شهادة #${cert.number}`, qty: 1, unitPriceMinor: cert.amountMinor, totalMinor: cert.amountMinor }]
+    if (cert.retentionMinor > 0) rows.push({ nameAr: 'محتجز ضمان الأعمال', qty: 1, unitPriceMinor: -cert.retentionMinor, totalMinor: -cert.retentionMinor })
+    if (cert.taxWithholdMinor > 0) rows.push({ nameAr: 'ضريبة استقطاع (تُورَّد للمصلحة)', qty: 1, unitPriceMinor: -cert.taxWithholdMinor, totalMinor: -cert.taxWithholdMinor })
+    if (cert.advanceRecoveryMinor > 0) rows.push({ nameAr: 'استرداد من الدفعة المقدمة', qty: 1, unitPriceMinor: -cert.advanceRecoveryMinor, totalMinor: -cert.advanceRecoveryMinor })
+    const model = buildSimpleDocModel({
+      docTitle: 'شهادة أعمال — مقاول باطن',
+      invoiceNumber: `شهادة #${cert.number} · ${c.contractNumber}`,
+      refCode: 'SC',
+      dateIso: cert.date,
+      partyLabel: c.contractorName,
+      paymentLabel: `الصافي المستحق ${fmt(cert.netMinor)} · المشروع: ${projects.find((p) => p.id === c.projectId)?.nameAr ?? '—'}`,
+      rows,
+      totalMinor: cert.netMinor,
+      paidMinor: 0,
+      operatorName: useAppStore.getState().setup.ownerName ?? 'المالك',
+      settings: useAppStore.getState().receipt,
+      extraFooter: `قيمة الأعمال ${fmt(cert.amountMinor)} − المحتجز ${fmt(cert.retentionMinor)}${cert.taxWithholdMinor > 0 ? ` − استقطاع ${fmt(cert.taxWithholdMinor)}` : ''}${cert.advanceRecoveryMinor > 0 ? ` − استرداد دفعة ${fmt(cert.advanceRecoveryMinor)}` : ''} = الصافي ${fmt(cert.netMinor)}`,
+    })
+    const live = useAppStore.getState().receipt
+    if (!printSwitches.silentPrint) { openPrintPreview({ html: buildModelHtml(model, cur, live, 'a4'), wide: true, title: `معاينة شهادة #${cert.number} قبل الطباعة`, rebuild: () => buildModelHtml(model, cur, useAppStore.getState().receipt, 'a4') }); return }
+    printModelWithTemplate(model, cur, live, 'a4')
+  }
 
   const [open, setOpen] = useState(false)
   const [projectId, setProjectId] = useState<number | ''>('')
@@ -281,6 +369,7 @@ export function SubcontractorsPage() {
                     <td className="px-4 py-3">
                       <div className="flex gap-1.5 justify-end flex-wrap">
                         <button onClick={() => setViewing(c)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800" title="عرض"><Eye size={15} /></button>
+                        {c.status === 'active' && <button onClick={() => openSubEdit(c)} data-sub-edit title="تعديل بيانات العقد — القيمة مقفولة بعد أول شهادة" className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Pencil size={15} /></button>}
                         {c.status === 'active' && <>
                           <Btn variant="soft" onClick={() => setAdvFor(c)} className="!px-2 !py-1 !text-[11px]">دفعة مقدمة</Btn>
                           <Btn variant="soft" onClick={() => setCertFor(c)} className="!px-2 !py-1 !text-[11px]">شهادة</Btn>
@@ -412,12 +501,13 @@ export function SubcontractorsPage() {
             {viewCerts.length > 0 && (
               <table className="w-full text-[12px]">
                 <thead><tr className="text-right text-[10px] text-slate-400 border-b border-slate-100 dark:border-slate-800">
-                  <th className="px-3 py-2">#</th><th className="px-3 py-2">التاريخ</th><th className="px-3 py-2">الوصف</th><th className="px-3 py-2">القيمة</th><th className="px-3 py-2">المحتجز</th><th className="px-3 py-2">الصافي</th>
+                  <th className="px-3 py-2">#</th><th className="px-3 py-2">التاريخ</th><th className="px-3 py-2">الوصف</th><th className="px-3 py-2">القيمة</th><th className="px-3 py-2">المحتجز</th><th className="px-3 py-2">الصافي</th><th className="px-3 py-2"></th>
                 </tr></thead>
                 <tbody>{viewCerts.map((x) => (
                   <tr key={x.id} className="border-b border-slate-50 dark:border-slate-800/50">
                     <td className="px-3 py-2 font-bold">{x.number}</td><td className="px-3 py-2">{x.date}</td><td className="px-3 py-2">{x.descriptionAr || '—'}</td>
                     <td className="px-3 py-2">{fmt(x.amountMinor)}</td><td className="px-3 py-2 text-amber-600">{fmt(x.retentionMinor)}</td><td className="px-3 py-2 font-bold">{fmt(x.netMinor)}</td>
+                    <td className="px-3 py-2"><button onClick={() => printSubCertificate(viewLive, x)} data-sub-cert-print title="طباعة الشهادة A4 — الأعمال والاستقطاعات والصافي" className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all"><Printer size={13} /></button></td>
                   </tr>
                 ))}</tbody>
               </table>
@@ -430,16 +520,53 @@ export function SubcontractorsPage() {
           </div>
         )}
       </Modal>
+
+      {/* §94-مراجعة-2: تعديل عقد باطن — النِّسَب تسري على الشهادات القادمة فقط */}
+      <Modal open={!!editSub} onClose={() => setEditSub(null)} title={editSub ? `تعديل ${editSub.contractNumber} — ${editSub.contractorName}` : ''} subtitle="بيانات العقد ونِسَبه — الرقم والحالة والمنفَّذ لا يتغيرون">
+        {editSub && (() => {
+          const locked = subCertificates.some((x) => x.contractId === editSub.id)
+          return (
+            <div className="grid grid-cols-2 gap-3" data-sub-edit-modal>
+              <Field label="مقاول الباطن *"><input className={inputCls} value={esName} onChange={(e) => setEsName(e.target.value)} aria-label="اسم المقاول" /></Field>
+              <Field label="نطاق الأعمال *"><input className={inputCls} value={esScope} onChange={(e) => setEsScope(e.target.value)} aria-label="نطاق الأعمال" /></Field>
+              <Field label="ربط سجل مورد" hint="إداري — يوحّد كشوف الحساب"><input className={inputCls} type="number" value={esSupplier} onChange={(e) => setEsSupplier(e.target.value)} placeholder="رقم المورد (اختياري)" aria-label="ربط المورد" /></Field>
+              <Field label={`قيمة العقد (${cur.code})`} hint={locked ? '🔒 اعتُمدت شهادات — عقد ملحق هو الباب' : 'قبل أول شهادة فقط'}>
+                <input className={inputCls} type="number" disabled={locked} value={locked ? String(editSub.contractValueMinor / 10 ** cur.decimals) : esValue} onChange={(e) => setEsValue(e.target.value)} aria-label="قيمة العقد" />
+              </Field>
+              <Field label="محتجز ضمان ٪" hint="0–20٪ — على الشهادات القادمة"><input className={inputCls} type="number" value={esRetention} onChange={(e) => setEsRetention(e.target.value)} aria-label="نسبة المحتجز" /></Field>
+              <Field label="ضريبة استقطاع ٪" hint="0–20٪ — التزام 2112"><input className={inputCls} type="number" value={esWithhold} onChange={(e) => setEsWithhold(e.target.value)} aria-label="نسبة الاستقطاع" /></Field>
+              <Field label="خصم دفعة مقدمة ٪" hint="0–100٪ — تلقائي من الشهادات القادمة"><input className={inputCls} type="number" value={esAdvPct} onChange={(e) => setEsAdvPct(e.target.value)} aria-label="نسبة الاسترداد" /></Field>
+              <div className="col-span-2 flex gap-2 justify-end pt-1">
+                <Btn variant="ghost" onClick={() => setEditSub(null)}>إلغاء</Btn>
+                <Btn onClick={saveSubEdit} data-sub-edit-save><Pencil size={14} /> حفظ التعديلات</Btn>
+              </div>
+            </div>
+          )
+        })()}
+      </Modal>
     </div>
   )
 }
 
 /* ═══════════ خطابات الضمان ═══════════ */
 export function BondsPage() {
-  const { projects, bonds, treasuries, issueBond, settleBond } = useDataStore()
+  const { projects, bonds, treasuries, issueBond, updateBond, settleBond } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
+
+  /* §94-مراجعة-2: تعديل خطاب نشط — القيمة/الهامش/المصاريف مقفولة (قُيّدت عند الإصدار) */
+  const [editBond, setEditBond] = useState<Bond | null>(null)
+  const [ebNumber, setEbNumber] = useState(''); const [ebBeneficiary, setEbBeneficiary] = useState(''); const [ebExpiry, setEbExpiry] = useState(''); const [ebType, setEbType] = useState<BondType>('bid')
+  const openBondEdit = (b: Bond) => { setEditBond(b); setEbNumber(b.bondNumber); setEbBeneficiary(b.beneficiary); setEbExpiry(b.expiryDate); setEbType(b.type) }
+  const saveBondEdit = () => {
+    if (!editBond) return
+    try {
+      const updated = updateBond(editBond.id, { bondNumber: ebNumber.trim(), beneficiary: ebBeneficiary.trim(), type: ebType, expiryDate: ebExpiry })
+      toast.show(`عُدّلت بيانات الخطاب ${updated.bondNumber} ✓`)
+      setEditBond(null)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
   const banks = treasuries.filter((t) => t.kind === 'bank')
 
   const [open, setOpen] = useState(false)
@@ -523,6 +650,7 @@ export function BondsPage() {
                     <td className="px-4 py-3">
                       {b.status === 'active' && (
                         <div className="flex gap-1.5 justify-end">
+                          <button onClick={() => openBondEdit(b)} data-bond-edit title="تعديل بيانات الخطاب — القيمة والهامش مقفولان" className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Pencil size={15} /></button>
                           <Btn variant="soft" onClick={() => settle(b, 'released')} className="!px-2 !py-1 !text-[11px]">رد الخطاب</Btn>
                           <Btn variant="danger" onClick={() => settle(b, 'forfeited')} className="!px-2 !py-1 !text-[11px]">مصادرة</Btn>
                         </div>
@@ -572,16 +700,52 @@ export function BondsPage() {
           <Btn onClick={save} shortcut="F9" className="w-full">إصدار الخطاب</Btn>
         </div>
       </Modal>
+
+      {/* §94-مراجعة-2: تعديل خطاب ضمان نشط */}
+      <Modal open={!!editBond} onClose={() => setEditBond(null)} title={editBond ? `تعديل بيانات ${editBond.bondNumber}` : ''} subtitle="بيانات الخطاب الظاهرة للبنك والمستفيد — القيم المالية قُيّدت ولا تُمس">
+        {editBond && (
+          <div className="grid grid-cols-2 gap-3" data-bond-edit-modal>
+            <Field label="رقم الخطاب *"><input className={inputCls} value={ebNumber} onChange={(e) => setEbNumber(e.target.value)} aria-label="رقم الخطاب" /></Field>
+            <Field label="النوع">
+              <QuickSelect className={inputCls} value={ebType} onChange={(e) => setEbType(e.target.value as BondType)} aria-label="نوع الخطاب">
+                {Object.entries(BOND_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </QuickSelect>
+            </Field>
+            <Field label="الجهة المستفيدة *"><input className={inputCls} value={ebBeneficiary} onChange={(e) => setEbBeneficiary(e.target.value)} aria-label="الجهة المستفيدة" /></Field>
+            <Field label="تاريخ الانتهاء *"><input className={inputCls} type="date" value={ebExpiry} onChange={(e) => setEbExpiry(e.target.value)} aria-label="تاريخ الانتهاء" /></Field>
+            <div className="col-span-2 rounded-xl bg-slate-500/5 border border-slate-500/20 px-3 py-2 text-[12px] text-slate-500 font-bold">
+              🔒 قيمة الخطاب {fmt(editBond.amountMinor)} والهامش {fmt(editBond.marginMinor)} والمصاريف {fmt(editBond.feesMinor)} مقفولة — قُيّدت عند الإصدار (1109 والبنك)
+            </div>
+            <div className="col-span-2 flex gap-2 justify-end pt-1">
+              <Btn variant="ghost" onClick={() => setEditBond(null)}>إلغاء</Btn>
+              <Btn onClick={saveBondEdit} data-bond-edit-save><Pencil size={14} /> حفظ التعديلات</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }
 
 /* ═══════════ عمال اليومية ═══════════ */
 export function DailyWorkersPage() {
-  const { projects, dailyWorkers, dailyWorkRecords, addDailyWorker, addDailyWorkRecord, settleDailyWorker } = useDataStore()
+  const { projects, dailyWorkers, dailyWorkRecords, addDailyWorker, updateDailyWorker, addDailyWorkRecord, settleDailyWorker } = useDataStore()
   const cur = useCur()
   const toast = useToast()
   const fmt = (m: number) => formatMinor(m, cur, false)
+
+  /* §94-مراجعة-2: تعديل بيانات العامل — اليومية تسري على الأيام القادمة فقط */
+  const [editWorker, setEditWorker] = useState<DailyWorker | null>(null)
+  const [ewName, setEwName] = useState(''); const [ewPhone, setEwPhone] = useState(''); const [ewWage, setEwWage] = useState('')
+  const openWorkerEdit = (w: DailyWorker) => { setEditWorker(w); setEwName(w.nameAr); setEwPhone(w.phone); setEwWage(String(w.dailyWageMinor / 10 ** cur.decimals)) }
+  const saveWorkerEdit = () => {
+    if (!editWorker) return
+    try {
+      const updated = updateDailyWorker(editWorker.id, { nameAr: ewName.trim(), phone: ewPhone.trim(), dailyWageMinor: toMinor(ewWage, cur.decimals) })
+      toast.show(`عُدّلت بيانات ${updated.nameAr} ✓ — السجلات المسجلة محفوظة بأجرها وقت تسجيلها`)
+      setEditWorker(null)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
 
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
@@ -663,6 +827,7 @@ export function DailyWorkersPage() {
                 <div className="flex gap-2">
                   <Btn variant="soft" onClick={() => { setRecFor(w.id); setRecProject('') }} className="flex-1 !text-[12px]">+ يوم عمل</Btn>
                   <Btn onClick={() => doSettle(w.id)} disabled={due <= 0} className="flex-1 !text-[12px]">تسوية {due > 0 && fmt(due)}</Btn>
+                  <button onClick={() => openWorkerEdit(w)} data-dw-edit title="تعديل بيانات العامل وأجره — الأجر يسري على الأيام القادمة" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Pencil size={15} /></button>
                 </div>
               </div>
             )
@@ -697,6 +862,23 @@ export function DailyWorkersPage() {
           <DocOutcome>الأثر: <b>لا قيد</b> لحظة تسجيل اليوم — يتراكم على العامل؛ وعند تسوية أيامه يُقيَّد <b>5110 تكلفة تنفيذ المشاريع</b> بما ارتبط بمشروع و<b>5108 مصروفات عمومية</b> بما كان تشغيلاً عاماً، مقابل <b>الخزينة</b> دائناً.</DocOutcome>
           <Btn onClick={saveRecord} shortcut="F9" className="w-full">تسجيل</Btn>
         </div>
+      </Modal>
+
+      {/* §94-مراجعة-2: تعديل عامل يومية */}
+      <Modal open={!!editWorker} onClose={() => setEditWorker(null)} title={editWorker ? `تعديل — ${editWorker.nameAr}` : ''} subtitle="بيانات العامل وأجره اليومي">
+        {editWorker && (
+          <div className="grid grid-cols-2 gap-3" data-dw-edit-modal>
+            <Field label="الاسم *"><input className={inputCls} value={ewName} onChange={(e) => setEwName(e.target.value)} aria-label="اسم العامل" /></Field>
+            <Field label="الهاتف"><input className={inputCls} value={ewPhone} onChange={(e) => setEwPhone(e.target.value)} aria-label="هاتف العامل" /></Field>
+            <Field label={`الأجر اليومي (${cur.symbol}) *`} hint="يسري على أيام العمل القادمة — المسجلة محفوظة بأجرها">
+              <input className={inputCls} inputMode="decimal" value={ewWage} onChange={(e) => setEwWage(e.target.value)} aria-label="الأجر اليومي" />
+            </Field>
+            <div className="col-span-2 flex gap-2 justify-end pt-1">
+              <Btn variant="ghost" onClick={() => setEditWorker(null)}>إلغاء</Btn>
+              <Btn onClick={saveWorkerEdit} data-dw-edit-save><Pencil size={14} /> حفظ التعديلات</Btn>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   )

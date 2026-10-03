@@ -14,6 +14,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -75,7 +76,7 @@ let inv1
   inv1 = st().postPurchase({
     supplierId: sup.id, date: '2026-09-17',
     lines: [
-      { itemId: rice.id, qty: 100, unitPriceMinor: 1000, expiryDate: '2027-06-30' },
+      { itemId: rice.id, qty: 100, unitPriceMinor: 1000, expiryDate: relDays(270) },
       { itemId: sugar.id, qty: 50, unitPriceMinor: 2000 },
     ],
     expenses: [{ nameAr: 'شحن', amountMinor: 20000, method: 'value', paidBy: 'supplier' }],
@@ -107,7 +108,7 @@ let inv1
   assert.equal(st().batches.filter((b) => b.purchaseId === inv1.id).length, 1)
   ok('P5: دفعة FEFO فُتحت للأرز المتتبَّع فقط')
   // متوسط مرجح تراكمي: شراء ثانٍ 100كجم أرز ×13 بلا مصاريف ⇒ (110000+130000)/200 = 12/كجم
-  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: rice.id, qty: 100, unitPriceMinor: 1300, expiryDate: '2027-03-31' }], expenses: [], paidMinor: 130000, treasury: '1101', notes: '' })
+  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: rice.id, qty: 100, unitPriceMinor: 1300, expiryDate: relDays(180) }], expenses: [], paidMinor: 130000, treasury: '1101', notes: '' })
   assert.equal(st().items.find((i) => i.id === rice.id).costMinor, 1200)
   ok('P5: شراء ثانٍ بسعر أعلى — المتوسط المرجح 12 بالضبط')
 }

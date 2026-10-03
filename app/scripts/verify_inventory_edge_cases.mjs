@@ -17,6 +17,7 @@
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -137,10 +138,10 @@ console.log('\n— ح5) الإتلاف عبر دفعات متعددة FEFO —')
 {
   const yog = mkItem('زبادي', { trackExpiry: true })
   st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: yog.id, qty: 6, unitPriceMinor: 500, expiryDate: '2026-09-01' }], expenses: [], paidMinor: 0, notes: '' })
-  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: yog.id, qty: 6, unitPriceMinor: 500, expiryDate: '2026-12-01' }], expenses: [], paidMinor: 0, notes: '' })
+  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: yog.id, qty: 6, unitPriceMinor: 500, expiryDate: relDays(60) }], expenses: [], paidMinor: 0, notes: '' })
   st().postWastage({ reason: 'انتهاء صلاحية', lines: [{ itemId: yog.id, qty: 8 }], notes: '' })
   const b1 = st().batches.find((b) => b.itemId === yog.id && b.expiryDate === '2026-09-01')
-  const b2 = st().batches.find((b) => b.itemId === yog.id && b.expiryDate === '2026-12-01')
+  const b2 = st().batches.find((b) => b.itemId === yog.id && b.expiryDate === relDays(60))
   assert.equal(b1?.qty ?? 0, 0)
   assert.equal(b2.qty, 4)
   ok('ح5: إتلاف 8 عبر دفعتين — المنتهية أُعدمت كلها (6) والباقي (2) من التالية')

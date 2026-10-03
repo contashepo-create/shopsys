@@ -16,5 +16,7 @@ export function validateTerminalAccess(access: PaymentTerminalAccess, validTermi
 export function assertTerminalOperation(access: PaymentTerminalAccess, terminalId: string, operation: TerminalOperation, amountMinor = 0): void {
   const grant = access.grants.find((row) => row.terminalId === terminalId)
   if (!grant?.operations.includes(operation)) throw new Error('لا تملك صلاحية العملية على ماكينة الدفع')
-  if (grant.maxAmountMinor !== undefined && amountMinor > grant.maxAmountMinor) throw new Error('المبلغ يتجاوز حد ماكينة الدفع للمستخدم')
+  // (إصلاح §78) الصفر/الغياب = بلا حد — كما تعِد الواجهة «حد العملية (0 = بلا حد)»
+  // وكما هي دلالة treasuryAccess الموثقة؛ كان الصفر يمنع كل عملية صامتاً
+  if (grant.maxAmountMinor != null && grant.maxAmountMinor > 0 && amountMinor > grant.maxAmountMinor) throw new Error('المبلغ يتجاوز حد ماكينة الدفع للمستخدم')
 }

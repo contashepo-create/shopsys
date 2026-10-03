@@ -149,7 +149,7 @@ const R = reporter('دفعة المالك ⑩ي على الفاتورة — ال
 
 /* ⑮ الفاتورة نافذة حرة لا صفحة مدمجة */
 {
-  assert.ok(/openSalesInvoiceWindow\(editId\)/.test(route) && /openPurchaseInvoiceWindow\(editId\)/.test(route),
+  assert.ok(/openSalesInvoiceWindow\(editId/.test(route) && /openPurchaseInvoiceWindow\(editId/.test(route),
     'مسار الفاتورة ما زال يرسم المستند مدمجاً بدل فتح نافذة حرة')
   assert.ok(!/AdvancedSalesInvoicePage/.test(route), 'المسار ما زال يستورد صفحة الفاتورة مباشرة (تضمين لا نافذة)')
   assert.ok(/dedupeKey: editId \? `sales-invoice:\$\{editId\}` : null/.test(read('src/ui/windows/windowStore.ts')),

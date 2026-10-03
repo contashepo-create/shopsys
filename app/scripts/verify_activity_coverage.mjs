@@ -31,6 +31,10 @@ const ok = (name, cond, extra = '') => { if (cond) { pass++; console.log(`  ✅ 
 
 const appTsx = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const routedPaths = new Set([...appTsx.matchAll(/Route path="([^"]+)"/g)].map((m) => m[1]))
+/* تابات شؤون الموظفين الخمسة يغطيها المسار الديناميكي /hr/:tab — المسارات
+   الصريحة المكررة كانت تُطابَق قبله فلا يصل :tab إلى useParams فتعطل التابات
+   (عطل المالك 2026-10-01). الدليل: يوجد المسار الديناميكي نفسه. */
+if (routedPaths.has('/hr/:tab')) for (const t of ['attendance', 'fingerprint', 'leaves', 'shifts', 'reports']) routedPaths.add(`/hr/${t}`)
 
 console.log('🗺️ كل مسار في كتالوج التنقل له صفحة مسجلة (لا شاشة بيضاء أبداً)')
 for (const sec of NAV_SECTIONS) {

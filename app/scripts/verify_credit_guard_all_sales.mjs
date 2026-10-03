@@ -209,7 +209,8 @@ const line = (qty, price = 10000) => ({ itemId: item.id, nameAr: item.nameAr, qt
 
 /* ═══ 7) addProjectExtract (مقاولات): مستخلص آجل فوق الحد ═══ */
 {
-  st().addProject({ nameAr: 'برج المنزلة', clientName: 'مقيد', clientId: bounded.id, contractValueMinor: 10000000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  /* §95: سقف المستخلصات = قيمة العقد الفعلية يسبق فحص الحد (النقدي أيضاً) — فضخّمنا العقد ليمر المستخلص النقدي الكبير */
+  st().addProject({ nameAr: 'برج المنزلة', clientName: 'مقيد', clientId: bounded.id, contractValueMinor: 300000000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const project = st().projects.at(-1)
   assert.throws(
     () => st().addProjectExtract({ projectId: project.id, grossMinor: 70000, vatPercent: 0, payment: 'credit', description: 'مستخلص 1' }),

@@ -17,7 +17,8 @@ const css = read('index.css')
     'postSale لا يقبل مشروعاً')
   assert.ok(/projectId: args\.projectId \?\? null/.test(repo), 'المشروع لا يُحفظ على فاتورة البيع')
   assert.ok(/aria-label="مشروع الفاتورة"/.test(sales), 'لا حقل مشروع في فاتورة البيع')
-  assert.ok(/postSale\(\{projectId:projectId\|\|null/.test(sales), 'المشروع لا يُمرَّر عند الترحيل')
+  /* بعد بوابة الاعتماد (خطة ③): الوسيط يُبنى كاملاً في saleArgs ثم يُرحَّل — المشروع ما زال أول حقوله */
+  assert.ok(/projectId:projectId\|\|null/.test(sales) && /postSale\(saleArgs\)/.test(sales), 'المشروع لا يُمرَّر عند الترحيل')
   R.ok('فاتورة البيع تُربط بمشروع مقاولات ويُحفظ على المستند')
 }
 {

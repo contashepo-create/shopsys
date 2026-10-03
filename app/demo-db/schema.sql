@@ -166,9 +166,260 @@ CREATE TABLE IF NOT EXISTS purchase_lines (
   purchase_ref     TEXT NOT NULL,
   item_ref         TEXT NOT NULL,
   qty              REAL NOT NULL,
-  unit_price_minor INTEGER NOT NULL
+  unit_price_minor INTEGER NOT NULL,
+  expiry_date      TEXT NOT NULL DEFAULT ''   -- تاريخ صلاحية الدفعة (فارغ = بلا تتبع)
 );
 
 CREATE INDEX IF NOT EXISTS ix_items_activity ON items (activity);
 CREATE INDEX IF NOT EXISTS ix_sale_lines ON sale_lines (activity, sale_ref);
 CREATE INDEX IF NOT EXISTS ix_purchase_lines ON purchase_lines (activity, purchase_ref);
+
+-- ─── توسعة المرحلة ⑥: الموارد البشرية والمستندات التجارية (طلب المالك ㉘) ───
+
+CREATE TABLE IF NOT EXISTS employees (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity         TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref              TEXT NOT NULL,
+  name_ar          TEXT NOT NULL,
+  phone            TEXT NOT NULL DEFAULT '',
+  job_title        TEXT NOT NULL DEFAULT '',
+  hire_date        TEXT NOT NULL DEFAULT '',
+  base_salary_minor INTEGER NOT NULL DEFAULT 0,
+  allowances_minor INTEGER NOT NULL DEFAULT 0,
+  active           INTEGER NOT NULL DEFAULT 1,
+  notes            TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- بصمات الحضور اليدوية (status: present | absent | leave | permission | holiday | mission)
+CREATE TABLE IF NOT EXISTS attendance_records (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity    TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref         TEXT NOT NULL,
+  employee_ref TEXT NOT NULL DEFAULT '',
+  date        TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'present',
+  check_in    TEXT NOT NULL DEFAULT '',
+  check_out   TEXT NOT NULL DEFAULT '',
+  notes       TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- طلبات الإجازات (type_id: annual | sick | emergency | unpaid · status: pending | approved | rejected)
+CREATE TABLE IF NOT EXISTS leave_requests (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity     TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref          TEXT NOT NULL,
+  employee_ref TEXT NOT NULL DEFAULT '',
+  type_id      TEXT NOT NULL DEFAULT 'annual',
+  from_date    TEXT NOT NULL,
+  to_date      TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'approved',
+  reason       TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- مسير رواتب شهر: يُستحق قسائم ثم تُسدَّد المحدد منها بسند صرف على 2104
+CREATE TABLE IF NOT EXISTS payroll_months (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity     TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref          TEXT NOT NULL,
+  month        TEXT NOT NULL,               -- YYYY-MM
+  pay_employee_refs TEXT NOT NULL DEFAULT '', -- موظفو القسائم المسددة (مفصولة بفاصلة)
+  treasury_ref TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- عروض الأسعار والمناقصات (بنود حرة النص — لا أصناف كتالوج)
+CREATE TABLE IF NOT EXISTS quotations (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity    TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref         TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'quotation' CHECK (kind IN ('quotation', 'tender')),
+  client_name TEXT NOT NULL,
+  client_ref  TEXT NOT NULL DEFAULT '',
+  title_ar    TEXT NOT NULL,
+  valid_until TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'draft',
+  win_probability INTEGER NOT NULL DEFAULT 50,
+  bid_bond_minor INTEGER NOT NULL DEFAULT 0,
+  convert      TEXT NOT NULL DEFAULT '', -- 'project' = العرض الفائز يُحوَّل مشروعاً كاملاً عند التحميل
+  notes       TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+CREATE TABLE IF NOT EXISTS quotation_lines (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity         TEXT NOT NULL,
+  quotation_ref    TEXT NOT NULL,
+  name_ar          TEXT NOT NULL DEFAULT '',
+  description_ar   TEXT NOT NULL,
+  unit_ar          TEXT NOT NULL DEFAULT 'مقطوعية',
+  qty              REAL NOT NULL DEFAULT 1,
+  unit_price_minor INTEGER NOT NULL DEFAULT 0,
+  est_cost_minor   INTEGER NOT NULL DEFAULT 0,
+  vat_percent      REAL NOT NULL DEFAULT 0,
+  tax_included     INTEGER NOT NULL DEFAULT 0
+);
+
+-- أوامر الشراء: التزام تجاري لا قيد — تُعبَّأ منه فاتورة الشراء عند الاستلام
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity       TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref            TEXT NOT NULL,
+  supplier_ref   TEXT NOT NULL DEFAULT '',
+  order_date     TEXT NOT NULL,
+  expected_date  TEXT NOT NULL DEFAULT '',
+  warehouse_ref  TEXT NOT NULL DEFAULT '',
+  notes          TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+CREATE TABLE IF NOT EXISTS purchase_order_lines (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity         TEXT NOT NULL,
+  order_ref        TEXT NOT NULL,
+  item_ref         TEXT NOT NULL,
+  qty              REAL NOT NULL,
+  unit_price_minor INTEGER NOT NULL,
+  vat_percent      REAL NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS ix_attendance ON attendance_records (activity, employee_ref);
+CREATE INDEX IF NOT EXISTS ix_quotation_lines ON quotation_lines (activity, quotation_ref);
+CREATE INDEX IF NOT EXISTS ix_po_lines ON purchase_order_lines (activity, order_ref);
+
+-- مستندات الهالك (طلب المالك ㉘): من المصدر «منتهي الصلاحية» أو الجرد
+CREATE TABLE IF NOT EXISTS wastage_docs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity   TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref        TEXT NOT NULL,
+  doc_date   TEXT NOT NULL,
+  reason     TEXT NOT NULL DEFAULT 'انتهاء صلاحية',
+  notes      TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+CREATE TABLE IF NOT EXISTS wastage_lines (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity  TEXT NOT NULL,
+  doc_ref   TEXT NOT NULL,
+  item_ref  TEXT NOT NULL,
+  qty       REAL NOT NULL
+);
+
+-- ─── تعميق المرحلة ⑥: مقاولو الباطن والمستخلصات وعقود الإيجار ───
+
+-- معدات الإيجار (فعليات الأسطول: عدّاد ساعات وخطة صيانة)
+CREATE TABLE IF NOT EXISTS equipment (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity           TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref                TEXT NOT NULL,
+  name_ar            TEXT NOT NULL,
+  code               TEXT NOT NULL DEFAULT '',
+  daily_rate_minor   INTEGER NOT NULL DEFAULT 0,
+  hourly_rate_minor  INTEGER NOT NULL DEFAULT 0,
+  monthly_rate_minor INTEGER NOT NULL DEFAULT 0,
+  meter_reading      REAL NOT NULL DEFAULT 0,
+  service_every_hours REAL NOT NULL DEFAULT 0,
+  notes              TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- عقود الإيجار: payment = cash | credit | mixed · حقول الإقفال الفارغة = عقد مفتوح
+CREATE TABLE IF NOT EXISTS rental_contracts (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity          TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref               TEXT NOT NULL,
+  customer_ref      TEXT NOT NULL DEFAULT '',
+  equipment_ref     TEXT NOT NULL,
+  days              INTEGER NOT NULL,
+  daily_rate_minor  INTEGER NOT NULL,
+  deposit_minor     INTEGER NOT NULL DEFAULT 0,
+  payment           TEXT NOT NULL DEFAULT 'cash',
+  paid_minor        INTEGER NOT NULL DEFAULT 0,
+  vat_percent       REAL NOT NULL DEFAULT 0,
+  start_date        TEXT NOT NULL DEFAULT '',
+  notes             TEXT NOT NULL DEFAULT '',
+  close_deduct_minor INTEGER NOT NULL DEFAULT 0,
+  close_end_date    TEXT NOT NULL DEFAULT '',
+  treasury_ref      TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- مصروفات تشغيل المعدات: kind = fuel | maintenance | repair | operator | other
+CREATE TABLE IF NOT EXISTS equipment_costs (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity     TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref          TEXT NOT NULL,
+  equipment_ref TEXT NOT NULL DEFAULT '',
+  date         TEXT NOT NULL,
+  kind         TEXT NOT NULL DEFAULT 'fuel',
+  amount_minor INTEGER NOT NULL,
+  description  TEXT NOT NULL DEFAULT '',
+  treasury_ref TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- عقود مقاولي الباطن (تجد المشروع عبر quotation_ref المحوَّل مشروعاً)
+CREATE TABLE IF NOT EXISTS sub_contracts (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity       TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref            TEXT NOT NULL,
+  quotation_ref  TEXT NOT NULL DEFAULT '',
+  contractor_name TEXT NOT NULL,
+  supplier_ref   TEXT NOT NULL DEFAULT '',
+  scope_ar       TEXT NOT NULL,
+  contract_value_minor INTEGER NOT NULL,
+  retention_percent REAL NOT NULL DEFAULT 5,
+  tax_withhold_percent REAL NOT NULL DEFAULT 0,
+  advance_percent REAL NOT NULL DEFAULT 0,
+  start_date     TEXT NOT NULL DEFAULT '',
+  advance_minor  INTEGER NOT NULL DEFAULT 0,
+  advance_treasury_ref TEXT NOT NULL DEFAULT '',
+  certificate_amount_minor INTEGER NOT NULL DEFAULT 0,
+  certificate_description TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- مستخلصات المشروع: نسبة إنجاز تراكمية تُطبَّق على بنود جدول الكميات
+CREATE TABLE IF NOT EXISTS project_extracts (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity      TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref           TEXT NOT NULL,
+  quotation_ref TEXT NOT NULL DEFAULT '',
+  percent       REAL NOT NULL DEFAULT 0,
+  vat_percent   REAL NOT NULL DEFAULT 14,
+  payment       TEXT NOT NULL DEFAULT 'credit',
+  description   TEXT NOT NULL DEFAULT '',
+  treasury_ref  TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- مراكز التكلفة: شجرة تجميع للمصاريف والتحليل (طلب المالك — بذور لكل نشاط)
+CREATE TABLE IF NOT EXISTS cost_centers (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity  TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref       TEXT NOT NULL,
+  code      TEXT NOT NULL,
+  name_ar   TEXT NOT NULL,
+  parent_ref TEXT NOT NULL DEFAULT '',
+  is_active INTEGER NOT NULL DEFAULT 1,
+  notes     TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- §96: مستندات المقاولات الشاملة (طلب المالك: بيانات تجريبية في كل أقسام المقاولات)
+-- جدول واحد بأنواع kind متعددة: project · boq_item · change_order · bond · daily_worker ·
+-- material_issue · project_cost · client_advance · project_receipt · project_payment ·
+-- client_collection · project_purchase · extract · project_task · approval_flow · approval_request
+-- الحقول التفصيلية داخل data بوصف JSON — والملف القابل للقراءة هو seed.data.mjs
+CREATE TABLE IF NOT EXISTS contracting_docs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity   TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref        TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  data       TEXT NOT NULL DEFAULT '{}',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (activity, ref)
+);

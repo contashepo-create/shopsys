@@ -60,7 +60,9 @@ describe('كشوف حساب الأطراف', () => {
       custodyTransactions: [{ date: '2026-09-03', employeeId: 3, type: 'fund', amountMinor: 1000, description: 'تعزيز عهدة' }],
     })
 
-    expect(rows.map((row) => row.docLabel)).toEqual(['مسير SAL-0001 — إجمالي 5500، صافي 5500', 'عمولة SCM-0001 — عمولة بيع (مستحقة)', 'تعزيز عهدة (fund)'])
+    // (§76) كان البيان يكرر الإجمالي/الصافي خامَّين بالوحدة الصغرى — الآن رقما المسير
+    // في عمودَي العملية/الخصم المنسقين، والبيان اسم المسير فقط
+    expect(rows.map((row) => row.docLabel)).toEqual(['مسير SAL-0001', 'عمولة SCM-0001 — عمولة بيع (مستحقة)', 'تعزيز عهدة (fund)'])
     expect(rows[0].operationMinor).toBe(5500)
     expect(rows.at(-1)?.balanceMinor).toBe(600)
   })

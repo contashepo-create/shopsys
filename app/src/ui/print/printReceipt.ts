@@ -24,6 +24,11 @@ const esc = (s: string) =>
 export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, settings: ReceiptSettings): string {
   const paper = settings.paperWidth
   const wide = paper === '80'
+  /* طلب المالك: «تكبير الخط قليلاً في الفاتورة وجعله بولد» — الوضع الكبير
+     (الافتراضي) يرفع كل المقاسات 1px ويعرّض النصوص الفرعية، و'عادي' يعيد
+     المقاسات القديمة لمن يريد (إعداد سريع من المعاينة/النافذة المنبثقة). */
+  const large = (settings.fontScale ?? 'large') === 'large'
+  const fs = (px: number) => large ? px + 1 : px
   const w = wide ? '72mm' : '48mm'
   const fmt = (m: number) => formatMinor(m, cur, false)
   const showDisc = settings.showDiscount
@@ -104,33 +109,38 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
   body {
     width: ${w}; font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; color: #000; padding: 2mm 1mm;
     -webkit-print-color-adjust: exact; print-color-adjust: exact; text-rendering: geometricPrecision;
-    font-weight: 600; line-height: 1.45; -webkit-font-smoothing: none;
+    font-weight: 700; line-height: 1.45; -webkit-font-smoothing: none;
   }
   .center { text-align: center; }
-  .shop { font-size: ${wide ? '17px' : '15px'}; font-weight: 900; letter-spacing: -0.2px; }
-  .hdr { font-size: ${wide ? '11.5px' : '11px'}; font-weight: 700; }
-  .title { margin: 1.5mm 0; padding: 1.2mm 0; background: #000; color: #fff; text-align: center; font-size: ${wide ? '13px' : '12px'}; font-weight: 900; letter-spacing: 0.5px; }
-  .kv { display: flex; justify-content: space-between; gap: 2mm; font-size: ${wide ? '11.5px' : '11px'}; padding: 0.35mm 0; font-weight: 700; }
+  .shop { font-size: ${fs(wide ? 17 : 15)}px; font-weight: 900; letter-spacing: -0.2px; }
+  .hdr { font-size: ${fs(wide ? 11.5 : 11)}px; font-weight: 700; }
+  .title { margin: 1.5mm 0; padding: 1.2mm 0; background: #000; color: #fff; text-align: center; font-size: ${fs(wide ? 13 : 12)}px; font-weight: 900; letter-spacing: 0.5px; }
+  .kv { display: flex; justify-content: space-between; gap: 2mm; font-size: ${fs(wide ? 11.5 : 11)}px; padding: 0.35mm 0; font-weight: 700; }
   .kv .k { color: #000; white-space: nowrap; }
   .kv .k.op { font-weight: 800; color: #000; }
   .kv .v { text-align: left; font-weight: 800; }
   hr { border: none; border-top: 1px dashed #000; margin: 1.5mm 0; }
-  table { width: 100%; border-collapse: collapse; font-size: ${wide ? '12px' : '11.5px'}; }
-  thead td { font-size: ${wide ? '11px' : '10.5px'}; font-weight: 900; color: #000; border-bottom: 1.4px solid #000; padding-bottom: 0.7mm; }
+  table { width: 100%; border-collapse: collapse; font-size: ${fs(wide ? 12 : 11.5)}px; }
+  thead td { font-size: ${fs(wide ? 11 : 10.5)}px; font-weight: 900; color: #000; border-bottom: 1.4px solid #000; padding-bottom: 0.7mm; }
   td { padding: 0.9mm 0; vertical-align: top; color: #000; }
-  .idx { width: 5.5mm; text-align: center; font-size: ${wide ? '11px' : '10.5px'}; font-weight: 800; color: #000; }
+  .idx { width: 5.5mm; text-align: center; font-size: ${fs(wide ? 11 : 10.5)}px; font-weight: 800; color: #000; }
   .name { font-weight: 800; }
-  .sub { font-size: ${wide ? '11px' : '10.5px'}; font-weight: 700; color: #000; }
-  .disc { font-size: ${wide ? '11px' : '10.5px'}; font-weight: 700; color: #000; }
+  .sub { font-size: ${fs(wide ? 11 : 10.5)}px; font-weight: 700; color: #000; }
+  .disc { font-size: ${fs(wide ? 11 : 10.5)}px; font-weight: 700; color: #000; }
   .amt { text-align: left; font-weight: 900; white-space: nowrap; padding-right: 2mm; }
-  .tot { display: flex; justify-content: space-between; font-size: ${wide ? '11.5px' : '11px'}; padding: 0.45mm 0; font-weight: 700; }
-  .grand { font-size: ${wide ? '17px' : '15px'}; font-weight: 900; display: flex; justify-content: space-between; align-items: center; margin: 1mm 0; padding: 1.2mm 1.5mm; border: 2.2px solid #000; }
-  .words { font-size: ${wide ? '11px' : '10.5px'}; font-weight: 700; text-align: center; margin-top: 1mm; line-height: 1.5; }
+  .tot { display: flex; justify-content: space-between; font-size: ${fs(wide ? 11.5 : 11)}px; padding: 0.45mm 0; font-weight: 700; }
+  .grand { font-size: ${fs(wide ? 17 : 15)}px; font-weight: 900; display: flex; justify-content: space-between; align-items: center; margin: 1mm 0; padding: 1.2mm 1.5mm; border: 2.2px solid #000; }
+  .words { font-size: ${fs(wide ? 11 : 10.5)}px; font-weight: 700; text-align: center; margin-top: 1mm; line-height: 1.5; }
   .barcode { margin-top: 2mm; }
   .barcode svg { max-width: 100%; height: auto; }
-  .bc { font-size: ${wide ? '11px' : '10.5px'}; font-weight: 800; letter-spacing: 1px; }
-  .foot { text-align: center; font-size: ${wide ? '11.5px' : '11px'}; margin-top: 2mm; font-weight: 800; }
-  .stamp { text-align: center; font-size: ${wide ? '11px' : '10.5px'}; font-weight: 700; color: #000; margin-top: 1.5mm; }
+  .bc { font-size: ${fs(wide ? 11 : 10.5)}px; font-weight: 800; letter-spacing: 1px; }
+  .foot { text-align: center; font-size: ${fs(wide ? 11.5 : 11)}px; margin-top: 2mm; font-weight: 800; }
+  .stamp { text-align: center; font-size: ${fs(wide ? 11 : 10.5)}px; font-weight: 700; color: #000; margin-top: 1.5mm; }
+${large ? `
+  /* وضع الخط الكبير: النصوص الفرعية والرؤوس تُعرَّض أيضاً */
+  .hdr,.kv,.kv .k,.kv .v,.sub,.disc,.tot,.words,.stamp,.bc,.idx,.bc { font-weight: 800; }
+  .shop,.title,.grand,.amt,thead td,.foot { font-weight: 900; }
+` : ''}
 </style></head><body>
   ${logo}
   <div class="center shop">${esc(model.shopName)}</div>

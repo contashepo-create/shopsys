@@ -17,7 +17,7 @@ beforeAll(() => {
 describe('نافذة مسير الرواتب المعاد تصميمها — كل الموظفين', () => {
   it('يعرض الجدول والإجماليات والبحث داخل المسير', () => {
     const view = render(<MemoryRouter><EmployeesPage initialTab="payroll" /></MemoryRouter>)
-    fireEvent.click(view.getByText('مسير رواتب لكل الموظفين').closest('button')!)
+    fireEvent.click(view.getByText('مسير مجمّع للجميع (قديم)').closest('button')!)
     const dialog = document.querySelector('[role="dialog"]') as HTMLElement
     const t = dialog.textContent ?? ''
     expect(t).toContain('① بيانات المسير')

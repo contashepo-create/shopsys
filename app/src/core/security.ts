@@ -143,12 +143,22 @@ export const LOCK_REASON_LABELS: Record<LockReason, { title: string; desc: strin
 
 /* ═══ تصدير البيانات من شاشة القفل (حق العميل في بياناته) ═══ */
 
-/** تحويل مصفوفة كائنات إلى CSV (UTF-8 مع BOM لفتح صحيح في Excel عربي) */
+/**
+ * تحويل مصفوفة كائنات إلى CSV (UTF-8 مع BOM لفتح صحيح في Excel عربي).
+ * - العناوين = اتحاد مفاتيح كل الصفوف بترتيب ظهورها الأول: أي حقل يظهر في
+ *   صف لاحق لا يُسقط بصمت (تصدير LockScreen/EmployeesPage يمرّ ببيانات مستخدم).
+ * - تحييد حقن الصيغ (CSV injection): Excel يفسّر خلية تبدأ بـ = + - @ (أو محرف
+ *   تحكم) كصيغة عند الفتح، والقيم هنا مدخلات مستخدم (أسماء/ملاحظات) — نُسبق
+ *   البادئات الخطرة بعلامة ' فتُعرض نصاً. الأرقام السالبة تبقى كما هي
+ *   كي لا تتشوه الأرصدة والتقارير المالية في التصدير.
+ */
 export function toCsv(rows: readonly Record<string, unknown>[]): string {
   if (!rows.length) return '\uFEFF'
-  const headers = Object.keys(rows[0])
+  const headers: string[] = []
+  for (const r of rows) for (const k of Object.keys(r)) if (!headers.includes(k)) headers.push(k)
   const escape = (v: unknown) => {
-    const s = v == null ? '' : String(v)
+    let s = v == null ? '' : String(v)
+    if (/^[=+\t\r@]/.test(s) || (/^-/.test(s) && !/^-\d[\d.,]*$/.test(s))) s = "'" + s
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
   const lines = [headers.join(','), ...rows.map((r) => headers.map((h) => escape(r[h])).join(','))]

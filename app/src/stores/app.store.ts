@@ -18,6 +18,7 @@ import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoi
 import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
 import { DEFAULT_REPORT_PRINT, type ReportPrintSettings } from '../core/reportPrint.ts'
 import { DEFAULT_LABEL_SETTINGS, type LabelSettings } from '../core/labels.ts'
+import { DEFAULT_FX_RATES_SETTINGS, normalizeFxRatesSettings, type FxRatesMap, type FxRatesSettings, type FxRateRecord } from '../core/fxRates.ts'
 import { DEFAULT_SCALE_RULES, validateScaleRule, type ScaleRule } from '../core/barcode.ts'
 import type { AboutContent } from '../core/cloud.ts'
 import type { DeviceFlags } from '../core/featureFlags.ts'
@@ -111,6 +112,16 @@ interface AppState {
   /** قالب ملصقات الباركود/السيريال — يُضبط مرة ويسري على كل الطباعات (طلب المالك) */
   labelSettings: LabelSettings
   updateLabelSettings: (patch: Partial<LabelSettings>) => void
+  /**
+   * أسعار الصرف المركزية (طلب المالك 2026-10-01): سعر محفوظ لكل عملة يستعمله
+   * الفاتورة/السند افتراضياً. التعديل يدوي أو من API — والمسؤول عنه المالك
+   * فقط (بواجهة تطلب الرقم السري عند الحفظ).
+   */
+  fxRates: FxRatesMap
+  fxRatesSettings: FxRatesSettings
+  setFxRate: (code: string, ratePpm: number, updatedBy: string) => void
+  applyFxApiQuotes: (quotes: { code: string; ratePpm: number }[], updatedBy: string) => number
+  updateFxRatesSettings: (patch: Partial<FxRatesSettings>) => void
   /** قواعد باركود الميزان العالمية (أي ميزان بأي صيغة) — تُجرب بالترتيب في الكاشير */
   scaleRules: ScaleRule[]
   addScaleRule: (rule: Omit<ScaleRule, 'id'>) => void
@@ -292,6 +303,31 @@ export const useAppStore = create<AppState>()(
       updateReportPrint: (patch) => set((s) => ({ reportPrint: { ...s.reportPrint, ...patch } })),
       labelSettings: DEFAULT_LABEL_SETTINGS,
       updateLabelSettings: (patch) => set((s) => ({ labelSettings: { ...s.labelSettings, ...patch } })),
+      fxRates: {},
+      fxRatesSettings: DEFAULT_FX_RATES_SETTINGS,
+      setFxRate: (code, ratePpm, updatedBy) => {
+        const key = String(code ?? '').trim().toUpperCase()
+        if (!/^[A-Z]{3}$/.test(key)) throw new Error('رمز العملة غير سليم')
+        if (!Number.isInteger(ratePpm) || ratePpm <= 0) throw new Error('سعر الصرف يجب أن يكون عدداً أكبر من صفر')
+        const record: FxRateRecord = { ratePpm, updatedAt: new Date().toISOString(), updatedBy, source: 'manual' }
+        set((s) => ({ fxRates: { ...s.fxRates, [key]: record } }))
+      },
+      applyFxApiQuotes: (quotes, updatedBy) => {
+        const stamp = new Date().toISOString()
+        let applied = 0
+        set((s) => {
+          const next: FxRatesMap = { ...s.fxRates }
+          for (const quote of quotes) {
+            const key = String(quote.code ?? '').trim().toUpperCase()
+            if (!/^[A-Z]{3}$/.test(key) || !Number.isInteger(quote.ratePpm) || quote.ratePpm <= 0) continue
+            next[key] = { ratePpm: quote.ratePpm, updatedAt: stamp, updatedBy, source: 'api' }
+            applied += 1
+          }
+          return { fxRates: next }
+        })
+        return applied
+      },
+      updateFxRatesSettings: (patch) => set((s) => ({ fxRatesSettings: normalizeFxRatesSettings({ ...s.fxRatesSettings, ...patch }) })),
       scaleRules: DEFAULT_SCALE_RULES,
       addScaleRule: (rule) => set((s) => {
         const errors = validateScaleRule(rule)

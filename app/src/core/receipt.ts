@@ -77,6 +77,8 @@ export interface ReceiptSettings {
   /** خانتا التوقيع — فاتورة A4 */
   showSignatures: boolean
   showFooter: boolean
+  /** حجم خط الإيصال الحراري (طلب المالك 2026-10-01): كبير وعريض افتراضياً — عادي = المقاسات القديمة */
+  fontScale?: 'normal' | 'large'
   /** خيار عابر لقالب إذن التسليم/الاستلام؛ لا يُحفظ في الإعدادات */
   hidePrices?: boolean
   /* ─── مفاتيح الطباعة الثلاثة (طلب المالك) — تُعرض كأزرار «مفتاح كهرباء» ───
@@ -119,6 +121,7 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   showWords: true,
   showSignatures: true,
   showFooter: true,
+  fontScale: 'large',
   silentPrint: false,
   cashierPrint: false,
   printAfterSave: false

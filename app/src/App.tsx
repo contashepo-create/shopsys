@@ -42,6 +42,7 @@ import { PromotionsPage } from './ui/pages/PromotionsPage.tsx'
 import { PosPage } from './ui/pages/PosPage.tsx'
 import { SalesInvoicesPage } from './ui/pages/SalesInvoicesPage.tsx'
 import { InvoiceDocumentRoute } from './ui/pages/InvoiceDocumentRoute.tsx'
+import { ContractingInvoicesPage } from './ui/pages/ContractingInvoicesPage.tsx'
 import { SaleReturnsPage } from './ui/pages/SaleReturnsPage.tsx'
 import { ShiftsPage } from './ui/pages/ShiftsPage.tsx'
 import { JournalPage } from './ui/pages/JournalPage.tsx'
@@ -56,6 +57,7 @@ import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
 import { CostCentersPage } from './ui/pages/CostCentersPage.tsx'
 import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
+import { HrPage } from './ui/pages/HrPage.tsx'
 import { InstallmentsPage } from './ui/pages/InstallmentsPage.tsx'
 import { ReportsPage } from './ui/pages/ReportsPage.tsx'
 import { NasqPage } from './ui/pages/NasqPage.tsx'
@@ -68,11 +70,15 @@ import { EquipmentPage } from './ui/pages/EquipmentPage.tsx'
 import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
 import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from './ui/pages/LabPages.tsx'
 import { ProjectsPage } from './ui/pages/ContractingPages.tsx'
+import { ContractingReportsPage } from './ui/pages/ContractingReportsPage.tsx'
+import { EquipmentReportsPage } from './ui/pages/EquipmentReportsPage.tsx'
+import { RestaurantReportsPage } from './ui/pages/RestaurantReportsPage.tsx'
 import { QuotationsPage } from './ui/pages/QuotationsPage.tsx'
 import { BoqPage, SubcontractorsPage, BondsPage, DailyWorkersPage } from './ui/pages/ContractingDepthPages.tsx'
 import { MaterialIssuesPage, ClientCollectionsPage, EvmDashboardPage, ApprovalsPage } from './ui/pages/ProjectOpsPages.tsx'
 import { ProjectBudgetPage, ProjectTasksPage } from './ui/pages/ContractingPlanPages.tsx'
 import { PropertiesPage, LeasesPage } from './ui/pages/RealEstatePages.tsx'
+import { LogisticsInvoicesPage, RentalInvoicesPage, RealestateInvoicesPage } from './ui/pages/ActivityInvoicesHubs.tsx'
 import { CustodyPage } from './ui/pages/CustodyPage.tsx'
 import { SyncPage } from './ui/pages/SyncPage.tsx'
 import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
@@ -102,6 +108,7 @@ import { TelegramPage } from './ui/pages/TelegramPage.tsx'
 import { AssetsPage } from './ui/pages/AssetsPage.tsx'
 import { ExternalCommissionsPage } from './ui/pages/ExternalCommissionsPage.tsx'
 import { ToastHost } from './ui/components/ui.tsx'
+import { ThermalPreview } from './ui/components/ThermalPreview.tsx'
 import { KeyboardNavigation } from './ui/components/KeyboardNavigation.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
 
@@ -203,16 +210,24 @@ function Shell() {
         <Route path="/parties/employee-advances" element={<EmployeesPage initialTab="advances" />} />
         <Route path="/parties/employee-deductions" element={<EmployeesPage initialTab="deductions" />} />
         <Route path="/parties/employee-commissions" element={<EmployeesPage initialTab="commissions" />} />
+    {/* شؤون الموظفين — قسم مستقل بتابات داخلية (حضور/بصمة/إجازات/ورديات/تقارير).
+        مسار واحد ديناميكي يغطي كل التابات: المسارات الصريحة المكررة كانت تطابَق
+        قبله فلا يصل :tab إلى useParams إطلاقاً — فتبقى الصفحة على «الحضور»
+        مهما نقر المستخدم من التابات (عطل المالك: «التابات لا تعمل»). */}
+    <Route path="/hr" element={<HrPage />} />
+    <Route path="/hr/:tab" element={<HrPage />} />
         <Route path="/parties/installments" element={<InstallmentsPage />} />
         <Route path="/maintenance/tickets" element={<MaintenancePage />} />
         <Route path="/laundry/orders" element={<LaundryPage />} />
         <Route path="/rental/fleet" element={<EquipmentPage />} />
+        <Route path="/rental/invoices" element={<RentalInvoicesPage />} />
         <Route path="/rental/contracts" element={<RentalContractsPage />} />
         <Route path="/lab/orders" element={<LabOrdersPage />} />
         <Route path="/lab/tests" element={<LabTestsPage />} />
         <Route path="/lab/patients" element={<LabPatientsPage />} />
         <Route path="/lab/referrers" element={<LabReferrersPage />} />
-        <Route path="/contracting/projects" element={<ProjectsPage />} />
+        <Route path="/contracting/invoices" element={<ContractingInvoicesPage />} />
+      <Route path="/contracting/projects" element={<ProjectsPage />} />
         <Route path="/contracting/quotations" element={<QuotationsPage />} />
         <Route path="/contracting/boq" element={<BoqPage />} />
         <Route path="/contracting/subcontractors" element={<SubcontractorsPage />} />
@@ -221,8 +236,12 @@ function Shell() {
         <Route path="/contracting/material-issues" element={<MaterialIssuesPage />} />
         <Route path="/contracting/collections" element={<ClientCollectionsPage />} />
         <Route path="/contracting/evm" element={<EvmDashboardPage />} />
+        <Route path="/contracting/reports" element={<ContractingReportsPage />} />
+        <Route path="/rental/reports" element={<EquipmentReportsPage />} />
+        <Route path="/restaurant/reports" element={<RestaurantReportsPage />} />
         <Route path="/realestate/properties" element={<PropertiesPage />} />
         <Route path="/realestate/leases" element={<LeasesPage />} />
+        <Route path="/realestate/invoices" element={<RealestateInvoicesPage />} />
         <Route path="/contracting/budget" element={<ProjectBudgetPage />} />
         <Route path="/contracting/tasks" element={<ProjectTasksPage />} />
         <Route path="/contracting/approvals" element={<ApprovalsPage />} />
@@ -231,6 +250,7 @@ function Shell() {
         <Route path="/clinic/appointments" element={<ClinicAppointmentsPage />} />
         <Route path="/cars" element={<CarsPage />} />
         <Route path="/logistics/trips" element={<TripsPage />} />
+        <Route path="/logistics/invoices" element={<LogisticsInvoicesPage />} />
         <Route path="/logistics/fleet" element={<FleetPage />} />
         <Route path="/accounting/journal" element={<JournalPage />} />
         <Route path="/accounting/coa" element={<CoaPage />} />
@@ -514,6 +534,9 @@ export default function App() {
     <HashRouter>
       {setup.completed ? <Shell /> : <FirstRunWizard />}
       <ToastHost />
+      {/* معاينة الطباعة الحية — نافذة حرة فوق كل المسارات (طلب المالك):
+          تبقى حية أثناء فتح قسم إعدادات الطباعة وتتحدث فوراً مع كل تغيير */}
+      <ThermalPreview />
     </HashRouter>
   )
 }

@@ -1,7 +1,7 @@
 /**
- * فحص جولة مراجعة نشاط المقاولات (الطلبات 6–9 — الجولة 14):
+ * فحص جولة مراجعة نشاط المقاولات (الطلبات 6–9 — الجولة 14 · محدَّث لتصميم §94):
  * المستخلص المطبوع للجهة المالكة — تراكمي سابق + حالي + نسبة إنجاز
- * + محتجز خصماً + صافي مستحق + توقيعات ثلاثية (مقاول/استشاري/مالك).
+ * + سلّم إجماليات (محتجز واسترداد خصماً) + صافي مستحق + توقيعات ثلاثية.
  * تشغيل: node --experimental-strip-types scripts/verify_contracting_review.mjs
  */
 const { renderExtractHtml } = await import('../src/ui/print/printExtract.ts')
@@ -26,8 +26,8 @@ const html = renderExtractHtml({
 ok('الرقم والمشروع والجهة المالكة', html.includes('EXT-0003') && html.includes('برج النيل') && html.includes('هيئة المجتمعات'))
 ok('السابق والحالي والتراكمي', html.includes('1,500,000') && html.includes('500,000') && html.includes('2,000,000'))
 ok('نسبة الإنجاز 40٪ بشريط', html.includes('40٪') && html.includes('width:40%'))
-ok('المحتجز خصماً بين قوسين وبنسبته', html.includes('محتجز ضمان الأعمال 5٪') && html.includes('(25,000'))
-ok('الصافي والمطالبة على الجهة', html.includes('545,000') && html.includes('مطالبة على الجهة'))
+ok('المحتجز خصماً بنسبته وسالب القيمة (تصميم §94: سلّم الإجماليات)', html.includes('محتجز ضمان (5٪)') && html.includes('− 25,000'))
+ok('الصافي المستحق والمطالبة على الجهة المالكة', html.includes('545,000') && html.includes('الصافي المستحق للجهة المالكة'))
 ok('توقيعات ثلاثية', html.includes('المقاول') && html.includes('الاستشاري') && html.includes('الجهة المالكة'))
 
 console.log('\n3️⃣ الحالات الخاصة')
@@ -37,8 +37,8 @@ const min = renderExtractHtml({
   progressPercent: null, vat: '', retention: '', retentionPercent: 0, due: '100', payment: 'cash',
 })
 ok('عقد بلا قيمة = لا شريط إنجاز ولا قيمة عقد', !min.includes('نسبة الإنجاز') && !min.includes('قيمة العقد'))
-ok('بلا محتجز/ضريبة لا تُطبع صفوفهما', !min.includes('محتجز') && !min.includes('ضريبة القيمة'))
-ok('نقدي = «حُصّل نقداً»', min.includes('حُصّل نقداً'))
+ok('بلا محتجز/ضريبة: الصفان باقيان بصفر ووسم (غير خاضع) — سلّم متوازن دائماً (تصميم §94)', min.includes('محتجز ضمان (0٪)') && min.includes('غير خاضع') && min.includes('− 0'))
+ok('نقدي = «محصل نقدي» بالترويسة ومحصل كاملاً في خانة الصافي', min.includes('محصل نقدي') && min.includes('محصل كاملاً وقت إصدار'))
 ok('إنجاز فوق 100 يُقص للشريط', renderExtractHtml({ shopName: 'م', extractNumber: 'e', dateIso: '2026-01-01', projectName: 'p', projectCode: 'c', clientName: 'c', contractValue: '1', description: '', previousGross: '0', currentGross: '1', cumulativeGross: '1', progressPercent: 130, vat: '', retention: '', retentionPercent: 0, due: '1', payment: 'cash' }).includes('width:100%'))
 ok('تهريب HTML', renderExtractHtml({ shopName: '<x>', extractNumber: 'e', dateIso: '2026-01-01', projectName: 'p', projectCode: 'c', clientName: 'c', contractValue: '', description: '', previousGross: '0', currentGross: '1', cumulativeGross: '1', progressPercent: null, vat: '', retention: '', retentionPercent: 0, due: '1', payment: 'cash' }).includes('&lt;x&gt;'))
 

@@ -52,6 +52,8 @@ export function validateCommercialDocumentMeta(meta: CommercialDocumentMeta): st
     errors.push('المستند المرحّل يحتاج اسم ووقت الترحيل')
   }
   if (meta.status === 'draft' && meta.postedAt) errors.push('المسودة لا تحمل وقت ترحيل')
+  // (§76) المعتمد لم يُرحَّل بعد — وجود وقت ترحيل تناقض يفسد سجل التدقيق
+  if (meta.status === 'approved' && meta.postedAt) errors.push('المستند المعتمد (غير المرحّل) لا يحمل وقت ترحيل')
   return errors
 }
 

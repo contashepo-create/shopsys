@@ -11,7 +11,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { PartyNotesLog } from '../components/PartyNotesLog.tsx'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { employeeStatement, statementBalance, type StatementRow } from '../../core/statements.ts'
+import { statementBalance, type StatementRow } from '../../core/statements.ts'
 import { renderStatementHtml } from '../print/printStatement.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { EmptyState, Btn, useToast } from '../components/ui.tsx'
@@ -21,13 +21,12 @@ type Kind = 'customer' | 'supplier' | 'employee'
 const KINDS: { id: Kind; nameAr: string; icon: typeof UserRound; debitLabel: string; creditLabel: string; positive: string; negative: string }[] = [
   { id: 'customer', nameAr: 'كشف حساب عميل', icon: UserRound, debitLabel: 'عليه (مدين)', creditLabel: 'له (دائن)', positive: 'مطلوب منه', negative: 'رصيد له عندك' },
   { id: 'supplier', nameAr: 'كشف حساب مورد', icon: Building2, debitLabel: 'سددنا / مرتجع', creditLabel: 'مستحق له', positive: 'مستحق له عندك', negative: 'رصيد لك عنده' },
-  { id: 'employee', nameAr: 'كشف حساب موظف', icon: UserCog, debitLabel: 'سلف مصروفة', creditLabel: 'مستقطع من الراتب', positive: 'سلف متبقية عليه', negative: 'رصيد له' },
+  { id: 'employee', nameAr: 'كشف حساب موظف', icon: UserCog, debitLabel: 'عليه (سلف/قبض)', creditLabel: 'له (رواتب/سداد)', positive: 'رصيد عليه (مدين)', negative: 'رصيد له (دائن)' },
 ]
 
 export function StatementsPage() {
-  const { customers, suppliers, employees, employeeAdvances, payrollRuns, advanceRepayments, employeeDeductions,
-    staffCommissions, custodyFiles, custodyTxs,
-    getCustomerStatementRows, getSupplierStatementRows } = useDataStore()
+  const { customers, suppliers, employees,
+    getCustomerStatementRows, getSupplierStatementRows, getEmployeeStatementRows } = useDataStore()
   const { setup, receipt } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -52,18 +51,17 @@ export function StatementsPage() {
       ? getCustomerStatementRows(partyId)
       : kind === 'supplier'
         ? getSupplierStatementRows(partyId)
-        : employeeStatement({
-            employeeId: partyId,
-            advances: employeeAdvances,
-            payrollRuns,
-            advanceRepayments,
-            deductions: employeeDeductions,
-            commissions: staffCommissions,
-            custodyTransactions: custodyTxs.flatMap((tx) => {
-              const file = custodyFiles.find((item) => item.id === tx.fileId)
-              return file ? [{ date: tx.date, employeeId: file.employeeId, type: tx.type, amountMinor: tx.amountMinor, description: tx.description }] : []
-            }),
-          })
+        /* كشف الموظف الموحّد (طلب المالك): مسيرات وقسائم وسلف وخصومات وسندات
+         * وعمولات وعهدات — من دالة المتجر نفسها التي تغذي رصيد الموظف، فلا
+         * يسقط منها مستند ولا يتكرر استرداد سلفة مرتين. */
+        : getEmployeeStatementRows(partyId).map((row, index, list) => ({
+          date: row.date,
+          docLabel: `${row.ref} — ${row.description}`,
+          operationMinor: undefined,
+          debitMinor: row.debitMinor,
+          creditMinor: row.creditMinor,
+          balanceMinor: list.slice(0, index + 1).reduce((sum, line) => sum + line.creditMinor - line.debitMinor, 0),
+        }))
 
   const balance = statementBalance(rows)
   const partyName = parties.find((p) => p.id === partyId)?.nameAr ?? ''

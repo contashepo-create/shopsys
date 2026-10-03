@@ -17,7 +17,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { pendingForUser, canApprove } from '../../core/approvals.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../../core/permissions.ts'
 import { labelFor } from '../../core/activityLabels.ts'
-import { guardNavigation, OverlayPortal } from '../components/ui.tsx'
+import { guardNavigation, OverlayPortal, useToast } from '../components/ui.tsx'
 
 /** موضع القائمة تحت عنوانها مباشرة — محاذاة يمينية (RTL) مع انقلاب عند ضيق الشاشة */
 function menuStyleFor(anchor: HTMLElement | null): CSSProperties {
@@ -70,9 +70,20 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
     }))
     .filter((sec) => sec.children.length > 0)
 
-  /* شارة «طلبات الاعتماد المعلّقة» للمخوَّل (طلب المالك) */
+  /* شارة «طلبات الاعتماد المعلّقة» للمخوَّل (طلب المالك) + إشعار فوري عند
+     وصول مستند جديد بانتظاره: يدخل نظام الاعتماد ويعتمد ما أدخله موظف آخر. */
+  const toast = useToast()
   const canApproveDocs = canApprove({ settings: approvalSettings, userId: currentUserId, userPermissions: perms })
   const pendingApprovals = canApproveDocs ? pendingForUser(docApprovals, currentUserId, perms.has('docs.approve')).length : 0
+  const pendingApprovalsRef = useRef(pendingApprovals)
+  const approvalsToastReady = useRef(false)
+  useEffect(() => {
+    if (!approvalsToastReady.current) { approvalsToastReady.current = true; pendingApprovalsRef.current = pendingApprovals; return }
+    if (pendingApprovals > pendingApprovalsRef.current) {
+      toast.show(`📥 ${pendingApprovals} مستند بانتظار اعتمادك — من «طلبات الاعتماد» في الشريط العلوي`)
+    }
+    pendingApprovalsRef.current = pendingApprovals
+  }, [pendingApprovals, toast])
 
   const sectionIds = sections.map((sec) => sec.id).join('|')
   /* قياس عرض كل عنوان مرة واحدة (العناوين ثابتة)، ثم حساب كم عنواناً يتسع فعلاً.

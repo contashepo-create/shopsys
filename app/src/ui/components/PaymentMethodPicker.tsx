@@ -15,8 +15,9 @@ export interface PaymentMethodDraft {
 }
 
 /**
- * منتقي وسيلة الدفع الموحد للفواتير:
- * حساب نقدي/بنك/محفظة/فرع تابع في قائمة واحدة، أو ماكينة دفع عند التحصيل.
+ * منتقي وسيلة الدفع الموحد للفواتير — **قائمة منسدلة واحدة فقط** (طلب المالك:
+ * لا أزرار/بلاطات تشغل حيزاً): حساب نقدي/بنك/محفظة/فرع تابع في قائمة واحدة
+ * مجمَّعة، أو ماكينة دفع عند التحصيل.
  * لا يخلط بين اختيار الحساب ومبلغ السداد؛ المبلغ يبقى في الحقل المجاور.
  */
 /** بلاغ المالك: عند اختيار «نقدي» لا تظهر البنوك ولا الماكينات داخل القائمة —
@@ -28,15 +29,13 @@ export function PaymentMethodPicker({
   allowTerminal = operation === 'receipt',
   allowCredit = false,
   terminalOptions,
-  tiles = false, restrictTo }: {
+  restrictTo }: {
   value: PaymentMethodDraft
   onChange: (value: PaymentMethodDraft) => void
   operation: TreasuryOperation
   allowTerminal?: boolean
   allowCredit?: boolean
   terminalOptions?: readonly { id: string; nameAr: string }[]
-  /** بلاطات «نقدي · تحويل بنكي · ماكينة» فوق القائمة (شكل الفاتورة المرجعي) */
-  tiles?: boolean
   /** فلترة الوسائل حسب نوع الطريقة (بلاغ المالك) */
   restrictTo?: 'cash' | 'bank' | 'terminal' | null
 }) {
@@ -81,24 +80,11 @@ export function PaymentMethodPicker({
     return <div className="text-[11px] font-bold text-rose-500">لا توجد وسيلة دفع مسموحة لهذه العملية</div>
   }
 
-  const firstCash = treasuries.find((treasury) => treasury.kind === 'cash')
-  const firstBank = treasuries.find((treasury) => treasury.kind === 'bank')
-  const firstTerminal = terminals[0]
-  const activeTreasury = treasuries.find((treasury) => treasury.code === value.treasury)
-  const tileMode: 'cash' | 'bank' | 'terminal' | null = value.kind === 'credit' ? null
-    : value.terminalPayment.terminalId ? 'terminal'
-    : activeTreasury?.kind === 'bank' ? 'bank'
-    : activeTreasury ? 'cash' : null
-
   return (
     <div className="space-y-2">
-      {tiles && (
-        <div className="invoice-doc-tiles" role="group" aria-label="طريقة الدفع السريعة">
-          <button type="button" aria-pressed={tileMode === 'cash'} disabled={!firstCash} onClick={() => firstCash && selectMethod(`treasury:${firstCash.code}`)}>نقدي</button>
-          <button type="button" aria-pressed={tileMode === 'bank'} disabled={!firstBank} onClick={() => firstBank && selectMethod(`treasury:${firstBank.code}`)}>تحويل بنكي</button>
-          <button type="button" aria-pressed={tileMode === 'terminal'} disabled={!firstTerminal} onClick={() => firstTerminal && selectMethod(`terminal:${firstTerminal.id}`)}>ماكينة دفع</button>
-        </div>
-      )}
+      {/* طلب المالك (2026-10-01): لا بلاطات أزرار فوق القائمة — قائمة منسدلة
+          واحدة فقط توفر المساحة، وفيها كل الوسائل مجمَّعة (خزائن/بنوك/محافظ
+          تابعة ثم ماكينات الدفع). */}
       <QuickSelect aria-label="طريقة الدفع" value={selectedValue} onChange={(event) => selectMethod(event.target.value)} className={inputCls}>
         <option value="">اختر طريقة الدفع…</option>
         {treasuries.length > 0 && (

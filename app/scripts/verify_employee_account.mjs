@@ -13,17 +13,23 @@ const sales = read('ui/pages/AdvancedSalesInvoicePage.tsx')
 {
   assert.ok(/getEmployeeBalance: \(employeeId: number\) => number/.test(repo), 'لا رصيد للموظف كطرف')
   assert.ok(/getEmployeeStatementRows: \(employeeId: number\)/.test(repo), 'لا كشف حساب للموظف')
-  /* الاستحقاق دائن بالمستحق قبل الاقتطاع، والخصم والسلفة مدينان — بلا ازدواج */
-  assert.ok(/creditMinor: slip\.grossMinor \+ slip\.allowancesMinor/.test(repo), 'كشف الموظف يزدوج فيه الخصم')
-  assert.ok(/description: 'خصومات على الراتب', debitMinor: slip\.deductionsMinor/.test(repo), 'الخصومات لا تظهر مديناً')
-  assert.ok(/description: 'استقطاع سلفة من الراتب', debitMinor: slip\.advanceMinor/.test(repo), 'السلف المستقطعة لا تظهر مديناً')
-  assert.ok(/description: 'صرف الراتب', debitMinor: slip\.netMinor/.test(repo), 'الصرف لا يصفّي رصيد الموظف')
-  R.ok('كشف الموظف: استحقاق دائن · خصومات وسلف مدين · الصرف يصفّي الرصيد')
+  /* القاعدة المحاسبية (مساوية لقيد المسير 2104): الاستحقاق دائن بالصافي فقط،
+     واستقطاع السلفة دائن لأنه سداد لدينها على 1107، والخصم بند توثيقي في البيان
+     (أخفض مصروف 5102) — لا يُقيَّد على الموظف وإلا ازدوج. البوابة الحية
+     (verify_owner_live_preview_batch) تثبت الرصيد صفراً بهذه المعادلة. */
+  assert.ok(/debitMinor: 0, creditMinor: slip\.netMinor/.test(repo), 'استحقاق القسيمة ليس دائناً بالصافي فقط')
+  assert.ok(/سلفة استُردت من الراتب \(سداد دين السلفة\)'.*debitMinor: 0, creditMinor: slip\.advanceMinor/s.test(repo), 'استقطاع السلفة ليس دائناً — الازدواج عاد')
+  assert.ok(!/debitMinor: slip\.deductionsMinor/.test(repo), 'الخصومات لا تكون مدينة على الموظف (ازدواج)')
+  assert.ok(/صرف راتب \$\{slipMonth\}/.test(repo) && /debitMinor: slip\.netMinor, creditMinor: 0/.test(repo), 'الصرف لا يصفّي رصيد الموظف')
+  assert.ok(/سلفة استُردت من المسير/.test(repo), 'سلف المسير القديم لا تُسترد في الكشف')
+  R.ok('كشف الموظف: استحقاق دائن بالصافي · استقطاع السلفة سداد دائن · الخصم توثيقي · الصرف يصفّي الرصيد')
 }
 {
   assert.ok(/partyKind\?: 'customer' \| 'supplier' \| 'employee' \| null/.test(repo), 'السندات لا تقبل الموظف كطرف')
   assert.ok(/state\.vouchers\.filter\(\(row\) => row\.partyKind === 'employee'/.test(repo), 'سندات الموظف لا تدخل كشفه')
-  assert.ok(/debitMinor: voucher\.kind === 'payment' \? voucher\.amountMinor : 0/.test(repo), 'سند الصرف للموظف لا يُقيَّد مديناً')
+  /* Â§93: مدين بكامل المبلغ إلا ما سدّد قسائم رواتب — سطر القسيمة نفسه موجود في الكشف فلا يزدوج */
+  assert.ok(/const settledByVoucher = voucher\.kind === 'payment'/.test(repo), 'لا استثناء لسند تسديد القسائم — الازدواج عاد')
+  assert.ok(/voucherDebit = voucher\.kind === 'payment' \? Math\.max\(0, voucher\.amountMinor - settledByVoucher\) : 0/.test(repo), 'سند الصرف للموظف لا يُقيَّد مديناً')
   assert.ok(/creditMinor: voucher\.kind === 'receipt' \? voucher\.amountMinor : 0/.test(repo), 'سند القبض من الموظف لا يُقيَّد دائناً')
   R.ok('سندا القبض والصرف يقبلان الموظف ويحدّثان رصيده مثل العميل')
 }

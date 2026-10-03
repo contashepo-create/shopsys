@@ -14,6 +14,9 @@ import type { Minor } from './money.ts'
 export type ApprovalDocKind = 'sale' | 'purchase' | 'receipt' | 'payment' | 'sale_return' | 'purchase_return'
 export type DocApprovalStatus = 'pending' | 'approved' | 'rejected'
 
+/** كل أنواع المستندات الخاضعة للاعتماد — تستخدمها شاشة الإعدادات */
+export const APPROVAL_DOC_KINDS: ApprovalDocKind[] = ['sale', 'purchase', 'receipt', 'payment', 'sale_return', 'purchase_return']
+
 export const APPROVAL_DOC_LABELS: Record<ApprovalDocKind, string> = {
   sale: 'فاتورة مبيعات',
   purchase: 'فاتورة مشتريات',
@@ -64,6 +67,8 @@ export interface DocApprovalRequest {
   reason?: string
   /** رقم المستند بعد الترحيل الفعلي */
   postedDocumentId?: number | null
+  /** مرجع المستند المرحَّل (رقم الفاتورة/السند) للعرض في سجل الطلبات */
+  postedDocumentRef?: string | null
 }
 
 /** هل يحتاج هذا المستند اعتماداً قبل الترحيل؟ */

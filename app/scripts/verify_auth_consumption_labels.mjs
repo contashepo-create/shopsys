@@ -8,6 +8,7 @@
  * ⑥ الملصقات: مقاسات، تحقق الطباعة، رسم ملصقات أصناف وسيريال بالقالب
  * تشغيل: node --experimental-strip-types scripts/verify_auth_consumption_labels.mjs
  */
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 const mem = new Map()
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) }
 globalThis.window = globalThis
@@ -110,8 +111,8 @@ S().addItem({ nameAr: 'منظف صناعي', sku: 'CLN-1', barcodes: [], categor
 const cln = S().items.at(-1)
 S().addSupplier({ nameAr: 'مورد كيماويات', phone: '', notes: '', taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' })
 const sup = S().suppliers.at(-1)
-S().postPurchase({ supplierId: sup.id, date: '2026-09-01', lines: [{ itemId: cln.id, qty: 10, unitPriceMinor: 4000, expiryDate: '2026-10-01' }], expenses: [], paidMinor: 0, notes: '' })
-S().postPurchase({ supplierId: sup.id, date: '2026-09-02', lines: [{ itemId: cln.id, qty: 10, unitPriceMinor: 4000, expiryDate: '2026-12-01' }], expenses: [], paidMinor: 0, notes: '' })
+S().postPurchase({ supplierId: sup.id, date: '2026-09-01', lines: [{ itemId: cln.id, qty: 10, unitPriceMinor: 4000, expiryDate: relDays(45) }], expenses: [], paidMinor: 0, notes: '' })
+S().postPurchase({ supplierId: sup.id, date: '2026-09-02', lines: [{ itemId: cln.id, qty: 10, unitPriceMinor: 4000, expiryDate: relDays(90) }], expenses: [], paidMinor: 0, notes: '' })
 ok('الرصيد بعد الشراء 20 والتكلفة 40.00', S().items.find((i) => i.id === cln.id).stockQty === 20 && S().items.find((i) => i.id === cln.id).costMinor === 4000)
 // نواة خالصة
 ok('validateConsumption: غرض فارغ يُرفض', cons.validateConsumption({ purpose: ' ', expenseAccount: '5114', lines: [{ itemId: 1, nameAr: 'x', qty: 1, unitCostMinor: 100 }] }, () => 5, () => true).length === 1)
@@ -127,7 +128,7 @@ ok('الحساب الافتراضي 5114', doc.expenseAccount === '5114')
 const jc = S().journal.at(-1)
 ok('قيد internal_use متوازن ومربوط', S().journal.length === before + 1 && jc.sourceType === 'internal_use' && jc.lines.reduce((a, l) => a + l.debit - l.credit, 0) === 0)
 ok('الرصيد خُصم إلى 12', S().items.find((i) => i.id === cln.id).stockQty === 12)
-const batchOld = S().batches.find((b) => b.itemId === cln.id && b.expiryDate === '2026-10-01')
+const batchOld = S().batches.find((b) => b.itemId === cln.id && b.expiryDate === relDays(45))
 ok('FEFO: الدفعة الأقدم استُهلكت أولاً (10→2... )', batchOld.qty === 2)
 throws('تجاوز الرصيد يُرفض', () => S().postConsumption({ purpose: 'مواد تشغيل', lines: [{ itemId: cln.id, qty: 999 }], notes: '' }), 'تتجاوز')
 const doc2 = S().postConsumption({ purpose: 'ضيافة ونظافة', expenseAccount: '5108', lines: [{ itemId: cln.id, qty: 2 }], notes: '' })
