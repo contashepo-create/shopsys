@@ -13,6 +13,8 @@ import { readFileSync, existsSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { DEMO_ACTIVITIES } from './seed.data.mjs'
+import { writeFileSync } from 'node:fs'
+import { dumpPayloads, PAYLOADS_PATH } from './dump.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 export const DB_PATH = join(here, 'demo.sqlite')
@@ -138,7 +140,11 @@ export function buildDemoDatabase(target = DB_PATH) {
     ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts', 'contracting_docs']
       .map((table) => [table, db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n]),
   )
+  /* §98: حمولة JSON جاهزة لاختبارات الواجهة (jsdom لا تستورد node:sqlite) —
+     تُفرَّغ من القاعدة المنشأة للتو فتبقى مطابقة للبذرة حكماً */
+  const payloads = dumpPayloads(db)
   db.close()
+  writeFileSync(PAYLOADS_PATH, JSON.stringify(payloads, null, 1) + '\n')
   return counts
 }
 

@@ -87,6 +87,28 @@ assert.ok(contractingDocsCount >= 35, 'مستندات المقاولات أقل 
 assert.ok(db.prepare("SELECT COUNT(*) AS n FROM quotations WHERE activity = 'contracting' AND convert = 'project'").get().n >= 1, 'لا عرض فائز يتحول مشروعاً — عمود convert')
 R.ok(`نشاط المقاولات كامل الأقسام: ${contractingDocsCount} مستنداً ب${docKinds.length} نوعاً (مشروع يدوي · موازنة · أوامر تغيير · خطابات ضمان · عمال يومية · أذون صرف · سندات موسومة · تحصيل FIFO · شراء مربوط · مهام · موافقات)`)
 
+/* §98: حمولة JSON (demo-payloads.json) مطابقة تماماً لما تنتجه البذرة —
+   تُبنى قاعدة مؤقتة من البذرة وتُفرَّغ وتُقارن بالملف الملتزم (نمط بوابة المصفوفة) */
+{
+  const { buildDemoDatabase } = await import('../demo-db/build.mjs')
+  const { DatabaseSync } = await import('node:sqlite')
+  const { dumpPayloads } = await import('../demo-db/dump.mjs')
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const tmp = mkdtempSync(join(tmpdir(), 'shopsys-demo-'))
+  try {
+    buildDemoDatabase(join(tmp, 'demo.sqlite'))
+    const db = new DatabaseSync(join(tmp, 'demo.sqlite'))
+    const fresh = dumpPayloads(db)
+    db.close()
+    const committed = JSON.parse(readFileSync(new URL('../demo-db/demo-payloads.json', import.meta.url), 'utf8'))
+    /* صفوف sqlite كائنات بلا prototype وJSON.parse عادية — فالمقارنة قانونية نصياً */
+    assert.equal(JSON.stringify(fresh), JSON.stringify(committed), 'demo-payloads.json لا يطابق البذرة — شغّل npm run demo:build')
+  } finally { rmSync(tmp, { recursive: true, force: true }) }
+  R.ok('حمولات الأنشطة الجاهزة للاختبارات (demo-payloads.json) مطابقة للبذرة حرفياً')
+}
+
 const bridge = read('src/dev/demoDatabase.ts')
 const panel = read('src/dev/DemoDataPanel.tsx')
 assert.ok(/if \(!import\.meta\.env\.DEV\)/.test(bridge) && /if \(!import\.meta\.env\.DEV\) return null/.test(panel),

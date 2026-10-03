@@ -288,6 +288,13 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [comAmount, setComAmount] = useState('')
   const [comDesc, setComDesc] = useState('')
   const [comPayId, setComPayId] = useState<number | null>(null)
+  /* §98: تعديل/إلغاء العمولة بنوافذ النظام بدل prompt() الأصلية (مراجعة شاملة:
+     النوافذ الأصلية تكسر نمط البرنامج وتحجب الخلفية بلا Arabic UX ولا تحقق) */
+  const [comEdit, setComEdit] = useState<{ id: number; code: string; amountMinor: number } | null>(null)
+  const [comEditAmount, setComEditAmount] = useState('')
+  const [comEditReason, setComEditReason] = useState('')
+  const [comCancel, setComCancel] = useState<{ id: number; code: string } | null>(null)
+  const [comCancelReason, setComCancelReason] = useState('')
   const [comPayTreasury, setComPayTreasury] = useState('1101')
   const saveCommission = () => {
     try {
@@ -862,23 +869,14 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                           <>
                             <button title="صرف منفرد الآن من الخزينة" onClick={() => setComPayId(c.id)}
                               className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors">💵 صرف</button>
-                            <button title="تعديل المبلغ (إلغاء + استحقاق جديد بأثر تدقيقي)" onClick={() => {
-                              const raw = prompt(`المبلغ الجديد لـ${c.code} (${cur.symbol}):`, String(c.amountMinor / 10 ** cur.decimals))
-                              if (raw == null || !raw.trim()) return
-                              const reason = prompt('سبب التعديل:')
-                              if (reason == null || !reason.trim()) return toast.show('سبب التعديل مطلوب', 'error')
-                              try {
-                                const nc = updateStaffCommissionAmount({ commissionId: c.id, newAmountMinor: toMinor(raw, cur.decimals), reason: reason.trim() })
-                                toast.show(`عُدلت — العمولة الجديدة ${nc.code} ✓`)
-                              } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                            <button title="تعديل المبلغ (إلغاء + استحقاق جديد بأثر تدقيقي)" data-commission-edit onClick={() => {
+                              setComEdit({ id: c.id, code: c.code, amountMinor: c.amountMinor })
+                              setComEditAmount(String(c.amountMinor / 10 ** cur.decimals))
+                              setComEditReason('')
                             }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-colors">✏️ تعديل</button>
-                            <button title="إلغاء العمولة (قيد عاكس + سبب موثق)" onClick={() => {
-                              const reason = prompt(`سبب إلغاء ${c.code}:`)
-                              if (reason == null || !reason.trim()) return
-                              try {
-                                cancelStaffCommission({ commissionId: c.id, reason: reason.trim() })
-                                toast.show(`أُلغيت ${c.code} بقيد عاكس ✓`)
-                              } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                            <button title="إلغاء العمولة (قيد عاكس + سبب موثق)" data-commission-cancel onClick={() => {
+                              setComCancel({ id: c.id, code: c.code })
+                              setComCancelReason('')
                             }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors">🚫 إلغاء</button>
                           </>
                         )}
@@ -951,6 +949,54 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     setComPayId(null)
                   } catch (e2) { toast.show((e2 as Error).message, 'error') }
                 }}>💵 صرف الآن</Btn>
+              </div>
+            </div>
+          </Modal>
+
+          {/* §98: تعديل مبلغ عمولة — نافذة نظام بتحقق، كانت prompt() أصلية */}
+          <Modal open={comEdit != null} onClose={() => setComEdit(null)} title="تعديل مبلغ عمولة" subtitle="إلغاء واستحقاق جديد بأثر تدقيقي — السبب إلزامي">
+            <div className="space-y-4">
+              <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{comEdit?.code}: <span className="text-violet-600 font-black">{comEdit ? fmt(comEdit.amountMinor) : ''}</span> ← <span className="text-amber-600 font-black">{comEditAmount.trim() ? `${fmt(toMinor(comEditAmount, cur.decimals))}` : '—'}</span></div>
+              <Field label={`المبلغ الجديد (${cur.symbol}) *`}>
+                <input className={inputCls} inputMode="decimal" value={comEditAmount} data-commission-amount onChange={(e) => setComEditAmount(e.target.value)} aria-label="المبلغ الجديد" />
+              </Field>
+              <Field label="سبب التعديل *" hint="يُوثَّق على القيد العاكس والعمولة الجديدة">
+                <input className={inputCls} value={comEditReason} data-commission-reason onChange={(e) => setComEditReason(e.target.value)} aria-label="سبب التعديل" placeholder="مثال: تصحيح نسبة العمولة مع العميل" />
+              </Field>
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => setComEdit(null)}>إلغاء</Btn>
+                <Btn onClick={() => {
+                  if (!comEdit) return
+                  if (!comEditAmount.trim()) return toast.show('المبلغ الجديد مطلوب', 'error')
+                  if (!comEditReason.trim()) return toast.show('سبب التعديل مطلوب', 'error')
+                  try {
+                    const nc = updateStaffCommissionAmount({ commissionId: comEdit.id, newAmountMinor: toMinor(comEditAmount, cur.decimals), reason: comEditReason.trim() })
+                    toast.show(`عُدلت — العمولة الجديدة ${nc.code} ✓`)
+                    setComEdit(null)
+                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                }}>✏️ اعتماد التعديل</Btn>
+              </div>
+            </div>
+          </Modal>
+
+          {/* §98: إلغاء عمولة — قيد عاكس بسبب موثق من نافذة لا prompt() */}
+          <Modal open={comCancel != null} onClose={() => setComCancel(null)} title="إلغاء عمولة" subtitle="قيد عاكس يطفئ العمولة — السبب إلزامي للتدقيق">
+            <div className="space-y-4">
+              <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{comCancel?.code}</div>
+              <Field label="سبب الإلغاء *">
+                <input className={inputCls} value={comCancelReason} data-commission-cancel-reason onChange={(e) => setComCancelReason(e.target.value)} aria-label="سبب الإلغاء" placeholder="مثال: أُلغيت العملية المرتبطة بالعمولة" />
+              </Field>
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => setComCancel(null)}>تراجع</Btn>
+                <Btn variant="danger" onClick={() => {
+                  if (!comCancel) return
+                  if (!comCancelReason.trim()) return toast.show('سبب الإلغاء مطلوب', 'error')
+                  try {
+                    cancelStaffCommission({ commissionId: comCancel.id, reason: comCancelReason.trim() })
+                    toast.show(`أُلغيت ${comCancel.code} بقيد عاكس ✓`)
+                    setComCancel(null)
+                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                }}>🚫 إلغاء العمولة</Btn>
               </div>
             </div>
           </Modal>
