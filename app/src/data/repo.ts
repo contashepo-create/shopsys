@@ -2350,6 +2350,8 @@ interface DataState {
   /** شهادة أعمال باطن: 5110 ← 2101 صافي + 2108 محتجز */
   /** شهادة أعمال باطن: مبلغ مباشر أو نسبة إنجاز تراكمية من قيمة العقد (نمط AccFlex)؛ خصم المقدمة تلقائي بنسبة العقد ما لم يُمرَّر يدوياً */
   addSubCertificate: (args: { contractId: number; amountMinor?: number; newProgressPercent?: number; description: string; advanceRecoveryMinor?: number }) => SubCertificate
+  /** §94-مراجعة-2: تعديل عقد باطن — القيمة مقفولة بعد أول شهادة (النِّسَب محسوبة عليها)، والنِّسَب تسري على الشهادات القادمة فقط */
+  updateSubContract: (id: number, changes: { contractorName?: string; scopeAr?: string; supplierId?: number | null; contractValueMinor?: number; retentionPercent?: number; taxWithholdPercent?: number; advanceRecoveryPercent?: number; boqItemIds?: number[] }) => SubContract
   /** دفعة لمقاول الباطن من مستحقاته */
   paySubContractor: (args: { contractId: number; amountMinor: number; treasury: string }) => void
   /** إفراج محتجزات الباطن وإقفال عقده */
@@ -2358,7 +2360,11 @@ interface DataState {
   issueBond: (args: { projectId: number | null; bondNumber: string; type: BondType; beneficiary: string; amountMinor: number; marginMinor: number; feesMinor: number; bank: string; issueDate: string; expiryDate: string }) => Bond
   /** رد الخطاب (release) أو مصادرته (forfeit) */
   settleBond: (bondId: number, outcome: 'released' | 'forfeited') => Bond
+  /** §94-مراجعة-2: تعديل بيانات خطاب ضمان نشط — القيمة/الهامش/المصاريف مقفولة (قُيّدت عند الإصدار في 1109 والبنك) */
+  updateBond: (id: number, changes: { bondNumber?: string; type?: BondType; beneficiary?: string; expiryDate?: string; projectId?: number | null }) => Bond
   addDailyWorker: (args: { nameAr: string; phone: string; dailyWageMinor: number }) => DailyWorker
+  /** §94-مراجعة-2: تعديل عامل يومية — اليومية تسري على أيام العمل القادمة (المسجلة محفوظة بأجرها وقت تسجيلها) */
+  updateDailyWorker: (id: number, changes: { nameAr?: string; phone?: string; dailyWageMinor?: number; active?: boolean }) => DailyWorker
   addDailyWorkRecord: (args: { workerId: number; projectId: number | null; date: string; days: number; wageMinor?: number }) => DailyWorkRecord
   /** تسوية كل يوميات عامل غير المسددة: مشاريع→5110 وتشغيل عام→5108 ← خزينة */
   settleDailyWorker: (workerId: number, treasury: string) => { total: number; recordCount: number }
@@ -10368,6 +10374,33 @@ export const useDataStore = create<DataState>()(
         set({ subContracts: [...state.subContracts, contract] })
         return contract
       },
+      /* ─── §94-مراجعة-2: تعديل عقد باطن (استكمال مراجعة «راجع كل شئ») ─── */
+      updateSubContract: (id, changes) => {
+        const state = get()
+        const c = state.subContracts.find((x) => x.id === id)
+        if (!c) throw new Error('عقد الباطن غير موجود')
+        if (c.status !== 'active') throw new Error('العقد مقفل — لا يُعدَّل')
+        const hasCerts = state.subCertificates.some((x) => x.contractId === id)
+        if (changes.contractValueMinor !== undefined && changes.contractValueMinor !== c.contractValueMinor && hasCerts) {
+          throw new Error('اعتُمدت شهادات على هذا العقد — قيمته لا تُعدَّل مباشرة؛ عقد ملحق (عقد جديد) أو قسّم الأعمال')
+        }
+        const merged: SubContract = { ...c, ...changes }
+        const errors = validateSubContract(merged)
+        const withhold = changes.taxWithholdPercent ?? c.taxWithholdPercent
+        if (withhold < 0 || withhold > 20) errors.push('نسبة ضريبة الاستقطاع بين 0 و20٪')
+        const advPct = changes.advanceRecoveryPercent ?? c.advanceRecoveryPercent
+        if (advPct < 0 || advPct > 100) errors.push('نسبة خصم الدفعة المقدمة بين 0 و100٪')
+        if (merged.supplierId != null && !state.suppliers.find((x) => x.id === merged.supplierId)) errors.push('المورد المربوط غير موجود')
+        for (const bid of merged.boqItemIds) {
+          const b = state.boqItems.find((x) => x.id === bid)
+          if (!b || b.projectId !== c.projectId) errors.push(`بند BOQ رقم ${bid} ليس من بنود مشروع هذا العقد`)
+        }
+        if (errors.length) throw new Error(errors.join(' — '))
+        /* الرقم والحالة والمشروع والنسبة المنفذة لا تتغير — التعديل للبيانات والنِّسَب المستقبلية */
+        set({ subContracts: state.subContracts.map((x) => (x.id === id ? { ...merged, contractNumber: c.contractNumber, status: c.status, projectId: c.projectId, progressPercent: c.progressPercent } : x)) })
+        return merged
+      },
+
       addSubCertificate: (args) => {
         const state = get()
         const contract = state.subContracts.find((c) => c.id === args.contractId)
@@ -10509,6 +10542,21 @@ export const useDataStore = create<DataState>()(
         set({ bonds: [...state.bonds, bond], journal: [...state.journal, entry] })
         return bond
       },
+      /* ─── §94-مراجعة-2: تعديل بيانات خطاب ضمان نشط — القيم المقيدة لا تُمس ─── */
+      updateBond: (id, changes) => {
+        const state = get()
+        const bond = state.bonds.find((b) => b.id === id)
+        if (!bond) throw new Error('الخطاب غير موجود')
+        if (bond.status !== 'active') throw new Error('الخطاب مُسوَّى — لا يُعدَّل')
+        const merged: Bond = { ...bond, ...changes }
+        const errors = validateBond(merged)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (merged.projectId != null && !state.projects.find((p) => p.id === merged.projectId)) throw new Error('المشروع غير موجود')
+        /* القيمة والهامش والمصاريف والبنك والحالة والإقفال لا تتغير — قيود 1109/البنك صدرت بها */
+        set({ bonds: state.bonds.map((b) => (b.id === id ? { ...merged, amountMinor: bond.amountMinor, marginMinor: bond.marginMinor, feesMinor: bond.feesMinor, bank: bond.bank, status: bond.status, issueEntryId: bond.issueEntryId, settleEntryId: bond.settleEntryId } : b)) })
+        return merged
+      },
+
       settleBond: (bondId, outcome) => {
         const state = get()
         const bond = state.bonds.find((b) => b.id === bondId)
@@ -10529,6 +10577,18 @@ export const useDataStore = create<DataState>()(
         const updated: Bond = { ...bond, status: outcome, settleEntryId: entryId }
         set({ bonds: state.bonds.map((b) => (b.id === bondId ? updated : b)), journal: [...state.journal, entry] })
         return updated
+      },
+
+      /* ─── §94-مراجعة-2: تعديل عامل يومية — الأجر المسجل بالسجلات القديمة تاريخي ─── */
+      updateDailyWorker: (id, changes) => {
+        const state = get()
+        const w = state.dailyWorkers.find((x) => x.id === id)
+        if (!w) throw new Error('العامل غير مسجل')
+        const merged: DailyWorker = { ...w, ...changes }
+        if (!merged.nameAr.trim()) throw new Error('اسم العامل مطلوب')
+        if (!Number.isInteger(merged.dailyWageMinor) || merged.dailyWageMinor <= 0) throw new Error('اليومية يجب أن تكون موجبة')
+        set({ dailyWorkers: state.dailyWorkers.map((x) => (x.id === id ? merged : x)) })
+        return merged
       },
 
       addDailyWorker: (args) => {

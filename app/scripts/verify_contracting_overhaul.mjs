@@ -15,6 +15,8 @@
  *
  * ⑤ المراجعة الشاملة: كل فواتير البيع تظهر في مركز المقاولات (حرة/مربوطة) · فتح
  *    وتعديل وطباعة العروض المحفوظة · تعديل مشروع وبند BOQ بحروس سلامة.
+ * ⑥ استكمال المراجعة: تعديل عقد باطن وخطاب ضمان وعامل يومية بحروس · طباعة
+ *    شهادة الباطن A4.
  *
  * التشغيل: node --experimental-strip-types scripts/verify_contracting_overhaul.mjs
  */
@@ -227,6 +229,56 @@ console.log('⑤ المراجعة الشاملة: ظهور كل الفواتير
   ok('جدول الكميات: قلم تعديل لكل بند + قفل الكمية/السعر بعد التنفيذ', depth.includes('data-boq-edit') && depth.includes('الكمية والسعر مقفولان'))
 }
 
+/* ═══ ⑥ §94-مراجعة-2 («اكمل وراجع»): عمق المقاولات — تعديل باطن/ضمان/عامل + طباعة شهادة الباطن ═══ */
+console.log('⑥ استكمال المراجعة: تعديل عقد باطن وخطاب ضمان وعامل يومية · طباعة شهادة الباطن')
+{
+  /* ── عقد باطن: البيانات والنِّسَب تُعدَّل، القيمة بعد أول شهادة لا ── */
+  const sub = st().addSubContract({ projectId: proj.id, contractorName: 'مقاول الحفر', scopeAr: 'أعمال حفر', contractValueMinor: 300_000, retentionPercent: 10 })
+  const subE = st().updateSubContract(sub.id, { contractorName: 'مقاول الحفر (أحمد)', retentionPercent: 5, taxWithholdPercent: 3, advanceRecoveryPercent: 10 })
+  ok('تعديل عقد باطن بلا شهادات: البيانات والنِّسَب تُحفظ', subE.contractorName.includes('أحمد') && subE.retentionPercent === 5 && subE.taxWithholdPercent === 3 && subE.advanceRecoveryPercent === 10)
+  st().addSubCertificate({ contractId: sub.id, newProgressPercent: 50, description: 'نصف الأعمال' }) // شهادة 150,000
+  const subE2 = st().updateSubContract(sub.id, { scopeAr: 'أعمال حفر وردم' })
+  ok('بعد الشهادات: النطاق يُعدَّل والنِّسَب تسري على القادمة', subE2.scopeAr === 'أعمال حفر وردم')
+  throws('قيمة عقد الباطن بعد أول شهادة مقفولة (عقد ملحق)', () => st().updateSubContract(sub.id, { contractValueMinor: 400_000 }), 'شهادات')
+  throws('نسبة محتجز خارج 0–20٪ تُرفض', () => st().updateSubContract(sub.id, { retentionPercent: 50 }), 'المحتجز')
+  const cert1 = st().subCertificates.filter((c) => c.contractId === sub.id).at(-1)
+  ok('الشهادة تحسب بالنِّسَب المعدلة وقت إنشائها (150,000 × محتجز 5٪ = 7,500 + استقطاع 3٪ = 4,500)', cert1.amountMinor === 150_000 && cert1.retentionMinor === 7_500 && cert1.taxWithholdMinor === 4_500)
+  st().addSubCertificate({ contractId: sub.id, newProgressPercent: 60, description: 'شريحة إضافية' }) // 30,000 بمحتجز 5٪ الجديدة
+  const cert2 = st().subCertificates.filter((c) => c.contractId === sub.id).at(-1)
+  ok('النسبة المعدلة تسري على الشهادة التالية فقط (5٪ لا 10٪)', cert2.amountMinor === 30_000 && cert2.retentionMinor === 1_500)
+
+  /* ── خطاب ضمان: البيانات تُعدَّل والقيم المقيدة لا ── */
+  const bond = st().issueBond({ projectId: proj.id, bondNumber: 'BG-101', type: 'final', beneficiary: 'المالك', amountMinor: 200_000, marginMinor: 40_000, feesMinor: 500, bank: '1102', issueDate: '2026-10-01', expiryDate: '2027-04-01' })
+  const bondE = st().updateBond(bond.id, { bondNumber: 'BG-101-R1', beneficiary: 'المالك — إدارة المشروع', expiryDate: '2027-06-01' })
+  ok('تعديل خطاب نشط: الرقم والمستفيد والانتهاء تُحفظ', bondE.bondNumber === 'BG-101-R1' && bondE.beneficiary.includes('إدارة') && bondE.expiryDate === '2027-06-01')
+  ok('القيم المقيدة محفوظة رغم محاولة التغيير من النوع', bondE.amountMinor === 200_000 && bondE.marginMinor === 40_000 && bondE.feesMinor === 500 && bondE.bank === '1102')
+  throws('خطاب بمستفيد فارغ يُرفض', () => st().updateBond(bond.id, { beneficiary: '  ' }), 'المستفيد')
+  st().settleBond(bond.id, 'released')
+  throws('الخطاب المُسوَّى لا يُعدَّل', () => st().updateBond(bond.id, { bondNumber: 'X' }), 'مُسوَّى')
+
+  /* ── عامل يومية: البيانات والأجر (المستقبلي) ── */
+  const w = st().addDailyWorker({ nameAr: 'سيد عامل', phone: '', dailyWageMinor: 300 })
+  st().addDailyWorkRecord({ workerId: w.id, projectId: proj.id, date: '2026-10-02', days: 2 }) // 600 بالأجر القديم
+  const wE = st().updateDailyWorker(w.id, { nameAr: 'سيد علي', phone: '0100', dailyWageMinor: 350 })
+  ok('تعديل عامل: البيانات واليومية الجديدة', wE.nameAr === 'سيد علي' && wE.phone === '0100' && wE.dailyWageMinor === 350)
+  const oldRec = st().dailyWorkRecords.find((r) => r.workerId === w.id)
+  ok('السجل القديم محفوظ بأجره وقت تسجيله (600 لا 700)', oldRec.wageMinor === 600)
+  st().addDailyWorkRecord({ workerId: w.id, projectId: proj.id, date: '2026-10-03', days: 1 })
+  const newRec = st().dailyWorkRecords.filter((r) => r.workerId === w.id).at(-1)
+  ok('اليوم الجديد يحسب بالأجر المعدل (350)', newRec.wageMinor === 350)
+  throws('يومية غير موجبة تُرفض', () => st().updateDailyWorker(w.id, { dailyWageMinor: 0 }), 'اليومية')
+
+  /* ── الواجهات: أزرار التعديل والطباعة ── */
+  const { readFileSync } = await import('node:fs')
+  const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8')
+  const depth = read('../src/ui/pages/ContractingDepthPages.tsx')
+  ok('عقد الباطن: قلم تعديل + مودال بنِسَبه وقيمة مقفولة بعد الشهادات', depth.includes('data-sub-edit') && depth.includes('data-sub-edit-modal') && depth.includes('اعتُمدت شهادات'))
+  ok('شهادة الباطن: زر طباعة A4 من نافذة العرض', depth.includes('data-sub-cert-print') && depth.includes('شهادة أعمال — مقاول باطن') && depth.includes('استرداد من الدفعة المقدمة'))
+  ok('خطاب الضمان: قلم تعديل والقيم المالية مقفولة بلافتة سبب', depth.includes('data-bond-edit') && depth.includes('data-bond-edit-modal') && depth.includes('مقفولة — قُيّدت عند الإصدار'))
+  ok('عامل اليومية: قلم تعديل والأجر يسري على القادم فقط', depth.includes('data-dw-edit') && depth.includes('data-dw-edit-modal') && depth.includes('بأجرها وقت تسجيلها'))
+  ok('الدفتـر متوازن بعد جولة العمق', balanced())
+}
+
 console.log('─'.repeat(60))
 if (fails.length) { console.log(`❌ فشل ${fails.length} من ${pass + fails.length}:`); for (const f of fails) console.log(`   - ${f}`); process.exit(1) }
-console.log(`✅ بوابة التطوير الشامل للمقاولات §94 (بمراجعتها): ${pass} فحصاً ناجحاً — فواتير مربوطة وحرة تظهر · تعديل مستخلصات بعكس موثق · مستند رسمي متوازن · عروض تُفتح وتُعدَّل وتُطبع · مشروع وبند BOQ قابلان للتعديل بحراس`)
+console.log(`✅ بوابة التطوير الشامل للمقاولات §94 (بمراجعتها): ${pass} فحصاً ناجحاً — فواتير مربوطة وحرة تظهر · تعديل مستخلصات بعكس موثق · مستند رسمي متوازن · عروض تُفتح وتُعدَّل وتُطبع · مشروع وبند BOQ قابلان للتعديل بحراس · عمق المقاولات (باطن/ضمان/يومية) يُعدَّل وشهادة الباطن تُطبع`)
