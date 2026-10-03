@@ -37,6 +37,15 @@ const STATUS_BADGE: Record<string, string> = {
 }
 const STATUS_LABELS: Record<string, string> = { open: 'مفتوح', settled: 'مقفل', cancelled: 'ملغى' }
 
+/* بطاقة مؤشر — خارج المكون (§97): مكوّنات التصيير الداخلي تعيد تركيب الشجرة كل تحديث */
+const KPI = ({ label, value, hint, accent = '' }: { label: string; value: string; hint?: string; accent?: string }) => (
+  <div className={`${card} p-3.5`}>
+    <div className="text-[11px] text-slate-500 dark:text-slate-400 font-bold">{label}</div>
+    <div className={`mt-1 text-xl font-black tabular-nums ${accent || 'text-slate-800 dark:text-slate-100'}`}>{value}</div>
+    {hint && <div className="mt-1 text-[10px] text-slate-400">{hint}</div>}
+  </div>
+)
+
 export function RestaurantReportsPage() {
   const { sales, recipes, restaurantOrders, productionOrders, items } = useDataStore()
   const { setup } = useAppStore()
@@ -93,14 +102,6 @@ export function RestaurantReportsPage() {
     (a, p) => ({ ingredients: a.ingredients + p.ingredientsCostMinor, overhead: a.overhead + p.overheadMinor, total: a.total + p.totalCostMinor }),
     { ingredients: 0, overhead: 0, total: 0 },
   ), [periodProduction])
-
-  const KPI = ({ label, value, hint, accent = '' }: { label: string; value: string; hint?: string; accent?: string }) => (
-    <div className={`${card} p-3.5`}>
-      <div className="text-[11px] text-slate-500 dark:text-slate-400 font-bold">{label}</div>
-      <div className={`mt-1 text-xl font-black tabular-nums ${accent || 'text-slate-800 dark:text-slate-100'}`}>{value}</div>
-      {hint && <div className="mt-1 text-[10px] text-slate-400">{hint}</div>}
-    </div>
-  )
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-7xl mx-auto" dir="rtl">

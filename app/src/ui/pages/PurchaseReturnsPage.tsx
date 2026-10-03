@@ -5,7 +5,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * المتبقي القابل للإرجاع ولا المخزون الحالي (لا إرجاع لبضاعة بيعت).
  * الاسترداد: نقدي من المورد أو تخفيض دينه.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RotateCcw, Search, BookOpenText, Eye, Printer } from 'lucide-react'
 import { useDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
@@ -112,6 +112,20 @@ export function PurchaseReturnsPage() {
   const prefillPurchaseId = Number(searchParams.get('purchase')) || 0
   const prefillItemId = Number(searchParams.get('item')) || 0
   const prefillQty = Number(searchParams.get('qty')) || 0
+
+  /* مراجعة §97: بدء المرتجع معرَّف قبل أثر التعبئة (كان يُقرأ من إغلاق فوق متغير
+     في طور التهيئة — تحذير immutability) ومثبتاً بuseCallback فلا يعاد تشغيل الأثر */
+  const startReturn = useCallback((p: PurchaseInvoice) => {
+    setPurchase(p)
+    setQtys({})
+    setReturnWarehouses({})
+    setRefund((p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor > 0 ? 'debt' : 'cash')
+    setReason('')
+    setPickOpen(false)
+  }, [])
+
+  /* تعبئة من شاشة «منتهي الصلاحية» (طلب المالك ㉘): ?purchase=<id>&item=<id>&qty=<n>
+     تختار فاتورة الشراء وتملأ الكمية المرتجعة مباشرة */
   useEffect(() => {
     if (!prefillPurchaseId || purchase) return
     const target = purchases.find((p) => p.id === prefillPurchaseId)
@@ -124,16 +138,7 @@ export function PurchaseReturnsPage() {
       setReason('انتهاء صلاحية — إرجاع للمورد')
     }
     setSearchParams({}, { replace: true })
-  }, [prefillPurchaseId, prefillItemId, prefillQty, purchase, purchases])
-
-  const startReturn = (p: PurchaseInvoice) => {
-    setPurchase(p)
-    setQtys({})
-    setReturnWarehouses({})
-    setRefund((p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor > 0 ? 'debt' : 'cash')
-    setReason('')
-    setPickOpen(false)
-  }
+  }, [prefillPurchaseId, prefillItemId, prefillQty, purchase, purchases, setSearchParams, startReturn])
 
   // قاعدة المالك المعممة: كل المرتجعات باعتماد مشرف — مرتجع الشراء يخرج بضاعة ويرد مالاً
   const approval = useSupervisorApproval()

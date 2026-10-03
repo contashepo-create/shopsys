@@ -299,6 +299,7 @@ export function InvoiceLinesTable({
       cell.select()
     })
     return () => cancelAnimationFrame(frame)
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- قرار تصميمي مقفول ببوابة verify_invoice_lines_behaviour: الاعتماد على الطول فقط كي لا يعاد تشغيل الأثر مع كل تعديل كمية/سعر (حارس النمو lineCountRef يكفي)
   }, [lines.length])
 
   const draftValue = (key: string, value: string | number) => drafts[key] ?? String(value ?? '')

@@ -7,7 +7,7 @@ import { COMMON_FX_CURRENCIES, convertFxToBookMinor, describeFxLeg, formatRate, 
  * صرف: نقدية خارجة (سداد مورد، مصروف، مسحوبات…)
  * كل سند يولّد قيده المتوازن فوراً ويظهر في اليومية.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ArrowDownCircle, ArrowUpCircle, BookOpenText, CheckCircle2, Eye, FileSpreadsheet, FileText, Landmark, Paperclip, Pencil, Printer, ReceiptText, Save, Search, Stamp, Undo2, WalletCards, X } from 'lucide-react'
 import { useDataStore, type Voucher } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -88,9 +88,14 @@ export function VouchersPage() {
   const isPayrollSettlement = kind === 'payment' && counter === '2104'
   const unpaidSlips = useMemo(
     () => (isPayrollSettlement && employeePartyId ? getUnpaidPayrollSlips(employeePartyId) : []),
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- vouchers/payrollSlips محفز بيانات متجر: الدالة ثابتة الهوية وتقرأهما داخلياً وإسقاطهما يجمّد القسائم
     [isPayrollSettlement, employeePartyId, getUnpaidPayrollSlips, vouchers, payrollSlips],
   )
-  useEffect(() => { setSettleSlipIds([]) }, [employeePartyId, counter, kind])
+  /* §97: تصفير القسائم المختارة عند تغير الطرف/النوع بنمط «التعديل أثناء التصيير»
+     (كان أثراً يضع الحالة تزامنياً — تتالي تصييرات بلا داعٍ) */
+  const partyKey = `${kind}|${counter}|${employeePartyId}`
+  const [prevPartyKey, setPrevPartyKey] = useState('')
+  if (prevPartyKey !== partyKey) { setPrevPartyKey(partyKey); setSettleSlipIds([]) }
   const toggleSlip = (id: number) =>
     setSettleSlipIds((ids) => (ids.includes(id) ? ids.filter((row) => row !== id) : [...ids, id]))
   const settledTotalMinor = unpaidSlips.filter((s) => settleSlipIds.includes(s.id)).reduce((sum, s) => sum + s.netMinor, 0)

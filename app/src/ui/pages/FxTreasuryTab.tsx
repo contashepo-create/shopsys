@@ -34,8 +34,10 @@ export function FxTreasuryTab({ cur, companyName }: { cur: BookCur; companyName:
   const treasuryName = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? code
 
   /* كل الأرقام مشتقة — تنعكس فوراً بعد أي مستند */
-  const holdings = useMemo(() => getFxHoldings(), [getFxHoldings, fxConversions, fxConversions.length])
-  const flows = useMemo(() => getFxFlows(), [getFxFlows, fxConversions, fxConversions.length])
+  /* §97: fxConversions محفز بيانات المتجر (الدالة ثابتة الهوية وتقرأه داخلياً) —
+     والطول كان تبعية مزدوجة زائدة */
+  const holdings = useMemo(() => getFxHoldings(), /* oxlint-disable-next-line react-hooks/exhaustive-deps */ [getFxHoldings, fxConversions])
+  const flows = useMemo(() => getFxFlows(), /* oxlint-disable-next-line react-hooks/exhaustive-deps */ [getFxFlows, fxConversions])
   const recentFlows = useMemo(() => [...flows].sort((a, b) => b.seq - a.seq).slice(0, 30), [flows])
 
   /* بطاقات الملخص: إجمالي القيم الدفترية وسعر اليوم والفرق غير المحقق */

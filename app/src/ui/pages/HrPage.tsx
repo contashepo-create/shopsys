@@ -10,7 +10,7 @@
  *
  * التصميم يتماشى مع لغة التطبيق (بطاقات rounded-2xl · ألوان الأقسام · RTL).
  */
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   CalendarCheck2, ClipboardPaste, FileDown, Fingerprint,
@@ -143,7 +143,8 @@ function AttendanceTab() {
     } catch (e) { toast.show((e as Error).message, 'error') }
   }
 
-  const shiftFor = (employeeId: number) => employeeShifts.find((s) => s.employeeId === employeeId) ?? hrRules.shift
+  /* §97: دوال البحث مثبتة بuseCallback كي لا تُبطل المذكرات التي تعتمدها كل تصيير */
+  const shiftFor = useCallback((employeeId: number) => employeeShifts.find((s) => s.employeeId === employeeId) ?? hrRules.shift, [employeeShifts, hrRules])
 
   /* ملخص الشهر لكل موظف */
   const monthStats = useMemo(() => active.map((employee) => {
@@ -158,7 +159,7 @@ function AttendanceTab() {
       ot += m.overtimeMinutes
     }
     return { employee, counts, late, ot }
-  }), [active, dates, byKey, hrRules, employeeShifts])
+  }), [active, dates, byKey, hrRules, shiftFor])/* §97: التبعية الفعلية shiftFor — employeeShifts كان زائداً */
 
   const todayStats = useMemo(() => {
     const counts = { present: 0, absent: 0, leave: 0, none: 0 }
@@ -529,8 +530,8 @@ function LeavesTab() {
   const pending = leaveRequests.filter((l) => l.status === 'pending')
   const history = [...leaveRequests].reverse()
   const dates = useMemo(() => monthDates(month), [month])
-  const typeName = (id: string) => leaveTypes.find((t) => t.id === id)?.nameAr ?? id
-  const empName = (id: number) => employees.find((e) => e.id === id)?.nameAr ?? `#${id}`
+  const typeName = useCallback((id: string) => leaveTypes.find((t) => t.id === id)?.nameAr ?? id, [leaveTypes])
+  const empName = useCallback((id: number) => employees.find((e) => e.id === id)?.nameAr ?? `#${id}`, [employees])
   /* تقويم الفريق: لكل يوم من الشهر — من في إجازة معتمدة */
   const calendar = useMemo(() => {
     const approved = leaveRequests.filter((l) => l.status === 'approved')
@@ -538,7 +539,7 @@ function LeavesTab() {
       date,
       onLeave: approved.filter((l) => leaveDates(l).includes(date)).map((l) => ({ employee: empName(l.employeeId), type: typeName(l.typeId) })),
     }))
-  }, [dates, leaveRequests, employees, leaveTypes])
+  }, [dates, leaveRequests, empName, typeName])/* §97: تبعية دوال الأسماء الفعلية */
 
   return (
     <div className="space-y-4" data-hr-leaves>
