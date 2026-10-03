@@ -61,6 +61,8 @@ interface DemoPayload {
   equipmentCosts?: Row[]
   subContracts?: Row[]
   projectExtracts?: Row[]
+  /* §96: مستندات المقاولات الشاملة — kind + JSON في عمود data */
+  contractingDocs?: (Row & { kind?: string | number; data?: string | number })[]
 }
 
 const str = (value: unknown, fallback = '') => (value == null ? fallback : String(value))
@@ -95,7 +97,9 @@ export function switchDemoActivity(activityId: string): void {
 }
 
 /** يحمّل نشاطاً كاملاً من قاعدة البيانات إلى المتجر (يستبدل البيانات الحالية للنشاط). */
-export async function loadDemoActivity(activityId: string): Promise<{ items: number; sales: number; purchases: number; skipped: string[]; employees: number; attendance: number; leaves: number; payrollMonths: number; quotations: number; purchaseOrders: number; wastage: number; subContracts: number; projectExtracts: number; equipment: number; rentals: number; equipmentCosts: number; costCenters: number }> {
+export interface ContractingDemoCounts { demoProjects: number; demoBoqItems: number; changeOrders: number; bonds: number; dailyWorkers: number; dailyWorkRecords: number; materialIssues: number; manualCosts: number; clientAdvances: number; projectVouchers: number; clientCollections: number; linkedPurchases: number; extraExtracts: number; projectTasks: number; approvalFlows: number; approvalRequests: number }
+
+export async function loadDemoActivity(activityId: string): Promise<{ items: number; sales: number; purchases: number; skipped: string[]; employees: number; attendance: number; leaves: number; payrollMonths: number; quotations: number; purchaseOrders: number; wastage: number; subContracts: number; projectExtracts: number; equipment: number; rentals: number; equipmentCosts: number; costCenters: number; contracting: ContractingDemoCounts }> {
   if (!import.meta.env.DEV) throw new Error('البيانات التجريبية متاحة في وضع التطوير فقط')
   const skipped: string[] = []
   const payload = await api<DemoPayload>(`/__demo/data?activity=${encodeURIComponent(activityId)}`)
@@ -418,6 +422,7 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
   /* 9) تعميق المرحلة ⑥: مقاولو الباطن والمستخلصات (المقاولات) والمعدات
         وعقود الإيجار (التأجير) — كلها بالإجراءات الرسمية فتُبنى القيود والذمم */
   let subContracts = 0
+  const subContractIdByRef = new Map<string, number>() // §96: لطلبات اعتماد شهادات الباطن
   for (const row of payload.subContracts ?? []) {
     const projectId = quotationProjectId.get(str(row.quotation_ref))
     if (!projectId) { skipped.push(`عقد باطن ${str(row.ref)}: لا مشروع مرتبط`); continue }
@@ -430,6 +435,7 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
       } as never)
       if (num(row.advance_minor) > 0)
         data().addSubAdvance({ contractId: contract.id, amountMinor: num(row.advance_minor), treasury: (treasuryCode.get(str(row.advance_treasury_ref)) ?? '1101') as never } as never)
+      subContractIdByRef.set(str(row.ref), contract.id)
       if (num(row.certificate_amount_minor) > 0)
         data().addSubCertificate({ contractId: contract.id, amountMinor: num(row.certificate_amount_minor), description: str(row.certificate_description, 'شهادة أعمال') } as never)
       subContracts += 1
@@ -451,6 +457,196 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
       } as never)
       projectExtracts += 1
     } catch (error) { skipped.push(`مستخلص ${str(row.ref)}: ${(error as Error).message}`) }
+  }
+
+  /* 9.5) §96: مستندات كل أقسام المقاولات (طلب المالك) — مشروع يدوي بجدول كمياته ·
+        أوامر تغيير · خطابات ضمان · عمال يومية · أذون صرف مواد · تكاليف يدوية ·
+        دفعة مقدمة · سندات موسومة بمشروع · تحصيل FIFO · شراء مربوط · مستخلص إضافي ·
+        مهام الجدول الزمني · مسارات موافقات — كلها بالإجراءات الرسمية.
+        الترتيب داخل المصفوفة مُلزِم: المشروع قبل بنوده، والشراء قبل الصرف،
+        والمسارات بعد كل إجراء محروس بها. */
+  const projectIdByRef = new Map(quotationProjectId) // عروض محوَّلة + مشاريع يدوية
+  const contracting: ContractingDemoCounts = { demoProjects: 0, demoBoqItems: 0, changeOrders: 0, bonds: 0, dailyWorkers: 0, dailyWorkRecords: 0, materialIssues: 0, manualCosts: 0, clientAdvances: 0, projectVouchers: 0, clientCollections: 0, linkedPurchases: 0, extraExtracts: 0, projectTasks: 0, approvalFlows: 0, approvalRequests: 0 }
+  for (const row of payload.contractingDocs ?? []) {
+    const kind = str(row.kind)
+    let d: Record<string, unknown> = {}
+    try { d = JSON.parse(str(row.data, '{}') || '{}') as Record<string, unknown> } catch { d = {} }
+    const pid = projectIdByRef.get(str(d.quotation_ref)) ?? projectIdByRef.get(str(d.project_ref)) ?? 0
+    const linesOf = () => ((d.lines ?? []) as { item_ref?: unknown; qty?: unknown; unit_ar?: unknown; unit_price_minor?: unknown }[])
+    try {
+      switch (kind) {
+        case 'project': {
+          const manager = employeeId.get(str(d.manager_employee_ref))
+          const created = data().addProject({
+            nameAr: str(d.name_ar), clientName: str(d.client_name), clientId: customerId.get(str(d.client_ref)) ?? null,
+            contractValueMinor: num(d.contract_value_minor), retentionPercent: num(d.retention_percent),
+            startDate: str(d.start_date, '2026-09-01'), notes: str(d.notes),
+            ...(str(d.contract_number) ? { contractNumber: str(d.contract_number) } : {}),
+            ...(str(d.location) ? { location: str(d.location) } : {}),
+            ...(manager != null ? { managerEmployeeId: manager } : {}),
+          } as never)
+          projectIdByRef.set(str(row.ref), created.id)
+          contracting.demoProjects += 1
+          break
+        }
+        case 'boq_item': {
+          if (!pid) throw new Error('لا مشروع مرتبط')
+          data().addBoqItem({
+            projectId: pid, code: str(d.code), descriptionAr: str(d.description_ar), unit: str(d.unit, 'مقطوعية'),
+            qty: num(d.qty, 1), unitPriceMinor: num(d.unit_price_minor), estCostMinor: num(d.est_cost_minor),
+          } as never)
+          contracting.demoBoqItems += 1
+          break
+        }
+        case 'budget': {
+          if (!pid) throw new Error('لا مشروع مرتبط')
+          const lines = ((d.lines ?? []) as { kind?: unknown; amount_minor?: unknown }[])
+            .map((line) => ({ kind: str(line.kind, 'other'), amountMinor: num(line.amount_minor) }))
+            .filter((line) => line.amountMinor > 0)
+          if (!lines.length) throw new Error('بنود موازنة ناقصة')
+          data().setProjectBudget(pid, lines as never)
+          break
+        }
+        case 'change_order': {
+          if (!pid) throw new Error('لا مشروع مرتبط')
+          const created = data().addChangeOrder({ projectId: pid, titleAr: str(d.title_ar), amountMinor: num(d.amount_minor) } as never)
+          const status = str(d.status)
+          if (status === 'approved' || status === 'invoiced' || status === 'rejected') data().setChangeOrderStatus(created.id, status as never)
+          contracting.changeOrders += 1
+          break
+        }
+        case 'bond': {
+          const created = data().issueBond({
+            projectId: pid || null, bondNumber: str(d.bond_number), type: str(d.type, 'bid') as never,
+            beneficiary: str(d.beneficiary), amountMinor: num(d.amount_minor), marginMinor: num(d.margin_minor),
+            feesMinor: num(d.fees_minor), bank: (treasuryCode.get(str(d.bank_ref)) ?? '1101') as never,
+            issueDate: str(d.issue_date), expiryDate: str(d.expiry_date),
+          } as never)
+          const outcome = str(d.settle)
+          if (outcome === 'released' || outcome === 'forfeited') data().settleBond(created.id, outcome)
+          contracting.bonds += 1
+          break
+        }
+        case 'daily_worker': {
+          const worker = data().addDailyWorker({ nameAr: str(d.name_ar), phone: str(d.phone), dailyWageMinor: num(d.daily_wage_minor) } as never)
+          for (const record of ((d.records ?? []) as { date?: unknown; days?: unknown; quotation_ref?: unknown; project_ref?: unknown }[])) {
+            const recordProject = projectIdByRef.get(str(record.quotation_ref)) ?? projectIdByRef.get(str(record.project_ref)) ?? null
+            data().addDailyWorkRecord({ workerId: worker.id, projectId: recordProject, date: str(record.date), days: num(record.days, 1) } as never)
+            contracting.dailyWorkRecords += 1
+          }
+          if (str(d.settle_ref)) data().settleDailyWorker(worker.id, (treasuryCode.get(str(d.settle_ref)) ?? '1101') as never)
+          contracting.dailyWorkers += 1
+          break
+        }
+        case 'material_issue': {
+          const lines = linesOf()
+            .map((line) => ({ itemId: itemId.get(str(line.item_ref)) ?? 0, qty: num(line.qty), unitAr: str(line.unit_ar) }))
+            .filter((line) => line.itemId && line.qty > 0)
+          if (!pid || !lines.length) throw new Error('لا مشروع مرتبط أو بنود ناقصة')
+          data().issueMaterials({
+            projectId: pid,
+            issuedByEmployeeId: employeeId.get(str(d.issued_by_ref)) ?? 0,
+            receivedByEmployeeId: employeeId.get(str(d.received_by_ref)) ?? 0,
+            lines: lines as never, notes: str(d.notes),
+          } as never)
+          contracting.materialIssues += 1
+          break
+        }
+        case 'project_cost': {
+          if (!pid) throw new Error('لا مشروع مرتبط')
+          data().addProjectCost({
+            projectId: pid, kind: str(d.kind, 'other') as never, amountMinor: num(d.amount_minor),
+            payment: str(d.payment, 'cash') as never, paidMinor: num(d.paid_minor), description: str(d.description),
+            treasury: (treasuryCode.get(str(d.treasury_ref)) ?? '1101') as never,
+          } as never)
+          contracting.manualCosts += 1
+          break
+        }
+        case 'client_advance': {
+          if (!pid) throw new Error('لا مشروع مرتبط')
+          data().receiveClientAdvance({ projectId: pid, amountMinor: num(d.amount_minor), treasury: (treasuryCode.get(str(d.treasury_ref)) ?? '1101') as never } as never)
+          contracting.clientAdvances += 1
+          break
+        }
+        case 'project_receipt':
+        case 'project_payment': {
+          const receipt = kind === 'project_receipt'
+          data().postVoucher({
+            kind: (receipt ? 'receipt' : 'payment') as never,
+            treasury: (treasuryCode.get(str(d.treasury_ref)) ?? '1101') as never,
+            counterAccountCode: receipt ? '1104' : '2101',
+            amountMinor: num(d.amount_minor), description: str(d.description),
+            partyKind: (receipt ? 'customer' : 'supplier') as never,
+            partyId: (receipt ? customerId.get(str(d.client_ref)) : supplierId.get(str(d.client_ref))) ?? null,
+            projectId: pid || null,
+          } as never)
+          contracting.projectVouchers += 1
+          break
+        }
+        case 'client_collection': {
+          data().receiveClientPayment({
+            customerId: customerId.get(str(d.client_ref)) ?? 0, amountMinor: num(d.amount_minor),
+            treasury: (treasuryCode.get(str(d.treasury_ref)) ?? '1101') as never, notes: str(d.notes),
+          } as never)
+          contracting.clientCollections += 1
+          break
+        }
+        case 'project_purchase': {
+          const lines = linesOf()
+            .map((line) => ({ itemId: itemId.get(str(line.item_ref)) ?? 0, qty: num(line.qty), unitPriceMinor: num(line.unit_price_minor), warehouseId: warehouseId.get(str(d.warehouse_ref)) ?? null }))
+            .filter((line) => line.itemId && line.qty > 0)
+          if (!pid || !lines.length) throw new Error('لا مشروع مرتبط أو بنود ناقصة')
+          data().postPurchase({
+            supplierId: supplierId.get(str(d.supplier_ref)) ?? 0, supplierInvoiceNumber: str(d.supplier_doc) || undefined,
+            date: str(d.date, '2026-09-18'), lines: lines as never, expenses: [],
+            paidMinor: num(d.paid_minor), treasury: (treasuryCode.get(str(d.treasury_ref)) ?? '1101') as never,
+            warehouseId: warehouseId.get(str(d.warehouse_ref)) ?? null, projectId: pid, notes: str(d.notes),
+          } as never)
+          contracting.linkedPurchases += 1
+          break
+        }
+        case 'extract': {
+          const percent = Math.min(100, Math.max(0, num(d.percent)))
+          if (!pid || percent <= 0) throw new Error('لا مشروع مرتبط أو نسبة غير صحيحة')
+          data().addProjectExtract({
+            projectId: pid,
+            extractLines: data().boqItems.filter((item) => item.projectId === pid).map((item) => ({ boqItemId: item.id, newProgressPercent: percent })),
+            vatPercent: num(d.vat_percent, 14), payment: (str(d.payment, 'cash') === 'credit' ? 'credit' : 'cash') as never,
+            description: str(d.description, 'مستخلص'), treasury: (treasuryCode.get(str(d.treasury_ref)) ?? '1101') as never,
+          } as never)
+          contracting.extraExtracts += 1
+          break
+        }
+        case 'project_task': {
+          if (!pid) throw new Error('لا مشروع مرتبط')
+          const boq = data().boqItems.filter((item) => item.projectId === pid)
+          const index = num(d.boq_index)
+          data().addProjectTask({
+            projectId: pid, nameAr: str(d.name_ar), startDate: str(d.start_date), endDate: str(d.end_date),
+            progressPercent: num(d.progress_percent), boqItemId: index >= 1 && index <= boq.length ? boq[index - 1].id : null,
+          } as never)
+          contracting.projectTasks += 1
+          break
+        }
+        case 'approval_flow': {
+          data().setApprovalFlow(
+            str(d.action) as never,
+            ((d.steps ?? []) as { role_ar?: unknown; employee_ref?: unknown }[]).map((step) => ({ roleAr: str(step.role_ar), employeeId: employeeId.get(str(step.employee_ref)) ?? null })),
+            bool(d.active),
+          )
+          contracting.approvalFlows += 1
+          break
+        }
+        case 'approval_request': {
+          const created = data().requestApproval(str(d.action) as never, str(d.subject), subContractIdByRef.get(str(d.sub_contract_ref)) ?? (num(d.ref_id) || pid))
+          if (str(d.decide) === 'approved') data().decideApproval(created.id, 'approved', str(d.decided_by, 'المالك'), str(d.note))
+          contracting.approvalRequests += 1
+          break
+        }
+        default:
+          skipped.push(`مستند مقاولة ${str(row.ref)}: نوع غير معروف «${kind}»`)
+      }
+    } catch (error) { skipped.push(`مستند مقاولة ${str(row.ref)} (${kind}): ${(error as Error).message}`) }
   }
 
   const equipmentId = new Map<string, number>()
@@ -538,7 +734,7 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
     } catch (error) { skipped.push(`أمر شراء ${str(order.ref)}: ${(error as Error).message}`) }
   }
 
-  return { items: itemId.size, sales: salesPosted, purchases: purchasesPosted, skipped, employees: employeesAdded, attendance: attendanceMarked, leaves: leavesAdded, payrollMonths, quotations: quotationsAdded, purchaseOrders: ordersAdded, wastage: wastagePosted, subContracts, projectExtracts, equipment: equipmentAdded, rentals: rentalsOpened, equipmentCosts, costCenters: costCentersAdded }
+  return { items: itemId.size, sales: salesPosted, purchases: purchasesPosted, skipped, employees: employeesAdded, attendance: attendanceMarked, leaves: leavesAdded, payrollMonths, quotations: quotationsAdded, purchaseOrders: ordersAdded, wastage: wastagePosted, subContracts, projectExtracts, equipment: equipmentAdded, rentals: rentalsOpened, equipmentCosts, costCenters: costCentersAdded, contracting }
 }
 
 /** يحفظ البيانات الرئيسية الحالية من المتجر إلى ملف قاعدة البيانات (تعديل حقيقي). */

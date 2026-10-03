@@ -243,6 +243,7 @@ CREATE TABLE IF NOT EXISTS quotations (
   status      TEXT NOT NULL DEFAULT 'draft',
   win_probability INTEGER NOT NULL DEFAULT 50,
   bid_bond_minor INTEGER NOT NULL DEFAULT 0,
+  convert      TEXT NOT NULL DEFAULT '', -- 'project' = العرض الفائز يُحوَّل مشروعاً كاملاً عند التحميل
   notes       TEXT NOT NULL DEFAULT '',
   UNIQUE (activity, ref)
 );
@@ -405,5 +406,20 @@ CREATE TABLE IF NOT EXISTS cost_centers (
   parent_ref TEXT NOT NULL DEFAULT '',
   is_active INTEGER NOT NULL DEFAULT 1,
   notes     TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+-- §96: مستندات المقاولات الشاملة (طلب المالك: بيانات تجريبية في كل أقسام المقاولات)
+-- جدول واحد بأنواع kind متعددة: project · boq_item · change_order · bond · daily_worker ·
+-- material_issue · project_cost · client_advance · project_receipt · project_payment ·
+-- client_collection · project_purchase · extract · project_task · approval_flow · approval_request
+-- الحقول التفصيلية داخل data بوصف JSON — والملف القابل للقراءة هو seed.data.mjs
+CREATE TABLE IF NOT EXISTS contracting_docs (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity   TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref        TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  data       TEXT NOT NULL DEFAULT '{}',
+  sort_order INTEGER NOT NULL DEFAULT 0,
   UNIQUE (activity, ref)
 );

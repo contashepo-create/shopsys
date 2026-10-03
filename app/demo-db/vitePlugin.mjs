@@ -57,6 +57,9 @@ function readActivity(db, activity) {
     equipmentCosts: rows('equipment_costs'),
     subContracts: rows('sub_contracts'),
     projectExtracts: rows('project_extracts'),
+    /* §96: مستندات المقاولات الشاملة — تُقرأ للتحميل ولا تُمسح عند الحفظ من التطبيق
+       (خارج TABLES عمداً: التعديلات داخل التطبيق تخص بيانات النشاط الأساسية فقط) */
+    contractingDocs: db.prepare('SELECT * FROM contracting_docs WHERE activity = ? ORDER BY sort_order').all(activity),
     sales: sales.map((sale) => ({ ...sale, lines: db.prepare('SELECT * FROM sale_lines WHERE activity = ? AND sale_ref = ?').all(activity, sale.ref) })),
     purchases: purchases.map((purchase) => ({ ...purchase, lines: db.prepare('SELECT * FROM purchase_lines WHERE activity = ? AND purchase_ref = ?').all(activity, purchase.ref) })),
   }

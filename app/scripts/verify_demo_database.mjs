@@ -78,6 +78,15 @@ assert.ok(/'\/__demo\/data' && req\.method === 'POST'/.test(plugin) && /writeAct
 assert.ok(/'\/__demo\/reset'/.test(plugin), 'لا مسار لإعادة بناء القاعدة')
 R.ok('القاعدة قابلة للتعديل: قراءة وكتابة وإعادة بناء عبر واجهة محلية في وضع التطوير فقط')
 
+/* §96: نشاط المقاولات يحمل مستندات لكل أقسامه — جدول contracting_docs بأنواع كاملة */
+const docKinds = db.prepare("SELECT DISTINCT kind FROM contracting_docs WHERE activity = 'contracting'").all().map((row) => row.kind)
+for (const kind of ['project', 'boq_item', 'budget', 'change_order', 'bond', 'daily_worker', 'material_issue', 'project_cost', 'client_advance', 'project_receipt', 'project_payment', 'client_collection', 'project_purchase', 'extract', 'project_task', 'approval_flow', 'approval_request'])
+  assert.ok(docKinds.includes(kind), `مستندات المقاولات: نوع ${kind} مفقود من contracting_docs`)
+const contractingDocsCount = db.prepare("SELECT COUNT(*) AS n FROM contracting_docs WHERE activity = 'contracting'").get().n
+assert.ok(contractingDocsCount >= 35, 'مستندات المقاولات أقل من 35 — أقسام ستظهر فارغة')
+assert.ok(db.prepare("SELECT COUNT(*) AS n FROM quotations WHERE activity = 'contracting' AND convert = 'project'").get().n >= 1, 'لا عرض فائز يتحول مشروعاً — عمود convert')
+R.ok(`نشاط المقاولات كامل الأقسام: ${contractingDocsCount} مستنداً ب${docKinds.length} نوعاً (مشروع يدوي · موازنة · أوامر تغيير · خطابات ضمان · عمال يومية · أذون صرف · سندات موسومة · تحصيل FIFO · شراء مربوط · مهام · موافقات)`)
+
 const bridge = read('src/dev/demoDatabase.ts')
 const panel = read('src/dev/DemoDataPanel.tsx')
 assert.ok(/if \(!import\.meta\.env\.DEV\)/.test(bridge) && /if \(!import\.meta\.env\.DEV\) return null/.test(panel),
@@ -85,6 +94,10 @@ assert.ok(/if \(!import\.meta\.env\.DEV\)/.test(bridge) && /if \(!import\.meta\.
 assert.ok(/switchDemoActivity/.test(bridge) && /data-demo-load/.test(panel), 'لا خيار داخلي لاختيار النشاط والتنقل لغيره')
 assert.ok(/postSale\(/.test(bridge) && /postPurchase\(/.test(bridge) && /setOpeningBalance\(/.test(bridge),
   'التحميل يحقن البيانات بلا قيود محاسبية — يجب المرور بإجراءات الترحيل الرسمية')
+assert.ok(/issueBond\(/.test(bridge) && /issueMaterials\(/.test(bridge) && /addDailyWorker\(/.test(bridge) && /addChangeOrder\(/.test(bridge)
+  && /addProjectTask\(/.test(bridge) && /setProjectBudget\(/.test(bridge) && /receiveClientAdvance\(/.test(bridge)
+  && /receiveClientPayment\(/.test(bridge) && /setApprovalFlow\(/.test(bridge),
+  'مستندات المقاولات تُحقن بغير الإجراءات الرسمية — يجب المرور بissueBond/issueMaterials/... كي تُبنى القيود بصدق')
 R.ok('لوحة «بيانات تجريبية» محروسة بـDEV، تبدّل النشاط، وتحمّل الفواتير بالترحيل النظامي لا بحقنة صامتة')
 
 db.close()

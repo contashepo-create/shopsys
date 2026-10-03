@@ -14,6 +14,9 @@ const item = (ref, name_ar, sku, category_ref, cost, price, stock, extra = {}) =
   ref, name_ar, sku, category_ref, cost_minor: cost, price_minor: price, stock_qty: stock, ...extra,
 })
 
+/** §96: مستند المقاولات — نوع + مرجع + حقول JSON (يصب في جدول contracting_docs) */
+const doc = (kind, ref, data) => ({ kind, ref, data: JSON.stringify(data) })
+
 export const DEMO_ACTIVITIES = [
   {
     id: 'grocery',
@@ -560,6 +563,13 @@ export const DEMO_ACTIVITIES = [
           { name_ar: 'عزل مائي للأسطح', description_ar: 'عزل بيتوميني بارد طبقتين مع فرش حماية', unit_ar: 'م2', qty: 640, unit_price_minor: 95000, est_cost_minor: 72000, vat_percent: 14 },
           { name_ar: 'إشراف هندسي', description_ar: 'إشراف يومي وتقارير تقدم ومستخلصات', unit_ar: 'يوم', qty: 45, unit_price_minor: 150000, est_cost_minor: 100000, vat_percent: 14 },
         ] },
+      /* مناقصة صرف صحي قيد الترسية — تخضّع بضريبة وخطاب ضمان ابتدائي */
+      { ref: 'q2', kind: 'tender', client_name: 'شركة الإسكان الاجتماعي', client_ref: 'c2', title_ar: 'مناقصة أعمال شبكات صرف صحي — منطقة شرق المدينة', valid_until: '2026-11-15', status: 'submitted', win_probability: 45, bid_bond_minor: 1200000, notes: 'مذكرات الأسعار مطلوبة على 3 دفعات — اعتماد جهة الإشراف شرط جزائي',
+        lines: [
+          { name_ar: 'حفر شبكات خطوط', description_ar: 'حفر وردم لشبكات صرف صحي بأعماق تصل 3.5 م', unit_ar: 'م طولي', qty: 1800, unit_price_minor: 48000, est_cost_minor: 36000, vat_percent: 14 },
+          { name_ar: 'ماسورة صرف 8 بوصة', description_ar: 'توريد وتركيب ماسورة PVC صرف 8 بوصة مع مكوناتها', unit_ar: 'م طولي', qty: 1800, unit_price_minor: 39000, est_cost_minor: 30000, vat_percent: 14 },
+          { name_ar: 'غرف تفتيش', description_ar: 'تنفيذ غرف تفتيش خرسانية بغطاء حديد زهر', unit_ar: 'غرفة', qty: 36, unit_price_minor: 950000, est_cost_minor: 720000, vat_percent: 14 },
+        ] },
     ],
     sales: [
       { ref: 'i1', doc_date: '2026-09-20', customer_ref: 'c1', warehouse_ref: 'wh-main', payment: 'credit', paid_minor: 0, notes: 'ذاتية (خارج المستخلصات) — بيع مواد فائضة',
@@ -570,10 +580,81 @@ export const DEMO_ACTIVITIES = [
     /* مقاول باطن للحفر: عقد بمحتجز 5٪ ودفعة مقدمة وشهادة أولى — قيود 5110/2101/2108/1111 */
     sub_contracts: [
       { ref: 'sc1', quotation_ref: 'q1', contractor_name: 'أبو الفتوح — مقاول حفر وردم', supplier_ref: 's2', scope_ar: 'أعمال الحفر والردم ونقل المخلفات لبند 1 من جدول الكميات', contract_value_minor: 32000000, retention_percent: 5, tax_withhold_percent: 1, advance_percent: 10, start_date: '2026-09-10', advance_minor: 3200000, advance_treasury_ref: 'bank-nbe', certificate_amount_minor: 16000000, certificate_description: 'شهادة 1 — الحفر مكتمل والردم 80٪' },
+      { ref: 'sc2', quotation_ref: 'q1', contractor_name: 'الشيخ مبروك — مقاول عزل', supplier_ref: 's1', scope_ar: 'أعمال العزل المائي البيتوميني لبند 3 من جدول الكميات', contract_value_minor: 28000000, retention_percent: 5, tax_withhold_percent: 1, advance_percent: 0, start_date: '2026-09-20', advance_minor: 0, advance_treasury_ref: '', certificate_amount_minor: 12000000, certificate_description: 'شهادة 1 — عزل 40٪ من المسطح' },
     ],
-    /* المستخلص الأول: إنجاز تراكمي 35٪ على كل بنود جدول الكميات بضريبة 14٪ */
+    /* المستخلصات: الأول آجل 35٪ والثاني 60٪ تراكمياً بعد اعتماد أمر تغيير */
     project_extracts: [
       { ref: 'ex1', quotation_ref: 'q1', percent: 35, vat_percent: 14, payment: 'credit', description: 'المستخلص رقم 1 — أعمال حفر وردم ومباني جزئية', treasury_ref: 'bank-nbe' },
+      { ref: 'ex2', quotation_ref: 'q1', percent: 60, vat_percent: 14, payment: 'credit', description: 'المستخلص رقم 2 — مباني وعزل حتى 60٪ تنفيذ', treasury_ref: 'bank-nbe' },
+    ],
+    /* §96: مستندات كل أقسام المقاولات — مشروع يدوي بجدول كمياته وأوامر تغيير وخطابات
+       ضمان وعمال يومية وأذون صرف وتكاليف يدوية ودفعة مقدمة وسندات موسومة بمشروع وتحصيل
+       FIFO وشراء مربوط ومهام جدولة ومسارات موافقات — الترتيب مُلزِم (المشروع قبل بنوده) */
+    contracting_docs: [
+      /* —— مشروع يدوي (بلا عرض سعر) + جدول كمياته —— */
+      doc('project', 'p2', { name_ar: 'فيلا م. خالد الشاذلي — تشطيبات داخلية', client_name: 'م. خالد الشاذلي', client_ref: 'c3', contract_value_minor: 30000000, retention_percent: 10, start_date: '2026-09-01', contract_number: 'عقد أشغال 46 لسنة 2026', location: 'منية النصر — الدقهلية', manager_employee_ref: 'e1', notes: 'عميل خاص — تحصيل نقدي مع كل مستخلص' }),
+      doc('boq_item', 'p2b1', { project_ref: 'p2', code: '1-1', description_ar: 'محارة داخلية ودهان بلاستيك للحوائط والأسقف', unit: 'م2', qty: 1200, unit_price_minor: 8500, est_cost_minor: 6200 }),
+      doc('boq_item', 'p2b2', { project_ref: 'p2', code: '1-2', description_ar: 'توريد وتركيب سيراميك وأرضيات', unit: 'م2', qty: 850, unit_price_minor: 11000, est_cost_minor: 8000 }),
+      doc('boq_item', 'p2b3', { project_ref: 'p2', code: '1-3', description_ar: 'تمديدات كهرباء ونقاط إنارة ومفاتيح', unit: 'نقطة', qty: 650, unit_price_minor: 2200, est_cost_minor: 1500 }),
+
+      /* —— موازنة التكاليف بالفئات (نمط pro-acc): تقديرية مقابل الفعلي —— */
+      doc('budget', 'bg1', { quotation_ref: 'q1', lines: [ { kind: 'materials', amount_minor: 100000000 }, { kind: 'labor', amount_minor: 20000000 }, { kind: 'equipment', amount_minor: 12000000 }, { kind: 'subcontract', amount_minor: 22000000 }, { kind: 'other', amount_minor: 4000000 } ] }),
+      doc('budget', 'bg2', { project_ref: 'p2', lines: [ { kind: 'materials', amount_minor: 12000000 }, { kind: 'labor', amount_minor: 6000000 }, { kind: 'other', amount_minor: 2000000 } ] }),
+
+      /* —— أوامر التغيير على عقد الجامعة: معتمد يوسّع السقف + مسودة —— */
+      doc('change_order', 'co1', { quotation_ref: 'q1', title_ar: 'أعمال عزل إضافي لدورات المياه والخزان الأرضي', amount_minor: 18000000, status: 'approved' }),
+      doc('change_order', 'co2', { quotation_ref: 'q1', title_ar: 'استبدال دهان الواجهة بمواد سيليكون (تعديل مواصفات)', amount_minor: 6500000, status: 'draft' }),
+
+      /* —— دفعة مقدمة من عميل الجامعة (20٪) ثم شراء مربوط بالمشروع —— */
+      doc('client_advance', 'adv1', { quotation_ref: 'q1', amount_minor: 41580000, treasury_ref: 'bank-nbe' }),
+      doc('project_purchase', 'pp1', { quotation_ref: 'q1', supplier_ref: 's1', supplier_doc: 'CM-8842', date: '2026-09-18', paid_minor: 0, treasury_ref: 'bank-nbe', warehouse_ref: 'wh-main', notes: 'توريد أسمنت وزلط لأعمال المباني — على حساب مشروع الجامعة', lines: [ { item_ref: 'cement', qty: 250, unit_price_minor: 9000 }, { item_ref: 'gravel', qty: 40, unit_price_minor: 42000 } ] }),
+
+      /* —— أذون صرف المواد: موقع الجامعة ثم الفيلا (لا مخزون سالب) —— */
+      doc('material_issue', 'mi1', { quotation_ref: 'q1', issued_by_ref: 'e1', received_by_ref: 'e2', notes: 'صرف أسمنت وحديد ورمل لأعمال مباني الدور الأرضي', lines: [ { item_ref: 'cement', qty: 200, unit_ar: '' }, { item_ref: 'steel', qty: 7, unit_ar: 'طن' }, { item_ref: 'sand', qty: 25, unit_ar: 'م3' } ] }),
+      doc('material_issue', 'mi2', { project_ref: 'p2', issued_by_ref: 'e1', received_by_ref: 'e2', notes: 'صرف دهان وطوب لأعمال محارة الفيلا', lines: [ { item_ref: 'paintalkyd', qty: 120, unit_ar: 'لتر' }, { item_ref: 'brick', qty: 2, unit_ar: 'ألف' } ] }),
+
+      /* —— تكلفة يدوية (مصدر manual في بطاقة تكاليف المشروع) —— */
+      doc('project_cost', 'pc1', { quotation_ref: 'q1', kind: 'equipment', amount_minor: 5500000, payment: 'cash', paid_minor: 5500000, description: 'إيجار سقالات ومعدات خفيفة للموقع — شهر (تحويل بنكي)', treasury_ref: 'bank-nbe' }),
+
+      /* —— مستخلص نقدي لمشروع الفيلا (تحصيل فوري من البنك) —— */
+      doc('extract', 'exp2', { project_ref: 'p2', percent: 25, vat_percent: 14, payment: 'cash', description: 'المستخلص رقم 1 — محارة وتمديدات (تحصيل نقدي)', treasury_ref: 'bank-nbe' }),
+
+      /* —— سندات موسومة بمشروع (§95): قبض من عميل الجامعة وصرف لمورد الأسمنت —— */
+      doc('project_receipt', 'vr1', { quotation_ref: 'q1', client_ref: 'c1', amount_minor: 45000000, treasury_ref: 'bank-nbe', description: 'دفعة من مستحقات المستخلص رقم 1 — جامعة الدلتا الخاصة' }),
+      doc('project_payment', 'vp1', { quotation_ref: 'q1', client_ref: 's1', amount_minor: 1500000, treasury_ref: 'bank-nbe', description: 'دفعة تحت الحساب لمصنع أسمنت بني سويف — مشروع الجامعة' }),
+
+      /* —— تحصيل FIFO من العميل على فواتيره المفتوحة —— */
+      doc('client_collection', 'cc1', { client_ref: 'c1', amount_minor: 20000000, treasury_ref: 'cash-main', notes: 'تحصيل نقدي من إدارة الجامعة — تسوية أقدم مستحق' }),
+
+      /* —— خطابات الضمان: ابتدائي مُرد · نهائي نشط · دفعة مقدمة يقرب انتهاؤه · صيانة عام —— */
+      doc('bond', 'b1', { quotation_ref: 'q1', bond_number: 'NBE-G-2026-1201', type: 'bid', beneficiary: 'جامعة الدلتا الخاصة', amount_minor: 4158000, margin_minor: 415800, fees_minor: 41580, bank_ref: 'bank-nbe', issue_date: '2026-09-01', expiry_date: '2026-10-05', settle: 'released' }),
+      doc('bond', 'b2', { quotation_ref: 'q1', bond_number: 'NBE-G-2026-1305', type: 'performance', beneficiary: 'جامعة الدلتا الخاصة', amount_minor: 10395000, margin_minor: 1039500, fees_minor: 103950, bank_ref: 'bank-nbe', issue_date: '2026-09-10', expiry_date: '2027-03-31', settle: '' }),
+      doc('bond', 'b3', { project_ref: 'p2', bond_number: 'NBE-G-2026-1310', type: 'advance_payment', beneficiary: 'م. خالد الشاذلي', amount_minor: 9000000, margin_minor: 900000, fees_minor: 90000, bank_ref: 'bank-nbe', issue_date: '2026-09-15', expiry_date: '2026-10-25', settle: '' }),
+      doc('bond', 'b4', { bond_number: 'NBE-G-2025-0998', type: 'warranty', beneficiary: 'جمعية النور التعليمية — أعمال سابقة', amount_minor: 2000000, margin_minor: 200000, fees_minor: 20000, bank_ref: 'bank-nbe', issue_date: '2025-11-01', expiry_date: '2026-11-01', settle: '' }),
+
+      /* —— عمال اليومية: مسدَّد · مستحق على مشروعين · تشغيل عام (5108) —— */
+      doc('daily_worker', 'w1', { name_ar: 'عم صابر حمادة — نجار مسلح', phone: '01007778811', daily_wage_minor: 45000, settle_ref: 'bank-nbe', records: [ { quotation_ref: 'q1', date: '2026-09-21', days: 1 }, { quotation_ref: 'q1', date: '2026-09-22', days: 1 }, { quotation_ref: 'q1', date: '2026-09-23', days: 1 } ] }),
+      doc('daily_worker', 'w2', { name_ar: 'عم رجب السمان — حداد تسليح', phone: '01007778822', daily_wage_minor: 50000, records: [ { quotation_ref: 'q1', date: '2026-09-22', days: 1 }, { quotation_ref: 'q1', date: '2026-09-23', days: 1 }, { quotation_ref: 'q1', date: '2026-09-24', days: 1.5 }, { project_ref: 'p2', date: '2026-09-25', days: 1 } ] }),
+      doc('daily_worker', 'w3', { name_ar: 'سيد فتحي — نظافة ومساعد موقع', phone: '01007778833', daily_wage_minor: 25000, records: [ { date: '2026-09-24', days: 1 }, { date: '2026-09-25', days: 1 } ] }),
+
+      /* —— الجدول الزمني: مهام المشروعين بروابط بنود جدول الكميات —— */
+      doc('project_task', 't1', { quotation_ref: 'q1', name_ar: 'أعمال الحفر والردم', start_date: '2026-09-05', end_date: '2026-09-15', progress_percent: 100, boq_index: 1 }),
+      doc('project_task', 't2', { quotation_ref: 'q1', name_ar: 'مباني الطوب 25سم', start_date: '2026-09-10', end_date: '2026-10-08', progress_percent: 55, boq_index: 2 }),
+      doc('project_task', 't3', { quotation_ref: 'q1', name_ar: 'العزل المائي للأسطح', start_date: '2026-09-25', end_date: '2026-10-18', progress_percent: 30, boq_index: 3 }),
+      doc('project_task', 't4', { quotation_ref: 'q1', name_ar: 'الإشراف الهندسي اليومي', start_date: '2026-09-01', end_date: '2026-10-20', progress_percent: 40, boq_index: 4 }),
+      doc('project_task', 't5', { quotation_ref: 'q1', name_ar: 'توريد وتركيب الأبواب والنجارة', start_date: '2026-10-10', end_date: '2026-10-25', progress_percent: 0, boq_index: 0 }),
+      doc('project_task', 't6', { project_ref: 'p2', name_ar: 'محارة الحوائط والأسقف', start_date: '2026-09-05', end_date: '2026-09-30', progress_percent: 60, boq_index: 1 }),
+      doc('project_task', 't7', { project_ref: 'p2', name_ar: 'توريد وتركيب السيراميك', start_date: '2026-09-20', end_date: '2026-10-10', progress_percent: 20, boq_index: 2 }),
+      doc('project_task', 't8', { project_ref: 'p2', name_ar: 'التمديدات الكهربائية', start_date: '2026-09-10', end_date: '2026-10-05', progress_percent: 35, boq_index: 3 }),
+
+      /* —— مسارات الموافقات (بعد كل الإجراءات المحروسة) —— */
+      doc('approval_flow', 'af1', { action: 'material_requisition', active: 1, steps: [ { role_ar: 'مهندس الموقع', employee_ref: 'e1' }, { role_ar: 'مدير المشروع', employee_ref: 'e2' } ] }),
+      doc('approval_flow', 'af2', { action: 'sub_certificate', active: 1, steps: [ { role_ar: 'محاسب أول', employee_ref: 'e2' }, { role_ar: 'المدير المالي', employee_ref: '' } ] }),
+      doc('approval_flow', 'af3', { action: 'project_extract', active: 0, steps: [ { role_ar: 'مدير المشروع', employee_ref: 'e1' } ] }),
+
+      /* —— طلبات اعتماد: معلّق بالمستوى الأول · معتمد بالمستوى الأول وينتظر الثاني —— */
+      doc('approval_request', 'ar1', { action: 'material_requisition', subject: 'صرف أسمنت إضافي لأعمال الخزان الأرضي — مشروع الجامعة', quotation_ref: 'q1' }),
+      doc('approval_request', 'ar2', { action: 'sub_certificate', subject: 'شهادة أعمال رقم 2 — مقاول العزل (الشيخ مبروك)', sub_contract_ref: 'sc2', decide: 'approved', decided_by: 'م. أحمد المسيري', note: 'مطابق لتقرير الحصر الهندسي' }),
     ],
   },
 

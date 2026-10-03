@@ -44,7 +44,7 @@ export function buildDemoDatabase(target = DB_PATH) {
   const insertAttendance = db.prepare('INSERT INTO attendance_records (activity, ref, employee_ref, date, status, check_in, check_out, notes) VALUES (?,?,?,?,?,?,?,?)')
   const insertLeave = db.prepare('INSERT INTO leave_requests (activity, ref, employee_ref, type_id, from_date, to_date, status, reason) VALUES (?,?,?,?,?,?,?,?)')
   const insertPayrollMonth = db.prepare('INSERT INTO payroll_months (activity, ref, month, pay_employee_refs, treasury_ref) VALUES (?,?,?,?,?)')
-  const insertQuotation = db.prepare('INSERT INTO quotations (activity, ref, kind, client_name, client_ref, title_ar, valid_until, status, win_probability, bid_bond_minor, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+  const insertQuotation = db.prepare('INSERT INTO quotations (activity, ref, kind, client_name, client_ref, title_ar, valid_until, status, win_probability, bid_bond_minor, convert, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
   const insertQuotationLine = db.prepare('INSERT INTO quotation_lines (activity, quotation_ref, name_ar, description_ar, unit_ar, qty, unit_price_minor, est_cost_minor, vat_percent, tax_included) VALUES (?,?,?,?,?,?,?,?,?,?)')
   const insertPurchaseOrder = db.prepare('INSERT INTO purchase_orders (activity, ref, supplier_ref, order_date, expected_date, warehouse_ref, notes) VALUES (?,?,?,?,?,?,?)')
   const insertPurchaseOrderLine = db.prepare('INSERT INTO purchase_order_lines (activity, order_ref, item_ref, qty, unit_price_minor, vat_percent) VALUES (?,?,?,?,?,?)')
@@ -57,6 +57,8 @@ export function buildDemoDatabase(target = DB_PATH) {
   const insertEquipmentCost = db.prepare('INSERT INTO equipment_costs (activity, ref, equipment_ref, date, kind, amount_minor, description, treasury_ref) VALUES (?,?,?,?,?,?,?,?)')
   const insertSubContract = db.prepare('INSERT INTO sub_contracts (activity, ref, quotation_ref, contractor_name, supplier_ref, scope_ar, contract_value_minor, retention_percent, tax_withhold_percent, advance_percent, start_date, advance_minor, advance_treasury_ref, certificate_amount_minor, certificate_description) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
   const insertProjectExtract = db.prepare('INSERT INTO project_extracts (activity, ref, quotation_ref, percent, vat_percent, payment, description, treasury_ref) VALUES (?,?,?,?,?,?,?,?)')
+  /* §96: مستندات المقاولات الشاملة — نوع + JSON (يقرؤها جسر التحميل في التطبيق) */
+  const insertContractingDoc = db.prepare('INSERT INTO contracting_docs (activity, ref, kind, data, sort_order) VALUES (?,?,?,?,?)')
 
   db.exec('BEGIN')
   DEMO_ACTIVITIES.forEach((activity, order) => {
@@ -96,7 +98,7 @@ export function buildDemoDatabase(target = DB_PATH) {
     for (const row of activity.payroll_months ?? [])
       insertPayrollMonth.run(activity.id, row.ref, row.month, row.pay_employee_refs ?? '', row.treasury_ref ?? '')
     for (const quotation of activity.quotations ?? []) {
-      insertQuotation.run(activity.id, quotation.ref, quotation.kind ?? 'quotation', quotation.client_name, quotation.client_ref ?? '', quotation.title_ar, quotation.valid_until ?? '', quotation.status ?? 'draft', quotation.win_probability ?? 50, quotation.bid_bond_minor ?? 0, quotation.notes ?? '')
+      insertQuotation.run(activity.id, quotation.ref, quotation.kind ?? 'quotation', quotation.client_name, quotation.client_ref ?? '', quotation.title_ar, quotation.valid_until ?? '', quotation.status ?? 'draft', quotation.win_probability ?? 50, quotation.bid_bond_minor ?? 0, quotation.convert ?? '', quotation.notes ?? '')
       for (const line of quotation.lines ?? [])
         insertQuotationLine.run(activity.id, quotation.ref, line.name_ar ?? '', line.description_ar, line.unit_ar ?? 'مقطوعية', line.qty ?? 1, line.unit_price_minor ?? 0, line.est_cost_minor ?? 0, line.vat_percent ?? 0, line.tax_included ? 1 : 0)
     }
@@ -122,6 +124,8 @@ export function buildDemoDatabase(target = DB_PATH) {
       insertSubContract.run(activity.id, row.ref, row.quotation_ref ?? '', row.contractor_name, row.supplier_ref ?? '', row.scope_ar, row.contract_value_minor, row.retention_percent ?? 5, row.tax_withhold_percent ?? 0, row.advance_percent ?? 0, row.start_date ?? '', row.advance_minor ?? 0, row.advance_treasury_ref ?? '', row.certificate_amount_minor ?? 0, row.certificate_description ?? '')
     for (const row of activity.project_extracts ?? [])
       insertProjectExtract.run(activity.id, row.ref, row.quotation_ref ?? '', row.percent ?? 0, row.vat_percent ?? 14, row.payment ?? 'credit', row.description ?? '', row.treasury_ref ?? '')
+    ;(activity.contracting_docs ?? []).forEach((row, order) =>
+      insertContractingDoc.run(activity.id, row.ref, row.kind, row.data ?? '{}', order))
     for (const sale of activity.sales ?? []) {
       insertSale.run(activity.id, sale.ref, sale.doc_date, sale.customer_ref ?? '', sale.warehouse_ref ?? '', sale.payment ?? 'cash', sale.paid_minor ?? 0, sale.treasury_ref ?? '', sale.notes ?? '')
       for (const line of sale.lines ?? [])
@@ -131,7 +135,7 @@ export function buildDemoDatabase(target = DB_PATH) {
   db.exec('COMMIT')
 
   const counts = Object.fromEntries(
-    ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']
+    ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts', 'contracting_docs']
       .map((table) => [table, db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n]),
   )
   db.close()
