@@ -82,8 +82,12 @@ jobs:
               echo ""
               echo "### سياق أخطاء البوابات والرحلات"
               echo '```'
-              grep -a -B3 -A15 -E "AssertionError|ERR_|Error \[" verify.log | head -c 30000 || true
+              grep -a -B3 -A15 -E "AssertionError|ERR_|Error \[" verify.log | head -c 22000 || true
               echo ""
+              echo '```'
+              echo "### مخرجات oxlint من بوابة الليت (حتى 10000 بايت)"
+              echo '```'
+              grep -a -A60 "مخرجات oxlint" verify.log | head -c 10000 || true
               echo '```'
               echo "### آخر 8000 بايت من سجل البوابات"
               echo '```'

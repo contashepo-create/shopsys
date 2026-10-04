@@ -25,8 +25,10 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
-// --config صريح: اكتشاف .oxlintrc.json تلقائياً حسب المنصة أخرج قواعداً افتراضية مختلفة على ويندوز
-const output = execFileSync(process.execPath, [join(APP_ROOT, 'node_modules', 'oxlint', 'bin', 'oxlint'), '--config', join(APP_ROOT, '.oxlintrc.json'), 'src'], { cwd: APP_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+// cwd نظيف بلا شرطة ختامية + --config صريح:
+// على ويندوز لم يُطبَّق التكوين (اكتشافاً ولا صراحةً بcwd ختامي) فخرجت قواعد مختلفة
+const APP_DIR = APP_ROOT.replace(/[\\/]$/, '')
+const output = execFileSync(process.execPath, [join(APP_DIR, 'node_modules', 'oxlint', 'bin', 'oxlint'), '--config', join(APP_DIR, '.oxlintrc.json'), 'src'], { cwd: APP_DIR, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 const match = output.match(/Found (\d+) warnings? and (\d+) errors?/)
 assert.ok(match, 'تعذّر قراءة مخرجات oxlint')
 const [, warnings, errors] = match.map(Number)
