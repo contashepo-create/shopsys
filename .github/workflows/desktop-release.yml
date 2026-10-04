@@ -109,3 +109,42 @@ jobs:
         run: npm run desktop:publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # electron-builder (v26) قد يقسم أصول الإصدار على إصدارين بنفس الوسم
+      # (exe في أحدهما وlatest.yml/blockmap في الآخر) — هذه الخطوة توحّدهما:
+      # تحذف الإصدارات المكررة ثم ترفع latest.yml وblockmap لإصدار الوسم الرئيسي.
+      - name: توحيد أصول الإصدار (latest.yml للتحديث التلقائي)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          MAIN_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq "[.[] | select(.tag_name == \"${TAG}\")][0].id")
+          if [ -z "$MAIN_ID" ] || [ "$MAIN_ID" = "null" ]; then
+            echo "لا يوجد إصدار للوسم ${TAG} — لا شيء لتوحيده"
+            exit 1
+          fi
+          echo "الإصدار الرئيسي: ${MAIN_ID}"
+          # احذف الإصدارات المكررة الأخرى لنفس الوسم (بعد إفراغها)
+          for id in $(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${TAG}\") | .id"); do
+            if [ "$id" != "$MAIN_ID" ]; then
+              echo "حذف الإصدار المكرر ${id}"
+              for aid in $(gh api "repos/${GITHUB_REPOSITORY}/releases/${id}/assets" --jq '.[].id'); do
+                gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${aid}" || true
+              done
+              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${id}" || true
+            fi
+          done
+          # ارفع ملفات التحديث من مخرجات البناء إلى الإصدار الرئيسي
+          if [ -f release/latest.yml ]; then
+            gh release upload "${TAG}" release/latest.yml --clobber
+            echo "رُفع latest.yml ✓"
+          else
+            echo "release/latest.yml غير موجود!" && ls -la release/ && exit 1
+          fi
+          if compgen -G "release/*.blockmap" > /dev/null; then
+            gh release upload "${TAG}" release/*.blockmap --clobber
+            echo "رُفع blockmap ✓"
+          fi
+          # تحقق نهائي: exe + latest.yml معاً في إصدار واحد
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${MAIN_ID}" --jq '.assets[].name'
