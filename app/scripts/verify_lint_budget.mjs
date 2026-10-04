@@ -25,7 +25,8 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
-const output = execFileSync(process.execPath, [join(APP_ROOT, 'node_modules', 'oxlint', 'bin', 'oxlint'), 'src'], { cwd: APP_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+// --config صريح: اكتشاف .oxlintrc.json تلقائياً حسب المنصة أخرج قواعداً افتراضية مختلفة على ويندوز
+const output = execFileSync(process.execPath, [join(APP_ROOT, 'node_modules', 'oxlint', 'bin', 'oxlint'), '--config', join(APP_ROOT, '.oxlintrc.json'), 'src'], { cwd: APP_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 const match = output.match(/Found (\d+) warnings? and (\d+) errors?/)
 assert.ok(match, 'تعذّر قراءة مخرجات oxlint')
 const [, warnings, errors] = match.map(Number)
@@ -33,6 +34,9 @@ const [, warnings, errors] = match.map(Number)
 assert.equal(errors, 0, `أخطاء ليت في src: ${errors} — ممنوعة تماماً`)
 R.ok(`صفر أخطاء ليت في 338 ملفاً`)
 
+if (warnings > BUDGET || /react-hooks\(exhaustive-deps\)|react\(immutability\)/.test(output)) {
+  console.error(`── مخرجات oxlint الكاملة (التحذيرات ${warnings}) ──\n${output}`)
+}
 assert.ok(warnings <= BUDGET, `تحذيرات الليت ${warnings} تجاوزت السقف ${BUDGET} — أصلح الجديد أو وثّق سببه في بوابة verify_lint_budget.mjs`)
 R.ok(`التحذيرات ${warnings} ≤ السقف ${BUDGET} — الباقي أنماط مقصودة موثقة (محرك العدّ الحي · تعبئة أحادية · اقتراحات fast-refresh)`)
 
