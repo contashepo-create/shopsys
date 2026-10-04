@@ -10,7 +10,7 @@
  * تشغيل: node --experimental-strip-types scripts/verify_staff_commissions_and_new_activities.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
@@ -29,11 +29,11 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'SA', activityId: 'realestate', vatPercent: 15, taxInclusive: false, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { ACTIVITY_TEMPLATES, ALL_MODULES, effectiveModules } = await import(join(root, 'src/core/activities.ts'))
-const { ACTIVITY_THEMES } = await import(join(root, 'src/core/activityTheme.ts'))
-const { guidesForActivity } = await import(join(root, 'src/core/guides.ts'))
-const { incomeStatement, trialBalance } = await import(join(root, 'src/core/financialReports.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { ACTIVITY_TEMPLATES, ALL_MODULES, effectiveModules } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
+const { ACTIVITY_THEMES } = await import(pathToFileURL(join(root, 'src/core/activityTheme.ts')).href)
+const { guidesForActivity } = await import(pathToFileURL(join(root, 'src/core/guides.ts')).href)
+const { incomeStatement, trialBalance } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 
 const st = () => useDataStore.getState()
 let pass = 0

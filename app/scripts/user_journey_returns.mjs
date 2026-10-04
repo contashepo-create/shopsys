@@ -7,7 +7,7 @@
  * سكربت فحص استكشافي — يُشغَّل يدوياً: node --experimental-strip-types scripts/user_journey_returns.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -29,14 +29,14 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let step = 0
 const ok = (name) => { step++; console.log(`  ✓ [${String(step).padStart(2, '0')}] ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
-const { buildItemLedger } = await import(join(root, 'src/core/itemLedger.ts'))
-const { customerStatement, statementBalance } = await import(join(root, 'src/core/statements.ts'))
-const { summarizeShift } = await import(join(root, 'src/core/shifts.ts'))
-const { salesSummary } = await import(join(root, 'src/core/reports.ts'))
-const { trialBalance, incomeStatement } = await import(join(root, 'src/core/financialReports.ts'))
-const { planProgress } = await import(join(root, 'src/core/installments.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
+const { buildItemLedger } = await import(pathToFileURL(join(root, 'src/core/itemLedger.ts')).href)
+const { customerStatement, statementBalance } = await import(pathToFileURL(join(root, 'src/core/statements.ts')).href)
+const { summarizeShift } = await import(pathToFileURL(join(root, 'src/core/shifts.ts')).href)
+const { salesSummary } = await import(pathToFileURL(join(root, 'src/core/reports.ts')).href)
+const { trialBalance, incomeStatement } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
+const { planProgress } = await import(pathToFileURL(join(root, 'src/core/installments.ts')).href)
 
 const st = () => useDataStore.getState()
 const P = { from: '2000-01-01', to: '2099-12-31' }

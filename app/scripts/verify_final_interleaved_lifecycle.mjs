@@ -12,7 +12,7 @@
  * تشغيل: node --experimental-strip-types scripts/verify_final_interleaved_lifecycle.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -30,7 +30,7 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'grocery', vatPercent: 14, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
 const st = () => useDataStore.getState()
 const EXT = { taxNumber: '', commercialReg: '', email: '', address: '', city: '', postalCode: '', buildingNo: '', nationalId: '' }
 
@@ -182,7 +182,7 @@ console.log('  ✓ توزيع العمليات:', Object.entries(counts).map(([k
 console.log(`  ✓ ${opsDone} عملية متشابكة، ${checksRun} جولة ثوابت (${checksRun * 6} فحصاً)، ${st().journal.length} قيداً`)
 
 // ───── خاتمة: تقارير متسقة فوق الحالة المتشابكة ─────
-const { trialBalance, incomeStatement, balanceSheet } = await import(join(root, 'src/core/financialReports.ts'))
+const { trialBalance, incomeStatement, balanceSheet } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 const P = { from: '2020-01-01', to: '2030-12-31' }
 const tb = trialBalance(st().journal, P)
 assert.equal(tb.totalDebitMinor, tb.totalCreditMinor, 'ميزان ختامي')

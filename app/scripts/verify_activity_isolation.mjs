@@ -14,17 +14,17 @@
  * تشغيل: node --experimental-strip-types scripts/verify_activity_isolation.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
 
-const { ACTIVITY_TEMPLATES, effectiveModules, INVOICE_FIRST_ACTIVITIES, isInvoiceFirst } = await import(join(root, 'src/core/activities.ts'))
-const { STANDARD_COA } = await import(join(root, 'src/core/ledger.ts'))
-const { coaForModules, usedAccountCodes, pathAllowedForSetup, ACCOUNT_MODULE_MAP, MODULE_ROUTES } = await import(join(root, 'src/core/coaVisibility.ts'))
-const { PERMISSIONS, PERMISSION_MODULE_MAP, permissionsForModules, permissionSectionsForModules, DEFAULT_ROLES, ACTIVITY_ROLES, rolesWithOverrides, visibleRolesForModules } = await import(join(root, 'src/core/permissions.ts'))
-const { ACTIVITY_LABELS, labelFor } = await import(join(root, 'src/core/activityLabels.ts'))
+const { ACTIVITY_TEMPLATES, effectiveModules, INVOICE_FIRST_ACTIVITIES, isInvoiceFirst } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
+const { STANDARD_COA } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
+const { coaForModules, usedAccountCodes, pathAllowedForSetup, ACCOUNT_MODULE_MAP, MODULE_ROUTES } = await import(pathToFileURL(join(root, 'src/core/coaVisibility.ts')).href)
+const { PERMISSIONS, PERMISSION_MODULE_MAP, permissionsForModules, permissionSectionsForModules, DEFAULT_ROLES, ACTIVITY_ROLES, rolesWithOverrides, visibleRolesForModules } = await import(pathToFileURL(join(root, 'src/core/permissions.ts')).href)
+const { ACTIVITY_LABELS, labelFor } = await import(pathToFileURL(join(root, 'src/core/activityLabels.ts')).href)
 
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }

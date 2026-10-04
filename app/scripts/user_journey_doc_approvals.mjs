@@ -10,7 +10,7 @@
  * تشغيل: node --experimental-strip-types scripts/user_journey_doc_approvals.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -31,10 +31,10 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let step = 0
 const ok = (name) => { step++; console.log(`  ✓ [${String(step).padStart(2, '0')}] ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { useAppStore } = await import(join(root, 'src/stores/app.store.ts'))
-const { trialBalance } = await import(join(root, 'src/core/financialReports.ts'))
-const { pendingForUser } = await import(join(root, 'src/core/approvals.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
+const { trialBalance } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
+const { pendingForUser } = await import(pathToFileURL(join(root, 'src/core/approvals.ts')).href)
 
 const st = () => useDataStore.getState()
 const app = () => useAppStore.getState()

@@ -43,7 +43,18 @@ jobs:
 
       - name: بوابات الأعمال والرحلات
         shell: bash
-        run: npm run verify:all 2>&1 | tee ../verify.log; exit ${PIPESTATUS[0]}
+        run: |
+          npm run verify:all 2>&1 | tee ../verify.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            echo "===== آخر 60 سطراً من سجل البوابات ====="
+            tail -60 ../verify.log
+            # بث الأسطر الحرجة كتعليقات توضيحية — تُقرأ عبر API حتى مع حجب سجلات CI
+            grep -aE "فشل|خطأ|Error|error|Cannot|ENOENT|✗|AssertionError" ../verify.log | head -25 | cut -c1-220 | while IFS= read -r line; do
+              echo "::error title=بوابات-الأعمال::${line//:/؛}"
+            done
+            exit "$code"
+          fi
 
       - name: رفع سجلات السلسلة (للتشخيص — حتى عند النجاح)
         if: always()

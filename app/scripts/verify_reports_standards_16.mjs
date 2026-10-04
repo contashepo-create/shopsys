@@ -37,8 +37,8 @@ globalThis.localStorage = {
 }
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 
-const { ACTIVITY_TEMPLATES } = await import(join(root, 'src/core/activities.ts'))
-const { trialBalance, incomeStatement, balanceSheet, cashFlowReport } = await import(join(root, 'src/core/financialReports.ts'))
+const { ACTIVITY_TEMPLATES } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
+const { trialBalance, incomeStatement, balanceSheet, cashFlowReport } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
 assert.equal(ACTIVITIES.length, 29)

@@ -15,7 +15,7 @@
  * ح11) قيمة مخزون سالبة مستحيلة: إتلاف/صرف/تحويل فوق الرصيد مرفوض في كل مسار
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
@@ -37,8 +37,8 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
 const st = () => useDataStore.getState()
 const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 const check1103 = (label, tolerancePerItem = 100) => {
@@ -171,7 +171,7 @@ console.log('\n— ح7) التحويلات ذهاباً وإياباً وفرع-
   st().addWarehouse('فرع ب')
   const wb = st().warehouses.at(-1)
   const main = st().warehouses.find((w) => w.isMain)
-  const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
+  const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
   const stockOf = () => computeWarehouseStock(st().items, st().warehouses, st().transfers, buildWarehouseDocs(st().purchases, st().sales, st().saleReturns, st().purchaseReturns))
   st().postTransfer({ fromWarehouseId: main.id, toWarehouseId: wa.id, lines: [{ itemId: sugar2.id, qty: 10 }], notes: '' })
   st().postTransfer({ fromWarehouseId: wa.id, toWarehouseId: wb.id, lines: [{ itemId: sugar2.id, qty: 4 }], notes: '' })

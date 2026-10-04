@@ -13,7 +13,7 @@
  * تشغيل: node --experimental-strip-types scripts/verify_grand_audit_round2.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -31,10 +31,10 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'general', vatPercent: 14, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { useAppStore } = await import(join(root, 'src/stores/app.store.ts'))
-const { trialBalance, incomeStatement, balanceSheet } = await import(join(root, 'src/core/financialReports.ts'))
-const { buildFiscalYearReport } = await import(join(root, 'src/core/fiscal.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { useAppStore } = await import(pathToFileURL(join(root, 'src/stores/app.store.ts')).href)
+const { trialBalance, incomeStatement, balanceSheet } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
+const { buildFiscalYearReport } = await import(pathToFileURL(join(root, 'src/core/fiscal.ts')).href)
 
 const st = () => useDataStore.getState()
 st().seed([])
@@ -298,7 +298,7 @@ assert.equal(rep.netProfitMinor, incBefore.netProfitMinor)
 ok('صافي ربح تقرير السنة = قائمة الدخل لنفس الفترة بالقرش')
 
 // سياسة سنة واحدة مفتوحة تصان
-const { validateFiscalYear } = await import(join(root, 'src/core/fiscal.ts'))
+const { validateFiscalYear } = await import(pathToFileURL(join(root, 'src/core/fiscal.ts')).href)
 const errs = validateFiscalYear({ nameAr: 'سنة 2027', startDate: '2027-01-01', endDate: '2027-12-31' }, [{ id: 1, nameAr: 'سنة 2026', startDate: '2026-01-01', endDate: '2026-12-31', status: 'open' }])
 assert.ok(errs.some((e) => e.includes('مفتوحة')))
 ok('فتح سنة جديدة والحالية مفتوحة مرفوض (سياسة المالك: سنة واحدة مفتوحة)')

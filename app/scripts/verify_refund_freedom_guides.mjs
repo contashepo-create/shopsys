@@ -10,7 +10,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -34,9 +34,9 @@ const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
 const {
   validateRefundAllocation, allocationOf, buildReturnEntryAlloc, splitRefund,
-} = await import(join(root, 'src/core/returns.ts'))
-const { guidesForActivity, searchGuides, COMMON_GUIDES, ACTIVITY_GUIDES } = await import(join(root, 'src/core/guides.ts'))
-const { ACTIVITY_TEMPLATES } = await import(join(root, 'src/core/activities.ts'))
+} = await import(pathToFileURL(join(root, 'src/core/returns.ts')).href)
+const { guidesForActivity, searchGuides, COMMON_GUIDES, ACTIVITY_GUIDES } = await import(pathToFileURL(join(root, 'src/core/guides.ts')).href)
+const { ACTIVITY_TEMPLATES } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
 
 /* ═══ 1) validateRefundAllocation ═══ */
 {
@@ -108,7 +108,7 @@ const { ACTIVITY_TEMPLATES } = await import(join(root, 'src/core/activities.ts')
 }
 
 /* ═══ 4) postSaleReturn refund='custom' — تكامل ═══ */
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
 const st = () => useDataStore.getState()
 
 // صنف وعميل (توقيع Item الكامل — حقول ناقصة = مخزون صفري صامت)
@@ -296,8 +296,8 @@ const line = (qty) => ({ itemId: item.id, nameAr: item.nameAr, qty, unitPriceMin
 
 /* ═══ 8) إصلاحات المراجعة الاحترافية: التالف لا يدخل أرصدة المخازن ولا كارت الصنف ═══ */
 {
-  const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
-  const { buildItemLedger } = await import(join(root, 'src/core/itemLedger.ts'))
+  const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
+  const { buildItemLedger } = await import(pathToFileURL(join(root, 'src/core/itemLedger.ts')).href)
 
   // buildWarehouseDocs: مرتجع فيه سطر سليم وسطر تالف — السليم فقط يعود لمخزن الفاتورة
   const docs = buildWarehouseDocs(
@@ -351,7 +351,7 @@ const line = (qty) => ({ itemId: item.id, nameAr: item.nameAr, qty, unitPriceMin
 
 /* ═══ 9) أثر المرتجع على خطط الأقساط (reduceSchedule) ═══ */
 {
-  const { reduceSchedule, buildSchedule } = await import(join(root, 'src/core/installments.ts'))
+  const { reduceSchedule, buildSchedule } = await import(pathToFileURL(join(root, 'src/core/installments.ts')).href)
   // جدول 10 أقساط × 100
   const items = buildSchedule({ totalMinor: 1000, downPaymentMinor: 0, count: 10, intervalMonths: 1, firstDueDate: '2026-01-01' })
   const red = reduceSchedule(items, 250)

@@ -12,7 +12,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
@@ -34,7 +34,7 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
 const st = () => useDataStore.getState()
 const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 
@@ -193,14 +193,14 @@ let inv1
 
 /* ═══ P9) توازن الدفتر ═══ */
 {
-  const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
+  const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
   for (const e of st().journal) assertBalanced(e.lines)
   ok(`P9: كل قيود الدفتر (${st().journal.length}) متوازنة بعد دورة المشتريات الكاملة`)
 }
 
 /* ═══ P2/P4) الفحوص النصية للواجهة والصلاحيات ═══ */
 {
-  const { PERMISSIONS, DEFAULT_ROLES, effectivePermissionsFor } = await import(join(root, 'src/core/permissions.ts'))
+  const { PERMISSIONS, DEFAULT_ROLES, effectivePermissionsFor } = await import(pathToFileURL(join(root, 'src/core/permissions.ts')).href)
   const p = PERMISSIONS.find((x) => x.id === 'pur.invoice.edit')
   assert.ok(p && p.sensitive === true)
   ok('P4: صلاحية pur.invoice.edit معرفة وحساسة')

@@ -10,7 +10,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -31,8 +31,8 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { CreditLimitError } = await import(join(root, 'src/core/pos.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { CreditLimitError } = await import(pathToFileURL(join(root, 'src/core/pos.ts')).href)
 const st = () => useDataStore.getState()
 
 /* شراء سيارة للمعرض: الآجل يتطلب مورداً ويظهر في كشفه وفواتيره المفتوحة */
@@ -144,7 +144,7 @@ ok('بيع سيارة آجل بلا مشترٍ من السجل — مرفوض ب
 
 /* ═══ 6) توازن الدفتر ═══ */
 {
-  const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
+  const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
   for (const e of st().journal) assertBalanced(e.lines)
   ok(`كل قيود الدفتر (${st().journal.length}) متوازنة بعد بيوع السيارات`)
 }

@@ -10,9 +10,10 @@
  */
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { argv } from 'node:process'
 
-const APP = new URL('..', import.meta.url).pathname
+const APP = fileURLToPath(new URL('..', import.meta.url))
 const SRC = join(APP, 'src')
 const OUT = join(APP, '..', 'docs', 'مصفوفة_المحرك_المحاسبي.md')
 

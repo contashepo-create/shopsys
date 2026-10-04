@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -31,9 +31,9 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'grocery', vatPercent: 14, taxInclusive: false, allowNegativeTreasury: true } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { newJournalEntries, newAuditEvents } = await import(join(root, 'src/data/persistentStorage.ts'))
-const { ShopsysDatabase } = await import(join(root, 'desktop/sqlite/storage.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { newJournalEntries, newAuditEvents } = await import(pathToFileURL(join(root, 'src/data/persistentStorage.ts')).href)
+const { ShopsysDatabase } = await import(pathToFileURL(join(root, 'desktop/sqlite/storage.ts')).href)
 
 let pass = 0
 const ok = (name) => { pass++; console.log('  ✓', name) }

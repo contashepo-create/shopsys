@@ -11,6 +11,7 @@
  */
 import { DatabaseSync } from 'node:sqlite'
 import { readFileSync, existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import { reporter } from './auditKit.mjs'
 
@@ -19,7 +20,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 const DB = new URL('../demo-db/demo.sqlite', import.meta.url)
 
 assert.ok(existsSync(DB), 'ملف قاعدة البيانات التجريبية مفقود — شغّل npm run demo:build')
-const db = new DatabaseSync(DB.pathname)
+const db = new DatabaseSync(fileURLToPath(DB))
 R.ok('قاعدة بيانات SQLite حقيقية موجودة مع ملفات المشروع: app/demo-db/demo.sqlite')
 
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name)

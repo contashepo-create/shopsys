@@ -9,7 +9,7 @@
  * تشغيل: node --experimental-strip-types scripts/verify_market_standard_gaps.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -27,10 +27,10 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'grocery', vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { PriceFloorError, priceFloorViolations } = await import(join(root, 'src/core/items.ts'))
-const { stagnantItems } = await import(join(root, 'src/core/reports.ts'))
-const { incomeStatement } = await import(join(root, 'src/core/financialReports.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { PriceFloorError, priceFloorViolations } = await import(pathToFileURL(join(root, 'src/core/items.ts')).href)
+const { stagnantItems } = await import(pathToFileURL(join(root, 'src/core/reports.ts')).href)
+const { incomeStatement } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 
 const st = () => useDataStore.getState()
 let pass = 0

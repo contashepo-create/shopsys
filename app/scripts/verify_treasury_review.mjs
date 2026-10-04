@@ -17,7 +17,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -39,9 +39,9 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { customerStatement, supplierStatement, statementBalance } = await import(join(root, 'src/core/statements.ts'))
-const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { customerStatement, supplierStatement, statementBalance } = await import(pathToFileURL(join(root, 'src/core/statements.ts')).href)
+const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
 const st = () => useDataStore.getState()
 const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 
@@ -191,7 +191,7 @@ console.log('\n— T8) الورديات —')
   st().postSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 1, unitPriceMinor: 90000, unitCostMinor: 50000, discountPercent: 0, soldByWeight: false }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101' })
   st().postSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 1, unitPriceMinor: 90000, unitCostMinor: 50000, discountPercent: 0, soldByWeight: false }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1102' })
   st().postSale({ lines: [{ itemId: item.id, nameAr: item.nameAr, qty: 1, unitPriceMinor: 90000, unitCostMinor: 50000, discountPercent: 0, soldByWeight: false }], customerId: cust.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101' })
-  const { summarizeShift } = await import(join(root, 'src/core/shifts.ts'))
+  const { summarizeShift } = await import(pathToFileURL(join(root, 'src/core/shifts.ts')).href)
   const kindOf = (code) => st().treasuries.find((t) => t.code === (code ?? '1101'))?.kind ?? 'cash'
   const docs = st().sales.map((s) => ({ shiftId: s.shiftId, payment: s.payment, totalMinor: s.totals.totalMinor, paidMinor: s.paidMinor, treasuryKind: kindOf(s.treasury) }))
   const summary = summarizeShift(shift, docs, [])
@@ -257,7 +257,7 @@ console.log('\n— T11) إدارة الخزائن —')
 
 console.log('\n— T12) الحراسات —')
 {
-  const { PERMISSIONS } = await import(join(root, 'src/core/permissions.ts'))
+  const { PERMISSIONS } = await import(pathToFileURL(join(root, 'src/core/permissions.ts')).href)
   const perm = PERMISSIONS.find((p) => p.id === 'trs.payment.approve')
   assert.ok(perm?.sensitive)
   ok('T12: صلاحية اعتماد خروج النقدية trs.payment.approve معرفة وحساسة')

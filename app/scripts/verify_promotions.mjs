@@ -9,7 +9,7 @@
  * تشغيل: node --experimental-strip-types scripts/verify_promotions.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -27,8 +27,8 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'grocery', vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { promotionCartLines, promotionActiveOn, promotionRetailMinor, promotionSavingsMinor, validatePromotion } = await import(join(root, 'src/core/promotions.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { promotionCartLines, promotionActiveOn, promotionRetailMinor, promotionSavingsMinor, validatePromotion } = await import(pathToFileURL(join(root, 'src/core/promotions.ts')).href)
 
 const st = () => useDataStore.getState()
 let pass = 0

@@ -13,7 +13,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -34,9 +34,9 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { invoiceEditPolicy } = await import(join(root, 'src/core/invoiceEdit.ts'))
-const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { invoiceEditPolicy } = await import(pathToFileURL(join(root, 'src/core/invoiceEdit.ts')).href)
+const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
 const st = () => useDataStore.getState()
 const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 const allBalanced = () => { for (const e of st().journal) assertBalanced(e.lines) }
@@ -188,7 +188,7 @@ console.log('\n— س6) الكاشير والرقم السري — فحص الو
   const prPage = readFileSync(join(root, 'src/ui/pages/PurchaseReturnsPage.tsx'), 'utf8')
   assert.ok(srPage.includes('useSupervisorApproval') && prPage.includes('useSupervisorApproval'))
   ok('س6: والمرتجعان (بيع وشراء) خلف اعتماد المشرف — كل الحساس مقفول بالرقم السري')
-  const { PERMISSIONS } = await import(join(root, 'src/core/permissions.ts'))
+  const { PERMISSIONS } = await import(pathToFileURL(join(root, 'src/core/permissions.ts')).href)
   for (const id of ['sales.price.edit', 'pur.invoice.edit']) {
     const perm = PERMISSIONS.find((p) => p.id === id)
     assert.ok(perm?.sensitive, `${id} حساسة`)

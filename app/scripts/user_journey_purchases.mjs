@@ -10,7 +10,7 @@
  * م8) تأثير المشتريات على الأقسام: ميزان المراجعة متزن، بطاقة الصنف مطابقة، كشف المورد صحيح
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
@@ -32,9 +32,9 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { supplierStatement, statementBalance } = await import(join(root, 'src/core/statements.ts'))
-const { computeTrialBalance } = await import(join(root, 'src/core/accounting.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { supplierStatement, statementBalance } = await import(pathToFileURL(join(root, 'src/core/statements.ts')).href)
+const { computeTrialBalance } = await import(pathToFileURL(join(root, 'src/core/accounting.ts')).href)
 const st = () => useDataStore.getState()
 const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 
@@ -215,7 +215,7 @@ console.log('\n— م7) تعديل فاتورة قبل أي حركة —')
 
 console.log('\n— م8) التأثير على كل الأقسام —')
 {
-  const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
+  const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
   for (const e of st().journal) assertBalanced(e.lines)
   ok(`كل قيود الدفتر (${st().journal.length}) متوازنة`)
   const tb = computeTrialBalance(st().journal, st().accounts ?? [])

@@ -17,7 +17,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
@@ -39,9 +39,9 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { validateItem } = await import(join(root, 'src/core/items.ts'))
-const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { validateItem } = await import(pathToFileURL(join(root, 'src/core/items.ts')).href)
+const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
 const st = () => useDataStore.getState()
 const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 const allBalanced = () => { for (const e of st().journal) assertBalanced(e.lines) }
@@ -159,7 +159,7 @@ console.log('\n— V6) التحويلات المخزنية —')
   assert.equal(bal('1103'), inv1103)
   assert.equal(st().journal.length, journalCount)
   ok('V6: التحويل حركة داخلية — لا قيد و1103 ثابت (القيمة لم تغادر المنشأة)')
-  const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
+  const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
   const stock = computeWarehouseStock(st().items, st().warehouses, st().transfers, buildWarehouseDocs(st().purchases, st().sales, st().saleReturns, st().purchaseReturns))
   assert.equal(stock.get(branch.id).get(rice2.id), 15)
   assert.equal(stock.get(main.id).get(rice2.id), 25)
@@ -227,7 +227,7 @@ console.log('\n— V9) الرصيد الافتتاحي للمخزون —')
 
 console.log('\n— V10) الحراسات والصلاحيات —')
 {
-  const { PERMISSIONS } = await import(join(root, 'src/core/permissions.ts'))
+  const { PERMISSIONS } = await import(pathToFileURL(join(root, 'src/core/permissions.ts')).href)
   const adjust = PERMISSIONS.find((p) => p.id === 'inv.adjust')
   assert.ok(adjust?.sensitive)
   ok('V10: صلاحية التسوية المخزنية inv.adjust حساسة')

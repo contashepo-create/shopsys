@@ -31,8 +31,8 @@ globalThis.window = { localStorage: globalThis.localStorage, addEventListener: (
 // WebCrypto لhashPin — Node 18+ يوفر crypto.subtle
 if (!globalThis.crypto?.subtle) { const { webcrypto } = await import('node:crypto'); globalThis.crypto = webcrypto }
 
-const { hashPin, findUserByIdentifier, suggestRoleForJobTitle } = await import(join(root, 'src/core/audit.ts'))
-const { effectivePermissionsFor, rolesWithOverrides } = await import(join(root, 'src/core/permissions.ts'))
+const { hashPin, findUserByIdentifier, suggestRoleForJobTitle } = await import(pathToFileURL(join(root, 'src/core/audit.ts')).href)
+const { effectivePermissionsFor, rolesWithOverrides } = await import(pathToFileURL(join(root, 'src/core/permissions.ts')).href)
 
 let pass = 0
 const ok = (cond, name) => { assert.ok(cond, name); pass++ }

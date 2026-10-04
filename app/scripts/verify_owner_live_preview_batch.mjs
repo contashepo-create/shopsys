@@ -10,7 +10,7 @@
    (لا ازدواج) — نفس معادلة 2104/1107. */
 import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { reporter } from './auditKit.mjs'
 
@@ -108,7 +108,7 @@ const menu = read('ui/layout/MenuBar.tsx')
   }
   globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
   mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'general', vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
-  const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
+  const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
   const st = () => useDataStore.getState()
   const okLive = (name) => console.log('  ✓ [حي]', name)
 
