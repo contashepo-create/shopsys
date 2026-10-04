@@ -54,7 +54,7 @@ const pickers = read('ui/components/KeyboardPickers.tsx')
 }
 /* ④ القوائم القصيرة */
 {
-  assert.ok(/if \(choices\.length > 0 && choices\.length <= 10\) \{/.test(pickers), 'لا تتحول القوائم القصيرة إلى منسدلة أصلية')
+  assert.ok(/native \|\| \(choices\.length > 0 && choices\.length <= 10\)\) \{/.test(pickers), 'لا تتحول القوائم القصيرة إلى منسدلة أصلية (وnative يفرضها للمعالج)')
   assert.ok(/<select[\s\S]{0,400}quick-native-select[\s\S]{0,400}<\/select>/.test(pickers), 'القائمة القصيرة لا تستعمل <select> أصلي')
   assert.ok(/data-quick-native="true"/.test(pickers), 'القائمة الأصلية بلا سمة تعريف للاختبارات')
   assert.ok(/function nodeText\(node: ReactNode\): string/.test(pickers), 'نص الخيار قد يظهر [object Object] في القائمة الأصلية')

@@ -142,7 +142,7 @@ html.dark { color-scheme: dark; }
   33% { transform: translate(40px, -30px) scale(1.15); }
   66% { transform: translate(-30px, 25px) scale(0.9); }
 }
-.anim-wizard-step { animation: wizardSlideIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-wizard-step { animation: wizardSlideIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 .anim-glow { animation: wizardGlow 3s ease-in-out infinite; }
 .anim-float { animation: floatY 4s ease-in-out infinite; }
 .anim-orb { animation: orbDrift 14s ease-in-out infinite; }

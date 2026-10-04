@@ -156,7 +156,7 @@ export function FirstRunWizard() {
                 سنضبط العملة والكسور والضريبة تلقائياً — <b className="text-amber-600">البلد يُقفل بعد الإعداد</b> ولا يغيّره إلا الدعم الفني
               </p>
               <div className="max-w-md mx-auto space-y-4">
-                <QuickSelect value={countryCode} onChange={(e) => { setCountryCode(e.target.value); setCity(''); setCustomCity('') }} className={`${inputCls} !text-base font-bold`}>
+                <QuickSelect native value={countryCode} onChange={(e) => { setCountryCode(e.target.value); setCity(''); setCustomCity('') }} className={`${inputCls} !text-base font-bold`}>
                   <option value="">— اختر البلد —</option>
                   {ARAB_COUNTRIES.map((c) => (
                     <option key={c.code} value={c.code}>{c.flag} {c.nameAr} — {c.currency.name}</option>
@@ -190,7 +190,7 @@ export function FirstRunWizard() {
                 النشاط يحدد الأقسام والشاشات الظاهرة — الأقسام الإضافية يفعّلها الدعم الفني في رخصتك
               </p>
               <div className="max-w-md mx-auto space-y-4">
-                <QuickSelect value={activityId} onChange={(e) => setActivityId(e.target.value)} className={`${inputCls} !text-base font-bold`}>
+                <QuickSelect native value={activityId} onChange={(e) => setActivityId(e.target.value)} className={`${inputCls} !text-base font-bold`}>
                   <option value="">— اختر النشاط —</option>
                   {ACTIVITY_TEMPLATES.map((a) => (
                     <option key={a.id} value={a.id}>{a.icon} {a.nameAr}</option>
@@ -226,7 +226,7 @@ export function FirstRunWizard() {
                   <div className="anim-pop p-4 rounded-2xl bg-sky-500/5 border border-sky-500/20 space-y-2">
                     <div className="text-sm font-black text-slate-700 dark:text-white">🩺 تخصص العيادة</div>
                     <div className="text-[11px] text-slate-400">اختر التخصص أو اكتبه — يظهر في الشاشات والمطبوعات</div>
-                    <QuickSelect value={specialty} onChange={(e) => setSpecialty(e.target.value)} className={inputCls}>
+                    <QuickSelect native value={specialty} onChange={(e) => setSpecialty(e.target.value)} className={inputCls}>
                       <option value="">— اختر التخصص —</option>
                       {DOCTOR_SPECIALTIES.map((x) => <option key={x} value={x}>{x}</option>)}
                       <option value="__other__">تخصص آخر (اكتبه بنفسك)…</option>
@@ -329,7 +329,7 @@ export function FirstRunWizard() {
                 <div>
                   <label className="block text-[12px] font-bold text-slate-600 dark:text-slate-300 mb-1.5">المدينة *</label>
                   {cities.length > 0 ? (
-                    <QuickSelect value={city} onChange={(e) => setCity(e.target.value)} className={inputCls}>
+                    <QuickSelect native value={city} onChange={(e) => setCity(e.target.value)} className={inputCls}>
                       <option value="">— اختر المدينة —</option>
                       {cities.map((c) => <option key={c} value={c}>{c}</option>)}
                       <option value="__other__">أخرى…</option>

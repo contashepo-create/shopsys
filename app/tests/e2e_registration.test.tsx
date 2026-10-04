@@ -20,12 +20,23 @@ const { useAppStore } = await import('../src/stores/app.store.ts')
 const { useDataStore } = await import('../src/data/repo.ts')
 const { ACTIVITY_TEMPLATES } = await import('../src/core/activities.ts')
 
-/** اختيار من QuickSelect عبر القيمة المخفية في زر الخيار، بلا اعتماد على عنصر select أصلي. */
+/** اختيار من QuickSelect بالوضعين: قائمة أصلية (native — شاشة الإعداد) أو
+ *  قائمة بحث مركّبة على body (بقية الشاشات) — بلا اعتماد على أي وضع بعينه. */
 function chooseQuickSelect(currentLabel: string, value: string) {
+  /* الوضع الأصلي: select حقيقية — تغيير قيمتها مباشرة */
+  const nativeSelect = [...document.querySelectorAll<HTMLSelectElement>('[data-quick-native] select')].find((node) => {
+    const chosen = node.options[node.selectedIndex]
+    return chosen?.textContent?.trim() === currentLabel || node.value === '' || currentLabel.startsWith('—')
+  })
+  if (nativeSelect) {
+    fireEvent.change(nativeSelect, { target: { value } })
+    return
+  }
+  /* وضع قائمة البحث: فتح الحقل ثم النقر على الخيار المطابق */
   const input = [...document.querySelectorAll('[data-quick-select] input')].find((node) => (node as HTMLInputElement).value === currentLabel) as HTMLInputElement | undefined
   expect(input, `لم يُعثر على المنتقي الحالي «${currentLabel}»`).toBeTruthy()
   fireEvent.focus(input!)
-  const option = [...input!.closest('[data-quick-select]')!.querySelectorAll('[data-quick-option]')].find((node) => node.getAttribute('data-value') === value)
+  const option = [...document.querySelectorAll('[data-quick-option]')].find((node) => node.getAttribute('data-value') === value)
   expect(option, `لم يُعثر على خيار ${value}`).toBeTruthy()
   fireEvent.click(option!)
 }
