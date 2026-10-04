@@ -11,6 +11,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
+import { initLanHostIpc } from './hostServerMain.ts'
 
 type ClaimOutboxInput = { now?: string; limit?: number }
 type DeleteSnapshotInput = { storeName: string; expectedRevision: number }
@@ -174,6 +175,9 @@ function wireIpc(): void {
     await printHtml(html, silent, printerName)
   })
   ipcMain.handle('print:printers', () => listPrinters())
+
+  /* §102 — مضيف شبكة المحل: خادم ws في هذه العملية، منطق المضيف في المُصيّر */
+  initLanHostIpc(() => mainWindow)
 
   ipcMain.handle('updater:state', () => updaterState)
   ipcMain.handle('updater:check', () => {

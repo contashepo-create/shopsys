@@ -39,3 +39,26 @@ contextBridge.exposeInMainWorld('shopsysUpdater', {
 
 contextBridge.exposeInMainWorld('shopsysAppInfo', () => ipcRenderer.invoke('app:info'))
 contextBridge.exposeInMainWorld('shopsysBackupNow', () => ipcRenderer.invoke('app:backupNow'))
+
+/* §102 — مضيف شبكة المحل: تشغيل خادم ws + أحداث الأجهزة (المنطق في المُصيّر) */
+contextBridge.exposeInMainWorld('shopsysLanHost', {
+  start: (opts: { port: number }) => ipcRenderer.invoke('lan-host:start', opts),
+  stop: () => ipcRenderer.invoke('lan-host:stop'),
+  status: () => ipcRenderer.invoke('lan-host:status'),
+  send: (payload: { connectionId: number; msg: unknown }) => ipcRenderer.invoke('lan-host:send', payload),
+  onWsOpen: (listener: (e: { connectionId: number }) => void) => {
+    const wrapped = (_event: unknown, e: { connectionId: number }) => listener(e)
+    ipcRenderer.on('lan-host:ws-open', wrapped)
+    return () => ipcRenderer.removeListener('lan-host:ws-open', wrapped)
+  },
+  onWsMessage: (listener: (e: { connectionId: number; msg: unknown }) => void) => {
+    const wrapped = (_event: unknown, e: { connectionId: number; msg: unknown }) => listener(e)
+    ipcRenderer.on('lan-host:ws-message', wrapped)
+    return () => ipcRenderer.removeListener('lan-host:ws-message', wrapped)
+  },
+  onWsClose: (listener: (e: { connectionId: number }) => void) => {
+    const wrapped = (_event: unknown, e: { connectionId: number }) => listener(e)
+    ipcRenderer.on('lan-host:ws-close', wrapped)
+    return () => ipcRenderer.removeListener('lan-host:ws-close', wrapped)
+  },
+})

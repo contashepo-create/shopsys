@@ -55,6 +55,9 @@ import { PaymentTerminalsPage } from './ui/pages/PaymentTerminalsPage.tsx'
 import { ChequesPage } from './ui/pages/ChequesPage.tsx'
 import { EinvoicePage } from './ui/pages/EinvoicePage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
+import { LanSettingsPage } from './ui/pages/LanSettingsPage.tsx'
+import { startHostSession } from './data/lan/hostSession.ts'
+import { bootRemoteSession } from './data/lan/remoteSession.ts'
 import { CostCentersPage } from './ui/pages/CostCentersPage.tsx'
 import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
@@ -183,6 +186,7 @@ function Shell() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/settings/permissions" element={<PermissionsPage />} />
         <Route path="/settings/general" element={<GeneralSettingsPage />} />
+        <Route path="/settings/lan" element={<LanSettingsPage />} />
         <Route path="/settings/cost-centers" element={<CostCentersPage />} />
         <Route path="/inventory/items" element={<ItemsPage />} />
         <Route path="/inventory/warehouses" element={<WarehousesPage />} />
@@ -379,6 +383,17 @@ export default function App() {
     }
     window.addEventListener('beforeunload', release)
     return () => { clearInterval(t); release(); window.removeEventListener('beforeunload', release) }
+  }, [])
+
+  // ─── شبكة المحل (§102): إقلاع دور الجهاز — مضيف مفعّل يفتح خادمه، وعميل
+  // مفعل يعيد الاتصال بالمضيف تلقائياً بالتوكن المحفوظ (بلا رمز اقتران) ───
+  useEffect(() => {
+    const { lanHost, lanClient } = useAppStore.getState()
+    if (lanHost.enabled && lanHost.pairingCode) {
+      void startHostSession({ pairingCode: lanHost.pairingCode, port: lanHost.port, hostName: lanHost.hostName }).catch(() => undefined)
+    } else if (lanClient.enabled && lanClient.hostUrl) {
+      bootRemoteSession()
+    }
   }, [])
 
   // ─── مزامنة السحابة (Cloudflare): صفحة «حول» + قائمة الحرق — عند الإقلاع وكل 6 ساعات ───

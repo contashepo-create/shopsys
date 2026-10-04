@@ -272,6 +272,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/settings/permissions', perm: 'set.users' },
   { prefix: '/settings/audit', perm: 'set.audit.view' },
   { prefix: '/settings/backup', perm: 'set.backup' },
+  { prefix: '/settings/lan', perm: 'set.backup' }, // شبكة المحل: دور الجهاز (مضيف/عميل) — للمالك فقط
   { prefix: '/settings/sync', perm: 'set.backup' },
   { prefix: '/settings/profile', perm: null }, // «حسابي» — كل مستخدم يدير ملفه بنفسه
   { prefix: '/settings/about', perm: null }, // حول التطبيق — للجميع

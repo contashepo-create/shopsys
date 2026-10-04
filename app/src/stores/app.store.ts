@@ -159,6 +159,12 @@ interface AppState {
   // ─── الإرسال المجدول عبر التليجرام (القرار 32) ───
   schedule: ScheduleSettings
   updateSchedule: (patch: Partial<ScheduleSettings>) => void
+  /** §102 مضيف شبكة المحل — هذا الجهاز يخدم قاعدة واحدة لأجهزة المحل */
+  lanHost: LanHostSettings
+  updateLanHost: (patch: Partial<LanHostSettings>) => void
+  /** §102 عميل شبكة المحل — هذا الجهاز يتصل بمضيف المحل */
+  lanClient: LanClientSettings
+  updateLanClient: (patch: Partial<LanClientSettings>) => void
   lastDailySentDay: string | null // «YYYY-MM-DD» — يمنع تكرار إرسال اليوم
   setLastDailySentDay: (day: string) => void
   // ─── الترخيص (القرار 4) ───
@@ -186,6 +192,42 @@ interface AppState {
   // ─── المزامنة السحابية متعددة الأجهزة (Supabase — ميزة cloud_sync المدفوعة) ───
   sync: SyncSettings
   updateSync: (patch: Partial<SyncSettings>) => void
+}
+
+/** إعدادات مضيف شبكة المحل (§102) — تُخزن لكل جهاز */
+export interface LanHostSettings {
+  enabled: boolean
+  /** رمز الاقتران الذي يُدخله كل جهاز مرة واحدة */
+  pairingCode: string
+  /** منفذ الاستماع (افتراضي 8787) */
+  port: number
+  /** اسم يظهر للأجهزة عند اللقطة */
+  hostName: string
+}
+
+/** إعدادات عميل شبكة المحل (§102) — العنوان والتوكن يُحفظان لكل جهاز */
+export interface LanClientSettings {
+  enabled: boolean
+  /** ws://192.168.1.10:8787 */
+  hostUrl: string
+  /** توكن الجهاز بعد أول اقتران ناجح — يتيح العودة بلا رمز */
+  token: string | null
+  /** اسم هذا الجهاز عند المضيف */
+  deviceName: string
+}
+
+export const DEFAULT_LAN_HOST_SETTINGS: LanHostSettings = {
+  enabled: false,
+  pairingCode: '',
+  port: 8787,
+  hostName: 'مضيف محل تَحَكَّم',
+}
+
+export const DEFAULT_LAN_CLIENT_SETTINGS: LanClientSettings = {
+  enabled: false,
+  hostUrl: '',
+  token: null,
+  deviceName: '',
 }
 
 export interface SyncSettings {
@@ -371,6 +413,10 @@ export const useAppStore = create<AppState>()(
       updateEinvoice: (patch) => set((s) => ({ einvoice: { ...s.einvoice, ...patch } })),
       schedule: DEFAULT_SCHEDULE_SETTINGS,
       updateSchedule: (patch) => set((s) => ({ schedule: { ...s.schedule, ...patch } })),
+      lanHost: DEFAULT_LAN_HOST_SETTINGS,
+      updateLanHost: (patch) => set((s) => ({ lanHost: { ...s.lanHost, ...patch } })),
+      lanClient: DEFAULT_LAN_CLIENT_SETTINGS,
+      updateLanClient: (patch) => set((s) => ({ lanClient: { ...s.lanClient, ...patch } })),
       lastDailySentDay: null,
       setLastDailySentDay: (day) => set({ lastDailySentDay: day }),
       deviceId: BOOT.deviceId,
@@ -485,6 +531,9 @@ export const useAppStore = create<AppState>()(
         if (state) state.telegram = { ...DEFAULT_TELEGRAM_SETTINGS, ...state.telegram }
         // ترحيل: حسابات قبل ميزة المزامنة السحابية تحصل على الافتراضيات
         if (state) state.sync = { ...DEFAULT_SYNC_SETTINGS, ...state.sync }
+        // ترحيل: حسابات قبل شبكة المحل تحصل على الافتراضيات (§102)
+        if (state) state.lanHost = { ...DEFAULT_LAN_HOST_SETTINGS, ...state.lanHost }
+        if (state) state.lanClient = { ...DEFAULT_LAN_CLIENT_SETTINGS, ...state.lanClient }
         // ترحيل: حسابات قبل ميزة الفاتورة الإلكترونية تحصل على الافتراضيات
         if (state) state.einvoice = { ...DEFAULT_EINVOICE_SETTINGS, ...state.einvoice }
         // ترحيل: حسابات قبل الإرسال المجدول تحصل على الافتراضيات

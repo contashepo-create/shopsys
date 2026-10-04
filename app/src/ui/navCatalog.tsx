@@ -12,7 +12,7 @@ import {
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
   FileText, ListChecks, Users2, ChefHat, Scissors, Gem, Tags, PackageMinus, HandCoins, Gauge,
   ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2, Gift, GitBranch, Calculator,
-  CalendarCheck2, Fingerprint, CalendarRange, Settings2, FileDown } from 'lucide-react'
+  CalendarCheck2, Fingerprint, CalendarRange, Settings2, FileDown, Network } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule, ItemFeature } from '../core/activities.ts'
 import { INVOICE_FIRST_ACTIVITIES } from '../core/activities.ts'
@@ -252,6 +252,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'settings', nameAr: 'الإعدادات', icon: Settings, color: 'slate',
     children: [
       { id: 'general', nameAr: 'عامة (بلد/عملة/ضريبة)', icon: Percent, path: '/settings/general' },
+      { id: 'lan', nameAr: 'شبكة المحل (عدة أجهزة)', icon: Network, path: '/settings/lan' },
       { id: 'profile', nameAr: 'حسابي (بياناتي ورقمي السري)', icon: UserCircle2, path: '/settings/profile' },
       { id: 'permissions', nameAr: 'المستخدمون والصلاحيات', icon: ShieldCheck, path: '/settings/permissions' },
       { id: 'approvals', nameAr: 'اعتماد المستندات', icon: ShieldCheck, path: '/settings/approvals' },
