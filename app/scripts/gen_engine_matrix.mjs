@@ -156,7 +156,7 @@ function activitiesOf(mods) {
 // ————————————————————————————————————————————————
 const rows = [...paths.values()]
   .filter((p) => (p.debits.size || p.credits.size || p.sources.size) && p.fn !== '(مستوى الوحدة)')
-  .sort((a, b) => (a.file === b.file ? a.fn.localeCompare(b.fn) : a.file.localeCompare(b.file)))
+  .sort((a, b) => (a.file === b.file ? (a.fn < b.fn ? -1 : a.fn > b.fn ? 1 : 0) : a.file < b.file ? -1 : 1))
 
 const fmt = (set) => [...set].sort().map((c) => (c === 'خزينة*' ? '**خزينة/بنك**' : `${c} ${nameOf(c)}`)).join(' · ') || '—'
 

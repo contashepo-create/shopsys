@@ -82,25 +82,24 @@ jobs:
               echo ""
               echo "### سياق أخطاء البوابات والرحلات"
               echo '```'
-              grep -a -B3 -A15 -E "AssertionError|ERR_|Error \[|فشل [0-9]|❌" verify.log | head -c 40000
+              grep -a -B3 -A15 -E "AssertionError|ERR_|Error \[" verify.log | head -c 30000 || true
               echo ""
               echo '```'
-              echo "### آخر 12000 بايت من سجل البوابات"
+              echo "### آخر 8000 بايت من سجل البوابات"
               echo '```'
-              tail -c 12000 verify.log
+              tail -c 8000 verify.log
               echo '```'
             fi
-            for f in vitest.log typecheck.log; do
-              if [ -f "$f" ]; then
-                echo ""
-                echo "### $f (آخر 4000 بايت)"
-                echo '```'
-                tail -c 4000 "$f"
-                echo '```'
-              fi
-            done
+            if [ -f vitest.log ]; then
+              echo ""
+              echo "### vitest.log (آخر 2000 بايت)"
+              echo '```'
+              tail -c 2000 vitest.log
+              echo '```'
+            fi
           } > /tmp/comment.md
-          gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" -F body=@/tmp/comment.md || echo "تعذر نشر التعليق"
+          # بلا إخفاء للأخطاء: فشل النشر نفسه يظهر كخطوة حمراء
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" -F body=@/tmp/comment.md
 
       - name: بناء المثبت ونشره
         run: npm run desktop:publish

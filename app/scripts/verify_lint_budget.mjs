@@ -22,9 +22,10 @@ const R = reporter('سقف تحذيرات الليت في src (جودة الوا
 
 const BUDGET = 6
 import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
-const output = execFileSync('npx', ['oxlint', 'src'], { cwd: APP_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' })
+const output = execFileSync(process.execPath, [join(APP_ROOT, 'node_modules', 'oxlint', 'bin', 'oxlint'), 'src'], { cwd: APP_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 const match = output.match(/Found (\d+) warnings? and (\d+) errors?/)
 assert.ok(match, 'تعذّر قراءة مخرجات oxlint')
 const [, warnings, errors] = match.map(Number)
