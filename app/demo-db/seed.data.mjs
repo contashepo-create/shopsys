@@ -126,6 +126,24 @@ export const DEMO_ACTIVITIES = [
       { ref: 'i3', doc_date: '2026-09-22', customer_ref: 'c4', warehouse_ref: 'wh-main', payment: 'card', paid_minor: 53000, treasury_ref: 'bank-cib',
         lines: [{ item_ref: 'cheese', qty: 2, unit_price_minor: 26500 }] },
     ],
+    /* §100: بذور أعمق — مرتجعات وسندات لكل نشاط (تُرحَّل بالإجراءات الرسمية عند التحميل) */
+    sales_returns: [
+      { ref: 'sr1', sale_ref: 'i1', doc_date: '2026-09-19', refund: 'credit', reason: 'عبوات زيت تالفة عند الاستلام',
+        lines: [{ item_ref: 'oil1', qty: 2, condition: 'resellable' }] },
+      /* i2 (زبادي بصلاحية) لا تُرحَّل أصلاً — اليتطلب موافقة المدير (القرار 8) —
+         فالمرتجع التالف هنا على i3 المرحّلة فعلاً */
+      { ref: 'sr2', sale_ref: 'i3', doc_date: '2026-09-23', refund: 'cash', treasury_ref: 'cash-main', reason: 'جبن رومي تعيب أثناء النقل — رد نقدي',
+        lines: [{ item_ref: 'cheese', qty: 1, condition: 'damaged' }] },
+    ],
+    purchase_returns: [
+      { ref: 'pr1', purchase_ref: 'p2', doc_date: '2026-09-24', refund: 'debt', reason: 'عبوات لبن منتفخة من التوريد',
+        lines: [{ item_ref: 'milk', qty: 5 }] },
+    ],
+    vouchers: [
+      { ref: 'v1', kind: 'receipt', doc_date: '2026-09-25', treasury_ref: 'cash-main', party_kind: 'customer', party_ref: 'c1', amount_minor: 18000, description: 'تحصيل دفعة من فاتورة الأسبوع' },
+      { ref: 'v2', kind: 'payment', doc_date: '2026-09-26', treasury_ref: 'cash-main', party_kind: 'supplier', party_ref: 's2', amount_minor: 100000, description: 'سداد جزء من فاتورة الألبان' },
+    ],
+
   },
 
   {
@@ -206,6 +224,20 @@ export const DEMO_ACTIVITIES = [
       { ref: 'i2', doc_date: '2026-09-20', customer_ref: '', warehouse_ref: 'wh-main', payment: 'cash', paid_minor: 7000, treasury_ref: 'cash-main',
         lines: [{ item_ref: 'panad', qty: 2, unit_price_minor: 3500 }] },
     ],
+    /* §100: بذور أعمق — مرتجعات وسندات لكل نشاط (تُرحَّل بالإجراءات الرسمية عند التحميل) */
+    sales_returns: [
+      { ref: 'sr1', sale_ref: 'i1', doc_date: '2026-09-21', refund: 'credit', reason: 'حساسية من الدواء — استرجاع',
+        lines: [{ item_ref: 'augm', qty: 1, condition: 'resellable' }, { item_ref: 'brufen', qty: 2, condition: 'resellable' }] },
+    ],
+    purchase_returns: [
+      { ref: 'pr1', purchase_ref: 'p1', doc_date: '2026-09-22', refund: 'cash', treasury_ref: 'bank-qnb', reason: 'قرب انتهاء الصلاحية',
+        lines: [{ item_ref: 'panad', qty: 5 }] },
+    ],
+    vouchers: [
+      { ref: 'v1', kind: 'receipt', doc_date: '2026-09-23', treasury_ref: 'bank-qnb', party_kind: 'customer', party_ref: 'c1', amount_minor: 60000, description: 'تحصيل تعاقد المستشفى' },
+      { ref: 'v2', kind: 'payment', doc_date: '2026-09-24', treasury_ref: 'cash-main', party_kind: 'supplier', party_ref: 's2', amount_minor: 30000, description: 'سداد متبقي فاتورة البنادول' },
+    ],
+
   },
 
   {
@@ -296,6 +328,20 @@ export const DEMO_ACTIVITIES = [
       { ref: 'i2', doc_date: '2026-09-21', customer_ref: '', warehouse_ref: 'wh-kitchen', payment: 'cash', paid_minor: 27000, treasury_ref: 'cash-main',
         lines: [{ item_ref: 'firakh', qty: 1, unit_price_minor: 14500 }, { item_ref: 'mahshi', qty: 1, unit_price_minor: 9000 }, { item_ref: 'juice', qty: 1, unit_price_minor: 3500 }] },
     ],
+    /* §100: بذور أعمق — مرتجعات وسندات لكل نشاط (تُرحَّل بالإجراءات الرسمية عند التحميل) */
+    sales_returns: [
+      { ref: 'sr1', sale_ref: 'i1', doc_date: '2026-09-24', refund: 'credit', reason: 'إلغاء أطباق من طلب الطاولة',
+        lines: [{ item_ref: 'kofta', qty: 2, condition: 'resellable' }] },
+    ],
+    purchase_returns: [
+      { ref: 'pr1', purchase_ref: 'p2', doc_date: '2026-09-25', refund: 'debt', reason: 'عبوات تالفة من التوريد',
+        lines: [{ item_ref: 'cola', qty: 24 }] },
+    ],
+    vouchers: [
+      { ref: 'v1', kind: 'receipt', doc_date: '2026-09-26', treasury_ref: 'cash-main', party_kind: 'customer', party_ref: 'c1', amount_minor: 60000, description: 'تحصيل حساب الطاولات' },
+      { ref: 'v2', kind: 'payment', doc_date: '2026-09-26', treasury_ref: 'cash-main', party_kind: 'supplier', party_ref: 's3', amount_minor: 50000, description: 'سداد جزء فاتورة المشروبات' },
+    ],
+
   },
 
   {
@@ -389,6 +435,20 @@ export const DEMO_ACTIVITIES = [
       { ref: 'i2', doc_date: '2026-09-23', customer_ref: 'c2', warehouse_ref: 'wh-display', payment: 'card', paid_minor: 165000, treasury_ref: 'bank-aaib',
         lines: [{ item_ref: 'dress', qty: 1, unit_price_minor: 165000 }] },
     ],
+    /* §100: بذور أعمق — مرتجعات وسندات لكل نشاط (تُرحَّل بالإجراءات الرسمية عند التحميل) */
+    sales_returns: [
+      { ref: 'sr1', sale_ref: 'i1', doc_date: '2026-09-25', refund: 'credit', reason: 'مقاس غير مناسب وعيب صناعة',
+        lines: [{ item_ref: 'shirt', qty: 1, condition: 'resellable' }, { item_ref: 'sneaker', qty: 1, condition: 'damaged' }] },
+    ],
+    purchase_returns: [
+      { ref: 'pr1', purchase_ref: 'p1', doc_date: '2026-09-26', refund: 'debt', reason: 'خياطة معيبة',
+        lines: [{ item_ref: 'jeans', qty: 2 }] },
+    ],
+    vouchers: [
+      { ref: 'v1', kind: 'receipt', doc_date: '2026-09-27', treasury_ref: 'bank-aaib', party_kind: 'customer', party_ref: 'c1', amount_minor: 200000, description: 'تحصيل دفعة من حساب المتجر' },
+      { ref: 'v2', kind: 'payment', doc_date: '2026-09-27', treasury_ref: 'bank-aaib', party_kind: 'supplier', party_ref: 's1', amount_minor: 300000, description: 'سداد دفعة من فاتورة الملابس' },
+    ],
+
   },
   /* ─── أنشطة المرحلة ⑥ الجديدة (طلب المالك ㉘): أعلاف · مقاولات · تأجير معدات ─── */
 
@@ -476,6 +536,20 @@ export const DEMO_ACTIVITIES = [
       { ref: 'i2', doc_date: '2026-09-22', customer_ref: 'c3', warehouse_ref: 'wh-main', payment: 'cash', paid_minor: 8750, treasury_ref: 'cash-main',
         lines: [{ item_ref: 'corn', qty: 5, unit_price_minor: 1750 }] },
     ],
+    /* §100: بذور أعمق — مرتجعات وسندات لكل نشاط (تُرحَّل بالإجراءات الرسمية عند التحميل) */
+    sales_returns: [
+      { ref: 'sr1', sale_ref: 'i1', doc_date: '2026-09-23', refund: 'credit', reason: 'أعلاف غير مطابقة للمواصفة',
+        lines: [{ item_ref: 'broiler5', qty: 3, condition: 'resellable' }] },
+    ],
+    purchase_returns: [
+      { ref: 'pr1', purchase_ref: 'p2', doc_date: '2026-09-24', refund: 'debt', reason: 'رطوبة أعلى من المسموح',
+        lines: [{ item_ref: 'corn', qty: 100 }] },
+    ],
+    vouchers: [
+      { ref: 'v1', kind: 'receipt', doc_date: '2026-09-25', treasury_ref: 'bank-cbe', party_kind: 'customer', party_ref: 'c1', amount_minor: 500000, description: 'تحصيل دفعة أعلاف' },
+      { ref: 'v2', kind: 'payment', doc_date: '2026-09-26', treasury_ref: 'bank-cbe', party_kind: 'supplier', party_ref: 's2', amount_minor: 2000000, description: 'سداد دفعة من فاتورة الذرة' },
+    ],
+
   },
 
   {
@@ -656,6 +730,20 @@ export const DEMO_ACTIVITIES = [
       doc('approval_request', 'ar1', { action: 'material_requisition', subject: 'صرف أسمنت إضافي لأعمال الخزان الأرضي — مشروع الجامعة', quotation_ref: 'q1' }),
       doc('approval_request', 'ar2', { action: 'sub_certificate', subject: 'شهادة أعمال رقم 2 — مقاول العزل (الشيخ مبروك)', sub_contract_ref: 'sc2', decide: 'approved', decided_by: 'م. أحمد المسيري', note: 'مطابق لتقرير الحصر الهندسي' }),
     ],
+    /* §100: بذور أعمق — مرتجعات وسندات لكل نشاط (تُرحَّل بالإجراءات الرسمية عند التحميل) */
+    sales_returns: [
+      { ref: 'sr1', sale_ref: 'i1', doc_date: '2026-09-24', refund: 'credit', reason: 'طوب مشقوق — استرجاع للمخزن',
+        lines: [{ item_ref: 'brick', qty: 200, condition: 'resellable' }] },
+    ],
+    purchase_returns: [
+      { ref: 'pr1', purchase_ref: 'p2', doc_date: '2026-09-25', refund: 'debt', reason: 'كمر غير مطابق للمقاسات',
+        lines: [{ item_ref: 'steel', qty: 1 }] },
+    ],
+    vouchers: [
+      { ref: 'v1', kind: 'receipt', doc_date: '2026-09-26', treasury_ref: 'bank-nbe', party_kind: 'customer', party_ref: 'c1', amount_minor: 2000000, description: 'تحصيل دفعة من حساب الأعمال' },
+      { ref: 'v2', kind: 'payment', doc_date: '2026-09-26', treasury_ref: 'bank-nbe', party_kind: 'supplier', party_ref: 's2', amount_minor: 5000000, description: 'سداد دفعة من فاتورة الصلب' },
+    ],
+
   },
 
   {
@@ -767,5 +855,19 @@ export const DEMO_ACTIVITIES = [
       { ref: 'ec3', equipment_ref: 'eq-rl1', date: '2026-09-22', kind: 'repair', amount_minor: 350000, description: 'إصلاح سير دمك', treasury_ref: 'cash-main' },
       { ref: 'ec4', equipment_ref: 'eq-ld1', date: '2026-09-25', kind: 'operator', amount_minor: 600000, description: 'بونس سائق أيام التشغيل الإضافية', treasury_ref: 'cash-main' },
     ],
+    /* §100: بذور أعمق — مرتجعات وسندات لكل نشاط (تُرحَّل بالإجراءات الرسمية عند التحميل) */
+    sales_returns: [
+      { ref: 'sr1', sale_ref: 'i1', doc_date: '2026-09-24', refund: 'credit', reason: 'قطعة استبدلت أثناء الصيانة',
+        lines: [{ item_ref: 'loader', qty: 1, condition: 'resellable' }] },
+    ],
+    purchase_returns: [
+      { ref: 'pr1', purchase_ref: 'p1', doc_date: '2026-09-25', refund: 'debt', reason: 'فلتر غير مطابق للموديل',
+        lines: [{ item_ref: 'dieselfilter', qty: 1 }] },
+    ],
+    vouchers: [
+      { ref: 'v1', kind: 'receipt', doc_date: '2026-09-26', treasury_ref: 'bank-misr', party_kind: 'customer', party_ref: 'c1', amount_minor: 3000000, description: 'تحصيل دفعة إيجار' },
+      { ref: 'v2', kind: 'payment', doc_date: '2026-09-26', treasury_ref: 'bank-misr', party_kind: 'supplier', party_ref: 's1', amount_minor: 1000000, description: 'سداد دفعة قطع الغيار' },
+    ],
+
   },
 ]

@@ -63,6 +63,10 @@ interface DemoPayload {
   projectExtracts?: Row[]
   /* §96: مستندات المقاولات الشاملة — kind + JSON في عمود data */
   contractingDocs?: (Row & { kind?: string | number; data?: string | number })[]
+  /* §100: بذور أعمق — مرتجعات وسندات لكل نشاط */
+  saleReturns?: (Row & { lines: Row[] })[]
+  purchaseReturns?: (Row & { lines: Row[] })[]
+  vouchers?: Row[]
 }
 
 const str = (value: unknown, fallback = '') => (value == null ? fallback : String(value))
@@ -99,7 +103,7 @@ export function switchDemoActivity(activityId: string): void {
 /** يحمّل نشاطاً كاملاً من قاعدة البيانات إلى المتجر (يستبدل البيانات الحالية للنشاط). */
 export interface ContractingDemoCounts { demoProjects: number; demoBoqItems: number; changeOrders: number; bonds: number; dailyWorkers: number; dailyWorkRecords: number; materialIssues: number; manualCosts: number; clientAdvances: number; projectVouchers: number; clientCollections: number; linkedPurchases: number; extraExtracts: number; projectTasks: number; approvalFlows: number; approvalRequests: number }
 
-export async function loadDemoActivity(activityId: string): Promise<{ items: number; sales: number; purchases: number; skipped: string[]; employees: number; attendance: number; leaves: number; payrollMonths: number; quotations: number; purchaseOrders: number; wastage: number; subContracts: number; projectExtracts: number; equipment: number; rentals: number; equipmentCosts: number; costCenters: number; contracting: ContractingDemoCounts }> {
+export async function loadDemoActivity(activityId: string): Promise<{ items: number; sales: number; purchases: number; skipped: string[]; employees: number; attendance: number; leaves: number; payrollMonths: number; quotations: number; purchaseOrders: number; wastage: number; subContracts: number; projectExtracts: number; equipment: number; rentals: number; equipmentCosts: number; costCenters: number; contracting: ContractingDemoCounts; saleReturns: number; purchaseReturns: number; vouchers: number }> {
   if (!import.meta.env.DEV) throw new Error('البيانات التجريبية متاحة في وضع التطوير فقط')
   const skipped: string[] = []
   const payload = await api<DemoPayload>(`/__demo/data?activity=${encodeURIComponent(activityId)}`)
@@ -259,13 +263,14 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
 
   /* 7) فواتير الشراء ثم البيع — بالإجراءات الرسمية كي تُبنى القيود والمخزون بصدق */
   let purchasesPosted = 0
+  const purchaseIdByRef = new Map<string, number>()
   for (const purchase of payload.purchases) {
     const lines = purchase.lines
       .map((line) => ({ itemId: itemId.get(str(line.item_ref)) ?? 0, qty: num(line.qty), unitPriceMinor: num(line.unit_price_minor), warehouseId: warehouseId.get(str(purchase.warehouse_ref)) ?? null, expiryDate: str(line.expiry_date) || null }))
       .filter((line) => line.itemId)
     if (!lines.length) continue
     try {
-      data().postPurchase({
+      const postedPurchase = data().postPurchase({
         supplierId: supplierId.get(str(purchase.supplier_ref)) ?? 0,
         supplierInvoiceNumber: str(purchase.supplier_doc) || undefined,
         date: str(purchase.doc_date),
@@ -276,11 +281,13 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
         warehouseId: warehouseId.get(str(purchase.warehouse_ref)) ?? null,
         notes: str(purchase.notes),
       } as never)
+      purchaseIdByRef.set(str(purchase.ref), postedPurchase.id)
       purchasesPosted += 1
     } catch (error) { skipped.push(`شراء ${str(purchase.ref)}: ${(error as Error).message}`) }
   }
 
   let salesPosted = 0
+  const saleIdByRef = new Map<string, number>()
   for (const sale of payload.sales) {
     const lines = sale.lines
       .map((line) => {
@@ -302,7 +309,7 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
     const grossMinor = lines.reduce((sum, line) => sum + Math.round(line.qty * line.unitPriceMinor * (1 - line.discountPercent / 100)), 0)
     const paidMinor = payment === 'credit' ? num(sale.paid_minor) : grossMinor
     try {
-      data().postSale({
+      const postedSale = data().postSale({
         lines: lines as never,
         customerId: customerId.get(str(sale.customer_ref)) ?? null,
         payment: (payment === 'credit' ? 'credit' : payment === 'card' ? 'card' : 'cash') as never,
@@ -316,8 +323,81 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
         notes: str(sale.notes),
         allowNegativeStock: true,
       } as never)
+      saleIdByRef.set(str(sale.ref), postedSale.id)
       salesPosted += 1
     } catch (error) { skipped.push(`بيع ${str(sale.ref)}: ${(error as Error).message}`) }
+  }
+
+  /* 7.5) §100 بذور أعمق: مرتجعات بيع وشراء وسندات قبض وصرف — كلها بالإجراءات
+          الرسمية (postSaleReturn/postPurchaseReturn/postVoucher) فتُبنى القيود
+          العاكسة والمخزون والأرصدة بصدق كما لو أدخلها المستخدم بيده */
+  let saleReturnsPosted = 0
+  for (const ret of payload.saleReturns ?? []) {
+    const saleId = saleIdByRef.get(str(ret.sale_ref))
+    const sale = saleId != null ? data().sales.find((row) => row.id === saleId) : undefined
+    if (!sale) { skipped.push(`مرتجع بيع ${str(ret.ref)}: الفاتورة الأصل غير موجودة`); continue }
+    /* سطر بسطر بحالته (سليم يعود للمخزن · تالف للهالك) — نمط lineSpecs الرسمي */
+    const specs = (ret.lines ?? []).flatMap((line) => {
+      const id = itemId.get(str(line.item_ref)) ?? -1
+      const lineIndex = sale.lines.findIndex((l) => l.itemId === id)
+      return lineIndex >= 0 ? [{ lineIndex, qty: num(line.qty), condition: (str(line.condition, 'resellable') === 'damaged' ? 'damaged' : 'resellable') as 'resellable' | 'damaged' }] : []
+    })
+    if (!specs.length) { skipped.push(`مرتجع بيع ${str(ret.ref)}: لا سطور مطابقة للفاتورة`); continue }
+    const refundRaw = str(ret.refund, 'cash')
+    try {
+      data().postSaleReturn({
+        saleId: sale.id,
+        lineSpecs: specs as never,
+        refund: (refundRaw === 'credit' ? 'credit' : refundRaw === 'store_credit' ? 'store_credit' : 'cash') as never,
+        reason: str(ret.reason, 'مرتجع من البيانات التجريبية'),
+        ...(str(ret.treasury_ref) ? { treasury: treasuryCode.get(str(ret.treasury_ref)) as never } : {}),
+      } as never)
+      saleReturnsPosted += 1
+    } catch (error) { skipped.push(`مرتجع بيع ${str(ret.ref)}: ${(error as Error).message}`) }
+  }
+
+  let purchaseReturnsPosted = 0
+  for (const ret of payload.purchaseReturns ?? []) {
+    const purchaseId = purchaseIdByRef.get(str(ret.purchase_ref))
+    const purchase = purchaseId != null ? data().purchases.find((row) => row.id === purchaseId) : undefined
+    if (!purchase) { skipped.push(`مرتجع شراء ${str(ret.ref)}: الفاتورة الأصل غير موجودة`); continue }
+    const qtyByItem = new Map<number, number>()
+    for (const line of ret.lines ?? []) {
+      const id = itemId.get(str(line.item_ref))
+      if (id) qtyByItem.set(id, (qtyByItem.get(id) ?? 0) + num(line.qty))
+    }
+    if (!qtyByItem.size) { skipped.push(`مرتجع شراء ${str(ret.ref)}: لا أصناف مطابقة`); continue }
+    try {
+      data().postPurchaseReturn({
+        purchaseId: purchase.id,
+        qtyByItem: qtyByItem as never,
+        refund: (str(ret.refund, 'debt') === 'cash' ? 'cash' : 'debt') as never,
+        reason: str(ret.reason, 'مرتجع من البيانات التجريبية'),
+        ...(str(ret.treasury_ref) ? { treasury: treasuryCode.get(str(ret.treasury_ref)) as never } : {}),
+      } as never)
+      purchaseReturnsPosted += 1
+    } catch (error) { skipped.push(`مرتجع شراء ${str(ret.ref)}: ${(error as Error).message}`) }
+  }
+
+  let vouchersPosted = 0
+  for (const v of payload.vouchers ?? []) {
+    const kind = str(v.kind) === 'payment' ? 'payment' : 'receipt'
+    const partyKind = str(v.party_kind) === 'supplier' ? 'supplier' : 'customer'
+    const partyId = partyKind === 'customer' ? customerId.get(str(v.party_ref)) : supplierId.get(str(v.party_ref))
+    if (partyId == null) { skipped.push(`سند ${str(v.ref)}: الطرف غير موجود`); continue }
+    try {
+      data().postVoucher({
+        kind,
+        treasury: (treasuryCode.get(str(v.treasury_ref)) ?? '1101') as never,
+        counterAccountCode: partyKind === 'customer' ? '1104' : '2101',
+        amountMinor: num(v.amount_minor),
+        description: str(v.description, 'سند من البيانات التجريبية'),
+        partyKind,
+        partyId,
+        date: str(v.doc_date),
+      } as never)
+      vouchersPosted += 1
+    } catch (error) { skipped.push(`سند ${str(v.ref)}: ${(error as Error).message}`) }
   }
 
   /* 8) توسعة المرحلة ⑥ (طلب المالك ㉘): موظفون وحضور وإجازات ومسير رواتب
@@ -734,7 +814,7 @@ export async function loadDemoActivity(activityId: string): Promise<{ items: num
     } catch (error) { skipped.push(`أمر شراء ${str(order.ref)}: ${(error as Error).message}`) }
   }
 
-  return { items: itemId.size, sales: salesPosted, purchases: purchasesPosted, skipped, employees: employeesAdded, attendance: attendanceMarked, leaves: leavesAdded, payrollMonths, quotations: quotationsAdded, purchaseOrders: ordersAdded, wastage: wastagePosted, subContracts, projectExtracts, equipment: equipmentAdded, rentals: rentalsOpened, equipmentCosts, costCenters: costCentersAdded, contracting }
+  return { items: itemId.size, sales: salesPosted, purchases: purchasesPosted, skipped, employees: employeesAdded, attendance: attendanceMarked, leaves: leavesAdded, payrollMonths, quotations: quotationsAdded, purchaseOrders: ordersAdded, wastage: wastagePosted, subContracts, projectExtracts, equipment: equipmentAdded, rentals: rentalsOpened, equipmentCosts, costCenters: costCentersAdded, contracting, saleReturns: saleReturnsPosted, purchaseReturns: purchaseReturnsPosted, vouchers: vouchersPosted }
 }
 
 /** يحفظ البيانات الرئيسية الحالية من المتجر إلى ملف قاعدة البيانات (تعديل حقيقي). */

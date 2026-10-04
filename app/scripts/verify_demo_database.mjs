@@ -23,9 +23,9 @@ const db = new DatabaseSync(DB.pathname)
 R.ok('قاعدة بيانات SQLite حقيقية موجودة مع ملفات المشروع: app/demo-db/demo.sqlite')
 
 const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name)
-for (const table of ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines'])
+for (const table of ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'sale_returns', 'sale_return_lines', 'purchase_returns', 'purchase_return_lines', 'vouchers'])
   assert.ok(tables.includes(table), `جدول ${table} مفقود من القاعدة`)
-R.ok(`الجداول الثلاثة عشر كاملة (${tables.length} جدولاً)`)
+R.ok(`الجداول الأساسية كاملة (${tables.length} جدولاً)`)
 
 const activities = db.prepare('SELECT * FROM activities ORDER BY sort_order').all()
 assert.ok(activities.length >= 3, 'لا بد من أنشطة متعددة للتجربة والتنقل بينها')
@@ -109,6 +109,37 @@ R.ok(`نشاط المقاولات كامل الأقسام: ${contractingDocsCoun
   R.ok('حمولات الأنشطة الجاهزة للاختبارات (demo-payloads.json) مطابقة للبذرة حرفياً')
 }
 
+/* ═══ §100: بذور أعمق — مرتجعات وسندات لكل نشاط ═══ */
+{
+  let srTotal = 0, prTotal = 0, vTotal = 0
+  for (const activity of activities) {
+    const sr = db.prepare('SELECT COUNT(*) AS n FROM sale_returns WHERE activity = ?').get(activity.id).n
+    const pr = db.prepare('SELECT COUNT(*) AS n FROM purchase_returns WHERE activity = ?').get(activity.id).n
+    const vR = db.prepare("SELECT COUNT(*) AS n FROM vouchers WHERE activity = ? AND kind = 'receipt'").get(activity.id).n
+    const vP = db.prepare("SELECT COUNT(*) AS n FROM vouchers WHERE activity = ? AND kind = 'payment'").get(activity.id).n
+    srTotal += sr; prTotal += pr; vTotal += vR + vP
+    assert.ok(sr >= 1, `نشاط ${activity.id}: لا مرتجع بيع — شاشة المرتجعات ستظهر فارغة`)
+    assert.ok(pr >= 1, `نشاط ${activity.id}: لا مرتجع شراء`)
+    assert.ok(vR >= 1 && vP >= 1, `نشاط ${activity.id}: يجب سند قبض وسند صرف على الأقل`)
+    /* المرتجع يشير لفاتورة موجودة بنفس النشاط وسطوره أصناف من فاتورته الأصل */
+    const badRef = db.prepare(`SELECT COUNT(*) AS n FROM sale_returns r WHERE r.activity = ? AND NOT EXISTS (SELECT 1 FROM sales s WHERE s.activity = r.activity AND s.ref = r.sale_ref)`).get(activity.id).n
+    assert.equal(badRef, 0, `نشاط ${activity.id}: مرتجع بيع يشير لفاتورة غير موجودة`)
+    const badPRef = db.prepare(`SELECT COUNT(*) AS n FROM purchase_returns r WHERE r.activity = ? AND NOT EXISTS (SELECT 1 FROM purchases p WHERE p.activity = r.activity AND p.ref = r.purchase_ref)`).get(activity.id).n
+    assert.equal(badPRef, 0, `نشاط ${activity.id}: مرتجع شراء يشير لفاتورة غير موجودة`)
+    const badVoucher = db.prepare(`SELECT COUNT(*) AS n FROM vouchers v WHERE v.activity = ? AND v.amount_minor <= 0`).get(activity.id).n
+    assert.equal(badVoucher, 0, `نشاط ${activity.id}: سند بمبلغ غير موجب`)
+  }
+  /* كميات المرتجعات لا تتجاوز كميات فواتيرها الأصلية (سطر بسطر) */
+  const overSale = db.prepare(`
+    SELECT COUNT(*) AS n FROM sale_return_lines rl
+    JOIN sale_returns r ON r.activity = rl.activity AND r.ref = rl.return_ref
+    JOIN sales s ON s.activity = r.activity AND s.ref = r.sale_ref
+    JOIN sale_lines sl ON sl.activity = s.activity AND sl.sale_ref = s.ref AND sl.item_ref = rl.item_ref
+    WHERE rl.qty > sl.qty`).get().n
+  assert.equal(overSale, 0, 'مرتجع بيع بكمية أكبر من سطر الفاتورة الأصل')
+  R.ok(`بذور أعمق لكل نشاط: ${srTotal} مرتجع بيع · ${prTotal} مرتجع شراء · ${vTotal} سند قبض/صرف — بمرجعيات سليمة وكميات لا تتجاوز الأصل`)
+}
+
 const bridge = read('src/dev/demoDatabase.ts')
 const panel = read('src/dev/DemoDataPanel.tsx')
 assert.ok(/if \(!import\.meta\.env\.DEV\)/.test(bridge) && /if \(!import\.meta\.env\.DEV\) return null/.test(panel),
@@ -116,6 +147,8 @@ assert.ok(/if \(!import\.meta\.env\.DEV\)/.test(bridge) && /if \(!import\.meta\.
 assert.ok(/switchDemoActivity/.test(bridge) && /data-demo-load/.test(panel), 'لا خيار داخلي لاختيار النشاط والتنقل لغيره')
 assert.ok(/postSale\(/.test(bridge) && /postPurchase\(/.test(bridge) && /setOpeningBalance\(/.test(bridge),
   'التحميل يحقن البيانات بلا قيود محاسبية — يجب المرور بإجراءات الترحيل الرسمية')
+assert.ok(/postSaleReturn\(/.test(bridge) && /postPurchaseReturn\(/.test(bridge) && /postVoucher\(/.test(bridge),
+  'المرتجعات والسندات تُحقن بغير الإجراءات الرسمية — يجب postSaleReturn/postPurchaseReturn/postVoucher كي تُبنى القيود العاكسة بصدق')
 assert.ok(/issueBond\(/.test(bridge) && /issueMaterials\(/.test(bridge) && /addDailyWorker\(/.test(bridge) && /addChangeOrder\(/.test(bridge)
   && /addProjectTask\(/.test(bridge) && /setProjectBudget\(/.test(bridge) && /receiveClientAdvance\(/.test(bridge)
   && /receiveClientPayment\(/.test(bridge) && /setApprovalFlow\(/.test(bridge),

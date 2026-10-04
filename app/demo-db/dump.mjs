@@ -16,7 +16,7 @@ import { DB_PATH } from './build.mjs'
 const here = dirname(fileURLToPath(import.meta.url))
 export const PAYLOADS_PATH = join(here, 'demo-payloads.json')
 
-const TABLES = ['branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts', 'contracting_docs']
+const TABLES = ['branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'sale_returns', 'sale_return_lines', 'purchase_returns', 'purchase_return_lines', 'vouchers', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts', 'contracting_docs']
 
 /** يقرأ نشاطاً كاملاً بنفس شكل /__demo/data (واجهة إضافة Vite) */
 export function readActivityPayload(db, activity) {
@@ -49,6 +49,10 @@ export function readActivityPayload(db, activity) {
     contractingDocs: db.prepare('SELECT * FROM contracting_docs WHERE activity = ? ORDER BY sort_order').all(activity),
     sales: withLines('sales', 'sale_lines', 'sale_ref'),
     purchases: withLines('purchases', 'purchase_lines', 'purchase_ref'),
+    /* §100: بذور أعمق — مرتجعات وسندات */
+    saleReturns: withLines('sale_returns', 'sale_return_lines', 'return_ref'),
+    purchaseReturns: withLines('purchase_returns', 'purchase_return_lines', 'return_ref'),
+    vouchers: rows('vouchers'),
   }
 }
 
@@ -66,5 +70,5 @@ if (process.argv[1] && process.argv[1].endsWith('dump.mjs')) {
   writeFileSync(PAYLOADS_PATH, JSON.stringify(payloads, null, 1) + '\n')
   console.log(`✅ حُرِّرت حمولات الأنشطة: ${PAYLOADS_PATH}`)
   for (const [id, payload] of Object.entries(payloads))
-    console.log(`   • ${id}: ${payload.items.length} صنفاً · ${payload.contractingDocs.length} مستند مقاولة · ${payload.sales.length} بيع · ${payload.purchases.length} شراء`)
+    console.log(`   • ${id}: ${payload.items.length} صنفاً · ${payload.contractingDocs.length} مستند مقاولة · ${payload.sales.length} بيع · ${payload.purchases.length} شراء · ${payload.saleReturns.length} مرتجع بيع · ${payload.purchaseReturns.length} مرتجع شراء · ${payload.vouchers.length} سند`)
 }

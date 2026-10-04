@@ -41,6 +41,12 @@ export function buildDemoDatabase(target = DB_PATH) {
   const insertSaleLine = db.prepare('INSERT INTO sale_lines (activity, sale_ref, item_ref, qty, unit_price_minor, discount_percent) VALUES (?,?,?,?,?,?)')
   const insertPurchase = db.prepare('INSERT INTO purchases (activity, ref, doc_date, supplier_ref, warehouse_ref, supplier_doc, paid_minor, treasury_ref, notes) VALUES (?,?,?,?,?,?,?,?,?)')
   const insertPurchaseLine = db.prepare('INSERT INTO purchase_lines (activity, purchase_ref, item_ref, qty, unit_price_minor, expiry_date) VALUES (?,?,?,?,?,?)')
+  /* ─── §100: بذور أعمق — مرتجعات وسندات ─── */
+  const insertSaleReturn = db.prepare('INSERT INTO sale_returns (activity, ref, sale_ref, doc_date, refund, treasury_ref, reason) VALUES (?,?,?,?,?,?,?)')
+  const insertSaleReturnLine = db.prepare('INSERT INTO sale_return_lines (activity, return_ref, item_ref, qty, condition) VALUES (?,?,?,?,?)')
+  const insertPurchaseReturn = db.prepare('INSERT INTO purchase_returns (activity, ref, purchase_ref, doc_date, refund, treasury_ref, reason) VALUES (?,?,?,?,?,?,?)')
+  const insertPurchaseReturnLine = db.prepare('INSERT INTO purchase_return_lines (activity, return_ref, item_ref, qty) VALUES (?,?,?,?)')
+  const insertVoucher = db.prepare('INSERT INTO vouchers (activity, ref, kind, doc_date, treasury_ref, party_kind, party_ref, amount_minor, description) VALUES (?,?,?,?,?,?,?,?,?)')
   /* ─── توسعة المرحلة ⑥: موارد بشرية ومستندات تجارية ─── */
   const insertEmployee = db.prepare('INSERT INTO employees (activity, ref, name_ar, phone, job_title, hire_date, base_salary_minor, allowances_minor, active, notes) VALUES (?,?,?,?,?,?,?,?,?,?)')
   const insertAttendance = db.prepare('INSERT INTO attendance_records (activity, ref, employee_ref, date, status, check_in, check_out, notes) VALUES (?,?,?,?,?,?,?,?)')
@@ -133,11 +139,24 @@ export function buildDemoDatabase(target = DB_PATH) {
       for (const line of sale.lines ?? [])
         insertSaleLine.run(activity.id, sale.ref, line.item_ref, line.qty, line.unit_price_minor, line.discount_percent ?? 0)
     }
+    /* §100: مرتجعات بيع/شراء وسندات القبض/الصرف */
+    for (const ret of activity.sales_returns ?? []) {
+      insertSaleReturn.run(activity.id, ret.ref, ret.sale_ref, ret.doc_date, ret.refund ?? 'cash', ret.treasury_ref ?? '', ret.reason ?? '')
+      for (const line of ret.lines ?? [])
+        insertSaleReturnLine.run(activity.id, ret.ref, line.item_ref, line.qty, line.condition ?? 'resellable')
+    }
+    for (const ret of activity.purchase_returns ?? []) {
+      insertPurchaseReturn.run(activity.id, ret.ref, ret.purchase_ref, ret.doc_date, ret.refund ?? 'debt', ret.treasury_ref ?? '', ret.reason ?? '')
+      for (const line of ret.lines ?? [])
+        insertPurchaseReturnLine.run(activity.id, ret.ref, line.item_ref, line.qty)
+    }
+    for (const v of activity.vouchers ?? [])
+      insertVoucher.run(activity.id, v.ref, v.kind, v.doc_date, v.treasury_ref ?? '', v.party_kind ?? 'customer', v.party_ref ?? '', v.amount_minor, v.description ?? '')
   })
   db.exec('COMMIT')
 
   const counts = Object.fromEntries(
-    ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts', 'contracting_docs']
+    ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'sale_returns', 'sale_return_lines', 'purchase_returns', 'purchase_return_lines', 'vouchers', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts', 'contracting_docs']
       .map((table) => [table, db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n]),
   )
   /* §98: حمولة JSON جاهزة لاختبارات الواجهة (jsdom لا تستورد node:sqlite) —

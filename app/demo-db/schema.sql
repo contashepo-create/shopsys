@@ -423,3 +423,66 @@ CREATE TABLE IF NOT EXISTS contracting_docs (
   sort_order INTEGER NOT NULL DEFAULT 0,
   UNIQUE (activity, ref)
 );
+
+-- ─── §100: بذور أعمق — مرتجعات بيع/شراء وسندات قبض/صرف لكل نشاط ───
+-- المرتجع يحمل سطوره بحالتها (سليم يعود للمخزن · تالف يذهب للهالك 5111)،
+-- والسند يحمل طرفه (عميل 1104 / مورد 2101) — الترحيل نفسه يتم بالإجراءات
+-- الرسمية داخل التطبيق (postSaleReturn/postPurchaseReturn/postVoucher).
+
+CREATE TABLE IF NOT EXISTS sale_returns (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity     TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref          TEXT NOT NULL,
+  sale_ref     TEXT NOT NULL,              -- الفاتورة الأصل (sales.ref)
+  doc_date     TEXT NOT NULL,
+  refund       TEXT NOT NULL DEFAULT 'cash' CHECK (refund IN ('cash', 'credit', 'store_credit')),
+  treasury_ref TEXT NOT NULL DEFAULT '',   -- وجهة الرد النقدي (للنقدي فقط)
+  reason       TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+CREATE TABLE IF NOT EXISTS sale_return_lines (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity   TEXT NOT NULL,
+  return_ref TEXT NOT NULL,
+  item_ref   TEXT NOT NULL,
+  qty        REAL NOT NULL,
+  condition  TEXT NOT NULL DEFAULT 'resellable' CHECK (condition IN ('resellable', 'damaged'))
+);
+
+CREATE TABLE IF NOT EXISTS purchase_returns (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity      TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref           TEXT NOT NULL,
+  purchase_ref  TEXT NOT NULL,             -- فاتورة الشراء الأصل (purchases.ref)
+  doc_date      TEXT NOT NULL,
+  refund        TEXT NOT NULL DEFAULT 'debt' CHECK (refund IN ('cash', 'debt')),
+  treasury_ref  TEXT NOT NULL DEFAULT '',  -- خزينة الاسترداد النقدي (للنقدي فقط)
+  reason        TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+CREATE TABLE IF NOT EXISTS purchase_return_lines (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity   TEXT NOT NULL,
+  return_ref TEXT NOT NULL,
+  item_ref   TEXT NOT NULL,
+  qty        REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS vouchers (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  activity     TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+  ref          TEXT NOT NULL,
+  kind         TEXT NOT NULL CHECK (kind IN ('receipt', 'payment')),
+  doc_date     TEXT NOT NULL,
+  treasury_ref TEXT NOT NULL,
+  party_kind   TEXT NOT NULL CHECK (party_kind IN ('customer', 'supplier')),
+  party_ref    TEXT NOT NULL DEFAULT '',   -- customer_ref أو supplier_ref
+  amount_minor INTEGER NOT NULL,           -- بالقروش دائماً
+  description  TEXT NOT NULL DEFAULT '',
+  UNIQUE (activity, ref)
+);
+
+CREATE INDEX IF NOT EXISTS ix_sale_return_lines ON sale_return_lines (activity, return_ref);
+CREATE INDEX IF NOT EXISTS ix_purchase_return_lines ON purchase_return_lines (activity, return_ref);

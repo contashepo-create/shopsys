@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path'
 const here = dirname(fileURLToPath(import.meta.url))
 const DB_PATH = join(here, 'demo.sqlite')
 
-const TABLES = ['branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']
+const TABLES = ['branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'sale_returns', 'sale_return_lines', 'purchase_returns', 'purchase_return_lines', 'vouchers', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts']
 
 function openDb() {
   if (!existsSync(DB_PATH)) return null

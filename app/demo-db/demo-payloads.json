@@ -891,6 +891,95 @@
      }
     ]
    }
+  ],
+  "saleReturns": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-19",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "عبوات زيت تالفة عند الاستلام",
+    "lines": [
+     {
+      "id": 1,
+      "activity": "grocery",
+      "return_ref": "sr1",
+      "item_ref": "oil1",
+      "qty": 2,
+      "condition": "resellable"
+     }
+    ]
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "sr2",
+    "sale_ref": "i3",
+    "doc_date": "2026-09-23",
+    "refund": "cash",
+    "treasury_ref": "cash-main",
+    "reason": "جبن رومي تعيب أثناء النقل — رد نقدي",
+    "lines": [
+     {
+      "id": 2,
+      "activity": "grocery",
+      "return_ref": "sr2",
+      "item_ref": "cheese",
+      "qty": 1,
+      "condition": "damaged"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "pr1",
+    "purchase_ref": "p2",
+    "doc_date": "2026-09-24",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "عبوات لبن منتفخة من التوريد",
+    "lines": [
+     {
+      "id": 1,
+      "activity": "grocery",
+      "return_ref": "pr1",
+      "item_ref": "milk",
+      "qty": 5
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-25",
+    "treasury_ref": "cash-main",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 18000,
+    "description": "تحصيل دفعة من فاتورة الأسبوع"
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "cash-main",
+    "party_kind": "supplier",
+    "party_ref": "s2",
+    "amount_minor": 100000,
+    "description": "سداد جزء من فاتورة الألبان"
+   }
   ]
  },
  "pharmacy": {
@@ -1508,6 +1597,83 @@
       "expiry_date": "2026-10-15"
      }
     ]
+   }
+  ],
+  "saleReturns": [
+   {
+    "id": 3,
+    "activity": "pharmacy",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-21",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "حساسية من الدواء — استرجاع",
+    "lines": [
+     {
+      "id": 3,
+      "activity": "pharmacy",
+      "return_ref": "sr1",
+      "item_ref": "augm",
+      "qty": 1,
+      "condition": "resellable"
+     },
+     {
+      "id": 4,
+      "activity": "pharmacy",
+      "return_ref": "sr1",
+      "item_ref": "brufen",
+      "qty": 2,
+      "condition": "resellable"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 2,
+    "activity": "pharmacy",
+    "ref": "pr1",
+    "purchase_ref": "p1",
+    "doc_date": "2026-09-22",
+    "refund": "cash",
+    "treasury_ref": "bank-qnb",
+    "reason": "قرب انتهاء الصلاحية",
+    "lines": [
+     {
+      "id": 2,
+      "activity": "pharmacy",
+      "return_ref": "pr1",
+      "item_ref": "panad",
+      "qty": 5
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 3,
+    "activity": "pharmacy",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-23",
+    "treasury_ref": "bank-qnb",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 60000,
+    "description": "تحصيل تعاقد المستشفى"
+   },
+   {
+    "id": 4,
+    "activity": "pharmacy",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-24",
+    "treasury_ref": "cash-main",
+    "party_kind": "supplier",
+    "party_ref": "s2",
+    "amount_minor": 30000,
+    "description": "سداد متبقي فاتورة البنادول"
    }
   ]
  },
@@ -2213,6 +2379,75 @@
      }
     ]
    }
+  ],
+  "saleReturns": [
+   {
+    "id": 4,
+    "activity": "restaurant",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-24",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "إلغاء أطباق من طلب الطاولة",
+    "lines": [
+     {
+      "id": 5,
+      "activity": "restaurant",
+      "return_ref": "sr1",
+      "item_ref": "kofta",
+      "qty": 2,
+      "condition": "resellable"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 3,
+    "activity": "restaurant",
+    "ref": "pr1",
+    "purchase_ref": "p2",
+    "doc_date": "2026-09-25",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "عبوات تالفة من التوريد",
+    "lines": [
+     {
+      "id": 3,
+      "activity": "restaurant",
+      "return_ref": "pr1",
+      "item_ref": "cola",
+      "qty": 24
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 5,
+    "activity": "restaurant",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "cash-main",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 60000,
+    "description": "تحصيل حساب الطاولات"
+   },
+   {
+    "id": 6,
+    "activity": "restaurant",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "cash-main",
+    "party_kind": "supplier",
+    "party_ref": "s3",
+    "amount_minor": 50000,
+    "description": "سداد جزء فاتورة المشروبات"
+   }
   ]
  },
  "clothing": {
@@ -2889,6 +3124,83 @@
      }
     ]
    }
+  ],
+  "saleReturns": [
+   {
+    "id": 5,
+    "activity": "clothing",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-25",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "مقاس غير مناسب وعيب صناعة",
+    "lines": [
+     {
+      "id": 6,
+      "activity": "clothing",
+      "return_ref": "sr1",
+      "item_ref": "shirt",
+      "qty": 1,
+      "condition": "resellable"
+     },
+     {
+      "id": 7,
+      "activity": "clothing",
+      "return_ref": "sr1",
+      "item_ref": "sneaker",
+      "qty": 1,
+      "condition": "damaged"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 4,
+    "activity": "clothing",
+    "ref": "pr1",
+    "purchase_ref": "p1",
+    "doc_date": "2026-09-26",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "خياطة معيبة",
+    "lines": [
+     {
+      "id": 4,
+      "activity": "clothing",
+      "return_ref": "pr1",
+      "item_ref": "jeans",
+      "qty": 2
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 7,
+    "activity": "clothing",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-27",
+    "treasury_ref": "bank-aaib",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 200000,
+    "description": "تحصيل دفعة من حساب المتجر"
+   },
+   {
+    "id": 8,
+    "activity": "clothing",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-27",
+    "treasury_ref": "bank-aaib",
+    "party_kind": "supplier",
+    "party_ref": "s1",
+    "amount_minor": 300000,
+    "description": "سداد دفعة من فاتورة الملابس"
+   }
   ]
  },
  "feed_trade": {
@@ -3500,6 +3812,75 @@
       "expiry_date": ""
      }
     ]
+   }
+  ],
+  "saleReturns": [
+   {
+    "id": 6,
+    "activity": "feed_trade",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-23",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "أعلاف غير مطابقة للمواصفة",
+    "lines": [
+     {
+      "id": 8,
+      "activity": "feed_trade",
+      "return_ref": "sr1",
+      "item_ref": "broiler5",
+      "qty": 3,
+      "condition": "resellable"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 5,
+    "activity": "feed_trade",
+    "ref": "pr1",
+    "purchase_ref": "p2",
+    "doc_date": "2026-09-24",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "رطوبة أعلى من المسموح",
+    "lines": [
+     {
+      "id": 5,
+      "activity": "feed_trade",
+      "return_ref": "pr1",
+      "item_ref": "corn",
+      "qty": 100
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 9,
+    "activity": "feed_trade",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-25",
+    "treasury_ref": "bank-cbe",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 500000,
+    "description": "تحصيل دفعة أعلاف"
+   },
+   {
+    "id": 10,
+    "activity": "feed_trade",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "bank-cbe",
+    "party_kind": "supplier",
+    "party_ref": "s2",
+    "amount_minor": 2000000,
+    "description": "سداد دفعة من فاتورة الذرة"
    }
   ]
  },
@@ -4583,6 +4964,75 @@
      }
     ]
    }
+  ],
+  "saleReturns": [
+   {
+    "id": 7,
+    "activity": "contracting",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-24",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "طوب مشقوق — استرجاع للمخزن",
+    "lines": [
+     {
+      "id": 9,
+      "activity": "contracting",
+      "return_ref": "sr1",
+      "item_ref": "brick",
+      "qty": 200,
+      "condition": "resellable"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 6,
+    "activity": "contracting",
+    "ref": "pr1",
+    "purchase_ref": "p2",
+    "doc_date": "2026-09-25",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "كمر غير مطابق للمقاسات",
+    "lines": [
+     {
+      "id": 6,
+      "activity": "contracting",
+      "return_ref": "pr1",
+      "item_ref": "steel",
+      "qty": 1
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 11,
+    "activity": "contracting",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "bank-nbe",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 2000000,
+    "description": "تحصيل دفعة من حساب الأعمال"
+   },
+   {
+    "id": 12,
+    "activity": "contracting",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "bank-nbe",
+    "party_kind": "supplier",
+    "party_ref": "s2",
+    "amount_minor": 5000000,
+    "description": "سداد دفعة من فاتورة الصلب"
+   }
   ]
  },
  "equipment_rental": {
@@ -5399,6 +5849,75 @@
       "expiry_date": ""
      }
     ]
+   }
+  ],
+  "saleReturns": [
+   {
+    "id": 8,
+    "activity": "equipment_rental",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-24",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "قطعة استبدلت أثناء الصيانة",
+    "lines": [
+     {
+      "id": 10,
+      "activity": "equipment_rental",
+      "return_ref": "sr1",
+      "item_ref": "loader",
+      "qty": 1,
+      "condition": "resellable"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 7,
+    "activity": "equipment_rental",
+    "ref": "pr1",
+    "purchase_ref": "p1",
+    "doc_date": "2026-09-25",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "فلتر غير مطابق للموديل",
+    "lines": [
+     {
+      "id": 7,
+      "activity": "equipment_rental",
+      "return_ref": "pr1",
+      "item_ref": "dieselfilter",
+      "qty": 1
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 13,
+    "activity": "equipment_rental",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "bank-misr",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 3000000,
+    "description": "تحصيل دفعة إيجار"
+   },
+   {
+    "id": 14,
+    "activity": "equipment_rental",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "bank-misr",
+    "party_kind": "supplier",
+    "party_ref": "s1",
+    "amount_minor": 1000000,
+    "description": "سداد دفعة قطع الغيار"
    }
   ]
  }
