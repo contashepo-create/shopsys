@@ -1,0 +1,20 @@
+# نهايات أسطر موحدة (LF) على كل المنصات:
+# بوابات التحقق تفحص المصادر حرفياً (regex بـ\n وسلاسل متعددة الأسطر) —
+# أي تحويل CRLF عند checkout على ويندوز يكسرها ويكسر oxlint نفسه.
+* text=auto eol=lf
+
+# الثنائيات لا تُلمس أبداً
+*.sqlite binary
+*.db binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.pdf binary
+*.zip binary
+*.exe binary

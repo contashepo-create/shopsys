@@ -21,7 +21,10 @@ import { reporter } from './auditKit.mjs'
 const R = reporter('سقف تحذيرات الليت في src (جودة الواجهة)')
 
 const BUDGET = 6
-const output = execFileSync('npx', ['oxlint', 'src'], { cwd: new URL('..', import.meta.url), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' })
+import { fileURLToPath } from 'node:url'
+
+const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
+const output = execFileSync('npx', ['oxlint', 'src'], { cwd: APP_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], shell: process.platform === 'win32' })
 const match = output.match(/Found (\d+) warnings? and (\d+) errors?/)
 assert.ok(match, 'تعذّر قراءة مخرجات oxlint')
 const [, warnings, errors] = match.map(Number)
