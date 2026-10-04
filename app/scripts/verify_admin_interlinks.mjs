@@ -3,7 +3,7 @@ const mem = new Map()
 globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) }
 globalThis.window = globalThis
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, requireOpenShiftForSales: false, allowNegativeTreasury: true, vatPercent: 14, taxInclusive: true, activityId: 'general', countryCode: 'EG' }, license: { plan: 'pro' } } }))
-const { useDataStore } = await import('/home/user/shopsys/app/src/data/repo.ts')
+const { useDataStore } = await import('../src/data/repo.ts')
 const st = () => useDataStore.getState()
 let pass = 0, fails = []
 const ok = (n, c) => c ? (pass++, console.log('  ✓ ' + n)) : fails.push(n)
@@ -43,7 +43,7 @@ try { st().removeCustomer(c.id) } catch { blocked = true }
 ok('حذف عميل عليه رصيد محظور', blocked)
 
 // ⑤ الإشعارات الإدارية: مخزون منخفض + شيك مستحق تظهر في المركز
-const { collectNotifications } = await import('/home/user/shopsys/app/src/core/notifications.ts')
+const { collectNotifications } = await import('../src/core/notifications.ts')
 st().receiveCheque({ chequeNumber: 'N-1', partyId: null, partyName: 'فلان', bankName: 'X', amountMinor: 9999, dueDate: '2026-01-02', notes: '' })
 const notifs = collectNotifications({
   todayIso: '2026-01-03',

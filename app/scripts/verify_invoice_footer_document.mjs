@@ -24,7 +24,8 @@ import { readFileSync } from 'node:fs'
 import { reporter } from './auditKit.mjs'
 
 const R = reporter('تذييل الفاتورة ورأسها — لغة مستند واحدة')
-const ROOT = '/home/user/shopsys/app'
+import { fileURLToPath } from 'node:url'
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const css = readFileSync(`${ROOT}/src/index.css`, 'utf8')
 const frame = readFileSync(`${ROOT}/src/ui/components/InvoicePOSFrame.tsx`, 'utf8')
 const sales = readFileSync(`${ROOT}/src/ui/pages/AdvancedSalesInvoicePage.tsx`, 'utf8')

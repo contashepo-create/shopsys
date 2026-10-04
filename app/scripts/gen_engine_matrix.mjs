@@ -60,7 +60,7 @@ const paths = new Map() // key: file#fn → { file, fn, debits:Set, credits:Set,
 for (const file of files) {
   const text = readFileSync(file, 'utf8')
   const lines = text.split('\n')
-  const rel = file.replace(APP, 'app/')
+  const rel = file.replace(APP, 'app/').replaceAll('\\', '/')
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     // أ) أسطر الحسابات: accountCode: '1103', debit: X, credit: Y  (قد تكون على سطر واحد أو ثلاثة)

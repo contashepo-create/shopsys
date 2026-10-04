@@ -14,9 +14,11 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { reporter } from './auditKit.mjs'
+import { fileURLToPath } from 'node:url'
+const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 const R = reporter('المرحلة 7 — نوافذ الإدخال المالية')
-const UI = '/home/user/shopsys/app/src/ui/'
+const UI = `${APP_ROOT}/src/ui/`
 const read = (f) => readFileSync(UI + f, 'utf8')
 
 const docSection = read('components/DocSection.tsx')
@@ -171,7 +173,7 @@ const commissions = read('pages/ExternalCommissionsPage.tsx')
   }
   assert.equal((custody.match(/<DocOutcome>/g) ?? []).length, 3, 'ليست كل نوافذ العهدة تعرض القيد قبل الترحيل')
   // الحسابات المعروضة في المعاينة هي نفسها التي يرحّل عليها المحرك
-  const engine = readFileSync('/home/user/shopsys/app/src/core/custody.ts', 'utf8')
+  const engine = readFileSync(`${APP_ROOT}/src/core/custody.ts`, 'utf8')
   for (const code of ['1108', '2107', '1107']) {
     assert.ok(engine.includes(`'${code}'`), `حساب العهدة ${code} غير موجود في المحرك`)
     assert.ok(custody.includes(`(${code})`), `النافذة لا تُظهر الحساب ${code} الذي يرحّل عليه المحرك`)
@@ -189,7 +191,7 @@ const commissions = read('pages/ExternalCommissionsPage.tsx')
   assert.ok(cheques.includes('أوراق قبض (1106)') && cheques.includes('أوراق دفع (2106)'), 'نافذة الشيك لا تعرض حسابي الأوراق')
   assert.ok(cheques.includes('لا نقد يدخل الآن') && cheques.includes('لا نقد يخرج الآن'),
     'النافذة لا توضح أن تسجيل الشيك ليس حركة نقدية — أخطر لبس محاسبي في الشيكات')
-  const engine = readFileSync('/home/user/shopsys/app/src/core/cheques.ts', 'utf8')
+  const engine = readFileSync(`${APP_ROOT}/src/core/cheques.ts`, 'utf8')
   for (const code of ['1106', '2106']) assert.ok(engine.includes(`'${code}'`), `حساب الأوراق ${code} غير موجود في محرك الشيكات`)
   assert.ok(/disabled=\{!chequeNumber\.trim\(\) \|\| \(!partyId && !partyName\.trim\(\)\) \|\| amountMinor <= 0 \|\| !dueDate\}/.test(cheques),
     'نافذة الشيك تقبل شيكاً بلا رقم أو طرف أو مبلغ أو استحقاق')

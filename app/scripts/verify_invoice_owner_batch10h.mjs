@@ -20,7 +20,8 @@ import assert from 'node:assert/strict'
 import { reporter } from './auditKit.mjs'
 
 const R = reporter('دفعة المالك ⑩ح على الفاتورة')
-const ROOT = '/home/user/shopsys/app'
+import { fileURLToPath } from 'node:url'
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const read = (path) => readFileSync(`${ROOT}/${path}`, 'utf8')
 const css = read('src/index.css')
 const sales = read('src/ui/pages/AdvancedSalesInvoicePage.tsx')
@@ -30,7 +31,7 @@ const table = read('src/ui/components/InvoiceLinesTable.tsx')
 const pickers = read('src/ui/components/KeyboardPickers.tsx')
 const notesLog = read('src/ui/components/PartyNotesLog.tsx')
 const repo = read('src/data/repo.ts')
-const mockup = readFileSync('/home/user/shopsys/docs/mockups/invoice-layout-2026/index.html', 'utf8')
+const mockup = readFileSync(new URL('../../docs/mockups/invoice-layout-2026/index.html', import.meta.url), 'utf8')
 const ruleOf = (selector) => {
   const at = css.indexOf(`${selector} {`)
   assert.ok(at >= 0, `لا قاعدة CSS للمحدد ${selector}`)

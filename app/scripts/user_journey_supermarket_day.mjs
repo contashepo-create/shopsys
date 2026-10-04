@@ -3,8 +3,8 @@ const mem = new Map()
 globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k), clear: () => mem.clear(), key: (i) => [...mem.keys()][i] ?? null, get length() { return mem.size } }
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: true, done: true, countryCode: 'EG', activityId: 'grocery', vatPercent: 14, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
-const { useDataStore } = await import('/home/user/shopsys/app/src/data/repo.ts')
-const { trialBalance, balanceSheet, incomeStatement } = await import('/home/user/shopsys/app/src/core/financialReports.ts')
+const { useDataStore } = await import('../src/data/repo.ts')
+const { trialBalance, balanceSheet, incomeStatement } = await import('../src/core/financialReports.ts')
 const st = () => useDataStore.getState()
 let pass = 0; const ok = (n) => { pass++; console.log('  ✓', n) }
 
@@ -25,7 +25,7 @@ assert.equal(100 * riceCost + 50 * oilCost <= 100*2500 + 50*6000 + 5000 + 150, t
 ok(`landed cost: أرز ${riceCost} وزيت ${oilCost} — النقل موزع بالكمية`)
 
 // 2) سياسة الورديات بالدور (salesShiftPolicy): المالك معفى تلميحاً، والكاشير ملزم
-const { hashPin } = await import('/home/user/shopsys/app/src/core/audit.ts')
+const { hashPin } = await import('../src/core/audit.ts')
 st().setOwnerPin(await hashPin('123456'))
 const cashier = st().addAppUser({ nameAr: 'كاشير الوردية', roleId: 'cashier', pinHash: await hashPin('567890'), active: true })
 await st().login(cashier.id, '567890') // التبديل يمر بشاشة الدخول بالرقم السري (حماية بنيوية)

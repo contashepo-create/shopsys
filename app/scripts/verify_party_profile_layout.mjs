@@ -21,7 +21,8 @@ import { readFileSync } from 'node:fs'
 import { reporter } from './auditKit.mjs'
 
 const R = reporter('بطاقة الطرف — لا فراغ ميت ولا فيضان خارج الإطار')
-const ROOT = '/home/user/shopsys/app'
+import { fileURLToPath } from 'node:url'
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const css = readFileSync(`${ROOT}/src/index.css`, 'utf8')
 const sales = readFileSync(`${ROOT}/src/ui/pages/AdvancedSalesInvoicePage.tsx`, 'utf8')
 const purch = readFileSync(`${ROOT}/src/ui/pages/AdvancedPurchaseInvoicePage.tsx`, 'utf8')

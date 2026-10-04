@@ -17,7 +17,7 @@
  */
 import assert from 'node:assert/strict'
 import { freshCase, assertInvariants, expectReject, balanceOf, addSimpleItem, addParty, reporter } from './auditKit.mjs'
-import { vatReport, incomeStatement, balanceSheet } from '/home/user/shopsys/app/src/core/financialReports.ts'
+import { vatReport, incomeStatement, balanceSheet } from '../src/core/financialReports.ts'
 
 const R = reporter('المرحلة 2 — الأصول والضريبة والتقسيط ومراكز التكلفة')
 const bal = (c, code) => balanceOf(c.st().journal, code)

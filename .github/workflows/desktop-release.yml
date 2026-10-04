@@ -78,12 +78,24 @@ jobs:
           cd "${GITHUB_WORKSPACE}"
           {
             echo "## سجلات تشخيص البناء الفاشل"
-            for f in verify.log vitest.log typecheck.log; do
+            if [ -f verify.log ]; then
+              echo ""
+              echo "### سياق أخطاء البوابات والرحلات"
+              echo '```'
+              grep -a -B3 -A15 -E "AssertionError|ERR_|Error \[|فشل [0-9]|❌" verify.log | head -c 40000
+              echo ""
+              echo '```'
+              echo "### آخر 12000 بايت من سجل البوابات"
+              echo '```'
+              tail -c 12000 verify.log
+              echo '```'
+            fi
+            for f in vitest.log typecheck.log; do
               if [ -f "$f" ]; then
                 echo ""
-                echo "### $f (آخر 8000 بايت)"
+                echo "### $f (آخر 4000 بايت)"
                 echo '```'
-                tail -c 8000 "$f"
+                tail -c 4000 "$f"
                 echo '```'
               fi
             done

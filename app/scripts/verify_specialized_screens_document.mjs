@@ -27,7 +27,8 @@ import { readFileSync } from 'node:fs'
 import { reporter } from './auditKit.mjs'
 
 const R = reporter('الشاشات التخصصية — نوافذ إدخال بلغة المستند')
-const ROOT = '/home/user/shopsys/app'
+import { fileURLToPath } from 'node:url'
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const css = readFileSync(`${ROOT}/src/index.css`, 'utf8')
 const ui = readFileSync(`${ROOT}/src/ui/components/ui.tsx`, 'utf8')
 

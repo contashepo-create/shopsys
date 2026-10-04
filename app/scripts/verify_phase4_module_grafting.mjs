@@ -13,10 +13,10 @@
  */
 import assert from 'node:assert/strict'
 import { freshCase, assertInvariants, balanceOf, addSimpleItem, addParty, reporter, ACTIVITY_IDS } from './auditKit.mjs'
-import { ALL_MODULES, effectiveModules, ACTIVITY_TEMPLATES } from '/home/user/shopsys/app/src/core/activities.ts'
-import { coaForModules, ACCOUNT_MODULE_MAP, MODULE_ROUTES, pathAllowedForSetup } from '/home/user/shopsys/app/src/core/coaVisibility.ts'
-import { STANDARD_COA } from '/home/user/shopsys/app/src/core/ledger.ts'
-import { trialBalance, balanceSheet } from '/home/user/shopsys/app/src/core/financialReports.ts'
+import { ALL_MODULES, effectiveModules, ACTIVITY_TEMPLATES } from '../src/core/activities.ts'
+import { coaForModules, ACCOUNT_MODULE_MAP, MODULE_ROUTES, pathAllowedForSetup } from '../src/core/coaVisibility.ts'
+import { STANDARD_COA } from '../src/core/ledger.ts'
+import { trialBalance, balanceSheet } from '../src/core/financialReports.ts'
 
 const R = reporter('المرحلة 4 — تركيب وحدة غير أصلية على نشاط')
 const bal = (c, code) => balanceOf(c.st().journal, code)

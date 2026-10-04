@@ -23,7 +23,8 @@ import { convertFxToBookMinor, parseRateToPpm, formatRate, validateFxLeg, descri
 import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments, documentKindLabel } from '../src/core/openPartyDocuments.ts'
 
 const R = reporter('العملة الثانية وتخصيص السند على مستندات الأنشطة')
-const ROOT = '/home/user/shopsys/app'
+import { fileURLToPath } from 'node:url'
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 /* ① حساب التحويل: أعداد صحيحة، تقريب نصفي لأعلى، وعملات بثلاث خانات */
 {

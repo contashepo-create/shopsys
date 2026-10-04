@@ -14,6 +14,8 @@
  */
 import assert from 'node:assert/strict'
 import { freshCase, assertInvariants, expectReject, balanceOf, addSimpleItem, addParty, reporter } from './auditKit.mjs'
+import { fileURLToPath } from 'node:url'
+const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 const R = reporter('حسابات المراقبة والمقاصة (AUDIT-010…013)')
 const bal = (c, code) => balanceOf(c.st().journal, code)
@@ -159,7 +161,7 @@ const sellOnCredit = (c, customerId, amountMinor) => {
 // ——— ④ AUDIT-013: مصدر واحد للكشف ———
 {
   const { readFileSync } = await import('node:fs')
-  const root = '/home/user/shopsys/app/'
+  const root = `${APP_ROOT}/`
   for (const f of ['src/ui/pages/StatementsPage.tsx', 'src/ui/pages/SettlementsPage.tsx']) {
     const src = readFileSync(root + f, 'utf8')
     assert.ok(!src.includes('customerStatement('), `${f}: لا يعيد تركيب كشف العميل`)
@@ -178,7 +180,7 @@ const sellOnCredit = (c, customerId, amountMinor) => {
 /* ⑤ واجهة المقاصة موجودة فعلاً (لا محرك بلا شاشة) */
 {
   const { readFileSync } = await import('node:fs')
-  const page = readFileSync('/home/user/shopsys/app/src/ui/pages/SettlementsPage.tsx', 'utf8')
+  const page = readFileSync(`${APP_ROOT}/src/ui/pages/SettlementsPage.tsx`, 'utf8')
   assert.ok(page.includes('postPartyOffset'), 'شاشة التسويات لا تستدعي محرك المقاصة')
   assert.ok(page.includes('offsetCapMinor') && page.includes('أقصى مقاصة ممكنة'), 'الشاشة لا تعرض سقف المقاصة (أقل الرصيدين)')
   assert.ok(page.includes('getCustomerBalance') && page.includes('getSupplierBalance'), 'الشاشة لا تعرض رصيدي الطرفين قبل المقاصة')

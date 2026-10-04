@@ -4,12 +4,12 @@ globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) 
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'pharmacy', vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { ACTIVITY_TEMPLATES, getActivity, effectiveModules } = await import('/home/user/shopsys/app/src/core/activities.ts')
-const { pathAllowedForSetup } = await import('/home/user/shopsys/app/src/core/coaVisibility.ts')
-const { priceFloorViolations } = await import('/home/user/shopsys/app/src/core/items.ts')
-const { promotionCartLines } = await import('/home/user/shopsys/app/src/core/promotions.ts')
-const { stagnantItems } = await import('/home/user/shopsys/app/src/core/reports.ts')
-const { useDataStore } = await import('/home/user/shopsys/app/src/data/repo.ts')
+const { ACTIVITY_TEMPLATES, getActivity, effectiveModules } = await import('../src/core/activities.ts')
+const { pathAllowedForSetup } = await import('../src/core/coaVisibility.ts')
+const { priceFloorViolations } = await import('../src/core/items.ts')
+const { promotionCartLines } = await import('../src/core/promotions.ts')
+const { stagnantItems } = await import('../src/core/reports.ts')
+const { useDataStore } = await import('../src/data/repo.ts')
 const st = () => useDataStore.getState()
 let pass = 0
 const ok = (n) => { pass++; console.log('  ✓', n) }
