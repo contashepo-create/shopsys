@@ -67,6 +67,29 @@ jobs:
             vitest.log
             verify.log
 
+      # قناة تشخيص مضمونة: نشر ذيل سجل البوابات كتعليق على الالتزام
+      # (تعليقات الالتزام تُقرأ عبر api.github.com حتى مع حجب مضيفي السجلات)
+      - name: نشر ذيل سجل البوابات كتعليق على الالتزام
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "${GITHUB_WORKSPACE}"
+          {
+            echo "## سجلات تشخيص البناء الفاشل"
+            for f in verify.log vitest.log typecheck.log; do
+              if [ -f "$f" ]; then
+                echo ""
+                echo "### $f (آخر 8000 بايت)"
+                echo '```'
+                tail -c 8000 "$f"
+                echo '```'
+              fi
+            done
+          } > /tmp/comment.md
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" -F body=@/tmp/comment.md || echo "تعذر نشر التعليق"
+
       - name: بناء المثبت ونشره
         run: npm run desktop:publish
         env:
