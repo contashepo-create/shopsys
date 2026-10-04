@@ -38,7 +38,7 @@ import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotio
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
-import { STANDARD_COA, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
+import { STANDARD_COA, accountNature, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
 import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
 import { getCountry } from '../core/countries.ts'
 import { DEFAULT_LOYALTY, earnedPoints, redeemValue, validateRedeem, buildLoyaltyRedeemEntry, type LoyaltySettings } from '../core/loyalty.ts'
@@ -69,7 +69,7 @@ import { assertTerminalOperation, validateTerminalAccess } from '../core/payment
 import { calculateTerminalSettlement, netSettlementTransactions, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
-import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
+import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, OPENING_COVERED_SYSTEM_KEYS, type OpeningKind } from '../core/openingBalances.ts'
 import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
 import { customerStatement, supplierStatement, statementBalance, customerUnitDocs, supplierUnitDocs, type StatementRow } from '../core/statements.ts'
 import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments } from '../core/openPartyDocuments.ts'
@@ -5492,6 +5492,11 @@ export const useDataStore = create<DataState>()(
         if (args.kind === 'treasury' && !state.treasuries.some((t) => t.code === String(args.refId))) errors.push('الخزينة/البنك غير موجود')
         if (args.kind === 'employee_advance' && !state.employees.some((e) => e.id === Number(args.refId))) errors.push('الموظف غير موجود')
         if (args.kind === 'item_stock' && !state.items.some((it) => it.id === Number(args.refId))) errors.push('الصنف غير موجود')
+        if (args.kind === 'account') {
+          const acc = STANDARD_COA.find((a) => a.code === String(args.refId))
+          if (!acc || !acc.isPostable) errors.push('الحساب غير موجود أو غير قابل للترحيل')
+          else if (acc.systemKey && OPENING_COVERED_SYSTEM_KEYS.has(acc.systemKey)) errors.push('هذا الحساب له نوع افتتاحي مخصص (عملاء/موردون/سلف/مخزون/خزائن/رأس المال) — سجّله من تبويبه')
+        }
         if (errors.length) throw new Error(errors.join(' — '))
 
         const key = openingKey(args.kind, args.refId)
@@ -5503,7 +5508,10 @@ export const useDataStore = create<DataState>()(
           args.kind,
           delta,
           `${OPENING_KIND_LABELS[args.kind]} — ${args.label}`,
-          args.kind === 'treasury' ? String(args.refId) : undefined,
+          args.kind === 'treasury' || args.kind === 'account' ? String(args.refId) : undefined,
+          args.kind === 'account'
+            ? accountNature(STANDARD_COA.find((a) => a.code === String(args.refId))?.rootType ?? 'assets')
+            : undefined,
         )
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()

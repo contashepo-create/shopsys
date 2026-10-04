@@ -13,7 +13,7 @@
 import type { Minor } from './money.ts'
 import { assertBalanced, type JournalLine } from './ledger.ts'
 
-export type OpeningKind = 'customer' | 'supplier' | 'treasury' | 'employee_advance' | 'item_stock'
+export type OpeningKind = 'customer' | 'supplier' | 'treasury' | 'employee_advance' | 'item_stock' | 'account'
 
 export const OPENING_KIND_LABELS: Record<OpeningKind, string> = {
   customer: 'رصيد عميل افتتاحي (مدين لنا)',
@@ -21,7 +21,17 @@ export const OPENING_KIND_LABELS: Record<OpeningKind, string> = {
   treasury: 'رصيد خزينة/بنك افتتاحي',
   employee_advance: 'سلفة موظف قائمة',
   item_stock: 'مخزون افتتاحي (بضاعة أول المدة)',
+  account: 'رصيد حساب عام افتتاحي (بطبيعة الحساب)',
 }
+
+/**
+ * الحسابات النظامية المغطاة بأنواع افتتاحية مخصصة (سجلات فرعية تُزامن):
+ * العملاء/الموردون/السلف/المخزون/رأس المال/الخزائن والبنوك — لا يقبلها نوع
+ * «حساب عام» حتى لا يظهر رصيدان متوازيان لنفس الطرف من مسارين مختلفين.
+ */
+export const OPENING_COVERED_SYSTEM_KEYS = new Set([
+  'customers', 'suppliers', 'employee_advances', 'inventory', 'capital', 'main_cash', 'bank',
+])
 
 /** مفتاح فريد للرصيد: نوع + مُعرّف (رقم الطرف أو كود الخزينة) */
 export function openingKey(kind: OpeningKind, refId: string | number): string {
@@ -46,6 +56,7 @@ export function buildOpeningDeltaEntry(
   deltaMinor: Minor,
   label: string,
   treasuryCode?: string,
+  accountNatureKind?: 'debit' | 'credit',
 ): JournalLine[] {
   if (deltaMinor === 0) return []
   const amount = Math.abs(deltaMinor)
@@ -74,6 +85,21 @@ export function buildOpeningDeltaEntry(
       debitAcc = up ? '1103' : '3101'
       creditAcc = up ? '3101' : '1103'
       break
+    case 'account': {
+      // حساب عام: الاتجاه بطبيعة الحساب — طبيعة مدينة (أصول/مصاريف): زيادة = الحساب مدين
+      // وطبيعة دائنة (التزامات/حقوق ملكية/إيرادات): زيادة = الحساب دائن (كالموردين).
+      // المعامل الرابع يحمل كود الحساب هنا (انظر setOpeningBalance في repo.ts)
+      const acc = treasuryCode ?? ''
+      if (!acc) throw new Error('حدد كود الحساب')
+      if (accountNatureKind === 'debit') {
+        debitAcc = up ? acc : '3101'
+        creditAcc = up ? '3101' : acc
+      } else {
+        debitAcc = up ? '3101' : acc
+        creditAcc = up ? acc : '3101'
+      }
+      break
+    }
   }
   const lines: JournalLine[] = [
     { accountCode: debitAcc, debit: amount, credit: 0, note: label },

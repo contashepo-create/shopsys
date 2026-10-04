@@ -74,6 +74,11 @@ export function PosPage() {
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  /* بلاغ المالك v1.0.2: عمود الضريبة في سلة الكاشير يختفي كلياً للمنشأة المعفاة
+     (أو أي نسبة فعلية صفر) — عمود بعنوان وتحته خلايا فارغة = تنافر أعمدة.
+     الإجمالي يبقيان يظهران ضريبة السطور فقط إذا وُجدت فعلاً. */
+  const showTaxCol = taxPolicy.effectivePercent > 0
+  const cartGrid = showTaxCol ? 'grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem]' : 'grid-cols-[1fr_7.3rem_6rem_4.2rem_5.8rem]'
   const effectiveCountryVatPercent = taxPolicy.effectivePercent === 0 ? 0 : countryVatPercent
   const posLayout = themeForActivity(setup.activityId).posLayout
   const isFastList = posLayout === 'fast_list'
@@ -805,16 +810,16 @@ export function PosPage() {
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {/* رأس أعمدة السلة */}
-              <div className="grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
+              <div className={`grid ${cartGrid} gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10`}>
                 <span>الصنف</span>
                 <span className="text-center">الكمية</span>
                 <span className="text-center">السعر</span>
-                <span className="text-center" title="النسبة الفعلية لكل سطر: نسبة البلد تلقائياً أو النسبة الخاصة بالصنف">ضريبة</span>
+                {showTaxCol && <span className="text-center" title="النسبة الفعلية لكل سطر: نسبة البلد تلقائياً أو النسبة الخاصة بالصنف">ضريبة</span>}
                 <span className="text-center">خصم ٪</span>
                 <span className="text-left">الإجمالي</span>
               </div>
               {cart.map((l, i) => (
-                <div key={i} data-entry-row aria-selected={selectedCartIndex === i} onClick={() => setSelectedCartIndex(i)} className={`anim-pop entry-grid grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem] gap-2 items-center px-4 py-3 transition-colors duration-150 ${selectedCartIndex === i ? 'bg-emerald-500/15 ring-1 ring-inset ring-emerald-500/50' : 'hover:bg-emerald-500/[0.03]'}`}>
+                <div key={i} data-entry-row aria-selected={selectedCartIndex === i} onClick={() => setSelectedCartIndex(i)} className={`anim-pop entry-grid grid ${cartGrid} gap-2 items-center px-4 py-3 transition-colors duration-150 ${selectedCartIndex === i ? 'bg-emerald-500/15 ring-1 ring-inset ring-emerald-500/50' : 'hover:bg-emerald-500/[0.03]'}`}>
                   {/* الصنف: الاسم + سعر الوحدة */}
                   <div className="min-w-0">
                     <div className="font-bold text-[13px] text-slate-800 dark:text-white truncate leading-snug">
@@ -919,13 +924,16 @@ export function PosPage() {
                   </div>
                   )}
                   <input ref={(node) => { priceRefs.current[i] = node }} value={String(l.unitPriceMinor / 10 ** cur.decimals)} inputMode="decimal" onFocus={(e) => e.target.select()} onChange={(e) => { const raw = e.target.value; if (!/^\d*\.?\d*$/.test(raw)) return; try { const value = Math.max(0, toMinor(raw || '0', cur.decimals)); setCart((current) => current.map((line, index) => index === i ? { ...line, unitPriceMinor: value } : line)) } catch { /* قيمة انتقالية */ } }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select() } }} className="h-9 text-center font-bold bg-transparent border border-slate-200 dark:border-slate-700 outline-none" aria-label={`سعر ${l.nameAr}`}/>
-                  {/* ضريبة السطر — تلقائية من بلد المنشأة أو النسبة الخاصة بالصنف (صفر = بلا نسبة تُعرض) */}
+                  {/* ضريبة السطر — تلقائية من بلد المنشأة أو النسبة الخاصة بالصنف؛
+                      العمود كله يختفي للمنشأة المعفاة فلا يظهر عمود بلا قيم */}
+                  {showTaxCol && (
                   <div
                     title={`نسبة الضريبة لهذا السطر: ${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪ — ${country?.nameAr ?? 'حسب بلد المنشأة'}`}
                     className="h-9 rounded-xl border-2 border-sky-200 dark:border-sky-800/70 bg-sky-500/[0.06] text-center flex items-center justify-center text-[11px] font-black text-sky-700 dark:text-sky-300"
                   >
                     {(l.vatPercentOverride ?? itemVatPercent(l.itemId)) > 0 ? `${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪` : ''}
                   </div>
+                  )}
                   {/* خصم السطر */}
                   <input
                     value={l.discountPercent || ''}

@@ -73,7 +73,7 @@ export interface InvoiceColumnPrefs {
   tax: boolean
 }
 
-export const DEFAULT_INVOICE_COLUMNS: InvoiceColumnPrefs = { code: true, unit: true, tax: true }
+export const DEFAULT_INVOICE_COLUMNS: InvoiceColumnPrefs = { code: true, unit: true, tax: false }
 
 /** أسماء الأعمدة كما تظهر في قائمة «تخصيص الحقول» */
 export const INVOICE_COLUMN_LABELS: Record<keyof InvoiceColumnPrefs, string> = {

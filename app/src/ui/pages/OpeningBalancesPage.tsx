@@ -4,12 +4,13 @@
  * بقيود متوازنة مقابل رأس المال 3101 — والتعديل يرحّل قيد الفرق فقط.
  */
 import { useMemo, useState } from 'react'
-import { Scale, Users, Truck, PiggyBank, HandCoins, CheckCircle2, Package } from 'lucide-react'
+import { Scale, Users, Truck, PiggyBank, HandCoins, CheckCircle2, Package, BookOpen } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
-import { openingKey, type OpeningKind } from '../../core/openingBalances.ts'
+import { openingKey, OPENING_COVERED_SYSTEM_KEYS, type OpeningKind } from '../../core/openingBalances.ts'
+import { STANDARD_COA, accountNature } from '../../core/ledger.ts'
 import { Btn, inputCls, useToast } from '../components/ui.tsx'
 
 const TABS: { id: OpeningKind; nameAr: string; icon: typeof Users; hint: string }[] = [
@@ -18,6 +19,7 @@ const TABS: { id: OpeningKind; nameAr: string; icon: typeof Users; hint: string 
   { id: 'treasury', nameAr: 'الخزائن والبنوك', icon: PiggyBank, hint: 'النقدية الفعلية بالأدراج والحسابات يوم البدء — قيد: الخزينة / رأس المال' },
   { id: 'employee_advance', nameAr: 'سلف الموظفين', icon: HandCoins, hint: 'سلف قائمة لم تُخصم بعد — قيد: سلف 1107 / رأس المال' },
   { id: 'item_stock', nameAr: 'المخزون الافتتاحي', icon: Package, hint: 'بضاعة أول المدة (سد فجوة T2): قيمة رصيد الصنف × تكلفته الافتتاحية — قيد: مخزون 1103 / رأس المال. بدونه دفتر 1103 لا يشمل بضاعتك القائمة قبل البرنامج' },
+  { id: 'account', nameAr: 'حسابات عامة', icon: BookOpen, hint: 'رصيد افتتاحي لأي حساب آخر بالشجرة (أصول ثابتة، مصاريف مترحلة، التزامات…): الاتجاه بطبيعة الحساب تلقائياً — حسابات العملاء/الموردون/السلف/الخزائن/المخزون لها تبويباتها المخصصة، ورأس المال 3101 هو الطرف المقابل لكل افتتاحي فلا يقبل رصيداً من هنا' },
 ]
 
 export function OpeningBalancesPage() {
@@ -35,6 +37,16 @@ export function OpeningBalancesPage() {
     if (tab === 'customer') return customers.map((c) => ({ refId: c.id as string | number, nameAr: c.nameAr }))
     if (tab === 'supplier') return suppliers.map((s) => ({ refId: s.id as string | number, nameAr: s.nameAr }))
     if (tab === 'treasury') return treasuries.map((t) => ({ refId: t.code as string | number, nameAr: t.nameAr }))
+    if (tab === 'account') {
+      // كل حساب قابل للترحيل بلا نوع افتتاحي مخصص وبلا رأس المال (الطرف المقابل)
+      return STANDARD_COA
+        .filter((a) => a.isPostable && !(a.systemKey && OPENING_COVERED_SYSTEM_KEYS.has(a.systemKey)) && a.code !== '3101')
+        .map((a) => ({
+          refId: a.code as string | number,
+          nameAr: `${a.code} — ${a.nameAr}`,
+          natureAr: accountNature(a.rootType) === 'debit' ? 'مدين' : 'دائن',
+        }))
+    }
     if (tab === 'item_stock') {
       // اقتراح القيمة تلقائياً = الرصيد الحالي × التكلفة — والمستخدم حر في تثبيت غيرها
       return items
@@ -118,7 +130,7 @@ export function OpeningBalancesPage() {
                 const suggested = (r as { suggestedMinor?: number }).suggestedMinor
                 return (
                   <tr key={key} className="border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}</td>
+                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{r.nameAr}{(r as { natureAr?: string }).natureAr && <span className={`text-[10px] font-bold ${(r as { natureAr?: string }).natureAr === 'مدين' ? 'text-sky-600' : 'text-amber-600'}`}> ({(r as { natureAr?: string }).natureAr})</span>}</td>
                     <td className="px-4 py-2">
                       {posted > 0 ? (
                         <span className="inline-flex items-center gap-1 text-emerald-600 font-bold"><CheckCircle2 size={13} /> {fmt(posted)}</span>

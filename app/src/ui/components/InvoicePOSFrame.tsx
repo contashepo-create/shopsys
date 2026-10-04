@@ -48,6 +48,8 @@ type InvoicePOSFrameProps = {
   /** تصدير نسخة PDF — يفتح حوار الطباعة على قالب A4 ووجهة «حفظ كـ PDF» */
   onExportPdf?: () => void
   onPost: () => void
+  /** نص زر الاعتماد الرئيسي — افتراضياً «حفظ وترحيل» (الفواتير)؛ أوامر الشراء «اعتماد أمر الشراء» لأنها التزام تجاري لا ترحيل محاسبي */
+  postLabel?: string
   children: ReactNode
 }
 
@@ -96,6 +98,7 @@ export function InvoicePOSFrame({
   onPrint,
   onExportPdf,
   onPost,
+  postLabel,
   children,
 }: InvoicePOSFrameProps) {
   const sale = kind === 'sale'
@@ -182,7 +185,7 @@ export function InvoicePOSFrame({
           {onWarehouseReceipt && <Btn variant="ghost" onClick={onWarehouseReceipt} title="إذن استلام من المستودع — كميات فقط بلا أسعار"><PackageCheck size={13} /> إذن استلام مستودع</Btn>}
           <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={13} /> حفظ مسودة</Btn>
           <Btn variant="ghost" onClick={onPrint} shortcut="F6"><Eye size={13} /> معاينة</Btn>
-          <Btn onClick={onPost} shortcut="F9"><CheckCheck size={13} /> حفظ وترحيل</Btn>
+          <Btn onClick={onPost} shortcut="F9"><CheckCheck size={13} /> {postLabel ?? 'حفظ وترحيل'}</Btn>
         </div>
       </header>
 

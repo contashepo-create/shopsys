@@ -42,7 +42,9 @@ const purchaseInvoicePage = readFileSync(new URL('../src/ui/pages/AdvancedPurcha
   assert.ok(purchaseOrdersPage.includes('modeLabel="أمر شراء"'), 'تسمية «أمر شراء» مفقودة من الترويسة')
   assert.ok(purchaseOrdersPage.includes('data-po-doc-editor'), 'لا علامة محرر مستند أمر الشراء')
   assert.ok(purchaseOrdersPage.includes('InvoiceLinesTable'), 'بنود أمر الشراء ليست بجدول بنود الفاتورة القابل لإعادة الاستخدام')
-  assert.ok(purchaseOrdersPage.includes('kind="purchase"') && purchaseOrdersPage.includes('mode="simple"'), 'جدول البنود ليس في وضع الشراء البسيط')
+  /* جولة v1.0.3 (بلاغ المالك: أمر الشراء يطابق الفاتورة بالضبط): المحرر بالوضع
+     المتقدم المطابق لفاتورة الشراء — لا الوضع المبسط السابق */
+  assert.ok(purchaseOrdersPage.includes('kind="purchase"') && purchaseOrdersPage.includes('mode="advanced"'), 'جدول البنود ليس في وضع الشراء المتقدم (مطابقة الفاتورة)')
   assert.ok(purchaseOrdersPage.includes('PURCHASE_TERMS'), 'لا شروط توريد جاهزة لأمر الشراء')
   assert.ok(purchaseOrdersPage.includes('buildSimpleDocModel'), 'طباعة الأمر ليست عبر محرك قوالب الفواتير')
   assert.ok(purchaseOrdersPage.includes('usePrintSwitches') && purchaseOrdersPage.includes('openPrintPreview'), 'مفاتيح الطباعة/المعاينة ناقصة في أمر الشراء')

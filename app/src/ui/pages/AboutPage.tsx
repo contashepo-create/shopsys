@@ -11,6 +11,7 @@ import { APP_VERSION, fetchUpdateInfo, decideUpdate, buildUpdatePlan, type Updat
 import { DownloadCloud, ShieldCheck } from 'lucide-react'
 import { PLAN_LABELS } from '../../core/license.ts'
 import { DesktopUpdater } from '../components/DesktopUpdater.tsx'
+import { isElectronRuntime } from '../../data/desktopBridge.ts'
 import { Btn, useToast } from '../components/ui.tsx'
 
 export function AboutPage() {
@@ -45,7 +46,7 @@ export function AboutPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-4">
       <div className={`${card} text-center space-y-3`}>
-        <img src="/app-logo.png" alt="TAHAKAM ERP" className="max-h-32 mx-auto object-contain rounded-2xl shadow-lg" />
+        <img src="./app-logo.png" alt="TAHAKAM ERP" className="max-h-32 mx-auto object-contain rounded-2xl shadow-lg" />
         <h1 className="text-2xl font-black">{about.title}</h1>
         <p className="text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{about.body}</p>
         <div className="flex items-center justify-center gap-4 flex-wrap text-sm font-bold">
@@ -76,7 +77,11 @@ export function AboutPage() {
         </div>
       </div>
 
-      {/* فحص التحديثات — Cloudflare (البند 6) */}
+      {/* فحص التحديثات — Cloudflare (نسخة المتصفح فقط): في نسخة سطح المكتب
+          القناة الفعلية هي electron-updater من GitHub Releases (القسم أدناه) —
+          بلاغ v1.0.2: زرّان للتحديث أحدهما سحابي غير مرفوع بعد فيفشل؛ نوحّد
+          على زر واحد يعمل في كل نسخة */}
+      {!isElectronRuntime() && (
       <div className={card}>
         <div className="flex items-center justify-between flex-wrap gap-2">
           <h2 className="font-black flex items-center gap-2"><DownloadCloud className="w-5 h-5 text-emerald-500" /> التحديثات</h2>
@@ -118,12 +123,14 @@ export function AboutPage() {
         )}
       </div>
 
+      )}
+
       {/* §101: تحديث نسخة سطح المكتب (electron-updater) — مخفي في المتصفح */}
       <DesktopUpdater />
 
       {/* شعار المطوّر — علامة حصرية للمالك */}
       <div className={`${card} text-center space-y-2 !bg-black !border-slate-800`}>
-        <img src="/dev-logo.png" alt="شعار المطوّر" className="max-h-40 mx-auto object-contain" />
+        <img src="./dev-logo.png" alt="شعار المطوّر" className="max-h-40 mx-auto object-contain" />
         <div className="text-[13px] text-amber-400/90 font-black">تطوير وملكية حصرية — جميع الحقوق محفوظة</div>
         <div className="text-[13px] text-slate-300 font-black">م / محمد عبدة</div>
       </div>

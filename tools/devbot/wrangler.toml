@@ -1,0 +1,19 @@
+# مركز تحكم المطوّر — shopsys-control
+# الاسم مطابق لقاعدة السحابة المضمّنة في العميل:
+# app/src/core/cloud.ts → DEFAULT_CLOUD_BASE_URL = 'https://shopsys-control.contashepo.workers.dev'
+name = "shopsys-control"
+main = "src/worker.js"
+compatibility_date = "2024-12-01"
+
+# تخزين واحد: سجل التراخيص + قائمة الحرق + حالة الأجهزة + نص «حول»
+# أنشئه أولاً:  npx wrangler kv namespace create SHOPSYS_CONTROL
+# ثم انسخ id هنا — ولو أردت نسخة معاينة (اختيارية): npx wrangler kv namespace create SHOPSYS_CONTROL_PREVIEW
+[[kv_namespaces]]
+binding = "SHOPSYS_CONTROL"
+id = "ضع-معرف-مساحة-KV-هنا"
+
+# ─── الأسرار (لا تُكتب هنا أبداً — تُضبط بأمر wrangler secret put) ───
+#   TELEGRAM_BOT_TOKEN   توكن البوت من @BotFather
+#   TELEGRAM_ADMIN_ID    معرّفك الرقمي (أرسل /start للبوت أو استخدم @userinfobot)
+#   DEV_PRIVATE_KEY_B64U المفتاح الخاص من scripts/keygen.mjs
+#   WEBHOOK_SECRET       سلسلة عشوائية طويلة تحمي رابط الـwebhook

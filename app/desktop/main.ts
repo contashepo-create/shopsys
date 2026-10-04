@@ -73,6 +73,7 @@ function createMainWindow(): BrowserWindow {
     minHeight: 640,
     title: 'تَحَكَّم',
     autoHideMenuBar: true,
+    icon: join(__dirname, '../dist/app-icon.png'),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,

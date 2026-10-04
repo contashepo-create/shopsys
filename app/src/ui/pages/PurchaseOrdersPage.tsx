@@ -3,6 +3,10 @@
  * أمر الشراء التزام تجاري لا قيد محاسبي: يوثّق المطلوب من المورد بكمياته
  * وأسعاره وضريبته، ثم تُعبَّأ منه فاتورة الشراء بزر «تعبئة من» فتُرحَّل هي وحدها.
  *
+ * **مطابق للفاتورة بالضبط (بلاغ v1.0.2)**: المحرر بالوضع المتقدم المتقدم نفسه
+ * (أعمدة الكود/الوحدة/المستودع لكل سطر/ملاحظات + تخصيص الحقول) وزر الاعتماد
+ * يقول «اعتماد أمر الشراء» — لا «ترحيل» — لأن الأمر التزام تجاري لا قيد.
+ *
  * **مستندي بالكامل (طلب المالك ㉘)**: المحرر بنفس هيئة فاتورة الشراء —
  * إطار InvoicePOSFrame وجدول بنود الفاتورة — بدل النافذة البسيطة السابقة.
  */
@@ -142,6 +146,7 @@ export function PurchaseOrdersPage() {
           onPrint={() => printDraft('a4')}
           onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); printDraft('a4') }}
           onPost={submit}
+          postLabel="اعتماد أمر الشراء"
           headerFields={
             <>
               <Field label="المورد *">
@@ -177,7 +182,7 @@ export function PurchaseOrdersPage() {
                 <InvoiceLinesTable
                   entry={<ItemQuickPicker items={items.filter((item) => item.isActive !== false)} onPick={addItem} itemMeta={(item) => ({ unit: item.baseUnit ?? '', stock: item.isService ? 'خدمة' : String(item.stockQty ?? 0), price: formatMinor(item.costMinor ?? 0, cur, false) })} amountLabel={(item) => `آخر تكلفة ${formatMinor(item.costMinor ?? 0, cur, false)}`} placeholder="ابحث عن الصنف المطلوب شراؤه…" />}
                   kind="purchase"
-                  mode="simple"
+                  mode="advanced"
                   lines={lines.map((line) => ({ ...line, warehouseId: line.warehouseId ?? warehouseId }))}
                   items={items}
                   warehouses={warehouses}
