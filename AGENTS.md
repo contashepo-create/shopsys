@@ -5392,3 +5392,44 @@ persistentStorage.ts` فيه `DesktopStateStorage` كامل (قفل تفاؤلي
 **التالي:** مرحلة «مضيف المحل» (وثيقة §102 التصميمية): DataTransport خلف
 واجهة useDataStore (Local/Remote) + وضع المضيف + WebSocket رقع لحظية
 ببوابة الاعتماد عبر الشبكة — بمعالم قبولها المكتوبة.
+
+## جولة الإطلاق v1.0.0 — توافق ويندوز للسلسلة وإخراج المثبّت (مغلقة)
+
+**النتيجة:** الإصدار v1.0.0 منشور على GitHub Releases (tahakom-setup-1.0.0.exe
++ latest.yml للتحديث التلقائي) بعد إصلاح طبقات توافق ويندوز الخمس في السلسلة،
+كلها كانت تعمل على لينكس فقط وتنفجر على windows-latest:
+
+1. **مسارات `.pathname`** لعناصر URL على ويندوز تنتج `/C:/...` ← `fileURLToPath`
+   في run_verify_all (كان يفجر السلسلة في أقل من ثانية) وverify_demo_database
+   وgen_engine_matrix.
+2. **`import(join(...))` بشرطات خلفية** يرمي ERR_UNSUPPORTED_ESM_URL_SCHEME ←
+   `pathToFileURL(...).href` في 62 سكربت بوابة/رحلة.
+3. **مسارات لينكس مطلقة مكتوبة حرفياً** (`'/home/user/shopsys/app/...'`) في 26
+   سكربتاً ← استيراد نسبي + ثابت `APP_ROOT` عبر fileURLToPath (26 فشلاً ← 5).
+4. **تحويل CRLF عند checkout الويندوزي** (runner بلا تكوين يطبق autocrlf)
+   يكسر البوابات النصية الحرفية (regex بـ\n وسلاسل متعددة الأسطر) وoxlint
+   نفسه ← ملف `.gitattributes` بفرض `eol=lf` على كل المنصات (5 ← 1).
+5. **سلوك oxlint بين المنصات/التنسيقات:** تنسيق CI-annotations وحده يعرض
+   تحذير exhaustive-deps بسطرٍ عموده 482+ (التنسيق العادي يطبع «File is too
+   long» بدلاً منه فيختفي عن البوابة) ← تعطيل موضعي موثق لتلك القاعدة في
+   AdvancedPurchaseInvoicePage.tsx وحده (.oxlintrc.json overrides) — إصلاح
+   الdeps نفسه تغيير سلوك مختبر يؤجل لجودة منفصلة.
+
+**قنوات التشخيص في سير desktop-release** (سجلات GitHub Actions محجوبة من بيئة
+التطوير): upload-artifact دائم + **نشر سياق الأخطاء كتعليق على الالتزام** عبر
+gh api (يعمل حتى مع حجب مضيفي السجلات) — هي التي حسمت الطبقات 3-5.
+
+**عيب electron-builder v26 (انقسام الأصول):** النشر يقسم الأصول على إصدارين
+بنفس الوسم (exe وحده + latest.yml/blockmap وحدهما) فينكسر التحديث التلقائي ←
+خطوة «توحيد أصول الإصدار» بعد النشر: الرئيسي هو **حامل المثبت حصراً** (وليس
+الأحدث في قائمة API — newest-first خدع جولة كاملة فحذفت إصدار الexe بالخطأ)،
+حذف المكرر، رفع latest.yml/blockmap من release/، وتحقق نهائي.
+
+**دروس تشغيلية:** edit_file المتوازية على نفس الملف تسقط أول تعديلين — تعديل
+واحد لكل ملف لكل كتلة · وسم v* على رأس arena هو آلية الإطلاق (workflow_dispatch
+مستحيل لسير ليس على الفرع الافتراضي) · أعِد بناء better-sqlite3 محلياً بـ
+`npx node-gyp rebuild --nodedir=/usr/local` بعد كل إعادة بناء للبيئة (الشبكة
+تحجب nodejs.org) · إعادة بناء البيئة قد تفقد آخر التزام غير مدفوع (996d503
+ضاع واستُعيد من الملفات الرطبة).
+
+**رابط التحميل:** github.com/contashepo-create/shopsys/releases/tag/v1.0.0
