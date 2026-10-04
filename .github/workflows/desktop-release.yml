@@ -1,6 +1,7 @@
 # بناء نسخة سطح المكتب «تَحَكَّم» (ويندوز NSIS) ونشرها على GitHub Releases.
-# التشغيل: يدوياً (workflow_dispatch) أو بدفع وسم v* — الإصدار يقرأ من package.json.
-# التحديث التلقائي داخل التطبيق يقرأ من نفس الإصدارات (electron-updater، بلا توكن لأن المستودع عام).
+# التشغيل: يدوياً (workflow_dispatch من الفرع الافتراضي) أو بدفع وسم v* —
+# الإصدار يقرأ من package.json، والتحديث التلقائي داخل التطبيق يقرأ من نفس
+# الإصدارات (electron-updater، بلا توكن لأن المستودع عام).
 name: desktop-release
 
 on:
@@ -15,6 +16,7 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: app
@@ -30,11 +32,29 @@ jobs:
       - name: تثبيت الاعتماديات
         run: npm ci
 
-      - name: السلسلة الخضراء قبل الحزم (لا حزمة تكسر بوابة)
-        run: |
-          npm run typecheck
-          npx vitest run
-          npm run verify:all
+      # السلسلة الخضراء خطوةً خطوة — لا حزمة تكسر بوابة
+      - name: فحص الأنواع
+        shell: bash
+        run: npm run typecheck 2>&1 | tee ../typecheck.log; exit ${PIPESTATUS[0]}
+
+      - name: اختبارات المتصفح
+        shell: bash
+        run: npx vitest run 2>&1 | tee ../vitest.log; exit ${PIPESTATUS[0]}
+
+      - name: بوابات الأعمال والرحلات
+        shell: bash
+        run: npm run verify:all 2>&1 | tee ../verify.log; exit ${PIPESTATUS[0]}
+
+      - name: رفع سجلات السلسلة (للتشخيص — حتى عند النجاح)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chain-logs
+          retention-days: 7
+          path: |
+            typecheck.log
+            vitest.log
+            verify.log
 
       - name: بناء المثبت ونشره
         run: npm run desktop:publish
