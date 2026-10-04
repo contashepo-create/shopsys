@@ -119,12 +119,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          MAIN_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq "[.[] | select(.tag_name == \"${TAG}\")][0].id")
+          # الرئيسي = الإصدار الذي يحمل المثبت (exe) — ليس مجرد الأحدث؛
+          # ترتيب API newest-first خدعنا في جولة سابقة فحذفنا إصدار الexe.
+          MAIN_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq "[.[] | select(.tag_name == \"${TAG}\") | select([.assets[].name] | any(test(\"\\\\.exe$\")))][0].id")
           if [ -z "$MAIN_ID" ] || [ "$MAIN_ID" = "null" ]; then
-            echo "لا يوجد إصدار للوسم ${TAG} — لا شيء لتوحيده"
+            echo "لا يوجد إصدار يحمل المثبت للوسم ${TAG}"
             exit 1
           fi
-          echo "الإصدار الرئيسي: ${MAIN_ID}"
+          echo "الإصدار الرئيسي (حامل المثبت): ${MAIN_ID}"
           # احذف الإصدارات المكررة الأخرى لنفس الوسم (بعد إفراغها)
           for id in $(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${TAG}\") | .id"); do
             if [ "$id" != "$MAIN_ID" ]; then
