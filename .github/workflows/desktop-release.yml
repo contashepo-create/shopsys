@@ -1,0 +1,42 @@
+# بناء نسخة سطح المكتب «تَحَكَّم» (ويندوز NSIS) ونشرها على GitHub Releases.
+# التشغيل: يدوياً (workflow_dispatch) أو بدفع وسم v* — الإصدار يقرأ من package.json.
+# التحديث التلقائي داخل التطبيق يقرأ من نفس الإصدارات (electron-updater، بلا توكن لأن المستودع عام).
+name: desktop-release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: تثبيت الاعتماديات
+        run: npm ci
+
+      - name: السلسلة الخضراء قبل الحزم (لا حزمة تكسر بوابة)
+        run: |
+          npm run typecheck
+          npx vitest run
+          npm run verify:all
+
+      - name: بناء المثبت ونشره
+        run: npm run desktop:publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,31 @@
+# حزمة نسخة سطح المكتب «تَحَكَّم» (مرحلة القاعدة المحلية — وثيقة §101)
+# التشغيل: npm run desktop:dist  (ويندوز NSIS) — والنشر: npm run desktop:publish
+appId: com.contashepo.tahakom
+productName: Tahakom
+copyright: تطوير وملكية حصرية — جميع الحقوق محفوظة
+directories:
+  output: release
+  buildResources: desktop/build
+files:
+  - dist/**/*
+  - dist-desktop/**/*
+  - package.json
+# الوحدة الأصلية تُفك من asar (إلاكترون يحمّلها من node_modules وقت التشغيل)
+asarUnpack:
+  - node_modules/better-sqlite3/**
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  shortcutName: تحكم
+  artifactName: tahakom-setup-${version}.${ext}
+publish:
+  provider: github
+  owner: contashepo-create
+  repo: shopsys
+  releaseType: release

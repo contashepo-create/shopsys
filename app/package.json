@@ -1,7 +1,7 @@
 {
   "name": "app",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,9 +15,15 @@
     "preview": "vite preview",
     "test:e2e": "vitest run",
     "demo:build": "node demo-db/build.mjs",
-    "demo:dump": "node demo-db/dump.mjs"
+    "demo:dump": "node demo-db/dump.mjs",
+    "desktop:compile": "node desktop/build.mjs",
+    "desktop:dev": "node desktop/build.mjs && node desktop/dev.mjs",
+    "desktop:dist": "vite build && node desktop/build.mjs && electron-builder --win nsis",
+    "desktop:publish": "vite build && node desktop/build.mjs && electron-builder --win nsis --publish always"
   },
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "electron-updater": "^6.8.9",
     "lucide-react": "^1.45.0",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
@@ -30,11 +36,15 @@
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^24.13.3",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
     "jsdom": "^30.0.1",
     "oxlint": "^1.81.0",
     "playwright": "^1.63.0",
@@ -42,5 +52,8 @@
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"
-  }
+  },
+  "main": "dist-desktop/main.cjs",
+  "description": "تَحَكَّم — نظام إدارة ومحاسبة متكامل للأنشطة (نسخة ويب + سطح المكتب SQLite)",
+  "author": "م / محمد عبدة"
 }

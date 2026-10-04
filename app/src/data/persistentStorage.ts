@@ -179,3 +179,21 @@ export function appStorage(): StateStorage {
   const bridge = desktopBridge()
   return bridge ? new DesktopStateStorage(bridge.database) : secureStorage
 }
+
+/** localStorage الخام كما هو — لمتجر الإعدادات في الويب (سلوك اليوم بلا تغيير). */
+const rawLocalStorage: StateStorage = {
+  getItem: (name) => localStorage.getItem(name),
+  setItem: (name, value) => localStorage.setItem(name, value),
+  removeItem: (name) => localStorage.removeItem(name),
+}
+
+/**
+ * §101 التنفيذية: متجر الإعدادات (shopsys-app) — في Electron ينتقل إلى SQLite
+ * (مع ترحيل لمرة واحدة من localStorage الخاص بالنسخة المكتبية القديمة)،
+ * وفي المتصفح يبقى localStorage الخام **كما هو حرفياً** فلا يفقد مستخدم الويب
+ * إعداداته ولا يتبدل تنسيق التخزين لديه.
+ */
+export function settingsAppStorage(): StateStorage {
+  const bridge = desktopBridge()
+  return bridge ? new DesktopStateStorage(bridge.database, rawLocalStorage) : rawLocalStorage
+}

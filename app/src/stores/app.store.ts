@@ -9,6 +9,8 @@ import type { Country } from '../core/countries.ts'
 import { toggleModuleList, effectiveModules, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
+import { createJSONStorage } from 'zustand/middleware'
+import { settingsAppStorage } from '../data/persistentStorage.ts'
 import { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, type PrinterProfile, type PrintRoute, type PrinterProfiles } from '../core/printers.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
 import { DEFAULT_APPROVALS, type ApprovalSettings } from '../core/approvals.ts'
@@ -412,6 +414,8 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'shopsys-app',
+      /* §101 التنفيذية: SQLite داخل نسخة سطح المكتب — وlocalStorage الخام في الويب كما هو */
+      storage: createJSONStorage(settingsAppStorage),
       onRehydrateStorage: () => (state) => {
         // ترحيل: حسابات أُنشئت قبل خطوة السنة المالية تحصل على سنة ميلادية حالية تلقائياً
         if (state && state.setup.completed && state.fiscalYears.length === 0) {

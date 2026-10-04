@@ -11,6 +11,7 @@ import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSe
 import { fetchAbout, fetchRevocationList, DEFAULT_CLOUD_BASE_URL } from './core/cloud.ts'
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
+import { isElectronRuntime } from './data/desktopBridge.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
 import { LoginScreen } from './ui/LoginScreen.tsx'
 import { authRequired } from './core/auth.ts'
@@ -299,6 +300,27 @@ const TAB_ID = `tab-${Math.random().toString(36).slice(2, 10)}`
 const TAB_LOCK_KEY = 'shopsys-tab-lock'
 
 export default function App() {
+  /* §101 التنفيذية: بوابة ترطيب المتجرين — داخل Electron فقط (القراءة من
+     SQLite عبر IPC غير متزامنة، فبدون البوابة يومض معالج التثبيت أول كل
+     إقلاع). في المتصفح الترطيب متزامن فلا بوابة أصلاً — سلوك الويب
+     والاختبارات كما هو حرفياً. */
+  const needsHydrationGate = isElectronRuntime()
+  const [storesHydrated, setStoresHydrated] = useState(() => {
+    if (!needsHydrationGate) return true
+    try { return useAppStore.persist.hasHydrated() && useDataStore.persist.hasHydrated() } catch { return true }
+  })
+  useEffect(() => {
+    if (storesHydrated) return
+    const check = () => {
+      try { if (useAppStore.persist.hasHydrated() && useDataStore.persist.hasHydrated()) setStoresHydrated(true) } catch { setStoresHydrated(true) }
+    }
+    const offApp = useAppStore.persist.onFinishHydration(check)
+    const offData = useDataStore.persist.onFinishHydration(check)
+    check()
+    const safety = setTimeout(setStoresHydrated, 5000) /* شبكة أمان: لا تعليق أبداً */
+    return () => { offApp(); offData(); clearTimeout(safety) }
+  }, [storesHydrated])
+
   const {
     theme, setup, touchLastSeen, appearance,
     activatedKey, activatedPayload, trialStartedAt, lastSeenAt, revokedKeys,
@@ -532,7 +554,14 @@ export default function App() {
 
   return (
     <HashRouter>
-      {setup.completed ? <Shell /> : <FirstRunWizard />}
+      {!storesHydrated ? (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+          <div className="text-center space-y-3">
+            <div className="text-4xl animate-pulse">🏛️</div>
+            <div className="text-[13px] font-black text-slate-400">تَحَكَّم — جارٍ فتح قاعدة البيانات…</div>
+          </div>
+        </div>
+      ) : setup.completed ? <Shell /> : <FirstRunWizard />}
       <ToastHost />
       {/* معاينة الطباعة الحية — نافذة حرة فوق كل المسارات (طلب المالك):
           تبقى حية أثناء فتح قسم إعدادات الطباعة وتتحدث فوراً مع كل تغيير */}

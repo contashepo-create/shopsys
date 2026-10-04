@@ -10,6 +10,7 @@ import { fetchAbout, DEFAULT_CLOUD_BASE_URL, FALLBACK_ABOUT } from '../../core/c
 import { APP_VERSION, fetchUpdateInfo, decideUpdate, buildUpdatePlan, type UpdateDecision } from '../../core/updates.ts'
 import { DownloadCloud, ShieldCheck } from 'lucide-react'
 import { PLAN_LABELS } from '../../core/license.ts'
+import { DesktopUpdater } from '../components/DesktopUpdater.tsx'
 import { Btn, useToast } from '../components/ui.tsx'
 
 export function AboutPage() {
@@ -116,6 +117,9 @@ export function AboutPage() {
           </div>
         )}
       </div>
+
+      {/* §101: تحديث نسخة سطح المكتب (electron-updater) — مخفي في المتصفح */}
+      <DesktopUpdater />
 
       {/* شعار المطوّر — علامة حصرية للمالك */}
       <div className={`${card} text-center space-y-2 !bg-black !border-slate-800`}>
