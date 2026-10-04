@@ -9,6 +9,7 @@ import type { Country } from '../core/countries.ts'
 import { toggleModuleList, effectiveModules, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
+import { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, type PrinterProfile, type PrintRoute, type PrinterProfiles } from '../core/printers.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
 import { DEFAULT_APPROVALS, type ApprovalSettings } from '../core/approvals.ts'
 import { generateDeviceId, type LicensePayload } from '../core/license.ts'
@@ -101,6 +102,9 @@ interface AppState {
   toggleModule: (m: BusinessModule) => void
   resetSetup: () => void
   receipt: ReceiptSettings
+  /** §102 (تعدد الطابعات): مسار لكل نسخة مطبوعة — اسم الطابعة + طباعة آلية */
+  printerProfiles: PrinterProfiles
+  setPrinterProfile: (route: PrintRoute, patch: Partial<PrinterProfile>) => void
   /** برنامج نقاط الولاء (نمط Lightspeed Loyalty) — الكسب والاستبدال من الكاشير */
   loyalty: LoyaltySettings
   approvals: ApprovalSettings
@@ -295,6 +299,10 @@ export const useAppStore = create<AppState>()(
           setup: { ...s.setup, completed: false, countryCode: null, activityId: null },
         })),
       receipt: DEFAULT_RECEIPT_SETTINGS,
+      printerProfiles: DEFAULT_PRINTER_PROFILES,
+      setPrinterProfile: (route, patch) => set((s) => ({
+        printerProfiles: { ...s.printerProfiles, [route]: { ...s.printerProfiles[route], ...patch } },
+      })),
       loyalty: DEFAULT_LOYALTY,
       approvals: DEFAULT_APPROVALS,
       updateApprovals: (patch) => set((s) => ({ approvals: { ...s.approvals, ...patch } })),
@@ -438,6 +446,8 @@ export const useAppStore = create<AppState>()(
         // ترحيل: مفاتيح الرصيد السالب والمخزن الافتراضي (طلب المالك) — الافتراضي: ممنوع
         if (state?.setup) {
           state.setup.allowNegativeTreasury = state.setup.allowNegativeTreasury ?? false
+        // ترحيل §102: مسارات الطابعات — القديم بلا المفتاح أو بشكل فاسد يُستكمل دفاعياً
+        if (state) state.printerProfiles = normalizePrinterProfiles(state.printerProfiles)
           state.setup.requireOpenShiftForSales = state.setup.requireOpenShiftForSales ?? true
           state.loyalty = { ...DEFAULT_LOYALTY, ...(state.loyalty ?? {}) }
           state.approvals = { ...DEFAULT_APPROVALS, ...(state.approvals ?? {}) }

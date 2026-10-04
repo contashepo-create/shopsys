@@ -83,6 +83,24 @@ describe('§99 مطبوعات تقارير المقاولات (PDF)', () => {
     expect(html).toContain('المستخلص')
   })
 
+  it('§102 بطاقة عميل بعينه: تُختار من القائمة وتُطبع بمؤشراتها ومشاريعها ومستخلصاتها', async () => {
+    const { ContractingReportsPage } = await import('../src/ui/pages/ContractingReportsPage.tsx')
+    render(<ContractingReportsPage />)
+    fireEvent.click(screen.getAllByText('عميل بعينه')[0])
+    const select = screen.getByTestId('client-select') as HTMLSelectElement
+    const firstClient = [...select.options].find((o) => o.value)
+    expect(firstClient, 'لا عملاء بمشاريع في بيانات المقاولات').toBeTruthy()
+    fireEvent.change(select, { target: { value: firstClient!.value } })
+    fireEvent.click(document.querySelector('[data-print="client-card"]')!)
+    const html = printed()
+    expect(html).toContain('بطاقة عميل —')
+    expect(html).toContain('مؤشرات بطاقة العميل')
+    expect(html).toContain('مشاريع العميل (')
+    expect(html).toContain('المستحق الصافي')
+    /* جدول المستخلصات عبر مشاريعه أو «لا مستخلصات» — أحدهما واجب */
+    expect(/مستخلصات العميل \(/.test(html) || /لا مستخلصات/.test(html)).toBe(true)
+  })
+
   it('ذمم العملاء: مطبوعة متابعة التحصيل بإجمالي مصفوف', async () => {
     const { ContractingReportsPage } = await import('../src/ui/pages/ContractingReportsPage.tsx')
     render(<ContractingReportsPage />)

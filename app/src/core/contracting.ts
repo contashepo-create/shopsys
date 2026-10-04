@@ -841,3 +841,70 @@ export function computeWip(input: WipInput): WipResult {
     status: underBilling > 0 ? 'under_billed' : underBilling < 0 ? 'over_billed' : 'on_track',
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * §102 (مراجعة المالك — مركز تقارير المقاولات): بطاقة **العميل** الخالصة —
+ * العميل هو المحور لا المشروع: كل مشاريعه ومستخلصاته ومحتجزه ودفعاته المقدمة
+ * وما فُتح من مستخلصاته الآجلة ومحصَّلها — بنفس نمط projectReportCard
+ * (نواة خالصة قابلة للفحص ببوابة).
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** تجميعة مشروع واحد من منظور العميل — تُبنى في الصفحة من projectReportCard ودفتر التوزيع */
+export interface ClientProjectRow {
+  projectId: number
+  projectName: string
+  projectCode: string
+  status: ProjectStatus
+  contractEffectiveMinor: Minor
+  extractedMinor: Minor
+  retentionHeldMinor: Minor
+  advancesRemainingMinor: Minor
+  /** المفتوح من مستخلصات هذا المشروع الآجلة (بعد المحصل عليها) */
+  openExtractsMinor: Minor
+  openExtractsCount: number
+  /** المحصل فعلاً على مستخلصاته الآجلة (توزيع دفتر التحصيل) */
+  settledOnExtractsMinor: Minor
+}
+
+export interface ClientContractingCard {
+  projectsCount: number
+  activeProjects: number
+  /** مجموع العقود الفعلية (بأوامر التغيير المعتمدة) */
+  contractMinor: Minor
+  /** قيمة الأعمال المستخلصة عند العميل */
+  extractedMinor: Minor
+  /** المحتجز القائم لدى العميل */
+  retentionHeldMinor: Minor
+  /** الدفعات المقدمة المتبقية (التزام العميل لصالحنا حتى تُسترد من المستخلصات) */
+  advancesRemainingMinor: Minor
+  /** المفتوح من المستخلصات الآجلة */
+  openDocsMinor: Minor
+  openDocsCount: number
+  /** المحصل على المستخلصات الآجلة */
+  collectedMinor: Minor
+  /** نسبة التحصيل من الأعمال المستخلصة (مقربة لعُشر) */
+  collectedPercent: number
+  /** المستحق الصافي الآن = المفتوح − المقدمة المتبقية (قد يكون سالباً: العميل دفع مقدماً) */
+  netDueMinor: Minor
+}
+
+export function clientContractingCard(rows: readonly ClientProjectRow[]): ClientContractingCard {
+  const sum = (pick: (row: ClientProjectRow) => number) => rows.reduce((acc, row) => acc + pick(row), 0)
+  const extractedMinor = sum((r) => r.extractedMinor)
+  const openDocsMinor = sum((r) => r.openExtractsMinor)
+  const advancesRemainingMinor = sum((r) => r.advancesRemainingMinor)
+  const collectedMinor = sum((r) => r.settledOnExtractsMinor)
+  return {
+    projectsCount: rows.length,
+    activeProjects: rows.filter((r) => r.status === 'active').length,
+    contractMinor: sum((r) => r.contractEffectiveMinor),
+    extractedMinor,
+    retentionHeldMinor: sum((r) => r.retentionHeldMinor),
+    advancesRemainingMinor,
+    openDocsMinor,
+    openDocsCount: sum((r) => r.openExtractsCount),
+    collectedMinor,
+    collectedPercent: extractedMinor > 0 ? Math.round((collectedMinor / extractedMinor) * 10) / 10 : 0,
+    netDueMinor: openDocsMinor - advancesRemainingMinor,
+  }
+}

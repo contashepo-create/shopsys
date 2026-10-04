@@ -88,4 +88,36 @@ const c = projectReportCard(project, extracts, costs, releasedRetentionMinor, or
   ok('البطاقة تمتد projectProfit كما هي — لا ازدواج منطق ولا انحراف')
 }
 
+/* ═══ ⑥ §102 بطاقة العميل الخالصة: تجميع مشاريعه من منظور العميل ═══ */
+{
+  const { clientContractingCard } = await import('../src/core/contracting.ts')
+  /* سيناريو محسوب باليد: عميل بمشروعين —
+     أ: عقد 1,100,000 (فعلي) · مستخلص 700,000 · محتجز 35,000 · مقدمة متبقية 90,000
+        مفتوح من مستخلصاته 400,000 (مستندان) · محصل على آجله 260,000
+     ب (مكتمل): عقد 500,000 · مستخلص 500,000 · محتجز 25,000 (لم يُفرج) · مقدمة 0
+        نقدي بالكامل: محصل 475,000 (المستحق بعد المحتجز) · مفتوح 0 */
+  const rows = [
+    { projectId: 1, projectName: 'أ', projectCode: 'A', status: 'active', contractEffectiveMinor: 1_100_000, extractedMinor: 700_000, retentionHeldMinor: 35_000, advancesRemainingMinor: 90_000, openExtractsMinor: 400_000, openExtractsCount: 2, settledOnExtractsMinor: 260_000 },
+    { projectId: 2, projectName: 'ب', projectCode: 'B', status: 'completed', contractEffectiveMinor: 500_000, extractedMinor: 500_000, retentionHeldMinor: 25_000, advancesRemainingMinor: 0, openExtractsMinor: 0, openExtractsCount: 0, settledOnExtractsMinor: 475_000 },
+  ]
+  const cc = clientContractingCard(rows)
+  assert.equal(cc.projectsCount, 2)
+  assert.equal(cc.activeProjects, 1, 'مشروع جارٍ واحد فقط')
+  assert.equal(cc.contractMinor, 1_600_000, 'مجموع العقود الفعلية')
+  assert.equal(cc.extractedMinor, 1_200_000, 'الأعمال المستخلصة')
+  assert.equal(cc.retentionHeldMinor, 60_000, 'المحتجز القائم لدى العميل')
+  assert.equal(cc.advancesRemainingMinor, 90_000)
+  assert.equal(cc.openDocsMinor, 400_000)
+  assert.equal(cc.openDocsCount, 2)
+  assert.equal(cc.collectedMinor, 735_000, 'محصل = 260 آجل + 475 نقدي')
+  assert.equal(cc.collectedPercent, 0.6, '735/1200 = 61.25٪ مقربة لعُشر = 0.6')
+  assert.equal(cc.netDueMinor, 310_000, 'المستحق الصافي = 400 − 90 مقدمة')
+  /* العميل بلا مشاريع: كل شيء صفر بلا قسمة على صفر */
+  const empty = clientContractingCard([])
+  assert.equal(empty.collectedPercent, 0)
+  assert.equal(empty.netDueMinor, 0)
+  assert.equal(empty.projectsCount, 0)
+  ok('بطاقة العميل: عقود 1,600,000 · مستخلص 1,200,000 · محصل 735,000 (0.6) · صافي مستحق 310,000')
+}
+
 console.log(`\n✅ بطاقة تقرير المشروع الشاملة: ${pass} فحوصاً ناجحة`)

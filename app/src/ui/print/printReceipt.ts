@@ -172,9 +172,19 @@ ${large ? `
  * المتصفح لا يسمح بإلغاء الحوار، لذلك نمرّر النية عبر خاصية على النافذة ليستعملها
  * غلاف سطح المكتب (webContents.print({ silent: true })).
  */
-export function printHtml(html: string, options?: { silent?: boolean }): void {
-  const bridge = (globalThis as { shopsysPrint?: (html: string, silent: boolean) => void }).shopsysPrint
-  if (options?.silent && typeof bridge === 'function') { bridge(html, true); return }
+/**
+ * §102 (تعدد الطابعات): خيار `printerName` يوجه النسخة إلى طابعة باسمها —
+ * يعمل في نسخة EXE عبر جسر `shopsysPrint(html, silent, printerName)` (Electron:
+ * webContents.print بـ deviceName). في المتصفح لا وجود للجسر فيسقط إلى حوار
+ * النظام كالعادة — لا ادعاء قدرة لا يملكها المتصفح.
+ */
+export function printHtml(html: string, options?: { silent?: boolean; printerName?: string }): void {
+  const bridge = (globalThis as { shopsysPrint?: (html: string, silent: boolean, printerName?: string) => void }).shopsysPrint
+  /* الطباعة المباشرة (صامتة أو إلى طابعة مسماة) متاحة فقط عبر جسر EXE */
+  if (typeof bridge === 'function' && (options?.silent || options?.printerName)) {
+    bridge(html, options.silent ?? true, options.printerName || undefined)
+    return
+  }
   const frame = document.createElement('iframe')
   frame.style.position = 'fixed'
   frame.style.left = '-9999px'
@@ -199,4 +209,28 @@ export function printHtml(html: string, options?: { silent?: boolean }): void {
   frame.onload = doPrint
   // احتياط لو أطلق onload قبل التسجيل — مهلة تكفي تحميل الخط
   setTimeout(doPrint, 400)
+}
+
+/**
+ * §102: تعداد طابعات النظام — متاح في نسخة EXE فقط عبر جسر `shopsysPrinters`
+ * (Electron: webContents.getPrinters()). في المتصفح يرجع [] دائماً —
+ * المتصفح تقنياً لا يرى طابعات الجهاز، والواجهة تشرح ذلك بدل اصطناع قائمة.
+ */
+export async function listSystemPrinters(): Promise<string[]> {
+  const bridge = (globalThis as { shopsysPrinters?: () => Promise<unknown> }).shopsysPrinters
+  if (typeof bridge !== 'function') return []
+  try {
+    const list = await bridge()
+    return Array.isArray(list) ? list.filter((name): name is string => typeof name === 'string' && name.length > 0) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * §102: طباعة نسخة على مسارها — إن كان للمسار طابعة مسماة وجهناها إليها،
+ * وإلا سقطت إلى الطابعة الافتراضية في EXE أو حوار المتصفح.
+ */
+export function printToRoute(html: string, profile: { printerName: string }, opts?: { silent?: boolean }): void {
+  printHtml(html, { silent: opts?.silent ?? true, printerName: profile.printerName || undefined })
 }

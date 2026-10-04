@@ -35,7 +35,9 @@ const css = read('index.css')
 {
   assert.ok(/if\(printSwitches\.printAfterSave\)\{try\{printDraft\(printSwitches\.cashierPrint\?'thermal':'a4'\)/.test(sales),
     'الطباعة بعد الحفظ لا تحترم مفتاح الكاشير')
-  assert.ok(/export function printHtml\(html: string, options\?: \{ silent\?: boolean \}\)/.test(printer),
+  /* §102: التوقيع اتسع بخيار printerName (توجيه النسخة لطابعتها المسماة عبر
+     جسر سطح المكتب) — الصمت والجسر باقيان، فالمقصود الأصلي محفوظ وموسّع. */
+  assert.ok(/export function printHtml\(html: string, options\?: \{ silent\?: boolean; printerName\?: string \}\)/.test(printer),
     'الطباعة الصامتة غير مدعومة في طبقة الطباعة')
   R.ok('الطباعة بعد الحفظ تتبع نمط الكاشير · والطباعة الصامتة مدعومة عبر جسر سطح المكتب')
 }
