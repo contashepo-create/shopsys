@@ -8,7 +8,7 @@
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import { existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
@@ -25,6 +25,44 @@ let database: ShopsysDatabase | null = null
 let printWindow: BrowserWindow | null = null
 
 const isDev = !!process.env.ELECTRON_START_URL
+
+/* ── سجل تشخيصي ملفي (بلاغ v1.0.0: شاشة بيضاء بلا أثر) — كل حدث مهم يُكتب
+      في userData/main.log ليتحقق منه الدعم الفني على جهاز العميل ── */
+function logLine(tag: string, message: string): void {
+  const stamp = new Date().toISOString()
+  const line = `[${stamp}] [${tag}] ${message}\n`
+  /* eslint-disable no-console */
+  console.log(`[shopsys] ${line.trim()}`)
+  try {
+    appendFileSync(join(app.getPath('userData'), 'main.log'), line, 'utf8')
+  } catch {
+    /* مجلد المستخدم غير جاهز بعد — السطر طُبع على المخرجات فقط */
+  }
+}
+
+/** صفحة خطأ عربية مضمّنة بدل الشاشة البيضاء — تعرض سبب الفشل ومسار السجل */
+function errorPageHtml(reason: string, logPath: string): string {
+  const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<title>تَحَكَّم — تعذّر التحميل</title>
+<style>body{font-family:Tahoma,Arial,sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+.card{max-width:560px;padding:32px;background:#1e293b;border:1px solid #334155;border-radius:16px}
+h1{font-size:20px;color:#f87171;margin:0 0 12px}p{font-size:14px;line-height:1.9;margin:8px 0}
+code{background:#0f172a;padding:2px 8px;border-radius:6px;font-size:12px;color:#7dd3fc;direction:ltr;display:inline-block;max-width:100%;word-break:break-all}
+.hint{color:#94a3b8;font-size:12px}</style></head><body><div class="card">
+<h1>⚠ تعذّر تحميل واجهة التطبيق</h1>
+<p>السبب المسجَّل: <b>${esc(reason)}</b></p>
+<p>تفاصيل التشخيص محفوظة في ملف السجل:<br><code>${esc(logPath)}</code></p>
+<p class="hint">أرسل ملف السجل هذا للدعم الفني وسيتابع فوراً — بياناتك المحلية سليمة ولم تتأثر.</p>
+</div></body></html>`
+}
+
+function showLoadError(win: BrowserWindow, reason: string): void {
+  const logPath = join(app.getPath('userData'), 'main.log')
+  logLine('load-error', reason)
+  const html = errorPageHtml(reason, logPath)
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(() => undefined)
+}
 
 /* ── النافذة ── */
 function createMainWindow(): BrowserWindow {
@@ -47,17 +85,47 @@ function createMainWindow(): BrowserWindow {
     void shell.openExternal(url)
     return { action: 'deny' }
   })
+  /* قنوات التشخيص الميداني: فشل التحميل يعرض صفحة خطأ عربية بدل شاشة بيضاء،
+     وأخطاء المُصيّر تُسجَّل في main.log — أين المشكلة يصبح معروفاً فوراً */
+  win.webContents.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
+    if (!isMainFrame) return
+    showLoadError(win, `فشل تحميل الصفحة (${code}): ${desc} — ${failedUrl}`)
+  })
+  win.webContents.on('render-process-gone', (_e, details) => {
+    logLine('renderer-gone', `reason=${details.reason} exitCode=${details.exitCode}`)
+    showLoadError(win, `توقف محرك الواجهة (${details.reason} / ${details.exitCode})`)
+  })
+  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    if (level >= 2) logLine('renderer-console', `${message} (${sourceId}:${line})`)
+  })
+  win.webContents.on('preload-error', (_e, preloadPath, error) => {
+    logLine('preload-error', `${preloadPath}: ${error}`)
+  })
   if (isDev) void win.loadURL(process.env.ELECTRON_START_URL!)
-  else void win.loadFile(join(__dirname, '../dist/index.html'))
+  else {
+    void win.loadFile(join(__dirname, '../dist/index.html')).catch((err: unknown) => {
+      showLoadError(win, `loadFile: ${(err as Error).message}`)
+    })
+  }
   return win
 }
 
 /* ── القاعدة ── */
 async function openDatabase(): Promise<ShopsysDatabase> {
   const dbPath = join(app.getPath('userData'), 'shopsys.db')
-  const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(app.getPath('userData'), 'backups') })
-  console.log(`[shopsys] قاعدة SQLite جاهزة: ${dbPath} (مخطط ${db.schemaVersion()})`)
-  return db
+  try {
+    const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(app.getPath('userData'), 'backups') })
+    logLine('db', `قاعدة SQLite جاهزة: ${dbPath} (مخطط ${db.schemaVersion()})`)
+    return db
+  } catch (error) {
+    const message = (error as Error).message
+    logLine('db-fatal', `فشل فتح القاعدة (${dbPath}): ${message}`)
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { dialog } = require('electron') as typeof import('electron')
+    dialog.showErrorBox('تَحَكَّم — فشل تشغيل القاعدة', `تعذّر فتح قاعدة البيانات:\n${message}\n\nسجل التشخيص:\n${join(app.getPath('userData'), 'main.log')}`)
+    app.exit(1)
+    throw error
+  }
 }
 
 /* ── الطباعة (§102): نسخة إلى طابعة مسماة أو الافتراضية، صامتة أو بحوار ── */
@@ -95,6 +163,8 @@ let updaterState: UpdaterState = { status: 'idle' }
 
 function pushUpdaterState(state: UpdaterState): void {
   updaterState = state
+  if (state.status === 'error') logLine('updater', `خطأ تحديث: ${state.message}`)
+  if (state.status === 'downloaded') logLine('updater', `جاهز للتثبيت عند الإغلاق: ${state.version}`)
   mainWindow?.webContents.send('updater:state', state)
 }
 
@@ -225,6 +295,7 @@ if (!gotLock) {
   })
 
   void app.whenReady().then(async () => {
+    logLine('boot', `تَحَكَّم ${app.getVersion()} — electron ${process.versions.electron} — node ${process.versions.node} — userData=${app.getPath('userData')}`)
     database = await openDatabase()
     wireIpc()
     mainWindow = createMainWindow()

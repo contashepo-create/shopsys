@@ -1,7 +1,7 @@
 {
   "name": "app",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -22,7 +22,6 @@
     "desktop:publish": "vite build && node desktop/build.mjs && electron-builder --win nsis --publish always"
   },
   "dependencies": {
-    "@types/ws": "^8.18.2",
     "better-sqlite3": "^13.0.3",
     "electron-updater": "^6.8.9",
     "lucide-react": "^1.45.0",
@@ -43,6 +42,7 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.1.1",
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
