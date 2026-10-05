@@ -17,6 +17,7 @@ import { computeTotals, CreditLimitError, type CartLine, type CartTotals } from 
 import { PriceFloorError } from '../../core/items.ts'
 import { buildReceiptModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import { inventoryWarnings, type InternalExpense, type InvoiceEditorMode } from '../../core/advancedInvoice.ts'
 import { calculateInvoiceCommissionMinor, type InvoiceCommissionBasis } from '../../core/invoiceCommissions.ts'
@@ -240,6 +241,8 @@ const printDraft=(template:InvoiceTemplate)=>{if(!totals||!lines.length)return t
   printModelWithTemplate(model,cur,live,template)}
  /* «تصدير PDF» = نفس قالب A4 عبر حوار الطباعة ووجهة «حفظ كـ PDF» — بلا مكتبة خارجية ولا إنترنت */
  const exportPdf=()=>{if(!totals||!lines.length)return toast.show('أضف بنوداً قبل التصدير','error');toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️');printDraft('a4')}
+ /* v1.0.13 — إرسال الفاتورة PDF عبر واتساب: يولّد ملف A4 حقيقياً ويفتح محادثة العميل */
+ const whatsappPdf=()=>{if(!totals||!lines.length)return toast.show('أضف بنوداً قبل الإرسال','error');shareDocPdfViaWhatsapp({model:buildPrintModel(totals),cur,settings:useAppStore.getState().receipt,docLabel:'فاتورة مبيعات',docNumber:editingInvoice?.invoiceNumber??'مسودة',partyPhone:customers.find(c=>c.id===customerId)?.phone??'',shopName:setup.shopName,toast})}
  const approval=useSupervisorApproval('sales.price.edit')
  /* بوابة الاعتماد (طلب المالك): لا قيد قبل الاعتماد — المستند يُحفظ طلباً */
  const submitForApprovalIfNeeded=(saleArgs?:Parameters<typeof postSale>[0])=>{
@@ -389,6 +392,7 @@ const minCollectMinor=!selectedCustomer?grandMinor:selectedCustomer.active===fal
   draftCount={advancedInvoiceDrafts.filter(d=>d.kind==='sale').length} onRestoreDraft={restoreDraft}
   onPrint={() => setPrintOpen(true)}
   onExportPdf={exportPdf}
+  onWhatsappPdf={whatsappPdf}
   onOpenPrintSettings={()=>setPrintSettingsOpen(true)} onQuickPrint={()=>printDraft((useDataStore.getState().userPrefs[String(currentUserId??'owner')]?.preferredPrintTemplate)??(printSwitches.cashierPrint?'thermal':'a4'))}
   reviewSlot={<><button type="button" className={`invoice-doc-review${allPrePostIssues.some(i=>i.level==='blocking')?' is-blocking':allPrePostIssues.length?' is-warning':''}`} onClick={()=>setChecksOpen(v=>!v)} title="مراجعة الفاتورة قبل الترحيل: مخزون · تكلفة · تحصيل" data-prepost-open>✓ مراجعة قبل الترحيل {allPrePostIssues.length>0&&<span className="invoice-doc-count">{allPrePostIssues.length}</span>}</button><PrePostChecks issues={allPrePostIssues} open={checksOpen} onClose={()=>setChecksOpen(false)}/></>}
   onPost={save}

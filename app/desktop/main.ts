@@ -316,6 +316,48 @@ async function listPrinters(): Promise<string[]> {
   return printers.map((printer) => printer.name)
 }
 
+/* ── v1.0.13: إرسال مستند PDF عبر واتساب ─────────────────────────────
+   wa.me لا يدعم إرفاق ملفات برابط مباشر — النمط الصادق الواقعي:
+   1) توليد PDF حقيقي بنفس محرك الطباعة (printToPDF على قالب المستند).
+   2) حفظه بمجلد معروف: التنزيلات/تَحَكَّم-PDF/
+   3) نسخ مسار الملف للحافظة (صيغة FileNameW على ويندوز — أفضل جهد)
+      ليقصقه المستخدم في المحادثة، مع فتح المجلد وتحديد الملف كخيار موازٍ.
+   4) فتح محادثة wa.me (برقم الطرف أو قائمة اختيار جهة عند غياب الرقم). */
+async function exportPdfShare(html: string, fileName: string, waLink?: string): Promise<{ ok: boolean; path?: string; copied: boolean; error?: string }> {
+  try {
+    const dir = join(app.getPath('downloads'), 'Tahakom-PDF')
+    mkdirSync(dir, { recursive: true })
+    /* أسماء لاتينية آمنة عبر أنظمة الملفات والمشاركة */
+    const safeName = (fileName || '').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || `doc-${Date.now()}`
+    const outPath = join(dir, `${safeName}.pdf`)
+    const tmp = join(app.getPath('userData'), 'pdf-tmp.html')
+    writeFileSync(tmp, html, 'utf8')
+    if (!printWindow || printWindow.isDestroyed()) {
+      printWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true } })
+    }
+    await new Promise<void>((resolve) => {
+      printWindow!.webContents.once('did-finish-load', () => resolve())
+      void printWindow!.loadFile(tmp)
+    })
+    /* المقاس والاتجاه من @page داخل قالب المستند نفسه (A4/A5/حراري) */
+    const pdf = await printWindow.webContents.printToPDF({ printBackground: true, margins: { marginType: 'default' } })
+    writeFileSync(outPath, pdf)
+    /* نسخ الملف للحافظة — أفضل جهد: صيغة FileNameW (مسار عريض منتهٍ بـ NUL)؛
+       فشلها لا يوقف الإرسال لأن المجلد مفتوح والملف محدد */
+    let copied = false
+    try {
+      const { clipboard } = require('electron') as typeof import('electron')
+      clipboard.writeBuffer('FileNameW', Buffer.from(`${outPath}\0`, 'utf16le'))
+      copied = process.platform === 'win32'
+    } catch { /* حافظة الملفات غير متاحة على هذه المنصة — نكتشف بالفتح */ }
+    shell.showItemInFolder(outPath)
+    if (waLink) void shell.openExternal(waLink)
+    return { ok: true, path: outPath, copied }
+  } catch (error) {
+    return { ok: false, copied: false, error: (error as Error).message }
+  }
+}
+
 /* ── التحديث التلقائي: فحص إقلاعي + يدوي + تثبيت عند الإغلاق ── */
 type UpdaterState =
   | { status: 'idle' }
@@ -413,6 +455,10 @@ function wireIpc(): void {
     await printHtml(html, silent, printerName)
   })
   ipcMain.handle('print:printers', () => listPrinters())
+
+  /* v1.0.13 — إرسال مستند PDF عبر واتساب: توليد + حفظ + حافظة + فتح المحادثة */
+  ipcMain.handle('pdf:export-share', (_event, html: string, fileName: string, waLink?: string) =>
+    exportPdfShare(html, fileName, waLink))
 
   /* §102 — مضيف شبكة المحل: خادم ws في هذه العملية، منطق المضيف في المُصيّر */
   initLanHostIpc(() => mainWindow)

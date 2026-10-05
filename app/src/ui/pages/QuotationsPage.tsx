@@ -19,6 +19,7 @@ import { Printer, Pencil } from 'lucide-react'
 import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { usePrintSwitches } from '../components/PrintSwitches.tsx'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
@@ -236,6 +237,7 @@ export function QuotationsPage() {
           onRestoreDraft={() => setDraftsOpen(true)}
           onPrint={() => printDraft('a4')}
           onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); printDraft('a4') }}
+          onWhatsappPdf={() => { if (!parsedLines.length) return toast.show('أضف بنوداً قبل الإرسال', 'error'); shareDocPdfViaWhatsapp({ model: buildPrintModel(), cur, settings: useAppStore.getState().receipt, docLabel: kind === 'tender' ? 'مذكرة تسعير مناقصة' : 'عرض سعر', docNumber: editingQuote?.quoteNumber ?? 'مسودة', partyPhone: '', shopName: setup.shopName, toast }) }}
           onPost={save}
           headerFields={
             <>

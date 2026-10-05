@@ -21,6 +21,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import { rowOpenProps } from '../components/rowOpen.ts'
 
@@ -51,10 +52,10 @@ export function PurchaseReturnsPage() {
   useEffect(() => { unsaved.markClean() }, [purchase?.id, unsaved])
   const closePurchase = () => unsaved.requestClose(() => setPurchase(null))
 
-  /** إشعار مدين للمورد: سطور بتكلفة الوحدة النهائية + المسترد نقداً/ديناً */
-  const printPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
+  /** بناء موديل إشعار مدين للمورد — مشترك بين الطباعة وإرسال واتساب PDF (v1.0.13) */
+  const buildPurchaseReturnModel = (r: PurchaseReturn) => {
     const orig = purchases.find((pv) => pv.id === r.purchaseId)
-    const model = buildSimpleDocModel({
+    return buildSimpleDocModel({
       docTitle: 'مرتجع مشتريات (إشعار مدين)',
       invoiceNumber: r.returnNumber,
       refCode: r.refCode ?? '',
@@ -73,8 +74,19 @@ export function PurchaseReturnsPage() {
       settings: receipt,
       extraFooter: r.reason ? `السبب: ${r.reason}` : undefined,
     })
-    printModelWithTemplate(model, cur, receipt, template)
+  }
+
+  /** إشعار مدين للمورد: سطور بتكلفة الوحدة النهائية + المسترد نقداً/ديناً */
+  const printPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
+    printModelWithTemplate(buildPurchaseReturnModel(r), cur, receipt, template)
     toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
+  }
+
+  /** v1.0.13 — إرسال إشعار مرتجع المشتريات PDF عبر واتساب للمورد */
+  const whatsappPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
+    const orig = purchases.find((pv) => pv.id === r.purchaseId)
+    const phone = orig?.supplierId ? suppliers.find((s) => s.id === orig.supplierId)?.phone ?? '' : ''
+    shareDocPdfViaWhatsapp({ model: buildPurchaseReturnModel(r), cur, settings: receipt, template, docLabel: 'مرتجع مشتريات', docNumber: r.returnNumber, partyPhone: phone, shopName: setup.shopName, toast })
   }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
@@ -403,6 +415,7 @@ export function PurchaseReturnsPage() {
         defaultTemplate={receipt.defaultTemplate}
         title="🖨️ طباعة إشعار مرتجع الشراء"
         onPrint={(t) => { if (printTarget) printPurchaseReturn(printTarget, t) }}
+        onWhatsappPdf={(t) => { if (printTarget) whatsappPurchaseReturn(printTarget, t) }}
       />
     </div>
   )

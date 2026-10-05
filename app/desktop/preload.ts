@@ -38,6 +38,10 @@ contextBridge.exposeInMainWorld('shopsysPrint', (html: string, silent: boolean, 
 
 contextBridge.exposeInMainWorld('shopsysPrinters', () => ipcRenderer.invoke('print:printers'))
 
+/* v1.0.13 — إرسال مستند PDF عبر واتساب: يولّد الملف بالسطح المكتب ويفتح المحادثة */
+contextBridge.exposeInMainWorld('shopsysPdfShare', (html: string, fileName: string, waLink?: string) =>
+  ipcRenderer.invoke('pdf:export-share', html, fileName, waLink))
+
 contextBridge.exposeInMainWorld('shopsysUpdater', {
   state: () => ipcRenderer.invoke('updater:state'),
   check: () => ipcRenderer.invoke('updater:check'),

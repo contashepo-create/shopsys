@@ -5,7 +5,7 @@ import { QuickSelect } from './KeyboardPickers.tsx'
  * والاختيار للجلسة فقط — لا يغيّر الإعدادات الدائمة.
  */
 import { useState } from 'react'
-import { Printer } from 'lucide-react'
+import { Printer, MessageCircle } from 'lucide-react'
 import { INVOICE_TEMPLATE_OPTIONS, type InvoiceTemplate } from '../../core/receipt.ts'
 import { Modal, Btn } from './ui.tsx'
 
@@ -16,6 +16,8 @@ export function PrintTemplateModal(props: {
   defaultTemplate: InvoiceTemplate
   title?: string
   onPrint: (template: InvoiceTemplate) => void
+  /** v1.0.13 — إرسال المستند PDF عبر واتساب بالقالب المختار (سطح المكتب) */
+  onWhatsappPdf?: (template: InvoiceTemplate) => void
 }) {
   const [chosen, setChosen] = useState<InvoiceTemplate | null>(null)
   const active = chosen ?? props.defaultTemplate
@@ -34,6 +36,11 @@ export function PrintTemplateModal(props: {
         <Btn className="w-full" onClick={() => { props.onPrint(active); props.onClose() }}>
           <Printer size={15} /> طباعة الآن
         </Btn>
+        {props.onWhatsappPdf && (
+          <Btn className="w-full !bg-emerald-600 hover:!bg-emerald-700 !text-white" onClick={() => { props.onWhatsappPdf?.(active); props.onClose() }} title="يولّد PDF بالقالب المختار ويفتح محادثة واتساب — الملف في الحافظة والمجلد">
+            <MessageCircle size={15} /> إرسال PDF عبر واتساب
+          </Btn>
+        )}
       </div>
     </Modal>
   )

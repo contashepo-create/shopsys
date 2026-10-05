@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X, Printer , Settings2 } from 'lucide-react'
+import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageCircle, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X, Printer , Settings2 } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
@@ -47,6 +47,8 @@ type InvoicePOSFrameProps = {
   onPrint: () => void
   /** تصدير نسخة PDF — يفتح حوار الطباعة على قالب A4 ووجهة «حفظ كـ PDF» */
   onExportPdf?: () => void
+  /** v1.0.13 — إرسال المستند PDF عبر واتساب (سطح المكتب): يولّد الملف ويفتح المحادثة */
+  onWhatsappPdf?: () => void
   onPost: () => void
   /** نص زر الاعتماد الرئيسي — افتراضياً «حفظ وترحيل» (الفواتير)؛ أوامر الشراء «اعتماد أمر الشراء» لأنها التزام تجاري لا ترحيل محاسبي */
   postLabel?: string
@@ -97,6 +99,7 @@ export function InvoicePOSFrame({
   onRestoreDraft,
   onPrint,
   onExportPdf,
+  onWhatsappPdf,
   onPost,
   postLabel,
   children,
@@ -249,6 +252,7 @@ export function InvoicePOSFrame({
           <PrintSwitches compact/>
           <Btn variant="ghost" onClick={() => onNavigate('/settings/printing')} title="قوالب الطباعة وإعداد إذن الاستلام والحرارية"><Settings size={13} /> إعدادات الطباعة</Btn>
           {onExportPdf && <Btn variant="ghost" onClick={onExportPdf} title="يفتح حوار الطباعة — اختر وجهة «حفظ كـ PDF»"><FileDown size={13} /> تصدير PDF</Btn>}
+          {onWhatsappPdf && <Btn variant="ghost" onClick={onWhatsappPdf} title="يولّد PDF ويفتح محادثة واتساب — الملف في الحافظة والمجلد"><MessageCircle size={13} className="text-emerald-600" /> واتساب PDF</Btn>}
         </div>
       </footer>
     </div>
