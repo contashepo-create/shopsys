@@ -82,6 +82,10 @@ export interface DesktopDatabaseStorageBridge {
   }>
   chooseDbLocation(): Promise<{ ok: boolean; canceled?: boolean; newPath?: string; restarting?: boolean; error?: string }>
   chooseSecondaryBackupDir(): Promise<{ ok: boolean; canceled?: boolean; dir?: string }>
+  /* v1.0.9: درع البيانات — استرداد تلقائي + استعادة نسخة ملفية */
+  recoveryNotice(): Promise<{ at: string; from: string | null } | null>
+  listFileBackups(): Promise<{ path: string; where: string; kind: string; size: number; at: string }[]>
+  restoreFileBackup(path: string): Promise<{ ok: boolean; restarting?: boolean }>
 }
 
 export interface ShopsysDesktopBridge {

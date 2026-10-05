@@ -25,6 +25,10 @@ const databaseStorage = {
   getStorageInfo: () => ipcRenderer.invoke('database:getStorageInfo'),
   chooseDbLocation: () => ipcRenderer.invoke('database:chooseDbLocation'),
   chooseSecondaryBackupDir: () => ipcRenderer.invoke('database:chooseSecondaryBackupDir'),
+  /* v1.0.9: درع البيانات — استرداد تلقائي + استعادة نسخة ملفية من داخل التطبيق */
+  recoveryNotice: () => ipcRenderer.invoke('database:recoveryNotice'),
+  listFileBackups: () => ipcRenderer.invoke('database:listFileBackups'),
+  restoreFileBackup: (path: string) => ipcRenderer.invoke('database:restoreFileBackup', { path }),
 }
 
 contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage })

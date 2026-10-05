@@ -8,11 +8,12 @@
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
+import Database from 'better-sqlite3'
 
 type ClaimOutboxInput = { now?: string; limit?: number }
 type DeleteSnapshotInput = { storeName: string; expectedRevision: number }
@@ -208,9 +209,69 @@ async function backupDatabaseFile(tag: 'manual' | 'auto', database: ShopsysDatab
   return written
 }
 
+/* ── v1.0.9: درع البيانات — فحص سلامة عند الإقلاع واسترداد تلقائي من أحدث نسخة سليمة ──
+   سيناريوهات التلف: انقطاع كهرباء أثناء الكتابة، امتلاء القرص، أنتيفيروس عزل الملف،
+   نسخ القاعدة وهي مفتوحة بلا WAL. quick_check يكتشف التلف، والاسترداد يعيد أحدث
+   نسخة سليمة من المكانين (يدوية/تلقائية) بلا تدخل — والملف التالف يُحفظ للفحص. */
+const RECOVERY_MARKER = 'db-recovery.json'
+
+function quickCheck(dbPath: string): boolean {
+  try {
+    const probe = new Database(dbPath, { readonly: true, fileMustExist: true })
+    try { return probe.pragma('quick_check', { simple: true }) === 'ok' } finally { probe.close() }
+  } catch { return false }
+}
+
+/** كل ملفات النسخ في المكانين (يدوي/تلقائي) — الأحدث أولاً (أسماؤها بطابع زمني) */
+function candidateBackups(dbPath: string): string[] {
+  const dirs = [
+    join(dirname(dbPath), 'backups', 'manual'),
+    join(dirname(dbPath), 'backups', 'auto'),
+    join(resolveSecondaryBackupDir().dir, 'manual'),
+    join(resolveSecondaryBackupDir().dir, 'auto'),
+  ]
+  const out: string[] = []
+  for (const dir of dirs) {
+    try { for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) out.push(join(dir, f)) } catch { /* مجلد غير موجود */ }
+  }
+  return out.sort().reverse()
+}
+
+/** يُنفَّذ قبل الفتح: القاعدة تالفة ⇐ عزلها + استرداد أحدث نسخة سليمة (أو قاعدة جديدة إن لا نسخة) */
+function shieldDamagedDatabase(dbPath: string): void {
+  if (!existsSync(dbPath)) return
+  if (quickCheck(dbPath)) return
+  logLine('db-shield', 'فحص الإقلاع: القاعدة تالفة — بدء الاسترداد التلقائي')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const quarantine = `${dbPath}.corrupt-${stamp}`
+  try { renameSync(dbPath, quarantine) } catch { return /* تعذّر العزل — نحاول الفتح كما هو */ }
+  // ملفات WAL/SHM التابعة للتالف تُعزل معه (بقاءها قد يفسد النسخة المستردة)
+  for (const ext of ['-wal', '-shm']) {
+    const side = dbPath + ext
+    if (existsSync(side)) { try { renameSync(side, `${quarantine}${ext}`) } catch { try { unlinkSync(side) } catch { /* استمر */ } } }
+  }
+  let restoredFrom: string | null = null
+  for (const candidate of candidateBackups(dbPath)) {
+    try {
+      if (!quickCheck(candidate)) continue
+      copyFileSync(candidate, dbPath)
+      restoredFrom = candidate
+      break
+    } catch { /* النسخة التالية */ }
+  }
+  try {
+    writeFileSync(join(app.getPath('userData'), RECOVERY_MARKER), JSON.stringify({
+      at: new Date().toISOString(), from: restoredFrom, quarantine,
+    }), 'utf8')
+  } catch { /* الإشعار اختياري */ }
+  logLine('db-shield', restoredFrom ? `استُردت القاعدة تلقائياً من: ${restoredFrom} (التالف محفوظ: ${quarantine})` : 'لا نسخة سليمة — ستُنشأ قاعدة جديدة فارغة')
+}
+
 /* ── القاعدة ── */
 async function openDatabase(): Promise<ShopsysDatabase> {
   const { dbPath, isCustom } = resolveDbPath()
+  // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة
+  try { shieldDamagedDatabase(dbPath) } catch (e) { logLine('db-shield', `تخطي الفحص: ${(e as Error).message}`) }
   try {
     const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(dirname(dbPath), 'backups') })
     logLine('db', `قاعدة SQLite جاهزة: ${dbPath}${isCustom ? ' (مكان مخصص)' : ' (افتراضي)'} (مخطط ${db.schemaVersion()})`)
@@ -413,6 +474,63 @@ function wireIpc(): void {
       secondaryBackupDir: secondary.dir,
       secondaryIsDefault: secondary.isDefault,
       lastFileBackupAt: readDbLocation().lastFileBackupAt,
+    }
+  })
+
+  /* v1.0.9: إشعار استرداد القاعدة — يُقرأ مرة واحدة من الواجهة عند الإقلاع */
+  ipcMain.handle('database:recoveryNotice', () => {
+    const markerPath = join(app.getPath('userData'), RECOVERY_MARKER)
+    try {
+      const data = JSON.parse(readFileSync(markerPath, 'utf8')) as { at: string; from: string | null }
+      unlinkSync(markerPath)
+      return data
+    } catch { return null }
+  })
+
+  /* v1.0.9: استعادة نسخة قاعدة ملفية من داخل التطبيق (المكانان، يدوية وتلقائية) */
+  ipcMain.handle('database:listFileBackups', () => {
+    const { dbPath } = resolveDbPath()
+    const dirs = [
+      { dir: join(dirname(dbPath), 'backups', 'manual'), where: 'بجوار القاعدة' },
+      { dir: join(dirname(dbPath), 'backups', 'auto'), where: 'بجوار القاعدة' },
+      { dir: join(resolveSecondaryBackupDir().dir, 'manual'), where: 'المكان الثاني' },
+      { dir: join(resolveSecondaryBackupDir().dir, 'auto'), where: 'المكان الثاني' },
+    ]
+    const out: { path: string; where: string; kind: string; size: number; at: string }[] = []
+    for (const { dir, where } of dirs) {
+      try {
+        for (const f of readdirSync(dir).filter((x) => x.endsWith('.db'))) {
+          const full = join(dir, f)
+          const st = statSync(full)
+          out.push({ path: full, where, kind: f.startsWith('manual') ? 'يدوية' : 'تلقائية', size: st.size, at: new Date(st.mtimeMs).toISOString() })
+        }
+      } catch { /* لا مجلد */ }
+    }
+    return out.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 40)
+  })
+
+  ipcMain.handle('database:restoreFileBackup', async (_event, args: { path?: string }) => {
+    if (!database) throw new Error('قاعدة البيانات غير مهيأة')
+    const target = typeof args?.path === 'string' ? args.path : ''
+    // أمن المسار: الاستعادة من ملفات النسخ المعروفة فقط — لا مسارات خارجية
+    if (!candidateBackups(resolveDbPath().dbPath).includes(target)) throw new Error('مسار نسخة غير معروف')
+    if (!quickCheck(target)) throw new Error('النسخة المحددة غير سليمة (فشل فحص السلامة) — اختر نسخة أخرى')
+    const { dbPath } = resolveDbPath()
+    try {
+      database.close()
+      database = null
+      // نسخة أمان من الحالية قبل الاستبدال — الاحتمال المرجوح لا يُفقد بيانات
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+      copyFileSync(dbPath, `${dbPath}.before-restore-${stamp}`)
+      for (const ext of ['-wal', '-shm']) { try { unlinkSync(dbPath + ext) } catch { /* غير موجود */ } }
+      copyFileSync(target, dbPath)
+      logLine('db-restore', `استعادة نسخة ملفية: ${target} — إعادة تشغيل`)
+      setTimeout(() => { app.relaunch(); app.exit(0) }, 600)
+      return { ok: true as const, restarting: true as const }
+    } catch (error) {
+      const message = (error as Error).message
+      logLine('db-restore-fatal', `فشل الاستعادة: ${message}`)
+      throw new Error(`فشل الاستعادة: ${message}`)
     }
   })
 

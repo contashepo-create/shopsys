@@ -4,7 +4,7 @@
  * نفس صيغة الملف ستُستخدم لاحقاً للنسخ اليومي عبر بوت التليجرام.
  */
 import { useRef, useState } from 'react'
-import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock, FileSpreadsheet, FileText, HardDrive, FolderOpen, ShieldAlert } from 'lucide-react'
+import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock, FileSpreadsheet, FileText, HardDrive, FolderOpen, ShieldAlert, History } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupSummary } from '../../core/backup.ts'
@@ -110,6 +110,26 @@ export function BackupPage() {
   const [fileBackupBusy, setFileBackupBusy] = useState(false)
   const refreshStorage = async () => { if (storage) { try { setStorageInfo(await storage.getStorageInfo()) } catch { /* الجسر القديم */ } } }
   if (storage && storageInfo == null) void refreshStorage()
+  /* ─── v1.0.9 (درع البيانات): استعادة نسخة قاعدة ملفية من المكانين — سطح المكتب ─── */
+  type FileBackup = Awaited<ReturnType<NonNullable<typeof storage>['listFileBackups']>>[number]
+  const [fileBackups, setFileBackups] = useState<FileBackup[] | null>(null)
+  const [restoringPath, setRestoringPath] = useState<string | null>(null)
+  const [confirmingPath, setConfirmingPath] = useState<string | null>(null)
+  const refreshFileBackups = async () => {
+    if (!storage) return
+    try { setFileBackups(await storage.listFileBackups()) } catch { /* جسر قديم */ }
+  }
+  const restoreFileBackup = async (path: string) => {
+    if (!storage) return
+    setRestoringPath(path)
+    try {
+      const result = await storage.restoreFileBackup(path)
+      if (result.ok) toast.show('استُبدلت القاعدة بالنسخة المحددة — سيُعاد تشغيل التطبيق الآن ✓')
+    } catch (err) {
+      toast.show((err as Error).message, 'error')
+      setRestoringPath(null); setConfirmingPath(null)
+    }
+  }
   const takeFileBackup = async () => {
     const backup = desktopBackupNow()
     if (!backup) return toast.show('النسخة الملفية متاحة في نسخة سطح المكتب فقط', 'error')
@@ -294,6 +314,55 @@ export function BackupPage() {
           <div className="text-[11px] text-slate-400 leading-relaxed">
             تغيير مكان القاعدة: يُغلق الاتصال بأمان، تُنسخ القاعدة كاملة للمكان الجديد (الأصل يبقى نسخة أمان)، ثم يُعاد تشغيل التطبيق تلقائياً.
           </div>
+        </div>
+      )}
+
+      {/* v1.0.9: استعادة نسخة قاعدة ملفية — سيناريو الويندوز الجديد/القاعدة التالفة */}
+      {storage && (
+        <div className={`anim-up ${card} space-y-4`} style={{ animationDelay: '70ms' }}>
+          <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+            <History size={17} className="text-violet-600" /> استعادة نسخة قاعدة كاملة (من النسخ الملفية)
+          </div>
+          <div className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
+            عند تلف القاعدة أو تثبيت الويندوز من جديد: هذه نسخ القاعدة الكاملة المحفوظة تلقائياً ويدوياً في المكانين —
+            اختر نسخة لتستعيد <b>كل شيء كما كان في لحظتها</b> (أصناف، فواتير، حسابات، إعدادات).
+          </div>
+          <div className="rounded-2xl border-2 border-amber-400/40 bg-amber-500/[0.06] p-3.5 text-[12px] text-slate-600 dark:text-slate-300">
+            ⚠️ الاستعادة <b>تستبدل بياناتك الحالية بالكامل</b> بحالة النسخة المختارة، ثم يُعاد تشغيل التطبيق تلقائياً.
+            تُحفظ نسخة أمان من بياناتك الحالية قبل الاستبدال (لا يُفقد شيء بلا نسخة).
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Btn variant="ghost" onClick={() => { void refreshFileBackups() }}>
+              <CalendarClock size={15} /> {fileBackups ? 'تحديث القائمة' : 'عرض النسخ المتاحة'}
+            </Btn>
+          </div>
+          {fileBackups && fileBackups.length === 0 && (
+            <div className="text-[12px] text-slate-400">لا توجد نسخ ملفية بعد — تُؤخذ أول نسخة تلقائية عند فتح التطبيق يومياً، أو خذها الآن بزر «نسخة ملفية فورية» أعلاه.</div>
+          )}
+          {fileBackups && fileBackups.length > 0 && (
+            <div className="space-y-1.5 max-h-72 overflow-y-auto pl-1">
+              {fileBackups.slice(0, 12).map((b) => (
+                <div key={b.path} className={`flex flex-wrap items-center gap-2 justify-between rounded-xl border p-2.5 ${confirmingPath === b.path ? 'border-amber-400 bg-amber-500/[0.07]' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50'}`}>
+                  <div className="text-[12px] leading-relaxed">
+                    <b dir="ltr">{b.at.slice(0, 16).replace('T', ' ')}</b>
+                    <span className="text-slate-400"> · {b.kind} · {b.where} · {(b.size / 1024).toFixed(0)} ك.ب</span>
+                  </div>
+                  {confirmingPath === b.path ? (
+                    <div className="flex gap-1.5">
+                      <Btn variant="danger" disabled={restoringPath === b.path} onClick={() => { void restoreFileBackup(b.path) }}>
+                        {restoringPath === b.path ? 'جارٍ…' : 'متأكد — استبدل بياناتي الحالية'}
+                      </Btn>
+                      <Btn variant="ghost" disabled={restoringPath === b.path} onClick={() => setConfirmingPath(null)}>إلغاء</Btn>
+                    </div>
+                  ) : (
+                    <Btn variant="ghost" disabled={restoringPath === b.path} onClick={() => setConfirmingPath(b.path)}>
+                      <Upload size={14} /> استعادة
+                    </Btn>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

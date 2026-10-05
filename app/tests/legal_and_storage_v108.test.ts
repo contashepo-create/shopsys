@@ -44,7 +44,10 @@ describe('الاتفاقية والخصوصية والموافقة الموثق�
     // الخصوصية: البيانات محلية ولا تُباع
     const privacyText = JSON.stringify(PRIVACY)
     expect(privacyText).toContain('لا نستخدم إعلانات')
+    // v1.0.9: ادعاء التشفير صادق (AES-256-GCM + safeStorage منذ v1.0.7) + طبقة BitLocker بيد المستخدم
     expect(privacyText).toContain('AES-256-GCM')
+    expect(privacyText).toContain('مخزن مفاتيح النظام')
+    expect(privacyText).toContain('BitLocker')
     expect(privacyText).toContain('بياناتك ليست رهينة')
   })
 

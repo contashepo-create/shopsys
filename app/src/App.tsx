@@ -11,7 +11,7 @@ import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSe
 import { fetchAbout, fetchRevocationList, DEFAULT_CLOUD_BASE_URL } from './core/cloud.ts'
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
-import { isElectronRuntime } from './data/desktopBridge.ts'
+import { isElectronRuntime, desktopDatabaseStorage } from './data/desktopBridge.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
 import { LoginScreen } from './ui/LoginScreen.tsx'
 import { authRequired } from './core/auth.ts'
@@ -112,7 +112,7 @@ import { AppearancePage } from './ui/pages/AppearancePage.tsx'
 import { TelegramPage } from './ui/pages/TelegramPage.tsx'
 import { AssetsPage } from './ui/pages/AssetsPage.tsx'
 import { ExternalCommissionsPage } from './ui/pages/ExternalCommissionsPage.tsx'
-import { ToastHost } from './ui/components/ui.tsx'
+import { ToastHost, useToast } from './ui/components/ui.tsx'
 import { ThermalPreview } from './ui/components/ThermalPreview.tsx'
 import { KeyboardNavigation } from './ui/components/KeyboardNavigation.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
@@ -343,6 +343,19 @@ export default function App() {
         useAppStore.setState({ trialStartedAt: anchor.firstTrialAt })
       }
     }).catch(() => { /* المرساة مساعدة — لا تعطل الإقلاع */ })
+  }, [])
+
+  /* v1.0.9 (درع البيانات): إشعار استرداد القاعدة — إن اكتُشف تلف عند الإقلاع
+     استُردت أحدث نسخة سليمة تلقائياً (أو بدئت قاعدة جديدة لعدم وجود نسخة) */
+  useEffect(() => {
+    const bridge = desktopDatabaseStorage()
+    if (!bridge?.recoveryNotice) return
+    void bridge.recoveryNotice().then((notice) => {
+      if (!notice) return
+      const toast = useToast.getState()
+      if (notice.from) toast.show('اكتُشف تلف في قاعدة البيانات واستُردت تلقائياً من أحدث نسخة سليمة ✓')
+      else toast.show('تعذّر إيجاد نسخة سليمة — بدئت قاعدة جديدة. استعد بياناتك من «النسخ الاحتياطي ← استعادة نسخة قاعدة كاملة»', 'error')
+    }).catch(() => { /* إشعار مساعد — لا يعطل الإقلاع */ })
   }, [])
 
   // ─── بوابة الترخيص (القرار 28): تقييم الحالة + الحرق + مطابقة النشاط ───
