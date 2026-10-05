@@ -196,7 +196,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
       aria-label="شريط القوائم الرئيسي"
       className="app-menubar sticky top-0 z-40 flex items-center gap-0.5 border-b border-slate-200 bg-white/95 px-2 py-0.5 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95"
     >
-      <img src="/app-icon.png?v=3" className="ms-1 me-1.5 h-5 w-5 shrink-0 rounded" alt="TAHAKAM ERP" />
+      <img src="./app-icon.png?v=4" className="ms-1 me-1.5 h-5 w-5 shrink-0 rounded" alt="TAHAKAM ERP" />
 
       <div ref={stripRef} className="menubar-scroll flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
         {visibleSections.map((sec) => {

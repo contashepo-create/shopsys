@@ -4,13 +4,14 @@
  * نفس صيغة الملف ستُستخدم لاحقاً للنسخ اليومي عبر بوت التليجرام.
  */
 import { useRef, useState } from 'react'
-import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock } from 'lucide-react'
+import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock, FileSpreadsheet, FileText } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupSummary } from '../../core/backup.ts'
 import { BACKUP_INTERVAL_CHOICES } from '../../core/security.ts'
-import { decryptForDevice, encryptForDevice } from '../../data/secureStorage.ts'
+import { appStorage, settingsAppStorage } from '../../data/persistentStorage.ts'
 import { Btn, useToast } from '../components/ui.tsx'
+import { buildFullExportSheets, sheetsToExcelXml, sheetToCsv, downloadTextFile, exportFileName, type ExportSheet } from '../../core/fullExport.ts'
 
 
 export function BackupPage() {
@@ -23,9 +24,12 @@ export function BackupPage() {
 
   const verifyRoundTrip = async () => {
     try {
-      const appRaw = localStorage.getItem('shopsys-app')
-      const storeEnc = localStorage.getItem('shopsys-data')
-      const storeRaw = storeEnc == null ? null : await decryptForDevice(storeEnc)
+      /* v1.0.6 (بلاغ المالك): القراءة من طبقة التخزين الحقيقية — في المتصفح
+         localStorage/secureStorage وفي سطح المكتب SQLite عبر IPC. القراءة
+         النصية المباشرة من localStorage كانت ترجع null دائماً في النسخة
+         المثبتة فيظهر «لا بيانات للنسخ بعد» رغم وجود البيانات. */
+      const appRaw = await settingsAppStorage().getItem('shopsys-app')
+      const storeRaw = await appStorage().getItem('shopsys-data')
       if (!storeRaw) throw new Error('لا بيانات محلية لفحصها')
       const backup = buildBackup({ appState: appRaw ? JSON.parse(appRaw) : null, storeState: JSON.parse(storeRaw), appDataVersion: DATA_VERSION, shopName: setup.shopName })
       const serialized = JSON.stringify(backup)
@@ -38,11 +42,10 @@ export function BackupPage() {
 
   const download = async () => {
     try {
-      // نقرأ من localStorage ونفك تشفير قاعدة البيانات (القرار 28) — النسخة تُحفظ نصاً صريحاً
-      // كي تُستعاد على أي جهاز (تشفير القاعدة مربوط بمفتاح الجهاز نفسه)
-      const appRaw = localStorage.getItem('shopsys-app')
-      const storeEnc = localStorage.getItem('shopsys-data')
-      const storeRaw = storeEnc == null ? null : await decryptForDevice(storeEnc)
+      // نقرأ من طبقة التخزين الحقيقية ويفك التشفير تلقائياً حيث يلزم (القرار 28) —
+      // النسخة تُحفظ نصاً صريحاً كي تُستعاد على أي جهاز (تشفير القاعدة مربوط بمفتاح الجهاز نفسه)
+      const appRaw = await settingsAppStorage().getItem('shopsys-app')
+      const storeRaw = await appStorage().getItem('shopsys-data')
       if (!storeRaw) return toast.show('لا بيانات للنسخ بعد', 'error')
       const backup = buildBackup({
         appState: appRaw ? JSON.parse(appRaw) : null,
@@ -83,14 +86,31 @@ export function BackupPage() {
     if (!pending) return
     try {
       const backup = parseBackup(pending.raw) // تحقق ثانٍ لحظة التنفيذ
-      if (backup.data.app != null) localStorage.setItem('shopsys-app', JSON.stringify(backup.data.app))
-      // تُكتب القاعدة مشفرة بمفتاح هذا الجهاز — كما يكتبها التطبيق نفسه تماماً
-      localStorage.setItem('shopsys-data', await encryptForDevice(JSON.stringify(backup.data.store)))
+      /* v1.0.6: الكتابة عبر نفس طبقة التخزين التي يقرأ منها التطبيق عند الإقلاع —
+         localStorage المباشر كان يكتب في المكان الخطأ في النسخة المثبتة (persist
+         يقرأ من SQLite) فلا تنجح الاستعادة. الترقيم المتفائل في DesktopStateStorage
+         يمنع أي حفظ متأخر من المتجر القديم من الكتابة فوق النسخة المستعادة. */
+      if (backup.data.app != null) await settingsAppStorage().setItem('shopsys-app', JSON.stringify(backup.data.app))
+      await appStorage().setItem('shopsys-data', JSON.stringify(backup.data.store))
       toast.show('استُعيدت النسخة — يُعاد تحميل التطبيق…')
       setTimeout(() => window.location.reload(), 800)
     } catch (err) {
       toast.show((err as Error).message, 'error')
     }
+  }
+
+  /* ─── التصدير الشامل (طلب المالك v1.0.6): Excel متعدد الأوراق + CSV لكل جدول ───
+     يُبنى من المتجر الحي مباشرة — بلا قراءة تخزين — فلا يتأثر بفرق بيئة الويب/سطح المكتب */
+  const [exportSheets, setExportSheets] = useState<ExportSheet[] | null>(null)
+  const exportAll = () => {
+    const sheets = buildFullExportSheets(useDataStore.getState() as unknown as Record<string, unknown>)
+    setExportSheets(sheets)
+    downloadTextFile(exportFileName(setup.shopName, 'export', 'xls', new Date().toISOString()), 'application/vnd.ms-excel', sheetsToExcelXml(sheets))
+    toast.show(`نُزّل ملف Excel شامل (${sheets.length} أوراق: أصناف/فواتير/قيود/أطراف…) ✓`)
+  }
+  const exportCsv = (sheet: ExportSheet) => {
+    downloadTextFile(exportFileName(setup.shopName, sheet.nameAr.replace(/\s+/g, '-'), 'csv', new Date().toISOString()), 'text/csv;charset=utf-8', sheetToCsv(sheet))
+    toast.show(`نُزّل CSV «${sheet.nameAr}» (${sheet.rows.length} صفاً) ✓`)
   }
 
   // ملاحظة: selectors منفصلة — إرجاع كائن جديد كل تصيير يسبب حلقة لانهائية في zustand v5 (صفحة بيضاء)
@@ -150,6 +170,35 @@ export function BackupPage() {
           {lastHourlyBackupAt
             ? <>آخر لقطة تلقائية: <b dir="ltr">{lastHourlyBackupAt.slice(0, 16).replace('T', ' ')}</b></>
             : 'لم تُؤخذ لقطة تلقائية بعد — تُؤخذ الأولى خلال دقائق من فتح التطبيق'}
+        </div>
+      </div>
+
+      {/* تصدير شامل — Excel وCSV (طلب المالك v1.0.6) */}
+      <div className={`anim-up ${card} space-y-4`} style={{ animationDelay: '60ms' }}>
+        <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+          <FileSpreadsheet size={17} className="text-emerald-600" /> تصدير شامل للبيانات — Excel وCSV
+        </div>
+        <div className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed">
+          ملف Excel واحد يفتح بكل الجداول أوراقاً منفصلة (أصناف، عملاء، موردون، فواتير البيع
+          والشراء، قيود اليومية، الخزائن، المخازن، الفروع، الرواتب، السلف، العمولات، السندات) —
+          أو نزّل أي جدول منفرداً بصيغة CSV بترميز عربي سليم. المبالغ بالوحدة الكاملة (جنيه) لا بالقروش.
+        </div>
+        <Btn onClick={exportAll} className="w-full !bg-emerald-600 hover:!bg-emerald-700"><FileSpreadsheet size={15} /> تنزيل Excel شامل (كل الجداول)</Btn>
+        <div className="flex flex-wrap gap-2">
+          {(exportSheets ?? []).map((sheet) => (
+            <button
+              key={sheet.nameAr}
+              onClick={() => exportCsv(sheet)}
+              className="px-3 py-2 rounded-xl text-[11.5px] font-bold border border-slate-200 dark:border-slate-700 text-slate-500 hover:border-emerald-400 hover:text-emerald-600 transition-colors flex items-center gap-1.5"
+            >
+              <FileText size={12} /> {sheet.nameAr} ({sheet.rows.length})
+            </button>
+          ))}
+          {!exportSheets && <div className="text-[11px] text-slate-400">اضغط «تنزيل Excel شامل» أولاً لتظهر أزرار CSV لكل جدول</div>}
+        </div>
+        <div className="text-[11px] text-slate-400 leading-relaxed">
+          تصدير تشغيلي للمحاسبة والمخزون — لا يشمل الحقول السرية (بصمات الدخول والترخيص).
+          للنسخ الكاملة القابلة للاستعادة استخدم «نسخة احتياطية كاملة» أعلاه.
         </div>
       </div>
 

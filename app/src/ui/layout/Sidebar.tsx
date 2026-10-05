@@ -73,7 +73,7 @@ export function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle:
       <button onClick={onToggle} title={collapsed ? 'فتح الشريط الجانبي' : 'طي الشريط الجانبي'} className="sidebar-toggle absolute -left-3 top-20 z-[70] w-7 h-7 rounded-full border bg-white dark:bg-card-dark shadow flex items-center justify-center text-brand-600">{collapsed ? <PanelRightOpen size={14}/> : <PanelRightClose size={14}/>}</button>
       {/* الشعار */}
       <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-        <img src="/app-icon.png?v=3" alt="TAHAKAM ERP" className="w-10 h-10 rounded-xl shadow-lg shadow-brand-500/30 object-cover" />
+        <img src="./app-icon.png?v=4" alt="TAHAKAM ERP" className="w-10 h-10 rounded-xl shadow-lg shadow-brand-500/30 object-cover" />
         <div className="min-w-0 flex-1">
           <div className="font-extrabold text-slate-800 dark:text-white leading-tight tracking-wide" dir="ltr">TAHAKAM <span className="text-emerald-500">ERP</span></div>
           <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate max-w-[150px]">
