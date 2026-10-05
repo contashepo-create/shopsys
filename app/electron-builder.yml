@@ -22,7 +22,7 @@ win:
         - x64
 nsis:
   # v1.0.8: صفحة الاتفاقية داخل المثبّت (الموجز) — النص الكامل والموافقة الموثقة داخل التطبيق عند أول تشغيل
-  licenseKeyFile: desktop/build/license.txt
+  license: desktop/build/license.txt
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always

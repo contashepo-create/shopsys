@@ -50,7 +50,7 @@ const app = read('src/App.tsx')
 check('④ بوابة قانونية إلزامية قبل الاستخدام + صفحة دائمة', app.includes('LegalGate') && app.includes('/settings/legal'))
 check('④ الموافقة موثقة بالإصدار والتاريخ وتظهر مجدداً عند تحديثه', read('src/stores/app.store.ts').includes('legal: null') && read('src/stores/app.store.ts').includes('LEGAL_VERSION'))
 const builder = read('electron-builder.yml')
-check('④ صفحة اتفاقية داخل المثبِّت (NSIS licenseKeyFile)', builder.includes('licenseKeyFile: desktop/build/license.txt'))
+check('④ صفحة اتفاقية داخل المثبِّت (NSIS licenseKeyFile)', builder.includes('license: desktop/build/license.txt'))
 check('④ ملف اتفاقية المثبِّت موجود وغير فارغ', existsSync(join(DIR, '..', 'desktop/build/license.txt')) && statSync(join(DIR, '..', 'desktop/build/license.txt')).size > 300)
 
 /* ─── ⑤ النشاط من شاشة التفعيل ─── */
