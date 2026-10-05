@@ -37,7 +37,7 @@ export function PrintTemplateModal(props: {
           <Printer size={15} /> طباعة الآن
         </Btn>
         {props.onWhatsappPdf && (
-          <Btn className="w-full !bg-emerald-600 hover:!bg-emerald-700 !text-white" onClick={() => { props.onWhatsappPdf?.(active); props.onClose() }} title="يولّد PDF بالقالب المختار ويفتح محادثة واتساب — الملف في الحافظة والمجلد">
+          <Btn className="w-full !bg-emerald-600 hover:!bg-emerald-700 !text-white" onClick={() => { props.onWhatsappPdf?.(active); props.onClose() }} title="يولّد PDF بالقالب المختار ويفتح مجلد الملف ومحادثة واتساب — اسحب الملف للمحادثة">
             <MessageCircle size={15} /> إرسال PDF عبر واتساب
           </Btn>
         )}

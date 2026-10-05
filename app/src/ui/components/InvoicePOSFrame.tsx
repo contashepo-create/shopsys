@@ -252,7 +252,7 @@ export function InvoicePOSFrame({
           <PrintSwitches compact/>
           <Btn variant="ghost" onClick={() => onNavigate('/settings/printing')} title="قوالب الطباعة وإعداد إذن الاستلام والحرارية"><Settings size={13} /> إعدادات الطباعة</Btn>
           {onExportPdf && <Btn variant="ghost" onClick={onExportPdf} title="يفتح حوار الطباعة — اختر وجهة «حفظ كـ PDF»"><FileDown size={13} /> تصدير PDF</Btn>}
-          {onWhatsappPdf && <Btn variant="ghost" onClick={onWhatsappPdf} title="يولّد PDF ويفتح محادثة واتساب — الملف في الحافظة والمجلد"><MessageCircle size={13} className="text-emerald-600" /> واتساب PDF</Btn>}
+          {onWhatsappPdf && <Btn variant="ghost" onClick={onWhatsappPdf} title="يولّد PDF ويفتح مجلد الملف ومحادثة واتساب — اسحب الملف للمحادثة"><MessageCircle size={13} className="text-emerald-600" /> واتساب PDF</Btn>}
         </div>
       </footer>
     </div>

@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
+    "bytenode": "^1.7.0",
     "electron-updater": "^6.8.9",
     "lucide-react": "^1.45.0",
     "qrcode": "^1.5.4",

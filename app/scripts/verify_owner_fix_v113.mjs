@@ -19,12 +19,12 @@ const check = (name, ok) => {
   if (!ok) { failed++; failedNames.push(name) }
 }
 
-/* ─── المحرك (سطح المكتب): توليد PDF حقيقي + مجلد + حافظة + فتح المحادثة ─── */
+/* ─── المحرك (سطح المكتب): توليد PDF حقيقي + مجلد + فتح المحادثة ─── */
 const main = read('desktop/main.ts')
 check('المحرك: معالج pdf:export-share مسجل في IPC', main.includes("ipcMain.handle('pdf:export-share'"))
 check('المحرك: exportPdfShare يولّد PDF بنفس محرك الطباعة (printToPDF بخلفيات)', main.includes('printToPDF({ printBackground: true'))
 check('المحرك: الملف يُحفظ بمجلد معروف تحت التنزيلات (Tahakom-PDF)', main.includes("'Tahakom-PDF'") && main.includes('downloads'))
-check('المحرك: نسخ الملف للحافظة أفضل جهد (FileNameW) دون تعطيل الإرسال عند فشلها', main.includes("writeBuffer('FileNameW'"))
+check('المحرك: لا استدعاء حافظة ملفات — Electron 44 أزالها؛ الفتح بالمجلد محدداً هو النمط الموثق', !main.includes('clipboard.writeBuffer') && !main.includes("writeBuffer('FileNameW'") && main.includes('showItemInFolder'))
 check('المحرك: يفتح المجلد بالملف محدداً ثم محادثة wa.me (openExternal)', main.includes('showItemInFolder') && main.includes('openExternal(waLink)'))
 check('التوثيق الصادق: لا ادعاء إرفاق مباشر — wa.me لا يدعم مرفقات بالرابط', main.includes('wa.me لا يدعم إرفاق ملفات برابط مباشر'))
 

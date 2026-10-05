@@ -319,9 +319,9 @@ async function listPrinters(): Promise<string[]> {
 /* ── v1.0.13: إرسال مستند PDF عبر واتساب ─────────────────────────────
    wa.me لا يدعم إرفاق ملفات برابط مباشر — النمط الصادق الواقعي:
    1) توليد PDF حقيقي بنفس محرك الطباعة (printToPDF على قالب المستند).
-   2) حفظه بمجلد معروف: التنزيلات/تَحَكَّم-PDF/
-   3) نسخ مسار الملف للحافظة (صيغة FileNameW على ويندوز — أفضل جهد)
-      ليقصقه المستخدم في المحادثة، مع فتح المجلد وتحديد الملف كخيار موازٍ.
+   2) حفظه بمجلد معروف: التنزيلات/Tahakom-PDF/
+   3) فتح المجلد بالمستكشف والملف محدد — ليسحبه المستخدم للمحادثة
+      (Electron 44 لا يوفر حافظة ملفات — لا ادعاء قدرة غير موجودة).
    4) فتح محادثة wa.me (برقم الطرف أو قائمة اختيار جهة عند غياب الرقم). */
 async function exportPdfShare(html: string, fileName: string, waLink?: string): Promise<{ ok: boolean; path?: string; copied: boolean; error?: string }> {
   try {
@@ -339,17 +339,13 @@ async function exportPdfShare(html: string, fileName: string, waLink?: string): 
       printWindow!.webContents.once('did-finish-load', () => resolve())
       void printWindow!.loadFile(tmp)
     })
-    /* المقاس والاتجاه من @page داخل قالب المستند نفسه (A4/A5/حراري) */
-    const pdf = await printWindow.webContents.printToPDF({ printBackground: true, margins: { marginType: 'default' } })
+    /* المقاس والاتجاه من @page داخل قالب المستند نفسه (A4/A5/حراري)؛
+       الهوامش بالبوصة — 0.4" ≈ 1سم مثل افتراضي حوار الطباعة */
+    const pdf = await printWindow.webContents.printToPDF({ printBackground: true, margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 } })
     writeFileSync(outPath, pdf)
-    /* نسخ الملف للحافظة — أفضل جهد: صيغة FileNameW (مسار عريض منتهٍ بـ NUL)؛
-       فشلها لا يوقف الإرسال لأن المجلد مفتوح والملف محدد */
-    let copied = false
-    try {
-      const { clipboard } = require('electron') as typeof import('electron')
-      clipboard.writeBuffer('FileNameW', Buffer.from(`${outPath}\0`, 'utf16le'))
-      copied = process.platform === 'win32'
-    } catch { /* حافظة الملفات غير متاحة على هذه المنصة — نكتشف بالفتح */ }
+    /* Electron 44: لا واجهة حافظة للملفات (writeBuffer أزيل) — الصدق التقني:
+       النمط المعتمد فتح المجلد بالملف محدداً ليسحبه المستخدم للمحادثة */
+    const copied = false
     shell.showItemInFolder(outPath)
     if (waLink) void shell.openExternal(waLink)
     return { ok: true, path: outPath, copied }

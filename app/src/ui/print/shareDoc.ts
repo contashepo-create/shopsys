@@ -4,8 +4,9 @@
  *
  * الحقيقة التقنية الصريحة: wa.me لا يقبل إرفاق ملفات برابط — لذا النمط هو:
  * يولّد نسخة سطح المكتب PDF حقيقياً بنفس قوالب الطباعة (printToPDF)،
- * يحفظه بمجلد «التنزيلات/Tahakom-PDF»، ينسخ مساره للحافظة (أفضل جهد)،
- * يفتح المجلد بملف محدد ويفتح محادثة واتساب — ثم يرشد للصق/السحب.
+ * يحفظه بمجلد «التنزيلات/Tahakom-PDF»، يفتح المجلد بالملف محدداً
+ * ليسحبه المستخدم إلى المحادثة، ويفتح محادثة واتساب برسالة جاهزة.
+ * (Electron 44 لا يوفر حافظة ملفات — لا ادعاء «الصق Ctrl+V» كاذب.)
  * في المتصفح لا يوجد محرك PDF — رسالة صادقة بدل الادعاء.
  */
 import type { ReceiptModel, ReceiptSettings, InvoiceTemplate } from '../../core/receipt.ts'
@@ -42,8 +43,7 @@ export function shareDocPdfViaWhatsapp(args: ShareDocPdfArgs): void {
   toast.show(`جارٍ توليد PDF لـ ${docLabel} ${docNumber}…`)
   void bridge(html, fileName, link).then((result) => {
     if (!result.ok) { toast.show(`تعذر توليد PDF: ${result.error ?? 'خطأ غير معروف'}`, 'error'); return }
-    if (result.copied) toast.show('✅ الملف في الحافظة والمجلد مفتوح — الصق (Ctrl+V) في المحادثة أو اسحبه')
-    else toast.show('✅ الملف جاهز في مجلد التنزيلات/Tahakom-PDF — اسحبه إلى المحادثة')
+    toast.show('✅ الملف جاهز والمجلد مفتوح — اسحبه إلى محادثة واتساب')
   }).catch((e: unknown) => toast.show(`تعذر الإرسال: ${(e as Error).message}`, 'error'))
 }
 
