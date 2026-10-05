@@ -21,7 +21,8 @@ type Kind = 'customer' | 'supplier' | 'employee'
 const KINDS: { id: Kind; nameAr: string; icon: typeof UserRound; debitLabel: string; creditLabel: string; positive: string; negative: string }[] = [
   { id: 'customer', nameAr: 'كشف حساب عميل', icon: UserRound, debitLabel: 'عليه (مدين)', creditLabel: 'له (دائن)', positive: 'مطلوب منه', negative: 'رصيد له عندك' },
   { id: 'supplier', nameAr: 'كشف حساب مورد', icon: Building2, debitLabel: 'سددنا / مرتجع', creditLabel: 'مستحق له', positive: 'مستحق له عندك', negative: 'رصيد لك عنده' },
-  { id: 'employee', nameAr: 'كشف حساب موظف', icon: UserCog, debitLabel: 'عليه (سلف/قبض)', creditLabel: 'له (رواتب/سداد)', positive: 'رصيد عليه (مدين)', negative: 'رصيد له (دائن)' },
+  /* v1.0.5: تسميات الموظف كانت معكوسة عن اتجاه الحساب (الموجب=له) — بلاغ المالك */
+  { id: 'employee', nameAr: 'كشف حساب موظف', icon: UserCog, debitLabel: 'عليه (سلف/قبض)', creditLabel: 'له (رواتب/سداد)', positive: 'رصيد له (مستحق)', negative: 'رصيد عليه (سلف قائمة)' },
 ]
 
 export function StatementsPage() {
@@ -57,7 +58,9 @@ export function StatementsPage() {
         : getEmployeeStatementRows(partyId).map((row, index, list) => ({
           date: row.date,
           docLabel: `${row.ref} — ${row.description}`,
-          operationMinor: undefined,
+          /* v1.0.5: قيمة العملية = أكبر الجانبين (الحركة غالباً أحادية الجانب،
+             والعمولة المصروفة مدين+دائن معاً فلا يصح جمعهما فيتضاعف المبلغ) */
+          operationMinor: Math.max(row.debitMinor, row.creditMinor) || undefined,
           debitMinor: row.debitMinor,
           creditMinor: row.creditMinor,
           balanceMinor: list.slice(0, index + 1).reduce((sum, line) => sum + line.creditMinor - line.debitMinor, 0),

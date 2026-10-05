@@ -2995,12 +2995,22 @@ function assertTreasuryNotNegative(
   treasuries: TreasuryDef[],
 ): void {
   if (nextJournal === prevJournal || nextJournal.length <= prevJournal.length) return
-  // الإعداد من مخزن التطبيق — قراءة مباشرة لتفادي دورة استيراد
+  /* الإعداد من متجر التطبيق مباشرة — قراءة حية في كل عملية.
+     بلاغ المالك v1.0.4 (النسخة المثبتة): القراءة القديمة من localStorage النصي
+     كانت ترجع false دائماً في نسخة سطح المكتب لأن persist يكتب إلى SQLite
+     (settingsAppStorage §101) لا إلى localStorage — فالمفتاح «مفعّل» عند
+     المستخدم والحارس لا يراه. المتجر الحي هو مصدر الحقيقة بعد الاسترجاع. */
   let allow = false
   try {
-    const raw = localStorage.getItem('shopsys-app')
-    if (raw) allow = JSON.parse(raw)?.state?.setup?.allowNegativeTreasury === true
-  } catch { /* الافتراضي: ممنوع */ }
+    allow = useAppStore.getState().setup.allowNegativeTreasury === true
+  } catch { /* المتجر غير مهيأ بعد — الافتراضي الآمن: ممنوع */ }
+  if (!allow) {
+    // تراجع خلفي للبيئات التي لم تُسترجع بعد (الواجهة الحية تسجّل دائماً)
+    try {
+      const raw = localStorage.getItem('shopsys-app')
+      if (raw) allow = JSON.parse(raw)?.state?.setup?.allowNegativeTreasury === true
+    } catch { /* الافتراضي: ممنوع */ }
+  }
   if (allow) return
   const codes = new Set(treasuries.map((t) => t.code))
   const balances = new Map<string, number>()
@@ -3010,10 +3020,22 @@ function assertTreasuryNotNegative(
       balances.set(l.accountCode, (balances.get(l.accountCode) ?? 0) + l.debit - l.credit)
     }
   }
+  /* v1.0.5 (استكمال بلاغ المالك): كان الحارس يرفض أي قيد يترك الخزينة سالبة
+     مطلقاً — فإذا صارت الخزينة سالبة في فترة «سماح» ثم أُغلق المفتاح، رُفضت
+     حتى عمليات القبض التي تُقلّص السالبية وتحسّن الوضع، وانطبق على المستخدم
+     أن السالب «ممنوع رغم التفعيل». العقد الصحيح: المنع يلقى فقط على العملية
+     التي تُعمّق السالبية (تجعل الرصيد أدنى مما كان). التحسّن أو الثبات يمر. */
+  const prevBalances = new Map<string, number>()
+  for (const e of prevJournal) {
+    for (const l of e.lines) {
+      if (!codes.has(l.accountCode)) continue
+      prevBalances.set(l.accountCode, (prevBalances.get(l.accountCode) ?? 0) + l.debit - l.credit)
+    }
+  }
   for (const [code, bal] of balances) {
-    if (bal < 0) {
+    if (bal < 0 && bal < (prevBalances.get(code) ?? 0)) {
       const name = treasuries.find((t) => t.code === code)?.nameAr ?? code
-      throw new Error(`رصيد «${name}» سيصبح سالباً — العملية مرفوضة. فعّل السماح بالرصيد السالب من الإعدادات العامة لو كنت تقصد ذلك`)
+      throw new Error(`رصيد «${name}» سيصبح سالباً — العملية مرفوضة. فعّل مفتاح «السماح بالرصيد السالب في الخزائن والبنوك» من الإعدادات العامة (مفتاح المخزون لا يشمل الخزائن — كلاهما مفتاح مستقل)`)
     }
   }
 }
