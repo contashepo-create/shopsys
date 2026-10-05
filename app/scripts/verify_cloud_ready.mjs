@@ -30,8 +30,14 @@ check('⑥ الصدق التقني موثق: البيانات محلية بال�
 check('⑥ الوثيقة تفرض قرار المالك الصريح — لا نشر ذاتي', doc.includes('بقرار المالك') && doc.includes('قرار صريح'))
 check('⑥ مقارنة صادقة بين نسخة الويب وسطح المكتب (ما ينقص المتصفح)', doc.includes('الطباعة الصامتة') && doc.includes('إرسال المستندات PDF عبر واتساب'))
 
-/* بناء الويب سليم — dist موجود بآخر بناء (بوابة التغليف تبنيه ضمن verify:all) */
-check('⑥ نسخة الويب تُبنى فعلاً (app/dist/index.html موجود بعد البناء)', existsSync(join(appRoot, 'dist', 'index.html')))
+/* قابلية النشر الثابت: vite يفرض المسارات النسبية (نفس شرط بوابة التغليف —
+   لا نعتمد على dist الموجود مسبقاً: بيئة CI نظيفة عند ترتيب البوابات) */
+{
+  const viteConfig = readFileSync(join(appRoot, 'vite.config.ts'), 'utf8')
+  check('⑥ بناء الويب صالح للصفحات الثابتة (vite base ./ — مسارات نسبية)', /base:\s*['\"]\.\/['\"]/.test(viteConfig))
+  const pkg = JSON.parse(readFileSync(join(appRoot, 'package.json'), 'utf8'))
+  check('⑥ سكربت البناء موجود (npm run build → dist)', typeof pkg.scripts?.build === 'string' && pkg.scripts.build.includes('vite build'))
+}
 
 console.log('')
 if (failed > 0) {
