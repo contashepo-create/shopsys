@@ -213,14 +213,19 @@ console.log('\n— V8) تحقق الأصناف —')
 console.log('\n— V9) الرصيد الافتتاحي للمخزون —')
 {
   const old = item('بضاعة قديمة')
+  /* v1.0.4 (نمط العالمية): تحرير البطاقة قبل أي حركة يقيد قيمة المخزون افتتاحياً —
+     لا تغيير صامت يكسر ثابت 1103 = Σ كمية×تكلفة */
+  const inv0 = bal('1103')
   st().updateItem(old.id, { stockQty: 10, costMinor: 2000 })
+  assert.equal(bal('1103') - inv0, 20000)
+  ok('V9: تحرير بطاقة صنف بلا حركات (10×200) يقيد 1103 افتتاحياً — لا تغيير صامت')
   const invBefore = bal('1103')
   st().setOpeningBalance({ kind: 'item_stock', refId: old.id, amountMinor: 20000, label: old.nameAr })
-  assert.equal(bal('1103') - invBefore, 20000)
-  ok('V9: مخزون افتتاحي 200 — قيد 1103/رأس المال')
+  assert.equal(bal('1103') - invBefore, 0)
+  ok('V9: إعادة تثبيت نفس القيمة لا تقيّد شيئاً — لا ازدواج')
   st().setOpeningBalance({ kind: 'item_stock', refId: old.id, amountMinor: 25000, label: old.nameAr })
-  assert.equal(bal('1103') - invBefore, 25000)
-  ok('V9: تعديل الافتتاحي يرحّل قيد الفرق 50 فقط — لا مسح ولا ازدواج')
+  assert.equal(bal('1103') - invBefore, 5000)
+  ok('V9: تعديل الافتتاحي (250 بدل 200) يرحّل قيد الفرق 50 فقط — لا مسح ولا ازدواج')
   assert.throws(() => st().setOpeningBalance({ kind: 'item_stock', refId: 99999, amountMinor: 1000, label: 'شبح' }), /غير موجود/)
   ok('V9: افتتاحي لصنف غير موجود مرفوض (فخ mobileshop)')
 }

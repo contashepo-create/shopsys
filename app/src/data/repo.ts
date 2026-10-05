@@ -69,7 +69,7 @@ import { assertTerminalOperation, validateTerminalAccess } from '../core/payment
 import { calculateTerminalSettlement, netSettlementTransactions, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
-import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, OPENING_COVERED_SYSTEM_KEYS, type OpeningKind } from '../core/openingBalances.ts'
+import { validateOpening, buildOpeningDeltaEntry, buildCapitalDeclarationEntry, openingKey, OPENING_KIND_LABELS, OPENING_COVERED_SYSTEM_KEYS, type OpeningItemDetail, type OpeningKind } from '../core/openingBalances.ts'
 import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
 import { customerStatement, supplierStatement, statementBalance, customerUnitDocs, supplierUnitDocs, type StatementRow } from '../core/statements.ts'
 import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments } from '../core/openPartyDocuments.ts'
@@ -1582,6 +1582,13 @@ interface DataState {
   consumptions: ConsumptionDoc[] // مستندات الصرف الداخلي (استهلاك تشغيل) — مصروف/1103
   /** الأرصدة الافتتاحية المثبتة: key = kind:refId → آخر رصيد مرحّل (Minor) — التعديل يرحّل الفرق فقط */
   openingBalances: Record<string, number>
+  /**
+   * التقييم المادي للمخزون الافتتاحي (v1.0.4): الكمية والتكلفة المسجلتان لكل صنف —
+   * القيمة الدفترية (1103) تُحسب منهما فلا يتباعد الرصيد الفعلي عن الدفتر أبداً.
+   */
+  openingItems: Record<number, OpeningItemDetail>
+  /** رأس المال المعلن (نمط QuickBooks/Odoo) — الفرق عن المحتسب يرحَّل لأرباح مرحّلة 3102 */
+  openingDeclaredCapitalMinor: number | null
   /** التسويات الشاملة (خزينة/عميل/مورد) — كل فرق مربوط بقيد 5112 */
   settlements: SettlementDoc[]
   /** مقاصات الأطراف (عميل ↔ مورد لنفس الشخص) — AUDIT-012 */
@@ -1893,6 +1900,14 @@ interface DataState {
    * يرحّل قيد الفرق فقط مقابل رأس المال 3101، فيبقى المركز المالي متزناً.
    */
   setOpeningBalance: (args: { kind: OpeningKind; refId: string | number; amountMinor: number; label: string }) => void
+  /**
+   * المخزون الافتتاحي بالتقييم المادي (كمية × تكلفة وحدة — بلاغ المالك v1.0.4):
+   * يثبّت القيمة الدفترية (1103/3101) والكمية الفعلية (stockQty) وتكلفة الصنف
+   * المرجعية معاً، والتعديل اللاحق يرحّل فرق القيمة وفرق الكمية — لا تكرار.
+   */
+  setOpeningItemStock: (args: { itemId: number; qty: number; unitCostMinor: number }) => void
+  /** إعلان رأس المال — الفرق عن المحتسب يرحَّل لأرباح مرحّلة 3102 بقيد متوازن */
+  declareOpeningCapital: (declaredMinor: number) => void
   /**
    * تسوية شاملة (نمط mobileshop): مطابقة رصيد خزينة/عميل/مورد بالواقع —
    * الفرق يضرب 5112 إجبارياً (درس عجز الـ5,000 المتبخر) ويُوثق بمستند SET-####.
@@ -3638,6 +3653,8 @@ export const useDataStore = create<DataState>()(
       wastages: [],
       consumptions: [],
       openingBalances: {},
+      openingItems: {},
+      openingDeclaredCapitalMinor: null,
       settlements: [],
       partyOffsets: [],
       exchanges: [],
@@ -3717,6 +3734,8 @@ export const useDataStore = create<DataState>()(
           set({ items: [...state.items, created] })
           return
         }
+        // v1.0.4: التقييم المادي يسجَّل مع القيمة — التعديل اللاحق يكون بفرق كمية وتكلفة
+        const createdWithDetail = { ...created }
         const lines = buildOpeningDeltaEntry('item_stock', openingValueMinor, `${OPENING_KIND_LABELS.item_stock} — ${item.nameAr}`)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -3734,9 +3753,10 @@ export const useDataStore = create<DataState>()(
           reversesEntryId: null,
         }
         set({
-          items: [...state.items, created],
+          items: [...state.items, createdWithDetail],
           journal: [...state.journal, entry],
           openingBalances: { ...state.openingBalances, [openingKey('item_stock', id)]: openingValueMinor },
+          openingItems: { ...state.openingItems, [id]: { qty: item.stockQty || 0, unitCostMinor: item.costMinor || 0 } },
         })
       },
       updateItem: (id, patch) => {
@@ -3746,6 +3766,53 @@ export const useDataStore = create<DataState>()(
         // (نافذة سريعة/قائمة أسعار) بمعامل وحدة فاسد أو باركود مكرر أو سيريال+وزن.
         const blockers = itemBlockers({ ...current, ...patch }, get().items.filter((it) => it.id !== id), id)
         if (blockers.length) throw new Error(blockers[0])
+        // v1.0.4 (بلاغ المالك — نمط العالمية): تحرير الكمية/التكلفة من بطاقة الصنف
+        // لا يغيّر قيمة المخزون صامتاً — وإلا انكسر ثابت 1103 = Σ كمية×تكلفة.
+        // بعد وجود حركات: تسوية الجرد أو شاشة الأرصدة الافتتاحية حصراً.
+        // قبل أي حركة: تعديل افتتاحي يقيد الفرق مقابل 3101 (امتداد AUDIT-005 للتحرير).
+        if (patch.stockQty != null || patch.costMinor != null) {
+          const mergedQty = patch.stockQty ?? current.stockQty ?? 0
+          const mergedCost = patch.costMinor ?? current.costMinor ?? 0
+          const oldVal = Math.round((current.stockQty ?? 0) * (current.costMinor ?? 0))
+          const newVal = Math.round(mergedQty * mergedCost)
+          if (newVal !== oldVal) {
+            const state = get()
+            const moved: string[] = []
+            if (state.purchases.some((pu) => pu.lines.some((l) => l.itemId === id))) moved.push('فواتير شراء')
+            if (state.sales.some((sl) => sl.lines.some((l) => l.itemId === id))) moved.push('فواتير بيع')
+            if (state.stocktakes.some((st) => st.result.variances.some((v) => v.itemId === id))) moved.push('تسويات جرد')
+            if (state.wastages.some((w) => w.lines.some((l) => l.itemId === id))) moved.push('مستندات إتلاف')
+            if (state.consumptions.some((c) => c.lines.some((l) => l.itemId === id))) moved.push('صرف داخلي')
+            if (state.transfers.some((t) => t.lines.some((l) => l.itemId === id))) moved.push('تحويلات مخزنية')
+            if (moved.length) {
+              throw new Error(`تعديل رصيد/تكلفة «${current.nameAr}» بعد وجود حركات (${moved.join(' و')}) يتم من تسوية الجرد أو شاشة الأرصدة الافتتاحية — حفاظاً على تطابق دفتر 1103 مع المخزون الفعلي`)
+            }
+            const delta = newVal - oldVal
+            const entryLines = buildOpeningDeltaEntry('item_stock', delta, `${OPENING_KIND_LABELS.item_stock} — ${current.nameAr} (تعديل بطاقة)`)
+            const entryId = nextId(state.journal)
+            const now = new Date().toISOString()
+            const entry: JournalEntry = {
+              id: entryId,
+              entryNumber: entryId,
+              date: now.slice(0, 10),
+              description: `تعديل افتتاحي ببطاقة الصنف: ${current.nameAr} (${mergedQty} × ${mergedCost})`,
+              sourceType: 'opening',
+              sourceId: id,
+              lines: entryLines,
+              createdBy: activeUserName(state),
+              createdAt: now,
+              reversedByEntryId: null,
+              reversesEntryId: null,
+            }
+            set((s) => ({
+              items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)),
+              journal: [...s.journal, entry],
+              openingBalances: { ...s.openingBalances, [openingKey('item_stock', id)]: newVal },
+              openingItems: { ...s.openingItems, [id]: { qty: mergedQty, unitCostMinor: mergedCost } },
+            }))
+            return
+          }
+        }
         set((s) => ({ items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) }))
       },
       removeItem: (id, approval) => {
@@ -5555,6 +5622,64 @@ export const useDataStore = create<DataState>()(
           openingBalances: { ...state.openingBalances, [key]: args.amountMinor },
           journal: [...state.journal, entry],
           ...(args.kind === 'employee_advance' ? { employeeAdvances } : {}),
+        })
+      },
+
+      setOpeningItemStock: (args) => {
+        const state = get()
+        const item = state.items.find((it) => it.id === args.itemId)
+        if (!item) throw new Error('الصنف غير موجود')
+        if (item.isService) throw new Error('الخدمات لا تدخل المخزون — سجّل قيمتها من تبويب «حسابات عامة» (مصاريف مترحلة/أصول)')
+        if (!Number.isFinite(args.qty) || args.qty < 0) throw new Error('الكمية الافتتاحية لا تكون سالبة')
+        if (!Number.isInteger(args.unitCostMinor) || args.unitCostMinor < 0) throw new Error('تكلفة الوحدة لا تكون سالبة')
+        const prev = state.openingItems[args.itemId] ?? { qty: 0, unitCostMinor: 0 }
+        const amountMinor = Math.round(args.qty * args.unitCostMinor)
+        // الكمية الفعلية تعدَّل بالفرق من المرجع الافتتاحي — لا تُستبدل (المبيعات قد تكون استهلكت جزءاً)
+        const deltaQty = Math.round((args.qty - prev.qty) * 1000) / 1000
+        const newStockQty = Math.round(((item.stockQty ?? 0) + deltaQty) * 1000) / 1000
+        if (newStockQty < 0) {
+          throw new Error(`لا يمكن تخفيض الكمية الافتتاحية دون المستهلك فعلياً (الرصيد الحالي ${item.stockQty ?? 0}) — استخدم تسوية الجرد`)
+        }
+        // القيمة الدفترية بنفس مسار الافتتاحي المتوازن (1103/3101 بفرق القيمة)
+        get().setOpeningBalance({ kind: 'item_stock', refId: args.itemId, amountMinor, label: item.nameAr })
+        // التقييم المادي: تثبيت الكمية والتكلفة المرجعية للصنف + سجل الافتتاحي المادي
+        set((s) => ({
+          items: s.items.map((it) => (it.id === args.itemId ? { ...it, stockQty: newStockQty, costMinor: args.unitCostMinor } : it)),
+          openingItems: { ...s.openingItems, [args.itemId]: { qty: args.qty, unitCostMinor: args.unitCostMinor } },
+        }))
+      },
+
+      declareOpeningCapital: (declaredMinor) => {
+        if (!Number.isInteger(declaredMinor) || declaredMinor < 0) throw new Error('رأس المال المعلن لا يكون سالباً')
+        const state = get()
+        // رصيد 3101 الدفتري الحقيقي (يشمل إعلانات سابقة) — حقوق الملكية طبيعتها دائنة
+        let capitalBalance = 0
+        for (const e of state.journal) for (const l of e.lines) {
+          if (l.accountCode === '3101') capitalBalance += l.credit - l.debit
+        }
+        const lines = buildCapitalDeclarationEntry(declaredMinor, capitalBalance)
+        if (lines.length === 0) {
+          set({ openingDeclaredCapitalMinor: declaredMinor })
+          return
+        }
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `إعلان رأس المال: ${declaredMinor} — الفرق عن الدفتر يرحَّل لأرباح مرحّلة 3102`,
+          sourceType: 'opening',
+          sourceId: null,
+          lines,
+          createdBy: activeUserName(state),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        set({
+          journal: [...state.journal, entry],
+          openingDeclaredCapitalMinor: declaredMinor,
         })
       },
 
@@ -13678,6 +13803,8 @@ export const useDataStore = create<DataState>()(
           stocktakes: s.stocktakes ?? [],
           wastages: s.wastages ?? [],
           openingBalances: s.openingBalances ?? {},
+          openingItems: s.openingItems ?? {},
+          openingDeclaredCapitalMinor: s.openingDeclaredCapitalMinor ?? null,
           settlements: s.settlements ?? [],
           exchanges: s.exchanges ?? [],
           restaurantOrders: s.restaurantOrders ?? [],
