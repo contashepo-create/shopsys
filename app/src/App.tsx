@@ -22,6 +22,7 @@ import { pathAllowedForSetup } from './core/coaVisibility.ts'
 import { labelFor } from './core/activityLabels.ts'
 import { useState } from 'react'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
+import { LegalGate, LegalPage } from './ui/LegalGate.tsx'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
 import { Dashboard } from './ui/pages/Dashboard.tsx'
 import { PermissionsPage } from './ui/pages/PermissionsPage.tsx'
@@ -277,6 +278,7 @@ function Shell() {
         <Route path="/settings/appearance" element={<AppearancePage />} />
         <Route path="/settings/einvoice" element={<EinvoicePage />} />
         <Route path="/settings/license" element={<LicensePage />} />
+        <Route path="/settings/legal" element={<LegalPage />} />
         <Route path="/settings/profile" element={<ProfilePage />} />
         <Route path="/settings/about" element={<AboutPage />} />
         <Route path="/settings/audit" element={<AuditLogPage />} />
@@ -326,11 +328,22 @@ export default function App() {
   }, [storesHydrated])
 
   const {
-    theme, setup, touchLastSeen, appearance,
+    theme, setup, touchLastSeen, appearance, legal,
     activatedKey, activatedPayload, trialStartedAt, lastSeenAt, revokedKeys,
     setCloudData, lastHourlyBackupAt, setLastHourlyBackupAt,
   } = useAppStore()
   const seed = useDataStore((s) => s.seed)
+
+  /* v1.0.8: مرساة التجربة خارج القاعدة (سطح المكتب) — مسح البيانات لا يعيد
+     التجربة: عند الإقلاع نطابق بداية التجربة مع أقدم تاريخ معروف للجهاز */
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.shopsysTrialAnchor !== 'function') return
+    void window.shopsysTrialAnchor(useAppStore.getState().trialStartedAt).then((anchor) => {
+      if (anchor.firstTrialAt < useAppStore.getState().trialStartedAt) {
+        useAppStore.setState({ trialStartedAt: anchor.firstTrialAt })
+      }
+    }).catch(() => { /* المرساة مساعدة — لا تعطل الإقلاع */ })
+  }, [])
 
   // ─── بوابة الترخيص (القرار 28): تقييم الحالة + الحرق + مطابقة النشاط ───
   const licenseState = useMemo(
@@ -576,6 +589,8 @@ export default function App() {
             <div className="text-[13px] font-black text-slate-400">تَحَكَّم — جارٍ فتح قاعدة البيانات…</div>
           </div>
         </div>
+      ) : !legal ? (
+        <><LegalGate /></>
       ) : setup.completed ? <Shell /> : <FirstRunWizard />}
       <ToastHost />
       {/* معاينة الطباعة الحية — نافذة حرة فوق كل المسارات (طلب المالك):

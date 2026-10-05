@@ -20,7 +20,14 @@ const database = {
   schemaVersion: () => ipcRenderer.invoke('database:schemaVersion'),
 }
 
-contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database })
+/* v1.0.8: إدارة مكان قاعدة البيانات والنسخ الاحتياطية المزدوجة (طلب المالك) */
+const databaseStorage = {
+  getStorageInfo: () => ipcRenderer.invoke('database:getStorageInfo'),
+  chooseDbLocation: () => ipcRenderer.invoke('database:chooseDbLocation'),
+  chooseSecondaryBackupDir: () => ipcRenderer.invoke('database:chooseSecondaryBackupDir'),
+}
+
+contextBridge.exposeInMainWorld('shopsysDesktop', { runtime: 'electron', database, databaseStorage })
 
 contextBridge.exposeInMainWorld('shopsysPrint', (html: string, silent: boolean, printerName?: string) =>
   ipcRenderer.invoke('print:print', html, silent, printerName))
@@ -40,6 +47,9 @@ contextBridge.exposeInMainWorld('shopsysUpdater', {
 
 contextBridge.exposeInMainWorld('shopsysAppInfo', () => ipcRenderer.invoke('app:info'))
 contextBridge.exposeInMainWorld('shopsysBackupNow', () => ipcRenderer.invoke('app:backupNow'))
+
+/* v1.0.8: مرساة التجربة خارج القاعدة — تمنع إعادة التجربة بمسح البيانات */
+contextBridge.exposeInMainWorld('shopsysTrialAnchor', (firstTrialAt: string) => ipcRenderer.invoke('trial:anchor', { firstTrialAt }))
 
 /* §102 — مضيف شبكة المحل: تشغيل خادم ws + أحداث الأجهزة (المنطق في المُصيّر) */
 contextBridge.exposeInMainWorld('shopsysLanHost', {

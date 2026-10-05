@@ -7,10 +7,10 @@
  *   • النسخ الدوّارة: ساعي 24 · يومي 30 · أسبوعي 12 (Backup API الساخنة)
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
 
@@ -131,12 +131,97 @@ function ensureDeviceEncryptionKey(): Buffer {
   return key
 }
 
+/* ═══ v1.0.8 (طلب المالك): قاعدة بيانات قابلة للنقل + نسخ احتياطية مزدوجة ═══
+   ملف التوجيه userData/db-location.json يحمل:
+     customDbPath       — مكان القاعدة الذي اختاره المستخدم (null = الافتراضي)
+     secondaryBackupDir — مكان النسخة الاحتياطية الثانية (null = المستندات الافتراضي)
+     lastFileBackupAt   — آخر نسخة ملفية تلقائية (إقلاع يومياً في المكانين)
+   القرص C يحمل ويندوز — نقل القاعدة لقرص آخر يحميها من الفرمتة، والنسخ
+   المزدوجة (بجوار القاعدة + مكان ثانٍ) تضاعف الأمان. */
+
+interface DbLocationConfig {
+  customDbPath: string | null
+  secondaryBackupDir: string | null
+  lastFileBackupAt: string | null
+}
+
+function dbLocationFile(): string {
+  return join(app.getPath('userData'), 'db-location.json')
+}
+
+function readDbLocation(): DbLocationConfig {
+  try {
+    const parsed = JSON.parse(readFileSync(dbLocationFile(), 'utf8')) as Partial<DbLocationConfig>
+    return {
+      customDbPath: typeof parsed.customDbPath === 'string' && parsed.customDbPath.trim() ? parsed.customDbPath : null,
+      secondaryBackupDir: typeof parsed.secondaryBackupDir === 'string' && parsed.secondaryBackupDir.trim() ? parsed.secondaryBackupDir : null,
+      lastFileBackupAt: typeof parsed.lastFileBackupAt === 'string' ? parsed.lastFileBackupAt : null,
+    }
+  } catch {
+    return { customDbPath: null, secondaryBackupDir: null, lastFileBackupAt: null }
+  }
+}
+
+function writeDbLocation(cfg: DbLocationConfig): void {
+  writeFileSync(dbLocationFile(), JSON.stringify(cfg, null, 2), 'utf8')
+}
+
+function resolveDbPath(): { dbPath: string; isCustom: boolean } {
+  const cfg = readDbLocation()
+  if (cfg.customDbPath && existsSync(dirname(cfg.customDbPath))) return { dbPath: cfg.customDbPath, isCustom: true }
+  return { dbPath: join(app.getPath('userData'), 'shopsys.db'), isCustom: false }
+}
+
+/** المكان الثاني الافتراضي للنسخ: مجلد مستندات المستخدم (يبقى مع ملفاته عند إعادة تثبيت الويندوز إن نُقلت المستندات) */
+function resolveSecondaryBackupDir(): { dir: string; isDefault: boolean } {
+  const cfg = readDbLocation()
+  if (cfg.secondaryBackupDir && existsSync(cfg.secondaryBackupDir)) return { dir: cfg.secondaryBackupDir, isDefault: false }
+  return { dir: join(app.getPath('documents'), 'Tahakom-Backups'), isDefault: true }
+}
+
+/** نسخة ملفية SQLite في المكانين: بجوار القاعدة + المكان الثاني — تُستدعى يدوياً وعند الإقلاع (يومياً) */
+async function backupDatabaseFile(tag: 'manual' | 'auto', database: ShopsysDatabase | null, dbPath: string): Promise<string[]> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const written: string[] = []
+  const targets = [
+    join(dirname(dbPath), 'backups', tag),
+    join(resolveSecondaryBackupDir().dir, tag),
+  ]
+  for (const dir of targets) {
+    try {
+      mkdirSync(dir, { recursive: true })
+      const dest = join(dir, `${tag}-${stamp}.db`)
+      if (database) await database.raw.backup(dest)
+      else copyFileSync(dbPath, dest)
+      // تنظيف: أحدث 20 نسخة لكل مكان (لا امتلاء قرص بلا نهاية)
+      const files = readdirSync(dir).filter((f) => f.endsWith('.db')).sort()
+      for (const old of files.slice(0, Math.max(0, files.length - 20))) unlinkSync(join(dir, old))
+      written.push(dest)
+    } catch (error) {
+      logLine('backup', `تعذّرت النسخة إلى ${dir}: ${(error as Error).message}`)
+    }
+  }
+  if (tag === 'auto') {
+    const cfg = readDbLocation()
+    writeDbLocation({ ...cfg, lastFileBackupAt: new Date().toISOString() })
+  }
+  return written
+}
+
 /* ── القاعدة ── */
 async function openDatabase(): Promise<ShopsysDatabase> {
-  const dbPath = join(app.getPath('userData'), 'shopsys.db')
+  const { dbPath, isCustom } = resolveDbPath()
   try {
-    const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(app.getPath('userData'), 'backups') })
-    logLine('db', `قاعدة SQLite جاهزة: ${dbPath} (مخطط ${db.schemaVersion()})`)
+    const db = await ShopsysDatabase.open(dbPath, { backupsDir: join(dirname(dbPath), 'backups') })
+    logLine('db', `قاعدة SQLite جاهزة: ${dbPath}${isCustom ? ' (مكان مخصص)' : ' (افتراضي)'} (مخطط ${db.schemaVersion()})`)
+    // v1.0.8: نسخة ملفية تلقائية يومياً في المكانين عند الإقلاع
+    const cfg = readDbLocation()
+    const lastAuto = cfg.lastFileBackupAt ? Date.parse(cfg.lastFileBackupAt) : 0
+    if (Date.now() - lastAuto > 24 * 60 * 60 * 1000) {
+      void backupDatabaseFile('auto', db, dbPath).then((files) => {
+        if (files.length) logLine('backup', `نسخة تلقائية في ${files.length} مكان: ${files.join(' | ')}`)
+      })
+    }
     return db
   } catch (error) {
     const message = (error as Error).message
@@ -296,11 +381,88 @@ function wireIpc(): void {
   }))
   ipcMain.handle('app:backupNow', async () => {
     if (!database) throw new Error('قاعدة البيانات غير مهيأة')
-    const dir = join(app.getPath('userData'), 'backups', 'manual')
-    mkdirSync(dir, { recursive: true })
-    const dest = join(dir, `manual-${new Date().toISOString().replace(/[:.]/g, '-')}.db`)
-    await database.raw.backup(dest)
-    return dest
+    // v1.0.8: النسخة اليدوية في المكانين معاً (بجوار القاعدة + المكان الثاني)
+    const written = await backupDatabaseFile('manual', database, resolveDbPath().dbPath)
+    if (!written.length) throw new Error('تعذّرت النسخة الاحتياطية — راجع صلاحيات المجلدات')
+    return written
+  })
+
+  /* v1.0.8 (طلب المالك): مرساة التجربة خارج القاعدة — مسح بيانات التطبيق من
+     الواجهة أو حذف القاعدة لا يعيد الفترة التجريبية. تُحفظ أول بداية تجربة
+     في ملف مستقل ويعاد الأقدم بينها وبين ما يرسله التطبيق. */
+  ipcMain.handle('trial:anchor', (_event, args: { firstTrialAt: string }) => {
+    const anchorPath = join(app.getPath('userData'), 'trial-anchor.json')
+    let saved: { firstTrialAt: string } | null = null
+    try { saved = JSON.parse(readFileSync(anchorPath, 'utf8')) as { firstTrialAt: string } } catch { /* أول مرة */ }
+    const incoming = typeof args?.firstTrialAt === 'string' ? args.firstTrialAt : new Date().toISOString()
+    const oldest = saved && saved.firstTrialAt < incoming ? saved.firstTrialAt : incoming
+    if (!saved || saved.firstTrialAt !== oldest) {
+      writeFileSync(anchorPath, JSON.stringify({ firstTrialAt: oldest }), 'utf8')
+    }
+    return { firstTrialAt: oldest }
+  })
+
+  /* ── v1.0.8: إدارة مكان القاعدة والنسخ (طلب المالك) ── */
+  ipcMain.handle('database:getStorageInfo', () => {
+    const { dbPath, isCustom } = resolveDbPath()
+    const secondary = resolveSecondaryBackupDir()
+    return {
+      dbPath,
+      defaultDbPath: join(app.getPath('userData'), 'shopsys.db'),
+      isCustom,
+      secondaryBackupDir: secondary.dir,
+      secondaryIsDefault: secondary.isDefault,
+      lastFileBackupAt: readDbLocation().lastFileBackupAt,
+    }
+  })
+
+  ipcMain.handle('database:chooseSecondaryBackupDir', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], title: 'اختر مجلد النسخة الاحتياطية الثانية' })
+    if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true as const }
+    const cfg = readDbLocation()
+    writeDbLocation({ ...cfg, secondaryBackupDir: result.filePaths[0] })
+    mkdirSync(result.filePaths[0], { recursive: true })
+    logLine('backup', `المكان الثاني للنسخ: ${result.filePaths[0]}`)
+    return { ok: true as const, dir: result.filePaths[0] }
+  })
+
+  /** نقل القاعدة لمجلد يختاره المستخدم: إغلاق ← نسخ ← تحديث التوجيه ← إعادة تشغيل.
+      الأصل يبقى في مكانه نسخةَ أمان حتى ينجح الإقلاع من المكان الجديد. */
+  ipcMain.handle('database:chooseDbLocation', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, { properties: ['openDirectory'], title: 'اختر مجلد حفظ قاعدة البيانات (خارج قرص C إن أمكن)' })
+    if (result.canceled || !result.filePaths[0]) return { ok: false as const, canceled: true as const }
+    const dir = result.filePaths[0]
+    const { dbPath } = resolveDbPath()
+    const dest = join(dir, 'shopsys.db')
+    if (dest === dbPath) return { ok: false as const, canceled: true as const }
+    if (existsSync(dest)) {
+      const confirm = await dialog.showMessageBox(mainWindow!, {
+        type: 'warning',
+        title: 'يوجد ملف قاعدة بهذا الاسم',
+        message: `يوجد ملف shopsys.db في المجلد المختار. سيُستبدل بنسخة قاعدتك الحالية — واصل؟`,
+        buttons: ['إلغاء', 'استبدال ونقل'],
+        defaultId: 0, cancelId: 0,
+      })
+      if (confirm.response !== 1) return { ok: false as const, canceled: true as const }
+    }
+    try {
+      if (database) { database.close(); database = null }
+      mkdirSync(dir, { recursive: true })
+      copyFileSync(dbPath, dest)
+      for (const ext of ['-wal', '-shm']) {
+        const src = dbPath + ext
+        if (existsSync(src)) copyFileSync(src, dest + ext)
+      }
+      writeDbLocation({ ...readDbLocation(), customDbPath: dest })
+      logLine('db-move', `نُقلت القاعدة إلى ${dest} — الأصل باقٍ في ${dbPath} كنسخة أمان`)
+      // ردّ الجواب أولاً ثم أعد التشغيل كي يستلمه المُصيّر
+      setTimeout(() => { app.relaunch(); app.exit(0) }, 600)
+      return { ok: true as const, newPath: dest, restarting: true as const }
+    } catch (error) {
+      const message = (error as Error).message
+      logLine('db-move-fatal', `فشل نقل القاعدة: ${message}`)
+      return { ok: false as const, error: message }
+    }
   })
 }
 

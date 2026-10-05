@@ -64,6 +64,8 @@ async function completeWizard(activityNameAr: string, shopName: string) {
   // كلمة سر المالك تُنشأ مع التسجيل (طلب المالك) — 6-32 خانة
   fireEvent.change(screen.getByPlaceholderText('6 خانات فأكثر'), { target: { value: 'Owner@2026' } })
   fireEvent.change(screen.getByPlaceholderText('أعد كتابتها'), { target: { value: 'Owner@2026' } })
+  // v1.0.8: الخطوة 5 (مكان البيانات — تحذير النسخ والمسؤولية) قبل الإنهاء
+  fireEvent.click(screen.getByText('التالي'))
   fireEvent.click(screen.getByText('🚀 ابدأ العمل'))
   // إنهاء المعالج صار غير متزامن (تجزئة كلمة السر) — انتظر اكتمال الإعداد
   await waitFor(() => expect(useAppStore.getState().setup.completed).toBe(true))
@@ -86,6 +88,8 @@ function resetApp() {
   })
   // seeded=false ليعاد بذر النشاط الجديد — محاكاة تثبيت نظيف لكل مستأجر
   useDataStore.setState({ ...useDataStore.getState(), categories: [], items: [], journal: [], seeded: false, ownerPinHash: null, currentUserId: null, loggedOut: false })
+  // v1.0.8: البوابة القانونية قبل المعالج — موافقة الاتفاقية جزء من التسجيل
+  useAppStore.getState().acceptLegal()
 }
 
 beforeEach(resetApp)

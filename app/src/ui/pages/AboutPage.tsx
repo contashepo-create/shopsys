@@ -3,7 +3,7 @@
  * Cloudflare Worker (نقطة /about) — تتحدث تلقائياً عند توفر الإنترنت
  * وتعمل بآخر نسخة محفوظة أوفلاين.
  */
-import { Info, MessageCircle, Phone, Globe, RefreshCw } from 'lucide-react'
+import { Info, MessageCircle, Phone, Globe, RefreshCw, Scale } from 'lucide-react'
 import { useState } from 'react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { fetchAbout, DEFAULT_CLOUD_BASE_URL, FALLBACK_ABOUT } from '../../core/cloud.ts'
@@ -127,6 +127,14 @@ export function AboutPage() {
 
       {/* §101: تحديث نسخة سطح المكتب (electron-updater) — مخفي في المتصفح */}
       <DesktopUpdater />
+
+      {/* v1.0.8: الاتفاقية والخصوصية — مراجعة دائمة */}
+      <button
+        onClick={() => window.location.hash = '#/settings/legal'}
+        className="anim-up w-full px-5 py-3.5 rounded-2xl border-2 border-slate-200 dark:border-slate-700 text-[13px] font-bold text-slate-600 dark:text-slate-300 hover:border-violet-400 hover:text-violet-600 transition-colors flex items-center justify-center gap-2"
+      >
+        <Scale size={16} /> مراجعة اتفاقية الاستخدام وسياسة الخصوصية
+      </button>
 
       {/* شعار المطوّر — علامة حصرية للمالك */}
       <div className={`${card} text-center space-y-2 !bg-black !border-slate-800`}>

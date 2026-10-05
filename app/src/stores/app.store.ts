@@ -15,6 +15,7 @@ import { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, type PrinterProfile
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
 import { DEFAULT_APPROVALS, type ApprovalSettings } from '../core/approvals.ts'
 import { generateDeviceId, verifyActivityChangeKey, ACTIVITY_CHANGE_COOLDOWN_DAYS, daysBetween, type LicensePayload } from '../core/license.ts'
+import { LEGAL_VERSION } from '../core/legal.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
 import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
@@ -89,6 +90,9 @@ export const INVOICE_COLUMN_LABELS: Record<keyof InvoiceColumnPrefs, string> = {
 interface AppState {
   theme: ThemeMode
   toggleTheme: () => void
+  /** v1.0.8: موافقة الاتفاقية والخصوصية (الإصدار والتاريخ) — null = لم يوافق بعد */
+  legal: { version: string; acceptedAt: string } | null
+  acceptLegal: () => void
   setup: SetupState
   fiscalYears: FiscalYear[]
   completeSetup: (data: {
@@ -287,6 +291,9 @@ export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
       theme: 'light',
+      /* v1.0.8: موافقة الاتفاقية والخصوصية — تسجل بالإصدار والتاريخ وتطلب مجدداً عند التحديث */
+      legal: null as { version: string; acceptedAt: string } | null,
+      acceptLegal: () => set({ legal: { version: LEGAL_VERSION, acceptedAt: new Date().toISOString() } }),
       toggleTheme: () => set((s) => ({ theme: s.theme === 'light' ? 'dark' : 'light' })),
       setup: {
         completed: false,

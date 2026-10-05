@@ -19,6 +19,8 @@ import { validatePinFormat, PIN_MIN_LENGTH, PIN_MAX_LENGTH } from '../../core/au
 import { hashPin } from '../../core/audit.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
+import { desktopDatabaseStorage, isElectronRuntime } from '../../data/desktopBridge.ts'
+import { HardDrive, ShieldAlert, FolderOpen } from 'lucide-react'
 import { PinInput } from '../components/ui.tsx'
 
 /** تخصصات شائعة لنشاط العيادة — والمالك حر يكتب غيرها (طلب المالك) */
@@ -33,6 +35,8 @@ const STEPS = [
   { n: 2, label: 'النشاط', icon: '🏪' },
   { n: 3, label: 'السنة المالية', icon: '📅' },
   { n: 4, label: 'بيانات المنشأة', icon: '🏢' },
+  /* v1.0.8 (طلب المالك): تحذير مكان القاعدة واختياره عند أول إنشاء */
+  { n: 5, label: 'مكان البيانات', icon: '💾' },
 ]
 
 const inputCls =
@@ -44,6 +48,9 @@ const isValidPhone = (v: string) => v.replace(/\D/g, '').length >= 7
 export function FirstRunWizard() {
   const completeSetup = useAppStore((s) => s.completeSetup)
   const [step, setStep] = useState(1)
+  /* v1.0.8: اختيار مكان قاعدة البيانات عند أول تشغيل (سطح المكتب) */
+  const storage = isElectronRuntime() ? desktopDatabaseStorage() : null
+  const [chosenDbPath, setChosenDbPath] = useState<string | null>(null)
   const [countryCode, setCountryCode] = useState('')
   const [activityId, setActivityId] = useState('')
   // تخصص الطبيب لنشاط العيادة (طلب المالك: لا تُفرض «أسنان» — اختيار أو كتابة حرة)
@@ -85,6 +92,7 @@ export function FirstRunWizard() {
     step === 1 ? !!country
     : step === 2 ? !!activity
     : step === 3 ? fyErrors.length === 0
+    : step === 5 ? true
     : companyOk
 
   const pickYear = (y: number) => {
@@ -395,6 +403,46 @@ export function FirstRunWizard() {
             </div>
           )}
 
+          {step === 5 && (
+            <div key="s5" className="anim-wizard-step space-y-4">
+              {storage ? (
+                <>
+                  <div className="rounded-2xl border-2 border-amber-400/50 bg-amber-500/[0.07] p-4 space-y-2">
+                    <div className="flex items-center gap-1.5 text-[13px] font-black text-amber-700 dark:text-amber-400"><ShieldAlert size={16} /> قبل البدء — أين ستُحفظ بيانات محلّك؟</div>
+                    <div className="text-[12.5px] text-slate-600 dark:text-slate-300 leading-relaxed space-y-1.5">
+                      <div>• الافتراضي هو قرص الويندوز <b>C</b> — <b>فرمتة الويندوز أو إعادة تثبيته تفقد كل بياناتك نهائياً</b>.</div>
+                      <div>• يُنصح بشدة باختيار مكان على قرص آخر (مثل <b dir="ltr">D:\تحكم-بيانات</b>) أو فلاشة خارجية تبقى موصولة.</div>
+                      <div>• النسخ الاحتياطية تُحفظ تلقائياً في <b>مكانين</b>: بجوار القاعدة نفسها + مجلد المستندات (<span dir="ltr">Tahakom-Backups</span>) — ويمكنك تغيير الثاني لاحقاً.</div>
+                      <div>• <b>ضياع القاعدة أو النسخ الاحتياطية مسؤوليتك الكاملة</b> — احرص دائماً على نسخة خارج الجهاز.</div>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4">
+                    <div className="text-[12px] text-slate-400 mb-1">مكان القاعدة الآن</div>
+                    <div dir="ltr" className="text-[12px] font-bold text-slate-700 dark:text-slate-200">{chosenDbPath ?? 'الافتراضي: قرص C بجانب الويندوز ⚠️'}</div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const result = await storage.chooseDbLocation()
+                        if (result.ok && result.newPath) { setChosenDbPath(result.newPath); setTimeout(() => window.location.reload(), 1200) }
+                      } catch { /* اختيار ملغى */ }
+                    }}
+                    className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-2xl border-2 border-sky-400/60 bg-sky-500/10 text-sky-700 dark:text-sky-300 font-bold text-[13px] hover:bg-sky-500/20 transition-colors"
+                  >
+                    <FolderOpen size={16} /> اختر مكاناً آخر لقاعدة البيانات (يُعاد تشغيل التطبيق)
+                  </button>
+                  <div className="text-[11px] text-slate-400 leading-relaxed">يمكنك المتابعة بالمكان الافتراضي وتغييره لاحقاً من «النسخ الاحتياطي» — لكن دون مسؤولية المطوّر عن فقدان بيانات لم تُنسخ احتياطياً.</div>
+                </>
+              ) : (
+                <div className="rounded-2xl bg-slate-50 dark:bg-slate-800/50 p-4 text-[12.5px] text-slate-600 dark:text-slate-300 leading-relaxed space-y-2">
+                  <div className="flex items-center gap-1.5 font-bold"><HardDrive size={15} /> بياناتك في نسخة المتصفح تُحفظ داخل هذا المتصفح على هذا الجهاز</div>
+                  <div>• مسح بيانات المتصفح أو إعادة تثبيت الويندوز <b>يفقد كل البيانات</b> — استخدم «نسخة احتياطية» باستمرار واحفظها خارج الجهاز.</div>
+                  <div>• <b>ضياع النسخ الاحتياطية مسؤوليتك الكاملة</b>.</div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* أزرار التنقل */}
           <div className="flex items-center justify-between mt-6 pt-5 border-t border-slate-100 dark:border-slate-800">
             <button
@@ -405,11 +453,11 @@ export function FirstRunWizard() {
             </button>
             <button
               disabled={!canNext}
-              onClick={() => (step === 4 ? void finish() : setStep((s) => s + 1))}
+              onClick={() => (step === 5 ? void finish() : setStep((s) => s + 1))}
               className="group flex items-center gap-2 px-7 py-2.5 rounded-xl text-sm font-bold text-white bg-gradient-to-l from-brand-600 to-fuchsia-600 shadow-lg shadow-brand-500/30 transition-all duration-200 hover:scale-105 hover:shadow-xl active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
             >
-              {step === 4 ? '🚀 ابدأ العمل' : 'التالي'}
-              {step < 4 && <ChevronLeft size={16} className="transition-transform duration-200 group-hover:-translate-x-1" />}
+              {step === 5 ? '🚀 ابدأ العمل' : 'التالي'}
+              {step < 5 && <ChevronLeft size={16} className="transition-transform duration-200 group-hover:-translate-x-1" />}
             </button>
           </div>
         </div>

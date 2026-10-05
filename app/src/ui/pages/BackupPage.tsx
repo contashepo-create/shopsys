@@ -4,12 +4,13 @@
  * نفس صيغة الملف ستُستخدم لاحقاً للنسخ اليومي عبر بوت التليجرام.
  */
 import { useRef, useState } from 'react'
-import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock, FileSpreadsheet, FileText } from 'lucide-react'
+import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock, FileSpreadsheet, FileText, HardDrive, FolderOpen, ShieldAlert } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupSummary } from '../../core/backup.ts'
 import { BACKUP_INTERVAL_CHOICES } from '../../core/security.ts'
 import { appStorage, settingsAppStorage } from '../../data/persistentStorage.ts'
+import { desktopDatabaseStorage, desktopBackupNow, isElectronRuntime } from '../../data/desktopBridge.ts'
 import { Btn, useToast } from '../components/ui.tsx'
 import { buildFullExportSheets, sheetsToExcelXml, sheetToCsv, downloadTextFile, exportFileName, type ExportSheet } from '../../core/fullExport.ts'
 
@@ -102,6 +103,23 @@ export function BackupPage() {
   /* ─── التصدير الشامل (طلب المالك v1.0.6): Excel متعدد الأوراق + CSV لكل جدول ───
      يُبنى من المتجر الحي مباشرة — بلا قراءة تخزين — فلا يتأثر بفرق بيئة الويب/سطح المكتب */
   const [exportSheets, setExportSheets] = useState<ExportSheet[] | null>(null)
+  /* ─── v1.0.8 (طلب المالك): مكان قاعدة البيانات + النسخ المزدوجة — سطح المكتب ─── */
+  const storage = desktopDatabaseStorage()
+  const [storageInfo, setStorageInfo] = useState<Awaited<ReturnType<NonNullable<typeof storage>['getStorageInfo']>> | null>(null)
+  const [movingDb, setMovingDb] = useState(false)
+  const [fileBackupBusy, setFileBackupBusy] = useState(false)
+  const refreshStorage = async () => { if (storage) { try { setStorageInfo(await storage.getStorageInfo()) } catch { /* الجسر القديم */ } } }
+  if (storage && storageInfo == null) void refreshStorage()
+  const takeFileBackup = async () => {
+    const backup = desktopBackupNow()
+    if (!backup) return toast.show('النسخة الملفية متاحة في نسخة سطح المكتب فقط', 'error')
+    setFileBackupBusy(true)
+    try {
+      const files = await backup()
+      toast.show(`أُخذت نسخة ملفية في ${files.length} مكان ✓ (${files.map((f) => f.split(/[\\/]/).slice(-2, -1)[0] + '/' + f.split(/[\\/]/).pop()).join(' و ')})`)
+      await refreshStorage()
+    } catch (err) { toast.show((err as Error).message, 'error') } finally { setFileBackupBusy(false) }
+  }
   const exportAll = () => {
     const sheets = buildFullExportSheets(useDataStore.getState() as unknown as Record<string, unknown>)
     setExportSheets(sheets)
@@ -201,6 +219,83 @@ export function BackupPage() {
           للنسخ الكاملة القابلة للاستعادة استخدم «نسخة احتياطية كاملة» أعلاه.
         </div>
       </div>
+
+      {/* v1.0.8: مكان القاعدة والنسخ المزدوجة (طلب المالك) — سطح المكتب فقط */}
+      {isElectronRuntime() && (
+        <div className={`anim-up ${card} space-y-4 lg:col-span-2`} style={{ animationDelay: '50ms' }}>
+          <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+            <HardDrive size={17} className="text-sky-600" /> مكان قاعدة البيانات والنسخ الاحتياطية
+          </div>
+
+          <div className="rounded-2xl border-2 border-amber-400/40 bg-amber-500/[0.06] p-4 space-y-2">
+            <div className="flex items-center gap-1.5 text-[12.5px] font-bold text-amber-700 dark:text-amber-400">
+              <ShieldAlert size={15} /> تحذير مهم — اقرأه بعناية
+            </div>
+            <div className="text-[12px] text-slate-600 dark:text-slate-300 leading-relaxed space-y-1.5">
+              <div>• قاعدة البيانات على <b>قرص C</b> مع الويندوز: <b>فرمتة الويندوز أو إعادة تهيئته = فقدان كل بياناتك</b>. يُنصح بشدة باختيار مكان على قرص آخر (D أو E أو فلاشة خارجية تبقى موصولة).</div>
+              <div>• النسخ الاحتياطية تُحفظ تلقائياً في <b>مكانين مختلفين</b>:
+                <b> الأول</b> بجوار القاعدة نفسها{storageInfo ? <> (<span dir="ltr" className="text-[11px]">{storageInfo.dbPath.split(/[\\/]/).slice(0, -1).join(' \\ ')}</span>)</> : null}،
+                و<b>الثاني</b> في{storageInfo ? <> <span dir="ltr" className="text-[11px]">{storageInfo.secondaryBackupDir}</span></> : ' مجلد المستندات (Tahakom-Backups)'}.
+              </div>
+              <div>• <b>ضياع النسخ الاحتياطية أو القاعدة مسؤوليتك الكاملة</b> — احرص على حفظ نسخة خارج الجهاز (فلاشة/سحابة) من زر التنزيل أعلاه، فلا يمكن استعادة بيانات لا نسخة منها.</div>
+            </div>
+          </div>
+
+          {storageInfo && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3.5">
+                <div className="text-[11px] text-slate-400 mb-1">مكان القاعدة الحالي {storageInfo.isCustom ? '(مخصص — خارج قرص الويندوز ✓)' : '(الافتراضي — على قرص الويندوز ⚠️)'}</div>
+                <div dir="ltr" className="text-[11.5px] font-bold text-slate-700 dark:text-slate-200 break-all">{storageInfo.dbPath}</div>
+              </div>
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3.5">
+                <div className="text-[11px] text-slate-400 mb-1">النسخة الاحتياطية الثانية {storageInfo.secondaryIsDefault ? '(الافتراضي — المستندات)' : '(مكانك المخصص)'}</div>
+                <div dir="ltr" className="text-[11.5px] font-bold text-slate-700 dark:text-slate-200 break-all">{storageInfo.secondaryBackupDir}</div>
+              </div>
+            </div>
+          )}
+
+          {storageInfo && (
+            <div className="text-[11px] text-slate-400">
+              {storageInfo.lastFileBackupAt
+                ? <>آخر نسخة ملفية تلقائية: <b dir="ltr">{storageInfo.lastFileBackupAt.slice(0, 16).replace('T', ' ')}</b> — تُؤخذ تلقائياً مرة يومياً عند فتح التطبيق.</>
+                : 'تُؤخذ نسخة ملفية تلقائية مرة يومياً عند فتح التطبيق (في المكانين معاً).'}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Btn variant="ghost" onClick={takeFileBackup} disabled={fileBackupBusy}>
+              <DatabaseBackup size={15} /> {fileBackupBusy ? 'جارٍ أخذ النسخة…' : 'نسخة ملفية فورية في المكانين'}
+            </Btn>
+            {storage && (
+              <>
+                <Btn variant="ghost" disabled={movingDb} onClick={async () => {
+                  setMovingDb(true)
+                  try {
+                    const result = await storage.chooseDbLocation()
+                    if (result.ok && result.restarting) {
+                      toast.show(`نُقلت القاعدة إلى المكان الجديد — سيُعاد تشغيل التطبيق الآن ✓`)
+                      setTimeout(() => window.location.reload(), 1500)
+                    } else if (!result.ok && result.error) toast.show(result.error, 'error')
+                  } catch (err) { toast.show((err as Error).message, 'error') } finally { setMovingDb(false) }
+                }}>
+                  <FolderOpen size={15} /> تغيير مكان قاعدة البيانات…
+                </Btn>
+                <Btn variant="ghost" onClick={async () => {
+                  try {
+                    const result = await storage.chooseSecondaryBackupDir()
+                    if (result.ok && result.dir) { toast.show(`مكان النسخة الثانية الآن: ${result.dir} ✓`); await refreshStorage() }
+                  } catch (err) { toast.show((err as Error).message, 'error') }
+                }}>
+                  <FolderOpen size={15} /> تغيير مكان النسخة الثانية…
+                </Btn>
+              </>
+            )}
+          </div>
+          <div className="text-[11px] text-slate-400 leading-relaxed">
+            تغيير مكان القاعدة: يُغلق الاتصال بأمان، تُنسخ القاعدة كاملة للمكان الجديد (الأصل يبقى نسخة أمان)، ثم يُعاد تشغيل التطبيق تلقائياً.
+          </div>
+        </div>
+      )}
 
       {/* استعادة */}
       <div className={`anim-up ${card} space-y-4`} style={{ animationDelay: '80ms' }}>

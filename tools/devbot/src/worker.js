@@ -86,6 +86,16 @@ async function sendTelegram(cfg, chatId, text, opts = {}) {
   })
 }
 
+/* v1.0.8 (طلب المالك): سجل لكل جهاز — التفعيل/التجديد/تغيير النشاط — append بحد 200 حدث */
+async function appendDeviceLog(cfg, deviceId, text) {
+  if (!deviceId) return
+  const key = `log:${deviceId}`
+  let log = []
+  try { log = JSON.parse((await cfg.kv.get(key)) ?? '[]') } catch { log = [] }
+  log.push({ at: new Date().toISOString().slice(0, 16).replace('T', ' '), text })
+  await cfg.kv.put(key, JSON.stringify(log.slice(-200)))
+}
+
 async function handleUpdate(update, cfg) {
   const msg = update.message
   if (!msg || !msg.text) return null
@@ -101,6 +111,52 @@ async function handleUpdate(update, cfg) {
     switch (cmd) {
       case '/start': case '/بدء': case '/مساعدة': return { chatId, text: HELP }
 
+      /* v1.0.8: لوحة متطورة — العملاء، ربط بريد بفحص تكرار، سجل جهاز */
+      case '/عملاء': case '/customers': {
+        const list = await cfg.kv.list({ prefix: 'dev:' })
+        if (!list.keys.length) return { chatId, text: 'لا عملاء مسجلين بعد' }
+        const lines = []
+        for (const k of list.keys.slice(0, 100)) {
+          const raw = await cfg.kv.get(k.name)
+          if (!raw) continue
+          const d = JSON.parse(raw)
+          lines.push(`• <code>${k.name.slice(4)}</code> — ${d.customer ?? '؟'} · ${d.plan ?? '؟'} · حتى ${d.expiresAt ?? 'الحياة'}${d.email ? ` · ${d.email}` : ''}`)
+        }
+        return { chatId, text: `👥 <b>العملاء (${lines.length})</b>\n${lines.join('\n')}` }
+      }
+
+      case '/عميل': case '/customer': {
+        // /عميل <deviceId> <بريد> — ربط البريد بالجهاز مع منع تكرار البريد بين الأجهزة
+        const [deviceId, email] = args
+        if (!deviceId || !email || !/^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(deviceId)) {
+          return { chatId, text: '⚠️ الصيغة: <code>/عميل SHOP-XXXX-XXXX-XXXX email@example.com</code>' }
+        }
+        const mail = email.toLowerCase().trim()
+        const existing = await cfg.kv.get(`email:${mail}`)
+        if (existing && existing !== deviceId) {
+          return { chatId, text: `⚠️ البريد <code>${mail}</code> مسجل بالفعل للجهاز <code>${existing}</code> — لا تكرار: عميل واحد ببريد واحد` }
+        }
+        const raw = await cfg.kv.get(`dev:${deviceId}`)
+        if (!raw) return { chatId, text: `⚠️ الجهاز <code>${deviceId}</code> غير مشترك — أصدر له مفتاحاً أولاً` }
+        const d = JSON.parse(raw)
+        d.email = mail
+        await cfg.kv.put(`dev:${deviceId}`, JSON.stringify(d))
+        await cfg.kv.put(`email:${mail}`, deviceId)
+        await appendDeviceLog(cfg, deviceId, `ربط البريد ${mail}`)
+        return { chatId, text: `✅ رُبط <code>${deviceId}</code> (${d.customer ?? '؟'}) بالبريد ${mail}` }
+      }
+
+      case '/سجل': case '/log': {
+        const deviceId = arg(0)
+        if (!deviceId || !/^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(deviceId)) {
+          return { chatId, text: '⚠️ الصيغة: <code>/سجل SHOP-XXXX-XXXX-XXXX</code>' }
+        }
+        const raw = await cfg.kv.get(`log:${deviceId}`)
+        if (!raw) return { chatId, text: 'لا سجل لهذا الجهاز بعد' }
+        const log = JSON.parse(raw)
+        return { chatId, text: `📋 <b>سجل ${deviceId}</b>\n${log.map((e) => `${e.at} — ${e.text}`).join('\n')}` }
+      }
+
       /* v1.0.7 (موافقة المالك): مفتاح تغيير نشاط لعميل محدد — التغيير في
          التطبيق يتم بهذا المفتاح الموقّع فقط، والمستخدم لا يغيّر نشاطه بنفسه.
          /مفتاح_نشاط <deviceId> <من النشاط> <إلى النشاط> */
@@ -115,6 +171,7 @@ async function handleUpdate(update, cfg) {
         const key = await issueActivityChangeKey(payload, cfg.priv)
         const fp = keyFingerprint(key)
         await cfg.kv.put(`actkey:${fp}`, JSON.stringify({ payload, issuedAt: payload.issuedAt }))
+        await appendDeviceLog(cfg, deviceId, `تغيير النشاط: ${fromId} ← ${toId}`)
         return {
           chatId,
           text: [
@@ -152,6 +209,7 @@ async function handleUpdate(update, cfg) {
         await cfg.kv.put(`dev:${deviceId}`, JSON.stringify({
           plan, expiresAt: payload.expiresAt, customer: payload.customer, message: '', fingerprint: fp,
         }))
+        await appendDeviceLog(cfg, deviceId, `تفعيل ${plan} حتى ${payload.expiresAt ?? 'الحياة'} — ${payload.customer}`)
         return {
           chatId,
           text: [
