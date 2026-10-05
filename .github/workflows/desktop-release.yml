@@ -106,9 +106,9 @@ jobs:
           gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" -F body=@/tmp/comment.md
 
       # v1.0.15: إعادة نشر الوسم (إعادة تشغيل/وسم مكرر) كانت تصطدم بأصول
-      # قديمة فيفشل النشر بعد رفع المثنت كاملاً — نُفرغ أصول الإصدار أولاً
+      # قديمة فيفشل النشر بعد رفع المثبت كاملاً — نُفرغ أصول الإصدار أولاً.
+      # بلا always: فشل الفحوص لا يمسّ أصول إصدار قائم أبداً
       - name: تنظيف أصول الإصدار السابقة (ضد تعارض إعادة النشر)
-        if: always()
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -122,6 +122,7 @@ jobs:
           done
 
       - name: بناء المثبت ونشره
+        id: build
         run: npm run desktop:publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -130,9 +131,10 @@ jobs:
       # (exe في أحدهما وlatest.yml/blockmap في الآخر) — هذه الخطوة توحّدهما:
       # تحذف الإصدارات المكررة ثم ترفع latest.yml وblockmap لإصدار الوسم الرئيسي.
       - name: توحيد أصول الإصدار (latest.yml للتحديث التلقائي)
-        # v1.0.15: always — فشل جزئي بنشر electron-builder (المثبت رُفع
-        # وlatest.yml تعثر) لم يعد يترك الإصدار ناقصاً؛ هنا يُكمل النشر
-        if: always()
+        # v1.0.15: فشل جزئي بنشر electron-builder (المثبت رُفع وlatest.yml
+        # تعثر) لم يعد يترك الإصدار ناقصاً — لكنها لا تعمل إلا إذا حاول
+        # البناء فعلاً: فشل الفحوص لا يعبث بإصدار قائم
+        if: always() && steps.build.conclusion != 'skipped'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
