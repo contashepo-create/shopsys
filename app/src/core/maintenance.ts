@@ -277,3 +277,29 @@ export function isTicketOverdue(
   if (ticket.status === 'delivered' || ticket.status === 'cancelled') return false
   return nowIso > ticket.promisedAt
 }
+
+/* ─── سد الفجوة العالمية 3: إشعار العميل بحالة التذكرة (نمط RepairShopr SMS) ───
+   الواتساب هو القناة المصرية الفعلية — بلا وسيط وبلا سحابة: يفتح محادثة
+   جاهزة برقم العميل برسالة مبنية من حالة التذكرة. */
+export function buildTicketStatusMessage(
+  ticket: { ticketNumber: string; customerName: string; deviceName: string; status: TicketStatus; estimateMinor: number; promisedAt?: string },
+  shopName: string,
+): string {
+  const estimate = ticket.estimateMinor > 0 ? ` والتكلفة المقدرة ${(ticket.estimateMinor / 100).toLocaleString('en-US')} ج.م` : ''
+  const promised = ticket.promisedAt ? ` موعد التسليم المتوقع: ${ticket.promisedAt.slice(0, 16).replace('T', ' ')}.` : ''
+  const statusLine: Record<TicketStatus, string> = {
+    received: `استلمنا جهازك (${ticket.deviceName}) برقم أمر ${ticket.ticketNumber}${estimate}. سنبلغك بأي مستجد.`,
+    in_progress: `جهازك (${ticket.deviceName}) — أمر ${ticket.ticketNumber} — تحت الصيانة الآن${estimate}.`,
+    ready: `✅ جهازك (${ticket.deviceName}) — أمر ${ticket.ticketNumber} — جاهز للتسليم.${estimate} نتشرف بزيارتك.`,
+    delivered: `تم تسليم جهازك (${ticket.deviceName}) — أمر ${ticket.ticketNumber}. شكراً لثقتكم بـ${shopName} 🌟`,
+    cancelled: `أُلغي أمر الصيانة ${ticket.ticketNumber} (${ticket.deviceName}). إن كان ذلك بالخطأ تواصل معنا.`,
+  }
+  return `عميلنا العزيز ${ticket.customerName}،\n${statusLine[ticket.status]}${promised}\n— ${shopName}`
+}
+
+/** رابط واتساب جاهز برقم العميل ورسالة الحالة — رقم مصري 01xxxxxxxxx أو دولي بلا + */
+export function ticketWhatsappLink(phone: string, message: string): string {
+  const digits = phone.replace(/\D/g, '')
+  const intl = digits.startsWith('0') ? `2${digits}` : digits // مصر: 20 + الرقم بلا الصفر
+  return `https://wa.me/${intl}?text=${encodeURIComponent(message)}`
+}

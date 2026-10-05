@@ -29,6 +29,7 @@ export type BusinessModule =
   | 'jewelry' // الصاغة: سعر الجرام اليومي والمصنعية والكسر
   | 'wallet_services' // خدمات المحافظ والدفع الإلكتروني (نمط mobileshop): ربح = المحصَّل − المدفوع للمزوّد
   | 'laundry' // المغاسل: أوامر غسيل بقطع وخدمات وعربون (وحدة مستقلة — ليست صيانة)
+  | 'booking' // المواعيد والحجوزات (سد الفجوة العالمية 1 — نمط Fresha/Booksy): صالون/معمل/مغسلة
   | 'processing' // التجهيز والتفكيك: ذبيحة→أجزاء (جزارة) أو محصول→درجات (تمور) بتوزيع تكلفة بالقيمة البيعية
   | 'realestate' // العقارات: إيجار وبيع وإدارة أملاك بسعي (خصوصاً السعودية — سند/الوسيط/سمات)
 
@@ -116,7 +117,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     id: 'lab', nameAr: 'معمل تحاليل طبية', icon: '🔬',
     description: 'مرضى وفحوصات ونطاقات مرجعية، عمولات أطباء محيلين (بلا مخازن ولا كاشير)',
     features: [],
-    modules: ['lab'],
+    modules: ['lab', 'booking'],
     taxInclusiveDefault: false, defaultInvoiceTemplate: 'a4',
   },
   {
@@ -161,7 +162,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     id: 'laundry', nameAr: 'مغسلة ملابس', icon: '🧺',
     description: 'أوامر غسيل بقطع وخدمات (غسيل/كي/دراي كلين) وعربون: استلام ← تجهيز ← تسليم وتحصيل',
     features: [],
-    modules: ['laundry'],
+    modules: ['laundry', 'booking'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
@@ -185,7 +186,7 @@ export const ACTIVITY_TEMPLATES: ActivityTemplate[] = [
     id: 'salon', nameAr: 'صالون حلاقة وتجميل', icon: '💈',
     description: 'خدمات بلا مخزون + منتجات عناية، مواعيد وعمولات موظفين',
     features: ['price_lists'],
-    modules: ['pos', 'inventory', 'purchases'],
+    modules: ['pos', 'inventory', 'purchases', 'booking'],
     taxInclusiveDefault: true, defaultInvoiceTemplate: 'thermal',
   },
   {
@@ -357,9 +358,10 @@ export const MODULE_LABELS: Record<BusinessModule, { nameAr: string; icon: strin
   jewelry: { nameAr: 'الصاغة', icon: '💍', desc: 'سعر الجرام اليومي بالعيار، مصنعية منفصلة، وشراء وبيع الكسر FIFO' },
   wallet_services: { nameAr: 'خدمات المحافظ', icon: '📲', desc: 'تحويل رصيد ودفع إلكتروني وفواتير — الربح آلياً: المحصَّل − المدفوع للمزوّد' },
   laundry: { nameAr: 'المغسلة', icon: '🧺', desc: 'أوامر غسيل بقطع وخدمات وعربون — استلام وتجهيز وتسليم بقيود سليمة' },
+  booking: { nameAr: 'المواعيد والحجوزات', icon: '📅', desc: 'حجز مواعيد العملاء بيوم ووقت ومدة وحالة — تحذير التداخل وإحصاءات اليوم (بلا قيود: الدفع عند البيع)' },
   processing: { nameAr: 'التجهيز والتفكيك', icon: '🔪', desc: 'ذبيحة → أجزاء أو محصول → درجات: توزيع التكلفة بالقيمة البيعية وفاقد موثق ونسب تصافٍ' },
   realestate: { nameAr: 'العقارات', icon: '🏘️', desc: 'عقارات ووحدات وعقود إيجار بأقساط وتأمينات، سعي إدارة أملاك الغير، وبيع العقارات المملوكة' },
 }
 
 /** ترتيب عرض الوحدات في شاشة الإعدادات */
-export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate']
+export const ALL_MODULES: BusinessModule[] = ['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate']

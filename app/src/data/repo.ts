@@ -58,6 +58,7 @@ import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalC
 import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateDocumentCharges, type DocumentCharge } from '../core/documentCharges.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
+import { validateBooking, bookingConflicts, type Booking, type BookingStatus } from '../core/booking.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
@@ -1556,6 +1557,8 @@ interface DataState {
   insuranceProviders: InsuranceProvider[] // جهات تأمين وتعاقد بنسب تحمل
   insuranceClaims: InsuranceClaim[] // مطالبات تتجمع حتى التحصيل
   variantStocks: VariantStock[] // مصفوفة مخزون لون×مقاس (دفتر فرعي لرصيد الصنف)
+  /** مواعيد العملاء (وحدة booking — الصالون/المعمل/المغسلة): بلا قيود، الدفع عند البيع */
+  bookings: Booking[]
   tickets: MaintenanceTicket[]
   /** كتالوج خدمات الصيانة بتكلفة وسعر بيع (الأمر 23) */
   maintenanceServices: MaintenanceService[]
@@ -2528,6 +2531,11 @@ interface DataState {
   collectFromPatient: (patientId: number, amountMinor: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => ClinicCollection
   /** رصيد المريض الحالي (المتبقي عليه) */
   getPatientBalance: (patientId: number) => number
+  /* ─── المواعيد والحجوزات (وحدة booking) ─── */
+  addBooking: (b: Omit<Booking, 'id' | 'status' | 'createdAt'> & { allowConflict?: boolean }) => { booking: Booking; conflicts: Booking[] }
+  setBookingStatus: (id: number, status: BookingStatus) => void
+  updateBooking: (id: number, patch: Partial<Omit<Booking, 'id'>>) => { conflicts: Booking[] }
+  deleteBooking: (id: number) => void
   addAppointment: (a: Omit<ClinicAppointment, 'id' | 'done'>) => ClinicAppointment
   markAppointmentDone: (id: number) => void
   /* ─── معرض السيارات (القرار 27) ─── */
@@ -3629,6 +3637,7 @@ export const useDataStore = create<DataState>()(
       insuranceClaims: [],
       variantStocks: [],
       tickets: [],
+      bookings: [],
       maintenanceServices: [],
       walletOps: [],
       loyaltyRedemptions: [],
@@ -11843,6 +11852,35 @@ export const useDataStore = create<DataState>()(
           [...state.clinicCollections.filter((c) => c.patientId === patientId).map((c) => ({ amountMinor: c.amountMinor })), ...creditRefunds],
         )
       },
+      /* ─── المواعيد والحجوزات (سد الفجوة العالمية 1) ─── */
+      addBooking: (b) => {
+        const errors = validateBooking(b)
+        if (errors.length) throw new Error(errors[0])
+        const state = get()
+        const conflicts = bookingConflicts(state.bookings, b)
+        if (conflicts.length && !b.allowConflict) {
+          return { booking: { ...b, id: -1, status: 'scheduled', createdAt: '' }, conflicts }
+        }
+        const booking: Booking = { ...b, id: nextId(state.bookings), status: 'scheduled', createdAt: new Date().toISOString() }
+        set({ bookings: [...state.bookings, booking] })
+        return { booking, conflicts }
+      },
+      setBookingStatus: (id, status) => {
+        set((s) => ({ bookings: s.bookings.map((b) => (b.id === id ? { ...b, status } : b)) }))
+      },
+      updateBooking: (id, patch) => {
+        const state = get()
+        const merged = { ...state.bookings.find((b) => b.id === id)!, ...patch }
+        const errors = validateBooking(merged)
+        if (errors.length) throw new Error(errors[0])
+        const conflicts = bookingConflicts(state.bookings, merged, id)
+        set({ bookings: state.bookings.map((b) => (b.id === id ? merged : b)) })
+        return { conflicts }
+      },
+      deleteBooking: (id) => {
+        set((s) => ({ bookings: s.bookings.filter((b) => b.id !== id) }))
+      },
+
       addAppointment: (a) => {
         const state = get()
         if (!state.clinicPatients.some((p) => p.id === a.patientId)) throw new Error('المريض غير مسجل')
@@ -13793,6 +13831,7 @@ export const useDataStore = create<DataState>()(
             salePaidMinor: car.salePaidMinor ?? (car.salePayment === 'cash' ? (car.saleTotalMinor ?? car.salePriceMinor ?? 0) : 0),
           })),
           // الأمر 23: تذاكر قديمة إجمالياتها بلا حقول الخدمات/التحصيل المجزأ/الربح — تُستكمل بأمان
+          bookings: s.bookings ?? [],
           tickets: (s.tickets ?? []).map((t: MaintenanceTicket) => {
             if (!t.totals || t.totals.paidMinor != null) return t
             const tot = t.totals

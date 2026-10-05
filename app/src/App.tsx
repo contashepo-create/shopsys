@@ -107,6 +107,7 @@ import { RestaurantOrdersPage } from './ui/pages/RestaurantOrdersPage.tsx'
 import { installErrorHooks, logEvent } from './core/applog.ts'
 import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
 import { LaundryPage } from './ui/pages/LaundryPage.tsx'
+import { BookingsPage } from './ui/pages/BookingsPage.tsx'
 import { TransfersPage } from './ui/pages/TransfersPage.tsx'
 import { AppearancePage } from './ui/pages/AppearancePage.tsx'
 import { TelegramPage } from './ui/pages/TelegramPage.tsx'
@@ -225,6 +226,7 @@ function Shell() {
         <Route path="/parties/installments" element={<InstallmentsPage />} />
         <Route path="/maintenance/tickets" element={<MaintenancePage />} />
         <Route path="/laundry/orders" element={<LaundryPage />} />
+        <Route path="/bookings" element={<BookingsPage />} />
         <Route path="/rental/fleet" element={<EquipmentPage />} />
         <Route path="/rental/invoices" element={<RentalInvoicesPage />} />
         <Route path="/rental/contracts" element={<RentalContractsPage />} />

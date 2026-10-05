@@ -33,7 +33,7 @@ const env_ = env => ({
 const PLANS = new Set(['trial', 'basic', 'pro', 'lifetime'])
 const FEATURES = new Set(['multi_branch', 'multi_instance', 'lan_host', 'reports_pro', 'custom_modules'])
 /* v1.0.10: الوحدات الـ17 القابلة للمنح بمفتاح موقّع (extraModules — عقد إضافة قسم خارج النشاط) */
-const MODULES = new Set(['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate'])
+const MODULES = new Set(['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate'])
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, OPTIONS',

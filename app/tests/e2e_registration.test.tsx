@@ -172,7 +172,7 @@ describe('تسجيل حقيقي لكل نشاط + عزل الأقسام (Feature
     render(<App />)
     await completeWizard('معمل تحاليل طبية', 'معمل ب')
     const mods = useAppStore.getState().setup.modules
-    expect(mods).toEqual(['lab'])
+    expect(mods).toEqual(['lab', 'booking']) // v1.0.11: المعمل يضم المواعيد والحجوزات
     expect(mods).not.toContain('contracting')
     const sb = sidebar()
     expect(sb.queryAllByText('معمل التحاليل').length).toBeGreaterThan(0)

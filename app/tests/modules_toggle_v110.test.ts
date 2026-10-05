@@ -44,7 +44,7 @@ describe('إدارة الأقسام — قسم إضافي لأي نشاط (v1.0.
   })
 
   it('كل الوحدات الـ17 معرفة بوصف عربي — والبطاقة تعرضها جميعاً (المعالج يثق بها)', () => {
-    expect(ALL_MODULES.length).toBe(17)
+    expect(ALL_MODULES.length).toBe(18) // v1.0.11: أُضيفت وحدة booking (المواعيد)
     for (const m of ALL_MODULES) {
       expect(MODULE_LABELS[m].nameAr.length).toBeGreaterThan(1)
       expect(MODULE_LABELS[m].desc.length).toBeGreaterThan(5)

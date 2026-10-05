@@ -150,6 +150,12 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    id: 'booking', nameAr: 'المواعيد والحجوزات', icon: CalendarClock, color: 'sky', module: 'booking',
+    children: [
+      { id: 'today', nameAr: 'مواعيد اليوم', icon: CalendarClock, path: '/bookings' },
+    ],
+  },
+  {
     id: 'wallets', nameAr: 'خدمات المحافظ', icon: Smartphone, color: 'fuchsia', module: 'wallet_services',
     children: [
       { id: 'wallet-ops', nameAr: 'عمليات المحافظ والدفع', icon: Smartphone, path: '/wallets/ops' },
