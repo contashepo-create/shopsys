@@ -9,6 +9,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { accountBalance, STANDARD_COA } from '../../core/ledger.ts'
+import { bookingsForDate, BOOKING_STATUS_LABELS } from '../../core/booking.ts'
 import { Link } from 'react-router-dom'
 import { collectBusinessAlerts } from '../../core/alerts.ts'
 import { collectAlerts as collectInstallmentAlerts } from '../../core/installments.ts'
@@ -20,7 +21,7 @@ import { UsersRound } from 'lucide-react'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements } = useDataStore()
+  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements, bookings } = useDataStore()
   /* جسور الحضور (جولة «اكمل ونفذ»): حضور اليوم وأسماء الغائبين بلا إجازة */
   const { employees, attendanceRecords, leaveRequests, employeeShifts, hrRules } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
@@ -154,8 +155,33 @@ export function Dashboard() {
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'صباح الخير' : hour < 18 ? 'مساء الخير' : 'مساء الخير'
 
+  /* v1.0.12 (اقتراح منفذ): بطاقة مواعيد اليوم — لوحدة المواعيد المفعّلة فقط */
+  const bookingEnabled = setup.modules.includes('booking')
+  const todayBookings = useMemo(() => (bookingEnabled ? bookingsForDate(bookings, new Date().toISOString().slice(0, 10)) : []), [bookingEnabled, bookings])
+  const upcomingToday = todayBookings.filter((b) => b.status === 'scheduled').slice(0, 4)
+
   return (
     <div className="space-y-6">
+      {bookingEnabled && todayBookings.length > 0 && (
+        <div className="anim-up rounded-3xl border-2 border-sky-400/40 bg-sky-500/[0.06] p-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2 font-extrabold text-sky-700 dark:text-sky-300">
+              📅 مواعيد اليوم — {todayBookings.filter((b) => b.status === 'scheduled').length} محجوزاً
+              {todayBookings.some((b) => b.status === 'no_show') ? <span className="text-[11px] font-bold text-amber-600">· {todayBookings.filter((b) => b.status === 'no_show').length} لم يحضر</span> : null}
+            </div>
+            <Link to="/bookings" className="text-[12px] font-bold text-sky-600 hover:underline">كل المواعيد ←</Link>
+          </div>
+          {upcomingToday.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {upcomingToday.map((b) => (
+                <span key={b.id} className="rounded-xl bg-white/70 dark:bg-slate-800/70 px-3 py-1.5 text-[12px]" title={`${b.serviceName}${b.notes ? ` — ${b.notes}` : ''}`}>
+                  <b dir="ltr">{b.time}</b> · {b.customerName} <span className="text-slate-400">({BOOKING_STATUS_LABELS[b.status]})</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {/* رأس الترحيب — هوية النشاط */}
       <div className={`anim-up relative overflow-hidden rounded-3xl border bg-gradient-to-l ${persona.hero} px-6 py-5`}>
         <div aria-hidden="true" className="absolute -left-4 -bottom-8 text-[7rem] opacity-10 select-none">{theme.heroEmoji}</div>

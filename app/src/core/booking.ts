@@ -78,3 +78,15 @@ export function bookingDayStats(list: readonly Booking[], date: string): { sched
     noShow: day.filter((b) => b.status === 'no_show').length,
   }
 }
+
+/* ─── سد الاقتراح 3: تذكير العميل بموعده عبر واتساب (بلا سحابة) ─── */
+export function buildBookingReminderMessage(b: Pick<Booking, 'customerName' | 'serviceName' | 'date' | 'time'>, shopName: string): string {
+  return `عميلنا العزيز ${b.customerName}،\nنذكّركم بموعدكم غداً ${b.date} الساعة ${b.time} — ${b.serviceName}.\nبانتظاركم 🌟\n— ${shopName}`
+}
+
+/** رابط واتساب برقم مصري/دولي — نفس تحويل رقم الصيانة */
+export function bookingWhatsappLink(phone: string, message: string): string {
+  const digits = phone.replace(/\D/g, '')
+  const intl = digits.startsWith('0') ? `2${digits}` : digits
+  return `https://wa.me/${intl}?text=${encodeURIComponent(message)}`
+}

@@ -8,10 +8,10 @@
  * المال يُسجل عند البيع الفعلي (كاشير/أمر مغسلة/طلب معمل).
  */
 import { useMemo, useState } from 'react'
-import { Plus, ChevronRight, ChevronLeft, CheckCircle2, XCircle, UserX, Pencil, Trash2, AlertTriangle, Copy } from 'lucide-react'
+import { Plus, ChevronRight, ChevronLeft, CheckCircle2, XCircle, UserX, Pencil, Trash2, AlertTriangle, Copy, Bell } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
-import { BOOKING_STATUS_LABELS, BOOKING_STATUS_STYLE, bookingsForDate, bookingDayStats, bookingConflicts, validateBooking, type Booking } from '../../core/booking.ts'
+import { BOOKING_STATUS_LABELS, BOOKING_STATUS_STYLE, bookingsForDate, bookingDayStats, bookingConflicts, validateBooking, buildBookingReminderMessage, bookingWhatsappLink, type Booking } from '../../core/booking.ts'
 import { Btn, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 
 const todayIso = () => new Date().toISOString().slice(0, 10)
@@ -31,6 +31,10 @@ export function BookingsPage() {
   const [day, setDay] = useState(todayIso())
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState<(Draft & { id?: number; allowConflict?: boolean }) | null>(null)
+  const [remindersOpen, setRemindersOpen] = useState(false)
+  const [reminderDay, setReminderDay] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10)
+  })
 
   const dayList = useMemo(() => {
     const list = bookingsForDate(bookings, day)
@@ -75,7 +79,10 @@ export function BookingsPage() {
           <div className="font-extrabold text-slate-800 dark:text-white text-[14px]">{arabicDay(day)}</div>
           <input type="date" value={day} onChange={(e) => setDay(e.target.value || day)} className={`${inputCls} !w-36 text-[12px]`} dir="ltr" />
         </div>
-        <Btn variant="primary" onClick={openNew}><Plus size={15} /> حجز موعد</Btn>
+        <div className="flex items-center gap-2">
+          <Btn variant="ghost" onClick={() => setRemindersOpen(true)} title="تذكير عملاء يوم بالمواعيد عبر واتساب — رسالة لكل عميل بضغطة"><Bell size={15} /> تذكيرات واتساب</Btn>
+          <Btn variant="primary" onClick={openNew}><Plus size={15} /> حجز موعد</Btn>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -133,6 +140,40 @@ export function BookingsPage() {
         💡 الموعد وعد تشغيلي لا يلمس الدفاتر — عند حضور العميل سجّل بيعه من الكاشير (أو أمر الغسيل/طلب التحليل) كالمعتاد.
         المواعيد القادمة تظهر هنا حسب وحدة «{useAppStore.getState().setup.modules.includes('booking') ? 'المواعيد والحجوزات' : ''}» لنشاط{setup.activityId ?? ''}.
       </div>
+
+      {/* v1.0.12: تذكيرات واتساب — يوم واحد، رسالة جاهزة لكل عميل (المتصفح لا يسمح بفتح روابط دفعة واحدة بلا نقرة لكل منها) */}
+      <Modal open={remindersOpen} onClose={() => setRemindersOpen(false)} title="تذكيرات واتساب" subtitle="اختر اليوم — كل عميل محجوز له زر تذكير جاهز برسالة موعده">
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <input type="date" value={reminderDay} onChange={(e) => setReminderDay(e.target.value || reminderDay)} className={`${inputCls} !w-40`} dir="ltr" />
+            <div className="flex gap-1.5">
+              <Btn variant="ghost" onClick={() => setReminderDay(new Date().toISOString().slice(0, 10))}>اليوم</Btn>
+              <Btn variant="ghost" onClick={() => { const d = new Date(); d.setDate(d.getDate() + 1); setReminderDay(d.toISOString().slice(0, 10)) }}>غداً</Btn>
+            </div>
+            <span className="text-[12px] font-bold text-slate-500">{bookingsForDate(bookings, reminderDay).filter((b) => b.status === 'scheduled').length} محجوزاً</span>
+          </div>
+          {(() => {
+            const dayList = bookingsForDate(bookings, reminderDay).filter((b) => b.status === 'scheduled' && b.phone.trim())
+            if (!dayList.length) return <EmptyState icon="🔔" title="لا تذكيرات" sub="لا مواعيد محجوزة برقم هاتف في هذا اليوم" />
+            return (
+              <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                {dayList.map((b) => {
+                  const msg = buildBookingReminderMessage(b, setup.shopName || 'تَحَكَّم')
+                  return (
+                    <div key={b.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-700 p-2.5">
+                      <div className="text-[12px]"><b dir="ltr">{b.time}</b> · {b.customerName} <span className="text-slate-400">— {b.serviceName}</span></div>
+                      <div className="flex gap-1.5">
+                        <Btn variant="ghost" onClick={() => { void navigator.clipboard.writeText(b.phone).then(() => toast.show('نُسخ الرقم 📋')).catch(() => toast.show(b.phone)) }}><Copy size={13} /></Btn>
+                        <Btn variant="primary" onClick={() => window.open(bookingWhatsappLink(b.phone, msg), '_blank', 'noopener')}>📹 تذكير</Btn>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
+        </div>
+      </Modal>
 
       {/* حوار الإضافة/التعديل */}
       <Modal open={draft != null} onClose={() => setDraft(null)} title={draft?.id != null ? 'تعديل موعد' : 'حجز موعد جديد'} subtitle="بيانات الموعد — الاسم والخدمة والتاريخ والوقت">

@@ -36,6 +36,7 @@ import { useAnchoredMenu } from '../components/anchoredMenu.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
+import { earnedPoints } from '../../core/loyalty.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { toMinor } from '../../core/money.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
@@ -64,9 +65,9 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints } = useDataStore()
   const openShift = currentOpenShift(shifts)
-  const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint, loyalty } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
@@ -123,6 +124,8 @@ export function PosPage() {
   const [terminalCardLast4, setTerminalCardLast4] = useState('')
   const [customerId, setCustomerId] = useState<number | null>(null)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
+  /* v1.0.12: العميل المختار (نقاط الولاء وكشفه) */
+  const selectedCustomer = useMemo(() => (customerId == null ? null : customers.find((x) => x.id === customerId) ?? null), [customerId, customers])
   // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
   const activePriceListId = useMemo(() => {
     if (customerId == null) return null
@@ -517,14 +520,14 @@ export function PosPage() {
   const finishSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
     if (!cart.length) return
     try {
-      // مجزأ فعلاً (جزء نقدي + جزء آجل) أو آجل بالكامل ⇒ عميل إلزامي
-      const isSplitOrCredit = payment === 'credit' || (payment === 'cash' && creditRemainder > 0)
       const selectedTerminal = payment === 'terminal' ? activePaymentTerminals.find((row) => row.id === paymentTerminalId) : null
       if (payment === 'terminal' && !selectedTerminal) throw new Error('اختر ماكينة دفع نشطة')
       if (terminalCardLast4 && !/^\d{4}$/.test(terminalCardLast4)) throw new Error('آخر أربعة أرقام يجب أن تكون 4 أرقام')
       const sale = postSale({
         lines: cart,
-        customerId: isSplitOrCredit ? customerId : null,
+        // v1.0.12: العميل المختار يُسجل دائماً — كسب نقاط الولاء وكشف حسابه،
+        // والقيد يتحدد بالمدفوع فقط (نقدي كامل = خزينة، لا ذمة) فلا أثر محاسبي
+        customerId: customerId ?? null,
         payment: payment === 'credit' || (payment === 'cash' && creditRemainder > 0) ? 'credit' : 'cash',
         invoiceDiscountPercent: invoiceDiscount,
         taxPercent: effectiveCountryVatPercent,
@@ -740,8 +743,8 @@ export function PosPage() {
                 {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
               </QuickSelect>
             )}
-            {customers.some((c) => c.priceListId != null) && (
-              <div className="flex items-center gap-1" title="اختيار العميل يسعّر السلة بقائمته (جملة/نصف جملة)">
+            {(customers.some((c) => c.priceListId != null) || (loyalty.enabled && customers.length > 0)) && (
+              <div className="flex items-center gap-1" title="اختيار العميل يسعّر السلة بقائمته ويكسب نقاط الولاء">
                 <div className="w-44">
                   <PartyQuickPicker
                     parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
@@ -753,6 +756,27 @@ export function PosPage() {
                     onConfirm={() => searchRef.current?.focus()}
                   />
                 </div>
+                {/* v1.0.12 (سد فجوة الولاء بالكاشير — نمط Square): رصيد نقاط العميل المختار وزر استبداله رصيداً دائناً */}
+                {loyalty.enabled && selectedCustomer && (selectedCustomer.loyaltyPoints ?? 0) > 0 && (
+                  <span className="flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg bg-pink-500/10 text-pink-600 dark:text-pink-300" title={`= ${fmt((selectedCustomer.loyaltyPoints ?? 0) * loyalty.redeemValueMinor)} ${cur.symbol} — يُستبدل رصيداً دائناً في حساب العميل (1104) يخصم من مشترياته القادمة`}>
+                    ⭐ {(selectedCustomer.loyaltyPoints ?? 0).toLocaleString('en-US')}
+                    {(selectedCustomer.loyaltyPoints ?? 0) >= loyalty.minRedeemPoints && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const points = selectedCustomer.loyaltyPoints ?? 0
+                          const capped = loyalty.maxRedeemPoints > 0 ? Math.min(points, loyalty.maxRedeemPoints) : points
+                          if (capped < points) { toast.show(`سقف الاستبدال للعملية الواحدة ${loyalty.maxRedeemPoints} نقطة — سيُستبدل ${capped} نقطة الآن`); }
+                          try {
+                            const res = redeemLoyaltyPoints(selectedCustomer.id, capped)
+                            toast.show(`استُبدلت ${capped} نقطة برصيد دائن ${fmt(res.valueMinor)} ${cur.symbol} لـ${selectedCustomer.nameAr} ✓`)
+                          } catch (err) { toast.show((err as Error).message, 'error') }
+                        }}
+                        className="underline hover:text-pink-700 dark:hover:text-pink-100"
+                      >استبدال</button>
+                    )}
+                  </span>
+                )}
                 {customerId ? <button type="button" title="تعديل بيانات العميل" onClick={() => setPartyEditorOpen(true)} className="rounded-lg border border-sky-300 p-1.5 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={14}/></button> : null}
               </div>
             )}
@@ -986,6 +1010,12 @@ export function PosPage() {
                 <div className="flex justify-between text-[12px] text-slate-400">
                   <span>إجمالي ضريبة السطور {setup.taxInclusive ? '(مشمولة)' : '(مضافة)'} — النسبة تظهر بجانب كل بند</span>
                   <span>{fmt(totals.taxMinor)}</span>
+                </div>
+              )}
+              {loyalty.enabled && selectedCustomer && earnedPoints(totals.totalMinor, cur.decimals, loyalty) > 0 && (
+                <div className="flex justify-between text-[11.5px] text-pink-500 dark:text-pink-300" title="تُضاف تلقائياً لرصيد العميل بعد إتمام الفاتورة">
+                  <span>⭐ نقاط ستُضاف لـ{selectedCustomer.nameAr}</span>
+                  <span className="font-bold">+{earnedPoints(totals.totalMinor, cur.decimals, loyalty)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center pt-1">

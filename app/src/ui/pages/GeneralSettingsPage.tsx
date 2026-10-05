@@ -275,7 +275,7 @@ export function GeneralSettingsPage() {
 
           {loyalty.enabled && (
             <>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <Field label={`نقاط لكل ${cur.symbol} من الفاتورة`} hint="الافتراضي العالمي: 1 نقطة لكل وحدة عملة">
                 <input
                   value={String(loyalty.pointsPerUnit)} dir="ltr" className={inputCls}
@@ -292,6 +292,12 @@ export function GeneralSettingsPage() {
                 <input
                   value={String(loyalty.minRedeemPoints)} dir="ltr" className={inputCls}
                   onChange={(e) => { const v = Math.round(Number(e.target.value)); if (Number.isFinite(v) && v >= 0) updateLoyalty({ minRedeemPoints: v }) }}
+                />
+              </Field>
+              <Field label="سقف الاستبدال للعملية الواحدة" hint="حماية من استبدال ضخم بضغطة — 0 = بلا سقف">
+                <input
+                  value={String(loyalty.maxRedeemPoints)} dir="ltr" className={inputCls}
+                  onChange={(e) => { const v = Math.round(Number(e.target.value)); if (Number.isFinite(v) && v >= 0) updateLoyalty({ maxRedeemPoints: v }) }}
                 />
               </Field>
             </div>
