@@ -65,6 +65,22 @@ export async function issueLicenseKey(payload, privB64u) {
   return `${KEY_PREFIX}.${b64uEncode(msg)}.${b64uEncode(new Uint8Array(sig))}`
 }
 
+/* ═══ v1.0.7: مفتاح تغيير النشاط SHOPSYS2 — موافقة المالك ═══
+ * مستنسخ حرفياً من license.ts (canonicalActivityChangePayload) — أي فرق يكسر التوقيع. */
+export const ACTIVITY_KEY_PREFIX = 'SHOPSYS2'
+
+export function canonicalActivityChangePayload(p) {
+  return JSON.stringify({ v: p.v, deviceId: p.deviceId, fromActivityId: p.fromActivityId, toActivityId: p.toActivityId, issuedAt: p.issuedAt })
+}
+
+/** إصدار مفتاح تغيير نشاط موقّع: SHOPSYS2.<payload-b64u>.<sig-b64u> */
+export async function issueActivityChangeKey(payload, privB64u) {
+  const priv = await importPrivateKey(privB64u)
+  const msg = new TextEncoder().encode(canonicalActivityChangePayload(payload))
+  const sig = await crypto.subtle.sign('Ed25519', priv, msg)
+  return `${ACTIVITY_KEY_PREFIX}.${b64uEncode(msg)}.${b64uEncode(new Uint8Array(sig))}`
+}
+
 /** فك حمولة مفتاح (للعرض/البحث فقط — التحقق الكامل يجريه العميل بتوقيعه) */
 export function decodeLicenseKey(key) {
   const parts = key.trim().split('.')

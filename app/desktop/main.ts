@@ -8,7 +8,8 @@
  * لا منطق أعمال هنا إطلاقاً — كل البوابات تعمل في المُصيّر كما هي.
  */
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
-import { appendFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
 import { ShopsysDatabase, type OutboxEventDto, type SaveSnapshotInput, type SnapshotDto } from './sqlite/storage.ts'
 import { initLanHostIpc } from './hostServerMain.ts'
@@ -22,6 +23,7 @@ type CompleteOutboxInput = Parameters<ShopsysDatabase['completeOutbox']>[0]
 
 let mainWindow: BrowserWindow | null = null
 let database: ShopsysDatabase | null = null
+let deviceEncryptionKey: Buffer = Buffer.alloc(0)
 let printWindow: BrowserWindow | null = null
 
 const isDev = !!process.env.ELECTRON_START_URL
@@ -109,6 +111,24 @@ function createMainWindow(): BrowserWindow {
     })
   }
   return win
+}
+
+/* ── مفتاح تشفير الجهاز (v1.0.7 — تشفير قاعدة البيانات بمفتاح الجهاز) ──
+   يولَّد مرة واحدة في userData/device.key (32 بايت عشوائية). لقطات المتاجر
+   تُشفَّر بـ AES-GCM في المُصيّر قبل وصولها إلى SQLite عبر IPC، فتُقرأ القاعدة
+   على هذا الجهاز فقط — نسخ shopsys.db إلى جهاز آخر يعطي بيانات غير قابلة
+   للفك. اللقطات النصية القديمة تُقرأ كما هي وتُرحَّل مشفرة عند أول حفظ. */
+function ensureDeviceEncryptionKey(): Buffer {
+  const keyPath = join(app.getPath('userData'), 'device.key')
+  try {
+    const existing = readFileSync(keyPath)
+    if (existing.length === 32) return existing
+    logLine('device-key', `ملف مفتاح بحجم غير متوقع (${existing.length}) — يُستبدل`)
+  } catch { /* لا ملف بعد — أول تشغيل */ }
+  const key = randomBytes(32)
+  writeFileSync(keyPath, key, { mode: 0o600 })
+  logLine('device-key', `وُلّد مفتاح تشفير الجهاز (${keyPath})`)
+  return key
 }
 
 /* ── القاعدة ── */
@@ -233,6 +253,7 @@ function wireIpc(): void {
     if (!database) throw new Error('قاعدة البيانات غير مهيأة بعد')
     return database
   }
+  ipcMain.handle('device:getEncryptionKey', (): Uint8Array => new Uint8Array(deviceEncryptionKey))
   ipcMain.handle('database:getSnapshot', (_event, storeName: string): SnapshotDto => db().getSnapshot(storeName))
   ipcMain.handle('database:saveSnapshot', (_event, input: SaveSnapshotInput) => db().saveSnapshot(input))
   ipcMain.handle('database:deleteSnapshot', (_event, input: DeleteSnapshotInput) => db().deleteSnapshot(input))
@@ -297,6 +318,7 @@ if (!gotLock) {
 
   void app.whenReady().then(async () => {
     logLine('boot', `تَحَكَّم ${app.getVersion()} — electron ${process.versions.electron} — node ${process.versions.node} — userData=${app.getPath('userData')}`)
+    deviceEncryptionKey = ensureDeviceEncryptionKey()
     database = await openDatabase()
     wireIpc()
     mainWindow = createMainWindow()

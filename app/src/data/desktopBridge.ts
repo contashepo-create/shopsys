@@ -58,6 +58,8 @@ export interface DesktopJournalEntry {
 }
 
 export interface DesktopDatabaseBridge {
+  /** v1.0.7: مفتاح تشفير هذا الجهاز — تُشفَّر به لقطات المتاجر قبل تخزينها في SQLite */
+  getEncryptionKey?(): Promise<Uint8Array>
   getSnapshot(storeName: string): Promise<DesktopSnapshot>
   saveSnapshot(input: { storeName: string; expectedRevision: number; payloadJson: string; idempotencyKey?: string; auditEvents?: readonly DesktopAuditEvent[]; journalEntries?: readonly DesktopJournalEntry[] }): Promise<{ revision: number; updatedAt: string; replayed?: boolean }>
   deleteSnapshot?(input: { storeName: string; expectedRevision: number }): Promise<{ revision: number; updatedAt: string }>

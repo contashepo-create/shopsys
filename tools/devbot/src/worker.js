@@ -19,7 +19,7 @@
  *                                TELEGRAM_ADMIN_ID · WEBHOOK_SECRET
  * لا سجلات حساسة: المفاتيح تُرسل للمطوّر فقط في محادثة تليجرام الخاصة.
  */
-import { issueLicenseKey, keyFingerprint, decodeLicenseKey, expiresAfterDays, canonicalPayload } from './licenseLib.js'
+import { issueLicenseKey, keyFingerprint, decodeLicenseKey, expiresAfterDays, canonicalPayload, issueActivityChangeKey } from './licenseLib.js'
 
 /* ═══════════ إعدادات البيئة (secrets + vars) ═══════════ */
 const env_ = env => ({
@@ -100,6 +100,34 @@ async function handleUpdate(update, cfg) {
   try {
     switch (cmd) {
       case '/start': case '/بدء': case '/مساعدة': return { chatId, text: HELP }
+
+      /* v1.0.7 (موافقة المالك): مفتاح تغيير نشاط لعميل محدد — التغيير في
+         التطبيق يتم بهذا المفتاح الموقّع فقط، والمستخدم لا يغيّر نشاطه بنفسه.
+         /مفتاح_نشاط <deviceId> <من النشاط> <إلى النشاط> */
+      case '/مفتاح_نشاط': case '/change_activity': {
+        const [deviceId, fromId, toId] = args
+        if (!deviceId || !fromId || !toId) return { chatId, text: '⚠️ الصيغة: <code>/مفتاح_نشاط SHOP-XXXX-XXXX-XXXX من_النشاط إلى_النشاط</code>\nمعرّفات الأنشطة مثل: <code>grocery · clinic · contracting · laundry …</code>' }
+        if (!/^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(deviceId)) return { chatId, text: `⚠️ معرّف الجهاز غير صحيح: <code>${deviceId}</code>` }
+        if (fromId === toId) return { chatId, text: '⚠️ النشاطان متطابقان — لا حاجة لمفتاح' }
+        const sub = await cfg.kv.get(`dev:${deviceId}`)
+        if (!sub) return { chatId, text: `⚠️ الجهاز <code>${deviceId}</code> غير مشترك — لا تسجيل له في المركز` }
+        const payload = { v: 1, deviceId, fromActivityId: fromId, toActivityId: toId, issuedAt: new Date().toISOString().slice(0, 10) }
+        const key = await issueActivityChangeKey(payload, cfg.priv)
+        const fp = keyFingerprint(key)
+        await cfg.kv.put(`actkey:${fp}`, JSON.stringify({ payload, issuedAt: payload.issuedAt }))
+        return {
+          chatId,
+          text: [
+            `✅ <b>مفتاح تغيير النشاط</b> — ${deviceId}`,
+            `من <code>${fromId}</code> إلى <code>${toId}</code>`,
+            '',
+            `<code>${key}</code>`,
+            '',
+            'أرسله للعميل ليلصقه في: الإعدادات العامة ← النشاط ← «تغيير النشاط بمفتاح الدعم».',
+            'التطبيق يتحقق: التوقيع + الجهاز + النشاط الحالي، ويطبق التغيير مرة كل 30 يوماً.',
+          ].join('\n'),
+        }
+      }
 
       case '/اصدر': {
         // /اصدر <deviceId> <خطة> <اسم العميل> [أيام] [نشاط] [+مستخدمون] [+فروع] [+ميزات بفواصل]

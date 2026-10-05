@@ -15,10 +15,10 @@ import { describe, it, expect } from 'vitest'
 import { webcrypto } from 'node:crypto'
 import {
   issueLicenseKey, canonicalPayload as botCanonical, keyFingerprint as botFingerprint,
-  decodeLicenseKey as botDecode, expiresAfterDays,
+  decodeLicenseKey as botDecode, expiresAfterDays, issueActivityChangeKey,
 } from '../../tools/devbot/src/licenseLib.js'
 import {
-  canonicalPayload, keyFingerprint, verifyLicenseKey, b64uEncode,
+  canonicalPayload, keyFingerprint, verifyLicenseKey, b64uEncode, verifyActivityChangeKey,
   type LicensePayload,
 } from '../src/core/license.ts'
 
@@ -82,6 +82,17 @@ describe('التوافق الذهبي: بوت المطوّر ↔ عميل الت
     const { payload } = botDecode(key)
     expect(payload.deviceId).toBe(basePayload.deviceId)
     expect(payload.plan).toBe('basic')
+  })
+
+  it('v1.0.7: مفتاح تغيير النشاط الذي يصدره البوت يمر بتحقق العميل (توقيع + جهاز)', async () => {
+    const payload = { v: 1 as const, deviceId: basePayload.deviceId, fromActivityId: 'grocery', toActivityId: 'clinic', issuedAt: '2026-10-05' }
+    const key = await issueActivityChangeKey(payload, PRIV_B64U)
+    expect(key.startsWith('SHOPSYS2.')).toBe(true)
+    const verified = await verifyActivityChangeKey(key, payload.deviceId, PUB_B64U)
+    expect(verified.fromActivityId).toBe('grocery')
+    expect(verified.toActivityId).toBe('clinic')
+    // جهاز آخر مرفوض رغم صحة التوقيع
+    await expect(verifyActivityChangeKey(key, 'SHOP-OTHE-R000-0001', PUB_B64U)).rejects.toThrow('جهاز آخر')
   })
 
   it('تاريخ الانتهاء: 365 يوماً صحيحاً، وlifetime = null', () => {

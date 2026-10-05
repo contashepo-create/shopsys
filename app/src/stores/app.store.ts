@@ -6,7 +6,7 @@ import { create } from 'zustand'
 import { DEFAULT_WAREHOUSE_RECEIPT, type WarehouseReceiptSettings } from '../core/warehouseReceipt.ts'
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
-import { toggleModuleList, effectiveModules, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
+import { toggleModuleList, effectiveModules, ACTIVITY_TEMPLATES, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
 import { createJSONStorage } from 'zustand/middleware'
@@ -14,7 +14,7 @@ import { settingsAppStorage } from '../data/persistentStorage.ts'
 import { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, type PrinterProfile, type PrintRoute, type PrinterProfiles } from '../core/printers.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
 import { DEFAULT_APPROVALS, type ApprovalSettings } from '../core/approvals.ts'
-import { generateDeviceId, type LicensePayload } from '../core/license.ts'
+import { generateDeviceId, verifyActivityChangeKey, ACTIVITY_CHANGE_COOLDOWN_DAYS, daysBetween, type LicensePayload } from '../core/license.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
 import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
@@ -60,6 +60,10 @@ interface SetupState {
   street: string
   /** تخصص الطبيب لنشاط العيادة (يختاره/يكتبه المالك في معالج أول تشغيل — لا يُفرض «أسنان») */
   doctorSpecialty: string
+  /** v1.0.7: آخر تغيير نشاط بمفتاح الدعم — التقييد 30 يوماً بين تغييرين */
+  lastActivityChangeAt: string | null
+  /** v1.0.7: الأنشطة المرخصة على الجهاز (الأصلي + كل تغيير موقّع) — مفتاح التفعيل القديم يظل صالحاً */
+  activityKeyHistory: string[]
 }
 
 /**
@@ -174,6 +178,8 @@ interface AppState {
   activatedKey: string | null // مفتاح التفعيل النصي كما أدخل
   activatedPayload: LicensePayload | null // حمولته الموثقة بعد التحقق
   setActivated: (key: string, payload: LicensePayload) => void
+  /** v1.0.7: تطبيق مفتاح تغيير النشاط الموقّع (SHOPSYS2) — يعيد اسم النشاط الجديد */
+  applyActivityChangeKey: (key: string, pubB64u?: string) => Promise<string>
   clearActivation: () => void
   touchLastSeen: () => void
   // ─── السحابة (القرار 28): آخر ما جُلب من Cloudflare — يعمل أوفلاين بآخر نسخة ───
@@ -279,7 +285,7 @@ const BOOT = bootIdentity()
 
 export const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       theme: 'light',
       toggleTheme: () => set((s) => ({ theme: s.theme === 'light' ? 'dark' : 'light' })),
       setup: {
@@ -300,6 +306,8 @@ export const useAppStore = create<AppState>()(
         defaultWarehouseId: null,
         phone: '', email: '', city: '', street: '',
         doctorSpecialty: '',
+        lastActivityChangeAt: null,
+        activityKeyHistory: [],
       },
       fiscalYears: [],
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact, doctorSpecialty }) =>
@@ -327,6 +335,8 @@ export const useAppStore = create<AppState>()(
             defaultWarehouseId: null,
             phone: contact?.phone ?? '', email: contact?.email ?? '', city: contact?.city ?? '', street: contact?.street ?? '',
             doctorSpecialty: doctorSpecialty?.trim() ?? '',
+            lastActivityChangeAt: null,
+            activityKeyHistory: [],
           },
         })),
       addFiscalYear: (fy) =>
@@ -430,10 +440,56 @@ export const useAppStore = create<AppState>()(
           activatedPayload: payload,
           // سياسة الأقسام: الوحدات = افتراضيات النشاط + ما فعّله المطوّر في المفتاح فقط
           setup: s.setup.completed
-            ? { ...s.setup, modules: effectiveModules(s.setup.activityId, payload.extraModules) }
+            ? {
+                ...s.setup,
+                modules: effectiveModules(s.setup.activityId, payload.extraModules),
+                /* v1.0.7: أول تفعيل على هذا الجهاز يثبّت النشاط المرخّص —
+                   التغيير بعده بمفتاح SHOPSYS2 موقّع فقط (activityKeyHistory) */
+                activityKeyHistory: s.setup.activityKeyHistory.length > 0
+                  ? s.setup.activityKeyHistory
+                  : [payload.activityId ?? s.setup.activityId ?? ''].filter(Boolean),
+              }
             : s.setup,
         })),
       clearActivation: () => set({ activatedKey: null, activatedPayload: null }),
+      /* ═══ v1.0.7 (موافقة المالك): تغيير النشاط بمفتاح الدعم الفني فقط ═══
+         SHOPSYS2 موقّع من المطوّر لهذا الجهاز تحديداً، من النشاط الحالي إلى
+         نشاط قالب معروف. التقييد: 30 يوماً بين تغييرين. القوالب (الخصائص
+         والوحدات والهوية اللونية وقالب الفاتورة) تُطبَّق كاملة — البيانات
+         المحاسبية والمخزنية تبقى كما هي، وضريبة النشاط لا تُلمس (تُضبط
+         يدوياً من الإعدادات إن لزم). */
+      applyActivityChangeKey: async (key, pubB64u) => {
+        const state = get()
+        if (!state.setup.completed) throw new Error('أكمل الإعداد الأول أولاً')
+        if (!state.setup.activityId) throw new Error('لا يوجد نشاط حالي على الجهاز')
+        const payload = await verifyActivityChangeKey(key, state.deviceId, pubB64u)
+        if (payload.fromActivityId !== state.setup.activityId) {
+          throw new Error(`المفتاح صادر للتحويل من نشاط «${payload.fromActivityId}» — نشاطك الحالي «${state.setup.activityId}». اطلب مفتاحاً محدّثاً من الدعم`)
+        }
+        if (payload.toActivityId === state.setup.activityId) throw new Error('المفتاح يحوّل إلى نشاطك الحالي نفسه — لا حاجة لأي تغيير')
+        const template = ACTIVITY_TEMPLATES.find((t) => t.id === payload.toActivityId)
+        if (!template) throw new Error(`نشاط غير معروف في هذه النسخة («${payload.toActivityId}») — حدّث التطبيق أولاً`)
+        if (state.setup.lastActivityChangeAt) {
+          const since = daysBetween(state.setup.lastActivityChangeAt.slice(0, 10), new Date().toISOString().slice(0, 10))
+          if (since < ACTIVITY_CHANGE_COOLDOWN_DAYS) {
+            throw new Error(`مضى ${since} يوماً فقط على آخر تغيير نشاط — التغيير مسموح كل ${ACTIVITY_CHANGE_COOLDOWN_DAYS} يوماً (باقٍ ${ACTIVITY_CHANGE_COOLDOWN_DAYS - since} يوماً)`)
+          }
+        }
+        const now = new Date().toISOString()
+        set((s) => ({
+          appearance: { ...s.appearance, accentId: activityAccentId(template.id) },
+          receipt: { ...s.receipt, defaultTemplate: template.defaultInvoiceTemplate },
+          setup: {
+            ...s.setup,
+            activityId: template.id,
+            features: template.features,
+            modules: template.modules,
+            lastActivityChangeAt: now,
+            activityKeyHistory: [...s.setup.activityKeyHistory, template.id],
+          },
+        }))
+        return template.nameAr
+      },
       touchLastSeen: () =>
         set((s) => {
           const now = new Date().toISOString()

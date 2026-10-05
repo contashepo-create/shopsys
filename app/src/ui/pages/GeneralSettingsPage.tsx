@@ -18,9 +18,13 @@ import { accountName } from './accountNames.ts'
 import { FxRatesManager } from '../components/FxRatesManager.tsx'
 
 export function GeneralSettingsPage() {
-  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty } = useAppStore()
+  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty, applyActivityChangeKey } = useAppStore()
   const { warehouses, closeFiscalYear, journal } = useDataStore()
   const toast = useToast()
+  /* v1.0.7: تغيير النشاط بمفتاح الدعم الفني فقط (موافقة المالك) */
+  const [activityKeyOpen, setActivityKeyOpen] = useState(false)
+  const [activityKeyInput, setActivityKeyInput] = useState('')
+  const [activityKeyBusy, setActivityKeyBusy] = useState(false)
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const activity = ACTIVITY_TEMPLATES.find((a) => a.id === setup.activityId)
   const [vat, setVat] = useState(String(setup.vatPercent))
@@ -353,11 +357,53 @@ export function GeneralSettingsPage() {
         <h3 className="font-extrabold text-slate-800 dark:text-white mb-4">النشاط والوحدات المفعّلة</h3>
         <div className="flex items-center gap-3 mb-4 p-3.5 rounded-xl bg-brand-500/5 border border-brand-500/15">
           <span className="text-2xl">{activity?.icon}</span>
-          <div>
+          <div className="flex-1">
             <div className="font-bold text-slate-800 dark:text-white text-sm">{activity?.nameAr}</div>
             <div className="text-[11px] text-slate-400">{activity?.description}</div>
           </div>
+          {/* v1.0.7: النشاط مقفول — التغيير بمفتاح موقّع من الدعم الفني فقط */}
+          <button
+            onClick={() => { setActivityKeyOpen(true); setActivityKeyInput('') }}
+            className="px-3 py-2 rounded-xl text-[11.5px] font-bold border-2 border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 transition-colors"
+          >تغيير النشاط بمفتاح الدعم</button>
         </div>
+        {setup.lastActivityChangeAt && (
+          <div className="mb-3 text-[11px] text-slate-400">
+            آخر تغيير نشاط: <b dir="ltr">{setup.lastActivityChangeAt.slice(0, 10)}</b> — التغيير مسموح كل 30 يوماً
+          </div>
+        )}
+        {activityKeyOpen && (
+          <div className="mb-4 p-4 rounded-2xl border-2 border-violet-400/40 bg-violet-500/[0.04] space-y-3">
+            <div className="text-[12.5px] font-bold text-slate-700 dark:text-slate-200">
+              اطلب من الدعم الفني مفتاح تغيير النشاط لجهازك، ثم ألصقه هنا — البيانات المحاسبية والمخزنية تبقى كما هي.
+            </div>
+            <textarea
+              value={activityKeyInput}
+              onChange={(e) => setActivityKeyInput(e.target.value)}
+              rows={3}
+              dir="ltr"
+              placeholder="SHOPSYS2...."
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-transparent text-[12px] outline-none focus:border-violet-500 font-mono"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setActivityKeyOpen(false)} className="flex-1 px-4 py-2 rounded-xl text-[12.5px] font-bold border border-slate-300 dark:border-slate-700 text-slate-500">إلغاء</button>
+              <button
+                disabled={activityKeyBusy || !activityKeyInput.trim()}
+                onClick={async () => {
+                  setActivityKeyBusy(true)
+                  try {
+                    const name = await applyActivityChangeKey(activityKeyInput.trim())
+                    setActivityKeyOpen(false)
+                    toast.show(`تغيّر النشاط إلى «${name}» — القوالب والهوية اللونية حُدّثت، وبياناتك كما هي ✓`)
+                  } catch (err) {
+                    toast.show((err as Error).message, 'error')
+                  } finally { setActivityKeyBusy(false) }
+                }}
+                className="flex-1 px-4 py-2 rounded-xl text-[12.5px] font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
+              >{activityKeyBusy ? 'جارٍ التحقق…' : 'تطبيق المفتاح'}</button>
+            </div>
+          </div>
+        )}
         {/* سياسة الأقسام (أمر المالك): المستخدم لا يضيف/يحذف أقساماً —
             الافتراضية تتبع النشاط، والإضافي يفعّله المطوّر فقط عبر البوت بمفتاح موقَّع */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">

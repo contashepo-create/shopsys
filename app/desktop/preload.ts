@@ -9,6 +9,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 const database = {
+  getEncryptionKey: (): Promise<Uint8Array> => ipcRenderer.invoke('device:getEncryptionKey'),
   getSnapshot: (storeName: string) => ipcRenderer.invoke('database:getSnapshot', storeName),
   saveSnapshot: (input: unknown) => ipcRenderer.invoke('database:saveSnapshot', input),
   deleteSnapshot: (input: unknown) => ipcRenderer.invoke('database:deleteSnapshot', input),

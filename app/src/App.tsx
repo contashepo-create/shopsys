@@ -340,9 +340,9 @@ export default function App() {
   const lockReason = useMemo(
     () => lockReasonFor(licenseState, {
       revoked: activatedKey != null && isRevoked(activatedKey, revokedKeys),
-      activityMismatch: activatedPayload != null && setup.completed && !activityMatches(activatedPayload, setup.activityId),
+      activityMismatch: activatedPayload != null && setup.completed && !activityMatches(activatedPayload, setup.activityId, setup.activityKeyHistory),
     }),
-    [licenseState, activatedKey, revokedKeys, activatedPayload, setup.completed, setup.activityId],
+    [licenseState, activatedKey, revokedKeys, activatedPayload, setup.completed, setup.activityId, setup.activityKeyHistory],
   )
 
   // ─── قفل الكاتب الواحد (البند 4): تبويب ثانٍ على نفس القاعدة = قراءة فقط ───
