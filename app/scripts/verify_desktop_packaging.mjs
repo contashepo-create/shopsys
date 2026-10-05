@@ -66,14 +66,18 @@ console.log('═══ بوابة تغليف سطح المكتب (الشاشة �
 /* ── 4) ترجمة العملية الرئيسية والجسور ── */
 {
   execFileSync('node', ['desktop/build.mjs'], { cwd: appRoot, stdio: 'pipe' })
-  for (const file of ['dist-desktop/main.cjs', 'dist-desktop/preload.cjs']) {
+  for (const file of ['dist-desktop/main.cjs', 'dist-desktop/main-full.cjs', 'dist-desktop/preload.cjs']) {
     if (!existsSync(join(appRoot, file))) fail(`${file} لم يُترجم — الحزمة بلا عملية رئيسية`)
   }
   const preload = readFileSync(join(appRoot, 'dist-desktop', 'preload.cjs'), 'utf8')
   if (!preload.includes('shopsysLanHost')) fail('preload بلا جسور شبكة المحل — مفاجآت وقت التشغيل')
-  const mainCjs = readFileSync(join(appRoot, 'dist-desktop', 'main.cjs'), 'utf8')
-  if (!mainCjs.includes('lan-host:start')) fail('main.cjs بلا خادم شبكة المحل')
-  ok('العملية الرئيسية والجسور مترجمة وتحمل خادم الشبكة وطباعة النسخ')
+  /* v1.0.14: main.cjs محمل رقيق (bytecode ثم احتياط) — الفحص على الجوهر
+     في main-full.cjs (وmain.jsc يُولَّد ببيئة فيها ثنائي Electron وقت النشر) */
+  const loader = readFileSync(join(appRoot, 'dist-desktop', 'main.cjs'), 'utf8')
+  if (!loader.includes("require('./main.jsc')") || !loader.includes("require('./main-full.cjs')")) fail('main.cjs ليس محمل main.jsc مع احتياط main-full.cjs')
+  const mainCjs = readFileSync(join(appRoot, 'dist-desktop', 'main-full.cjs'), 'utf8')
+  if (!mainCjs.includes('lan-host:start')) fail('العملية الرئيسية بلا خادم شبكة المحل')
+  ok('العملية الرئيسية والجسور مترجمة: محمل bytecode + احتياط مشوش يحملان خادم الشبكة')
 }
 
 /* ── 5) قنوات التشخيص الميداني حاضرة (بلاغ v1.0.0: عطل بلا أثر) ── */

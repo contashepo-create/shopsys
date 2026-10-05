@@ -4,14 +4,16 @@
  * نفس صيغة الملف ستُستخدم لاحقاً للنسخ اليومي عبر بوت التليجرام.
  */
 import { useRef, useState } from 'react'
-import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock, FileSpreadsheet, FileText, HardDrive, FolderOpen, ShieldAlert, History } from 'lucide-react'
+import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock, FileSpreadsheet, FileText, HardDrive, FolderOpen, ShieldAlert, History, KeyRound } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupSummary } from '../../core/backup.ts'
 import { BACKUP_INTERVAL_CHOICES } from '../../core/security.ts'
 import { appStorage, settingsAppStorage } from '../../data/persistentStorage.ts'
 import { desktopDatabaseStorage, desktopBackupNow, isElectronRuntime } from '../../data/desktopBridge.ts'
-import { Btn, useToast } from '../components/ui.tsx'
+import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
+import { getDeviceSecret, setDeviceSecret } from '../../data/secureStorage.ts'
+import { wrapSecretWithPassword, unwrapSecretWithPassword, parseKeyFile, keyFileName, type SecretKeyFile } from '../../core/secretTransfer.ts'
 import { buildFullExportSheets, sheetsToExcelXml, sheetToCsv, downloadTextFile, exportFileName, type ExportSheet } from '../../core/fullExport.ts'
 
 
@@ -19,9 +21,41 @@ export function BackupPage() {
   const { setup, backupIntervalMinutes, setBackupIntervalMinutes, lastHourlyBackupAt } = useAppStore()
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
+  const fileRef2 = useRef<HTMLInputElement>(null)
   const [pending, setPending] = useState<{ raw: string; summary: BackupSummary } | null>(null)
   const [confirmText, setConfirmText] = useState('')
   const [lastVerification, setLastVerification] = useState<{ at: string; bytes: number } | null>(null)
+
+  /* ── v1.0.15 (المرحلة ⑤): نقل سر التشفير بين الأجهزة ── */
+  const [keyExportOpen, setKeyExportOpen] = useState(false)
+  const [keyImportOpen, setKeyImportOpen] = useState(false)
+  const [keyPass, setKeyPass] = useState('')
+  const [keyPass2, setKeyPass2] = useState('')
+  const [keyImportPass, setKeyImportPass] = useState('')
+  const [keyImportFile, setKeyImportFile] = useState<{ name: string; text: string; file: SecretKeyFile } | null>(null)
+  const [keyImportShop, setKeyImportShop] = useState('')
+
+  const exportSecretKey = async () => {
+    try {
+      if (keyPass.length < 6) throw new Error('كلمة السر 6 أحرف على الأقل')
+      if (keyPass !== keyPass2) throw new Error('تأكيد كلمة السر غير مطابق')
+      const file = await wrapSecretWithPassword({ secret: getDeviceSecret(), password: keyPass, shopName: setup.shopName })
+      downloadTextFile(keyFileName(setup.shopName, file.createdAt), 'application/json', JSON.stringify(file, null, 2))
+      toast.show('نُزّلت نسخة السر المغلّفة — انقلها مع ملف القاعدة واحفظ كلمة السر بعيداً عنها 🔑')
+      setKeyExportOpen(false); setKeyPass(''); setKeyPass2('')
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
+  const importSecretKey = async () => {
+    try {
+      if (!keyImportFile) throw new Error('اختر ملف النسخة أولاً (.tkey.json)')
+      const secret = await unwrapSecretWithPassword(keyImportFile.file, keyImportPass)
+      setDeviceSecret(secret)
+      toast.show(`استُورد سر «${keyImportShop || keyImportFile.file.shopName}» — يُعاد تشغيل التطبيق الآن لقراءة القاعدة به 🔑`)
+      setKeyImportOpen(false)
+      setTimeout(() => { window.location.reload() }, 2500)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
 
   const verifyRoundTrip = async () => {
     try {
@@ -178,6 +212,26 @@ export function BackupPage() {
         <Btn onClick={download} className="w-full"><Download size={15} /> تنزيل نسخة احتياطية الآن</Btn>
         <Btn variant="ghost" onClick={() => { void verifyRoundTrip() }} className="w-full"><CheckCircle2 size={15}/> فحص استعادة تجريبي دون تغيير البيانات</Btn>
         {lastVerification && <div className="rounded-xl bg-emerald-500/10 p-3 text-xs text-emerald-700">آخر فحص ناجح: {lastVerification.at.slice(0,16).replace('T',' ')} · حجم النسخة {lastVerification.bytes.toLocaleString('ar-EG')} بايت</div>}
+      </div>
+
+      {/* v1.0.15 (المرحلة ⑤): نقل سر التشفير بين الأجهزة — القاعدة المنقولة لا تُقرأ بلا سرها */}
+      <div className={`anim-up ${card} space-y-4`} style={{ animationDelay: '30ms' }}>
+        <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+          <KeyRound size={17} className="text-amber-500" /> نقل سر التشفير بين الأجهزة
+        </div>
+        <div className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed">
+          قاعدة البيانات مشفرة بسر خاص بهذا الجهاز — نسخ ملف القاعدة وحده إلى جهاز آخر
+          يعطي شفرة لا تُقرأ. صَدّر نسخة السر <b>مغلّفة بكلمة سر تختارها</b> وانقلها مع ملف
+          القاعدة، ثم استوردها على الجهاز الجديد فتصبح قاعدته مقروءة.
+          <b> كلمة السر لا تُحفظ في التطبيق إطلاقاً</b> — من يملك الملف بلا كلمتها لا يملك شيئاً، فاحفظها بعيداً عن الملف.
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <Btn onClick={() => setKeyExportOpen(true)} className="w-full"><KeyRound size={15} /> تصدير نسخة السر بكلمة سر</Btn>
+          <Btn variant="ghost" onClick={() => { setKeyImportFile(null); setKeyImportPass(''); setKeyImportShop(''); setKeyImportOpen(true) }} className="w-full"><Upload size={15} /> استيراد نسخة سر على هذا الجهاز</Btn>
+        </div>
+        <div className="text-[11px] text-slate-400 leading-relaxed">
+          متى تحتاجها؟ نقلت القاعدة لجهاز جديد بملف shopsys.db (أو نسخة SQLite الملفية) وظهرت البيانات فارغة/غير مقروءة — استورد سر الجهاز الأصلي. نسخ JSON الاحتياطية لا تحتاج هذا (تُعاد تشفيرها بسر الجهاز الجديد تلقائياً).
+        </div>
       </div>
 
       {/* جدولة النسخ التلقائي (طلب المالك) — لقطة مشفرة على الجهاز حسب الفاصل المختار */}
@@ -419,6 +473,55 @@ export function BackupPage() {
           </div>
         )}
       </div>
+      {/* مودال تصدير نسخة السر (v1.0.15) */}
+      <Modal open={keyExportOpen} onClose={() => setKeyExportOpen(false)} title="🔑 تصدير نسخة السر المغلّفة بكلمة سر">
+        <div className="space-y-3">
+          <div className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
+            الملف الناتج يحمل سر التشفير مغلفاً (PBKDF2 بـ250 ألف دورة + AES-256-GCM) — لا يُفتح إلا بكلمة السر نفسها.
+            استخدمها على جهاز الاستيراد نفسه.
+          </div>
+          <label className="block text-[11px] font-bold text-slate-500">كلمة السر (6 أحرف على الأقل)
+            <input type="password" className={`${inputCls} mt-1`} value={keyPass} onChange={(e) => setKeyPass(e.target.value)} placeholder="اختر كلمة سر قوية" autoComplete="new-password" />
+          </label>
+          <label className="block text-[11px] font-bold text-slate-500">تأكيد كلمة السر
+            <input type="password" className={`${inputCls} mt-1`} value={keyPass2} onChange={(e) => setKeyPass2(e.target.value)} placeholder="أعد كتابتها" autoComplete="new-password" />
+          </label>
+          <Btn className="w-full" onClick={() => { void exportSecretKey() }}><Download size={15} /> تنزيل ملف السر (.tkey.json)</Btn>
+        </div>
+      </Modal>
+
+      {/* مودال استيراد نسخة السر (v1.0.15) */}
+      <Modal open={keyImportOpen} onClose={() => setKeyImportOpen(false)} title="🔑 استيراد نسخة سر إلى هذا الجهاز">
+        <div className="space-y-3">
+          <div className="rounded-xl bg-amber-500/10 p-3 text-[11.5px] text-amber-700 dark:text-amber-300 leading-relaxed">
+            ⚠️ الاستيراد يستبدل سر هذا الجهاز بسر النسخة ويُعيد تشغيل التطبيق — البيانات الحالية على هذا الجهاز
+            (المشفرة بسره القديم) لن تُقرأ بعده. استخدمه فقط على جهاز جديد عليه قاعدة منقولة من الجهاز الأصلي.
+          </div>
+          <input
+            ref={fileRef2}
+            type="file"
+            accept=".json,.tkey,application/json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (!f) return
+              void f.text().then((text) => {
+                try {
+                  const file = parseKeyFile(text)
+                  setKeyImportFile({ name: f.name, text, file })
+                  setKeyImportShop(file.shopName)
+                  toast.show(`قُرئ ملف سر «${file.shopName}» — أدخل كلمته`)
+                } catch (err) { toast.show((err as Error).message, 'error') }
+              })
+            }}
+          />
+          <Btn variant="ghost" className="w-full" onClick={() => fileRef2.current?.click()}><Upload size={15} /> {keyImportFile ? `الملف: ${keyImportFile.name} (${keyImportShop})` : 'اختر ملف النسخة (.tkey.json)'}</Btn>
+          <label className="block text-[11px] font-bold text-slate-500">كلمة سر الملف
+            <input type="password" className={`${inputCls} mt-1`} value={keyImportPass} onChange={(e) => setKeyImportPass(e.target.value)} placeholder="كلمة السر التي صُدر بها" autoComplete="off" />
+          </label>
+          <Btn className="w-full !bg-amber-600 hover:!bg-amber-700 !text-white" onClick={() => { void importSecretKey() }} disabled={!keyImportFile}><KeyRound size={15} /> استيراد السر وإعادة التشغيل</Btn>
+        </div>
+      </Modal>
     </div>
   )
 }
