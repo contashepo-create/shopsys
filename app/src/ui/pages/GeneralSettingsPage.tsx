@@ -8,7 +8,7 @@ import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Co
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
-import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES } from '../../core/activities.ts'
+import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES, effectiveModules } from '../../core/activities.ts'
 import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, type FiscalYear } from '../../core/fiscal.ts'
 import { formatMinor } from '../../core/money.ts'
 import { resolveBusinessTax, type BusinessTaxStatus } from '../../core/taxRegistration.ts'
@@ -18,7 +18,7 @@ import { accountName } from './accountNames.ts'
 import { FxRatesManager } from '../components/FxRatesManager.tsx'
 
 export function GeneralSettingsPage() {
-  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty, applyActivityChangeKey } = useAppStore()
+  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty, applyActivityChangeKey, toggleModule, activatedPayload } = useAppStore()
   const { warehouses, closeFiscalYear, journal } = useDataStore()
   const toast = useToast()
   /* v1.0.7: تغيير النشاط بمفتاح الدعم الفني فقط (موافقة المالك) */
@@ -27,6 +27,9 @@ export function GeneralSettingsPage() {
   const [activityKeyBusy, setActivityKeyBusy] = useState(false)
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const activity = ACTIVITY_TEMPLATES.find((a) => a.id === setup.activityId)
+  /* v1.0.10: الممنوحة = افتراضيات النشاط + ما منحه مفتاح الترخيص (extraModules الموقّعة) —
+     هذه فقط قابلة للإظهار من هنا؛ ما دونها يُطلب من الدعم */
+  const granted = effectiveModules(setup.activityId, activatedPayload?.extraModules)
   const [vat, setVat] = useState(String(setup.vatPercent))
   const [taxInclusive, setTaxInclusive] = useState(setup.taxInclusive)
   const [taxStatus, setTaxStatus] = useState<BusinessTaxStatus>(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
@@ -404,28 +407,54 @@ export function GeneralSettingsPage() {
             </div>
           </div>
         )}
-        {/* سياسة الأقسام (أمر المالك): المستخدم لا يضيف/يحذف أقساماً —
-            الافتراضية تتبع النشاط، والإضافي يفعّله المطوّر فقط عبر البوت بمفتاح موقَّع */}
+        {/* v1.0.10 (عقد إضافة قسم خارج النشاط): الفتح بمفتاح موقّع من الدعم فقط —
+            أمر البوت «اصدر ... وحدات=...» يمنح القسم فيظهر فوراً عند التفعيل.
+            من هنا: إيقاف/إعادة إظهار الأقسام الممنوحة (بياناتها تبقى دائماً). */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
-          {ALL_MODULES.filter((m) => setup.modules.includes(m) || activity?.modules.includes(m)).map((m) => {
+          {ALL_MODULES.map((m) => { // كل الوحدات ظاهرة: المفعّلة تُدار، والباقي يعرفها العميل ليطلبها من الدعم
             const on = setup.modules.includes(m)
             const isDefault = activity?.modules.includes(m)
             const info = MODULE_LABELS[m]
+            const lastOn = on && setup.modules.length <= 1
             return (
               <div
                 key={m}
                 className={`flex items-center gap-3 p-3 rounded-xl border-2 text-right ${
-                  on ? 'border-emerald-400/60 bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700 opacity-60'
+                  on ? 'border-emerald-400/60 bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700'
                 }`}
               >
                 <span className="text-xl">{info.icon}</span>
                 <span className="flex-1 min-w-0">
-                  <span className="block font-bold text-[13px] text-slate-800 dark:text-white">{info.nameAr}</span>
+                  <span className="block font-bold text-[13px] text-slate-800 dark:text-white">
+                    {info.nameAr}
+                    {isDefault && <span className={`mr-1.5 text-[10px] font-black px-1.5 py-0.5 rounded ${on ? 'bg-emerald-500/10 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>أساسي لنشاطك</span>}
+                  </span>
                   <span className="block text-[10.5px] text-slate-400 truncate">{info.desc}</span>
                 </span>
-                <span className={`shrink-0 text-[10px] font-black px-2 py-1 rounded-lg ${on ? (isDefault ? 'bg-emerald-500/10 text-emerald-600' : 'bg-violet-500/10 text-violet-600') : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
-                  {on ? (isDefault ? 'أساسي للنشاط' : 'مفعّل من المطوّر') : 'غير مفعّل'}
-                </span>
+                {on ? (
+                  <button
+                    disabled={lastOn}
+                    onClick={() => {
+                      if (lastOn) { toast.show('لا يمكن إيقاف آخر قسم مفعّل', 'error'); return }
+                      toast.show(`أُوقف قسم «${info.nameAr}» — شاشاته مختفية وبياناته محفوظة بالكامل`)
+                      toggleModule(m)
+                    }}
+                    className={`shrink-0 text-[10.5px] font-black px-2.5 py-1.5 rounded-lg transition-colors bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-rose-500/10 hover:text-rose-600 ${lastOn ? 'opacity-40' : ''}`}
+                  >
+                    إيقاف
+                  </button>
+                ) : granted.includes(m) ? (
+                  <button
+                    onClick={() => { toast.show(`عاد قسم «${info.nameAr}» للظهور — بياناته كاملة كما تركتها ✓`); toggleModule(m) }}
+                    className="shrink-0 text-[10.5px] font-black px-2.5 py-1.5 rounded-lg transition-colors bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
+                  >
+                    إعادة إظهار
+                  </button>
+                ) : (
+                  <span className="shrink-0 text-[10px] font-black px-2 py-1 rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-300" title="اطلبها من الدعم الفني — تُمنح بمفتاح موقّع وتظهر فوراً">
+                    بكود الدعم
+                  </span>
+                )}
               </div>
             )
           })}
@@ -433,7 +462,7 @@ export function GeneralSettingsPage() {
         <div className="flex items-center gap-2 p-3 rounded-xl bg-sky-500/5 border border-sky-500/15 mb-4">
           <span className="text-lg">ℹ️</span>
           <p className="text-[11px] font-bold text-sky-600 dark:text-sky-400">
-            الأقسام تتبع نشاطك تلقائياً — لإضافة قسم آخر تواصل مع الدعم الفني ليفعّله لك في رخصتك.
+            الأقسام الافتراضية تتبع نشاطك. القسم الإضافي (أي وحدة أعلاه غير مفعّلة) يُمنح بمفتاح موقّع من الدعم الفني — اطلبه فيظهر فوراً بعد التفعيل. إيقاف قسم يخفي شاشاته فقط وبياناته محفوظة وتعود كاملة عند إعادة الإظهار.
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">

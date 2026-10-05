@@ -354,7 +354,10 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ fiscalYears: s.fiscalYears.map((y) => (y.id === id ? { ...y, status: 'closed' as const } : y)) })),
       setAccountingMode: (m) => set((s) => ({ setup: { ...s.setup, accountingMode: m } })),
       toggleModule: (m) =>
-        set((s) => ({ setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } })),
+        /* v1.0.10: لا إيقاف آخر وحدة مفعّلة — التطبيق بلا أقسام لا معنى له */
+        set((s) => (s.setup.modules.includes(m) && s.setup.modules.length <= 1
+          ? {}
+          : { setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } })),
       resetSetup: () =>
         set((s) => ({
           setup: { ...s.setup, completed: false, countryCode: null, activityId: null },

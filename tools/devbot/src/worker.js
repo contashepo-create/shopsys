@@ -32,6 +32,8 @@ const env_ = env => ({
 
 const PLANS = new Set(['trial', 'basic', 'pro', 'lifetime'])
 const FEATURES = new Set(['multi_branch', 'multi_instance', 'lan_host', 'reports_pro', 'custom_modules'])
+/* v1.0.10: الوحدات الـ17 القابلة للمنح بمفتاح موقّع (extraModules — عقد إضافة قسم خارج النشاط) */
+const MODULES = new Set(['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate'])
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, OPTIONS',
@@ -187,21 +189,27 @@ async function handleUpdate(update, cfg) {
       }
 
       case '/اصدر': {
-        // /اصدر <deviceId> <خطة> <اسم العميل> [أيام] [نشاط] [+مستخدمون] [+فروع] [+ميزات بفواصل]
-        const [deviceId, plan, customer, daysRaw, activityId, extraUsersRaw, extraBranchesRaw, featuresRaw] = args
-        if (!deviceId || !plan || !customer) return { chatId, text: '⚠️ الصيغة: <code>/اصدر SHOP-XXXX-XXXX-XXXX basic «اسم المحل» 365 [معرّف النشاط] [+مستخدمون] [+فروع] [+ميزات]</code>' }
+        // /اصدر <deviceId> <خطة> <اسم العميل> [أيام] [نشاط] [+مستخدمون] [+فروع] [+ميزات] [وحدات=...]
+        const [deviceId, plan, customer, daysRaw, activityId, extraUsersRaw, extraBranchesRaw, featuresRaw, modulesRaw] = args
+        if (!deviceId || !plan || !customer) return { chatId, text: '⚠️ الصيغة: <code>/اصدر SHOP-XXXX-XXXX-XXXX basic «اسم المحل» 365 [نشاط] [+مستخدمون] [+فروع] [+ميزات] [وحدات=قائمة بفواصل]</code>' }
         if (!/^SHOP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(deviceId)) return { chatId, text: `⚠️ معرّف الجهاز غير صحيح: <code>${deviceId}</code> — يظهر للعميل في شاشة التفعيل` }
         if (!PLANS.has(plan)) return { chatId, text: `⚠️ الخطة من: ${[...PLANS].join(' / ')}` }
         const days = plan === 'lifetime' ? 0 : Math.max(1, Number(daysRaw) || 365)
         const extraUsers = Number(extraUsersRaw?.replace('+', '')) > 0 ? Number(extraUsersRaw.replace('+', '')) : undefined
         const extraBranches = Number(extraBranchesRaw?.replace('+', '')) > 0 ? Number(extraBranchesRaw.replace('+', '')) : undefined
         const features = (featuresRaw ?? '').split(',').map((f) => f.trim()).filter((f) => f && FEATURES.has(f))
+        // v1.0.10: منح أقسام إضافية خارج النشاط (extraModules موقّعة — القناة الوحيدة المعتمدة بالعقد)
+        const modulesArg = modulesRaw?.startsWith('وحدات=') ? modulesRaw.slice(5) : modulesRaw
+        const extraModules = (modulesArg ?? '').split(',').map((m) => m.trim()).filter((m) => m && MODULES.has(m))
+        const invalidModules = (modulesArg ?? '').split(',').map((m) => m.trim()).filter((m) => m && !MODULES.has(m))
+        if (invalidModules.length) return { chatId, text: `⚠️ وحدات غير معروفة: <code>${invalidModules.join(', ')}</code> — المتاح: <code>${[...MODULES].join(', ')}</code>` }
         const payload = {
           v: 1, deviceId, customer: customer.replace(/[«»]/g, ''), plan,
           features, issuedAt: new Date().toISOString().slice(0, 10),
           expiresAt: expiresAfterDays(days),
           ...(extraUsers != null ? { extraUsers } : {}), ...(extraBranches != null ? { extraBranches } : {}),
           ...(activityId ? { activityId } : {}),
+          ...(extraModules.length ? { extraModules } : {}),
         }
         const key = await issueLicenseKey(payload, cfg.priv)
         const fp = keyFingerprint(key)
@@ -209,7 +217,7 @@ async function handleUpdate(update, cfg) {
         await cfg.kv.put(`dev:${deviceId}`, JSON.stringify({
           plan, expiresAt: payload.expiresAt, customer: payload.customer, message: '', fingerprint: fp,
         }))
-        await appendDeviceLog(cfg, deviceId, `تفعيل ${plan} حتى ${payload.expiresAt ?? 'الحياة'} — ${payload.customer}`)
+        await appendDeviceLog(cfg, deviceId, `تفعيل ${plan} حتى ${payload.expiresAt ?? 'الحياة'} — ${payload.customer}${extraModules.length ? ` +وحدات ${extraModules.join(',')}` : ''}`)
         return {
           chatId,
           text: [
@@ -221,6 +229,7 @@ async function handleUpdate(update, cfg) {
             `🔑 البصمة: <code>${fp}</code> (للحرق لاحقاً)`,
             `⏱️ الانتهاء: ${payload.expiresAt ?? 'مدى الحياة'}`,
             extraUsers ? `👥 مستخدمون إضافيون: ${extraUsers}` : '', extraBranches ? `🏬 فروع إضافية: ${extraBranches}` : '',
+            extraModules.length ? `🧩 أقسام ممنوحة خارج النشاط: ${extraModules.join('، ')}` : '',
           ].filter(Boolean).join('\n'),
         }
       }

@@ -195,7 +195,7 @@ export function FirstRunWizard() {
             <div key="s2" className="anim-wizard-step">
               <h2 className="text-xl font-extrabold text-slate-800 dark:text-white mb-1">ما نشاطك التجاري؟ 🏪</h2>
               <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
-                النشاط يحدد الأقسام والشاشات الظاهرة — الأقسام الإضافية يفعّلها الدعم الفني في رخصتك
+                النشاط يحدد الأقسام الظاهرة افتراضياً — وأي قسم إضافي يُمنح بمفتاح موقّع من الدعم الفني ويظهر فوراً
               </p>
               <div className="max-w-md mx-auto space-y-4">
                 <QuickSelect native value={activityId} onChange={(e) => setActivityId(e.target.value)} className={`${inputCls} !text-base font-bold`}>
