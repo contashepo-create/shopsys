@@ -19,14 +19,15 @@ const check = (name, ok) => {
   if (!ok) { failed++; failedNames.push(name) }
 }
 
-check('⑥ ملف إعداد النشر موجود (cloud/wrangler.toml)', existsSync(join(repoRoot, 'cloud', 'wrangler.toml')))
-const toml = read('cloud/wrangler.toml')
-check('⑥ wrangler.toml يشحن مخرجات الواجهة (app/dist) كصفحات ثابتة', toml.includes('pages_build_output_dir') && toml.includes('app/dist'))
-check('⑥ لا خدمة سحابية مستهلكة بغير قرار — لا D1/KV/Functions بالتصميم', !/\[\[d1_databases\]\]|\[\[kv_namespaces\]\]|functions_dir/.test(toml))
+check('⑥ Worker قناة الدعم القائم سليم بلا تعديل (worker.js من الجولة السابقة)', existsSync(join(repoRoot, 'cloud', 'worker.js')) && read('cloud/wrangler.toml').includes('shopsys-control'))
+const toml = read('cloud/pages-wrangler.toml')
+check('⑥ ملف إعداد Pages منفصل (cloud/pages-wrangler.toml) لا يمس Worker', existsSync(join(repoRoot, 'cloud', 'pages-wrangler.toml')) && toml.includes('لا يمس'))
+check('⑥ Pages يشحن مخرجات الواجهة (app/dist) كصفحات ثابتة', toml.includes('pages_build_output_dir') && toml.includes('app/dist'))
+check('⑥ لا خدمة سحابية مستهلكة للصفحات بغير قرار — لا D1/KV/Functions بالتصميم', !/\[\[d1_databases\]\]|\[\[kv_namespaces\]\]|functions_dir/.test(toml))
 const doc = read('cloud/DEPLOY.md')
-check('⑥ وثيقة النشر بخطوتين (أوامر مباشرة + ربط مستودع) وقائمة تحقق قبل النشر', doc.includes('wrangler pages deploy') && doc.includes('قائمة تحقق'))
+check('⑥ الوثيقة تجمع المكوّنين بصدق: Worker القائم + Pages الجديد، بخطوات وقائمة تحقق', doc.includes('wrangler pages deploy') && doc.includes('قائمة تحقق') && doc.includes('Worker قناة الدعم'))
 check('⑥ الصدق التقني موثق: البيانات محلية بالمتصفح والمزامنة السحابية ليست في المرحلة', doc.includes('لا تُرفع لأي سيرفر') && doc.includes('ليست في هذه المرحلة'))
-check('⑥ الوثيقة تفرض قرار المالك الصريح — لا نشر ذاتي', doc.includes('بقرار المالك') && doc.includes('قراراً'))
+check('⑥ الوثيقة تفرض قرار المالك الصريح — لا نشر ذاتي', doc.includes('بقرار المالك') && doc.includes('قرار صريح'))
 check('⑥ مقارنة صادقة بين نسخة الويب وسطح المكتب (ما ينقص المتصفح)', doc.includes('الطباعة الصامتة') && doc.includes('إرسال المستندات PDF عبر واتساب'))
 
 /* بناء الويب سليم — dist موجود بآخر بناء (بوابة التغليف تبنيه ضمن verify:all) */
