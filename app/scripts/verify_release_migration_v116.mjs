@@ -114,6 +114,14 @@ if (auto.includes("'docs/**'") && auto.includes("'**/*.md'")) {
 } else {
   bad('استثناء الوثائق من الإصدار الآلي مفقود')
 }
+// v1.0.17 (بعد أول إطلاق فعلي): حساب النسخة من أوسمة الخادم لا المحلية —
+// checkout@v4 بfetch-depth:1 لا يمرر --tags (يمنع --no-tags فقط عند
+// fetch-tags:true) فكان السير يرى «لا وسم إصدار سابق» ويفشل خلال ثوانٍ
+if (auto.includes('ls-remote --tags origin') && !auto.includes("git tag -l")) {
+  ok('حساب النسخة التالية من أوسمة الخادم ls-remote (لا الأوسمة المحلية للسحب الضحال — عيب أول إطلاق مُصلح)')
+} else {
+  bad('حساب النسخة في auto-release يعتمد على الأوسمة المحلية — سيفشل بالسحب الضحال')
+}
 
 if (fails === 0) console.log('بوابة الترحيل: ✓ مقفلة');
 else { console.error(`بوابة الترحيل: ✗ ${fails} فشل`); process.exit(1); }
