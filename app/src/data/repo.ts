@@ -870,6 +870,8 @@ export interface Stocktake {
   countedItems: number // عدد الأصناف المشمولة بالجرد
   journalEntryId: number | null // null لو الجرد مطابق تماماً (لا قيد)
   notes: string
+  /** جرد خاص بمخزن (تدقيق أكتوبر 2026) — null/غياب = جرد شامل على الإجمالي */
+  warehouseId?: number | null
 }
 
 /** سند قبض/صرف/تحويل — كل سند مربوط بقيده */
@@ -1354,7 +1356,7 @@ interface DataState {
    * ترحيل جلسة جرد: يقارن المعدود بالدفتري، يضبط المخزون على المعدود،
    * ويولّد قيد تسوية متوازناً (عجز = مصروف، زيادة = تخفيض مصروف)
    */
-  postStocktake: (counts: CountInput[], notes: string) => Stocktake
+  postStocktake: (counts: CountInput[], notes: string, warehouseId?: number | null) => Stocktake
   /** إتلاف مخزون موثق بسبب: يخصم الكميات + يستهلك دفعات FEFO + قيد 5111/1103 */
   postWastage: (args: { reason: string; lines: { itemId: number; qty: number }[]; notes: string }) => WastageDoc
   /** صرف داخلي (استهلاك مخزون للتشغيل): يخصم الرصيد + FEFO + قيد مصروف/1103 بالمتوسط المرجح */
@@ -3226,9 +3228,10 @@ export const useDataStore = create<DataState>()(
         return ret
       },
 
-      postStocktake: (counts, notes) => {
+      postStocktake: (counts, notes, warehouseId) => {
         const state = get()
         if (!counts.length) throw new Error('لا أصناف في الجرد')
+        if (warehouseId != null && !state.warehouses.some((w) => w.id === warehouseId)) throw new Error('مخزن الجرد غير موجود')
         const result = computeStocktake(counts)
         const stocktakeId = nextId(state.stocktakes)
         const now = new Date().toISOString()
@@ -3264,6 +3267,7 @@ export const useDataStore = create<DataState>()(
           countedItems: counts.length,
           journalEntryId: entryId,
           notes,
+          warehouseId: warehouseId ?? null,
         }
 
         // ضبط المخزون: نطبّق «فرق الجرد» (المعدود − الدفتري وقت العدّ) على الرصيد الحي، لا نكتب
@@ -8549,7 +8553,7 @@ export const useDataStore = create<DataState>()(
         if (!state.warehouses.some((w) => w.id === args.toWarehouseId)) throw new Error('المخزن المستقبل غير موجود')
 
         // 1) الأرصدة الحالية لكل المخازن ثم تحقق النواة الخالصة
-        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns))
+        const stock = computeWarehouseStock(state.items, state.warehouses, state.transfers, buildWarehouseDocs(state.purchases, state.sales, state.saleReturns, state.purchaseReturns, state.stocktakes))
         const sourceMap = stock.get(args.fromWarehouseId)
         const errors = validateTransfer(
           { fromWarehouseId: args.fromWarehouseId, toWarehouseId: args.toWarehouseId, lines: args.lines },

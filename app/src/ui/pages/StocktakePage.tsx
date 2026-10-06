@@ -14,9 +14,10 @@ import type { CountInput } from '../../core/stocktake.ts'
 import { Btn, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { computeWarehouseStock, buildWarehouseDocs } from '../../core/transfers.ts'
 
 export function StocktakePage() {
-  const { items, stocktakes, journal, postStocktake } = useDataStore()
+  const { items, stocktakes, journal, postStocktake, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -26,14 +27,29 @@ export function StocktakePage() {
   const [counted, setCounted] = useState<Record<number, string>>({}) // itemId -> معدود
   const [scan, setScan] = useState('')
   const [notes, setNotes] = useState('')
+  /** مخزن الجرد (null = جرد شامل على إجمالي الرصيد) */
+  const [warehouseId, setWarehouseId] = useState<number | null>(null)
+  /**
+   * لقطة الدفتري لحظة أول عدّ للصنف: الرصيد الحي يتحرك بالبيع أثناء الجلسة، والمعدود يعكس لحظة العدّ —
+   * فالفرق يُقاس على اللقطة، ويُطبَّق على الرصيد الحي عند الترحيل فلا تضيع حركات الجلسة (تدقيق أكتوبر 2026).
+   */
+  const [snap, setSnap] = useState<Record<number, number>>({})
   const [viewing, setViewing] = useState<Stocktake | null>(null)
   const scanRef = useRef<HTMLInputElement>(null)
 
   const entry = viewing?.journalEntryId ? journal.find((e) => e.id === viewing.journalEntryId) : null
   const active = useMemo(() => items.filter((it) => it.isActive), [items])
+  const whStock = useMemo(
+    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, stocktakes)),
+    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, stocktakes],
+  )
+  /** الرصيد الدفتري الحي للصنف في نطاق الجرد (الإجمالي أو مخزن بعينه) */
+  const liveBook = (itemId: number, total: number) => (warehouseId === null ? total : (whStock.get(warehouseId)?.get(itemId) ?? 0))
+  const whName = (id: number | null | undefined) => (id == null ? null : warehouses.find((w) => w.id === id)?.nameAr ?? null)
 
   const startSession = () => {
     setCounted({})
+    setSnap({})
     setScan('')
     setNotes('')
     setSession(true)
@@ -50,6 +66,7 @@ export function StocktakePage() {
       setScan('')
       return
     }
+    setSnap((sn) => (sn[it.id] === undefined ? { ...sn, [it.id]: liveBook(it.id, it.stockQty ?? 0) } : sn))
     setCounted((c) => ({ ...c, [it.id]: String((Number(c[it.id]) || 0) + 1) }))
     toast.show(`${it.nameAr} — المعدود ${(Number(counted[it.id]) || 0) + 1}`)
     setScan('')
@@ -64,12 +81,12 @@ export function StocktakePage() {
           const it = items.find((x) => x.id === Number(id))!
           return {
             itemId: it.id, nameAr: it.nameAr,
-            expectedQty: it.stockQty ?? 0,
+            expectedQty: snap[it.id] ?? liveBook(it.id, it.stockQty ?? 0),
             countedQty: Number(normalizeDigits(v)) || 0,
             unitCostMinor: it.costMinor,
           }
         }),
-    [counted, items],
+    [counted, items, snap, warehouseId, whStock],
   )
   const liveDiffs = liveCounts.filter((c) => c.countedQty !== c.expectedQty)
 
@@ -79,7 +96,7 @@ export function StocktakePage() {
     if (!liveCounts.length) { toast.show('لم تعدّ أي صنف بعد', 'error'); return }
     approval.request(() => {
     try {
-      const st = postStocktake(liveCounts, notes.trim())
+      const st = postStocktake(liveCounts, notes.trim(), warehouseId)
       toast.show(
         st.journalEntryId
           ? `رُحّل الجرد ${st.stocktakeNumber} — ضُبط المخزون وتولد قيد التسوية ✓`
@@ -100,13 +117,21 @@ export function StocktakePage() {
             <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2"><ClipboardList size={18} className="text-amber-500" /> جلسة جرد جديدة</div>
             <div className="text-[12px] text-slate-400 mt-1">امسح باركود كل قطعة (كل مسحة +1) أو اكتب المعدود يدوياً — الفوارق تُقيَّم بالتكلفة ويتولد قيد التسوية تلقائياً</div>
           </div>
-          <Btn onClick={startSession} disabled={active.length === 0}><PlayCircle size={15} /> بدء الجرد</Btn>
+          <div className="flex items-center gap-2 flex-wrap">
+            {warehouses.length > 1 && (
+              <select value={warehouseId ?? ''} onChange={(e) => setWarehouseId(e.target.value === '' ? null : Number(e.target.value))} className={inputCls + ' w-52'} title="نطاق الجرد">
+                <option value="">كل المخازن (الإجمالي)</option>
+                {warehouses.map((w) => <option key={w.id} value={w.id}>جرد مخزن: {w.nameAr}</option>)}
+              </select>
+            )}
+            <Btn onClick={startSession} disabled={active.length === 0}><PlayCircle size={15} /> بدء الجرد</Btn>
+          </div>
         </div>
       ) : (
         <div className="anim-up rounded-3xl border-2 border-amber-500/30 bg-amber-500/[0.03] p-5 space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
-              <ClipboardList size={18} className="text-amber-500" /> جلسة جرد جارية — {liveCounts.length} صنف معدود
+              <ClipboardList size={18} className="text-amber-500" /> جلسة جرد جارية{whName(warehouseId) ? ` — ${whName(warehouseId)}` : ''} — {liveCounts.length} صنف معدود
               {liveDiffs.length > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-bold">{liveDiffs.length} فارق</span>}
             </div>
             <div className="flex gap-2">
@@ -142,15 +167,20 @@ export function StocktakePage() {
                 {active.map((it) => {
                   const v = counted[it.id] ?? ''
                   const c = v === '' ? null : Number(normalizeDigits(v)) || 0
-                  const diff = c === null ? null : Math.round((c - (it.stockQty ?? 0)) * 1000) / 1000
+                  const book = snap[it.id] ?? liveBook(it.id, it.stockQty ?? 0)
+                  const diff = c === null ? null : Math.round((c - book) * 1000) / 1000
                   return (
                     <tr key={it.id} className={`border-b border-slate-50 dark:border-slate-800/50 ${diff ? (diff < 0 ? 'bg-rose-500/[0.04]' : 'bg-emerald-500/[0.04]') : ''}`}>
                       <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{it.nameAr}<span className="text-[10px] text-slate-400 mr-2">{it.sku}</span></td>
-                      <td className="px-4 py-2 text-slate-500">{it.stockQty ?? 0} {it.baseUnit}</td>
+                      <td className="px-4 py-2 text-slate-500">{book} {it.baseUnit}</td>
                       <td className="px-4 py-2">
                         <input
                           value={v}
-                          onChange={(e) => setCounted((cc) => ({ ...cc, [it.id]: e.target.value }))}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            setSnap((sn) => (sn[it.id] === undefined ? { ...sn, [it.id]: liveBook(it.id, it.stockQty ?? 0) } : sn))
+                            setCounted((cc) => ({ ...cc, [it.id]: val }))
+                          }}
                           placeholder="—"
                           className={`${inputCls} text-center py-1`}
                         />
@@ -197,7 +227,7 @@ export function StocktakePage() {
               {[...stocktakes].reverse().map((st, i) => (
                 <tr key={st.id} style={{ animationDelay: `${i * 30}ms` }} className="anim-in border-b border-slate-50 dark:border-slate-800/50 hover:bg-amber-500/[0.03] transition-colors">
                   <td className="px-4 py-3">
-                    <div className="font-bold text-slate-800 dark:text-white">{st.stocktakeNumber}</div>
+                    <div className="font-bold text-slate-800 dark:text-white">{st.stocktakeNumber}{whName(st.warehouseId) && <span className="text-[10px] text-slate-400 mr-2">({whName(st.warehouseId)})</span>}</div>
                     <div className="text-[11px] text-slate-400">{st.date.slice(0, 16).replace('T', ' ')}</div>
                   </td>
                   <td className="px-4 py-3 text-slate-500">{st.countedItems} ({st.result.matchedCount} مطابق)</td>

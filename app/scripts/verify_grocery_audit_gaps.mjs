@@ -59,5 +59,40 @@ S().addItem({
 })
 ok('الحقل يُحفظ مع الصنف', S().items.at(-1).expiryAlertDays === 7)
 
+console.log('\n2️⃣ فصل فاقد الجرد (5111) + جرد مخزن بعينه')
+const bal = (code) => S().journal.flatMap((e) => e.lines).filter((l) => l.accountCode === code).reduce((a, l) => a + l.debit - l.credit, 0)
+const { computeWarehouseStock, buildWarehouseDocs } = await import('../src/core/transfers.ts')
+const mk = (nameAr) => { S().addItem({ nameAr, sku: '', barcodes: [], categoryId: 1, baseUnit: 'كجم', extraUnits: [], costMinor: 1000, stockQty: 0, priceMinor: 1500, minQty: 0, trackExpiry: false, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true }); return S().items.at(-1).id }
+S().addSupplier({ nameAr: 'مورد' })
+const sup = S().suppliers.at(-1).id
+const buy = (itemId, qty, extra = {}) => S().postPurchase({ supplierId: sup, date: '2026-10-06', lines: [{ itemId, qty, unitPriceMinor: 1000 }], expenses: [], paidMinor: qty * 1000, notes: '', ...extra })
+const g1 = mk('سكر')
+buy(g1, 100)
+const e5108 = bal('5108'), e5111 = bal('5111')
+S().postStocktake([{ itemId: g1, nameAr: 'سكر', expectedQty: 100, countedQty: 96, unitCostMinor: 1000 }], '')
+ok('عجز 4×1000 يذهب إلى 5111 لا 5108', bal('5111') - e5111 === 4000 && bal('5108') === e5108)
+S().postStocktake([{ itemId: g1, nameAr: 'سكر', expectedQty: 96, countedQty: 97, unitCostMinor: 1000 }], '')
+ok('زيادة 1×1000 تخفض 5111 (يصير صافي 3000)', bal('5111') - e5111 === 3000)
+ok('قائمة الدخل تفصل بند الهالك: 5111 ظاهر برصيد مدين', bal('5111') > 0)
+
+S().addWarehouse('فرع الجرد')
+const wb = S().warehouses.at(-1), wm = S().warehouses.find((w) => w.isMain)
+const g2 = mk('دقيق')
+buy(g2, 60)
+S().postTransfer({ fromWarehouseId: wm.id, toWarehouseId: wb.id, lines: [{ itemId: g2, qty: 20 }], notes: '' })
+const stockMap = () => computeWarehouseStock(S().items, S().warehouses, S().transfers, buildWarehouseDocs(S().purchases, S().sales, S().saleReturns, S().purchaseReturns, S().stocktakes))
+ok('قبل الجرد: رئيسي 40 + فرع 20', stockMap().get(wm.id).get(g2) === 40 && stockMap().get(wb.id).get(g2) === 20)
+const st = S().postStocktake([{ itemId: g2, nameAr: 'دقيق', expectedQty: 20, countedQty: 17, unitCostMinor: 1000 }], 'جرد الفرع', wb.id)
+ok('المستند يحفظ المخزن', st.warehouseId === wb.id)
+ok('الفرع صار 17 (العجز 3 نُسب له)', stockMap().get(wb.id).get(g2) === 17, `${stockMap().get(wb.id).get(g2)}`)
+ok('الرئيسي بقي 40 (لم يُحمَّل عجز الفرع)', stockMap().get(wm.id).get(g2) === 40, `${stockMap().get(wm.id).get(g2)}`)
+ok('الإجمالي 57 = 40 + 17', S().items.find((i) => i.id === g2).stockQty === 57)
+ok('قيد العجز 3×1000 على 5111', bal('5111') - e5111 === 3000 + 3000)
+let werr = ''
+try { S().postStocktake([{ itemId: g2, nameAr: 'دقيق', expectedQty: 17, countedQty: 17, unitCostMinor: 1000 }], '', 9999) } catch (e) { werr = e.message }
+ok('مخزن غير موجود يُرفض', werr.includes('غير موجود'))
+const noWh = S().postStocktake([{ itemId: g2, nameAr: 'دقيق', expectedQty: 57, countedQty: 57, unitCostMinor: 1000 }], 'شامل')
+ok('جرد شامل (بلا مخزن) يبقى null ولا يزيح شيئاً', noWh.warehouseId === null && stockMap().get(wb.id).get(g2) === 17 && stockMap().get(wm.id).get(g2) === 40)
+
 console.log(`\n═══ النتيجة: نجح ${pass} — فشل ${fail} ═══`)
 process.exit(fail ? 1 : 0)

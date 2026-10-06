@@ -118,6 +118,12 @@ export function buildWarehouseDocs(
   sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
   saleReturns: { saleId: number; lines: { itemId: number; qty: number; condition?: string }[] }[] = [],
   purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number }[] }[] = [],
+  /**
+   * جلسات جرد خاصة بمخزن (تدقيق أكتوبر 2026): فرق الجرد يخص مخزنه هو لا الرئيسي —
+   * وإلا ظهر عجز مخزن فرعي كعجز بالمخزن الرئيسي وأخفى الفاقد الحقيقي.
+   * warehouseId=null/غياب = جرد شامل على الإجمالي (السلوك القديم، لا إزاحة).
+   */
+  stocktakes: { warehouseId?: number | null; result: { variances: { itemId: number; diffQty: number }[] } }[] = [],
 ): WarehouseDoc[] {
   const docs: WarehouseDoc[] = []
   const pushLineDoc = (warehouseId: number | null | undefined, itemId: number, qtyDelta: number) => {
@@ -173,6 +179,9 @@ export function buildWarehouseDocs(
         pushLineDoc(pl.warehouseId ?? purchase.warehouseId ?? null, retLine.itemId, -take)
       }
     }
+  }
+  for (const st of stocktakes) {
+    for (const v of st.result.variances) pushLineDoc(st.warehouseId ?? null, v.itemId, v.diffQty)
   }
   return docs
 }

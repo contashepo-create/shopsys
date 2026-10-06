@@ -62,8 +62,8 @@ export function ItemsPage() {
   }, [categories])
 
   const warehouseStock = useMemo(
-    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns)),
-    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns],
+    () => computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, stocktakes)),
+    [items, warehouses, transfers, purchases, sales, saleReturns, purchaseReturns, stocktakes],
   )
   const stockInWarehouse = useCallback((warehouseId: number, itemId: number) => warehouseStock.get(warehouseId)?.get(itemId) ?? 0, [warehouseStock])
 
@@ -129,7 +129,7 @@ export function ItemsPage() {
       purchaseReturns: purchaseReturns.map((r) => ({ returnNumber: r.returnNumber, date: r.date, warehouseId: purchases.find((p) => p.id === r.purchaseId)?.warehouseId ?? null, userName: journalUser('purchase_return', r.id), lines: r.lines.map((l) => ({ itemId: l.itemId, qty: l.qty, unitCostMinor: l.landedUnitCostMinor })) })),
       sales: sales.map((sl) => ({ invoiceNumber: sl.invoiceNumber, date: sl.date, warehouseId: sl.warehouseId ?? null, userName: journalUser('sale', sl.id), lines: sl.lines })),
       saleReturns: saleReturns.map((r) => ({ returnNumber: r.returnNumber, date: r.date, warehouseId: sales.find((sl) => sl.id === r.saleId)?.warehouseId ?? null, userName: journalUser('sale_return', r.id), lines: r.lines })),
-      stocktakes: stocktakes.map((st) => ({ stocktakeNumber: st.stocktakeNumber, date: st.date, warehouseId: null, userName: journal.find((j) => j.id === st.journalEntryId)?.createdBy ?? null, rows: st.result.variances.map((v) => ({ itemId: v.itemId, systemQty: v.expectedQty, countedQty: v.countedQty })) })),
+      stocktakes: stocktakes.map((st) => ({ stocktakeNumber: st.stocktakeNumber, date: st.date, warehouseId: st.warehouseId ?? null, userName: journal.find((j) => j.id === st.journalEntryId)?.createdBy ?? null, rows: st.result.variances.map((v) => ({ itemId: v.itemId, systemQty: v.expectedQty, countedQty: v.countedQty })) })),
       productionOrders: productionOrders.map((po) => {
         const recipe = recipes.find((rc) => rc.id === po.recipeId)
         return {
@@ -724,7 +724,7 @@ export function ItemsPage() {
               </div>
               {/* أمر التعديل: تفصيل الرصيد بكل مخزن داخل معاينة الصنف */}
               {warehouses.length > 1 && (() => {
-                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns))
+                const whStock = computeWarehouseStock(items, warehouses, transfers, buildWarehouseDocs(purchases, sales, saleReturns, purchaseReturns, stocktakes))
                 return (
                   <div className="rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
                     <div className="px-4 py-2 text-[11.5px] font-black text-slate-500 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">🏬 الرصيد بكل مخزن</div>

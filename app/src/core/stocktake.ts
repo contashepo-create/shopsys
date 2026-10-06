@@ -3,7 +3,9 @@
  * ─────────────────────────────────────────────────────
  * جلسة جرد: امسح/عدّ الأصناف، والنظام يقارن المعدود بالدفتري
  * ويحسب الفوارق مُقيَّمة بتكلفة كل صنف، ثم قيد تسوية واحد متوازن:
- * العجز مصروف (5108) والزيادة تخفيض للمصروف — والمخزون يُضبط على المعدود.
+ * العجز على 5111 «هالك وتوالف مخزون» والزيادة تخفيض لنفس الحساب — والمخزون يُضبط على المعدود.
+ * (تدقيق أكتوبر 2026: كانا على 5108 مصروفات عمومية فاختلط فاقد المخزون بالمصروفات
+ * ولم تظهر نسبة الفاقد في قائمة الدخل منفصلة — المعيار العالمي حساب shrinkage مستقل.)
  */
 import type { Minor } from './money.ts'
 import type { JournalLine } from './ledger.ts'
@@ -73,8 +75,8 @@ export function computeStocktake(counts: CountInput[]): StocktakeResult {
 
 /**
  * قيد تسوية الجرد (sourceType: adjustment):
- *   عجز: مدين مصروفات عمومية (5108) / دائن مخزون (1103)
- *   زيادة: مدين مخزون (1103) / دائن مصروفات عمومية (5108)
+ *   عجز: مدين هالك وتوالف مخزون (5111) / دائن مخزون (1103)
+ *   زيادة: مدين مخزون (1103) / دائن هالك وتوالف مخزون (5111)
  * يُبنى قيد واحد صافٍ بطرفي العجز والزيادة معاً — ويرمي خطأ لو لا فوارق.
  */
 export function buildAdjustmentEntry(result: StocktakeResult): JournalLine[] {
@@ -82,12 +84,12 @@ export function buildAdjustmentEntry(result: StocktakeResult): JournalLine[] {
   if (sh === 0 && su === 0) throw new RangeError('لا فوارق — لا حاجة لقيد تسوية')
   const lines: JournalLine[] = []
   if (sh > 0) {
-    lines.push({ accountCode: '5108', debit: sh, credit: 0, note: 'عجز جرد' })
+    lines.push({ accountCode: '5111', debit: sh, credit: 0, note: 'عجز جرد' })
     lines.push({ accountCode: '1103', debit: 0, credit: sh, note: 'تخفيض المخزون بالعجز' })
   }
   if (su > 0) {
     lines.push({ accountCode: '1103', debit: su, credit: 0, note: 'زيادة جرد للمخزون' })
-    lines.push({ accountCode: '5108', debit: 0, credit: su, note: 'زيادة جرد (تخفيض مصروف)' })
+    lines.push({ accountCode: '5111', debit: 0, credit: su, note: 'زيادة جرد (تخفيض هالك)' })
   }
   assertBalanced(lines)
   return lines

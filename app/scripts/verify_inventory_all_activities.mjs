@@ -7,7 +7,7 @@
  *  1) شراء 20 بمصاريف ⇒ متوسط محمل 110
  *  2) تحويل 5 لفرع ⇒ لا قيد و1103 ثابت وأرصدة المخازن متسقة
  *  3) بيع 6 ⇒ 5101 بالمحمل، ثم مرتجع بيع 1 سليمة ⇒ ترجع بالمتوسط
- *  4) جرد بعد كل ذلك (متوقع 15) بعجز 2 ⇒ قيد 5108 وضبط 13
+ *  4) جرد بعد كل ذلك (متوقع 15) بعجز 2 ⇒ قيد 5111 وضبط 13
  *  5) إتلاف 1 ⇒ قيد 5111
  *  6) صرف داخلي 1 ⇒ قيد مصروف/1103
  *  7) مرتجع شراء 2 ⇒ G4 وسقف المخزون المتبقي
@@ -97,7 +97,7 @@ for (const activityId of ACTIVITIES) {
   // 4) جرد بعجز 2 (متوقع 15 معدود 13)
   const stk = st().postStocktake([{ itemId: item.id, nameAr: item.nameAr, expectedQty: 15, countedQty: 13, unitCostMinor: 11000 }], 'جرد النشاط')
   const stkEntry = st().journal.find((e) => e.id === stk.journalEntryId)
-  assert.ok(stkEntry.lines.some((l) => l.accountCode === '5108' && l.debit === 22000), `${activityId}: قيد عجز`)
+  assert.ok(stkEntry.lines.some((l) => l.accountCode === '5111' && l.debit === 22000), `${activityId}: قيد عجز`)
   assert.equal(st().items.find((i) => i.id === item.id).stockQty, 13)
   check1103('بعد الجرد')
 

@@ -128,7 +128,7 @@ ok('رفض معدود سالب وصنف مكرر', () => {
 ok('قيد التسوية متوازن ويحمل العجز والزيادة معاً', () => {
   const e = buildAdjustmentEntry(computeStocktake(counts))
   assert.equal(sumD(e), sumC(e))
-  assert.ok(e.some((l) => l.accountCode === '5108' && l.debit === 2000)) // عجز مصروف
+  assert.ok(e.some((l) => l.accountCode === '5111' && l.debit === 2000)) // عجز مصروف
   assert.ok(e.some((l) => l.accountCode === '1103' && l.debit === 500)) // زيادة للمخزون
 })
 
