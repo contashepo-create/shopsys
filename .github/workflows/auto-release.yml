@@ -53,8 +53,19 @@ jobs:
         id: version
         shell: bash
         run: |
-          LATEST=$(git tag -l 'v*' | sed 's/^v//' | sort -V | tail -1)
-          if [ -z "${LATEST}" ]; then echo "✗ لا وسم إصدار سابق — لا أساس للترقيم"; exit 1; fi
+          # آخر وسم يُقرأ من الخادم مباشرة (ls-remote) لا من الأوسمة المحلية:
+          # عيب أول إطلاق فعلي (دمج PR #10): checkout@v4 مع fetch-depth:1
+          # يمنع --no-tags عند fetch-tags:true لكنه لا يمرر --tags أصلاً —
+          # فلا تُجلب إلا الأوسمة المتصلة بالالتزامات المجلوبة (التزام الدمج
+          # فقط)، وكل أوسمة v* القديمة غائبة → «لا وسم إصدار سابق» خلال 4 ثوانٍ.
+          # ls-remote لا يعتمد على الجلب المحلي إطلاقاً (كما يفعل checkout
+          # نفسه لجلب الفرع الافتراضي).
+          LATEST=$(git ls-remote --tags origin 'refs/tags/v*' \
+            | awk -F/ '{print $NF}' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V | tail -1 | sed 's/^v//')
+          echo "تشخيص: آخر وسم إصدار من الخادم = v${LATEST:-<لا شيء>}"
+          if [ -z "${LATEST}" ]; then echo "✗ لا وسم إصدار سابق على الخادم — لا أساس للترقيم"; exit 1; fi
           IFS='.' read -r MA MI PA <<< "${LATEST}"
           NEW="v${MA}.${MI}.$((PA + 1))"
           echo "النسخة الحالية ${LATEST} ← الجديدة ${NEW}"
