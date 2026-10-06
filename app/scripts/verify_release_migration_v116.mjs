@@ -21,10 +21,10 @@ const guide = read('../docs/الترحيل-لمستودع-خاص.md');
 console.log('بوابة الترحيل لرف الإصدارات العام (v1.0.16):');
 
 // 1) وجهة التحديث = الرف العام
-if (builder.includes('tahakom-releases') && !/publish:[\s\S]*?shopsys/.test(builder)) {
-  ok('publish → tahakom-releases (لا يوجد توجيه قديم لshopsys)');
+if (builder.includes('tahakam-releases') && !/publish:[\s\S]*?shopsys/.test(builder)) {
+  ok('publish → tahakam-releases (لا يوجد توجيه قديم لshopsys)');
 } else {
-  bad('إعداد publish لا يشير حصراً للرف العام tahakom-releases');
+  bad('إعداد publish لا يشير حصراً للرف العام tahakam-releases');
 }
 
 // 2) desktop:dist بلا نشر — لا يمكن للبناء اليومي أن ينشر بGH_TOKEN للعملاء
@@ -72,7 +72,7 @@ if (/مرآة إصدار الترحيل/.test(wf) && /تُزال بعد اكتم
 }
 
 // 5) الدليل
-if (guide.includes('tahakom-releases') && guide.includes('RELEASES_REPO_TOKEN') && guide.includes('Make private')) {
+if (guide.includes('tahakam-releases') && guide.includes('RELEASES_REPO_TOKEN') && guide.includes('Make private')) {
   ok('دليل الترحيل موجود (الرف + التوكن + الخصخصة)');
 } else {
   bad('دليل الترحيل ناقص');

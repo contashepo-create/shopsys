@@ -107,7 +107,7 @@ jobs:
 
       # ── v1.0.16: ترحيل التحديث لرف الإصدارات العام ──────────────────────
       # المعمارية: البناء هنا (بلا توكن) → app-update.yml داخل المثبت يشير
-      # لtahakom-releases → نشر صريح للرف العام بتوكن محصور → مرآة هنا
+      # لtahakam-releases → نشر صريح للرف العام بتوكن محصور → مرآة هنا
       # للعملاء القدامى (تُزال بعد اكتمال الترحيل وخصخصة المستودع).
       # راجع docs/الترحيل-لمستودع-خاص.md
 
@@ -122,19 +122,19 @@ jobs:
           if [ ! -f "${FEED}" ]; then echo "✗ app-update.yml غير موجود بالبناء — لا نشر لمثبت بلا وجهة تحديث"; exit 1; fi
           echo "═══ app-update.yml داخل المثبت ═══"
           cat "${FEED}"
-          if ! grep -q "tahakom-releases" "${FEED}"; then
+          if ! grep -q "tahakam-releases" "${FEED}"; then
             echo "✗ المثبت لا يشير لرف الإصدارات العام — لا نشر يضلّل العملاء"; exit 1
           fi
-          echo "✓ التحديث داخل المثبت موجه للرف العام tahakom-releases"
+          echo "✓ التحديث داخل المثبت موجه للرف العام tahakam-releases"
 
-      - name: نشر الإصدار إلى رف الإصدارات العام (tahakom-releases)
+      - name: نشر الإصدار إلى رف الإصدارات العام (tahakam-releases)
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
           VER=$(node -p "require('./package.json').version")
-          REL="contashepo-create/tahakom-releases"
+          REL="contashepo-create/tahakam-releases"
           if [ -z "${GH_TOKEN}" ]; then
             echo "✗ سر RELEASES_REPO_TOKEN غير مضبوط — لا نشر بلا رف التحديث (إصدار بلا رف = عملاء معطلون عن التحديث)"
             exit 1
