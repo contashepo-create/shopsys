@@ -37,7 +37,12 @@ jobs:
         run: npm audit --omit=dev
 
       - name: Build-tool dependency audit
-        run: npm audit
+        # v1.0.15: العتبة high — ثغرة sprintf-js (moderate) داخل سلسلة
+        # electron-builder (roarr/global-agent) مكتبة مهجورة بلا نسخة مصلحة،
+        # ولا تخرج من أدوات البناء إلى حزمة المستخدم (production audit
+        # منفصلة أدناه/أعلاه وتبعيات الإنتاج نظيفة). عند صدور إصلاح
+        # upstream نعيد العتبة الافتراضية.
+        run: npm audit --audit-level=high
 
       - name: TypeScript and production build
         run: npm run build
