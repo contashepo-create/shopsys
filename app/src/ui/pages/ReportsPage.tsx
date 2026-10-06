@@ -96,7 +96,7 @@ export function ReportsPage() {
   const alerts = useMemo(() => stockAlerts(items), [items])
   const invValue = useMemo(() => inventoryValue(items), [items])
   const expAlerts = useMemo(
-    () => expiryAlerts(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`, new Date().toISOString()),
+    () => expiryAlerts(batches, (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`, new Date().toISOString(), 30, (id) => items.find((it) => it.id === id)?.expiryAlertDays),
     [batches, items],
   )
 

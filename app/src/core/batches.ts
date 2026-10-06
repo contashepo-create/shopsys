@@ -114,6 +114,8 @@ export function expiryAlerts(
   itemName: (itemId: number) => string,
   today: string,
   horizonDays = 30,
+  /** أفق خاص بصنف (أيام) — undefined/≤0 = horizonDays العام */
+  horizonFor?: (itemId: number) => number | undefined,
 ): ExpiryAlertRow[] {
   const day = today.slice(0, 10)
   const dayMs = Date.parse(`${day}T00:00:00Z`)
@@ -121,7 +123,9 @@ export function expiryAlerts(
   for (const b of batches) {
     if (b.expiryDate === null || b.qty <= 0) continue
     const daysLeft = Math.floor((Date.parse(`${b.expiryDate}T00:00:00Z`) - dayMs) / 86_400_000)
-    if (daysLeft > horizonDays) continue
+    const own = horizonFor?.(b.itemId)
+    const horizon = own !== undefined && own > 0 ? own : horizonDays
+    if (daysLeft > horizon) continue
     rows.push({
       itemId: b.itemId,
       nameAr: itemName(b.itemId),

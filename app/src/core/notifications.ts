@@ -25,6 +25,8 @@ export interface AppNotification {
 export interface NotificationsInput {
   batches: StockBatch[]
   itemName: (itemId: number) => string
+  /** أيام تنبيه الصلاحية الخاصة بصنف (Item.expiryAlertDays) — غيابها = 30 */
+  itemExpiryDays?: (itemId: number) => number | undefined
   /** أصناف انخفض رصيدها لحد إعادة الطلب (فجوة عالمية — Lightspeed reorder alerts) */
   lowStockItems?: { id: number; nameAr: string; stockQty: number; minQty: number }[]
   installmentPlans: { id: number; planNumber: string; customerId: number; items: InstallmentItem[] }[]
@@ -50,7 +52,7 @@ export function collectNotifications(input: NotificationsInput): AppNotification
   const dayMs = Date.parse(`${day}T00:00:00Z`)
 
   // 1) صلاحيات الدُفعات (منتهية أو خلال 30 يوماً)
-  for (const a of expiryAlerts(input.batches, input.itemName, input.todayIso)) {
+  for (const a of expiryAlerts(input.batches, input.itemName, input.todayIso, 30, input.itemExpiryDays)) {
     out.push({
       id: `exp:${a.itemId}:${a.expiryDate}`,
       icon: a.status === 'expired' ? '🛑' : '⏳',

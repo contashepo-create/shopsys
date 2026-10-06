@@ -88,7 +88,7 @@ export function Dashboard() {
   const businessAlerts = useMemo(() => {
     return collectBusinessAlerts({
       todayIso: new Date().toISOString(),
-      items: items.map((it) => ({ id: it.id, nameAr: it.nameAr, stockQty: it.stockQty ?? 0, minQty: it.minQty, isActive: it.isActive })),
+      items: items.map((it) => ({ id: it.id, nameAr: it.nameAr, stockQty: it.stockQty ?? 0, minQty: it.minQty, isActive: it.isActive, expiryAlertDays: it.expiryAlertDays })),
       batches,
       installmentAlerts: collectInstallmentAlerts(installmentPlans, new Date().toISOString().slice(0, 10)),
       cheques,

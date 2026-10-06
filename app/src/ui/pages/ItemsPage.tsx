@@ -966,6 +966,15 @@ function ItemForm({
             className={inputCls} placeholder="0"
           />
         </Field>
+        {draft.trackExpiry && (
+          <Field label="تنبيه الصلاحية قبل (يوم)" hint="يخص هذا الصنف: الألبان 5–10 أيام والمعلبات 60+ — اتركه فارغاً للافتراضي (30 يوماً)">
+            <input
+              type="number" min={0} inputMode="numeric" defaultValue={draft.expiryAlertDays || ''}
+              onChange={(e) => p({ expiryAlertDays: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+              className={inputCls} placeholder="30"
+            />
+          </Field>
+        )}
       </div>
 
       {/* الباركودات */}

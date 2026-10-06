@@ -114,6 +114,11 @@ export interface Item {
    * 0/undefined = بلا حد.
    */
   minSalePriceMinor?: Minor
+  /**
+   * أيام التنبيه قبل انتهاء الصلاحية لهذا الصنف (سد فجوة Odoo expiration alert_time):
+   * الزبادي بصلاحية 10 أيام لا يُنبَّه له قبل 30 يوماً كالأرز — 0/غياب = الافتراضي العام (30).
+   */
+  expiryAlertDays?: number
   isActive: boolean
 }
 

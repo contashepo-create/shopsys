@@ -23,7 +23,7 @@ const daysBetween = (fromIso: string, toIso: string) =>
 
 export function collectBusinessAlerts(args: {
   todayIso: string
-  items: readonly { id: number; nameAr: string; stockQty: number; minQty: number; isActive: boolean }[]
+  items: readonly { id: number; nameAr: string; stockQty: number; minQty: number; isActive: boolean; expiryAlertDays?: number }[]
   batches: readonly { itemId: number; expiryDate: string | null; qty: number }[]
   installmentAlerts: readonly { kind: 'overdue' | 'due_soon'; amountDueMinor: number; dueDate: string }[]
   cheques: readonly { chequeNumber: string; direction: string; status: string; dueDate: string; amountMinor: number; partyName: string }[]
@@ -54,7 +54,12 @@ export function collectBusinessAlerts(args: {
   const itemName = (id: number) => args.items.find((i) => i.id === id)?.nameAr ?? `#${id}`
   const withDate = args.batches.filter((b) => b.qty > 0 && b.expiryDate)
   const expired = withDate.filter((b) => daysBetween(todayIso, b.expiryDate!) < 0)
-  const expiring = withDate.filter((b) => { const d = daysBetween(todayIso, b.expiryDate!); return d >= 0 && d <= expiryDays })
+  // أفق كل صنف الخاص (Item.expiryAlertDays) يعلو الأفق العام
+  const horizonOf = (itemId: number) => {
+    const own = args.items.find((i) => i.id === itemId)?.expiryAlertDays
+    return own !== undefined && own > 0 ? own : expiryDays
+  }
+  const expiring = withDate.filter((b) => { const d = daysBetween(todayIso, b.expiryDate!); return d >= 0 && d <= horizonOf(b.itemId) })
   if (expired.length) {
     out.push({
       kind: 'expired', severity: 'danger',
@@ -66,7 +71,7 @@ export function collectBusinessAlerts(args: {
   if (expiring.length) {
     out.push({
       kind: 'expiring', severity: 'warn',
-      titleAr: `${expiring.length} دفعة تنتهي خلال ${expiryDays} يوماً`,
+      titleAr: `${expiring.length} دفعة قاربت الانتهاء`,
       detailAr: [...new Set(expiring.map((b) => itemName(b.itemId)))].slice(0, 3).join('، '),
       route: '/inventory/items',
     })
