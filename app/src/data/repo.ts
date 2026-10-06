@@ -3266,10 +3266,20 @@ export const useDataStore = create<DataState>()(
           notes,
         }
 
-        // ضبط المخزون على المعدود فعلياً
-        const countedBy = new Map(counts.map((c) => [c.itemId, c.countedQty]))
+        // ضبط المخزون: نطبّق «فرق الجرد» (المعدود − الدفتري وقت العدّ) على الرصيد الحي، لا نكتب
+        // المعدود فوقه — فأي بيع/شراء حدث بين بدء العدّ والترحيل لا يضيع، ويبقى الأستاذ 1103
+        // = دفتر الأصناف (قيد التسوية قُيّم بالفرق نفسه). بلا حركة متزامنة النتيجة = المعدود تماماً.
+        const diffBy = new Map(counts.map((c) => [c.itemId, Math.round((c.countedQty - c.expectedQty) * 1000) / 1000]))
+        for (const [itemId, diff] of diffBy) {
+          const live = state.items.find((it) => it.id === itemId)
+          if (!live) throw new Error('صنف في الجرد لم يعد موجوداً — أعد فتح الجرد')
+          const next = Math.round(((live.stockQty ?? 0) + diff) * 1000) / 1000
+          if (next < 0) {
+            throw new Error(`«${live.nameAr}»: الرصيد الحالي (${live.stockQty ?? 0}) تغيّر بعد بدء الجرد ولا يتسع للفرق (${diff}) — أعد عدّ هذا الصنف`)
+          }
+        }
         const updatedItems = state.items.map((it) =>
-          countedBy.has(it.id) ? { ...it, stockQty: countedBy.get(it.id)! } : it,
+          diffBy.has(it.id) ? { ...it, stockQty: Math.round(((it.stockQty ?? 0) + diffBy.get(it.id)!) * 1000) / 1000 } : it,
         )
 
         // V2 (مراجعة المخزون): العجز يُخصم من دفعات الصلاحية أيضاً (FEFO — الأقدم
