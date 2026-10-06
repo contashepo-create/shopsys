@@ -2,7 +2,7 @@
 /** فحص تشغيلي: مخزن كل سطر شراء + ختم اعتماد إقفال الوردية بفارق. */
 import assert from 'node:assert/strict'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -18,9 +18,9 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'grocery', allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
-const { summarizeShift } = await import(join(root, 'src/core/shifts.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
+const { summarizeShift } = await import(pathToFileURL(join(root, 'src/core/shifts.ts')).href)
 const S = () => useDataStore.getState()
 let pass = 0
 const ok = (msg) => { pass++; console.log('  ✓', msg) }
@@ -102,8 +102,8 @@ assert.throws(() => S().editPurchase({
   treasury: '1101',
   reason: 'اختبار منع تعديل متعدد المخازن',
   einvoiceActive: false,
-}), /متعددة المخازن/)
-ok('تعديل فاتورة شراء متعددة المخازن يُرفض حتى لا يمسح توزيع المخازن')
+}), /موزعة على أكثر من مخزن/)
+ok('تعديل فاتورة شراء موزعة على مخزنين يُرفض حتى لا يمسح توزيع المخازن')
 
 const projectDocs = buildWarehouseDocs([
   { id: 999, projectId: 77, warehouseId: coldWh, lines: [{ itemId, qty: 50 }] },

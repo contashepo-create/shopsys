@@ -751,7 +751,10 @@ export function ItemsPage() {
               <tbody>
                 {items.filter((it) => it.isActive).map((it) => (
                   <tr key={it.id} {...rowOpenProps(() => openEditItem(it), `انقر مرتين لفتح بطاقة ${it.nameAr}`)} className="border-b border-slate-50 dark:border-slate-800/50">
-                    <td className="px-4 py-1.5 font-bold">{it.nameAr}</td>
+                    <td className="px-4 py-1.5 font-bold">
+                      {it.nameAr}
+                      {it.fitment ? <span className="ms-1.5 text-[9.5px] font-normal text-slate-400" title={`يناسب: ${it.fitment}`}>🔧 {it.fitment.length > 22 ? `${it.fitment.slice(0, 22)}…` : it.fitment}</span> : null}
+                    </td>
                     <td className="px-4 py-1.5 font-mono text-[11px] text-slate-400" dir="ltr">{it.barcodes.find(Boolean) || it.sku || it.id}</td>
                     <td className="px-4 py-1.5 text-emerald-600 font-bold">{formatMinor(it.priceMinor, cur, false)}</td>
                     <td className="px-4 py-1.5">

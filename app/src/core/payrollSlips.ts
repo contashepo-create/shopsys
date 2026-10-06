@@ -41,6 +41,8 @@ export interface PayrollSlip {
   paidEntryId?: number | null
   paidFrom?: string | null
   notes?: string
+  /** §93: الجزاءات المسجلة التي خُصمت بهذه القسيمة (الأقدم أولاً) — تُعكس عند الإلغاء */
+  recoveredDeductions?: { deductionId: number; minor: number }[]
 }
 
 export const slipNetMinor = (row: { grossMinor: Minor; allowancesMinor: Minor; deductionsMinor: Minor; advanceMinor: Minor }): Minor =>

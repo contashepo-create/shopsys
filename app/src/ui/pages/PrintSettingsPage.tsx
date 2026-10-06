@@ -5,14 +5,15 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * شعار المحل، العلامة المائية، وإظهار/إخفاء كل عنصر — مع معاينة حية «حقيقية»
  * (iframe يعرض نفس HTML الذي سيُطبع حرفياً، فلا مفاجآت على الورق).
  */
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Printer, FileText, ImagePlus, Trash2, Stamp, Eye, Palette, ClipboardList, PackageCheck } from 'lucide-react'
 import { renderReportShell } from '../../core/reportPrint.ts'
 import { WAREHOUSE_RECEIPT_LABELS, buildWarehouseReceiptHtml, type WarehouseReceiptSettings } from '../../core/warehouseReceipt.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { buildReceiptModel, A4_STYLES, type PaperWidth, type InvoiceTemplate, type ReceiptSettings } from '../../core/receipt.ts'
-import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
+import { renderReceiptHtml, printHtml, listSystemPrinters } from '../print/printReceipt.ts'
+import { PRINT_ROUTES } from '../../core/printers.ts'
 import { renderInvoiceA4Html } from '../print/printInvoiceA4.ts'
 import { computeTotals } from '../../core/pos.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
@@ -64,7 +65,7 @@ function readLogoFile(file: File, onDone: (dataUrl: string) => void, onError: ()
 }
 
 export function PrintSettingsPage() {
-  const { setup, receipt, autoPrintAfterSale, updateReceipt, setAutoPrint, reportPrint, updateReportPrint, warehouseReceipt, updateWarehouseReceipt, resetWarehouseReceipt } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale, updateReceipt, setAutoPrint, reportPrint, updateReportPrint, warehouseReceipt, updateWarehouseReceipt, resetWarehouseReceipt, printerProfiles, setPrinterProfile } = useAppStore()
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
   const cur = useMemo(
@@ -119,6 +120,18 @@ export function PrintSettingsPage() {
   }
 
   const headerText = receipt.headerLines.join('\n')
+
+  /* §102 (تعدد الطابعات): قائمة طابعات النظام — متاحة في نسخة EXE فقط
+     (جسر shopsysPrinters/Electron)؛ في المتصفح تبقى فارغة ونشرح السبب. */
+  const [systemPrinters, setSystemPrinters] = useState<string[] | null>(null)
+  const [printersLoading, setPrintersLoading] = useState(false)
+  useEffect(() => { if (systemPrinters == null) listSystemPrinters().then(setSystemPrinters) }, [systemPrinters])
+  const refreshPrinters = async () => {
+    setPrintersLoading(true)
+    setSystemPrinters(await listSystemPrinters())
+    setPrintersLoading(false)
+  }
+
   const toggleCls =
     'flex items-center justify-between px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 cursor-pointer hover:border-brand-400/50 transition-colors'
 
@@ -504,6 +517,76 @@ export function PrintSettingsPage() {
             <Btn onClick={testPrint}><Printer size={15} /> تجربة الحراري</Btn>
             <Btn onClick={testPrintA4} variant="ghost" className="border-2 border-brand-500/30"><FileText size={15} /> تجربة A4</Btn>
             <Btn onClick={testPrintA5} variant="ghost" className="border-2 border-teal-500/30"><FileText size={15} /> تجربة A5</Btn>
+          </div>
+        </div>
+
+        {/* ─── §102: الطابعات والمسارات — نسخة لكل طابعة باسمها ─── */}
+        <div className="rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5 space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <div className="font-black text-[14px] text-slate-800 dark:text-white flex items-center gap-2"><PackageCheck size={16} className="text-brand-500" /> الطابعات والمسارات</div>
+              <div className="text-[11.5px] text-slate-400 mt-0.5">فاتورة واحدة تُطبع نسخاً متعددة — كل نسخة إلى طابعتها باسمها (عميل/مطبخ/محطة)</div>
+            </div>
+            <Btn variant="soft" onClick={refreshPrinters} disabled={printersLoading}>
+              <Printer size={14} /> {printersLoading ? 'جارٍ الجلب…' : 'جلب طابعات النظام'}
+            </Btn>
+          </div>
+
+          {systemPrinters != null && systemPrinters.length === 0 && (
+            <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-[11.5px] leading-relaxed text-amber-700 dark:text-amber-300">
+              <b>متصفح الويب لا يرى طابعات جهازك</b> — قيد تقني في كل المتصفحات، لا نقص في التطبيق.
+              أسماء الطابعات والتوجيه الصامت يعملان في <b>نسخة EXE لسطح المكتب</b>: تعرض قائمة طابعات
+              ويندوز الحقيقية (شبكية كانت أم USB)، وتختار لكل مسار طابعته وتُطبع فور الإقفال بلا حوار.
+              من الويب الآن: اترك الاسم فارغاً وستفتح نسخة الحوار لتختار الطابعة يدوياً.
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {PRINT_ROUTES.map((meta) => {
+              const profile = printerProfiles[meta.route]
+              return (
+                <div key={meta.route} className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xl">{meta.icon}</span>
+                      <div>
+                        <div className="font-bold text-[13px] text-slate-800 dark:text-white">{meta.nameAr}</div>
+                        <div className="text-[11px] text-slate-400">{meta.descAr}</div>
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer select-none bg-slate-50 dark:bg-slate-800/60 px-3 py-1.5 rounded-lg">
+                      <input
+                        type="checkbox"
+                        checked={profile.autoPrint}
+                        onChange={(e) => setPrinterProfile(meta.route, { autoPrint: e.target.checked })}
+                        className="w-4 h-4 accent-brand-600"
+                        data-testid={`autoprint-${meta.route}`}
+                      />
+                      <span className="text-[11.5px] font-bold text-slate-600 dark:text-slate-300">طباعة آلية — {meta.autoEventAr}</span>
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      list={`system-printers-${meta.route}`}
+                      value={profile.printerName}
+                      onChange={(e) => setPrinterProfile(meta.route, { printerName: e.target.value })}
+                      placeholder="اسم الطابعة في النظام — فارغ = طابعة النظام الافتراضية"
+                      className={inputCls}
+                      data-testid={`printer-name-${meta.route}`}
+                    />
+                    <datalist id={`system-printers-${meta.route}`}>
+                      {(systemPrinters ?? []).map((name) => <option key={name} value={name} />)}
+                    </datalist>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="text-[11px] text-slate-400 leading-relaxed bg-slate-50 dark:bg-slate-800/40 rounded-xl p-3">
+            <b>كيف يرى التطبيق طابعات الشبكة؟</b> أي طابعة مثبتة على ويندوز (عبر IP أو مشاركة) يعرضها
+            زر «جلب طابعات النظام» في نسخة EXE — التطبيق يرى ما يراه النظام، والحرارية تُعرَّف بتعريغها
+            في ويندوز كأي طابعة. الطباعة الآلية تعمل مع مفتاح «طباعة صامتة» في الإعدادات السريعة أعلاه.
           </div>
         </div>
       </div>

@@ -1,0 +1,192 @@
+# بناء نسخة سطح المكتب «تَحَكَّم» (ويندوز NSIS) ونشرها على GitHub Releases.
+# التشغيل: **بدفع وسم v* حصراً** (مثل v1.0.17) — لا محفز يدوي: التشغيل
+# اليدوي على فرع كان سينشر إصداراً باسم الفرع. الدفع العادي للفروع يشغل
+# سير الفحوص quality فقط ولا يبني مثبتاً أبداً.
+# الوسم يأتي من مصدرين: يدوي (إصدار مدروس) أو آلي من سير auto-release
+# (أي كود يصل main يوسم patch+1 تلقائياً — طلب المالك v1.0.17).
+# الإصدار يقرأ من package.json، والتحديث التلقائي داخل التطبيق يقرأ من نفس
+# الإصدارات (electron-updater، بلا توكن لأن المستودع عام).
+name: desktop-release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# بناء واحد في كل مرة: وسمان متلاحقان يبنيان بالترتيب لا بالسباق
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: تثبيت الاعتماديات
+        run: npm ci
+
+      # السلسلة الخضراء خطوةً خطوة — لا حزمة تكسر بوابة
+      - name: فحص الأنواع
+        shell: bash
+        run: npm run typecheck 2>&1 | tee ../typecheck.log; exit ${PIPESTATUS[0]}
+
+      - name: اختبارات المتصفح
+        shell: bash
+        run: npx vitest run 2>&1 | tee ../vitest.log; exit ${PIPESTATUS[0]}
+
+      - name: بوابات الأعمال والرحلات
+        shell: bash
+        run: |
+          npm run verify:all 2>&1 | tee ../verify.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            echo "===== آخر 60 سطراً من سجل البوابات ====="
+            tail -60 ../verify.log
+            # بث الأسطر الحرجة كتعليقات توضيحية — تُقرأ عبر API حتى مع حجب سجلات CI
+            grep -aE "فشل|خطأ|Error|error|Cannot|ENOENT|✗|AssertionError" ../verify.log | head -25 | cut -c1-220 | while IFS= read -r line; do
+              echo "::error title=بوابات-الأعمال::${line//:/؛}"
+            done
+            exit "$code"
+          fi
+
+      - name: رفع سجلات السلسلة (للتشخيص — حتى عند النجاح)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chain-logs
+          retention-days: 7
+          path: |
+            typecheck.log
+            vitest.log
+            verify.log
+
+      # قناة تشخيص مضمونة: نشر ذيل سجل البوابات كتعليق على الالتزام
+      # (تعليقات الالتزام تُقرأ عبر api.github.com حتى مع حجب مضيفي السجلات)
+      - name: نشر ذيل سجل البوابات كتعليق على الالتزام
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "${GITHUB_WORKSPACE}"
+          {
+            echo "## سجلات تشخيص البناء الفاشل"
+            if [ -f verify.log ]; then
+              echo ""
+              echo "### سياق أخطاء البوابات والرحلات"
+              echo '```'
+              grep -a -B3 -A15 -E "AssertionError|ERR_|Error \[" verify.log | head -c 22000 || true
+              echo ""
+              echo '```'
+              echo "### مخرجات oxlint من بوابة الليت (حتى 10000 بايت)"
+              echo '```'
+              grep -a -A60 "مخرجات oxlint" verify.log | head -c 10000 || true
+              echo '```'
+              echo "### آخر 8000 بايت من سجل البوابات"
+              echo '```'
+              tail -c 8000 verify.log
+              echo '```'
+            fi
+            if [ -f vitest.log ]; then
+              echo ""
+              echo "### vitest.log (آخر 2000 بايت)"
+              echo '```'
+              tail -c 2000 vitest.log
+              echo '```'
+            fi
+          } > /tmp/comment.md
+          # بلا إخفاء للأخطاء: فشل النشر نفسه يظهر كخطوة حمراء
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" -F body=@/tmp/comment.md
+
+      # ── v1.0.16: ترحيل التحديث لرف الإصدارات العام ──────────────────────
+      # المعمارية: البناء هنا (بلا توكن) → app-update.yml داخل المثبت يشير
+      # لtahakam-releases → نشر صريح للرف العام بتوكن محصور → مرآة هنا
+      # للعملاء القدامى (تُزال بعد اكتمال الترحيل وخصخصة المستودع).
+      # راجع docs/الترحيل-لمستودع-خاص.md
+
+      - name: بناء المثبت (بلا نشر — النشر خطوات صريحة أدناه)
+        id: build
+        run: npm run desktop:dist
+
+      - name: تحقق من توجيه التحديث داخل المثبت (رف الإصدارات العام)
+        shell: bash
+        run: |
+          FEED="release/win-unpacked/resources/app-update.yml"
+          if [ ! -f "${FEED}" ]; then echo "✗ app-update.yml غير موجود بالبناء — لا نشر لمثبت بلا وجهة تحديث"; exit 1; fi
+          echo "═══ app-update.yml داخل المثبت ═══"
+          cat "${FEED}"
+          if ! grep -q "tahakam-releases" "${FEED}"; then
+            echo "✗ المثبت لا يشير لرف الإصدارات العام — لا نشر يضلّل العملاء"; exit 1
+          fi
+          echo "✓ التحديث داخل المثبت موجه للرف العام tahakam-releases"
+
+      - name: نشر الإصدار إلى رف الإصدارات العام (tahakam-releases)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER=$(node -p "require('./package.json').version")
+          REL="contashepo-create/tahakam-releases"
+          # حارس الوسم: لا نشر إلا لوسم إصدار v(X.Y.Z) — يحمي من أي تشغيل
+          # مستقبلي خارج قصدنا (محفز يدوي قديم أو وسم غير إصداري)
+          if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "✗ \${TAG} ليس وسماً بإصدار vX.Y.Z — لا نشر (طلب المالك: الإصدار بوسم مقصود حصراً)"
+            exit 1
+          fi
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "✗ سر RELEASES_REPO_TOKEN غير مضبوط — لا نشر بلا رف التحديث (إصدار بلا رف = عملاء معطلون عن التحديث)"
+            exit 1
+          fi
+          # سلامة مخرجات البناء قبل الرفع
+          if [ ! -f release/latest.yml ]; then echo "✗ release/latest.yml مفقود"; exit 1; fi
+          ls release/tahakom-setup-*.exe >/dev/null || { echo "✗ المثبت مفقود"; exit 1; }
+          if ! grep -q "version: ${VER}" release/latest.yml; then echo "✗ latest.yml بإصدار مختلف عن package.json"; exit 1; fi
+          # إصدار جديد أو تحديث نفس الوسم (إعادة تشغيل) — clobber يستبدل الأصول
+          gh release view "${TAG}" --repo "${REL}" >/dev/null 2>&1 \
+            || gh release create "${TAG}" --repo "${REL}" --title "تَحَكَّم ${VER}" --notes "تحديث تلقائي — الإصدار ${VER}"
+          gh release upload "${TAG}" --repo "${REL}" release/tahakom-setup-*.exe release/latest.yml --clobber
+          if compgen -G "release/*.blockmap" > /dev/null; then
+            gh release upload "${TAG}" --repo "${REL}" release/*.blockmap --clobber
+          fi
+          echo "✓ نُشر ${TAG} إلى رف الإصدارات العام — أجهزة العملاء ستراه"
+
+      - name: مرآة إصدار الترحيل في هذا المستودع (للعملاء القدامى — تُزال بعد اكتمال الترحيل)
+        # الجهاز على 1.0.12/1.0.15 ينظر إلى shopsys: يجد هذه المرآة فيثبّت
+        # 1.0.16 فينتقل لرف الإصدارات (app-update.yml الجديد). بعد خصخصة
+        # shopsys لا فائدة منها — تُحذف الخطوة بتعليمات دليل الترحيل.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER=$(node -p "require('./package.json').version")
+          gh release view "${TAG}" >/dev/null 2>&1 \
+            || gh release create "${TAG}" --title "تَحَكَّم ${VER}" --notes "إصدار الترحيل لرف الإصدارات العام — التنزيل اليدوي والعملاء القدامى"
+          gh release upload "${TAG}" release/tahakom-setup-*.exe release/latest.yml --clobber
+          if compgen -G "release/*.blockmap" > /dev/null; then
+            gh release upload "${TAG}" release/*.blockmap --clobber
+          fi
+          echo "✓ مُرآء ${TAG} هنا للعملاء القدامى (1.0.12/1.0.15)"
+          # تحقق نهائي: exe + latest.yml معاً في إصدار واحد
+          ASSETS=$(gh release view "${TAG}" --json assets --jq '[.assets[].name] | join(" ")')
+          echo "أصول الإصدار: ${ASSETS}"
+          case "${ASSETS}" in
+            *latest.yml*) echo "✓ latest.yml مرفوع مع المثبت" ;;
+            *) echo "✗ latest.yml مفقود من الإصدار — العملاء القدامى لن يجدوا التحديث"; exit 1 ;;
+          esac

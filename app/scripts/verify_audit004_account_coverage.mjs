@@ -12,11 +12,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { reporter } from './auditKit.mjs'
-import { STANDARD_COA } from '/home/user/shopsys/app/src/core/ledger.ts'
-import { ACCOUNT_MODULE_MAP } from '/home/user/shopsys/app/src/core/coaVisibility.ts'
+import { STANDARD_COA } from '../src/core/ledger.ts'
+import { ACCOUNT_MODULE_MAP } from '../src/core/coaVisibility.ts'
+import { fileURLToPath } from 'node:url'
+const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 const R = reporter('AUDIT-004 — تغطية كل حساب في الشجرة')
-const SRC = '/home/user/shopsys/app/src/'
+const SRC = `${APP_ROOT}/src/`
 
 /** كل ملفات المحرك (نواة + مخزن) كنص واحد — الترحيل قد يكون بثابت مُسمّى لا بنص حرفي */
 const engineFiles = []

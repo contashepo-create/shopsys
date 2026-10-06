@@ -61,6 +61,24 @@ export function dateInClosedYear(date: string, years: readonly FiscalYear[]): Fi
 
 export interface ClosingLine { accountCode: string; debit: number; credit: number; note: string }
 
+/**
+ * معرفات «آلية الإقفال» كاملة: قيود الإقفال نفسها + القيود العاكسة لها (إعادة فتح).
+ * قوائم الدخل وملخصات الأداء تستثنيها جميعاً — وإلا تضاعفت الأرقام بعد
+ * (إقفال → إعادة فتح → إقفال جديد): العاكس يعكس تصفيراً مستثنى أصلاً
+ * فيحسب مرة ثانية. مرجع عالمي: قيود إقفال الكتب آلية عرض لا أداء اقتصادياً.
+ */
+export function closingMechanismIds(
+  journal: readonly { id: number; sourceType?: string; reversesEntryId?: number | null }[],
+): Set<number> {
+  const closing = new Set(
+    journal.filter((e) => (e as { sourceType?: string }).sourceType === 'year_closing').map((e) => e.id),
+  )
+  for (const e of journal) {
+    if (e.reversesEntryId != null && closing.has(e.reversesEntryId)) closing.add(e.id)
+  }
+  return closing
+}
+
 export interface YearClosingResult {
   lines: ClosingLine[]
   totalRevenueMinor: number
@@ -71,7 +89,9 @@ export interface YearClosingResult {
 /**
  * بناء قيد إقفال السنة من دفتر اليومية: يجمع صافي كل حساب إيراد/مصروف
  * داخل الفترة ويولّد الأسطر المُصفِّرة + سطر الأرباح المرحلة 3102.
- * يستثني قيود إقفال سابقة وقوائم القيود العاكسة لها تدخل بطبيعتها (مجاميع صافية).
+ * ملاحظة (مراجعة §75): قيود الإقفال السابقة لا تصل إلى هنا أصلاً لأن الفترات
+ * لا تتداخل — ومع ذلك يمررها المستدعي مُصفّاة (sourceType !== 'year_closing')
+ * احتياطاً، والقيود العاكسة لأي قيد تدخل بطبيعتها بمجاميعها الصافية.
  */
 export function buildYearClosingLines(
   journal: readonly { date: string; lines: readonly { accountCode: string; debit: number; credit: number }[] }[],
@@ -146,11 +166,15 @@ export interface FiscalYearReport {
  * مقابلها 3102 بوصف يبدأ بـ«إقفال»، لذا نطلب تمرير معرفات قيود الإقفال إن وجدت.
  */
 export function buildFiscalYearReport(
-  journal: readonly { id: number; date: string; lines: readonly { accountCode: string; debit: number; credit: number }[] }[],
+  journal: readonly { id: number; date: string; lines: readonly { accountCode: string; debit: number; credit: number }[]; reversesEntryId?: number | null }[],
   fy: Pick<FiscalYear, 'startDate' | 'endDate'>,
   closingEntryIds: readonly number[] = [],
 ): FiscalYearReport {
   const closing = new Set(closingEntryIds)
+  // عواكس قيود الإقفال جزء من آلية الإقفال — تُستثنى من ملخص الأداء معها
+  for (const e of journal) {
+    if (e.reversesEntryId != null && closing.has(e.reversesEntryId)) closing.add(e.id)
+  }
   const acc = new Map<string, { open: number; move: number }>()
   let rev = 0
   let exp = 0

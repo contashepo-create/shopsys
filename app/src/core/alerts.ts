@@ -10,7 +10,7 @@
 export type AlertSeverity = 'danger' | 'warn'
 
 export interface BusinessAlert {
-  kind: 'low_stock' | 'expired' | 'expiring' | 'installment_overdue' | 'installment_soon' | 'cheque_due' | 'credit_limit'
+  kind: 'low_stock' | 'expired' | 'expiring' | 'installment_overdue' | 'installment_soon' | 'cheque_due' | 'credit_limit' | 'leave_pending' | 'absence_today'
   severity: AlertSeverity
   titleAr: string
   detailAr: string
@@ -33,6 +33,9 @@ export function collectBusinessAlerts(args: {
   /** أفق «قريباً» بالأيام (افتراضي 7 للشيكات، 30 للصلاحية) */
   chequeDays?: number
   expiryDays?: number
+  /** جسور الحضور: طلبات إجازة بانتظار الاعتماد + أسماء الغائبين اليوم بلا إجازة */
+  pendingLeaveRequests?: number
+  absentToday?: readonly string[]
 }): BusinessAlert[] {
   const out: BusinessAlert[] = []
   const { todayIso, fmt } = args
@@ -115,6 +118,25 @@ export function collectBusinessAlerts(args: {
       titleAr: `${over.length} عميلاً تجاوز حد الائتمان`,
       detailAr: over.slice(0, 3).map((x) => `${x.c.nameAr} (${fmt(x.bal)})`).join('، '),
       route: '/parties/customers',
+    })
+  }
+
+  // 6) جسور الحضور (جولة «اكمل ونفذ»): طلبات إجازة معلّقة + غياب اليوم بلا إجازة
+  if ((args.pendingLeaveRequests ?? 0) > 0) {
+    out.push({
+      kind: 'leave_pending', severity: 'warn',
+      titleAr: `${args.pendingLeaveRequests} طلب إجازة بانتظار الاعتماد`,
+      detailAr: 'اعتمدها أو ارفضها من شؤون الموظفين — الإجازات قبل أن تتراكم',
+      route: '/hr/leaves',
+    })
+  }
+  const absentToday = args.absentToday ?? []
+  if (absentToday.length) {
+    out.push({
+      kind: 'absence_today', severity: 'danger',
+      titleAr: `${absentToday.length} غياب اليوم بلا إجازة`,
+      detailAr: absentToday.slice(0, 3).join('، ') + (absentToday.length > 3 ? '…' : '') + ' — يخصم من مسير الرواتب',
+      route: '/hr',
     })
   }
 

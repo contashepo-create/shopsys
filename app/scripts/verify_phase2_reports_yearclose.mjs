@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict'
 import { freshCase, assertInvariants, expectReject, balanceOf, addSimpleItem, addParty, reporter } from './auditKit.mjs'
-import { trialBalance, incomeStatement, balanceSheet, generalLedger, cashFlowReport, toCsv } from '/home/user/shopsys/app/src/core/financialReports.ts'
+import { trialBalance, incomeStatement, balanceSheet, generalLedger, cashFlowReport, toCsv } from '../src/core/financialReports.ts'
 
 const R = reporter('المرحلة 2 — التقارير المالية والإقفال السنوي')
 const bal = (c, code) => balanceOf(c.st().journal, code)
@@ -89,7 +89,7 @@ assertInvariants('بيانات التقارير', c)
       { id: 2, nameAr: '2026', startDate: '2026-01-01', endDate: '2026-12-31', status: 'open' },
     ],
   })
-  const { useAppStore } = await import('/home/user/shopsys/app/src/stores/app.store.ts')
+  const { useAppStore } = await import('../src/stores/app.store.ts')
   const allYears = () => useAppStore.getState().fiscalYears
   const kust = addParty(y, 'customer', 'عميل 2025')
   // ربح 2025 بقيود يدوية مؤرخة (البيع لا يقبل تاريخاً سابقاً)

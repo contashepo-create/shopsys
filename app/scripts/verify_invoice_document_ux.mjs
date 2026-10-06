@@ -14,9 +14,11 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { reporter } from './auditKit.mjs'
+import { fileURLToPath } from 'node:url'
+const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 const R = reporter('مستند الفاتورة — فتح بضغطتين · تأكيد إغلاق يعلو كل شيء · مسودات باسم العميل')
-const ROOT = '/home/user/shopsys/app/src'
+const ROOT = `${APP_ROOT}/src`
 const read = (rel) => readFileSync(`${ROOT}/${rel}`, 'utf8')
 const css = read('index.css')
 const frame = read('ui/components/InvoicePOSFrame.tsx')

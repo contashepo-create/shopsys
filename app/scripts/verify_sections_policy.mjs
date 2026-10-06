@@ -36,9 +36,13 @@ const p4 = { ...p1, extraModules: ['a', 'b'] }
 ok(canonicalPayload(p3) === canonicalPayload(p4), 'ترتيب الوحدات لا يغيّر التوقيع (فرز حتمي)')
 ok(!canonicalPayload(p1).includes('extraModules'), 'المفاتيح القديمة بلا extraModules تبقى صحيحة')
 
-console.log('— واجهة الإعدادات: لا تبديل أقسام ولا تغيير بلد —')
+console.log('— واجهة الإعدادات: لا فتح أقسام بلا ترخيص ولا تغيير بلد —')
 const settings = readFileSync(new URL('../src/ui/pages/GeneralSettingsPage.tsx', import.meta.url), 'utf8')
-ok(!settings.includes('toggleModule'), 'أُزيلت مفاتيح تبديل الوحدات من الإعدادات')
+/* v1.0.10 (عقد إضافة قسم خارج النشاط + طلب المالك): الفتح بمفتاح موقّع فقط.
+   من الإعدادات يجوز إيقاف/إعادة إظهار الوحدات الممنوحة (granted = نشاط ∪ مفتاح) —
+   لا زر فتح ذاتي لأي وحدة غير ممنوحة. */
+ok(!settings.includes('>تفعيل<') && !settings.includes(">{'تفعيل'}"), 'لا زر فتح ذاتي للوحدات من الإعدادات')
+ok(settings.includes('granted.includes(m)'), 'التبديل محصور بالوحدات الممنوحة (افتراضيات النشاط ∪ مفتاح الدعم الموقّع)')
 ok(!settings.includes('resetSetup'), 'أُزيل زر تغيير البلد/النشاط (البلد مقفول)')
 ok(settings.includes('مقفولان'), 'رسالة القفل ظاهرة للمستخدم')
 ok(settings.includes('الدعم الفني'), 'الإرشاد: التفعيل الإضافي عبر الدعم الفني (المطوّر)')

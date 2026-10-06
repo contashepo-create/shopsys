@@ -10,9 +10,9 @@
  */
 import assert from 'node:assert/strict'
 import { freshCase, balanceOf, assertInvariants, addParty, reporter } from './auditKit.mjs'
-import { assetDisposalPreview, buildAssetDisposalEntry } from '/home/user/shopsys/app/src/core/assets.ts'
-import { STANDARD_COA } from '/home/user/shopsys/app/src/core/ledger.ts'
-import { incomeStatement, balanceSheet } from '/home/user/shopsys/app/src/core/financialReports.ts'
+import { assetDisposalPreview, buildAssetDisposalEntry } from '../src/core/assets.ts'
+import { STANDARD_COA } from '../src/core/ledger.ts'
+import { incomeStatement, balanceSheet } from '../src/core/financialReports.ts'
 
 const R = reporter('استبعاد الأصول الثابتة — بيع وخردة')
 

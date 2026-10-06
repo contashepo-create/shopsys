@@ -10,9 +10,10 @@
  */
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { argv } from 'node:process'
 
-const APP = new URL('..', import.meta.url).pathname
+const APP = fileURLToPath(new URL('..', import.meta.url))
 const SRC = join(APP, 'src')
 const OUT = join(APP, '..', 'docs', 'مصفوفة_المحرك_المحاسبي.md')
 
@@ -59,7 +60,7 @@ const paths = new Map() // key: file#fn → { file, fn, debits:Set, credits:Set,
 for (const file of files) {
   const text = readFileSync(file, 'utf8')
   const lines = text.split('\n')
-  const rel = file.replace(APP, 'app/')
+  const rel = file.replace(APP, 'app/').replaceAll('\\', '/')
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     // أ) أسطر الحسابات: accountCode: '1103', debit: X, credit: Y  (قد تكون على سطر واحد أو ثلاثة)
@@ -155,7 +156,7 @@ function activitiesOf(mods) {
 // ————————————————————————————————————————————————
 const rows = [...paths.values()]
   .filter((p) => (p.debits.size || p.credits.size || p.sources.size) && p.fn !== '(مستوى الوحدة)')
-  .sort((a, b) => (a.file === b.file ? a.fn.localeCompare(b.fn) : a.file.localeCompare(b.file)))
+  .sort((a, b) => (a.file === b.file ? (a.fn < b.fn ? -1 : a.fn > b.fn ? 1 : 0) : a.file < b.file ? -1 : 1))
 
 const fmt = (set) => [...set].sort().map((c) => (c === 'خزينة*' ? '**خزينة/بنك**' : `${c} ${nameOf(c)}`)).join(' · ') || '—'
 

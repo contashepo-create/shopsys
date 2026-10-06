@@ -6,18 +6,23 @@ import { create } from 'zustand'
 import { DEFAULT_WAREHOUSE_RECEIPT, type WarehouseReceiptSettings } from '../core/warehouseReceipt.ts'
 import { persist } from 'zustand/middleware'
 import type { Country } from '../core/countries.ts'
-import { toggleModuleList, effectiveModules, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
+import { toggleModuleList, effectiveModules, ACTIVITY_TEMPLATES, type ActivityTemplate, type ItemFeature, type BusinessModule } from '../core/activities.ts'
 import type { FiscalYear } from '../core/fiscal.ts'
 import { DEFAULT_RECEIPT_SETTINGS, type ReceiptSettings } from '../core/receipt.ts'
+import { createJSONStorage } from 'zustand/middleware'
+import { settingsAppStorage } from '../data/persistentStorage.ts'
+import { DEFAULT_PRINTER_PROFILES, normalizePrinterProfiles, type PrinterProfile, type PrintRoute, type PrinterProfiles } from '../core/printers.ts'
 import { DEFAULT_LOYALTY, type LoyaltySettings } from '../core/loyalty.ts'
 import { DEFAULT_APPROVALS, type ApprovalSettings } from '../core/approvals.ts'
-import { generateDeviceId, type LicensePayload } from '../core/license.ts'
+import { generateDeviceId, verifyActivityChangeKey, ACTIVITY_CHANGE_COOLDOWN_DAYS, daysBetween, type LicensePayload } from '../core/license.ts'
+import { LEGAL_VERSION } from '../core/legal.ts'
 import { DEFAULT_APPEARANCE, sanitizeAppearance, activityAccentId, type AppearanceSettings } from '../core/appearance.ts'
 import { DEFAULT_TELEGRAM_SETTINGS, type TelegramSettings } from '../core/telegram.ts'
 import { DEFAULT_EINVOICE_SETTINGS, type EinvoiceSettings } from '../core/einvoice.ts'
 import { DEFAULT_SCHEDULE_SETTINGS, type ScheduleSettings } from '../core/schedule.ts'
 import { DEFAULT_REPORT_PRINT, type ReportPrintSettings } from '../core/reportPrint.ts'
 import { DEFAULT_LABEL_SETTINGS, type LabelSettings } from '../core/labels.ts'
+import { DEFAULT_FX_RATES_SETTINGS, normalizeFxRatesSettings, type FxRatesMap, type FxRatesSettings, type FxRateRecord } from '../core/fxRates.ts'
 import { DEFAULT_SCALE_RULES, validateScaleRule, type ScaleRule } from '../core/barcode.ts'
 import type { AboutContent } from '../core/cloud.ts'
 import type { DeviceFlags } from '../core/featureFlags.ts'
@@ -56,6 +61,10 @@ interface SetupState {
   street: string
   /** تخصص الطبيب لنشاط العيادة (يختاره/يكتبه المالك في معالج أول تشغيل — لا يُفرض «أسنان») */
   doctorSpecialty: string
+  /** v1.0.7: آخر تغيير نشاط بمفتاح الدعم — التقييد 30 يوماً بين تغييرين */
+  lastActivityChangeAt: string | null
+  /** v1.0.7: الأنشطة المرخصة على الجهاز (الأصلي + كل تغيير موقّع) — مفتاح التفعيل القديم يظل صالحاً */
+  activityKeyHistory: string[]
 }
 
 /**
@@ -69,7 +78,7 @@ export interface InvoiceColumnPrefs {
   tax: boolean
 }
 
-export const DEFAULT_INVOICE_COLUMNS: InvoiceColumnPrefs = { code: true, unit: true, tax: true }
+export const DEFAULT_INVOICE_COLUMNS: InvoiceColumnPrefs = { code: true, unit: true, tax: false }
 
 /** أسماء الأعمدة كما تظهر في قائمة «تخصيص الحقول» */
 export const INVOICE_COLUMN_LABELS: Record<keyof InvoiceColumnPrefs, string> = {
@@ -81,6 +90,9 @@ export const INVOICE_COLUMN_LABELS: Record<keyof InvoiceColumnPrefs, string> = {
 interface AppState {
   theme: ThemeMode
   toggleTheme: () => void
+  /** v1.0.8: موافقة الاتفاقية والخصوصية (الإصدار والتاريخ) — null = لم يوافق بعد */
+  legal: { version: string; acceptedAt: string } | null
+  acceptLegal: () => void
   setup: SetupState
   fiscalYears: FiscalYear[]
   completeSetup: (data: {
@@ -95,11 +107,15 @@ interface AppState {
   addFiscalYear: (fy: Omit<FiscalYear, 'id' | 'status'>) => void
   /** وسم سنة مالية مقفلة — يُستدعى بعد نجاح قيد الإقفال في repo (closeFiscalYear) */
   markFiscalYearClosed: (id: number) => void
+  reopenFiscalYear: (id: number) => void
   setAccountingMode: (m: 'simple' | 'full') => void
   /** تفعيل/إلغاء وحدة عمل من الإعدادات (طلب المالك: الوحدات حسب النشاط وقابلة للتبديل) */
   toggleModule: (m: BusinessModule) => void
   resetSetup: () => void
   receipt: ReceiptSettings
+  /** §102 (تعدد الطابعات): مسار لكل نسخة مطبوعة — اسم الطابعة + طباعة آلية */
+  printerProfiles: PrinterProfiles
+  setPrinterProfile: (route: PrintRoute, patch: Partial<PrinterProfile>) => void
   /** برنامج نقاط الولاء (نمط Lightspeed Loyalty) — الكسب والاستبدال من الكاشير */
   loyalty: LoyaltySettings
   approvals: ApprovalSettings
@@ -111,6 +127,16 @@ interface AppState {
   /** قالب ملصقات الباركود/السيريال — يُضبط مرة ويسري على كل الطباعات (طلب المالك) */
   labelSettings: LabelSettings
   updateLabelSettings: (patch: Partial<LabelSettings>) => void
+  /**
+   * أسعار الصرف المركزية (طلب المالك 2026-10-01): سعر محفوظ لكل عملة يستعمله
+   * الفاتورة/السند افتراضياً. التعديل يدوي أو من API — والمسؤول عنه المالك
+   * فقط (بواجهة تطلب الرقم السري عند الحفظ).
+   */
+  fxRates: FxRatesMap
+  fxRatesSettings: FxRatesSettings
+  setFxRate: (code: string, ratePpm: number, updatedBy: string) => void
+  applyFxApiQuotes: (quotes: { code: string; ratePpm: number }[], updatedBy: string) => number
+  updateFxRatesSettings: (patch: Partial<FxRatesSettings>) => void
   /** قواعد باركود الميزان العالمية (أي ميزان بأي صيغة) — تُجرب بالترتيب في الكاشير */
   scaleRules: ScaleRule[]
   addScaleRule: (rule: Omit<ScaleRule, 'id'>) => void
@@ -142,6 +168,12 @@ interface AppState {
   // ─── الإرسال المجدول عبر التليجرام (القرار 32) ───
   schedule: ScheduleSettings
   updateSchedule: (patch: Partial<ScheduleSettings>) => void
+  /** §102 مضيف شبكة المحل — هذا الجهاز يخدم قاعدة واحدة لأجهزة المحل */
+  lanHost: LanHostSettings
+  updateLanHost: (patch: Partial<LanHostSettings>) => void
+  /** §102 عميل شبكة المحل — هذا الجهاز يتصل بمضيف المحل */
+  lanClient: LanClientSettings
+  updateLanClient: (patch: Partial<LanClientSettings>) => void
   lastDailySentDay: string | null // «YYYY-MM-DD» — يمنع تكرار إرسال اليوم
   setLastDailySentDay: (day: string) => void
   // ─── الترخيص (القرار 4) ───
@@ -151,6 +183,8 @@ interface AppState {
   activatedKey: string | null // مفتاح التفعيل النصي كما أدخل
   activatedPayload: LicensePayload | null // حمولته الموثقة بعد التحقق
   setActivated: (key: string, payload: LicensePayload) => void
+  /** v1.0.7: تطبيق مفتاح تغيير النشاط الموقّع (SHOPSYS2) — يعيد اسم النشاط الجديد */
+  applyActivityChangeKey: (key: string, pubB64u?: string) => Promise<string>
   clearActivation: () => void
   touchLastSeen: () => void
   // ─── السحابة (القرار 28): آخر ما جُلب من Cloudflare — يعمل أوفلاين بآخر نسخة ───
@@ -169,6 +203,42 @@ interface AppState {
   // ─── المزامنة السحابية متعددة الأجهزة (Supabase — ميزة cloud_sync المدفوعة) ───
   sync: SyncSettings
   updateSync: (patch: Partial<SyncSettings>) => void
+}
+
+/** إعدادات مضيف شبكة المحل (§102) — تُخزن لكل جهاز */
+export interface LanHostSettings {
+  enabled: boolean
+  /** رمز الاقتران الذي يُدخله كل جهاز مرة واحدة */
+  pairingCode: string
+  /** منفذ الاستماع (افتراضي 8787) */
+  port: number
+  /** اسم يظهر للأجهزة عند اللقطة */
+  hostName: string
+}
+
+/** إعدادات عميل شبكة المحل (§102) — العنوان والتوكن يُحفظان لكل جهاز */
+export interface LanClientSettings {
+  enabled: boolean
+  /** ws://192.168.1.10:8787 */
+  hostUrl: string
+  /** توكن الجهاز بعد أول اقتران ناجح — يتيح العودة بلا رمز */
+  token: string | null
+  /** اسم هذا الجهاز عند المضيف */
+  deviceName: string
+}
+
+export const DEFAULT_LAN_HOST_SETTINGS: LanHostSettings = {
+  enabled: false,
+  pairingCode: '',
+  port: 8787,
+  hostName: 'مضيف محل تَحَكَّم',
+}
+
+export const DEFAULT_LAN_CLIENT_SETTINGS: LanClientSettings = {
+  enabled: false,
+  hostUrl: '',
+  token: null,
+  deviceName: '',
 }
 
 export interface SyncSettings {
@@ -220,8 +290,11 @@ const BOOT = bootIdentity()
 
 export const useAppStore = create<AppState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       theme: 'light',
+      /* v1.0.8: موافقة الاتفاقية والخصوصية — تسجل بالإصدار والتاريخ وتطلب مجدداً عند التحديث */
+      legal: null as { version: string; acceptedAt: string } | null,
+      acceptLegal: () => set({ legal: { version: LEGAL_VERSION, acceptedAt: new Date().toISOString() } }),
       toggleTheme: () => set((s) => ({ theme: s.theme === 'light' ? 'dark' : 'light' })),
       setup: {
         completed: false,
@@ -241,6 +314,8 @@ export const useAppStore = create<AppState>()(
         defaultWarehouseId: null,
         phone: '', email: '', city: '', street: '',
         doctorSpecialty: '',
+        lastActivityChangeAt: null,
+        activityKeyHistory: [],
       },
       fiscalYears: [],
       completeSetup: ({ country, activity, shopName, ownerName, fiscalYear, contact, doctorSpecialty }) =>
@@ -268,6 +343,8 @@ export const useAppStore = create<AppState>()(
             defaultWarehouseId: null,
             phone: contact?.phone ?? '', email: contact?.email ?? '', city: contact?.city ?? '', street: contact?.street ?? '',
             doctorSpecialty: doctorSpecialty?.trim() ?? '',
+            lastActivityChangeAt: null,
+            activityKeyHistory: [],
           },
         })),
       addFiscalYear: (fy) =>
@@ -276,14 +353,24 @@ export const useAppStore = create<AppState>()(
         })),
       markFiscalYearClosed: (id) =>
         set((s) => ({ fiscalYears: s.fiscalYears.map((y) => (y.id === id ? { ...y, status: 'closed' as const } : y)) })),
+      /** إعادة فتح سنة مقفلة (نمط عالمي — تُستدعى من مسار reopenFiscalYear بجوار عكس قيد الإقفال) */
+      reopenFiscalYear: (id) =>
+        set((s) => ({ fiscalYears: s.fiscalYears.map((y) => (y.id === id ? { ...y, status: 'open' as const } : y)) })),
       setAccountingMode: (m) => set((s) => ({ setup: { ...s.setup, accountingMode: m } })),
       toggleModule: (m) =>
-        set((s) => ({ setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } })),
+        /* v1.0.10: لا إيقاف آخر وحدة مفعّلة — التطبيق بلا أقسام لا معنى له */
+        set((s) => (s.setup.modules.includes(m) && s.setup.modules.length <= 1
+          ? {}
+          : { setup: { ...s.setup, modules: toggleModuleList(s.setup.modules, m) } })),
       resetSetup: () =>
         set((s) => ({
           setup: { ...s.setup, completed: false, countryCode: null, activityId: null },
         })),
       receipt: DEFAULT_RECEIPT_SETTINGS,
+      printerProfiles: DEFAULT_PRINTER_PROFILES,
+      setPrinterProfile: (route, patch) => set((s) => ({
+        printerProfiles: { ...s.printerProfiles, [route]: { ...s.printerProfiles[route], ...patch } },
+      })),
       loyalty: DEFAULT_LOYALTY,
       approvals: DEFAULT_APPROVALS,
       updateApprovals: (patch) => set((s) => ({ approvals: { ...s.approvals, ...patch } })),
@@ -292,6 +379,31 @@ export const useAppStore = create<AppState>()(
       updateReportPrint: (patch) => set((s) => ({ reportPrint: { ...s.reportPrint, ...patch } })),
       labelSettings: DEFAULT_LABEL_SETTINGS,
       updateLabelSettings: (patch) => set((s) => ({ labelSettings: { ...s.labelSettings, ...patch } })),
+      fxRates: {},
+      fxRatesSettings: DEFAULT_FX_RATES_SETTINGS,
+      setFxRate: (code, ratePpm, updatedBy) => {
+        const key = String(code ?? '').trim().toUpperCase()
+        if (!/^[A-Z]{3}$/.test(key)) throw new Error('رمز العملة غير سليم')
+        if (!Number.isInteger(ratePpm) || ratePpm <= 0) throw new Error('سعر الصرف يجب أن يكون عدداً أكبر من صفر')
+        const record: FxRateRecord = { ratePpm, updatedAt: new Date().toISOString(), updatedBy, source: 'manual' }
+        set((s) => ({ fxRates: { ...s.fxRates, [key]: record } }))
+      },
+      applyFxApiQuotes: (quotes, updatedBy) => {
+        const stamp = new Date().toISOString()
+        let applied = 0
+        set((s) => {
+          const next: FxRatesMap = { ...s.fxRates }
+          for (const quote of quotes) {
+            const key = String(quote.code ?? '').trim().toUpperCase()
+            if (!/^[A-Z]{3}$/.test(key) || !Number.isInteger(quote.ratePpm) || quote.ratePpm <= 0) continue
+            next[key] = { ratePpm: quote.ratePpm, updatedAt: stamp, updatedBy, source: 'api' }
+            applied += 1
+          }
+          return { fxRates: next }
+        })
+        return applied
+      },
+      updateFxRatesSettings: (patch) => set((s) => ({ fxRatesSettings: normalizeFxRatesSettings({ ...s.fxRatesSettings, ...patch }) })),
       scaleRules: DEFAULT_SCALE_RULES,
       addScaleRule: (rule) => set((s) => {
         const errors = validateScaleRule(rule)
@@ -325,6 +437,10 @@ export const useAppStore = create<AppState>()(
       updateEinvoice: (patch) => set((s) => ({ einvoice: { ...s.einvoice, ...patch } })),
       schedule: DEFAULT_SCHEDULE_SETTINGS,
       updateSchedule: (patch) => set((s) => ({ schedule: { ...s.schedule, ...patch } })),
+      lanHost: DEFAULT_LAN_HOST_SETTINGS,
+      updateLanHost: (patch) => set((s) => ({ lanHost: { ...s.lanHost, ...patch } })),
+      lanClient: DEFAULT_LAN_CLIENT_SETTINGS,
+      updateLanClient: (patch) => set((s) => ({ lanClient: { ...s.lanClient, ...patch } })),
       lastDailySentDay: null,
       setLastDailySentDay: (day) => set({ lastDailySentDay: day }),
       deviceId: BOOT.deviceId,
@@ -338,10 +454,56 @@ export const useAppStore = create<AppState>()(
           activatedPayload: payload,
           // سياسة الأقسام: الوحدات = افتراضيات النشاط + ما فعّله المطوّر في المفتاح فقط
           setup: s.setup.completed
-            ? { ...s.setup, modules: effectiveModules(s.setup.activityId, payload.extraModules) }
+            ? {
+                ...s.setup,
+                modules: effectiveModules(s.setup.activityId, payload.extraModules),
+                /* v1.0.7: أول تفعيل على هذا الجهاز يثبّت النشاط المرخّص —
+                   التغيير بعده بمفتاح SHOPSYS2 موقّع فقط (activityKeyHistory) */
+                activityKeyHistory: s.setup.activityKeyHistory.length > 0
+                  ? s.setup.activityKeyHistory
+                  : [payload.activityId ?? s.setup.activityId ?? ''].filter(Boolean),
+              }
             : s.setup,
         })),
       clearActivation: () => set({ activatedKey: null, activatedPayload: null }),
+      /* ═══ v1.0.7 (موافقة المالك): تغيير النشاط بمفتاح الدعم الفني فقط ═══
+         SHOPSYS2 موقّع من المطوّر لهذا الجهاز تحديداً، من النشاط الحالي إلى
+         نشاط قالب معروف. التقييد: 30 يوماً بين تغييرين. القوالب (الخصائص
+         والوحدات والهوية اللونية وقالب الفاتورة) تُطبَّق كاملة — البيانات
+         المحاسبية والمخزنية تبقى كما هي، وضريبة النشاط لا تُلمس (تُضبط
+         يدوياً من الإعدادات إن لزم). */
+      applyActivityChangeKey: async (key, pubB64u) => {
+        const state = get()
+        if (!state.setup.completed) throw new Error('أكمل الإعداد الأول أولاً')
+        if (!state.setup.activityId) throw new Error('لا يوجد نشاط حالي على الجهاز')
+        const payload = await verifyActivityChangeKey(key, state.deviceId, pubB64u)
+        if (payload.fromActivityId !== state.setup.activityId) {
+          throw new Error(`المفتاح صادر للتحويل من نشاط «${payload.fromActivityId}» — نشاطك الحالي «${state.setup.activityId}». اطلب مفتاحاً محدّثاً من الدعم`)
+        }
+        if (payload.toActivityId === state.setup.activityId) throw new Error('المفتاح يحوّل إلى نشاطك الحالي نفسه — لا حاجة لأي تغيير')
+        const template = ACTIVITY_TEMPLATES.find((t) => t.id === payload.toActivityId)
+        if (!template) throw new Error(`نشاط غير معروف في هذه النسخة («${payload.toActivityId}») — حدّث التطبيق أولاً`)
+        if (state.setup.lastActivityChangeAt) {
+          const since = daysBetween(state.setup.lastActivityChangeAt.slice(0, 10), new Date().toISOString().slice(0, 10))
+          if (since < ACTIVITY_CHANGE_COOLDOWN_DAYS) {
+            throw new Error(`مضى ${since} يوماً فقط على آخر تغيير نشاط — التغيير مسموح كل ${ACTIVITY_CHANGE_COOLDOWN_DAYS} يوماً (باقٍ ${ACTIVITY_CHANGE_COOLDOWN_DAYS - since} يوماً)`)
+          }
+        }
+        const now = new Date().toISOString()
+        set((s) => ({
+          appearance: { ...s.appearance, accentId: activityAccentId(template.id) },
+          receipt: { ...s.receipt, defaultTemplate: template.defaultInvoiceTemplate },
+          setup: {
+            ...s.setup,
+            activityId: template.id,
+            features: template.features,
+            modules: template.modules,
+            lastActivityChangeAt: now,
+            activityKeyHistory: [...s.setup.activityKeyHistory, template.id],
+          },
+        }))
+        return template.nameAr
+      },
       touchLastSeen: () =>
         set((s) => {
           const now = new Date().toISOString()
@@ -368,6 +530,8 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'shopsys-app',
+      /* §101 التنفيذية: SQLite داخل نسخة سطح المكتب — وlocalStorage الخام في الويب كما هو */
+      storage: createJSONStorage(settingsAppStorage),
       onRehydrateStorage: () => (state) => {
         // ترحيل: حسابات أُنشئت قبل خطوة السنة المالية تحصل على سنة ميلادية حالية تلقائياً
         if (state && state.setup.completed && state.fiscalYears.length === 0) {
@@ -402,6 +566,8 @@ export const useAppStore = create<AppState>()(
         // ترحيل: مفاتيح الرصيد السالب والمخزن الافتراضي (طلب المالك) — الافتراضي: ممنوع
         if (state?.setup) {
           state.setup.allowNegativeTreasury = state.setup.allowNegativeTreasury ?? false
+        // ترحيل §102: مسارات الطابعات — القديم بلا المفتاح أو بشكل فاسد يُستكمل دفاعياً
+        if (state) state.printerProfiles = normalizePrinterProfiles(state.printerProfiles)
           state.setup.requireOpenShiftForSales = state.setup.requireOpenShiftForSales ?? true
           state.loyalty = { ...DEFAULT_LOYALTY, ...(state.loyalty ?? {}) }
           state.approvals = { ...DEFAULT_APPROVALS, ...(state.approvals ?? {}) }
@@ -435,6 +601,9 @@ export const useAppStore = create<AppState>()(
         if (state) state.telegram = { ...DEFAULT_TELEGRAM_SETTINGS, ...state.telegram }
         // ترحيل: حسابات قبل ميزة المزامنة السحابية تحصل على الافتراضيات
         if (state) state.sync = { ...DEFAULT_SYNC_SETTINGS, ...state.sync }
+        // ترحيل: حسابات قبل شبكة المحل تحصل على الافتراضيات (§102)
+        if (state) state.lanHost = { ...DEFAULT_LAN_HOST_SETTINGS, ...state.lanHost }
+        if (state) state.lanClient = { ...DEFAULT_LAN_CLIENT_SETTINGS, ...state.lanClient }
         // ترحيل: حسابات قبل ميزة الفاتورة الإلكترونية تحصل على الافتراضيات
         if (state) state.einvoice = { ...DEFAULT_EINVOICE_SETTINGS, ...state.einvoice }
         // ترحيل: حسابات قبل الإرسال المجدول تحصل على الافتراضيات

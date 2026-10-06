@@ -13,12 +13,14 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { reporter } from './auditKit.mjs'
+import { fileURLToPath } from 'node:url'
+const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 const R = reporter('سلّم الطبقات — لا نافذة تختفي خلف أخرى')
-const css = readFileSync('/home/user/shopsys/app/src/index.css', 'utf8')
-const store = readFileSync('/home/user/shopsys/app/src/ui/windows/windowStore.ts', 'utf8')
-const pickers = readFileSync('/home/user/shopsys/app/src/ui/components/KeyboardPickers.tsx', 'utf8')
-const ui = readFileSync('/home/user/shopsys/app/src/ui/components/ui.tsx', 'utf8')
+const css = readFileSync(`${APP_ROOT}/src/index.css`, 'utf8')
+const store = readFileSync(`${APP_ROOT}/src/ui/windows/windowStore.ts`, 'utf8')
+const pickers = readFileSync(`${APP_ROOT}/src/ui/components/KeyboardPickers.tsx`, 'utf8')
+const ui = readFileSync(`${APP_ROOT}/src/ui/components/ui.tsx`, 'utf8')
 
 /** قراءة z-index المعرّف لصنف بعينه */
 const layerOf = (name) => {
@@ -121,7 +123,7 @@ const layerOf = (name) => {
   const ask = css.match(/\.app-window-ask\s*\{([^}]*)\}/)?.[1] ?? ''
   assert.ok(/z-index:\s*var\(--z-window-ask\)/.test(ask), 'غطاء تأكيد الإغلاق بلا طبقة صريحة')
   assert.ok(/position:\s*fixed/.test(ask) && /inset:\s*0/.test(ask), 'غطاء التأكيد لا يغطي الشاشة كاملةً')
-  const floatingSrc = readFileSync('/home/user/shopsys/app/src/ui/windows/FloatingWindow.tsx', 'utf8')
+  const floatingSrc = readFileSync(`${APP_ROOT}/src/ui/windows/FloatingWindow.tsx`, 'utf8')
   const askBlock = floatingSrc.slice(floatingSrc.indexOf('win.askingClose'), floatingSrc.indexOf('app-window-resize'))
   assert.ok(/<OverlayPortal>/.test(askBlock), 'حوار تأكيد الإغلاق ما زال يُرسم داخل النافذة — سيغطيه رأس جدول لاصق يوماً ما')
   assert.ok(askZ > layerOf('layer-window') && askZ > layerOf('layer-modal'),
@@ -145,18 +147,18 @@ const layerOf = (name) => {
   }
   assert.deepEqual(offenders, [], `عناصر تتجاوز سقف محتوى النافذة وتغطي أغطية التأكيد: ${offenders.join(' · ')}`)
 
-  const tsxZ = [...new Set([...readFileSync('/home/user/shopsys/app/src/ui/components/ui.tsx', 'utf8').matchAll(/\bz-\[(\d+)\]/g)].map((m) => Number(m[1])))]
+  const tsxZ = [...new Set([...readFileSync(`${APP_ROOT}/src/ui/components/ui.tsx`, 'utf8').matchAll(/\bz-\[(\d+)\]/g)].map((m) => Number(m[1])))]
   for (const value of tsxZ) assert.ok(value <= overlayZ, `صنف z-[${value}] في واجهة الحوارات يتجاوز طبقة الأغطية`)
   R.ok(`لا عنصر CSS يتجاوز سقف المحتوى ${contentMax} داخل النافذة، وأصناف الحوارات ضمن الحد`)
 }
 
 /* ⑧ ترويسة الحوار تعلو أي رأس جدول لاصق داخل جسمه */
 {
-  const uiSrc = readFileSync('/home/user/shopsys/app/src/ui/components/ui.tsx', 'utf8')
+  const uiSrc = readFileSync(`${APP_ROOT}/src/ui/components/ui.tsx`, 'utf8')
   const headerZ = Number(uiSrc.match(/sticky top-0 z-\[(\d+)\]/)?.[1])
   assert.ok(Number.isFinite(headerZ), 'ترويسة الحوار بلا طبقة صريحة')
   const stickyInPages = [...new Set([
-    ...[...readFileSync('/home/user/shopsys/app/src/index.css', 'utf8').matchAll(/position:\s*sticky[^}]*z-index:\s*(\d+)/g)].map((m) => Number(m[1])),
+    ...[...readFileSync(`${APP_ROOT}/src/index.css`, 'utf8').matchAll(/position:\s*sticky[^}]*z-index:\s*(\d+)/g)].map((m) => Number(m[1])),
     ...[...uiSrc.matchAll(/sticky[^"']*\bz-(\d+)\b/g)].map((m) => Number(m[1])),
   ])]
   const worst = Math.max(0, ...stickyInPages)
@@ -167,10 +169,10 @@ const layerOf = (name) => {
 /* ⑨ كل حوار تأكيد في التطبيق إما مُركَّب على body أو له طبقة صريحة تعلو محتواه */
 {
   const overlayZ = Number(css.match(/--z-in-window-overlay:\s*(\d+)/)[1])
-  const floating = readFileSync('/home/user/shopsys/app/src/ui/windows/FloatingWindow.tsx', 'utf8')
+  const floating = readFileSync(`${APP_ROOT}/src/ui/windows/FloatingWindow.tsx`, 'utf8')
   assert.ok(floating.includes('app-window-ask'), 'غطاء تأكيد الإغلاق مفقود من نافذة التطبيق')
   // أي غطاء inset-0 في الواجهة يجب أن يحمل صنف طبقة أو يكون داخل بورتال
-  const bare = [...readFileSync('/home/user/shopsys/app/src/ui/components/ui.tsx', 'utf8').matchAll(/className="((?:absolute|fixed) inset-0[^"]*)"/g)]
+  const bare = [...readFileSync(`${APP_ROOT}/src/ui/components/ui.tsx`, 'utf8').matchAll(/className="((?:absolute|fixed) inset-0[^"]*)"/g)]
     .map((m) => m[1])
     .filter((cls) => !/layer-|z-\[?\d/.test(cls) && !/bg-slate-900\/55/.test(cls))
   assert.deepEqual(bare, [], `أغطية بلا طبقة في مكوّنات الواجهة: ${bare.join(' · ')}`)
@@ -186,7 +188,7 @@ const layerOf = (name) => {
   const files = ['ui/layout/Header.tsx', 'ui/layout/Sidebar.tsx', 'ui/layout/MenuBar.tsx', 'ui/components/ui.tsx']
   const naked = []
   for (const file of files) {
-    const src = readFileSync(`/home/user/shopsys/app/src/${file}`, 'utf8')
+    const src = readFileSync(`${APP_ROOT}/src/${file}`, 'utf8')
     for (const m of src.matchAll(/className="(absolute[^"]*)"/g)) {
       const cls = m[1]
       // القوائم المنسدلة تُعرف بأنها مرساة أسفل/أعلى الزر — الشارات والزخارف لا تُحسب

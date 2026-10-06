@@ -57,7 +57,7 @@ const PAYMENT_COUNTERS = [
 const escapePrintText = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 
 export function VouchersPage() {
-  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, vehicles , employees, getEmployeeBalance } = useDataStore()
+  const { vouchers, journal, treasuries, paymentTerminals, customers, suppliers, purchases, customAccounts, addCustomAccount, postVoucher, reverseVoucher, addLatePurchaseExpense, getOpenClientInvoices, getOpenSupplierInvoices, sales, saleReturns, cheques, purchaseReturns, clientSettlements, openingBalances, trips, tickets, rentalContracts , clinicVisits, clinicCollections, clinicPatients, labOrders, labPatients, walletOps, projectExtracts, projects, costCenters, installmentPlans, assets, getAssetDue, laundryOrders, cars, consignmentCars, carPurchaseInvoices, carPrepCosts, propertySales, projectCosts, vehicles , employees, getEmployeeBalance, getUnpaidPayrollSlips, payrollSlips } = useDataStore()
   const nameOf = (code: string) => treasuries.find((t) => t.code === code)?.nameAr ?? ACCOUNT_NAMES[code] ?? code
   const { setup, receipt } = useAppStore()
   const toast = useToast()
@@ -82,6 +82,28 @@ export function VouchersPage() {
   const [quickAccountCode, setQuickAccountCode] = useState('')
   const [quickAccountName, setQuickAccountName] = useState('')
   const [employeePartyId, setEmployeePartyId] = useState(0)
+  /* سداد قسائم رواتب محددة من السند (طلب المالك ㉘): كل قسيمة تُسدَّد باسمها
+     فلا يختلط راتب موظف صُرف اليوم بآخر يُصرف غداً */
+  const [settleSlipIds, setSettleSlipIds] = useState<number[]>([])
+  const isPayrollSettlement = kind === 'payment' && counter === '2104'
+  const unpaidSlips = useMemo(
+    () => (isPayrollSettlement && employeePartyId ? getUnpaidPayrollSlips(employeePartyId) : []),
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- vouchers/payrollSlips محفز بيانات متجر: الدالة ثابتة الهوية وتقرأهما داخلياً وإسقاطهما يجمّد القسائم
+    [isPayrollSettlement, employeePartyId, getUnpaidPayrollSlips, vouchers, payrollSlips],
+  )
+  /* §97: تصفير القسائم المختارة عند تغير الطرف/النوع بنمط «التعديل أثناء التصيير»
+     (كان أثراً يضع الحالة تزامنياً — تتالي تصييرات بلا داعٍ) */
+  const partyKey = `${kind}|${counter}|${employeePartyId}`
+  const [prevPartyKey, setPrevPartyKey] = useState('')
+  if (prevPartyKey !== partyKey) { setPrevPartyKey(partyKey); setSettleSlipIds([]) }
+  const toggleSlip = (id: number) =>
+    setSettleSlipIds((ids) => (ids.includes(id) ? ids.filter((row) => row !== id) : [...ids, id]))
+  const settledTotalMinor = unpaidSlips.filter((s) => settleSlipIds.includes(s.id)).reduce((sum, s) => sum + s.netMinor, 0)
+  const selectAllSlips = () => {
+    const ids = unpaidSlips.map((s) => s.id)
+    setSettleSlipIds(ids)
+    if (ids.length) setAmount(String(unpaidSlips.reduce((sum, s) => sum + s.netMinor, 0) / 10 ** cur.decimals))
+  }
   const [partyId, setPartyId] = useState(0) // العميل (قبض 1104) أو المورد (صرف 2101) — يغذي كشف الحساب
   const [purchaseId, setPurchaseId] = useState(0) // فاتورة الشراء عند «مصروف على فاتورة شراء»
   const [expMethod, setExpMethod] = useState<'value' | 'qty'>('qty') // توزيع مصروف الفاتورة
@@ -90,6 +112,8 @@ export function VouchersPage() {
   const [expPayableAccount, setExpPayableAccount] = useState('2117')
   const [vehicleId, setVehicleId] = useState<number | null>(null)
   const [costCenterId, setCostCenterId] = useState<number | null>(null)
+  /* §95 (محاذاة pro-acc): ربط المشروع بالسند — إسناد تحليلي؛ الرصيد ينزل من الطرف أياً كان */
+  const [voucherProjectId, setVoucherProjectId] = useState<number | null>(null)
   const [vehicleCostCategory, setVehicleCostCategory] = useState('maintenance')
   const [allocationDraft, setAllocationDraft] = useState<Record<string, string>>({})
   const [viewing, setViewing] = useState<Voucher | null>(null)
@@ -187,6 +211,7 @@ export function VouchersPage() {
           expPayableAccount: string
           vehicleId: number | null
           costCenterId: number | null
+          voucherProjectId: number | null
           vehicleCostCategory: string
           allocationDraft: Record<string, string>
         }>
@@ -204,6 +229,7 @@ export function VouchersPage() {
         setExpPayableAccount(draft.expPayableAccount ?? '2117')
         setVehicleId(draft.vehicleId ?? null)
         setCostCenterId(draft.costCenterId ?? null)
+        setVoucherProjectId(draft.voucherProjectId ?? null)
         setVehicleCostCategory(draft.vehicleCostCategory ?? 'maintenance')
         setAllocationDraft(draft.allocationDraft ?? {})
         toast.show('استُعيدت آخر مسودة لهذا النوع من السندات ✓')
@@ -261,7 +287,7 @@ export function VouchersPage() {
     try {
       window.localStorage.setItem(`shopsys.voucher-draft.${kind}`, JSON.stringify({
         treasury, terminalPayment, counter, amount, voucherDate, desc, partyId, purchaseId, expMethod, expPaidBy,
-        expBeneficiary, expPayableAccount, vehicleId, costCenterId, vehicleCostCategory, allocationDraft,
+        expBeneficiary, expPayableAccount, vehicleId, costCenterId, vehicleCostCategory, allocationDraft, voucherProjectId,
       }))
       toast.show(`حُفظت مسودة سند ${kind === 'receipt' ? 'القبض' : 'الصرف'} محلياً ✓`)
     } catch {
@@ -351,10 +377,12 @@ export function VouchersPage() {
         allocations: manualAllocations,
         costCenterId: canLinkCostCenter ? costCenterId : null,
         vehicleId: canLinkVehicle ? vehicleId : null,
+        projectId: voucherProjectId,
         vehicleCostCategory: canLinkVehicle && vehicleId != null ? vehicleCostCategory : undefined,
         terminalPayment: kind === 'receipt' && selectedTerminal ? { terminalId: selectedTerminal.id, providerReference: terminalPayment.providerReference.trim(), cardLast4: terminalPayment.cardLast4 || undefined } : undefined,
+        settleSlipIds: isPayrollSettlement && settleSlipIds.length ? settleSlipIds : undefined,
       })
-      toast.show(`تم ${kind === 'receipt' ? 'سند القبض' : 'سند الصرف'} ${v.voucherNumber} — تولد قيده تلقائياً ✓`)
+      toast.show(`تم ${kind === 'receipt' ? 'سند القبض' : 'سند الصرف'} ${v.voucherNumber} — تولد قيده تلقائياً ✓${settleSlipIds.length ? ` · سُدِّدت ${settleSlipIds.length} قسيمة رواتب` : ''}`)
       clearDraft(kind)
       setOpen(false)
     } catch (e) {
@@ -520,6 +548,32 @@ export function VouchersPage() {
                         </b>
                       </div>
                     )}
+                    {/* قسائم رواتب غير مصروفة (طلب المالك ㉘): سداد موجه بالاسم والشهر */}
+                    {unpaidSlips.length > 0 && (
+                      <div className="mt-1 space-y-1 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2" data-unpaid-slips>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-amber-700 dark:text-amber-300">قسائم رواتب مستحقة لهذا الموظف</span>
+                          <button type="button" className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[10.5px] font-bold text-amber-700 hover:bg-amber-500/25 dark:text-amber-300" onClick={selectAllSlips}>تسديد الكل</button>
+                        </div>
+                        {unpaidSlips.map((slip) => (
+                          <label key={slip.id} className="flex cursor-pointer items-center justify-between gap-2 rounded-md bg-white/60 px-2 py-1 text-[11px] dark:bg-slate-800/60">
+                            <span className="flex items-center gap-1.5">
+                              <input type="checkbox" checked={settleSlipIds.includes(slip.id)} onChange={() => toggleSlip(slip.id)} className="size-3.5 accent-amber-600" />
+                              <b className="font-mono">{slip.slipNumber}</b>
+                              <span className="text-slate-500">{slip.month}</span>
+                            </span>
+                            <b className="font-mono">{fmt(slip.netMinor)} {cur.symbol}</b>
+                          </label>
+                        ))}
+                        {settledTotalMinor > 0 && (
+                          <div className="flex items-center justify-between border-t border-amber-500/20 pt-1 text-[11px] font-black text-amber-700 dark:text-amber-300">
+                            <span>المحدد للتسديد</span>
+                            <span className="font-mono">{fmt(settledTotalMinor)} {cur.symbol}</span>
+                          </div>
+                        )}
+                        <p className="text-[10px] text-slate-500">اختر قسيمة فأكثر ثم اجعل مبلغ السند مساوياً لمجموعها (زر «تسديد الكل» يفعل ذلك) — تُوسم القسائم مصروفة باسم هذا السند.</p>
+                      </div>
+                    )}
                   </div>
                 )}
                 {!needsParty && (
@@ -618,6 +672,8 @@ export function VouchersPage() {
               return <section className="space-y-2 rounded-xl border doc-line doc-card p-4"><h3 className="flex items-center gap-2 text-sm font-bold doc-ink"><Landmark size={17} className="doc-accent" /> أقساط الأصول المستحقة لهذا المورد</h3>{supplierAssets.map(({ a, due }) => <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 rounded doc-tint px-3 py-2 text-[11px]"><span>{a.assetNumber} — {a.nameAr}</span><b>متبقٍ {fmt(due.remainingMinor)} {cur.symbol}{due.nextInstallment ? ` · قسط ${fmt(due.nextInstallment.amountMinor - due.nextInstallment.paidMinor)} يستحق ${due.nextInstallment.dueDate}` : ''}</b></div>)}</section>
             })()}
 
+            {/* §95 (محاذاة pro-acc): ربط المشروع بالسند — أثر تحليلي على ربحية المشروع وتحصيلاته، ورصيد الطرف ينزل دائماً */}
+            {(kind === 'receipt' || kind === 'payment') && projects.length > 0 && <Field label="المشروع (اختياري — للربحية والتحصيلات)"><QuickSelect value={voucherProjectId ?? ''} onChange={(e) => setVoucherProjectId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card" data-voucher-project><option value="">بدون مشروع</option>{projects.filter((p) => p.status === 'active').map((p) => <option key={p.id} value={p.id}>{p.code} — {p.nameAr}</option>)}</QuickSelect></Field>}
             {canLinkCostCenter && !canLinkVehicle && <Field label="مركز التكلفة العام (اختياري)"><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field>}
             {canLinkVehicle && <div className="grid gap-3 rounded-xl border doc-line doc-card p-4 sm:grid-cols-3"><Field label="مركز التكلفة العام (اختياري)"><QuickSelect value={costCenterId ?? ''} onChange={(e) => setCostCenterId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركز عام</option>{costCenters.filter((center) => center.isActive).map((center) => <option key={center.id} value={center.id}>{center.code} — {center.nameAr}</option>)}</QuickSelect></Field><Field label="مركز تكلفة المركبة (اختياري)"><QuickSelect value={vehicleId ?? ''} onChange={(e) => setVehicleId(e.target.value ? Number(e.target.value) : null)} className="h-10 doc-line doc-card"><option value="">بدون مركبة</option>{vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.plateNumber} — {vehicle.vehicleType}</option>)}</QuickSelect></Field>{vehicleId != null && <Field label="نوع مصروف السيارة"><QuickSelect value={vehicleCostCategory} onChange={(e) => setVehicleCostCategory(e.target.value)} className="h-10 doc-line doc-card">{VEHICLE_COST_CATEGORIES.map(([code, label]) => <option key={code} value={code}>{label}</option>)}</QuickSelect></Field>}</div>}
 

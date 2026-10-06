@@ -142,7 +142,7 @@ html.dark { color-scheme: dark; }
   33% { transform: translate(40px, -30px) scale(1.15); }
   66% { transform: translate(-30px, 25px) scale(0.9); }
 }
-.anim-wizard-step { animation: wizardSlideIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-wizard-step { animation: wizardSlideIn 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 .anim-glow { animation: wizardGlow 3s ease-in-out infinite; }
 .anim-float { animation: floatY 4s ease-in-out infinite; }
 .anim-orb { animation: orbDrift 14s ease-in-out infinite; }
@@ -1373,6 +1373,10 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-fx-toggle { display: flex; align-items: center; gap: .3rem; cursor: pointer; color: var(--doc-muted); font-size: .6rem; font-weight: 700; }
 .invoice-doc-fx-toggle input { accent-color: var(--doc-accent); block-size: .8rem; inline-size: .8rem; }
 .invoice-doc-fx-toggle small { color: var(--doc-faint); font-size: .52rem; font-weight: 600; }
+/* رقاقة «سعر اليوم» تحت منتقي العملة — تفتح نافذة أسعار الصرف المفلترة (طلب المالك 2026-10-01) */
+.invoice-doc-fx-today { display: inline-flex; align-items: center; gap: .25rem; margin-top: .15rem; padding: .18rem .45rem; border: 1px solid color-mix(in srgb, var(--doc-accent) 35%, transparent); border-radius: .4rem; background: color-mix(in srgb, var(--doc-accent) 8%, transparent); color: var(--doc-muted); font-size: .56rem; font-weight: 800; cursor: pointer; transition: all .12s; text-align: start; }
+.invoice-doc-fx-today:hover { background: color-mix(in srgb, var(--doc-accent) 16%, transparent); color: var(--doc-ink); }
+.invoice-doc-fx-today b { color: var(--doc-accent); font-size: .62rem; }
 
 /* كشف الإجماليات: بند ونقاط موصولة ومبلغ على عمود واحد (شكل المستند المحاسبي) */
 .invoice-doc-sum { display: flex; flex-direction: column; }
@@ -1387,9 +1391,6 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-grand span { color: var(--doc-accent-deep); font-size: .65rem; font-weight: 800; }
 .invoice-doc-grand b { direction: ltr; color: var(--doc-accent-deep); font-family: ui-monospace, monospace; font-size: .95rem; font-weight: 900; }
 /* بلاطات طريقة الدفع الثلاث (نقدي · بنك · ماكينة) كما في التصميم المرجعي */
-.invoice-doc-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .25rem; }
-.invoice-doc-tiles > button { display: inline-flex; align-items: center; justify-content: center; gap: .25rem; border: 1px solid var(--doc-line); border-radius: .4rem; background: var(--doc-paper); padding: .25rem .2rem; color: var(--doc-muted); font-size: .6rem; font-weight: 800; }
-.invoice-doc-tiles > button:hover { background: var(--doc-tint); }
 .invoice-doc-tiles > button[aria-pressed=true] { border-color: var(--doc-accent); background: var(--doc-tint-strong); color: var(--doc-accent-deep); box-shadow: inset 0 0 0 1px var(--doc-accent-soft); }
 .invoice-doc-tiles > button:disabled { opacity: .4; cursor: not-allowed; }
 /* كتلة التسوية أسفل الإجمالي: المدفوع · المتبقي · حالة القيد */
@@ -1405,6 +1406,8 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc-quick button { border: 1px solid var(--doc-line); border-radius: .35rem; background: var(--doc-paper); padding: .1rem .4rem; color: var(--doc-muted); font-size: .55rem; font-weight: 700; }
 .invoice-doc-quick button:hover { border-color: var(--doc-accent-soft); background: var(--doc-tint-strong); color: var(--doc-accent-deep); }
 .invoice-doc-panel textarea { min-height: 4.6rem; resize: vertical; }
+/* طلب المالك 2026-10-01: مربع الشروط أصغر قليلاً */
+.invoice-doc-termsbox { min-height: 3.1rem !important; max-height: 5.2rem; }
 
 /* ⑤ شريط الإجراءات اللاصق */
 .invoice-doc-actionbar {
@@ -1751,14 +1754,18 @@ tr[data-row-open]:hover { background: rgb(99 102 241 / .04); }
 .invoice-doc .invoice-doc-head-actions .bg-gradient-to-l:hover { background: var(--doc-accent-deep) !important; }
 
 /* رقاقات المصروفات داخل لوحة الملاحظات (النموذج: .addons) — بدل الشريط العريض */
-.invoice-doc-addons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .18rem; border-top: 1px dashed var(--doc-line); padding-top: .22rem; }
-.invoice-doc-addons > button {
+/* طلب المالك 2026-10-01: أزرار المصروفات في صف والعمولات في صف فوق بعضهما — لا شريط تمرير */
+.invoice-doc-addons { display: flex; flex-direction: column; gap: .18rem; border-top: 1px dashed var(--doc-line); padding-top: .22rem; }
+.invoice-doc-addons-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .18rem; }
+.invoice-doc-addons-row.is-single { grid-template-columns: minmax(0, 1fr); }
+.invoice-doc-addons-row-label { color: var(--doc-faint); font-size: .52rem; font-weight: 800; padding-top: .05rem; }
+.invoice-doc-addons .invoice-doc-addons-row > button {
   display: inline-flex; align-items: center; justify-content: center; gap: .2rem;
   border: 1px solid var(--doc-line); border-radius: .35rem; background: var(--doc-paper);
   padding: .1rem .3rem; color: var(--doc-muted); font-size: .63rem; font-weight: 700; white-space: nowrap;
 }
-.invoice-doc-addons > button:hover { border-color: var(--doc-accent); color: var(--doc-accent); }
-.invoice-doc-addons > button.is-amber { border-color: var(--doc-warn-line); background: var(--doc-warn-tint); color: var(--doc-warn); }
+.invoice-doc-addons .invoice-doc-addons-row > button:hover { border-color: var(--doc-accent); color: var(--doc-accent); }
+.invoice-doc-addons .invoice-doc-addons-row > button.is-amber { border-color: var(--doc-warn-line); background: var(--doc-warn-tint); color: var(--doc-warn); }
 .invoice-doc-count { border-radius: 999px; background: var(--doc-tint-strong); padding: 0 .22rem; color: var(--doc-accent-deep); font-size: .55rem; font-weight: 800; }
 
 /* سطر الخصم الواحد (طلب المالك: «الخصم كله في سطر واحد بأزرار صغيرة مرئية بالكامل») */
@@ -2658,3 +2665,78 @@ input, textarea, select, option,
 .dark .menubar-approvals { color: #fcd34d; border-color: rgb(217 119 6 / .45); }
 @media (prefers-reduced-motion: reduce) { .menubar-approvals { animation: none; } }
 
+
+/* ─── معاينة الطباعة الحية: لوحة الإعدادات السريعة + الوضع المصغّر (طلب المالك) ─── */
+.thermal-preview-quick {
+  border-bottom: 1px solid rgb(148 163 184 / .3);
+  padding: .55rem .6rem;
+  display: grid;
+  gap: .45rem;
+  background: rgb(248 250 252 / .92);
+}
+.dark .thermal-preview-quick { background: rgb(15 23 42 / .92); }
+.thermal-preview-quick-title {
+  display: flex; align-items: center; gap: .35rem;
+  font-size: .68rem; font-weight: 900; color: #0f766e;
+}
+.dark .thermal-preview-quick-title { color: #5eead4; }
+.thermal-preview-quick-title button {
+  margin-inline-start: auto; border: 0; background: transparent; cursor: pointer;
+  color: #94a3b8; border-radius: .35rem; padding: .1rem .25rem;
+}
+.thermal-preview-quick-title button:hover { background: rgb(244 63 94 / .12); color: #e11d48; }
+.thermal-preview-quick-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.4fr); gap: .45rem; align-items: end; }
+.thermal-preview-quick-grid label, .thermal-preview-quick-style {
+  display: grid; gap: .2rem; font-size: .62rem; font-weight: 800; color: #64748b;
+}
+.thermal-preview-quick-input {
+  border: 1px solid rgb(148 163 184 / .45); border-radius: .45rem;
+  background: #fff; color: #0f172a; padding: .3rem .4rem; font-size: .72rem; width: 100%;
+}
+.dark .thermal-preview-quick-input { background: rgb(30 41 59); color: #e2e8f0; border-color: rgb(71 85 105 / .7); }
+.thermal-preview-quick-color { width: 100%; height: 1.85rem; border: 1px solid rgb(148 163 184 / .45); border-radius: .45rem; background: #fff; padding: .1rem; cursor: pointer; }
+.thermal-preview-quick-wide { grid-column: span 1; }
+.thermal-preview-quick-toggles { display: flex; flex-wrap: wrap; gap: .3rem .55rem; }
+.thermal-preview-quick-toggle {
+  display: inline-flex; align-items: center; gap: .25rem;
+  font-size: .63rem; font-weight: 800; color: #475569; cursor: pointer;
+  border: 1px solid rgb(148 163 184 / .4); border-radius: 999px; padding: .18rem .5rem;
+  background: #fff;
+}
+.dark .thermal-preview-quick-toggle { background: rgb(30 41 59); color: #cbd5e1; border-color: rgb(71 85 105 / .6); }
+.thermal-preview-quick-toggle:has(input:checked) { border-color: #14b8a6; color: #0f766e; background: rgb(20 184 166 / .08); }
+.dark .thermal-preview-quick-toggle:has(input:checked) { color: #5eead4; }
+.thermal-preview-quick-extra {
+  display: inline-flex; align-items: center; gap: .3rem; justify-content: center;
+  border: 1px dashed rgb(20 184 166 / .6); border-radius: .5rem;
+  background: rgb(20 184 166 / .07); color: #0f766e;
+  font-size: .65rem; font-weight: 800; padding: .35rem .5rem; cursor: pointer;
+}
+.dark .thermal-preview-quick-extra { color: #5eead4; }
+.thermal-preview-quick-extra:hover { background: rgb(20 184 166 / .15); }
+
+/* الوضع المصغّر: شريط حي أسفل الشاشة أثناء تعديل قسم الطباعة الكامل */
+.thermal-preview-mini { position: fixed; border-radius: .9rem; overflow: hidden; }
+.thermal-preview-mini header {
+  display: flex; align-items: center; gap: .4rem; padding: .35rem .55rem;
+  font-size: .68rem; cursor: default;
+}
+.thermal-preview-mini header b { display: inline-flex; align-items: center; gap: .25rem; color: #f8fafc; }
+.thermal-preview-mini header button {
+  border: 0; background: transparent; cursor: pointer; color: #cbd5e1;
+  border-radius: .35rem; padding: .15rem .3rem; display: inline-flex; align-items: center;
+}
+.thermal-preview-mini header button:hover { background: rgb(244 63 94 / .15); color: #fff; }
+.thermal-preview-mini-paper { background: #fff; border-block: 1px solid rgb(148 163 184 / .25); }
+.dark .thermal-preview-mini-paper { background: #f8fafc; }
+.thermal-preview-mini footer { display: flex; justify-content: center; padding: .35rem .5rem; }
+
+/* ═══ §93: زر التحصيل/السداد بعملة أجنبية — زر واحد ونافذة منظمة ═══ */
+.invoice-doc-fx-open { display: flex; align-items: center; gap: .35rem; width: 100%; padding: .4rem .55rem; border: 1px dashed color-mix(in srgb, var(--doc-accent) 45%, transparent); border-radius: .5rem; background: color-mix(in srgb, var(--doc-accent) 6%, transparent); color: var(--doc-accent); font-size: .66rem; font-weight: 900; cursor: pointer; transition: all .12s; text-align: start; }
+.invoice-doc-fx-open:hover { background: color-mix(in srgb, var(--doc-accent) 14%, transparent); }
+.invoice-doc-fx-open small { display: block; color: var(--doc-faint); font-size: .52rem; font-weight: 700; }
+.invoice-doc-fx-active { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding: .35rem .5rem; border: 1px solid color-mix(in srgb, #0d9488 45%, transparent); border-radius: .5rem; background: color-mix(in srgb, #0d9488 8%, transparent); }
+.invoice-doc-fx-active-leg { font-size: .68rem; font-weight: 900; color: var(--doc-ink); font-variant-numeric: tabular-nums; }
+.invoice-doc-fx-edit, .invoice-doc-fx-clear { border: none; border-radius: .4rem; padding: .15rem .5rem; font-size: .56rem; font-weight: 800; cursor: pointer; }
+.invoice-doc-fx-edit { background: color-mix(in srgb, var(--doc-accent) 15%, transparent); color: var(--doc-accent); }
+.invoice-doc-fx-clear { background: color-mix(in srgb, #e11d48 12%, transparent); color: #e11d48; }

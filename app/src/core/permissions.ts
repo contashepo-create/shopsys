@@ -243,10 +243,13 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/parties/employee-deductions', perm: 'party.employee.manage' },
   { prefix: '/parties/employee-commissions', perm: 'party.employee.manage' },
   { prefix: '/parties/custody', perm: 'party.employee.manage' },
+  // شؤون الموظفين (حضور/بصمة/إجازات/ورديات/تقارير) — نفس صلاحية إدارة الموظفين
+  { prefix: '/hr', perm: 'party.employee.manage' },
   { prefix: '/parties', perm: 'party.customer.manage' },
   // شاشات النشاط التخصصي (صيانة/رحلات/معمل/عيادة/مقاولات/سيارات/محافظ/تأجير)
   { prefix: '/maintenance', perm: 'ops.activity.use' },
   { prefix: '/laundry', perm: 'ops.activity.use' },
+  { prefix: '/bookings', perm: 'ops.activity.use' },
   { prefix: '/wallets', perm: 'ops.activity.use' },
   { prefix: '/rental', perm: 'ops.activity.use' },
   { prefix: '/logistics/fleet', perm: 'rep.fleet' },
@@ -256,6 +259,8 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/clinic', perm: 'ops.activity.use' },
   { prefix: '/cars', perm: 'ops.activity.use' },
   { prefix: '/realestate', perm: 'ops.activity.use' },
+  // وحدة تقارير المطعم (عائلة /restaurant مستقلة كسائر وحدات التقارير)
+  { prefix: '/restaurant', perm: 'ops.activity.use' },
   { prefix: '/accounting/coa', perm: 'acc.coa.manage' },
   { prefix: '/accounting/opening-balances', perm: 'acc.coa.manage' },
   { prefix: '/accounting/assets', perm: 'acc.coa.manage' },
@@ -268,6 +273,7 @@ export const ROUTE_PERMISSIONS: { prefix: string; perm: string | null }[] = [
   { prefix: '/settings/permissions', perm: 'set.users' },
   { prefix: '/settings/audit', perm: 'set.audit.view' },
   { prefix: '/settings/backup', perm: 'set.backup' },
+  { prefix: '/settings/lan', perm: 'set.backup' }, // شبكة المحل: دور الجهاز (مضيف/عميل) — للمالك فقط
   { prefix: '/settings/sync', perm: 'set.backup' },
   { prefix: '/settings/profile', perm: null }, // «حسابي» — كل مستخدم يدير ملفه بنفسه
   { prefix: '/settings/about', perm: null }, // حول التطبيق — للجميع

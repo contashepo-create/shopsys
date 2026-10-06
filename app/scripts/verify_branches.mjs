@@ -10,7 +10,7 @@
  * تشغيل: node --experimental-strip-types scripts/verify_branches.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -28,9 +28,9 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'supermarket', allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { compareBranches, branchOfWarehouse, validateBranch } = await import(join(root, 'src/core/branches.ts'))
-const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { compareBranches, branchOfWarehouse, validateBranch } = await import(pathToFileURL(join(root, 'src/core/branches.ts')).href)
+const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
 const st = () => useDataStore.getState()
 let pass = 0
 const ok = (n) => { pass++; console.log('  ✓', n) }

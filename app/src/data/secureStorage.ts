@@ -27,6 +27,34 @@ function key(): Promise<CryptoKey> {
   return keyPromise
 }
 
+/* ── v1.0.15 (المرحلة ⑤): نقل السر بين الأجهزة ─────────────────────────
+   القاعدة المنقولة تُقرأ فقط بسرها الأصلي — التصدير يغلّفه بكلمة سر يختارها
+   المالك، والاستيراد يستبدل السر المحلي به. بعد الاستبدال تُختم الكتابة
+   (seal) حتى إعادة التشغيل: أي حفظ تلقائي بالسر الجديد قبل قراءة القاعدة
+   القديمة كان سيدمّر بيانات الجهاز — الختم يمنع الكارثة بصمت. */
+let sealedForTransfer = false
+
+export function getDeviceSecret(): string {
+  return getOrCreateSecret()
+}
+
+export function setDeviceSecret(secret: string): void {
+  if (!/^[0-9a-f]{64}$/.test(secret)) throw new Error('سر غير صالح — يجب أن يكون 64 رقماً سداسياً عشرياً (256-بت)')
+  localStorage.setItem(SECRET_KEY, secret)
+  keyPromise = null // المفتاح القديم لم يعد صالحاً
+  sealedForTransfer = true
+}
+
+/** هل التخزين مختوم بعد استيراد سر؟ (يمنع الكتابة حتى إعادة التشغيل) */
+export function isStorageSealed(): boolean {
+  return sealedForTransfer
+}
+
+/** يفتح الختم بعد إعادة التشغيل — لا يُستدعى إلا من إقلاع جديد */
+export function unsealStorageAfterReload(): void {
+  sealedForTransfer = false
+}
+
 export const secureStorage: StateStorage = {
   getItem: async (name) => {
     const raw = localStorage.getItem(name)
@@ -40,6 +68,9 @@ export const secureStorage: StateStorage = {
     }
   },
   setItem: async (name, value) => {
+    /* بعد استيراد سر جديد: القاعدة الحالية فُكّت بالسر القديم — أي كتابة
+       الآن كانت ستحفظها بالسر الجديد وتُضلّل الجهاز؛ نتوقف حتى إعادة التشغيل */
+    if (sealedForTransfer) return
     localStorage.setItem(name, await encryptText(value, await key()))
   },
   removeItem: async (name) => {

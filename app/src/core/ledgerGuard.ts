@@ -35,6 +35,12 @@ const CLOSED_YEAR_EXEMPT: readonly SourceType[] = ['year_closing']
 
 const isMoney = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n)
 
+/** تاريخ YYYY-MM-DD موجود فعلاً في التقويم (ذهاباً وإياباً عبر محرك التواريخ) */
+function isValidCalendarDate(iso: string): boolean {
+  const d = new Date(`${iso}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso
+}
+
 /**
  * توحيد تاريخ القيد على `YYYY-MM-DD`.
  * بعض المسارات كانت ترحّل تاريخاً بصيغة ISO كاملة (`2026-09-20T09:00:00.000Z`) فتختل
@@ -64,6 +70,7 @@ export function validateEntry(entry: JournalEntry, ctx: LedgerGuardContext): str
   let totalDebit = 0
   let totalCredit = 0
   let meaningful = 0
+  let overflow = false
   for (const line of lines) {
     const debit = line.debit
     const credit = line.credit
@@ -76,8 +83,15 @@ export function validateEntry(entry: JournalEntry, ctx: LedgerGuardContext): str
     const acc = byCode.get(line.accountCode)
     if (!acc) errors.push(`${tag}: حساب غير موجود في شجرة الحسابات (${line.accountCode})`)
     else if (acc.isPostable === false) errors.push(`${tag}: «${acc.nameAr}» حساب تجميعي لا يقبل قيوداً مباشرة`)
-    totalDebit += debit
-    totalCredit += credit
+    // جمع آمن: تجاوز النطاق الآمن يفسد مقارنة التوازن بصمت (ث1) — يُرفض صراحة
+    if (!overflow) {
+      const nd = totalDebit + debit
+      const nc = totalCredit + credit
+      if (!Number.isSafeInteger(nd) || !Number.isSafeInteger(nc)) {
+        overflow = true
+        errors.push(`${tag}: مجموع مبالغ القيد خارج النطاق الآمن للأعداد الصحيحة`)
+      } else { totalDebit = nd; totalCredit = nc }
+    }
     if (debit !== 0 || credit !== 0) meaningful++
   }
 
@@ -89,6 +103,10 @@ export function validateEntry(entry: JournalEntry, ctx: LedgerGuardContext): str
   if (!entry.sourceType) errors.push(`${tag}: بلا نوع مصدر — كل قيد يتبع مستنداً`)
   if (!entry.date || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) {
     errors.push(`${tag}: تاريخ غير صالح (${entry.date ?? 'فارغ'})`)
+  } else if (!isValidCalendarDate(entry.date)) {
+    // 2026-02-30 كان يجتاز الاختبار النصي ثم يتدحرج في محرك التواريخ إلى مارس —
+    // تاريخ غير موجود تقويمياً يُرفض الآن قبل أن يفسد ترتيب الفترات (مراجعة §75)
+    errors.push(`${tag}: تاريخ غير موجود في التقويم (${entry.date})`)
   } else if (!CLOSED_YEAR_EXEMPT.includes(entry.sourceType)) {
     const closed = (ctx.fiscalYears ?? []).find((y) => y.status === 'closed' && entry.date >= y.startDate && entry.date <= y.endDate)
     if (closed) errors.push(`التاريخ ${entry.date} داخل السنة المالية المقفلة «${closed.nameAr}» — لا قيود في فترة مقفلة`)
@@ -117,9 +135,19 @@ export function assertJournalIntegrity(
     const before = prevById.get(entry.id)
     if (!before) {
       errors.push(...validateEntry(entry, ctx))
-    } else if (before.lines !== entry.lines && JSON.stringify(before.lines) !== JSON.stringify(entry.lines)) {
-      // ث9 — لا تعديل صامت: تصحيح القيد المُرحَّل يكون بقيد عاكس لا بتحرير سطوره
-      errors.push(`تعديل صامت لسطور القيد #${entry.entryNumber ?? entry.id} ممنوع — التصحيح يكون بقيد عاكس`)
+    } else {
+      if (before.lines !== entry.lines && JSON.stringify(before.lines) !== JSON.stringify(entry.lines)) {
+        // ث9 — لا تعديل صامت: تصحيح القيد المُرحَّل يكون بقيد عاكس لا بتحرير سطوره
+        errors.push(`تعديل صامت لسطور القيد #${entry.entryNumber ?? entry.id} ممنوع — التصحيح يكون بقيد عاكس`)
+      }
+      // ث9-ممتد (مراجعة §75): التاريخ والوصف والمصدر هوية القيد المرحّل — تحريك
+      // التاريخ كان ينقل أثراً مالياً بين الفترات بصمت (يتجاوز قفل السنة المقفلة).
+      // يُتسامح فقط مع تطبيع ISO الكامل إلى YYYY-MM-DD (يحدث داخل غلاف set).
+      const beforeDate = before.date.length > 10 && /^\d{4}-\d{2}-\d{2}T/.test(before.date) ? before.date.slice(0, 10) : before.date
+      if (beforeDate !== entry.date) errors.push(`تغيير تاريخ القيد #${entry.entryNumber ?? entry.id} ممنوع — القيد المرحّل لا يتحرك بين الفترات (التصحيح بقيد عاكس)`)
+      if (before.description !== entry.description || before.sourceType !== entry.sourceType || before.sourceId !== entry.sourceId) {
+        errors.push(`تغيير وصف أو مصدر القيد #${entry.entryNumber ?? entry.id} ممنوع — القيد المرحّل غير قابل للتعديل`)
+      }
     }
     // ث4 — لا تكرار في أرقام القيود
     const n = entry.entryNumber

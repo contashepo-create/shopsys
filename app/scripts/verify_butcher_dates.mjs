@@ -28,14 +28,14 @@ globalThis.localStorage = {
 }
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 
-const { ACTIVITY_TEMPLATES, getActivity, MODULE_LABELS } = await import(join(root, 'src/core/activities.ts'))
-const { ACTIVITY_THEMES, PERSONA_STYLES, WIDGET_LABELS } = await import(join(root, 'src/core/activityTheme.ts'))
-const { ACCENTS, ACTIVITY_ACCENTS } = await import(join(root, 'src/core/appearance.ts'))
-const { allocateProcessingCost, buildProcessingEntry, validateProcessing, processingYieldPercent, PROCESSING_KIND_LABELS } = await import(join(root, 'src/core/processing.ts'))
-const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
-const { buildZatcaQr } = await import(join(root, 'src/core/einvoice.ts'))
-const { buildItemLedger } = await import(join(root, 'src/core/itemLedger.ts'))
-const { getCountry } = await import(join(root, 'src/core/countries.ts'))
+const { ACTIVITY_TEMPLATES, getActivity, MODULE_LABELS } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
+const { ACTIVITY_THEMES, PERSONA_STYLES, WIDGET_LABELS } = await import(pathToFileURL(join(root, 'src/core/activityTheme.ts')).href)
+const { ACCENTS, ACTIVITY_ACCENTS } = await import(pathToFileURL(join(root, 'src/core/appearance.ts')).href)
+const { allocateProcessingCost, buildProcessingEntry, validateProcessing, processingYieldPercent, PROCESSING_KIND_LABELS } = await import(pathToFileURL(join(root, 'src/core/processing.ts')).href)
+const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
+const { buildZatcaQr } = await import(pathToFileURL(join(root, 'src/core/einvoice.ts')).href)
+const { buildItemLedger } = await import(pathToFileURL(join(root, 'src/core/itemLedger.ts')).href)
+const { getCountry } = await import(pathToFileURL(join(root, 'src/core/countries.ts')).href)
 
 let pass = 0
 const ok = (cond, name) => { assert.ok(cond, name); pass++ }

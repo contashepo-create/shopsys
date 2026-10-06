@@ -75,12 +75,19 @@ describe('تخصيص أعمدة جدول البنود', () => {
     />,
   )
 
-  it('يظهر كل الأعمدة افتراضياً', () => {
+  it('الكود والوحدة ظاهران افتراضياً — الضريبة مخفية افتراضياً (بلاغ v1.0.3: الإجماليات فقط)', () => {
     const view = table()
     expect(view.getByText('كود الصنف')).toBeTruthy()
     expect(view.getByText('الوحدة')).toBeTruthy()
-    expect(view.getByText('الضريبة')).toBeTruthy()
-    expect(view.getByText('14% ض.ق.م')).toBeTruthy()
+    // طلب المالك: حقل الضريبة لا يظهر إلا بإعادته من «تخصيص الحقول» داخل الفاتورة
+    expect(view.queryByText('الضريبة')).toBeNull()
+    expect(view.queryByText('14% ض.ق.م')).toBeNull()
+    cleanup()
+    // الإعادة من زر التخصيص تعيده فوراً — الإخفاء الافتراضي لا يقفل الباب
+    A().toggleInvoiceColumn('tax')
+    const taxed = table()
+    expect(taxed.getByText('الضريبة')).toBeTruthy()
+    expect(taxed.getByText('14% ض.ق.م')).toBeTruthy()
   })
 
   it('عمود الضريبة يختفي في البيع المباشر أو عند إلغاء تفعيل الضريبة (قرار المالك ⑩ي)', () => {
@@ -101,6 +108,7 @@ describe('تخصيص أعمدة جدول البنود', () => {
   })
 
   it('يخفي الأعمدة المطفأة ولا يغيّر إجمالي السطر — إخفاء عرضٍ لا حساب', () => {
+    A().toggleInvoiceColumn('tax') // الضريبة الآن مخفية افتراضياً — نشغلها لبيانات المقارنة
     const before = table().container.querySelector('.invoice-table-total')?.textContent
     cleanup()
     A().toggleInvoiceColumn('code'); A().toggleInvoiceColumn('unit'); A().toggleInvoiceColumn('tax')
@@ -115,14 +123,16 @@ describe('تخصيص أعمدة جدول البنود', () => {
   })
 
   it('يعيد كل الأعمدة بزر الاسترجاع', () => {
+    /* الضريبة مخفية افتراضياً (v1.0.3): التبديل يظهرها ثم الاسترجاع يخفيها ثانية */
     A().toggleInvoiceColumn('tax')
-    expect(A().invoiceColumns.tax).toBe(false)
+    expect(A().invoiceColumns.tax).toBe(true)
     A().resetInvoiceColumns()
     expect(A().invoiceColumns).toEqual(DEFAULT_INVOICE_COLUMNS)
+    expect(A().invoiceColumns.tax).toBe(false)
   })
 
   it('لا يسمح بإخفاء أعمدة الإدخال — الكمية والسعر والإجمالي ثابتة', () => {
-    A().toggleInvoiceColumn('code'); A().toggleInvoiceColumn('unit'); A().toggleInvoiceColumn('tax')
+    A().toggleInvoiceColumn('code'); A().toggleInvoiceColumn('unit')
     const view = table()
     expect(view.getByText('الكمية')).toBeTruthy()
     expect(view.getByText('السعر')).toBeTruthy()

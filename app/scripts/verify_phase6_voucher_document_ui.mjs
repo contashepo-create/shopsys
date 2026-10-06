@@ -13,16 +13,18 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { reporter } from './auditKit.mjs'
+import { fileURLToPath } from 'node:url'
+const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 const R = reporter('المرحلة 6 — سندات القبض والصرف بلغة المستند')
-const UI = '/home/user/shopsys/app/src/ui/'
+const UI = `${APP_ROOT}/src/ui/`
 const read = (p) => readFileSync(UI + p, 'utf8')
 const vouchers = read('pages/VouchersPage.tsx')
 const frame = read('components/InvoicePOSFrame.tsx')
 
 /* ① طبقة المستند موحّدة ولها بديل ليلي — لا ألوان محفورة في الصفحة */
 {
-  const css = readFileSync('/home/user/shopsys/app/src/index.css', 'utf8')
+  const css = readFileSync(`${APP_ROOT}/src/index.css`, 'utf8')
   // الفاتورة نظام أصناف (invoice-doc-*) له وضع ليلي — والسند يجب أن يكون مثله لا ألواناً ست عشرية ثابتة
   // UNIFY-DOC-2026-09-28: لوحة ألوان **واحدة** للفاتورة والسند — لا عائلتان تتباعدان مع كل تعديل
   assert.ok(frame.includes('invoice-doc-topbar'), 'شريط مستند الفاتورة مفقود')

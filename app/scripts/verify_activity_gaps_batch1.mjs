@@ -31,13 +31,13 @@ globalThis.window = { localStorage: globalThis.localStorage, addEventListener: (
 let pass = 0
 const ok = (msg) => { pass++; console.log(`✅ ${msg}`) }
 
-const { ACTIVITY_TEMPLATES, getActivity } = await import(join(root, 'src/core/activities.ts'))
-const { ACTIVITY_ACCENTS } = await import(join(root, 'src/core/appearance.ts'))
-const { themeForActivity } = await import(join(root, 'src/core/activityTheme.ts'))
-const { guidesForActivity, ACTIVITY_GUIDES } = await import(join(root, 'src/core/guides.ts'))
-const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
-const loyaltyCore = await import(join(root, 'src/core/loyalty.ts'))
-const { collectNotifications } = await import(join(root, 'src/core/notifications.ts'))
+const { ACTIVITY_TEMPLATES, getActivity } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
+const { ACTIVITY_ACCENTS } = await import(pathToFileURL(join(root, 'src/core/appearance.ts')).href)
+const { themeForActivity } = await import(pathToFileURL(join(root, 'src/core/activityTheme.ts')).href)
+const { guidesForActivity, ACTIVITY_GUIDES } = await import(pathToFileURL(join(root, 'src/core/guides.ts')).href)
+const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
+const loyaltyCore = await import(pathToFileURL(join(root, 'src/core/loyalty.ts')).href)
+const { collectNotifications } = await import(pathToFileURL(join(root, 'src/core/notifications.ts')).href)
 
 const repoUrl = pathToFileURL(join(root, 'src/data/repo.ts')).href
 const appState = (activityId, loyalty) => JSON.stringify({

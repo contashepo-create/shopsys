@@ -10,7 +10,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { webcrypto } from 'node:crypto'
 
@@ -20,7 +20,7 @@ const root = join(__dirname, '..')
 let pass = 0
 const ok = (n) => { pass++; console.log('  ✓', n) }
 
-const lic = await import(join(root, 'src/core/license.ts'))
+const lic = await import(pathToFileURL(join(root, 'src/core/license.ts')).href)
 
 console.log('\n═══ 1) مفتاح موقَّع بمنطق الووركر يجتاز تحقق التطبيق ═══')
 {

@@ -17,6 +17,9 @@ type QuickSelectProps = {
   disabled?: boolean
   title?: string
   'aria-label'?: string
+  /** فرض القائمة الأصلية الحقيقية مهما كان عدد الخيارات — لشاشة الإعداد
+      (بلاغ v1.0.1 على ويندوز: قائمة البحث المرساة لم تكن تظهر إطلاقاً) */
+  native?: boolean
   [attribute: string]: unknown
 }
 
@@ -67,7 +70,7 @@ function anchoredPanelStyle(anchor: HTMLElement | null, preferredWidth = 520): C
 }
 
 /** بديل موحد للقائمة الأصلية: حقل كتابة وبحث واختيار Enter بلا قائمة HTML أصلية. */
-export function QuickSelect({ value, onChange, children, className, disabled = false, title, 'aria-label': ariaLabel }: QuickSelectProps) {
+export function QuickSelect({ value, onChange, children, className, disabled = false, title, 'aria-label': ariaLabel, native = false }: QuickSelectProps) {
   const choices = useMemo(() => flattenChoices(children), [children])
   const selectedValue = String(value ?? '')
   const selected = choices.find((choice) => choice.value === selectedValue) ?? choices[0]
@@ -80,8 +83,14 @@ export function QuickSelect({ value, onChange, children, className, disabled = f
     const normalized = query.trim()
     return normalized ? choices.filter((choice) => matchesSearch([choice.searchText, choice.value], normalized)) : choices
   }, [choices, query])
+  const menuRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    const close = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false) }
+    /* القائمة تُركَّب على <body> عبر بورتال (خارج هذا الجذر) — فحص «النقر
+       خارج» يشملها وإلا لكان النقر على أي خيار يغلقها قبل الاختيار */
+    const close = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false)
+    }
     document.addEventListener('pointerdown', close)
     return () => document.removeEventListener('pointerdown', close)
   }, [])
@@ -96,8 +105,9 @@ export function QuickSelect({ value, onChange, children, className, disabled = f
   const menuStyle = useAnchoredMenu(fieldRef, open)
   /* بلاغ المالك: «الحقول ذات القوائم لا تبدو كخلية كتابة — اجعلها قوائم منسدلة
      أختار منها إذا كانت بنودها ≤ ١٠». القوائم القصيرة تُعرض قائمة أصلية حقيقية
-     (سهم + فتح بالنقر + اختيار بلوحة المفاتيح)، والطويلة تبقى قائمة بحث. */
-  if (choices.length > 0 && choices.length <= 10) {
+     (سهم + فتح بالنقر + اختيار بلوحة المفاتيح)، والطويلة تبقى قائمة بحث —
+     وprop native يفرض القائمة الأصلية مهما كان العدد (شاشة الإ-setup أولاً). */
+  if (native || (choices.length > 0 && choices.length <= 10)) {
     return <div className="quick-native" title={title} data-quick-select="true" data-quick-native="true">
       <select
         disabled={disabled}
@@ -136,7 +146,13 @@ export function QuickSelect({ value, onChange, children, className, disabled = f
       }} />
       <ChevronDown size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
     </div>
-    {open && <div style={menuStyle} className="layer-picker overflow-auto rounded-xl border border-brand-300/50 bg-white dark:border-brand-700/50 dark:bg-card-dark shadow-2xl p-1">{matches.length ? matches.map((choice, row) => <button type="button" key={`${choice.value}:${row}`} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(choice)} className={`w-full p-2 text-right rounded-lg ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : 'hover:bg-slate-500/10'}`} data-quick-option="true" data-value={choice.value}>{choice.content}</button>) : <div className="p-3 text-center text-xs text-slate-400">لا توجد خيارات مطابقة</div>}</div>}
+    {/* بلاغ v1.0.1 (ويندوز مثبّت): القائمة كانت تُرسم داخل شجرة الشاشة
+        بposition:fixed — وأي سلف بtransform (أنيميشن الخطوات fill-mode=both)
+        يحبسها ويقصّها بoverflow فلا تظهر إطلاقاً. الخروج إلى <body> عبر
+        بورتال (نفس علاج بقية الطبقات — تعليق OverlayPortal وسلّم layer-*) */}
+    {open && <OverlayPortal>
+      <div ref={menuRef} style={menuStyle} className="layer-picker overflow-auto rounded-xl border border-brand-300/50 bg-white dark:border-brand-700/50 dark:bg-card-dark shadow-2xl p-1">{matches.length ? matches.map((choice, row) => <button type="button" key={`${choice.value}:${row}`} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(choice)} className={`w-full p-2 text-right rounded-lg ${row === index ? 'bg-brand-500/15 ring-1 ring-brand-500/30' : 'hover:bg-slate-500/10'}`} data-quick-option="true" data-value={choice.value}>{choice.content}</button>) : <div className="p-3 text-center text-xs text-slate-400">لا توجد خيارات مطابقة</div>}</div>
+    </OverlayPortal>}
   </div>
 }
 

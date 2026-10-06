@@ -5,7 +5,8 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * ويُخصم الرصيد وتُستهلك دفعات الصلاحية الأقدم أولاً.
  */
 import { useMemo, useState } from 'react'
-import { Trash2, PlusCircle, Eye, BookOpenText, AlertTriangle } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Trash2, PlusCircle, Eye, BookOpenText, AlertTriangle, RotateCcw, Receipt } from 'lucide-react'
 import { useDataStore, type WastageDoc } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
@@ -15,11 +16,13 @@ import { expiryAlerts } from '../../core/batches.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
+import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
 
 interface DraftLine { itemId: string; qty: string }
 
 export function WastagePage() {
-  const { items, batches, wastages, journal, postWastage } = useDataStore()
+  const nav = useNavigate()
+  const { items, batches, wastages, journal, postWastage, purchases } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
@@ -86,17 +89,72 @@ export function WastagePage() {
       </div>
 
       {expiredNow.length > 0 && (
-        <div className="anim-up rounded-2xl border-2 border-rose-500/30 bg-rose-500/5 p-4 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2 text-[12.5px] font-bold text-rose-600 dark:text-rose-400">
-            <AlertTriangle size={16} /> {expiredNow.length} دفعة منتهية الصلاحية بالمخزون الآن — مرشحة للإعدام الفوري
+        <div className="anim-up rounded-2xl border-2 border-rose-500/30 bg-rose-500/5 p-4 space-y-3" data-expired-triage>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2 text-[12.5px] font-bold text-rose-600 dark:text-rose-400">
+              <AlertTriangle size={16} /> منتهي الصلاحية بالمخزون — لكل صنف ثلاثة خيارات: إتلاف أو مرتجع للمورد أو بيع بتصريف
+            </div>
+            <Btn variant="ghost" className="border border-rose-500/30 !text-rose-600" onClick={() => {
+              const agg = new Map<number, number>()
+              for (const a of expiredNow) agg.set(a.itemId, (agg.get(a.itemId) ?? 0) + a.qty)
+              openNew([...agg].map(([itemId, qty]) => ({ itemId, qty })))
+            }}>
+              إعدامها كلها بمستند واحد
+            </Btn>
           </div>
-          <Btn variant="ghost" className="border border-rose-500/30 !text-rose-600" onClick={() => {
-            const agg = new Map<number, number>()
-            for (const a of expiredNow) agg.set(a.itemId, (agg.get(a.itemId) ?? 0) + a.qty)
-            openNew([...agg].map(([itemId, qty]) => ({ itemId, qty })))
-          }}>
-            إعدامها كلها بمستند واحد
-          </Btn>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px]">
+              <thead className="text-[10px] text-slate-400">
+                <tr><th className="px-2 py-1 text-right">الصنف</th><th className="px-2 py-1">الكمية</th><th className="px-2 py-1">انتهت في</th><th className="px-2 py-1">القيمة بالتكلفة</th><th className="px-2 py-1">القرار</th></tr>
+              </thead>
+              <tbody>
+                {(() => {
+                  /* تجميع الدفعات المنتهية لكل صنف */
+                  const agg = new Map<number, { qty: number; expiryDate: string }>()
+                  for (const a of expiredNow) {
+                    const prev = agg.get(a.itemId)
+                    agg.set(a.itemId, { qty: (prev?.qty ?? 0) + a.qty, expiryDate: prev ? (prev.expiryDate < a.expiryDate ? prev.expiryDate : a.expiryDate) : a.expiryDate })
+                  }
+                  return [...agg].map(([itemId, row]) => {
+                    const item = items.find((it) => it.id === itemId)
+                    /* أحدث فاتورة شراء تحتوي الصنف — أساس المرتجع للمورد */
+                    const source = [...purchases].reverse().find((p) => p.lines.some((l) => l.itemId === itemId))
+                    return (
+                      <tr key={itemId} className="border-t border-rose-500/10">
+                        <td className="px-2 py-1.5 text-right font-bold text-slate-700 dark:text-slate-200">{item?.nameAr ?? `صنف #${itemId}`}</td>
+                        <td className="px-2 py-1.5 text-center font-mono">{row.qty}</td>
+                        <td className="px-2 py-1.5 text-center font-mono text-[11px] text-rose-500" dir="ltr">{row.expiryDate}</td>
+                        <td className="px-2 py-1.5 text-center font-mono text-rose-600">{fmt(Math.round(row.qty * (item?.costMinor ?? 0)))}</td>
+                        <td className="px-2 py-1.5">
+                          <div className="flex flex-wrap items-center justify-center gap-1">
+                            <button type="button" title="مستند إتلاف بقيد 5111/1103" onClick={() => openNew([{ itemId, qty: row.qty }])}
+                              className="inline-flex items-center gap-1 rounded-lg bg-rose-500/15 px-2 py-1 text-[10.5px] font-bold text-rose-700 hover:bg-rose-500/25 dark:text-rose-300">
+                              <Trash2 size={12} /> إتلاف
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!source}
+                              title={source ? `مرتجع للمورد من فاتورة ${source.invoiceNumber}` : 'لا فاتورة شراء سابقة لهذا الصنف — سجّل المرتجع يدوياً'}
+                              onClick={() => nav(`/purchases/returns?purchase=${source!.id}&item=${itemId}&qty=${row.qty}`)}
+                              className="inline-flex items-center gap-1 rounded-lg bg-sky-500/15 px-2 py-1 text-[10.5px] font-bold text-sky-700 hover:bg-sky-500/25 disabled:opacity-40 dark:text-sky-300">
+                              <RotateCcw size={12} /> مرتجع للمورد
+                            </button>
+                            <button
+                              type="button"
+                              title="فتح فاتورة بيع معبأة بالصنف — يحدد الثمن بضوابط البيع تحت التكلفة"
+                              onClick={() => { openSalesInvoiceWindow(undefined, { lines: [{ itemId, qty: row.qty }], notes: `بيع تصريف — دفعة منتهية الصلاحية (${row.expiryDate})` }); toast.show('فُتحت فاتورة بيع معبأة بالصنف — حدد الثمن ثم رحّل') }}
+                              className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/15 px-2 py-1 text-[10.5px] font-bold text-emerald-700 hover:bg-emerald-500/25 dark:text-emerald-300">
+                              <Receipt size={12} /> بيع تصريف
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                })()}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

@@ -5,7 +5,7 @@
  * شرحُ شاشةٍ لا يراها أصلاً (لا تداخل بين الأنشطة).
  */
 import { SALES_GUIDES, INVENTORY_GUIDES, PURCHASE_PARTY_GUIDES, type ScreenGuide, type ScreenGuideMap } from './guideSections.ts'
-import { MODULE_GUIDES } from './guideSectionsModules.ts'
+import { MODULE_GUIDES, HR_GUIDES } from './guideSectionsModules.ts'
 import { ACCOUNTING_GUIDES, REPORT_GUIDES, SETTINGS_GUIDES } from './guideSectionsBack.ts'
 import { fillSample, playbookFor, type ActivitySample } from './activityPlaybook.ts'
 
@@ -17,6 +17,7 @@ export const ALL_SCREEN_GUIDES: ScreenGuideMap = {
   ...INVENTORY_GUIDES,
   ...PURCHASE_PARTY_GUIDES,
   ...MODULE_GUIDES,
+  ...HR_GUIDES,
   ...ACCOUNTING_GUIDES,
   ...REPORT_GUIDES,
   ...SETTINGS_GUIDES,

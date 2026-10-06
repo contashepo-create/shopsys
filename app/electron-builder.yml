@@ -1,0 +1,41 @@
+# حزمة نسخة سطح المكتب «تَحَكَّم» (مرحلة القاعدة المحلية — وثيقة §101)
+# التشغيل: npm run desktop:dist  (ويندوز NSIS) — والنشر: npm run desktop:publish
+appId: com.contashepo.tahakom
+productName: Tahakom
+copyright: تطوير وملكية حصرية — جميع الحقوق محفوظة
+directories:
+  output: release
+  buildResources: desktop/build
+files:
+  - dist/**/*
+  - dist-desktop/**/*
+  - package.json
+# الوحدة الأصلية تُفك من asar (إلاكترون يحمّلها من node_modules وقت التشغيل)
+asarUnpack:
+  - node_modules/better-sqlite3/**
+win:
+  # v1.0.6: أيقونة صريحة — استنتاج buildResources قد يسقط صامتاً لأيقونة Electron
+  icon: desktop/build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  # v1.0.8: صفحة الاتفاقية داخل المثبّت (الموجز) — النص الكامل والموافقة الموثقة داخل التطبيق عند أول تشغيل
+  license: desktop/build/license.txt
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  shortcutName: تحكم
+  artifactName: tahakom-setup-${version}.${ext}
+# v1.0.16 (ترحيل التحديث لمستودع خاص): إعداد publish يحدد وجهة التحديث
+# التلقائي (app-update.yml داخل المثبت) — لا مكان البناء. البناء يجري في
+# shopsys، لكن أجهزة العملاء تطلب التحديث من رف الإصدارات العام
+# tahakam-releases (بلا أي توكن)؛ النشر إليه بخطوة صريحة في سير الإصدار
+# بسر RELEASES_REPO_TOKEN. مصدر shopsys يظل عاماً مؤقتاً (نافذة ترحيل
+# العملاء القدامى) ثم يُخصخص بيد المالك — راجع docs/الترحيل-لمستودع-خاص.md
+publish:
+  provider: github
+  owner: contashepo-create
+  repo: tahakam-releases
+  releaseType: release

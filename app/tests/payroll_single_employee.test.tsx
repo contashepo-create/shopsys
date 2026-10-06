@@ -45,8 +45,8 @@ describe('مسير راتب موظف واحد', () => {
 
   it('يعرض زرّي المسير: كل الموظفين وموظف واحد، ونافذة الموظف الواحد تفتح فارغة بالبحث', () => {
     const view = render(<MemoryRouter><EmployeesPage initialTab="payroll" /></MemoryRouter>)
-    const single = view.getByText('مسير راتب موظف واحد')
-    expect(view.getByText('مسير رواتب لكل الموظفين')).toBeTruthy()
+    const single = view.getByText('مسير مجمّع لموظف (قديم)')
+    expect(view.getByText('مسير مجمّع للجميع (قديم)')).toBeTruthy()
     fireEvent.click(single)
     const dialog = document.querySelector('[role="dialog"]') as HTMLElement
     expect(dialog.textContent).toContain('مسير راتب موظف واحد')

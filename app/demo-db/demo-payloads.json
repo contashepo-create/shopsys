@@ -1,0 +1,5924 @@
+{
+ "grocery": {
+  "activity": {
+   "id": "grocery",
+   "name_ar": "أغذية / سوبر ماركت",
+   "shop_name": "سوبر ماركت المنصورة",
+   "owner_name": "محمد عبده",
+   "city": "المنصورة",
+   "phone": "01000000000",
+   "note": "نشاط تجزئة سريع الدوران: باركود، أوزان، صلاحية، وفروع متعددة.",
+   "sort_order": 0
+  },
+  "branches": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "main",
+    "name_ar": "الفرع الرئيسي — المنصورة",
+    "city": "المنصورة",
+    "phone": "0502200110",
+    "is_main": 1
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "talkha",
+    "name_ar": "فرع طلخا",
+    "city": "طلخا",
+    "phone": "0502200220",
+    "is_main": 0
+   }
+  ],
+  "warehouses": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "wh-main",
+    "name_ar": "المخزن الرئيسي",
+    "branch_ref": "main",
+    "is_main": 1
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "wh-shelf",
+    "name_ar": "مخزن العرض (الرفوف)",
+    "branch_ref": "main",
+    "is_main": 0
+   },
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "wh-talkha",
+    "name_ar": "مخزن فرع طلخا",
+    "branch_ref": "talkha",
+    "is_main": 0
+   }
+  ],
+  "treasuries": [
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "bank-cib",
+    "name_ar": "بنك CIB — الحساب الجاري",
+    "kind": "bank",
+    "parent_ref": "",
+    "bank_name": "التجاري الدولي",
+    "account_no": "100020003000",
+    "branch_ref": "",
+    "opening_minor": 2500000
+   },
+   {
+    "id": 4,
+    "activity": "grocery",
+    "ref": "bank-misr",
+    "name_ar": "بنك مصر — حساب الفروع",
+    "kind": "bank",
+    "parent_ref": "",
+    "bank_name": "بنك مصر",
+    "account_no": "400050006000",
+    "branch_ref": "",
+    "opening_minor": 800000
+   },
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "cash-main",
+    "name_ar": "الخزينة الرئيسية",
+    "kind": "cash",
+    "parent_ref": "",
+    "bank_name": "",
+    "account_no": "",
+    "branch_ref": "main",
+    "opening_minor": 500000
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "cash-talkha",
+    "name_ar": "خزينة فرع طلخا",
+    "kind": "cash",
+    "parent_ref": "",
+    "bank_name": "",
+    "account_no": "",
+    "branch_ref": "talkha",
+    "opening_minor": 150000
+   },
+   {
+    "id": 5,
+    "activity": "grocery",
+    "ref": "wallet-cib",
+    "name_ar": "محفظة CIB الإلكترونية",
+    "kind": "wallet",
+    "parent_ref": "bank-cib",
+    "bank_name": "التجاري الدولي",
+    "account_no": "01001234567",
+    "branch_ref": "",
+    "opening_minor": 120000
+   },
+   {
+    "id": 6,
+    "activity": "grocery",
+    "ref": "wallet-misr",
+    "name_ar": "محفظة بنك مصر (BM Wallet)",
+    "kind": "wallet",
+    "parent_ref": "bank-misr",
+    "bank_name": "بنك مصر",
+    "account_no": "01117654321",
+    "branch_ref": "",
+    "opening_minor": 60000
+   }
+  ],
+  "terminals": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "code": "POS-01",
+    "name_ar": "ماكينة الدفع — الكاشير 1",
+    "provider_name": "CIB",
+    "branch_ref": "main",
+    "settlement_ref": "bank-cib",
+    "terminal_id": "TRM-88001",
+    "merchant_id": "MID-5501",
+    "serial_number": "SN-POS-01",
+    "status": "active"
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "code": "POS-02",
+    "name_ar": "ماكينة الدفع — فرع طلخا",
+    "provider_name": "بنك مصر",
+    "branch_ref": "talkha",
+    "settlement_ref": "bank-misr",
+    "terminal_id": "TRM-88002",
+    "merchant_id": "MID-5502",
+    "serial_number": "SN-POS-02",
+    "status": "active"
+   }
+  ],
+  "categories": [
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "dairy",
+    "name_ar": "ألبان ومبردات"
+   },
+   {
+    "id": 4,
+    "activity": "grocery",
+    "ref": "detergents",
+    "name_ar": "منظفات"
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "grains",
+    "name_ar": "بقالة جافة"
+   },
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "oils",
+    "name_ar": "زيوت وسمن"
+   }
+  ],
+  "items": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "oil1",
+    "name_ar": "زيت عباد الشمس 1 لتر",
+    "sku": "OIL-1",
+    "barcode": "6221031492016",
+    "category_ref": "oils",
+    "base_unit": "قطعة",
+    "extra_units": "كرتونة:12",
+    "cost_minor": 4500,
+    "price_minor": 6000,
+    "stock_qty": 120,
+    "min_qty": 24,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "ghee",
+    "name_ar": "سمن نباتي 700 جم",
+    "sku": "GHE-700",
+    "barcode": "6221031492023",
+    "category_ref": "oils",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 5200,
+    "price_minor": 6900,
+    "stock_qty": 64,
+    "min_qty": 12,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "rice",
+    "name_ar": "أرز مصري 5 كجم",
+    "sku": "RICE-5",
+    "barcode": "6221031492030",
+    "category_ref": "grains",
+    "base_unit": "قطعة",
+    "extra_units": "شيكارة:10",
+    "cost_minor": 12000,
+    "price_minor": 15500,
+    "stock_qty": 45,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 4,
+    "activity": "grocery",
+    "ref": "sugar",
+    "name_ar": "سكر ناعم",
+    "sku": "SUG-KG",
+    "barcode": "",
+    "category_ref": "grains",
+    "base_unit": "كجم",
+    "extra_units": "",
+    "cost_minor": 2800,
+    "price_minor": 3600,
+    "stock_qty": 310,
+    "min_qty": 50,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 1,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 5,
+    "activity": "grocery",
+    "ref": "tea",
+    "name_ar": "شاي أكياس 100 ظرف",
+    "sku": "TEA-100",
+    "barcode": "6221031492047",
+    "category_ref": "grains",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 5200,
+    "price_minor": 7000,
+    "stock_qty": 38,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 6,
+    "activity": "grocery",
+    "ref": "milk",
+    "name_ar": "لبن كامل الدسم 1 لتر",
+    "sku": "MLK-1",
+    "barcode": "",
+    "category_ref": "dairy",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 3200,
+    "price_minor": 4200,
+    "stock_qty": 90,
+    "min_qty": 20,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 7,
+    "activity": "grocery",
+    "ref": "yogurt",
+    "name_ar": "زبادي 105 جم",
+    "sku": "YOG-105",
+    "barcode": "",
+    "category_ref": "dairy",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 600,
+    "price_minor": 900,
+    "stock_qty": 240,
+    "min_qty": 48,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 8,
+    "activity": "grocery",
+    "ref": "cheese",
+    "name_ar": "جبن رومي",
+    "sku": "CHS-KG",
+    "barcode": "",
+    "category_ref": "dairy",
+    "base_unit": "كجم",
+    "extra_units": "",
+    "cost_minor": 21000,
+    "price_minor": 26500,
+    "stock_qty": 18,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 1,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 9,
+    "activity": "grocery",
+    "ref": "soap",
+    "name_ar": "مسحوق غسيل 2.5 كجم",
+    "sku": "DET-25",
+    "barcode": "6221031492054",
+    "category_ref": "detergents",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 9800,
+    "price_minor": 12500,
+    "stock_qty": 52,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 10,
+    "activity": "grocery",
+    "ref": "bleach",
+    "name_ar": "كلور مركّز 1 لتر",
+    "sku": "DET-CL",
+    "barcode": "",
+    "category_ref": "detergents",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 1500,
+    "price_minor": 2200,
+    "stock_qty": 0,
+    "min_qty": 24,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 11,
+    "activity": "grocery",
+    "ref": "delivery",
+    "name_ar": "خدمة توصيل داخل المدينة",
+    "sku": "SRV-DLV",
+    "barcode": "",
+    "category_ref": "",
+    "base_unit": "طلب",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 2500,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   }
+  ],
+  "customers": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "c1",
+    "name_ar": "مطعم البركة",
+    "phone": "01001110001",
+    "credit_limit_minor": 500000,
+    "notes": "يشتري بالجملة أسبوعياً"
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "c2",
+    "name_ar": "كافيتيريا النيل",
+    "phone": "01001110002",
+    "credit_limit_minor": 200000,
+    "notes": ""
+   },
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "c3",
+    "name_ar": "أحمد السيد (تجزئة)",
+    "phone": "01001110003",
+    "credit_limit_minor": 0,
+    "notes": ""
+   },
+   {
+    "id": 4,
+    "activity": "grocery",
+    "ref": "c4",
+    "name_ar": "شركة الأمل للتموين",
+    "phone": "01001110004",
+    "credit_limit_minor": 1500000,
+    "notes": "سداد 30 يوماً"
+   }
+  ],
+  "suppliers": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "s1",
+    "name_ar": "الشركة المصرية للزيوت",
+    "phone": "0502233445",
+    "notes": ""
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "s2",
+    "name_ar": "موزع الألبان — دلتا",
+    "phone": "0502233446",
+    "notes": ""
+   },
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "s3",
+    "name_ar": "مستودع البقالة الجافة",
+    "phone": "0502233447",
+    "notes": ""
+   }
+  ],
+  "costCenters": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "cc1",
+    "code": "GR-01",
+    "name_ar": "فرع المنصورة — التشغيل اليومي",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "cc2",
+    "code": "GR-02",
+    "name_ar": "فرع طلخا",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "cc3",
+    "code": "GR-03",
+    "name_ar": "المخزن المركزي والإدارة",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   }
+  ],
+  "employees": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "e1",
+    "name_ar": "محمود عبد الله",
+    "phone": "01001112233",
+    "job_title": "كاشير أول",
+    "hire_date": "2025-03-01",
+    "base_salary_minor": 900000,
+    "allowances_minor": 50000,
+    "active": 1,
+    "notes": ""
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "e2",
+    "name_ar": "فاطمة الزهراء",
+    "phone": "01001112244",
+    "job_title": "مشرفة أرفف",
+    "hire_date": "2025-06-15",
+    "base_salary_minor": 800000,
+    "allowances_minor": 30000,
+    "active": 1,
+    "notes": ""
+   },
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "e3",
+    "name_ar": "كريم سعيد",
+    "phone": "01001112255",
+    "job_title": "عامل مخزن",
+    "hire_date": "2026-01-10",
+    "base_salary_minor": 650000,
+    "allowances_minor": 0,
+    "active": 1,
+    "notes": ""
+   }
+  ],
+  "attendance": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "a1",
+    "employee_ref": "e1",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "09:00",
+    "check_out": "17:00",
+    "notes": ""
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "a2",
+    "employee_ref": "e1",
+    "date": "2026-09-25",
+    "status": "present",
+    "check_in": "09:20",
+    "check_out": "18:00",
+    "notes": ""
+   },
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "a3",
+    "employee_ref": "e1",
+    "date": "2026-09-26",
+    "status": "absent",
+    "check_in": "",
+    "check_out": "",
+    "notes": ""
+   },
+   {
+    "id": 4,
+    "activity": "grocery",
+    "ref": "a4",
+    "employee_ref": "e2",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "08:55",
+    "check_out": "17:10",
+    "notes": ""
+   },
+   {
+    "id": 5,
+    "activity": "grocery",
+    "ref": "a5",
+    "employee_ref": "e2",
+    "date": "2026-09-25",
+    "status": "present",
+    "check_in": "09:00",
+    "check_out": "19:30",
+    "notes": ""
+   },
+   {
+    "id": 6,
+    "activity": "grocery",
+    "ref": "a6",
+    "employee_ref": "e3",
+    "date": "2026-09-24",
+    "status": "mission",
+    "check_in": "07:00",
+    "check_out": "15:00",
+    "notes": "استلام شحنة طلخا"
+   },
+   {
+    "id": 7,
+    "activity": "grocery",
+    "ref": "a7",
+    "employee_ref": "e3",
+    "date": "2026-09-25",
+    "status": "present",
+    "check_in": "09:10",
+    "check_out": "17:00",
+    "notes": ""
+   }
+  ],
+  "leaves": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "l1",
+    "employee_ref": "e1",
+    "type_id": "annual",
+    "from_date": "2026-09-27",
+    "to_date": "2026-09-28",
+    "status": "approved",
+    "reason": "ظرف عائلي"
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "l2",
+    "employee_ref": "e3",
+    "type_id": "unpaid",
+    "from_date": "2026-09-20",
+    "to_date": "2026-09-20",
+    "status": "approved",
+    "reason": "نعي"
+   }
+  ],
+  "payrollMonths": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "pm1",
+    "month": "2026-09",
+    "pay_employee_refs": "e1",
+    "treasury_ref": "bank-cib"
+   }
+  ],
+  "quotations": [],
+  "purchaseOrders": [],
+  "wastage": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "w1",
+    "doc_date": "2026-09-26",
+    "reason": "انتهاء صلاحية",
+    "notes": "فرز أولي — الباقي بانتظار القرار",
+    "lines": [
+     {
+      "id": 1,
+      "activity": "grocery",
+      "doc_ref": "w1",
+      "item_ref": "yogurt",
+      "qty": 20
+     }
+    ]
+   }
+  ],
+  "equipment": [],
+  "rentalContracts": [],
+  "equipmentCosts": [],
+  "subContracts": [],
+  "projectExtracts": [],
+  "contractingDocs": [],
+  "sales": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "i1",
+    "doc_date": "2026-09-15",
+    "customer_ref": "c1",
+    "warehouse_ref": "wh-main",
+    "payment": "credit",
+    "paid_minor": 100000,
+    "treasury_ref": "",
+    "notes": "طلب أسبوعي",
+    "lines": [
+     {
+      "id": 1,
+      "activity": "grocery",
+      "sale_ref": "i1",
+      "item_ref": "oil1",
+      "qty": 12,
+      "unit_price_minor": 6000,
+      "discount_percent": 0
+     },
+     {
+      "id": 2,
+      "activity": "grocery",
+      "sale_ref": "i1",
+      "item_ref": "rice",
+      "qty": 4,
+      "unit_price_minor": 15500,
+      "discount_percent": 5
+     }
+    ]
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "i2",
+    "doc_date": "2026-09-18",
+    "customer_ref": "",
+    "warehouse_ref": "wh-shelf",
+    "payment": "cash",
+    "paid_minor": 16000,
+    "treasury_ref": "cash-main",
+    "notes": "",
+    "lines": [
+     {
+      "id": 3,
+      "activity": "grocery",
+      "sale_ref": "i2",
+      "item_ref": "sugar",
+      "qty": 2,
+      "unit_price_minor": 3600,
+      "discount_percent": 0
+     },
+     {
+      "id": 4,
+      "activity": "grocery",
+      "sale_ref": "i2",
+      "item_ref": "tea",
+      "qty": 1,
+      "unit_price_minor": 7000,
+      "discount_percent": 0
+     },
+     {
+      "id": 5,
+      "activity": "grocery",
+      "sale_ref": "i2",
+      "item_ref": "yogurt",
+      "qty": 2,
+      "unit_price_minor": 900,
+      "discount_percent": 0
+     }
+    ]
+   },
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "i3",
+    "doc_date": "2026-09-22",
+    "customer_ref": "c4",
+    "warehouse_ref": "wh-main",
+    "payment": "card",
+    "paid_minor": 53000,
+    "treasury_ref": "bank-cib",
+    "notes": "",
+    "lines": [
+     {
+      "id": 6,
+      "activity": "grocery",
+      "sale_ref": "i3",
+      "item_ref": "cheese",
+      "qty": 2,
+      "unit_price_minor": 26500,
+      "discount_percent": 0
+     }
+    ]
+   }
+  ],
+  "purchases": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "p1",
+    "doc_date": "2026-09-02",
+    "supplier_ref": "s1",
+    "warehouse_ref": "wh-main",
+    "supplier_doc": "SI-9001",
+    "paid_minor": 300000,
+    "treasury_ref": "cash-main",
+    "notes": "",
+    "lines": [
+     {
+      "id": 1,
+      "activity": "grocery",
+      "purchase_ref": "p1",
+      "item_ref": "oil1",
+      "qty": 60,
+      "unit_price_minor": 4500,
+      "expiry_date": ""
+     },
+     {
+      "id": 2,
+      "activity": "grocery",
+      "purchase_ref": "p1",
+      "item_ref": "ghee",
+      "qty": 30,
+      "unit_price_minor": 5200,
+      "expiry_date": ""
+     }
+    ]
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "p2",
+    "doc_date": "2026-09-10",
+    "supplier_ref": "s2",
+    "warehouse_ref": "wh-main",
+    "supplier_doc": "SI-9002",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "",
+    "lines": [
+     {
+      "id": 3,
+      "activity": "grocery",
+      "purchase_ref": "p2",
+      "item_ref": "milk",
+      "qty": 50,
+      "unit_price_minor": 3200,
+      "expiry_date": ""
+     },
+     {
+      "id": 4,
+      "activity": "grocery",
+      "purchase_ref": "p2",
+      "item_ref": "yogurt",
+      "qty": 120,
+      "unit_price_minor": 600,
+      "expiry_date": ""
+     }
+    ]
+   },
+   {
+    "id": 3,
+    "activity": "grocery",
+    "ref": "p3",
+    "doc_date": "2026-08-20",
+    "supplier_ref": "s2",
+    "warehouse_ref": "wh-main",
+    "supplier_doc": "SI-8990",
+    "paid_minor": 36000,
+    "treasury_ref": "cash-main",
+    "notes": "دفعة قديمة قصيرة الصلاحية — للفرز",
+    "lines": [
+     {
+      "id": 5,
+      "activity": "grocery",
+      "purchase_ref": "p3",
+      "item_ref": "yogurt",
+      "qty": 60,
+      "unit_price_minor": 600,
+      "expiry_date": "2026-09-25"
+     }
+    ]
+   }
+  ],
+  "saleReturns": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-19",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "عبوات زيت تالفة عند الاستلام",
+    "lines": [
+     {
+      "id": 1,
+      "activity": "grocery",
+      "return_ref": "sr1",
+      "item_ref": "oil1",
+      "qty": 2,
+      "condition": "resellable"
+     }
+    ]
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "sr2",
+    "sale_ref": "i3",
+    "doc_date": "2026-09-23",
+    "refund": "cash",
+    "treasury_ref": "cash-main",
+    "reason": "جبن رومي تعيب أثناء النقل — رد نقدي",
+    "lines": [
+     {
+      "id": 2,
+      "activity": "grocery",
+      "return_ref": "sr2",
+      "item_ref": "cheese",
+      "qty": 1,
+      "condition": "damaged"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "pr1",
+    "purchase_ref": "p2",
+    "doc_date": "2026-09-24",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "عبوات لبن منتفخة من التوريد",
+    "lines": [
+     {
+      "id": 1,
+      "activity": "grocery",
+      "return_ref": "pr1",
+      "item_ref": "milk",
+      "qty": 5
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 1,
+    "activity": "grocery",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-25",
+    "treasury_ref": "cash-main",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 18000,
+    "description": "تحصيل دفعة من فاتورة الأسبوع"
+   },
+   {
+    "id": 2,
+    "activity": "grocery",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "cash-main",
+    "party_kind": "supplier",
+    "party_ref": "s2",
+    "amount_minor": 100000,
+    "description": "سداد جزء من فاتورة الألبان"
+   }
+  ]
+ },
+ "pharmacy": {
+  "activity": {
+   "id": "pharmacy",
+   "name_ar": "صيدلية",
+   "shop_name": "صيدلية الشفاء",
+   "owner_name": "د. منار حسن",
+   "city": "المنصورة",
+   "phone": "01000000000",
+   "note": "أصناف بتواريخ صلاحية وشرائح دوائية وتأمين طبي.",
+   "sort_order": 1
+  },
+  "branches": [
+   {
+    "id": 4,
+    "activity": "pharmacy",
+    "ref": "gomhoria",
+    "name_ar": "فرع شارع الجمهورية",
+    "city": "المنصورة",
+    "phone": "0502244220",
+    "is_main": 0
+   },
+   {
+    "id": 3,
+    "activity": "pharmacy",
+    "ref": "main",
+    "name_ar": "صيدلية الشفاء — المركز",
+    "city": "المنصورة",
+    "phone": "0502244110",
+    "is_main": 1
+   }
+  ],
+  "warehouses": [
+   {
+    "id": 5,
+    "activity": "pharmacy",
+    "ref": "wh-cold",
+    "name_ar": "الثلاجة (مبردات)",
+    "branch_ref": "main",
+    "is_main": 0
+   },
+   {
+    "id": 4,
+    "activity": "pharmacy",
+    "ref": "wh-main",
+    "name_ar": "مخزن الصيدلية",
+    "branch_ref": "main",
+    "is_main": 1
+   }
+  ],
+  "treasuries": [
+   {
+    "id": 8,
+    "activity": "pharmacy",
+    "ref": "bank-qnb",
+    "name_ar": "QNB — حساب الصيدلية",
+    "kind": "bank",
+    "parent_ref": "",
+    "bank_name": "QNB الأهلي",
+    "account_no": "770088009900",
+    "branch_ref": "",
+    "opening_minor": 1800000
+   },
+   {
+    "id": 7,
+    "activity": "pharmacy",
+    "ref": "cash-main",
+    "name_ar": "درج الكاشير",
+    "kind": "cash",
+    "parent_ref": "",
+    "bank_name": "",
+    "account_no": "",
+    "branch_ref": "main",
+    "opening_minor": 200000
+   },
+   {
+    "id": 9,
+    "activity": "pharmacy",
+    "ref": "wallet-qnb",
+    "name_ar": "محفظة QNB",
+    "kind": "wallet",
+    "parent_ref": "bank-qnb",
+    "bank_name": "QNB الأهلي",
+    "account_no": "01223334444",
+    "branch_ref": "",
+    "opening_minor": 45000
+   }
+  ],
+  "terminals": [
+   {
+    "id": 3,
+    "activity": "pharmacy",
+    "code": "POS-PH1",
+    "name_ar": "ماكينة التأمين والدفع",
+    "provider_name": "QNB",
+    "branch_ref": "main",
+    "settlement_ref": "bank-qnb",
+    "terminal_id": "TRM-77001",
+    "merchant_id": "MID-3301",
+    "serial_number": "SN-PH-01",
+    "status": "active"
+   }
+  ],
+  "categories": [
+   {
+    "id": 6,
+    "activity": "pharmacy",
+    "ref": "analg",
+    "name_ar": "مسكنات وخافض حرارة"
+   },
+   {
+    "id": 5,
+    "activity": "pharmacy",
+    "ref": "antibio",
+    "name_ar": "مضادات حيوية"
+   },
+   {
+    "id": 8,
+    "activity": "pharmacy",
+    "ref": "baby",
+    "name_ar": "أغذية أطفال"
+   },
+   {
+    "id": 7,
+    "activity": "pharmacy",
+    "ref": "cosm",
+    "name_ar": "مستحضرات تجميل"
+   }
+  ],
+  "items": [
+   {
+    "id": 12,
+    "activity": "pharmacy",
+    "ref": "augm",
+    "name_ar": "أوجمنتين 1 جم — 14 قرص",
+    "sku": "PH-AUG1",
+    "barcode": "",
+    "category_ref": "antibio",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 9500,
+    "price_minor": 12000,
+    "stock_qty": 40,
+    "min_qty": 10,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 13,
+    "activity": "pharmacy",
+    "ref": "zinnat",
+    "name_ar": "زينات 500 مجم",
+    "sku": "PH-ZIN5",
+    "barcode": "",
+    "category_ref": "antibio",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 11000,
+    "price_minor": 13800,
+    "stock_qty": 25,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 14,
+    "activity": "pharmacy",
+    "ref": "panad",
+    "name_ar": "بنادول إكسترا 24 قرص",
+    "sku": "PH-PAN24",
+    "barcode": "",
+    "category_ref": "analg",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 2600,
+    "price_minor": 3500,
+    "stock_qty": 150,
+    "min_qty": 30,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 15,
+    "activity": "pharmacy",
+    "ref": "brufen",
+    "name_ar": "بروفين 600 مجم",
+    "sku": "PH-BRU6",
+    "barcode": "",
+    "category_ref": "analg",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 3100,
+    "price_minor": 4200,
+    "stock_qty": 60,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 16,
+    "activity": "pharmacy",
+    "ref": "insulin",
+    "name_ar": "إنسولين سريع — قلم",
+    "sku": "PH-INS",
+    "barcode": "",
+    "category_ref": "antibio",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 21000,
+    "price_minor": 26000,
+    "stock_qty": 12,
+    "min_qty": 4,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 17,
+    "activity": "pharmacy",
+    "ref": "cream",
+    "name_ar": "كريم مرطب للبشرة",
+    "sku": "PH-CRM",
+    "barcode": "",
+    "category_ref": "cosm",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 7800,
+    "price_minor": 10500,
+    "stock_qty": 35,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 18,
+    "activity": "pharmacy",
+    "ref": "shampoo",
+    "name_ar": "شامبو طبي 200 مل",
+    "sku": "PH-SHM",
+    "barcode": "",
+    "category_ref": "cosm",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 9200,
+    "price_minor": 12500,
+    "stock_qty": 22,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 19,
+    "activity": "pharmacy",
+    "ref": "milk1",
+    "name_ar": "لبن أطفال مرحلة 1",
+    "sku": "PH-ML1",
+    "barcode": "",
+    "category_ref": "baby",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 16500,
+    "price_minor": 19900,
+    "stock_qty": 18,
+    "min_qty": 6,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 20,
+    "activity": "pharmacy",
+    "ref": "diaper",
+    "name_ar": "حفاضات مقاس 3 — 48 قطعة",
+    "sku": "PH-DPR3",
+    "barcode": "",
+    "category_ref": "baby",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 21000,
+    "price_minor": 25500,
+    "stock_qty": 9,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 21,
+    "activity": "pharmacy",
+    "ref": "measure",
+    "name_ar": "قياس ضغط وسكر",
+    "sku": "SRV-MSR",
+    "barcode": "",
+    "category_ref": "",
+    "base_unit": "خدمة",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 2000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   }
+  ],
+  "customers": [
+   {
+    "id": 5,
+    "activity": "pharmacy",
+    "ref": "c1",
+    "name_ar": "مستشفى الحياة",
+    "phone": "0502255111",
+    "credit_limit_minor": 3000000,
+    "notes": "تعاقد شهري"
+   },
+   {
+    "id": 6,
+    "activity": "pharmacy",
+    "ref": "c2",
+    "name_ar": "شركة تأمين مصر",
+    "phone": "0502255222",
+    "credit_limit_minor": 2000000,
+    "notes": ""
+   },
+   {
+    "id": 7,
+    "activity": "pharmacy",
+    "ref": "c3",
+    "name_ar": "سعاد إبراهيم",
+    "phone": "01002223333",
+    "credit_limit_minor": 0,
+    "notes": ""
+   }
+  ],
+  "suppliers": [
+   {
+    "id": 4,
+    "activity": "pharmacy",
+    "ref": "s1",
+    "name_ar": "ابن سينا فارما",
+    "phone": "0502266111",
+    "notes": ""
+   },
+   {
+    "id": 5,
+    "activity": "pharmacy",
+    "ref": "s2",
+    "name_ar": "المتحدة للأدوية",
+    "phone": "0502266222",
+    "notes": ""
+   }
+  ],
+  "costCenters": [
+   {
+    "id": 4,
+    "activity": "pharmacy",
+    "ref": "cc1",
+    "code": "PH-01",
+    "name_ar": "الصيدلية الرئيسية",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 5,
+    "activity": "pharmacy",
+    "ref": "cc2",
+    "code": "PH-02",
+    "name_ar": "مستودع الأدوية",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 6,
+    "activity": "pharmacy",
+    "ref": "cc3",
+    "code": "PH-03",
+    "name_ar": "الإدارة والمتابعة",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   }
+  ],
+  "employees": [
+   {
+    "id": 4,
+    "activity": "pharmacy",
+    "ref": "e1",
+    "name_ar": "د. هالة مصطفى",
+    "phone": "01003334455",
+    "job_title": "صيدلية مسؤولة",
+    "hire_date": "2024-11-01",
+    "base_salary_minor": 1500000,
+    "allowances_minor": 100000,
+    "active": 1,
+    "notes": ""
+   },
+   {
+    "id": 5,
+    "activity": "pharmacy",
+    "ref": "e2",
+    "name_ar": "أحمد فتحي",
+    "phone": "01003334466",
+    "job_title": "مساعد صيدلي",
+    "hire_date": "2025-09-01",
+    "base_salary_minor": 850000,
+    "allowances_minor": 0,
+    "active": 1,
+    "notes": ""
+   }
+  ],
+  "attendance": [
+   {
+    "id": 8,
+    "activity": "pharmacy",
+    "ref": "a1",
+    "employee_ref": "e1",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "09:00",
+    "check_out": "22:00",
+    "notes": "وردية مزدوجة"
+   },
+   {
+    "id": 9,
+    "activity": "pharmacy",
+    "ref": "a2",
+    "employee_ref": "e2",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "14:00",
+    "check_out": "22:00",
+    "notes": ""
+   },
+   {
+    "id": 10,
+    "activity": "pharmacy",
+    "ref": "a3",
+    "employee_ref": "e2",
+    "date": "2026-09-25",
+    "status": "permission",
+    "check_in": "16:00",
+    "check_out": "22:00",
+    "notes": "إذن دوام ظهر"
+   }
+  ],
+  "leaves": [],
+  "payrollMonths": [],
+  "quotations": [],
+  "purchaseOrders": [],
+  "wastage": [],
+  "equipment": [],
+  "rentalContracts": [],
+  "equipmentCosts": [],
+  "subContracts": [],
+  "projectExtracts": [],
+  "contractingDocs": [],
+  "sales": [
+   {
+    "id": 4,
+    "activity": "pharmacy",
+    "ref": "i1",
+    "doc_date": "2026-09-17",
+    "customer_ref": "c1",
+    "warehouse_ref": "wh-main",
+    "payment": "credit",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "أمر توريد شهري",
+    "lines": [
+     {
+      "id": 7,
+      "activity": "pharmacy",
+      "sale_ref": "i1",
+      "item_ref": "augm",
+      "qty": 10,
+      "unit_price_minor": 12000,
+      "discount_percent": 0
+     },
+     {
+      "id": 8,
+      "activity": "pharmacy",
+      "sale_ref": "i1",
+      "item_ref": "brufen",
+      "qty": 12,
+      "unit_price_minor": 4200,
+      "discount_percent": 0
+     }
+    ]
+   },
+   {
+    "id": 5,
+    "activity": "pharmacy",
+    "ref": "i2",
+    "doc_date": "2026-09-20",
+    "customer_ref": "",
+    "warehouse_ref": "wh-main",
+    "payment": "cash",
+    "paid_minor": 7000,
+    "treasury_ref": "cash-main",
+    "notes": "",
+    "lines": [
+     {
+      "id": 9,
+      "activity": "pharmacy",
+      "sale_ref": "i2",
+      "item_ref": "panad",
+      "qty": 2,
+      "unit_price_minor": 3500,
+      "discount_percent": 0
+     }
+    ]
+   }
+  ],
+  "purchases": [
+   {
+    "id": 4,
+    "activity": "pharmacy",
+    "ref": "p1",
+    "doc_date": "2026-09-05",
+    "supplier_ref": "s1",
+    "warehouse_ref": "wh-main",
+    "supplier_doc": "INV-4411",
+    "paid_minor": 250000,
+    "treasury_ref": "bank-qnb",
+    "notes": "",
+    "lines": [
+     {
+      "id": 6,
+      "activity": "pharmacy",
+      "purchase_ref": "p1",
+      "item_ref": "augm",
+      "qty": 20,
+      "unit_price_minor": 9500,
+      "expiry_date": ""
+     },
+     {
+      "id": 7,
+      "activity": "pharmacy",
+      "purchase_ref": "p1",
+      "item_ref": "panad",
+      "qty": 50,
+      "unit_price_minor": 2600,
+      "expiry_date": ""
+     }
+    ]
+   },
+   {
+    "id": 5,
+    "activity": "pharmacy",
+    "ref": "p2",
+    "doc_date": "2026-09-15",
+    "supplier_ref": "s2",
+    "warehouse_ref": "wh-cold",
+    "supplier_doc": "INV-4430",
+    "paid_minor": 39000,
+    "treasury_ref": "cash-main",
+    "notes": "دفعة قصيرة الصلاحية — للتنبيه",
+    "lines": [
+     {
+      "id": 8,
+      "activity": "pharmacy",
+      "purchase_ref": "p2",
+      "item_ref": "panad",
+      "qty": 30,
+      "unit_price_minor": 2600,
+      "expiry_date": "2026-10-15"
+     }
+    ]
+   }
+  ],
+  "saleReturns": [
+   {
+    "id": 3,
+    "activity": "pharmacy",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-21",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "حساسية من الدواء — استرجاع",
+    "lines": [
+     {
+      "id": 3,
+      "activity": "pharmacy",
+      "return_ref": "sr1",
+      "item_ref": "augm",
+      "qty": 1,
+      "condition": "resellable"
+     },
+     {
+      "id": 4,
+      "activity": "pharmacy",
+      "return_ref": "sr1",
+      "item_ref": "brufen",
+      "qty": 2,
+      "condition": "resellable"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 2,
+    "activity": "pharmacy",
+    "ref": "pr1",
+    "purchase_ref": "p1",
+    "doc_date": "2026-09-22",
+    "refund": "cash",
+    "treasury_ref": "bank-qnb",
+    "reason": "قرب انتهاء الصلاحية",
+    "lines": [
+     {
+      "id": 2,
+      "activity": "pharmacy",
+      "return_ref": "pr1",
+      "item_ref": "panad",
+      "qty": 5
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 3,
+    "activity": "pharmacy",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-23",
+    "treasury_ref": "bank-qnb",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 60000,
+    "description": "تحصيل تعاقد المستشفى"
+   },
+   {
+    "id": 4,
+    "activity": "pharmacy",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-24",
+    "treasury_ref": "cash-main",
+    "party_kind": "supplier",
+    "party_ref": "s2",
+    "amount_minor": 30000,
+    "description": "سداد متبقي فاتورة البنادول"
+   }
+  ]
+ },
+ "restaurant": {
+  "activity": {
+   "id": "restaurant",
+   "name_ar": "مطعم / كافيه",
+   "shop_name": "مطعم البيت الدمياطي",
+   "owner_name": "كريم فؤاد",
+   "city": "المنصورة",
+   "phone": "01000000000",
+   "note": "وجبات وخامات مطبخ: تكلفة وصفة، صالة وتيك أواي وتطبيقات توصيل.",
+   "sort_order": 2
+  },
+  "branches": [
+   {
+    "id": 6,
+    "activity": "restaurant",
+    "ref": "cloud",
+    "name_ar": "مطبخ التوصيل (كلاود)",
+    "city": "المنصورة",
+    "phone": "0502277220",
+    "is_main": 0
+   },
+   {
+    "id": 5,
+    "activity": "restaurant",
+    "ref": "main",
+    "name_ar": "الفرع الرئيسي — الصالة",
+    "city": "المنصورة",
+    "phone": "0502277110",
+    "is_main": 1
+   }
+  ],
+  "warehouses": [
+   {
+    "id": 7,
+    "activity": "restaurant",
+    "ref": "wh-bar",
+    "name_ar": "مخزن المشروبات",
+    "branch_ref": "main",
+    "is_main": 0
+   },
+   {
+    "id": 8,
+    "activity": "restaurant",
+    "ref": "wh-cloud",
+    "name_ar": "مخزن مطبخ التوصيل",
+    "branch_ref": "cloud",
+    "is_main": 0
+   },
+   {
+    "id": 6,
+    "activity": "restaurant",
+    "ref": "wh-kitchen",
+    "name_ar": "مخزن المطبخ",
+    "branch_ref": "main",
+    "is_main": 1
+   }
+  ],
+  "treasuries": [
+   {
+    "id": 12,
+    "activity": "restaurant",
+    "ref": "bank-nbe",
+    "name_ar": "البنك الأهلي — حساب المطعم",
+    "kind": "bank",
+    "parent_ref": "",
+    "bank_name": "الأهلي المصري",
+    "account_no": "990011002200",
+    "branch_ref": "",
+    "opening_minor": 1200000
+   },
+   {
+    "id": 11,
+    "activity": "restaurant",
+    "ref": "cash-delivery",
+    "name_ar": "خزينة الدليفري",
+    "kind": "cash",
+    "parent_ref": "",
+    "bank_name": "",
+    "account_no": "",
+    "branch_ref": "cloud",
+    "opening_minor": 80000
+   },
+   {
+    "id": 10,
+    "activity": "restaurant",
+    "ref": "cash-main",
+    "name_ar": "خزينة الصالة",
+    "kind": "cash",
+    "parent_ref": "",
+    "bank_name": "",
+    "account_no": "",
+    "branch_ref": "main",
+    "opening_minor": 900000
+   },
+   {
+    "id": 13,
+    "activity": "restaurant",
+    "ref": "wallet-nbe",
+    "name_ar": "محفظة الأهلي (Phone Cash)",
+    "kind": "wallet",
+    "parent_ref": "bank-nbe",
+    "bank_name": "الأهلي المصري",
+    "account_no": "01555666777",
+    "branch_ref": "",
+    "opening_minor": 95000
+   }
+  ],
+  "terminals": [
+   {
+    "id": 4,
+    "activity": "restaurant",
+    "code": "POS-RS1",
+    "name_ar": "ماكينة الصالة",
+    "provider_name": "الأهلي المصري",
+    "branch_ref": "main",
+    "settlement_ref": "bank-nbe",
+    "terminal_id": "TRM-66001",
+    "merchant_id": "MID-2201",
+    "serial_number": "SN-RS-01",
+    "status": "active"
+   }
+  ],
+  "categories": [
+   {
+    "id": 10,
+    "activity": "restaurant",
+    "ref": "drinks",
+    "name_ar": "مشروبات"
+   },
+   {
+    "id": 9,
+    "activity": "restaurant",
+    "ref": "meals",
+    "name_ar": "وجبات"
+   },
+   {
+    "id": 11,
+    "activity": "restaurant",
+    "ref": "raw",
+    "name_ar": "خامات المطبخ"
+   }
+  ],
+  "items": [
+   {
+    "id": 22,
+    "activity": "restaurant",
+    "ref": "kofta",
+    "name_ar": "كفتة مشوية — وجبة",
+    "sku": "RS-KFT",
+    "barcode": "",
+    "category_ref": "meals",
+    "base_unit": "وجبة",
+    "extra_units": "",
+    "cost_minor": 6500,
+    "price_minor": 12000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 23,
+    "activity": "restaurant",
+    "ref": "firakh",
+    "name_ar": "نصف فرخة مشوية",
+    "sku": "RS-FRK",
+    "barcode": "",
+    "category_ref": "meals",
+    "base_unit": "وجبة",
+    "extra_units": "",
+    "cost_minor": 7800,
+    "price_minor": 14500,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 24,
+    "activity": "restaurant",
+    "ref": "mahshi",
+    "name_ar": "محشي مشكل",
+    "sku": "RS-MHS",
+    "barcode": "",
+    "category_ref": "meals",
+    "base_unit": "وجبة",
+    "extra_units": "",
+    "cost_minor": 4200,
+    "price_minor": 9000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 25,
+    "activity": "restaurant",
+    "ref": "cola",
+    "name_ar": "مشروب غازي 330 مل",
+    "sku": "RS-COLA",
+    "barcode": "",
+    "category_ref": "drinks",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 900,
+    "price_minor": 2000,
+    "stock_qty": 240,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 26,
+    "activity": "restaurant",
+    "ref": "juice",
+    "name_ar": "عصير طازج",
+    "sku": "RS-JUC",
+    "barcode": "",
+    "category_ref": "drinks",
+    "base_unit": "كوب",
+    "extra_units": "",
+    "cost_minor": 1500,
+    "price_minor": 3500,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 27,
+    "activity": "restaurant",
+    "ref": "rice-raw",
+    "name_ar": "أرز مصري خام",
+    "sku": "RW-RICE",
+    "barcode": "",
+    "category_ref": "raw",
+    "base_unit": "كجم",
+    "extra_units": "",
+    "cost_minor": 2400,
+    "price_minor": 0,
+    "stock_qty": 180,
+    "min_qty": 40,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 1,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 28,
+    "activity": "restaurant",
+    "ref": "meat",
+    "name_ar": "لحم بتلو",
+    "sku": "RW-MEAT",
+    "barcode": "",
+    "category_ref": "raw",
+    "base_unit": "كجم",
+    "extra_units": "",
+    "cost_minor": 33000,
+    "price_minor": 0,
+    "stock_qty": 42,
+    "min_qty": 15,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 1,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 29,
+    "activity": "restaurant",
+    "ref": "chicken",
+    "name_ar": "دجاج طازج",
+    "sku": "RW-CHK",
+    "barcode": "",
+    "category_ref": "raw",
+    "base_unit": "كجم",
+    "extra_units": "",
+    "cost_minor": 11000,
+    "price_minor": 0,
+    "stock_qty": 60,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 1,
+    "track_serial": 0,
+    "sold_by_weight": 1,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 30,
+    "activity": "restaurant",
+    "ref": "oil-raw",
+    "name_ar": "زيت قلي 10 لتر",
+    "sku": "RW-OIL",
+    "barcode": "",
+    "category_ref": "raw",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 41000,
+    "price_minor": 0,
+    "stock_qty": 12,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 31,
+    "activity": "restaurant",
+    "ref": "service",
+    "name_ar": "رسوم خدمة الصالة",
+    "sku": "SRV-TBL",
+    "barcode": "",
+    "category_ref": "",
+    "base_unit": "طلب",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 1000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   }
+  ],
+  "customers": [
+   {
+    "id": 8,
+    "activity": "restaurant",
+    "ref": "c1",
+    "name_ar": "شركة دلتا للبترول (بوفيه)",
+    "phone": "0502288111",
+    "credit_limit_minor": 1000000,
+    "notes": "فاتورة شهرية"
+   },
+   {
+    "id": 9,
+    "activity": "restaurant",
+    "ref": "c2",
+    "name_ar": "تطبيق توصيل — طلبات",
+    "phone": "0502288222",
+    "credit_limit_minor": 400000,
+    "notes": ""
+   },
+   {
+    "id": 10,
+    "activity": "restaurant",
+    "ref": "c3",
+    "name_ar": "زبون صالة",
+    "phone": "",
+    "credit_limit_minor": 0,
+    "notes": ""
+   }
+  ],
+  "suppliers": [
+   {
+    "id": 6,
+    "activity": "restaurant",
+    "ref": "s1",
+    "name_ar": "جزارة الدلتا",
+    "phone": "0502299111",
+    "notes": ""
+   },
+   {
+    "id": 7,
+    "activity": "restaurant",
+    "ref": "s2",
+    "name_ar": "مزرعة الدواجن الحديثة",
+    "phone": "0502299222",
+    "notes": ""
+   },
+   {
+    "id": 8,
+    "activity": "restaurant",
+    "ref": "s3",
+    "name_ar": "موزع المشروبات",
+    "phone": "0502299333",
+    "notes": ""
+   }
+  ],
+  "costCenters": [
+   {
+    "id": 7,
+    "activity": "restaurant",
+    "ref": "cc1",
+    "code": "RS-01",
+    "name_ar": "المطبخ",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 8,
+    "activity": "restaurant",
+    "ref": "cc2",
+    "code": "RS-02",
+    "name_ar": "الصالة والتيك أواي",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 9,
+    "activity": "restaurant",
+    "ref": "cc3",
+    "code": "RS-03",
+    "name_ar": "الدليفري",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   }
+  ],
+  "employees": [
+   {
+    "id": 6,
+    "activity": "restaurant",
+    "ref": "e1",
+    "name_ar": "الشيف حسن",
+    "phone": "01004445566",
+    "job_title": "شيف المطبخ",
+    "hire_date": "2024-05-01",
+    "base_salary_minor": 1800000,
+    "allowances_minor": 150000,
+    "active": 1,
+    "notes": ""
+   },
+   {
+    "id": 7,
+    "activity": "restaurant",
+    "ref": "e2",
+    "name_ar": "مصطفى علام",
+    "phone": "01004445577",
+    "job_title": "كاشير صالة",
+    "hire_date": "2025-02-15",
+    "base_salary_minor": 950000,
+    "allowances_minor": 50000,
+    "active": 1,
+    "notes": ""
+   },
+   {
+    "id": 8,
+    "activity": "restaurant",
+    "ref": "e3",
+    "name_ar": "إسلام رجب",
+    "phone": "01004445588",
+    "job_title": "نادل",
+    "hire_date": "2026-03-01",
+    "base_salary_minor": 700000,
+    "allowances_minor": 20000,
+    "active": 1,
+    "notes": "بالقطعة + إكراميات"
+   }
+  ],
+  "attendance": [
+   {
+    "id": 11,
+    "activity": "restaurant",
+    "ref": "a1",
+    "employee_ref": "e1",
+    "date": "2026-09-25",
+    "status": "present",
+    "check_in": "11:00",
+    "check_out": "23:30",
+    "notes": "وردية رمضانية"
+   },
+   {
+    "id": 12,
+    "activity": "restaurant",
+    "ref": "a2",
+    "employee_ref": "e2",
+    "date": "2026-09-25",
+    "status": "present",
+    "check_in": "12:00",
+    "check_out": "23:00",
+    "notes": ""
+   },
+   {
+    "id": 13,
+    "activity": "restaurant",
+    "ref": "a3",
+    "employee_ref": "e3",
+    "date": "2026-09-25",
+    "status": "present",
+    "check_in": "15:30",
+    "check_out": "23:00",
+    "notes": ""
+   },
+   {
+    "id": 14,
+    "activity": "restaurant",
+    "ref": "a4",
+    "employee_ref": "e3",
+    "date": "2026-09-26",
+    "status": "absent",
+    "check_in": "",
+    "check_out": "",
+    "notes": ""
+   }
+  ],
+  "leaves": [],
+  "payrollMonths": [],
+  "quotations": [],
+  "purchaseOrders": [
+   {
+    "id": 1,
+    "activity": "restaurant",
+    "ref": "po1",
+    "supplier_ref": "s1",
+    "order_date": "2026-09-27",
+    "expected_date": "2026-09-29",
+    "warehouse_ref": "wh-kitchen",
+    "notes": "توريد خضار بداية الأسبوع",
+    "lines": [
+     {
+      "id": 1,
+      "activity": "restaurant",
+      "order_ref": "po1",
+      "item_ref": "meat",
+      "qty": 25,
+      "unit_price_minor": 33500,
+      "vat_percent": 0
+     },
+     {
+      "id": 2,
+      "activity": "restaurant",
+      "order_ref": "po1",
+      "item_ref": "firakh",
+      "qty": 40,
+      "unit_price_minor": 9500,
+      "vat_percent": 0
+     }
+    ]
+   }
+  ],
+  "wastage": [],
+  "equipment": [],
+  "rentalContracts": [],
+  "equipmentCosts": [],
+  "subContracts": [],
+  "projectExtracts": [],
+  "contractingDocs": [],
+  "sales": [
+   {
+    "id": 6,
+    "activity": "restaurant",
+    "ref": "i1",
+    "doc_date": "2026-09-19",
+    "customer_ref": "c1",
+    "warehouse_ref": "wh-kitchen",
+    "payment": "credit",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "بوفيه اجتماع",
+    "lines": [
+     {
+      "id": 10,
+      "activity": "restaurant",
+      "sale_ref": "i1",
+      "item_ref": "kofta",
+      "qty": 15,
+      "unit_price_minor": 12000,
+      "discount_percent": 0
+     },
+     {
+      "id": 11,
+      "activity": "restaurant",
+      "sale_ref": "i1",
+      "item_ref": "cola",
+      "qty": 15,
+      "unit_price_minor": 2000,
+      "discount_percent": 0
+     }
+    ]
+   },
+   {
+    "id": 7,
+    "activity": "restaurant",
+    "ref": "i2",
+    "doc_date": "2026-09-21",
+    "customer_ref": "",
+    "warehouse_ref": "wh-kitchen",
+    "payment": "cash",
+    "paid_minor": 27000,
+    "treasury_ref": "cash-main",
+    "notes": "",
+    "lines": [
+     {
+      "id": 12,
+      "activity": "restaurant",
+      "sale_ref": "i2",
+      "item_ref": "firakh",
+      "qty": 1,
+      "unit_price_minor": 14500,
+      "discount_percent": 0
+     },
+     {
+      "id": 13,
+      "activity": "restaurant",
+      "sale_ref": "i2",
+      "item_ref": "mahshi",
+      "qty": 1,
+      "unit_price_minor": 9000,
+      "discount_percent": 0
+     },
+     {
+      "id": 14,
+      "activity": "restaurant",
+      "sale_ref": "i2",
+      "item_ref": "juice",
+      "qty": 1,
+      "unit_price_minor": 3500,
+      "discount_percent": 0
+     }
+    ]
+   }
+  ],
+  "purchases": [
+   {
+    "id": 6,
+    "activity": "restaurant",
+    "ref": "p1",
+    "doc_date": "2026-09-12",
+    "supplier_ref": "s1",
+    "warehouse_ref": "wh-kitchen",
+    "supplier_doc": "MT-330",
+    "paid_minor": 400000,
+    "treasury_ref": "cash-main",
+    "notes": "",
+    "lines": [
+     {
+      "id": 9,
+      "activity": "restaurant",
+      "purchase_ref": "p1",
+      "item_ref": "meat",
+      "qty": 20,
+      "unit_price_minor": 33000,
+      "expiry_date": ""
+     }
+    ]
+   },
+   {
+    "id": 7,
+    "activity": "restaurant",
+    "ref": "p2",
+    "doc_date": "2026-09-14",
+    "supplier_ref": "s3",
+    "warehouse_ref": "wh-bar",
+    "supplier_doc": "DR-118",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "",
+    "lines": [
+     {
+      "id": 10,
+      "activity": "restaurant",
+      "purchase_ref": "p2",
+      "item_ref": "cola",
+      "qty": 240,
+      "unit_price_minor": 900,
+      "expiry_date": ""
+     }
+    ]
+   }
+  ],
+  "saleReturns": [
+   {
+    "id": 4,
+    "activity": "restaurant",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-24",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "إلغاء أطباق من طلب الطاولة",
+    "lines": [
+     {
+      "id": 5,
+      "activity": "restaurant",
+      "return_ref": "sr1",
+      "item_ref": "kofta",
+      "qty": 2,
+      "condition": "resellable"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 3,
+    "activity": "restaurant",
+    "ref": "pr1",
+    "purchase_ref": "p2",
+    "doc_date": "2026-09-25",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "عبوات تالفة من التوريد",
+    "lines": [
+     {
+      "id": 3,
+      "activity": "restaurant",
+      "return_ref": "pr1",
+      "item_ref": "cola",
+      "qty": 24
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 5,
+    "activity": "restaurant",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "cash-main",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 60000,
+    "description": "تحصيل حساب الطاولات"
+   },
+   {
+    "id": 6,
+    "activity": "restaurant",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "cash-main",
+    "party_kind": "supplier",
+    "party_ref": "s3",
+    "amount_minor": 50000,
+    "description": "سداد جزء فاتورة المشروبات"
+   }
+  ]
+ },
+ "clothing": {
+  "activity": {
+   "id": "clothing",
+   "name_ar": "ملابس وأحذية",
+   "shop_name": "بوتيك أزياء الدلتا",
+   "owner_name": "هالة مصطفى",
+   "city": "المنصورة",
+   "phone": "01000000000",
+   "note": "ألوان ومقاسات ومخزون معرض ومستودع، وبيع بالتقسيط.",
+   "sort_order": 3
+  },
+  "branches": [
+   {
+    "id": 7,
+    "activity": "clothing",
+    "ref": "main",
+    "name_ar": "المعرض الرئيسي",
+    "city": "المنصورة",
+    "phone": "0502300110",
+    "is_main": 1
+   },
+   {
+    "id": 8,
+    "activity": "clothing",
+    "ref": "mall",
+    "name_ar": "فرع المول",
+    "city": "المنصورة",
+    "phone": "0502300220",
+    "is_main": 0
+   }
+  ],
+  "warehouses": [
+   {
+    "id": 10,
+    "activity": "clothing",
+    "ref": "wh-display",
+    "name_ar": "معرض العرض",
+    "branch_ref": "main",
+    "is_main": 0
+   },
+   {
+    "id": 11,
+    "activity": "clothing",
+    "ref": "wh-mall",
+    "name_ar": "مخزن فرع المول",
+    "branch_ref": "mall",
+    "is_main": 0
+   },
+   {
+    "id": 9,
+    "activity": "clothing",
+    "ref": "wh-store",
+    "name_ar": "مستودع البضاعة",
+    "branch_ref": "main",
+    "is_main": 1
+   }
+  ],
+  "treasuries": [
+   {
+    "id": 15,
+    "activity": "clothing",
+    "ref": "bank-aaib",
+    "name_ar": "العربي الأفريقي — جاري",
+    "kind": "bank",
+    "parent_ref": "",
+    "bank_name": "العربي الأفريقي",
+    "account_no": "550066007700",
+    "branch_ref": "",
+    "opening_minor": 2100000
+   },
+   {
+    "id": 14,
+    "activity": "clothing",
+    "ref": "cash-main",
+    "name_ar": "خزينة المعرض",
+    "kind": "cash",
+    "parent_ref": "",
+    "bank_name": "",
+    "account_no": "",
+    "branch_ref": "main",
+    "opening_minor": 250000
+   },
+   {
+    "id": 16,
+    "activity": "clothing",
+    "ref": "wallet-aaib",
+    "name_ar": "محفظة العربي الأفريقي",
+    "kind": "wallet",
+    "parent_ref": "bank-aaib",
+    "bank_name": "العربي الأفريقي",
+    "account_no": "01098765432",
+    "branch_ref": "",
+    "opening_minor": 70000
+   }
+  ],
+  "terminals": [
+   {
+    "id": 5,
+    "activity": "clothing",
+    "code": "POS-CL1",
+    "name_ar": "ماكينة المعرض",
+    "provider_name": "العربي الأفريقي",
+    "branch_ref": "main",
+    "settlement_ref": "bank-aaib",
+    "terminal_id": "TRM-55001",
+    "merchant_id": "MID-1101",
+    "serial_number": "SN-CL-01",
+    "status": "active"
+   },
+   {
+    "id": 6,
+    "activity": "clothing",
+    "code": "POS-CL2",
+    "name_ar": "ماكينة فرع المول",
+    "provider_name": "العربي الأفريقي",
+    "branch_ref": "mall",
+    "settlement_ref": "bank-aaib",
+    "terminal_id": "TRM-55002",
+    "merchant_id": "MID-1102",
+    "serial_number": "SN-CL-02",
+    "status": "active"
+   }
+  ],
+  "categories": [
+   {
+    "id": 12,
+    "activity": "clothing",
+    "ref": "men",
+    "name_ar": "رجالي"
+   },
+   {
+    "id": 14,
+    "activity": "clothing",
+    "ref": "shoes",
+    "name_ar": "أحذية"
+   },
+   {
+    "id": 13,
+    "activity": "clothing",
+    "ref": "women",
+    "name_ar": "حريمي"
+   }
+  ],
+  "items": [
+   {
+    "id": 32,
+    "activity": "clothing",
+    "ref": "shirt",
+    "name_ar": "قميص قطن رجالي",
+    "sku": "CL-SHT",
+    "barcode": "",
+    "category_ref": "men",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 28000,
+    "price_minor": 45000,
+    "stock_qty": 60,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "أبيض,أزرق,أسود",
+    "sizes": "M,L,XL"
+   },
+   {
+    "id": 33,
+    "activity": "clothing",
+    "ref": "jeans",
+    "name_ar": "بنطلون جينز رجالي",
+    "sku": "CL-JNS",
+    "barcode": "",
+    "category_ref": "men",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 42000,
+    "price_minor": 68000,
+    "stock_qty": 35,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "أزرق,أسود",
+    "sizes": "30,32,34,36"
+   },
+   {
+    "id": 34,
+    "activity": "clothing",
+    "ref": "jacket",
+    "name_ar": "جاكيت شتوي",
+    "sku": "CL-JKT",
+    "barcode": "",
+    "category_ref": "men",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 85000,
+    "price_minor": 135000,
+    "stock_qty": 14,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "أسود,بني",
+    "sizes": "L,XL"
+   },
+   {
+    "id": 35,
+    "activity": "clothing",
+    "ref": "dress",
+    "name_ar": "فستان سواريه",
+    "sku": "CL-DRS",
+    "barcode": "",
+    "category_ref": "women",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 95000,
+    "price_minor": 165000,
+    "stock_qty": 12,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "أحمر,أسود,ذهبي",
+    "sizes": "S,M,L"
+   },
+   {
+    "id": 36,
+    "activity": "clothing",
+    "ref": "blouse",
+    "name_ar": "بلوزة كاجوال",
+    "sku": "CL-BLS",
+    "barcode": "",
+    "category_ref": "women",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 22000,
+    "price_minor": 39000,
+    "stock_qty": 48,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "أبيض,وردي",
+    "sizes": "S,M,L"
+   },
+   {
+    "id": 37,
+    "activity": "clothing",
+    "ref": "abaya",
+    "name_ar": "عباية مطرزة",
+    "sku": "CL-ABY",
+    "barcode": "",
+    "category_ref": "women",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 55000,
+    "price_minor": 92000,
+    "stock_qty": 20,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "أسود",
+    "sizes": "M,L,XL"
+   },
+   {
+    "id": 38,
+    "activity": "clothing",
+    "ref": "sneaker",
+    "name_ar": "حذاء رياضي",
+    "sku": "CL-SNK",
+    "barcode": "",
+    "category_ref": "shoes",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 62000,
+    "price_minor": 99000,
+    "stock_qty": 26,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "أبيض,أسود",
+    "sizes": "41,42,43,44"
+   },
+   {
+    "id": 39,
+    "activity": "clothing",
+    "ref": "sandal",
+    "name_ar": "صندل جلد",
+    "sku": "CL-SND",
+    "barcode": "",
+    "category_ref": "shoes",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 31000,
+    "price_minor": 52000,
+    "stock_qty": 30,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "بني,أسود",
+    "sizes": "40,41,42,43"
+   },
+   {
+    "id": 40,
+    "activity": "clothing",
+    "ref": "tailor",
+    "name_ar": "خدمة تعديل وتفصيل",
+    "sku": "SRV-TLR",
+    "barcode": "",
+    "category_ref": "",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 7500,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   }
+  ],
+  "customers": [
+   {
+    "id": 11,
+    "activity": "clothing",
+    "ref": "c1",
+    "name_ar": "محل الأناقة (جملة)",
+    "phone": "0502311111",
+    "credit_limit_minor": 2500000,
+    "notes": ""
+   },
+   {
+    "id": 12,
+    "activity": "clothing",
+    "ref": "c2",
+    "name_ar": "نهى عبد الرحمن",
+    "phone": "01033334444",
+    "credit_limit_minor": 100000,
+    "notes": "تقسيط 3 شهور"
+   },
+   {
+    "id": 13,
+    "activity": "clothing",
+    "ref": "c3",
+    "name_ar": "زبون معرض",
+    "phone": "",
+    "credit_limit_minor": 0,
+    "notes": ""
+   }
+  ],
+  "suppliers": [
+   {
+    "id": 9,
+    "activity": "clothing",
+    "ref": "s1",
+    "name_ar": "مصنع الغزل — المحلة",
+    "phone": "0502322111",
+    "notes": ""
+   },
+   {
+    "id": 10,
+    "activity": "clothing",
+    "ref": "s2",
+    "name_ar": "مستورد أحذية — بورسعيد",
+    "phone": "0502322222",
+    "notes": ""
+   }
+  ],
+  "costCenters": [
+   {
+    "id": 10,
+    "activity": "clothing",
+    "ref": "cc1",
+    "code": "CL-01",
+    "name_ar": "معرض البيع",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 11,
+    "activity": "clothing",
+    "ref": "cc2",
+    "code": "CL-02",
+    "name_ar": "المخزن",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 12,
+    "activity": "clothing",
+    "ref": "cc3",
+    "code": "CL-03",
+    "name_ar": "التفصيل والتعديلات",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   }
+  ],
+  "employees": [
+   {
+    "id": 9,
+    "activity": "clothing",
+    "ref": "e1",
+    "name_ar": "شريف الجندي",
+    "phone": "01005556677",
+    "job_title": "بائع معرض",
+    "hire_date": "2025-01-05",
+    "base_salary_minor": 850000,
+    "allowances_minor": 40000,
+    "active": 1,
+    "notes": ""
+   },
+   {
+    "id": 10,
+    "activity": "clothing",
+    "ref": "e2",
+    "name_ar": "منى صابر",
+    "phone": "01005556688",
+    "job_title": "كاشير",
+    "hire_date": "2025-10-01",
+    "base_salary_minor": 750000,
+    "allowances_minor": 0,
+    "active": 1,
+    "notes": ""
+   }
+  ],
+  "attendance": [
+   {
+    "id": 15,
+    "activity": "clothing",
+    "ref": "a1",
+    "employee_ref": "e1",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "10:00",
+    "check_out": "22:00",
+    "notes": ""
+   },
+   {
+    "id": 17,
+    "activity": "clothing",
+    "ref": "a3",
+    "employee_ref": "e1",
+    "date": "2026-09-25",
+    "status": "present",
+    "check_in": "09:40",
+    "check_out": "22:00",
+    "notes": "وردية مول كاملة"
+   },
+   {
+    "id": 16,
+    "activity": "clothing",
+    "ref": "a2",
+    "employee_ref": "e2",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "15:00",
+    "check_out": "23:00",
+    "notes": ""
+   }
+  ],
+  "leaves": [],
+  "payrollMonths": [],
+  "quotations": [
+   {
+    "id": 1,
+    "activity": "clothing",
+    "ref": "q1",
+    "kind": "quotation",
+    "client_name": "مدرسة النور الخاصة",
+    "client_ref": "",
+    "title_ar": "توريد زي موحد للعام الدراسي",
+    "valid_until": "2026-10-31",
+    "status": "submitted",
+    "win_probability": 65,
+    "bid_bond_minor": 0,
+    "convert": "",
+    "notes": "التسليم على دفعتين",
+    "lines": [
+     {
+      "id": 1,
+      "activity": "clothing",
+      "quotation_ref": "q1",
+      "name_ar": "تيشيرت قطنية",
+      "description_ar": "تيشيرت قطن 100٪ مطرز شعار المدرسة",
+      "unit_ar": "قطعة",
+      "qty": 400,
+      "unit_price_minor": 22000,
+      "est_cost_minor": 16000,
+      "vat_percent": 14,
+      "tax_included": 0
+     },
+     {
+      "id": 2,
+      "activity": "clothing",
+      "quotation_ref": "q1",
+      "name_ar": "بنطلون رياضي",
+      "description_ar": "بنطلون تريكو بجيوب جانبية",
+      "unit_ar": "قطعة",
+      "qty": 400,
+      "unit_price_minor": 28000,
+      "est_cost_minor": 21000,
+      "vat_percent": 14,
+      "tax_included": 0
+     },
+     {
+      "id": 3,
+      "activity": "clothing",
+      "quotation_ref": "q1",
+      "name_ar": "حذاء رياضي أبيض",
+      "description_ar": "حذاء جلد صناعي مقاسات 32–40",
+      "unit_ar": "زوج",
+      "qty": 350,
+      "unit_price_minor": 85000,
+      "est_cost_minor": 66000,
+      "vat_percent": 14,
+      "tax_included": 0
+     }
+    ]
+   }
+  ],
+  "purchaseOrders": [
+   {
+    "id": 2,
+    "activity": "clothing",
+    "ref": "po1",
+    "supplier_ref": "s2",
+    "order_date": "2026-09-25",
+    "expected_date": "2026-10-10",
+    "warehouse_ref": "wh-store",
+    "notes": "تشغيلة مقاسات جديدة",
+    "lines": [
+     {
+      "id": 3,
+      "activity": "clothing",
+      "order_ref": "po1",
+      "item_ref": "sneaker",
+      "qty": 30,
+      "unit_price_minor": 62000,
+      "vat_percent": 14
+     },
+     {
+      "id": 4,
+      "activity": "clothing",
+      "order_ref": "po1",
+      "item_ref": "dress",
+      "qty": 15,
+      "unit_price_minor": 95000,
+      "vat_percent": 14
+     }
+    ]
+   }
+  ],
+  "wastage": [],
+  "equipment": [],
+  "rentalContracts": [],
+  "equipmentCosts": [],
+  "subContracts": [],
+  "projectExtracts": [],
+  "contractingDocs": [],
+  "sales": [
+   {
+    "id": 8,
+    "activity": "clothing",
+    "ref": "i1",
+    "doc_date": "2026-09-16",
+    "customer_ref": "c1",
+    "warehouse_ref": "wh-store",
+    "payment": "credit",
+    "paid_minor": 200000,
+    "treasury_ref": "",
+    "notes": "طلب جملة",
+    "lines": [
+     {
+      "id": 15,
+      "activity": "clothing",
+      "sale_ref": "i1",
+      "item_ref": "shirt",
+      "qty": 10,
+      "unit_price_minor": 45000,
+      "discount_percent": 10
+     },
+     {
+      "id": 16,
+      "activity": "clothing",
+      "sale_ref": "i1",
+      "item_ref": "sneaker",
+      "qty": 4,
+      "unit_price_minor": 99000,
+      "discount_percent": 0
+     }
+    ]
+   },
+   {
+    "id": 9,
+    "activity": "clothing",
+    "ref": "i2",
+    "doc_date": "2026-09-23",
+    "customer_ref": "c2",
+    "warehouse_ref": "wh-display",
+    "payment": "card",
+    "paid_minor": 165000,
+    "treasury_ref": "bank-aaib",
+    "notes": "",
+    "lines": [
+     {
+      "id": 17,
+      "activity": "clothing",
+      "sale_ref": "i2",
+      "item_ref": "dress",
+      "qty": 1,
+      "unit_price_minor": 165000,
+      "discount_percent": 0
+     }
+    ]
+   }
+  ],
+  "purchases": [
+   {
+    "id": 8,
+    "activity": "clothing",
+    "ref": "p1",
+    "doc_date": "2026-09-03",
+    "supplier_ref": "s1",
+    "warehouse_ref": "wh-store",
+    "supplier_doc": "TX-770",
+    "paid_minor": 800000,
+    "treasury_ref": "bank-aaib",
+    "notes": "",
+    "lines": [
+     {
+      "id": 11,
+      "activity": "clothing",
+      "purchase_ref": "p1",
+      "item_ref": "shirt",
+      "qty": 40,
+      "unit_price_minor": 28000,
+      "expiry_date": ""
+     },
+     {
+      "id": 12,
+      "activity": "clothing",
+      "purchase_ref": "p1",
+      "item_ref": "jeans",
+      "qty": 20,
+      "unit_price_minor": 42000,
+      "expiry_date": ""
+     }
+    ]
+   }
+  ],
+  "saleReturns": [
+   {
+    "id": 5,
+    "activity": "clothing",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-25",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "مقاس غير مناسب وعيب صناعة",
+    "lines": [
+     {
+      "id": 6,
+      "activity": "clothing",
+      "return_ref": "sr1",
+      "item_ref": "shirt",
+      "qty": 1,
+      "condition": "resellable"
+     },
+     {
+      "id": 7,
+      "activity": "clothing",
+      "return_ref": "sr1",
+      "item_ref": "sneaker",
+      "qty": 1,
+      "condition": "damaged"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 4,
+    "activity": "clothing",
+    "ref": "pr1",
+    "purchase_ref": "p1",
+    "doc_date": "2026-09-26",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "خياطة معيبة",
+    "lines": [
+     {
+      "id": 4,
+      "activity": "clothing",
+      "return_ref": "pr1",
+      "item_ref": "jeans",
+      "qty": 2
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 7,
+    "activity": "clothing",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-27",
+    "treasury_ref": "bank-aaib",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 200000,
+    "description": "تحصيل دفعة من حساب المتجر"
+   },
+   {
+    "id": 8,
+    "activity": "clothing",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-27",
+    "treasury_ref": "bank-aaib",
+    "party_kind": "supplier",
+    "party_ref": "s1",
+    "amount_minor": 300000,
+    "description": "سداد دفعة من فاتورة الملابس"
+   }
+  ]
+ },
+ "feed_trade": {
+  "activity": {
+   "id": "feed_trade",
+   "name_ar": "تجارة الأعلاف والحبوب",
+   "shop_name": "أعلاف الدلتا — المنصورة",
+   "owner_name": "سيد أبو العلا",
+   "city": "المنصورة",
+   "phone": "0502334455",
+   "note": "بيع بالوزن والشيكارة: أعلاف دواجن ومواشي وحبوب مع خلطات خاصة.",
+   "sort_order": 4
+  },
+  "branches": [
+   {
+    "id": 9,
+    "activity": "feed_trade",
+    "ref": "main",
+    "name_ar": "المخزن الرئيسي — طريق طلخا",
+    "city": "المنصورة",
+    "phone": "0502334455",
+    "is_main": 1
+   },
+   {
+    "id": 10,
+    "activity": "feed_trade",
+    "ref": "mitghamr",
+    "name_ar": "فرع ميت غمر",
+    "city": "ميت غمر",
+    "phone": "0502334466",
+    "is_main": 0
+   }
+  ],
+  "warehouses": [
+   {
+    "id": 12,
+    "activity": "feed_trade",
+    "ref": "wh-main",
+    "name_ar": "مخزن الحبوب",
+    "branch_ref": "main",
+    "is_main": 1
+   },
+   {
+    "id": 13,
+    "activity": "feed_trade",
+    "ref": "wh-silos",
+    "name_ar": "الصوامع",
+    "branch_ref": "main",
+    "is_main": 0
+   }
+  ],
+  "treasuries": [
+   {
+    "id": 18,
+    "activity": "feed_trade",
+    "ref": "bank-cbe",
+    "name_ar": "بنك القاهرة — الحساب الجاري",
+    "kind": "bank",
+    "parent_ref": "",
+    "bank_name": "بنك القاهرة",
+    "account_no": "660077008800",
+    "branch_ref": "",
+    "opening_minor": 12000000
+   },
+   {
+    "id": 17,
+    "activity": "feed_trade",
+    "ref": "cash-main",
+    "name_ar": "خزينة المكتب",
+    "kind": "cash",
+    "parent_ref": "",
+    "bank_name": "",
+    "account_no": "",
+    "branch_ref": "main",
+    "opening_minor": 300000
+   },
+   {
+    "id": 19,
+    "activity": "feed_trade",
+    "ref": "wallet-insta",
+    "name_ar": "محفظة انستاباي",
+    "kind": "wallet",
+    "parent_ref": "bank-cbe",
+    "bank_name": "بنك القاهرة",
+    "account_no": "01555222333",
+    "branch_ref": "",
+    "opening_minor": 40000
+   }
+  ],
+  "terminals": [
+   {
+    "id": 7,
+    "activity": "feed_trade",
+    "code": "POS-FD1",
+    "name_ar": "ماكينة المكتب",
+    "provider_name": "بنك القاهرة",
+    "branch_ref": "main",
+    "settlement_ref": "bank-cbe",
+    "terminal_id": "TRM-44001",
+    "merchant_id": "MID-9901",
+    "serial_number": "SN-FD-01",
+    "status": "active"
+   }
+  ],
+  "categories": [
+   {
+    "id": 16,
+    "activity": "feed_trade",
+    "ref": "cattle",
+    "name_ar": "أعلاف مواشي"
+   },
+   {
+    "id": 17,
+    "activity": "feed_trade",
+    "ref": "grains",
+    "name_ar": "حبوب خام"
+   },
+   {
+    "id": 15,
+    "activity": "feed_trade",
+    "ref": "poultry",
+    "name_ar": "أعلاف دواجن"
+   }
+  ],
+  "items": [
+   {
+    "id": 41,
+    "activity": "feed_trade",
+    "ref": "broiler5",
+    "name_ar": "علف بادي 5٪ — شيكارة 25 كجم",
+    "sku": "FD-BR5",
+    "barcode": "6221031493010",
+    "category_ref": "poultry",
+    "base_unit": "قطعة",
+    "extra_units": "طن:40",
+    "cost_minor": 48000,
+    "price_minor": 56000,
+    "stock_qty": 200,
+    "min_qty": 40,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 42,
+    "activity": "feed_trade",
+    "ref": "layers",
+    "name_ar": "علف بياض 17٪ — شيكارة 25 كجم",
+    "sku": "FD-LY17",
+    "barcode": "",
+    "category_ref": "poultry",
+    "base_unit": "قطعة",
+    "extra_units": "طن:40",
+    "cost_minor": 46000,
+    "price_minor": 53500,
+    "stock_qty": 150,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 43,
+    "activity": "feed_trade",
+    "ref": "dairy",
+    "name_ar": "علف حلاب 21٪ — شيكارة 50 كجم",
+    "sku": "FD-DR21",
+    "barcode": "",
+    "category_ref": "cattle",
+    "base_unit": "قطعة",
+    "extra_units": "طن:20",
+    "cost_minor": 92000,
+    "price_minor": 108000,
+    "stock_qty": 90,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 44,
+    "activity": "feed_trade",
+    "ref": "corn",
+    "name_ar": "ذرة صفراء (كجم)",
+    "sku": "GRN-KG",
+    "barcode": "",
+    "category_ref": "grains",
+    "base_unit": "كجم",
+    "extra_units": "",
+    "cost_minor": 1450,
+    "price_minor": 1750,
+    "stock_qty": 4200,
+    "min_qty": 500,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 1,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 45,
+    "activity": "feed_trade",
+    "ref": "soybean",
+    "name_ar": "كسر صويا 46٪ (كجم)",
+    "sku": "SOY-KG",
+    "barcode": "",
+    "category_ref": "grains",
+    "base_unit": "كجم",
+    "extra_units": "",
+    "cost_minor": 2100,
+    "price_minor": 2500,
+    "stock_qty": 1800,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 1,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 46,
+    "activity": "feed_trade",
+    "ref": "wheatbran",
+    "name_ar": "ردة ناعمة (كجم)",
+    "sku": "WB-KG",
+    "barcode": "",
+    "category_ref": "grains",
+    "base_unit": "كجم",
+    "extra_units": "",
+    "cost_minor": 900,
+    "price_minor": 1200,
+    "stock_qty": 3000,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 1,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 47,
+    "activity": "feed_trade",
+    "ref": "grower19",
+    "name_ar": "علف ناهي 19٪ — شيكارة 25 كجم",
+    "sku": "FD-GR19",
+    "barcode": "",
+    "category_ref": "poultry",
+    "base_unit": "قطعة",
+    "extra_units": "طن:40",
+    "cost_minor": 44000,
+    "price_minor": 51500,
+    "stock_qty": 120,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 48,
+    "activity": "feed_trade",
+    "ref": "cottonseed",
+    "name_ar": "كسب قطن 32٪ (كجم)",
+    "sku": "CS-KG",
+    "barcode": "",
+    "category_ref": "cattle",
+    "base_unit": "كجم",
+    "extra_units": "",
+    "cost_minor": 1750,
+    "price_minor": 2100,
+    "stock_qty": 1500,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 1,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 49,
+    "activity": "feed_trade",
+    "ref": "mixservice",
+    "name_ar": "خدمة خلطة خاصة",
+    "sku": "SRV-MIX",
+    "barcode": "",
+    "category_ref": "",
+    "base_unit": "شيكارة",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 3500,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   }
+  ],
+  "customers": [
+   {
+    "id": 14,
+    "activity": "feed_trade",
+    "ref": "c1",
+    "name_ar": "مزرعة النور للدواجن",
+    "phone": "01006667711",
+    "credit_limit_minor": 2000000,
+    "notes": "توريد أسبوعي بالشيكارة"
+   },
+   {
+    "id": 15,
+    "activity": "feed_trade",
+    "ref": "c2",
+    "name_ar": "مزرعة البركة الحلابة",
+    "phone": "01006667722",
+    "credit_limit_minor": 3000000,
+    "notes": ""
+   },
+   {
+    "id": 16,
+    "activity": "feed_trade",
+    "ref": "c3",
+    "name_ar": "حسن الجرف (تجزئة)",
+    "phone": "01006667733",
+    "credit_limit_minor": 0,
+    "notes": ""
+   }
+  ],
+  "suppliers": [
+   {
+    "id": 11,
+    "activity": "feed_trade",
+    "ref": "s1",
+    "name_ar": "مصنع أعلاف المنصورة",
+    "phone": "0502335566",
+    "notes": ""
+   },
+   {
+    "id": 12,
+    "activity": "feed_trade",
+    "ref": "s2",
+    "name_ar": "صراج البحيرة للحبوب",
+    "phone": "0502335577",
+    "notes": ""
+   }
+  ],
+  "costCenters": [
+   {
+    "id": 13,
+    "activity": "feed_trade",
+    "ref": "cc1",
+    "code": "FD-01",
+    "name_ar": "المطحنة والتعبئة",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 14,
+    "activity": "feed_trade",
+    "ref": "cc2",
+    "code": "FD-02",
+    "name_ar": "مبيعات الجملة",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 15,
+    "activity": "feed_trade",
+    "ref": "cc3",
+    "code": "FD-03",
+    "name_ar": "النقل والتوصيل",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   }
+  ],
+  "employees": [
+   {
+    "id": 11,
+    "activity": "feed_trade",
+    "ref": "e1",
+    "name_ar": "عبد الرحمن فتحي",
+    "phone": "01007778811",
+    "job_title": "عامل صوامع وميزان",
+    "hire_date": "2025-04-01",
+    "base_salary_minor": 750000,
+    "allowances_minor": 25000,
+    "active": 1,
+    "notes": ""
+   },
+   {
+    "id": 12,
+    "activity": "feed_trade",
+    "ref": "e2",
+    "name_ar": "ولاء محسن",
+    "phone": "01007778822",
+    "job_title": "محاسبة مكتب",
+    "hire_date": "2025-08-15",
+    "base_salary_minor": 900000,
+    "allowances_minor": 0,
+    "active": 1,
+    "notes": ""
+   }
+  ],
+  "attendance": [
+   {
+    "id": 18,
+    "activity": "feed_trade",
+    "ref": "a1",
+    "employee_ref": "e1",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "07:30",
+    "check_out": "15:30",
+    "notes": ""
+   },
+   {
+    "id": 19,
+    "activity": "feed_trade",
+    "ref": "a2",
+    "employee_ref": "e1",
+    "date": "2026-09-25",
+    "status": "present",
+    "check_in": "07:10",
+    "check_out": "16:00",
+    "notes": "شحنة صوامع إضافية"
+   },
+   {
+    "id": 20,
+    "activity": "feed_trade",
+    "ref": "a3",
+    "employee_ref": "e2",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "09:00",
+    "check_out": "17:00",
+    "notes": ""
+   }
+  ],
+  "leaves": [],
+  "payrollMonths": [],
+  "quotations": [],
+  "purchaseOrders": [
+   {
+    "id": 3,
+    "activity": "feed_trade",
+    "ref": "po1",
+    "supplier_ref": "s2",
+    "order_date": "2026-09-27",
+    "expected_date": "2026-10-02",
+    "warehouse_ref": "wh-silos",
+    "notes": "تعبئة الصوامع قبل موسم التسمين",
+    "lines": [
+     {
+      "id": 5,
+      "activity": "feed_trade",
+      "order_ref": "po1",
+      "item_ref": "corn",
+      "qty": 5000,
+      "unit_price_minor": 1460,
+      "vat_percent": 0
+     },
+     {
+      "id": 6,
+      "activity": "feed_trade",
+      "order_ref": "po1",
+      "item_ref": "soybean",
+      "qty": 1500,
+      "unit_price_minor": 2120,
+      "vat_percent": 0
+     }
+    ]
+   }
+  ],
+  "wastage": [],
+  "equipment": [],
+  "rentalContracts": [],
+  "equipmentCosts": [],
+  "subContracts": [],
+  "projectExtracts": [],
+  "contractingDocs": [],
+  "sales": [
+   {
+    "id": 10,
+    "activity": "feed_trade",
+    "ref": "i1",
+    "doc_date": "2026-09-18",
+    "customer_ref": "c1",
+    "warehouse_ref": "wh-main",
+    "payment": "credit",
+    "paid_minor": 2000000,
+    "treasury_ref": "",
+    "notes": "طلب التسمية الأسبوعي",
+    "lines": [
+     {
+      "id": 18,
+      "activity": "feed_trade",
+      "sale_ref": "i1",
+      "item_ref": "broiler5",
+      "qty": 60,
+      "unit_price_minor": 56000,
+      "discount_percent": 0
+     }
+    ]
+   },
+   {
+    "id": 11,
+    "activity": "feed_trade",
+    "ref": "i2",
+    "doc_date": "2026-09-22",
+    "customer_ref": "c3",
+    "warehouse_ref": "wh-main",
+    "payment": "cash",
+    "paid_minor": 8750,
+    "treasury_ref": "cash-main",
+    "notes": "",
+    "lines": [
+     {
+      "id": 19,
+      "activity": "feed_trade",
+      "sale_ref": "i2",
+      "item_ref": "corn",
+      "qty": 5,
+      "unit_price_minor": 1750,
+      "discount_percent": 0
+     }
+    ]
+   }
+  ],
+  "purchases": [
+   {
+    "id": 9,
+    "activity": "feed_trade",
+    "ref": "p1",
+    "doc_date": "2026-09-08",
+    "supplier_ref": "s1",
+    "warehouse_ref": "wh-main",
+    "supplier_doc": "FD-5510",
+    "paid_minor": 9600000,
+    "treasury_ref": "bank-cbe",
+    "notes": "",
+    "lines": [
+     {
+      "id": 13,
+      "activity": "feed_trade",
+      "purchase_ref": "p1",
+      "item_ref": "broiler5",
+      "qty": 200,
+      "unit_price_minor": 48000,
+      "expiry_date": ""
+     }
+    ]
+   },
+   {
+    "id": 10,
+    "activity": "feed_trade",
+    "ref": "p2",
+    "doc_date": "2026-09-16",
+    "supplier_ref": "s2",
+    "warehouse_ref": "wh-silos",
+    "supplier_doc": "GR-2211",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "",
+    "lines": [
+     {
+      "id": 14,
+      "activity": "feed_trade",
+      "purchase_ref": "p2",
+      "item_ref": "corn",
+      "qty": 3000,
+      "unit_price_minor": 1450,
+      "expiry_date": ""
+     },
+     {
+      "id": 15,
+      "activity": "feed_trade",
+      "purchase_ref": "p2",
+      "item_ref": "wheatbran",
+      "qty": 2000,
+      "unit_price_minor": 900,
+      "expiry_date": ""
+     }
+    ]
+   }
+  ],
+  "saleReturns": [
+   {
+    "id": 6,
+    "activity": "feed_trade",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-23",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "أعلاف غير مطابقة للمواصفة",
+    "lines": [
+     {
+      "id": 8,
+      "activity": "feed_trade",
+      "return_ref": "sr1",
+      "item_ref": "broiler5",
+      "qty": 3,
+      "condition": "resellable"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 5,
+    "activity": "feed_trade",
+    "ref": "pr1",
+    "purchase_ref": "p2",
+    "doc_date": "2026-09-24",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "رطوبة أعلى من المسموح",
+    "lines": [
+     {
+      "id": 5,
+      "activity": "feed_trade",
+      "return_ref": "pr1",
+      "item_ref": "corn",
+      "qty": 100
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 9,
+    "activity": "feed_trade",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-25",
+    "treasury_ref": "bank-cbe",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 500000,
+    "description": "تحصيل دفعة أعلاف"
+   },
+   {
+    "id": 10,
+    "activity": "feed_trade",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "bank-cbe",
+    "party_kind": "supplier",
+    "party_ref": "s2",
+    "amount_minor": 2000000,
+    "description": "سداد دفعة من فاتورة الذرة"
+   }
+  ]
+ },
+ "contracting": {
+  "activity": {
+   "id": "contracting",
+   "name_ar": "مقاولات وإنشاءات",
+   "shop_name": "شركة الريان للمقاولات العامة",
+   "owner_name": "م. عمار الريان",
+   "city": "المنصورة",
+   "phone": "0502445566",
+   "note": "مشاريع إنشاء بجداول كميات ومستخلصات وضمانات — الفائز من العروض يصير مشروعاً كاملاً.",
+   "sort_order": 5
+  },
+  "branches": [
+   {
+    "id": 11,
+    "activity": "contracting",
+    "ref": "main",
+    "name_ar": "المكتب الرئيسي — شارع الجيش",
+    "city": "المنصورة",
+    "phone": "0502445566",
+    "is_main": 1
+   },
+   {
+    "id": 12,
+    "activity": "contracting",
+    "ref": "talkha",
+    "name_ar": "مكتب موقع طلخا",
+    "city": "طلخا",
+    "phone": "0502445570",
+    "is_main": 0
+   }
+  ],
+  "warehouses": [
+   {
+    "id": 14,
+    "activity": "contracting",
+    "ref": "wh-main",
+    "name_ar": "مخزن الموقع المركزي",
+    "branch_ref": "main",
+    "is_main": 1
+   },
+   {
+    "id": 15,
+    "activity": "contracting",
+    "ref": "wh-site",
+    "name_ar": "مخزن موقع الجامعة",
+    "branch_ref": "talkha",
+    "is_main": 0
+   }
+  ],
+  "treasuries": [
+   {
+    "id": 21,
+    "activity": "contracting",
+    "ref": "bank-nbe",
+    "name_ar": "الأهلي — حساب المشروعات",
+    "kind": "bank",
+    "parent_ref": "",
+    "bank_name": "الأهلي المصري",
+    "account_no": "550066007700",
+    "branch_ref": "",
+    "opening_minor": 10000000
+   },
+   {
+    "id": 20,
+    "activity": "contracting",
+    "ref": "cash-main",
+    "name_ar": "خزينة المكتب",
+    "kind": "cash",
+    "parent_ref": "",
+    "bank_name": "",
+    "account_no": "",
+    "branch_ref": "main",
+    "opening_minor": 500000
+   },
+   {
+    "id": 22,
+    "activity": "contracting",
+    "ref": "wallet-fawry",
+    "name_ar": "محفظة فوري",
+    "kind": "wallet",
+    "parent_ref": "bank-nbe",
+    "bank_name": "الأهلي المصري",
+    "account_no": "01777888999",
+    "branch_ref": "",
+    "opening_minor": 30000
+   }
+  ],
+  "terminals": [
+   {
+    "id": 8,
+    "activity": "contracting",
+    "code": "POS-CN1",
+    "name_ar": "ماكينة التحصيلات",
+    "provider_name": "الأهلي المصري",
+    "branch_ref": "main",
+    "settlement_ref": "bank-nbe",
+    "terminal_id": "TRM-33001",
+    "merchant_id": "MID-7701",
+    "serial_number": "SN-CN-01",
+    "status": "active"
+   }
+  ],
+  "categories": [
+   {
+    "id": 18,
+    "activity": "contracting",
+    "ref": "materials",
+    "name_ar": "مواد بناء"
+   },
+   {
+    "id": 19,
+    "activity": "contracting",
+    "ref": "rentalsrv",
+    "name_ar": "خدمات موقع"
+   }
+  ],
+  "items": [
+   {
+    "id": 50,
+    "activity": "contracting",
+    "ref": "cement",
+    "name_ar": "أسمنت بورتلاندي 50 كجم",
+    "sku": "MT-CEM",
+    "barcode": "",
+    "category_ref": "materials",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 9000,
+    "price_minor": 10500,
+    "stock_qty": 300,
+    "min_qty": 100,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 51,
+    "activity": "contracting",
+    "ref": "steel",
+    "name_ar": "حديد تسليح 12مم (طن)",
+    "sku": "MT-ST12",
+    "barcode": "",
+    "category_ref": "materials",
+    "base_unit": "طن",
+    "extra_units": "",
+    "cost_minor": 3850000,
+    "price_minor": 4200000,
+    "stock_qty": 12,
+    "min_qty": 4,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 52,
+    "activity": "contracting",
+    "ref": "sand",
+    "name_ar": "رمل غسيل (م3)",
+    "sku": "MT-SND",
+    "barcode": "",
+    "category_ref": "materials",
+    "base_unit": "م3",
+    "extra_units": "",
+    "cost_minor": 35000,
+    "price_minor": 42000,
+    "stock_qty": 40,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 53,
+    "activity": "contracting",
+    "ref": "brick",
+    "name_ar": "طوب أحمر مفرغ",
+    "sku": "MT-BRK",
+    "barcode": "",
+    "category_ref": "materials",
+    "base_unit": "قطعة",
+    "extra_units": "ألف:1000",
+    "cost_minor": 1800,
+    "price_minor": 2400,
+    "stock_qty": 8000,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 54,
+    "activity": "contracting",
+    "ref": "siteeng",
+    "name_ar": "إشراف هندسي — يوم موقع",
+    "sku": "SRV-ENG",
+    "barcode": "",
+    "category_ref": "rentalsrv",
+    "base_unit": "يوم",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 150000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 55,
+    "activity": "contracting",
+    "ref": "survey",
+    "name_ar": "مساحة وتوقيع محاور",
+    "sku": "SRV-SRV",
+    "barcode": "",
+    "category_ref": "rentalsrv",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 80000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 56,
+    "activity": "contracting",
+    "ref": "gravel",
+    "name_ar": "زلط خشن (م3)",
+    "sku": "MT-GRV",
+    "barcode": "",
+    "category_ref": "materials",
+    "base_unit": "م3",
+    "extra_units": "",
+    "cost_minor": 42000,
+    "price_minor": 51000,
+    "stock_qty": 60,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 57,
+    "activity": "contracting",
+    "ref": "pvc4",
+    "name_ar": "ماسورة PVC 4 بوصة",
+    "sku": "MT-PVC4",
+    "barcode": "",
+    "category_ref": "materials",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 6500,
+    "price_minor": 8500,
+    "stock_qty": 400,
+    "min_qty": 50,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 58,
+    "activity": "contracting",
+    "ref": "paintalkyd",
+    "name_ar": "دهان ألكيد للحوائط (لتر)",
+    "sku": "MT-PNT",
+    "barcode": "",
+    "category_ref": "materials",
+    "base_unit": "لتر",
+    "extra_units": "",
+    "cost_minor": 3200,
+    "price_minor": 4200,
+    "stock_qty": 180,
+    "min_qty": 0,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   }
+  ],
+  "customers": [
+   {
+    "id": 17,
+    "activity": "contracting",
+    "ref": "c1",
+    "name_ar": "جامعة الدلتا الخاصة",
+    "phone": "0502445577",
+    "credit_limit_minor": 200000000,
+    "notes": "مشروع مبنى إداري — دفعات مستخلصات (حد يغطي قيمة العقد والضريبة)"
+   },
+   {
+    "id": 18,
+    "activity": "contracting",
+    "ref": "c2",
+    "name_ar": "شركة الإسكان الاجتماعي",
+    "phone": "0502445588",
+    "credit_limit_minor": 30000000,
+    "notes": ""
+   },
+   {
+    "id": 19,
+    "activity": "contracting",
+    "ref": "c3",
+    "name_ar": "م. خالد الشاذلي — فيلا خاصة",
+    "phone": "01001234567",
+    "credit_limit_minor": 3000000,
+    "notes": ""
+   }
+  ],
+  "suppliers": [
+   {
+    "id": 13,
+    "activity": "contracting",
+    "ref": "s1",
+    "name_ar": "مصنع أسمنت بني سويف",
+    "phone": "0502445599",
+    "notes": ""
+   },
+   {
+    "id": 14,
+    "activity": "contracting",
+    "ref": "s2",
+    "name_ar": "حديد الدخيلة — موزع الدلتا",
+    "phone": "0502445600",
+    "notes": ""
+   }
+  ],
+  "costCenters": [
+   {
+    "id": 16,
+    "activity": "contracting",
+    "ref": "cc1",
+    "code": "CN-01",
+    "name_ar": "مشروع جامعة الدلتا — مبنى إداري",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 17,
+    "activity": "contracting",
+    "ref": "cc2",
+    "code": "CN-02",
+    "name_ar": "المعدات والمخازن",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 18,
+    "activity": "contracting",
+    "ref": "cc3",
+    "code": "CN-03",
+    "name_ar": "الإدارة والمتابعة الفنية",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   }
+  ],
+  "employees": [
+   {
+    "id": 13,
+    "activity": "contracting",
+    "ref": "e1",
+    "name_ar": "م. طارق عبد الحي",
+    "phone": "01008889911",
+    "job_title": "مهندس موقع",
+    "hire_date": "2024-10-01",
+    "base_salary_minor": 2000000,
+    "allowances_minor": 300000,
+    "active": 1,
+    "notes": ""
+   },
+   {
+    "id": 14,
+    "activity": "contracting",
+    "ref": "e2",
+    "name_ar": "أحمد المسيري",
+    "phone": "01008889922",
+    "job_title": "مساح كميات",
+    "hire_date": "2025-05-01",
+    "base_salary_minor": 1500000,
+    "allowances_minor": 100000,
+    "active": 1,
+    "notes": ""
+   },
+   {
+    "id": 15,
+    "activity": "contracting",
+    "ref": "e3",
+    "name_ar": "رمضان أبو لبن",
+    "phone": "01008889933",
+    "job_title": "فراش موقع",
+    "hire_date": "2026-02-01",
+    "base_salary_minor": 600000,
+    "allowances_minor": 0,
+    "active": 1,
+    "notes": ""
+   }
+  ],
+  "attendance": [
+   {
+    "id": 21,
+    "activity": "contracting",
+    "ref": "a1",
+    "employee_ref": "e1",
+    "date": "2026-09-24",
+    "status": "mission",
+    "check_in": "07:00",
+    "check_out": "18:00",
+    "notes": "يوم صب كامل بالموقع"
+   },
+   {
+    "id": 22,
+    "activity": "contracting",
+    "ref": "a2",
+    "employee_ref": "e2",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "08:00",
+    "check_out": "17:00",
+    "notes": ""
+   },
+   {
+    "id": 23,
+    "activity": "contracting",
+    "ref": "a3",
+    "employee_ref": "e3",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "07:30",
+    "check_out": "16:30",
+    "notes": ""
+   },
+   {
+    "id": 24,
+    "activity": "contracting",
+    "ref": "a4",
+    "employee_ref": "e3",
+    "date": "2026-09-25",
+    "status": "absent",
+    "check_in": "",
+    "check_out": "",
+    "notes": ""
+   }
+  ],
+  "leaves": [],
+  "payrollMonths": [
+   {
+    "id": 2,
+    "activity": "contracting",
+    "ref": "pm1",
+    "month": "2026-09",
+    "pay_employee_refs": "e2",
+    "treasury_ref": "bank-nbe"
+   }
+  ],
+  "quotations": [
+   {
+    "id": 2,
+    "activity": "contracting",
+    "ref": "q1",
+    "kind": "quotation",
+    "client_name": "جامعة الدلتا الخاصة",
+    "client_ref": "c1",
+    "title_ar": "أعمال مباني وعزل — مبنى إداري (دور أرضي)",
+    "valid_until": "2026-10-20",
+    "status": "submitted",
+    "win_probability": 70,
+    "bid_bond_minor": 500000,
+    "convert": "project",
+    "notes": "التنفيذ 45 يوماً من التسليم",
+    "lines": [
+     {
+      "id": 4,
+      "activity": "contracting",
+      "quotation_ref": "q1",
+      "name_ar": "أعمال حفر وردم",
+      "description_ar": "حفر حتى منسوب التأسيس مع نقل المخلفات خارج الموقع",
+      "unit_ar": "م3",
+      "qty": 850,
+      "unit_price_minor": 55000,
+      "est_cost_minor": 40000,
+      "vat_percent": 14,
+      "tax_included": 0
+     },
+     {
+      "id": 5,
+      "activity": "contracting",
+      "quotation_ref": "q1",
+      "name_ar": "مباني طوب 25سم",
+      "description_ar": "مباني طوب أحمر مفرغ بمونة أسمنتية للوجهين",
+      "unit_ar": "م2",
+      "qty": 1200,
+      "unit_price_minor": 78000,
+      "est_cost_minor": 61000,
+      "vat_percent": 14,
+      "tax_included": 0
+     },
+     {
+      "id": 6,
+      "activity": "contracting",
+      "quotation_ref": "q1",
+      "name_ar": "عزل مائي للأسطح",
+      "description_ar": "عزل بيتوميني بارد طبقتين مع فرش حماية",
+      "unit_ar": "م2",
+      "qty": 640,
+      "unit_price_minor": 95000,
+      "est_cost_minor": 72000,
+      "vat_percent": 14,
+      "tax_included": 0
+     },
+     {
+      "id": 7,
+      "activity": "contracting",
+      "quotation_ref": "q1",
+      "name_ar": "إشراف هندسي",
+      "description_ar": "إشراف يومي وتقارير تقدم ومستخلصات",
+      "unit_ar": "يوم",
+      "qty": 45,
+      "unit_price_minor": 150000,
+      "est_cost_minor": 100000,
+      "vat_percent": 14,
+      "tax_included": 0
+     }
+    ]
+   },
+   {
+    "id": 3,
+    "activity": "contracting",
+    "ref": "q2",
+    "kind": "tender",
+    "client_name": "شركة الإسكان الاجتماعي",
+    "client_ref": "c2",
+    "title_ar": "مناقصة أعمال شبكات صرف صحي — منطقة شرق المدينة",
+    "valid_until": "2026-11-15",
+    "status": "submitted",
+    "win_probability": 45,
+    "bid_bond_minor": 1200000,
+    "convert": "",
+    "notes": "مذكرات الأسعار مطلوبة على 3 دفعات — اعتماد جهة الإشراف شرط جزائي",
+    "lines": [
+     {
+      "id": 8,
+      "activity": "contracting",
+      "quotation_ref": "q2",
+      "name_ar": "حفر شبكات خطوط",
+      "description_ar": "حفر وردم لشبكات صرف صحي بأعماق تصل 3.5 م",
+      "unit_ar": "م طولي",
+      "qty": 1800,
+      "unit_price_minor": 48000,
+      "est_cost_minor": 36000,
+      "vat_percent": 14,
+      "tax_included": 0
+     },
+     {
+      "id": 9,
+      "activity": "contracting",
+      "quotation_ref": "q2",
+      "name_ar": "ماسورة صرف 8 بوصة",
+      "description_ar": "توريد وتركيب ماسورة PVC صرف 8 بوصة مع مكوناتها",
+      "unit_ar": "م طولي",
+      "qty": 1800,
+      "unit_price_minor": 39000,
+      "est_cost_minor": 30000,
+      "vat_percent": 14,
+      "tax_included": 0
+     },
+     {
+      "id": 10,
+      "activity": "contracting",
+      "quotation_ref": "q2",
+      "name_ar": "غرف تفتيش",
+      "description_ar": "تنفيذ غرف تفتيش خرسانية بغطاء حديد زهر",
+      "unit_ar": "غرفة",
+      "qty": 36,
+      "unit_price_minor": 950000,
+      "est_cost_minor": 720000,
+      "vat_percent": 14,
+      "tax_included": 0
+     }
+    ]
+   }
+  ],
+  "purchaseOrders": [],
+  "wastage": [],
+  "equipment": [],
+  "rentalContracts": [],
+  "equipmentCosts": [],
+  "subContracts": [
+   {
+    "id": 1,
+    "activity": "contracting",
+    "ref": "sc1",
+    "quotation_ref": "q1",
+    "contractor_name": "أبو الفتوح — مقاول حفر وردم",
+    "supplier_ref": "s2",
+    "scope_ar": "أعمال الحفر والردم ونقل المخلفات لبند 1 من جدول الكميات",
+    "contract_value_minor": 32000000,
+    "retention_percent": 5,
+    "tax_withhold_percent": 1,
+    "advance_percent": 10,
+    "start_date": "2026-09-10",
+    "advance_minor": 3200000,
+    "advance_treasury_ref": "bank-nbe",
+    "certificate_amount_minor": 16000000,
+    "certificate_description": "شهادة 1 — الحفر مكتمل والردم 80٪"
+   },
+   {
+    "id": 2,
+    "activity": "contracting",
+    "ref": "sc2",
+    "quotation_ref": "q1",
+    "contractor_name": "الشيخ مبروك — مقاول عزل",
+    "supplier_ref": "s1",
+    "scope_ar": "أعمال العزل المائي البيتوميني لبند 3 من جدول الكميات",
+    "contract_value_minor": 28000000,
+    "retention_percent": 5,
+    "tax_withhold_percent": 1,
+    "advance_percent": 0,
+    "start_date": "2026-09-20",
+    "advance_minor": 0,
+    "advance_treasury_ref": "",
+    "certificate_amount_minor": 12000000,
+    "certificate_description": "شهادة 1 — عزل 40٪ من المسطح"
+   }
+  ],
+  "projectExtracts": [
+   {
+    "id": 1,
+    "activity": "contracting",
+    "ref": "ex1",
+    "quotation_ref": "q1",
+    "percent": 35,
+    "vat_percent": 14,
+    "payment": "credit",
+    "description": "المستخلص رقم 1 — أعمال حفر وردم ومباني جزئية",
+    "treasury_ref": "bank-nbe"
+   },
+   {
+    "id": 2,
+    "activity": "contracting",
+    "ref": "ex2",
+    "quotation_ref": "q1",
+    "percent": 60,
+    "vat_percent": 14,
+    "payment": "credit",
+    "description": "المستخلص رقم 2 — مباني وعزل حتى 60٪ تنفيذ",
+    "treasury_ref": "bank-nbe"
+   }
+  ],
+  "contractingDocs": [
+   {
+    "id": 1,
+    "activity": "contracting",
+    "ref": "p2",
+    "kind": "project",
+    "data": "{\"name_ar\":\"فيلا م. خالد الشاذلي — تشطيبات داخلية\",\"client_name\":\"م. خالد الشاذلي\",\"client_ref\":\"c3\",\"contract_value_minor\":30000000,\"retention_percent\":10,\"start_date\":\"2026-09-01\",\"contract_number\":\"عقد أشغال 46 لسنة 2026\",\"location\":\"منية النصر — الدقهلية\",\"manager_employee_ref\":\"e1\",\"notes\":\"عميل خاص — تحصيل نقدي مع كل مستخلص\"}",
+    "sort_order": 0
+   },
+   {
+    "id": 2,
+    "activity": "contracting",
+    "ref": "p2b1",
+    "kind": "boq_item",
+    "data": "{\"project_ref\":\"p2\",\"code\":\"1-1\",\"description_ar\":\"محارة داخلية ودهان بلاستيك للحوائط والأسقف\",\"unit\":\"م2\",\"qty\":1200,\"unit_price_minor\":8500,\"est_cost_minor\":6200}",
+    "sort_order": 1
+   },
+   {
+    "id": 3,
+    "activity": "contracting",
+    "ref": "p2b2",
+    "kind": "boq_item",
+    "data": "{\"project_ref\":\"p2\",\"code\":\"1-2\",\"description_ar\":\"توريد وتركيب سيراميك وأرضيات\",\"unit\":\"م2\",\"qty\":850,\"unit_price_minor\":11000,\"est_cost_minor\":8000}",
+    "sort_order": 2
+   },
+   {
+    "id": 4,
+    "activity": "contracting",
+    "ref": "p2b3",
+    "kind": "boq_item",
+    "data": "{\"project_ref\":\"p2\",\"code\":\"1-3\",\"description_ar\":\"تمديدات كهرباء ونقاط إنارة ومفاتيح\",\"unit\":\"نقطة\",\"qty\":650,\"unit_price_minor\":2200,\"est_cost_minor\":1500}",
+    "sort_order": 3
+   },
+   {
+    "id": 5,
+    "activity": "contracting",
+    "ref": "bg1",
+    "kind": "budget",
+    "data": "{\"quotation_ref\":\"q1\",\"lines\":[{\"kind\":\"materials\",\"amount_minor\":100000000},{\"kind\":\"labor\",\"amount_minor\":20000000},{\"kind\":\"equipment\",\"amount_minor\":12000000},{\"kind\":\"subcontract\",\"amount_minor\":22000000},{\"kind\":\"other\",\"amount_minor\":4000000}]}",
+    "sort_order": 4
+   },
+   {
+    "id": 6,
+    "activity": "contracting",
+    "ref": "bg2",
+    "kind": "budget",
+    "data": "{\"project_ref\":\"p2\",\"lines\":[{\"kind\":\"materials\",\"amount_minor\":12000000},{\"kind\":\"labor\",\"amount_minor\":6000000},{\"kind\":\"other\",\"amount_minor\":2000000}]}",
+    "sort_order": 5
+   },
+   {
+    "id": 7,
+    "activity": "contracting",
+    "ref": "co1",
+    "kind": "change_order",
+    "data": "{\"quotation_ref\":\"q1\",\"title_ar\":\"أعمال عزل إضافي لدورات المياه والخزان الأرضي\",\"amount_minor\":18000000,\"status\":\"approved\"}",
+    "sort_order": 6
+   },
+   {
+    "id": 8,
+    "activity": "contracting",
+    "ref": "co2",
+    "kind": "change_order",
+    "data": "{\"quotation_ref\":\"q1\",\"title_ar\":\"استبدال دهان الواجهة بمواد سيليكون (تعديل مواصفات)\",\"amount_minor\":6500000,\"status\":\"draft\"}",
+    "sort_order": 7
+   },
+   {
+    "id": 9,
+    "activity": "contracting",
+    "ref": "adv1",
+    "kind": "client_advance",
+    "data": "{\"quotation_ref\":\"q1\",\"amount_minor\":41580000,\"treasury_ref\":\"bank-nbe\"}",
+    "sort_order": 8
+   },
+   {
+    "id": 10,
+    "activity": "contracting",
+    "ref": "pp1",
+    "kind": "project_purchase",
+    "data": "{\"quotation_ref\":\"q1\",\"supplier_ref\":\"s1\",\"supplier_doc\":\"CM-8842\",\"date\":\"2026-09-18\",\"paid_minor\":0,\"treasury_ref\":\"bank-nbe\",\"warehouse_ref\":\"wh-main\",\"notes\":\"توريد أسمنت وزلط لأعمال المباني — على حساب مشروع الجامعة\",\"lines\":[{\"item_ref\":\"cement\",\"qty\":250,\"unit_price_minor\":9000},{\"item_ref\":\"gravel\",\"qty\":40,\"unit_price_minor\":42000}]}",
+    "sort_order": 9
+   },
+   {
+    "id": 11,
+    "activity": "contracting",
+    "ref": "mi1",
+    "kind": "material_issue",
+    "data": "{\"quotation_ref\":\"q1\",\"issued_by_ref\":\"e1\",\"received_by_ref\":\"e2\",\"notes\":\"صرف أسمنت وحديد ورمل لأعمال مباني الدور الأرضي\",\"lines\":[{\"item_ref\":\"cement\",\"qty\":200,\"unit_ar\":\"\"},{\"item_ref\":\"steel\",\"qty\":7,\"unit_ar\":\"طن\"},{\"item_ref\":\"sand\",\"qty\":25,\"unit_ar\":\"م3\"}]}",
+    "sort_order": 10
+   },
+   {
+    "id": 12,
+    "activity": "contracting",
+    "ref": "mi2",
+    "kind": "material_issue",
+    "data": "{\"project_ref\":\"p2\",\"issued_by_ref\":\"e1\",\"received_by_ref\":\"e2\",\"notes\":\"صرف دهان وطوب لأعمال محارة الفيلا\",\"lines\":[{\"item_ref\":\"paintalkyd\",\"qty\":120,\"unit_ar\":\"لتر\"},{\"item_ref\":\"brick\",\"qty\":2,\"unit_ar\":\"ألف\"}]}",
+    "sort_order": 11
+   },
+   {
+    "id": 13,
+    "activity": "contracting",
+    "ref": "pc1",
+    "kind": "project_cost",
+    "data": "{\"quotation_ref\":\"q1\",\"kind\":\"equipment\",\"amount_minor\":5500000,\"payment\":\"cash\",\"paid_minor\":5500000,\"description\":\"إيجار سقالات ومعدات خفيفة للموقع — شهر (تحويل بنكي)\",\"treasury_ref\":\"bank-nbe\"}",
+    "sort_order": 12
+   },
+   {
+    "id": 14,
+    "activity": "contracting",
+    "ref": "exp2",
+    "kind": "extract",
+    "data": "{\"project_ref\":\"p2\",\"percent\":25,\"vat_percent\":14,\"payment\":\"cash\",\"description\":\"المستخلص رقم 1 — محارة وتمديدات (تحصيل نقدي)\",\"treasury_ref\":\"bank-nbe\"}",
+    "sort_order": 13
+   },
+   {
+    "id": 15,
+    "activity": "contracting",
+    "ref": "vr1",
+    "kind": "project_receipt",
+    "data": "{\"quotation_ref\":\"q1\",\"client_ref\":\"c1\",\"amount_minor\":45000000,\"treasury_ref\":\"bank-nbe\",\"description\":\"دفعة من مستحقات المستخلص رقم 1 — جامعة الدلتا الخاصة\"}",
+    "sort_order": 14
+   },
+   {
+    "id": 16,
+    "activity": "contracting",
+    "ref": "vp1",
+    "kind": "project_payment",
+    "data": "{\"quotation_ref\":\"q1\",\"client_ref\":\"s1\",\"amount_minor\":1500000,\"treasury_ref\":\"bank-nbe\",\"description\":\"دفعة تحت الحساب لمصنع أسمنت بني سويف — مشروع الجامعة\"}",
+    "sort_order": 15
+   },
+   {
+    "id": 17,
+    "activity": "contracting",
+    "ref": "cc1",
+    "kind": "client_collection",
+    "data": "{\"client_ref\":\"c1\",\"amount_minor\":20000000,\"treasury_ref\":\"cash-main\",\"notes\":\"تحصيل نقدي من إدارة الجامعة — تسوية أقدم مستحق\"}",
+    "sort_order": 16
+   },
+   {
+    "id": 18,
+    "activity": "contracting",
+    "ref": "b1",
+    "kind": "bond",
+    "data": "{\"quotation_ref\":\"q1\",\"bond_number\":\"NBE-G-2026-1201\",\"type\":\"bid\",\"beneficiary\":\"جامعة الدلتا الخاصة\",\"amount_minor\":4158000,\"margin_minor\":415800,\"fees_minor\":41580,\"bank_ref\":\"bank-nbe\",\"issue_date\":\"2026-09-01\",\"expiry_date\":\"2026-10-05\",\"settle\":\"released\"}",
+    "sort_order": 17
+   },
+   {
+    "id": 19,
+    "activity": "contracting",
+    "ref": "b2",
+    "kind": "bond",
+    "data": "{\"quotation_ref\":\"q1\",\"bond_number\":\"NBE-G-2026-1305\",\"type\":\"performance\",\"beneficiary\":\"جامعة الدلتا الخاصة\",\"amount_minor\":10395000,\"margin_minor\":1039500,\"fees_minor\":103950,\"bank_ref\":\"bank-nbe\",\"issue_date\":\"2026-09-10\",\"expiry_date\":\"2027-03-31\",\"settle\":\"\"}",
+    "sort_order": 18
+   },
+   {
+    "id": 20,
+    "activity": "contracting",
+    "ref": "b3",
+    "kind": "bond",
+    "data": "{\"project_ref\":\"p2\",\"bond_number\":\"NBE-G-2026-1310\",\"type\":\"advance_payment\",\"beneficiary\":\"م. خالد الشاذلي\",\"amount_minor\":9000000,\"margin_minor\":900000,\"fees_minor\":90000,\"bank_ref\":\"bank-nbe\",\"issue_date\":\"2026-09-15\",\"expiry_date\":\"2026-10-25\",\"settle\":\"\"}",
+    "sort_order": 19
+   },
+   {
+    "id": 21,
+    "activity": "contracting",
+    "ref": "b4",
+    "kind": "bond",
+    "data": "{\"bond_number\":\"NBE-G-2025-0998\",\"type\":\"warranty\",\"beneficiary\":\"جمعية النور التعليمية — أعمال سابقة\",\"amount_minor\":2000000,\"margin_minor\":200000,\"fees_minor\":20000,\"bank_ref\":\"bank-nbe\",\"issue_date\":\"2025-11-01\",\"expiry_date\":\"2026-11-01\",\"settle\":\"\"}",
+    "sort_order": 20
+   },
+   {
+    "id": 22,
+    "activity": "contracting",
+    "ref": "w1",
+    "kind": "daily_worker",
+    "data": "{\"name_ar\":\"عم صابر حمادة — نجار مسلح\",\"phone\":\"01007778811\",\"daily_wage_minor\":45000,\"settle_ref\":\"bank-nbe\",\"records\":[{\"quotation_ref\":\"q1\",\"date\":\"2026-09-21\",\"days\":1},{\"quotation_ref\":\"q1\",\"date\":\"2026-09-22\",\"days\":1},{\"quotation_ref\":\"q1\",\"date\":\"2026-09-23\",\"days\":1}]}",
+    "sort_order": 21
+   },
+   {
+    "id": 23,
+    "activity": "contracting",
+    "ref": "w2",
+    "kind": "daily_worker",
+    "data": "{\"name_ar\":\"عم رجب السمان — حداد تسليح\",\"phone\":\"01007778822\",\"daily_wage_minor\":50000,\"records\":[{\"quotation_ref\":\"q1\",\"date\":\"2026-09-22\",\"days\":1},{\"quotation_ref\":\"q1\",\"date\":\"2026-09-23\",\"days\":1},{\"quotation_ref\":\"q1\",\"date\":\"2026-09-24\",\"days\":1.5},{\"project_ref\":\"p2\",\"date\":\"2026-09-25\",\"days\":1}]}",
+    "sort_order": 22
+   },
+   {
+    "id": 24,
+    "activity": "contracting",
+    "ref": "w3",
+    "kind": "daily_worker",
+    "data": "{\"name_ar\":\"سيد فتحي — نظافة ومساعد موقع\",\"phone\":\"01007778833\",\"daily_wage_minor\":25000,\"records\":[{\"date\":\"2026-09-24\",\"days\":1},{\"date\":\"2026-09-25\",\"days\":1}]}",
+    "sort_order": 23
+   },
+   {
+    "id": 25,
+    "activity": "contracting",
+    "ref": "t1",
+    "kind": "project_task",
+    "data": "{\"quotation_ref\":\"q1\",\"name_ar\":\"أعمال الحفر والردم\",\"start_date\":\"2026-09-05\",\"end_date\":\"2026-09-15\",\"progress_percent\":100,\"boq_index\":1}",
+    "sort_order": 24
+   },
+   {
+    "id": 26,
+    "activity": "contracting",
+    "ref": "t2",
+    "kind": "project_task",
+    "data": "{\"quotation_ref\":\"q1\",\"name_ar\":\"مباني الطوب 25سم\",\"start_date\":\"2026-09-10\",\"end_date\":\"2026-10-08\",\"progress_percent\":55,\"boq_index\":2}",
+    "sort_order": 25
+   },
+   {
+    "id": 27,
+    "activity": "contracting",
+    "ref": "t3",
+    "kind": "project_task",
+    "data": "{\"quotation_ref\":\"q1\",\"name_ar\":\"العزل المائي للأسطح\",\"start_date\":\"2026-09-25\",\"end_date\":\"2026-10-18\",\"progress_percent\":30,\"boq_index\":3}",
+    "sort_order": 26
+   },
+   {
+    "id": 28,
+    "activity": "contracting",
+    "ref": "t4",
+    "kind": "project_task",
+    "data": "{\"quotation_ref\":\"q1\",\"name_ar\":\"الإشراف الهندسي اليومي\",\"start_date\":\"2026-09-01\",\"end_date\":\"2026-10-20\",\"progress_percent\":40,\"boq_index\":4}",
+    "sort_order": 27
+   },
+   {
+    "id": 29,
+    "activity": "contracting",
+    "ref": "t5",
+    "kind": "project_task",
+    "data": "{\"quotation_ref\":\"q1\",\"name_ar\":\"توريد وتركيب الأبواب والنجارة\",\"start_date\":\"2026-10-10\",\"end_date\":\"2026-10-25\",\"progress_percent\":0,\"boq_index\":0}",
+    "sort_order": 28
+   },
+   {
+    "id": 30,
+    "activity": "contracting",
+    "ref": "t6",
+    "kind": "project_task",
+    "data": "{\"project_ref\":\"p2\",\"name_ar\":\"محارة الحوائط والأسقف\",\"start_date\":\"2026-09-05\",\"end_date\":\"2026-09-30\",\"progress_percent\":60,\"boq_index\":1}",
+    "sort_order": 29
+   },
+   {
+    "id": 31,
+    "activity": "contracting",
+    "ref": "t7",
+    "kind": "project_task",
+    "data": "{\"project_ref\":\"p2\",\"name_ar\":\"توريد وتركيب السيراميك\",\"start_date\":\"2026-09-20\",\"end_date\":\"2026-10-10\",\"progress_percent\":20,\"boq_index\":2}",
+    "sort_order": 30
+   },
+   {
+    "id": 32,
+    "activity": "contracting",
+    "ref": "t8",
+    "kind": "project_task",
+    "data": "{\"project_ref\":\"p2\",\"name_ar\":\"التمديدات الكهربائية\",\"start_date\":\"2026-09-10\",\"end_date\":\"2026-10-05\",\"progress_percent\":35,\"boq_index\":3}",
+    "sort_order": 31
+   },
+   {
+    "id": 33,
+    "activity": "contracting",
+    "ref": "af1",
+    "kind": "approval_flow",
+    "data": "{\"action\":\"material_requisition\",\"active\":1,\"steps\":[{\"role_ar\":\"مهندس الموقع\",\"employee_ref\":\"e1\"},{\"role_ar\":\"مدير المشروع\",\"employee_ref\":\"e2\"}]}",
+    "sort_order": 32
+   },
+   {
+    "id": 34,
+    "activity": "contracting",
+    "ref": "af2",
+    "kind": "approval_flow",
+    "data": "{\"action\":\"sub_certificate\",\"active\":1,\"steps\":[{\"role_ar\":\"محاسب أول\",\"employee_ref\":\"e2\"},{\"role_ar\":\"المدير المالي\",\"employee_ref\":\"\"}]}",
+    "sort_order": 33
+   },
+   {
+    "id": 35,
+    "activity": "contracting",
+    "ref": "af3",
+    "kind": "approval_flow",
+    "data": "{\"action\":\"project_extract\",\"active\":0,\"steps\":[{\"role_ar\":\"مدير المشروع\",\"employee_ref\":\"e1\"}]}",
+    "sort_order": 34
+   },
+   {
+    "id": 36,
+    "activity": "contracting",
+    "ref": "ar1",
+    "kind": "approval_request",
+    "data": "{\"action\":\"material_requisition\",\"subject\":\"صرف أسمنت إضافي لأعمال الخزان الأرضي — مشروع الجامعة\",\"quotation_ref\":\"q1\"}",
+    "sort_order": 35
+   },
+   {
+    "id": 37,
+    "activity": "contracting",
+    "ref": "ar2",
+    "kind": "approval_request",
+    "data": "{\"action\":\"sub_certificate\",\"subject\":\"شهادة أعمال رقم 2 — مقاول العزل (الشيخ مبروك)\",\"sub_contract_ref\":\"sc2\",\"decide\":\"approved\",\"decided_by\":\"م. أحمد المسيري\",\"note\":\"مطابق لتقرير الحصر الهندسي\"}",
+    "sort_order": 36
+   }
+  ],
+  "sales": [
+   {
+    "id": 12,
+    "activity": "contracting",
+    "ref": "i1",
+    "doc_date": "2026-09-20",
+    "customer_ref": "c1",
+    "warehouse_ref": "wh-main",
+    "payment": "credit",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "ذاتية (خارج المستخلصات) — بيع مواد فائضة",
+    "lines": [
+     {
+      "id": 20,
+      "activity": "contracting",
+      "sale_ref": "i1",
+      "item_ref": "brick",
+      "qty": 3000,
+      "unit_price_minor": 2400,
+      "discount_percent": 0
+     }
+    ]
+   },
+   {
+    "id": 13,
+    "activity": "contracting",
+    "ref": "i2",
+    "doc_date": "2026-09-23",
+    "customer_ref": "c2",
+    "warehouse_ref": "wh-main",
+    "payment": "credit",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "",
+    "lines": [
+     {
+      "id": 21,
+      "activity": "contracting",
+      "sale_ref": "i2",
+      "item_ref": "siteeng",
+      "qty": 5,
+      "unit_price_minor": 150000,
+      "discount_percent": 0
+     }
+    ]
+   }
+  ],
+  "purchases": [
+   {
+    "id": 11,
+    "activity": "contracting",
+    "ref": "p1",
+    "doc_date": "2026-09-06",
+    "supplier_ref": "s1",
+    "warehouse_ref": "wh-main",
+    "supplier_doc": "CM-8811",
+    "paid_minor": 2700000,
+    "treasury_ref": "bank-nbe",
+    "notes": "",
+    "lines": [
+     {
+      "id": 16,
+      "activity": "contracting",
+      "purchase_ref": "p1",
+      "item_ref": "cement",
+      "qty": 300,
+      "unit_price_minor": 9000,
+      "expiry_date": ""
+     }
+    ]
+   },
+   {
+    "id": 12,
+    "activity": "contracting",
+    "ref": "p2",
+    "doc_date": "2026-09-14",
+    "supplier_ref": "s2",
+    "warehouse_ref": "wh-main",
+    "supplier_doc": "ST-5520",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "قسط حديد أول — الباقي مع المستخلص الثاني",
+    "lines": [
+     {
+      "id": 17,
+      "activity": "contracting",
+      "purchase_ref": "p2",
+      "item_ref": "steel",
+      "qty": 6,
+      "unit_price_minor": 3850000,
+      "expiry_date": ""
+     }
+    ]
+   }
+  ],
+  "saleReturns": [
+   {
+    "id": 7,
+    "activity": "contracting",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-24",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "طوب مشقوق — استرجاع للمخزن",
+    "lines": [
+     {
+      "id": 9,
+      "activity": "contracting",
+      "return_ref": "sr1",
+      "item_ref": "brick",
+      "qty": 200,
+      "condition": "resellable"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 6,
+    "activity": "contracting",
+    "ref": "pr1",
+    "purchase_ref": "p2",
+    "doc_date": "2026-09-25",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "كمر غير مطابق للمقاسات",
+    "lines": [
+     {
+      "id": 6,
+      "activity": "contracting",
+      "return_ref": "pr1",
+      "item_ref": "steel",
+      "qty": 1
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 11,
+    "activity": "contracting",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "bank-nbe",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 2000000,
+    "description": "تحصيل دفعة من حساب الأعمال"
+   },
+   {
+    "id": 12,
+    "activity": "contracting",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "bank-nbe",
+    "party_kind": "supplier",
+    "party_ref": "s2",
+    "amount_minor": 5000000,
+    "description": "سداد دفعة من فاتورة الصلب"
+   }
+  ]
+ },
+ "equipment_rental": {
+  "activity": {
+   "id": "equipment_rental",
+   "name_ar": "إيجار معدات ثقيلة",
+   "shop_name": "فلوت الدلتا للمعدات الثقيلة",
+   "owner_name": "عبد الناصر سليم",
+   "city": "المنصورة",
+   "phone": "0502556677",
+   "note": "إيجار لوادر وحفارات باليوم مع سائقين ووقود — عقود شهرية وفواتير خدمة.",
+   "sort_order": 6
+  },
+  "branches": [
+   {
+    "id": 13,
+    "activity": "equipment_rental",
+    "ref": "main",
+    "name_ar": "الجراج الرئيسي — الطريق الزراعي",
+    "city": "المنصورة",
+    "phone": "0502556677",
+    "is_main": 1
+   },
+   {
+    "id": 14,
+    "activity": "equipment_rental",
+    "ref": "ringroad",
+    "name_ar": "جراج الطريق الدائري",
+    "city": "المنصورة",
+    "phone": "0502556680",
+    "is_main": 0
+   }
+  ],
+  "warehouses": [
+   {
+    "id": 16,
+    "activity": "equipment_rental",
+    "ref": "wh-parts",
+    "name_ar": "مخزن قطع الغيار",
+    "branch_ref": "main",
+    "is_main": 1
+   },
+   {
+    "id": 17,
+    "activity": "equipment_rental",
+    "ref": "wh-ringroad",
+    "name_ar": "مخزن الدائري (معدات جاهزة)",
+    "branch_ref": "ringroad",
+    "is_main": 0
+   }
+  ],
+  "treasuries": [
+   {
+    "id": 24,
+    "activity": "equipment_rental",
+    "ref": "bank-misr",
+    "name_ar": "بنك مصر — حساب الأسطول",
+    "kind": "bank",
+    "parent_ref": "",
+    "bank_name": "بنك مصر",
+    "account_no": "330044005500",
+    "branch_ref": "",
+    "opening_minor": 25000000
+   },
+   {
+    "id": 23,
+    "activity": "equipment_rental",
+    "ref": "cash-main",
+    "name_ar": "خزينة الحركة",
+    "kind": "cash",
+    "parent_ref": "",
+    "bank_name": "",
+    "account_no": "",
+    "branch_ref": "main",
+    "opening_minor": 4000000
+   },
+   {
+    "id": 25,
+    "activity": "equipment_rental",
+    "ref": "wallet-misr",
+    "name_ar": "محفظة بنك مصر",
+    "kind": "wallet",
+    "parent_ref": "bank-misr",
+    "bank_name": "بنك مصر",
+    "account_no": "01223344556",
+    "branch_ref": "",
+    "opening_minor": 50000
+   }
+  ],
+  "terminals": [
+   {
+    "id": 9,
+    "activity": "equipment_rental",
+    "code": "POS-EQ1",
+    "name_ar": "ماكينة إيصالات الإيجار",
+    "provider_name": "بنك مصر",
+    "branch_ref": "main",
+    "settlement_ref": "bank-misr",
+    "terminal_id": "TRM-22001",
+    "merchant_id": "MID-6601",
+    "serial_number": "SN-EQ-01",
+    "status": "active"
+   }
+  ],
+  "categories": [
+   {
+    "id": 20,
+    "activity": "equipment_rental",
+    "ref": "equip",
+    "name_ar": "خدمات إيجار"
+   },
+   {
+    "id": 21,
+    "activity": "equipment_rental",
+    "ref": "parts",
+    "name_ar": "قطع غيار وصيانة"
+   }
+  ],
+  "items": [
+   {
+    "id": 59,
+    "activity": "equipment_rental",
+    "ref": "loader",
+    "name_ar": "إيجار لودر كتربيلر 950 — يوم بسائق",
+    "sku": "RENT-LD950",
+    "barcode": "",
+    "category_ref": "equip",
+    "base_unit": "يوم",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 1200000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 60,
+    "activity": "equipment_rental",
+    "ref": "excavator",
+    "name_ar": "إيجار حفار هيونداي 220 — يوم بسائق",
+    "sku": "RENT-EX220",
+    "barcode": "",
+    "category_ref": "equip",
+    "base_unit": "يوم",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 1450000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 61,
+    "activity": "equipment_rental",
+    "ref": "roller",
+    "name_ar": "إيجار حدافة 10 طن — يوم",
+    "sku": "RENT-RL10",
+    "barcode": "",
+    "category_ref": "equip",
+    "base_unit": "يوم",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 900000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 62,
+    "activity": "equipment_rental",
+    "ref": "watertruck",
+    "name_ar": "إيجار ناضحة مياه — يوم",
+    "sku": "RENT-WT",
+    "barcode": "",
+    "category_ref": "equip",
+    "base_unit": "يوم",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 750000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 63,
+    "activity": "equipment_rental",
+    "ref": "dieselfilter",
+    "name_ar": "فلتر ديزل لودر (أصلي)",
+    "sku": "SP-DF50",
+    "barcode": "",
+    "category_ref": "parts",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 180000,
+    "price_minor": 0,
+    "stock_qty": 14,
+    "min_qty": 4,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 64,
+    "activity": "equipment_rental",
+    "ref": "trackshoe",
+    "name_ar": "نعلة حاشي حفار",
+    "sku": "SP-TS220",
+    "barcode": "",
+    "category_ref": "parts",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 950000,
+    "price_minor": 0,
+    "stock_qty": 8,
+    "min_qty": 2,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 65,
+    "activity": "equipment_rental",
+    "ref": "generator",
+    "name_ar": "إيجار مولد كهرباء 100KVA — يوم",
+    "sku": "RENT-GEN100",
+    "barcode": "",
+    "category_ref": "equip",
+    "base_unit": "يوم",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 850000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 66,
+    "activity": "equipment_rental",
+    "ref": "haulage",
+    "name_ar": "خدمة نقل معدات (نقلة لوح)",
+    "sku": "SRV-HAUL",
+    "barcode": "",
+    "category_ref": "equip",
+    "base_unit": "نقلة",
+    "extra_units": "",
+    "cost_minor": 0,
+    "price_minor": 500000,
+    "stock_qty": 0,
+    "min_qty": 0,
+    "is_service": 1,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   },
+   {
+    "id": 67,
+    "activity": "equipment_rental",
+    "ref": "hydraulicoil",
+    "name_ar": "زيت هيدروليك 208 لتر",
+    "sku": "SP-HO208",
+    "barcode": "",
+    "category_ref": "parts",
+    "base_unit": "قطعة",
+    "extra_units": "",
+    "cost_minor": 2200000,
+    "price_minor": 0,
+    "stock_qty": 6,
+    "min_qty": 2,
+    "is_service": 0,
+    "track_expiry": 0,
+    "track_serial": 0,
+    "sold_by_weight": 0,
+    "warranty_months": 0,
+    "colors": "",
+    "sizes": ""
+   }
+  ],
+  "customers": [
+   {
+    "id": 20,
+    "activity": "equipment_rental",
+    "ref": "c1",
+    "name_ar": "شركة الريان للمقاولات",
+    "phone": "0502556688",
+    "credit_limit_minor": 60000000,
+    "notes": "عقد إيجار شهري بمعدات ثابتة — الباقي مع المستخلصات"
+   },
+   {
+    "id": 21,
+    "activity": "equipment_rental",
+    "ref": "c2",
+    "name_ar": "مقاول الطرق — شركة النيل",
+    "phone": "0502556699",
+    "credit_limit_minor": 40000000,
+    "notes": ""
+   },
+   {
+    "id": 22,
+    "activity": "equipment_rental",
+    "ref": "c3",
+    "name_ar": "الاتحاد للصرف الصحي",
+    "phone": "0502556700",
+    "credit_limit_minor": 12000000,
+    "notes": ""
+   }
+  ],
+  "suppliers": [
+   {
+    "id": 15,
+    "activity": "equipment_rental",
+    "ref": "s1",
+    "name_ar": "الوكيل — قطع غيار كتربيلر",
+    "phone": "0502556711",
+    "notes": ""
+   },
+   {
+    "id": 16,
+    "activity": "equipment_rental",
+    "ref": "s2",
+    "name_ar": "محطة وقود الأهرام",
+    "phone": "0502556722",
+    "notes": ""
+   }
+  ],
+  "costCenters": [
+   {
+    "id": 19,
+    "activity": "equipment_rental",
+    "ref": "cc1",
+    "code": "EQ-01",
+    "name_ar": "اللودرات",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 20,
+    "activity": "equipment_rental",
+    "ref": "cc2",
+    "code": "EQ-02",
+    "name_ar": "الحفارات والرافعات",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   },
+   {
+    "id": 21,
+    "activity": "equipment_rental",
+    "ref": "cc3",
+    "code": "EQ-03",
+    "name_ar": "الورشة والإدارة",
+    "parent_ref": "",
+    "is_active": 1,
+    "notes": ""
+   }
+  ],
+  "employees": [
+   {
+    "id": 16,
+    "activity": "equipment_rental",
+    "ref": "e1",
+    "name_ar": "الأسطى جمال قنديل",
+    "phone": "01009990011",
+    "job_title": "سائق لودر أول",
+    "hire_date": "2024-06-01",
+    "base_salary_minor": 1300000,
+    "allowances_minor": 200000,
+    "active": 1,
+    "notes": "بونس يوم تشغيل إضافي"
+   },
+   {
+    "id": 17,
+    "activity": "equipment_rental",
+    "ref": "e2",
+    "name_ar": "الأسطى سيد غنيم",
+    "phone": "01009990022",
+    "job_title": "سائق حفار",
+    "hire_date": "2025-01-15",
+    "base_salary_minor": 1250000,
+    "allowances_minor": 150000,
+    "active": 1,
+    "notes": ""
+   },
+   {
+    "id": 18,
+    "activity": "equipment_rental",
+    "ref": "e3",
+    "name_ar": "مروة السعدني",
+    "phone": "01009990033",
+    "job_title": "مسؤولة تعاقدات",
+    "hire_date": "2025-09-01",
+    "base_salary_minor": 1000000,
+    "allowances_minor": 0,
+    "active": 1,
+    "notes": ""
+   }
+  ],
+  "attendance": [
+   {
+    "id": 25,
+    "activity": "equipment_rental",
+    "ref": "a1",
+    "employee_ref": "e1",
+    "date": "2026-09-24",
+    "status": "mission",
+    "check_in": "06:00",
+    "check_out": "20:00",
+    "notes": "يوم تشغيل كامل بموقع النيل"
+   },
+   {
+    "id": 26,
+    "activity": "equipment_rental",
+    "ref": "a2",
+    "employee_ref": "e2",
+    "date": "2026-09-24",
+    "status": "mission",
+    "check_in": "06:30",
+    "check_out": "19:30",
+    "notes": ""
+   },
+   {
+    "id": 27,
+    "activity": "equipment_rental",
+    "ref": "a3",
+    "employee_ref": "e2",
+    "date": "2026-09-25",
+    "status": "present",
+    "check_in": "09:00",
+    "check_out": "17:00",
+    "notes": "صيانة دورية بالجراج"
+   },
+   {
+    "id": 28,
+    "activity": "equipment_rental",
+    "ref": "a4",
+    "employee_ref": "e3",
+    "date": "2026-09-24",
+    "status": "present",
+    "check_in": "09:00",
+    "check_out": "17:00",
+    "notes": ""
+   }
+  ],
+  "leaves": [],
+  "payrollMonths": [
+   {
+    "id": 3,
+    "activity": "equipment_rental",
+    "ref": "pm1",
+    "month": "2026-09",
+    "pay_employee_refs": "e3",
+    "treasury_ref": "bank-misr"
+   }
+  ],
+  "quotations": [
+   {
+    "id": 4,
+    "activity": "equipment_rental",
+    "ref": "q1",
+    "kind": "tender",
+    "client_name": "الاتحاد للصرف الصحي",
+    "client_ref": "c3",
+    "title_ar": "توريد معدات حفر لمشروع خط الصرف الرئيسي",
+    "valid_until": "2026-10-15",
+    "status": "submitted",
+    "win_probability": 55,
+    "bid_bond_minor": 300000,
+    "convert": "",
+    "notes": "السعر شامل السائق والوقود — 60 يوم تشغيل متوقعة",
+    "lines": [
+     {
+      "id": 11,
+      "activity": "equipment_rental",
+      "quotation_ref": "q1",
+      "name_ar": "حفار 220 مع سائق",
+      "description_ar": "حفار هيونداي 220 بسائق ووقود لمدة التشغيل",
+      "unit_ar": "يوم",
+      "qty": 60,
+      "unit_price_minor": 1450000,
+      "est_cost_minor": 1050000,
+      "vat_percent": 14,
+      "tax_included": 0
+     },
+     {
+      "id": 12,
+      "activity": "equipment_rental",
+      "quotation_ref": "q1",
+      "name_ar": "ناضحة مياه",
+      "description_ar": "ناضحة 10 طن لترطيب أعمال الحفر ونقل المياه",
+      "unit_ar": "يوم",
+      "qty": 40,
+      "unit_price_minor": 750000,
+      "est_cost_minor": 520000,
+      "vat_percent": 14,
+      "tax_included": 0
+     },
+     {
+      "id": 13,
+      "activity": "equipment_rental",
+      "quotation_ref": "q1",
+      "name_ar": "حدافة 10 طن",
+      "description_ar": "حدافة لدمج طبقات الردم حول الخطوط",
+      "unit_ar": "يوم",
+      "qty": 25,
+      "unit_price_minor": 900000,
+      "est_cost_minor": 640000,
+      "vat_percent": 14,
+      "tax_included": 0
+     }
+    ]
+   }
+  ],
+  "purchaseOrders": [],
+  "wastage": [],
+  "equipment": [
+   {
+    "id": 2,
+    "activity": "equipment_rental",
+    "ref": "eq-ex1",
+    "name_ar": "حفار هيونداي 220",
+    "code": "EX-01",
+    "daily_rate_minor": 1450000,
+    "hourly_rate_minor": 210000,
+    "monthly_rate_minor": 34000000,
+    "meter_reading": 2180,
+    "service_every_hours": 500,
+    "notes": "سائقها الأسطى سيد"
+   },
+   {
+    "id": 5,
+    "activity": "equipment_rental",
+    "ref": "eq-gn1",
+    "name_ar": "مولد كهرباء 100KVA",
+    "code": "GN-01",
+    "daily_rate_minor": 850000,
+    "hourly_rate_minor": 120000,
+    "monthly_rate_minor": 20000000,
+    "meter_reading": 615,
+    "service_every_hours": 300,
+    "notes": ""
+   },
+   {
+    "id": 1,
+    "activity": "equipment_rental",
+    "ref": "eq-ld1",
+    "name_ar": "لودر كتربيلر 950H",
+    "code": "LD-01",
+    "daily_rate_minor": 1200000,
+    "hourly_rate_minor": 175000,
+    "monthly_rate_minor": 28000000,
+    "meter_reading": 3450,
+    "service_every_hours": 500,
+    "notes": "سائقها الأسطى جمال"
+   },
+   {
+    "id": 3,
+    "activity": "equipment_rental",
+    "ref": "eq-rl1",
+    "name_ar": "حدافة 10 طن",
+    "code": "RL-01",
+    "daily_rate_minor": 900000,
+    "hourly_rate_minor": 130000,
+    "monthly_rate_minor": 21000000,
+    "meter_reading": 940,
+    "service_every_hours": 400,
+    "notes": ""
+   },
+   {
+    "id": 4,
+    "activity": "equipment_rental",
+    "ref": "eq-wt1",
+    "name_ar": "ناضحة مياه 10 طن",
+    "code": "WT-01",
+    "daily_rate_minor": 750000,
+    "hourly_rate_minor": 110000,
+    "monthly_rate_minor": 17000000,
+    "meter_reading": 1260,
+    "service_every_hours": 400,
+    "notes": ""
+   }
+  ],
+  "rentalContracts": [
+   {
+    "id": 1,
+    "activity": "equipment_rental",
+    "ref": "rc1",
+    "customer_ref": "c1",
+    "equipment_ref": "eq-ld1",
+    "days": 30,
+    "daily_rate_minor": 1200000,
+    "deposit_minor": 500000,
+    "payment": "mixed",
+    "paid_minor": 20000000,
+    "vat_percent": 14,
+    "start_date": "2026-09-01",
+    "notes": "تعاقد شهري لودر لمشروع الريان — الباقي مع المستخلص",
+    "close_deduct_minor": 0,
+    "close_end_date": "",
+    "treasury_ref": "bank-misr"
+   },
+   {
+    "id": 2,
+    "activity": "equipment_rental",
+    "ref": "rc2",
+    "customer_ref": "c2",
+    "equipment_ref": "eq-ex1",
+    "days": 14,
+    "daily_rate_minor": 1450000,
+    "deposit_minor": 400000,
+    "payment": "credit",
+    "paid_minor": 0,
+    "vat_percent": 14,
+    "start_date": "2026-09-15",
+    "notes": "حفار لأعمال طريق النيل — آجل",
+    "close_deduct_minor": 0,
+    "close_end_date": "",
+    "treasury_ref": "bank-misr"
+   },
+   {
+    "id": 3,
+    "activity": "equipment_rental",
+    "ref": "rc3",
+    "customer_ref": "c3",
+    "equipment_ref": "eq-rl1",
+    "days": 3,
+    "daily_rate_minor": 900000,
+    "deposit_minor": 200000,
+    "payment": "cash",
+    "paid_minor": 3078000,
+    "vat_percent": 14,
+    "start_date": "2026-09-20",
+    "notes": "حدافة دمك ردمية — انتهت وسُلمت",
+    "close_deduct_minor": 50000,
+    "close_end_date": "2026-09-23",
+    "treasury_ref": "cash-main"
+   }
+  ],
+  "equipmentCosts": [
+   {
+    "id": 1,
+    "activity": "equipment_rental",
+    "ref": "ec1",
+    "equipment_ref": "eq-ld1",
+    "date": "2026-09-12",
+    "kind": "fuel",
+    "amount_minor": 1850000,
+    "description": "وقود أسبوع تشغيل كامل",
+    "treasury_ref": "cash-main"
+   },
+   {
+    "id": 2,
+    "activity": "equipment_rental",
+    "ref": "ec2",
+    "equipment_ref": "eq-ex1",
+    "date": "2026-09-18",
+    "kind": "maintenance",
+    "amount_minor": 900000,
+    "description": "زيوت وفلاتر 500 ساعة",
+    "treasury_ref": "cash-main"
+   },
+   {
+    "id": 3,
+    "activity": "equipment_rental",
+    "ref": "ec3",
+    "equipment_ref": "eq-rl1",
+    "date": "2026-09-22",
+    "kind": "repair",
+    "amount_minor": 350000,
+    "description": "إصلاح سير دمك",
+    "treasury_ref": "cash-main"
+   },
+   {
+    "id": 4,
+    "activity": "equipment_rental",
+    "ref": "ec4",
+    "equipment_ref": "eq-ld1",
+    "date": "2026-09-25",
+    "kind": "operator",
+    "amount_minor": 600000,
+    "description": "بونس سائق أيام التشغيل الإضافية",
+    "treasury_ref": "cash-main"
+   }
+  ],
+  "subContracts": [],
+  "projectExtracts": [],
+  "contractingDocs": [],
+  "sales": [
+   {
+    "id": 14,
+    "activity": "equipment_rental",
+    "ref": "i1",
+    "doc_date": "2026-09-19",
+    "customer_ref": "c1",
+    "warehouse_ref": "wh-parts",
+    "payment": "credit",
+    "paid_minor": 0,
+    "treasury_ref": "",
+    "notes": "إيجار أسبوع لودر + حفار — مشروع الريان",
+    "lines": [
+     {
+      "id": 22,
+      "activity": "equipment_rental",
+      "sale_ref": "i1",
+      "item_ref": "loader",
+      "qty": 7,
+      "unit_price_minor": 1200000,
+      "discount_percent": 0
+     },
+     {
+      "id": 23,
+      "activity": "equipment_rental",
+      "sale_ref": "i1",
+      "item_ref": "excavator",
+      "qty": 7,
+      "unit_price_minor": 1450000,
+      "discount_percent": 0
+     }
+    ]
+   },
+   {
+    "id": 15,
+    "activity": "equipment_rental",
+    "ref": "i2",
+    "doc_date": "2026-09-22",
+    "customer_ref": "c2",
+    "warehouse_ref": "wh-parts",
+    "payment": "card",
+    "paid_minor": 2700000,
+    "treasury_ref": "bank-misr",
+    "notes": "",
+    "lines": [
+     {
+      "id": 24,
+      "activity": "equipment_rental",
+      "sale_ref": "i2",
+      "item_ref": "roller",
+      "qty": 3,
+      "unit_price_minor": 900000,
+      "discount_percent": 0
+     }
+    ]
+   }
+  ],
+  "purchases": [
+   {
+    "id": 13,
+    "activity": "equipment_rental",
+    "ref": "p1",
+    "doc_date": "2026-09-09",
+    "supplier_ref": "s1",
+    "warehouse_ref": "wh-parts",
+    "supplier_doc": "CG-7781",
+    "paid_minor": 2500000,
+    "treasury_ref": "bank-misr",
+    "notes": "",
+    "lines": [
+     {
+      "id": 18,
+      "activity": "equipment_rental",
+      "purchase_ref": "p1",
+      "item_ref": "dieselfilter",
+      "qty": 10,
+      "unit_price_minor": 180000,
+      "expiry_date": ""
+     },
+     {
+      "id": 19,
+      "activity": "equipment_rental",
+      "purchase_ref": "p1",
+      "item_ref": "trackshoe",
+      "qty": 4,
+      "unit_price_minor": 950000,
+      "expiry_date": ""
+     }
+    ]
+   }
+  ],
+  "saleReturns": [
+   {
+    "id": 8,
+    "activity": "equipment_rental",
+    "ref": "sr1",
+    "sale_ref": "i1",
+    "doc_date": "2026-09-24",
+    "refund": "credit",
+    "treasury_ref": "",
+    "reason": "قطعة استبدلت أثناء الصيانة",
+    "lines": [
+     {
+      "id": 10,
+      "activity": "equipment_rental",
+      "return_ref": "sr1",
+      "item_ref": "loader",
+      "qty": 1,
+      "condition": "resellable"
+     }
+    ]
+   }
+  ],
+  "purchaseReturns": [
+   {
+    "id": 7,
+    "activity": "equipment_rental",
+    "ref": "pr1",
+    "purchase_ref": "p1",
+    "doc_date": "2026-09-25",
+    "refund": "debt",
+    "treasury_ref": "",
+    "reason": "فلتر غير مطابق للموديل",
+    "lines": [
+     {
+      "id": 7,
+      "activity": "equipment_rental",
+      "return_ref": "pr1",
+      "item_ref": "dieselfilter",
+      "qty": 1
+     }
+    ]
+   }
+  ],
+  "vouchers": [
+   {
+    "id": 13,
+    "activity": "equipment_rental",
+    "ref": "v1",
+    "kind": "receipt",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "bank-misr",
+    "party_kind": "customer",
+    "party_ref": "c1",
+    "amount_minor": 3000000,
+    "description": "تحصيل دفعة إيجار"
+   },
+   {
+    "id": 14,
+    "activity": "equipment_rental",
+    "ref": "v2",
+    "kind": "payment",
+    "doc_date": "2026-09-26",
+    "treasury_ref": "bank-misr",
+    "party_kind": "supplier",
+    "party_ref": "s1",
+    "amount_minor": 1000000,
+    "description": "سداد دفعة قطع الغيار"
+   }
+  ]
+ }
+}

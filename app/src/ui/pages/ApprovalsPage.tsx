@@ -1,10 +1,13 @@
 /**
- * شاشة «اعتماد المستندات» (طلب المالك).
- * تعرض المستندات المعلّقة التي سجّلها موظفون آخرون، فيعتمدها صاحب الصلاحية
- * فتُرحَّل بقيدها الكامل، أو يرفضها بسبب مكتوب فلا يبقى لها أي أثر محاسبي.
+ * شاشة «اعتماد المستندات» (طلب المالك — خطة ③).
+ * تعرض المستندات المعلّقة التي سجّلها الموظفون، فيعتمدها صاحب الصلاحية
+ * **فتُرحَّل فوراً بقيدها ومخزونها الكامل**، أو يرفضها بسبب مكتوب فلا يبقى
+ * لها أي أثر محاسبي. أعلى الشاشة إعدادات النظام نفسها: تفعيل/إيقاف، النطاق،
+ * حد المبلغ، المعتمِدون الإضافيون، ومن مستنداته معتمدة تلقائياً.
  */
 import { useMemo, useState } from 'react'
 import { BadgeCheck, ShieldCheck, ShieldX, Clock, FileText } from 'lucide-react'
+import { ApprovalSettingsCard } from '../components/ApprovalSettingsCard.tsx'
 import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { Btn, Field, inputCls, useToast } from '../components/ui.tsx'
@@ -25,6 +28,8 @@ export function ApprovalsPage() {
   const activeUser = appUsers.find((u) => u.id === currentUserId) ?? null
   const perms = effectivePermissionsFor(activeUser, rolesWithOverrides(roleOverrides, customRoles, setup.activityId))
   const allowed = canApprove({ settings: approvals, userId: currentUserId, userPermissions: perms })
+  /* الإعدادات يراها المالك وأصحاب صلاحية الاعتماد فقط — الموظف يرى قائمته */
+  const canConfigure = allowed || currentUserId == null
 
   const [filter, setFilter] = useState<'pending' | DocApprovalStatus | 'all'>('pending')
   const [reason, setReason] = useState('')
@@ -38,8 +43,8 @@ export function ApprovalsPage() {
 
   const decide = (id: number, status: 'approved' | 'rejected') => {
     try {
-      decideDocApproval(id, { status, by: currentUserId, byName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك', reason: status === 'rejected' ? reason : undefined })
-      toast.show(status === 'approved' ? 'اعتُمد المستند — يمكن ترحيله الآن' : 'رُفض المستند ولم يُقيَّد شيء')
+      const updated = decideDocApproval(id, { status, by: currentUserId, byName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك', reason: status === 'rejected' ? reason : undefined })
+      toast.show(status === 'approved' ? `اعتُمد المستند ورُحِّل ${updated.postedDocumentRef ?? ''} بقيده ومخزونه ✓` : 'رُفض المستند ولم يُقيَّد شيء')
       setRejecting(null); setReason('')
     } catch (error) { toast.show((error as Error).message, 'error') }
   }
@@ -52,7 +57,7 @@ export function ApprovalsPage() {
           <p className="text-xs text-slate-500">
             {approvals.enabled
               ? 'النظام مفعّل — المستندات الخاضعة له لا تُقيَّد في الدفتر حتى تُعتمد.'
-              : 'النظام موقوف حالياً — كل المستندات تُرحَّل فوراً. فعّله من الإعدادات العامة.'}
+              : 'النظام موقوف حالياً — كل المستندات تُرحَّل فوراً. فعّله من بطاقة الإعدادات أدناه.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -73,6 +78,8 @@ export function ApprovalsPage() {
           ليست لديك صلاحية «اعتماد المستندات». اطلب من المالك تفعيل <b>docs.approve</b> لحسابك من قسم الصلاحيات.
         </div>
       )}
+
+      {canConfigure && <ApprovalSettingsCard />}
 
       <section className={`${card} overflow-hidden`} data-approvals-list>
         <table className="w-full text-sm">
@@ -99,9 +106,10 @@ export function ApprovalsPage() {
                 <td className="p-2 text-center font-mono text-[11px]">{row.requestedAt.slice(0, 16).replace('T', ' ')}</td>
                 <td className="p-2 text-center">
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${row.status === 'approved' ? 'bg-emerald-500/10 text-emerald-600' : row.status === 'rejected' ? 'bg-rose-500/10 text-rose-600' : 'bg-amber-500/10 text-amber-600'}`}>
-                    {row.status === 'approved' ? 'معتمد' : row.status === 'rejected' ? 'مرفوض' : 'بانتظار الاعتماد'}
+                    {row.status === 'approved' ? 'معتمد ورُحِّل' : row.status === 'rejected' ? 'مرفوض' : 'بانتظار الاعتماد'}
                   </span>
                   {row.reason && <div className="text-[10px] text-rose-500">{row.reason}</div>}
+                  {row.status === 'approved' && row.postedDocumentRef && <div className="text-[10px] text-emerald-600" data-approval-posted-ref>{row.postedDocumentRef}</div>}
                 </td>
                 <td className="p-2">
                   {row.status === 'pending' && allowed && (
@@ -127,8 +135,9 @@ export function ApprovalsPage() {
 
       <section className={`${card} p-3 text-[12px] leading-6 text-slate-500 dark:text-slate-400`}>
         <b className="text-slate-700 dark:text-slate-200">كيف يعمل النظام؟</b>
-        <div>• التفعيل والنطاق وحد المبلغ والمعتمِدون من <b>الإعدادات العامة</b>، والصلاحيتان <b>docs.approve</b> و<b>docs.autoApproved</b> من قسم الصلاحيات.</div>
+        <div>• التفعيل والنطاق وحد المبلغ والمعتمِدون من بطاقة <b>الإعدادات</b> أعلاه، والصلاحيتان <b>docs.approve</b> و<b>docs.autoApproved</b> من قسم الصلاحيات.</div>
         <div>• مستند المستخدم صاحب <b>docs.autoApproved</b> يُرحَّل فوراً حتى لو كان النظام مفعّلاً.</div>
+        <div>• <b>الاعتماد يرحّل المستند فوراً</b> بقيده ومخزونه كاملاً؛ إن تعذّر الترحيل (مخزون تغيّر مثلاً) يظهر السبب ويبقى الطلب معلقاً.</div>
         <div>• عند إيقاف النظام تُرحَّل كل المستندات مباشرة بلا رجوع لأحد.</div>
         <div>• <b>لا قيد محاسبي ولا حركة مخزون قبل الاعتماد</b> — الرفض لا يترك أثراً.</div>
       </section>

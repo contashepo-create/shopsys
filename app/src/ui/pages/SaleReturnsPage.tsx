@@ -19,6 +19,7 @@ import { partyCode } from '../../core/partyCodes.ts'
 import { deriveTaxConfig } from '../../core/returns.ts'
 import { buildReceiptModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import type { InvoiceTemplate } from '../../core/receipt.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState, useUnsavedChangesGuard } from '../components/ui.tsx'
@@ -203,8 +204,8 @@ export function SaleReturnsPage() {
   // اختيار قالب لحظة الطباعة (تعميم قوالب الكاشير الثلاثة — طلب المالك)
   const [printTarget, setPrintTarget] = useState<SaleReturn | null>(null)
 
-  /** طباعة إشعار المرتجع للعميل — بالقالب المختار (حراري/A4/A5) */
-  const printReturn = (r: SaleReturn, template?: InvoiceTemplate) => {
+  /** بناء موديل طباعة إشعار المرتجع — مشترك بين الطباعة وإرسال واتساب PDF (v1.0.13) */
+  const buildReturnModel = (r: SaleReturn) => {
     const orig = sales.find((s) => s.id === r.saleId)
     const model = buildReceiptModel({
       invoiceNumber: r.returnNumber,
@@ -235,8 +236,21 @@ export function SaleReturnsPage() {
       : cashPart > 0 ? 'رد نقدي'
       : waivedPart > 0 ? 'تنازل — بلا رد'
       : r.refund === 'store_credit' ? 'إيداع رصيداً في حساب العميل' : 'خصم من حساب العميل'
+    return model
+  }
+
+  /** طباعة إشعار المرتجع للعميل — بالقالب المختار (حراري/A4/A5) */
+  const printReturn = (r: SaleReturn, template?: InvoiceTemplate) => {
+    const model = buildReturnModel(r)
     printModelWithTemplate(model, cur, receipt, template ?? receipt.defaultTemplate)
     toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
+  }
+
+  /** v1.0.13 — إرسال إشعار المرتجع PDF عبر واتساب لعميل الفاتورة الأصلية */
+  const whatsappReturn = (r: SaleReturn, template: InvoiceTemplate) => {
+    const orig = sales.find((s) => s.id === r.saleId)
+    const phone = orig?.customerId ? customers.find((c) => c.id === orig.customerId)?.phone ?? '' : ''
+    shareDocPdfViaWhatsapp({ model: buildReturnModel(r), cur, settings: receipt, template, docLabel: 'مرتجع مبيعات', docNumber: r.returnNumber, partyPhone: phone, shopName: setup.shopName, toast })
   }
 
   const canNext =
@@ -772,6 +786,7 @@ export function SaleReturnsPage() {
         defaultTemplate={receipt.defaultTemplate}
         title="🖨️ طباعة إشعار المرتجع"
         onPrint={(t) => { if (printTarget) printReturn(printTarget, t) }}
+        onWhatsappPdf={(t) => { if (printTarget) whatsappReturn(printTarget, t) }}
       />
     </div>
   )

@@ -12,6 +12,7 @@ import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry, phonePlaceholder } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { computeTicketTotals, maintenanceReport, isTicketOverdue, TICKET_STATUS_LABELS, TICKET_TRANSITIONS, type TicketStatus } from '../../core/maintenance.ts'
+import { buildTicketStatusMessage, ticketWhatsappLink } from '../../core/maintenance.ts'
 import { renderTicketReceiptHtml, renderTicketInvoiceHtml } from '../print/printMaintenanceTicket.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
@@ -294,6 +295,13 @@ export function MaintenancePage() {
                       )}
                       {TICKET_TRANSITIONS[t.status].includes('cancelled') && (
                         <button onClick={() => moveStatus(t, 'cancelled')} className="me-1 px-2 py-1 rounded-lg text-[10.5px] font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all">إلغاء</button>
+                      )}
+                      {t.customerPhone && (
+                        <button
+                          onClick={() => { window.open(ticketWhatsappLink(t.customerPhone, buildTicketStatusMessage(t, setup.shopName || 'تَحَكَّم')), '_blank', 'noopener') }}
+                          title="إبلاغ العميل بحالة الجهاز عبر واتساب"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all"
+                        >📹</button>
                       )}
                       <button onClick={() => (t.status === 'delivered' ? printTicketInvoice(t) : printTicketReceipt(t))} title={t.status === 'delivered' ? 'طباعة فاتورة الصيانة (بلا تكلفة/ربح)' : 'طباعة إيصال استلام الجهاز'} className="p-1.5 rounded-lg text-slate-400 hover:text-teal-600 hover:bg-teal-500/10 transition-all"><Printer size={14} /></button>
                       <button onClick={() => setViewing(t)} className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Eye size={14} /></button>

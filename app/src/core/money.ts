@@ -18,8 +18,12 @@ export interface CurrencyConfig {
   name: string
 }
 
-/** تطبيع الأرقام العربية والفارسية والفواصل العربية إلى ASCII — يمنع رفض «١٣٠» بصمت */
-export function normalizeDigits(s: string): string {
+/** تطبيع الأرقام العربية والفارسية والفواصل العربية إلى ASCII — يمنع رفض «١٣٠» بصمت.
+ * `decimals` (اختياري): خانات كسور العملة — تحسم فاصلةً وحيدة بلا نقطة:
+ * خاناتها ≤ الكسور ⇒ فاصلة عشرية أرسلتها لوحة مفاتيح عربية («1,5» ⇒ 1.5)،
+ * وخاناتها أكبر (مجموعة ثلاثية كـ«1,500») ⇒ فاصل آلاف إنجليزي يُحذف —
+ * وإلا انقلب 1500 إلى 1.50 خطأً بألف ضعف في استيراد CSV أو الإدخال المباشر. */
+export function normalizeDigits(s: string, decimals?: number): string {
   const translated = s
     .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
     .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
@@ -30,7 +34,22 @@ export function normalizeDigits(s: string): string {
   const lastDot = translated.lastIndexOf('.')
   const lastComma = translated.lastIndexOf(',')
   if (lastComma < 0) return translated
-  if (lastDot < 0) return translated.replace(/,/g, '.')
+  if (lastDot < 0) {
+    const commas = (translated.match(/,/g) ?? []).length
+    if (commas === 1) {
+      const digitsAfter = translated.length - lastComma - 1
+      return decimals == null || digitsAfter <= decimals
+        ? translated.replace(',', '.') // فاصل عشري عربي (سلوك مُوثق ومُختبَر)
+        : translated.replace(/,/g, '') // مجموعة آلاف إنجليزية (1,500 ⇒ 1500)
+    }
+    // فواصل متعددة بلا نقطة: فإن كانت الخانات بعد الأخيرة ثلاثاً فكلها فواصل
+    // آلاف إنجليزية (1,234,567) — وإلا فالأخيرة عشرية أوروبية (1,234,567,89).
+    // كانت تُرفض خطأً «مدخل غير رقمي» لأن كل الفواصل كانت تتحول نقاطاً (§74/§75)
+    const digitsAfterLast = translated.length - lastComma - 1
+    if (digitsAfterLast === 3) return translated.replace(/,/g, '')
+    const head = translated.slice(0, lastComma).replace(/,/g, '')
+    return `${head}.${translated.slice(lastComma + 1)}`
+  }
   return lastComma > lastDot
     ? translated.replace(/\./g, '').replace(',', '.')
     : translated.replace(/,/g, '')
@@ -38,10 +57,13 @@ export function normalizeDigits(s: string): string {
 
 /** تحويل من نص/رقم مُدخل إلى أصغر وحدة (بأمان من أخطاء التعويم) */
 export function toMinor(value: string | number, decimals: number): Minor {
-  const s = normalizeDigits(String(value).trim())
-  if (s === '' || s === '-') return 0
-  // ترميز علمي (1e5 تُكتب في خانات type=number): نحوله بدقة بدل قراءته خطأً كـ«1»
-  if (!/^-?\d*(\.\d*)?$/.test(s)) {
+  const s = normalizeDigits(String(value).trim(), decimals)
+  if (s === '' || s === '-' || s === '+') return 0
+  // الترميز العلمي العشري فقط (1e5 تُكتبه خانات type=number): يُحوَّل بدقة.
+  // أما حرفيا JS الأخرى (0x10 و0b101 وفواصل الأرقام 1_000) فكانت تُقرأ بصمت
+  // قيماً غير مقصودة عبر Number() — تُرفض الآن صراحة (مراجعة §75).
+  if (!/^[+-]?\d*(\.\d*)?$/.test(s)) {
+    if (!/^[+-]?(\d+(\.\d*)?|\.\d+)[eE][+-]?\d+$/.test(s)) throw new RangeError('money: مدخل غير رقمي')
     const n = Number(s)
     if (!Number.isFinite(n)) throw new RangeError('money: مدخل غير رقمي')
     const minor = Math.round(n * 10 ** decimals)
@@ -49,7 +71,7 @@ export function toMinor(value: string | number, decimals: number): Minor {
     return minor
   }
   const neg = s.startsWith('-')
-  const [intPart, fracRaw = ''] = s.replace('-', '').split('.')
+  const [intPart, fracRaw = ''] = s.replace(/^[+-]/, '').split('.')
   const frac = (fracRaw + '0'.repeat(decimals)).slice(0, decimals)
   const minor = parseInt(intPart || '0', 10) * 10 ** decimals + (decimals ? parseInt(frac || '0', 10) : 0)
   if (!Number.isSafeInteger(minor)) throw new RangeError('money: مبلغ خارج النطاق الآمن')
@@ -122,11 +144,6 @@ function assertMinor(x: number): void {
 }
 
 /**
- * نص رصيد الطرف كما يظهر في ترويسة الفاتورة (بلاغ المالك: «الرصيد يخرج خارج إطار البوكس»).
- * كان النص يُبنى دائماً كـ«القيمة + العملة + الحالة» فيصير «0.00 ر.س متزن» ويفيض من خانته.
- * عند التوازن لا قيمة تُذكر أصلاً: كلمة واحدة تكفي وتُقرأ في أضيق شاشة.
- */
-/**
  * نغمة مؤشر الطرف داخل الفاتورة (بلاغ المالك: حالة الحساب تُقرأ بجوار الاسم لا في خانة منفصلة).
  *
  * - `danger`  الحساب موقوف، أو الرصيد المتوقع بعد ترحيل هذه الفاتورة يتجاوز الحد الائتماني.
@@ -151,6 +168,11 @@ export function partyBalanceText(
   currency: CurrencyConfig,
   words: { owes: string; owed: string; none?: string } = { owes: 'عليه', owed: 'له' },
 ): string {
+  /**
+   * نص رصيد الطرف كما يظهر في ترويسة الفاتورة (بلاغ المالك: «الرصيد يخرج خارج إطار البوكس»).
+   * كان النص يُبنى دائماً كـ«القيمة + العملة + الحالة» فيصير «0.00 ر.س متزن» ويفيض من خانته.
+   * عند التوازن لا قيمة تُذكر أصلاً: كلمة واحدة تكفي وتُقرأ في أضيق شاشة.
+   */
   if (!hasParty) return words.none ?? 'نقدي — بلا حساب'
   if (balanceMinor === 0) return 'متزن'
   const value = `${formatMinor(Math.abs(balanceMinor), currency, false)} ${currency.symbol}`

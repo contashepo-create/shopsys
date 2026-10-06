@@ -5,7 +5,10 @@ import tailwindcss from '@tailwindcss/vite'
 import { demoDatabasePlugin } from './demo-db/vitePlugin.mjs'
 
 // معمارية جاهزة للويب: نفس الواجهة تعمل في المتصفح اليوم وداخل Electron غداً
+// base './': مسارات أصول نسبية — إلزامي للتحميل عبر file:// في النسخة المُثبَّتة
+// (المسارات المطلقة '/assets/…' تهرب خارج مجلد التطبيق ⇒ شاشة بيضاء — بلاغ v1.0.0)
 export default defineConfig({
+  base: './',
   plugins: [react(), tailwindcss(), demoDatabasePlugin()],
   server: {
     host: '0.0.0.0',

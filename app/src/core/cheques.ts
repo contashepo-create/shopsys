@@ -87,6 +87,10 @@ export function validateCheque(args: {
   if (!args.chequeNumber.trim()) throw new Error('رقم الشيك مطلوب')
   if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) throw new Error('مبلغ الشيك يجب أن يكون موجباً')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(args.dueDate)) throw new Error('تاريخ الاستحقاق غير صالح')
+  // (إصلاح §78) تقويم حقيقي: Date.parse يُدوّر 2026-02-30 إلى 2 مارس فيُحسب الاستحقاق خطأً بصمت
+  const [y, mo, d] = args.dueDate.split('-').map(Number)
+  const parsed = new Date(Date.UTC(y, mo - 1, d))
+  if (parsed.getUTCFullYear() !== y || parsed.getUTCMonth() !== mo - 1 || parsed.getUTCDate() !== d) throw new Error('تاريخ الاستحقاق ليس يوماً حقيقياً بالتقويم')
   if (args.partyId != null && (!Number.isInteger(args.partyId) || args.partyId <= 0)) throw new Error('الطرف المختار غير صالح')
   if (args.partyId == null && !(args.partyName ?? '').trim()) throw new Error('اكتب اسم الطرف/المستفيد للشيك غير المربوط بحساب مسجل')
 }

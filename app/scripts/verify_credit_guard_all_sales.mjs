@@ -17,7 +17,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -39,8 +39,8 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { CreditLimitError } = await import(join(root, 'src/core/pos.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { CreditLimitError } = await import(pathToFileURL(join(root, 'src/core/pos.ts')).href)
 const st = () => useDataStore.getState()
 
 const isCL = (e) => e instanceof CreditLimitError
@@ -209,7 +209,8 @@ const line = (qty, price = 10000) => ({ itemId: item.id, nameAr: item.nameAr, qt
 
 /* ═══ 7) addProjectExtract (مقاولات): مستخلص آجل فوق الحد ═══ */
 {
-  st().addProject({ nameAr: 'برج المنزلة', clientName: 'مقيد', clientId: bounded.id, contractValueMinor: 10000000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
+  /* §95: سقف المستخلصات = قيمة العقد الفعلية يسبق فحص الحد (النقدي أيضاً) — فضخّمنا العقد ليمر المستخلص النقدي الكبير */
+  st().addProject({ nameAr: 'برج المنزلة', clientName: 'مقيد', clientId: bounded.id, contractValueMinor: 300000000, retentionPercent: 0, startDate: '2026-01-01', notes: '' })
   const project = st().projects.at(-1)
   assert.throws(
     () => st().addProjectExtract({ projectId: project.id, grossMinor: 70000, vatPercent: 0, payment: 'credit', description: 'مستخلص 1' }),
@@ -297,7 +298,7 @@ const line = (qty, price = 10000) => ({ itemId: item.id, nameAr: item.nameAr, qt
   assert.equal(trip.totals.grandMinor, 500000)
   ok('regression: عميل بلا حد — بيع 5000 ونقلة 5000 آجلة تمر بلا أي حارس')
   // قيود الدفتر متوازنة بعد كل المحاور
-  const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
+  const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
   for (const e of st().journal) assertBalanced(e.lines)
   ok(`regression: كل قيود الدفتر (${st().journal.length}) متوازنة بعد المحاور العشرة`)
 }

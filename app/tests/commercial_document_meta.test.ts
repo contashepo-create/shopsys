@@ -41,4 +41,10 @@ describe('بيانات المستند التجاري المشتركة', () => {
     expect(meta.postedAt).toBeNull()
     expect(meta.postedBy).toBeNull()
   })
+
+  // (§76) انحدار: المعتمد (غير المرحّل) لا يحمل وقت ترحيل
+  it('يرفض المستند المعتمد الحامل وقت ترحيل', () => {
+    const meta: CommercialDocumentMeta = { ...valid, status: 'approved', approvedBy: 'مدير', approvedAt: '2026-10-01T09:30:00.000Z', postedAt: '2026-10-01T10:00:00.000Z' }
+    expect(validateCommercialDocumentMeta(meta)).toContain('المستند المعتمد (غير المرحّل) لا يحمل وقت ترحيل')
+  })
 })

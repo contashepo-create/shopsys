@@ -29,14 +29,14 @@ globalThis.localStorage = {
 }
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 
-const { ACTIVITY_TEMPLATES } = await import(join(root, 'src/core/activities.ts'))
-const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
-const { hashPin, matchesOwnerIdentity, DEFAULT_OWNER_PROFILE } = await import(join(root, 'src/core/audit.ts'))
-const { collectNotifications, visibleNotifications } = await import(join(root, 'src/core/notifications.ts'))
-const { rolesWithOverrides, effectivePermissionsFor } = await import(join(root, 'src/core/permissions.ts'))
-const { buildSimpleDocModel, DEFAULT_RECEIPT_SETTINGS } = await import(join(root, 'src/core/receipt.ts'))
-const { renderInvoiceA4Html } = await import(join(root, 'src/ui/print/printInvoiceA4.ts'))
-const { renderReceiptHtml } = await import(join(root, 'src/ui/print/printReceipt.ts'))
+const { ACTIVITY_TEMPLATES } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
+const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
+const { hashPin, matchesOwnerIdentity, DEFAULT_OWNER_PROFILE } = await import(pathToFileURL(join(root, 'src/core/audit.ts')).href)
+const { collectNotifications, visibleNotifications } = await import(pathToFileURL(join(root, 'src/core/notifications.ts')).href)
+const { rolesWithOverrides, effectivePermissionsFor } = await import(pathToFileURL(join(root, 'src/core/permissions.ts')).href)
+const { buildSimpleDocModel, DEFAULT_RECEIPT_SETTINGS } = await import(pathToFileURL(join(root, 'src/core/receipt.ts')).href)
+const { renderInvoiceA4Html } = await import(pathToFileURL(join(root, 'src/ui/print/printInvoiceA4.ts')).href)
+const { renderReceiptHtml } = await import(pathToFileURL(join(root, 'src/ui/print/printReceipt.ts')).href)
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
 assert.equal(ACTIVITIES.length, 29, `المتوقع 29 نشاطاً — الموجود ${ACTIVITIES.length}`)

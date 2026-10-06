@@ -20,7 +20,8 @@ import assert from 'node:assert/strict'
 import { reporter } from './auditKit.mjs'
 
 const R = reporter('دفعة المالك ⑩ح على الفاتورة')
-const ROOT = '/home/user/shopsys/app'
+import { fileURLToPath } from 'node:url'
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const read = (path) => readFileSync(`${ROOT}/${path}`, 'utf8')
 const css = read('src/index.css')
 const sales = read('src/ui/pages/AdvancedSalesInvoicePage.tsx')
@@ -30,7 +31,7 @@ const table = read('src/ui/components/InvoiceLinesTable.tsx')
 const pickers = read('src/ui/components/KeyboardPickers.tsx')
 const notesLog = read('src/ui/components/PartyNotesLog.tsx')
 const repo = read('src/data/repo.ts')
-const mockup = readFileSync('/home/user/shopsys/docs/mockups/invoice-layout-2026/index.html', 'utf8')
+const mockup = readFileSync(new URL('../../docs/mockups/invoice-layout-2026/index.html', import.meta.url), 'utf8')
 const ruleOf = (selector) => {
   const at = css.indexOf(`${selector} {`)
   assert.ok(at >= 0, `لا قاعدة CSS للمحدد ${selector}`)
@@ -68,9 +69,12 @@ const ruleOf = (selector) => {
 
 /* ②ب رسائل بوابة التحصيل بنصوص النموذج وحسابها الصحيح */
 {
-  for (const text of ['عميل نقدي — التحصيل كامل', 'ضمن حد الائتمان', 'مسدَّدة بالكامل']) {
+  for (const text of ['عميل نقدي — التحصيل كامل', 'ضمن حد الائتمان', 'بلا حد ائتمان مسجل']) {
     assert.ok(sales.includes(text), `رسالة التحصيل «${text}» غير منقولة من النموذج`)
   }
+  /* طلب المالك 2026-10-01: حد ائتمان صفر/غير مسجل = بلا حد — لا تحصيل كامل.
+     الفحص (والحد الأدنى للتحصيل) فقط عند حد محدد بقيمة موجبة. */
+  assert.ok(/!selectedCustomer\.creditLimitMinor\?0:/.test(sales), 'حد ائتمان صفر ما زال يفرض التحصيل الكامل')
   const logic = sales.slice(sales.indexOf('const minCollectMinor'), sales.indexOf('const minCollectMinor') + 420).replace(/\s+/g, '')
   assert.ok(/Math\.max\(0,selectedCustomerBalance\+grandMinor-/.test(logic), 'الحد الأدنى للتحصيل لا يُحسب من الرصيد + الفاتورة − حد الائتمان')
   assert.ok(/shortMinor/.test(sales), 'لا حساب لعجز التحصيل')

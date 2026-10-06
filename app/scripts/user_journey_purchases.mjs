@@ -10,8 +10,9 @@
  * م8) تأثير المشتريات على الأقسام: ميزان المراجعة متزن، بطاقة الصنف مطابقة، كشف المورد صحيح
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -31,9 +32,9 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { supplierStatement, statementBalance } = await import(join(root, 'src/core/statements.ts'))
-const { computeTrialBalance } = await import(join(root, 'src/core/accounting.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { supplierStatement, statementBalance } = await import(pathToFileURL(join(root, 'src/core/statements.ts')).href)
+const { computeTrialBalance } = await import(pathToFileURL(join(root, 'src/core/accounting.ts')).href)
 const st = () => useDataStore.getState()
 const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 
@@ -76,12 +77,12 @@ console.log('\n— م2) صيدلية: دفعات صلاحية + FEFO —')
   const sup = st().suppliers.at(-1)
   const dawa = item('باراسيتامول', { trackExpiry: true })
   // دفعتان: قريبة الانتهاء ثم بعيدة
-  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: dawa.id, qty: 50, unitPriceMinor: 500, expiryDate: '2026-12-31' }], expenses: [], paidMinor: 25000, treasury: '1101', notes: '' })
-  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: dawa.id, qty: 50, unitPriceMinor: 500, expiryDate: '2027-12-31' }], expenses: [], paidMinor: 25000, treasury: '1101', notes: '' })
+  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: dawa.id, qty: 50, unitPriceMinor: 500, expiryDate: relDays(90) }], expenses: [], paidMinor: 25000, treasury: '1101', notes: '' })
+  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: dawa.id, qty: 50, unitPriceMinor: 500, expiryDate: relDays(400) }], expenses: [], paidMinor: 25000, treasury: '1101', notes: '' })
   // بيع 10 يخصم من الدفعة الأقرب انتهاءً
   st().postSale({ lines: [{ itemId: dawa.id, nameAr: dawa.nameAr, qty: 10, unitPriceMinor: 1000, unitCostMinor: 500, discountPercent: 0, soldByWeight: false }], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101' })
-  const near = st().batches.find((b) => b.itemId === dawa.id && b.expiryDate === '2026-12-31')
-  const far = st().batches.find((b) => b.itemId === dawa.id && b.expiryDate === '2027-12-31')
+  const near = st().batches.find((b) => b.itemId === dawa.id && b.expiryDate === relDays(90))
+  const far = st().batches.find((b) => b.itemId === dawa.id && b.expiryDate === relDays(400))
   assert.equal(near.qty, 40)
   assert.equal(far.qty, 50)
   ok('البيع خصم من دفعة الشراء الأقرب انتهاءً (FEFO) — دورة شراء→بيع مترابطة')
@@ -214,7 +215,7 @@ console.log('\n— م7) تعديل فاتورة قبل أي حركة —')
 
 console.log('\n— م8) التأثير على كل الأقسام —')
 {
-  const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
+  const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
   for (const e of st().journal) assertBalanced(e.lines)
   ok(`كل قيود الدفتر (${st().journal.length}) متوازنة`)
   const tb = computeTrialBalance(st().journal, st().accounts ?? [])

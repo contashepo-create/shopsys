@@ -5,7 +5,7 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * كل قيد يظهر ويربط بالمشروع؛ الإفراج عن المحتجز يقفل المشروع.
  */
 import { useMemo, useState } from 'react'
-import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins } from 'lucide-react'
+import { Plus, HardHat, Eye, BookOpenText, Banknote, TrendingUp, Receipt, Hammer, Wallet2, FilePlus2, Printer, HandCoins, Pencil, ShoppingCart, Truck, Users2 } from 'lucide-react'
 import { useDataStore } from '../../data/repo.ts'
 import type { Project } from '../../core/contracting.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -13,6 +13,13 @@ import { getCountry } from '../../core/countries.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { COST_KIND_LABELS, CHANGE_ORDER_STATUS_LABELS, type CostKind } from '../../core/contracting.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { InvoicePOSFrame } from '../components/InvoicePOSFrame.tsx'
+import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
+import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
+import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
+import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
+import { openPrintPreview } from '../components/printPreviewStore.ts'
+import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
@@ -20,6 +27,7 @@ import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../com
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { CreditLimitError } from '../../core/pos.ts'
+import { openSalesInvoiceWindow } from '../windows/windowStore.ts'
 import { renderExtractHtml } from '../print/printExtract.ts'
 import { printHtml } from '../print/printReceipt.ts'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
@@ -27,9 +35,10 @@ import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 export function ProjectsPage() {
   const {
     projects, projectExtracts, projectCosts, retentionReleases, journal, changeOrders, customers, suppliers, employees, boqItems, costCenters, paymentTerminals, paymentTerminalTransactions,
-    addProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
+    addProject, updateProject, addBoqItem, addProjectExtract, addProjectCost, releaseRetention, getProjectProfit,
+    advancedInvoiceDrafts, upsertAdvancedInvoiceDraft, deleteAdvancedInvoiceDraft,
     receiveClientAdvance, getAdvanceBalance, addChangeOrder, setChangeOrderStatus, refundProjectExtract,
-    staffCommissions, addStaffCommission,
+    staffCommissions, addStaffCommission, editProjectExtract, sales, purchases,
   } = useDataStore()
   const { setup } = useAppStore()
   const toast = useToast()
@@ -54,6 +63,10 @@ export function ProjectsPage() {
   const [expectedEnd, setExpectedEnd] = useState('')
   const [managerId, setManagerId] = useState('')
   const [tags, setTags] = useState('')
+  /* §92: مسودات المشروع (kind='project') + مراجعة قبل الإنشاء — مثل فاتورة الأعلاف */
+  const [projDraftsOpen, setProjDraftsOpen] = useState(false)
+  const [projDraftId, setProjDraftId] = useState(() => crypto.randomUUID())
+  const [projChecksOpen, setProjChecksOpen] = useState(false)
 
   /* البند العالمي (طلب المالك): المشروع يُنشأ بجدول كميات BOQ —
      قيمة العقد تُحسب من مجموع البنود (كمية × سعر) لا تُكتب يدوياً */
@@ -68,9 +81,54 @@ export function ProjectsPage() {
   const [valueMode, setValueMode] = useState<'boq' | 'manual'>('boq')
   const effectiveContractMinor = valueMode === 'boq' ? boqTotalMinor : toMinor(contractValue, cur.decimals)
 
+  /* §92: أخطاء مانعة وتحذيرات قبل إنشاء المشروع — لوحة مثل فاتورة الأعلاف */
+  const projectIssues: PrePostIssue[] = [
+    ...(nameAr.trim() === '' ? [{ id: 'name', level: 'blocking' as const, text: 'اسم المشروع مطلوب' }] : []),
+    ...(clientName.trim() === '' ? [{ id: 'client', level: 'warning' as const, text: 'المشروع بلا عميل/جهة — لن يظهر في تقارير ذمم العميل' }] : []),
+    ...(valueMode === 'boq' && validBoqLines.length === 0
+      ? [{ id: 'boq-empty', level: 'blocking' as const, text: 'أدخل بند جدول كميات واحداً على الأقل (وصف + كمية + سعر) — أو بدّل إلى «قيمة إجمالية»' }]
+      : []),
+    ...(valueMode === 'manual' && effectiveContractMinor <= 0
+      ? [{ id: 'value', level: 'blocking' as const, text: 'قيمة العقد الإجمالية مطلوبة (أكبر من صفر)' }]
+      : []),
+    ...(valueMode === 'boq' && boqTotalMinor <= 0 && validBoqLines.length > 0
+      ? [{ id: 'boq-zero', level: 'blocking' as const, text: 'بنود الجدول لا تنتج قيمة عقد — راجع الكميات والأسعار' }]
+      : []),
+    ...(expectedEnd && expectedEnd < startDate
+      ? [{ id: 'dates', level: 'warning' as const, text: 'تاريخ التسليم المتوقع يسبق تاريخ البدء' }]
+      : []),
+    ...boqDraft.filter((l) => l.descriptionAr.trim() && Number(l.qty) > 0 && Number(l.unitPrice) === 0).map((l) => ({
+      id: `free:${l.code || l.descriptionAr.slice(0, 20)}`, level: 'warning' as const, text: `البند «${l.descriptionAr.slice(0, 30)}» بسعر صفر`,
+    })),
+  ]
+  const projectBlocking = projectIssues.filter((issue) => issue.level === 'blocking').length
+
+  const saveProjectDraft = () => {
+    const draft = upsertAdvancedInvoiceDraft({
+      id: projDraftId, kind: 'project',
+      name: `مسودة مشروع — ${nameAr.trim() || 'بلا اسم'}`,
+      payload: JSON.stringify({ nameAr, clientName, clientId, contractValue, retention, startDate, notes, contractNumber, location, expectedEnd, managerId, tags, valueMode, boqDraft }),
+    })
+    toast.show(`حُفظت مسودة المشروع ${new Date(draft.updatedAt).toLocaleTimeString('ar-EG')} ✓`)
+  }
+  const applyProjectDraft = (draft: { payload: string }) => {
+    try {
+      const d = JSON.parse(draft.payload)
+      setNameAr(d.nameAr ?? ''); setClientName(d.clientName ?? ''); setClientId(d.clientId ?? ''); setContractValue(d.contractValue ?? '')
+      setRetention(d.retention ?? '5'); setStartDate(d.startDate ?? new Date().toISOString().slice(0, 10)); setNotes(d.notes ?? '')
+      setContractNumber(d.contractNumber ?? ''); setLocation(d.location ?? ''); setExpectedEnd(d.expectedEnd ?? ''); setManagerId(d.managerId ?? ''); setTags(d.tags ?? '')
+      setValueMode(d.valueMode ?? 'boq'); setBoqDraft(d.boqDraft?.length ? d.boqDraft : [emptyBoqLine()])
+      setOpen(true)
+      toast.show('استُعيدت مسودة المشروع — أكمل وأنشئه ✓')
+    } catch { toast.show('تعذر قراءة المسودة المحفوظة', 'error') }
+  }
+
   const saveProject = () => {
+    /* §92: المانع يفتح لوحة المراجعة بدل رسالة مبعثرة — نمط فاتورة الأعلاف */
+    if (projectBlocking > 0) { setProjChecksOpen(true); return }
     try {
       if (valueMode === 'boq' && validBoqLines.length === 0) throw new Error('أدخل بند جدول كميات واحداً على الأقل (وصف + كمية + سعر) — أو بدّل إلى «قيمة إجمالية»')
+
       const p = addProject({
         nameAr: nameAr.trim(), clientName: clientName.trim(),
         clientId: clientId ? Number(clientId) : null,
@@ -91,6 +149,8 @@ export function ProjectsPage() {
           })
         })
       }
+      deleteAdvancedInvoiceDraft(projDraftId)
+      setProjDraftId(crypto.randomUUID())
       toast.show(`أُنشئ المشروع ${p.code}${valueMode === 'boq' ? ` بجدول كميات من ${validBoqLines.length} بند — قيمة العقد ${fmt(effectiveContractMinor)}` : ''} ✅`)
       setOpen(false); setNameAr(''); setClientName(''); setClientId(''); setContractValue(''); setRetention('5'); setNotes('')
       setContractNumber(''); setLocation(''); setExpectedEnd(''); setManagerId(''); setTags(''); setBoqDraft([emptyBoqLine()]); setValueMode('boq')
@@ -110,20 +170,113 @@ export function ProjectsPage() {
   const [exMode, setExMode] = useState<'lines' | 'gross'>('gross')
   const [exFinal, setExFinal] = useState(false)
   const [exLines, setExLines] = useState<Record<number, string>>({}) // boqItemId → النسبة الجديدة كنص
+  /* §94: مراجعة المستخلص الصادر (وثيقة كاملة) وتعديله (قيد عاكس + إعادة بناء) */
+  const [viewExtract, setViewExtract] = useState<(typeof projectExtracts)[number] | null>(null)
+  const [editingExtract, setEditingExtract] = useState<(typeof projectExtracts)[number] | null>(null)
+  const [exReason, setExReason] = useState('')
   const extractBoq = useMemo(() => (extractFor ? boqItems.filter((b) => b.projectId === extractFor.id) : []), [boqItems, extractFor])
+  /** النسبة السابقة لبند: في التعديل تُقرأ من المستخلص (قبل إصداره) لا من BOQ الحي الذي يحمل نتيجة إصداره */
+  const exPrevPct = (b: { id: number; progressPercent: number }) => editingExtract?.lines?.find((l) => l.boqItemId === b.id)?.prevProgressPercent ?? b.progressPercent
   const exLinesPreview = useMemo(() => {
     const rows = extractBoq.map((b) => {
+      const prev = editingExtract?.lines?.find((l) => l.boqItemId === b.id)?.prevProgressPercent ?? b.progressPercent
       const raw = exLines[b.id]
       const np = raw === undefined || raw === '' ? null : Number(raw)
       const total = Math.round(b.qty * b.unitPriceMinor)
-      const slice = np !== null && Number.isFinite(np) && np > b.progressPercent && np <= 100 ? Math.round((total * (np - b.progressPercent)) / 100) : 0
-      return { boq: b, newPercent: np, sliceMinor: slice }
+      const slice = np !== null && Number.isFinite(np) && np > prev && np <= 100 ? Math.round((total * (np - prev)) / 100) : 0
+      return { boq: b, prevPercent: prev, newPercent: np, sliceMinor: slice }
     })
     return { rows, grossMinor: rows.reduce((sum, row) => sum + row.sliceMinor, 0) }
-  }, [extractBoq, exLines])
+  }, [extractBoq, exLines, editingExtract])
+  /** فتح محرر المستخلص محمّلاً بقيمه الصادرة — التعديل يعكس قيده ويعيد البناء بنفس الرقم */
+  const openExtractEditor = (ex: (typeof projectExtracts)[number]) => {
+    const prj = projects.find((p) => p.id === ex.projectId)
+    if (!prj) return
+    setViewExtract(null)
+    setEditingExtract(ex)
+    setExtractFor(prj)
+    setExDesc(ex.description)
+    setExPayment(ex.payment)
+    setExTreasury('1101')
+    setExVat(ex.totals.vatMinor > 0)
+    setExRecovery(ex.advanceRecoveryMinor ? formatMinor(ex.advanceRecoveryMinor, cur, false) : '')
+    setExFinal(!!ex.isFinal)
+    setExReason('')
+    if (ex.lines?.length) {
+      setExMode('lines')
+      setExLines(Object.fromEntries(ex.lines.map((l) => [l.boqItemId, String(l.newProgressPercent)])))
+    } else {
+      setExMode('gross')
+      setExGross(formatMinor(ex.totals.grossMinor, cur, false))
+    }
+  }
 
   // مستخلص آجل فوق حد ائتمان عميل المشروع — تجاوز باعتماد مدير
   const creditApproval = useSupervisorApproval('sales.credit.override')
+
+  /* ─── معاينة المستندين بمحرك قوالب الفواتير (طلب المالك: نافذة مثل نافذة الفاتورة) ─── */
+  const printSwitches = usePrintSwitches()
+  /** معاينة مستند قبل إنشائه: تعرض في النافذة الحرة أو تطبع صامتة حسب المفاتيح الثلاثة */
+  const previewDraftDoc = (model: ReturnType<typeof buildSimpleDocModel>, title: string, templateHint?: InvoiceTemplate) => {
+    const template: InvoiceTemplate = templateHint ?? (printSwitches.cashierPrint ? 'thermal' : 'a4')
+    const live = useAppStore.getState().receipt
+    if (!printSwitches.silentPrint) {
+      openPrintPreview({
+        html: buildModelHtml(model, cur, live, template),
+        wide: template !== 'thermal',
+        title,
+        rebuild: () => { const r = useAppStore.getState().receipt; return buildModelHtml(model, cur, r, template) },
+      })
+      return
+    }
+    printModelWithTemplate(model, cur, live, template)
+  }
+  /** نموذج طباعة مشروع جديد: بنود جدول الكميات وقيمة العقد — كوثيقة تعاقدية قبل الإنشاء */
+  const buildProjectDraftModel = () => buildSimpleDocModel({
+    docTitle: valueMode === 'boq' ? 'مستند مشروع — جدول كميات' : 'مستند مشروع — مقطوعية',
+    invoiceNumber: 'مسودة',
+    refCode: 'PRJ-DRAFT',
+    dateIso: startDate,
+    partyLabel: clientName.trim() || 'عميل غير محدد',
+    paymentLabel: `محتجز ضمان ${Number(retention) || 0}٪${expectedEnd ? ` · التسليم المتوقع ${expectedEnd}` : ''}`,
+    rows: validBoqLines.map((l) => ({ nameAr: `${l.code.trim() || '—'} — ${l.descriptionAr.trim()} (${l.unit.trim() || 'مقطوعية'})`, qty: Number(l.qty), unitPriceMinor: toMinor(l.unitPrice, cur.decimals), totalMinor: Math.round(Number(l.qty) * toMinor(l.unitPrice, cur.decimals)) })),
+    totalMinor: effectiveContractMinor,
+    paidMinor: 0,
+    operatorName: setup.ownerName ?? 'المالك',
+    settings: useAppStore.getState().receipt,
+    extraFooter: [notes.trim(), location.trim() && `الموقع: ${location.trim()}`].filter(Boolean).join(' · ') || undefined,
+  })
+  /** نموذج طباعة المستخلص قبل تسجيله: شرائح البنود أو المبلغ الإجمالي، والمحتجز والمستحق في التذييل */
+  const buildExtractDraftModel = () => {
+    if (!extractFor) throw new Error('لا مشروع')
+    const grossMinor = exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)
+    const vatMinor = Math.round((grossMinor * (exVat ? setup.vatPercent : 0)) / 100)
+    const retentionMinor = Math.round((grossMinor * extractFor.retentionPercent) / 100)
+    const recoveryMinor = exRecovery ? toMinor(exRecovery, cur.decimals) : 0
+    const dueMinor = grossMinor + vatMinor - retentionMinor - recoveryMinor
+    return buildSimpleDocModel({
+      docTitle: exFinal ? 'مستخلص ختامي — أعمال منفذة' : 'مستخلص أعمال منفذة',
+      invoiceNumber: 'مسودة',
+      refCode: `PRX-${extractFor.code}`,
+      dateIso: new Date().toISOString().slice(0, 10),
+      partyLabel: extractFor.clientName || 'الجهة المالكة',
+      paymentLabel: `${exPayment === 'cash' ? 'تحصيل فوري' : 'آجل (مستحق على العميل)'} · المستحق ${formatMinor(dueMinor, cur, false)} ${cur.symbol}`,
+      rows: exMode === 'lines' && extractBoq.length > 0
+        ? exLinesPreview.rows.filter((r) => r.sliceMinor > 0).map((r) => ({ nameAr: `${r.boq.code} — ${r.boq.descriptionAr} (${r.newPercent ?? r.boq.progressPercent}٪ تراكمي)`, qty: 1, unitPriceMinor: r.sliceMinor, totalMinor: r.sliceMinor }))
+        : grossMinor > 0 ? [{ nameAr: exDesc.trim() || 'قيمة الأعمال المنفذة', qty: 1, unitPriceMinor: grossMinor, totalMinor: grossMinor }] : [],
+      totalMinor: dueMinor,
+      paidMinor: exPayment === 'cash' ? dueMinor : 0,
+      operatorName: setup.ownerName ?? 'المالك',
+      settings: useAppStore.getState().receipt,
+      extraFooter: [
+        `مشروع: ${extractFor.nameAr} (${extractFor.code})`,
+        `الأعمال: ${formatMinor(grossMinor, cur, false)}${vatMinor > 0 ? ` · ض.ق.م ${formatMinor(vatMinor, cur, false)}` : ''}`,
+        `محتجز ${extractFor.retentionPercent}٪: ${formatMinor(retentionMinor, cur, false)}`,
+        recoveryMinor > 0 ? `استرداد دفعة مقدمة: ${formatMinor(recoveryMinor, cur, false)}` : '',
+      ].filter(Boolean).join(' · '),
+    })
+  }
+
   const saveExtract = (creditLimitOverrideBy?: string) => {
     if (!extractFor) return
     try {
@@ -133,7 +286,7 @@ export function ProjectsPage() {
             .map(([id, v]) => ({ boqItemId: Number(id), newProgressPercent: Number(v) }))
             .filter((l) => {
               const b = extractBoq.find((x) => x.id === l.boqItemId)
-              return b ? l.newProgressPercent > b.progressPercent : false
+              return b ? l.newProgressPercent > exPrevPct(b) : false
             })
         : undefined
       const terminal = paymentTerminals.find((row) => row.id === exTerminal.terminalId)
@@ -148,9 +301,41 @@ export function ProjectsPage() {
         isFinal: exFinal,
       })
       toast.show(`سُجل المستخلص ${ex.extractNumber} — المستحق ${fmt(ex.totals.dueMinor)} والمحتجز ${fmt(ex.totals.retentionMinor)} ✅`)
+      /* §94: بعد الإصدار تفتح وثيقة المستخلص فوراً — البيانات والطباعة والتعديل في مكان واحد */
       setExtractFor(null); setExGross(''); setExDesc(''); setExRecovery(''); setExLines({}); setExFinal(false)
+      setViewExtract(ex)
     } catch (e) {
       if (e instanceof CreditLimitError) { creditApproval.request((by) => saveExtract(by ?? 'المشرف')); return }
+      toast.show((e as Error).message, 'error')
+    }
+  }
+
+  /* §94: حفظ تعديل مستخلص صادر — قيد عاكس موثق السبب ثم إعادة بناء بنفس الرقم */
+  const saveExtractEdit = (creditLimitOverrideBy?: string) => {
+    if (!extractFor || !editingExtract) return
+    try {
+      const linesInput = exMode === 'lines'
+        ? Object.entries(exLines)
+            .filter(([, v]) => v !== '')
+            .map(([id, v]) => ({ boqItemId: Number(id), newProgressPercent: Number(v) }))
+            .filter((l) => {
+              const b = extractBoq.find((x) => x.id === l.boqItemId)
+              return b ? l.newProgressPercent > exPrevPct(b) : false
+            })
+        : undefined
+      const ex = editProjectExtract({
+        extractId: editingExtract.id,
+        grossMinor: exMode === 'gross' ? toMinor(exGross, cur.decimals) : undefined,
+        extractLines: linesInput,
+        vatPercent: exVat ? setup.vatPercent : 0, payment: exPayment, description: exDesc.trim(), treasury: exTreasury,
+        advanceRecoveryMinor: exRecovery ? toMinor(exRecovery, cur.decimals) : 0,
+        creditLimitOverrideBy: creditLimitOverrideBy ?? null, isFinal: exFinal, reason: exReason.trim(),
+      })
+      toast.show(`عُدّل المستخلص ${ex.extractNumber}: قيد عاكس ثم إعادة بناء — الصافي الآن ${fmt(ex.totals.dueMinor)} ✅`)
+      setExtractFor(null); setEditingExtract(null); setExReason(''); setExGross(''); setExDesc(''); setExRecovery(''); setExLines({}); setExFinal(false)
+      setViewExtract(ex)
+    } catch (e) {
+      if (e instanceof CreditLimitError) { creditApproval.request((by) => saveExtractEdit(by ?? 'المشرف')); return }
       toast.show((e as Error).message, 'error')
     }
   }
@@ -191,6 +376,32 @@ export function ProjectsPage() {
   const [refundingExtract, setRefundingExtract] = useState<(typeof projectExtracts)[number] | null>(null)
   // عمولة موظف عن المشروع (تعميم — أمر المالك): مهندس مبيعات جلب العقد مثلاً
   const [commFor, setCommFor] = useState<Project | null>(null)
+  /* §94-مراجعة (بلاغ المالك: «راجع كل شئ»): تعديل بيانات المشروع — قيمة العقد قبل أول مستخلص فقط */
+  const [editPrj, setEditPrj] = useState<Project | null>(null)
+  const [epName, setEpName] = useState(''); const [epClient, setEpClient] = useState(''); const [epClientId, setEpClientId] = useState('')
+  const [epValue, setEpValue] = useState(''); const [epRetention, setEpRetention] = useState('')
+  const [epStart, setEpStart] = useState(''); const [epEnd, setEpEnd] = useState(''); const [epLocation, setEpLocation] = useState('')
+  const [epContractNo, setEpContractNo] = useState(''); const [epNotes, setEpNotes] = useState('')
+  const openProjectEdit = (p: Project) => {
+    setEditPrj(p)
+    setEpName(p.nameAr); setEpClient(p.clientName); setEpClientId(p.clientId != null ? String(p.clientId) : '')
+    setEpValue(String(p.contractValueMinor / 10 ** cur.decimals)); setEpRetention(String(p.retentionPercent))
+    setEpStart(p.startDate); setEpEnd(p.expectedEndDate ?? ''); setEpLocation(p.location ?? '')
+    setEpContractNo(p.contractNumber ?? ''); setEpNotes(p.notes ?? '')
+  }
+  const saveProjectEdit = () => {
+    if (!editPrj) return
+    try {
+      const updated = updateProject(editPrj.id, {
+        nameAr: epName.trim(), clientName: epClient.trim(), clientId: epClientId ? Number(epClientId) : null,
+        ...(epValue ? { contractValueMinor: toMinor(epValue, cur.decimals) } : {}),
+        retentionPercent: Number(epRetention) || 0, startDate: epStart, expectedEndDate: epEnd || undefined,
+        location: epLocation.trim() || undefined, contractNumber: epContractNo.trim() || undefined, notes: epNotes.trim(),
+      })
+      toast.show(`عُدّلت بيانات ${updated.code} ✓`)
+      setEditPrj(null)
+    } catch (e) { toast.show((e as Error).message, 'error') }
+  }
   const [commEmpId, setCommEmpId] = useState('')
   const [commAmount, setCommAmount] = useState('')
   const saveProjectCommission = () => {
@@ -233,8 +444,11 @@ export function ProjectsPage() {
       vat: ex.totals.vatMinor > 0 ? `${fmt(ex.totals.vatMinor)} ${cur.symbol}` : '',
       retention: ex.totals.retentionMinor > 0 ? `${fmt(ex.totals.retentionMinor)} ${cur.symbol}` : '',
       retentionPercent: prj.retentionPercent,
+      lines: (ex.lines ?? []).map((l) => ({ code: l.code, descriptionAr: l.descriptionAr, prevPercent: l.prevProgressPercent, newPercent: l.newProgressPercent, value: `${fmt(l.lineValueMinor)} ${cur.symbol}` })),
+      advanceRecovery: ex.advanceRecoveryMinor ? `${fmt(ex.advanceRecoveryMinor)} ${cur.symbol}` : '',
       due: `${fmt(ex.totals.dueMinor)} ${cur.symbol}`,
       payment: ex.payment,
+      currencySymbol: cur.symbol,
     }))
   }
   const viewCosts = viewingLive ? projectCosts.filter((c) => c.projectId === viewingLive.id) : []
@@ -286,6 +500,305 @@ export function ProjectsPage() {
       toast.show(`أُفرج عن محتجزات ${fmt(r.amount)} ${cur.symbol} وأُقفل المشروع 🎉`)
       setReleaseFor(null)
     } catch (e) { toast.show((e as Error).message, 'error') }
+  }
+
+  /* ═══ محرر مستند المشروع — نفس هيئة فاتورة البيع (طلب المالك: نافذة مثل نافذة الفاتورة تخدم المقاولات) ═══ */
+  if (open) {
+    return (
+      <div data-project-doc-editor>
+        <InvoicePOSFrame
+          kind="sale"
+          modeLabel="مشروع مقاولات"
+          currencyLabel={`${cur.code} · ${cur.symbol}`}
+          dateLabel={startDate}
+          branchLabel={setup.shopName ?? ''}
+          userLabel={setup.ownerName ?? 'المالك'}
+          activityLabel={setup.activityId ?? 'نشاط عام'}
+          documentNumber="PRJ-DRAFT"
+          onBack={() => setOpen(false)}
+          onNavigate={() => { /* لا تنقل أثناء التحرير */ }}
+          onPartySearch={() => document.getElementById('project-client-field')?.focus()}
+          onItemSearch={() => (document.getElementById('project-first-boq-line') ?? document.getElementById('project-contract-value'))?.focus()}
+          onSaveDraft={saveProjectDraft}
+          onRestoreDraft={() => setProjDraftsOpen(true)}
+          onPrint={() => {
+            if (valueMode === 'boq' && validBoqLines.length === 0) return toast.show('أضف بند جدول كميات واحداً على الأقل قبل المعاينة', 'error')
+            previewDraftDoc(buildProjectDraftModel(), 'معاينة مستند المشروع — جدول الكميات')
+          }}
+          onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); if (valueMode === 'boq' ? validBoqLines.length > 0 : !!contractValue) previewDraftDoc(buildProjectDraftModel(), 'مستند المشروع') }}
+          onPost={saveProject}
+          headerFields={
+            <>
+              <Field label="اسم المشروع *" icon={<Hammer size={11} />}>
+                <input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="فيلا الشيخ زايد…" />
+              </Field>
+              <Field label="رقم العقد الرسمي">
+                <input value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} className={inputCls} dir="ltr" placeholder="CT-2026-014" />
+              </Field>
+              <Field label="محتجز ضمان الأعمال ٪" hint="يُخصم من كل مستخلص ويُفرج عنه عند التسليم">
+                <input value={retention} onChange={(e) => setRetention(e.target.value)} inputMode="decimal" className={inputCls} />
+              </Field>
+              <Field label="تاريخ البدء">
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} dir="ltr" />
+              </Field>
+              <Field label="التسليم المتوقع">
+                <input type="date" value={expectedEnd} onChange={(e) => setExpectedEnd(e.target.value)} className={inputCls} dir="ltr" />
+              </Field>
+              <Field label="العميل / الجهة المالكة">
+                <div id="project-client-field" className="invoice-doc-infield flex gap-1">
+                  <input className={inputCls} value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="اسم الجهة" aria-label="اسم العميل" />
+                  <PartyQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = customers.find((x) => x.id === id); if (c && !clientName.trim()) setClientName(c.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />
+                </div>
+              </Field>
+              <Field label="مدير المشروع" hint="من سجل الموظفين">
+                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={managerId ? Number(managerId) : 0} onChange={(id) => setManagerId(id ? String(id) : '')} cashLabel="لاحقاً" label="بحث مدير المشروع" cashValue={0} />
+              </Field>
+              <Field label="موقع التنفيذ">
+                <input value={location} onChange={(e) => setLocation(e.target.value)} className={inputCls} placeholder="المنصورة — حي الجامعة" />
+              </Field>
+              <Field label="وسوم (افصل بـ ،)">
+                <input value={tags} onChange={(e) => setTags(e.target.value)} className={inputCls} placeholder="حكومي، تشطيبات" />
+              </Field>
+              <Field label="ملاحظات العقد">
+                <input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} />
+              </Field>
+            </>
+          }
+          partyMeta={
+            <div className="invoice-doc-partymeta">
+              <span>النوع: <b>{valueMode === 'boq' ? '📐 جدول كميات' : '💵 مقطوعية'}</b></span>
+              <span>العميل: <b>{clientName.trim() || 'غير محدد'}</b></span>
+              <span>قيمة العقد: <b className="text-emerald-600">{fmt(effectiveContractMinor)} {cur.symbol}</b></span>
+              <span>البنود: <b>{validBoqLines.length}</b></span>
+              {expectedEnd && <span>التسليم: <b>{expectedEnd}</b></span>}
+            </div>
+          }
+        >
+          <section className="invoice-shell invoice-reference-shell overflow-visible rounded-b-2xl border-x border-b border-slate-300 bg-white shadow-lg dark:border-slate-700 dark:bg-card-dark" data-project-boq>
+            <div className="invoice-lines-panel min-w-0 overflow-visible border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-card-dark">
+              <div className="invoice-lines-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-l from-emerald-500/10 to-transparent p-3 dark:border-slate-700">
+                <div className="invoice-lines-toolbar-title"><b>قيمة العقد وجدول الكميات (BOQ)</b><small>كل بند: كود ووصف ووحدة وكمية وسعر — قيمة العقد تُحسب تلقائياً</small></div>
+                <div className="invoice-lines-kpis">
+                  <div className="invoice-kpi"><small>قيمة العقد (بدون ضريبة)</small><b className="text-emerald-600">{fmt(effectiveContractMinor)} {cur.symbol}</b></div>
+                  <div className="invoice-kpi"><small>البنود الصالحة</small><b>{validBoqLines.length}</b></div>
+                  <div className="invoice-kpi"><small>محتجز الضمان</small><b>{Number(retention) || 0}٪</b></div>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 p-3 border-b border-slate-200 dark:border-slate-700">
+                {([['boq', 'بنود جدول كميات (مُوصى به)'], ['manual', 'قيمة إجمالية']] as const).map(([m, label]) => (
+                  <button key={m} onClick={() => setValueMode(m)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border-2 transition-all ${valueMode === m ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {valueMode === 'manual' ? (
+                <div className="p-4">
+                  <Field label={`قيمة العقد الإجمالية — بدون ضريبة (${cur.symbol}) *`} hint="§95: العقد صافٍ بلا ض.ق.م (تظهر في العرض والمستخلص فقط) — لعقود المقطوعية بلا جدول كميات">
+                    <input id="project-contract-value" value={contractValue} onChange={(e) => setContractValue(e.target.value)} inputMode="decimal" className={inputCls} />
+                  </Field>
+                </div>
+              ) : (
+                <div className="space-y-2 p-3">
+                  {boqDraft.map((l, i) => (
+                    <div key={i} className="grid grid-cols-2 sm:grid-cols-7 gap-2 items-end p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
+                      <Field label="كود البند"><input value={l.code} onChange={(e) => patchBoqLine(i, { code: e.target.value })} className={inputCls} dir="ltr" placeholder={String(i + 1)} /></Field>
+                      <div className="col-span-2"><Field label="وصف البند *"><input id={i === 0 ? 'project-first-boq-line' : undefined} value={l.descriptionAr} onChange={(e) => patchBoqLine(i, { descriptionAr: e.target.value })} className={inputCls} placeholder="أعمال حفر وردم…" /></Field></div>
+                      <Field label="الوحدة *"><input value={l.unit} onChange={(e) => patchBoqLine(i, { unit: e.target.value })} className={inputCls} placeholder="م2 / م3 / طن" /></Field>
+                      <Field label="الكمية *"><input value={l.qty} onChange={(e) => patchBoqLine(i, { qty: e.target.value })} inputMode="decimal" className={inputCls} dir="ltr" /></Field>
+                      <Field label={`سعر الوحدة (${cur.symbol}) *`}><input value={l.unitPrice} onChange={(e) => patchBoqLine(i, { unitPrice: e.target.value })} inputMode="decimal" className={inputCls} dir="ltr" /></Field>
+                      <div className="flex items-center gap-1.5">
+                        <div className="flex-1 min-w-0">
+                          <Field label="تكلفة تقديرية/وحدة" hint="">
+                            <input value={l.estCost} onChange={(e) => patchBoqLine(i, { estCost: e.target.value })} inputMode="decimal" className={inputCls} dir="ltr" placeholder="اختياري" />
+                          </Field>
+                        </div>
+                        {boqDraft.length > 1 && (
+                          <button onClick={() => setBoqDraft((prev) => prev.filter((_, idx) => idx !== i))} title="حذف البند" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all">✕</button>
+                        )}
+                      </div>
+                      {Number(l.qty) > 0 && Number(l.unitPrice) > 0 && (
+                        <div className="col-span-2 sm:col-span-7 text-[11px] font-bold text-emerald-600">
+                          إجمالي البند: {fmt(Math.round(Number(l.qty) * toMinor(l.unitPrice, cur.decimals)))} {cur.symbol}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <Btn variant="ghost" onClick={() => setBoqDraft((prev) => [...prev, emptyBoqLine()])}>+ بند جديد</Btn>
+                    <div className="text-[13px] font-black text-emerald-700 dark:text-emerald-300">
+                      💰 قيمة العقد المحسوبة: {fmt(boqTotalMinor)} {cur.symbol} <span className="text-[10.5px] font-bold text-slate-400">({validBoqLines.length} بند)</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="p-3">
+              <DocOutcome>الأثر: لا قيد عند فتح المشروع · القيود تبدأ من أول دفعة مقدمة أو مستخلص، وكلها منسوبة لمركز تكلفة هذا المشروع · «معاينة» تعرض مستند المشروع بقالب الفواتير قبل إنشائه.</DocOutcome>
+            </div>
+          </section>
+        </InvoicePOSFrame>
+
+        {/* §92: مسودات المشروع + لوحة المراجعة قبل الإنشاء */}
+        <InvoiceDraftsModal open={projDraftsOpen} onClose={() => setProjDraftsOpen(false)} kind="project" drafts={advancedInvoiceDrafts} currency={cur} currentDraftId={projDraftId} onPick={applyProjectDraft} onDelete={deleteAdvancedInvoiceDraft} />
+        <PrePostChecks issues={projectIssues} open={projChecksOpen} onClose={() => setProjChecksOpen(false)} />
+      </div>
+    )
+  }
+
+  /* ═══ محرر المستخلص — فاتورة المقاولات بنفس هيئة فاتورة البيع (طلب المالك) ═══ */
+  if (extractFor) {
+    return (
+      <div data-extract-doc-editor>
+        <InvoicePOSFrame
+          kind="sale"
+          modeLabel={editingExtract ? 'تعديل مستخلص صادر — قيد عاكس وإعادة بناء' : 'مستخلص أعمال'}
+          currencyLabel={`${cur.code} · ${cur.symbol}`}
+          dateLabel={editingExtract ? editingExtract.date.slice(0, 10) : new Date().toISOString().slice(0, 10)}
+          branchLabel={setup.shopName ?? ''}
+          userLabel={setup.ownerName ?? 'المالك'}
+          activityLabel={setup.activityId ?? 'نشاط عام'}
+          documentNumber={editingExtract ? `${editingExtract.extractNumber} (تعديل)` : `PRX-${extractFor.code}`}
+          onBack={() => { setEditingExtract(null); setExtractFor(null) }}
+          onNavigate={() => { /* لا تنقل أثناء التحرير */ }}
+          onPartySearch={() => document.getElementById('extract-desc-field')?.focus()}
+          onItemSearch={() => document.getElementById('extract-first-percent')?.focus()}
+          onSaveDraft={() => toast.show('المستخلص يُسجل بـ«حفظ وترحيل» — بوابات الاعتماد وحد الائتمان تُفحص عندها')}
+          onRestoreDraft={() => toast.show('لا مسودات للمستخلصات — النِّسَب تُحفظ تلقائياً مع كل بند')}
+          onPrint={() => {
+            const gross = exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)
+            if (gross <= 0) return toast.show('أدخل قيمة الأعمال أو نسب التنفيذ قبل المعاينة', 'error')
+            previewDraftDoc(buildExtractDraftModel(), `معاينة المستخلص — ${extractFor.nameAr}`)
+          }}
+          onExportPdf={() => { toast.show('اختر «حفظ كـ PDF» في وجهة الطباعة 🖨️'); const gross = exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals); if (gross > 0) previewDraftDoc(buildExtractDraftModel(), `مستخلص — ${extractFor.nameAr}`) }}
+          onPost={() => (editingExtract ? saveExtractEdit() : saveExtract())}
+          headerFields={
+            <>
+              {editingExtract && (
+                <Field label="سبب التعديل (سجل تدقيق)" hint="يُوثَّق على القيد العاكس — لا تعديل بلا سبب">
+                  <input data-extract-edit-reason value={exReason} onChange={(e) => setExReason(e.target.value)} className={inputCls} placeholder="تصحيح نسبة إنجاز بند / تعديل الاسترداد…" />
+                </Field>
+              )}
+              <Field label="وصف الأعمال المنفذة">
+                <input id="extract-desc-field" value={exDesc} onChange={(e) => setExDesc(e.target.value)} className={inputCls} placeholder="أعمال الأساسات…" />
+              </Field>
+              <Field label="الضريبة على المستخلص">
+                <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
+                  <input type="checkbox" checked={exVat} onChange={(e) => setExVat(e.target.checked)} className="accent-orange-600" />
+                  <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">ض.ق.م {setup.vatPercent}٪ على قيمة الأعمال</span>
+                </label>
+              </Field>
+              <Field label="التحصيل">
+                <div className="flex gap-2">
+                  {(['credit', 'cash'] as const).map((p) => (
+                    <button key={p} onClick={() => setExPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${exPayment === p ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
+                      {p === 'cash' ? 'نقدي فوري' : 'آجل (مستحق)'}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+              {exPayment === 'cash' && (
+                <div className="sm:col-span-2">
+                  <PaymentMethodPicker value={{ treasury: exTreasury, terminalPayment: exTerminal }} onChange={(value) => { setExTreasury(value.treasury); setExTerminal(value.terminalPayment) }} operation="receipt" />
+                </div>
+              )}
+              {getAdvanceBalance(extractFor.id) > 0 && (
+                <Field label={`استرداد من الدفعة المقدمة (رصيدها ${fmt(getAdvanceBalance(extractFor.id))})`} hint="يخصم من مستحق هذا المستخلص ويطفئ التزام 2109">
+                  <input value={exRecovery} onChange={(e) => setExRecovery(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0 = لا استرداد" />
+                </Field>
+              )}
+              <Field label="طبيعة المستخلص">
+                <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-rose-300 dark:border-rose-800 cursor-pointer">
+                  <input type="checkbox" checked={exFinal} onChange={(e) => setExFinal(e.target.checked)} className="accent-rose-600" />
+                  <span className="text-[12px] font-bold text-rose-600 dark:text-rose-400">ختامي — لا مستخلصات بعده</span>
+                </label>
+              </Field>
+            </>
+          }
+          partyMeta={
+            <div className="invoice-doc-partymeta">
+              <span>المشروع: <b>{extractFor.code} — {extractFor.nameAr}</b></span>
+              <span>العميل: <b>{extractFor.clientName || 'الجهة المالكة'}</b></span>
+              <span>النمط: <b>{exMode === 'lines' ? 'بندي من BOQ' : 'مبلغ إجمالي'}</b></span>
+              {editingExtract && <span className="text-amber-600 font-bold">تعديل مستخلص صادر — يعكس قيده ويعيد بناءه بنفس الرقم</span>}
+              <span>محتجز: <b>{extractFor.retentionPercent}٪</b></span>
+              <span>أعمال هذا المستخلص: <b className="text-emerald-600">{fmt(exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals))} {cur.symbol}</b></span>
+            </div>
+          }
+        >
+          <section className="invoice-shell invoice-reference-shell overflow-visible rounded-b-2xl border-x border-b border-slate-300 bg-white shadow-lg dark:border-slate-700 dark:bg-card-dark" data-extract-lines>
+            <div className="invoice-lines-panel min-w-0 overflow-visible border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-card-dark">
+              <div className="invoice-lines-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-gradient-to-l from-orange-500/10 to-transparent p-3 dark:border-slate-700">
+                <div className="invoice-lines-toolbar-title"><b>أعمال هذا المستخلص</b><small>نسب تنفيذ تراكمية لكل بند من جدول الكميات — قيمة الشريحة تُحسب تلقائياً</small></div>
+                <div className="invoice-lines-kpis">
+                  <div className="invoice-kpi"><small>الأعمال</small><b className="text-emerald-600">{fmt(exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals))} {cur.symbol}</b></div>
+                  <div className="invoice-kpi"><small>محتجز {extractFor.retentionPercent}٪</small><b className="text-amber-600">{fmt(Math.round(((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) * extractFor.retentionPercent) / 100))}</b></div>
+                  <div className="invoice-kpi"><small>مستحق متوقع</small><b className="text-orange-600">{fmt((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) + Math.round(((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) * (exVat ? setup.vatPercent : 0)) / 100) - Math.round(((exMode === 'lines' ? exLinesPreview.grossMinor : toMinor(exGross, cur.decimals)) * extractFor.retentionPercent) / 100) - (exRecovery ? toMinor(exRecovery, cur.decimals) : 0))}</b></div>
+                </div>
+              </div>
+              {extractBoq.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 p-3 border-b border-slate-200 dark:border-slate-700">
+                  {([['lines', 'بندي من جدول الكميات'], ['gross', 'مبلغ إجمالي']] as const).map(([m, label]) => (
+                    <button key={m} onClick={() => setExMode(m)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border-2 transition-all ${exMode === m ? 'border-orange-500/50 bg-orange-500/10 text-orange-700 dark:text-orange-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {exMode === 'lines' && extractBoq.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12px]">
+                    <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
+                      <tr>
+                        <th className="p-2 text-right font-bold">البند</th>
+                        <th className="p-2 text-center font-bold">سابق ٪</th>
+                        <th className="p-2 text-center font-bold">جديد ٪ (تراكمي)</th>
+                        <th className="p-2 text-left font-bold">قيمة الشريحة</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {exLinesPreview.rows.map(({ boq: b, newPercent, sliceMinor }, idx) => (
+                        <tr key={b.id} className="border-t border-slate-100 dark:border-slate-800">
+                          <td className="p-2 font-bold text-slate-700 dark:text-slate-200">{b.code} — {b.descriptionAr}</td>
+                          <td className="p-2 text-center text-slate-500">{b.progressPercent}٪</td>
+                          <td className="p-2">
+                            <input
+                              id={idx === 0 ? 'extract-first-percent' : undefined}
+                              value={exLines[b.id] ?? ''} inputMode="decimal" placeholder={`${b.progressPercent}`}
+                              onChange={(e) => setExLines((s) => ({ ...s, [b.id]: e.target.value }))}
+                              className="w-20 mx-auto block text-center rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent py-1 text-[12px] font-bold"
+                            />
+                            {newPercent !== null && (newPercent < b.progressPercent || newPercent > 100) && (
+                              <div className="text-[10px] text-red-500 text-center font-bold mt-0.5">{newPercent > 100 ? 'أقصاها 100' : 'لا تقل عن السابق'}</div>
+                            )}
+                          </td>
+                          <td className="p-2 text-left font-bold tabular-nums text-emerald-600">{sliceMinor > 0 ? fmt(sliceMinor) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-orange-500/10">
+                      <tr>
+                        <td colSpan={3} className="p-2 font-bold text-orange-700 dark:text-orange-300">إجمالي أعمال هذا المستخلص</td>
+                        <td className="p-2 text-left font-black tabular-nums text-orange-700 dark:text-orange-300">{fmt(exLinesPreview.grossMinor)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-4">
+                  <Field label={`قيمة الأعمال المنفذة (${cur.symbol}) *`}><input value={exGross} onChange={(e) => setExGross(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
+                </div>
+              )}
+            </div>
+            <div className="p-3 space-y-2">
+              <div className="rounded-xl bg-orange-500/10 border border-orange-500/30 p-3 text-[12px] font-bold text-orange-700 dark:text-orange-300">
+                يُخصم محتجز {extractFor.retentionPercent}٪ تلقائياً ويقيد على 1105 حتى التسليم النهائي · «معاينة» تعرض المستخلص بقالب الفواتير قبل تسجيله — هذه هي فاتورة الجهة المالكة.
+              </div>
+              <DocOutcome>الأثر: <b>1104 العميل</b> مديناً بصافي المستخلص · <b>4107 إيراد المقاولات</b> دائناً · <b>1105 محتجز لدى العملاء</b> بالنسبة المحتجزة · والضريبة على <b>2102</b>.</DocOutcome>
+            </div>
+          </section>
+        </InvoicePOSFrame>
+      </div>
+    )
   }
 
   return (
@@ -344,6 +857,7 @@ export function ProjectsPage() {
                           title={staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'عليه عمولة موظف — إدارتها من شاشة الموظفين' : 'عمولة موظف عن المشروع'}
                           className={`p-2 rounded-lg transition-all hover:scale-110 ${staffCommissions.some((c) => c.source === 'project' && c.sourceId === p.id && c.status !== 'cancelled') ? 'text-violet-500 bg-violet-500/10' : 'text-slate-400 hover:text-violet-600 hover:bg-violet-500/10'}`}
                         ><HandCoins className="w-4 h-4" /></button>
+                        <button onClick={() => openProjectEdit(p)} data-project-edit title="تعديل بيانات المشروع (القيمة قبل أول مستخلص فقط)" className="p-2 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all hover:scale-110"><Pencil className="w-4 h-4" /></button>
                         <button onClick={() => setViewing(p)} title="التفاصيل والقيود" className="p-2 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all hover:scale-110"><Eye className="w-4 h-4" /></button>
                       </div>
                     </td>
@@ -355,193 +869,7 @@ export function ProjectsPage() {
         </div>
       )}
 
-      {/* مشروع جديد — نموذج مقسّم أقساماً (أمر التعديل: نماذج احترافية) */}
-      <Modal open={open} onClose={() => setOpen(false)} title="مشروع مقاولات جديد" wide subtitle="مستند مشروع: عقد وقيمة ومحتجز ومدة">
-        <div className="space-y-4"><DocSectionHead step="١" title="أساسيات العقد وأطرافه" hint="المشروع مركز تكلفة مستقل: كل مستخلص وتكلفة يُنسبان إليه" />
-          {/* القسم 1: أساسيات العقد */}
-          <div className="rounded-2xl border border-orange-500/20 p-4 space-y-3">
-            <div className="text-[11.5px] font-black text-orange-600 dark:text-orange-400">📋 بيانات العقد الأساسية</div>
-            <Field label="اسم المشروع *"><input value={nameAr} onChange={(e) => setNameAr(e.target.value)} className={inputCls} placeholder="فيلا الشيخ زايد…" /></Field>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="رقم العقد الرسمي"><input value={contractNumber} onChange={(e) => setContractNumber(e.target.value)} className={inputCls} dir="ltr" placeholder="CT-2026-014" /></Field>
-              <Field label="محتجز ضمان الأعمال ٪" hint="يُخصم من كل مستخلص ويُفرج عنه عند التسليم"><input value={retention} onChange={(e) => setRetention(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            </div>
-          </div>
-          {/* القسم: جدول الكميات BOQ — قيمة العقد من البنود (النمط العالمي — طلب المالك) */}
-          <div className="rounded-2xl border border-emerald-500/25 p-4 space-y-3">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="text-[11.5px] font-black text-emerald-600 dark:text-emerald-400">📐 قيمة العقد وجدول الكميات</div>
-              <div className="flex gap-1.5">
-                {([['boq', 'بنود جدول كميات (مُوصى به)'], ['manual', 'قيمة إجمالية']] as const).map(([m, label]) => (
-                  <button key={m} onClick={() => setValueMode(m)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border-2 transition-all ${valueMode === m ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {valueMode === 'manual' ? (
-              <Field label={`قيمة العقد الإجمالية (${cur.symbol}) *`} hint="لعقود المقطوعية بلا جدول كميات — يمكنك إضافة البنود لاحقاً من «جدول الكميات»">
-                <input value={contractValue} onChange={(e) => setContractValue(e.target.value)} inputMode="decimal" className={inputCls} />
-              </Field>
-            ) : (
-              <div className="space-y-2">
-                <p className="text-[11px] text-slate-400">كل بند بخانات مسماة — قيمة العقد تُحسب تلقائياً من مجموع (الكمية × سعر الوحدة)</p>
-                {boqDraft.map((l, i) => (
-                  <div key={i} className="grid grid-cols-2 sm:grid-cols-7 gap-2 items-end p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700">
-                    <Field label="كود البند"><input value={l.code} onChange={(e) => patchBoqLine(i, { code: e.target.value })} className={inputCls} dir="ltr" placeholder={String(i + 1)} /></Field>
-                    <div className="col-span-2"><Field label="وصف البند *"><input value={l.descriptionAr} onChange={(e) => patchBoqLine(i, { descriptionAr: e.target.value })} className={inputCls} placeholder="أعمال حفر وردم…" /></Field></div>
-                    <Field label="الوحدة *"><input value={l.unit} onChange={(e) => patchBoqLine(i, { unit: e.target.value })} className={inputCls} placeholder="م2 / م3 / طن" /></Field>
-                    <Field label="الكمية *"><input value={l.qty} onChange={(e) => patchBoqLine(i, { qty: e.target.value })} inputMode="decimal" className={inputCls} dir="ltr" /></Field>
-                    <Field label={`سعر الوحدة (${cur.symbol}) *`}><input value={l.unitPrice} onChange={(e) => patchBoqLine(i, { unitPrice: e.target.value })} inputMode="decimal" className={inputCls} dir="ltr" /></Field>
-                    <div className="flex items-center gap-1.5">
-                      <div className="flex-1 min-w-0">
-                        <Field label="تكلفة تقديرية/وحدة" hint="">
-                          <input value={l.estCost} onChange={(e) => patchBoqLine(i, { estCost: e.target.value })} inputMode="decimal" className={inputCls} dir="ltr" placeholder="اختياري" />
-                        </Field>
-                      </div>
-                      {boqDraft.length > 1 && (
-                        <button onClick={() => setBoqDraft((prev) => prev.filter((_, idx) => idx !== i))} title="حذف البند" className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-500/10 transition-all">✕</button>
-                      )}
-                    </div>
-                    {Number(l.qty) > 0 && Number(l.unitPrice) > 0 && (
-                      <div className="col-span-2 sm:col-span-7 text-[11px] font-bold text-emerald-600">
-                        إجمالي البند: {fmt(Math.round(Number(l.qty) * toMinor(l.unitPrice, cur.decimals)))} {cur.symbol}
-                      </div>
-                    )}
-                  </div>
-                ))}
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <Btn variant="ghost" onClick={() => setBoqDraft((prev) => [...prev, emptyBoqLine()])}>+ بند جديد</Btn>
-                  <div className="text-[13px] font-black text-emerald-700 dark:text-emerald-300">
-                    💰 قيمة العقد المحسوبة: {fmt(boqTotalMinor)} {cur.symbol} <span className="text-[10.5px] font-bold text-slate-400">({validBoqLines.length} بند)</span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-          {/* القسم 2: العميل */}
-          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
-            <div className="text-[11.5px] font-black text-slate-500">👤 العميل / الجهة المالكة</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="اسم العميل / الجهة"><input value={clientName} onChange={(e) => setClientName(e.target.value)} className={inputCls} /></Field>
-              <Field label="ربط بسجل عميل (إداري)" hint="للمتابعة والتحصيل فقط — لا يؤثر على رصيده؛ الذمة من المستخلص/الفاتورة">
-                <PartyQuickPicker parties={customers} value={clientId ? Number(clientId) : 0} onChange={(id) => { setClientId(id ? String(id) : ''); const c = customers.find((x) => x.id === id); if (c && !clientName.trim()) setClientName(c.nameAr) }} cashLabel="بلا ربط" label="بحث العميل" cashValue={0} />
-              </Field>
-            </div>
-          </div>
-          {/* القسم 3: التنفيذ والجدولة */}
-          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
-            <div className="text-[11.5px] font-black text-slate-500">🗓️ التنفيذ والجدولة والفريق</div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Field label="تاريخ البدء"><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} /></Field>
-              <Field label="التسليم المتوقع"><input type="date" value={expectedEnd} onChange={(e) => setExpectedEnd(e.target.value)} className={inputCls} /></Field>
-              <Field label="مدير المشروع" hint="من سجل الموظفين">
-                <PartyQuickPicker parties={employees.filter((employee) => employee.active)} value={managerId ? Number(managerId) : 0} onChange={(id) => setManagerId(id ? String(id) : '')} cashLabel="لاحقاً" label="بحث مدير المشروع" cashValue={0} />
-              </Field>
-              <Field label="موقع التنفيذ"><input value={location} onChange={(e) => setLocation(e.target.value)} className={inputCls} placeholder="المنصورة — حي الجامعة" /></Field>
-              <Field label="وسوم (افصل بـ ،)"><input value={tags} onChange={(e) => setTags(e.target.value)} className={inputCls} placeholder="حكومي، تشطيبات" /></Field>
-              <Field label="ملاحظات"><input value={notes} onChange={(e) => setNotes(e.target.value)} className={inputCls} /></Field>
-            </div>
-          </div>
-          <DocOutcome>الأثر: لا قيد عند فتح المشروع · القيود تبدأ من أول دفعة مقدمة أو مستخلص، وكلها منسوبة لمركز تكلفة هذا المشروع.</DocOutcome><div className="flex justify-end gap-2">
-            <Btn variant="ghost" onClick={() => setOpen(false)}>إلغاء</Btn>
-            <Btn onClick={saveProject} disabled={!nameAr.trim() || (valueMode === 'manual' ? !contractValue : validBoqLines.length === 0)}>إنشاء المشروع</Btn>
-          </div>
-        </div>
-      </Modal>
 
-      {/* مستخلص */}
-      <Modal open={!!extractFor} onClose={() => setExtractFor(null)} title={extractFor ? `مستخلص جديد — ${extractFor.nameAr}` : ''} subtitle="مستند مستخلص: أعمال منفَّذة ومحتجز وضريبة">
-        {extractFor && (
-          <div className="space-y-3"><DocSectionHead step="١" title="بنود المستخلص ونسب التنفيذ" hint="المحتجز أصل لدى العميل لا خسارة" />
-            {extractBoq.length > 0 && (
-              <div className="flex gap-2">
-                {([['lines', 'بندي من جدول الكميات'], ['gross', 'مبلغ إجمالي']] as const).map(([m, label]) => (
-                  <button key={m} onClick={() => setExMode(m)} className={`flex-1 py-2 rounded-xl text-[12px] font-bold border transition-all ${exMode === m ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
-            {exMode === 'lines' && extractBoq.length > 0 ? (
-              <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-                <table className="w-full text-[12px]">
-                  <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
-                    <tr>
-                      <th className="p-2 text-right font-bold">البند</th>
-                      <th className="p-2 text-center font-bold">سابق ٪</th>
-                      <th className="p-2 text-center font-bold">جديد ٪ (تراكمي)</th>
-                      <th className="p-2 text-left font-bold">قيمة الشريحة</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {exLinesPreview.rows.map(({ boq: b, newPercent, sliceMinor }) => (
-                      <tr key={b.id} className="border-t border-slate-100 dark:border-slate-800">
-                        <td className="p-2 font-bold text-slate-700 dark:text-slate-200">{b.code} — {b.descriptionAr}</td>
-                        <td className="p-2 text-center text-slate-500">{b.progressPercent}٪</td>
-                        <td className="p-2">
-                          <input
-                            value={exLines[b.id] ?? ''} inputMode="decimal" placeholder={`${b.progressPercent}`}
-                            onChange={(e) => setExLines((s) => ({ ...s, [b.id]: e.target.value }))}
-                            className="w-20 mx-auto block text-center rounded-lg border border-slate-300 dark:border-slate-600 bg-transparent py-1 text-[12px] font-bold"
-                          />
-                          {newPercent !== null && (newPercent < b.progressPercent || newPercent > 100) && (
-                            <div className="text-[10px] text-red-500 text-center font-bold mt-0.5">{newPercent > 100 ? 'أقصاها 100' : 'لا تقل عن السابق'}</div>
-                          )}
-                        </td>
-                        <td className="p-2 text-left font-bold tabular-nums text-emerald-600">{sliceMinor > 0 ? fmt(sliceMinor) : '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-orange-500/10">
-                    <tr>
-                      <td colSpan={3} className="p-2 font-bold text-orange-700 dark:text-orange-300">إجمالي أعمال هذا المستخلص</td>
-                      <td className="p-2 text-left font-black tabular-nums text-orange-700 dark:text-orange-300">{fmt(exLinesPreview.grossMinor)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            ) : (
-              <Field label={`قيمة الأعمال المنفذة (${cur.symbol}) *`}><input value={exGross} onChange={(e) => setExGross(e.target.value)} inputMode="decimal" className={inputCls} /></Field>
-            )}
-            <Field label="وصف الأعمال"><input value={exDesc} onChange={(e) => setExDesc(e.target.value)} className={inputCls} placeholder="أعمال الأساسات…" /></Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="التحصيل">
-                <div className="flex gap-2">
-                  {(['credit', 'cash'] as const).map((p) => (
-                    <button key={p} onClick={() => setExPayment(p)} className={`flex-1 py-2 rounded-xl text-sm font-bold border transition-all ${exPayment === p ? 'bg-orange-600 text-white border-orange-600' : 'border-slate-300 dark:border-slate-600 text-slate-500'}`}>
-                      {p === 'cash' ? 'نقدي فوري' : 'آجل (مستحق)'}
-                    </button>
-                  ))}
-                </div>
-                {exPayment === 'cash' && <div className="mt-2 space-y-2"><PaymentMethodPicker value={{treasury:exTreasury,terminalPayment:exTerminal}} onChange={value=>{setExTreasury(value.treasury);setExTerminal(value.terminalPayment)}} operation="receipt"/></div>}
-              </Field>
-              <Field label="الضريبة">
-                <label className="flex items-center gap-2 h-10 px-3 rounded-xl border border-slate-300 dark:border-slate-600 cursor-pointer">
-                  <input type="checkbox" checked={exVat} onChange={(e) => setExVat(e.target.checked)} className="accent-orange-600" />
-                  <span className="text-[12px] font-bold text-slate-600 dark:text-slate-300">ض.ق.م {setup.vatPercent}٪</span>
-                </label>
-              </Field>
-            </div>
-            {getAdvanceBalance(extractFor.id) > 0 && (
-              <Field label={`استرداد من الدفعة المقدمة (رصيدها ${fmt(getAdvanceBalance(extractFor.id))})`} hint="يخصم من مستحق هذا المستخلص ويطفئ التزام 2109">
-                <input value={exRecovery} onChange={(e) => setExRecovery(e.target.value)} inputMode="decimal" className={inputCls} placeholder="0 = لا استرداد" />
-              </Field>
-            )}
-            <div className="rounded-xl bg-orange-500/10 border border-orange-500/30 p-3 text-[12px] font-bold text-orange-700 dark:text-orange-300">
-              يُخصم محتجز {extractFor.retentionPercent}٪ تلقائياً ويقيد على 1105 حتى التسليم النهائي
-            </div>
-            <label className="flex items-center gap-2 px-3 py-2 rounded-xl border border-rose-300 dark:border-rose-800 cursor-pointer">
-              <input type="checkbox" checked={exFinal} onChange={(e) => setExFinal(e.target.checked)} className="accent-rose-600" />
-              <span className="text-[12px] font-bold text-rose-600 dark:text-rose-400">مستخلص ختامي — لا مستخلصات بعده (يمهد للتسليم والإفراج عن المحتجز)</span>
-            </label>
-            <DocOutcome>الأثر: <b>1104 العميل</b> مديناً بصافي المستخلص · <b>4107 إيراد المقاولات</b> دائناً · <b>1105 محتجز لدى العملاء</b> بالنسبة المحتجزة · والضريبة على <b>2102</b>.</DocOutcome><div className="flex justify-end gap-2">
-              <Btn variant="ghost" onClick={() => setExtractFor(null)}>إلغاء</Btn>
-              <Btn onClick={saveExtract} shortcut="F9" disabled={exMode === 'lines' ? exLinesPreview.grossMinor <= 0 : !exGross}>تسجيل المستخلص وقيده</Btn>
-            </div>
-          </div>
-        )}
-      </Modal>
 
       {/* تكلفة */}
       <Modal open={!!costFor} onClose={() => setCostFor(null)} title={costFor ? `تكلفة على — ${costFor.nameAr}` : ''} subtitle="مستند تكلفة مشروع: بند التكلفة ومصدر سدادها">
@@ -595,6 +923,9 @@ export function ProjectsPage() {
       <Modal open={!!viewingLive} onClose={() => setViewing(null)} title={viewingLive ? `${viewingLive.code} — ${viewingLive.nameAr}` : ''} wide>
         {viewingLive && profit && (
           <div className="space-y-4 text-sm">
+            <div className="flex justify-end">
+              <Btn variant="ghost" data-project-new-invoice onClick={() => openSalesInvoiceWindow(undefined, { projectId: viewingLive.id, customerId: viewingLive.clientId ?? undefined })} title="فاتورة بيع كاملة بنافذة الفاتورة المتقدمة — مربوطة بهذا المشروع وعميله"><ShoppingCart size={14} /> فاتورة بيع لهذا المشروع</Btn>
+            </div>
             <div className="grid grid-cols-4 gap-2 text-center">
               <div className="rounded-xl bg-emerald-500/10 p-3"><div className="text-[11px] text-slate-500">المستخلصات</div><div className="font-black text-emerald-600">{fmt(profit.extractedMinor)}</div></div>
               <div className="rounded-xl bg-rose-500/10 p-3"><div className="text-[11px] text-slate-500">التكاليف</div><div className="font-black text-rose-600">{fmt(profit.costsMinor)}</div></div>
@@ -629,6 +960,8 @@ export function ProjectsPage() {
                         <td className="px-3 py-2 text-amber-600">{fmt(e.totals.retentionMinor)}</td>
                         <td className="px-3 py-2 font-bold">{fmt(e.totals.dueMinor)}</td>
                         <td className="px-3 py-2 flex items-center gap-1">
+                          <button onClick={() => setViewExtract(e)} data-extract-review title="مراجعة المستخلص — كل البيانات والقيد والطباعة والتعديل" className="p-1.5 rounded-lg text-slate-400 hover:text-sky-600 hover:bg-sky-500/10 transition-all"><Eye size={13} /></button>
+                          <button onClick={() => openExtractEditor(e)} data-extract-edit title="تعديل المستخلص — قيد عاكس وإعادة بناء بنفس الرقم" className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-all"><Pencil size={13} /></button>
                           <button onClick={() => printExtract(e)} title="طباعة المستخلص للجهة المالكة" className="p-1.5 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-500/10 transition-all"><Printer size={13} /></button>
                           <button onClick={() => setRefundingExtract(e)} title="إشعار دائن (رفض جزء من الأعمال بعد الاعتماد)" className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-all text-[12px] font-black">↩️</button>
                         </td>
@@ -638,6 +971,85 @@ export function ProjectsPage() {
                 </table>
               </div>
             )}
+
+            {/* §94: المشروع مربوط بأطرافه — فواتير عملائه ومشتريات مورديه وعمولات موظفيه في مكان واحد */}
+            {(() => {
+              const prjSales = sales.filter((x) => x.projectId === viewingLive.id)
+              const prjPurchases = purchases.filter((x) => x.projectId === viewingLive.id)
+              const prjComms = staffCommissions.filter((c) => c.source === 'project' && c.sourceId === viewingLive.id)
+              if (!prjSales.length && !prjPurchases.length && !prjComms.length) return null
+              return (
+                <div className="space-y-3" data-project-parties>
+                  {prjSales.length > 0 && (
+                    <div>
+                      <div className="font-bold text-[12px] text-slate-500 mb-1 flex items-center justify-between">
+                        <span className="flex items-center gap-1"><ShoppingCart className="w-4 h-4" /> فواتير بيع المشروع (العملاء)</span>
+                        <b className="text-emerald-600">{fmt(prjSales.reduce((a, x) => a + x.totals.totalMinor, 0))} {cur.symbol}</b>
+                      </div>
+                      <div className="overflow-x-auto rounded-xl border border-emerald-500/20">
+                        <table className="w-full text-[12px]">
+                          <thead className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"><tr>{['الفاتورة', 'التاريخ', 'العميل', 'الإجمالي', 'المحصل'].map((h) => <th key={h} className="px-3 py-1.5 text-right font-bold">{h}</th>)}</tr></thead>
+                          <tbody>
+                            {prjSales.map((x) => (
+                              <tr key={x.id} className="border-t border-slate-100 dark:border-slate-800">
+                                <td className="px-3 py-1.5 font-bold">{x.invoiceNumber}</td>
+                                <td className="px-3 py-1.5">{x.date.slice(0, 10)}</td>
+                                <td className="px-3 py-1.5">{customers.find((c) => c.id === x.customerId)?.nameAr ?? x.partyName ?? 'نقدي'}</td>
+                                <td className="px-3 py-1.5 font-bold">{fmt(x.totals.totalMinor)}</td>
+                                <td className="px-3 py-1.5">{fmt(x.paidMinor ?? 0)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                  {prjPurchases.length > 0 && (
+                    <div>
+                      <div className="font-bold text-[12px] text-slate-500 mb-1 flex items-center justify-between">
+                        <span className="flex items-center gap-1"><Truck className="w-4 h-4" /> مشتريات المشروع (الموردون)</span>
+                        <b className="text-rose-600">{fmt(prjPurchases.reduce((a, x) => a + x.grandTotalMinor, 0))} {cur.symbol}</b>
+                      </div>
+                      <div className="overflow-x-auto rounded-xl border border-rose-500/20">
+                        <table className="w-full text-[12px]">
+                          <thead className="bg-rose-500/10 text-rose-700 dark:text-rose-300"><tr>{['الفاتورة', 'التاريخ', 'المورد', 'الإجمالي'].map((h) => <th key={h} className="px-3 py-1.5 text-right font-bold">{h}</th>)}</tr></thead>
+                          <tbody>
+                            {prjPurchases.map((x) => (
+                              <tr key={x.id} className="border-t border-slate-100 dark:border-slate-800">
+                                <td className="px-3 py-1.5 font-bold">{x.invoiceNumber}</td>
+                                <td className="px-3 py-1.5">{x.date.slice(0, 10)}</td>
+                                <td className="px-3 py-1.5">{suppliers.find((c) => c.id === x.supplierId)?.nameAr ?? '—'}</td>
+                                <td className="px-3 py-1.5 font-bold">{fmt(x.grandTotalMinor)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                  {prjComms.length > 0 && (
+                    <div>
+                      <div className="font-bold text-[12px] text-slate-500 mb-1 flex items-center gap-1"><Users2 className="w-4 h-4" /> عمولات موظفي المشروع</div>
+                      <div className="overflow-x-auto rounded-xl border border-sky-500/20">
+                        <table className="w-full text-[12px]">
+                          <thead className="bg-sky-500/10 text-sky-700 dark:text-sky-300"><tr>{['الكود', 'الموظف', 'القيمة', 'الحالة'].map((h) => <th key={h} className="px-3 py-1.5 text-right font-bold">{h}</th>)}</tr></thead>
+                          <tbody>
+                            {prjComms.map((c) => (
+                              <tr key={c.id} className="border-t border-slate-100 dark:border-slate-800">
+                                <td className="px-3 py-1.5 font-bold">{c.code}</td>
+                                <td className="px-3 py-1.5">{employees.find((e) => e.id === c.employeeId)?.nameAr ?? '—'}</td>
+                                <td className="px-3 py-1.5 font-bold">{fmt(c.amountMinor)}</td>
+                                <td className="px-3 py-1.5">{c.status === 'accrued' ? 'مستحقة' : c.status === 'paid' ? 'مصروفة ✅' : 'ملغاة'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
 
             {viewEntries.map((e) => (
               <div key={e.id} className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -657,6 +1069,33 @@ export function ProjectsPage() {
             ))}
           </div>
         )}
+      </Modal>
+
+      {/* §94-مراجعة: تعديل بيانات المشروع — القيمة مقفولة بعد أول مستخلص (أوامر التغيير هي الباب) */}
+      <Modal open={!!editPrj} onClose={() => setEditPrj(null)} title={editPrj ? `تعديل ${editPrj.code} — ${editPrj.nameAr}` : ''} subtitle="بيانات العقد والمواعيد — الكود والحالة لا يتغيران">
+        {editPrj && (() => {
+          const locked = projectExtracts.some((e) => e.projectId === editPrj.id)
+          return (
+            <div className="grid grid-cols-2 gap-3" data-project-edit-modal>
+              <Field label="اسم المشروع *"><input className={inputCls} value={epName} onChange={(e) => setEpName(e.target.value)} aria-label="اسم المشروع" /></Field>
+              <Field label="الجهة المالكة (العميل) *"><input className={inputCls} value={epClient} onChange={(e) => setEpClient(e.target.value)} aria-label="الجهة المالكة" /></Field>
+              <Field label="ربط سجل العميل" hint="إداري بحت — لا قيد ولا ذمة"><input className={inputCls} type="number" value={epClientId} onChange={(e) => setEpClientId(e.target.value)} placeholder="رقم العميل (اختياري)" aria-label="ربط العميل" /></Field>
+              <Field label={`قيمة العقد — بدون ضريبة (${cur.code})`} hint={locked ? '🔒 صدرت مستخلصات — تعديل القيمة بأمر تغيير فقط' : 'صافية بلا ض.ق.م · قبل أول مستخلص فقط'}>
+                <input className={inputCls} type="number" disabled={locked} value={locked ? String(editPrj.contractValueMinor / 10 ** cur.decimals) : epValue} onChange={(e) => setEpValue(e.target.value)} aria-label="قيمة العقد" />
+              </Field>
+              <Field label="محتجز ضمان الأعمال ٪" hint="يؤثر على المستخلصات القادمة فقط"><input className={inputCls} type="number" value={epRetention} onChange={(e) => setEpRetention(e.target.value)} aria-label="نسبة المحتجز" /></Field>
+              <Field label="رقم العقد الرسمي"><input className={inputCls} value={epContractNo} onChange={(e) => setEpContractNo(e.target.value)} aria-label="رقم العقد" /></Field>
+              <Field label="تاريخ التسليم لل site"><input className={inputCls} type="date" value={epStart} onChange={(e) => setEpStart(e.target.value)} aria-label="تاريخ التسليم" /></Field>
+              <Field label="موعد التسليم المتوقع"><input className={inputCls} type="date" value={epEnd} onChange={(e) => setEpEnd(e.target.value)} aria-label="موعد التسليم" /></Field>
+              <Field label="موقع الأعمال"><input className={inputCls} value={epLocation} onChange={(e) => setEpLocation(e.target.value)} aria-label="موقع الأعمال" /></Field>
+              <Field label="ملاحظات"><input className={inputCls} value={epNotes} onChange={(e) => setEpNotes(e.target.value)} aria-label="ملاحظات" /></Field>
+              <div className="col-span-2 flex gap-2 justify-end pt-1">
+                <Btn variant="ghost" onClick={() => setEditPrj(null)}>إلغاء</Btn>
+                <Btn onClick={saveProjectEdit} data-project-edit-save><Pencil size={14} /> حفظ التعديلات</Btn>
+              </div>
+            </div>
+          )
+        })()}
       </Modal>
 
       {/* الإفراج عن المحتجزات — باختيار الخزينة (طلب المالك) */}
@@ -736,6 +1175,93 @@ export function ProjectsPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* §94: مراجعة المستخلص الصادر — وثيقة كاملة: البيانات والبنود والإجماليات والقيد + تعديل وطباعة */}
+      <Modal open={!!viewExtract} onClose={() => setViewExtract(null)} title={viewExtract ? `المستخلص ${viewExtract.extractNumber} — مراجعة كاملة` : ''} subtitle="كل بيانات المستخلص بعد الإصدار — ومن هنا التعديل والطباعة وإشعار الدائن" wide>
+        {viewExtract && (() => {
+          const prj = projects.find((p) => p.id === viewExtract.projectId)
+          if (!prj) return null
+          const previous = projectExtracts.filter((e) => e.projectId === prj.id && e.id < viewExtract.id).reduce((a, e) => a + e.totals.grossMinor, 0)
+          const cumulative = previous + viewExtract.totals.grossMinor
+          const entry = journal.find((e) => e.id === viewExtract.journalEntryId)
+          const reversalEntry = viewExtract.editReversalEntryId ? journal.find((e) => e.id === viewExtract.editReversalEntryId) : null
+          const progress = prj.contractValueMinor > 0 ? Math.min(100, Math.round((cumulative / prj.contractValueMinor) * 100)) : null
+          return (
+            <div className="space-y-4 text-sm" data-extract-view>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                <div className="rounded-xl bg-slate-500/5 p-3"><div className="text-[11px] text-slate-500">قيمة الأعمال</div><div className="font-black text-emerald-600" data-extract-view-gross>{fmt(viewExtract.totals.grossMinor)}</div></div>
+                <div className="rounded-xl bg-amber-500/10 p-3"><div className="text-[11px] text-slate-500">محتجز {prj.retentionPercent}٪</div><div className="font-black text-amber-600" data-extract-view-retention>{fmt(viewExtract.totals.retentionMinor)}</div></div>
+                <div className="rounded-xl bg-sky-500/10 p-3"><div className="text-[11px] text-slate-500">ض.ق.م</div><div className="font-black text-sky-600">{fmt(viewExtract.totals.vatMinor)}</div></div>
+                <div className="rounded-xl bg-orange-500/10 p-3"><div className="text-[11px] text-slate-500">الصافي المستحق</div><div className="font-black text-orange-600" data-extract-view-due>{fmt(viewExtract.totals.dueMinor)}</div></div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800 text-[12.5px]">
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">المشروع</span><b>{prj.code} — {prj.nameAr}</b></div>
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">الجهة المالكة / العميل</span><b>{prj.clientName || '—'}</b></div>
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">التاريخ · السداد</span><b>{viewExtract.date.slice(0, 10)} · {viewExtract.payment === 'cash' ? 'نقدي محصل' : 'آجل على العميل'}</b></div>
+                <div className="flex justify-between px-3 py-2"><span className="text-slate-500">قيمة العقد · التراكمي</span><b>{fmt(prj.contractValueMinor)} ← {fmt(cumulative)} {progress !== null ? `(${progress}٪)` : ''}</b></div>
+                {viewExtract.advanceRecoveryMinor ? <div className="flex justify-between px-3 py-2"><span className="text-slate-500">استرداد دفعة مقدمة</span><b className="text-amber-600">{fmt(viewExtract.advanceRecoveryMinor)}</b></div> : null}
+                {viewExtract.description ? <div className="px-3 py-2"><span className="text-slate-500">بيان الأعمال: </span><b>{viewExtract.description}</b></div> : null}
+                <div className="flex flex-wrap gap-1.5 px-3 py-2">
+                  {viewExtract.isFinal && <span className="text-[11px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-bold">ختامي</span>}
+                  {viewExtract.editedAt && <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold" title={viewExtract.lastEditReason}>عُدّل: {viewExtract.editedAt.slice(0, 10)}</span>}
+                  {(viewExtract.refundedMinor ?? 0) > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold">إشعار دائن {fmt(viewExtract.refundedMinor ?? 0)}</span>}
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-slate-500/10 text-slate-500 font-bold">{viewExtract.lines?.length ? `${viewExtract.lines.length} بنود BOQ` : 'مبلغ إجمالي'}</span>
+                </div>
+              </div>
+
+              {viewExtract.lines && viewExtract.lines.length > 0 && (
+                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700" data-extract-view-lines>
+                  <table className="w-full text-[12px]">
+                    <thead className="bg-orange-500/10 text-orange-700 dark:text-orange-300"><tr>{['الكود', 'البند', 'سابق ٪', 'حالي ٪', 'قيمة الشريحة'].map((h) => <th key={h} className="px-3 py-2 text-right font-bold">{h}</th>)}</tr></thead>
+                    <tbody>
+                      {viewExtract.lines.map((l) => (
+                        <tr key={l.boqItemId} className="border-t border-slate-100 dark:border-slate-800">
+                          <td className="px-3 py-2 font-mono">{l.code}</td>
+                          <td className="px-3 py-2">{l.descriptionAr}</td>
+                          <td className="px-3 py-2 text-center font-bold">{l.prevProgressPercent}٪</td>
+                          <td className="px-3 py-2 text-center font-bold text-orange-600">{l.newProgressPercent}٪</td>
+                          <td className="px-3 py-2 font-bold">{fmt(l.lineValueMinor)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {viewExtract.refunds?.length ? (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-[12px]">
+                  <b className="text-amber-700 dark:text-amber-300">إشعارات دائنة على المستخلص:</b>
+                  {viewExtract.refunds.map((r, i) => <div key={i} className="flex justify-between px-1 py-1"><span>{r.date.slice(0, 10)} — {r.reason}</span><b>{fmt(r.amountMinor)} {r.mode === 'cash' ? 'نقدي' : 'على العميل'}</b></div>)}
+                </div>
+              ) : null}
+
+              {entry && (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                  <div className="bg-sky-500/10 px-3 py-2 flex items-center gap-2 text-sky-700 dark:text-sky-300 font-bold text-[12px]"><BookOpenText className="w-4 h-4" /> القيد #{entry.entryNumber} — {entry.description}</div>
+                  <table className="w-full text-[12px]"><tbody>
+                    {entry.lines.map((l, i) => (
+                      <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
+                        <td className="px-3 py-1.5">{l.accountCode} — {ACCOUNT_NAMES[l.accountCode] ?? ''}</td>
+                        <td className="px-3 py-1.5 font-mono text-emerald-600">{l.debit ? fmt(l.debit) : ''}</td>
+                        <td className="px-3 py-1.5 font-mono text-rose-600">{l.credit ? fmt(l.credit) : ''}</td>
+                        <td className="px-3 py-1.5 text-slate-500">{l.note}</td>
+                      </tr>
+                    ))}
+                  </tbody></table>
+                  {reversalEntry && <div className="px-3 py-2 text-[11px] text-slate-500 border-t border-slate-100 dark:border-slate-800">قيد عاكس للتعديل #{reversalEntry.entryNumber} — {reversalEntry.description}</div>}
+                </div>
+              )}
+
+              <div className="flex flex-wrap justify-end gap-2 pb-1">
+                <Btn variant="ghost" onClick={() => printExtract(viewExtract)}><Printer size={14} /> طباعة المستخلص</Btn>
+                <Btn variant="ghost" onClick={() => setRefundingExtract(viewExtract)}>إشعار دائن</Btn>
+                <Btn onClick={() => openExtractEditor(viewExtract)} data-extract-view-edit><Pencil size={14} /> تعديل المستخلص</Btn>
+              </div>
+            </div>
+          )
+        })()}
       </Modal>
 
       {/* إشعار دائن على مستخلص (مراجعة المرتجعات) */}

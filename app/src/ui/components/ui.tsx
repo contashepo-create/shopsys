@@ -4,6 +4,9 @@ import { createPortal } from 'react-dom'
 import { X, Eye, EyeOff, FileText, Maximize2, Minus } from 'lucide-react'
 import { create } from 'zustand'
 import { PIN_MAX_LENGTH } from '../../core/auth.ts'
+import { useDataStore } from '../../data/repo.ts'
+import { userPrefsKey } from '../../core/userPreferences.ts'
+import { isFunctionKey, type ShortcutActionId } from '../../core/keyboardShortcuts.ts'
 
 let activeNavigationGuard: ((continueNavigation: () => void) => void) | null = null
 /** تستخدمها روابط التخطيط لمنع الانتقال الداخلي عندما توجد مسودة غير محفوظة. */
@@ -18,6 +21,17 @@ const F9_PAYMENT_PHRASES = /سداد|تحصيل وت|تحصيل وق|صرف ال
 const shortcutActionIds = new WeakMap<() => void, number>()
 let nextShortcutActionId = 1
 
+/* تخصيص الاختصارات (طلب المالك): مفتاح الزر الظاهر والمسجَّل يتبع خريطة
+   المستخدم — F3/F6/F8/F9 في النداءات معرّفات أفعال قياسية لا قيماً ثابتة */
+const SHORTCUT_PROP_ACTIONS: Record<string, ShortcutActionId> = { F3: 'newInvoice', F6: 'print', F8: 'saveDraft', F9: 'post' }
+
+function useResolvedShortcutKey(explicit: string | undefined, autoPost: boolean): string | undefined {
+  const action: ShortcutActionId | undefined = explicit ? SHORTCUT_PROP_ACTIONS[explicit] : autoPost ? 'post' : undefined
+  const override = useDataStore((s) => (action ? s.userPrefs[userPrefsKey(s.currentUserId)]?.keyboardShortcuts?.[action] : undefined))
+  if (!action) return explicit
+  return isFunctionKey(override) ? override : (explicit ?? 'F9')
+}
+
 function textFromChildren(children: ReactNode): string {
   return Children.toArray(children).map((child) => {
     if (typeof child === 'string' || typeof child === 'number' || typeof child === 'bigint') return String(child)
@@ -27,16 +41,17 @@ function textFromChildren(children: ReactNode): string {
 }
 
 export function Btn({
-  children, onClick, variant = 'primary', disabled, type = 'button', className = '', shortcut, title,
+  children, onClick, variant = 'primary', disabled, type = 'button', className = '', shortcut, title, ...rest
 }: {
   children: ReactNode; onClick?: () => void; disabled?: boolean
   variant?: 'primary' | 'ghost' | 'danger' | 'soft'; type?: 'button' | 'submit'; className?: string
   shortcut?: string
   /** تلميح يظهر عند المرور — يشرح الزر المختصر دون إطالة نصه */
   title?: string
-}) {
+} & { [key: `data-${string}`]: string | number | boolean | undefined }) {
   const actionText = textFromChildren(children)
-  const resolvedShortcut = shortcut ?? (F9_SAVE_WORDS.test(actionText) || F9_PAYMENT_PHRASES.test(actionText) ? 'F9' : undefined)
+  const autoPost = F9_SAVE_WORDS.test(actionText) || F9_PAYMENT_PHRASES.test(actionText)
+  const resolvedShortcut = useResolvedShortcutKey(shortcut, autoPost)
   let shortcutActionId: number | undefined
   if (resolvedShortcut && onClick) {
     shortcutActionId = shortcutActionIds.get(onClick)
@@ -57,6 +72,7 @@ export function Btn({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      {...rest}
       className={`px-4 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 hover:scale-[1.03] active:scale-95 disabled:opacity-40 disabled:pointer-events-none ${styles[variant]} ${className}`}
       data-shortcut={resolvedShortcut}
       data-shortcut-action={shortcutActionId}
@@ -148,17 +164,47 @@ export function PinInput({
   )
 }
 
-function normalizeDecimalDraft(value: string): string {
+/**
+ * تطبيع مسوّدة الحقل العشري أثناء الكتابة: أرقام عربية/فارسية وعلامة سالبة
+ * وحسم أدوار الفواصل قبل تسليم المسوّدة (مراجعة §75):
+ * - فاصلة ونقطة معاً: الأخيرة منهما هي العشرية والأخرى فواصل آلاف تُحذف
+ *   («1,234.56» كانت تصير 1.23456 لأن الفاصلة كانت تتحول نقطة ثم تحذف بقية النقاط).
+ * - فواصل متعددة: فواصل آلاف تُحذف كلها («1,234,567» كانت تصير 1.234567).
+ * - فاصلة وحيدة: فاصلة عشرية (لوحة المفاتيح العربية) — تحفظ كما هي ليحسمها
+ *   محرك النقود بخانات العملة عند الالتزام (حقل الأسعار) أو تحول نقطة هنا.
+ */
+function normalizeDecimalDraft(value: string, keepSingleComma = false): string {
   const translated = value
     .replace(/[٠-٩]/g, (digit) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(digit)))
     .replace(/[۰-۹]/g, (digit) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(digit)))
-    .replace(/[٫,]/g, '.')
-    .replace(/[^\d.-]/g, '')
+    .replace(/[٫]/g, '.')
+    .replace(/[٬]/g, '')
+    .replace(/[^\d.,-]/g, '')
   const sign = translated.startsWith('-') ? '-' : ''
   const unsigned = translated.replace(/-/g, '')
-  const dot = unsigned.indexOf('.')
-  if (dot < 0) return sign + unsigned
-  return sign + unsigned.slice(0, dot + 1) + unsigned.slice(dot + 1).replace(/\./g, '')
+  const lastDot = unsigned.lastIndexOf('.')
+  const lastComma = unsigned.lastIndexOf(',')
+  let out: string
+  if (lastComma < 0) {
+    // نقاط فقط: أكثر من نقطة = فواصل آلاف أوروبية تُحذف (كانت تبقى الأولى فتفسد القيمة)
+    out = (unsigned.match(/\./g) ?? []).length > 1 ? unsigned.replace(/\./g, '') : unsigned
+  } else if (lastDot < 0) {
+    const commas = (unsigned.match(/,/g) ?? []).length
+    if (commas > 1) {
+      // فواصل متعددة: إن كانت الخانات بعد الأخيرة ثلاثاً فكلها آلاف، وإلا فالأخيرة عشرية أوروبية
+      const digitsAfterLast = unsigned.length - lastComma - 1
+      const head = unsigned.slice(0, lastComma).replace(/,/g, '')
+      out = digitsAfterLast === 3 ? unsigned.replace(/,/g, '') : `${head}.${unsigned.slice(lastComma + 1)}`
+    } else {
+      out = keepSingleComma ? unsigned : unsigned.replace(',', '.') // فاصلة عشرية عربية
+    }
+  } else {
+    // الفاصل الأحدث هو العشري والآخر فواصل آلاف
+    out = lastComma > lastDot
+      ? unsigned.replace(/\./g, '').replace(/,(\d*)$/, '.$1')
+      : unsigned.replace(/,/g, '')
+  }
+  return sign + out
 }
 
 /**

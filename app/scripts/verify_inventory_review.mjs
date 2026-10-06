@@ -17,8 +17,9 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -38,9 +39,9 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { validateItem } = await import(join(root, 'src/core/items.ts'))
-const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { validateItem } = await import(pathToFileURL(join(root, 'src/core/items.ts')).href)
+const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
 const st = () => useDataStore.getState()
 const bal = (code) => { let v = 0; for (const e of st().journal) for (const l of e.lines) if (l.accountCode === code) v += l.debit - l.credit; return v }
 const allBalanced = () => { for (const e of st().journal) assertBalanced(e.lines) }
@@ -78,8 +79,8 @@ console.log('\n— V2+V3) الجرد: القيد والرصيد ودفعات ا�
 {
   const milk = item('لبن', { trackExpiry: true })
   // دفعتان: 20 تنتهي قريباً + 30 بعيدة = 50
-  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: milk.id, qty: 20, unitPriceMinor: 2000, expiryDate: '2026-10-01' }], expenses: [], paidMinor: 0, notes: '' })
-  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: milk.id, qty: 30, unitPriceMinor: 2000, expiryDate: '2027-01-01' }], expenses: [], paidMinor: 0, notes: '' })
+  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: milk.id, qty: 20, unitPriceMinor: 2000, expiryDate: relDays(45) }], expenses: [], paidMinor: 0, notes: '' })
+  st().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: milk.id, qty: 30, unitPriceMinor: 2000, expiryDate: relDays(400) }], expenses: [], paidMinor: 0, notes: '' })
   const invBefore = bal('1103')
   // جرد فعلي: 45 (عجز 5)
   const stk = st().postStocktake([{ itemId: milk.id, nameAr: milk.nameAr, expectedQty: 50, countedQty: 45, unitCostMinor: 2000 }], 'جرد شهري')
@@ -90,8 +91,8 @@ console.log('\n— V2+V3) الجرد: القيد والرصيد ودفعات ا�
   assert.ok(entry.lines.some((l) => l.accountCode === '5111' && l.debit === 10000)) // AUDIT-001
   ok('V3: قيد العجز 5111 هالك مخزون مدين 100 / 1103 دائن 100 — متوازن')
   // V2: الدفعة القريبة نقصت 5 (FEFO) — كانت الفجوة: تبقى 20+30=50 والرصيد 45
-  const near = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === '2026-10-01')
-  const far = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === '2027-01-01')
+  const near = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === relDays(45))
+  const far = st().batches.find((b) => b.itemId === milk.id && b.expiryDate === relDays(400))
   assert.equal(near.qty, 15)
   assert.equal(far.qty, 30)
   assert.equal(near.qty + far.qty, st().items.find((i) => i.id === milk.id).stockQty)
@@ -158,7 +159,7 @@ console.log('\n— V6) التحويلات المخزنية —')
   assert.equal(bal('1103'), inv1103)
   assert.equal(st().journal.length, journalCount)
   ok('V6: التحويل حركة داخلية — لا قيد و1103 ثابت (القيمة لم تغادر المنشأة)')
-  const { computeWarehouseStock, buildWarehouseDocs } = await import(join(root, 'src/core/transfers.ts'))
+  const { computeWarehouseStock, buildWarehouseDocs } = await import(pathToFileURL(join(root, 'src/core/transfers.ts')).href)
   const stock = computeWarehouseStock(st().items, st().warehouses, st().transfers, buildWarehouseDocs(st().purchases, st().sales, st().saleReturns, st().purchaseReturns))
   assert.equal(stock.get(branch.id).get(rice2.id), 15)
   assert.equal(stock.get(main.id).get(rice2.id), 25)
@@ -212,21 +213,26 @@ console.log('\n— V8) تحقق الأصناف —')
 console.log('\n— V9) الرصيد الافتتاحي للمخزون —')
 {
   const old = item('بضاعة قديمة')
+  /* v1.0.4 (نمط العالمية): تحرير البطاقة قبل أي حركة يقيد قيمة المخزون افتتاحياً —
+     لا تغيير صامت يكسر ثابت 1103 = Σ كمية×تكلفة */
+  const inv0 = bal('1103')
   st().updateItem(old.id, { stockQty: 10, costMinor: 2000 })
+  assert.equal(bal('1103') - inv0, 20000)
+  ok('V9: تحرير بطاقة صنف بلا حركات (10×200) يقيد 1103 افتتاحياً — لا تغيير صامت')
   const invBefore = bal('1103')
   st().setOpeningBalance({ kind: 'item_stock', refId: old.id, amountMinor: 20000, label: old.nameAr })
-  assert.equal(bal('1103') - invBefore, 20000)
-  ok('V9: مخزون افتتاحي 200 — قيد 1103/رأس المال')
+  assert.equal(bal('1103') - invBefore, 0)
+  ok('V9: إعادة تثبيت نفس القيمة لا تقيّد شيئاً — لا ازدواج')
   st().setOpeningBalance({ kind: 'item_stock', refId: old.id, amountMinor: 25000, label: old.nameAr })
-  assert.equal(bal('1103') - invBefore, 25000)
-  ok('V9: تعديل الافتتاحي يرحّل قيد الفرق 50 فقط — لا مسح ولا ازدواج')
+  assert.equal(bal('1103') - invBefore, 5000)
+  ok('V9: تعديل الافتتاحي (250 بدل 200) يرحّل قيد الفرق 50 فقط — لا مسح ولا ازدواج')
   assert.throws(() => st().setOpeningBalance({ kind: 'item_stock', refId: 99999, amountMinor: 1000, label: 'شبح' }), /غير موجود/)
   ok('V9: افتتاحي لصنف غير موجود مرفوض (فخ mobileshop)')
 }
 
 console.log('\n— V10) الحراسات والصلاحيات —')
 {
-  const { PERMISSIONS } = await import(join(root, 'src/core/permissions.ts'))
+  const { PERMISSIONS } = await import(pathToFileURL(join(root, 'src/core/permissions.ts')).href)
   const adjust = PERMISSIONS.find((p) => p.id === 'inv.adjust')
   assert.ok(adjust?.sensitive)
   ok('V10: صلاحية التسوية المخزنية inv.adjust حساسة')

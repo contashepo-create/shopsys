@@ -20,12 +20,23 @@ const { useAppStore } = await import('../src/stores/app.store.ts')
 const { useDataStore } = await import('../src/data/repo.ts')
 const { ACTIVITY_TEMPLATES } = await import('../src/core/activities.ts')
 
-/** اختيار من QuickSelect عبر القيمة المخفية في زر الخيار، بلا اعتماد على عنصر select أصلي. */
+/** اختيار من QuickSelect بالوضعين: قائمة أصلية (native — شاشة الإعداد) أو
+ *  قائمة بحث مركّبة على body (بقية الشاشات) — بلا اعتماد على أي وضع بعينه. */
 function chooseQuickSelect(currentLabel: string, value: string) {
+  /* الوضع الأصلي: select حقيقية — تغيير قيمتها مباشرة */
+  const nativeSelect = [...document.querySelectorAll<HTMLSelectElement>('[data-quick-native] select')].find((node) => {
+    const chosen = node.options[node.selectedIndex]
+    return chosen?.textContent?.trim() === currentLabel || node.value === '' || currentLabel.startsWith('—')
+  })
+  if (nativeSelect) {
+    fireEvent.change(nativeSelect, { target: { value } })
+    return
+  }
+  /* وضع قائمة البحث: فتح الحقل ثم النقر على الخيار المطابق */
   const input = [...document.querySelectorAll('[data-quick-select] input')].find((node) => (node as HTMLInputElement).value === currentLabel) as HTMLInputElement | undefined
   expect(input, `لم يُعثر على المنتقي الحالي «${currentLabel}»`).toBeTruthy()
   fireEvent.focus(input!)
-  const option = [...input!.closest('[data-quick-select]')!.querySelectorAll('[data-quick-option]')].find((node) => node.getAttribute('data-value') === value)
+  const option = [...document.querySelectorAll('[data-quick-option]')].find((node) => node.getAttribute('data-value') === value)
   expect(option, `لم يُعثر على خيار ${value}`).toBeTruthy()
   fireEvent.click(option!)
 }
@@ -53,6 +64,8 @@ async function completeWizard(activityNameAr: string, shopName: string) {
   // كلمة سر المالك تُنشأ مع التسجيل (طلب المالك) — 6-32 خانة
   fireEvent.change(screen.getByPlaceholderText('6 خانات فأكثر'), { target: { value: 'Owner@2026' } })
   fireEvent.change(screen.getByPlaceholderText('أعد كتابتها'), { target: { value: 'Owner@2026' } })
+  // v1.0.8: الخطوة 5 (مكان البيانات — تحذير النسخ والمسؤولية) قبل الإنهاء
+  fireEvent.click(screen.getByText('التالي'))
   fireEvent.click(screen.getByText('🚀 ابدأ العمل'))
   // إنهاء المعالج صار غير متزامن (تجزئة كلمة السر) — انتظر اكتمال الإعداد
   await waitFor(() => expect(useAppStore.getState().setup.completed).toBe(true))
@@ -75,6 +88,8 @@ function resetApp() {
   })
   // seeded=false ليعاد بذر النشاط الجديد — محاكاة تثبيت نظيف لكل مستأجر
   useDataStore.setState({ ...useDataStore.getState(), categories: [], items: [], journal: [], seeded: false, ownerPinHash: null, currentUserId: null, loggedOut: false })
+  // v1.0.8: البوابة القانونية قبل المعالج — موافقة الاتفاقية جزء من التسجيل
+  useAppStore.getState().acceptLegal()
 }
 
 beforeEach(resetApp)
@@ -157,7 +172,7 @@ describe('تسجيل حقيقي لكل نشاط + عزل الأقسام (Feature
     render(<App />)
     await completeWizard('معمل تحاليل طبية', 'معمل ب')
     const mods = useAppStore.getState().setup.modules
-    expect(mods).toEqual(['lab'])
+    expect(mods).toEqual(['lab', 'booking']) // v1.0.11: المعمل يضم المواعيد والحجوزات
     expect(mods).not.toContain('contracting')
     const sb = sidebar()
     expect(sb.queryAllByText('معمل التحاليل').length).toBeGreaterThan(0)

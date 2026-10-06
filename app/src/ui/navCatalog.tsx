@@ -11,7 +11,8 @@ import {
   Printer, ShieldCheck, DatabaseBackup, Palette, KeyRound, Bot, TrendingDown, CloudUpload,
   Microscope, FlaskConical, HeartPulse, Stethoscope, HardHat, Car, Banknote, Wallet2,
   FileText, ListChecks, Users2, ChefHat, Scissors, Gem, Tags, PackageMinus, HandCoins, Gauge,
-  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2, Gift, GitBranch, Calculator } from 'lucide-react'
+  ScrollText, MessageSquareWarning, Headset, Smartphone , Trash2, ScanBarcode, SlidersHorizontal, Repeat, UtensilsCrossed, Shirt , UserCircle2, Gift, GitBranch, Calculator,
+  CalendarCheck2, Fingerprint, CalendarRange, Settings2, FileDown, Network } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { BusinessModule, ItemFeature } from '../core/activities.ts'
 import { INVOICE_FIRST_ACTIVITIES } from '../core/activities.ts'
@@ -74,6 +75,7 @@ export const NAV_SECTIONS: NavSection[] = [
       // «إنشاء فاتورة بيع» عبر ACTIVITY_LABELS (sales.pos) — ولا ورديات ولا استبدال
       { id: 'pos', nameAr: 'شاشة البيع (كاشير)', icon: Store, path: '/pos' },
       { id: 'restaurant-orders', nameAr: 'أوامر الطاولات والدليفري', icon: UtensilsCrossed, path: '/sales/restaurant-orders', module: 'recipes', activities: ['restaurant'] },
+      { id: 'restaurant-reports', nameAr: 'وحدة تقارير المطعم', icon: BarChart3, path: '/restaurant/reports', module: 'recipes', activities: ['restaurant'] },
       { id: 'invoices', nameAr: 'فواتير المبيعات', icon: Receipt, path: '/sales/invoices' },
       { id: 'returns', nameAr: 'مرتجعات المبيعات', icon: RotateCcw, path: '/sales/returns' },
       { id: 'exchange', nameAr: 'الاستبدال', icon: Repeat, path: '/sales/exchange', hideForActivities: INVOICE_FIRST_ACTIVITIES },
@@ -125,6 +127,17 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // شؤون الموظفين (طلب المالك ㉘) — قسم مستقل بتابات داخلية: حضور/بصمة/إجازات/ورديات/تقارير
+    id: 'hr', nameAr: 'شؤون الموظفين (حضور وإجازات)', icon: CalendarCheck2, color: 'teal',
+    children: [
+      { id: 'hr-attendance', nameAr: 'الحضور والانصراف', icon: CalendarCheck2, path: '/hr/attendance' },
+      { id: 'hr-fingerprint', nameAr: 'استيراد البصمة', icon: Fingerprint, path: '/hr/fingerprint' },
+      { id: 'hr-leaves', nameAr: 'الإجازات وأرصدتها', icon: CalendarRange, path: '/hr/leaves' },
+      { id: 'hr-shifts', nameAr: 'الورديات وقواعد الاحتساب', icon: Settings2, path: '/hr/shifts' },
+      { id: 'hr-reports', nameAr: 'تقارير الحضور والرواتب', icon: FileDown, path: '/hr/reports' },
+    ],
+  },
+  {
     id: 'maintenance', nameAr: 'الصيانة', icon: Wrench, color: 'orange', module: 'maintenance',
     children: [
       { id: 'tickets', nameAr: 'أوامر الصيانة', icon: Wrench, path: '/maintenance/tickets' },
@@ -134,6 +147,12 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'laundry', nameAr: 'المغسلة', icon: Shirt, color: 'sky', module: 'laundry',
     children: [
       { id: 'orders', nameAr: 'أوامر الغسيل', icon: Shirt, path: '/laundry/orders' },
+    ],
+  },
+  {
+    id: 'booking', nameAr: 'المواعيد والحجوزات', icon: CalendarClock, color: 'sky', module: 'booking',
+    children: [
+      { id: 'today', nameAr: 'مواعيد اليوم', icon: CalendarClock, path: '/bookings' },
     ],
   },
   {
@@ -147,6 +166,8 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'fleet', nameAr: 'المعدات', icon: Tractor, path: '/rental/fleet' },
       { id: 'contracts', nameAr: 'عقود الإيجار', icon: FileSpreadsheet, path: '/rental/contracts' },
+      { id: 'invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/rental/invoices' },
+      { id: 'reports', nameAr: 'وحدة تقارير المعدات', icon: BarChart3, path: '/rental/reports' },
     ],
   },
   {
@@ -154,6 +175,7 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'properties', nameAr: 'العقارات والملاك', icon: Building2, path: '/realestate/properties' },
       { id: 'leases', nameAr: 'عقود الإيجار', icon: KeyRound, path: '/realestate/leases' },
+      { id: 'invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/realestate/invoices' },
     ],
   },
   {
@@ -161,6 +183,7 @@ export const NAV_SECTIONS: NavSection[] = [
     children: [
       { id: 'trips', nameAr: 'النقلات', icon: Route, path: '/logistics/trips' },
       { id: 'fleet', nameAr: 'الأسطول والسائقون', icon: Truck, path: '/logistics/fleet' },
+      { id: 'invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/logistics/invoices' },
     ],
   },
   {
@@ -176,6 +199,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'contracting', nameAr: 'المقاولات', icon: HardHat, color: 'orange', module: 'contracting',
     children: [
       { id: 'projects', nameAr: 'المشروعات والمستخلصات', icon: HardHat, path: '/contracting/projects' },
+      { id: 'contracting-invoices', nameAr: 'فواتير البيع', icon: Receipt, path: '/contracting/invoices' },
       { id: 'quotations', nameAr: 'عروض الأسعار والمناقصات', icon: FileText, path: '/contracting/quotations' },
       { id: 'boq', nameAr: 'جداول الكميات BOQ', icon: ListChecks, path: '/contracting/boq' },
       { id: 'subcontractors', nameAr: 'مقاولو الباطن', icon: Users2, path: '/contracting/subcontractors' },
@@ -186,6 +210,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { id: 'budget', nameAr: 'موازنة المشروع والانحرافات', icon: Scale, path: '/contracting/budget' },
       { id: 'tasks', nameAr: 'الجدول الزمني للمهام', icon: CalendarClock, path: '/contracting/tasks' },
       { id: 'evm', nameAr: 'القيمة المكتسبة EVM', icon: Gauge, path: '/contracting/evm' },
+      { id: 'reports', nameAr: 'مركز تقارير المقاولات', icon: BarChart3, path: '/contracting/reports' },
       { id: 'approvals', nameAr: 'الموافقات التسلسلية', icon: ShieldCheck, path: '/contracting/approvals' },
     ],
   },
@@ -233,6 +258,7 @@ export const NAV_SECTIONS: NavSection[] = [
     id: 'settings', nameAr: 'الإعدادات', icon: Settings, color: 'slate',
     children: [
       { id: 'general', nameAr: 'عامة (بلد/عملة/ضريبة)', icon: Percent, path: '/settings/general' },
+      { id: 'lan', nameAr: 'شبكة المحل (عدة أجهزة)', icon: Network, path: '/settings/lan' },
       { id: 'profile', nameAr: 'حسابي (بياناتي ورقمي السري)', icon: UserCircle2, path: '/settings/profile' },
       { id: 'permissions', nameAr: 'المستخدمون والصلاحيات', icon: ShieldCheck, path: '/settings/permissions' },
       { id: 'approvals', nameAr: 'اعتماد المستندات', icon: ShieldCheck, path: '/settings/approvals' },

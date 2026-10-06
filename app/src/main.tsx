@@ -6,6 +6,11 @@ import App from './App.tsx'
 import { AppErrorBoundary } from './ui/AppErrorBoundary.tsx'
 import { seedDeveloperDefaults, exposeDeveloperStores } from './dev/devDefaults.ts'
 import { installNoTextSelection } from './ui/interactionGuards.ts'
+import { unsealStorageAfterReload } from './data/secureStorage.ts'
+
+/* v1.0.15: إقلاع جديد = فتح ختم الكتابة بعد استيراد سر (الختم يمنع أي حفظ
+   بالسر الجديد قبل قراءة القاعدة المنقولة — يُفتح فقط بإعادة تشغيل حقيقية) */
+unsealStorageAfterReload()
 
 // يجهز الحساب التجريبي مرة واحدة في بيئة التطوير فقط؛ لا يُضمّن في النسخة النهائية.
 seedDeveloperDefaults()

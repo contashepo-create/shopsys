@@ -122,14 +122,18 @@ const USD = { currencyCode: 'USD', amountMinor: 10000, ratePpm: 48_500_000, deci
 {
   const sales = readFileSync(new URL('../src/ui/pages/AdvancedSalesInvoicePage.tsx', import.meta.url), 'utf8')
   const purchase = readFileSync(new URL('../src/ui/pages/AdvancedPurchaseInvoicePage.tsx', import.meta.url), 'utf8')
+  /* §93: العملة والمبلغ والسعر انتقلت لنافذة منبثقة واحدة (FxCollectModal) — الفحص يتبع النافذة */
+  const modal = readFileSync(new URL('../src/ui/components/FxCollectModal.tsx', import.meta.url), 'utf8')
   for (const [name, source, label] of [['فاتورة البيع', sales, 'تحصيل بعملة أجنبية'], ['فاتورة الشراء', purchase, 'سداد بعملة أجنبية']]) {
     if (!source.includes("from '../../core/foreignCurrency.ts'") && !source.includes("from'../../core/foreignCurrency.ts'")) throw new Error(`${name}: لا تستعمل نواة التحويل المشتركة`)
     if (!source.includes(label)) throw new Error(`${name}: خانة العملة الأجنبية غير معروضة`)
-    if (!source.includes('data-invoice-fx-rate="true"')) throw new Error(`${name}: حقل سعر الصرف مفقود`)
+    if (!source.includes('FxCollectModal')) throw new Error(`${name}: نافذة العملة الأجنبية غير مستخدمة`)
     if (!source.includes('readOnly={fxOn')) throw new Error(`${name}: المبلغ بعملة الدفتر يجب أن يكون محسوباً لا يدوياً`)
     if (!source.includes('bookCurrencyCode:cur.code')) throw new Error(`${name}: عملة الدفتر لا تُمرَّر للمحرك`)
     if (!source.includes('fxErrors')) throw new Error(`${name}: أخطاء الساق لا تُعرض للمستخدم`)
   }
+  if (!modal.includes('data-fx-rate="true"')) throw new Error('نافذة العملة: حقل سعر الصرف مفقود')
+  if (!modal.includes('data-fx-amount="true"')) throw new Error('نافذة العملة: حقل المبلغ الأجنبي مفقود')
   if (!sales.includes('أزل التحصيل على حساب الموظف')) throw new Error('فاتورة البيع: حارس التحصيل على حساب الموظف مفقود')
   if (!sales.includes('fxOn?fxBookMinor:toMinor')) throw new Error('فاتورة البيع: المحصَّل نقداً لا يتبع حاصل التحويل')
   if (!purchase.includes('fxOn?fxBookMinor:toMinor')) throw new Error('فاتورة الشراء: المسدَّد لا يتبع حاصل التحويل')

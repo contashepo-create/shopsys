@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X, Printer } from 'lucide-react'
+import { CheckCheck, ChevronLeft, ChevronRight, Columns3, Eye, FileClock, FileDown, FileText, MessageCircle, MessageSquare, Minus, PackageCheck, RotateCcw, Save, Settings, Square, UserRound, X, Printer , Settings2 } from 'lucide-react'
 import { useWindowHost } from '../windows/windowHostContext.ts'
 import { useWindowStore } from '../windows/windowStore.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
@@ -30,6 +30,8 @@ type InvoicePOSFrameProps = {
   reviewSlot?: ReactNode
   /** طباعة فورية من شريط الفاتورة دون إغلاقها — تتبع مفاتيح الطباعة الثلاثة */
   onQuickPrint?: () => void
+  /** فتح نافذة إعدادات الطباعة السريعة المنبثقة (طلب المالك) */
+  onOpenPrintSettings?: () => void
   /** سطر تدقيق المستند: متى عُدِّل ومن عدّله ولماذا — يظهر في شريط الحالة سطراً واحداً */
   auditLabel?: string
   /** طباعة إذن استلام من المستودع (كميات فقط بلا أسعار) */
@@ -45,7 +47,11 @@ type InvoicePOSFrameProps = {
   onPrint: () => void
   /** تصدير نسخة PDF — يفتح حوار الطباعة على قالب A4 ووجهة «حفظ كـ PDF» */
   onExportPdf?: () => void
+  /** v1.0.13 — إرسال المستند PDF عبر واتساب (سطح المكتب): يولّد الملف ويفتح المحادثة */
+  onWhatsappPdf?: () => void
   onPost: () => void
+  /** نص زر الاعتماد الرئيسي — افتراضياً «حفظ وترحيل» (الفواتير)؛ أوامر الشراء «اعتماد أمر الشراء» لأنها التزام تجاري لا ترحيل محاسبي */
+  postLabel?: string
   children: ReactNode
 }
 
@@ -81,6 +87,7 @@ export function InvoicePOSFrame({
   documentNumber,
   reviewSlot,
   onQuickPrint,
+  onOpenPrintSettings,
   auditLabel,
   onWarehouseReceipt,
   draftCount = 0,
@@ -92,7 +99,9 @@ export function InvoicePOSFrame({
   onRestoreDraft,
   onPrint,
   onExportPdf,
+  onWhatsappPdf,
   onPost,
+  postLabel,
   children,
 }: InvoicePOSFrameProps) {
   const sale = kind === 'sale'
@@ -169,11 +178,17 @@ export function InvoicePOSFrame({
               </Btn>
             </span>
           )}
+          {onOpenPrintSettings && (
+            <Btn variant="ghost" onClick={onOpenPrintSettings} data-print-settings-button
+              title="إعدادات الطباعة السريعة — ورق/لون/تذييل/مفاتيح إظهار، والمزيد من قسم الطباعة">
+              <Settings2 size={13} /> إعدادات الطباعة
+            </Btn>
+          )}
           <Btn variant="ghost" onClick={onRestoreDraft} title="فتح أي مسودة محفوظة باسم العميل"><FileClock size={13} /> المسودات{draftCount ? ` (${draftCount})` : ''}</Btn>
           {onWarehouseReceipt && <Btn variant="ghost" onClick={onWarehouseReceipt} title="إذن استلام من المستودع — كميات فقط بلا أسعار"><PackageCheck size={13} /> إذن استلام مستودع</Btn>}
           <Btn variant="ghost" onClick={onSaveDraft} shortcut="F8"><Save size={13} /> حفظ مسودة</Btn>
           <Btn variant="ghost" onClick={onPrint} shortcut="F6"><Eye size={13} /> معاينة</Btn>
-          <Btn onClick={onPost} shortcut="F9"><CheckCheck size={13} /> حفظ وترحيل</Btn>
+          <Btn onClick={onPost} shortcut="F9"><CheckCheck size={13} /> {postLabel ?? 'حفظ وترحيل'}</Btn>
         </div>
       </header>
 
@@ -237,6 +252,7 @@ export function InvoicePOSFrame({
           <PrintSwitches compact/>
           <Btn variant="ghost" onClick={() => onNavigate('/settings/printing')} title="قوالب الطباعة وإعداد إذن الاستلام والحرارية"><Settings size={13} /> إعدادات الطباعة</Btn>
           {onExportPdf && <Btn variant="ghost" onClick={onExportPdf} title="يفتح حوار الطباعة — اختر وجهة «حفظ كـ PDF»"><FileDown size={13} /> تصدير PDF</Btn>}
+          {onWhatsappPdf && <Btn variant="ghost" onClick={onWhatsappPdf} title="يولّد PDF ويفتح مجلد الملف ومحادثة واتساب — اسحب الملف للمحادثة"><MessageCircle size={13} className="text-emerald-600" /> واتساب PDF</Btn>}
         </div>
       </footer>
     </div>

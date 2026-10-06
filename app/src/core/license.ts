@@ -133,9 +133,65 @@ export function canonicalPayload(p: LicensePayload): string {
  * مسح قاعدة البيانات وإنشاء نشاط آخر ⇒ المفتاح لا يعمل محلياً،
  * والمطوّر يحرقه نهائياً في قائمة الإبطال (Cloudflare) فلا يعاد استخدامه.
  */
-export function activityMatches(payload: LicensePayload, currentActivityId: string | null): boolean {
+/** v1.0.7 (موافقة المالك): قائمة الأنشطة المصرّح بها على هذا الجهاز —
+ * النشاط الأصلي وقت التفعيل + كل تغيير تم بمفتاح نشاط موقّع من المطور.
+ * مفتاح التفعيل القديم يظل صالحاً بعد تغيير النشاط الموقّع. */
+export function activityMatches(payload: LicensePayload, currentActivityId: string | null, licensedActivityHistory?: readonly string[]): boolean {
   if (payload.activityId == null) return true // مفاتيح قديمة بلا ربط
-  return payload.activityId === currentActivityId
+  if (payload.activityId === currentActivityId) return true
+  // النشاط تغيّر لاحقاً بمفتاح موقّع: نشاط المفتاح ونشاط الحالي كلاهما بالسجل
+  if (licensedActivityHistory == null) return false
+  return licensedActivityHistory.includes(currentActivityId ?? '') && licensedActivityHistory.includes(payload.activityId)
+}
+
+/* ═══ مفتاح تغيير النشاط (v1.0.7): SHOPSYS2.<payload>.<sig> ═══
+ * يوقّعه المطوّر فقط (نفس زوج Ed25519) لعميل محدد وجهاز محدد:
+ * التطبيق يطبّق التغيير ويقفل النشاط — المستخدم لا يغيّره بنفسه بأي طريق. */
+export const ACTIVITY_KEY_PREFIX = 'SHOPSYS2'
+
+/** الحد الأدنى بين تغييرين للنشاط (طلب المالك: تقييد التغيير شهرياً) */
+export const ACTIVITY_CHANGE_COOLDOWN_DAYS = 30
+
+export interface ActivityChangePayload {
+  v: 1
+  deviceId: string
+  fromActivityId: string
+  toActivityId: string
+  issuedAt: string
+}
+
+export function canonicalActivityChangePayload(p: ActivityChangePayload): string {
+  return JSON.stringify({ v: p.v, deviceId: p.deviceId, fromActivityId: p.fromActivityId, toActivityId: p.toActivityId, issuedAt: p.issuedAt })
+}
+
+export function encodeActivityChangeKey(payload: ActivityChangePayload, signature: Uint8Array): string {
+  const body = b64uEncode(new TextEncoder().encode(canonicalActivityChangePayload(payload)))
+  return `${ACTIVITY_KEY_PREFIX}.${body}.${b64uEncode(signature)}`
+}
+
+/** تحقق كامل من مفتاح النشاط: توقيع المطوّر + الجهاز المطابق. يعيد الحمولة أو يرمي */
+export async function verifyActivityChangeKey(
+  key: string,
+  deviceId: string,
+  pubB64u: string = DEVELOPER_PUBLIC_KEY_B64U,
+): Promise<ActivityChangePayload> {
+  const parts = key.trim().split('.')
+  if (parts.length !== 3 || parts[0] !== ACTIVITY_KEY_PREFIX) throw new Error('صيغة مفتاح تغيير النشاط غير صحيحة')
+  let payload: ActivityChangePayload
+  try {
+    payload = JSON.parse(new TextDecoder().decode(b64uDecode(parts[1]))) as ActivityChangePayload
+  } catch {
+    throw new Error('محتوى مفتاح النشاط تالف')
+  }
+  if (payload.v !== 1 || !payload.deviceId || !payload.fromActivityId || !payload.toActivityId || !payload.issuedAt) {
+    throw new Error('مفتاح النشاط ناقص البيانات')
+  }
+  const pub = await importPublicKey(pubB64u)
+  const msg = new TextEncoder().encode(canonicalActivityChangePayload(payload))
+  const ok = await crypto.subtle.verify('Ed25519', pub, b64uDecode(parts[2]) as unknown as ArrayBuffer, msg as unknown as ArrayBuffer)
+  if (!ok) throw new Error('توقيع مفتاح النشاط غير صحيح — ليس صادراً من المطوّر')
+  if (payload.deviceId !== deviceId) throw new Error(`مفتاح النشاط صادر لجهاز آخر (${payload.deviceId})`)
+  return payload
 }
 
 /**

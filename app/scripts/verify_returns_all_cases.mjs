@@ -10,6 +10,7 @@
  * 7) الخدمات (مغسلة): إلغاء قبل التسليم يرد العربون (2109) — لا مساس بالإيراد
  * تشغيل: node --experimental-strip-types scripts/verify_returns_all_cases.mjs
  */
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 const mem = new Map()
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) }
 globalThis.window = globalThis
@@ -178,7 +179,7 @@ ok('الميزان متوازن ختاماً', balanced())
 console.log('\n9️⃣ G5: مرتجع الشراء يخفض دفعات الصلاحية ويعلّم السيريالات «مرتجعة للمورد»')
 S().addItem(item({ nameAr: 'زبادي', trackExpiry: true }))
 const yog = S().items.at(-1)
-S().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: yog.id, qty: 20, unitPriceMinor: 1000, expiryDate: '2026-12-31' }], expenses: [], paidMinor: 0, notes: '' })
+S().postPurchase({ supplierId: sup.id, date: '2026-09-17', lines: [{ itemId: yog.id, qty: 20, unitPriceMinor: 1000, expiryDate: relDays(90) }], expenses: [], paidMinor: 0, notes: '' })
 const yogInv = S().purchases.at(-1)
 const batchQty0 = S().batches.filter((b) => b.itemId === yog.id).reduce((a, b) => a + b.qty, 0)
 ok('دفعة صلاحية فُتحت بالشراء (20)', batchQty0 === 20, `فعلي ${batchQty0}`)

@@ -17,7 +17,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { pendingForUser, canApprove } from '../../core/approvals.ts'
 import { effectivePermissionsFor, rolesWithOverrides, canAccessPath } from '../../core/permissions.ts'
 import { labelFor } from '../../core/activityLabels.ts'
-import { guardNavigation, OverlayPortal } from '../components/ui.tsx'
+import { guardNavigation, OverlayPortal, useToast } from '../components/ui.tsx'
 
 /** موضع القائمة تحت عنوانها مباشرة — محاذاة يمينية (RTL) مع انقلاب عند ضيق الشاشة */
 function menuStyleFor(anchor: HTMLElement | null): CSSProperties {
@@ -70,9 +70,20 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
     }))
     .filter((sec) => sec.children.length > 0)
 
-  /* شارة «طلبات الاعتماد المعلّقة» للمخوَّل (طلب المالك) */
+  /* شارة «طلبات الاعتماد المعلّقة» للمخوَّل (طلب المالك) + إشعار فوري عند
+     وصول مستند جديد بانتظاره: يدخل نظام الاعتماد ويعتمد ما أدخله موظف آخر. */
+  const toast = useToast()
   const canApproveDocs = canApprove({ settings: approvalSettings, userId: currentUserId, userPermissions: perms })
   const pendingApprovals = canApproveDocs ? pendingForUser(docApprovals, currentUserId, perms.has('docs.approve')).length : 0
+  const pendingApprovalsRef = useRef(pendingApprovals)
+  const approvalsToastReady = useRef(false)
+  useEffect(() => {
+    if (!approvalsToastReady.current) { approvalsToastReady.current = true; pendingApprovalsRef.current = pendingApprovals; return }
+    if (pendingApprovals > pendingApprovalsRef.current) {
+      toast.show(`📥 ${pendingApprovals} مستند بانتظار اعتمادك — من «طلبات الاعتماد» في الشريط العلوي`)
+    }
+    pendingApprovalsRef.current = pendingApprovals
+  }, [pendingApprovals, toast])
 
   const sectionIds = sections.map((sec) => sec.id).join('|')
   /* قياس عرض كل عنوان مرة واحدة (العناوين ثابتة)، ثم حساب كم عنواناً يتسع فعلاً.
@@ -185,7 +196,7 @@ export function MenuBar({ onSwitchToSidebar }: { onSwitchToSidebar: () => void }
       aria-label="شريط القوائم الرئيسي"
       className="app-menubar sticky top-0 z-40 flex items-center gap-0.5 border-b border-slate-200 bg-white/95 px-2 py-0.5 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95"
     >
-      <img src="/app-icon.png?v=3" className="ms-1 me-1.5 h-5 w-5 shrink-0 rounded" alt="TAHAKAM ERP" />
+      <img src="./app-icon.png?v=4" className="ms-1 me-1.5 h-5 w-5 shrink-0 rounded" alt="TAHAKAM ERP" />
 
       <div ref={stripRef} className="menubar-scroll flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden">
         {visibleSections.map((sec) => {

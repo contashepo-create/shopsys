@@ -15,16 +15,19 @@ export function InvoiceDocumentRoute({ kind }: { kind: 'sale' | 'purchase' }) {
   const navigate = useNavigate()
   const editParam = searchParams.get('edit')
   const editId = editParam && Number.isFinite(Number(editParam)) ? Number(editParam) : undefined
+  /* أمر شراء للتعبئة المسبقة: /purchases/invoices/new?po=<id> — زر «فاتورة استلام» */
+  const poParam = searchParams.get('po')
+  const poId = poParam && Number.isFinite(Number(poParam)) ? Number(poParam) : undefined
   const opened = useRef(false)
   const listPath = kind === 'sale' ? '/sales/invoices' : '/purchases/invoices'
   useEffect(() => {
     if (opened.current) return
     opened.current = true
     if (kind === 'sale') openSalesInvoiceWindow(editId)
-    else openPurchaseInvoiceWindow(editId)
+    else openPurchaseInvoiceWindow(editId, poId != null ? { purchaseOrderId: poId } : undefined)
     /* الخلفية تعود لقائمة الفواتير حتى تبقى الشاشة صالحة عند تصغير النافذة */
     navigate(listPath, { replace: true })
-  }, [kind, editId, navigate, listPath])
+  }, [kind, editId, poId, navigate, listPath])
   return (
     <div className="grid place-items-center p-10 text-sm text-slate-500" data-invoice-window-route>
       <span className="inline-flex items-center gap-2"><FilePlus2 size={16} /> جارٍ فتح {kind === 'sale' ? 'فاتورة المبيعات' : 'فاتورة المشتريات'} في نافذة مستقلة…</span>

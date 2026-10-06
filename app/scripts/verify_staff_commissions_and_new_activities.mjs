@@ -10,8 +10,9 @@
  * تشغيل: node --experimental-strip-types scripts/verify_staff_commissions_and_new_activities.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -28,11 +29,11 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'SA', activityId: 'realestate', vatPercent: 15, taxInclusive: false, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { ACTIVITY_TEMPLATES, ALL_MODULES, effectiveModules } = await import(join(root, 'src/core/activities.ts'))
-const { ACTIVITY_THEMES } = await import(join(root, 'src/core/activityTheme.ts'))
-const { guidesForActivity } = await import(join(root, 'src/core/guides.ts'))
-const { incomeStatement, trialBalance } = await import(join(root, 'src/core/financialReports.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { ACTIVITY_TEMPLATES, ALL_MODULES, effectiveModules } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
+const { ACTIVITY_THEMES } = await import(pathToFileURL(join(root, 'src/core/activityTheme.ts')).href)
+const { guidesForActivity } = await import(pathToFileURL(join(root, 'src/core/guides.ts')).href)
+const { incomeStatement, trialBalance } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 
 const st = () => useDataStore.getState()
 let pass = 0
@@ -171,8 +172,8 @@ mkItem('منتج تام', 'FG-1', { baseUnit: 'قطعة', priceMinor: 50_000 })
 const raw = st().items.find((i) => i.sku === 'RM-1')
 const fg = st().items.find((i) => i.sku === 'FG-1')
 // شراء الخام على دفعتين بصلاحيتين مختلفتين
-st().postPurchase({ supplierId: sup.id, date: '2026-05-01', lines: [{ itemId: raw.id, qty: 40, unitPriceMinor: 1_000, expiryDate: '2027-03-31' }], expenses: [], paidMinor: 40_000, notes: '' })
-st().postPurchase({ supplierId: sup.id, date: '2026-05-02', lines: [{ itemId: raw.id, qty: 60, unitPriceMinor: 1_000, expiryDate: '2027-12-31' }], expenses: [], paidMinor: 60_000, notes: '' })
+st().postPurchase({ supplierId: sup.id, date: '2026-05-01', lines: [{ itemId: raw.id, qty: 40, unitPriceMinor: 1_000, expiryDate: relDays(180) }], expenses: [], paidMinor: 40_000, notes: '' })
+st().postPurchase({ supplierId: sup.id, date: '2026-05-02', lines: [{ itemId: raw.id, qty: 60, unitPriceMinor: 1_000, expiryDate: relDays(400) }], expenses: [], paidMinor: 60_000, notes: '' })
 // وصفة إنتاج مسبق: 10 كجم خام → 5 قطع منتج + تشغيل 5000
 st().addRecipe({ productItemId: fg.id, mode: 'prepped', yieldQty: 5, overheadMinor: 5_000, ingredients: [{ itemId: raw.id, qty: 10 }], isActive: true, notes: '' })
 const recipe = st().recipes.at(-1)
@@ -185,7 +186,7 @@ assert.equal(fgAfter.stockQty, 25, 'الناتج: 5 تشغيلات × 5 = 25')
 const rawBatches = st().batches.filter((b) => b.itemId === raw.id)
 const batchSum = rawBatches.reduce((a, b) => a + b.qty, 0)
 assert.equal(batchSum, 50, `Σدفعات الخام (${batchSum}) = مخزونه (50) — لا دفعات وهمية`)
-const early = rawBatches.find((b) => b.expiryDate === '2027-03-31')
+const early = rawBatches.find((b) => b.expiryDate === relDays(180))
 assert.ok(!early || early.qty === 0, 'الدفعة الأقرب انتهاءً استُهلكت أولاً (FEFO)')
 ok('أمر الإنتاج استهلك دفعات الصلاحية FEFO: الأقرب انتهاءً نفدت أولاً وΣالدفعات=المخزون (الإصلاح الجديد)')
 // تكلفة الناتج = خامات + تشغيل

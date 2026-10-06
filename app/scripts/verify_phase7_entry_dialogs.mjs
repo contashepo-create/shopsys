@@ -14,9 +14,11 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { reporter } from './auditKit.mjs'
+import { fileURLToPath } from 'node:url'
+const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 const R = reporter('المرحلة 7 — نوافذ الإدخال المالية')
-const UI = '/home/user/shopsys/app/src/ui/'
+const UI = `${APP_ROOT}/src/ui/`
 const read = (f) => readFileSync(UI + f, 'utf8')
 
 const docSection = read('components/DocSection.tsx')
@@ -47,9 +49,14 @@ const commissions = read('pages/ExternalCommissionsPage.tsx')
   const steps = [...purchaseExpense.matchAll(/<DocSectionHead step="([١٢٣٤])"/g)].map((m) => m[1])
   assert.deepEqual(steps, ['١', '٢', '٣', '٤'], `ترقيم أقسام نافذة المصروف غير متسلسل: ${steps.join('')}`)
   assert.ok(salesInvoice.includes('<DocSectionHead step="١" title="بنود يتحملها العميل"'), 'نافذة المصروفات على العميل بلا قسم مرقّم')
-  assert.ok(salesInvoice.includes('<DocSectionHead step="١" title="عمولات البيع"') && salesInvoice.includes('<DocSectionHead step="٢" title="مصروفات داخلية على الفاتورة"'),
-    'نافذة المصروفات الداخلية بلا أقسام مرقّمة')
-  R.ok('نوافذ المصروفات الثلاث بأقسام مرقّمة كسند القبض/الصرف (٤ أقسام في مدير الشراء، وقسم/قسمان في نوافذ الفاتورة)')
+  assert.ok(salesInvoice.includes('<DocSectionHead step="١" title="بنود يتحملها العميل"'), 'نافذة المصروفات على العميل بلا قسم مرقّم')
+  /* نافذة المصروفات الداخلية أعيد تصميمها بطلب المالك (جولة المعاينة الحية):
+     نافذة أوسع (extraWide) بتابات «مصروفات/عمولات» وبطاقة مختصرة لكل مصروف
+     بتفاصيل قابلة للفتح بدل الأقسام المرقّمة الطويلة */
+  assert.ok(salesInvoice.includes('data-expense-tab="expenses"') && salesInvoice.includes('data-expense-tab="commissions"'),
+    'نافذة المصروفات الداخلية الجديدة بلا تابات فاصلة')
+  assert.ok(salesInvoice.includes('data-expense-details='), 'بطاقة المصروف بلا تفاصيل قابلة للفتح')
+  R.ok('مدير مصروفات الشراء بأقسام مرقّمة (١-٤) · مصروفات العميل بقسم مرقّم · الداخلية بالتصميم الجديد (تابات + بطاقات قابلة للفتح)')
 }
 
 /* ③ الوضع الليلي: لا هكس محفور بلا مقابل في نوافذ الإدخال المالية */
@@ -166,7 +173,7 @@ const commissions = read('pages/ExternalCommissionsPage.tsx')
   }
   assert.equal((custody.match(/<DocOutcome>/g) ?? []).length, 3, 'ليست كل نوافذ العهدة تعرض القيد قبل الترحيل')
   // الحسابات المعروضة في المعاينة هي نفسها التي يرحّل عليها المحرك
-  const engine = readFileSync('/home/user/shopsys/app/src/core/custody.ts', 'utf8')
+  const engine = readFileSync(`${APP_ROOT}/src/core/custody.ts`, 'utf8')
   for (const code of ['1108', '2107', '1107']) {
     assert.ok(engine.includes(`'${code}'`), `حساب العهدة ${code} غير موجود في المحرك`)
     assert.ok(custody.includes(`(${code})`), `النافذة لا تُظهر الحساب ${code} الذي يرحّل عليه المحرك`)
@@ -184,7 +191,7 @@ const commissions = read('pages/ExternalCommissionsPage.tsx')
   assert.ok(cheques.includes('أوراق قبض (1106)') && cheques.includes('أوراق دفع (2106)'), 'نافذة الشيك لا تعرض حسابي الأوراق')
   assert.ok(cheques.includes('لا نقد يدخل الآن') && cheques.includes('لا نقد يخرج الآن'),
     'النافذة لا توضح أن تسجيل الشيك ليس حركة نقدية — أخطر لبس محاسبي في الشيكات')
-  const engine = readFileSync('/home/user/shopsys/app/src/core/cheques.ts', 'utf8')
+  const engine = readFileSync(`${APP_ROOT}/src/core/cheques.ts`, 'utf8')
   for (const code of ['1106', '2106']) assert.ok(engine.includes(`'${code}'`), `حساب الأوراق ${code} غير موجود في محرك الشيكات`)
   assert.ok(/disabled=\{!chequeNumber\.trim\(\) \|\| \(!partyId && !partyName\.trim\(\)\) \|\| amountMinor <= 0 \|\| !dueDate\}/.test(cheques),
     'نافذة الشيك تقبل شيكاً بلا رقم أو طرف أو مبلغ أو استحقاق')

@@ -35,6 +35,15 @@ export interface WarehouseDoc {
 }
 
 /**
+ * كمية السطر بالوحدة الأساسية (نفس منطق baseQty في pos.ts — مكررة محلياً
+ * لتبقى النواة الخالصة بلا استيراد متبادل). إصلاح §80: كان buildWarehouseDocs
+ * يزيح كمية السطر كما هي (كرتونة = 1) بينما المخزون الكلي يتحرك بالأساسية
+ * (كرتونة = 12) فتنحرف أرصدة المخازن وتظهر بضاعة في غير مخزنها.
+ */
+const qtyBase = (l: { qty: number; unitFactor?: number }): number =>
+  Math.round(l.qty * (l.unitFactor ?? 1) * 1000) / 1000
+
+/**
  * حساب أرصدة المخازن من الرصيد الكلي + سجل التحويلات + مستندات المخازن.
  * items: الرصيد الكلي لكل صنف (stockQty). transfers: بالترتيب الزمني.
  * docs (اختياري): فواتير بيع/شراء اختير لها مخزن غير الرئيسي — تُزاح كمياتها
@@ -114,12 +123,12 @@ export function transferTotalQty(lines: TransferLine[]): number {
  * ومرتجع شراء عن فاتورة وردت لمخزن X ⇒ سالب في X (خرجت من حيث دخلت).
  */
 export function buildWarehouseDocs(
-  purchases: { id?: number; projectId?: number | null; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
-  sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; warehouseId?: number | null }[] }[],
-  saleReturns: { saleId: number; lines: { itemId: number; qty: number; condition?: string; saleLineIndex?: number; warehouseId?: number | null }[] }[] = [],
-  purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number; purchaseLineIndex?: number; warehouseId?: number | null }[] }[] = [],
-  productionOrders: { warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; productItemId: number; producedQty: number; ingredientItems?: { itemId: number; qty: number; warehouseId?: number | null }[] }[] = [],
-  processingOrders: { sourceWarehouseId?: number | null; outputWarehouseId?: number | null; sourceItemId: number; sourceQty: number; outputs: { itemId: number; qty: number }[] }[] = [],
+  purchases: { id?: number; projectId?: number | null; warehouseId?: number | null; lines: { itemId: number; qty: number; unitFactor?: number; warehouseId?: number | null }[] }[],
+  sales: { id?: number; warehouseId?: number | null; lines: { itemId: number; qty: number; unitFactor?: number; warehouseId?: number | null }[] }[],
+  saleReturns: { saleId: number; lines: { itemId: number; qty: number; unitFactor?: number; condition?: string; saleLineIndex?: number; warehouseId?: number | null }[] }[] = [],
+  purchaseReturns: { purchaseId: number; lines: { itemId: number; qty: number; unitFactor?: number; purchaseLineIndex?: number; warehouseId?: number | null }[] }[] = [],
+  productionOrders: { warehouseId?: number | null; ingredientWarehouseId?: number | null; outputWarehouseId?: number | null; productItemId: number; producedQty: number; ingredientItems?: { itemId: number; qty: number; unitFactor?: number; warehouseId?: number | null }[] }[] = [],
+  processingOrders: { sourceWarehouseId?: number | null; outputWarehouseId?: number | null; sourceItemId: number; sourceQty: number; outputs: { itemId: number; qty: number; unitFactor?: number }[] }[] = [],
 ): WarehouseDoc[] {
   const docs: WarehouseDoc[] = []
   const pushLineDoc = (warehouseId: number | null | undefined, itemId: number, qtyDelta: number) => {
@@ -130,21 +139,21 @@ export function buildWarehouseDocs(
   // الفاتورة قد تكون على مخزن واحد، أو «تحديد بالسطر» وفيها warehouseId على كل سطر.
   for (const p of purchases) {
     if (p.projectId != null) continue // فاتورة مشروع: بضاعتها تكلفة موقع مباشرة وليست رصيد مخزن
-    for (const l of p.lines) pushLineDoc(l.warehouseId ?? p.warehouseId ?? null, l.itemId, l.qty)
+    for (const l of p.lines) pushLineDoc(l.warehouseId ?? p.warehouseId ?? null, l.itemId, qtyBase(l))
   }
   for (const s of sales) {
-    for (const l of s.lines) pushLineDoc(l.warehouseId ?? s.warehouseId ?? null, l.itemId, -l.qty)
+    for (const l of s.lines) pushLineDoc(l.warehouseId ?? s.warehouseId ?? null, l.itemId, -qtyBase(l))
   }
 
   const saleById = new Map(sales.filter((s) => s.id != null).map((s) => [s.id!, s]))
   // يبقى الاستهلاك متراكماً بين جميع مرتجعات الفاتورة، لا يبدأ من أول سطر مع كل مستند.
   const remainingSaleLineQty = new Map<string, number>()
-  for (const sale of sales) sale.lines.forEach((line, index) => remainingSaleLineQty.set(`${sale.id ?? 0}:${index}`, line.qty))
+  for (const sale of sales) sale.lines.forEach((line, index) => remainingSaleLineQty.set(`${sale.id ?? 0}:${index}`, qtyBase(line)))
   for (const r of saleReturns) {
     const sale = saleById.get(r.saleId)
     if (!sale) continue
     for (const retLine of r.lines.filter((l) => l.condition !== 'damaged')) {
-      let left = retLine.qty
+      let left = qtyBase(retLine)
       const referencedIndex = 'saleLineIndex' in retLine && typeof retLine.saleLineIndex === 'number' ? retLine.saleLineIndex : null
       const indexes = referencedIndex == null ? sale.lines.map((_, index) => index) : [referencedIndex]
       for (const i of indexes) {
@@ -165,23 +174,23 @@ export function buildWarehouseDocs(
   // التصنيع حركة داخل المخزن المحدد: خامات سالبة ومنتج نهائي موجب.
   for (const order of productionOrders) {
     pushLineDoc(order.outputWarehouseId ?? order.warehouseId ?? null, order.productItemId, order.producedQty)
-    for (const ingredient of order.ingredientItems ?? []) pushLineDoc(ingredient.warehouseId ?? order.ingredientWarehouseId ?? order.warehouseId ?? null, ingredient.itemId, -ingredient.qty)
+    for (const ingredient of order.ingredientItems ?? []) pushLineDoc(ingredient.warehouseId ?? order.ingredientWarehouseId ?? order.warehouseId ?? null, ingredient.itemId, -qtyBase(ingredient))
   }
   // التجهيز/التفكيك أيضاً حركة مخزنية: خام خارج ونواتج داخلة في مخازنها.
   for (const order of processingOrders) {
     pushLineDoc(order.sourceWarehouseId ?? null, order.sourceItemId, -order.sourceQty)
-    for (const output of order.outputs) pushLineDoc(order.outputWarehouseId ?? order.sourceWarehouseId ?? null, output.itemId, output.qty)
+    for (const output of order.outputs) pushLineDoc(order.outputWarehouseId ?? order.sourceWarehouseId ?? null, output.itemId, qtyBase(output))
   }
 
   const purchaseById = new Map(purchases.filter((p) => p.id != null && p.projectId == null).map((p) => [p.id!, p]))
   // مرتجعات الشراء الحالية مجمعة بالصنف؛ نوزعها على سطور الأصل بترتيبها حتى لا يخرج رصيد من مخزن لم يستلم.
   const remainingPurchaseLineQty = new Map<string, number>()
-  for (const p of purchases) p.lines.forEach((l, i) => remainingPurchaseLineQty.set(`${p.id ?? 0}:${i}`, l.qty))
+  for (const p of purchases) p.lines.forEach((l, i) => remainingPurchaseLineQty.set(`${p.id ?? 0}:${i}`, qtyBase(l)))
   for (const r of purchaseReturns) {
     const purchase = purchaseById.get(r.purchaseId)
     if (!purchase) continue
     for (const retLine of r.lines) {
-      let left = retLine.qty
+      let left = qtyBase(retLine)
       const indexes = retLine.purchaseLineIndex == null
         ? purchase.lines.map((_, index) => index)
         : [retLine.purchaseLineIndex]

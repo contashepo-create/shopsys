@@ -5,9 +5,9 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * 2) مسيرات الرواتب: مسير شهري (أساسي + بدلات + إضافي − خصومات − سلف)
  *    يترحّل بقيد متوازن بنيوياً: 5102 → خزينة (نقدي) أو 2104 (استحقاق)
  */
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download, UserSearch } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, Phone, ChevronDown, FileBadge, BookOpenText, Eye, BadgeCheck, BadgeX, FileSpreadsheet, Download, UserSearch, CalendarCheck2, UserCog, Banknote, HandCoins, Percent } from 'lucide-react'
 import { useDataStore, EMPTY_EXTENDED, type Employee, type PayrollRun } from '../../data/repo.ts'
 import { rolesWithOverrides, visibleRolesForModules } from '../../core/permissions.ts'
 import { suggestRoleForJobTitle } from '../../core/audit.ts'
@@ -18,9 +18,11 @@ import { matchesPartyCode, partyCode } from '../../core/partyCodes.ts'
 import { formatMinor, toMinor } from '../../core/money.ts'
 import { toCsv } from '../../core/security.ts'
 import { monthLabelAr, type PayrollPayMode, type PayrollLineInput } from '../../core/payroll.ts'
+import type { PayrollSlip } from '../../core/payrollSlips.ts'
 import { matchesSearch } from '../../core/search.ts'
 import { STAFF_COMMISSION_SOURCE_LABELS, STAFF_COMMISSION_STATUS_LABELS, type StaffCommissionSource } from '../../core/staffCommissions.ts'
 import { Btn, Field, inputCls, Modal, useToast, EmptyState } from '../components/ui.tsx'
+import { parseEmployeesCsv, employeesImportTemplateCsv, type EmployeeImportResult } from '../../core/employeesImport.ts'
 import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { PaySourcePicker, DEFAULT_PAY_SOURCE, type PaySourceValue } from '../components/PaySourcePicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
@@ -87,6 +89,10 @@ interface DraftLine {
 }
 
 export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' | 'payroll' | 'advances' | 'deductions' | 'commissions' }) {
+  /* قسم مستقل بتابات داخلية (طلب المالك ㉘): التابات تُبدَّل من الشاشة نفسها،
+     والمسار الخارجي (initialTab) يحدد التاب الابتدائي فقط */
+  const [tab, setTab] = useState(initialTab)
+  useEffect(() => { setTab(initialTab) }, [initialTab])
   const { employees, payrollRuns, journal, employeeAdvances, employeeDeductions, advanceRepayments, staffCommissions, getDriverDueBalance, sales, cars, projects, leases, properties, addEmployee, updateEmployee, removeEmployee, postPayroll, grantEmployeeAdvance, getEmployeeAdvanceBalance, getEmployeeDeductionBalance, getEmployeeExcessDue, addEmployeeDeduction, repayEmployeeAdvance, waiveEmployeeDeduction, addStaffCommission, payStaffCommission, cancelStaffCommission, updateStaffCommissionAmount, getStaffCommissionsDue, roleOverrides, customRoles } = useDataStore()
   // تجاوز سقف الخصم 50% من الراتب (قوانين العمل) — اعتماد مشرف موثق بالاسم
   const dedOverrideApproval = useSupervisorApproval('trs.payment.approve')
@@ -102,11 +108,47 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const fmt = (m: number) => formatMinor(m, cur, false)
   const toMajor = (m: number) => (m ? String(m / 10 ** cur.decimals) : '')
 
-  const tab = initialTab
   /* ── حالة قسائم الرواتب (طلب المالك) ── */
   const payrollSlips = useDataStore((state) => state.payrollSlips)
   const accruePayrollSlips = useDataStore((state) => state.accruePayrollSlips)
-  const payPayrollSlip = useDataStore((state) => state.payPayrollSlip)
+  const postVoucher = useDataStore((state) => state.postVoucher)
+  /* الربط بالحضور (طلب المالك ㉘): خصومات وأجر إضافي من بيانات الحضور والإجازات */
+  const getAttendancePayrollImpact = useDataStore((state) => state.getAttendancePayrollImpact)
+  const getMonthlyAttendance = useDataStore((state) => state.getMonthlyAttendance)
+  const attendanceRecords = useDataStore((state) => state.attendanceRecords)
+  /* جسر الحضور ⑤: أسماء المحددين بلا أي سجل حضور في شهر المسير — تحذير صريح قبل الترحيل */
+  const [slipNoAttendance, setSlipNoAttendance] = useState<string[] | null>(null)
+  /* استيراد الموظفين من Excel/CSV (البند ③ من «اكمل ونفذ»): قالب أعمدة + معاينة قبل الاعتماد */
+  const importEmployeesAction = useDataStore((state) => state.importEmployees)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importRaw, setImportRaw] = useState('')
+  const [importPreview, setImportPreview] = useState<EmployeeImportResult | null>(null)
+  const [importOutcome, setImportOutcome] = useState<{ added: number; addedNames: string[]; skipped: string[] } | null>(null)
+  const importFileRef = useRef<HTMLInputElement | null>(null)
+  const doImportParse = (text: string) => {
+    setImportRaw(text)
+    setImportOutcome(null)
+    setImportPreview(parseEmployeesCsv(text))
+  }
+  const downloadEmployeesTemplate = () => {
+    /* BOM حتى يفتح Excel العربية سليمة */
+    const blob = new Blob(['\uFEFF' + employeesImportTemplateCsv()], { type: 'text/csv;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = 'قالب-استيراد-الموظفين.csv'
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+  const commitEmployeesImport = () => {
+    if (!importPreview?.rows.length) return
+    const outcome = importEmployeesAction(importPreview.rows)
+    setImportOutcome(outcome)
+    setImportPreview(null)
+    setImportRaw('')
+    toast.show(outcome.added
+      ? `أُضيف ${outcome.added} موظفاً${outcome.skipped.length ? ` — و${outcome.skipped.length} صفوف مرفوضة بأسبابها` : ''}`
+      : 'لم يُضف أي موظف — راجع الصفوف المرفوضة', outcome.added ? undefined : 'error')
+  }
   const [slipMonth, setSlipMonth] = useState(() => new Date().toISOString().slice(0, 7))
   /* كشف حساب الموظف (طلب المالك: يُعامل كالعميل) */
   const getEmployeeBalance = useDataStore((state) => state.getEmployeeBalance)
@@ -115,12 +157,13 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [slipDraftOpen, setSlipDraftOpen] = useState(false)
   const [slipSearch, setSlipSearch] = useState('')
   const [slipScope, setSlipScope] = useState<'all' | 'selected'>('all')
-  const [slipRows, setSlipRows] = useState<{ employeeId: number; name: string; on: boolean; gross: number; allowances: number; deductions: number; advance: number }[]>([])
+  const [slipRows, setSlipRows] = useState<{ employeeId: number; name: string; on: boolean; gross: number; allowances: number; deductions: number; advance: number; attDed: number; attAllw: number; regDed: number }[]>([])
   useEffect(() => {
     if (!slipDraftOpen) return
     setSlipRows(employees.filter((employee) => employee.active !== false).map((employee) => ({
       employeeId: employee.id, name: employee.nameAr, on: true,
       gross: employee.baseSalaryMinor ?? 0, allowances: 0, deductions: 0, advance: 0,
+      attDed: 0, attAllw: 0, regDed: 0,
     })))
   }, [employees, slipDraftOpen])
   /* بحث الموظف داخل المسير: تُعرض قسيمته وحده (طلب المالك) */
@@ -130,9 +173,78 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
     if (slipScope === 'selected' && !row.on) return false
     return true
   })
-  const patchSlipRow = (employeeId: number, patch: Partial<{ on: boolean; gross: number; allowances: number; deductions: number; advance: number }>) =>
+  /* §92: إجماليات المسير الصلبة — لشريط الترحيل السفلي */
+  const slipTotals = useMemo(() => {
+    const sel = slipRows.filter((row) => row.on)
+    const gross = sel.reduce((sum, row) => sum + row.gross + row.allowances, 0)
+    const cut = sel.reduce((sum, row) => sum + row.deductions + row.advance, 0)
+    return { count: sel.length, gross, cut, net: Math.max(0, gross - cut) }
+  }, [slipRows])
+  const patchSlipRow = (employeeId: number, patch: Partial<{ on: boolean; gross: number; allowances: number; deductions: number; advance: number; attDed: number; attAllw: number; regDed: number }>) =>
     setSlipRows((rows) => rows.map((row) => (row.employeeId === employeeId ? { ...row, ...patch } : row)))
+  /**
+   * «احتساب من الحضور» (طلب المالك ㉘): يملأ خصومات الغياب/التأخير والإجازة بلا
+   * أجر وبدل الإضافي من بيانات الشبكة الشهرية — بنود مرئية قابلة للتعديل قبل
+   * الترحيل، لا خصم صامت. يعمل فوق أي قيم يدوية موجودة (يستبدل الخصومات).
+   */
+  const applyAttendanceImpact = () => {
+    const impacts = new Map(getAttendancePayrollImpact(slipMonth).map((row) => [row.employeeId, row]))
+    let touched = 0
+    setSlipRows((rows) => rows.map((row) => {
+      const impact = impacts.get(row.employeeId)
+      if (!impact) return row
+      touched += 1
+      /* §93: يستبدل نصيبه المحسوب سابقاً فقط — فلا يضاعف بالضغط مرتين
+         ولا يطمس الجزاءات المسجلة التي حمّلها زر «السلف والجزاءات» */
+      const attDed = impact.absenceDeductionMinor + impact.unpaidLeaveDeductionMinor + impact.lateDeductionMinor
+      const attAllw = impact.overtimeAllowanceMinor
+      return {
+        ...row,
+        attDed, attAllw,
+        deductions: Math.max(0, row.deductions - (row.attDed ?? 0)) + attDed,
+        allowances: Math.max(0, row.allowances - (row.attAllw ?? 0)) + attAllw,
+      }
+    }))
+    toast.show(touched
+      ? `احتُسبت بنود الحضور لـ${touched} موظف — راجعها قبل الترحيل (خصم غياب/تأخير + بدل إضافي)`
+      : 'لا بيانات حضور لهذا الشهر — سجّلها من «شؤون الموظفين» أولاً')
+  }
+  /**
+   * §93 (إصلاح سلسلة الرواتب): تحميل السلف والجزاءات القائمة من سجلاتها
+   * الرسمية — قبل هذا كان المالك يكتب المبالغ من ذاكرته فتبقى السجلات
+   * «قائمة» والكشف متناقضاً. الخانة تستبدل نصيبها المحمّل سابقاً فقط.
+   */
+  const loadOutstandingBalances = () => {
+    let advCount = 0, dedCount = 0, advSum = 0, dedSum = 0
+    setSlipRows((rows) => rows.map((row) => {
+      if (!row.on) return row
+      const advRemaining = getEmployeeAdvanceBalance(row.employeeId).remainingMinor
+      const dedRemaining = getEmployeeDeductionBalance(row.employeeId).remainingMinor
+      if (advRemaining > 0) { advCount += 1; advSum += advRemaining }
+      if (dedRemaining > 0) { dedCount += 1; dedSum += dedRemaining }
+      return {
+        ...row,
+        advance: advRemaining,
+        regDed: dedRemaining,
+        deductions: Math.max(0, row.deductions - (row.regDed ?? 0)) + dedRemaining,
+      }
+    }))
+    toast.show(advCount || dedCount
+      ? `حُمّلت المتأخرات من سجلاتها: سلف لـ${advCount} موظف (${fmt(advSum)}) وجزاءات لـ${dedCount} (${fmt(dedSum)}) — راجعها قبل الترحيل`
+      : 'لا سلف ولا جزاءات قائمة لأي من المحددين — القسائم صافية')
+  }
   const accrueSlips = () => {
+    /* جسر الحضور ⑤ (جولة «اكمل ونفذ»): لا ترحيل أعمى لمسير شهرٍ بلا أي سجلات
+       حضور لمحددينه — تحذير صريح بالأسماء، والقرار النهائي للمالك بموافقة ثانية */
+    const chosen = slipRows.filter((row) => row.on)
+    const withRecords = new Set(attendanceRecords.filter((r) => r.date.startsWith(slipMonth)).map((r) => r.employeeId))
+    const missing = chosen.filter((row) => !withRecords.has(row.employeeId)).map((row) => row.name)
+    if (missing.length > 0 && slipNoAttendance == null) {
+      setSlipNoAttendance(missing)
+      toast.show(`تحذير: ${missing.length} من المحددَدين بلا أي سجل حضور في ${slipMonth} — أكّد الترحيل رغم ذلك`)
+      return
+    }
+    setSlipNoAttendance(null)
     try {
       const rows = slipRows.filter((row) => row.on).map((row) => ({
         employeeId: row.employeeId, grossMinor: row.gross, allowancesMinor: row.allowances,
@@ -143,10 +255,24 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
       setSlipDraftOpen(false)
     } catch (error) { toast.show((error as Error).message, 'error') }
   }
-  const paySlip = (slipId: number) => {
+  /* §93 (إصلاح سلسلة الرواتب): صرف القسيمة بمستند «سند صرف» رسمي على 2104
+     باسم الموظف — فيُسدَّد القسيمة بسندها القابل للطباعة بدل قيد مجهّل
+     من الخزينة الرئيسية فقط، ويعرض كشف الحساب القيمة مرة واحدة صحيحة. */
+  const [paySlipFor, setPaySlipFor] = useState<PayrollSlip | null>(null)
+  const [paySlipTreasury, setPaySlipTreasury] = useState('1101')
+  const [paySlipDate, setPaySlipDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const postSlipVoucher = () => {
+    if (!paySlipFor) return
     try {
-      const slip = payPayrollSlip(slipId, { treasury: '1101' })
-      toast.show(`صُرف راتب ${slip.employeeName} (${slip.slipNumber}) بقيد مستقل`)
+      const voucher = postVoucher({
+        kind: 'payment', treasury: paySlipTreasury as never, counterAccountCode: '2104',
+        amountMinor: paySlipFor.netMinor,
+        description: `صرف راتب ${paySlipFor.month} — ${paySlipFor.slipNumber} · ${paySlipFor.employeeName}`,
+        partyKind: 'employee', partyId: paySlipFor.employeeId,
+        settleSlipIds: [paySlipFor.id], date: paySlipDate || undefined,
+      })
+      toast.show(`سند صرف ${voucher.voucherNumber} سدّد القسيمة ${paySlipFor.slipNumber} بقيد متوازن ✓`)
+      setPaySlipFor(null)
     } catch (error) { toast.show((error as Error).message, 'error') }
   }
   const roleOptions = useMemo(
@@ -162,6 +288,13 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   const [comAmount, setComAmount] = useState('')
   const [comDesc, setComDesc] = useState('')
   const [comPayId, setComPayId] = useState<number | null>(null)
+  /* §98: تعديل/إلغاء العمولة بنوافذ النظام بدل prompt() الأصلية (مراجعة شاملة:
+     النوافذ الأصلية تكسر نمط البرنامج وتحجب الخلفية بلا Arabic UX ولا تحقق) */
+  const [comEdit, setComEdit] = useState<{ id: number; code: string; amountMinor: number } | null>(null)
+  const [comEditAmount, setComEditAmount] = useState('')
+  const [comEditReason, setComEditReason] = useState('')
+  const [comCancel, setComCancel] = useState<{ id: number; code: string } | null>(null)
+  const [comCancelReason, setComCancelReason] = useState('')
   const [comPayTreasury, setComPayTreasury] = useState('1101')
   const saveCommission = () => {
     try {
@@ -463,6 +596,26 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between"><h1 className="text-xl font-black">{sectionMeta[tab][0]}</h1><Btn variant="ghost" onClick={exportSection}><Download size={14}/> تصدير Excel</Btn></div>
+      {/* إدارة القسم بالكامل من مكان واحد (طلب المالك ㉘): تابات داخلية للتبديل الفوري
+          بين سجلات الموظفين ورواتبهم وسلفهم وخصوماتهم وعمولاتهم */}
+      <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm dark:border-slate-700 dark:bg-card-dark" role="tablist" data-employees-tabs>
+        {([
+          ['staff', 'الموظفون', UserCog], ['payroll', 'المرتبات والقسائم', Banknote], ['advances', 'السلف', HandCoins],
+          ['deductions', 'الخصومات والجزاءات', Percent], ['commissions', 'العمولات', BadgeCheck],
+        ] as const).map(([id, label, Icon]) => (
+          <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}
+            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12.5px] font-bold transition-all ${
+              tab === id ? 'bg-violet-500/15 text-violet-700 ring-1 ring-violet-500/30 dark:text-violet-300' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+            }`}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+        <span className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" aria-hidden="true" />
+        <button type="button" role="tab" aria-selected={false} onClick={() => navigate('/hr/attendance')}
+          className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12.5px] font-bold text-teal-600 transition-all hover:bg-teal-500/10 dark:text-teal-300">
+          <CalendarCheck2 size={14} /> الحضور والإجازات
+        </button>
+      </div>
       {tab === 'advances' && (
         <>
           <div className="anim-up flex items-center justify-between flex-wrap gap-2">
@@ -716,23 +869,14 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                           <>
                             <button title="صرف منفرد الآن من الخزينة" onClick={() => setComPayId(c.id)}
                               className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-emerald-600 hover:bg-emerald-500/10 transition-colors">💵 صرف</button>
-                            <button title="تعديل المبلغ (إلغاء + استحقاق جديد بأثر تدقيقي)" onClick={() => {
-                              const raw = prompt(`المبلغ الجديد لـ${c.code} (${cur.symbol}):`, String(c.amountMinor / 10 ** cur.decimals))
-                              if (raw == null || !raw.trim()) return
-                              const reason = prompt('سبب التعديل:')
-                              if (reason == null || !reason.trim()) return toast.show('سبب التعديل مطلوب', 'error')
-                              try {
-                                const nc = updateStaffCommissionAmount({ commissionId: c.id, newAmountMinor: toMinor(raw, cur.decimals), reason: reason.trim() })
-                                toast.show(`عُدلت — العمولة الجديدة ${nc.code} ✓`)
-                              } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                            <button title="تعديل المبلغ (إلغاء + استحقاق جديد بأثر تدقيقي)" data-commission-edit onClick={() => {
+                              setComEdit({ id: c.id, code: c.code, amountMinor: c.amountMinor })
+                              setComEditAmount(String(c.amountMinor / 10 ** cur.decimals))
+                              setComEditReason('')
                             }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-amber-600 hover:bg-amber-500/10 transition-colors">✏️ تعديل</button>
-                            <button title="إلغاء العمولة (قيد عاكس + سبب موثق)" onClick={() => {
-                              const reason = prompt(`سبب إلغاء ${c.code}:`)
-                              if (reason == null || !reason.trim()) return
-                              try {
-                                cancelStaffCommission({ commissionId: c.id, reason: reason.trim() })
-                                toast.show(`أُلغيت ${c.code} بقيد عاكس ✓`)
-                              } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                            <button title="إلغاء العمولة (قيد عاكس + سبب موثق)" data-commission-cancel onClick={() => {
+                              setComCancel({ id: c.id, code: c.code })
+                              setComCancelReason('')
                             }} className="text-[11px] px-2 py-1 rounded-lg font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors">🚫 إلغاء</button>
                           </>
                         )}
@@ -808,6 +952,54 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
             </div>
           </Modal>
+
+          {/* §98: تعديل مبلغ عمولة — نافذة نظام بتحقق، كانت prompt() أصلية */}
+          <Modal open={comEdit != null} onClose={() => setComEdit(null)} title="تعديل مبلغ عمولة" subtitle="إلغاء واستحقاق جديد بأثر تدقيقي — السبب إلزامي">
+            <div className="space-y-4">
+              <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{comEdit?.code}: <span className="text-violet-600 font-black">{comEdit ? fmt(comEdit.amountMinor) : ''}</span> ← <span className="text-amber-600 font-black">{comEditAmount.trim() ? `${fmt(toMinor(comEditAmount, cur.decimals))}` : '—'}</span></div>
+              <Field label={`المبلغ الجديد (${cur.symbol}) *`}>
+                <input className={inputCls} inputMode="decimal" value={comEditAmount} data-commission-amount onChange={(e) => setComEditAmount(e.target.value)} aria-label="المبلغ الجديد" />
+              </Field>
+              <Field label="سبب التعديل *" hint="يُوثَّق على القيد العاكس والعمولة الجديدة">
+                <input className={inputCls} value={comEditReason} data-commission-reason onChange={(e) => setComEditReason(e.target.value)} aria-label="سبب التعديل" placeholder="مثال: تصحيح نسبة العمولة مع العميل" />
+              </Field>
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => setComEdit(null)}>إلغاء</Btn>
+                <Btn onClick={() => {
+                  if (!comEdit) return
+                  if (!comEditAmount.trim()) return toast.show('المبلغ الجديد مطلوب', 'error')
+                  if (!comEditReason.trim()) return toast.show('سبب التعديل مطلوب', 'error')
+                  try {
+                    const nc = updateStaffCommissionAmount({ commissionId: comEdit.id, newAmountMinor: toMinor(comEditAmount, cur.decimals), reason: comEditReason.trim() })
+                    toast.show(`عُدلت — العمولة الجديدة ${nc.code} ✓`)
+                    setComEdit(null)
+                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                }}>✏️ اعتماد التعديل</Btn>
+              </div>
+            </div>
+          </Modal>
+
+          {/* §98: إلغاء عمولة — قيد عاكس بسبب موثق من نافذة لا prompt() */}
+          <Modal open={comCancel != null} onClose={() => setComCancel(null)} title="إلغاء عمولة" subtitle="قيد عاكس يطفئ العمولة — السبب إلزامي للتدقيق">
+            <div className="space-y-4">
+              <div className="text-sm font-bold text-slate-600 dark:text-slate-300">{comCancel?.code}</div>
+              <Field label="سبب الإلغاء *">
+                <input className={inputCls} value={comCancelReason} data-commission-cancel-reason onChange={(e) => setComCancelReason(e.target.value)} aria-label="سبب الإلغاء" placeholder="مثال: أُلغيت العملية المرتبطة بالعمولة" />
+              </Field>
+              <div className="flex justify-end gap-2">
+                <Btn variant="ghost" onClick={() => setComCancel(null)}>تراجع</Btn>
+                <Btn variant="danger" onClick={() => {
+                  if (!comCancel) return
+                  if (!comCancelReason.trim()) return toast.show('سبب الإلغاء مطلوب', 'error')
+                  try {
+                    cancelStaffCommission({ commissionId: comCancel.id, reason: comCancelReason.trim() })
+                    toast.show(`أُلغيت ${comCancel.code} بقيد عاكس ✓`)
+                    setComCancel(null)
+                  } catch (e2) { toast.show((e2 as Error).message, 'error') }
+                }}>🚫 إلغاء العمولة</Btn>
+              </div>
+            </div>
+          </Modal>
         </>
       )}
 
@@ -818,6 +1010,9 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               <Search size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="ابحث بالاسم أو الهاتف أو الوظيفة أو الكود (EMP-0001)…" className={`${inputCls} pr-10`} />
             </div>
+            <Btn variant="soft" onClick={() => { setImportOpen(true); setImportPreview(null); setImportOutcome(null); setImportRaw('') }} data-employees-import-open>
+              <span className="flex items-center gap-1.5"><FileSpreadsheet size={15} /> استيراد Excel/CSV</span>
+            </Btn>
             <Btn onClick={openNew}><span className="flex items-center gap-1.5"><Plus size={15} /> موظف جديد</span></Btn>
           </div>
 
@@ -891,9 +1086,35 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
               </div>
             </div>
 
-      <Modal open={slipDraftOpen} onClose={() => setSlipDraftOpen(false)} title="مسير رواتب — قسائم الموظفين" wide>
-              <div className="space-y-3" dir="rtl" data-slip-draft>
-                <div className="grid gap-2 md:grid-cols-3">
+      <Modal open={slipDraftOpen} onClose={() => setSlipDraftOpen(false)} title="مسير رواتب — قسائم الموظفين" extraWide subtitle="مستند استحقاق شهري — قسيمة مستقلة باسم كل موظف تُصرف كلٌّ بيومه">
+              <div dir="rtl" data-slip-draft>
+                {/* ═══ §92: ترويسة مستند رسمي صلبة ═══ */}
+                <div className="payroll-doc-head rounded-2xl bg-slate-900 dark:bg-slate-950 text-white overflow-hidden shadow-lg shadow-slate-900/20" data-slip-head>
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="grid h-11 w-11 place-items-center rounded-xl bg-white/10 text-xl ring-1 ring-white/20">🧾</div>
+                      <div>
+                        <div className="text-[15px] font-black leading-tight">مسير رواتب — قسائم الموظفين</div>
+                        <div className="text-[11px] text-slate-300 mt-0.5">{setup.shopName || 'المنشأة'} · مستند استحقاق رقم <span className="font-mono font-bold text-white">PR-{slipMonth}</span></div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-lg bg-amber-400/15 px-3 py-1.5 text-[11px] font-bold text-amber-300 ring-1 ring-amber-400/30" data-slip-count>
+                        {slipTotals.count} قسيمة معتمدة
+                      </span>
+                      <span className="rounded-lg bg-white/10 px-3 py-1.5 text-[13px] font-black tabular-nums ring-1 ring-white/15" data-slip-head-net>
+                        {fmt(slipTotals.net)} {cur.symbol}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-white/10 bg-white/[0.04] px-5 py-1.5 text-[10.5px] font-bold text-slate-300">
+                    <span>الاستحقاق: أساسي + بدلات − خصومات − سلف مستقطعة</span>
+                    <span>القيد: 5102 رواتب وأجور · 2104 رواتب مستحقة · 1107 سلف الموظفين</span>
+                  </div>
+                </div>
+
+                {/* ═══ شريط الأدوات: الشهر والبحث والنطاق ═══ */}
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
                   <Field label="شهر الاستحقاق">
                     <input type="month" className={inputCls} value={slipMonth} onChange={(event) => setSlipMonth(event.target.value)} aria-label="شهر المسير" />
                   </Field>
@@ -909,47 +1130,139 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   </Field>
                 </div>
 
-                <table className="w-full text-[12px]">
-                  <thead className="text-[11px] font-black text-slate-500">
-                    <tr><th className="p-1">الموظف</th><th className="p-1 w-24">الأساسي</th><th className="p-1 w-24">بدلات</th><th className="p-1 w-24">خصومات</th><th className="p-1 w-24">سلف</th><th className="p-1 w-24">الصافي</th></tr>
-                  </thead>
-                  <tbody>
-                    {visibleSlipRows.length === 0 && (
-                      <tr><td colSpan={6} className="p-4 text-center text-slate-400">لا موظف مطابق لبحثك</td></tr>
-                    )}
-                    {visibleSlipRows.map((row) => {
-                      const net = Math.max(0, row.gross + row.allowances - row.deductions - row.advance)
-                      return (
-                        <tr key={row.employeeId} data-slip-row={row.employeeId}>
-                          <td className="p-1">
-                            <label className="flex items-center gap-1">
-                              <input type="checkbox" checked={row.on} onChange={(event) => patchSlipRow(row.employeeId, { on: event.target.checked })} aria-label={`اختيار ${row.name}`} />
-                              {row.name}
+                {/* ═══ جدول القسائم — رأس صلب داكن ═══ */}
+                <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+                  <table className="w-full text-[12px]">
+                    <thead className="bg-slate-800 text-[11px] font-black text-slate-100 dark:bg-slate-900">
+                      <tr>
+                        <th className="p-2.5 text-right">الموظف</th><th className="p-2.5 w-24">الأساسي</th><th className="p-2.5 w-24">بدلات</th><th className="p-2.5 w-24">خصومات</th><th className="p-2.5 w-24">سلف</th><th className="p-2.5 w-28">الصافي</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleSlipRows.length === 0 && (
+                        <tr><td colSpan={6} className="p-6 text-center text-[12px] text-slate-400">لا موظف مطابق لبحثك</td></tr>
+                      )}
+                      {visibleSlipRows.map((row, index) => {
+                        const net = Math.max(0, row.gross + row.allowances - row.deductions - row.advance)
+                        return (
+                          <tr key={row.employeeId} data-slip-row={row.employeeId} className={`border-t border-slate-100 dark:border-slate-800 ${row.on ? 'bg-white dark:bg-slate-900/40' : 'opacity-60'} hover:bg-brand-500/[0.04]`}>
+                          <td className="p-1.5 px-2.5">
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={row.on} onChange={(event) => patchSlipRow(row.employeeId, { on: event.target.checked })} aria-label={`اختيار ${row.name}`} className="h-4 w-4 accent-emerald-600" />
+                              <span className="font-bold text-slate-700 dark:text-slate-200">{row.name}</span>
+                              <span className="font-mono text-[10px] text-slate-400">#{index + 1}</span>
                             </label>
+                            {/* §93: متبقي السلف والجزاءات المسجلة — مرئي قبل الترحيل لا من الذاكرة */}
+                            {(() => {
+                              const adv = getEmployeeAdvanceBalance(row.employeeId)
+                              const ded = getEmployeeDeductionBalance(row.employeeId)
+                              if (adv.remainingMinor <= 0 && ded.remainingMinor <= 0) return null
+                              const advWhy = adv.advances.filter((a) => a.amountMinor > a.recoveredMinor).map((a) => `${a.advanceNumber}${a.source === 'custody_shortage' ? ' (عجز عهدة)' : a.source === 'sale_collection' ? ' (تحصيل على حسابه)' : ''}: متبقٍ ${fmt(a.amountMinor - a.recoveredMinor)}${a.notes ? ` — ${a.notes}` : ''}`).join('\n')
+                              const dedWhy = ded.deductions.filter((d) => d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0) > 0).map((d) => `${d.dedNumber}: ${d.reason} — متبقٍ ${fmt(d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0))}`).join('\n')
+                              return (
+                                <div className="mt-1 flex flex-wrap gap-1" data-slip-hints={row.employeeId}>
+                                  {adv.remainingMinor > 0 && <span title={advWhy} className="cursor-help rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-700 dark:text-amber-300">سلف متبقية {fmt(adv.remainingMinor)}</span>}
+                                  {ded.remainingMinor > 0 && <span title={dedWhy} className="cursor-help rounded-md bg-rose-500/10 px-1.5 py-0.5 text-[9.5px] font-bold text-rose-600 dark:text-rose-300">جزاءات قائمة {fmt(ded.remainingMinor)}</span>}
+                                </div>
+                              )
+                            })()}
                           </td>
                           {(['gross', 'allowances', 'deductions', 'advance'] as const).map((field) => (
-                            <td className="p-1" key={field}>
-                              <input className={inputCls} inputMode="decimal" value={String(row[field] / 100)}
+                            <td className="p-1.5" key={field}>
+                              <input className={`${inputCls} h-8 text-center font-mono`} inputMode="decimal" value={String(row[field] / 100)}
                                 aria-label={`${field} ${row.name}`}
                                 onChange={(event) => patchSlipRow(row.employeeId, { [field]: Math.round((Number(event.target.value) || 0) * 100) })} />
                             </td>
                           ))}
-                          <td className="p-1 text-center font-mono font-bold">{fmt(net)}</td>
+                          <td className="p-1.5 text-center font-mono text-[13px] font-black text-emerald-600">{fmt(net)}</td>
                         </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[12px] text-slate-500">
-                    المحدَّد: <b>{slipRows.filter((row) => row.on).length}</b> موظف · إجمالي الصافي{' '}
-                    <b className="font-mono">{fmt(slipRows.filter((row) => row.on).reduce((sum, row) => sum + Math.max(0, row.gross + row.allowances - row.deductions - row.advance), 0))}</b>
-                  </span>
-                  <div className="flex gap-2">
-                    <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
-                    <Btn onClick={accrueSlips}>ترحيل الاستحقاق</Btn>
+                {/* ═══ §92: شريط الترحيل الصلب — الإجماليات الكبرى وزر الترحيل في مكان واحد ═══ */}
+                <div className="mt-3 overflow-hidden rounded-2xl border-2 border-slate-800 dark:border-slate-700 bg-slate-900 dark:bg-slate-950 text-white shadow-lg shadow-slate-900/20" data-slip-totals-bar>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-white/10 divide-x-reverse" dir="rtl">
+                    <div className="px-4 py-3">
+                      <div className="text-[10px] font-bold text-slate-400">إجمالي الاستحقاق</div>
+                      <div className="mt-0.5 text-lg font-black tabular-nums">{fmt(slipTotals.gross)}</div>
+                    </div>
+                    <div className="px-4 py-3">
+                      <div className="text-[10px] font-bold text-slate-400">خصومات وجزاءات</div>
+                      <div className="mt-0.5 text-lg font-black tabular-nums text-rose-400">−{fmt(slipTotals.cut)}</div>
+                    </div>
+                    <div className="px-4 py-3">
+                      <div className="text-[10px] font-bold text-slate-400">سلف مستقطعة (1107)</div>
+                      <div className="mt-0.5 text-lg font-black tabular-nums text-amber-300">{fmt(slipRows.filter((row) => row.on).reduce((sum, row) => sum + row.advance, 0))}</div>
+                    </div>
+                    <div className="px-4 py-3 bg-white/[0.06]">
+                      <div className="text-[10px] font-bold text-emerald-300">صافي المستحق ({slipTotals.count} قسيمة)</div>
+                      <div className="mt-0.5 text-2xl font-black tabular-nums text-emerald-400" data-slip-total-net>{fmt(slipTotals.net)} <span className="text-[12px] font-bold">{cur.symbol}</span></div>
+                    </div>
                   </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 px-4 py-2.5">
+                    <div className="flex flex-wrap gap-2">
+                      {/* الربط بالحضور (طلب المالك ㉘): بنود مرئية من الشبكة الشهرية — لا خصم صامت */}
+                      <Btn variant="soft" onClick={applyAttendanceImpact} data-apply-attendance title="يملأ خصم الغياب والتأخير والإجازة بلا أجر وبدل الإضافي من بيانات الحضور لهذا الشهر">
+                        <span className="flex items-center gap-1.5"><CalendarCheck2 size={15} /> احتساب من الحضور</span>
+                      </Btn>
+                      <Btn variant="soft" onClick={loadOutstandingBalances} data-load-outstanding title="يملأ خانتي السلف والخصومات من سجلات السلف والجزاءات القائمة — لا تكتبها من ذاكرتك">
+                        <span className="flex items-center gap-1.5"><HandCoins size={15} /> تحميل السلف والجزاءات القائمة</span>
+                      </Btn>
+                      <Btn variant="ghost" onClick={() => setSlipDraftOpen(false)}>إلغاء</Btn>
+                    </div>
+                    <Btn onClick={accrueSlips} disabled={slipTotals.count === 0 || slipTotals.net <= 0} className="!bg-emerald-500 hover:!bg-emerald-400 !text-white font-black px-5" data-slip-post>
+                      💾 ترحيل المسير — {slipTotals.count} قسيمة بقيد متوازن
+                    </Btn>
+                  </div>
+                </div>
+              </div>
+            </Modal>
+
+            {/* §93: سند صرف القسيمة — تسديد رسمي بمستند مطبوع على 2104 باسم الموظف */}
+            <Modal open={paySlipFor != null} onClose={() => setPaySlipFor(null)} title={`سند صرف راتب — ${paySlipFor?.employeeName ?? ''}`} subtitle={`تسديد القسيمة ${paySlipFor?.slipNumber ?? ''} · ${paySlipFor ? monthLabelAr(paySlipFor.month) : ''} بمستند رسمي يسددها باسمها`}>
+              {paySlipFor && (
+                <div className="space-y-3" data-slip-voucher>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Field label="الخزينة / البنك المصروف منه">
+                      <TreasuryPicker value={paySlipTreasury} onChange={setPaySlipTreasury} operation="payment" />
+                    </Field>
+                    <Field label="تاريخ السند">
+                      <input type="date" className={inputCls} value={paySlipDate} onChange={(event) => setPaySlipDate(event.target.value)} aria-label="تاريخ سند صرف الراتب" />
+                    </Field>
+                    <Field label={`صافي القسيمة (${cur.symbol})`}>
+                      <input className={inputCls + ' text-center font-mono font-black'} readOnly value={fmt(paySlipFor.netMinor)} aria-label="مبلغ سند صرف الراتب" />
+                    </Field>
+                  </div>
+                  <DocOutcome>الأثر: سند صرف PV يُقفل «رواتب مستحقة 2104» مديناً باسم الموظف والخزينة دائنةً بالنقد المصروف — القسيمة تُوسم «مصروفة» باسم هذا السند، وتظهر في كشف حساب الموظف مرة واحدة بلا ازدواج.</DocOutcome>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Btn variant="ghost" onClick={() => setPaySlipFor(null)}>رجوع</Btn>
+                    <Btn onClick={postSlipVoucher} className="!bg-teal-600 hover:!bg-teal-500 !text-white font-black px-5" data-slip-voucher-post>
+                      💸 ترحيل سند الصرف وتسديد {paySlipFor.slipNumber}
+                    </Btn>
+                  </div>
+                </div>
+              )}
+            </Modal>
+
+            {/* جسر الحضور ⑤: تحذير صريح قبل ترحيل مسير شهرٍ بلا سجلات حضور — لا خصم صامت ولا ترحيل أعمى */}
+            <Modal open={slipNoAttendance != null} onClose={() => setSlipNoAttendance(null)} title={`ترحيل مسير ${slipMonth} بلا بيانات حضور؟`}>
+              <div className="space-y-3" data-slip-attendance-warning>
+                <p className="text-[13px] font-bold text-amber-600">
+                  ⚠ {slipNoAttendance?.length ?? 0} من الموظفين المحددين ليس لديهم أي سجل حضور في هذا الشهر:
+                </p>
+                <p className="text-[12.5px] text-slate-600 dark:text-slate-300 rounded-xl bg-amber-500/10 p-2" data-slip-attendance-names>
+                  {slipNoAttendance?.join('، ')}
+                </p>
+                <p className="text-[11.5px] text-slate-500 leading-relaxed">
+                  معنى ذلك أن غيابهم وتأخيرهم لن يُحتسب في هذه القسائم. سجّل الحضور أولاً من «شؤون الموظفين ← الحضور اليومي»
+                  أو استورد ملف البصمة، ثم اضغط «احتساب من الحضور» — أو رحّل كما هو إن كان هذا قصدك.
+                </p>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Btn variant="ghost" onClick={() => setSlipNoAttendance(null)}>رجوع لمراجعة المسير</Btn>
+                  <Btn variant="danger" onClick={() => { accrueSlips() }} data-slip-force>الترحيل رغم ذلك</Btn>
                 </div>
               </div>
             </Modal>
@@ -975,7 +1288,7 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                     </td>
                     <td className="p-1 text-center">
                       {slip.status === 'accrued' && (
-                        <Btn variant="ghost" onClick={() => paySlip(slip.id)} data-pay-slip={slip.slipNumber}>صرف الآن</Btn>
+                        <Btn variant="ghost" onClick={() => { setPaySlipFor(slip); setPaySlipDate(new Date().toISOString().slice(0, 10)) }} data-pay-slip={slip.slipNumber}>سند صرف</Btn>
                       )}
                       {slip.status === 'paid' && <span className="text-[11px] text-slate-400">{(slip.paidAt ?? '').slice(0, 10)}</span>}
                     </td>
@@ -985,9 +1298,11 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
             </table>
           </section>
 
-          <div className="anim-up flex flex-wrap justify-end gap-2">
-            <Btn variant="ghost" onClick={openSingleRun}><span className="flex items-center gap-1.5"><UserSearch size={15} /> مسير راتب موظف واحد</span></Btn>
-            <Btn onClick={openRun}><span className="flex items-center gap-1.5"><Plus size={15} /> مسير رواتب لكل الموظفين</span></Btn>
+          <div className="anim-up flex flex-wrap items-center justify-end gap-2">
+            {/* §93: القسائم المستقلة هي المسار الرسمي — المجمّع القديم للتوافق فقط */}
+            <span className="hidden sm:block text-[10.5px] font-bold text-slate-400">المسار الرسمي: قسيمة مستقلة لكل موظف تُسدَّد بسند صرفها</span>
+            <Btn variant="ghost" onClick={openSingleRun} title="الطريقة القديمة: مستند مسير واحد لراتب موظف"><span className="flex items-center gap-1.5"><UserSearch size={15} /> مسير مجمّع لموظف (قديم)</span></Btn>
+            <Btn variant="ghost" onClick={openRun} title="الطريقة القديمة: مستند مسير واحد بكل الموظفين"><span className="flex items-center gap-1.5"><Plus size={15} /> مسير مجمّع للجميع (قديم)</span></Btn>
           </div>
 
           {listedRuns.length === 0 ? (
@@ -1035,6 +1350,89 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
         </>
       )}
 
+            {/* استيراد الموظفين من Excel/CSV (البند ③): قالب أعمدة + معاينة قبل الاعتماد */}
+            <Modal open={importOpen} onClose={() => setImportOpen(false)} title="استيراد الموظفين من Excel/CSV" subtitle="نزّل القالب واملأه من Excel واحفظه CSV (أو انسخ الجدول والصقه هنا) ثم عاين قبل الاعتماد">
+              <div className="space-y-3" data-employees-import>
+                <div className="flex flex-wrap gap-2">
+                  <Btn variant="soft" onClick={downloadEmployeesTemplate} data-employees-template>
+                    <span className="flex items-center gap-1.5"><Download size={15} /> تنزيل قالب الأعمدة</span>
+                  </Btn>
+                  <input ref={importFileRef} type="file" accept=".csv,.txt" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void f.text().then(doImportParse); e.target.value = '' }} data-employees-file />
+                  <Btn variant="soft" onClick={() => importFileRef.current?.click()}>
+                    <span className="flex items-center gap-1.5"><FileSpreadsheet size={15} /> اختيار ملف CSV</span>
+                  </Btn>
+                  <Btn onClick={() => doImportParse(importRaw)} disabled={!importRaw.trim()}>تحليل ومعاينة</Btn>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  الأعمدة: <b>اسم الموظف · المسمى الوظيفي · الهاتف · تاريخ التعيين · الراتب الأساسي · البدلات · ملاحظات</b>.
+                  التاريخ يقبل 2026-01-15 أو 15/01/2026، والمبالغ تقبل الأرقام العربية (٥٠٠٠) والفواصل (5,000.50).
+                  بلا رأس أعمدة يُفهم الترتيب نفسه — والاسم المكرر يُرفض بحارس الإضافة.
+                </p>
+                <textarea
+                  className={inputCls + ' h-24 font-mono text-[11px]'}
+                  dir="ltr"
+                  value={importRaw}
+                  onChange={(e) => setImportRaw(e.target.value)}
+                  placeholder={'أحمد سعيد,كاشير,01000000001,2026-01-15,5000,500,\nمنى عبد الله,مشرفة,01000000002,15/01/2026,7500.50,0,'}
+                  aria-label="لصق بيانات الموظفين"
+                  data-employees-paste
+                />
+                {importPreview && (
+                  <div className="space-y-2" data-employees-preview>
+                    {importPreview.errors.length > 0 && (
+                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
+                        {importPreview.errors.slice(0, 5).map((error, i) => <div key={i}>⚠ {error}</div>)}
+                        {importPreview.errors.length > 5 && <div>…و{importPreview.errors.length - 5} سطر آخر مرفوض</div>}
+                      </div>
+                    )}
+                    {importPreview.rows.length > 0 ? (
+                      <>
+                        <div className="max-h-56 overflow-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                          <table className="w-full text-[11.5px]">
+                            <thead className="bg-slate-50 text-slate-500 dark:bg-slate-800/60">
+                              <tr><th className="p-1.5 text-right">الاسم</th><th className="p-1.5">الوظيفة</th><th className="p-1.5">الهاتف</th><th className="p-1.5">التعيين</th><th className="p-1.5">الأساسي</th><th className="p-1.5">البدلات</th></tr>
+                            </thead>
+                            <tbody>
+                              {importPreview.rows.map((row, i) => (
+                                <tr key={i} className="border-t border-slate-100 dark:border-slate-800">
+                                  <td className="p-1.5 font-bold">{row.nameAr}</td>
+                                  <td className="p-1.5 text-center">{row.jobTitle || '—'}</td>
+                                  <td className="p-1.5 text-center font-mono" dir="ltr">{row.phone || '—'}</td>
+                                  <td className="p-1.5 text-center font-mono">{row.hireDate}</td>
+                                  <td className="p-1.5 text-center font-mono">{fmt(row.baseSalaryMinor)}</td>
+                                  <td className="p-1.5 text-center font-mono">{fmt(row.allowancesMinor)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] text-slate-500">{importPreview.rows.length} موظفاً صالحاً للاستيراد — يُدخل كلٌّ عبر حراس الإضافة الرسمية</span>
+                          <Btn onClick={commitEmployeesImport} data-employees-commit>
+                            <span className="flex items-center gap-1.5"><FileSpreadsheet size={15} /> اعتماد الاستيراد</span>
+                          </Btn>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-[12px] text-slate-500">لا صفوف صالحة — صحّح الأخطاء أعلاه ثم أعد التحليل.</p>
+                    )}
+                  </div>
+                )}
+                {importOutcome && (
+                  <div className="space-y-2" data-employees-outcome>
+                    <p className="text-[12.5px] font-bold text-emerald-600">
+                      ✓ أُضيف {importOutcome.added} موظفاً{importOutcome.addedNames.length ? `: ${importOutcome.addedNames.slice(0, 5).join('، ')}${importOutcome.addedNames.length > 5 ? '…' : ''}` : ''}
+                    </p>
+                    {importOutcome.skipped.length > 0 && (
+                      <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-2 text-[11px] text-rose-600">
+                        {importOutcome.skipped.map((reason, i) => <div key={i}>✗ {reason}</div>)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </Modal>
+
       {/* نموذج موظف */}
       {/* كشف حساب الموظف — نفس منطق كشف العميل */}
       <Modal open={statementFor != null} onClose={() => setStatementFor(null)} wide
@@ -1053,6 +1451,34 @@ export function EmployeesPage({ initialTab = 'staff' }: { initialTab?: 'staff' |
                   </b>
                 </span>
               </div>
+              {/* جسر الحضور ④ (جولة «اكمل ونفذ»): ملخص حضور الشهر الجاري وأثره المالي داخل الكشف الموحد */}
+              {(() => {
+                const monthNow = new Date().toISOString().slice(0, 7)
+                const employee = employees.find((e) => e.id === statementFor)
+                if (!employee || employee.active === false) return null
+                const summary = getMonthlyAttendance(statementFor, monthNow)
+                const impact = getAttendancePayrollImpact(monthNow, [statementFor])[0]
+                const net = impact?.netAdjustmentMinor ?? 0
+                const hasAny = summary.recordedDays > 0 || summary.paidLeaveDays > 0 || summary.unpaidLeaveDays > 0
+                return (
+                  <div className="rounded-xl border border-slate-200 p-2 text-[11.5px] leading-relaxed dark:border-slate-700" data-employee-attendance>
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <b>حضور {monthNow}:</b>
+                      {hasAny ? (
+                        <>
+                          <span>حاضر {summary.presentDays} · غياب {summary.absentDays} · إجازة مدفوعة {summary.paidLeaveDays} · بلا أجر {summary.unpaidLeaveDays} · مأمورية {summary.missionDays}</span>
+                          <span className={net < 0 ? 'text-rose-600 font-bold' : 'text-emerald-600 font-bold'}>
+                            أثر الشهر على الراتب: {net < 0 ? '−' : '+'}{fmt(Math.abs(net))}
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-slate-400">لا سجلات حضور هذا الشهر — يُرحَّل الراتب كاملاً ما لم تُسجَّل الغيابات</span>
+                      )}
+                    </div>
+                    {impact && impact.notes.length > 0 && <p className="mt-1 text-slate-500">{impact.notes.join(' · ')} — تُطبَّق عبر زر «احتساب من الحضور» في مسير الرواتب</p>}
+                  </div>
+                )
+              })()}
               <table className="w-full text-[12px]">
                 <thead className="text-[11px] font-black text-slate-500">
                   <tr><th className="p-1">التاريخ</th><th className="p-1">المرجع</th><th className="p-1">البيان</th><th className="p-1 w-24">مدين</th><th className="p-1 w-24">دائن</th><th className="p-1 w-28">الرصيد</th></tr>

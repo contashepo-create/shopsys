@@ -248,3 +248,73 @@ export function isRentalOverdue(
   if (contract.status !== 'active') return false
   return nowIso > rentalExpectedEnd(contract.date, contract.days, contract.rateType ?? 'daily')
 }
+
+/* ─── فاتورة إيجار للعميل (طلب المالك — «كيف أصدر فاتورة لمستأجر المعدات كي يسدد إيجاره؟») ─── */
+
+/** سطر في فاتورة الإيجار — نفس شكل سطور فاتورة البيع */
+export interface RentalInvoiceRow {
+  nameAr: string
+  qty: number
+  unitPriceMinor: Minor
+  totalMinor: Minor
+}
+
+/**
+ * فاتورة الإيجار كوثيقة استحقاق يسدّد منها المستأجر:
+ * - السطر الأول: إيجار المدة المحجوزة (وحدات × تعرفة).
+ * - سطر التجاوز عند الإقفال (ساعات عدّاد أو مدة إرجاع متأخرة) إن وُجد.
+ * - الإجمالي = إيجار + ض.ق.م + تجاوز + ضريبته (نفس نسبة العقد).
+ * - المتبقي = ما قُيِّد على ذمة العميل (1104): آجل الفتح + التجاوز
+ *   (العقد النقدي وحده يقبض التجاوز من الخزينة — buildExtraUsageEntry).
+ * - التأمين المحتجز (2103) التزام مستقل لا يدخل الاستحقاق — يُذكر في
+ *   تذييل الفاتورة ويُرد عند الإقفال، فلا يُخلط بدين الإيجار.
+ */
+export interface RentalInvoiceDoc {
+  rows: RentalInvoiceRow[]
+  totalMinor: Minor
+  paidMinor: Minor
+  dueMinor: Minor
+  depositMinor: Minor
+}
+
+const RATE_UNIT_AR: Record<'hourly' | 'daily' | 'monthly', string> = { hourly: 'ساعة', daily: 'يوم', monthly: 'شهر' }
+
+export function rentalInvoiceDoc(contract: {
+  equipmentName: string
+  contractNumber: string
+  days: number
+  dailyRateMinor: number
+  rateType?: 'hourly' | 'daily' | 'monthly'
+  payment: RentalPaymentMode
+  vatPercent: number
+  totals: RentalTotals
+  extraMinor: number
+}): RentalInvoiceDoc {
+  const rt = contract.rateType ?? 'daily'
+  const unit = RATE_UNIT_AR[rt]
+  const rows: RentalInvoiceRow[] = [{
+    nameAr: `إيجار ${contract.equipmentName} — ${contract.days} ${unit} × التعرفة`,
+    qty: contract.days,
+    unitPriceMinor: contract.dailyRateMinor,
+    totalMinor: contract.totals.rentMinor,
+  }]
+  if (contract.extraMinor > 0) {
+    rows.push({
+      nameAr: `تجاوز استخدام عند الإقفال (${rt === 'hourly' ? 'قراءة عدّاد' : 'مدة إرجاع'} — ${contract.contractNumber})`,
+      qty: 1,
+      unitPriceMinor: contract.extraMinor,
+      totalMinor: contract.extraMinor,
+    })
+  }
+  const extraVatMinor = Math.round((contract.extraMinor * contract.vatPercent) / 100)
+  const totalMinor = contract.totals.grandMinor + contract.extraMinor + extraVatMinor
+  // التجاوز يقيَّد على ذمة العميل إلا في العقد النقدي (نفس قاعدة buildExtraUsageEntry)
+  const dueMinor = contract.totals.collectCreditMinor + (contract.payment !== 'cash' ? contract.extraMinor + extraVatMinor : 0)
+  return {
+    rows,
+    totalMinor,
+    paidMinor: totalMinor - dueMinor,
+    dueMinor,
+    depositMinor: contract.totals.depositMinor,
+  }
+}

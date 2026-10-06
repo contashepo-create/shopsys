@@ -13,8 +13,8 @@
  */
 import assert from 'node:assert/strict'
 import { freshCase, assertInvariants, balanceOf, addSimpleItem, addParty, reporter, ACTIVITY_IDS } from './auditKit.mjs'
-import { trialBalance, incomeStatement, balanceSheet } from '/home/user/shopsys/app/src/core/financialReports.ts'
-import { ACCOUNT_MODULE_MAP, coaForModules } from '/home/user/shopsys/app/src/core/coaVisibility.ts'
+import { trialBalance, incomeStatement, balanceSheet } from '../src/core/financialReports.ts'
+import { ACCOUNT_MODULE_MAP, coaForModules } from '../src/core/coaVisibility.ts'
 
 const R = reporter('المرحلة 3 — الأنشطة التسعة والعشرون نشاطاً نشاطاً')
 const ALL = { from: '0000-01-01', to: '2999-12-31' }

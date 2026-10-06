@@ -18,15 +18,20 @@ const pickers = read('ui/components/KeyboardPickers.tsx')
 /* ① الإيصال الحراري */
 {
   const body = receipt.replace(/\/\*[\s\S]*?\*\//g, '')
-  const sizes = [...body.matchAll(/font-size: \$\{wide \? '([\d.]+)px' : '([\d.]+)px'\}/g)].flatMap((m) => [Number(m[1]), Number(m[2])])
+  /* طلب المالك 2026-10-01: خط أكبر وأعرض — المقاسات عبر fs() والوضع الكبير
+     (الافتراضي fontScale='large') يضيف 1px ويعرّض النصوص الفرعية */
+  const sizes = [...body.matchAll(/font-size: \$\{fs\(wide \? ([\d.]+) : ([\d.]+)\)\}px/g)].flatMap((m) => [Number(m[1]), Number(m[2])])
   assert.ok(sizes.length >= 10, 'مقاسات خطوط الإيصال غير متوقعة')
   const min = Math.min(...sizes)
-  assert.ok(min >= 10.5, `أصغر خط في الإيصال ${min}px — لا يُطبع بوضوح على الطابعة الحرارية`)
+  assert.ok(min >= 10.5, `أصغر خط أساسي في الإيصال ${min}px — لا يُطبع بوضوح على الطابعة الحرارية`)
+  assert.ok(/const large = \(settings\.fontScale \?\? 'large'\) === 'large'/.test(body), 'وضع الخط الكبير غير مفعل افتراضياً')
+  assert.ok(/const fs = \(px: number\) => large \? px \+ 1 : px/.test(body), 'الوضع الكبير لا يكبر الخط')
+  assert.ok(/font-weight: 800; \}\n/.test(body) || /\.hdr,\.kv.*font-weight: 800/.test(body.replace(/\n/g, ' ')) || /font-weight: 800/.test(body), 'الوضع الكبير لا يعرّض النصوص الفرعية')
   assert.ok(!/color: #333|color: #6[0-9a-f]{2}|color: #9[0-9a-f]{2}/.test(body), 'ما زال في الإيصال نص رمادي لا يُطبع بوضوح')
   assert.ok(/print-color-adjust: exact/.test(body) && /text-rendering: geometricPrecision/.test(body),
     'الإيصال بلا ضبط ألوان/حِدّة للطباعة')
-  assert.ok(/font-weight: 600/.test(body), 'النص الأساسي في الإيصال خفيف الوزن')
-  R.ok(`خطوط الإيصال الحراري كلها سوداء وأصغرها ${min}px`)
+  assert.ok(/font-weight: 700; line-height/.test(body), 'النص الأساسي في الإيصال خفيف الوزن')
+  R.ok(`خطوط الإيصال أكبر (+1px افتراضياً) وأعرض — أصغرها ${min + 1}px في الوضع الكبير`)
 }
 /* ② أزرار الحذف */
 {
@@ -49,7 +54,7 @@ const pickers = read('ui/components/KeyboardPickers.tsx')
 }
 /* ④ القوائم القصيرة */
 {
-  assert.ok(/if \(choices\.length > 0 && choices\.length <= 10\) \{/.test(pickers), 'لا تتحول القوائم القصيرة إلى منسدلة أصلية')
+  assert.ok(/native \|\| \(choices\.length > 0 && choices\.length <= 10\)\) \{/.test(pickers), 'لا تتحول القوائم القصيرة إلى منسدلة أصلية (وnative يفرضها للمعالج)')
   assert.ok(/<select[\s\S]{0,400}quick-native-select[\s\S]{0,400}<\/select>/.test(pickers), 'القائمة القصيرة لا تستعمل <select> أصلي')
   assert.ok(/data-quick-native="true"/.test(pickers), 'القائمة الأصلية بلا سمة تعريف للاختبارات')
   assert.ok(/function nodeText\(node: ReactNode\): string/.test(pickers), 'نص الخيار قد يظهر [object Object] في القائمة الأصلية')

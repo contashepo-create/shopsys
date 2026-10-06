@@ -13,6 +13,8 @@ import { readFileSync, existsSync, rmSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { DEMO_ACTIVITIES } from './seed.data.mjs'
+import { writeFileSync } from 'node:fs'
+import { dumpPayloads, PAYLOADS_PATH } from './dump.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 export const DB_PATH = join(here, 'demo.sqlite')
@@ -38,7 +40,33 @@ export function buildDemoDatabase(target = DB_PATH) {
   const insertSale = db.prepare('INSERT INTO sales (activity, ref, doc_date, customer_ref, warehouse_ref, payment, paid_minor, treasury_ref, notes) VALUES (?,?,?,?,?,?,?,?,?)')
   const insertSaleLine = db.prepare('INSERT INTO sale_lines (activity, sale_ref, item_ref, qty, unit_price_minor, discount_percent) VALUES (?,?,?,?,?,?)')
   const insertPurchase = db.prepare('INSERT INTO purchases (activity, ref, doc_date, supplier_ref, warehouse_ref, supplier_doc, paid_minor, treasury_ref, notes) VALUES (?,?,?,?,?,?,?,?,?)')
-  const insertPurchaseLine = db.prepare('INSERT INTO purchase_lines (activity, purchase_ref, item_ref, qty, unit_price_minor) VALUES (?,?,?,?,?)')
+  const insertPurchaseLine = db.prepare('INSERT INTO purchase_lines (activity, purchase_ref, item_ref, qty, unit_price_minor, expiry_date) VALUES (?,?,?,?,?,?)')
+  /* ─── §100: بذور أعمق — مرتجعات وسندات ─── */
+  const insertSaleReturn = db.prepare('INSERT INTO sale_returns (activity, ref, sale_ref, doc_date, refund, treasury_ref, reason) VALUES (?,?,?,?,?,?,?)')
+  const insertSaleReturnLine = db.prepare('INSERT INTO sale_return_lines (activity, return_ref, item_ref, qty, condition) VALUES (?,?,?,?,?)')
+  const insertPurchaseReturn = db.prepare('INSERT INTO purchase_returns (activity, ref, purchase_ref, doc_date, refund, treasury_ref, reason) VALUES (?,?,?,?,?,?,?)')
+  const insertPurchaseReturnLine = db.prepare('INSERT INTO purchase_return_lines (activity, return_ref, item_ref, qty) VALUES (?,?,?,?)')
+  const insertVoucher = db.prepare('INSERT INTO vouchers (activity, ref, kind, doc_date, treasury_ref, party_kind, party_ref, amount_minor, description) VALUES (?,?,?,?,?,?,?,?,?)')
+  /* ─── توسعة المرحلة ⑥: موارد بشرية ومستندات تجارية ─── */
+  const insertEmployee = db.prepare('INSERT INTO employees (activity, ref, name_ar, phone, job_title, hire_date, base_salary_minor, allowances_minor, active, notes) VALUES (?,?,?,?,?,?,?,?,?,?)')
+  const insertAttendance = db.prepare('INSERT INTO attendance_records (activity, ref, employee_ref, date, status, check_in, check_out, notes) VALUES (?,?,?,?,?,?,?,?)')
+  const insertLeave = db.prepare('INSERT INTO leave_requests (activity, ref, employee_ref, type_id, from_date, to_date, status, reason) VALUES (?,?,?,?,?,?,?,?)')
+  const insertPayrollMonth = db.prepare('INSERT INTO payroll_months (activity, ref, month, pay_employee_refs, treasury_ref) VALUES (?,?,?,?,?)')
+  const insertQuotation = db.prepare('INSERT INTO quotations (activity, ref, kind, client_name, client_ref, title_ar, valid_until, status, win_probability, bid_bond_minor, convert, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+  const insertQuotationLine = db.prepare('INSERT INTO quotation_lines (activity, quotation_ref, name_ar, description_ar, unit_ar, qty, unit_price_minor, est_cost_minor, vat_percent, tax_included) VALUES (?,?,?,?,?,?,?,?,?,?)')
+  const insertPurchaseOrder = db.prepare('INSERT INTO purchase_orders (activity, ref, supplier_ref, order_date, expected_date, warehouse_ref, notes) VALUES (?,?,?,?,?,?,?)')
+  const insertPurchaseOrderLine = db.prepare('INSERT INTO purchase_order_lines (activity, order_ref, item_ref, qty, unit_price_minor, vat_percent) VALUES (?,?,?,?,?,?)')
+  const insertWastageDoc = db.prepare('INSERT INTO wastage_docs (activity, ref, doc_date, reason, notes) VALUES (?,?,?,?,?)')
+  const insertWastageLine = db.prepare('INSERT INTO wastage_lines (activity, doc_ref, item_ref, qty) VALUES (?,?,?,?)')
+  /* ─── تعميق المرحلة ⑥: معدات وعقود إيجار ومقاولو باطن ومستخلصات ─── */
+  const insertEquipment = db.prepare('INSERT INTO equipment (activity, ref, name_ar, code, daily_rate_minor, hourly_rate_minor, monthly_rate_minor, meter_reading, service_every_hours, notes) VALUES (?,?,?,?,?,?,?,?,?,?)')
+  const insertRentalContract = db.prepare('INSERT INTO rental_contracts (activity, ref, customer_ref, equipment_ref, days, daily_rate_minor, deposit_minor, payment, paid_minor, vat_percent, start_date, notes, close_deduct_minor, close_end_date, treasury_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+  const insertCostCenter = db.prepare('INSERT INTO cost_centers (activity, ref, code, name_ar, parent_ref, is_active, notes) VALUES (?,?,?,?,?,?,?)')
+  const insertEquipmentCost = db.prepare('INSERT INTO equipment_costs (activity, ref, equipment_ref, date, kind, amount_minor, description, treasury_ref) VALUES (?,?,?,?,?,?,?,?)')
+  const insertSubContract = db.prepare('INSERT INTO sub_contracts (activity, ref, quotation_ref, contractor_name, supplier_ref, scope_ar, contract_value_minor, retention_percent, tax_withhold_percent, advance_percent, start_date, advance_minor, advance_treasury_ref, certificate_amount_minor, certificate_description) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+  const insertProjectExtract = db.prepare('INSERT INTO project_extracts (activity, ref, quotation_ref, percent, vat_percent, payment, description, treasury_ref) VALUES (?,?,?,?,?,?,?,?)')
+  /* §96: مستندات المقاولات الشاملة — نوع + JSON (يقرؤها جسر التحميل في التطبيق) */
+  const insertContractingDoc = db.prepare('INSERT INTO contracting_docs (activity, ref, kind, data, sort_order) VALUES (?,?,?,?,?)')
 
   db.exec('BEGIN')
   DEMO_ACTIVITIES.forEach((activity, order) => {
@@ -67,21 +95,75 @@ export function buildDemoDatabase(target = DB_PATH) {
     for (const purchase of activity.purchases ?? []) {
       insertPurchase.run(activity.id, purchase.ref, purchase.doc_date, purchase.supplier_ref ?? '', purchase.warehouse_ref ?? '', purchase.supplier_doc ?? '', purchase.paid_minor ?? 0, purchase.treasury_ref ?? '', purchase.notes ?? '')
       for (const line of purchase.lines ?? [])
-        insertPurchaseLine.run(activity.id, purchase.ref, line.item_ref, line.qty, line.unit_price_minor)
+        insertPurchaseLine.run(activity.id, purchase.ref, line.item_ref, line.qty, line.unit_price_minor, line.expiry_date ?? '')
     }
+    for (const employee of activity.employees ?? [])
+      insertEmployee.run(activity.id, employee.ref, employee.name_ar, employee.phone ?? '', employee.job_title ?? '', employee.hire_date ?? '', employee.base_salary_minor ?? 0, employee.allowances_minor ?? 0, employee.active === false ? 0 : 1, employee.notes ?? '')
+    for (const row of activity.attendance ?? [])
+      insertAttendance.run(activity.id, row.ref, row.employee_ref, row.date, row.status ?? 'present', row.check_in ?? '', row.check_out ?? '', row.notes ?? '')
+    for (const row of activity.leaves ?? [])
+      insertLeave.run(activity.id, row.ref, row.employee_ref, row.type_id ?? 'annual', row.from_date, row.to_date, row.status ?? 'approved', row.reason ?? '')
+    for (const row of activity.payroll_months ?? [])
+      insertPayrollMonth.run(activity.id, row.ref, row.month, row.pay_employee_refs ?? '', row.treasury_ref ?? '')
+    for (const quotation of activity.quotations ?? []) {
+      insertQuotation.run(activity.id, quotation.ref, quotation.kind ?? 'quotation', quotation.client_name, quotation.client_ref ?? '', quotation.title_ar, quotation.valid_until ?? '', quotation.status ?? 'draft', quotation.win_probability ?? 50, quotation.bid_bond_minor ?? 0, quotation.convert ?? '', quotation.notes ?? '')
+      for (const line of quotation.lines ?? [])
+        insertQuotationLine.run(activity.id, quotation.ref, line.name_ar ?? '', line.description_ar, line.unit_ar ?? 'مقطوعية', line.qty ?? 1, line.unit_price_minor ?? 0, line.est_cost_minor ?? 0, line.vat_percent ?? 0, line.tax_included ? 1 : 0)
+    }
+    for (const order of activity.purchase_orders ?? []) {
+      insertPurchaseOrder.run(activity.id, order.ref, order.supplier_ref ?? '', order.order_date, order.expected_date ?? '', order.warehouse_ref ?? '', order.notes ?? '')
+      for (const line of order.lines ?? [])
+        insertPurchaseOrderLine.run(activity.id, order.ref, line.item_ref, line.qty, line.unit_price_minor ?? 0, line.vat_percent ?? 0)
+    }
+    for (const doc of activity.wastage ?? []) {
+      insertWastageDoc.run(activity.id, doc.ref, doc.doc_date, doc.reason ?? 'انتهاء صلاحية', doc.notes ?? '')
+      for (const line of doc.lines ?? [])
+        insertWastageLine.run(activity.id, doc.ref, line.item_ref, line.qty)
+    }
+    for (const row of activity.cost_centers ?? [])
+      insertCostCenter.run(activity.id, row.ref, row.code, row.name_ar, row.parent_ref ?? '', row.is_active === false ? 0 : 1, row.notes ?? '')
+    for (const row of activity.equipment ?? [])
+      insertEquipment.run(activity.id, row.ref, row.name_ar, row.code ?? '', row.daily_rate_minor ?? 0, row.hourly_rate_minor ?? 0, row.monthly_rate_minor ?? 0, row.meter_reading ?? 0, row.service_every_hours ?? 0, row.notes ?? '')
+    for (const row of activity.rental_contracts ?? [])
+      insertRentalContract.run(activity.id, row.ref, row.customer_ref ?? '', row.equipment_ref, row.days, row.daily_rate_minor, row.deposit_minor ?? 0, row.payment ?? 'cash', row.paid_minor ?? 0, row.vat_percent ?? 0, row.start_date ?? '', row.notes ?? '', row.close_deduct_minor ?? 0, row.close_end_date ?? '', row.treasury_ref ?? '')
+    for (const row of activity.equipment_costs ?? [])
+      insertEquipmentCost.run(activity.id, row.ref, row.equipment_ref, row.date, row.kind ?? 'fuel', row.amount_minor, row.description ?? '', row.treasury_ref ?? '')
+    for (const row of activity.sub_contracts ?? [])
+      insertSubContract.run(activity.id, row.ref, row.quotation_ref ?? '', row.contractor_name, row.supplier_ref ?? '', row.scope_ar, row.contract_value_minor, row.retention_percent ?? 5, row.tax_withhold_percent ?? 0, row.advance_percent ?? 0, row.start_date ?? '', row.advance_minor ?? 0, row.advance_treasury_ref ?? '', row.certificate_amount_minor ?? 0, row.certificate_description ?? '')
+    for (const row of activity.project_extracts ?? [])
+      insertProjectExtract.run(activity.id, row.ref, row.quotation_ref ?? '', row.percent ?? 0, row.vat_percent ?? 14, row.payment ?? 'credit', row.description ?? '', row.treasury_ref ?? '')
+    ;(activity.contracting_docs ?? []).forEach((row, order) =>
+      insertContractingDoc.run(activity.id, row.ref, row.kind, row.data ?? '{}', order))
     for (const sale of activity.sales ?? []) {
       insertSale.run(activity.id, sale.ref, sale.doc_date, sale.customer_ref ?? '', sale.warehouse_ref ?? '', sale.payment ?? 'cash', sale.paid_minor ?? 0, sale.treasury_ref ?? '', sale.notes ?? '')
       for (const line of sale.lines ?? [])
         insertSaleLine.run(activity.id, sale.ref, line.item_ref, line.qty, line.unit_price_minor, line.discount_percent ?? 0)
     }
+    /* §100: مرتجعات بيع/شراء وسندات القبض/الصرف */
+    for (const ret of activity.sales_returns ?? []) {
+      insertSaleReturn.run(activity.id, ret.ref, ret.sale_ref, ret.doc_date, ret.refund ?? 'cash', ret.treasury_ref ?? '', ret.reason ?? '')
+      for (const line of ret.lines ?? [])
+        insertSaleReturnLine.run(activity.id, ret.ref, line.item_ref, line.qty, line.condition ?? 'resellable')
+    }
+    for (const ret of activity.purchase_returns ?? []) {
+      insertPurchaseReturn.run(activity.id, ret.ref, ret.purchase_ref, ret.doc_date, ret.refund ?? 'debt', ret.treasury_ref ?? '', ret.reason ?? '')
+      for (const line of ret.lines ?? [])
+        insertPurchaseReturnLine.run(activity.id, ret.ref, line.item_ref, line.qty)
+    }
+    for (const v of activity.vouchers ?? [])
+      insertVoucher.run(activity.id, v.ref, v.kind, v.doc_date, v.treasury_ref ?? '', v.party_kind ?? 'customer', v.party_ref ?? '', v.amount_minor, v.description ?? '')
   })
   db.exec('COMMIT')
 
   const counts = Object.fromEntries(
-    ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines']
+    ['activities', 'branches', 'warehouses', 'treasuries', 'payment_terminals', 'categories', 'items', 'customers', 'suppliers', 'sales', 'sale_lines', 'purchases', 'purchase_lines', 'sale_returns', 'sale_return_lines', 'purchase_returns', 'purchase_return_lines', 'vouchers', 'employees', 'attendance_records', 'leave_requests', 'payroll_months', 'quotations', 'quotation_lines', 'purchase_orders', 'purchase_order_lines', 'wastage_docs', 'wastage_lines', 'cost_centers', 'equipment', 'rental_contracts', 'equipment_costs', 'sub_contracts', 'project_extracts', 'contracting_docs']
       .map((table) => [table, db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n]),
   )
+  /* §98: حمولة JSON جاهزة لاختبارات الواجهة (jsdom لا تستورد node:sqlite) —
+     تُفرَّغ من القاعدة المنشأة للتو فتبقى مطابقة للبذرة حكماً */
+  const payloads = dumpPayloads(db)
   db.close()
+  writeFileSync(PAYLOADS_PATH, JSON.stringify(payloads, null, 1) + '\n')
   return counts
 }
 

@@ -24,7 +24,8 @@ import { readFileSync } from 'node:fs'
 import { reporter } from './auditKit.mjs'
 
 const R = reporter('تذييل الفاتورة ورأسها — لغة مستند واحدة')
-const ROOT = '/home/user/shopsys/app'
+import { fileURLToPath } from 'node:url'
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const css = readFileSync(`${ROOT}/src/index.css`, 'utf8')
 const frame = readFileSync(`${ROOT}/src/ui/components/InvoicePOSFrame.tsx`, 'utf8')
 const sales = readFileSync(`${ROOT}/src/ui/pages/AdvancedSalesInvoicePage.tsx`, 'utf8')
@@ -266,11 +267,13 @@ const footerOf = (src) => {
   }
   assert.ok(!table.includes('invoice-doc-linebar'), 'عاد شريط أدوات البنود السفلي المكرر')
   assert.ok(/invoice-doc-taxchip/.test(table) && css.includes('.invoice-doc-taxchip'), 'رقاقة نسبة الضريبة على السطر غير موجودة')
-  // البلاطات الثلاث وكتلة التسوية في صفحتي البيع والشراء
+  // طريقة الدفع قائمة منسدلة واحدة فقط (طلب المالك 2026-10-01): لا بلاطات
+  // أزرار فوقها تشغل حيزاً — كل الوسائل مجمَّعة داخل القائمة نفسها.
   const picker = readFileSync(`${ROOT}/src/ui/components/PaymentMethodPicker.tsx`, 'utf8')
-  assert.ok(picker.includes('invoice-doc-tiles') && /نقدي/.test(picker) && /ماكينة دفع/.test(picker), 'بلاطات وسيلة الدفع الثلاث غير موجودة')
+  assert.ok(!picker.includes('invoice-doc-tiles') && !/\btiles\b/.test(picker), 'عادت بلاطات أزرار وسيلة الدفع — المطلوب قائمة منسدلة فقط')
+  assert.ok(/QuickSelect/.test(picker) && /خزينة \/ بنك \/ محفظة/.test(picker) && /ماكينات الدفع/.test(picker), 'القائمة المنسدلة لا تجمع كل الوسائل (خزائن/بنوك/محافظ + ماكينات)')
   for (const [label, src] of PAGES) {
-    assert.ok(src.includes('tiles'), `${label}: لوحة التحصيل بلا بلاطات وسيلة الدفع`)
+    assert.ok(!/\btiles\b/.test(src), `${label}: عادت بلاطات/أزرار وسيلة الدفع — المطلوب قائمة منسدلة فقط`)
     /* النموذج المعتمد ينهي لوحة الإجماليات عند «صافي إجمالي الفاتورة»:
        المدفوع والمتبقي في حاشية لوحة التحصيل، وحالة اتزان القيد رقاقة في
        شريط المستند — بلا تكرار لنفس الرقم في ثلاثة أماكن. */
@@ -284,7 +287,7 @@ const footerOf = (src) => {
     assert.ok(rowsAfterGrand.every((row) => / info\/>| info /.test(row)), `${label}: صفوف كشف تدخل الحساب بعد الإجمالي — المسموح فقط سطور معلومة (info)`)
     assert.ok(src.includes('invoice-doc-infield-chip'), `${label}: كود الطرف ليس رقاقة داخل حقله كالمرجع`)
   }
-  R.ok('قطع التصميم المرجعي: نقاط النافذة · تصفّح الدفتر · تصفية التصنيف · رقاقات داخل الحقول · وحدة وضريبة وأدوات لكل سطر · بلاطات الدفع · كتلة التسوية')
+  R.ok('قطع التصميم المرجعي: نقاط النافذة · تصفّح الدفتر · تصفية التصنيف · رقاقات داخل الحقول · وحدة وضريبة وأدوات لكل سطر · قائمة الدفع المنسدلة الوحيدة · كتلة التسوية')
 }
 
 /* ⑪ المرفقات وتخصيص الحقول وتصدير PDF — قطع المرجع المتبقية، ولا زرّ منها شكلي */

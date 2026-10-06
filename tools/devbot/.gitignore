@@ -1,0 +1,8 @@
+# أسرار المحلي — لا تُحفظ في git أبداً
+*.secret*
+*.key
+*.pem
+.env*
+.env
+state.json
+.wrangler

@@ -4,23 +4,32 @@ import { QuickSelect } from '../components/KeyboardPickers.tsx'
  * (القرارات 6 — كل قيم البلد قابلة للتعديل اليدوي)
  */
 import { useState } from 'react'
-import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift } from 'lucide-react'
+import { Percent, Globe2, ShieldAlert, Warehouse, CalendarCheck2, Lock, Gift, Coins } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { ARAB_COUNTRIES, getCountry } from '../../core/countries.ts'
-import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES } from '../../core/activities.ts'
+import { ACTIVITY_TEMPLATES, FEATURE_LABELS, MODULE_LABELS, ALL_MODULES, effectiveModules } from '../../core/activities.ts'
 import { suggestFiscalYear, validateFiscalYear, validateYearClose, buildFiscalYearReport, type FiscalYear } from '../../core/fiscal.ts'
 import { formatMinor } from '../../core/money.ts'
 import { resolveBusinessTax, type BusinessTaxStatus } from '../../core/taxRegistration.ts'
 import { Btn, Field, inputCls, Modal, useToast } from '../components/ui.tsx'
 import { accountName } from './accountNames.ts'
 
+import { FxRatesManager } from '../components/FxRatesManager.tsx'
+
 export function GeneralSettingsPage() {
-  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty } = useAppStore()
-  const { warehouses, closeFiscalYear, journal } = useDataStore()
+  const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty, applyActivityChangeKey, toggleModule, activatedPayload } = useAppStore()
+  const { warehouses, closeFiscalYear, reopenFiscalYear, journal } = useDataStore()
   const toast = useToast()
+  /* v1.0.7: تغيير النشاط بمفتاح الدعم الفني فقط (موافقة المالك) */
+  const [activityKeyOpen, setActivityKeyOpen] = useState(false)
+  const [activityKeyInput, setActivityKeyInput] = useState('')
+  const [activityKeyBusy, setActivityKeyBusy] = useState(false)
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const activity = ACTIVITY_TEMPLATES.find((a) => a.id === setup.activityId)
+  /* v1.0.10: الممنوحة = افتراضيات النشاط + ما منحه مفتاح الترخيص (extraModules الموقّعة) —
+     هذه فقط قابلة للإظهار من هنا؛ ما دونها يُطلب من الدعم */
+  const granted = effectiveModules(setup.activityId, activatedPayload?.extraModules)
   const [vat, setVat] = useState(String(setup.vatPercent))
   const [taxInclusive, setTaxInclusive] = useState(setup.taxInclusive)
   const [taxStatus, setTaxStatus] = useState<BusinessTaxStatus>(setup.taxRegistrationStatus ?? (setup.vatPercent > 0 ? 'registered' : 'zero_rated'))
@@ -29,6 +38,8 @@ export function GeneralSettingsPage() {
 
   /* ─── إقفال السنة المالية (منهجية QuickBooks/Xero — طلب المالك) ─── */
   const [closeTarget, setCloseTarget] = useState<(typeof fiscalYears)[number] | null>(null)
+  /* ─── إعادة فتح سنة مقفلة (نمط عالمي Reopen books): عكس قيد الإقفال + فتح الفترة للتصحيح ─── */
+  const [reopenTarget, setReopenTarget] = useState<(typeof fiscalYears)[number] | null>(null)
   const [newYearOpen, setNewYearOpen] = useState(false)
   const nextSuggested = suggestFiscalYear(new Date().getFullYear() + (fiscalYears.some((y) => y.nameAr === String(new Date().getFullYear())) ? 1 : 0))
   const [fyName, setFyName] = useState(nextSuggested.nameAr)
@@ -51,6 +62,15 @@ export function GeneralSettingsPage() {
       markFiscalYearClosed(closeTarget.id)
       toast.show(`أُقفلت سنة «${closeTarget.nameAr}» — صافي ${netProfitMinor >= 0 ? 'الربح' : 'الخسارة'} ${fmt(Math.abs(netProfitMinor))} ${cur.symbol} رُحّل للأرباح المرحلة ✅`)
       setCloseTarget(null)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
+  const doReopenYear = () => {
+    if (!reopenTarget) return
+    try {
+      reopenFiscalYear(reopenTarget, fiscalYears)
+      toast.show(`أُعيد فتح سنة «${reopenTarget.nameAr}» — عُكس قيد الإقفال والفترة مفتوحة للتصحيح، أقفلها مجدداً بعده ✅`)
+      setReopenTarget(null)
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
   const saveNewYear = () => {
@@ -116,6 +136,14 @@ export function GeneralSettingsPage() {
             البلد والنشاط مقفولان بعد الإعداد الأول — تغييرهما يتم عبر الدعم الفني (المطوّر) فقط.
           </p>
         </div>
+      </section>
+
+      {/* أسعار الصرف (طلب المالك 2026-10-01): يدوي أو API — المالك فقط وبالرقم السري */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '70ms' }} data-settings-fx-rates>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+          <Coins size={17} className="text-amber-500" /> أسعار الصرف (تحصيل/سداد بعملة أجنبية)
+        </h3>
+        <FxRatesManager />
       </section>
 
       {/* الضريبة */}
@@ -258,7 +286,7 @@ export function GeneralSettingsPage() {
 
           {loyalty.enabled && (
             <>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <Field label={`نقاط لكل ${cur.symbol} من الفاتورة`} hint="الافتراضي العالمي: 1 نقطة لكل وحدة عملة">
                 <input
                   value={String(loyalty.pointsPerUnit)} dir="ltr" className={inputCls}
@@ -275,6 +303,12 @@ export function GeneralSettingsPage() {
                 <input
                   value={String(loyalty.minRedeemPoints)} dir="ltr" className={inputCls}
                   onChange={(e) => { const v = Math.round(Number(e.target.value)); if (Number.isFinite(v) && v >= 0) updateLoyalty({ minRedeemPoints: v }) }}
+                />
+              </Field>
+              <Field label="سقف الاستبدال للعملية الواحدة" hint="حماية من استبدال ضخم بضغطة — 0 = بلا سقف">
+                <input
+                  value={String(loyalty.maxRedeemPoints)} dir="ltr" className={inputCls}
+                  onChange={(e) => { const v = Math.round(Number(e.target.value)); if (Number.isFinite(v) && v >= 0) updateLoyalty({ maxRedeemPoints: v }) }}
                 />
               </Field>
             </div>
@@ -343,33 +377,101 @@ export function GeneralSettingsPage() {
         <h3 className="font-extrabold text-slate-800 dark:text-white mb-4">النشاط والوحدات المفعّلة</h3>
         <div className="flex items-center gap-3 mb-4 p-3.5 rounded-xl bg-brand-500/5 border border-brand-500/15">
           <span className="text-2xl">{activity?.icon}</span>
-          <div>
+          <div className="flex-1">
             <div className="font-bold text-slate-800 dark:text-white text-sm">{activity?.nameAr}</div>
             <div className="text-[11px] text-slate-400">{activity?.description}</div>
           </div>
+          {/* v1.0.7: النشاط مقفول — التغيير بمفتاح موقّع من الدعم الفني فقط */}
+          <button
+            onClick={() => { setActivityKeyOpen(true); setActivityKeyInput('') }}
+            className="px-3 py-2 rounded-xl text-[11.5px] font-bold border-2 border-violet-400/50 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 transition-colors"
+          >تغيير النشاط بمفتاح الدعم</button>
         </div>
-        {/* سياسة الأقسام (أمر المالك): المستخدم لا يضيف/يحذف أقساماً —
-            الافتراضية تتبع النشاط، والإضافي يفعّله المطوّر فقط عبر البوت بمفتاح موقَّع */}
+        {setup.lastActivityChangeAt && (
+          <div className="mb-3 text-[11px] text-slate-400">
+            آخر تغيير نشاط: <b dir="ltr">{setup.lastActivityChangeAt.slice(0, 10)}</b> — التغيير مسموح كل 30 يوماً
+          </div>
+        )}
+        {activityKeyOpen && (
+          <div className="mb-4 p-4 rounded-2xl border-2 border-violet-400/40 bg-violet-500/[0.04] space-y-3">
+            <div className="text-[12.5px] font-bold text-slate-700 dark:text-slate-200">
+              اطلب من الدعم الفني مفتاح تغيير النشاط لجهازك، ثم ألصقه هنا — البيانات المحاسبية والمخزنية تبقى كما هي.
+            </div>
+            <textarea
+              value={activityKeyInput}
+              onChange={(e) => setActivityKeyInput(e.target.value)}
+              rows={3}
+              dir="ltr"
+              placeholder="SHOPSYS2...."
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-transparent text-[12px] outline-none focus:border-violet-500 font-mono"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setActivityKeyOpen(false)} className="flex-1 px-4 py-2 rounded-xl text-[12.5px] font-bold border border-slate-300 dark:border-slate-700 text-slate-500">إلغاء</button>
+              <button
+                disabled={activityKeyBusy || !activityKeyInput.trim()}
+                onClick={async () => {
+                  setActivityKeyBusy(true)
+                  try {
+                    const name = await applyActivityChangeKey(activityKeyInput.trim())
+                    setActivityKeyOpen(false)
+                    toast.show(`تغيّر النشاط إلى «${name}» — القوالب والهوية اللونية حُدّثت، وبياناتك كما هي ✓`)
+                  } catch (err) {
+                    toast.show((err as Error).message, 'error')
+                  } finally { setActivityKeyBusy(false) }
+                }}
+                className="flex-1 px-4 py-2 rounded-xl text-[12.5px] font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
+              >{activityKeyBusy ? 'جارٍ التحقق…' : 'تطبيق المفتاح'}</button>
+            </div>
+          </div>
+        )}
+        {/* v1.0.10 (عقد إضافة قسم خارج النشاط): الفتح بمفتاح موقّع من الدعم فقط —
+            أمر البوت «اصدر ... وحدات=...» يمنح القسم فيظهر فوراً عند التفعيل.
+            من هنا: إيقاف/إعادة إظهار الأقسام الممنوحة (بياناتها تبقى دائماً). */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
-          {ALL_MODULES.filter((m) => setup.modules.includes(m) || activity?.modules.includes(m)).map((m) => {
+          {ALL_MODULES.map((m) => { // كل الوحدات ظاهرة: المفعّلة تُدار، والباقي يعرفها العميل ليطلبها من الدعم
             const on = setup.modules.includes(m)
             const isDefault = activity?.modules.includes(m)
             const info = MODULE_LABELS[m]
+            const lastOn = on && setup.modules.length <= 1
             return (
               <div
                 key={m}
                 className={`flex items-center gap-3 p-3 rounded-xl border-2 text-right ${
-                  on ? 'border-emerald-400/60 bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700 opacity-60'
+                  on ? 'border-emerald-400/60 bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700'
                 }`}
               >
                 <span className="text-xl">{info.icon}</span>
                 <span className="flex-1 min-w-0">
-                  <span className="block font-bold text-[13px] text-slate-800 dark:text-white">{info.nameAr}</span>
+                  <span className="block font-bold text-[13px] text-slate-800 dark:text-white">
+                    {info.nameAr}
+                    {isDefault && <span className={`mr-1.5 text-[10px] font-black px-1.5 py-0.5 rounded ${on ? 'bg-emerald-500/10 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>أساسي لنشاطك</span>}
+                  </span>
                   <span className="block text-[10.5px] text-slate-400 truncate">{info.desc}</span>
                 </span>
-                <span className={`shrink-0 text-[10px] font-black px-2 py-1 rounded-lg ${on ? (isDefault ? 'bg-emerald-500/10 text-emerald-600' : 'bg-violet-500/10 text-violet-600') : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
-                  {on ? (isDefault ? 'أساسي للنشاط' : 'مفعّل من المطوّر') : 'غير مفعّل'}
-                </span>
+                {on ? (
+                  <button
+                    disabled={lastOn}
+                    onClick={() => {
+                      if (lastOn) { toast.show('لا يمكن إيقاف آخر قسم مفعّل', 'error'); return }
+                      toast.show(`أُوقف قسم «${info.nameAr}» — شاشاته مختفية وبياناته محفوظة بالكامل`)
+                      toggleModule(m)
+                    }}
+                    className={`shrink-0 text-[10.5px] font-black px-2.5 py-1.5 rounded-lg transition-colors bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-rose-500/10 hover:text-rose-600 ${lastOn ? 'opacity-40' : ''}`}
+                  >
+                    إيقاف
+                  </button>
+                ) : granted.includes(m) ? (
+                  <button
+                    onClick={() => { toast.show(`عاد قسم «${info.nameAr}» للظهور — بياناته كاملة كما تركتها ✓`); toggleModule(m) }}
+                    className="shrink-0 text-[10.5px] font-black px-2.5 py-1.5 rounded-lg transition-colors bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20"
+                  >
+                    إعادة إظهار
+                  </button>
+                ) : (
+                  <span className="shrink-0 text-[10px] font-black px-2 py-1 rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-300" title="اطلبها من الدعم الفني — تُمنح بمفتاح موقّع وتظهر فوراً">
+                    بكود الدعم
+                  </span>
+                )}
               </div>
             )
           })}
@@ -377,7 +479,7 @@ export function GeneralSettingsPage() {
         <div className="flex items-center gap-2 p-3 rounded-xl bg-sky-500/5 border border-sky-500/15 mb-4">
           <span className="text-lg">ℹ️</span>
           <p className="text-[11px] font-bold text-sky-600 dark:text-sky-400">
-            الأقسام تتبع نشاطك تلقائياً — لإضافة قسم آخر تواصل مع الدعم الفني ليفعّله لك في رخصتك.
+            الأقسام الافتراضية تتبع نشاطك. القسم الإضافي (أي وحدة أعلاه غير مفعّلة) يُمنح بمفتاح موقّع من الدعم الفني — اطلبه فيظهر فوراً بعد التفعيل. إيقاف قسم يخفي شاشاته فقط وبياناته محفوظة وتعود كاملة عند إعادة الإظهار.
           </p>
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -408,6 +510,8 @@ export function GeneralSettingsPage() {
           {fiscalYears.length === 0 && <div className="text-[12px] text-slate-400">لا سنوات مسجلة</div>}
           {fiscalYears.map((y) => {
             const closable = validateYearClose(y, fiscalYears, new Date().toISOString().slice(0, 10)).length === 0
+            // إعادة الفتح بالترتيب العكسي: أحدث سنة مقفلة فقط (لا سنة مقفلة أحدث منها)
+            const newestClosed = y.status === 'closed' && !fiscalYears.some((o) => o.id !== y.id && o.status === 'closed' && o.startDate > y.endDate)
             return (
               <div key={y.id} className="flex items-center justify-between rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5">
                 <div>
@@ -417,7 +521,10 @@ export function GeneralSettingsPage() {
                 <div className="flex items-center gap-2">
                   <Btn variant="ghost" onClick={() => setReportYear(y)}>📊 تقرير السنة</Btn>
                   {y.status === 'closed' ? (
-                    <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-500/10 text-slate-500 font-bold flex items-center gap-1"><Lock size={11} /> مقفلة</span>
+                    <>
+                      {newestClosed && <Btn variant="ghost" onClick={() => setReopenTarget(y)}>🔓 إعادة فتح</Btn>}
+                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-500/10 text-slate-500 font-bold flex items-center gap-1"><Lock size={11} /> مقفلة</span>
+                    </>
                   ) : closable ? (
                     <Btn variant="ghost" onClick={() => setCloseTarget(y)}>🔒 إقفال السنة</Btn>
                   ) : (
@@ -433,7 +540,7 @@ export function GeneralSettingsPage() {
       <Modal open={!!closeTarget} onClose={() => setCloseTarget(null)} title={`🔒 إقفال السنة المالية «${closeTarget?.nameAr ?? ''}»`}>
         <div className="space-y-4">
           <div className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
-            سيحدث الآتي (لا رجوع إلا بعكس القيد يدوياً):
+            سيحدث الآتي (يمكن التراجع لاحقاً بزر «إعادة فتح» — يعكس قيد الإقفال):
             <ul className="list-disc pr-5 mt-2 space-y-1 text-[12px]">
               <li>قيد إقفال بتاريخ {closeTarget?.endDate} يصفّر كل حسابات الإيرادات والمصروفات</li>
               <li>صافي الربح/الخسارة يُرحَّل إلى «أرباح مرحّلة 3102»</li>
@@ -444,6 +551,25 @@ export function GeneralSettingsPage() {
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setCloseTarget(null)}>تراجع</Btn>
             <Btn onClick={doCloseYear}>🔒 تأكيد الإقفال</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!reopenTarget} onClose={() => setReopenTarget(null)} title={`🔓 إعادة فتح السنة المالية «${reopenTarget?.nameAr ?? ''}»`}>
+        <div className="space-y-4">
+          <div className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
+            سيحدث الآتي (نمط البرامج العالمية — Reopen books):
+            <ul className="list-disc pr-5 mt-2 space-y-1 text-[12px]">
+              <li>قيد عاكس بقيد الإقفال — تعود أرصدة الإيرادات والمصروفات كما كانت قبل التصفير</li>
+              <li>الفترة تصبح مفتوحة: يمكن تسجيل قيود تصحيحية بتواريخها</li>
+              <li>أرصدة الميزانية لا تتغير (الأرباح المرحلة يلغيها العكس ثم يعيدها إقفال جديد)</li>
+              <li>بعد اكتمال التصحيح أقفل السنة مجدداً — قيد إقفال جديد بالأرقام المصححة</li>
+            </ul>
+            <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">تنبيه: إعادة الفتح تكون لأحدث سنة مقفلة فقط وبالترتيب — والتقارير المعتمدة سابقاً على السنة المقفلة قد تتغير أرقامها بعد التصحيح.</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setReopenTarget(null)}>تراجع</Btn>
+            <Btn onClick={doReopenYear}>🔓 تأكيد إعادة الفتح</Btn>
           </div>
         </div>
       </Modal>

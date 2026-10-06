@@ -16,8 +16,9 @@
  * تشغيل: node --experimental-strip-types scripts/verify_systematic_invariants.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -34,8 +35,8 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'general', vatPercent: 14, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { trialBalance, incomeStatement, balanceSheet, vatReport } = await import(join(root, 'src/core/financialReports.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { trialBalance, incomeStatement, balanceSheet, vatReport } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 
 const st = () => useDataStore.getState()
 const P = { from: '2000-01-01', to: '2099-12-31' }
@@ -67,8 +68,8 @@ st().addItem(item('بصلاحية', 'E-1', 20_000, { trackExpiry: true }))
 st().addItem(item('بسيريال', 'S-1', 500_000, { trackSerial: true }))
 const [normal, expiry, serialItem] = st().items
 // شراء بكل الأنواع
-st().postPurchase({ supplierId: sup.id, date: '2026-03-01', lines: [{ itemId: normal.id, qty: 100, unitPriceMinor: 6_000 }, { itemId: expiry.id, qty: 50, unitPriceMinor: 12_000, expiryDate: '2027-06-30' }, { itemId: serialItem.id, qty: 3, unitPriceMinor: 350_000, serialsRaw: 'SN-A,SN-B,SN-C' }], expenses: [{ nameAr: 'شحن', amountMinor: 30_000, paidFrom: 'cash' }], paidMinor: 2_000_000, notes: '' })
-st().postPurchase({ supplierId: sup.id, date: '2026-03-02', lines: [{ itemId: expiry.id, qty: 30, unitPriceMinor: 13_000, expiryDate: '2027-09-30' }], expenses: [], paidMinor: 0, notes: '' })
+st().postPurchase({ supplierId: sup.id, date: '2026-03-01', lines: [{ itemId: normal.id, qty: 100, unitPriceMinor: 6_000 }, { itemId: expiry.id, qty: 50, unitPriceMinor: 12_000, expiryDate: relDays(270) }, { itemId: serialItem.id, qty: 3, unitPriceMinor: 350_000, serialsRaw: 'SN-A,SN-B,SN-C' }], expenses: [{ nameAr: 'شحن', amountMinor: 30_000, paidFrom: 'cash' }], paidMinor: 2_000_000, notes: '' })
+st().postPurchase({ supplierId: sup.id, date: '2026-03-02', lines: [{ itemId: expiry.id, qty: 30, unitPriceMinor: 13_000, expiryDate: relDays(365) }], expenses: [], paidMinor: 0, notes: '' })
 // بيع نقدي وآجل وبسيريال
 st().postSale({ lines: [cline(normal, 10, 10_000), cline(expiry, 5, 20_000)], customerId: null, payment: 'cash', invoiceDiscountPercent: 0, taxPercent: 14, taxInclusive: true, treasury: '1101' })
 st().postSale({ lines: [cline(serialItem, 1, 500_000, { serials: ['SN-B'] })], customerId: cust.id, payment: 'credit', invoiceDiscountPercent: 0, taxPercent: 0, taxInclusive: true, treasury: '1101' })

@@ -11,7 +11,7 @@
  * تشغيل: node --experimental-strip-types scripts/verify_final_guards_atomicity.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -30,7 +30,7 @@ globalThis.window = { localStorage: globalThis.localStorage, addEventListener: (
 // ⚠️ هنا عمداً: allowNegativeTreasury غير مفعّل (الافتراضي ممنوع) لفحص الحارس المركزي
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'clothing', vatPercent: 14, taxInclusive: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
 const st = () => useDataStore.getState()
 let pass = 0
 const ok = (n) => { pass++; console.log('  ✓', n) }

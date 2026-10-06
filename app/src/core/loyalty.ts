@@ -20,6 +20,8 @@ export interface LoyaltySettings {
   redeemValueMinor: number
   /** أدنى رصيد نقاط يسمح بالاستبدال (منع استبدال الفتات) */
   minRedeemPoints: number
+  /** سقف النقاط القابلة للاستبدال في العملية الواحدة — 0 = بلا سقف (v1.0.12: حماية من استبدال ضخم بضغطة) */
+  maxRedeemPoints: number
 }
 
 export const DEFAULT_LOYALTY: LoyaltySettings = {
@@ -27,6 +29,7 @@ export const DEFAULT_LOYALTY: LoyaltySettings = {
   pointsPerUnit: 1,
   redeemValueMinor: 5,
   minRedeemPoints: 100,
+  maxRedeemPoints: 0,
 }
 
 /**
@@ -57,6 +60,7 @@ export function validateRedeem(args: {
   else {
     if (requestedPoints > customerPoints) errors.push(`رصيد العميل ${customerPoints} نقطة فقط`)
     if (requestedPoints < settings.minRedeemPoints) errors.push(`أدنى استبدال ${settings.minRedeemPoints} نقطة`)
+    if (settings.maxRedeemPoints > 0 && requestedPoints > settings.maxRedeemPoints) errors.push(`سقف الاستبدال في العملية الواحدة ${settings.maxRedeemPoints} نقطة`)
   }
   if (settings.redeemValueMinor <= 0) errors.push('قيمة النقطة غير مضبوطة في الإعدادات')
   return errors

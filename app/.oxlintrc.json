@@ -4,5 +4,13 @@
   "rules": {
     "react/rules-of-hooks": "error",
     "react/only-export-components": ["warn", { "allowConstantExport": true, "allowExportNames": ["guardNavigation", "useUnsavedChangesGuard", "useToast", "DEFAULT_PAY_SOURCE"] }]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/ui/pages/AdvancedPurchaseInvoicePage.tsx"],
+      "rules": {
+        "react-hooks/exhaustive-deps": "off"
+      }
+    }
+  ]
 }

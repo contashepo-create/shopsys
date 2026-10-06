@@ -7,7 +7,7 @@
  * تشغيل: node --experimental-strip-types scripts/user_journey_restaurant_service.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -25,8 +25,8 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'restaurant', vatPercent: 14, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { trialBalance } = await import(join(root, 'src/core/financialReports.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { trialBalance } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 const st = () => useDataStore.getState()
 let pass = 0
 const ok = (n) => { pass++; console.log('  ✓', n) }
@@ -99,7 +99,7 @@ console.log('\n═══ 4) قفل الطاولة برسوم خدمة 12% — ا
   assert.equal(st().items.find(i => i.id === chicken.id).stockQty, chickenBefore - 1.2, 'خُصم 1.2 كجم فراخ (3×0.4) لحظة الفوترة')
   assert.equal(st().items.find(i => i.id === rice.id).stockQty, 30 - 0.75, 'و0.75 كجم أرز')
   // الطاولة تحررت
-  const { occupiedTables } = await import(join(root, 'src/core/restaurant.ts'))
+  const { occupiedTables } = await import(pathToFileURL(join(root, 'src/core/restaurant.ts')).href)
   assert.ok(!occupiedTables(st().restaurantOrders).has('3'))
   ok('قفل الطاولة: 403.2ج برسوم خدمة، الخامات خُصمت بالوصفة لحظة الفوترة فقط')
 }

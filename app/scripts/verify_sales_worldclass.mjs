@@ -10,7 +10,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -34,7 +34,7 @@ const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
 /* ═══ 1) النواة الخالصة: exceedsCreditLimit ═══ */
 {
-  const { exceedsCreditLimit, CreditLimitError } = await import(join(root, 'src/core/pos.ts'))
+  const { exceedsCreditLimit, CreditLimitError } = await import(pathToFileURL(join(root, 'src/core/pos.ts')).href)
   assert.equal(exceedsCreditLimit(50000, 60000, 100000), true)
   ok('رصيد 500 + آجل جديد 600 > حد 1000 ⇒ تجاوز')
   assert.equal(exceedsCreditLimit(50000, 50000, 100000), false)
@@ -51,7 +51,7 @@ const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
 /* ═══ 2) الصلاحية الجديدة ═══ */
 {
-  const { PERMISSIONS, DEFAULT_ROLES, effectivePermissionsFor } = await import(join(root, 'src/core/permissions.ts'))
+  const { PERMISSIONS, DEFAULT_ROLES, effectivePermissionsFor } = await import(pathToFileURL(join(root, 'src/core/permissions.ts')).href)
   const p = PERMISSIONS.find((x) => x.id === 'sales.credit.override')
   assert.ok(p, 'sales.credit.override معرفة')
   assert.equal(p.sensitive, true)
@@ -65,9 +65,9 @@ const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 }
 
 /* ═══ 3) التكامل: postSale مع حد الائتمان ═══ */
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
 const st = () => useDataStore.getState()
-const { CreditLimitError } = await import(join(root, 'src/core/pos.ts'))
+const { CreditLimitError } = await import(pathToFileURL(join(root, 'src/core/pos.ts')).href)
 {
   st().addItem({
     nameAr: 'صنف الائتمان', sku: 'CL-1', barcodes: [], categoryId: 1, baseUnit: 'قطعة', extraUnits: [],
@@ -135,7 +135,7 @@ const { CreditLimitError } = await import(join(root, 'src/core/pos.ts'))
 
 /* ═══ 5) سلامة postSale الأساسية ═══ */
 {
-  const { buildSaleEntry, computeTotals } = await import(join(root, 'src/core/pos.ts'))
+  const { buildSaleEntry, computeTotals } = await import(pathToFileURL(join(root, 'src/core/pos.ts')).href)
   const totals = computeTotals(
     [{ itemId: 1, nameAr: 'س', qty: 2, unitPriceMinor: 11400, unitCostMinor: 5000, discountPercent: 0, soldByWeight: false }],
     0, 14, true,

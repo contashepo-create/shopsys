@@ -7,8 +7,9 @@
  * تشغيل: node --experimental-strip-types scripts/user_journey_pharmacy_day.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -25,10 +26,10 @@ globalThis.localStorage = {
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSales: false, done: true, countryCode: 'EG', activityId: 'pharmacy', vatPercent: 0, taxInclusive: true, allowNegativeTreasury: true }, license: { plan: 'pro' } }, version: 0 }))
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { ExpiredStockError } = await import(join(root, 'src/core/batches.ts'))
-const { PriceFloorError } = await import(join(root, 'src/core/items.ts'))
-const { trialBalance } = await import(join(root, 'src/core/financialReports.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { ExpiredStockError } = await import(pathToFileURL(join(root, 'src/core/batches.ts')).href)
+const { PriceFloorError } = await import(pathToFileURL(join(root, 'src/core/items.ts')).href)
+const { trialBalance } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
 const st = () => useDataStore.getState()
 let pass = 0
 const ok = (n) => { pass++; console.log('  ✓', n) }
@@ -51,8 +52,8 @@ console.log('\n═══ 2) شراء بدفعتين: قريبة الانتهاء
 {
   st().addSupplier({ nameAr: 'مخازن الدواء', phone: '', taxNumber: '', address: '', notes: '', isActive: true })
   const sup = st().suppliers[0]
-  st().postPurchase({ supplierId: sup.id, date: '2026-09-01', treasury: '1101', notes: '', expenses: [], paidMinor: 0, lines: [{ itemId: para.id, qty: 100, unitPriceMinor: 100, expiryDate: '2026-10-15' }] })
-  st().postPurchase({ supplierId: sup.id, date: '2026-09-10', treasury: '1101', notes: '', expenses: [], paidMinor: 0, lines: [{ itemId: para.id, qty: 200, unitPriceMinor: 100, expiryDate: '2027-06-30' }] })
+  st().postPurchase({ supplierId: sup.id, date: '2026-09-01', treasury: '1101', notes: '', expenses: [], paidMinor: 0, lines: [{ itemId: para.id, qty: 100, unitPriceMinor: 100, expiryDate: relDays(45) }] })
+  st().postPurchase({ supplierId: sup.id, date: '2026-09-10', treasury: '1101', notes: '', expenses: [], paidMinor: 0, lines: [{ itemId: para.id, qty: 200, unitPriceMinor: 100, expiryDate: relDays(400) }] })
   st().postPurchase({ supplierId: sup.id, date: '2026-09-10', treasury: '1101', notes: '', expenses: [], paidMinor: 0, lines: [{ itemId: vitc.id, qty: 30, unitPriceMinor: 3000, expiryDate: '2026-08-01' }] }) // منتهية بالفعل!
   assert.equal(st().items.find(i => i.id === para.id).stockQty, 300)
   assert.equal(st().batches.filter(b => b.itemId === para.id).length, 2)
@@ -67,9 +68,9 @@ console.log('\n═══ 3) بيع 3 علب (60 قرصاً) بوحدة كبرى 
   })
   assert.equal(sale.totals.totalMinor, 10800, '3 علب × 36ج')
   assert.equal(st().items.find(i => i.id === para.id).stockQty, 240, 'خُصم 60 قرصاً بالوحدة الأساسية')
-  const nearBatch = st().batches.find(b => b.itemId === para.id && b.expiryDate === '2026-10-15')
+  const nearBatch = st().batches.find(b => b.itemId === para.id && b.expiryDate === relDays(45))
   assert.equal(nearBatch.qty, 40, 'FEFO أكل من القريبة أولاً (100−60)')
-  const farBatch = st().batches.find(b => b.itemId === para.id && b.expiryDate === '2027-06-30')
+  const farBatch = st().batches.find(b => b.itemId === para.id && b.expiryDate === relDays(400))
   assert.equal(farBatch.qty, 200, 'البعيدة لم تُمس')
   ok('بيع علب بوحدة كبرى: مخزون بالقرص، FEFO التهم القريبة أولاً')
 }

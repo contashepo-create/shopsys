@@ -9,16 +9,21 @@ import { useDataStore } from '../../data/repo.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
 import { accountBalance, STANDARD_COA } from '../../core/ledger.ts'
+import { bookingsForDate, BOOKING_STATUS_LABELS } from '../../core/booking.ts'
 import { Link } from 'react-router-dom'
 import { collectBusinessAlerts } from '../../core/alerts.ts'
 import { collectAlerts as collectInstallmentAlerts } from '../../core/installments.ts'
+import { dayMetrics, leaveDates } from '../../core/attendance.ts'
 import { themeForActivity, PERSONA_STYLES } from '../../core/activityTheme.ts'
 import { ActivityWidgets } from '../components/ActivityWidgets.tsx'
 import { getActivity } from '../../core/activities.ts'
+import { UsersRound } from 'lucide-react'
 
 export function Dashboard() {
   const { setup } = useAppStore()
-  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements } = useDataStore()
+  const { journal, sales, items, purchases, purchaseReturns, treasuries, batches, installmentPlans, cheques, customers, saleReturns, vouchers, clientSettlements, bookings } = useDataStore()
+  /* جسور الحضور (جولة «اكمل ونفذ»): حضور اليوم وأسماء الغائبين بلا إجازة */
+  const { employees, attendanceRecords, leaveRequests, employeeShifts, hrRules } = useDataStore()
   const country = setup.countryCode ? getCountry(setup.countryCode) : undefined
   const cur = country?.currency ?? { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (minor: number) => formatMinor(minor, cur)
@@ -84,7 +89,32 @@ export function Dashboard() {
 
   const lowStock = items.filter((it) => (it.stockQty ?? 0) <= it.minQty && it.minQty > 0)
 
-  /* مركز التنبيهات الموحد (جولة المراجعة الختامية): صلاحية/أقساط/شيكات/حد ائتمان + نواقص */
+  /* جسر الحضور ② (جولة «اكمل ونفذ»): حضور اليوم من الشبكة والإجازات —
+     نفس منطق تاب الحضور (احترام وردية كل موظف) لكن مجمَّعاً للرئيسية */
+  const attendanceToday = useMemo(() => {
+    const active = employees.filter((e) => e.active)
+    const byEmp = new Map(attendanceRecords.filter((r) => r.date === today).map((r) => [r.employeeId, r]))
+    const onLeaveToday = new Set(
+      leaveRequests.filter((l) => l.status === 'approved' && leaveDates(l).includes(today)).map((l) => l.employeeId),
+    )
+    const out = { active: active.length, present: 0, late: 0, onLeave: 0, absent: 0, other: 0, unrecorded: 0, absentNames: [] as string[], lateNames: [] as string[] }
+    for (const e of active) {
+      if (onLeaveToday.has(e.id)) { out.onLeave += 1; continue }
+      const record = byEmp.get(e.id)
+      if (!record) { out.unrecorded += 1; continue }
+      if (record.status === 'present' || record.status === 'mission') {
+        const shift = employeeShifts.find((s) => s.employeeId === e.id) ?? hrRules.shift
+        const m = dayMetrics(record, { ...hrRules, shift })
+        if (m.lateMinutes > 0) { out.late += 1; out.lateNames.push(e.nameAr) } else out.present += 1
+      } else if (record.status === 'absent') { out.absent += 1; out.absentNames.push(e.nameAr) }
+      else out.other += 1 /* إذن/عطلة مسجلة */
+    }
+    return out
+  }, [employees, attendanceRecords, leaveRequests, employeeShifts, hrRules, today])
+  const pendingLeaveCount = useMemo(() => leaveRequests.filter((l) => l.status === 'pending').length, [leaveRequests])
+
+  /* مركز التنبيهات الموحد (جولة المراجعة الختامية): صلاحية/أقساط/شيكات/حد ائتمان + نواقص
+     + جسور الحضور ③: طلبات إجازة معلقة وغياب اليوم بلا إجازة */
   const businessAlerts = useMemo(() => {
     return collectBusinessAlerts({
       todayIso: new Date().toISOString(),
@@ -95,10 +125,12 @@ export function Dashboard() {
       customers,
       customerBalances: (id) => useDataStore.getState().getCustomerBalance(id), // الرصيد الموحّد من كل الأنشطة
       fmt,
+      pendingLeaveRequests: pendingLeaveCount,
+      absentToday: attendanceToday.absentNames,
     })
     // fmt يتغير فقط بتغير عملة الدولة — نمثلها بـ setup.countryCode بدل الدالة المتجددة كل رندر
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements, setup.countryCode])
+  }, [items, batches, installmentPlans, cheques, customers, sales, saleReturns, vouchers, clientSettlements, setup.countryCode, pendingLeaveCount, attendanceToday])
   // دين الموردين = فواتير غير مسددة − مرتجعات الشراء المخفِّضة للدين
   const suppliersDebt = Math.max(
     0,
@@ -123,8 +155,33 @@ export function Dashboard() {
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'صباح الخير' : hour < 18 ? 'مساء الخير' : 'مساء الخير'
 
+  /* v1.0.12 (اقتراح منفذ): بطاقة مواعيد اليوم — لوحدة المواعيد المفعّلة فقط */
+  const bookingEnabled = setup.modules.includes('booking')
+  const todayBookings = useMemo(() => (bookingEnabled ? bookingsForDate(bookings, new Date().toISOString().slice(0, 10)) : []), [bookingEnabled, bookings])
+  const upcomingToday = todayBookings.filter((b) => b.status === 'scheduled').slice(0, 4)
+
   return (
     <div className="space-y-6">
+      {bookingEnabled && todayBookings.length > 0 && (
+        <div className="anim-up rounded-3xl border-2 border-sky-400/40 bg-sky-500/[0.06] p-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2 font-extrabold text-sky-700 dark:text-sky-300">
+              📅 مواعيد اليوم — {todayBookings.filter((b) => b.status === 'scheduled').length} محجوزاً
+              {todayBookings.some((b) => b.status === 'no_show') ? <span className="text-[11px] font-bold text-amber-600">· {todayBookings.filter((b) => b.status === 'no_show').length} لم يحضر</span> : null}
+            </div>
+            <Link to="/bookings" className="text-[12px] font-bold text-sky-600 hover:underline">كل المواعيد ←</Link>
+          </div>
+          {upcomingToday.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {upcomingToday.map((b) => (
+                <span key={b.id} className="rounded-xl bg-white/70 dark:bg-slate-800/70 px-3 py-1.5 text-[12px]" title={`${b.serviceName}${b.notes ? ` — ${b.notes}` : ''}`}>
+                  <b dir="ltr">{b.time}</b> · {b.customerName} <span className="text-slate-400">({BOOKING_STATUS_LABELS[b.status]})</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {/* رأس الترحيب — هوية النشاط */}
       <div className={`anim-up relative overflow-hidden rounded-3xl border bg-gradient-to-l ${persona.hero} px-6 py-5`}>
         <div aria-hidden="true" className="absolute -left-4 -bottom-8 text-[7rem] opacity-10 select-none">{theme.heroEmoji}</div>
@@ -242,6 +299,32 @@ export function Dashboard() {
                   <span className="text-[11px] font-black text-rose-500">{it.stockQty ?? 0} / حد {it.minQty}</span>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* جسر الحضور ②: حضور اليوم — من شبكة الحضور والإجازات مباشرة */}
+        <div className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '440ms' }} data-attendance-today>
+          <h3 className="font-extrabold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+            <UsersRound size={17} className="text-emerald-500" /> حضور اليوم
+            <span className="text-[11px] font-normal text-slate-400">من {attendanceToday.active} موظفاً على رأس العمل</span>
+          </h3>
+          {attendanceToday.active === 0 ? (
+            <div className="text-center py-8 text-slate-300 dark:text-slate-600 text-sm">
+              ✓ لا موظفين مسجلين بعد
+              <div className="text-[11px] mt-1">أضف الموظفين من «شؤون الموظفين» ليعمل مركز الحضور</div>
+            </div>
+          ) : (
+            <div className="space-y-2.5 text-[13px]">
+              <div className="flex justify-between"><span className="text-slate-500">حاضر الآن</span><b className="text-emerald-600">{attendanceToday.present}</b></div>
+              <div className="flex justify-between"><span className="text-slate-500">متأخر (تجاوز السماح)</span><b className="text-amber-600">{attendanceToday.late}</b></div>
+              <div className="flex justify-between"><span className="text-slate-500">في إجازة معتمدة</span><b className="text-sky-600">{attendanceToday.onLeave}</b></div>
+              <div className="flex justify-between"><span className="text-slate-500">غياب بلا إجازة</span><b className={attendanceToday.absent ? 'text-rose-600' : 'text-slate-400'}>{attendanceToday.absent}</b></div>
+              <div className="flex justify-between"><span className="text-slate-500">بلا تسجيل اليوم</span><b className="text-slate-400">{attendanceToday.unrecorded}</b></div>
+              {attendanceToday.lateNames.length > 0 && (
+                <p className="text-[11px] text-amber-600 bg-amber-500/10 rounded-lg p-2">⏰ المتأخرون: {attendanceToday.lateNames.slice(0, 4).join('، ')}{attendanceToday.lateNames.length > 4 ? '…' : ''}</p>
+              )}
+              <Link to="/hr" className="block text-center text-[12px] font-bold text-brand-600 hover:text-brand-500 pt-1">فتح شؤون الموظفين ←</Link>
             </div>
           )}
         </div>

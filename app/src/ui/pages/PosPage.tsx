@@ -23,6 +23,8 @@ import { hasVariantStock, variantLabel, variantKey } from '../../core/variants.t
 import { promotionActiveOn, promotionSavingsMinor } from '../../core/promotions.ts'
 import { ExpiredStockError } from '../../core/batches.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
+import { userPrefsKey } from '../../core/userPreferences.ts'
+import { resolveShortcuts } from '../../core/keyboardShortcuts.ts'
 import { isInvoiceFirst } from '../../core/activities.ts'
 import { buildReceiptModel, INVOICE_TEMPLATE_OPTIONS, A4_STYLES, type InvoiceTemplate } from '../../core/receipt.ts'
 import { renderReceiptHtml, printHtml } from '../print/printReceipt.ts'
@@ -34,6 +36,7 @@ import { useAnchoredMenu } from '../components/anchoredMenu.ts'
 import { useSupervisorApproval } from '../components/SupervisorPinDialog.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
 import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx'
+import { earnedPoints } from '../../core/loyalty.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { toMinor } from '../../core/money.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
@@ -62,9 +65,9 @@ function saveHeldCarts(held: HeldCart[]) {
 }
 
 export function PosPage() {
-  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance } = useDataStore()
+  const { items, customers, shifts, serials, postSale, openShift: openShiftAction, priceLists, getEffectivePrice, variantStocks, warehouses, branches, appUsers, currentUserId, promotions, getPromotionCartLines, paymentTerminals, getCustomerBalance, redeemLoyaltyPoints } = useDataStore()
   const openShift = currentOpenShift(shifts)
-  const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint } = useAppStore()
+  const { setup, receipt, autoPrintAfterSale, einvoice, activatedPayload, trialStartedAt, lastSeenAt, scaleRules, updateReceipt, setAutoPrint, loyalty } = useAppStore()
   const toast = useToast()
   const navigate = useNavigate()
   const goTo = (path: string) => { if (!guardNavigation(() => navigate(path))) navigate(path) }
@@ -72,6 +75,11 @@ export function PosPage() {
   const cur = country?.currency || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const taxPolicy = resolveBusinessTax(setup.taxRegistrationStatus, setup.vatPercent)
   const countryVatPercent = country?.vatPercent ?? setup.vatPercent
+  /* بلاغ المالك v1.0.2: عمود الضريبة في سلة الكاشير يختفي كلياً للمنشأة المعفاة
+     (أو أي نسبة فعلية صفر) — عمود بعنوان وتحته خلايا فارغة = تنافر أعمدة.
+     الإجمالي يبقيان يظهران ضريبة السطور فقط إذا وُجدت فعلاً. */
+  const showTaxCol = taxPolicy.effectivePercent > 0
+  const cartGrid = showTaxCol ? 'grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem]' : 'grid-cols-[1fr_7.3rem_6rem_4.2rem_5.8rem]'
   const effectiveCountryVatPercent = taxPolicy.effectivePercent === 0 ? 0 : countryVatPercent
   const posLayout = themeForActivity(setup.activityId).posLayout
   const isFastList = posLayout === 'fast_list'
@@ -116,6 +124,8 @@ export function PosPage() {
   const [terminalCardLast4, setTerminalCardLast4] = useState('')
   const [customerId, setCustomerId] = useState<number | null>(null)
   const [partyEditorOpen, setPartyEditorOpen] = useState(false)
+  /* v1.0.12: العميل المختار (نقاط الولاء وكشفه) */
+  const selectedCustomer = useMemo(() => (customerId == null ? null : customers.find((x) => x.id === customerId) ?? null), [customerId, customers])
   // قائمة أسعار العميل المختار (جملة/نصف جملة…) — تسعّر السلة تلقائياً
   const activePriceListId = useMemo(() => {
     if (customerId == null) return null
@@ -154,14 +164,18 @@ export function PosPage() {
   useEffect(() => { const focusItem = () => { searchRef.current?.focus(); searchRef.current?.select() }; window.addEventListener('shopsys:focus-item', focusItem); window.addEventListener('shopsys:open-item', focusItem); return () => { window.removeEventListener('shopsys:focus-item', focusItem); window.removeEventListener('shopsys:open-item', focusItem) } }, [])
 
   // F9 = فتح الدفع مباشرة (الاختصار المكتوب على الزر يعمل فعلاً)
+  // تخصيص الاختصارات (طلب المالك): مفتاحا البحث والترحيل هنا يتبعان خريطة
+  // المستخدم؛ يبقى F8 تحصيلاً نقدياً سريعاً خاصاً بالكاشير (موثّقاً على الزر).
+  const savedShortcutOverrides = useDataStore((s) => s.userPrefs[userPrefsKey(s.currentUserId)]?.keyboardShortcuts)
+  const posShortcuts = useMemo(() => resolveShortcuts(savedShortcutOverrides), [savedShortcutOverrides])
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'F2') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); return }
+      if (e.key === posShortcuts.quickSearch) { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); return }
       if (e.key === 'Escape') { setPayOpen(false); setQuickPrintOpen(false); searchRef.current?.focus(); return }
-      if (e.key === 'F8' || e.key === 'F9') {
+      if (e.key === posShortcuts.post || e.key === 'F8') {
         e.preventDefault()
         if (!cart.length) return
-        // F8 تحصيل نقدي سريع، وF9 فتح الدفع مع احترام سياسة المستخدم/الدور
+        // F8 تحصيل نقدي سريع، ومفتاح الترحيل يفتح الدفع مع احترام سياسة المستخدم/الدور
         if (shiftPolicy.required && !currentOpenShift(useDataStore.getState().shifts)) { setShiftOpenModal(true); return }
         if (e.key === 'F8') setPayment('cash')
         setPayOpen(true)
@@ -169,7 +183,7 @@ export function PosPage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [cart.length, shiftPolicy.required])
+  }, [cart.length, shiftPolicy.required, posShortcuts])
 
   const sellable = useMemo(() => items.filter((it) => it.isActive), [items])
 
@@ -506,14 +520,14 @@ export function PosPage() {
   const finishSale = (expiryOverrideBy?: string, creditLimitOverrideBy?: string, priceFloorOverrideBy?: string) => {
     if (!cart.length) return
     try {
-      // مجزأ فعلاً (جزء نقدي + جزء آجل) أو آجل بالكامل ⇒ عميل إلزامي
-      const isSplitOrCredit = payment === 'credit' || (payment === 'cash' && creditRemainder > 0)
       const selectedTerminal = payment === 'terminal' ? activePaymentTerminals.find((row) => row.id === paymentTerminalId) : null
       if (payment === 'terminal' && !selectedTerminal) throw new Error('اختر ماكينة دفع نشطة')
       if (terminalCardLast4 && !/^\d{4}$/.test(terminalCardLast4)) throw new Error('آخر أربعة أرقام يجب أن تكون 4 أرقام')
       const sale = postSale({
         lines: cart,
-        customerId: isSplitOrCredit ? customerId : null,
+        // v1.0.12: العميل المختار يُسجل دائماً — كسب نقاط الولاء وكشف حسابه،
+        // والقيد يتحدد بالمدفوع فقط (نقدي كامل = خزينة، لا ذمة) فلا أثر محاسبي
+        customerId: customerId ?? null,
         payment: payment === 'credit' || (payment === 'cash' && creditRemainder > 0) ? 'credit' : 'cash',
         invoiceDiscountPercent: invoiceDiscount,
         taxPercent: effectiveCountryVatPercent,
@@ -729,8 +743,8 @@ export function PosPage() {
                 {warehouses.map((w) => <option key={w.id} value={w.id}>🏬 {w.nameAr}{w.isMain ? ' (الرئيسي)' : ''}</option>)}
               </QuickSelect>
             )}
-            {customers.some((c) => c.priceListId != null) && (
-              <div className="flex items-center gap-1" title="اختيار العميل يسعّر السلة بقائمته (جملة/نصف جملة)">
+            {(customers.some((c) => c.priceListId != null) || (loyalty.enabled && customers.length > 0)) && (
+              <div className="flex items-center gap-1" title="اختيار العميل يسعّر السلة بقائمته ويكسب نقاط الولاء">
                 <div className="w-44">
                   <PartyQuickPicker
                     parties={customers.map((c) => ({ ...c, nameAr: [c.nameAr, c.priceListId != null ? priceLists.find((l) => l.id === c.priceListId && l.isActive)?.nameAr : null].filter(Boolean).join(' — ') }))}
@@ -742,6 +756,27 @@ export function PosPage() {
                     onConfirm={() => searchRef.current?.focus()}
                   />
                 </div>
+                {/* v1.0.12 (سد فجوة الولاء بالكاشير — نمط Square): رصيد نقاط العميل المختار وزر استبداله رصيداً دائناً */}
+                {loyalty.enabled && selectedCustomer && (selectedCustomer.loyaltyPoints ?? 0) > 0 && (
+                  <span className="flex items-center gap-1 text-[11px] font-bold px-2 py-1 rounded-lg bg-pink-500/10 text-pink-600 dark:text-pink-300" title={`= ${fmt((selectedCustomer.loyaltyPoints ?? 0) * loyalty.redeemValueMinor)} ${cur.symbol} — يُستبدل رصيداً دائناً في حساب العميل (1104) يخصم من مشترياته القادمة`}>
+                    ⭐ {(selectedCustomer.loyaltyPoints ?? 0).toLocaleString('en-US')}
+                    {(selectedCustomer.loyaltyPoints ?? 0) >= loyalty.minRedeemPoints && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const points = selectedCustomer.loyaltyPoints ?? 0
+                          const capped = loyalty.maxRedeemPoints > 0 ? Math.min(points, loyalty.maxRedeemPoints) : points
+                          if (capped < points) { toast.show(`سقف الاستبدال للعملية الواحدة ${loyalty.maxRedeemPoints} نقطة — سيُستبدل ${capped} نقطة الآن`); }
+                          try {
+                            const res = redeemLoyaltyPoints(selectedCustomer.id, capped)
+                            toast.show(`استُبدلت ${capped} نقطة برصيد دائن ${fmt(res.valueMinor)} ${cur.symbol} لـ${selectedCustomer.nameAr} ✓`)
+                          } catch (err) { toast.show((err as Error).message, 'error') }
+                        }}
+                        className="underline hover:text-pink-700 dark:hover:text-pink-100"
+                      >استبدال</button>
+                    )}
+                  </span>
+                )}
                 {customerId ? <button type="button" title="تعديل بيانات العميل" onClick={() => setPartyEditorOpen(true)} className="rounded-lg border border-sky-300 p-1.5 text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:text-sky-300"><Pencil size={14}/></button> : null}
               </div>
             )}
@@ -799,16 +834,16 @@ export function PosPage() {
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {/* رأس أعمدة السلة */}
-              <div className="grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem] gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10">
+              <div className={`grid ${cartGrid} gap-2 items-center px-4 py-2 text-[10px] font-bold text-slate-400 bg-slate-50/80 dark:bg-slate-900/40 sticky top-0 z-10`}>
                 <span>الصنف</span>
                 <span className="text-center">الكمية</span>
                 <span className="text-center">السعر</span>
-                <span className="text-center" title="النسبة الفعلية لكل سطر: نسبة البلد تلقائياً أو النسبة الخاصة بالصنف">ضريبة</span>
+                {showTaxCol && <span className="text-center" title="النسبة الفعلية لكل سطر: نسبة البلد تلقائياً أو النسبة الخاصة بالصنف">ضريبة</span>}
                 <span className="text-center">خصم ٪</span>
                 <span className="text-left">الإجمالي</span>
               </div>
               {cart.map((l, i) => (
-                <div key={i} data-entry-row aria-selected={selectedCartIndex === i} onClick={() => setSelectedCartIndex(i)} className={`anim-pop entry-grid grid grid-cols-[1fr_7.3rem_6rem_3.7rem_4.2rem_5.8rem] gap-2 items-center px-4 py-3 transition-colors duration-150 ${selectedCartIndex === i ? 'bg-emerald-500/15 ring-1 ring-inset ring-emerald-500/50' : 'hover:bg-emerald-500/[0.03]'}`}>
+                <div key={i} data-entry-row aria-selected={selectedCartIndex === i} onClick={() => setSelectedCartIndex(i)} className={`anim-pop entry-grid grid ${cartGrid} gap-2 items-center px-4 py-3 transition-colors duration-150 ${selectedCartIndex === i ? 'bg-emerald-500/15 ring-1 ring-inset ring-emerald-500/50' : 'hover:bg-emerald-500/[0.03]'}`}>
                   {/* الصنف: الاسم + سعر الوحدة */}
                   <div className="min-w-0">
                     <div className="font-bold text-[13px] text-slate-800 dark:text-white truncate leading-snug">
@@ -913,13 +948,16 @@ export function PosPage() {
                   </div>
                   )}
                   <input ref={(node) => { priceRefs.current[i] = node }} value={String(l.unitPriceMinor / 10 ** cur.decimals)} inputMode="decimal" onFocus={(e) => e.target.select()} onChange={(e) => { const raw = e.target.value; if (!/^\d*\.?\d*$/.test(raw)) return; try { const value = Math.max(0, toMinor(raw || '0', cur.decimals)); setCart((current) => current.map((line, index) => index === i ? { ...line, unitPriceMinor: value } : line)) } catch { /* قيمة انتقالية */ } }} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); searchRef.current?.focus(); searchRef.current?.select() } }} className="h-9 text-center font-bold bg-transparent border border-slate-200 dark:border-slate-700 outline-none" aria-label={`سعر ${l.nameAr}`}/>
-                  {/* ضريبة السطر — تلقائية من بلد المنشأة أو النسبة الخاصة بالصنف (صفر = بلا نسبة تُعرض) */}
+                  {/* ضريبة السطر — تلقائية من بلد المنشأة أو النسبة الخاصة بالصنف؛
+                      العمود كله يختفي للمنشأة المعفاة فلا يظهر عمود بلا قيم */}
+                  {showTaxCol && (
                   <div
                     title={`نسبة الضريبة لهذا السطر: ${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪ — ${country?.nameAr ?? 'حسب بلد المنشأة'}`}
                     className="h-9 rounded-xl border-2 border-sky-200 dark:border-sky-800/70 bg-sky-500/[0.06] text-center flex items-center justify-center text-[11px] font-black text-sky-700 dark:text-sky-300"
                   >
                     {(l.vatPercentOverride ?? itemVatPercent(l.itemId)) > 0 ? `${l.vatPercentOverride ?? itemVatPercent(l.itemId)}٪` : ''}
                   </div>
+                  )}
                   {/* خصم السطر */}
                   <input
                     value={l.discountPercent || ''}
@@ -972,6 +1010,12 @@ export function PosPage() {
                 <div className="flex justify-between text-[12px] text-slate-400">
                   <span>إجمالي ضريبة السطور {setup.taxInclusive ? '(مشمولة)' : '(مضافة)'} — النسبة تظهر بجانب كل بند</span>
                   <span>{fmt(totals.taxMinor)}</span>
+                </div>
+              )}
+              {loyalty.enabled && selectedCustomer && earnedPoints(totals.totalMinor, cur.decimals, loyalty) > 0 && (
+                <div className="flex justify-between text-[11.5px] text-pink-500 dark:text-pink-300" title="تُضاف تلقائياً لرصيد العميل بعد إتمام الفاتورة">
+                  <span>⭐ نقاط ستُضاف لـ{selectedCustomer.nameAr}</span>
+                  <span className="font-bold">+{earnedPoints(totals.totalMinor, cur.decimals, loyalty)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center pt-1">

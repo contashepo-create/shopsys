@@ -37,7 +37,8 @@ const counter = read('ui/components/AnimatedMinor.tsx')
 }
 /* ③ العدّاد الحي */
 {
-  assert.ok(/export function useAnimatedMinor/.test(counter) && /export function AnimatedMinor/.test(counter), 'مكوّن العدّاد الحي مفقود')
+  /* v1.0.15: hook العدّاد داخلي (سياسة Fast Refresh للينت الصارم) — المكوّن هو المصدّر */
+  assert.ok(/function useAnimatedMinor/.test(counter) && /export function AnimatedMinor/.test(counter), 'مكوّن العدّاد الحي مفقود')
   assert.ok(/prefers-reduced-motion: reduce/.test(counter), 'العدّاد لا يحترم تقليل الحركة')
   for (const [name, src] of [['المبيعات', sales], ['المشتريات', purchase]]) {
     assert.ok(/<AnimatedMinor value=\{v\} format=\{minor=>formatMinor\(minor,cur,false\)\}\/>/.test(src),

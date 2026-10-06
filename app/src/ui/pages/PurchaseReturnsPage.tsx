@@ -5,7 +5,8 @@ import { PartyQuickPicker, QuickSelect } from '../components/KeyboardPickers.tsx
  * المتبقي القابل للإرجاع ولا المخزون الحالي (لا إرجاع لبضاعة بيعت).
  * الاسترداد: نقدي من المورد أو تخفيض دينه.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { RotateCcw, Search, BookOpenText, Eye, Printer } from 'lucide-react'
 import { useDataStore, type PurchaseInvoice, type PurchaseReturn } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
@@ -20,6 +21,7 @@ import { TreasuryPicker } from '../components/TreasuryPicker.tsx'
 import { ACCOUNT_NAMES } from './accountNames.ts'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate } from '../print/printDoc.ts'
+import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { PrintTemplateModal } from '../components/PrintTemplateModal.tsx'
 import { rowOpenProps } from '../components/rowOpen.ts'
 
@@ -50,10 +52,10 @@ export function PurchaseReturnsPage() {
   useEffect(() => { unsaved.markClean() }, [purchase?.id, unsaved])
   const closePurchase = () => unsaved.requestClose(() => setPurchase(null))
 
-  /** إشعار مدين للمورد: سطور بتكلفة الوحدة النهائية + المسترد نقداً/ديناً */
-  const printPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
+  /** بناء موديل إشعار مدين للمورد — مشترك بين الطباعة وإرسال واتساب PDF (v1.0.13) */
+  const buildPurchaseReturnModel = (r: PurchaseReturn) => {
     const orig = purchases.find((pv) => pv.id === r.purchaseId)
-    const model = buildSimpleDocModel({
+    return buildSimpleDocModel({
       docTitle: 'مرتجع مشتريات (إشعار مدين)',
       invoiceNumber: r.returnNumber,
       refCode: r.refCode ?? '',
@@ -72,8 +74,19 @@ export function PurchaseReturnsPage() {
       settings: receipt,
       extraFooter: r.reason ? `السبب: ${r.reason}` : undefined,
     })
-    printModelWithTemplate(model, cur, receipt, template)
+  }
+
+  /** إشعار مدين للمورد: سطور بتكلفة الوحدة النهائية + المسترد نقداً/ديناً */
+  const printPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
+    printModelWithTemplate(buildPurchaseReturnModel(r), cur, receipt, template)
     toast.show(`أُرسل إشعار المرتجع ${r.returnNumber} للطباعة 🖨️`)
+  }
+
+  /** v1.0.13 — إرسال إشعار مرتجع المشتريات PDF عبر واتساب للمورد */
+  const whatsappPurchaseReturn = (r: PurchaseReturn, template: Parameters<typeof printModelWithTemplate>[3]) => {
+    const orig = purchases.find((pv) => pv.id === r.purchaseId)
+    const phone = orig?.supplierId ? suppliers.find((s) => s.id === orig.supplierId)?.phone ?? '' : ''
+    shareDocPdfViaWhatsapp({ model: buildPurchaseReturnModel(r), cur, settings: receipt, template, docLabel: 'مرتجع مشتريات', docNumber: r.returnNumber, partyPhone: phone, shopName: setup.shopName, toast })
   }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
@@ -105,14 +118,41 @@ export function PurchaseReturnsPage() {
     return Math.max(0, (purchase.supplierDueMinor ?? purchase.grandTotalMinor) - purchase.paidMinor - priorDebt)
   }, [purchase, purchaseReturns])
 
-  const startReturn = (p: PurchaseInvoice) => {
+  /* تعبئة من شاشة «منتهي الصلاحية» (طلب المالك ㉘): ?purchase=<id>&item=<id>&qty=<n>
+     تختار فاتورة الشراء وتملأ الكمية المرتجعة مباشرة */
+  const [searchParams, setSearchParams] = useSearchParams()
+  const prefillPurchaseId = Number(searchParams.get('purchase')) || 0
+  const prefillItemId = Number(searchParams.get('item')) || 0
+  const prefillQty = Number(searchParams.get('qty')) || 0
+
+  /* مراجعة §97: بدء المرتجع معرَّف قبل أثر التعبئة (كان يُقرأ من إغلاق فوق متغير
+     في طور التهيئة — تحذير immutability) ومثبتاً بuseCallback فلا يعاد تشغيل الأثر */
+  const startReturn = useCallback((p: PurchaseInvoice) => {
     setPurchase(p)
     setQtys({})
     setReturnWarehouses({})
     setRefund((p.supplierDueMinor ?? p.grandTotalMinor) - p.paidMinor > 0 ? 'debt' : 'cash')
     setReason('')
     setPickOpen(false)
-  }
+  }, [])
+
+  /* تعبئة من شاشة «منتهي الصلاحية» (طلب المالك ㉘): ?purchase=<id>&item=<id>&qty=<n>
+     تختار فاتورة الشراء وتملأ الكمية المرتجعة مباشرة */
+  useEffect(() => {
+    if (!prefillPurchaseId || purchase) return
+    const target = purchases.find((p) => p.id === prefillPurchaseId)
+    if (!target) return
+    /* تزامن مشروع مع نظام خارجي (معاملات URL للاستيراد المسبق) — يهيئ النموذج مرة ثم يمسحها */
+    // oxlint-disable-next-line
+    startReturn(target)
+    if (prefillItemId && prefillQty > 0) {
+      setQtys((q) => ({ ...q, [prefillItemId]: String(prefillQty) }))
+      const wh = target.lines.find((l) => l.itemId === prefillItemId)?.warehouseId
+      if (wh) setReturnWarehouses((r) => ({ ...r, [prefillItemId]: wh }))
+      setReason('انتهاء صلاحية — إرجاع للمورد')
+    }
+    setSearchParams({}, { replace: true })
+  }, [prefillPurchaseId, prefillItemId, prefillQty, purchase, purchases, setSearchParams, startReturn])
 
   // قاعدة المالك المعممة: كل المرتجعات باعتماد مشرف — مرتجع الشراء يخرج بضاعة ويرد مالاً
   const approval = useSupervisorApproval()
@@ -377,6 +417,7 @@ export function PurchaseReturnsPage() {
         defaultTemplate={receipt.defaultTemplate}
         title="🖨️ طباعة إشعار مرتجع الشراء"
         onPrint={(t) => { if (printTarget) printPurchaseReturn(printTarget, t) }}
+        onWhatsappPdf={(t) => { if (printTarget) whatsappPurchaseReturn(printTarget, t) }}
       />
     </div>
   )

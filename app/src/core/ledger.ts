@@ -76,6 +76,7 @@ export type SourceType =
   | 'lease' | 'lease_collection' | 'owner_payout' | 'lease_end' | 'unit_maintenance' | 'property_acquisition' | 'property_sale'
   | 'staff_commission' | 'staff_commission_payout' | 'staff_commission_cancel'
   | 'party_offset'
+  | 'fx_conversion'
   | 'opening' | 'manual' | 'year_closing' | 'asset_purchase' | 'asset_payment' | 'asset_disposal' | 'depreciation' | 'external_commission' | 'laundry' | 'reversal'
 
 export interface JournalEntry {
@@ -194,6 +195,7 @@ export const STANDARD_COA: Account[] = [
   { code: '4114', nameAr: 'سعي وعمولات إدارة أملاك', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'property_commission_revenue' },
   { code: '4115', nameAr: 'إيرادات بيع عقارات', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'property_sale_revenue' },
   { code: '4116', nameAr: 'أرباح بيع أصول ثابتة', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'asset_disposal_gain' },
+  { code: '4117', nameAr: 'أرباح فروق عملة', rootType: 'revenue', parentCode: '4', isPostable: true, systemKey: 'fx_gain' },
   { code: '5', nameAr: 'المصروفات', rootType: 'expenses', parentCode: null, isPostable: false },
   { code: '5101', nameAr: 'تكلفة البضاعة المباعة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'cogs' },
   { code: '5102', nameAr: 'رواتب وأجور', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'salaries' },
@@ -213,4 +215,5 @@ export const STANDARD_COA: Account[] = [
   { code: '5116', nameAr: 'تكلفة عقارات مباعة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'property_cogs' },
   { code: '5117', nameAr: 'مصروف عمولات موظفين', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'staff_commission_expense' },
   { code: '5118', nameAr: 'خسائر بيع واستبعاد أصول ثابتة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'asset_disposal_loss' },
+  { code: '5119', nameAr: 'خسائر فروق عملة', rootType: 'expenses', parentCode: '5', isPostable: true, systemKey: 'fx_loss' },
 ]

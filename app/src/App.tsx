@@ -11,6 +11,7 @@ import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSe
 import { fetchAbout, fetchRevocationList, DEFAULT_CLOUD_BASE_URL } from './core/cloud.ts'
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
+import { isElectronRuntime, desktopDatabaseStorage } from './data/desktopBridge.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
 import { LoginScreen } from './ui/LoginScreen.tsx'
 import { authRequired } from './core/auth.ts'
@@ -21,6 +22,7 @@ import { pathAllowedForSetup } from './core/coaVisibility.ts'
 import { labelFor } from './core/activityLabels.ts'
 import { useState } from 'react'
 import { FirstRunWizard } from './ui/setup/FirstRunWizard.tsx'
+import { LegalGate, LegalPage } from './ui/LegalGate.tsx'
 import { MainLayout } from './ui/layout/MainLayout.tsx'
 import { Dashboard } from './ui/pages/Dashboard.tsx'
 import { PermissionsPage } from './ui/pages/PermissionsPage.tsx'
@@ -42,6 +44,7 @@ import { PromotionsPage } from './ui/pages/PromotionsPage.tsx'
 import { PosPage } from './ui/pages/PosPage.tsx'
 import { SalesInvoicesPage } from './ui/pages/SalesInvoicesPage.tsx'
 import { InvoiceDocumentRoute } from './ui/pages/InvoiceDocumentRoute.tsx'
+import { ContractingInvoicesPage } from './ui/pages/ContractingInvoicesPage.tsx'
 import { SaleReturnsPage } from './ui/pages/SaleReturnsPage.tsx'
 import { ShiftsPage } from './ui/pages/ShiftsPage.tsx'
 import { JournalPage } from './ui/pages/JournalPage.tsx'
@@ -53,9 +56,13 @@ import { PaymentTerminalsPage } from './ui/pages/PaymentTerminalsPage.tsx'
 import { ChequesPage } from './ui/pages/ChequesPage.tsx'
 import { EinvoicePage } from './ui/pages/EinvoicePage.tsx'
 import { GeneralSettingsPage } from './ui/pages/GeneralSettingsPage.tsx'
+import { LanSettingsPage } from './ui/pages/LanSettingsPage.tsx'
+import { startHostSession } from './data/lan/hostSession.ts'
+import { bootRemoteSession } from './data/lan/remoteSession.ts'
 import { CostCentersPage } from './ui/pages/CostCentersPage.tsx'
 import { PrintSettingsPage } from './ui/pages/PrintSettingsPage.tsx'
 import { EmployeesPage } from './ui/pages/EmployeesPage.tsx'
+import { HrPage } from './ui/pages/HrPage.tsx'
 import { InstallmentsPage } from './ui/pages/InstallmentsPage.tsx'
 import { ReportsPage } from './ui/pages/ReportsPage.tsx'
 import { NasqPage } from './ui/pages/NasqPage.tsx'
@@ -68,11 +75,15 @@ import { EquipmentPage } from './ui/pages/EquipmentPage.tsx'
 import { RentalContractsPage } from './ui/pages/RentalContractsPage.tsx'
 import { LabOrdersPage, LabTestsPage, LabPatientsPage, LabReferrersPage } from './ui/pages/LabPages.tsx'
 import { ProjectsPage } from './ui/pages/ContractingPages.tsx'
+import { ContractingReportsPage } from './ui/pages/ContractingReportsPage.tsx'
+import { EquipmentReportsPage } from './ui/pages/EquipmentReportsPage.tsx'
+import { RestaurantReportsPage } from './ui/pages/RestaurantReportsPage.tsx'
 import { QuotationsPage } from './ui/pages/QuotationsPage.tsx'
 import { BoqPage, SubcontractorsPage, BondsPage, DailyWorkersPage } from './ui/pages/ContractingDepthPages.tsx'
 import { MaterialIssuesPage, ClientCollectionsPage, EvmDashboardPage, ApprovalsPage } from './ui/pages/ProjectOpsPages.tsx'
 import { ProjectBudgetPage, ProjectTasksPage } from './ui/pages/ContractingPlanPages.tsx'
 import { PropertiesPage, LeasesPage } from './ui/pages/RealEstatePages.tsx'
+import { LogisticsInvoicesPage, RentalInvoicesPage, RealestateInvoicesPage } from './ui/pages/ActivityInvoicesHubs.tsx'
 import { CustodyPage } from './ui/pages/CustodyPage.tsx'
 import { SyncPage } from './ui/pages/SyncPage.tsx'
 import { ClinicPatientsPage, ClinicAppointmentsPage } from './ui/pages/ClinicPages.tsx'
@@ -96,12 +107,14 @@ import { RestaurantOrdersPage } from './ui/pages/RestaurantOrdersPage.tsx'
 import { installErrorHooks, logEvent } from './core/applog.ts'
 import { MaintenancePage } from './ui/pages/MaintenancePage.tsx'
 import { LaundryPage } from './ui/pages/LaundryPage.tsx'
+import { BookingsPage } from './ui/pages/BookingsPage.tsx'
 import { TransfersPage } from './ui/pages/TransfersPage.tsx'
 import { AppearancePage } from './ui/pages/AppearancePage.tsx'
 import { TelegramPage } from './ui/pages/TelegramPage.tsx'
 import { AssetsPage } from './ui/pages/AssetsPage.tsx'
 import { ExternalCommissionsPage } from './ui/pages/ExternalCommissionsPage.tsx'
-import { ToastHost } from './ui/components/ui.tsx'
+import { ToastHost, useToast } from './ui/components/ui.tsx'
+import { ThermalPreview } from './ui/components/ThermalPreview.tsx'
 import { KeyboardNavigation } from './ui/components/KeyboardNavigation.tsx'
 import { NAV_SECTIONS } from './ui/navCatalog.tsx'
 
@@ -175,6 +188,7 @@ function Shell() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/settings/permissions" element={<PermissionsPage />} />
         <Route path="/settings/general" element={<GeneralSettingsPage />} />
+        <Route path="/settings/lan" element={<LanSettingsPage />} />
         <Route path="/settings/cost-centers" element={<CostCentersPage />} />
         <Route path="/inventory/items" element={<ItemsPage />} />
         <Route path="/inventory/warehouses" element={<WarehousesPage />} />
@@ -203,16 +217,25 @@ function Shell() {
         <Route path="/parties/employee-advances" element={<EmployeesPage initialTab="advances" />} />
         <Route path="/parties/employee-deductions" element={<EmployeesPage initialTab="deductions" />} />
         <Route path="/parties/employee-commissions" element={<EmployeesPage initialTab="commissions" />} />
+    {/* شؤون الموظفين — قسم مستقل بتابات داخلية (حضور/بصمة/إجازات/ورديات/تقارير).
+        مسار واحد ديناميكي يغطي كل التابات: المسارات الصريحة المكررة كانت تطابَق
+        قبله فلا يصل :tab إلى useParams إطلاقاً — فتبقى الصفحة على «الحضور»
+        مهما نقر المستخدم من التابات (عطل المالك: «التابات لا تعمل»). */}
+    <Route path="/hr" element={<HrPage />} />
+    <Route path="/hr/:tab" element={<HrPage />} />
         <Route path="/parties/installments" element={<InstallmentsPage />} />
         <Route path="/maintenance/tickets" element={<MaintenancePage />} />
         <Route path="/laundry/orders" element={<LaundryPage />} />
+        <Route path="/bookings" element={<BookingsPage />} />
         <Route path="/rental/fleet" element={<EquipmentPage />} />
+        <Route path="/rental/invoices" element={<RentalInvoicesPage />} />
         <Route path="/rental/contracts" element={<RentalContractsPage />} />
         <Route path="/lab/orders" element={<LabOrdersPage />} />
         <Route path="/lab/tests" element={<LabTestsPage />} />
         <Route path="/lab/patients" element={<LabPatientsPage />} />
         <Route path="/lab/referrers" element={<LabReferrersPage />} />
-        <Route path="/contracting/projects" element={<ProjectsPage />} />
+        <Route path="/contracting/invoices" element={<ContractingInvoicesPage />} />
+      <Route path="/contracting/projects" element={<ProjectsPage />} />
         <Route path="/contracting/quotations" element={<QuotationsPage />} />
         <Route path="/contracting/boq" element={<BoqPage />} />
         <Route path="/contracting/subcontractors" element={<SubcontractorsPage />} />
@@ -221,8 +244,12 @@ function Shell() {
         <Route path="/contracting/material-issues" element={<MaterialIssuesPage />} />
         <Route path="/contracting/collections" element={<ClientCollectionsPage />} />
         <Route path="/contracting/evm" element={<EvmDashboardPage />} />
+        <Route path="/contracting/reports" element={<ContractingReportsPage />} />
+        <Route path="/rental/reports" element={<EquipmentReportsPage />} />
+        <Route path="/restaurant/reports" element={<RestaurantReportsPage />} />
         <Route path="/realestate/properties" element={<PropertiesPage />} />
         <Route path="/realestate/leases" element={<LeasesPage />} />
+        <Route path="/realestate/invoices" element={<RealestateInvoicesPage />} />
         <Route path="/contracting/budget" element={<ProjectBudgetPage />} />
         <Route path="/contracting/tasks" element={<ProjectTasksPage />} />
         <Route path="/contracting/approvals" element={<ApprovalsPage />} />
@@ -231,6 +258,7 @@ function Shell() {
         <Route path="/clinic/appointments" element={<ClinicAppointmentsPage />} />
         <Route path="/cars" element={<CarsPage />} />
         <Route path="/logistics/trips" element={<TripsPage />} />
+        <Route path="/logistics/invoices" element={<LogisticsInvoicesPage />} />
         <Route path="/logistics/fleet" element={<FleetPage />} />
         <Route path="/accounting/journal" element={<JournalPage />} />
         <Route path="/accounting/coa" element={<CoaPage />} />
@@ -252,6 +280,7 @@ function Shell() {
         <Route path="/settings/appearance" element={<AppearancePage />} />
         <Route path="/settings/einvoice" element={<EinvoicePage />} />
         <Route path="/settings/license" element={<LicensePage />} />
+        <Route path="/settings/legal" element={<LegalPage />} />
         <Route path="/settings/profile" element={<ProfilePage />} />
         <Route path="/settings/about" element={<AboutPage />} />
         <Route path="/settings/audit" element={<AuditLogPage />} />
@@ -279,12 +308,57 @@ const TAB_ID = `tab-${Math.random().toString(36).slice(2, 10)}`
 const TAB_LOCK_KEY = 'shopsys-tab-lock'
 
 export default function App() {
+  /* §101 التنفيذية: بوابة ترطيب المتجرين — داخل Electron فقط (القراءة من
+     SQLite عبر IPC غير متزامنة، فبدون البوابة يومض معالج التثبيت أول كل
+     إقلاع). في المتصفح الترطيب متزامن فلا بوابة أصلاً — سلوك الويب
+     والاختبارات كما هو حرفياً. */
+  const needsHydrationGate = isElectronRuntime()
+  const [storesHydrated, setStoresHydrated] = useState(() => {
+    if (!needsHydrationGate) return true
+    try { return useAppStore.persist.hasHydrated() && useDataStore.persist.hasHydrated() } catch { return true }
+  })
+  useEffect(() => {
+    if (storesHydrated) return
+    const check = () => {
+      try { if (useAppStore.persist.hasHydrated() && useDataStore.persist.hasHydrated()) setStoresHydrated(true) } catch { setStoresHydrated(true) }
+    }
+    const offApp = useAppStore.persist.onFinishHydration(check)
+    const offData = useDataStore.persist.onFinishHydration(check)
+    check()
+    const safety = setTimeout(setStoresHydrated, 5000) /* شبكة أمان: لا تعليق أبداً */
+    return () => { offApp(); offData(); clearTimeout(safety) }
+  }, [storesHydrated])
+
   const {
-    theme, setup, touchLastSeen, appearance,
+    theme, setup, touchLastSeen, appearance, legal,
     activatedKey, activatedPayload, trialStartedAt, lastSeenAt, revokedKeys,
     setCloudData, lastHourlyBackupAt, setLastHourlyBackupAt,
   } = useAppStore()
   const seed = useDataStore((s) => s.seed)
+
+  /* v1.0.8: مرساة التجربة خارج القاعدة (سطح المكتب) — مسح البيانات لا يعيد
+     التجربة: عند الإقلاع نطابق بداية التجربة مع أقدم تاريخ معروف للجهاز */
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.shopsysTrialAnchor !== 'function') return
+    void window.shopsysTrialAnchor(useAppStore.getState().trialStartedAt).then((anchor) => {
+      if (anchor.firstTrialAt < useAppStore.getState().trialStartedAt) {
+        useAppStore.setState({ trialStartedAt: anchor.firstTrialAt })
+      }
+    }).catch(() => { /* المرساة مساعدة — لا تعطل الإقلاع */ })
+  }, [])
+
+  /* v1.0.9 (درع البيانات): إشعار استرداد القاعدة — إن اكتُشف تلف عند الإقلاع
+     استُردت أحدث نسخة سليمة تلقائياً (أو بدئت قاعدة جديدة لعدم وجود نسخة) */
+  useEffect(() => {
+    const bridge = desktopDatabaseStorage()
+    if (!bridge?.recoveryNotice) return
+    void bridge.recoveryNotice().then((notice) => {
+      if (!notice) return
+      const toast = useToast.getState()
+      if (notice.from) toast.show('اكتُشف تلف في قاعدة البيانات واستُردت تلقائياً من أحدث نسخة سليمة ✓')
+      else toast.show('تعذّر إيجاد نسخة سليمة — بدئت قاعدة جديدة. استعد بياناتك من «النسخ الاحتياطي ← استعادة نسخة قاعدة كاملة»', 'error')
+    }).catch(() => { /* إشعار مساعد — لا يعطل الإقلاع */ })
+  }, [])
 
   // ─── بوابة الترخيص (القرار 28): تقييم الحالة + الحرق + مطابقة النشاط ───
   const licenseState = useMemo(
@@ -294,9 +368,9 @@ export default function App() {
   const lockReason = useMemo(
     () => lockReasonFor(licenseState, {
       revoked: activatedKey != null && isRevoked(activatedKey, revokedKeys),
-      activityMismatch: activatedPayload != null && setup.completed && !activityMatches(activatedPayload, setup.activityId),
+      activityMismatch: activatedPayload != null && setup.completed && !activityMatches(activatedPayload, setup.activityId, setup.activityKeyHistory),
     }),
-    [licenseState, activatedKey, revokedKeys, activatedPayload, setup.completed, setup.activityId],
+    [licenseState, activatedKey, revokedKeys, activatedPayload, setup.completed, setup.activityId, setup.activityKeyHistory],
   )
 
   // ─── قفل الكاتب الواحد (البند 4): تبويب ثانٍ على نفس القاعدة = قراءة فقط ───
@@ -337,6 +411,17 @@ export default function App() {
     }
     window.addEventListener('beforeunload', release)
     return () => { clearInterval(t); release(); window.removeEventListener('beforeunload', release) }
+  }, [])
+
+  // ─── شبكة المحل (§102): إقلاع دور الجهاز — مضيف مفعّل يفتح خادمه، وعميل
+  // مفعل يعيد الاتصال بالمضيف تلقائياً بالتوكن المحفوظ (بلا رمز اقتران) ───
+  useEffect(() => {
+    const { lanHost, lanClient } = useAppStore.getState()
+    if (lanHost.enabled && lanHost.pairingCode) {
+      void startHostSession({ pairingCode: lanHost.pairingCode, port: lanHost.port, hostName: lanHost.hostName }).catch(() => undefined)
+    } else if (lanClient.enabled && lanClient.hostUrl) {
+      bootRemoteSession()
+    }
   }, [])
 
   // ─── مزامنة السحابة (Cloudflare): صفحة «حول» + قائمة الحرق — عند الإقلاع وكل 6 ساعات ───
@@ -512,8 +597,20 @@ export default function App() {
 
   return (
     <HashRouter>
-      {setup.completed ? <Shell /> : <FirstRunWizard />}
+      {!storesHydrated ? (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+          <div className="text-center space-y-3">
+            <div className="text-4xl animate-pulse">🏛️</div>
+            <div className="text-[13px] font-black text-slate-400">تَحَكَّم — جارٍ فتح قاعدة البيانات…</div>
+          </div>
+        </div>
+      ) : !legal ? (
+        <><LegalGate /></>
+      ) : setup.completed ? <Shell /> : <FirstRunWizard />}
       <ToastHost />
+      {/* معاينة الطباعة الحية — نافذة حرة فوق كل المسارات (طلب المالك):
+          تبقى حية أثناء فتح قسم إعدادات الطباعة وتتحدث فوراً مع كل تغيير */}
+      <ThermalPreview />
     </HashRouter>
   )
 }

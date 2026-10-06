@@ -163,6 +163,57 @@ export function projectProfit(
   }
 }
 
+/* ─── بطاقة تقرير المشروع الشاملة (مركز تقارير المقاولات — طلب المالك) ─── */
+
+/**
+ * تقرير واحد لكل مشروع يجمع كل ما يحتاجه المالك في مكان واحد:
+ * ربحية projectProfit (المستخلصات/التكاليف/الهامش/الإنجاز/المحتجز القائم)
+ * + قيمة العقد الفعلية بأوامر التغيير (effectiveContractValue)
+ * + المعلقة من أوامر التغيير (مسودات لم تدخل العقد بعد)
+ * + الدفعات المقدمة (مستلمة/مستردة/متبقية — التزام 2109)
+ * + ضريبة المستخلصات المحمّلة (معلومة ضريبية للإقرار).
+ */
+export interface ProjectReportCard extends ProjectProfit {
+  contractOriginalMinor: Minor
+  contractEffectiveMinor: Minor // الأصلية + أوامر التغيير المعتمدة/المستخلصة
+  changeOrdersPendingMinor: Minor // صافي المسودات — لم تدخل العقد بعد
+  changeOrdersApprovedCount: number
+  extractsCount: number
+  lastExtractDate: string | null
+  vatChargedMinor: Minor // ض.ق.م المحمّلة على العميل عبر المستخلصات
+  advancesReceivedMinor: Minor
+  advancesRecoveredMinor: Minor
+  advancesRemainingMinor: Minor
+}
+
+export function projectReportCard(
+  project: Pick<Project, 'contractValueMinor'>,
+  extracts: readonly { grossMinor: Minor; vatMinor: Minor; retentionMinor: Minor; date: string }[],
+  costs: readonly { kind: CostKind; amountMinor: Minor }[],
+  releasedRetentionMinor: Minor,
+  orders: readonly ChangeOrder[],
+  advances: readonly { amountMinor: Minor; recoveredMinor: Minor }[],
+): ProjectReportCard {
+  const base = projectProfit(project, extracts, costs, releasedRetentionMinor)
+  const pending = orders.filter((o) => o.status === 'draft').reduce((a, o) => a + o.amountMinor, 0)
+  const received = advances.reduce((a, x) => a + x.amountMinor, 0)
+  const recovered = advances.reduce((a, x) => a + x.recoveredMinor, 0)
+  const lastDate = extracts.reduce<string | null>((latest, e) => (!latest || e.date > latest ? e.date : latest), null)
+  return {
+    ...base,
+    contractOriginalMinor: project.contractValueMinor,
+    contractEffectiveMinor: effectiveContractValue(project.contractValueMinor, orders),
+    changeOrdersPendingMinor: pending,
+    changeOrdersApprovedCount: orders.filter((o) => o.status === 'approved' || o.status === 'invoiced').length,
+    extractsCount: extracts.length,
+    lastExtractDate: lastDate,
+    vatChargedMinor: extracts.reduce((a, e) => a + e.vatMinor, 0),
+    advancesReceivedMinor: received,
+    advancesRecoveredMinor: recovered,
+    advancesRemainingMinor: received - recovered,
+  }
+}
+
 /* ─── عروض الأسعار والمناقصات (طلب المالك — مرجعية pro-acc) ─── */
 
 /**
@@ -788,5 +839,72 @@ export function computeWip(input: WipInput): WipResult {
     underBillingMinor: underBilling,
     costToCompleteMinor: Math.max(0, base - input.costsIncurredMinor),
     status: underBilling > 0 ? 'under_billed' : underBilling < 0 ? 'over_billed' : 'on_track',
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * §102 (مراجعة المالك — مركز تقارير المقاولات): بطاقة **العميل** الخالصة —
+ * العميل هو المحور لا المشروع: كل مشاريعه ومستخلصاته ومحتجزه ودفعاته المقدمة
+ * وما فُتح من مستخلصاته الآجلة ومحصَّلها — بنفس نمط projectReportCard
+ * (نواة خالصة قابلة للفحص ببوابة).
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** تجميعة مشروع واحد من منظور العميل — تُبنى في الصفحة من projectReportCard ودفتر التوزيع */
+export interface ClientProjectRow {
+  projectId: number
+  projectName: string
+  projectCode: string
+  status: ProjectStatus
+  contractEffectiveMinor: Minor
+  extractedMinor: Minor
+  retentionHeldMinor: Minor
+  advancesRemainingMinor: Minor
+  /** المفتوح من مستخلصات هذا المشروع الآجلة (بعد المحصل عليها) */
+  openExtractsMinor: Minor
+  openExtractsCount: number
+  /** المحصل فعلاً على مستخلصاته الآجلة (توزيع دفتر التحصيل) */
+  settledOnExtractsMinor: Minor
+}
+
+export interface ClientContractingCard {
+  projectsCount: number
+  activeProjects: number
+  /** مجموع العقود الفعلية (بأوامر التغيير المعتمدة) */
+  contractMinor: Minor
+  /** قيمة الأعمال المستخلصة عند العميل */
+  extractedMinor: Minor
+  /** المحتجز القائم لدى العميل */
+  retentionHeldMinor: Minor
+  /** الدفعات المقدمة المتبقية (التزام العميل لصالحنا حتى تُسترد من المستخلصات) */
+  advancesRemainingMinor: Minor
+  /** المفتوح من المستخلصات الآجلة */
+  openDocsMinor: Minor
+  openDocsCount: number
+  /** المحصل على المستخلصات الآجلة */
+  collectedMinor: Minor
+  /** نسبة التحصيل من الأعمال المستخلصة (مقربة لعُشر) */
+  collectedPercent: number
+  /** المستحق الصافي الآن = المفتوح − المقدمة المتبقية (قد يكون سالباً: العميل دفع مقدماً) */
+  netDueMinor: Minor
+}
+
+export function clientContractingCard(rows: readonly ClientProjectRow[]): ClientContractingCard {
+  const sum = (pick: (row: ClientProjectRow) => number) => rows.reduce((acc, row) => acc + pick(row), 0)
+  const extractedMinor = sum((r) => r.extractedMinor)
+  const openDocsMinor = sum((r) => r.openExtractsMinor)
+  const advancesRemainingMinor = sum((r) => r.advancesRemainingMinor)
+  const collectedMinor = sum((r) => r.settledOnExtractsMinor)
+  return {
+    projectsCount: rows.length,
+    activeProjects: rows.filter((r) => r.status === 'active').length,
+    contractMinor: sum((r) => r.contractEffectiveMinor),
+    extractedMinor,
+    retentionHeldMinor: sum((r) => r.retentionHeldMinor),
+    advancesRemainingMinor,
+    openDocsMinor,
+    openDocsCount: sum((r) => r.openExtractsCount),
+    collectedMinor,
+    collectedPercent: extractedMinor > 0 ? Math.round((collectedMinor / extractedMinor) * 10) / 10 : 0,
+    netDueMinor: openDocsMinor - advancesRemainingMinor,
   }
 }

@@ -12,7 +12,7 @@
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -21,10 +21,10 @@ const root = join(__dirname, '..')
 let pass = 0
 const ok = (name) => { pass++; console.log(`  ✓ ${name}`) }
 
-const { ALL_SCREEN_GUIDES, screenGuideFor, guideText, guideMatches } = await import(join(root, 'src/core/activityGuide.ts'))
-const { ACTIVITY_PLAYBOOKS, playbookFor, fillSample } = await import(join(root, 'src/core/activityPlaybook.ts'))
-const { ACTIVITY_TEMPLATES } = await import(join(root, 'src/core/activities.ts'))
-const { guidesForActivity, topicsForSetup, COMMON_GUIDES } = await import(join(root, 'src/core/guides.ts'))
+const { ALL_SCREEN_GUIDES, screenGuideFor, guideText, guideMatches } = await import(pathToFileURL(join(root, 'src/core/activityGuide.ts')).href)
+const { ACTIVITY_PLAYBOOKS, playbookFor, fillSample } = await import(pathToFileURL(join(root, 'src/core/activityPlaybook.ts')).href)
+const { ACTIVITY_TEMPLATES } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
+const { guidesForActivity, topicsForSetup, COMMON_GUIDES } = await import(pathToFileURL(join(root, 'src/core/guides.ts')).href)
 
 /* ─── قراءة كتالوج التنقل نصياً (فيه JSX/أيقونات فلا يُستورد هنا) ─── */
 const navSrc = readFileSync(join(root, 'src/ui/navCatalog.tsx'), 'utf8')

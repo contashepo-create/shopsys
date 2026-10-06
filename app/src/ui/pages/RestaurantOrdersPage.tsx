@@ -14,13 +14,14 @@ import { formatMinor, toMinor } from '../../core/money.ts'
 import { ORDER_TYPE_LABELS, orderSubtotalMinor, type RestaurantOrderType } from '../../core/restaurant.ts'
 import type { CartLine } from '../../core/pos.ts'
 import { renderKitchenTicketHtml } from '../print/printKitchen.ts'
-import { printHtml } from '../print/printReceipt.ts'
+import { buildReceiptModel } from '../../core/receipt.ts'
+import { renderReceiptHtml, printHtml, printToRoute } from '../print/printReceipt.ts'
 import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components/ui.tsx'
 import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 
 export function RestaurantOrdersPage() {
   const { restaurantOrders, items, treasuries, paymentTerminals, appUsers, currentUserId, openRestaurantOrder, setRestaurantOrderLines, cancelRestaurantOrder, settleRestaurantOrder, splitRestaurantOrder, getEffectivePrice } = useDataStore()
-  const { setup } = useAppStore()
+  const { setup, receipt, printerProfiles } = useAppStore()
   const toast = useToast()
   const cur = (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
   const fmt = (m: number) => formatMinor(m, cur, false)
@@ -119,6 +120,38 @@ export function RestaurantOrdersPage() {
         taxInclusive: setup.taxInclusive,
       })
       toast.show(`قُفل ${settleOrder.orderNumber} بالفاتورة ${sale.invoiceNumber} — ${fmt(sale.totals.totalMinor)} ${cur.symbol} ✓`)
+      /* §102 (تعدد الطابعات): النسخ الآلية عند الإقفال — لكل مسار مفعّل تُرسل
+         نسخته إلى طابعته المسماة (صامتة في EXE عبر الجسر، وحوار في المتصفح). */
+      const ticketArgs = {
+        shopName: setup.shopName || 'تَحَكَّم',
+        orderNumber: settleOrder.orderNumber,
+        typeLabel: ORDER_TYPE_LABELS[settleOrder.type].nameAr,
+        tableName: settleOrder.tableName,
+        notes: settleOrder.notes,
+        lines: settleOrder.lines,
+        dateIso: new Date().toISOString(),
+      }
+      if (printerProfiles.clientReceipt.autoPrint) {
+        const model = buildReceiptModel({
+          invoiceNumber: sale.invoiceNumber,
+          refCode: sale.refCode,
+          dateIso: sale.date,
+          lines: sale.lines,
+          totals: sale.totals,
+          payment: sale.payment,
+          paidMinor: sale.paidMinor,
+          operatorName: activeUser?.nameAr ?? setup.ownerName ?? 'المالك',
+          customerName: null,
+          taxPercent: setup.vatPercent,
+          taxInclusive: setup.taxInclusive,
+          settings: receipt,
+        })
+        printToRoute(renderReceiptHtml(model, cur, receipt), printerProfiles.clientReceipt, { silent: receipt.silentPrint })
+      }
+      if (printerProfiles.kitchenTicket.autoPrint)
+        printToRoute(renderKitchenTicketHtml(ticketArgs), printerProfiles.kitchenTicket, { silent: receipt.silentPrint })
+      if (printerProfiles.stationTicket.autoPrint)
+        printToRoute(renderKitchenTicketHtml({ ...ticketArgs, stationLabel: 'المحطة' }), printerProfiles.stationTicket, { silent: receipt.silentPrint })
       setSettleFor(null)
       if (activeId === settleOrder.id) setActiveId(null)
       setSvcPct(''); setDelFee(''); setTerminalId(''); setTerminalReference(''); setCardLast4('')

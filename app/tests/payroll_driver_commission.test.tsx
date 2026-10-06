@@ -51,7 +51,8 @@ describe('عمولة سائق النقلات في مسير الرواتب', () =
 
   it('تظهر في شاشة إصدار المسير بعمود العمولات مع وسم «نقلات»', () => {
     const view = render(<MemoryRouter><EmployeesPage initialTab="payroll" /></MemoryRouter>)
-    fireEvent.click(view.getByText('مسير رواتب لكل الموظفين'))
+    /* §93: المسير المجمّع أصبح ثانوياً — الرسمي قسائم مستقلة */
+    fireEvent.click(view.getByText('مسير مجمّع للجميع (قديم)'))
     const dialog = document.querySelector('[role="dialog"]') as HTMLElement
     expect(dialog).toBeTruthy()
     const marker = dialog.querySelector('[data-driver-dues]')

@@ -11,12 +11,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { reporter, ACTIVITY_IDS } from './auditKit.mjs'
-import { ACTIVITY_TEMPLATES, effectiveModules } from '/home/user/shopsys/app/src/core/activities.ts'
-import { coaForModules } from '/home/user/shopsys/app/src/core/coaVisibility.ts'
-import { STANDARD_COA } from '/home/user/shopsys/app/src/core/ledger.ts'
+import { ACTIVITY_TEMPLATES, effectiveModules } from '../src/core/activities.ts'
+import { coaForModules } from '../src/core/coaVisibility.ts'
+import { STANDARD_COA } from '../src/core/ledger.ts'
 
 const R = reporter('المرحلة 3 (ب) — خريطة إيراد كل نشاط وتغطيته')
-const ROOT = '/home/user/shopsys'
+import { fileURLToPath } from 'node:url'
+const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const matrix = readFileSync(`${ROOT}/docs/مصفوفة_المحرك_المحاسبي.md`, 'utf8')
 const gateFiles = readdirSync(`${ROOT}/app/scripts`).filter((f) => /^verify_.*\.mjs$/.test(f))
 const gateBlob = gateFiles.map((f) => `${f}\n${readFileSync(`${ROOT}/app/scripts/${f}`, 'utf8')}`).join('\n')

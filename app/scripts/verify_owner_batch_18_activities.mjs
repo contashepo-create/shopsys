@@ -29,16 +29,16 @@ globalThis.localStorage = {
 }
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 
-const { ACTIVITY_TEMPLATES } = await import(join(root, 'src/core/activities.ts'))
-const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
-const { computeTotals, lineTotal } = await import(join(root, 'src/core/pos.ts'))
-const { buildReceiptModel, DEFAULT_RECEIPT_SETTINGS } = await import(join(root, 'src/core/receipt.ts'))
-const { renderInvoiceA4Html } = await import(join(root, 'src/ui/print/printInvoiceA4.ts'))
-const { renderReceiptHtml } = await import(join(root, 'src/ui/print/printReceipt.ts'))
-const { collectNotifications } = await import(join(root, 'src/core/notifications.ts'))
-const { rolesWithOverrides } = await import(join(root, 'src/core/permissions.ts'))
-const { REFUND_APPROVE_PERM } = await import(join(root, 'src/core/refundApproval.ts'))
-const { hashPin } = await import(join(root, 'src/core/audit.ts'))
+const { ACTIVITY_TEMPLATES } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
+const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
+const { computeTotals, lineTotal } = await import(pathToFileURL(join(root, 'src/core/pos.ts')).href)
+const { buildReceiptModel, DEFAULT_RECEIPT_SETTINGS } = await import(pathToFileURL(join(root, 'src/core/receipt.ts')).href)
+const { renderInvoiceA4Html } = await import(pathToFileURL(join(root, 'src/ui/print/printInvoiceA4.ts')).href)
+const { renderReceiptHtml } = await import(pathToFileURL(join(root, 'src/ui/print/printReceipt.ts')).href)
+const { collectNotifications } = await import(pathToFileURL(join(root, 'src/core/notifications.ts')).href)
+const { rolesWithOverrides } = await import(pathToFileURL(join(root, 'src/core/permissions.ts')).href)
+const { REFUND_APPROVE_PERM } = await import(pathToFileURL(join(root, 'src/core/refundApproval.ts')).href)
+const { hashPin } = await import(pathToFileURL(join(root, 'src/core/audit.ts')).href)
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
 assert.equal(ACTIVITIES.length, 29, `المتوقع 29 نشاطاً — الموجود ${ACTIVITIES.length}`)

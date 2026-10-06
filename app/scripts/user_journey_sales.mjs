@@ -8,8 +8,9 @@
  * سكربت استكشافي: node --experimental-strip-types scripts/user_journey_sales.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
+const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10) // §77: تواريخ نسبية — لا قنابل زمنية في البوابات
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '..')
@@ -29,10 +30,10 @@ mem.set('shopsys-app', JSON.stringify({ state: { setup: { requireOpenShiftForSal
 let step = 0
 const ok = (name) => { step++; console.log(`  ✓ [${String(step).padStart(2, '0')}] ${name}`) }
 
-const { useDataStore } = await import(join(root, 'src/data/repo.ts'))
-const { trialBalance, incomeStatement } = await import(join(root, 'src/core/financialReports.ts'))
-const { summarizeShift } = await import(join(root, 'src/core/shifts.ts'))
-const { ExpiredStockError } = await import(join(root, 'src/core/batches.ts'))
+const { useDataStore } = await import(pathToFileURL(join(root, 'src/data/repo.ts')).href)
+const { trialBalance, incomeStatement } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
+const { summarizeShift } = await import(pathToFileURL(join(root, 'src/core/shifts.ts')).href)
+const { ExpiredStockError } = await import(pathToFileURL(join(root, 'src/core/batches.ts')).href)
 
 const st = () => useDataStore.getState()
 const P = { from: '2000-01-01', to: '2099-12-31' }
@@ -111,12 +112,12 @@ ok('تثبيت التكلفة لحظة الترحيل: السلة أرسلت 111
 console.log('\n─── 2: صيدلية — بيع بالشريط/العلبة ودفعات صلاحية FEFO ───')
 st().postPurchase({
   supplierId: supplier.id, date: '2026-09-03',
-  lines: [{ itemId: med.id, qty: 100, unitPriceMinor: 300, expiryDate: '2026-10-01' }],
+  lines: [{ itemId: med.id, qty: 100, unitPriceMinor: 300, expiryDate: relDays(45) }],
   expenses: [], paidMinor: 30000, treasury: '1101', notes: '',
 })
 st().postPurchase({
   supplierId: supplier.id, date: '2026-09-04',
-  lines: [{ itemId: med.id, qty: 100, unitPriceMinor: 300, expiryDate: '2027-05-01' }],
+  lines: [{ itemId: med.id, qty: 100, unitPriceMinor: 300, expiryDate: relDays(400) }],
   expenses: [], paidMinor: 30000, treasury: '1101', notes: '',
 })
 // بيع علبة (20 قرصاً): المخزون يُخصم بالوحدة الأساسية والدفعة الأقرب انتهاءً أولاً
@@ -127,7 +128,7 @@ const s2 = st().postSale({
 })
 assert.equal(st().items.find((i) => i.id === med.id).stockQty, medStock0 - 20)
 ok('بيع علبة ×20: المخزون خُصم 20 قرصاً بالوحدة الأساسية')
-const oldBatch = st().batches.find((b) => b.itemId === med.id && b.expiryDate === '2026-10-01')
+const oldBatch = st().batches.find((b) => b.itemId === med.id && b.expiryDate === relDays(45))
 assert.equal(oldBatch.qty, 80)
 ok('FEFO: الخصم من الدفعة الأقرب انتهاءً (2026-10) أولاً — بقي 80')
 // بيع يمس المنتهي بعد انتهاء الدفعة الأولى محظور بلا اعتماد
@@ -161,7 +162,7 @@ const s3 = st().postSale({
 const soldUnit = st().serials.find((u) => u.serial === 'IMEI-222')
 assert.equal(soldUnit.status, 'sold')
 assert.equal(soldUnit.saleId, s3.id)
-const { warrantyLookup } = await import(join(root, 'src/core/serials.ts'))
+const { warrantyLookup } = await import(pathToFileURL(join(root, 'src/core/serials.ts')).href)
 const w = warrantyLookup(st().serials, 'IMEI-222', new Date().toISOString())
 assert.ok(w && w.active && w.warrantyUntil > '2027-09-01')
 ok('IMEI-222 مباعة ومربوطة بفاتورتها — الضمان 12 شهراً سارٍ (يُحسب من تاريخ البيع)')

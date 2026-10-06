@@ -14,6 +14,8 @@ export function renderKitchenTicketHtml(args: {
   notes: string
   lines: readonly CartLine[]
   dateIso: string
+  /** §102 (تعدد الطابعات): عنوان البون — «المطبخ» أو «المحطة» حسب الطابعة الوجهة */
+  stationLabel?: string
 }): string {
   const rows = args.lines
     .map(
@@ -37,14 +39,14 @@ export function renderKitchenTicketHtml(args: {
     .foot { text-align: center; font-size: 11.5px; font-weight: 700; color: #000; margin-top: 8px; }
   </style></head><body>
     <div class="head">
-      <div class="shop">${esc(args.shopName)} — 🍳 بون مطبخ</div>
+      <div class="shop">${esc(args.shopName)} — ${args.stationLabel ? `🍹 ${esc(args.stationLabel)}` : '🍳 بون مطبخ'}</div>
       <div class="ord">${esc(args.orderNumber)}</div>
       <div class="meta">${esc(args.typeLabel)}${args.tableName ? ` — طاولة ${esc(args.tableName)}` : ''}</div>
       <div class="meta">${new Date(args.dateIso).toLocaleString('ar-EG')}</div>
     </div>
     <table>${rows}</table>
     ${args.notes ? `<div class="notes">📝 ${esc(args.notes)}</div>` : ''}
-    <div class="foot">بلا أسعار — نسخة المطبخ</div>
+    <div class="foot">بلا أسعار — ${args.stationLabel ? `نسخة ${esc(args.stationLabel)}` : 'نسخة المطبخ'}</div>
     <script>window.onload = () => { window.print() }</script>
   </body></html>`
 }

@@ -14,14 +14,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { freshCase, assertInvariants, balanceOf, addSimpleItem, addParty, reporter } from './auditKit.mjs'
-import { assertJournalIntegrity, normalizeJournalDates } from '/home/user/shopsys/app/src/core/ledgerGuard.ts'
-import { STANDARD_COA } from '/home/user/shopsys/app/src/core/ledger.ts'
-import { fullCoa } from '/home/user/shopsys/app/src/core/treasury.ts'
-import { validateSyncConfig, SYNC_SECRET_RE } from '/home/user/shopsys/app/src/data/syncClient.ts'
-import { trialBalance } from '/home/user/shopsys/app/src/core/financialReports.ts'
+import { assertJournalIntegrity, normalizeJournalDates } from '../src/core/ledgerGuard.ts'
+import { STANDARD_COA } from '../src/core/ledger.ts'
+import { fullCoa } from '../src/core/treasury.ts'
+import { validateSyncConfig, SYNC_SECRET_RE } from '../src/data/syncClient.ts'
+import { trialBalance } from '../src/core/financialReports.ts'
+import { fileURLToPath } from 'node:url'
+const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 
 const R = reporter('المرحلة 5 — الخدمات السحابية والمحاسبة')
-const RUNNER = readFileSync('/home/user/shopsys/app/src/data/syncRunner.ts', 'utf8')
+const RUNNER = readFileSync(`${APP_ROOT}/src/data/syncRunner.ts`, 'utf8')
 const LOCAL_SESSION_KEYS = ['currentUserId']
 
 // حالة متجر حقيقية فيها كل أنواع المستندات

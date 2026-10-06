@@ -7,7 +7,8 @@
  * لا سبيل لتجاوزها: كل الشاشات الأخرى غير معروضة أصلاً في هذه الحالة.
  */
 import { useMemo, useState } from 'react'
-import { KeyRound, Download, MessageCircle, Phone, FileJson, FileSpreadsheet, Copy } from 'lucide-react'
+import { KeyRound, Download, MessageCircle, Phone, FileJson, FileSpreadsheet, Copy, Store } from 'lucide-react'
+import { ACTIVITY_TEMPLATES } from '../core/activities.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { useDataStore } from '../data/repo.ts'
 import {
@@ -31,11 +32,14 @@ function downloadBlob(content: string, filename: string, mime: string) {
 }
 
 export function LockScreen({ reason, state }: { reason: LockReason; state: LicenseState }) {
-  const { deviceId, setup, cloudAbout, revokedKeys, setActivated } = useAppStore()
+  const { deviceId, setup, cloudAbout, revokedKeys, setActivated, applyActivityChangeKey } = useAppStore()
   const data = useDataStore()
   const toast = useToast()
   const info = LOCK_REASON_LABELS[reason]
   const about = cloudAbout ?? FALLBACK_ABOUT
+  const [activityKeyInput, setActivityKeyInput] = useState('')
+  const [activityKeyBusy, setActivityKeyBusy] = useState(false)
+  const [activityKeyError, setActivityKeyError] = useState<string | null>(null)
   const [keyInput, setKeyInput] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -50,7 +54,7 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
       const trimmed = keyInput.trim()
       if (isRevoked(trimmed, revokedKeys)) throw new Error('هذا المفتاح محروق (مُبطل من المطوّر) — اطلب مفتاحاً جديداً')
       const payload = await verifyLicenseKey(trimmed, deviceId)
-      if (!activityMatches(payload, setup.activityId)) throw new Error('المفتاح صادر لنشاط آخر — اطلب مفتاحاً لنشاطك الحالي')
+      if (!activityMatches(payload, setup.activityId, setup.activityKeyHistory)) throw new Error('المفتاح صادر لنشاط آخر — اطلب مفتاحاً لنشاطك الحالي')
       setActivated(trimmed, payload)
       toast.show(`تم التفعيل — خطة ${PLAN_LABELS[payload.plan]} ✅ يعاد التحميل…`)
       setTimeout(() => window.location.reload(), 900)
@@ -102,7 +106,7 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
     <div className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-950 p-4" dir="rtl">
       <div className="w-full max-w-2xl space-y-4">
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 text-center space-y-3 shadow-xl">
-          <img src="/dev-logo.png" alt="شعار المطوّر" className="max-h-24 mx-auto object-contain rounded-xl bg-black px-4 py-2" />
+          <img src="./dev-logo.png" alt="شعار المطوّر" className="max-h-24 mx-auto object-contain rounded-xl bg-black px-4 py-2" />
           <div className="text-[11px] text-slate-400 font-bold">تطوير وملكية حصرية — م / محمد عبدة</div>
           <div className="text-6xl">{info.icon}</div>
           <h1 className="text-2xl font-black text-slate-800 dark:text-slate-100">{info.title}</h1>
@@ -136,6 +140,37 @@ export function LockScreen({ reason, state }: { reason: LockReason; state: Licen
               {about.supportPhone && (
                 <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 font-bold text-sm" dir="ltr"><Phone className="w-4 h-4" /> {about.supportPhone}</div>
               )}
+            </div>
+
+            {/* v1.0.8 (طلب المالك): تغيير النشاط بكود الدعم من نفس شاشة التفعيل */}
+            <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-2">
+              <h2 className="font-black flex items-center gap-2"><Store className="w-5 h-5 text-emerald-500" /> تغيير النشاط بكود الدعم</h2>
+              <p className="text-[11px] text-slate-400">نشاطك الحالي: <b>{ACTIVITY_TEMPLATES.find((t) => t.id === setup.activityId)?.nameAr ?? setup.activityId}</b> — التغيير يتم فقط بمفتاح موقّع من الدعم الفني.</p>
+              <input
+                value={activityKeyInput}
+                onChange={(e) => setActivityKeyInput(e.target.value)}
+                placeholder="SHOPSYS2...."
+                dir="ltr"
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-transparent text-[12px] font-mono outline-none focus:border-emerald-500"
+              />
+              <Btn
+                disabled={!activityKeyInput.trim() || activityKeyBusy}
+                onClick={async () => {
+                  setActivityKeyBusy(true)
+                  try {
+                    await applyActivityChangeKey(activityKeyInput.trim())
+                    setActivityKeyInput('')
+                    /* النشاط تغيّر — يعاد فحص القفل تلقائياً بإعادة تحميل الواجهة */
+                    window.location.reload()
+                  } catch (err) {
+                    setActivityKeyError((err as Error).message)
+                  } finally { setActivityKeyBusy(false) }
+                }}
+                className="w-full !bg-emerald-600 hover:!bg-emerald-700"
+              >
+                {activityKeyBusy ? 'جارٍ التحقق…' : 'تطبيق مفتاح تغيير النشاط'}
+              </Btn>
+              {activityKeyError && <p className="text-[11px] text-rose-500 font-bold">{activityKeyError}</p>}
             </div>
 
             <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 space-y-2">

@@ -40,11 +40,11 @@ globalThis.localStorage = {
 }
 globalThis.window = { localStorage: globalThis.localStorage, addEventListener: () => {}, dispatchEvent: () => true }
 
-const { ACTIVITY_TEMPLATES } = await import(join(root, 'src/core/activities.ts'))
-const { assertBalanced } = await import(join(root, 'src/core/ledger.ts'))
-const { trialBalance, incomeStatement, balanceSheet, generalLedger, cashFlowReport, vatReport, toCsv } = await import(join(root, 'src/core/financialReports.ts'))
-const { salesSummary, topItems, dailySales } = await import(join(root, 'src/core/reports.ts'))
-const { expensesSummary } = await import(join(root, 'src/core/expenseReports.ts'))
+const { ACTIVITY_TEMPLATES } = await import(pathToFileURL(join(root, 'src/core/activities.ts')).href)
+const { assertBalanced } = await import(pathToFileURL(join(root, 'src/core/ledger.ts')).href)
+const { trialBalance, incomeStatement, balanceSheet, generalLedger, cashFlowReport, vatReport, toCsv } = await import(pathToFileURL(join(root, 'src/core/financialReports.ts')).href)
+const { salesSummary, topItems, dailySales } = await import(pathToFileURL(join(root, 'src/core/reports.ts')).href)
+const { expensesSummary } = await import(pathToFileURL(join(root, 'src/core/expenseReports.ts')).href)
 
 const ACTIVITIES = ACTIVITY_TEMPLATES.map((a) => a.id)
 assert.equal(ACTIVITIES.length, 29)

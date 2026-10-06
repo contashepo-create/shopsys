@@ -222,8 +222,58 @@ export function validateItem(draft: ItemDraft, existing: Item[], editingId?: num
   }
   const draftCodes = draft.barcodes.filter(Boolean)
   if (new Set(draftCodes).size !== draftCodes.length) errors.push('باركود مكرر داخل نفس الصنف')
+  // §81: تفرد SKU غير الفارغ — الكاشير والواجهات يبحثون به ويعرضونه
+  if (draft.sku.trim() && existing.some((it) => it.id !== editingId && it.sku === draft.sku.trim())) {
+    errors.push(`كود الصنف ${draft.sku.trim()} مستخدم لصنف آخر`)
+  }
   for (const u of draft.extraUnits) {
     if (u.factor <= 1) errors.push(`معامل الوحدة "${u.nameAr}" يجب أن يكون أكبر من 1`)
+    // §81: باركود الوحدة الكبرى كان بلا فحص إطلاقاً — الكاشير يمسحه فيبيع صنفاً بدل آخر
+    if (u.barcode) {
+      if (allCodes.has(u.barcode)) errors.push(`باركود الوحدة «${u.nameAr}» (${u.barcode}) مستخدم في صنف آخر`)
+      if (draft.barcodes.includes(u.barcode)) errors.push(`الباركود ${u.barcode} مكرر بين الصنف ووحدته «${u.nameAr}»`)
+      if (draft.extraUnits.filter((x) => x.barcode === u.barcode).length > 1) errors.push(`باركود الوحدة ${u.barcode} مكرر بين الوحدات`)
+    }
+  }
+  return errors
+}
+
+/**
+ * الأخطاء القاتلة فقط — لحراسة المستودع (addItem/updateItem):
+ * تتحمل الحقول الغائبة (سجلات/استدعاءات بأشكال قديمة ناقصة) وتفحص ما وُجد
+ * فقط: باركود مكرر بين صنفين يُنطق الكاشير بيع صنف بدل آخر، ومعامل وحدة < 1
+ * يفسد خصم المخزون بالأساسية، والسيريال مع الوزن مساران متضاربان.
+ * التحذيرات (سعر صفر/بيع بخسارة) قرار شاشة ItemsPage ولا تمنع الحفظ.
+ */
+export function itemBlockers(draft: Partial<ItemDraft>, existing: Item[], editingId?: number): string[] {
+  const errors: string[] = []
+  if (draft.nameAr != null && !draft.nameAr.trim()) errors.push('اسم الصنف مطلوب')
+  if ((draft.priceMinor ?? 0) < 0 || (draft.costMinor ?? 0) < 0) errors.push('الأسعار لا تكون سالبة')
+  if (draft.trackSerial && draft.soldByWeight) errors.push('لا يجتمع السيريال مع البيع بالوزن')
+  if (draft.isService && (draft.trackSerial || draft.trackExpiry || draft.soldByWeight)) {
+    errors.push('صنف الخدمة بلا مخزون — لا صلاحية ولا سيريال ولا وزن')
+  }
+  const allCodes = new Set<string>()
+  for (const it of existing) {
+    if (it.id === editingId) continue
+    for (const b of it.barcodes ?? []) allCodes.add(b)
+    for (const u of it.extraUnits ?? []) if (u.barcode) allCodes.add(u.barcode)
+  }
+  const draftCodes = (draft.barcodes ?? []).filter(Boolean)
+  for (const b of draftCodes) if (allCodes.has(b)) errors.push(`الباركود ${b} مستخدم في صنف آخر`)
+  if (new Set(draftCodes).size !== draftCodes.length) errors.push('باركود مكرر داخل نفس الصنف')
+  if (draft.sku?.trim() && existing.some((it) => it.id !== editingId && it.sku === draft.sku!.trim())) {
+    errors.push(`كود الصنف ${draft.sku.trim()} مستخدم لصنف آخر`)
+  }
+  const seenUnitBarcodes = new Set<string>()
+  for (const u of draft.extraUnits ?? []) {
+    if (u.factor <= 1) errors.push(`معامل الوحدة "${u.nameAr}" يجب أن يكون أكبر من 1`)
+    if (u.barcode) {
+      if (allCodes.has(u.barcode)) errors.push(`باركود الوحدة «${u.nameAr}» (${u.barcode}) مستخدم في صنف آخر`)
+      if (draftCodes.includes(u.barcode)) errors.push(`الباركود ${u.barcode} مكرر بين الصنف ووحدته «${u.nameAr}»`)
+      if (seenUnitBarcodes.has(u.barcode)) errors.push(`باركود الوحدة ${u.barcode} مكرر بين الوحدات`)
+      seenUnitBarcodes.add(u.barcode)
+    }
   }
   return errors
 }

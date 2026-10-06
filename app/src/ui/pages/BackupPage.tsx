@@ -4,28 +4,67 @@
  * نفس صيغة الملف ستُستخدم لاحقاً للنسخ اليومي عبر بوت التليجرام.
  */
 import { useRef, useState } from 'react'
-import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock } from 'lucide-react'
+import { DatabaseBackup, Download, Upload, AlertTriangle, CheckCircle2, FileJson, CalendarClock, FileSpreadsheet, FileText, HardDrive, FolderOpen, ShieldAlert, History, KeyRound } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore, DATA_VERSION } from '../../data/repo.ts'
 import { buildBackup, parseBackup, summarizeBackup, backupFileName, type BackupSummary } from '../../core/backup.ts'
 import { BACKUP_INTERVAL_CHOICES } from '../../core/security.ts'
-import { decryptForDevice, encryptForDevice } from '../../data/secureStorage.ts'
-import { Btn, useToast } from '../components/ui.tsx'
+import { appStorage, settingsAppStorage } from '../../data/persistentStorage.ts'
+import { desktopDatabaseStorage, desktopBackupNow, isElectronRuntime } from '../../data/desktopBridge.ts'
+import { Btn, Modal, inputCls, useToast } from '../components/ui.tsx'
+import { getDeviceSecret, setDeviceSecret } from '../../data/secureStorage.ts'
+import { wrapSecretWithPassword, unwrapSecretWithPassword, parseKeyFile, keyFileName, type SecretKeyFile } from '../../core/secretTransfer.ts'
+import { buildFullExportSheets, sheetsToExcelXml, sheetToCsv, downloadTextFile, exportFileName, type ExportSheet } from '../../core/fullExport.ts'
 
 
 export function BackupPage() {
   const { setup, backupIntervalMinutes, setBackupIntervalMinutes, lastHourlyBackupAt } = useAppStore()
   const toast = useToast()
   const fileRef = useRef<HTMLInputElement>(null)
+  const fileRef2 = useRef<HTMLInputElement>(null)
   const [pending, setPending] = useState<{ raw: string; summary: BackupSummary } | null>(null)
   const [confirmText, setConfirmText] = useState('')
   const [lastVerification, setLastVerification] = useState<{ at: string; bytes: number } | null>(null)
 
+  /* ── v1.0.15 (المرحلة ⑤): نقل سر التشفير بين الأجهزة ── */
+  const [keyExportOpen, setKeyExportOpen] = useState(false)
+  const [keyImportOpen, setKeyImportOpen] = useState(false)
+  const [keyPass, setKeyPass] = useState('')
+  const [keyPass2, setKeyPass2] = useState('')
+  const [keyImportPass, setKeyImportPass] = useState('')
+  const [keyImportFile, setKeyImportFile] = useState<{ name: string; text: string; file: SecretKeyFile } | null>(null)
+  const [keyImportShop, setKeyImportShop] = useState('')
+
+  const exportSecretKey = async () => {
+    try {
+      if (keyPass.length < 6) throw new Error('كلمة السر 6 أحرف على الأقل')
+      if (keyPass !== keyPass2) throw new Error('تأكيد كلمة السر غير مطابق')
+      const file = await wrapSecretWithPassword({ secret: getDeviceSecret(), password: keyPass, shopName: setup.shopName })
+      downloadTextFile(keyFileName(setup.shopName, file.createdAt), 'application/json', JSON.stringify(file, null, 2))
+      toast.show('نُزّلت نسخة السر المغلّفة — انقلها مع ملف القاعدة واحفظ كلمة السر بعيداً عنها 🔑')
+      setKeyExportOpen(false); setKeyPass(''); setKeyPass2('')
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
+  const importSecretKey = async () => {
+    try {
+      if (!keyImportFile) throw new Error('اختر ملف النسخة أولاً (.tkey.json)')
+      const secret = await unwrapSecretWithPassword(keyImportFile.file, keyImportPass)
+      setDeviceSecret(secret)
+      toast.show(`استُورد سر «${keyImportShop || keyImportFile.file.shopName}» — يُعاد تشغيل التطبيق الآن لقراءة القاعدة به 🔑`)
+      setKeyImportOpen(false)
+      setTimeout(() => { window.location.reload() }, 2500)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
   const verifyRoundTrip = async () => {
     try {
-      const appRaw = localStorage.getItem('shopsys-app')
-      const storeEnc = localStorage.getItem('shopsys-data')
-      const storeRaw = storeEnc == null ? null : await decryptForDevice(storeEnc)
+      /* v1.0.6 (بلاغ المالك): القراءة من طبقة التخزين الحقيقية — في المتصفح
+         localStorage/secureStorage وفي سطح المكتب SQLite عبر IPC. القراءة
+         النصية المباشرة من localStorage كانت ترجع null دائماً في النسخة
+         المثبتة فيظهر «لا بيانات للنسخ بعد» رغم وجود البيانات. */
+      const appRaw = await settingsAppStorage().getItem('shopsys-app')
+      const storeRaw = await appStorage().getItem('shopsys-data')
       if (!storeRaw) throw new Error('لا بيانات محلية لفحصها')
       const backup = buildBackup({ appState: appRaw ? JSON.parse(appRaw) : null, storeState: JSON.parse(storeRaw), appDataVersion: DATA_VERSION, shopName: setup.shopName })
       const serialized = JSON.stringify(backup)
@@ -38,11 +77,10 @@ export function BackupPage() {
 
   const download = async () => {
     try {
-      // نقرأ من localStorage ونفك تشفير قاعدة البيانات (القرار 28) — النسخة تُحفظ نصاً صريحاً
-      // كي تُستعاد على أي جهاز (تشفير القاعدة مربوط بمفتاح الجهاز نفسه)
-      const appRaw = localStorage.getItem('shopsys-app')
-      const storeEnc = localStorage.getItem('shopsys-data')
-      const storeRaw = storeEnc == null ? null : await decryptForDevice(storeEnc)
+      // نقرأ من طبقة التخزين الحقيقية ويفك التشفير تلقائياً حيث يلزم (القرار 28) —
+      // النسخة تُحفظ نصاً صريحاً كي تُستعاد على أي جهاز (تشفير القاعدة مربوط بمفتاح الجهاز نفسه)
+      const appRaw = await settingsAppStorage().getItem('shopsys-app')
+      const storeRaw = await appStorage().getItem('shopsys-data')
       if (!storeRaw) return toast.show('لا بيانات للنسخ بعد', 'error')
       const backup = buildBackup({
         appState: appRaw ? JSON.parse(appRaw) : null,
@@ -83,14 +121,68 @@ export function BackupPage() {
     if (!pending) return
     try {
       const backup = parseBackup(pending.raw) // تحقق ثانٍ لحظة التنفيذ
-      if (backup.data.app != null) localStorage.setItem('shopsys-app', JSON.stringify(backup.data.app))
-      // تُكتب القاعدة مشفرة بمفتاح هذا الجهاز — كما يكتبها التطبيق نفسه تماماً
-      localStorage.setItem('shopsys-data', await encryptForDevice(JSON.stringify(backup.data.store)))
+      /* v1.0.6: الكتابة عبر نفس طبقة التخزين التي يقرأ منها التطبيق عند الإقلاع —
+         localStorage المباشر كان يكتب في المكان الخطأ في النسخة المثبتة (persist
+         يقرأ من SQLite) فلا تنجح الاستعادة. الترقيم المتفائل في DesktopStateStorage
+         يمنع أي حفظ متأخر من المتجر القديم من الكتابة فوق النسخة المستعادة. */
+      if (backup.data.app != null) await settingsAppStorage().setItem('shopsys-app', JSON.stringify(backup.data.app))
+      await appStorage().setItem('shopsys-data', JSON.stringify(backup.data.store))
       toast.show('استُعيدت النسخة — يُعاد تحميل التطبيق…')
       setTimeout(() => window.location.reload(), 800)
     } catch (err) {
       toast.show((err as Error).message, 'error')
     }
+  }
+
+  /* ─── التصدير الشامل (طلب المالك v1.0.6): Excel متعدد الأوراق + CSV لكل جدول ───
+     يُبنى من المتجر الحي مباشرة — بلا قراءة تخزين — فلا يتأثر بفرق بيئة الويب/سطح المكتب */
+  const [exportSheets, setExportSheets] = useState<ExportSheet[] | null>(null)
+  /* ─── v1.0.8 (طلب المالك): مكان قاعدة البيانات + النسخ المزدوجة — سطح المكتب ─── */
+  const storage = desktopDatabaseStorage()
+  const [storageInfo, setStorageInfo] = useState<Awaited<ReturnType<NonNullable<typeof storage>['getStorageInfo']>> | null>(null)
+  const [movingDb, setMovingDb] = useState(false)
+  const [fileBackupBusy, setFileBackupBusy] = useState(false)
+  const refreshStorage = async () => { if (storage) { try { setStorageInfo(await storage.getStorageInfo()) } catch { /* الجسر القديم */ } } }
+  if (storage && storageInfo == null) void refreshStorage()
+  /* ─── v1.0.9 (درع البيانات): استعادة نسخة قاعدة ملفية من المكانين — سطح المكتب ─── */
+  type FileBackup = Awaited<ReturnType<NonNullable<typeof storage>['listFileBackups']>>[number]
+  const [fileBackups, setFileBackups] = useState<FileBackup[] | null>(null)
+  const [restoringPath, setRestoringPath] = useState<string | null>(null)
+  const [confirmingPath, setConfirmingPath] = useState<string | null>(null)
+  const refreshFileBackups = async () => {
+    if (!storage) return
+    try { setFileBackups(await storage.listFileBackups()) } catch { /* جسر قديم */ }
+  }
+  const restoreFileBackup = async (path: string) => {
+    if (!storage) return
+    setRestoringPath(path)
+    try {
+      const result = await storage.restoreFileBackup(path)
+      if (result.ok) toast.show('استُبدلت القاعدة بالنسخة المحددة — سيُعاد تشغيل التطبيق الآن ✓')
+    } catch (err) {
+      toast.show((err as Error).message, 'error')
+      setRestoringPath(null); setConfirmingPath(null)
+    }
+  }
+  const takeFileBackup = async () => {
+    const backup = desktopBackupNow()
+    if (!backup) return toast.show('النسخة الملفية متاحة في نسخة سطح المكتب فقط', 'error')
+    setFileBackupBusy(true)
+    try {
+      const files = await backup()
+      toast.show(`أُخذت نسخة ملفية في ${files.length} مكان ✓ (${files.map((f) => f.split(/[\\/]/).slice(-2, -1)[0] + '/' + f.split(/[\\/]/).pop()).join(' و ')})`)
+      await refreshStorage()
+    } catch (err) { toast.show((err as Error).message, 'error') } finally { setFileBackupBusy(false) }
+  }
+  const exportAll = () => {
+    const sheets = buildFullExportSheets(useDataStore.getState() as unknown as Record<string, unknown>)
+    setExportSheets(sheets)
+    downloadTextFile(exportFileName(setup.shopName, 'export', 'xls', new Date().toISOString()), 'application/vnd.ms-excel', sheetsToExcelXml(sheets))
+    toast.show(`نُزّل ملف Excel شامل (${sheets.length} أوراق: أصناف/فواتير/قيود/أطراف…) ✓`)
+  }
+  const exportCsv = (sheet: ExportSheet) => {
+    downloadTextFile(exportFileName(setup.shopName, sheet.nameAr.replace(/\s+/g, '-'), 'csv', new Date().toISOString()), 'text/csv;charset=utf-8', sheetToCsv(sheet))
+    toast.show(`نُزّل CSV «${sheet.nameAr}» (${sheet.rows.length} صفاً) ✓`)
   }
 
   // ملاحظة: selectors منفصلة — إرجاع كائن جديد كل تصيير يسبب حلقة لانهائية في zustand v5 (صفحة بيضاء)
@@ -120,6 +212,26 @@ export function BackupPage() {
         <Btn onClick={download} className="w-full"><Download size={15} /> تنزيل نسخة احتياطية الآن</Btn>
         <Btn variant="ghost" onClick={() => { void verifyRoundTrip() }} className="w-full"><CheckCircle2 size={15}/> فحص استعادة تجريبي دون تغيير البيانات</Btn>
         {lastVerification && <div className="rounded-xl bg-emerald-500/10 p-3 text-xs text-emerald-700">آخر فحص ناجح: {lastVerification.at.slice(0,16).replace('T',' ')} · حجم النسخة {lastVerification.bytes.toLocaleString('ar-EG')} بايت</div>}
+      </div>
+
+      {/* v1.0.15 (المرحلة ⑤): نقل سر التشفير بين الأجهزة — القاعدة المنقولة لا تُقرأ بلا سرها */}
+      <div className={`anim-up ${card} space-y-4`} style={{ animationDelay: '30ms' }}>
+        <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+          <KeyRound size={17} className="text-amber-500" /> نقل سر التشفير بين الأجهزة
+        </div>
+        <div className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed">
+          قاعدة البيانات مشفرة بسر خاص بهذا الجهاز — نسخ ملف القاعدة وحده إلى جهاز آخر
+          يعطي شفرة لا تُقرأ. صَدّر نسخة السر <b>مغلّفة بكلمة سر تختارها</b> وانقلها مع ملف
+          القاعدة، ثم استوردها على الجهاز الجديد فتصبح قاعدته مقروءة.
+          <b> كلمة السر لا تُحفظ في التطبيق إطلاقاً</b> — من يملك الملف بلا كلمتها لا يملك شيئاً، فاحفظها بعيداً عن الملف.
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <Btn onClick={() => setKeyExportOpen(true)} className="w-full"><KeyRound size={15} /> تصدير نسخة السر بكلمة سر</Btn>
+          <Btn variant="ghost" onClick={() => { setKeyImportFile(null); setKeyImportPass(''); setKeyImportShop(''); setKeyImportOpen(true) }} className="w-full"><Upload size={15} /> استيراد نسخة سر على هذا الجهاز</Btn>
+        </div>
+        <div className="text-[11px] text-slate-400 leading-relaxed">
+          متى تحتاجها؟ نقلت القاعدة لجهاز جديد بملف shopsys.db (أو نسخة SQLite الملفية) وظهرت البيانات فارغة/غير مقروءة — استورد سر الجهاز الأصلي. نسخ JSON الاحتياطية لا تحتاج هذا (تُعاد تشفيرها بسر الجهاز الجديد تلقائياً).
+        </div>
       </div>
 
       {/* جدولة النسخ التلقائي (طلب المالك) — لقطة مشفرة على الجهاز حسب الفاصل المختار */}
@@ -152,6 +264,161 @@ export function BackupPage() {
             : 'لم تُؤخذ لقطة تلقائية بعد — تُؤخذ الأولى خلال دقائق من فتح التطبيق'}
         </div>
       </div>
+
+      {/* تصدير شامل — Excel وCSV (طلب المالك v1.0.6) */}
+      <div className={`anim-up ${card} space-y-4`} style={{ animationDelay: '60ms' }}>
+        <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+          <FileSpreadsheet size={17} className="text-emerald-600" /> تصدير شامل للبيانات — Excel وCSV
+        </div>
+        <div className="text-[12.5px] text-slate-500 dark:text-slate-400 leading-relaxed">
+          ملف Excel واحد يفتح بكل الجداول أوراقاً منفصلة (أصناف، عملاء، موردون، فواتير البيع
+          والشراء، قيود اليومية، الخزائن، المخازن، الفروع، الرواتب، السلف، العمولات، السندات) —
+          أو نزّل أي جدول منفرداً بصيغة CSV بترميز عربي سليم. المبالغ بالوحدة الكاملة (جنيه) لا بالقروش.
+        </div>
+        <Btn onClick={exportAll} className="w-full !bg-emerald-600 hover:!bg-emerald-700"><FileSpreadsheet size={15} /> تنزيل Excel شامل (كل الجداول)</Btn>
+        <div className="flex flex-wrap gap-2">
+          {(exportSheets ?? []).map((sheet) => (
+            <button
+              key={sheet.nameAr}
+              onClick={() => exportCsv(sheet)}
+              className="px-3 py-2 rounded-xl text-[11.5px] font-bold border border-slate-200 dark:border-slate-700 text-slate-500 hover:border-emerald-400 hover:text-emerald-600 transition-colors flex items-center gap-1.5"
+            >
+              <FileText size={12} /> {sheet.nameAr} ({sheet.rows.length})
+            </button>
+          ))}
+          {!exportSheets && <div className="text-[11px] text-slate-400">اضغط «تنزيل Excel شامل» أولاً لتظهر أزرار CSV لكل جدول</div>}
+        </div>
+        <div className="text-[11px] text-slate-400 leading-relaxed">
+          تصدير تشغيلي للمحاسبة والمخزون — لا يشمل الحقول السرية (بصمات الدخول والترخيص).
+          للنسخ الكاملة القابلة للاستعادة استخدم «نسخة احتياطية كاملة» أعلاه.
+        </div>
+      </div>
+
+      {/* v1.0.8: مكان القاعدة والنسخ المزدوجة (طلب المالك) — سطح المكتب فقط */}
+      {isElectronRuntime() && (
+        <div className={`anim-up ${card} space-y-4 lg:col-span-2`} style={{ animationDelay: '50ms' }}>
+          <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+            <HardDrive size={17} className="text-sky-600" /> مكان قاعدة البيانات والنسخ الاحتياطية
+          </div>
+
+          <div className="rounded-2xl border-2 border-amber-400/40 bg-amber-500/[0.06] p-4 space-y-2">
+            <div className="flex items-center gap-1.5 text-[12.5px] font-bold text-amber-700 dark:text-amber-400">
+              <ShieldAlert size={15} /> تحذير مهم — اقرأه بعناية
+            </div>
+            <div className="text-[12px] text-slate-600 dark:text-slate-300 leading-relaxed space-y-1.5">
+              <div>• قاعدة البيانات على <b>قرص C</b> مع الويندوز: <b>فرمتة الويندوز أو إعادة تهيئته = فقدان كل بياناتك</b>. يُنصح بشدة باختيار مكان على قرص آخر (D أو E أو فلاشة خارجية تبقى موصولة).</div>
+              <div>• النسخ الاحتياطية تُحفظ تلقائياً في <b>مكانين مختلفين</b>:
+                <b> الأول</b> بجوار القاعدة نفسها{storageInfo ? <> (<span dir="ltr" className="text-[11px]">{storageInfo.dbPath.split(/[\\/]/).slice(0, -1).join(' \\ ')}</span>)</> : null}،
+                و<b>الثاني</b> في{storageInfo ? <> <span dir="ltr" className="text-[11px]">{storageInfo.secondaryBackupDir}</span></> : ' مجلد المستندات (Tahakom-Backups)'}.
+              </div>
+              <div>• <b>ضياع النسخ الاحتياطية أو القاعدة مسؤوليتك الكاملة</b> — احرص على حفظ نسخة خارج الجهاز (فلاشة/سحابة) من زر التنزيل أعلاه، فلا يمكن استعادة بيانات لا نسخة منها.</div>
+            </div>
+          </div>
+
+          {storageInfo && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3.5">
+                <div className="text-[11px] text-slate-400 mb-1">مكان القاعدة الحالي {storageInfo.isCustom ? '(مخصص — خارج قرص الويندوز ✓)' : '(الافتراضي — على قرص الويندوز ⚠️)'}</div>
+                <div dir="ltr" className="text-[11.5px] font-bold text-slate-700 dark:text-slate-200 break-all">{storageInfo.dbPath}</div>
+              </div>
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-800/50 p-3.5">
+                <div className="text-[11px] text-slate-400 mb-1">النسخة الاحتياطية الثانية {storageInfo.secondaryIsDefault ? '(الافتراضي — المستندات)' : '(مكانك المخصص)'}</div>
+                <div dir="ltr" className="text-[11.5px] font-bold text-slate-700 dark:text-slate-200 break-all">{storageInfo.secondaryBackupDir}</div>
+              </div>
+            </div>
+          )}
+
+          {storageInfo && (
+            <div className="text-[11px] text-slate-400">
+              {storageInfo.lastFileBackupAt
+                ? <>آخر نسخة ملفية تلقائية: <b dir="ltr">{storageInfo.lastFileBackupAt.slice(0, 16).replace('T', ' ')}</b> — تُؤخذ تلقائياً مرة يومياً عند فتح التطبيق.</>
+                : 'تُؤخذ نسخة ملفية تلقائية مرة يومياً عند فتح التطبيق (في المكانين معاً).'}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Btn variant="ghost" onClick={takeFileBackup} disabled={fileBackupBusy}>
+              <DatabaseBackup size={15} /> {fileBackupBusy ? 'جارٍ أخذ النسخة…' : 'نسخة ملفية فورية في المكانين'}
+            </Btn>
+            {storage && (
+              <>
+                <Btn variant="ghost" disabled={movingDb} onClick={async () => {
+                  setMovingDb(true)
+                  try {
+                    const result = await storage.chooseDbLocation()
+                    if (result.ok && result.restarting) {
+                      toast.show(`نُقلت القاعدة إلى المكان الجديد — سيُعاد تشغيل التطبيق الآن ✓`)
+                      setTimeout(() => window.location.reload(), 1500)
+                    } else if (!result.ok && result.error) toast.show(result.error, 'error')
+                  } catch (err) { toast.show((err as Error).message, 'error') } finally { setMovingDb(false) }
+                }}>
+                  <FolderOpen size={15} /> تغيير مكان قاعدة البيانات…
+                </Btn>
+                <Btn variant="ghost" onClick={async () => {
+                  try {
+                    const result = await storage.chooseSecondaryBackupDir()
+                    if (result.ok && result.dir) { toast.show(`مكان النسخة الثانية الآن: ${result.dir} ✓`); await refreshStorage() }
+                  } catch (err) { toast.show((err as Error).message, 'error') }
+                }}>
+                  <FolderOpen size={15} /> تغيير مكان النسخة الثانية…
+                </Btn>
+              </>
+            )}
+          </div>
+          <div className="text-[11px] text-slate-400 leading-relaxed">
+            تغيير مكان القاعدة: يُغلق الاتصال بأمان، تُنسخ القاعدة كاملة للمكان الجديد (الأصل يبقى نسخة أمان)، ثم يُعاد تشغيل التطبيق تلقائياً.
+          </div>
+        </div>
+      )}
+
+      {/* v1.0.9: استعادة نسخة قاعدة ملفية — سيناريو الويندوز الجديد/القاعدة التالفة */}
+      {storage && (
+        <div className={`anim-up ${card} space-y-4`} style={{ animationDelay: '70ms' }}>
+          <div className="font-extrabold text-slate-800 dark:text-white flex items-center gap-2">
+            <History size={17} className="text-violet-600" /> استعادة نسخة قاعدة كاملة (من النسخ الملفية)
+          </div>
+          <div className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
+            عند تلف القاعدة أو تثبيت الويندوز من جديد: هذه نسخ القاعدة الكاملة المحفوظة تلقائياً ويدوياً في المكانين —
+            اختر نسخة لتستعيد <b>كل شيء كما كان في لحظتها</b> (أصناف، فواتير، حسابات، إعدادات).
+          </div>
+          <div className="rounded-2xl border-2 border-amber-400/40 bg-amber-500/[0.06] p-3.5 text-[12px] text-slate-600 dark:text-slate-300">
+            ⚠️ الاستعادة <b>تستبدل بياناتك الحالية بالكامل</b> بحالة النسخة المختارة، ثم يُعاد تشغيل التطبيق تلقائياً.
+            تُحفظ نسخة أمان من بياناتك الحالية قبل الاستبدال (لا يُفقد شيء بلا نسخة).
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Btn variant="ghost" onClick={() => { void refreshFileBackups() }}>
+              <CalendarClock size={15} /> {fileBackups ? 'تحديث القائمة' : 'عرض النسخ المتاحة'}
+            </Btn>
+          </div>
+          {fileBackups && fileBackups.length === 0 && (
+            <div className="text-[12px] text-slate-400">لا توجد نسخ ملفية بعد — تُؤخذ أول نسخة تلقائية عند فتح التطبيق يومياً، أو خذها الآن بزر «نسخة ملفية فورية» أعلاه.</div>
+          )}
+          {fileBackups && fileBackups.length > 0 && (
+            <div className="space-y-1.5 max-h-72 overflow-y-auto pl-1">
+              {fileBackups.slice(0, 12).map((b) => (
+                <div key={b.path} className={`flex flex-wrap items-center gap-2 justify-between rounded-xl border p-2.5 ${confirmingPath === b.path ? 'border-amber-400 bg-amber-500/[0.07]' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50'}`}>
+                  <div className="text-[12px] leading-relaxed">
+                    <b dir="ltr">{b.at.slice(0, 16).replace('T', ' ')}</b>
+                    <span className="text-slate-400"> · {b.kind} · {b.where} · {(b.size / 1024).toFixed(0)} ك.ب</span>
+                  </div>
+                  {confirmingPath === b.path ? (
+                    <div className="flex gap-1.5">
+                      <Btn variant="danger" disabled={restoringPath === b.path} onClick={() => { void restoreFileBackup(b.path) }}>
+                        {restoringPath === b.path ? 'جارٍ…' : 'متأكد — استبدل بياناتي الحالية'}
+                      </Btn>
+                      <Btn variant="ghost" disabled={restoringPath === b.path} onClick={() => setConfirmingPath(null)}>إلغاء</Btn>
+                    </div>
+                  ) : (
+                    <Btn variant="ghost" disabled={restoringPath === b.path} onClick={() => setConfirmingPath(b.path)}>
+                      <Upload size={14} /> استعادة
+                    </Btn>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* استعادة */}
       <div className={`anim-up ${card} space-y-4`} style={{ animationDelay: '80ms' }}>
@@ -206,6 +473,55 @@ export function BackupPage() {
           </div>
         )}
       </div>
+      {/* مودال تصدير نسخة السر (v1.0.15) */}
+      <Modal open={keyExportOpen} onClose={() => setKeyExportOpen(false)} title="🔑 تصدير نسخة السر المغلّفة بكلمة سر">
+        <div className="space-y-3">
+          <div className="text-[12px] text-slate-500 dark:text-slate-400 leading-relaxed">
+            الملف الناتج يحمل سر التشفير مغلفاً (PBKDF2 بـ250 ألف دورة + AES-256-GCM) — لا يُفتح إلا بكلمة السر نفسها.
+            استخدمها على جهاز الاستيراد نفسه.
+          </div>
+          <label className="block text-[11px] font-bold text-slate-500">كلمة السر (6 أحرف على الأقل)
+            <input type="password" className={`${inputCls} mt-1`} value={keyPass} onChange={(e) => setKeyPass(e.target.value)} placeholder="اختر كلمة سر قوية" autoComplete="new-password" />
+          </label>
+          <label className="block text-[11px] font-bold text-slate-500">تأكيد كلمة السر
+            <input type="password" className={`${inputCls} mt-1`} value={keyPass2} onChange={(e) => setKeyPass2(e.target.value)} placeholder="أعد كتابتها" autoComplete="new-password" />
+          </label>
+          <Btn className="w-full" onClick={() => { void exportSecretKey() }}><Download size={15} /> تنزيل ملف السر (.tkey.json)</Btn>
+        </div>
+      </Modal>
+
+      {/* مودال استيراد نسخة السر (v1.0.15) */}
+      <Modal open={keyImportOpen} onClose={() => setKeyImportOpen(false)} title="🔑 استيراد نسخة سر إلى هذا الجهاز">
+        <div className="space-y-3">
+          <div className="rounded-xl bg-amber-500/10 p-3 text-[11.5px] text-amber-700 dark:text-amber-300 leading-relaxed">
+            ⚠️ الاستيراد يستبدل سر هذا الجهاز بسر النسخة ويُعيد تشغيل التطبيق — البيانات الحالية على هذا الجهاز
+            (المشفرة بسره القديم) لن تُقرأ بعده. استخدمه فقط على جهاز جديد عليه قاعدة منقولة من الجهاز الأصلي.
+          </div>
+          <input
+            ref={fileRef2}
+            type="file"
+            accept=".json,.tkey,application/json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (!f) return
+              void f.text().then((text) => {
+                try {
+                  const file = parseKeyFile(text)
+                  setKeyImportFile({ name: f.name, text, file })
+                  setKeyImportShop(file.shopName)
+                  toast.show(`قُرئ ملف سر «${file.shopName}» — أدخل كلمته`)
+                } catch (err) { toast.show((err as Error).message, 'error') }
+              })
+            }}
+          />
+          <Btn variant="ghost" className="w-full" onClick={() => fileRef2.current?.click()}><Upload size={15} /> {keyImportFile ? `الملف: ${keyImportFile.name} (${keyImportShop})` : 'اختر ملف النسخة (.tkey.json)'}</Btn>
+          <label className="block text-[11px] font-bold text-slate-500">كلمة سر الملف
+            <input type="password" className={`${inputCls} mt-1`} value={keyImportPass} onChange={(e) => setKeyImportPass(e.target.value)} placeholder="كلمة السر التي صُدر بها" autoComplete="off" />
+          </label>
+          <Btn className="w-full !bg-amber-600 hover:!bg-amber-700 !text-white" onClick={() => { void importSecretKey() }} disabled={!keyImportFile}><KeyRound size={15} /> استيراد السر وإعادة التشغيل</Btn>
+        </div>
+      </Modal>
     </div>
   )
 }

@@ -8,7 +8,7 @@
  * تشغيل: node --experimental-strip-types scripts/verify_activity_gaps_batch2.mjs
  */
 import assert from 'node:assert/strict'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
 import { webcrypto } from 'node:crypto'
 if (!globalThis.crypto?.subtle) globalThis.crypto = webcrypto
@@ -21,7 +21,7 @@ const ok = (msg) => { pass++; console.log(`✅ ${msg}`) }
 
 /* ═══════════ ① الصاغة: التقييم بالعيار ═══════════ */
 {
-  const { jewelryBreakdown } = await import(join(root, 'src/core/jewelry.ts'))
+  const { jewelryBreakdown } = await import(pathToFileURL(join(root, 'src/core/jewelry.ts')).href)
   const prices = { k18: 3000_00, k21: 3500_00, k24: 4000_00, updatedAt: '2026-09-19T08:00:00Z' }
   const bd = jewelryBreakdown({ karat: 'k21', weightGrams: 5.5, workmanshipMinor: 200_00 }, prices)
   assert.equal(bd.goldMinor, Math.round(5.5 * 3500_00))
@@ -31,7 +31,7 @@ const ok = (msg) => { pass++; console.log(`✅ ${msg}`) }
 
 /* ═══════════ ② الإيجار: معدل الاستغلال ═══════════ */
 {
-  const { utilizationReport } = await import(join(root, 'src/core/rental.ts'))
+  const { utilizationReport } = await import(pathToFileURL(join(root, 'src/core/rental.ts')).href)
   const equipment = [
     { id: 1, nameAr: 'حفار', isActive: true },
     { id: 2, nameAr: 'لودر', isActive: true },
@@ -64,7 +64,7 @@ const ok = (msg) => { pass++; console.log(`✅ ${msg}`) }
 
 /* ═══════════ ③ المعمل: القيم الحرجة ═══════════ */
 {
-  const { evaluateResult, isCriticalFlag } = await import(join(root, 'src/core/lab.ts'))
+  const { evaluateResult, isCriticalFlag } = await import(pathToFileURL(join(root, 'src/core/lab.ts')).href)
   const range = { gender: 'any', ageMinYears: 0, ageMaxYears: 999, low: 70, high: 110, criticalLow: 50, criticalHigh: 400 }
   assert.equal(evaluateResult('95', range), 'normal')
   assert.equal(evaluateResult('120', range), 'high')
@@ -83,7 +83,7 @@ const ok = (msg) => { pass++; console.log(`✅ ${msg}`) }
 
 /* ═══════════ ④ الصيدلية: بدائل المادة الفعالة ═══════════ */
 {
-  const { sameIngredientAlternatives } = await import(join(root, 'src/core/items.ts'))
+  const { sameIngredientAlternatives } = await import(pathToFileURL(join(root, 'src/core/items.ts')).href)
   const base = { sku: '', barcodes: [], categoryId: 1, baseUnit: 'علبة', extraUnits: [], costMinor: 0, minQty: 0, trackExpiry: true, trackSerial: false, warrantyMonths: 0, soldByWeight: false, variantColors: [], variantSizes: [], isActive: true }
   const items = [
     { ...base, id: 1, nameAr: 'بنادول 500', activeIngredient: 'Paracetamol 500mg', stockQty: 0, priceMinor: 30_00 },
@@ -101,7 +101,7 @@ const ok = (msg) => { pass++; console.log(`✅ ${msg}`) }
 
 /* ═══════════ ⑤ الإشعارات الجديدة ═══════════ */
 {
-  const { collectNotifications } = await import(join(root, 'src/core/notifications.ts'))
+  const { collectNotifications } = await import(pathToFileURL(join(root, 'src/core/notifications.ts')).href)
   const notifs = collectNotifications({
     batches: [], itemName: () => '', installmentPlans: [], customerName: () => '',
     cheques: [], fmt: (m) => String(m), todayIso: '2026-09-19',

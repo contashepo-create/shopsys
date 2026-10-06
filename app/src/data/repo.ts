@@ -11,14 +11,15 @@ import { persist, createJSONStorage } from 'zustand/middleware'
 import { appStorage } from './persistentStorage.ts'
 import type { Item, Category } from '../core/items.ts'
 import { buildPartyNote, normalizePartyNoteText, type PartyNote, type PartyNoteKind } from '../core/partyNotes.ts'
-import { priceFloorViolations, PriceFloorError } from '../core/items.ts'
+import { priceFloorViolations, PriceFloorError, itemBlockers } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
-import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
+import { computeTotals, buildSaleEntry, buildSaleEntryWithAllocations, baseQty, exceedsCreditLimit, CreditLimitError, SALE_PARTY_RECEIVABLE, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
+import { userPrefsKey, type UserPreferences } from '../core/userPreferences.ts'
 import { effectivePermissionsFor, rolesWithOverrides } from '../core/permissions.ts'
 import { isEligibleApprover, describeShiftContext } from '../core/refundApproval.ts'
 import {
@@ -37,7 +38,7 @@ import { validatePromotion, promotionCartLines, promotionActiveOn, type Promotio
 import { validateProvider, splitCoverage, buildInsuredEntry, buildClaimSettlementEntry, type InsuranceProvider, type InsuranceClaim } from '../core/insurance.ts'
 import { variantKey, undistributedQty, hasVariantStock, validateVariantAssignment, planVariantDeduction, type VariantStock } from '../core/variants.ts'
 import { buildReceiptVoucherEntry, buildPaymentVoucherEntry, buildTransferEntry, validateManualEntry, type VoucherKind, type TreasuryAccount } from '../core/accounting.ts'
-import { STANDARD_COA, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
+import { STANDARD_COA, accountNature, buildReversalLines, assertBalanced, type JournalLine } from '../core/ledger.ts'
 import { assertJournalIntegrity, normalizeJournalDates } from '../core/ledgerGuard.ts'
 import { getCountry } from '../core/countries.ts'
 import { DEFAULT_LOYALTY, earnedPoints, redeemValue, validateRedeem, buildLoyaltyRedeemEntry, type LoyaltySettings } from '../core/loyalty.ts'
@@ -57,6 +58,7 @@ import { validateRental, computeRentalTotals, buildRentalOpenEntry, buildRentalC
 import { makeUniqueRefCode } from '../core/refcode.ts'
 import { validateDocumentCharges, type DocumentCharge } from '../core/documentCharges.ts'
 import { validateTicket, validateDelivery, computeTicketTotals, buildTicketDeliveryEntry, buildTicketCancelEntry, validateService, TICKET_TRANSITIONS, type TicketStatus, type TicketDeliveryInput, type TicketTotals, type MaintenanceService, type TicketServiceInput } from '../core/maintenance.ts'
+import { validateBooking, bookingConflicts, type Booking, type BookingStatus } from '../core/booking.ts'
 import { validateTransfer, computeWarehouseStock, buildWarehouseDocs, transferTotalQty, type TransferLine } from '../core/transfers.ts'
 import { validateBranch, canRemoveBranch, type Branch, type BranchInput } from '../core/branches.ts'
 import { validatePaymentTerminal, type PaymentTerminal } from '../core/paymentTerminals.ts'
@@ -68,12 +70,13 @@ import { assertTerminalOperation, validateTerminalAccess } from '../core/payment
 import { calculateTerminalSettlement, netSettlementTransactions, validateSettlementTransactions, type PaymentTerminalSettlement } from '../core/paymentTerminalSettlement.ts'
 import { planFefo, applyFefo, isValidExpiryDate, ExpiredStockError, type StockBatch } from '../core/batches.ts'
 import { validateWastage, buildWastageEntry, wastageTotalMinor } from '../core/wastage.ts'
-import { validateOpening, buildOpeningDeltaEntry, openingKey, OPENING_KIND_LABELS, type OpeningKind } from '../core/openingBalances.ts'
+import { validateOpening, buildOpeningDeltaEntry, buildCapitalDeclarationEntry, openingKey, OPENING_KIND_LABELS, OPENING_COVERED_SYSTEM_KEYS, type OpeningItemDetail, type OpeningKind } from '../core/openingBalances.ts'
 import { validateSettlement, buildSettlementEntry, settlementVariance, SETTLEMENT_LABELS, type SettlementInput } from '../core/settlement.ts'
 import { customerStatement, supplierStatement, statementBalance, customerUnitDocs, supplierUnitDocs, type StatementRow } from '../core/statements.ts'
 import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments } from '../core/openPartyDocuments.ts'
 import { convertFxToBookMinor, describeFxLeg, validateFxLeg, type FxLeg } from '../core/foreignCurrency.ts'
-import { buildYearClosingLines, validateYearClose, dateInClosedYear, type FiscalYear } from '../core/fiscal.ts'
+import { buildFxConversionEntry, computeFxConversion, fxConversionFlows, fxHoldingsFromFlows, validateFxConversion, type FxConversionDoc, type FxFlow, type FxHolding } from '../core/fxTreasury.ts'
+import { buildYearClosingLines, validateYearClose, dateInClosedYear, closingMechanismIds, type FiscalYear } from '../core/fiscal.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
@@ -87,7 +90,7 @@ import {
   assertFileOpen, CUSTODY_ACCOUNT,
   type CustodyFile, type CustodyTx, type CustodySummary,
 } from '../core/custody.ts'
-import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotal, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
+import { computeExtractLines, budgetVarianceReport, validateProject, computeExtractTotals, buildExtractEntry, buildProjectCostEntry, buildRetentionReleaseEntry, projectProfit, validateQuotation, quotationTotals, quotationLineNetMinor, QUOTATION_TRANSITIONS, type Project, type CostKind, type ExtractTotals, type ProjectProfit, type Quotation, type QuotationLine, type QuotationStatus,
   validateBoqItem, boqItemTotal, effectiveContractValue, buildClientAdvanceEntry, buildExtractEntryWithAdvance,
   validateSubContract, buildSubCertificateEntry, buildSubPaymentEntry, buildSubRetentionReleaseEntry, buildSubAdvanceEntry,
   validateBond, buildBondIssueEntry, buildBondReleaseEntry, buildBondForfeitEntry, buildDailyWorkSettlementEntry, computeWip, type ExtractLineComputed, type ExtractLineInput, type ProjectBudgetLine, type BudgetVarianceRow,
@@ -111,10 +114,17 @@ import { DEFAULT_TREASURIES, nextTreasuryCode, validateTreasury, type TreasuryDe
 import { validateCostCenter, validateCostCenterBudget, type CostCenter, type CostCenterBudget } from '../core/costCenters.ts'
 import { validateExpenseTemplate, type ExpenseTemplate } from '../core/expenseCatalog.ts'
 import type { JournalEntry } from '../core/ledger.ts'
-import type { DocApprovalRequest, ApprovalDocKind, DocApprovalStatus } from '../core/approvals.ts'
+import { needsApproval, canApprove, type DocApprovalRequest, type ApprovalDocKind, type DocApprovalStatus } from '../core/approvals.ts'
 import {
   type PayrollSlip, slipNetMinor, validateSlipDraft, buildSlipAccrualLines, buildSlipPaymentLines,
 } from '../core/payrollSlips.ts'
+import { type EmployeeImportRow } from '../core/employeesImport.ts'
+import {
+  DEFAULT_HR_RULES, DEFAULT_LEAVE_TYPES, normalizeHrRules, monthlySummary, attendancePayrollImpact,
+  leaveBalances, leaveDaysBetween, validateLeaveRequest, leaveDates,
+  type AttendanceRecord, type AttendanceStatus, type HrRules, type LeaveRequest, type LeaveTypeDef,
+  type MonthlyAttendanceSummary, type AttendancePayrollImpact, type LeaveBalanceRow,
+} from '../core/attendance.ts'
 import {
   type PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderStatus,
   validatePurchaseOrder, derivePurchaseOrderStatus,
@@ -414,6 +424,10 @@ export interface ProjectExtract {
   refundedMinor?: number
   refundedTaxMinor?: number
   refunds?: ServiceRefundRecord[]
+  /** §94: أثر التعديل بعد الإصدار — قيد عاكس ثم إعادة بناء بنفس الرقم (سجل تدقيق) */
+  lastEditReason?: string
+  editedAt?: string
+  editReversalEntryId?: number
 }
 
 /** تكلفة مسجلة على مشروع ببند */
@@ -433,7 +447,30 @@ export interface ProjectCost {
   dueMinor?: number
   /** المورد/مقاول الباطن المسجل الذي يُحمَّل عليه الآجل فيظهر في كشف حسابه */
   supplierId?: number | null
+  /** §95: مصدر بند التكلفة — التدفقات الآلية (شهادة باطن/أجور يومية/فاتورة شراء/إذن صرف)
+      تُوسَم لتفصيل بطاقة التكاليف بلا جمع مزدوج؛ الغياب = يدوي/سجل قديم */
+  source?: 'manual' | 'sub_certificate' | 'daily_work' | 'purchase' | 'material_issue'
   journalEntryId: number
+}
+
+/** §95 (محاذاة pro-acc): تفصيل تكاليف المشروع حسب **مصدر** كل بند —
+ *  التدفقات الآلية (شهادة باطن/أجور يومية/فاتورة شراء/إذن صرف) تُسجَّل أصلاً في
+ *  projectCosts بوسم source، فالتفصيل **تصنيف** لها لا جمع فوقها (لا ازدواج).
+ *  مرتجعات الشراء تعكس 5110 بالدفتر ولا تحذف البند — تُخصم هنا لتطابق الدفتر. */
+export interface ProjectCostBreakdown {
+  /** بنود مسجلة يدوياً بشاشة المشروع (أو سجلات قديمة بلا وسم مصدر) */
+  manual: { id: number; kind: CostKind; description: string; amountMinor: number; date: string }[]
+  /** شهادات أعمال مقاولي الباطن — بند تكلفة تلقائي بالاعتماد (source=sub_certificate) */
+  subCertificates: { id: number; description: string; amountMinor: number; date: string }[]
+  /** أجور يومية مسوّاة على المشروع — بند تلقائي بالتسوية (source=daily_work) */
+  dailyWork: { id: number; description: string; amountMinor: number; date: string }[]
+  /** فواتير شراء مربوطة — بند تلقائي بالترحيل (source=purchase) */
+  purchases: { id: number; description: string; amountMinor: number; date: string }[]
+  /** أذون صرف مواد من المخزن — بند تلقائي بالإصدار (source=material_issue) */
+  materialIssues: { id: number; description: string; amountMinor: number; date: string }[]
+  /** مرتجعات شراء لفواتير المشروع — تعكس 5110 فتُخصم من الإجمالي */
+  purchaseReturns: { returnNumber: string; totalMinor: number; date: string }[]
+  totals: { manualMinor: number; subMinor: number; dailyMinor: number; purchasesMinor: number; materialIssuesMinor: number; returnsMinor: number; allMinor: number }
 }
 
 /** إفراج عن محتجز ضمان */
@@ -1117,6 +1154,9 @@ export interface Voucher {
   costCenterId?: number | null
   /** مركز تكلفة مركبة الأسطول عند سند صرف مصروف صيانة/تشغيل */
   vehicleId?: number | null
+  /** §95 (محاذاة pro-acc — طلب المالك): مشروع المقاولات المرتبط بالسند —
+   *  إسناد تحليلي للربحية وتحصيلات المشروع؛ رصيد العميل ينزل من الطرف أياً كان المشروع */
+  projectId?: number | null
   /** توزيع قبض/سداد الطرف على عدة مستندات — يثبت كـFIFO تلقائياً إن غاب */
   allocations?: FifoAllocation[]
   /** المتبقي تحت الحساب بعد توزيع السند */
@@ -1200,7 +1240,8 @@ export interface DocumentFile {
 
 export interface AdvancedInvoiceDraft {
   id: string
-  kind: 'sale' | 'purchase'
+  /** §92: مسودات عروض الأسعار بنفس مخزن الفواتير — لكل نوع مسوداته المستقلة */
+  kind: 'sale' | 'purchase' | 'quotation' | 'project'
   name: string
   payload: string
   createdAt: string
@@ -1228,6 +1269,16 @@ export interface SaleInvoice {
   expiryOverrideBy: string | null // من وافق على تجاوز الصلاحية (القرار 8)
   /** من اعتمد تجاوز حد ائتمان العميل (نمط SAP B1) — null = لم يتجاوز */
   creditLimitOverrideBy?: string | null
+  /**
+   * §91 — فاتورة البيع لأي طرف: نوع الطرف المدين للآجل.
+   * undefined = عميل (كل الفواتير التاريخية)؛ «supplier»/«employee» = البيع لمورد/موظف
+   * وعندها customerId = null ويُحفظ الطرف في partyId/partyName.
+   */
+  partyKind?: 'supplier' | 'employee' | null
+  /** معرف الطرف (مورد/موظف) عندما ليس العميل */
+  partyId?: number | null
+  /** اسم الطرف لحظة الترحيل — يظهر في القوائم والطباعة بلا بحث إضافي */
+  partyName?: string | null
   approvedBy?: string | null
   shiftId: number | null // الوردية التي بيعت خلالها (null = خارج وردية)
   /** سجل تدقيق التعديلات (طلب المالك): كل تعديل يعكس قيده القديم ويولد قيداً جديداً */
@@ -1408,6 +1459,24 @@ interface DataState {
   /* ─── قسائم الرواتب: ذمة مستقلة لكل موظف (طلب المالك) ─── */
   payrollSlips: PayrollSlip[]
   /** استحقاق مسير لموظف واحد أو عدة موظفين: قيد واحد بسطر دائن لكل موظف */
+  /** §93: مستندات تحويل العملات — رصيد العملات بالخزائن مشتق من التدفقات بلا حالة منفصلة */
+  fxConversions: FxConversionDoc[]
+  getFxFlows: () => FxFlow[]
+  getFxHoldings: () => FxHolding[]
+  convertFx: (args: {
+    fromCurrency: string
+    fromDecimals: 0 | 2 | 3
+    toCurrency: string
+    toDecimals: 0 | 2 | 3
+    fromTreasury: string
+    toTreasury: string
+    fromAmountMinor: number
+    fromRatePpm: number
+    toRatePpm: number
+    feeMinor: number
+    date?: string
+    notes?: string
+  }) => FxConversionDoc
   accruePayrollSlips: (args: {
     month: string
     date?: string
@@ -1421,6 +1490,43 @@ interface DataState {
   cancelPayrollSlip: (slipId: number, reason: string) => void
   /** القسائم غير المصروفة — يعرضها سند الصرف لكل موظف على حدة */
   getUnpaidPayrollSlips: (employeeId?: number) => PayrollSlip[]
+  /* ─── شؤون الموظفين: حضور وانصراف وإجازات واستيراد بصمة (طلب المالك ㉘) ─── */
+  /** سجل الحضور اليومي — سجل واحد للموظف في اليوم */
+  attendanceRecords: AttendanceRecord[]
+  /** طلبات الإجازات: معلّقة ⇐ معتمدة/مرفوضة */
+  leaveRequests: LeaveRequest[]
+  /** أنواع الإجازات وأرصدتها السنوية (قابلة للتعديل) */
+  leaveTypes: LeaveTypeDef[]
+  /** قواعد الاحتساب: الوردية · سماح التأخير · خصم الغياب · أجر الإضافي */
+  hrRules: HrRules
+  /** ورديات خاصة لكل موظف تتجاوز وردية المنشأة الافتراضية */
+  employeeShifts: { employeeId: number; startMin: number; endMin: number; graceMinutes: number }[]
+  /** سجل عمليات استيراد البصمة — يمنع التكرار ويوثق المصدر */
+  attendanceImports: { id: number; at: string; fileName: string; rows: number; matched: number; unmatched: number; inserted: number; updated: number; by: string }[]
+  /** إدخال/تعديل حضور يوم واحد لموظف (يدوي) — يدمج فوق أي سجل موجود */
+  setAttendanceDay: (args: { employeeId: number; date: string; status: AttendanceStatus; checkIn?: string | null; checkOut?: string | null; notes?: string }) => void
+  /** حذف سجل حضور يوم واحد */
+  clearAttendanceDay: (employeeId: number, date: string) => void
+  /** اعتماد استيراد بصمة معتمد (بعد المعاينة والمطابقة): إدخال/تحديث سجلات اليوم */
+  importAttendance: (args: { rows: { employeeId: number; date: string; status: AttendanceStatus; checkIn?: string | null; checkOut?: string | null }[]; fileName: string; by: string }) => { inserted: number; updated: number; importId: number }
+  /** طلب إجازة جديد — يُتحقق من الرصيد والتعارض قبل الحفظ */
+  addLeaveRequest: (args: { employeeId: number; typeId: string; from: string; to: string; reason: string }) => LeaveRequest
+  /** اعتماد أو رفض إجازة معلقة (باسم صاحب القرار) */
+  decideLeaveRequest: (id: number, approve: boolean, by: string) => LeaveRequest
+  /** حذف طلب إجازة معلّق */
+  deleteLeaveRequest: (id: number) => void
+  /** تحديث قواعد الاحتساب (وردية المنشأة وخصوماتها) */
+  updateHrRules: (patch: Partial<HrRules>) => void
+  /** تعديل أنواع الإجازات وأرصدتها */
+  updateLeaveTypes: (types: LeaveTypeDef[]) => void
+  /** وردية خاصة لموظف (أو حذفها بالقيمة null للعودة لوردية المنشأة) */
+  setEmployeeShift: (employeeId: number, shift: { startMin: number; endMin: number; graceMinutes: number } | null) => void
+  /** أرصدة إجازات موظف لسنة معينة */
+  getLeaveBalances: (employeeId: number, year: number) => LeaveBalanceRow[]
+  /** ملخص حضور موظف لشهر معين */
+  getMonthlyAttendance: (employeeId: number, month: string) => MonthlyAttendanceSummary
+  /** أثر الحضور على رواتب الشهر — بنود مرئية تُعرض في مسار القسيمة قبل الترحيل */
+  getAttendancePayrollImpact: (month: string, employeeIds?: number[]) => AttendancePayrollImpact[]
   approvalRequests: ApprovalRequest[] // طلبات الاعتماد الجارية والمحسومة
   recipes: Recipe[] // وصفات الأطباق والتصنيع (مطاعم)
   productionOrders: ProductionOrder[] // أوامر الإنتاج المسبق
@@ -1451,6 +1557,8 @@ interface DataState {
   insuranceProviders: InsuranceProvider[] // جهات تأمين وتعاقد بنسب تحمل
   insuranceClaims: InsuranceClaim[] // مطالبات تتجمع حتى التحصيل
   variantStocks: VariantStock[] // مصفوفة مخزون لون×مقاس (دفتر فرعي لرصيد الصنف)
+  /** مواعيد العملاء (وحدة booking — الصالون/المعمل/المغسلة): بلا قيود، الدفع عند البيع */
+  bookings: Booking[]
   tickets: MaintenanceTicket[]
   /** كتالوج خدمات الصيانة بتكلفة وسعر بيع (الأمر 23) */
   maintenanceServices: MaintenanceService[]
@@ -1477,6 +1585,13 @@ interface DataState {
   consumptions: ConsumptionDoc[] // مستندات الصرف الداخلي (استهلاك تشغيل) — مصروف/1103
   /** الأرصدة الافتتاحية المثبتة: key = kind:refId → آخر رصيد مرحّل (Minor) — التعديل يرحّل الفرق فقط */
   openingBalances: Record<string, number>
+  /**
+   * التقييم المادي للمخزون الافتتاحي (v1.0.4): الكمية والتكلفة المسجلتان لكل صنف —
+   * القيمة الدفترية (1103) تُحسب منهما فلا يتباعد الرصيد الفعلي عن الدفتر أبداً.
+   */
+  openingItems: Record<number, OpeningItemDetail>
+  /** رأس المال المعلن (نمط QuickBooks/Odoo) — الفرق عن المحتسب يرحَّل لأرباح مرحّلة 3102 */
+  openingDeclaredCapitalMinor: number | null
   /** التسويات الشاملة (خزينة/عميل/مورد) — كل فرق مربوط بقيد 5112 */
   settlements: SettlementDoc[]
   /** مقاصات الأطراف (عميل ↔ مورد لنفس الشخص) — AUDIT-012 */
@@ -1507,6 +1622,9 @@ interface DataState {
   /* ─── سجل النشاطات والمستخدمون والبلاغات (طلب المالك) ─── */
   auditLog: AuditEvent[] // «من فعل ماذا ومتى» — يُبنى تلقائياً من كل كتابة، يظهر للمالك فقط
   appUsers: AppUser[] // مستخدمو التطبيق (المالك + الفرعيون) برقم سري ودور
+  /* تفضيلات كل مستخدم الخاصة (طلب المالك): نمط محرر البيع/الشراء وقالب الطباعة —
+     خريطة بمفتاح مستقل لكل مستخدم ('owner' للمالك) فلا تختلط تفضيلات أحد بأحد */
+  userPrefs: Record<string, UserPreferences>
   /** تعديلات الأدوار المحفوظة (البند 4): roleId → قائمة صلاحيات — تعلو على الافتراضي (owner لا يُعدل أبداً) */
   roleOverrides: Record<string, string[]>
   setRolePermissions: (roleId: string, permissions: string[]) => void
@@ -1532,6 +1650,8 @@ interface DataState {
    */
   changeMyPin: (currentPin: string, newPinHash: string) => Promise<void>
   updateMyProfile: (patch: { phone?: string; email?: string; avatarDataUrl?: string }) => void
+  /** تحديث تفضيلاتي (المستخدم الحالي فقط) — نمط الفواتير وقالب الطباعة المفضل */
+  updateMyPreferences: (patch: Partial<UserPreferences>) => void
   /** true = لا أحد داخل — شاشة الدخول تحجب التطبيق كله (متى كانت المصادقة مطلوبة) */
   loggedOut: boolean
   /** حارس المحاولات الفاشلة (يبقى بعد تحديث الصفحة — لا تحايل) */
@@ -1641,6 +1761,8 @@ interface DataState {
     fx?: { currencyCode: string; amountMinor: number; ratePpm: number; decimals: 0 | 2 | 3 }
     bookDecimals?: number
     bookCurrencyCode?: string
+    /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
+    __approvalBypass?: boolean
   }) => PurchaseInvoice
   /**
    * ترحيل فاتورة بيع من الكاشير:
@@ -1650,6 +1772,12 @@ interface DataState {
   postSale: (args: {
     lines: CartLine[]
     customerId: number | null
+    /** §91 — نوع الطرف: عميل (افتراضي) أو مورد (2101) أو موظف (1107) */
+    partyKind?: 'customer' | 'supplier' | 'employee'
+    /** معرف المورد/الموظف عند البيع لغير العميل */
+    partyId?: number | null
+    /** اسم الطرف (مورد/موظف) — يُخزن على الفاتورة للعرض والطباعة */
+    partyName?: string | null
     payment: PaymentMethod
     invoiceDiscountPercent: number
     taxPercent: number
@@ -1689,6 +1817,8 @@ interface DataState {
     bookCurrencyCode?: string
     /** ربط فاتورة البيع بمشروع مقاولات — يُنسب إليه إيرادها وربحيتها (طلب المالك) */
     projectId?: number | null
+    /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
+    __approvalBypass?: boolean
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -1716,6 +1846,8 @@ interface DataState {
     approvedBy?: string
     /** رد ماكينة يُحفظ ذرياً مع المرتجع ويُربط بتحصيل الفاتورة الأصلي. */
     terminalRefund?: { originalTransactionId: string; providerReference: string }
+    /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
+    __approvalBypass?: boolean
   }) => SaleReturn
   /**
    * مصروف لاحق على فاتورة شراء مرحّلة (Landed Cost Voucher — طلب المالك):
@@ -1754,6 +1886,8 @@ interface DataState {
     treasury?: string
     /** موافقة المشرف (قاعدة المالك المعممة: كل المرتجعات باعتماد) — اسم المعتمد يُسجل على المستند */
     approvedBy?: string
+    /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
+    __approvalBypass?: boolean
   }) => PurchaseReturn
   /**
    * ترحيل جلسة جرد: يقارن المعدود بالدفتري، يضبط المخزون على المعدود،
@@ -1769,6 +1903,14 @@ interface DataState {
    * يرحّل قيد الفرق فقط مقابل رأس المال 3101، فيبقى المركز المالي متزناً.
    */
   setOpeningBalance: (args: { kind: OpeningKind; refId: string | number; amountMinor: number; label: string }) => void
+  /**
+   * المخزون الافتتاحي بالتقييم المادي (كمية × تكلفة وحدة — بلاغ المالك v1.0.4):
+   * يثبّت القيمة الدفترية (1103/3101) والكمية الفعلية (stockQty) وتكلفة الصنف
+   * المرجعية معاً، والتعديل اللاحق يرحّل فرق القيمة وفرق الكمية — لا تكرار.
+   */
+  setOpeningItemStock: (args: { itemId: number; qty: number; unitCostMinor: number }) => void
+  /** إعلان رأس المال — الفرق عن المحتسب يرحَّل لأرباح مرحّلة 3102 بقيد متوازن */
+  declareOpeningCapital: (declaredMinor: number) => void
   /**
    * تسوية شاملة (نمط mobileshop): مطابقة رصيد خزينة/عميل/مورد بالواقع —
    * الفرق يضرب 5112 إجبارياً (درس عجز الـ5,000 المتبخر) ويُوثق بمستند SET-####.
@@ -1844,6 +1986,8 @@ interface DataState {
     costCenterId?: number | null
     /** مركز تكلفة مركبة الأسطول عند سند صرف مصروف صيانة/تشغيل */
     vehicleId?: number | null
+    /** §95: مشروع مقاولات اختياري على السند — أثر تحليلي، لا يغيّر القيد ولا رصيد الطرف */
+    projectId?: number | null
     /** نوع مصروف مركز التكلفة في التقارير: صيانة/وقود/قطع غيار… */
     vehicleCostCategory?: string
     /** تحصيل وارد عبر ماكينة: يُحفظ charge مع السند والقيد ذَرّياً. */
@@ -1861,6 +2005,15 @@ interface DataState {
     bookDecimals?: number
     /** رمز عملة الدفتر — لمنع «عملة أجنبية» تساوي عملة الدفتر (افتراضي EGP) */
     bookCurrencyCode?: string
+    /**
+     * سداد قسائم رواتب محددة من سند الصرف (طلب المالك ㉘): عند الصرف على
+     * 2104 لموظف تُحدَّد القسائم المستهدفة فتُوسم «مصروفة» بهذا السند —
+     * فيُسدَّد راتب موظف اليوم وآخر غداً بلا خلط. مجموعها يجب أن يساوي مبلغ
+     * السند أو أقل منه (الباقي يبقى رصيداً عاماً على 2104 للموظف).
+     */
+    settleSlipIds?: number[]
+    /** داخلي: تنفيذ مستند معتمَد من طابور الاعتماد يتجاوز البوابة (القرار اتُّخذ) */
+    __approvalBypass?: boolean
   }) => Voucher
   /** صرف سلفة لموظف: قيد 1107 ← خزينة، وتُسترد من مسيرات الرواتب */
   grantEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount; notes: string }) => EmployeeAdvance
@@ -1911,7 +2064,7 @@ interface DataState {
     purchaseId: number
     /** المورد المحدد داخل نفس محرر الفاتورة؛ 0 = شراء نقدي */
     supplierId?: number
-    lines: { itemId: number; qty: number; unitPriceMinor: number }[]
+    lines: { itemId: number; qty: number; unitPriceMinor: number; warehouseId?: number | null; vatPercent?: number }[]
     expenses: PurchaseExpense[]
     paidMinor: number
     treasury: TreasuryAccount
@@ -1922,6 +2075,10 @@ interface DataState {
     notes?: string
     reason: string
     einvoiceActive: boolean
+    /** مخزن الرأس من المحرر — يُطبَّع مع مخازن السطور (توزيع فعلي ⇒ رأس فارغ) */
+    warehouseId?: number | null
+    /** ضريبة مدخلات السطور الجديدة كما حسبها المحرر — دونها تبقى ضريبة الأصل (توافق قديم) */
+    inputVatMinor?: number
   }) => PurchaseInvoice
   addWarehouse: (nameAr: string) => void
   /**
@@ -1951,6 +2108,8 @@ interface DataState {
   updateSupplier: (id: number, patch: Partial<Supplier>) => void
   removeSupplier: (id: number) => void
   addEmployee: (e: Omit<Employee, 'id'>) => void
+  /** استيراد دفعة موظفين من Excel/CSV (البند ③) — عبر addEmployee بحراسه، ويعيد ملخصاً بالمضاف والمرفوض وأسبابه */
+  importEmployees: (rows: EmployeeImportRow[]) => { added: number; addedNames: string[]; skipped: string[] }
   updateEmployee: (id: number, patch: Partial<Employee>) => void
   removeEmployee: (id: number) => void
   /**
@@ -1981,6 +2140,8 @@ interface DataState {
   repayEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount }) => AdvanceRepayment
   /** إقفال سنة مالية (منهجية QuickBooks/Xero): قيد يصفّر 4xxx/5xxx → أرباح مرحلة 3102 ثم يقفل الفترة */
   closeFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { entryId: number; netProfitMinor: number }
+  /** إعادة فتح سنة مقفلة (نمط عالمي — Reopen books): تعكس قيد الإقفال وتفتح الفترة للتصحيح */
+  reopenFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { reversedEntryId: number | null }
   /** رصيد العميل الموحّد من كل الأنشطة — مصدر حقيقة واحد لكل الشاشات */
   getCustomerBalance: (customerId: number) => number
   /**
@@ -2142,9 +2303,13 @@ interface DataState {
   payReferrerCommissions: (referrerId: number, treasury?: string) => { total: number; orderCount: number }
   /* ─── المقاولات (القرار 27) ─── */
   addProject: (p: Omit<Project, 'id' | 'code' | 'status' | 'clientId'> & { clientId?: number | null }) => Project
+  /** §94-مراجعة: تعديل بيانات المشروع — قيمة العقد تُعدَّل فقط قبل أول مستخلص (بعده: أمر تغيير) */
+  updateProject: (id: number, changes: { nameAr?: string; clientName?: string; clientId?: number | null; contractValueMinor?: number; retentionPercent?: number; startDate?: string; contractNumber?: string; location?: string; expectedEndDate?: string; managerEmployeeId?: number | null; notes?: string; tags?: string[] }) => Project
   /** عرض سعر/مناقصة — مستند غير محاسبي، الفائز يتحول مشروعاً بضغطة */
   addQuotation: (q: { kind: 'quotation' | 'tender'; clientName: string; clientId?: number | null; titleAr: string; validUntil: string; lines: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes: string; winProbability?: number; bidBondMinor?: number }) => Quotation
   setQuotationStatus: (id: number, status: QuotationStatus) => void
+  /** §94-مراجعة: تعديل عرض/مناقصة محفوظ (فتحه وإصلاحه) — محظور بعد تحوله لمشروع */
+  updateQuotation: (id: number, changes: { kind?: 'quotation' | 'tender'; clientName?: string; clientId?: number | null; titleAr?: string; validUntil?: string; lines?: (Omit<QuotationLine, 'nameAr' | 'estCostMinor'> & { nameAr?: string; estCostMinor?: number })[]; notes?: string; winProbability?: number; bidBondMinor?: number }) => Quotation
   /** تحويل عرض فائز لمشروع (يرث الاسم والعميل وقيمة العرض) */
   convertQuotationToProject: (id: number, retentionPercent: number) => Project
   /* ─── ملفات العهد المتكاملة (طلب المالك — نمط pro-acc) ─── */
@@ -2217,8 +2382,12 @@ interface DataState {
   releaseRetention: (projectId: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => { amount: number }
   /** ربحية مشروع محسوبة من مستخلصاته وتكاليفه */
   getProjectProfit: (projectId: number) => ProjectProfit
+  /** §95: كل تكاليف المشروع بمصادرها الأربعة (يدوي/باطن/يومية/مشتريات) — تُطابق صافي 5110 بالدفتر */
+  getProjectCostBreakdown: (projectId: number) => ProjectCostBreakdown
   /* ─── عمق المقاولات: BOQ، أوامر تغيير، دفعات مقدمة، باطن، ضمانات، يوميات، WIP ─── */
   addBoqItem: (args: Omit<BoqItem, 'id' | 'progressPercent' | 'estCostMinor'> & { estCostMinor?: number }) => BoqItem
+  /** §94-مراجعة: تعديل بيانات بند BOQ — الكمية/السعر مقفولان بعد بدء التنفيذ (نسب المستخلصات تاريخية) */
+  updateBoqItem: (id: number, changes: { code?: string; descriptionAr?: string; unit?: string; qty?: number; unitPriceMinor?: number; estCostMinor?: number }) => BoqItem
   updateBoqProgress: (id: number, progressPercent: number) => void
   removeBoqItem: (id: number) => void
   addChangeOrder: (args: { projectId: number; titleAr: string; amountMinor: number }) => ChangeOrder
@@ -2231,6 +2400,8 @@ interface DataState {
   /** شهادة أعمال باطن: 5110 ← 2101 صافي + 2108 محتجز */
   /** شهادة أعمال باطن: مبلغ مباشر أو نسبة إنجاز تراكمية من قيمة العقد (نمط AccFlex)؛ خصم المقدمة تلقائي بنسبة العقد ما لم يُمرَّر يدوياً */
   addSubCertificate: (args: { contractId: number; amountMinor?: number; newProgressPercent?: number; description: string; advanceRecoveryMinor?: number }) => SubCertificate
+  /** §94-مراجعة-2: تعديل عقد باطن — القيمة مقفولة بعد أول شهادة (النِّسَب محسوبة عليها)، والنِّسَب تسري على الشهادات القادمة فقط */
+  updateSubContract: (id: number, changes: { contractorName?: string; scopeAr?: string; supplierId?: number | null; contractValueMinor?: number; retentionPercent?: number; taxWithholdPercent?: number; advanceRecoveryPercent?: number; boqItemIds?: number[] }) => SubContract
   /** دفعة لمقاول الباطن من مستحقاته */
   paySubContractor: (args: { contractId: number; amountMinor: number; treasury: string }) => void
   /** إفراج محتجزات الباطن وإقفال عقده */
@@ -2239,7 +2410,11 @@ interface DataState {
   issueBond: (args: { projectId: number | null; bondNumber: string; type: BondType; beneficiary: string; amountMinor: number; marginMinor: number; feesMinor: number; bank: string; issueDate: string; expiryDate: string }) => Bond
   /** رد الخطاب (release) أو مصادرته (forfeit) */
   settleBond: (bondId: number, outcome: 'released' | 'forfeited') => Bond
+  /** §94-مراجعة-2: تعديل بيانات خطاب ضمان نشط — القيمة/الهامش/المصاريف مقفولة (قُيّدت عند الإصدار في 1109 والبنك) */
+  updateBond: (id: number, changes: { bondNumber?: string; type?: BondType; beneficiary?: string; expiryDate?: string; projectId?: number | null }) => Bond
   addDailyWorker: (args: { nameAr: string; phone: string; dailyWageMinor: number }) => DailyWorker
+  /** §94-مراجعة-2: تعديل عامل يومية — اليومية تسري على أيام العمل القادمة (المسجلة محفوظة بأجرها وقت تسجيلها) */
+  updateDailyWorker: (id: number, changes: { nameAr?: string; phone?: string; dailyWageMinor?: number; active?: boolean }) => DailyWorker
   addDailyWorkRecord: (args: { workerId: number; projectId: number | null; date: string; days: number; wageMinor?: number }) => DailyWorkRecord
   /** تسوية كل يوميات عامل غير المسددة: مشاريع→5110 وتشغيل عام→5108 ← خزينة */
   settleDailyWorker: (workerId: number, treasury: string) => { total: number; recordCount: number }
@@ -2358,6 +2533,11 @@ interface DataState {
   collectFromPatient: (patientId: number, amountMinor: number, treasury?: string, terminalPayment?: { terminalId: string; providerReference: string; cardLast4?: string }) => ClinicCollection
   /** رصيد المريض الحالي (المتبقي عليه) */
   getPatientBalance: (patientId: number) => number
+  /* ─── المواعيد والحجوزات (وحدة booking) ─── */
+  addBooking: (b: Omit<Booking, 'id' | 'status' | 'createdAt'> & { allowConflict?: boolean }) => { booking: Booking; conflicts: Booking[] }
+  setBookingStatus: (id: number, status: BookingStatus) => void
+  updateBooking: (id: number, patch: Partial<Omit<Booking, 'id'>>) => { conflicts: Booking[] }
+  deleteBooking: (id: number) => void
   addAppointment: (a: Omit<ClinicAppointment, 'id' | 'done'>) => ClinicAppointment
   markAppointmentDone: (id: number) => void
   /* ─── معرض السيارات (القرار 27) ─── */
@@ -2523,6 +2703,8 @@ interface DataState {
   refundRental: (args: { contractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => RentalContract
   /** إشعار دائن على مستخلص (رفض المالك/الاستشاري جزءاً من الأعمال بعد الاعتماد): يعكس 4102+2102 نسبياً */
   refundProjectExtract: (args: { extractId: number; amountMinor: number; mode: 'cash' | 'customer_credit'; treasury?: string; reason: string; approvedBy?: string; terminalRefund?: { originalTransactionId: string; providerReference: string } }) => ProjectExtract
+  /** §94: تعديل مستخلص صادر — عكس قيده وإرجاع تقدم BOQ واسترداد الدفعة ثم إعادة بناء بنفس الرقم */
+  editProjectExtract: (args: { extractId: number; grossMinor?: number; extractLines?: ExtractLineInput[]; vatPercent: number; payment: 'cash' | 'credit'; description: string; treasury?: string; advanceRecoveryMinor?: number; creditLimitOverrideBy?: string | null; isFinal?: boolean; reason: string }) => ProjectExtract
   /** ترحيل إهلاك شهر واحد لكل الأصول المستحقة — قيد مجمع واحد 5107/1202 */
   postMonthlyDepreciation: () => { entry: JournalEntry; totalMinor: number; assetCount: number }
   /** إهلاك تلقائي (طلب المالك): يرحّل كل الأشهر المتأخرة دفعة واحدة بلا تدخل — يُستدعى عند فتح البرنامج. يعيد عدد القيود المرحّلة */
@@ -2550,13 +2732,139 @@ const nextId = <T extends { id: number }>(arr: T[]) => arr.reduce((m, x) => Math
  * «المالك» ثابتة حتى لو نفذه كاشير — الآن يُختم باسم المستخدم المسجل دخوله،
  * كما تفعل QuickBooks/Zoho (كل مستند باسم منشئه الحقيقي للتدقيق).
  */
+/**
+ * §93: عملة الدفتر من إعدادات المنشأة — تحاسبه كل منظومة العملات الأجنبية
+ */
+function bookCurrencyOf() {
+  const setup = useAppStore.getState().setup
+  return (setup.countryCode && getCountry(setup.countryCode)?.currency) || { code: 'EGP', symbol: 'ج.م', decimals: 2 as const, name: '' }
+}
+
 function activeUserName(state: Pick<DataState, 'appUsers' | 'currentUserId'>): string {
   return state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
+}
+
+/**
+ * إعادة احتساب «المستلم» في أمر شراء من فواتيره الصافية — مجموع سطور فواتير الأمر
+ * المرتبطة بعد خصم مرتجعاتها — وتوزيعه توزيعاً متدرجاً على سطور الأمر (الأول أولاً).
+ * invoiceOverrides يمرّر كميات فاتورة تُعدَّل الآن بدل المخزّنة (تعديل فاتورة الأمر)،
+ * وextraReturn يمرّر مرتجعاً يُرحَّل الآن قبل أن يدخل الحالة.
+ * تُستخدم عند تعديل فاتورة مُعبَّأة من أمر وعند المرتجع منها حتى يظل «المستلم» صافياً.
+ */
+function recomputeOrderReceivedFromInvoices(
+  state: Pick<DataState, 'purchases' | 'purchaseReturns'>,
+  order: PurchaseOrder,
+  invoiceOverrides?: Map<number, { lines: { itemId: number; qty: number }[] }>,
+  extraReturn?: PurchaseReturn,
+): PurchaseOrder {
+  const receivedByItem = new Map<number, number>()
+  for (const invoiceId of order.invoiceIds) {
+    const source = invoiceOverrides?.get(invoiceId) ?? state.purchases.find((p) => p.id === invoiceId)
+    if (!source) continue
+    for (const l of source.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) + l.qty)
+  }
+  const orderReturns = state.purchaseReturns.filter((r) => order.invoiceIds.includes(r.purchaseId))
+  for (const ret of extraReturn ? [...orderReturns, extraReturn] : orderReturns) {
+    for (const l of ret.lines) receivedByItem.set(l.itemId, (receivedByItem.get(l.itemId) ?? 0) - l.qty)
+  }
+  const remaining = new Map(receivedByItem)
+  const lines = order.lines.map((line) => {
+    const left = remaining.get(line.itemId) ?? 0
+    const take = Math.max(0, Math.min(line.qty, left))
+    remaining.set(line.itemId, left - take)
+    return take === (line.receivedQty || 0) ? line : { ...line, receivedQty: take }
+  })
+  const next: PurchaseOrder = { ...order, lines }
+  return { ...next, status: derivePurchaseOrderStatus(next) }
+}
+
+/** تنسيق مبلغ بفواصل آلاف بلا رمز عملة — لبيانات كشوف الموظفين */
+function fmtMinorPlain(minor: number): string {
+  return (minor / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })
 }
 
 function approvalStamp(state: Pick<DataState, 'appUsers' | 'currentUserId'>, approvedBy?: string): { approvedBy: string; requestedBy: string } {
   const requester = state.appUsers.find((u) => u.id === state.currentUserId)?.nameAr ?? 'المالك'
   return { approvedBy: approvedBy ?? requester, requestedBy: requester }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * بوابة اعتماد المستندات (خطة ③): لا قيد قبل الاعتماد.
+ * المستند الخاضع للنظام لا يُرحَّل من بوابة postSale/postPurchase/postVoucher/
+ * المرتجعات — يُخزَّن طلباً كاملاً (payload = وسيط الترحيل نفسه) ويرمى خطأ عربي
+ * يشرح ما حدث. عند الاعتماد ينفّذ decideDocApproval الترحيل الفعلي بعلم التجاوز
+ * الداخلي، والعمليات المركّبة (الاستبدال/فاتورة الأمر/مقايضة الذهب) تمرّ بعلم
+ * __approvalBypass لأنها ذرّية ولا يصح شطرها على طابور الاعتماد.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** تسلسل حمولة الاعتماد: Map (كميات مرتجع مجمّعة بالصنف) تتحول مدخلات قابلة للـJSON */
+function serializeApprovalPayload(value: unknown): string {
+  return JSON.stringify(value, (_key, row) => (row instanceof Map ? { __approvalMapEntries: [...row.entries()] } : row))
+}
+/** عكس التسلسل: يعيد بناء Map الكميات كما كانت لحظة التقديم */
+function deserializeApprovalPayload<T>(payload: string): T {
+  return JSON.parse(payload, (_key, row) =>
+    row && typeof row === 'object' && Array.isArray((row as { __approvalMapEntries?: unknown }).__approvalMapEntries)
+      ? new Map((row as { __approvalMapEntries: [number, number][] }).__approvalMapEntries)
+      : row,
+  ) as T
+}
+
+/**
+ * بوابة الاعتماد: إن كان نوع المستند خاضعاً للنظام والمُدخِل لا يملك تجاوزاً،
+ * يُسجَّل الطلب بلا أي كتابة في الدفتر أو المخزون ثم يُرمى خطأ إخباري.
+ * لا تُستدعى إلا من رؤوس إجراءات الترحيل المباشرة (بيع/شراء/سندات/مرتجعات).
+ */
+function enforceApprovalGate(
+  get: () => DataState,
+  kind: ApprovalDocKind,
+  amountMinor: number,
+  meta: { title: string; partyName: string; payload: string },
+): void {
+  const state = get()
+  const settings = useAppStore.getState().approvals
+  if (!settings.enabled) return
+  const activeUser = state.appUsers.find((u) => u.id === state.currentUserId) ?? null
+  const roles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
+  const userPermissions = effectivePermissionsFor(activeUser, roles)
+  if (!needsApproval({ settings, kind, amountMinor, userId: state.currentUserId, userPermissions })) return
+  get().submitDocForApproval({
+    kind,
+    title: meta.title,
+    partyName: meta.partyName,
+    amountMinor: Math.round(amountMinor),
+    payload: meta.payload,
+    requestedBy: state.currentUserId,
+    requestedByName: activeUserName(state),
+  })
+  throw new Error('أُرسل المستند للاعتماد — لن يُقيَّد في الدفتر ولا المخزون حتى يعتمده صاحب الصلاحية من «طلبات الاعتماد»')
+}
+
+/** تنفيذ ترحيل مستند معتمَد من طابور الاعتماد — بتجاوز البوابة (القرار اتُّخذ) */
+function postApprovedDocument(get: () => DataState, kind: ApprovalDocKind, payload: string): { id: number; ref: string } {
+  switch (kind) {
+    case 'sale': {
+      const sale = get().postSale({ ...deserializeApprovalPayload<Parameters<DataState['postSale']>[0]>(payload), __approvalBypass: true })
+      return { id: sale.id, ref: sale.invoiceNumber }
+    }
+    case 'purchase': {
+      const purchase = get().postPurchase({ ...deserializeApprovalPayload<Parameters<DataState['postPurchase']>[0]>(payload), __approvalBypass: true })
+      return { id: purchase.id, ref: purchase.invoiceNumber }
+    }
+    case 'receipt':
+    case 'payment': {
+      const voucher = get().postVoucher({ ...deserializeApprovalPayload<Parameters<DataState['postVoucher']>[0]>(payload), __approvalBypass: true })
+      return { id: voucher.id, ref: voucher.voucherNumber }
+    }
+    case 'sale_return': {
+      const ret = get().postSaleReturn({ ...deserializeApprovalPayload<Parameters<DataState['postSaleReturn']>[0]>(payload), __approvalBypass: true })
+      return { id: ret.id, ref: ret.refCode }
+    }
+    case 'purchase_return': {
+      const ret = get().postPurchaseReturn({ ...deserializeApprovalPayload<Parameters<DataState['postPurchaseReturn']>[0]>(payload), __approvalBypass: true })
+      return { id: ret.id, ref: ret.refCode }
+    }
+  }
 }
 
 /** كل الأكواد المرجعية المستخدمة حالياً — لضمان تفرد الكود الجديد */
@@ -2697,12 +3005,22 @@ function assertTreasuryNotNegative(
   treasuries: TreasuryDef[],
 ): void {
   if (nextJournal === prevJournal || nextJournal.length <= prevJournal.length) return
-  // الإعداد من مخزن التطبيق — قراءة مباشرة لتفادي دورة استيراد
+  /* الإعداد من متجر التطبيق مباشرة — قراءة حية في كل عملية.
+     بلاغ المالك v1.0.4 (النسخة المثبتة): القراءة القديمة من localStorage النصي
+     كانت ترجع false دائماً في نسخة سطح المكتب لأن persist يكتب إلى SQLite
+     (settingsAppStorage §101) لا إلى localStorage — فالمفتاح «مفعّل» عند
+     المستخدم والحارس لا يراه. المتجر الحي هو مصدر الحقيقة بعد الاسترجاع. */
   let allow = false
   try {
-    const raw = localStorage.getItem('shopsys-app')
-    if (raw) allow = JSON.parse(raw)?.state?.setup?.allowNegativeTreasury === true
-  } catch { /* الافتراضي: ممنوع */ }
+    allow = useAppStore.getState().setup.allowNegativeTreasury === true
+  } catch { /* المتجر غير مهيأ بعد — الافتراضي الآمن: ممنوع */ }
+  if (!allow) {
+    // تراجع خلفي للبيئات التي لم تُسترجع بعد (الواجهة الحية تسجّل دائماً)
+    try {
+      const raw = localStorage.getItem('shopsys-app')
+      if (raw) allow = JSON.parse(raw)?.state?.setup?.allowNegativeTreasury === true
+    } catch { /* الافتراضي: ممنوع */ }
+  }
   if (allow) return
   const codes = new Set(treasuries.map((t) => t.code))
   const balances = new Map<string, number>()
@@ -2712,10 +3030,22 @@ function assertTreasuryNotNegative(
       balances.set(l.accountCode, (balances.get(l.accountCode) ?? 0) + l.debit - l.credit)
     }
   }
+  /* v1.0.5 (استكمال بلاغ المالك): كان الحارس يرفض أي قيد يترك الخزينة سالبة
+     مطلقاً — فإذا صارت الخزينة سالبة في فترة «سماح» ثم أُغلق المفتاح، رُفضت
+     حتى عمليات القبض التي تُقلّص السالبية وتحسّن الوضع، وانطبق على المستخدم
+     أن السالب «ممنوع رغم التفعيل». العقد الصحيح: المنع يلقى فقط على العملية
+     التي تُعمّق السالبية (تجعل الرصيد أدنى مما كان). التحسّن أو الثبات يمر. */
+  const prevBalances = new Map<string, number>()
+  for (const e of prevJournal) {
+    for (const l of e.lines) {
+      if (!codes.has(l.accountCode)) continue
+      prevBalances.set(l.accountCode, (prevBalances.get(l.accountCode) ?? 0) + l.debit - l.credit)
+    }
+  }
   for (const [code, bal] of balances) {
-    if (bal < 0) {
+    if (bal < 0 && bal < (prevBalances.get(code) ?? 0)) {
       const name = treasuries.find((t) => t.code === code)?.nameAr ?? code
-      throw new Error(`رصيد «${name}» سيصبح سالباً — العملية مرفوضة. فعّل السماح بالرصيد السالب من الإعدادات العامة لو كنت تقصد ذلك`)
+      throw new Error(`رصيد «${name}» سيصبح سالباً — العملية مرفوضة. فعّل مفتاح «السماح بالرصيد السالب في الخزائن والبنوك» من الإعدادات العامة (مفتاح المخزون لا يشمل الخزائن — كلاهما مفتاح مستقل)`)
     }
   }
 }
@@ -2775,6 +3105,7 @@ export const useDataStore = create<DataState>()(
       employees: [],
       payrollRuns: [],
       payrollSlips: [],
+      fxConversions: [],
       accruePayrollSlips: (args) => {
         const state = get()
         if (!/^\d{4}-\d{2}$/.test(args.month)) throw new Error('الشهر غير صحيح (YYYY-MM)')
@@ -2790,6 +3121,51 @@ export const useDataStore = create<DataState>()(
         for (const draft of drafts) {
           const twice = state.payrollSlips.some((slip) => slip.month === args.month && slip.employeeId === draft.employeeId && slip.status !== 'cancelled')
           if (twice) throw new Error(`${draft.employeeName}: له قسيمة مستحقة لهذا الشهر بالفعل`)
+        }
+        // إصلاح §83 (قياس أثر): السلفة المستقطعة بالقسيمة كانت تقيّد 1107 دائناً
+        // دون تحديث سجلات السلف — فتفترق السجلات عن الدفتر (المتبقي الوهمي يسمح
+        // باستقطاع فوق الحقيقة لاحقاً). الآن: حارس المتبقي + توزيع الأقدم أولاً
+        // (نفس منهج المسير والسداد النقدي).
+        let employeeAdvances = state.employeeAdvances
+        for (const draft of drafts) {
+          if ((draft.advanceMinor ?? 0) <= 0) continue
+          const remaining = employeeAdvances
+            .filter((a) => a.employeeId === draft.employeeId)
+            .reduce((sum, a) => sum + (a.amountMinor - a.recoveredMinor), 0)
+          if (draft.advanceMinor > remaining) {
+            throw new Error(`${draft.employeeName}: السلفة المستقطعة (${draft.advanceMinor}) أكبر من متبقي سلفه (${remaining})`)
+          }
+          let toRecover = draft.advanceMinor
+          employeeAdvances = employeeAdvances.map((a) => {
+            if (a.employeeId !== draft.employeeId || toRecover <= 0) return a
+            const open = a.amountMinor - a.recoveredMinor
+            if (open <= 0) return a
+            const take = Math.min(open, toRecover)
+            toRecover -= take
+            return { ...a, recoveredMinor: a.recoveredMinor + take }
+          })
+        }
+        /* §93 (إصلاح سلسلة الرواتب): الخصومات المسجلة (الجزاءات) تُخصم من
+           سجلاتها الأقدم أولاً — كما يفعل المسير المجمّع تماماً. قبل هذا
+           الإصلاح كان الجزاء يُخصم فعلياً من الراتب ويبقى «قائماً» في سجله
+           للأبد فتتناقض التقارير مع الواقع. الفائض عن المسجل = خصم لحظي
+           (غياب/تأخير هذا الشهر) بلا سجل — مسموح بلا حراسة. */
+        let employeeDeductions = state.employeeDeductions
+        const recoveredDeductionsByEmployee = new Map<number, { deductionId: number; minor: number }[]>()
+        for (const draft of drafts) {
+          if ((draft.deductionsMinor ?? 0) <= 0) continue
+          let toRecover = draft.deductionsMinor
+          const taken: { deductionId: number; minor: number }[] = []
+          employeeDeductions = employeeDeductions.map((d) => {
+            if (d.employeeId !== draft.employeeId || toRecover <= 0) return d
+            const open = d.amountMinor - d.recoveredMinor - (d.waivedMinor ?? 0)
+            if (open <= 0) return d
+            const take = Math.min(open, toRecover)
+            toRecover -= take
+            taken.push({ deductionId: d.id, minor: take })
+            return { ...d, recoveredMinor: d.recoveredMinor + take }
+          })
+          if (taken.length) recoveredDeductionsByEmployee.set(draft.employeeId, taken)
         }
         const runId = nextId(state.payrollRuns)
         const baseId = nextId(state.payrollSlips)
@@ -2820,8 +3196,14 @@ export const useDataStore = create<DataState>()(
           accruedAt: now,
           accrualEntryId: entryId,
           notes: draft.notes ?? '',
+          recoveredDeductions: recoveredDeductionsByEmployee.get(draft.employeeId),
         }))
-        set({ payrollSlips: [...state.payrollSlips, ...slips], journal: [...state.journal, entry] })
+        set({
+          payrollSlips: [...state.payrollSlips, ...slips],
+          journal: [...state.journal, entry],
+          employeeAdvances,
+          employeeDeductions,
+        })
         return slips
       },
       payPayrollSlip: (slipId, args) => {
@@ -2851,26 +3233,219 @@ export const useDataStore = create<DataState>()(
         const slip = state.payrollSlips.find((row) => row.id === slipId)
         if (!slip) throw new Error('القسيمة غير موجودة')
         if (slip.status === 'paid') throw new Error('لا تُلغى قسيمة مصروفة — سجّل تسوية بدلاً منها')
+        // إصلاح §83 (بوابة العمق): الملغاة كانت تُلغى مرة ثانية فيولَّد قيد عكسي
+        // مزدوج بلا مقابل — يفسد مصروف الرواتب والذمة معاً. القاتل في المستودع.
+        if (slip.status === 'cancelled') throw new Error('القسيمة ملغاة بالفعل — لا يُلغى مستند ملغى')
         if (!reason.trim()) throw new Error('سبب الإلغاء مطلوب')
+        // إصلاح §83 (ث9): كان القيد يحمل reversesEntryId لقيد الاستحقاق المجمَّع
+        // بلا تحديث الطرف الآخر — كسر التبادلية. والأدق محاسبياً: الإلغاء يعكس
+        // **سطر قسيمة واحد** من قيد مجمَّع (سطر 2104 باسم الموظف) لا القيد كله،
+        // فهو تسوية مستقلة تُربط بمصدرها (payroll/runId) ووصفها لا بعلاقة عكس.
+        // وإصلاح §83 الثاني هنا: سطر 1107 دائن (استقطاع السلفة) كان يُترك دون
+        // عكس — يُعاد الاستقطاع ديناً على الموظف ويُعكس في سجلات سلفه.
+        const advanceBack = slip.advanceMinor > 0
+          ? [{ accountCode: '1107', debit: slip.advanceMinor, credit: 0, note: `إعادة استقطاع سلفة ${slip.slipNumber} — ${slip.employeeName}` }]
+          : []
         const reverse = [
           { accountCode: '2104', debit: slip.netMinor, credit: 0, note: `إلغاء ${slip.slipNumber} — ${reason.trim()}` },
-          { accountCode: '5102', debit: 0, credit: slip.netMinor, note: `عكس استحقاق ${slip.employeeName}` },
+          ...advanceBack,
+          { accountCode: '5102', debit: 0, credit: slip.netMinor + slip.advanceMinor, note: `عكس استحقاق ${slip.employeeName}` },
         ]
+        // §93: عكس استرداد الجزاءات المسجلة — يعود الجزاء «قائماً» كما قبل المسير
+        let employeeDeductions = state.employeeDeductions
+        for (const rd of slip.recoveredDeductions ?? []) {
+          employeeDeductions = employeeDeductions.map((d) => (d.id === rd.deductionId ? { ...d, recoveredMinor: Math.max(0, d.recoveredMinor - rd.minor) } : d))
+        }
+        // عكس توزيع السلفة على السجلات (بما استُرد بمقدارها، الأقدم أولاً)
+        let employeeAdvances = state.employeeAdvances
+        if (slip.advanceMinor > 0) {
+          let toGive = slip.advanceMinor
+          employeeAdvances = employeeAdvances.map((a) => {
+            if (a.employeeId !== slip.employeeId || toGive <= 0) return a
+            const give = Math.min(a.recoveredMinor, toGive)
+            if (give <= 0) return a
+            toGive -= give
+            return { ...a, recoveredMinor: a.recoveredMinor - give }
+          })
+        }
         const nowIso = new Date().toISOString()
         const entryId = nextId(state.journal)
         const entry: JournalEntry = {
           id: entryId, entryNumber: entryId, date: nowIso.slice(0, 10),
           description: `إلغاء قسيمة ${slip.slipNumber}`,
           sourceType: 'payroll', sourceId: slip.runId, lines: reverse,
-          createdBy: activeUserName(state), createdAt: nowIso, reversedByEntryId: null, reversesEntryId: slip.accrualEntryId,
+          createdBy: activeUserName(state), createdAt: nowIso, reversedByEntryId: null, reversesEntryId: null,
         }
         set({
           payrollSlips: state.payrollSlips.map((row) => (row.id === slipId ? { ...row, status: 'cancelled' as const, notes: `${row.notes ?? ''} · ألغيت: ${reason.trim()}` } : row)),
           journal: [...state.journal, entry],
+          employeeAdvances,
+          employeeDeductions,
         })
       },
       getUnpaidPayrollSlips: (employeeId) => get().payrollSlips
         .filter((slip) => slip.status === 'accrued' && (employeeId == null || slip.employeeId === employeeId)),
+
+      /* ─── شؤون الموظفين: حضور وإجازات وبصمة (طلب المالك ㉘) — لا قيود هنا؛
+            كل الأثر المالي عبر قسائم الرواتب في مسارها الرسمي ─── */
+      attendanceRecords: [],
+      leaveRequests: [],
+      leaveTypes: DEFAULT_LEAVE_TYPES,
+      hrRules: DEFAULT_HR_RULES,
+      employeeShifts: [],
+      attendanceImports: [],
+      setAttendanceDay: (args) => {
+        const state = get()
+        if (!state.employees.some((e) => e.id === args.employeeId)) throw new Error('الموظف غير موجود')
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error('تاريخ غير سليم (YYYY-MM-DD)')
+        const existing = state.attendanceRecords.find((r) => r.employeeId === args.employeeId && r.date === args.date)
+        if (existing) {
+          set({ attendanceRecords: state.attendanceRecords.map((r) => (r.id === existing.id
+            ? { ...r, status: args.status, checkIn: args.checkIn ?? null, checkOut: args.checkOut ?? null, notes: args.notes ?? r.notes, source: 'manual' as const }
+            : r)) })
+        } else {
+          set({ attendanceRecords: [...state.attendanceRecords, { id: nextId(state.attendanceRecords), employeeId: args.employeeId, date: args.date, status: args.status, checkIn: args.checkIn ?? null, checkOut: args.checkOut ?? null, source: 'manual' as const, importBatch: null, notes: args.notes }] })
+        }
+      },
+      clearAttendanceDay: (employeeId, date) => {
+        const state = get()
+        set({ attendanceRecords: state.attendanceRecords.filter((r) => !(r.employeeId === employeeId && r.date === date)) })
+      },
+      importAttendance: (args) => {
+        const state = get()
+        if (!args.rows.length) throw new Error('لا صفوف للاستيراد — راجع المعاينة')
+        const byDate = new Map(state.attendanceRecords.map((r) => [`${r.employeeId}|${r.date}`, r]))
+        let inserted = 0
+        let updated = 0
+        const importId = nextId(state.attendanceImports)
+        const nextRecords = [...state.attendanceRecords]
+        for (const row of args.rows) {
+          if (!state.employees.some((e) => e.id === row.employeeId)) throw new Error(`موظف رقم ${row.employeeId} غير موجود — أعد المطابقة`)
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date)) throw new Error(`تاريخ غير سليم في الاستيراد: ${row.date}`)
+          const existing = byDate.get(`${row.employeeId}|${row.date}`)
+          if (existing) {
+            updated += 1
+            const idx = nextRecords.findIndex((r) => r.id === existing.id)
+            nextRecords[idx] = { ...existing, status: row.status, checkIn: row.checkIn ?? existing.checkIn, checkOut: row.checkOut ?? existing.checkOut, source: 'import' as const, importBatch: importId }
+          } else {
+            inserted += 1
+            const record: AttendanceRecord = { id: nextId(nextRecords), employeeId: row.employeeId, date: row.date, status: row.status, checkIn: row.checkIn ?? null, checkOut: row.checkOut ?? null, source: 'import' as const, importBatch: importId }
+            byDate.set(`${row.employeeId}|${row.date}`, record)
+            nextRecords.push(record)
+          }
+        }
+        set({
+          attendanceRecords: nextRecords,
+          attendanceImports: [...state.attendanceImports, { id: importId, at: new Date().toISOString(), fileName: args.fileName, rows: args.rows.length, matched: args.rows.length, unmatched: 0, inserted, updated, by: args.by || 'المالك' }],
+        })
+        return { inserted, updated, importId }
+      },
+      addLeaveRequest: (args) => {
+        const state = get()
+        // إصلاح §83: إجازة لموظف شبح كانت تُسجَّل وتعتمد وتلوث الأرصدة والتقارير
+        if (!state.employees.some((e) => e.id === args.employeeId)) throw new Error('الموظف غير موجود')
+        const days = leaveDaysBetween(args.from, args.to)
+        const errors = validateLeaveRequest({ employeeId: args.employeeId, typeId: args.typeId, from: args.from, to: args.to, leaves: state.leaveRequests, types: state.leaveTypes })
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (days <= 0) throw new Error('نطاق التاريخ غير سليم')
+        const request: LeaveRequest = {
+          id: nextId(state.leaveRequests),
+          employeeId: args.employeeId, typeId: args.typeId, from: args.from, to: args.to, days,
+          status: 'pending', reason: args.reason.trim(), requestedAt: new Date().toISOString(),
+        }
+        set({ leaveRequests: [...state.leaveRequests, request] })
+        return request
+      },
+      decideLeaveRequest: (id, approve, by) => {
+        const state = get()
+        const request = state.leaveRequests.find((l) => l.id === id)
+        if (!request) throw new Error('طلب الإجازة غير موجود')
+        if (request.status !== 'pending') throw new Error('هذا الطلب محسوم بالفعل')
+        const now = new Date().toISOString()
+        const decided: LeaveRequest = { ...request, status: approve ? 'approved' : 'rejected', decidedBy: by || 'المالك', decidedAt: now }
+        /* عند الاعتماد: تُعلَّم أيام الإجازة في شبكة الحضور تلقائياً (فوق أي «حاضر» سابق) */
+        if (approve) {
+          const dates = leaveDates(request)
+          const byDay = new Map(state.attendanceRecords.map((r) => [`${r.employeeId}|${r.date}`, r]))
+          const nextRecords = [...state.attendanceRecords]
+          for (const date of dates) {
+            const existing = byDay.get(`${request.employeeId}|${date}`)
+            if (existing) {
+              const idx = nextRecords.findIndex((r) => r.id === existing.id)
+              nextRecords[idx] = { ...existing, status: 'leave' as const, notes: `إجازة معتمدة #${request.id}` }
+            } else {
+              nextRecords.push({ id: nextId(nextRecords), employeeId: request.employeeId, date, status: 'leave' as const, checkIn: null, checkOut: null, source: 'manual' as const, importBatch: null, notes: `إجازة معتمدة #${request.id}` })
+            }
+          }
+          set({ leaveRequests: state.leaveRequests.map((l) => (l.id === id ? decided : l)), attendanceRecords: nextRecords })
+          return decided
+        }
+        set({ leaveRequests: state.leaveRequests.map((l) => (l.id === id ? decided : l)) })
+        return decided
+      },
+      deleteLeaveRequest: (id) => {
+        const state = get()
+        const request = state.leaveRequests.find((l) => l.id === id)
+        if (!request) throw new Error('طلب الإجازة غير موجود')
+        if (request.status === 'approved') throw new Error('لا يُحذف طلب معتمد — راسل طلباً معاكساً أو عدّل شبكة الحضور')
+        set({ leaveRequests: state.leaveRequests.filter((l) => l.id !== id) })
+      },
+      updateHrRules: (patch) => {
+        const state = get()
+        set({ hrRules: normalizeHrRules({ ...state.hrRules, ...patch }) })
+      },
+      updateLeaveTypes: (types) => {
+        if (!types.length) throw new Error('لا تُفرَّغ أنواع الإجازات — نوع واحد على الأقل')
+        for (const type of types) {
+          if (!type.id.trim() || !type.nameAr.trim()) throw new Error('كل نوع إجازة يحتاج كوداً واسماً')
+          if (!Number.isFinite(type.annualQuotaDays) || type.annualQuotaDays < 0) throw new Error(`رصيد ${type.nameAr || type.id} غير سليم`)
+        }
+        const ids = new Set(types.map((t) => t.id))
+        if (ids.size !== types.length) throw new Error('أكواد الإجازات مكررة')
+        set({ leaveTypes: types })
+      },
+      setEmployeeShift: (employeeId, shift) => {
+        const state = get()
+        if (shift) {
+          const clean = {
+            employeeId,
+            startMin: Math.max(0, Math.min(24 * 60, Math.round(shift.startMin))),
+            endMin: Math.max(0, Math.min(24 * 60, Math.round(shift.endMin))),
+            graceMinutes: Math.max(0, Math.min(240, Math.round(shift.graceMinutes))),
+          }
+          if (clean.endMin <= clean.startMin) throw new Error('نهاية الوردية يجب أن تكون بعد بدايتها')
+          const existing = state.employeeShifts.find((s) => s.employeeId === employeeId)
+          set({ employeeShifts: existing
+            ? state.employeeShifts.map((s) => (s.employeeId === employeeId ? clean : s))
+            : [...state.employeeShifts, clean] })
+        } else {
+          set({ employeeShifts: state.employeeShifts.filter((s) => s.employeeId !== employeeId) })
+        }
+      },
+      getLeaveBalances: (employeeId, year) => {
+        const state = get()
+        return leaveBalances(state.leaveRequests, state.leaveTypes, employeeId, year)
+      },
+      getMonthlyAttendance: (employeeId, month) => {
+        const state = get()
+        return monthlySummary({ employeeId, month, records: state.attendanceRecords, leaves: state.leaveRequests, types: state.leaveTypes })
+      },
+      getAttendancePayrollImpact: (month, employeeIds) => {
+        const state = get()
+        const targets = state.employees.filter((e) => e.active && (employeeIds == null || employeeIds.includes(e.id)))
+        return targets.map((employee) => attendancePayrollImpact({
+          employeeId: employee.id,
+          month,
+          grossMinor: employee.baseSalaryMinor + employee.allowancesMinor,
+          /* جسر الحضور ① (جولة «اكمل ونفذ»): وردية الموظف الفردية تُحترم في
+             مسار الرواتب كما تحترمها شاشة HR — لا يُحتسب التأخير/الإضافي
+             للوردية الليلية على وردية المنشأة الافتراضية */
+          rules: { ...state.hrRules, shift: state.employeeShifts.find((s) => s.employeeId === employee.id) ?? state.hrRules.shift },
+          records: state.attendanceRecords,
+          leaves: state.leaveRequests,
+          types: state.leaveTypes,
+        }))
+      },
 
       installmentPlans: [],
       vehicles: [],
@@ -2909,6 +3484,21 @@ export const useDataStore = create<DataState>()(
         if (!target) throw new Error('طلب الاعتماد غير موجود')
         if (target.status !== 'pending') throw new Error('هذا الطلب مُقرَّر فيه بالفعل')
         if (decision.status === 'rejected' && !(decision.reason ?? '').trim()) throw new Error('سبب الرفض مطلوب')
+        // صلاحية القرار: لا يعتمد/يرفض إلا صاحب docs.approve أو المالك أو من أُضيف صراحة
+        const decider = state.appUsers.find((u) => u.id === decision.by) ?? null
+        const deciderRoles = rolesWithOverrides(state.roleOverrides, state.customRoles, useAppStore.getState().setup.activityId)
+        if (!canApprove({ settings: useAppStore.getState().approvals, userId: decision.by, userPermissions: effectivePermissionsFor(decider, deciderRoles) })) {
+          throw new Error('لا تملك صلاحية اعتماد المستندات — القرار لصاحب docs.approve أو المالك')
+        }
+        /* الاعتماد ينفّذ الترحيل الفعلي (pending → approved → posted): أي فشل
+         * (مخزون تغيّر، حد ائتمان…) يُبلَّغ للمعتمِد ويبقى الطلب معلقاً كما هو. */
+        let postedId: number | null = null
+        let postedRef: string | null = null
+        if (decision.status === 'approved') {
+          const posted = postApprovedDocument(get, target.kind, target.payload)
+          postedId = posted.id
+          postedRef = posted.ref
+        }
         const updated: DocApprovalRequest = {
           ...target,
           status: decision.status,
@@ -2916,6 +3506,8 @@ export const useDataStore = create<DataState>()(
           decidedByName: decision.byName,
           decidedAt: new Date().toISOString(),
           reason: decision.reason?.trim() || undefined,
+          postedDocumentId: postedId,
+          postedDocumentRef: postedRef,
         }
         set({ docApprovals: state.docApprovals.map((row) => (row.id === id ? updated : row)) })
         return updated
@@ -2951,18 +3543,40 @@ export const useDataStore = create<DataState>()(
         set({ purchaseOrders: [...state.purchaseOrders, order] })
         return order
       },
-      setPurchaseOrderStatus: (id, status) => set((state) => ({
-        purchaseOrders: state.purchaseOrders.map((order) => (order.id === id ? { ...order, status } : order)),
-      })),
+      setPurchaseOrderStatus: (id, status) => set((state) => {
+        const order = state.purchaseOrders.find((o) => o.id === id)
+        if (!order) throw new Error('أمر الشراء غير موجود')
+        /* حرس سلامة دورة الأمر: الحالات المستلمة (partial/closed) تُشتق من الاستلام
+           لا تُضبط يدوياً، والأمر المكتمل أو المرتبط بفواتير لا يُلغى */
+        if ((status === 'partial' || status === 'closed') && status !== order.status) throw new Error('حالة الاستلام تُحدَّث تلقائياً من فواتير الشراء — لا تُضبط يدوياً')
+        if (status === 'cancelled') {
+          if (order.status === 'closed') throw new Error('أمر الشراء مكتمل الاستلام — لا يُلغى')
+          if ((order.invoiceIds ?? []).length > 0) throw new Error('الأمر مرتبط بفواتير شراء مسجلة — لا يُلغى')
+        }
+        return { purchaseOrders: state.purchaseOrders.map((o) => (o.id === id ? { ...o, status } : o)) }
+      }),
       receivePurchaseOrder: (id, received, invoiceId) => set((state) => ({
         purchaseOrders: state.purchaseOrders.map((order) => {
           if (order.id !== id) return order
+          // إصلاح (مراجعة المالك 2026-10-01): المستلم يُجمَّع لكل صنف أولاً — سطور
+          // فاتورة متعددة لنفس الصنف كانت تُحتسب أولاها فقط — ثم يوزَّع متدرجاً على
+          // سطور الأمر المتكررة للصنف نفسه (الأول أولاً) بدل تكرار كامل الكمية لكل سطر.
+          const remaining = new Map<number, number>()
+          for (const row of received) {
+            if (!(row.qty > 0)) continue
+            remaining.set(row.itemId, (remaining.get(row.itemId) ?? 0) + row.qty)
+          }
+          const lines = order.lines.map((line) => {
+            const left = remaining.get(line.itemId) ?? 0
+            if (left <= 0) return line
+            const room = Math.max(0, line.qty - (line.receivedQty || 0))
+            const take = Math.min(room, left)
+            remaining.set(line.itemId, left - take)
+            return take > 0 ? { ...line, receivedQty: (line.receivedQty || 0) + take } : line
+          })
           const next: PurchaseOrder = {
             ...order,
-            lines: order.lines.map((line) => {
-              const hit = received.find((row) => row.itemId === line.itemId)
-              return hit ? { ...line, receivedQty: Math.min(line.qty, (line.receivedQty || 0) + Math.max(0, hit.qty)) } : line
-            }),
+            lines,
             invoiceIds: invoiceId != null && !order.invoiceIds.includes(invoiceId) ? [...order.invoiceIds, invoiceId] : order.invoiceIds,
           }
           return { ...next, status: derivePurchaseOrderStatus(next) }
@@ -3025,6 +3639,7 @@ export const useDataStore = create<DataState>()(
       insuranceClaims: [],
       variantStocks: [],
       tickets: [],
+      bookings: [],
       maintenanceServices: [],
       walletOps: [],
       loyaltyRedemptions: [],
@@ -3071,6 +3686,8 @@ export const useDataStore = create<DataState>()(
       wastages: [],
       consumptions: [],
       openingBalances: {},
+      openingItems: {},
+      openingDeclaredCapitalMinor: null,
       settlements: [],
       partyOffsets: [],
       exchanges: [],
@@ -3108,6 +3725,7 @@ export const useDataStore = create<DataState>()(
       journal: [],
       auditLog: [],
       appUsers: [],
+      userPrefs: {},
       roleOverrides: {},
       customRoles: [],
       currentUserId: null,
@@ -3130,6 +3748,13 @@ export const useDataStore = create<DataState>()(
       },
 
       addItem: (item) => {
+        // §81: حراس النواة داخل المستودع — الواجهة ليست المتصل الوحيد
+        // (الإضافة السريعة في فاتورة الشراء، الاستيراد، نوافذ التحرير، بوت التليجرام…):
+        // باركود مكرر بين صنفين يُنطق الكاشير بيع صنف بدل آخر، ومعامل وحدة < 1
+        // يفسد خصم المخزون بالوحدة الأساسية. التحذيرات (سعر صفر/خسارة) قرار شاشة.
+        const guardState = get()
+        const blockers = itemBlockers(item, guardState.items)
+        if (blockers.length) throw new Error(blockers[0])
         // AUDIT-005: الرصيد الابتدائي للصنف (كمية × تكلفة) كان يدخل المخزون **بلا قيد**
         // فينكسر ثابت «1103 = Σ كمية×متوسط» من اليوم الأول (وأبرز مسار: استيراد CSV).
         // الآن يُثبت بنفس مسار الأرصدة الافتتاحية: 1103 مدين / 3101 دائن، ويُسجَّل في
@@ -3142,6 +3767,8 @@ export const useDataStore = create<DataState>()(
           set({ items: [...state.items, created] })
           return
         }
+        // v1.0.4: التقييم المادي يسجَّل مع القيمة — التعديل اللاحق يكون بفرق كمية وتكلفة
+        const createdWithDetail = { ...created }
         const lines = buildOpeningDeltaEntry('item_stock', openingValueMinor, `${OPENING_KIND_LABELS.item_stock} — ${item.nameAr}`)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -3159,13 +3786,68 @@ export const useDataStore = create<DataState>()(
           reversesEntryId: null,
         }
         set({
-          items: [...state.items, created],
+          items: [...state.items, createdWithDetail],
           journal: [...state.journal, entry],
           openingBalances: { ...state.openingBalances, [openingKey('item_stock', id)]: openingValueMinor },
+          openingItems: { ...state.openingItems, [id]: { qty: item.stockQty || 0, unitCostMinor: item.costMinor || 0 } },
         })
       },
-      updateItem: (id, patch) =>
-        set((s) => ({ items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) })),
+      updateItem: (id, patch) => {
+        const current = get().items.find((it) => it.id === id)
+        if (!current) return
+        // §81: التحرير الجزئي يُحرَس على الصورة المدموجة كاملة — لا يمر تحرير
+        // (نافذة سريعة/قائمة أسعار) بمعامل وحدة فاسد أو باركود مكرر أو سيريال+وزن.
+        const blockers = itemBlockers({ ...current, ...patch }, get().items.filter((it) => it.id !== id), id)
+        if (blockers.length) throw new Error(blockers[0])
+        // v1.0.4 (بلاغ المالك — نمط العالمية): تحرير الكمية/التكلفة من بطاقة الصنف
+        // لا يغيّر قيمة المخزون صامتاً — وإلا انكسر ثابت 1103 = Σ كمية×تكلفة.
+        // بعد وجود حركات: تسوية الجرد أو شاشة الأرصدة الافتتاحية حصراً.
+        // قبل أي حركة: تعديل افتتاحي يقيد الفرق مقابل 3101 (امتداد AUDIT-005 للتحرير).
+        if (patch.stockQty != null || patch.costMinor != null) {
+          const mergedQty = patch.stockQty ?? current.stockQty ?? 0
+          const mergedCost = patch.costMinor ?? current.costMinor ?? 0
+          const oldVal = Math.round((current.stockQty ?? 0) * (current.costMinor ?? 0))
+          const newVal = Math.round(mergedQty * mergedCost)
+          if (newVal !== oldVal) {
+            const state = get()
+            const moved: string[] = []
+            if (state.purchases.some((pu) => pu.lines.some((l) => l.itemId === id))) moved.push('فواتير شراء')
+            if (state.sales.some((sl) => sl.lines.some((l) => l.itemId === id))) moved.push('فواتير بيع')
+            if (state.stocktakes.some((st) => st.result.variances.some((v) => v.itemId === id))) moved.push('تسويات جرد')
+            if (state.wastages.some((w) => w.lines.some((l) => l.itemId === id))) moved.push('مستندات إتلاف')
+            if (state.consumptions.some((c) => c.lines.some((l) => l.itemId === id))) moved.push('صرف داخلي')
+            if (state.transfers.some((t) => t.lines.some((l) => l.itemId === id))) moved.push('تحويلات مخزنية')
+            if (moved.length) {
+              throw new Error(`تعديل رصيد/تكلفة «${current.nameAr}» بعد وجود حركات (${moved.join(' و')}) يتم من تسوية الجرد أو شاشة الأرصدة الافتتاحية — حفاظاً على تطابق دفتر 1103 مع المخزون الفعلي`)
+            }
+            const delta = newVal - oldVal
+            const entryLines = buildOpeningDeltaEntry('item_stock', delta, `${OPENING_KIND_LABELS.item_stock} — ${current.nameAr} (تعديل بطاقة)`)
+            const entryId = nextId(state.journal)
+            const now = new Date().toISOString()
+            const entry: JournalEntry = {
+              id: entryId,
+              entryNumber: entryId,
+              date: now.slice(0, 10),
+              description: `تعديل افتتاحي ببطاقة الصنف: ${current.nameAr} (${mergedQty} × ${mergedCost})`,
+              sourceType: 'opening',
+              sourceId: id,
+              lines: entryLines,
+              createdBy: activeUserName(state),
+              createdAt: now,
+              reversedByEntryId: null,
+              reversesEntryId: null,
+            }
+            set((s) => ({
+              items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)),
+              journal: [...s.journal, entry],
+              openingBalances: { ...s.openingBalances, [openingKey('item_stock', id)]: newVal },
+              openingItems: { ...s.openingItems, [id]: { qty: mergedQty, unitCostMinor: mergedCost } },
+            }))
+            return
+          }
+        }
+        set((s) => ({ items: s.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) }))
+      },
       removeItem: (id, approval) => {
         const s = get()
         const it = s.items.find((x) => x.id === id)
@@ -3291,6 +3973,17 @@ export const useDataStore = create<DataState>()(
 
       postPurchase: (inv) => {
         const state = get()
+        // بوابة اعتماد المستندات (خطة ③): شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
+        if (!inv.__approvalBypass) {
+          const approvalGoodsMinor = inv.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 + (line.vatPercent ?? 0) / 100), 0)
+            + inv.expenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
+            + (inv.inputVatMinor ?? 0) - (inv.discountMinor ?? 0)
+          enforceApprovalGate(get, 'purchase', approvalGoodsMinor, {
+            title: `فاتورة مشتريات — ${inv.lines.length} بند`,
+            partyName: inv.supplierId !== 0 ? state.suppliers.find((row) => row.id === inv.supplierId)?.nameAr ?? 'مورد' : 'شراء نقدي',
+            payload: serializeApprovalPayload(inv),
+          })
+        }
         // تحقق صارم قبل أي كتابة: سطور موجودة وكميات وأسعار سليمة (حماية من إفساد المخزون)
         if (!inv.lines.length) throw new Error('الفاتورة بلا أصناف')
         // الشراء النقدي الحقيقي يحمل supplierId=0: لا يُجبر المستخدم على إنشاء مورد وهمي،
@@ -3506,7 +4199,12 @@ export const useDataStore = create<DataState>()(
         const mainWarehouseId = state.warehouses.find((w) => w.isMain)?.id ?? state.warehouses[0]?.id ?? null
         const hasLineWarehouses = inv.lines.some((l) => l.warehouseId != null)
         if (hasLineWarehouses && inv.lines.some((l) => l.warehouseId == null)) throw new Error('فاتورة شراء مختلطة المخازن — حدد مخزناً لكل سطر')
-        const effectivePurchaseWarehouseId = hasLineWarehouses ? null : (inv.warehouseId ?? mainWarehouseId)
+        // إصلاح (مراجعة المالك للفواتير 2026-10-01): الرأس كان يُفرَّغ متى كان لأي سطر
+        // مخزن — والمحرر يختم مخزن الرأس على كل سطر افتراضياً، فتُخزَّن كل فاتورة عادية
+        // برأس فارغ وسطور كلها بمخزن واحد، ثم يرفض حارس التعديل الفاتورة بذريعة
+        // «متعددة المخازن». القاعدة الصحيحة: الرأس يخلو فقط عند توزيع فعلي على مخزنين فأكثر.
+        const distinctLineWarehouses = [...new Set(inv.lines.map((l) => l.warehouseId).filter((v): v is number => v != null))]
+        const effectivePurchaseWarehouseId = distinctLineWarehouses.length >= 2 ? null : (distinctLineWarehouses[0] ?? inv.warehouseId ?? mainWarehouseId)
         const invoice: PurchaseInvoice = {
           id: purchaseId,
           invoiceNumber,
@@ -3629,7 +4327,7 @@ export const useDataStore = create<DataState>()(
             amountMinor: grandTotal, date: inv.date,
             description: `فاتورة شراء ${invoiceNumber}${custodyFile ? ` — من عهدة ${custodyFile.fileNumber}` : ''}`,
             payment: inv.paidMinor >= grandTotal ? 'cash' as const : 'credit' as const,
-            journalEntryId: entryId,
+            journalEntryId: entryId, source: 'purchase' as const,
           }]
         }
         const createdPayables: PurchaseExpensePayable[] = inv.expenses.flatMap((expense, expenseIndex) => expense.paidBy === 'payable' && expense.amountMinor > 0 ? [{ id: nextId(state.purchaseExpensePayables) + expenseIndex, purchaseId, expenseIndex, beneficiaryName: expense.beneficiaryName!.trim(), description: expense.nameAr, amountMinor: expensePayableAmount(expense), paidMinor: 0, payableAccountCode: expense.payableAccountCode ?? '2117', status: 'open' as const, createdAt: nowIso, settlementEntryIds: [], vehicleId: expense.vehicleId ?? null, vehicleCostEntryId: null }] : [])
@@ -3832,6 +4530,18 @@ export const useDataStore = create<DataState>()(
 
       postSale: (args) => {
         const state = get()
+        // بوابة اعتماد المستندات (خطة ③): بيع خاضع للنظام ⇒ يُخزَّن طلباً كاملاً
+        // ولا يُخصم مخزون ولا يُنشأ قيد حتى يعتمده صاحب الصلاحية.
+        if (!args.__approvalBypass) {
+          const approvalNetMinor = args.lines.reduce((sum, line) => sum + line.qty * line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100), 0) * (1 - args.invoiceDiscountPercent / 100)
+          enforceApprovalGate(get, 'sale', approvalNetMinor * (args.taxInclusive ? 1 : 1 + args.taxPercent / 100), {
+            title: `فاتورة مبيعات — ${args.lines.length} بند`,
+            partyName: args.partyKind && args.partyKind !== 'customer'
+              ? args.partyName ?? (args.partyKind === 'supplier' ? state.suppliers.find((p) => p.id === args.partyId)?.nameAr : state.employees.find((p) => p.id === args.partyId)?.nameAr) ?? 'طرف خارجي'
+              : args.customerId != null ? state.customers.find((c) => c.id === args.customerId)?.nameAr ?? 'عميل نقدي' : 'عميل نقدي',
+            payload: serializeApprovalPayload(args),
+          })
+        }
         // سياسة الورديات مرتبطة بالمستخدم الفعلي: المالك تلميح فقط، والكاشير حسب
         // إعداد الكاشير، وبقية الأدوار ملزمة في سياق البيع. نفس القرار تستخدمه الواجهة.
         const shiftPolicy = salesShiftPolicyForState(state)
@@ -4020,7 +4730,16 @@ export const useDataStore = create<DataState>()(
             if (errors.length) throw new Error(errors.join(' — '))
           }
         }
-        if (paidM < totals.totalMinor && args.customerId == null) {
+        // §91: البيع الآجل لأي طرف — عميل (1104) أو مورد (2101) أو موظف (1107)؛
+        // بلا طرف محدد لا يُسجَّل دين على «نقدي»
+        const salePartyKind = args.partyKind ?? 'customer'
+        const salePartyId = salePartyKind === 'customer' ? args.customerId : args.partyId ?? null
+        if (salePartyKind !== 'customer' && paidM < totals.totalMinor) {
+          if (salePartyId == null) throw new Error('الجزء الآجل يحتاج اختيار الطرف — لا دين على طرف نقدي')
+          const pool = salePartyKind === 'supplier' ? state.suppliers : state.employees
+          if (!pool.some((p) => p.id === salePartyId)) throw new Error(salePartyKind === 'supplier' ? 'المورد غير موجود' : 'الموظف غير موجود')
+        }
+        if (paidM < totals.totalMinor && salePartyKind === 'customer' && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
         const systemDate = new Date().toISOString().slice(0, 10)
@@ -4036,7 +4755,7 @@ export const useDataStore = create<DataState>()(
         // حارس حد الائتمان (مراجعة المبيعات — نمط SAP B1/أودو): البيع الآجل لعميل له حد
         // يُفحص لحظة الترحيل — رصيده + الآجل الجديد ≤ حده، والتجاوز بموافقة مدير مسجلة
         const newCredit = totals.totalMinor - paidM
-        if (newCredit > 0 && args.customerId != null && !args.creditLimitOverrideBy) {
+        if (newCredit > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
           const cust = state.customers.find((c) => c.id === args.customerId)
           if (cust && cust.creditLimitMinor > 0) {
             const balance = get().getCustomerBalance(cust.id)
@@ -4045,7 +4764,11 @@ export const useDataStore = create<DataState>()(
             }
           }
         }
-        const entryLines = args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM)
+        const receivable = salePartyKind === 'customer' ? undefined : {
+          receivableAccount: SALE_PARTY_RECEIVABLE[salePartyKind].accountCode,
+          receivableNote: SALE_PARTY_RECEIVABLE[salePartyKind].noteAr,
+        }
+        const entryLines = args.paymentAllocations?.length ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, receivable) : buildSaleEntry(totals, args.payment, args.treasury ?? '1101', paidM, receivable)
         const internalExpenses = args.internalExpenses ?? []
         for (const expense of internalExpenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
@@ -4099,7 +4822,12 @@ export const useDataStore = create<DataState>()(
           invoiceNumber,
           refCode,
           date: now,
-          customerId: args.customerId,
+          customerId: salePartyKind === 'customer' ? args.customerId : null,
+          partyKind: salePartyKind === 'customer' ? null : salePartyKind,
+          partyId: salePartyKind === 'customer' ? null : salePartyId,
+          partyName: salePartyKind === 'customer' ? null : args.partyName
+            ?? (salePartyKind === 'supplier' ? state.suppliers.find((p) => p.id === salePartyId)?.nameAr : state.employees.find((p) => p.id === salePartyId)?.nameAr)
+            ?? null,
           payment: args.payment,
           paidMinor: paidM,
           treasury: args.treasury ?? '1101',
@@ -4199,6 +4927,21 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const sale = state.sales.find((s) => s.id === args.saleId)
         if (!sale) throw new Error('الفاتورة الأصلية غير موجودة')
+        // بوابة اعتماد المستندات (خطة ③): مرتجع خاضع للنظام ⇒ طلب اعتماد بلا قيد
+        if (!args.__approvalBypass) {
+          const returnedMinor = args.lineSpecs?.length
+            ? args.lineSpecs.reduce((sum, spec) => {
+                const line = sale.lines[spec.lineIndex]
+                return sum + (line ? spec.qty * line.unitPriceMinor * (1 - (line.discountPercent ?? 0) / 100) : 0)
+              }, 0)
+            : [...(args.qtyByItem ?? new Map<number, number>()).entries()].reduce(
+                (sum, [itemId, qty]) => sum + qty * (sale.lines.find((line) => line.itemId === itemId)?.unitPriceMinor ?? 0), 0)
+          enforceApprovalGate(get, 'sale_return', returnedMinor, {
+            title: `مرتجع مبيعات عن ${sale.invoiceNumber}`,
+            partyName: sale.customerId != null ? state.customers.find((c) => c.id === sale.customerId)?.nameAr ?? 'عميل نقدي' : 'عميل نقدي',
+            payload: serializeApprovalPayload(args),
+          })
+        }
         if ((args.refund === 'credit' || args.refund === 'store_credit') && sale.customerId === null) {
           throw new Error('فاتورة عميل نقدي — الاسترداد نقدي فقط (لا حساب يُودَع فيه)')
         }
@@ -4240,7 +4983,17 @@ export const useDataStore = create<DataState>()(
           0,
         )
         const openCredit = sale.totals.totalMinor - paidAtSale - priorCreditRefunds - settledToThisSale
-        const received = paidAtSale + settledToThisSale - priorCashRefunds
+        // ردود ماكينة خارج مرتجعات المبيعات (سُجلت يدوياً بعد الرد في تطبيق المزود):
+        // نقود غادرت فعلاً عبر الماكينة — تُخصم من «المُحصَّل القابل للرد نقداً» وإلا رُد المال مرتين
+        // (ردود المرتجعات نفسها محسوبة في priorCashRefunds — تُستثنى بمستند sale_return).
+        // عيب §79: قبل هذا الخصم كان الدرج يرد كامل القيمة رغم رد الماكينة السابق.
+        const terminalRefundedExternally = state.paymentTerminalTransactions
+          .filter((row) => (row.kind === 'refund' || row.kind === 'void') && row.documentType !== 'sale_return')
+          .filter((row) => state.paymentTerminalTransactions.some(
+            (chg) => chg.id === row.originalTransactionId && chg.kind === 'charge' && chg.documentType === 'sale' && chg.documentId === String(sale.id),
+          ))
+          .reduce((a, row) => a + row.amountMinor, 0)
+        const received = paidAtSale + settledToThisSale - priorCashRefunds - terminalRefundedExternally
         // التوزيع الرباعي الموحد (طلب المالك — رد القيمة اختياري بحرية كاملة):
         // refund='custom' ⇒ توزيع المستخدم اليدوي بعد تحققه، وإلا التقسيم التلقائي القديم
         let alloc: RefundAllocation
@@ -4250,6 +5003,12 @@ export const useDataStore = create<DataState>()(
           alloc = args.allocation!
         } else {
           alloc = allocationOf(totals.totalMinor, args.refund, openCredit, received)
+          // فاتورة عميل نقدي: لا يقبل قيد دائن على 1104 بلا حساب عميل.
+          // لا يحدث إلا إذا كان جزء من التحصيل سبق رده خارجياً عبر الماكينة —
+          // فالتوزيع التلقائي يوجه الفائض فوق «المُحصَّل» إلى الذمم. الوزع اليدوي واضح.
+          if (sale.customerId === null && alloc.creditMinor + alloc.storeCreditMinor > 0) {
+            throw new Error('جزء من تحصيل هذه الفاتورة سبق رده عبر الماكينة خارج مرتجعات المبيعات، والفاتورة بلا عميل يسجل له الباقي — وزّع الرد يدوياً على النقدي والتنازل فقط')
+          }
         }
         // القيد العاكس المتوازن
         // الرد النقدي من نفس خزينة البيع الأصلية (فواتير قديمة بلا خزينة → الرئيسية)
@@ -4431,6 +5190,21 @@ export const useDataStore = create<DataState>()(
         const state = get()
         const purchase = state.purchases.find((p) => p.id === args.purchaseId)
         if (!purchase) throw new Error('فاتورة الشراء الأصلية غير موجودة')
+        // بوابة اعتماد المستندات (خطة ③): مرتجع شراء خاضع للنظام ⇒ طلب اعتماد بلا قيد
+        if (!args.__approvalBypass) {
+          const returnedMinor = args.lineSpecs?.length
+            ? args.lineSpecs.reduce((sum, spec) => {
+                const line = purchase.lines[spec.lineIndex]
+                return sum + (line ? spec.qty * (line.unitPriceMinor ?? 0) : 0)
+              }, 0)
+            : [...(args.qtyByItem ?? new Map<number, number>()).entries()].reduce(
+                (sum, [itemId, qty]) => sum + qty * (purchase.lines.find((line) => line.itemId === itemId)?.unitPriceMinor ?? 0), 0)
+          enforceApprovalGate(get, 'purchase_return', returnedMinor, {
+            title: `مرتجع شراء عن ${purchase.invoiceNumber ?? purchase.refCode}`,
+            partyName: purchase.supplierId !== 0 ? state.suppliers.find((row) => row.id === purchase.supplierId)?.nameAr ?? 'مورد' : 'شراء نقدي',
+            payload: serializeApprovalPayload(args),
+          })
+        }
         // فاتورة مشروع: بضاعتها حُمّلت تكلفة موقع 5110 لا مخزوناً — مرتجعها يُسوَّى
         // بسند قبض من المورد أو تسوية تكلفة على المشروع، لا بمرتجع مخزني يفسد 1103
         if (purchase.projectId != null) {
@@ -4577,13 +5351,32 @@ export const useDataStore = create<DataState>()(
         for (const [itemId, qty] of qtyOut) {
           updatedSerials = markReturnedToSupplier(updatedSerials, purchase.id, itemId, qty)
         }
-        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials })
+        // إصلاح (مراجعة المالك 2026-10-01): مرتجع من فاتورة مُعبَّأة من أمر شراء كان
+        // يترك كميات «المستلم» في الأمر كما كانت — يُعاد احتسابها الآن صافية
+        const updatedOrdersAfterReturn = (() => {
+          const linked = state.purchaseOrders.filter((o) => (o.invoiceIds ?? []).includes(purchase.id))
+          if (!linked.length) return state.purchaseOrders
+          return state.purchaseOrders.map((order) =>
+            order.invoiceIds.includes(purchase.id) ? recomputeOrderReceivedFromInvoices(state, order, undefined, ret) : order,
+          )
+        })()
+        set({ purchaseReturns: [...state.purchaseReturns, ret], journal: [...state.journal, entry], items: updatedItems, batches: workingBatches, serials: updatedSerials, purchaseOrders: updatedOrdersAfterReturn })
         return ret
       },
 
       postStocktake: (counts, notes) => {
         const state = get()
         if (!counts.length) throw new Error('لا أصناف في الجرد')
+        // حراسة §80: صنف غير مسجل يولّد قيد تسوية (5111/4110) بلا أثر مخزوني فعلي
+        // فينفصل 1103 الدفتري عن قيمة المخزون الحقيقية (قيس: عجز وهمي 50,000).
+        // كذلك «الدفتري» المُمرر يجب أن يطابق رصيد اللحظة وإلا كان الجرد على أساس قديم.
+        for (const c of counts) {
+          const it = state.items.find((row) => row.id === c.itemId)
+          if (!it) throw new Error(`«${c.nameAr}» (#${c.itemId}) ليس صنفاً مسجلاً — أزل سطر الجرد`)
+          if (Math.round((it.stockQty ?? 0) * 1000) !== Math.round(c.expectedQty * 1000)) {
+            throw new Error(`«${c.nameAr}»: الرصيد الدفتري تغير منذ العد (${it.stockQty ?? 0} حالياً) — أعد الجرد على الرصيد الحالي`)
+          }
+        }
         const result = computeStocktake(counts)
         const stocktakeId = nextId(state.stocktakes)
         const now = new Date().toISOString()
@@ -4799,6 +5592,11 @@ export const useDataStore = create<DataState>()(
         if (args.kind === 'treasury' && !state.treasuries.some((t) => t.code === String(args.refId))) errors.push('الخزينة/البنك غير موجود')
         if (args.kind === 'employee_advance' && !state.employees.some((e) => e.id === Number(args.refId))) errors.push('الموظف غير موجود')
         if (args.kind === 'item_stock' && !state.items.some((it) => it.id === Number(args.refId))) errors.push('الصنف غير موجود')
+        if (args.kind === 'account') {
+          const acc = STANDARD_COA.find((a) => a.code === String(args.refId))
+          if (!acc || !acc.isPostable) errors.push('الحساب غير موجود أو غير قابل للترحيل')
+          else if (acc.systemKey && OPENING_COVERED_SYSTEM_KEYS.has(acc.systemKey)) errors.push('هذا الحساب له نوع افتتاحي مخصص (عملاء/موردون/سلف/مخزون/خزائن/رأس المال) — سجّله من تبويبه')
+        }
         if (errors.length) throw new Error(errors.join(' — '))
 
         const key = openingKey(args.kind, args.refId)
@@ -4810,7 +5608,10 @@ export const useDataStore = create<DataState>()(
           args.kind,
           delta,
           `${OPENING_KIND_LABELS[args.kind]} — ${args.label}`,
-          args.kind === 'treasury' ? String(args.refId) : undefined,
+          args.kind === 'treasury' || args.kind === 'account' ? String(args.refId) : undefined,
+          args.kind === 'account'
+            ? accountNature(STANDARD_COA.find((a) => a.code === String(args.refId))?.rootType ?? 'assets')
+            : undefined,
         )
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -4854,6 +5655,64 @@ export const useDataStore = create<DataState>()(
           openingBalances: { ...state.openingBalances, [key]: args.amountMinor },
           journal: [...state.journal, entry],
           ...(args.kind === 'employee_advance' ? { employeeAdvances } : {}),
+        })
+      },
+
+      setOpeningItemStock: (args) => {
+        const state = get()
+        const item = state.items.find((it) => it.id === args.itemId)
+        if (!item) throw new Error('الصنف غير موجود')
+        if (item.isService) throw new Error('الخدمات لا تدخل المخزون — سجّل قيمتها من تبويب «حسابات عامة» (مصاريف مترحلة/أصول)')
+        if (!Number.isFinite(args.qty) || args.qty < 0) throw new Error('الكمية الافتتاحية لا تكون سالبة')
+        if (!Number.isInteger(args.unitCostMinor) || args.unitCostMinor < 0) throw new Error('تكلفة الوحدة لا تكون سالبة')
+        const prev = state.openingItems[args.itemId] ?? { qty: 0, unitCostMinor: 0 }
+        const amountMinor = Math.round(args.qty * args.unitCostMinor)
+        // الكمية الفعلية تعدَّل بالفرق من المرجع الافتتاحي — لا تُستبدل (المبيعات قد تكون استهلكت جزءاً)
+        const deltaQty = Math.round((args.qty - prev.qty) * 1000) / 1000
+        const newStockQty = Math.round(((item.stockQty ?? 0) + deltaQty) * 1000) / 1000
+        if (newStockQty < 0) {
+          throw new Error(`لا يمكن تخفيض الكمية الافتتاحية دون المستهلك فعلياً (الرصيد الحالي ${item.stockQty ?? 0}) — استخدم تسوية الجرد`)
+        }
+        // القيمة الدفترية بنفس مسار الافتتاحي المتوازن (1103/3101 بفرق القيمة)
+        get().setOpeningBalance({ kind: 'item_stock', refId: args.itemId, amountMinor, label: item.nameAr })
+        // التقييم المادي: تثبيت الكمية والتكلفة المرجعية للصنف + سجل الافتتاحي المادي
+        set((s) => ({
+          items: s.items.map((it) => (it.id === args.itemId ? { ...it, stockQty: newStockQty, costMinor: args.unitCostMinor } : it)),
+          openingItems: { ...s.openingItems, [args.itemId]: { qty: args.qty, unitCostMinor: args.unitCostMinor } },
+        }))
+      },
+
+      declareOpeningCapital: (declaredMinor) => {
+        if (!Number.isInteger(declaredMinor) || declaredMinor < 0) throw new Error('رأس المال المعلن لا يكون سالباً')
+        const state = get()
+        // رصيد 3101 الدفتري الحقيقي (يشمل إعلانات سابقة) — حقوق الملكية طبيعتها دائنة
+        let capitalBalance = 0
+        for (const e of state.journal) for (const l of e.lines) {
+          if (l.accountCode === '3101') capitalBalance += l.credit - l.debit
+        }
+        const lines = buildCapitalDeclarationEntry(declaredMinor, capitalBalance)
+        if (lines.length === 0) {
+          set({ openingDeclaredCapitalMinor: declaredMinor })
+          return
+        }
+        const entryId = nextId(state.journal)
+        const now = new Date().toISOString()
+        const entry: JournalEntry = {
+          id: entryId,
+          entryNumber: entryId,
+          date: now.slice(0, 10),
+          description: `إعلان رأس المال: ${declaredMinor} — الفرق عن الدفتر يرحَّل لأرباح مرحّلة 3102`,
+          sourceType: 'opening',
+          sourceId: null,
+          lines,
+          createdBy: activeUserName(state),
+          createdAt: now,
+          reversedByEntryId: null,
+          reversesEntryId: null,
+        }
+        set({
+          journal: [...state.journal, entry],
+          openingDeclaredCapitalMinor: declaredMinor,
         })
       },
 
@@ -5014,6 +5873,7 @@ export const useDataStore = create<DataState>()(
           const treasury = args.treasury ?? sale.treasury ?? '1101'
           const isCreditSale = sale.payment === 'credit' && sale.customerId != null
           const ret = get().postSaleReturn({
+            __approvalBypass: true, // عملية الاستبدال ذرّية: المرتجع والبيع الجديد معاً لا يشطرهما طابور الاعتماد
             saleId: sale.id,
             ...(args.returnLineSpecs?.length
               ? { lineSpecs: args.returnLineSpecs }
@@ -5032,6 +5892,7 @@ export const useDataStore = create<DataState>()(
           // البيع الجديد يتبع الفاتورة الأصلية أيضاً: آجلة ⇒ على حساب العميل
           // (المرتجع خفض دينه والجديد يضيف له — الحركة الصافية على الذمم = الفرق)
           const newSale = get().postSale({
+            __approvalBypass: true, // جزء الاستبدال المركّب — لا يمرّ ببوابة الاعتماد
             lines: args.newLines,
             customerId: sale.customerId,
             payment: isCreditSale ? 'credit' : 'cash',
@@ -5166,6 +6027,7 @@ export const useDataStore = create<DataState>()(
         }
         // فاتورة واحدة تتولى الوصفات/المخزون/الضريبة/القيد — المحاسبة تبدأ هنا فقط
         const sale = get().postSale({
+          __approvalBypass: true, // إقفال أمر الطلب تدفق مركّب على شاشته — خارج طابور الاعتماد
           lines,
           customerId: args.customerId ?? null,
           payment: args.payment,
@@ -5187,6 +6049,20 @@ export const useDataStore = create<DataState>()(
 
       postVoucher: (args) => {
         const state = get()
+        // بوابة اعتماد المستندات (خطة ③): سندات القبض والصرف الخاضعة للنظام تقف
+        // بطلب اعتماد — التحويل بين الخزائن ليس مستند طرف خارجي فلا يخضع للنطاق.
+        if (!args.__approvalBypass && (args.kind === 'receipt' || args.kind === 'payment')) {
+          const approvalPartyName =
+            args.partyKind === 'customer' && args.partyId != null ? state.customers.find((c) => c.id === args.partyId)?.nameAr
+            : args.partyKind === 'supplier' && args.partyId != null ? state.suppliers.find((row) => row.id === args.partyId)?.nameAr
+            : args.partyKind === 'employee' && args.partyId != null ? state.employees.find((row) => row.id === args.partyId)?.nameAr
+            : null
+          enforceApprovalGate(get, args.kind, args.amountMinor, {
+            title: `${args.kind === 'receipt' ? 'سند قبض' : 'سند صرف'} — ${args.description}`,
+            partyName: approvalPartyName ?? args.description,
+            payload: serializeApprovalPayload(args),
+          })
+        }
         // ماكينة الدفع مسار قبض وارد فقط؛ الصرف الخارجي ليس refund لماكينة بلا أصل.
         if (args.terminalPayment && args.kind !== 'receipt') throw new Error('ماكينة الدفع مخصصة لسندات القبض؛ رد الماكينة يتم من المستند الأصلي')
         const terminal = args.terminalPayment ? state.paymentTerminals.find((row) => row.id === args.terminalPayment!.terminalId) : undefined
@@ -5220,6 +6096,23 @@ export const useDataStore = create<DataState>()(
         }
         if (args.kind === 'receipt' && args.counterAccountCode === '1104' && (args.partyKind !== 'customer' || args.partyId == null)) throw new Error('سند قبض العملاء 1104 يتطلب اختيار عميل مسجل')
         if (args.kind === 'payment' && args.counterAccountCode === '2101' && (args.partyKind !== 'supplier' || args.partyId == null)) throw new Error('سداد الموردين 2101 يتطلب اختيار مورد مسجل')
+        /* سداد قسائم رواتب محددة (طلب المالك ㉘): تحقق قبل أي كتابة — لا قسيمة إلا لموظف السند نفسه */
+        let settleSlips: PayrollSlip[] = []
+        if (args.settleSlipIds?.length) {
+          if (args.kind !== 'payment' || args.counterAccountCode !== '2104' || args.partyKind !== 'employee' || args.partyId == null)
+            throw new Error('سداد القسائم متاح في سند صرف على «رواتب مستحقة 2104» لموظف محدد')
+          settleSlips = args.settleSlipIds
+            .map((id) => state.payrollSlips.find((slip) => slip.id === id))
+            .filter((slip): slip is PayrollSlip => !!slip)
+          if (settleSlips.length !== args.settleSlipIds.length) throw new Error('قسيمة غير موجودة في سداد القسائم')
+          for (const slip of settleSlips) {
+            if (slip.employeeId !== args.partyId) throw new Error(`القسيمة ${slip.slipNumber} ليست لهذا الموظف — ${slip.employeeName}`)
+            if (slip.status === 'paid') throw new Error(`القسيمة ${slip.slipNumber} مصروفة بالفعل — لا يُسدَّد مرتين`)
+            if (slip.status === 'cancelled') throw new Error(`القسيمة ${slip.slipNumber} ملغاة`)
+          }
+          const settledTotal = settleSlips.reduce((sum, slip) => sum + slip.netMinor, 0)
+          if (settledTotal > args.amountMinor) throw new Error(`مجموع القسائم المحددة (${settledTotal}) أكبر من مبلغ السند (${args.amountMinor}) — ارفع المبلغ أو أزل قسيمة`)
+        }
         let partyAllocations: FifoAllocation[] | undefined
         let partyUnallocatedMinor: number | undefined
         if (args.kind === 'receipt' && args.counterAccountCode === '1104' && args.partyId != null) {
@@ -5260,6 +6153,7 @@ export const useDataStore = create<DataState>()(
         const entryLines = args.costCenterId == null ? baseEntryLines : baseEntryLines.map((line) => line.debit > 0 && line.accountCode === args.counterAccountCode ? { ...line, costCenterId: args.costCenterId } : line)
 
         if (args.date != null && !/^\d{4}-\d{2}-\d{2}$/.test(args.date)) throw new Error('تاريخ السند غير صالح')
+        if (args.projectId != null && !state.projects.find((p) => p.id === args.projectId)) throw new Error('المشروع المرتبط بالسند غير موجود')
         const voucherId = nextId(state.vouchers)
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -5299,6 +6193,7 @@ export const useDataStore = create<DataState>()(
           partyId: args.partyId ?? null,
           costCenterId: args.costCenterId ?? null,
           vehicleId: args.vehicleId ?? null,
+          projectId: args.projectId ?? null,
           fx: fxLeg,
           ...(partyAllocations ? { allocations: partyAllocations, unallocatedMinor: partyUnallocatedMinor ?? 0 } : {}),
           reversalEntryId: null,
@@ -5350,6 +6245,17 @@ export const useDataStore = create<DataState>()(
             }]
           : state.vehicleCostEntries
         set({ vouchers: [...state.vouchers, voucher], journal: [...state.journal, entry], clinicCollections, vehicleCostEntries, ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
+        /* وسْم القسائم المسدَّدة بهذا السند — بعد نجاح ترحيله (ذريّ: أي فشل قبله لا يترك أثراً).
+           القيد نفسه فوق 2104/الخزينة من مسار السند الرسمي؛ الوسم تسوية دفتر مساعد فقط. */
+        if (settleSlips.length) {
+          const settledIds = new Set(settleSlips.map((slip) => slip.id))
+          const settledNow = new Date().toISOString()
+          set({
+            payrollSlips: get().payrollSlips.map((slip) => (settledIds.has(slip.id)
+              ? { ...slip, status: 'paid' as const, paidAt: settledNow, paidEntryId: entryId, paidFrom: `سند صرف ${voucherNumber}` }
+              : slip)),
+          })
+        }
         return voucher
       },
 
@@ -5735,7 +6641,9 @@ export const useDataStore = create<DataState>()(
         const paidM = args.paidMinor
         if (!Number.isInteger(paidM) || paidM < 0) throw new Error('المدفوع لا يكون سالباً')
         if (paidM > totals.totalMinor) throw new Error('المدفوع أكبر من إجمالي الفاتورة المعدلة')
-        if (paidM < totals.totalMinor && args.customerId == null) {
+        // §91: التعديل يرث طرف الفاتورة الأصلية (عميل/مورد/موظف) — نوع الطرف لا يتغير بالتعديل
+        const salePartyKind = sale.partyKind ?? 'customer'
+        if (paidM < totals.totalMinor && salePartyKind === 'customer' && args.customerId == null) {
           throw new Error('الجزء الآجل يحتاج اختيار عميل — لا دين على «عميل نقدي»')
         }
         if (args.dueDate && args.dueDate < new Date().toISOString().slice(0, 10)) throw new Error('تاريخ الاستحقاق لا يسبق تاريخ التعديل')
@@ -5743,7 +6651,7 @@ export const useDataStore = create<DataState>()(
         // حارس حد الائتمان (المراجعة التراجعية): التعديل قد يرفع الجزء الآجل —
         // الفحص على صافي الزيادة: (رصيد العميل − آجل الفاتورة القديم) + الآجل الجديد ≤ الحد
         const newCreditPart = totals.totalMinor - paidM
-        if (newCreditPart > 0 && args.customerId != null && !args.creditLimitOverrideBy) {
+        if (newCreditPart > 0 && salePartyKind === 'customer' && args.customerId != null && !args.creditLimitOverrideBy) {
           const cust = state.customers.find((c) => c.id === args.customerId)
           if (cust && cust.creditLimitMinor > 0) {
             const oldPaid = sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0)
@@ -5760,9 +6668,13 @@ export const useDataStore = create<DataState>()(
           const receiptErrors = validateTreasuryAccess(user?.treasuryAccess, args.treasury, 'receipt', paidM)
           if (receiptErrors.length) throw new Error(receiptErrors.join(' — '))
         }
+        const editReceivable = salePartyKind === 'customer' ? undefined : {
+          receivableAccount: SALE_PARTY_RECEIVABLE[salePartyKind].accountCode,
+          receivableNote: SALE_PARTY_RECEIVABLE[salePartyKind].noteAr,
+        }
         const newEntryLines = args.paymentAllocations?.length
-          ? buildSaleEntryWithAllocations(totals, args.paymentAllocations)
-          : buildSaleEntry(totals, args.payment, args.treasury, paidM)
+          ? buildSaleEntryWithAllocations(totals, args.paymentAllocations, editReceivable)
+          : buildSaleEntry(totals, args.payment, args.treasury, paidM, editReceivable)
         const internalExpenses = args.internalExpenses ?? sale.internalExpenses ?? []
         for (const expense of internalExpenses) {
           if (expense.costCenterId != null && !state.costCenters.some((center) => center.id === expense.costCenterId && center.isActive)) throw new Error(`مركز التكلفة العام للمصروف «${expense.label}» غير موجود أو غير نشط`)
@@ -5829,7 +6741,8 @@ export const useDataStore = create<DataState>()(
 
         const updatedSale: SaleInvoice = {
           ...sale,
-          customerId: args.customerId,
+          // §91: التعديل يرث نوع الطرف — فاتورة مورد/موظف يبقى طرفها ولا يتحول لعميل
+          customerId: salePartyKind === 'customer' ? args.customerId : null,
           payment: args.payment,
           paidMinor: paidM,
           treasury: args.treasury,
@@ -5898,8 +6811,12 @@ export const useDataStore = create<DataState>()(
         }
         if (inv.custodyFileId != null) throw new Error('فاتورة مدفوعة من عهدة — عدّلها بمرتجع وفاتورة جديدة حفاظاً على ملف العهدة')
         if (inv.projectId != null) throw new Error('فاتورة مشروع — تكاليف المشاريع تُصحح بمستند تكلفة عاكس لا بتعديل')
-        if (inv.warehouseId == null && inv.lines.some((l) => l.warehouseId != null)) {
-          throw new Error('فاتورة شراء متعددة المخازن — صحّحها بمرتجع/فاتورة جديدة حتى لا يضيع توزيع المخازن')
+        // إصلاح (مراجعة المالك 2026-10-01): الحارس القديم كان يرفض أي فاتورة لسطورها
+        // مخازن ولو كانت كلها بمخزن واحد — فتعذّر تعديل أي فاتورة أُنشئت بالمحرر
+        // المستندي. يُرفض فقط التوزيع الفعلي على مخزنين فأكثر (توزيع يضيع بإعادة البناء).
+        const distinctOldWarehouses = [...new Set(inv.lines.map((l) => l.warehouseId).filter((v): v is number => v != null))]
+        if (distinctOldWarehouses.length >= 2) {
+          throw new Error('فاتورة شراء موزعة على أكثر من مخزن — صحّحها بمرتجع/فاتورة جديدة حتى لا يضيع توزيع المخازن')
         }
         if (inv.expenses.some((e) => (e.paidBy ?? 'supplier') !== 'supplier')) {
           throw new Error('فيها مصاريف مدفوعة من خزائن/عهد — عدّلها بمرتجع وفاتورة جديدة')
@@ -5939,7 +6856,9 @@ export const useDataStore = create<DataState>()(
         }
         // N1 (المراجعة الثانية): ض.ق.م المدخلات المسجلة على الفاتورة تُحفظ في القيد المعاد بناؤه —
         // وإلا اختفى مدين 2102 بصمت واختل مستحق المورد
-        const keptInputVat = inv.inputVatMinor ?? 0
+        // إصلاح (مراجعة المالك 2026-10-01): تُؤخذ من المحرر عند تعديل الكميات/النسب —
+        // كانت تبقى ضريبة الأصل كما هي فلا يتبعها مستحق المورد ولا القيد
+        const keptInputVat = args.inputVatMinor ?? inv.inputVatMinor ?? 0
         const periodExpenseTotal = periodExpenses.reduce((sum, expense) => sum + expense.amountMinor, 0)
         const editedSupplierDue = grandTotal + keptInputVat + periodExpenseTotal
         if (args.dueDate && args.paidMinor >= editedSupplierDue) throw new Error('الفاتورة مسددة بالكامل ولا تحتاج تاريخ استحقاق')
@@ -5957,6 +6876,13 @@ export const useDataStore = create<DataState>()(
         newEntryLines.push(...buildInternalExpenseLines(periodExpenses.map((expense) => ({ id: crypto.randomUUID(), label: expense.nameAr, amountMinor: expense.amountMinor, accountCode: expense.accountCode ?? '5108', settlement: 'payable_later' as const, payableAccountCode: expense.payableAccountCode ?? '2117', costCenterId: expense.costCenterId ?? null, taxTreatment: 'exempt' as const, taxPercent: 0, affectsProfit: true, landedCostAllocation: 'none' as const })), args.treasury))
         assertBalanced(newEntryLines)
         const now = new Date().toISOString()
+
+        // إصلاح (مراجعة المالك 2026-10-01): سطور الفاتورة المعدلة كانت تُبنى من الصفر
+        // فتضيع مخازن السطور وضريبتها وكميات الطلب/المرفوض — تُحفظ الآن من المحرر
+        // (مع رجوع لقيم الفاتورة الأصلية)، ويُطبَّع رأس المخزن كما في الترحيل الجديد.
+        const newLineWarehouses = args.lines.map((l, i) => l.warehouseId ?? inv.lines[i]?.warehouseId ?? null)
+        const distinctNewWarehouses = [...new Set(newLineWarehouses.filter((v): v is number => v != null))]
+        const newHeaderWarehouseId = distinctNewWarehouses.length >= 2 ? null : (distinctNewWarehouses[0] ?? args.warehouseId ?? inv.warehouseId ?? null)
 
         // ③ عكس القيد القديم + قيد جديد
         const oldEntry = state.journal.find((e) => e.id === inv.journalEntryId)
@@ -5997,20 +6923,25 @@ export const useDataStore = create<DataState>()(
         let nextBatchId = nextId(state.batches)
         const keptBatches = state.batches.filter((b) => b.purchaseId !== inv.id)
         const newBatches: StockBatch[] = []
-        for (const l of args.lines) {
+        args.lines.forEach((l, i) => {
           const item = state.items.find((it) => it.id === l.itemId)
           const oldBatch = state.batches.find((b) => b.purchaseId === inv.id && b.itemId === l.itemId)
-          if (!item?.trackExpiry) continue
-          newBatches.push({ id: nextBatchId++, itemId: l.itemId, warehouseId: inv.warehouseId ?? oldBatch?.warehouseId ?? null, expiryDate: oldBatch?.expiryDate ?? null, qty: l.qty, purchaseId: inv.id, receivedAt: now })
-        }
+          if (!item?.trackExpiry) return
+          newBatches.push({ id: nextBatchId++, itemId: l.itemId, warehouseId: newLineWarehouses[i] ?? newHeaderWarehouseId ?? oldBatch?.warehouseId ?? null, expiryDate: oldBatch?.expiryDate ?? null, qty: l.qty, purchaseId: inv.id, receivedAt: now })
+        })
 
         const updatedInv: PurchaseInvoice = {
           ...inv,
           supplierId: editedSupplierId,
-          lines: landed.map((l) => ({
+          lines: landed.map((l, i) => ({
             itemId: l.itemId, qty: l.qty, unitPriceMinor: l.unitPriceMinor,
             expenseShareMinor: l.expenseShareMinor, landedUnitCostMinor: l.landedUnitCostMinor,
+            warehouseId: newLineWarehouses[i] ?? newHeaderWarehouseId,
+            vatPercent: args.lines[i]?.vatPercent ?? inv.lines[i]?.vatPercent ?? 0,
+            orderedQty: inv.lines[i]?.orderedQty, rejectedQty: inv.lines[i]?.rejectedQty,
+            inputVatMinor: inv.lines[i]?.inputVatMinor,
           })),
+          warehouseId: newHeaderWarehouseId,
           expenses: args.expenses,
           goodsTotalMinor: goodsTotal,
           expensesTotalMinor: expensesTotal,
@@ -6028,6 +6959,17 @@ export const useDataStore = create<DataState>()(
             { at: now, reason: args.reason, previousEntryId: oldEntry.id, reversalEntryId: reversalId, by: activeUserName(state) },
           ],
         }
+        // إصلاح (مراجعة المالك 2026-10-01): تعديل فاتورة مُعبَّأة من أمر شراء كان يترك
+        // كميات «المستلم» في الأمر كما كانت — تُعاد الآن من فواتير الأمر الصافية
+        // (بعد خصم مرتجعاتها) وتوزَّع على سطور الأمر توزيعاً متدرجاً.
+        const editedSourceOverride = new Map([[inv.id, updatedInv]] as [number, { lines: { itemId: number; qty: number }[] }][])
+        const updatedPurchaseOrders = (() => {
+          const linked = state.purchaseOrders.filter((o) => (o.invoiceIds ?? []).includes(inv.id))
+          if (!linked.length) return state.purchaseOrders
+          return state.purchaseOrders.map((order) =>
+            order.invoiceIds.includes(inv.id) ? recomputeOrderReceivedFromInvoices(state, order, editedSourceOverride) : order,
+          )
+        })()
         set({
           purchases: state.purchases.map((p) => (p.id === inv.id ? updatedInv : p)),
           journal: [
@@ -6037,6 +6979,7 @@ export const useDataStore = create<DataState>()(
           ],
           items: updatedItems,
           batches: [...keptBatches, ...newBatches],
+          purchaseOrders: updatedPurchaseOrders,
         })
         return updatedInv
       },
@@ -6246,6 +7189,12 @@ export const useDataStore = create<DataState>()(
           appUsers: state.appUsers.map((u) => (u.id === user.id ? { ...u, pinHash: newPinHash, mustChangePin: false, initialPin: null } : u)),
           auditLog: appendAudit(state.auditLog, [{ at: new Date().toISOString(), user: user.nameAr, kind: 'auth', title: `«${user.nameAr}» غيّر رقمه السري من بروفايله` }]),
         })
+      },
+      updateMyPreferences: (patch) => {
+        /* تفضيلات المستخدم الحالي فقط — المفتاح خاص به فتفضيلات كل مستخدم
+           منفصلة تماماً عن غيره (طلب المالك: فصل إعدادات كل مستخدم عن الآخر) */
+        const key = userPrefsKey(get().currentUserId)
+        set({ userPrefs: { ...get().userPrefs, [key]: { ...get().userPrefs[key], ...patch } } })
       },
       updateMyProfile: (patch) => {
         const state = get()
@@ -6607,9 +7556,11 @@ export const useDataStore = create<DataState>()(
         set({ treasuries: state.treasuries.filter((x) => x.code !== code) })
       },
       removeWarehouse: (id) => {
+        // حارس §80: الرئيسي لا يُحذف — كان الفلتر يبتلع الطلب بصمت فيوهم المستخدم بالحذف
+        if (get().warehouses.some((w) => w.id === id && w.isMain)) throw new Error('المخزن الرئيسي لا يُحذف — أنشئ مخزناً آخر وحوّل الأدوار إن أردت')
         const used = get().transfers.some((t) => t.fromWarehouseId === id || t.toWarehouseId === id)
         if (used) throw new Error('لا يمكن حذف مخزن له تحويلات مسجلة — احتفظ به للسجل')
-        set((s) => ({ warehouses: s.warehouses.filter((w) => w.id !== id || w.isMain) }))
+        set((s) => ({ warehouses: s.warehouses.filter((w) => w.id !== id) }))
       },
 
       addCustomer: (c) => {
@@ -6709,6 +7660,28 @@ export const useDataStore = create<DataState>()(
           deductionsMinor: money((e as { deductionsMinor?: number }).deductionsMinor),
         }] }))
       },
+      importEmployees: (rows) => {
+        /* استيراد الموظفين (البند ③ من «اكمل ونفذ»): يضيف الصفوف الصالحة عبر
+           addEmployee الرسمي فتمر بحراسه (الاسم المكرر/الفارغ)، والمرفوض يُعاد
+           بسببته — لا صف يُدخل جزئياً ولا يُمس ما قبله */
+        const addedNames: string[] = []
+        const skipped: string[] = []
+        for (const row of rows) {
+          try {
+            get().addEmployee({
+              ...EMPTY_EXTENDED,
+              nameAr: row.nameAr, phone: row.phone, jobTitle: row.jobTitle, roleId: null,
+              hireDate: row.hireDate || new Date().toISOString().slice(0, 10),
+              baseSalaryMinor: row.baseSalaryMinor, allowancesMinor: row.allowancesMinor,
+              active: true, notes: row.notes,
+            })
+            addedNames.push(row.nameAr)
+          } catch (e) {
+            skipped.push(`${row.nameAr}: ${(e as Error).message}`)
+          }
+        }
+        return { added: addedNames.length, addedNames, skipped }
+      },
       updateEmployee: (id, patch) => {
         const state = get()
         if (patch.nameAr !== undefined) {
@@ -6747,6 +7720,10 @@ export const useDataStore = create<DataState>()(
 
       postPayroll: (args) => {
         const state = get()
+        // إصلاح §83 (قياس أثر): مسير بموظف شبح كان يمر — نقد حقيقي يخرج من
+        // الخزينة ومصروف 5102 يُحمَّل لمستفيد غير موجود في السجلات. القاتل في المستودع.
+        const ghost = [...new Set(args.lines.map((l) => l.employeeId))].filter((id) => !state.employees.some((e) => e.id === id))
+        if (ghost.length) throw new Error(`موظف غير موجود بالسجلات (رقم ${ghost.join('، ')}) — لا يُصرف راتب لمن ليس له ملف`)
         // 1) حساب كل سطر بالنواة الخالصة (يرمي لو صافي سطر سالب)
         const computed: PayrollLineComputed[] = args.lines.map(computePayrollLine)
         // 2) تحقق شامل قبل أي كتابة
@@ -7040,12 +8017,16 @@ export const useDataStore = create<DataState>()(
         // ① تحققات الإقفال (منتهية فعلاً + بالترتيب الزمني)
         const errors = validateYearClose(fy, allYears, new Date().toISOString().slice(0, 10))
         if (errors.length) throw new Error(errors.join(' — '))
-        // ② لا يُقفل مرتين: قيد إقفال سابق لنفس السنة؟
-        if (state.journal.some((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id)) {
+        // ② لا يُقفل مرتين: قيد إقفال سابق **غير معكوس** لنفس السنة؟
+        // (إعادة الفتح تعكس قيد الإقفال — بعدها يجوز إقفال جديد بالأرقام المصححة)
+        if (state.journal.some((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)) {
           throw new Error(`السنة «${fy.nameAr}» عليها قيد إقفال بالفعل`)
         }
-        // ③ بناء قيد الإقفال من اليومية (يستثني قيود إقفال سابقة تلقائياً — لا 4xxx/5xxx فيها أصلاً غير مصفَّرة)
-        const result = buildYearClosingLines(state.journal.filter((e) => e.sourceType !== 'year_closing'), fy)
+        // ③ بناء قيد الإقفال من اليومية — تستثنى آلية الإقفال كاملة (قيود إقفال
+        // سابقة **وعواكسها من إعادة فتح**): العاكس يعكس تصفيراً لن يصل الحساب
+        // أصلاً فاحتسابه يضاعف الصافي بعد إعادة فتح ثم إقفال جديد
+        const mechanism = closingMechanismIds(state.journal)
+        const result = buildYearClosingLines(state.journal.filter((e) => !mechanism.has(e.id)), fy)
         if (result.lines.length === 0) throw new Error('لا حركة إيرادات أو مصروفات في هذه السنة — لا شيء يُقفل')
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -7061,31 +8042,125 @@ export const useDataStore = create<DataState>()(
         return { entryId, netProfitMinor: result.netProfitMinor }
       },
 
+      reopenFiscalYear: (fy, allYears) => {
+        const state = get()
+        if (fy.status !== 'closed') throw new Error('السنة مفتوحة أصلاً — لا شيء يُعاد فتحه')
+        // الترتيب العكسي (نمط Odoo): لا إعادة فتح لسنة توجد بعدها سنة مقفلة —
+        // قيد إقفال السنة الأحدث بُني على أرصدة أُغلق عليها الأقدم، ففكّ الأحدث أولاً
+        const newerClosed = allYears.find((y) => y.id !== fy.id && y.status === 'closed' && y.startDate > fy.endDate)
+        if (newerClosed) throw new Error(`أعد فتح السنة الأحدث المقفلة «${newerClosed.nameAr}» أولاً — إعادة الفتح بالترتيب الزمني`)
+        const closingEntry = state.journal.find((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)
+        // أولاً: فتح الفترة (متجر الإعداد) — حتى يقبل حارس الدفتر قيد العكس بتاريخ داخلها
+        useAppStore.getState().reopenFiscalYear(fy.id)
+        if (!closingEntry) return { reversedEntryId: null } // مقفلة بلا قيد إقفال (إقفال قديم بلا حركة) — يكفي فتح الحالة
+        // قيد عاكس لقيد الإقفال: يعيد أرصدة الإيرادات والمصروفات وأثر الأرباح المرحلة،
+        // بتاريخ آخر يوم بالسنة المعاد فتحها (يلغي أثر التصفير داخل فترته نفسها)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId,
+          date: fy.endDate,
+          description: `إعادة فتح السنة المالية «${fy.nameAr}» — عكس قيد الإقفال #${closingEntry.entryNumber}`,
+          sourceType: 'reversal', sourceId: closingEntry.id,
+          lines: closingEntry.lines.map((l) => ({ accountCode: l.accountCode, debit: l.credit, credit: l.debit, note: `عكس إقفال — ${l.note}` })),
+          createdBy: activeUserName(get()), createdAt: new Date().toISOString(),
+          reversedByEntryId: null, reversesEntryId: closingEntry.id,
+        }
+        set({
+          journal: [
+            ...state.journal.map((e) => (e.id === closingEntry.id ? { ...e, reversedByEntryId: entryId } : e)),
+            entry,
+          ],
+        })
+        return { reversedEntryId: entryId }
+      },
+
       getCustomerBalance: (customerId) => statementBalance(get().getCustomerStatementRows(customerId)),
       getEmployeeStatementRows: (employeeId) => {
         const state = get()
         const rows: { date: string; ref: string; description: string; debitMinor: number; creditMinor: number }[] = []
-        /* قسائم الرواتب: الاستحقاق دائن للموظف، والصرف مدين يصفّي ذمته */
+        /* ── §91: فواتير البيع الآجلة للموظف (على جاريه 1107) — تُسترد من مسير رواتبه ── */
+        for (const sale of state.sales.filter((sl) => sl.partyKind === 'employee' && sl.partyId === employeeId)) {
+          const remainder = sale.totals.totalMinor - (sale.paidMinor ?? (sale.payment === 'cash' ? sale.totals.totalMinor : 0))
+          if (remainder <= 0) continue
+          rows.push({ date: sale.date.slice(0, 10), ref: sale.invoiceNumber, description: `فاتورة بيع آجلة على حساب الموظف — تُسترد من مسير رواتبه`, debitMinor: remainder, creditMinor: 0 })
+        }
+        /* ── كشف حساب الموظف الموحّد (طلب المالك: ككشف العميل — يظهر كل شيء) ──
+         * القاعدة المحاسبية: 2104 يحمل **الصافي** فقط، والسلفة (1107) أصل مستقل.
+         *   • استحقاق القسيمة: دائن بالصافي (الخصومات والسلف لم تدخل ذمته أصلاً)
+         *   • استرداد السلفة من الراتب: دائن (يسدد دين السلفة المدين أعلاه)
+         *   • الخصومات: بند توثيقي داخل البيان — لا دين ولا دفع
+         *   • الصرف: مدين بالصافي
+         * بهذا لا يتكرر الاسترداد مرتين ولا يختفي — والرصيد يطابق 2104/1107. */
         for (const slip of state.payrollSlips.filter((row) => row.employeeId === employeeId && row.status !== 'cancelled')) {
-          /* الدائن = المستحق قبل الاقتطاعات، ثم تظهر الخصومات والسلف مديناً
-             فيكون صافي الأثر = صافي القسيمة بلا ازدواج. */
-          rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: `استحقاق راتب ${slip.month}`, debitMinor: 0, creditMinor: slip.grossMinor + slip.allowancesMinor })
-          if (slip.deductionsMinor > 0) rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: 'خصومات على الراتب', debitMinor: slip.deductionsMinor, creditMinor: 0 })
-          if (slip.advanceMinor > 0) rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: 'استقطاع سلفة من الراتب', debitMinor: slip.advanceMinor, creditMinor: 0 })
-          if (slip.status === 'paid' && slip.paidAt) rows.push({ date: slip.paidAt.slice(0, 10), ref: slip.slipNumber, description: 'صرف الراتب', debitMinor: slip.netMinor, creditMinor: 0 })
-        }
-        /* السلف النقدية: مدين على الموظف حتى تُسترد */
-        for (const advance of state.employeeAdvances.filter((row) => row.employeeId === employeeId)) {
-          rows.push({ date: advance.date, ref: `ADV-${advance.id}`, description: advance.notes || 'سلفة موظف', debitMinor: advance.amountMinor, creditMinor: 0 })
-          if ((advance.recoveredMinor ?? 0) > 0) rows.push({ date: advance.date, ref: `ADV-${advance.id}`, description: 'استرداد من السلفة', debitMinor: 0, creditMinor: advance.recoveredMinor ?? 0 })
-        }
-        /* سندات القبض والصرف المحرَّرة باسم الموظف */
-        for (const voucher of state.vouchers.filter((row) => row.partyKind === 'employee' && row.partyId === employeeId && !row.reversalEntryId)) {
+          const slipMonth = monthLabelAr(slip.month)
           rows.push({
-            date: voucher.date, ref: voucher.voucherNumber, description: voucher.description || (voucher.kind === 'payment' ? 'سند صرف للموظف' : 'سند قبض من الموظف'),
-            debitMinor: voucher.kind === 'payment' ? voucher.amountMinor : 0,
+            date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber,
+            description: `استحقاق راتب ${slipMonth} — إجمالي ${fmtMinorPlain(slip.grossMinor + slip.allowancesMinor)}${slip.deductionsMinor > 0 ? ` · خصومات ${fmtMinorPlain(slip.deductionsMinor)}` : ''}${slip.advanceMinor > 0 ? ` · سلف مستقطعة ${fmtMinorPlain(slip.advanceMinor)}` : ''} · صافي ${fmtMinorPlain(slip.netMinor)}`,
+            debitMinor: 0, creditMinor: slip.netMinor,
+          })
+          if (slip.advanceMinor > 0) rows.push({ date: slip.accruedAt.slice(0, 10), ref: slip.slipNumber, description: 'سلفة استُردت من الراتب (سداد دين السلفة)', debitMinor: 0, creditMinor: slip.advanceMinor })
+          if (slip.status === 'paid' && slip.paidAt) rows.push({ date: slip.paidAt.slice(0, 10), ref: slip.slipNumber, description: `صرف راتب ${slipMonth}${slip.paidFrom ? ` — من ${slip.paidFrom}` : ''}`, debitMinor: slip.netMinor, creditMinor: 0 })
+        }
+        /* ── المسيرات القديمة (postPayroll المباشر): استحقاق وصرف في مستند واحد.
+         * آجل (accrue): 2104 دائن بالصافي + رد السلف المستقطع.
+         * نقدي (cash): أثر الذمة = رد السلف المستقطع فقط (الصرف خرج من الخزينة فوراً). */
+        for (const run of state.payrollRuns) {
+          const line = run.lines.find((row) => row.employeeId === employeeId)
+          if (!line) continue
+          const runMonth = monthLabelAr(run.month)
+          if (run.payMode === 'accrue') {
+            rows.push({ date: run.date, ref: run.runNumber, description: `مسير ${runMonth} (استحقاق آجل) — إجمالي ${fmtMinorPlain(line.grossMinor)} · صافي ${fmtMinorPlain(line.netMinor)}`, debitMinor: 0, creditMinor: line.netMinor })
+          } else {
+            rows.push({ date: run.date, ref: run.runNumber, description: `مسير ${runMonth} (نقدي فوري) — إجمالي ${fmtMinorPlain(line.grossMinor)} · صافي ${fmtMinorPlain(line.netMinor)}`, debitMinor: 0, creditMinor: 0 })
+          }
+          if (line.advancesMinor > 0) rows.push({ date: run.date, ref: run.runNumber, description: 'سلفة استُردت من المسير (سداد دين السلفة)', debitMinor: 0, creditMinor: line.advancesMinor })
+        }
+        /* ── السلف النقدية: مدين على الموظف (أصل 1107) — تُصفّى من مستنداتها ── */
+        for (const advance of state.employeeAdvances.filter((row) => row.employeeId === employeeId)) {
+          rows.push({ date: advance.date, ref: advance.advanceNumber, description: advance.source === 'sale_collection' ? `${advance.notes || 'تحصيل فاتورة على حساب الموظف'} — يسددها نقداً أو تُخصم من راتبه` : (advance.notes || 'سلفة موظف'), debitMinor: advance.amountMinor, creditMinor: 0 })
+        }
+        /* ── سداد نقدي لسلفة خارج المسير: دائن (يسدد دين السلفة) ── */
+        for (const repayment of state.advanceRepayments.filter((row) => row.employeeId === employeeId)) {
+          rows.push({ date: repayment.date, ref: repayment.repayNumber, description: 'سداد نقدي لسلفة خارج المسير', debitMinor: 0, creditMinor: repayment.amountMinor })
+        }
+        /* ── سندات القبض والصرف المحرَّرة باسم الموظف (سلفة/راتب/استرداد) ──
+         * §93 (إصلاح ازدواج العد): سند الصرف الذي سدّد قسائم رواتب يظهر مرة
+         * واحدة فقط — سطر «صرف راتب» للقسيمة نفسها موجود أعلاه، فكان السند
+         * يُعدّ مديناً مرة ثانية بنفس المبلغ فينقلب رصيد الموظف سالباً بلا سبب.
+         * يُعرض من السند فقط ما زاد عن مجموع القسائم التي سددها. */
+        for (const voucher of state.vouchers.filter((row) => row.partyKind === 'employee' && row.partyId === employeeId && !row.reversalEntryId)) {
+          const settledByVoucher = voucher.kind === 'payment'
+            ? state.payrollSlips
+              .filter((row) => row.employeeId === employeeId && row.status === 'paid' && row.paidEntryId === voucher.journalEntryId)
+              .reduce((sum, row) => sum + row.netMinor, 0)
+            : 0
+          const voucherDebit = voucher.kind === 'payment' ? Math.max(0, voucher.amountMinor - settledByVoucher) : 0
+          if (voucher.kind === 'payment' && voucherDebit === 0) continue
+          rows.push({
+            date: voucher.date, ref: voucher.voucherNumber,
+            description: voucher.description || (voucher.kind === 'payment' ? 'سند صرف للموظف' : 'سند قبض من الموظف'),
+            debitMinor: voucherDebit,
             creditMinor: voucher.kind === 'receipt' ? voucher.amountMinor : 0,
           })
+        }
+        /* ── العمولات: مستحقة = دائن، مصروفة = محايدة (صرفها النقدي يظهر بسند باسمه أو بالمسير) ── */
+        for (const commission of state.staffCommissions.filter((row) => row.employeeId === employeeId)) {
+          const amount = Math.max(0, commission.amountMinor)
+          if (amount <= 0 || commission.status === 'cancelled') continue
+          if (commission.status === 'accrued') rows.push({ date: commission.date, ref: commission.code, description: `عمولة مستحقة — ${commission.description}`, debitMinor: 0, creditMinor: amount })
+          else rows.push({ date: commission.date, ref: commission.code, description: `عمولة مصروفة — ${commission.description}`, debitMinor: amount, creditMinor: amount })
+        }
+        /* ── حركات العهدة: تعزيز/عجز مدين، تسوية/مردود دائن ── */
+        for (const tx of state.custodyTxs) {
+          const file = state.custodyFiles.find((row) => row.id === tx.fileId)
+          if (!file || file.employeeId !== employeeId || tx.amountMinor <= 0) continue
+          const isDebit = tx.type === 'fund' || tx.type === 'shortage'
+          rows.push({ date: tx.date, ref: `CT-${tx.id}`, description: `${tx.description || 'حركة عهدة'} (${tx.type})`, debitMinor: isDebit ? tx.amountMinor : 0, creditMinor: isDebit ? 0 : tx.amountMinor })
+        }
+        /* ── الجزاءات: توثيقية بمبلغ صفري — تُعلّم القارئ ولا تلوث الرصيد ── */
+        for (const deduction of state.employeeDeductions.filter((row) => row.employeeId === employeeId)) {
+          const status = (deduction.waivedMinor ?? 0) > 0 ? 'معفو عنه' : deduction.recoveredMinor >= deduction.amountMinor ? 'خُصم بالكامل' : deduction.recoveredMinor > 0 ? 'خُصم جزئياً' : 'قائم'
+          rows.push({ date: deduction.date.slice(0, 10), ref: deduction.dedNumber, description: `جزاء (${deduction.reason}) — ${status} · ${fmtMinorPlain(deduction.amountMinor)}`, debitMinor: 0, creditMinor: 0 })
         }
         return rows.sort((a, b) => a.date.localeCompare(b.date))
       },
@@ -7175,6 +8250,11 @@ export const useDataStore = create<DataState>()(
         return supplierStatement({
           supplierId,
           openingMinor: state.openingBalances[`supplier:${supplierId}`] ?? 0,
+          // §91: فواتير البيع الآجلة له (2101) — تظهر بكشفه
+          sales: state.sales.filter((sl) => sl.partyKind === 'supplier' && sl.partyId === supplierId).map((sl) => ({
+            invoiceNumber: sl.invoiceNumber, date: sl.date,
+            remainderMinor: sl.totals.totalMinor - (sl.paidMinor ?? (sl.payment === 'cash' ? sl.totals.totalMinor : 0)),
+          })),
           purchases: state.purchases, purchaseReturns: state.purchaseReturns, allPurchases: state.purchases,
           vouchers: state.vouchers, cheques: state.cheques,
           adjustments: [
@@ -7188,6 +8268,19 @@ export const useDataStore = create<DataState>()(
               docLabel: `مقاصة ${o.offsetNumber}`, date: o.date,
               debitMinor: o.amountMinor, creditMinor: 0,
             })),
+            // مقاولو الباطن المرتبطون بهذا المورد (تكامل الموردين): شهادات الأعمال
+            // تلزمه بصافي مستحقاته (2101 دائن) ودفعاته تخفضه (2101 مدين) —
+            // وإلا انفصل الدفتر المساعد للعقد عن كشف المورد (ث7) ودُفع مرتين.
+            ...state.subContracts.filter((sc) => sc.supplierId === supplierId).flatMap((sc) => [
+              ...state.subCertificates.filter((cert) => cert.contractId === sc.id).map((cert) => ({
+                docLabel: `شهادة باطن ${sc.contractNumber} #${cert.number} — ${cert.descriptionAr}`, date: cert.date,
+                debitMinor: 0, creditMinor: cert.netMinor,
+              })),
+              ...state.subPayments.filter((pay) => pay.contractId === sc.id && pay.kind === 'payment').map((pay) => ({
+                docLabel: `دفعة باطن ${sc.contractNumber} — ${sc.contractorName}`, date: pay.date,
+                debitMinor: pay.amountMinor, creditMinor: 0,
+              })),
+            ]),
             // قيود يدوية تحمل هذا المورد على 2101 (AUDIT-011)
             ...state.journal.flatMap((entry) => entry.lines
               .filter((line) => line.partyKind === 'supplier' && line.partyId === supplierId && line.accountCode === '2101')
@@ -8229,6 +9322,24 @@ export const useDataStore = create<DataState>()(
         set({ projects: [...state.projects, project] })
         return project
       },
+      /* ─── §94-مراجعة: تعديل بيانات المشروع (طلب المالك) — قيمة العقد قبل أول مستخلص فقط ─── */
+      updateProject: (id, changes) => {
+        const state = get()
+        const project = state.projects.find((p2) => p2.id === id)
+        if (!project) throw new Error('المشروع غير موجود')
+        const hasExtracts = state.projectExtracts.some((e) => e.projectId === id)
+        if (changes.contractValueMinor !== undefined && changes.contractValueMinor !== project.contractValueMinor && hasExtracts) {
+          throw new Error('صدرت مستخلصات على هذا المشروع — قيمة العقد لا تُعدَّل مباشرة؛ استخدم أمر تغيير (يدخل العقد الفعلي ونسب الإنجاز)')
+        }
+        const merged: Project = { ...project, ...changes }
+        const errors = validateProject(merged)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (merged.clientId != null && !state.customers.find((c) => c.id === merged.clientId)) throw new Error('العميل المربوط غير موجود')
+        if (merged.managerEmployeeId != null && !state.employees.find((e) => e.id === merged.managerEmployeeId)) throw new Error('مدير المشروع غير موجود في سجل الموظفين')
+        /* الكود والحالة لا يتغيران — التعديل للبيانات فقط */
+        set({ projects: state.projects.map((p2) => (p2.id === id ? { ...merged, code: project.code, status: project.status } : p2)) })
+        return merged
+      },
 
       addQuotation: (q) => {
         const state = get()
@@ -8240,6 +9351,9 @@ export const useDataStore = create<DataState>()(
           unitAr: l.unitAr,
           unitPriceMinor: l.unitPriceMinor,
           estCostMinor: Number.isInteger(l.estCostMinor) && (l.estCostMinor ?? 0) >= 0 ? (l.estCostMinor as number) : 0,
+          // الضريبة جزء من بند العرض (طلب المالك ㉘): تُحفظ وإلا ضاعت إجماليات العرض عند التخزين
+          vatPercent: Math.min(100, Math.max(0, l.vatPercent ?? 0)),
+          taxIncluded: !!l.taxIncluded,
         }))
         const errors = validateQuotation({ ...q, lines: fullLines })
         if (errors.length) throw new Error(errors.join(' — '))
@@ -8276,6 +9390,36 @@ export const useDataStore = create<DataState>()(
         set({ quotations: state.quotations.map((x) => (x.id === id ? { ...x, status } : x)) })
       },
 
+      /* ─── §94-مراجعة: فتح العرض المحفوظ وتعديله (طلب المالك: «لماذا لا يمكن فتحها وتعديلها؟») ─── */
+      updateQuotation: (id, changes) => {
+        const state = get()
+        const q = state.quotations.find((x) => x.id === id)
+        if (!q) throw new Error('العرض غير موجود')
+        if (q.projectId != null) throw new Error('العرض تحوّل لمشروع — لا يُعدَّل؛ بنوده صارت جدول كميات المشروع (أوامر التغيير من المشروع)')
+        const merged: Quotation = { ...q, ...changes, lines: q.lines } /* البنود تُستبدل بعد التطبيع أدناه — لا تتسرب بنود النوع الفضفاض */
+        const fullLines: QuotationLine[] = (changes.lines ?? q.lines).map((l) => ({
+          nameAr: (l.nameAr ?? '').trim() || l.descriptionAr.trim().slice(0, 40),
+          descriptionAr: l.descriptionAr,
+          qty: l.qty,
+          unitAr: l.unitAr,
+          unitPriceMinor: l.unitPriceMinor,
+          estCostMinor: Number.isInteger(l.estCostMinor) && (l.estCostMinor ?? 0) >= 0 ? (l.estCostMinor as number) : 0,
+          vatPercent: Math.min(100, Math.max(0, l.vatPercent ?? 0)),
+          taxIncluded: !!l.taxIncluded,
+        }))
+        merged.lines = fullLines.filter((l) => l.descriptionAr.trim() && l.qty > 0)
+        const errors = validateQuotation({ clientName: merged.clientName, titleAr: merged.titleAr, lines: merged.lines })
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (merged.clientId != null && !state.customers.find((c) => c.id === merged.clientId)) throw new Error('العميل المربوط غير موجود')
+        merged.clientName = merged.clientName.trim()
+        merged.titleAr = merged.titleAr.trim()
+        merged.winProbability = Math.min(100, Math.max(0, changes.winProbability ?? q.winProbability))
+        merged.bidBondMinor = Number.isInteger(changes.bidBondMinor ?? q.bidBondMinor) && (changes.bidBondMinor ?? q.bidBondMinor) >= 0 ? (changes.bidBondMinor ?? q.bidBondMinor) as number : 0
+        /* الرقم والحالة والتاريخ والمشروع المتولد لا تتغير — التعديل يصحح المحتوى فقط */
+        set({ quotations: state.quotations.map((x) => (x.id === id ? merged : x)) })
+        return merged
+      },
+
       convertQuotationToProject: (id, retentionPercent) => {
         const state = get()
         const q = state.quotations.find((x) => x.id === id)
@@ -8284,16 +9428,21 @@ export const useDataStore = create<DataState>()(
         if (q.projectId != null) throw new Error('تحوّل هذا العرض لمشروع بالفعل')
         // بوابة الموافقات (أمر التعديل): مسار نشط ⇒ يتطلب اعتماداً مكتملاً غير مستهلك
         get().assertApproved('quotation_to_project', q.id, `تحويل ${q.quoteNumber} إلى مشروع`)
+        /* §95 (محاذاة pro-acc — طلب المالك): قيمة عقد المشروع = صافي العرض **بلا ضريبة** —
+           الضريبة تظهر في إجماليات العرض فقط، والضريبة على الإيراد تحصّل وتُورَّد للدولة،
+           فلو دخلت قيمة العقد لتضخم سقف المستخلصات ونسب الإنجاز. البنود كذلك بأسعار صافية
+           (إن كان سعر العرض شاملاً الضريبة تُستخرج منه). */
+        const netContractMinor = quotationTotals(q.lines).netMinor
         const project = get().addProject({
           nameAr: q.titleAr,
           clientName: q.clientName,
           clientId: q.clientId ?? null, // الربط الإداري ينتقل مع التحويل — بلا أي أثر مالي
-          contractValueMinor: quotationTotal(q.lines),
+          contractValueMinor: netContractMinor,
           retentionPercent,
           startDate: new Date().toISOString().slice(0, 10),
-          notes: `متولد من ${q.quoteNumber}`,
+          notes: `متولد من ${q.quoteNumber}${quotationTotals(q.lines).taxMinor > 0 ? ' — قيمة العقد صافية بلا الضريبة' : ''}`,
         })
-        // تحويل بضغطة: كل بنود العرض تنتقل جدولَ كميات للمشروع بأكوادها وتكاليفها التقديرية
+        // تحويل بضغطة: كل بنود العرض تنتقل جدولَ كميات للمشروع بأكوادها وتكاليفها التقديرية — بأسعار صافية
         const startBoqId = nextId(get().boqItems)
         const boq: BoqItem[] = q.lines.map((l, i) => ({
           id: startBoqId + i,
@@ -8302,7 +9451,7 @@ export const useDataStore = create<DataState>()(
           descriptionAr: l.nameAr && l.nameAr !== l.descriptionAr ? `${l.nameAr} — ${l.descriptionAr}` : l.descriptionAr,
           unit: l.unitAr,
           qty: l.qty,
-          unitPriceMinor: l.unitPriceMinor,
+          unitPriceMinor: Math.round(quotationLineNetMinor(l) / l.qty), /* صافي سعر الوحدة = صافي البند ÷ كميته */
           estCostMinor: l.estCostMinor,
           progressPercent: 0,
         }))
@@ -8463,11 +9612,116 @@ export const useDataStore = create<DataState>()(
 
       getCustodySummary: (fileId) => summarizeCustody(get().custodyTxs.filter((t) => t.fileId === fileId)),
 
+      /* ═══ §93: خزائن العملات الأجنبية — أرصدة مذكرة مشتقة من المستندات (طلب المالك) ═══ */
+      getFxFlows: () => {
+        const state = get()
+        const book = bookCurrencyOf()
+        const flows: FxFlow[] = []
+        /* مبيعات حُصّلت بعملة أجنبية — دخول بسعر التحصيل (قيمته الدفترية يومها) */
+        for (const sale of state.sales) {
+          if (!sale.fx || sale.fx.amountMinor <= 0) continue
+          flows.push({
+            date: sale.date.slice(0, 10), seq: sale.journalEntryId, treasury: sale.treasury ?? '1101', currency: sale.fx.currencyCode,
+            amountMinor: sale.fx.amountMinor,
+            bookValueMinor: convertFxToBookMinor({ currencyCode: sale.fx.currencyCode, amountMinor: sale.fx.amountMinor, ratePpm: sale.fx.ratePpm, decimals: sale.fx.decimals }, book.decimals),
+            kind: 'in', ref: sale.invoiceNumber,
+          })
+        }
+        /* مشتريات سُدّدت بعملة أجنبية — خروج بسعر السداد */
+        for (const purchase of state.purchases) {
+          if (!purchase.fx || purchase.fx.amountMinor <= 0) continue
+          flows.push({
+            date: purchase.date.slice(0, 10), seq: purchase.journalEntryId ?? 0, treasury: purchase.treasury ?? '1101', currency: purchase.fx.currencyCode,
+            amountMinor: purchase.fx.amountMinor,
+            bookValueMinor: convertFxToBookMinor({ currencyCode: purchase.fx.currencyCode, amountMinor: purchase.fx.amountMinor, ratePpm: purchase.fx.ratePpm, decimals: purchase.fx.decimals }, book.decimals),
+            kind: 'out', ref: purchase.invoiceNumber,
+          })
+        }
+        /* سندات قبض/صرف بعملة أجنبية — المعكوس يُحسب من حركة العملة نفسها */
+        for (const voucher of state.vouchers) {
+          if (!voucher.fx || voucher.fx.amountMinor <= 0 || voucher.reversalEntryId) continue
+          flows.push({
+            date: voucher.date.slice(0, 10), seq: voucher.journalEntryId, treasury: voucher.treasury, currency: voucher.fx.currencyCode,
+            amountMinor: voucher.fx.amountMinor, bookValueMinor: voucher.amountMinor,
+            kind: voucher.kind === 'receipt' ? 'in' : 'out', ref: voucher.voucherNumber,
+          })
+        }
+        /* تحويلات العملة المسجلة — كل مستند حركتاه (خروج بمتوسط التكلفة/دخول بتكلفة الشراء) */
+        for (const doc of state.fxConversions) flows.push(...fxConversionFlows(doc, book.code, book.decimals))
+        return flows
+      },
+      getFxHoldings: () => fxHoldingsFromFlows(get().getFxFlows()),
+
+      convertFx: (args) => {
+        const state = get()
+        const book = bookCurrencyOf()
+        const from = args.fromCurrency.trim().toUpperCase()
+        const to = args.toCurrency.trim().toUpperCase()
+        const fromIsBook = from === book.code.toUpperCase()
+        const toIsBook = to === book.code.toUpperCase()
+        if (fromIsBook && toIsBook) throw new Error('تحويل عملة الدفتر إلى نفسها هو «تحويل خزينة» — من شاشة السندات')
+        if (!state.treasuries.some((t) => t.code === args.fromTreasury)) throw new Error('الخزينة المصروفة منها غير موجودة')
+        if (!state.treasuries.some((t) => t.code === args.toTreasury)) throw new Error('الخزينة المستلمة غير موجودة')
+        /* حارس الرصيد المذكرة: لا تحويل من عملة أجنبية أكثر من رصيدها الفعلي في الخزينة */
+        const holdings = get().getFxHoldings()
+        const holding = fromIsBook ? null : holdings.find((h) => h.treasury === args.fromTreasury && h.currency === from)
+        const acquisitionRatePpm = holding?.avgRatePpm ?? (fromIsBook ? 1_000_000 : 0)
+        const input = {
+          fromCurrency: from, fromDecimals: args.fromDecimals, toCurrency: to, toDecimals: args.toDecimals,
+          fromTreasury: args.fromTreasury, toTreasury: args.toTreasury,
+          fromAmountMinor: args.fromAmountMinor,
+          fromRatePpm: fromIsBook ? 1_000_000 : args.fromRatePpm,
+          toRatePpm: toIsBook ? 1_000_000 : args.toRatePpm,
+          feeMinor: args.feeMinor, bookDecimals: book.decimals, bookCurrencyCode: book.code, acquisitionRatePpm,
+        }
+        const errors = validateFxConversion(input, holding ? holding.amountMinor : null)
+        if (errors.length) throw new Error(errors.join(' — '))
+        const computed = computeFxConversion(input)
+        const docId = nextId(state.fxConversions)
+        const docNumber = `FXC-${String(docId).padStart(4, '0')}`
+        const now = new Date().toISOString()
+        const date = args.date || now.slice(0, 10)
+        const fromTxt = (args.fromAmountMinor / 10 ** args.fromDecimals).toFixed(args.fromDecimals)
+        const toTxt = (computed.toAmountMinor / 10 ** args.toDecimals).toFixed(args.toDecimals)
+        const label = `${fromTxt} ${from} → ${toTxt} ${to}`
+        const lines = buildFxConversionEntry(input, computed, `${docNumber} — ${label}`)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date,
+          description: `تحويل عملة ${docNumber}: ${label}${args.feeMinor > 0 ? ` · مصاريف ${(args.feeMinor / 10 ** book.decimals).toFixed(book.decimals)}` : ''}${computed.gainMinor > 0 ? ` · ربح فرق عملة ${(computed.gainMinor / 10 ** book.decimals).toFixed(book.decimals)}` : ''}${computed.lossMinor > 0 ? ` · خسارة فرق عملة ${(computed.lossMinor / 10 ** book.decimals).toFixed(book.decimals)}` : ''}`,
+          sourceType: 'fx_conversion', sourceId: docId, lines,
+          createdBy: activeUserName(state), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const doc: FxConversionDoc = {
+          id: docId, docNumber, date,
+          fromCurrency: from, fromDecimals: args.fromDecimals, toCurrency: to, toDecimals: args.toDecimals,
+          fromTreasury: args.fromTreasury, toTreasury: args.toTreasury,
+          fromAmountMinor: args.fromAmountMinor, toAmountMinor: computed.toAmountMinor,
+          fromRatePpm: input.fromRatePpm, toRatePpm: input.toRatePpm, acquisitionRatePpm,
+          feeMinor: args.feeMinor, gainMinor: computed.gainMinor, lossMinor: computed.lossMinor,
+          journalEntryId: entryId, notes: args.notes?.trim() || undefined,
+          createdBy: activeUserName(state), createdAt: now,
+        }
+        set({ fxConversions: [...state.fxConversions, doc], journal: [...state.journal, entry] })
+        return doc
+      },
+
       addProjectExtract: (args) => {
         const state = get()
         const project = state.projects.find((p) => p.id === args.projectId)
         if (!project) throw new Error('المشروع غير موجود')
         if (project.status === 'completed') throw new Error('المشروع مقفل — لا مستخلصات جديدة')
+        /* §95 (محاذاة pro-acc — طلب المالك): سقف صارم — المستخلصات المتراكمة لا تتجاوز
+           قيمة العقد الفعلية (الأصلية + أوامر التغيير المعتمدة/المستخلصة). الفارق؟ أمر تغيير. */
+        const extractCeiling = (newGross: number, excludeExtractId?: number) => {
+          const effective = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === project.id))
+          const claimed = state.projectExtracts
+            .filter((e) => e.projectId === project.id && e.id !== (excludeExtractId ?? -1))
+            .reduce((a, e) => a + e.totals.grossMinor, 0)
+          if (claimed + newGross > effective) {
+            throw new Error(`المستخلصات (${fmtMinorPlain(claimed + newGross)}) ستتجاوز قيمة العقد الفعلية (${fmtMinorPlain(effective)}) — المتبقي ${fmtMinorPlain(effective - claimed)}؛ اعتمد أمر تغيير بالفارق أولاً أو خفّض قيمة المستخلص`)
+          }
+        }
         // بوابة الموافقات: إصدار مستخلص العميل إجراء حرج (أمر التعديل)
         get().assertApproved('project_extract', project.id, `مستخلص جديد — ${project.nameAr}`)
         // بعد المستخلص الختامي لا مستخلصات — التسليم والإفراج عن المحتجز فقط
@@ -8484,6 +9738,7 @@ export const useDataStore = create<DataState>()(
           gross = r.grossMinor
         }
         if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
+        extractCeiling(gross)
         const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
         const id = nextId(state.projectExtracts)
         const extractNumber = `PRX-${String(id).padStart(4, '0')}`
@@ -8543,6 +9798,131 @@ export const useDataStore = create<DataState>()(
         }
         set({ projectExtracts: [...state.projectExtracts, extract], clientAdvances: updatedAdvances, boqItems: updatedBoq, journal: [...state.journal, entry], ...(terminalTransaction ? { paymentTerminalTransactions: [...state.paymentTerminalTransactions, terminalTransaction] } : {}) })
         return extract
+      },
+      /* ─── §94: تعديل مستخلص صادر (طلب المالك: «أصدرت مستخلصاً ولم أجد واجهة لمراجعته أو تعديله») ───
+         نفس نمط تعديل الفاتورة: قيد عاكس موثق السبب ثم إعادة بناء بنفس الرقم —
+         مع إرجاع كل أثر جانبي (تقدم بنود BOQ · استرداد الدفعة المقدمة) قبل البناء. ─── */
+      editProjectExtract: (args) => {
+        const state = get()
+        const extract = state.projectExtracts.find((e) => e.id === args.extractId)
+        if (!extract) throw new Error('المستخلص غير موجود')
+        const project = state.projects.find((p) => p.id === extract.projectId)
+        if (!project) throw new Error('المشروع غير موجود')
+        if (project.status === 'completed') throw new Error('المشروع مقفل — لا تُعدَّل مستخلصاته')
+        if (extract.refunds?.length) throw new Error('على المستخلص إشعار دائن قائم — عالجه أولاً (إلغاؤه أو مستخلص بديل)')
+        if (state.paymentTerminalTransactions.some((row) => row.kind === 'charge' && row.documentType === 'project_extract' && row.documentId === String(extract.id))) throw new Error('المستخلص محصل بالماكينة — لا يُعدَّل؛ إشعار دائن ثم مستخلص جديد')
+        const reason = args.reason.trim()
+        if (!reason) throw new Error('سبب التعديل مطلوب لسجل التدقيق')
+        /* النسب التراكمية: لا تعديل لملموس من مستخلص أحدث — التسلسل من الأحدث للأقدم
+           (فقط عند إعادة احتساب البنود؛ التعديل بمبلغ إجمالي لا يمس تقدم BOQ) */
+        const recomputeLines = !!(args.extractLines && args.extractLines.length > 0)
+        if (recomputeLines && extract.lines?.length) {
+          const mine = new Set(extract.lines.map((l) => l.boqItemId))
+          const later = state.projectExtracts.find((e) => e.projectId === extract.projectId && e.id > extract.id && e.lines?.some((l) => mine.has(l.boqItemId)))
+          if (later) throw new Error(`المستخلص ${later.extractNumber} الأحدث عدّل نسب بنود هذا المستخلص — عدّل الأحدث أولاً أو أصدر مستخلصاً بديلاً`)
+        }
+        get().assertApproved('project_extract', project.id, `تعديل مستخلص ${extract.extractNumber} — ${project.nameAr}`)
+        /* ① القيد الأصلي يُعكس بقيد موثق السبب (يبقى الرقم والتاريخ في الدفتر) */
+        const original = state.journal.find((e) => e.id === extract.journalEntryId)
+        if (!original) throw new Error('قيد المستخلص الأصلي غير موجود')
+        if (original.reversedByEntryId) throw new Error('قيد المستخلص معكوس مسبقاً — لا يُعدَّل مرتين')
+        const now = new Date().toISOString()
+        const reversalId = nextId(state.journal)
+        const reversal: JournalEntry = {
+          id: reversalId, entryNumber: reversalId, date: now.slice(0, 10),
+          description: `عكس ${extract.extractNumber} للتعديل — ${reason}`,
+          sourceType: 'reversal', sourceId: extract.id,
+          lines: buildReversalLines(original.lines),
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: original.id,
+        }
+        const journalAfterReversal = state.journal.map((e) => (e.id === original.id ? { ...e, reversedByEntryId: reversalId } : e))
+        /* ② تقدم بنود BOQ يرجع للنسب السابقة لهذا المستخلص — البناء الجديد ينطلق منها
+           (تعديل بمبلغ إجمالي على مستخلص بندي: الأعمال قائمة والتقدم لا يُمس) */
+        const boqAfterRevert = recomputeLines && extract.lines?.length
+          ? state.boqItems.map((b) => {
+              const l = extract.lines!.find((x) => x.boqItemId === b.id)
+              return l ? { ...b, progressPercent: l.prevProgressPercent } : b
+            })
+          : state.boqItems
+        /* ③ استرداد الدفعة المقدمة يُرجَع (إجمالي 2109 يظل مطابقاً — القيد العاكس عكس نصيبه) */
+        let toGiveBack = extract.advanceRecoveryMinor ?? 0
+        let advancesAfterRevert = state.clientAdvances
+        if (toGiveBack > 0) {
+          advancesAfterRevert = state.clientAdvances.map((a) => ({ ...a }))
+          for (let i = advancesAfterRevert.length - 1; i >= 0 && toGiveBack > 0; i--) {
+            const a = advancesAfterRevert[i]
+            if (a.projectId !== extract.projectId || a.recoveredMinor <= 0) continue
+            const give = Math.min(a.recoveredMinor, toGiveBack)
+            a.recoveredMinor -= give
+            toGiveBack -= give
+          }
+          if (toGiveBack > 0) throw new Error('خلل في إرجاع استرداد الدفعة المقدمة — راجع الدعم الفني')
+        }
+        /* ④ إعادة البناء من الحالة المرجَعة — نفس حراس الإصدار (نفس الرقم والمعرف) */
+        let extractLinesComputed: ExtractLineComputed[] | undefined
+        let gross = args.grossMinor ?? 0
+        if (recomputeLines) {
+          const r = computeExtractLines(args.extractLines!, boqAfterRevert.filter((b) => b.projectId === project.id))
+          extractLinesComputed = r.computed
+          gross = r.grossMinor
+        }
+        if (!Number.isInteger(gross) || gross <= 0) throw new Error('قيمة المستخلص يجب أن تكون موجبة — أدخل مبلغاً أو اختر بنوداً من جدول الكميات')
+        /* سقف العقد مع إقصاء قيمة هذا المستخلص القديمة — التعديل يعيد حساب المتراكم كأنه استُبدل */
+        {
+          const effective = effectiveContractValue(project.contractValueMinor, state.changeOrders.filter((o) => o.projectId === project.id))
+          const claimed = state.projectExtracts
+            .filter((e) => e.projectId === project.id && e.id !== extract.id)
+            .reduce((a, e) => a + e.totals.grossMinor, 0)
+          if (claimed + gross > effective) {
+            throw new Error(`بعد التعديل سيتجاوز المتراكم (${fmtMinorPlain(claimed + gross)}) قيمة العقد الفعلية (${fmtMinorPlain(effective)}) — المتبقي ${fmtMinorPlain(effective - claimed)}؛ اعتمد أمر تغيير أو خفّض القيمة`)
+          }
+        }
+        const totals = computeExtractTotals(gross, project.retentionPercent, args.vatPercent)
+        const recovery = args.advanceRecoveryMinor ?? 0
+        if (recovery > 0) {
+          const advBalance = advancesAfterRevert.filter((a) => a.projectId === project.id).reduce((sum, a) => sum + a.amountMinor - a.recoveredMinor, 0)
+          if (recovery > advBalance) throw new Error(`الاسترداد أكبر من رصيد الدفعات المقدمة (${advBalance})`)
+        }
+        if (args.payment === 'credit') guardCreditLimit(get(), project.clientId ?? null, Math.max(totals.dueMinor - recovery, 0), args.creditLimitOverrideBy)
+        const lines = recovery > 0
+          ? buildExtractEntryWithAdvance(totals, args.payment, extract.extractNumber, args.treasury ?? '1101', recovery)
+          : buildExtractEntry(totals, args.payment, extract.extractNumber, args.treasury ?? '1101')
+        const entryId = reversalId + 1 /* القيد العاكس استولى على nextId — البديل بعده مباشرة */
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId, date: now.slice(0, 10),
+          description: `مستخلص ${extract.extractNumber} (معدَّل) — ${project.nameAr}`,
+          sourceType: 'project_extract', sourceId: extract.id, lines,
+          createdBy: activeUserName(get()), createdAt: now, reversedByEntryId: null, reversesEntryId: null,
+        }
+        const rebuilt: ProjectExtract = {
+          ...extract,
+          date: now, description: args.description, payment: args.payment, totals, journalEntryId: entryId,
+          lines: extractLinesComputed?.map((c) => ({ boqItemId: c.boqItemId, code: c.code, descriptionAr: c.descriptionAr, prevProgressPercent: c.prevProgressPercent, newProgressPercent: c.newProgressPercent, lineValueMinor: c.lineValueMinor })),
+          ...(recovery > 0 ? { advanceRecoveryMinor: recovery } : { advanceRecoveryMinor: undefined }),
+          ...(args.isFinal ? { isFinal: true } : { isFinal: undefined }),
+          lastEditReason: reason, editedAt: now, editReversalEntryId: reversalId,
+        }
+        /* ⑤ تقدم BOQ الجديد واسترداد الدفعة الجديد (FIFO الأقدم أولاً) */
+        const updatedBoq = extractLinesComputed
+          ? boqAfterRevert.map((b) => {
+              const c = extractLinesComputed.find((x) => x.boqItemId === b.id)
+              return c ? { ...b, progressPercent: c.newProgressPercent } : b
+            })
+          : boqAfterRevert
+        let toRecover = recovery
+        const updatedAdvances = advancesAfterRevert.map((a) => {
+          if (toRecover <= 0 || a.projectId !== project.id) return a
+          const room = a.amountMinor - a.recoveredMinor
+          const take = Math.min(room, toRecover)
+          toRecover -= take
+          return take > 0 ? { ...a, recoveredMinor: a.recoveredMinor + take } : a
+        })
+        set({
+          projectExtracts: state.projectExtracts.map((e) => (e.id === extract.id ? rebuilt : e)),
+          clientAdvances: updatedAdvances, boqItems: updatedBoq,
+          journal: [...journalAfterReversal, reversal, entry],
+        })
+        return rebuilt
       },
       /* موازنة تكاليف المشروع بالفئات (نمط pro-acc): تُدخل مرة وتقارن بالفعلي أولاً بأول */
       setProjectBudget: (projectId, budgetLines) => {
@@ -9109,15 +10489,50 @@ export const useDataStore = create<DataState>()(
         })
         return { amount: remaining }
       },
+      getProjectCostBreakdown: (projectId) => {
+        const state = get()
+        /* تصنيف بنود projectCosts بوسم المصدر — لا جمع فوقها (التدفقات الآلية
+           تُنشئ بندها هنا مباشرة منذ نشأتها) */
+        const rows = state.projectCosts.filter((c) => c.projectId === projectId)
+        const manual = rows.filter((c) => !c.source || c.source === 'manual').map((c) => ({ id: c.id, kind: c.kind, description: c.description, amountMinor: c.amountMinor, date: c.date }))
+        const subCertificates = rows.filter((c) => c.source === 'sub_certificate').map((c) => ({ id: c.id, description: c.description, amountMinor: c.amountMinor, date: c.date }))
+        const dailyWork = rows.filter((c) => c.source === 'daily_work').map((c) => ({ id: c.id, description: c.description, amountMinor: c.amountMinor, date: c.date }))
+        const purchases = rows.filter((c) => c.source === 'purchase').map((c) => ({ id: c.id, description: c.description, amountMinor: c.amountMinor, date: c.date }))
+        const materialIssues = rows.filter((c) => c.source === 'material_issue').map((c) => ({ id: c.id, description: c.description, amountMinor: c.amountMinor, date: c.date }))
+        const projectPurchaseIds = new Set(state.purchases.filter((x) => x.projectId === projectId).map((x) => x.id))
+        const purchaseReturns = state.purchaseReturns
+          .filter((r) => projectPurchaseIds.has(r.purchaseId))
+          .map((r) => ({ returnNumber: r.returnNumber, totalMinor: r.totalMinor, date: r.date }))
+        const totals = {
+          manualMinor: manual.reduce((a, c) => a + c.amountMinor, 0),
+          subMinor: subCertificates.reduce((a, c) => a + c.amountMinor, 0),
+          dailyMinor: dailyWork.reduce((a, c) => a + c.amountMinor, 0),
+          purchasesMinor: purchases.reduce((a, c) => a + c.amountMinor, 0),
+          materialIssuesMinor: materialIssues.reduce((a, c) => a + c.amountMinor, 0),
+          returnsMinor: purchaseReturns.reduce((a, r) => a + r.totalMinor, 0),
+        }
+        return { manual, subCertificates, dailyWork, purchases, materialIssues, purchaseReturns, totals: { ...totals, allMinor: totals.manualMinor + totals.subMinor + totals.dailyMinor + totals.purchasesMinor + totals.materialIssuesMinor - totals.returnsMinor } }
+      },
+
       getProjectProfit: (projectId) => {
         const state = get()
         const project = state.projects.find((p) => p.id === projectId)
         if (!project) throw new Error('المشروع غير موجود')
         const released = state.retentionReleases.filter((r) => r.projectId === projectId).reduce((a, r) => a + r.amountMinor, 0)
+        /* §95 (محاذاة pro-acc): التكاليف من كل مصادرها — اليدوية + شهادات الباطن
+           (باطن) + أجور اليومية المسوّاة (عمالة) + المشتريات المرتبطة (مواد، بلا ض.مدخلات)
+           − مرتجعاتها. قبل هذا كان الربح يبدو أعلى من الحقيقة بقدر التكاليف المرحّلة تلقائياً. */
+        /* بنود projectCosts نفسها (بكل مصادرها الموسومة) − مرتجعات الشراء التي
+           عكست 5110 بالدفتر — فتطابق البطاقة صافي 5110 بلا جمع مزدوج */
+        const bd = get().getProjectCostBreakdown(projectId)
+        const costs = [
+          ...state.projectCosts.filter((c) => c.projectId === projectId).map((c) => ({ kind: c.kind, amountMinor: c.amountMinor })),
+          ...bd.purchaseReturns.map((r) => ({ kind: 'materials' as CostKind, amountMinor: -r.totalMinor })),
+        ]
         return projectProfit(
           project,
           state.projectExtracts.filter((e) => e.projectId === projectId).map((e) => ({ grossMinor: e.totals.grossMinor, retentionMinor: e.totals.retentionMinor })),
-          state.projectCosts.filter((c) => c.projectId === projectId).map((c) => ({ kind: c.kind, amountMinor: c.amountMinor })),
+          costs,
           released,
         )
       },
@@ -9133,6 +10548,19 @@ export const useDataStore = create<DataState>()(
         const item: BoqItem = { ...args, estCostMinor: estCost, id: nextId(state.boqItems), progressPercent: 0 }
         set({ boqItems: [...state.boqItems, item] })
         return item
+      },
+      /* ─── §94-مراجعة: تعديل بيانات بند BOQ — الوصف والوحدة دائماً، الكمية/السعر قبل بدء التنفيذ فقط ─── */
+      updateBoqItem: (id, changes) => {
+        const state = get()
+        const boq = state.boqItems.find((b) => b.id === id)
+        if (!boq) throw new Error('بند الكميات غير موجود')
+        const priceQtyChange = (changes.qty !== undefined && changes.qty !== boq.qty) || (changes.unitPriceMinor !== undefined && changes.unitPriceMinor !== boq.unitPriceMinor)
+        if (priceQtyChange && boq.progressPercent > 0) throw new Error(`البند منفَّذ بنسبة ${boq.progressPercent}٪ — قيمته في مستخلصات مرحّلة؛ لا تُعدَّل الكمية ولا السعر (بند جديد أو أمر تغيير)`)
+        const merged: BoqItem = { ...boq, ...changes }
+        const errors = validateBoqItem({ descriptionAr: merged.descriptionAr, unit: merged.unit, qty: merged.qty, unitPriceMinor: merged.unitPriceMinor })
+        if (errors.length) throw new Error(errors.join(' — '))
+        set({ boqItems: state.boqItems.map((b) => (b.id === id ? merged : b)) })
+        return merged
       },
       updateBoqProgress: (id, progressPercent) => {
         if (progressPercent < 0 || progressPercent > 100) throw new Error('نسبة الإنجاز بين 0 و100')
@@ -9242,6 +10670,33 @@ export const useDataStore = create<DataState>()(
         set({ subContracts: [...state.subContracts, contract] })
         return contract
       },
+      /* ─── §94-مراجعة-2: تعديل عقد باطن (استكمال مراجعة «راجع كل شئ») ─── */
+      updateSubContract: (id, changes) => {
+        const state = get()
+        const c = state.subContracts.find((x) => x.id === id)
+        if (!c) throw new Error('عقد الباطن غير موجود')
+        if (c.status !== 'active') throw new Error('العقد مقفل — لا يُعدَّل')
+        const hasCerts = state.subCertificates.some((x) => x.contractId === id)
+        if (changes.contractValueMinor !== undefined && changes.contractValueMinor !== c.contractValueMinor && hasCerts) {
+          throw new Error('اعتُمدت شهادات على هذا العقد — قيمته لا تُعدَّل مباشرة؛ عقد ملحق (عقد جديد) أو قسّم الأعمال')
+        }
+        const merged: SubContract = { ...c, ...changes }
+        const errors = validateSubContract(merged)
+        const withhold = changes.taxWithholdPercent ?? c.taxWithholdPercent
+        if (withhold < 0 || withhold > 20) errors.push('نسبة ضريبة الاستقطاع بين 0 و20٪')
+        const advPct = changes.advanceRecoveryPercent ?? c.advanceRecoveryPercent
+        if (advPct < 0 || advPct > 100) errors.push('نسبة خصم الدفعة المقدمة بين 0 و100٪')
+        if (merged.supplierId != null && !state.suppliers.find((x) => x.id === merged.supplierId)) errors.push('المورد المربوط غير موجود')
+        for (const bid of merged.boqItemIds) {
+          const b = state.boqItems.find((x) => x.id === bid)
+          if (!b || b.projectId !== c.projectId) errors.push(`بند BOQ رقم ${bid} ليس من بنود مشروع هذا العقد`)
+        }
+        if (errors.length) throw new Error(errors.join(' — '))
+        /* الرقم والحالة والمشروع والنسبة المنفذة لا تتغير — التعديل للبيانات والنِّسَب المستقبلية */
+        set({ subContracts: state.subContracts.map((x) => (x.id === id ? { ...merged, contractNumber: c.contractNumber, status: c.status, projectId: c.projectId, progressPercent: c.progressPercent } : x)) })
+        return merged
+      },
+
       addSubCertificate: (args) => {
         const state = get()
         const contract = state.subContracts.find((c) => c.id === args.contractId)
@@ -9308,7 +10763,7 @@ export const useDataStore = create<DataState>()(
         const cost = {
           id: nextId(state.projectCosts), projectId: contract.projectId, date: now.slice(0, 10),
           kind: 'subcontract' as CostKind, description: `شهادة ${label}: ${args.description}`,
-          amountMinor, payment: 'credit' as const, journalEntryId: entryId,
+          amountMinor, payment: 'credit' as const, journalEntryId: entryId, source: 'sub_certificate' as const,
         }
         const updatedContracts = newProgress !== null
           ? state.subContracts.map((c) => (c.id === contract.id ? { ...c, progressPercent: newProgress } : c))
@@ -9383,6 +10838,21 @@ export const useDataStore = create<DataState>()(
         set({ bonds: [...state.bonds, bond], journal: [...state.journal, entry] })
         return bond
       },
+      /* ─── §94-مراجعة-2: تعديل بيانات خطاب ضمان نشط — القيم المقيدة لا تُمس ─── */
+      updateBond: (id, changes) => {
+        const state = get()
+        const bond = state.bonds.find((b) => b.id === id)
+        if (!bond) throw new Error('الخطاب غير موجود')
+        if (bond.status !== 'active') throw new Error('الخطاب مُسوَّى — لا يُعدَّل')
+        const merged: Bond = { ...bond, ...changes }
+        const errors = validateBond(merged)
+        if (errors.length) throw new Error(errors.join(' — '))
+        if (merged.projectId != null && !state.projects.find((p) => p.id === merged.projectId)) throw new Error('المشروع غير موجود')
+        /* القيمة والهامش والمصاريف والبنك والحالة والإقفال لا تتغير — قيود 1109/البنك صدرت بها */
+        set({ bonds: state.bonds.map((b) => (b.id === id ? { ...merged, amountMinor: bond.amountMinor, marginMinor: bond.marginMinor, feesMinor: bond.feesMinor, bank: bond.bank, status: bond.status, issueEntryId: bond.issueEntryId, settleEntryId: bond.settleEntryId } : b)) })
+        return merged
+      },
+
       settleBond: (bondId, outcome) => {
         const state = get()
         const bond = state.bonds.find((b) => b.id === bondId)
@@ -9403,6 +10873,18 @@ export const useDataStore = create<DataState>()(
         const updated: Bond = { ...bond, status: outcome, settleEntryId: entryId }
         set({ bonds: state.bonds.map((b) => (b.id === bondId ? updated : b)), journal: [...state.journal, entry] })
         return updated
+      },
+
+      /* ─── §94-مراجعة-2: تعديل عامل يومية — الأجر المسجل بالسجلات القديمة تاريخي ─── */
+      updateDailyWorker: (id, changes) => {
+        const state = get()
+        const w = state.dailyWorkers.find((x) => x.id === id)
+        if (!w) throw new Error('العامل غير مسجل')
+        const merged: DailyWorker = { ...w, ...changes }
+        if (!merged.nameAr.trim()) throw new Error('اسم العامل مطلوب')
+        if (!Number.isInteger(merged.dailyWageMinor) || merged.dailyWageMinor <= 0) throw new Error('اليومية يجب أن تكون موجبة')
+        set({ dailyWorkers: state.dailyWorkers.map((x) => (x.id === id ? merged : x)) })
+        return merged
       },
 
       addDailyWorker: (args) => {
@@ -9454,7 +10936,7 @@ export const useDataStore = create<DataState>()(
         for (const r of unsettled) if (r.projectId != null) byProject.set(r.projectId, (byProject.get(r.projectId) ?? 0) + r.wageMinor)
         const newCosts = [...byProject].map(([projectId, amountMinor]) => ({
           id: costId++, projectId, date: now.slice(0, 10), kind: 'labor' as CostKind,
-          description: `أجور يومية ${worker.nameAr}`, amountMinor, payment: 'cash' as const, journalEntryId: entryId,
+          description: `أجور يومية ${worker.nameAr}`, amountMinor, payment: 'cash' as const, journalEntryId: entryId, source: 'daily_work' as const,
         }))
         set({
           dailyWorkRecords: state.dailyWorkRecords.map((r) => (r.workerId === workerId && !r.settled ? { ...r, settled: true, settlementId: entryId } : r)),
@@ -9529,7 +11011,7 @@ export const useDataStore = create<DataState>()(
         const cost = {
           id: nextId(state.projectCosts), projectId: project.id, date: now.slice(0, 10),
           kind: 'materials' as CostKind, description: `مواد منصرفة ${reqNumber}`,
-          amountMinor: totalCost, payment: 'cash' as const, journalEntryId: entryId,
+          amountMinor: totalCost, payment: 'cash' as const, journalEntryId: entryId, source: 'material_issue' as const,
         }
         set({
           materialRequisitions: [...state.materialRequisitions, req],
@@ -10118,6 +11600,7 @@ export const useDataStore = create<DataState>()(
           const treasury = args.treasury ?? '1101'
           // 1) بيع المشغول الجديد نقداً كاملاً في الخزينة (قيد بيع كامل: 4101/2102/5101)
           const sale = get().postSale({
+            __approvalBypass: true, // المقايضة ذرّية: البيع وشراء الكسر معاً — خارج طابور الاعتماد
             lines: args.lines,
             customerId: args.customerId ?? null,
             payment: 'cash',
@@ -10407,6 +11890,35 @@ export const useDataStore = create<DataState>()(
           [...state.clinicCollections.filter((c) => c.patientId === patientId).map((c) => ({ amountMinor: c.amountMinor })), ...creditRefunds],
         )
       },
+      /* ─── المواعيد والحجوزات (سد الفجوة العالمية 1) ─── */
+      addBooking: (b) => {
+        const errors = validateBooking(b)
+        if (errors.length) throw new Error(errors[0])
+        const state = get()
+        const conflicts = bookingConflicts(state.bookings, b)
+        if (conflicts.length && !b.allowConflict) {
+          return { booking: { ...b, id: -1, status: 'scheduled', createdAt: '' }, conflicts }
+        }
+        const booking: Booking = { ...b, id: nextId(state.bookings), status: 'scheduled', createdAt: new Date().toISOString() }
+        set({ bookings: [...state.bookings, booking] })
+        return { booking, conflicts }
+      },
+      setBookingStatus: (id, status) => {
+        set((s) => ({ bookings: s.bookings.map((b) => (b.id === id ? { ...b, status } : b)) }))
+      },
+      updateBooking: (id, patch) => {
+        const state = get()
+        const merged = { ...state.bookings.find((b) => b.id === id)!, ...patch }
+        const errors = validateBooking(merged)
+        if (errors.length) throw new Error(errors[0])
+        const conflicts = bookingConflicts(state.bookings, merged, id)
+        set({ bookings: state.bookings.map((b) => (b.id === id ? merged : b)) })
+        return { conflicts }
+      },
+      deleteBooking: (id) => {
+        set((s) => ({ bookings: s.bookings.filter((b) => b.id !== id) }))
+      },
+
       addAppointment: (a) => {
         const state = get()
         if (!state.clinicPatients.some((p) => p.id === a.patientId)) throw new Error('المريض غير مسجل')
@@ -11050,6 +12562,13 @@ export const useDataStore = create<DataState>()(
       addAsset: (args) => {
         const state = get()
         const funding: AssetFunding = args.funding ?? 'cash'
+        // إصلاح §82 (قياس أثر): التمويل غير النقدي كان يقبل دفعة نقدية ويصفّرها بصمت —
+        // القيمة تختفي: لا تُخصم من الخزينة، لا تدفع للمورد، ولا تظهر في أي كشف،
+        // بينما يُحمَّل المورد بكامل التكلفة. القاتل الآن صريح في المستودع:
+        // «المقدم نقداً + الباقي آجل» هو مسار التمويل النقدي نفسه.
+        if ((funding === 'supplier_credit' || funding === 'capital' || funding === 'partner') && (args.paidMinor ?? 0) > 0) {
+          throw new Error('هذا التمويل لا يقبل دفعة نقدية عند الاقتناء — للشراء بمقدم نقدي وباقٍ آجل على المورد اختر تمويل «دفع من خزينة/بنك» وأدخل المقدم، أو اجعله آجلاً بالكامل وسدّده بالأقساط')
+        }
         // رأس مال/جاري شريك: لا دفع نقدياً من خزائن المنشأة إطلاقاً
         const paid = funding === 'capital' || funding === 'partner' ? 0 : funding === 'supplier_credit' ? 0 : args.paidMinor
         const errors = validateAsset({ ...args, paidMinor: paid })
@@ -12228,6 +13747,7 @@ export const useDataStore = create<DataState>()(
           suppliers: (s.suppliers ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           employees: (s.employees ?? []).map((x) => ({ ...EMPTY_EXTENDED, ...x })),
           payrollRuns: s.payrollRuns ?? [],
+          fxConversions: s.fxConversions ?? [],
           employeeDeductions: s.employeeDeductions ?? [],
           advanceRepayments: s.advanceRepayments ?? [],
           installmentPlans: s.installmentPlans ?? [],
@@ -12349,6 +13869,7 @@ export const useDataStore = create<DataState>()(
             salePaidMinor: car.salePaidMinor ?? (car.salePayment === 'cash' ? (car.saleTotalMinor ?? car.salePriceMinor ?? 0) : 0),
           })),
           // الأمر 23: تذاكر قديمة إجمالياتها بلا حقول الخدمات/التحصيل المجزأ/الربح — تُستكمل بأمان
+          bookings: s.bookings ?? [],
           tickets: (s.tickets ?? []).map((t: MaintenanceTicket) => {
             if (!t.totals || t.totals.paidMinor != null) return t
             const tot = t.totals
@@ -12368,12 +13889,21 @@ export const useDataStore = create<DataState>()(
           maintenanceServices: s.maintenanceServices ?? [],
           walletOps: s.walletOps ?? [],
           loyaltyRedemptions: s.loyaltyRedemptions ?? [],
+          // الإصدار 26: شؤون الموظفين — حضور وإجازات وبصمة وقواعد احتساب
+          attendanceRecords: s.attendanceRecords ?? [],
+          leaveRequests: (s.leaveRequests ?? []).map((l) => ({ ...l, decidedBy: l.decidedBy ?? null, decidedAt: l.decidedAt ?? null })),
+          leaveTypes: s.leaveTypes && s.leaveTypes.length ? s.leaveTypes : DEFAULT_LEAVE_TYPES,
+          hrRules: normalizeHrRules(s.hrRules),
+          employeeShifts: s.employeeShifts ?? [],
+          attendanceImports: s.attendanceImports ?? [],
           transfers: s.transfers ?? [],
           batches: s.batches ?? [],
           serials: s.serials ?? [],
           stocktakes: s.stocktakes ?? [],
           wastages: s.wastages ?? [],
           openingBalances: s.openingBalances ?? {},
+          openingItems: s.openingItems ?? {},
+          openingDeclaredCapitalMinor: s.openingDeclaredCapitalMinor ?? null,
           settlements: s.settlements ?? [],
           exchanges: s.exchanges ?? [],
           restaurantOrders: s.restaurantOrders ?? [],

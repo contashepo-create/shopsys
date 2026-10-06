@@ -3,8 +3,8 @@ const mem = new Map()
 globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, v), removeItem: (k) => mem.delete(k) }
 globalThis.window = globalThis
 mem.set('shopsys-app', JSON.stringify({ state: { setup: { done: true, activityId: 'general', allowNegativeTreasury: true } } }))
-const { useDataStore } = await import('/home/user/shopsys/app/src/data/repo.ts')
-const { hashPin } = await import('/home/user/shopsys/app/src/core/audit.ts')
+const { useDataStore } = await import('../src/data/repo.ts')
+const { hashPin } = await import('../src/core/audit.ts')
 const st = () => useDataStore.getState()
 let pass = 0, fails = []
 const ok = (n, c) => c ? (pass++, console.log('  ✓ ' + n)) : fails.push(n)

@@ -204,7 +204,12 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     const win = get().windows.find((row) => row.id === id)
     if (!win) return
     if (!win.dirty) { get().closeWindow(id); return }
-    set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, askingClose: true } : row)) }))
+    /* بلاغ المالك: إغلاق نافذة «مصغَّرة» من شريط المهام لم يكن يظهر حوار
+       التأكيد لأن حوار الإغلاق يُرسم داخل النافذة نفسها — والمصغَّرة غير
+       مرسومة أصلاً. الحل: تُستعاد النافذة أولاً (تُرفع للأمام وحدها ولا
+       تُمس بقية النوافذ المفتوحة) ثم يظهر حوار تأكيدها فوقها مباشرة. */
+    if (win.mode === 'minimized') get().focusWindow(id)
+    set((state) => ({ windows: state.windows.map((row) => (row.id === id ? { ...row, mode: row.mode === 'minimized' ? 'normal' : row.mode, askingClose: true } : row)) }))
   },
   setWindowClosePrompt: (id, prompt) => {
     set((state) => (state.windows.some((row) => row.id === id && row.closePrompt !== prompt)
@@ -270,12 +275,23 @@ function invoiceWindowSize() {
   return { width: Math.max(MIN_W, Math.round(vw * 0.94)), height: Math.max(MIN_H, Math.round(vh * 0.9)) }
 }
 
-export function openSalesInvoiceWindow(editId?: number) {
+/** تعبئة أولية لفاتورة بيع (طلب المالك ㉘): بيع أصناف منتهية الصلاحية من شاشة الإتلاف —
+ *  §94: ربط المشروع والعميل مسبقاً من مركز فواتير المقاولات (lines تصبح اختيارية: فاتورة مشروع قد تبدأ فارغة) */
+export interface SalesInvoicePrefill {
+  lines?: { itemId: number; qty: number; unitPriceMinor?: number }[]
+  notes?: string
+  /** مشروع المقاولات الذي صُدرت الفاتورة من أجله — 0/undefined = بلا مشروع */
+  projectId?: number
+  /** عميل الفاتورة (يُشتق من عميل المشروع إن لم يُحدد) */
+  customerId?: number
+}
+
+export function openSalesInvoiceWindow(editId?: number, prefill?: SalesInvoicePrefill) {
   return useWindowStore.getState().openWindow({
     kind: 'sales-invoice',
-    title: editId ? `تعديل فاتورة مبيعات #${editId}` : 'فاتورة مبيعات جديدة',
+    title: editId ? `تعديل فاتورة مبيعات #${editId}` : prefill?.projectId ? 'فاتورة بيع مقاولات — مربوطة بمشروع' : prefill ? 'فاتورة مبيعات — أصناف محددة' : 'فاتورة مبيعات جديدة',
     subtitle: 'نافذة مستقلة — تبقى مفتوحة حتى تحفظها أو تغلقها',
-    props: editId ? { editId } : {},
+    props: editId ? { editId } : prefill ? { prefill } : {},
     dedupeKey: editId ? `sales-invoice:${editId}` : null,
     /* نافذة حرة لا صفحة ملتصقة (بلاغ المالك): تفتح بإطار نافذة كامل يُحرَّك ويُكبَّر
        ويُصغَّر، ويمكن فتح فاتورة أخرى فوقها وحفظ الاثنتين. */
@@ -284,16 +300,24 @@ export function openSalesInvoiceWindow(editId?: number) {
   })
 }
 
-export function openPurchaseInvoiceWindow(editId?: number) {
+export function openPurchaseInvoiceWindow(editId?: number, prefill?: PurchaseInvoicePrefill) {
   return useWindowStore.getState().openWindow({
     kind: 'purchase-invoice',
-    title: editId ? `تعديل فاتورة مشتريات #${editId}` : 'فاتورة مشتريات جديدة',
+    title: editId ? `تعديل فاتورة مشتريات #${editId}` : prefill ? 'فاتورة مشتريات — من أمر شراء' : 'فاتورة مشتريات جديدة',
     subtitle: 'نافذة مستقلة — تبقى مفتوحة حتى تحفظها أو تغلقها',
-    props: editId ? { editId } : {},
+    props: editId ? { editId } : prefill ? { prefill } : {},
     dedupeKey: editId ? `purchase-invoice:${editId}` : null,
     mode: 'normal',
     ...invoiceWindowSize(),
   })
+}
+
+/**
+ * تعبئة أولية لفاتورة مشتريات (مراجعة المالك 2026-10-01): زر «فاتورة استلام»
+ * في شاشة أوامر الشراء يفتح الفاتورة معبَّأة من الأمر مباشرة بدل التنقل الفارغ.
+ */
+export interface PurchaseInvoicePrefill {
+  purchaseOrderId: number
 }
 
 export function openItemEditorWindow(itemId: number, parentId?: string | null) {

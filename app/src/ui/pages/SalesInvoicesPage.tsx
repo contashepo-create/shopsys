@@ -208,7 +208,7 @@ export function SalesInvoicesPage() {
       payment: s.payment,
       paidMinor: s.paidMinor, // الدفع المجزأ: المدفوع/المتبقي على المطبوعة (بلاغ المالك)
       operatorName: printOperatorName,
-      customerName: s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : null,
+      customerName: s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? null : s.partyName ?? null,
       taxPercent: s.taxPercent ?? countryVatPercent,
       taxInclusive: s.taxInclusive ?? setup.taxInclusive,
       settings: receipt,
@@ -220,7 +220,7 @@ export function SalesInvoicesPage() {
   }
 
   const exportSales = () => {
-    const headers=['رقم الفاتورة','التاريخ','العميل','الإجمالي','المدفوع','المتبقي','طريقة الدفع'];const values=filtered.map(s=>[s.invoiceNumber,s.date.slice(0,10),s.customerId?customers.find(c=>c.id===s.customerId)?.nameAr??'':'عميل نقدي',fmt(s.totals.totalMinor),fmt(s.paidMinor??(s.payment==='cash'?s.totals.totalMinor:0)),fmt(s.totals.totalMinor-(s.paidMinor??(s.payment==='cash'?s.totals.totalMinor:0))),s.payment==='cash'?'نقدي':'آجل']);const esc=(v:unknown)=>`"${String(v??'').replaceAll('"','""')}"`;const csv='\ufeff'+[headers,...values].map(r=>r.map(esc).join(',')).join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='sales-invoices.csv';a.click();URL.revokeObjectURL(url);toast.show('تم تصدير فواتير المبيعات إلى Excel ✓')
+    const headers=['رقم الفاتورة','التاريخ','العميل','الإجمالي','المدفوع','المتبقي','طريقة الدفع'];const values=filtered.map(s=>[s.invoiceNumber,s.date.slice(0,10),s.customerId?customers.find(c=>c.id===s.customerId)?.nameAr??'':s.partyName?`${s.partyName} (${s.partyKind==='supplier'?'مورد':'موظف'})`:'عميل نقدي',fmt(s.totals.totalMinor),fmt(s.paidMinor??(s.payment==='cash'?s.totals.totalMinor:0)),fmt(s.totals.totalMinor-(s.paidMinor??(s.payment==='cash'?s.totals.totalMinor:0))),s.payment==='cash'?'نقدي':'آجل']);const esc=(v:unknown)=>`"${String(v??'').replaceAll('"','""')}"`;const csv='\ufeff'+[headers,...values].map(r=>r.map(esc).join(',')).join('\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='sales-invoices.csv';a.click();URL.revokeObjectURL(url);toast.show('تم تصدير فواتير المبيعات إلى Excel ✓')
   }
 
   const entry = viewing ? journal.find((e) => e.id === viewing.journalEntryId) : null
@@ -296,7 +296,7 @@ export function SalesInvoicesPage() {
                   <div className="text-[11px] text-slate-400">{s.date.slice(0, 16).replace('T', ' ')}</div>
                 </td>
                 <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                  {s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? '—' : 'عميل نقدي'}
+                  {s.customerId ? customers.find((c) => c.id === s.customerId)?.nameAr ?? '—' : s.partyName ? <span>{s.partyName} <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${s.partyKind === 'supplier' ? 'bg-cyan-500/10 text-cyan-600' : 'bg-violet-500/10 text-violet-600'}`}>{s.partyKind === 'supplier' ? 'مورد' : 'موظف'}</span></span> : 'عميل نقدي'}
                 </td>
                 <td className="px-4 py-3">
                   <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${s.payment === 'cash' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-violet-500/10 text-violet-600'}`}>
@@ -305,7 +305,24 @@ export function SalesInvoicesPage() {
                 </td>
                 <td className="px-4 py-3 text-slate-500">{s.lines.length}</td>
                 <td className="px-4 py-3 font-black text-emerald-600 dark:text-emerald-400">{fmt(s.totals.totalMinor)}</td>
-                <td className="px-4 py-3">{(s.paidMinor??0)>=s.totals.totalMinor?<span className="text-emerald-600 font-bold">محصلة</span>:s.dueDate?<span className={s.dueDate<today?'text-rose-600 font-bold':'text-amber-600'}>{s.dueDate<today?'متأخرة':s.dueDate}</span>:<span className="text-slate-400">غير محدد</span>}</td>
+                <td className="px-4 py-3" data-collection-status>
+                    {(() => {
+                      /* حالة التحصيل الحقيقية (بلاغ المالك): «محصلة» حتى لو كان
+                         التحصيل على حساب موظف — نميّز: محصلة · جزئية · على موظف · آجلة */
+                      const total = s.totals.totalMinor
+                      const paid = s.paidMinor ?? 0
+                      const onStaff = (s.paymentAllocations ?? []).some((a) => a.accountCode === '1107' || a.employeeId != null)
+                      if (total > 0 && paid >= total) return onStaff
+                        ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-600 font-bold" title="محصلة بالكامل على حساب موظف (سلفة تُسترد من راتبه)">على موظف</span>
+                        : <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold">محصلة</span>
+                      if (paid > 0) return onStaff
+                        ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold" title={`محصّل ${fmt(paid)} من ${fmt(total)} — جزء منها على حساب موظف`}>جزئية · على موظف</span>
+                        : <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold" title={`محصّل ${fmt(paid)} من ${fmt(total)}`}>جزئية</span>
+                      return s.dueDate
+                        ? <span className={`text-[11px] font-bold ${s.dueDate < today ? 'text-rose-600' : 'text-amber-600'}`}>{s.dueDate < today ? 'متأخرة' : s.dueDate}</span>
+                        : <span className="text-slate-400">غير محدد</span>
+                    })()}
+                  </td>
                 <td className={`px-4 py-3 font-bold ${profitabilityOf(s).profit < 0 ? 'text-rose-600' : 'text-sky-600'}`} title={`تكلفة ${fmt(profitabilityOf(s).cogs)} · مصروف داخلي ${fmt(profitabilityOf(s).internal)} · عمولات ${fmt(profitabilityOf(s).commissions)}`}>{fmt(profitabilityOf(s).profit)}</td>
                 <td className="px-4 py-3">
                   <span className="text-[11px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 font-bold flex items-center gap-1 w-fit">
