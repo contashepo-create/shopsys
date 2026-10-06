@@ -20,7 +20,7 @@ import { DocSectionHead, DocOutcome } from '../components/DocSection.tsx'
 import { buildSimpleDocModel } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
-import { usePrintSwitches } from '../components/PrintSwitches.tsx'
+import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 
 const useCur = () => {
   const { setup } = useAppStore()

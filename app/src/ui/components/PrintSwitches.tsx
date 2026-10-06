@@ -11,17 +11,7 @@
 import { Printer, ReceiptText, Zap } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useToast } from './ui.tsx'
-
-export type PrintSwitchState = { silentPrint: boolean; cashierPrint: boolean; printAfterSave: boolean }
-
-export function usePrintSwitches(): PrintSwitchState {
-  const receipt = useAppStore((s) => s.receipt)
-  return {
-    silentPrint: receipt.silentPrint ?? false,
-    cashierPrint: receipt.cashierPrint ?? false,
-    printAfterSave: receipt.printAfterSave ?? false,
-  }
-}
+import type { PrintSwitchState } from '../hooks/usePrintSwitches.ts'
 
 export function PrintSwitches({ compact = false }: { compact?: boolean }) {
   const receipt = useAppStore((s) => s.receipt)

@@ -9,11 +9,14 @@ const R = reporter('مفاتيح الطباعة — فاتورة الشراء م
 const purchasePage = readFileSync(new URL('../src/ui/pages/AdvancedPurchaseInvoicePage.tsx', import.meta.url), 'utf8')
 const salesPage = readFileSync(new URL('../src/ui/pages/AdvancedSalesInvoicePage.tsx', import.meta.url), 'utf8')
 const printSwitchesFile = readFileSync(new URL('../src/ui/components/PrintSwitches.tsx', import.meta.url), 'utf8')
+  /* v1.0.15: تعريف حالة المفاتيح انتقل لملف hook مستقل (سياسة Fast Refresh) */
+  const printSwitchesHookFile = readFileSync(new URL('../src/ui/hooks/usePrintSwitches.ts', import.meta.url), 'utf8')
+  const printSwitchesSources = printSwitchesFile + printSwitchesHookFile
 
 /* ① المفاتيح الثلاثة نفسها المعرّفة في المكوّن المشترك */
 {
   for (const key of ['cashierPrint', 'silentPrint', 'printAfterSave']) {
-    assert.ok(new RegExp(`${key}[?:]`).test(printSwitchesFile), `مفتاح «${key}» غير معرف في PrintSwitches`)
+    assert.ok(new RegExp(`${key}[?:]`).test(printSwitchesSources), `مفتاح «${key}» غير معرف في PrintSwitches`)
   }
   R.ok('المفاتيح الثلاثة معرفة مركزياً: cashierPrint · silentPrint · printAfterSave')
 }

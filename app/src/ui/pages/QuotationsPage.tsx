@@ -21,7 +21,7 @@ import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { shareDocPdfViaWhatsapp } from '../print/shareDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
-import { usePrintSwitches } from '../components/PrintSwitches.tsx'
+import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { InvoiceDraftsModal } from '../components/InvoiceDraftsModal.tsx'
 import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.tsx'
 import { validateQuotation } from '../../core/contracting.ts'

@@ -142,6 +142,8 @@ export function PurchaseReturnsPage() {
     if (!prefillPurchaseId || purchase) return
     const target = purchases.find((p) => p.id === prefillPurchaseId)
     if (!target) return
+    /* تزامن مشروع مع نظام خارجي (معاملات URL للاستيراد المسبق) — يهيئ النموذج مرة ثم يمسحها */
+    // oxlint-disable-next-line
     startReturn(target)
     if (prefillItemId && prefillQty > 0) {
       setQtys((q) => ({ ...q, [prefillItemId]: String(prefillQty) }))

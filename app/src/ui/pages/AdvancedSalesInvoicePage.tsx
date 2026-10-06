@@ -35,7 +35,7 @@ import { DocumentAttachmentsBox, type PendingAttachment } from '../components/Do
 import { partyCode } from '../../core/partyCodes.ts'
 import { PartyQuickEditModal } from '../components/PartyQuickEditModal.tsx'
 import { SheetPanel } from '../components/SheetPanel.tsx'
-import { usePrintSwitches } from '../components/PrintSwitches.tsx'
+import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
 import { PrintSettingsPopup } from '../components/PrintSettingsPopup.tsx'
 import { FxCollectModal } from '../components/FxCollectModal.tsx'

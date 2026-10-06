@@ -27,7 +27,7 @@ import { InvoiceLinesTable } from '../components/InvoiceLinesTable.tsx'
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
-import { usePrintSwitches } from '../components/PrintSwitches.tsx'
+import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { partyCode } from '../../core/partyCodes.ts'
 import { useNavigate } from 'react-router-dom'
 

@@ -33,7 +33,8 @@ import { Btn, Field, Modal, inputCls, useToast, EmptyState } from '../components
 import { QuickSelect } from '../components/KeyboardPickers.tsx'
 import { printHtml } from '../print/printReceipt.ts'
 
-export const HR_TABS = [
+/* ثابت داخلي (سياسة Fast Refresh: الملف يصدّر مكونات فقط) */
+const HR_TABS = [
   { id: 'attendance', nameAr: 'الحضور والانصراف', icon: CalendarCheck2, path: '/hr/attendance' },
   { id: 'fingerprint', nameAr: 'استيراد البصمة', icon: Fingerprint, path: '/hr/fingerprint' },
   { id: 'leaves', nameAr: 'الإجازات', icon: CalendarRange, path: '/hr/leaves' },
@@ -41,7 +42,7 @@ export const HR_TABS = [
   { id: 'reports', nameAr: 'تقارير الموارد البشرية', icon: FileDown, path: '/hr/reports' },
 ] as const
 
-export type HrTabId = (typeof HR_TABS)[number]['id']
+type HrTabId = (typeof HR_TABS)[number]['id']
 
 /** شريط التابات المشترك — يُستعمل من صفحات شؤون الموظفين كافة */
 export function HrSectionTabs({ active }: { active: HrTabId }) {

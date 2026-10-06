@@ -9,7 +9,8 @@ const REDUCED = () => typeof window !== 'undefined'
   && typeof window.matchMedia === 'function'
   && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-export function useAnimatedMinor(value: number, duration = 260): number {
+/* hook داخلي للمكون (سياسة Fast Refresh: الملف يصدّر مكونات فقط) */
+function useAnimatedMinor(value: number, duration = 260): number {
   const [shown, setShown] = useState(value)
   const fromRef = useRef(value)
   const rafRef = useRef(0)
@@ -19,6 +20,8 @@ export function useAnimatedMinor(value: number, duration = 260): number {
     if (from === to) return
     if (REDUCED() || typeof requestAnimationFrame !== 'function') {
       fromRef.current = to
+      /* تزامن مشروع مع نظام خارجي (requestAnimationFrame) — جوهر العدّاد الحي */
+      // oxlint-disable-next-line
       setShown(to)
       return
     }

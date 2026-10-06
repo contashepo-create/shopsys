@@ -19,7 +19,7 @@ import { PrePostChecks, type PrePostIssue } from '../components/PrePostChecks.ts
 import { buildSimpleDocModel, type InvoiceTemplate } from '../../core/receipt.ts'
 import { printModelWithTemplate, buildModelHtml } from '../print/printDoc.ts'
 import { openPrintPreview } from '../components/printPreviewStore.ts'
-import { usePrintSwitches } from '../components/PrintSwitches.tsx'
+import { usePrintSwitches } from '../hooks/usePrintSwitches.ts'
 import { ServiceRefundBox } from '../components/ServiceRefundBox.tsx'
 import { type TerminalPaymentDraft } from '../components/TerminalPaymentPicker.tsx'
 import { PaymentMethodPicker } from '../components/PaymentMethodPicker.tsx'
