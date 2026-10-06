@@ -105,88 +105,74 @@ jobs:
           # بلا إخفاء للأخطاء: فشل النشر نفسه يظهر كخطوة حمراء
           gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/comments" -F body=@/tmp/comment.md
 
-      # v1.0.15: إعادة نشر الوسم (إعادة تشغيل/وسم مكرر) كانت تصطدم بأصول
-      # قديمة فيفشل النشر بعد رفع المثبت كاملاً — نُفرغ أصول الإصدار أولاً.
-      # بلا always: فشل الفحوص لا يمسّ أصول إصدار قائم أبداً
-      - name: تنظيف أصول الإصدار السابقة (ضد تعارض إعادة النشر)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          for RID in $(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq ".[] | select(.tag_name == "${TAG}") | .id"); do
-            echo "تفريغ أصول الإصدار ${RID} للوسم ${TAG} قبل البناء"
-            for AID in $(gh api "repos/${GITHUB_REPOSITORY}/releases/${RID}/assets" --jq '.[].id'); do
-              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${AID}" || true
-            done
-          done
+      # ── v1.0.16: ترحيل التحديث لرف الإصدارات العام ──────────────────────
+      # المعمارية: البناء هنا (بلا توكن) → app-update.yml داخل المثبت يشير
+      # لtahakom-releases → نشر صريح للرف العام بتوكن محصور → مرآة هنا
+      # للعملاء القدامى (تُزال بعد اكتمال الترحيل وخصخصة المستودع).
+      # راجع docs/الترحيل-لمستودع-خاص.md
 
-      - name: بناء المثبت ونشره
+      - name: بناء المثبت (بلا نشر — النشر خطوات صريحة أدناه)
         id: build
-        run: npm run desktop:publish
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run desktop:dist
 
-      # electron-builder (v26) قد يقسم أصول الإصدار على إصدارين بنفس الوسم
-      # (exe في أحدهما وlatest.yml/blockmap في الآخر) — هذه الخطوة توحّدهما:
-      # تحذف الإصدارات المكررة ثم ترفع latest.yml وblockmap لإصدار الوسم الرئيسي.
-      - name: توحيد أصول الإصدار (latest.yml للتحديث التلقائي)
-        # v1.0.15: فشل جزئي بنشر electron-builder (المثبت رُفع وlatest.yml
-        # تعثر) لم يعد يترك الإصدار ناقصاً — لكنها لا تعمل إلا إذا حاول
-        # البناء فعلاً: فشل الفحوص لا يعبث بإصدار قائم
-        if: always() && steps.build.conclusion != 'skipped'
+      - name: تحقق من توجيه التحديث داخل المثبت (رف الإصدارات العام)
+        shell: bash
+        run: |
+          FEED="release/win-unpacked/resources/app-update.yml"
+          if [ ! -f "${FEED}" ]; then echo "✗ app-update.yml غير موجود بالبناء — لا نشر لمثبت بلا وجهة تحديث"; exit 1; fi
+          echo "═══ app-update.yml داخل المثبت ═══"
+          cat "${FEED}"
+          if ! grep -q "tahakom-releases" "${FEED}"; then
+            echo "✗ المثبت لا يشير لرف الإصدارات العام — لا نشر يضلّل العملاء"; exit 1
+          fi
+          echo "✓ التحديث داخل المثبت موجه للرف العام tahakom-releases"
+
+      - name: نشر الإصدار إلى رف الإصدارات العام (tahakom-releases)
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          # الرئيسي = الإصدار الذي يحمل المثبت (exe) — ليس مجرد الأحدث؛
-          # ترتيب API newest-first خدعنا في جولة سابقة فحذفنا إصدار الexe.
-          MAIN_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq "[.[] | select(.tag_name == \"${TAG}\") | select([.assets[].name] | any(test(\"\\\\.exe$\")))][0].id")
-          if [ -z "$MAIN_ID" ] || [ "$MAIN_ID" = "null" ]; then
-            echo "لا يوجد إصدار يحمل المثبت للوسم ${TAG}"
+          VER=$(node -p "require('./package.json').version")
+          REL="contashepo-create/tahakom-releases"
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "✗ سر RELEASES_REPO_TOKEN غير مضبوط — لا نشر بلا رف التحديث (إصدار بلا رف = عملاء معطلون عن التحديث)"
             exit 1
           fi
-          echo "الإصدار الرئيسي (حامل المثبت): ${MAIN_ID}"
-          # احذف الإصدارات المكررة الأخرى لنفس الوسم (بعد إفراغها)
-          for id in $(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq ".[] | select(.tag_name == \"${TAG}\") | .id"); do
-            if [ "$id" != "$MAIN_ID" ]; then
-              echo "حذف الإصدار المكرر ${id}"
-              for aid in $(gh api "repos/${GITHUB_REPOSITORY}/releases/${id}/assets" --jq '.[].id'); do
-                gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${aid}" || true
-              done
-              gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${id}" || true
-            fi
-          done
-          # ارفع ملفات التحديث من مخرجات البناء إلى الإصدار الرئيسي
-          if [ ! -f release/latest.yml ]; then
-            # v1.0.15: غاب محلياً (فشل جزئي) — ولّده من الأصل المرفوع نفسه
-            echo "release/latest.yml غير موجود — توليده من المثبت المرفوع…"
-            mkdir -p /tmp/dl release
-            gh release download "${TAG}" -p 'tahakom-setup-*.exe' -D /tmp/dl --clobber || true
-            EXE=$(ls /tmp/dl/tahakom-setup-*.exe 2>/dev/null | head -1)
-            if [ -z "${EXE}" ]; then echo "لا مثبت مرفوع ولا latest.yml — لا شيء لنكمله" && exit 1; fi
-            VER=$(node -p "require('./app/package.json').version" 2>/dev/null || echo "${TAG#v}")
-            SHA=$(sha512sum "${EXE}" | cut -d' ' -f1 | xxd -r -p | base64 -w0)
-            SIZE=$(stat -c%s "${EXE}")
-            NOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
-            {
-              echo "version: ${VER}"
-              echo "path: tahakom-setup-${VER}.exe"
-              echo "sha512: ${SHA}"
-              echo "releaseDate: '${NOW}'"
-              echo "files:"
-              echo "  - url: tahakom-setup-${VER}.exe"
-              echo "    sha512: ${SHA}"
-              echo "    size: ${SIZE}"
-            } > release/latest.yml
-            echo "وُلّد latest.yml احتياطياً (${SIZE} بايت)"
+          # سلامة مخرجات البناء قبل الرفع
+          if [ ! -f release/latest.yml ]; then echo "✗ release/latest.yml مفقود"; exit 1; fi
+          ls release/tahakom-setup-*.exe >/dev/null || { echo "✗ المثبت مفقود"; exit 1; }
+          if ! grep -q "version: ${VER}" release/latest.yml; then echo "✗ latest.yml بإصدار مختلف عن package.json"; exit 1; fi
+          # إصدار جديد أو تحديث نفس الوسم (إعادة تشغيل) — clobber يستبدل الأصول
+          gh release view "${TAG}" --repo "${REL}" >/dev/null 2>&1 \
+            || gh release create "${TAG}" --repo "${REL}" --title "تَحَكَّم ${VER}" --notes "تحديث تلقائي — الإصدار ${VER}"
+          gh release upload "${TAG}" --repo "${REL}" release/tahakom-setup-*.exe release/latest.yml --clobber
+          if compgen -G "release/*.blockmap" > /dev/null; then
+            gh release upload "${TAG}" --repo "${REL}" release/*.blockmap --clobber
           fi
-          gh release upload "${TAG}" release/latest.yml --clobber
-          echo "رُفع latest.yml ✓"
+          echo "✓ نُشر ${TAG} إلى رف الإصدارات العام — أجهزة العملاء ستراه"
+
+      - name: مرآة إصدار الترحيل في هذا المستودع (للعملاء القدامى — تُزال بعد اكتمال الترحيل)
+        # الجهاز على 1.0.12/1.0.15 ينظر إلى shopsys: يجد هذه المرآة فيثبّت
+        # 1.0.16 فينتقل لرف الإصدارات (app-update.yml الجديد). بعد خصخصة
+        # shopsys لا فائدة منها — تُحذف الخطوة بتعليمات دليل الترحيل.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER=$(node -p "require('./package.json').version")
+          gh release view "${TAG}" >/dev/null 2>&1 \
+            || gh release create "${TAG}" --title "تَحَكَّم ${VER}" --notes "إصدار الترحيل لرف الإصدارات العام — التنزيل اليدوي والعملاء القدامى"
+          gh release upload "${TAG}" release/tahakom-setup-*.exe release/latest.yml --clobber
           if compgen -G "release/*.blockmap" > /dev/null; then
             gh release upload "${TAG}" release/*.blockmap --clobber
-            echo "رُفع blockmap ✓"
           fi
+          echo "✓ مُرآء ${TAG} هنا للعملاء القدامى (1.0.12/1.0.15)"
           # تحقق نهائي: exe + latest.yml معاً في إصدار واحد
-          gh api "repos/${GITHUB_REPOSITORY}/releases/${MAIN_ID}" --jq '.assets[].name'
+          ASSETS=$(gh release view "${TAG}" --json assets --jq '[.assets[].name] | join(" ")')
+          echo "أصول الإصدار: ${ASSETS}"
+          case "${ASSETS}" in
+            *latest.yml*) echo "✓ latest.yml مرفوع مع المثبت" ;;
+            *) echo "✗ latest.yml مفقود من الإصدار — العملاء القدامى لن يجدوا التحديث"; exit 1 ;;
+          esac
