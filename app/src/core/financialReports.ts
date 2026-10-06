@@ -8,6 +8,7 @@
  */
 import type { Minor } from './money.ts'
 import { STANDARD_COA, accountBalance, type AccountRootType, type JournalEntry } from './ledger.ts'
+import { closingMechanismIds } from './fiscal.ts'
 
 export interface FinPeriod {
   from: string // YYYY-MM-DD شامل
@@ -94,8 +95,10 @@ export interface IncomeStatement {
 }
 
 export function incomeStatement(journal: readonly JournalEntry[], p: FinPeriod, extraNames?: Record<string, string>): IncomeStatement {
-  // قيود إقفال السنة تصفّر 4xxx/5xxx — تُستثنى هنا لتظل قائمة الدخل تعرض الأداء الحقيقي لأي فترة حتى بعد الإقفال
-  const tb = trialBalance(journal.filter((e) => e.sourceType !== 'year_closing'), p, extraNames)
+  // قيود إقفال السنة وعواكسها (إعادة فتح) آلية عرض لا أداء — تُستثنى معاً
+  // لتظل قائمة الدخل تعرض الأداء الحقيقي لأي فترة حتى بعد إقفال ثم إعادة فتح ثم إقفال جديد
+  const closingIds = closingMechanismIds(journal)
+  const tb = trialBalance(journal.filter((e) => !closingIds.has(e.id)), p, extraNames)
   const revenues = tb.rows
     .filter((r) => r.rootType === 'revenue')
     .map((r) => ({ code: r.code, nameAr: r.nameAr, amountMinor: r.creditMinor - r.debitMinor }))
@@ -160,9 +163,12 @@ export function balanceSheet(journal: readonly JournalEntry[], asOf: string, ext
   const liabilities = pick('liabilities')
   const equity = pick('equity')
   const inc = incomeStatement(journal, p, extraNames)
-  // ما أُقفل رسمياً في 3102 (قيود year_closing) صار ضمن حقوق الملكية أعلاه — يُطرح من نتيجة الفترة الجارية
+  // ما أُقفل رسمياً في 3102 صار ضمن حقوق الملكية أعلاه — يُطرح من نتيجة الفترة الجارية.
+  // يحسب صافي آلية الإقفال كاملة (قيود الإقفال + عواكسها): الأصلي المعكوس يلغيه عكسه
+  // تلقائياً فيبقى الصافي صحيحاً حتى بعد إعادة فتح وإقفال جديد
+  const closingIds = closingMechanismIds(journal)
   const closedNetMinor = journal
-    .filter((e) => e.sourceType === 'year_closing' && e.date <= asOf)
+    .filter((e) => closingIds.has(e.id) && e.date <= asOf)
     .reduce((a, e) => a + e.lines.filter((l) => l.accountCode === '3102').reduce((x, l) => x + l.credit - l.debit, 0), 0)
   const retainedEarningsMinor = inc.netProfitMinor - closedNetMinor
   const totalAssetsMinor = assets.reduce((a, r) => a + r.amountMinor, 0)

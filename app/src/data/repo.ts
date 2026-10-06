@@ -76,7 +76,7 @@ import { customerStatement, supplierStatement, statementBalance, customerUnitDoc
 import { openCustomerSpecializedDocuments, openSupplierSpecializedDocuments } from '../core/openPartyDocuments.ts'
 import { convertFxToBookMinor, describeFxLeg, validateFxLeg, type FxLeg } from '../core/foreignCurrency.ts'
 import { buildFxConversionEntry, computeFxConversion, fxConversionFlows, fxHoldingsFromFlows, validateFxConversion, type FxConversionDoc, type FxFlow, type FxHolding } from '../core/fxTreasury.ts'
-import { buildYearClosingLines, validateYearClose, dateInClosedYear, type FiscalYear } from '../core/fiscal.ts'
+import { buildYearClosingLines, validateYearClose, dateInClosedYear, closingMechanismIds, type FiscalYear } from '../core/fiscal.ts'
 import { useAppStore } from '../stores/app.store.ts'
 import { validateExchange, computeExchangeNet } from '../core/exchange.ts'
 import { validateRestaurantOrder, feeLine, serviceChargeMinor, orderSubtotalMinor, occupiedTables, splitOrderLines, type RestaurantOrder, type RestaurantOrderType } from '../core/restaurant.ts'
@@ -2140,6 +2140,8 @@ interface DataState {
   repayEmployeeAdvance: (args: { employeeId: number; amountMinor: number; treasury: TreasuryAccount }) => AdvanceRepayment
   /** إقفال سنة مالية (منهجية QuickBooks/Xero): قيد يصفّر 4xxx/5xxx → أرباح مرحلة 3102 ثم يقفل الفترة */
   closeFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { entryId: number; netProfitMinor: number }
+  /** إعادة فتح سنة مقفلة (نمط عالمي — Reopen books): تعكس قيد الإقفال وتفتح الفترة للتصحيح */
+  reopenFiscalYear: (fy: FiscalYear, allYears: readonly FiscalYear[]) => { reversedEntryId: number | null }
   /** رصيد العميل الموحّد من كل الأنشطة — مصدر حقيقة واحد لكل الشاشات */
   getCustomerBalance: (customerId: number) => number
   /**
@@ -8015,12 +8017,16 @@ export const useDataStore = create<DataState>()(
         // ① تحققات الإقفال (منتهية فعلاً + بالترتيب الزمني)
         const errors = validateYearClose(fy, allYears, new Date().toISOString().slice(0, 10))
         if (errors.length) throw new Error(errors.join(' — '))
-        // ② لا يُقفل مرتين: قيد إقفال سابق لنفس السنة؟
-        if (state.journal.some((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id)) {
+        // ② لا يُقفل مرتين: قيد إقفال سابق **غير معكوس** لنفس السنة؟
+        // (إعادة الفتح تعكس قيد الإقفال — بعدها يجوز إقفال جديد بالأرقام المصححة)
+        if (state.journal.some((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)) {
           throw new Error(`السنة «${fy.nameAr}» عليها قيد إقفال بالفعل`)
         }
-        // ③ بناء قيد الإقفال من اليومية (يستثني قيود إقفال سابقة تلقائياً — لا 4xxx/5xxx فيها أصلاً غير مصفَّرة)
-        const result = buildYearClosingLines(state.journal.filter((e) => e.sourceType !== 'year_closing'), fy)
+        // ③ بناء قيد الإقفال من اليومية — تستثنى آلية الإقفال كاملة (قيود إقفال
+        // سابقة **وعواكسها من إعادة فتح**): العاكس يعكس تصفيراً لن يصل الحساب
+        // أصلاً فاحتسابه يضاعف الصافي بعد إعادة فتح ثم إقفال جديد
+        const mechanism = closingMechanismIds(state.journal)
+        const result = buildYearClosingLines(state.journal.filter((e) => !mechanism.has(e.id)), fy)
         if (result.lines.length === 0) throw new Error('لا حركة إيرادات أو مصروفات في هذه السنة — لا شيء يُقفل')
         const entryId = nextId(state.journal)
         const now = new Date().toISOString()
@@ -8034,6 +8040,38 @@ export const useDataStore = create<DataState>()(
         }
         set({ journal: [...state.journal, entry] })
         return { entryId, netProfitMinor: result.netProfitMinor }
+      },
+
+      reopenFiscalYear: (fy, allYears) => {
+        const state = get()
+        if (fy.status !== 'closed') throw new Error('السنة مفتوحة أصلاً — لا شيء يُعاد فتحه')
+        // الترتيب العكسي (نمط Odoo): لا إعادة فتح لسنة توجد بعدها سنة مقفلة —
+        // قيد إقفال السنة الأحدث بُني على أرصدة أُغلق عليها الأقدم، ففكّ الأحدث أولاً
+        const newerClosed = allYears.find((y) => y.id !== fy.id && y.status === 'closed' && y.startDate > fy.endDate)
+        if (newerClosed) throw new Error(`أعد فتح السنة الأحدث المقفلة «${newerClosed.nameAr}» أولاً — إعادة الفتح بالترتيب الزمني`)
+        const closingEntry = state.journal.find((e) => e.sourceType === 'year_closing' && e.sourceId === fy.id && !e.reversedByEntryId)
+        // أولاً: فتح الفترة (متجر الإعداد) — حتى يقبل حارس الدفتر قيد العكس بتاريخ داخلها
+        useAppStore.getState().reopenFiscalYear(fy.id)
+        if (!closingEntry) return { reversedEntryId: null } // مقفلة بلا قيد إقفال (إقفال قديم بلا حركة) — يكفي فتح الحالة
+        // قيد عاكس لقيد الإقفال: يعيد أرصدة الإيرادات والمصروفات وأثر الأرباح المرحلة،
+        // بتاريخ آخر يوم بالسنة المعاد فتحها (يلغي أثر التصفير داخل فترته نفسها)
+        const entryId = nextId(state.journal)
+        const entry: JournalEntry = {
+          id: entryId, entryNumber: entryId,
+          date: fy.endDate,
+          description: `إعادة فتح السنة المالية «${fy.nameAr}» — عكس قيد الإقفال #${closingEntry.entryNumber}`,
+          sourceType: 'reversal', sourceId: closingEntry.id,
+          lines: closingEntry.lines.map((l) => ({ accountCode: l.accountCode, debit: l.credit, credit: l.debit, note: `عكس إقفال — ${l.note}` })),
+          createdBy: activeUserName(get()), createdAt: new Date().toISOString(),
+          reversedByEntryId: null, reversesEntryId: closingEntry.id,
+        }
+        set({
+          journal: [
+            ...state.journal.map((e) => (e.id === closingEntry.id ? { ...e, reversedByEntryId: entryId } : e)),
+            entry,
+          ],
+        })
+        return { reversedEntryId: entryId }
       },
 
       getCustomerBalance: (customerId) => statementBalance(get().getCustomerStatementRows(customerId)),

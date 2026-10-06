@@ -19,7 +19,7 @@ import { FxRatesManager } from '../components/FxRatesManager.tsx'
 
 export function GeneralSettingsPage() {
   const { setup, fiscalYears, addFiscalYear, markFiscalYearClosed, loyalty, updateLoyalty, applyActivityChangeKey, toggleModule, activatedPayload } = useAppStore()
-  const { warehouses, closeFiscalYear, journal } = useDataStore()
+  const { warehouses, closeFiscalYear, reopenFiscalYear, journal } = useDataStore()
   const toast = useToast()
   /* v1.0.7: تغيير النشاط بمفتاح الدعم الفني فقط (موافقة المالك) */
   const [activityKeyOpen, setActivityKeyOpen] = useState(false)
@@ -38,6 +38,8 @@ export function GeneralSettingsPage() {
 
   /* ─── إقفال السنة المالية (منهجية QuickBooks/Xero — طلب المالك) ─── */
   const [closeTarget, setCloseTarget] = useState<(typeof fiscalYears)[number] | null>(null)
+  /* ─── إعادة فتح سنة مقفلة (نمط عالمي Reopen books): عكس قيد الإقفال + فتح الفترة للتصحيح ─── */
+  const [reopenTarget, setReopenTarget] = useState<(typeof fiscalYears)[number] | null>(null)
   const [newYearOpen, setNewYearOpen] = useState(false)
   const nextSuggested = suggestFiscalYear(new Date().getFullYear() + (fiscalYears.some((y) => y.nameAr === String(new Date().getFullYear())) ? 1 : 0))
   const [fyName, setFyName] = useState(nextSuggested.nameAr)
@@ -60,6 +62,15 @@ export function GeneralSettingsPage() {
       markFiscalYearClosed(closeTarget.id)
       toast.show(`أُقفلت سنة «${closeTarget.nameAr}» — صافي ${netProfitMinor >= 0 ? 'الربح' : 'الخسارة'} ${fmt(Math.abs(netProfitMinor))} ${cur.symbol} رُحّل للأرباح المرحلة ✅`)
       setCloseTarget(null)
+    } catch (err) { toast.show((err as Error).message, 'error') }
+  }
+
+  const doReopenYear = () => {
+    if (!reopenTarget) return
+    try {
+      reopenFiscalYear(reopenTarget, fiscalYears)
+      toast.show(`أُعيد فتح سنة «${reopenTarget.nameAr}» — عُكس قيد الإقفال والفترة مفتوحة للتصحيح، أقفلها مجدداً بعده ✅`)
+      setReopenTarget(null)
     } catch (err) { toast.show((err as Error).message, 'error') }
   }
   const saveNewYear = () => {
@@ -499,6 +510,8 @@ export function GeneralSettingsPage() {
           {fiscalYears.length === 0 && <div className="text-[12px] text-slate-400">لا سنوات مسجلة</div>}
           {fiscalYears.map((y) => {
             const closable = validateYearClose(y, fiscalYears, new Date().toISOString().slice(0, 10)).length === 0
+            // إعادة الفتح بالترتيب العكسي: أحدث سنة مقفلة فقط (لا سنة مقفلة أحدث منها)
+            const newestClosed = y.status === 'closed' && !fiscalYears.some((o) => o.id !== y.id && o.status === 'closed' && o.startDate > y.endDate)
             return (
               <div key={y.id} className="flex items-center justify-between rounded-xl border border-slate-200 dark:border-slate-700 px-4 py-2.5">
                 <div>
@@ -508,7 +521,10 @@ export function GeneralSettingsPage() {
                 <div className="flex items-center gap-2">
                   <Btn variant="ghost" onClick={() => setReportYear(y)}>📊 تقرير السنة</Btn>
                   {y.status === 'closed' ? (
-                    <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-500/10 text-slate-500 font-bold flex items-center gap-1"><Lock size={11} /> مقفلة</span>
+                    <>
+                      {newestClosed && <Btn variant="ghost" onClick={() => setReopenTarget(y)}>🔓 إعادة فتح</Btn>}
+                      <span className="text-[11px] px-2.5 py-1 rounded-full bg-slate-500/10 text-slate-500 font-bold flex items-center gap-1"><Lock size={11} /> مقفلة</span>
+                    </>
                   ) : closable ? (
                     <Btn variant="ghost" onClick={() => setCloseTarget(y)}>🔒 إقفال السنة</Btn>
                   ) : (
@@ -524,7 +540,7 @@ export function GeneralSettingsPage() {
       <Modal open={!!closeTarget} onClose={() => setCloseTarget(null)} title={`🔒 إقفال السنة المالية «${closeTarget?.nameAr ?? ''}»`}>
         <div className="space-y-4">
           <div className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
-            سيحدث الآتي (لا رجوع إلا بعكس القيد يدوياً):
+            سيحدث الآتي (يمكن التراجع لاحقاً بزر «إعادة فتح» — يعكس قيد الإقفال):
             <ul className="list-disc pr-5 mt-2 space-y-1 text-[12px]">
               <li>قيد إقفال بتاريخ {closeTarget?.endDate} يصفّر كل حسابات الإيرادات والمصروفات</li>
               <li>صافي الربح/الخسارة يُرحَّل إلى «أرباح مرحّلة 3102»</li>
@@ -535,6 +551,25 @@ export function GeneralSettingsPage() {
           <div className="flex justify-end gap-2">
             <Btn variant="ghost" onClick={() => setCloseTarget(null)}>تراجع</Btn>
             <Btn onClick={doCloseYear}>🔒 تأكيد الإقفال</Btn>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal open={!!reopenTarget} onClose={() => setReopenTarget(null)} title={`🔓 إعادة فتح السنة المالية «${reopenTarget?.nameAr ?? ''}»`}>
+        <div className="space-y-4">
+          <div className="text-[13px] leading-relaxed text-slate-600 dark:text-slate-300">
+            سيحدث الآتي (نمط البرامج العالمية — Reopen books):
+            <ul className="list-disc pr-5 mt-2 space-y-1 text-[12px]">
+              <li>قيد عاكس بقيد الإقفال — تعود أرصدة الإيرادات والمصروفات كما كانت قبل التصفير</li>
+              <li>الفترة تصبح مفتوحة: يمكن تسجيل قيود تصحيحية بتواريخها</li>
+              <li>أرصدة الميزانية لا تتغير (الأرباح المرحلة يلغيها العكس ثم يعيدها إقفال جديد)</li>
+              <li>بعد اكتمال التصحيح أقفل السنة مجدداً — قيد إقفال جديد بالأرقام المصححة</li>
+            </ul>
+            <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">تنبيه: إعادة الفتح تكون لأحدث سنة مقفلة فقط وبالترتيب — والتقارير المعتمدة سابقاً على السنة المقفلة قد تتغير أرقامها بعد التصحيح.</p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Btn variant="ghost" onClick={() => setReopenTarget(null)}>تراجع</Btn>
+            <Btn onClick={doReopenYear}>🔓 تأكيد إعادة الفتح</Btn>
           </div>
         </div>
       </Modal>

@@ -1,0 +1,88 @@
+# الإصدار الآلي (طلب المالك v1.0.17): أي كود يصل للفرع الرئيسي main —
+# بدمج PR أو دفع مباشر — يولّد إصداراً محدّثاً يصل للعملاء تلقائياً.
+#
+# كيف يعمل: هذا السير رفيع لا يبني شيئاً — يحسب النسخة التالية (patch+1)
+# من آخر وسم v*، يرفعها في app/package.json، يدفع التزام إصدار آلي إلى
+# main، ثم يوسمه vX.Y.Z — ووسم الوسم يشغّل desktop-release الموجود الذي
+# يفحص كل شيء (أنواع/اختبارات/بوابات 283) ثم يبني وينشر للرف العام
+# tahakam-releases ويمرآء للعملاء القدامى. أي كود فاسد يفشل بالفحوص قبل
+# أي نشر — لا يصل للعملاء شيء غير مفحوص.
+#
+# تحديثات الوثائق وحدها (docs/** و**/*.md) لا تولّد إصداراً — كود فقط.
+name: auto-release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.gitignore'
+      - '.gitattributes'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  tag-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          fetch-tags: true
+
+      - name: هل هذا التزام إصدار آلي؟ (حارس منع الدوران)
+        id: guard
+        shell: bash
+        run: |
+          if git log -1 --pretty=%s | grep -q '^chore(release):'; then
+            echo "التزام إصدار آلي (رفع رقم النسخة) — لا يولّد إصداراً جديداً"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: حساب النسخة التالية ورفعها في package.json
+        if: steps.guard.outputs.skip != 'true'
+        id: version
+        shell: bash
+        run: |
+          LATEST=$(git tag -l 'v*' | sed 's/^v//' | sort -V | tail -1)
+          if [ -z "${LATEST}" ]; then echo "✗ لا وسم إصدار سابق — لا أساس للترقيم"; exit 1; fi
+          IFS='.' read -r MA MI PA <<< "${LATEST}"
+          NEW="v${MA}.${MI}.$((PA + 1))"
+          echo "النسخة الحالية ${LATEST} ← الجديدة ${NEW}"
+          cd app
+          node -e "
+            const fs = require('fs')
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
+            pkg.version = '${NEW#v}'
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n')
+          "
+          grep -q "\"version\": \"${NEW#v}\"" package.json || { echo "✗ فشل رفع الإصدار"; exit 1; }
+          echo "new=${NEW}" >> "$GITHUB_OUTPUT"
+
+      - name: التزام الإصدار والوسم ودفعها
+        if: steps.guard.outputs.skip != 'true'
+        shell: bash
+        run: |
+          NEW="${{ steps.version.outputs.new }}"
+          BASE=$(git rev-parse --short HEAD)
+          git config user.name "tahakam-release-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/package.json
+          # بلا [skip ci] عمداً: الوسم يشير لهذا الالتزام ويجب أن يشغّل سير البناء
+          git commit -m "chore(release): ${NEW} — إصدار آلي بعد دمج ${BASE}"
+          if ! git push origin main; then
+            echo "✗ فشل دفع التزام الإصدار — هل main محمي؟ (سمح للبوت بالدفع أو أزل الحماية)"
+            exit 1
+          fi
+          git tag -a "${NEW}" -m "تَحَكَّم ${NEW#v} — إصدار آلي من دمج ${BASE}"
+          git push origin "${NEW}"
+          echo "✓ وُسم ${NEW} — سير desktop-release يبنيه وينشره للعملاء الآن"
