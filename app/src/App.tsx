@@ -12,6 +12,7 @@ import { fetchAbout, fetchRevocationList, fetchCloudNotices, LICENSE_CLOUD_BASE_
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { isElectronRuntime, desktopDatabaseStorage } from './data/desktopBridge.ts'
+import { desktopStorageFailure } from './data/persistentStorage.ts'
 import { LockScreen } from './ui/LockScreen.tsx'
 import { LoginScreen } from './ui/LoginScreen.tsx'
 import { authRequired } from './core/auth.ts'
@@ -303,6 +304,29 @@ function Shell() {
   )
 }
 
+/** شاشة استرداد: تظهر حين تعذّر قراءة البيانات — لا معالج إعداد ولا كتابة فوق البيانات */
+function DataRecoveryScreen({ reason }: { reason: string }) {
+  return (
+    <div dir="rtl" className="min-h-screen flex items-center justify-center p-6 bg-slate-100 dark:bg-slate-950">
+      <div className="max-w-lg space-y-4 p-8 rounded-3xl bg-white dark:bg-card-dark border border-rose-500/30 shadow-2xl">
+        <div className="text-4xl">⚠️</div>
+        <h1 className="text-xl font-black text-slate-800 dark:text-white">تعذّر فتح بياناتك — لم يبدأ إعداد جديد</h1>
+        <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+          بياناتك لم تُحذف ولم يُكتب فوقها. هذا الخطأ يعني أن التطبيق لم يستطع قراءة قاعدة البيانات المحفوظة،
+          فأوقف الحفظ حمايةً لها. تأكد من توصيل قرص مكان البيانات، ثم أعد المحاولة. إن استمر الخطأ أرسل ملف السجل للدعم.
+        </p>
+        <p dir="ltr" className="text-[11px] font-mono text-rose-600 dark:text-rose-400 break-all">{reason}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-6 py-2.5 rounded-xl text-sm font-bold text-white bg-brand-600 hover:bg-brand-700 transition-colors"
+        >
+          🔄 إعادة المحاولة
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /** معرف هذا التبويب — ثابت طوال حياته */
 const TAB_ID = `tab-${Math.random().toString(36).slice(2, 10)}`
 const TAB_LOCK_KEY = 'shopsys-tab-lock'
@@ -317,16 +341,22 @@ export default function App() {
     if (!needsHydrationGate) return true
     try { return useAppStore.persist.hasHydrated() && useDataStore.persist.hasHydrated() } catch { return true }
   })
+  /* v1.0.19: فشل قراءة القاعدة ≠ «عميل جديد». كان المؤقت القديم (5 ثوانٍ) يفتح البوابة
+     بحالة افتراضية فيظهر معالج الإعداد وكأن البيانات اختفت. الآن: لا فتح بلا ترطيب
+     حقيقي، وفشل القراءة يعرض شاشة استرداد بدل المعالج (والكتابة ممنوعة). */
+  const [hydrationFailure, setHydrationFailure] = useState<string | null>(null)
   useEffect(() => {
     if (storesHydrated) return
     const check = () => {
+      const failure = desktopStorageFailure()
+      if (failure) { setHydrationFailure(failure); return }
       try { if (useAppStore.persist.hasHydrated() && useDataStore.persist.hasHydrated()) setStoresHydrated(true) } catch { setStoresHydrated(true) }
     }
     const offApp = useAppStore.persist.onFinishHydration(check)
     const offData = useDataStore.persist.onFinishHydration(check)
     check()
-    const safety = setTimeout(setStoresHydrated, 5000) /* شبكة أمان: لا تعليق أبداً */
-    return () => { offApp(); offData(); clearTimeout(safety) }
+    const poll = setInterval(check, 500) /* فشل الترطيب لا يُطلق onFinishHydration */
+    return () => { offApp(); offData(); clearInterval(poll) }
   }, [storesHydrated])
 
   const {
@@ -396,7 +426,10 @@ export default function App() {
 
   useEffect(() => {
     const beat = () => {
-      const existing = parseTabLock(localStorage.getItem(TAB_LOCK_KEY))
+      /* v1.0.19: في سطح المكتب الكاتب الوحيد محمي أصلاً بقفل العملية الواحدة
+         (requestSingleInstanceLock). نبضة تركها تطبيق سابق قُتل أثناء التحديث أو
+         إعادة التشغيل كانت تُظهر «التطبيق مفتوح في نافذة أخرى» بلا سبب. */
+      const existing = isElectronRuntime() ? null : parseTabLock(localStorage.getItem(TAB_LOCK_KEY))
       const d = decideTabLock(existing, TAB_ID, Date.now())
       if (d.kind === 'read_only') { setReadOnlyTab(true); return }
       // acquired أو takeover: نكتب نبضتنا ونستمر كاتباً وحيداً
@@ -616,7 +649,9 @@ export default function App() {
 
   return (
     <HashRouter>
-      {!storesHydrated ? (
+      {!storesHydrated && hydrationFailure ? (
+        <DataRecoveryScreen reason={hydrationFailure} />
+      ) : !storesHydrated ? (
         <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
           <div className="text-center space-y-3">
             <div className="text-4xl animate-pulse">🏛️</div>

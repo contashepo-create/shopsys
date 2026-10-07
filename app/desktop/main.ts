@@ -167,9 +167,21 @@ function writeDbLocation(cfg: DbLocationConfig): void {
   writeFileSync(dbLocationFile(), JSON.stringify(cfg, null, 2), 'utf8')
 }
 
+/* v1.0.19: مكان مخصص غير متاح (قرص مفصول / تغيّر حرف الدرايف بعد التحديث)
+   ⇒ كان الإقلاع يسقط بصمت على قاعدة افتراضية فارغة فيظهر معالج «عميل جديد»
+   وتبدو البيانات مفقودة. الآن الإقلاع يتوقف ويسأل المستخدم (انظر openDatabase)،
+   ولا يُستخدم الافتراضي إلا باختيار صريح من المستخدم لهذه الجلسة فقط. */
+let useDefaultDbForSession = false
+
+function customDbUnavailable(): string | null {
+  const cfg = readDbLocation()
+  if (!cfg.customDbPath || useDefaultDbForSession) return null
+  return existsSync(dirname(cfg.customDbPath)) ? null : cfg.customDbPath
+}
+
 function resolveDbPath(): { dbPath: string; isCustom: boolean } {
   const cfg = readDbLocation()
-  if (cfg.customDbPath && existsSync(dirname(cfg.customDbPath))) return { dbPath: cfg.customDbPath, isCustom: true }
+  if (cfg.customDbPath && !useDefaultDbForSession && existsSync(dirname(cfg.customDbPath))) return { dbPath: cfg.customDbPath, isCustom: true }
   return { dbPath: join(app.getPath('userData'), 'shopsys.db'), isCustom: false }
 }
 
@@ -215,11 +227,31 @@ async function backupDatabaseFile(tag: 'manual' | 'auto', database: ShopsysDatab
    نسخة سليمة من المكانين (يدوية/تلقائية) بلا تدخل — والملف التالف يُحفظ للفحص. */
 const RECOVERY_MARKER = 'db-recovery.json'
 
-function quickCheck(dbPath: string): boolean {
+/* v1.0.19: الفحص ثلاثي الحالة. الخطأ في الفتح (قفل/صلاحيات/ملف مشغول بعملية
+   أخرى أثناء التحديث) لا يعني تلف القاعدة — كان يُعامَل كتلف فيُعزل الملف
+   الحقيقي ويُستبدل بنسخة أقدم أو بقاعدة فارغة. العزل يحدث فقط عند تلف مؤكد. */
+type DbProbe = 'ok' | 'corrupt' | 'unreadable'
+
+function probeDatabase(dbPath: string): DbProbe {
+  let probe: Database.Database
   try {
-    const probe = new Database(dbPath, { readonly: true, fileMustExist: true })
-    try { return probe.pragma('quick_check', { simple: true }) === 'ok' } finally { probe.close() }
-  } catch { return false }
+    probe = new Database(dbPath, { readonly: true, fileMustExist: true })
+  } catch (error) {
+    const code = String((error as { code?: unknown }).code ?? '')
+    return /SQLITE_(CORRUPT|NOTADB)/.test(code) ? 'corrupt' : 'unreadable'
+  }
+  try {
+    return probe.pragma('quick_check', { simple: true }) === 'ok' ? 'ok' : 'corrupt'
+  } catch (error) {
+    const code = String((error as { code?: unknown }).code ?? '')
+    return /SQLITE_(CORRUPT|NOTADB)/.test(code) ? 'corrupt' : 'unreadable'
+  } finally {
+    try { probe.close() } catch { /* لا شيء */ }
+  }
+}
+
+function quickCheck(dbPath: string): boolean {
+  return probeDatabase(dbPath) === 'ok'
 }
 
 /** كل ملفات النسخ في المكانين (يدوي/تلقائي) — الأحدث أولاً (أسماؤها بطابع زمني) */
@@ -240,7 +272,13 @@ function candidateBackups(dbPath: string): string[] {
 /** يُنفَّذ قبل الفتح: القاعدة تالفة ⇐ عزلها + استرداد أحدث نسخة سليمة (أو قاعدة جديدة إن لا نسخة) */
 function shieldDamagedDatabase(dbPath: string): void {
   if (!existsSync(dbPath)) return
-  if (quickCheck(dbPath)) return
+  const probe = probeDatabase(dbPath)
+  if (probe === 'ok') return
+  if (probe === 'unreadable') {
+    // ليست تلفاً مؤكداً (قفل/صلاحيات) — لا عزل ولا استبدال؛ الفتح العادي يتولى الأمر
+    logLine('db-shield', 'تعذّر فحص القاعدة دون دليل تلف (قفل أو صلاحيات) — تُفتح كما هي بلا عزل')
+    return
+  }
   logLine('db-shield', 'فحص الإقلاع: القاعدة تالفة — بدء الاسترداد التلقائي')
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const quarantine = `${dbPath}.corrupt-${stamp}`
@@ -269,6 +307,24 @@ function shieldDamagedDatabase(dbPath: string): void {
 
 /* ── القاعدة ── */
 async function openDatabase(): Promise<ShopsysDatabase> {
+  // v1.0.19: المكان المخصص غائب ⇒ لا إنشاء قاعدة فارغة صامتاً. نسأل المستخدم.
+  for (let guard = 0; customDbUnavailable() && guard < 1000; guard += 1) {
+    const missing = customDbUnavailable() as string
+    logLine('db-location', `المكان المخصص غير متاح الآن: ${missing}`)
+    const choice = dialog.showMessageBoxSync({
+      type: 'error',
+      title: 'تَحَكَّم — مكان قاعدة البيانات غير متاح',
+      message: `مكان قاعدة البيانات المحفوظ غير متاح الآن:\n${missing}\n\nغالباً القرص أو الفلاشة غير موصولة، أو تغيّر حرف الدرايف. بياناتك لم تُحذف.`,
+      detail: 'وصّل القرص ثم اختر «إعادة المحاولة». «المكان الافتراضي مؤقتاً» يفتح برنامجاً فارغاً لهذه الجلسة فقط — أي بيانات تُدخل فيها لن تظهر عند عودة القرص.',
+      buttons: ['إعادة المحاولة', 'المكان الافتراضي مؤقتاً', 'إغلاق البرنامج'],
+      defaultId: 0,
+      cancelId: 2,
+    })
+    if (choice === 0) continue
+    if (choice === 1) { useDefaultDbForSession = true; break }
+    app.exit(0)
+    throw new Error('مكان قاعدة البيانات المخصص غير متاح — أُغلق البرنامج بطلب المستخدم')
+  }
   const { dbPath, isCustom } = resolveDbPath()
   // v1.0.9: الدرع قبل الفتح — تلف القاعدة لا يوقف التطبيق بل يسترد نسخة
   try { shieldDamagedDatabase(dbPath) } catch (e) { logLine('db-shield', `تخطي الفحص: ${(e as Error).message}`) }
