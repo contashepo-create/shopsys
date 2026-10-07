@@ -53,6 +53,16 @@ export function isEncryptedSnapshot(stored: string): boolean {
   return stored.startsWith(ENC_PREFIX)
 }
 
+/* v1.0.19: متاجر فشلت قراءتها من SQLite. عند الفشل لا يُعرض معالج «عميل جديد»
+   ولا تُكتب الحالة الافتراضية فوق بيانات موجودة — الكتابة تُمنع حتى إعادة التشغيل. */
+const failedStores = new Map<string, string>()
+
+/** أخطاء قراءة المتاجر التي لم تُحمَّل (أو null) — تقرؤها الواجهة لعرض شاشة الاسترداد */
+export function desktopStorageFailure(): string | null {
+  if (failedStores.size === 0) return null
+  return [...failedStores].map(([name, message]) => `${name}: ${message}`).join(' | ')
+}
+
 /** مفتاح ثابت لإعادة محاولة IPC بعد انقطاع الرد دون تكرار الحفظ. */
 export async function snapshotIdempotencyKey(storeName: string, expectedRevision: number, payloadJson: string): Promise<string> {
   const data = new TextEncoder().encode(`${storeName}\u0000${expectedRevision}\u0000${payloadJson}`)
@@ -215,11 +225,23 @@ export class DesktopStateStorage implements StateStorage {
   }
 
   getItem(name: string): Promise<string | null> {
-    return this.enqueue(name, async () => this.readPayload((await this.load(name)).payloadJson, name))
+    return this.enqueue(name, async () => {
+      try {
+        const value = await this.readPayload((await this.load(name)).payloadJson, name)
+        failedStores.delete(name)
+        return value
+      } catch (error) {
+        failedStores.set(name, (error as Error).message)
+        throw error
+      }
+    })
   }
 
   setItem(name: string, value: string): Promise<void> {
     return this.enqueue(name, async () => {
+      if (failedStores.has(name)) {
+        throw new Error(`لم تُحمَّل بيانات «${name}» — منع الحفظ حتى لا تُكتب فوقها. ${failedStores.get(name)}`)
+      }
       const current = await this.load(name)
       const idempotencyKey = await snapshotIdempotencyKey(name, current.revision, value)
       /* v1.0.7: الحمولة تُشفَّر قبل عبور IPC والتخزين — استخراج القيود
@@ -241,6 +263,7 @@ export class DesktopStateStorage implements StateStorage {
 
   removeItem(name: string): Promise<void> {
     return this.enqueue(name, async () => {
+      if (failedStores.has(name)) throw new Error(`لم تُحمَّل بيانات «${name}» — منع الحذف`)
       const current = await this.load(name)
       if (this.database.deleteSnapshot) {
         const result = await this.database.deleteSnapshot({ storeName: name, expectedRevision: current.revision })
