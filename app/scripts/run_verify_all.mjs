@@ -14,7 +14,12 @@ let failures = 0
 const failed = []
 for (const file of files) {
   const result = spawnSync(process.execPath, ['--experimental-strip-types', join(root, file)], { stdio: 'inherit', cwd: fileURLToPath(new URL('..', import.meta.url)) })
-  if (result.status !== 0) { failures++; failed.push(file) }
+  if (result.status !== 0) {
+    failures++
+    failed.push(file)
+    const reason = result.error?.message ?? (result.signal ? `توقف بسبب ${result.signal}` : `رمز الخروج ${result.status ?? 'غير معروف'}`)
+    console.error(`::error file=app/scripts/${file},line=1,title=بوابة تحقق فاشلة::${reason}`)
+  }
 }
 if (failures) {
   console.error(`فشل ${failures} من ${files.length} (بوابات ${gates.length} + رحلات ${journeys.length}):\n  - ${failed.join('\n  - ')}`)
