@@ -13,12 +13,22 @@ const files = [...gates, ...journeys]
 let failures = 0
 const failed = []
 for (const file of files) {
-  const result = spawnSync(process.execPath, ['--experimental-strip-types', join(root, file)], { stdio: 'inherit', cwd: fileURLToPath(new URL('..', import.meta.url)) })
+  const result = spawnSync(process.execPath, ['--experimental-strip-types', join(root, file)], {
+    encoding: 'utf8', maxBuffer: 10 * 1024 * 1024,
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+  })
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
   if (result.status !== 0) {
     failures++
     failed.push(file)
+    const candidates = `${result.stdout ?? ''}\n${result.stderr ?? ''}`.split(/\r?\n/)
+      .filter((line) => /❌|✗|FAIL|AssertionError|Error:|ERR_/.test(line))
+      .slice(-6)
     const reason = result.error?.message ?? (result.signal ? `توقف بسبب ${result.signal}` : `رمز الخروج ${result.status ?? 'غير معروف'}`)
-    console.error(`::error file=app/scripts/${file},line=1,title=بوابة تحقق فاشلة::${reason}`)
+    const detail = (candidates.join(' | ') || reason).slice(0, 700)
+      .replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A').replaceAll(':', '%3A').replaceAll(',', '%2C')
+    console.error(`::error file=app/scripts/${file},line=1,title=بوابة تحقق فاشلة::${detail}`)
   }
 }
 if (failures) {
