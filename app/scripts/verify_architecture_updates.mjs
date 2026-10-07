@@ -2,10 +2,10 @@
  * تحقق البنية الهجينة والتحديث التلقائي (البنود 3 و6):
  * ① اشتقاق وضع التشغيل الأربعة من ميزات الرخصة الموقَّعة فقط (لا تزوير محلي).
  * ② مؤشر الاتصال المرئي — كل الحالات الخمس بمدخلات حقيقية.
- * ③ مقارنة الإصدارات وقرار التحديث (اختياري/إجباري) وتنقية استجابة السحابة.
+ * ③ مقارنة الإصدارات وقرار التحديث (اختياري/إجباري) وتنقية استجابة GitHub.
  * ④ خطة التحديث الآمن: نسخة احتياطية أولاً + تراجع كامل عند الفشل.
  * ⑤ ترحيلات المخطط المتسلسلة بلا فقد بيانات.
- * ⑥ نقطة /version موجودة في عامل Cloudflare والهيدر يعرض المؤشر.
+ * ⑥ فحص آخر إصدار من GitHub والهيدر يعرض المؤشر.
  * تشغيل: node --experimental-strip-types scripts/verify_architecture_updates.mjs
  */
 import { readFileSync } from 'node:fs'
@@ -13,8 +13,8 @@ import {
   deriveArchitectureMode, MODE_LABELS, connectivityStatus, CONNECTIVITY_LABELS,
 } from '../src/core/architecture.ts'
 import {
-  APP_VERSION, isValidVersion, compareVersions, parseUpdateInfo, decideUpdate,
-  buildUpdatePlan, rollbackFrom, runMigrations,
+  APP_VERSION, LATEST_RELEASE_API, isValidVersion, compareVersions, parseUpdateInfo,
+  parseGitHubRelease, decideUpdate, buildUpdatePlan, rollbackFrom, runMigrations,
 } from '../src/core/updates.ts'
 
 let PASS = 0, FAIL = 0
@@ -46,8 +46,15 @@ ok(compareVersions('1.10.0', '1.9.0') === 1, '10 > 9 عددياً لا نصيا�
 throws('إصدار مشوه يُرفض', () => compareVersions('1.2', '1.2.3'))
 const info = parseUpdateInfo({ latestVersion: '1.1.0', downloadUrl: 'https://x/y.exe', releaseNotesAr: 'تحسينات', sha256: 'abc', mandatory: false, publishedAt: '2026-09-16' })
 ok(info !== null && info.latestVersion === '1.1.0', 'تنقية استجابة سليمة')
-ok(parseUpdateInfo({ latestVersion: 'abc' }) === null, 'إصدار فاسد من السحابة = null (لا انهيار)')
+ok(parseUpdateInfo({ latestVersion: 'abc' }) === null, 'إصدار فاسد = null (لا انهيار)')
 ok(parseUpdateInfo('نص') === null, 'استجابة غير كائن = null')
+const githubInfo = parseGitHubRelease({
+  tag_name: 'v1.2.3', html_url: 'https://github.com/contashepo-create/tahakam-releases/releases/tag/v1.2.3',
+  body: 'تحسينات', published_at: '2026-10-07T10:00:00Z',
+  assets: [{ name: 'tahakom-setup-1.2.3.exe', browser_download_url: 'https://downloads.example/setup.exe' }],
+})
+ok(githubInfo?.latestVersion === '1.2.3' && githubInfo.downloadUrl.endsWith('setup.exe'), 'بيانات أحدث إصدار GitHub تُحوّل لصيغة التطبيق')
+ok(parseGitHubRelease({ tag_name: 'draft' }) === null, 'وسم إصدار غير صالح من GitHub يُرفض')
 ok(decideUpdate('1.0.0', info).kind === 'update_available', 'أحدث مني = تحديث متاح')
 ok(decideUpdate('1.1.0', info).kind === 'up_to_date', 'مساوٍ = أنت على الأحدث')
 ok(decideUpdate('1.2.0', info).kind === 'up_to_date', 'أقدم مني (rollback سحابي) = لا تنزيل')
@@ -78,10 +85,8 @@ const r2 = runMigrations({ a: 1 }, 3, migrations)
 ok(r2.version === 3 && r2.applied.length === 0, 'حالة محدثة أصلاً = لا ترحيل')
 throws('ترحيل غير متسلسل يُرفض', () => runMigrations({}, 1, [{ fromVersion: 1, toVersion: 5, migrate: (d) => d }]))
 
-console.log('— ⑥ الربط: عامل Cloudflare + الهيدر + صفحة حول —')
-const worker = readFileSync(new URL('../../cloud/worker.js', import.meta.url), 'utf8')
-ok(worker.includes("path === '/version'"), 'نقطة /version موجودة في العامل')
-ok(worker.includes('latestVersion'), 'الاستجابة الافتراضية بالشكل المتفق')
+console.log('— ⑥ الربط: GitHub للتحديثات + Cloudflare للترخيص و«حول» —')
+ok(LATEST_RELEASE_API.includes('api.github.com/repos/contashepo-create/tahakam-releases/releases/latest'), 'فحص نسخة المتصفح يتصل بإصدارات GitHub المنشورة')
 const header = readFileSync(new URL('../src/ui/layout/Header.tsx', import.meta.url), 'utf8')
 ok(header.includes('connectivityStatus'), 'الهيدر يشتق حالة الاتصال من النواة')
 ok(header.includes("addEventListener('online'"), 'يستمع لأحداث الشبكة الحقيقية')

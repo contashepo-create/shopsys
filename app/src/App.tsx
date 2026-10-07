@@ -8,7 +8,7 @@ import { isDailySendDue, localNowIso } from './core/schedule.ts'
 import { runSyncCycle, watchLocalChanges } from './data/syncRunner.ts'
 import { hasFeature } from './core/license.ts'
 import { botConnected, sendDailyReportNow, sendBackupNow } from './ui/telegramSender.ts'
-import { fetchAbout, fetchRevocationList, DEFAULT_CLOUD_BASE_URL } from './core/cloud.ts'
+import { fetchAbout, fetchRevocationList, fetchCloudNotices, LICENSE_CLOUD_BASE_URL, APP_SERVICES_CLOUD_BASE_URL } from './core/cloud.ts'
 import { fetchDeviceFlags, effectiveFeatures } from './core/featureFlags.ts'
 import { encryptForDevice } from './data/secureStorage.ts'
 import { isElectronRuntime, desktopDatabaseStorage } from './data/desktopBridge.ts'
@@ -424,15 +424,15 @@ export default function App() {
     }
   }, [])
 
-  // ─── مزامنة السحابة (Cloudflare): صفحة «حول» + قائمة الحرق — عند الإقلاع وكل 6 ساعات ───
+  // ─── مزامنة الترخيص و«حول» من عامل التحكم — عند الإقلاع وكل 6 ساعات ───
   useEffect(() => {
     let cancelled = false
     const sync = async () => {
       const devId = useAppStore.getState().deviceId
       const [about, revoked, flags] = await Promise.all([
-        fetchAbout(DEFAULT_CLOUD_BASE_URL),
-        fetchRevocationList(DEFAULT_CLOUD_BASE_URL),
-        fetchDeviceFlags(DEFAULT_CLOUD_BASE_URL, devId), // مفاتيح الميزات عن بُعد (البند 5)
+        fetchAbout(LICENSE_CLOUD_BASE_URL),
+        fetchRevocationList(LICENSE_CLOUD_BASE_URL),
+        fetchDeviceFlags(APP_SERVICES_CLOUD_BASE_URL, devId), // يبقى عبر العامل الكامل
       ])
       if (cancelled) return
       // فشل الجلب (أوفلاين) لا يمس آخر بيانات محفوظة
@@ -447,6 +447,25 @@ export default function App() {
     sync()
     const t = setInterval(sync, 6 * 60 * 60 * 1000)
     return () => { cancelled = true; clearInterval(t) }
+  }, [setCloudData])
+
+  // ─── تنبيهات المطوّر من البوت — تحديث دوري كل دقيقة وعند العودة للتطبيق ───
+  useEffect(() => {
+    let cancelled = false
+    const syncNotices = async () => {
+      if (!useAppStore.getState().setup.completed) return
+      const deviceId = useAppStore.getState().deviceId
+      const notices = await fetchCloudNotices(LICENSE_CLOUD_BASE_URL, deviceId)
+      if (!cancelled && notices !== null) setCloudData({ notifications: notices })
+    }
+    void syncNotices()
+    const timer = setInterval(() => { void syncNotices() }, 60_000)
+    window.addEventListener('focus', syncNotices)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+      window.removeEventListener('focus', syncNotices)
+    }
   }, [setCloudData])
 
   // ─── الإرسال المجدول عبر التليجرام (القرار 32): تقرير اليوم + نسخة — مرة يومياً بعد ساعة الجدولة ───

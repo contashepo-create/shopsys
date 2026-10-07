@@ -18,10 +18,11 @@ import { collectLeaseAlerts } from '../../core/realestate.ts'
 import { connectivityStatus, CONNECTIVITY_LABELS } from '../../core/architecture.ts'
 import { currentOpenShift, salesShiftPolicy } from '../../core/shifts.ts'
 import { isInvoiceFirst } from '../../core/activities.ts'
-import { guardNavigation } from '../components/ui.tsx'
+import { guardNavigation, useToast } from '../components/ui.tsx'
 
 export function Header({ title }: { title: string }) {
-  const { theme, toggleTheme, setup, setAccountingMode, sync } = useAppStore()
+  const { theme, toggleTheme, setup, setAccountingMode, sync, cloudNotifications } = useAppStore()
+  const showToast = useToast((state) => state.show)
 
   // مؤشر الاتصال المرئي (Offline-First — أمر المالك): يستمع لأحداث المتصفح
   const [browserOnline, setBrowserOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true)
@@ -66,7 +67,17 @@ export function Header({ title }: { title: string }) {
   const authOn = authRequired(ownerPinHash, appUsers.filter((u) => u.active).length)
 
   const notifications = useMemo(
-    () => collectNotifications({
+    () => [
+      ...cloudNotifications.map((notice) => ({
+        id: `cloud:${notice.id}`,
+        icon: '📣',
+        title: notice.title,
+        body: notice.body,
+        severity: 'info' as const,
+        route: '/settings/about',
+        perm: null,
+      })),
+      ...collectNotifications({
       batches,
       itemName: (id) => items.find((it) => it.id === id)?.nameAr ?? `صنف #${id}`,
       // انخفاض المخزون تحت حد إعادة الطلب (نمط Lightspeed) — للأصناف النشطة ذات حد فقط
@@ -98,8 +109,20 @@ export function Header({ title }: { title: string }) {
       fmt: (m) => formatMinor(m, cur, false),
       todayIso: new Date().toISOString(),
     }),
-    [batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, tickets, laundryOrders, leases],
+    ],
+    [cloudNotifications, batches, items, installmentPlans, customers, cheques, issues, pinResetRequests, currentUserId, cur, rentalContracts, tickets, laundryOrders, leases],
   )
+  const announcedCloudNoticeIds = useRef(new Set<string>())
+  const sawCloudNoticeSnapshot = useRef(false)
+  useEffect(() => {
+    const fresh = cloudNotifications.filter((notice) => !announcedCloudNoticeIds.current.has(notice.id))
+    for (const notice of cloudNotifications) announcedCloudNoticeIds.current.add(notice.id)
+    if (fresh.length && sawCloudNoticeSnapshot.current) {
+      const latest = fresh[fresh.length - 1]
+      showToast(`📣 ${latest.title}: ${latest.body.slice(0, 180)}`)
+    }
+    sawCloudNoticeSnapshot.current = true
+  }, [cloudNotifications, showToast])
   // مراجعة المالك («لماذا إشعارات المالك تظهر لأي مستخدم؟»):
   // الجرس يفلتر بصلاحيات المستخدم النشط — الكاشير لا يرى أقساطاً ولا شيكات ولا بلاغات
   const myPerms = useMemo(

@@ -6,7 +6,7 @@
 import { Info, MessageCircle, Phone, Globe, RefreshCw, Scale } from 'lucide-react'
 import { useState } from 'react'
 import { useAppStore } from '../../stores/app.store.ts'
-import { fetchAbout, DEFAULT_CLOUD_BASE_URL, FALLBACK_ABOUT } from '../../core/cloud.ts'
+import { fetchAbout, LICENSE_CLOUD_BASE_URL, FALLBACK_ABOUT } from '../../core/cloud.ts'
 import { APP_VERSION, fetchUpdateInfo, decideUpdate, buildUpdatePlan, type UpdateDecision } from '../../core/updates.ts'
 import { DownloadCloud, ShieldCheck } from 'lucide-react'
 import { PLAN_LABELS } from '../../core/license.ts'
@@ -20,12 +20,12 @@ export function AboutPage() {
   const [busy, setBusy] = useState(false)
   const about = cloudAbout ?? FALLBACK_ABOUT
 
-  // فحص التحديثات عبر Cloudflare (البند 6) — النتيجة تُعرض ببطاقة أسفل معلومات النسخة
+  // فحص آخر إصدار منشور على GitHub — Cloudflare مخصص للترخيص ومحتوى «حول».
   const [updBusy, setUpdBusy] = useState(false)
   const [updDecision, setUpdDecision] = useState<UpdateDecision | null>(null)
   const checkUpdates = async () => {
     setUpdBusy(true)
-    const info = await fetchUpdateInfo(DEFAULT_CLOUD_BASE_URL)
+    const info = await fetchUpdateInfo()
     setUpdBusy(false)
     if (info === null) { toast.show('تعذّر الوصول لخادم التحديثات — أنت على النسخة المحفوظة', 'error'); return }
     const d = decideUpdate(APP_VERSION, info)
@@ -35,7 +35,7 @@ export function AboutPage() {
 
   const refresh = async () => {
     setBusy(true)
-    const fresh = await fetchAbout(DEFAULT_CLOUD_BASE_URL)
+    const fresh = await fetchAbout(LICENSE_CLOUD_BASE_URL)
     setBusy(false)
     if (fresh) { setCloudData({ about: fresh }); toast.show('تم التحديث من السحابة ✅') }
     else toast.show('تعذّر الاتصال — تُعرض آخر نسخة محفوظة', 'error')
@@ -77,10 +77,8 @@ export function AboutPage() {
         </div>
       </div>
 
-      {/* فحص التحديثات — Cloudflare (نسخة المتصفح فقط): في نسخة سطح المكتب
-          القناة الفعلية هي electron-updater من GitHub Releases (القسم أدناه) —
-          بلاغ v1.0.2: زرّان للتحديث أحدهما سحابي غير مرفوع بعد فيفشل؛ نوحّد
-          على زر واحد يعمل في كل نسخة */}
+      {/* فحص الإصدارات المنشورة على GitHub — للمتصفح فقط.
+          نسخة سطح المكتب تفحص وتنزل التحديث مباشرة عبر electron-updater. */}
       {!isElectronRuntime() && (
       <div className={card}>
         <div className="flex items-center justify-between flex-wrap gap-2">

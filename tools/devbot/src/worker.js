@@ -5,21 +5,26 @@
  *   ① بوت تليجرام خاص بالمطوّر: إصدار/تجديد مفاتيح التفعيل الموقّعة (Ed25519)،
  *      حرق المفاتيح، البحث، رسائل للعملاء، محتوى «حول» — كلها محصورة بمعرّف المطوّر.
  *   ② نقاط REST التي تقرؤها نسخة العميل (متوافقة حرفياً مع app/src/core/cloud.ts):
- *      GET /about                  → نص «حول» السحابي
+ *      GET /about                  → محتوى صفحة «حول» بصيغة JSON
  *      GET /revoked                → مصفوفة بصمات المفاتيح المحروقة (8-hex)
  *      GET /subscription/:deviceId → { plan, expiresAt, message }
+ *      GET /notifications/:deviceId → التنبيهات العامة والخاصة بالجهاز
  *
- * التخزين: KV واحد (SHOPSYS_CONTROL) — المفاتيح:
+ *   التخزين: KV واحد (SHOPSYS_CONTROL) — المفاتيح:
  *   about               → نص «حول»
  *   revoked             → JSON: ["1a2b3c4d", ...]
  *   lic:{fingerprint}   → سجل مفتاح: { payload, key, issuedAt, revoked, note }
  *   dev:{deviceId}      → حالة جهاز: { plan, expiresAt, customer, message }
+ *   settings:global     → إعدادات افتراضية للرخص الجديدة
+ *   settings:customer:* → استثناءات محفوظة لكل عميل
+ *   notices:global      → تنبيهات عامة، و notices:{deviceId} → تنبيهات خاصة
  *
  * الأسرار (wrangler secret put): TELEGRAM_BOT_TOKEN · DEV_PRIVATE_KEY_B64U ·
  *                                TELEGRAM_ADMIN_ID · WEBHOOK_SECRET
  * لا سجلات حساسة: المفاتيح تُرسل للمطوّر فقط في محادثة تليجرام الخاصة.
  */
 import { issueLicenseKey, keyFingerprint, decodeLicenseKey, expiresAfterDays, canonicalPayload, issueActivityChangeKey } from './licenseLib.js'
+import { acknowledgePanelCallback, getNotificationsForDevice, handlePanelButton, handlePanelText, panelHome } from './adminPanel.js'
 
 /* ═══════════ إعدادات البيئة (secrets + vars) ═══════════ */
 const env_ = env => ({
@@ -31,7 +36,14 @@ const env_ = env => ({
 })
 
 const PLANS = new Set(['trial', 'basic', 'pro', 'lifetime'])
-const FEATURES = new Set(['multi_branch', 'multi_instance', 'lan_host', 'reports_pro', 'custom_modules'])
+const FEATURES = new Set([
+  'einvoice_eg',
+  'einvoice_sa',
+  'multi_branch',
+  'telegram_bot',
+  'cloud_sync',
+  'multi_user_lan',
+])
 /* v1.0.10: الوحدات الـ17 القابلة للمنح بمفتاح موقّع (extraModules — عقد إضافة قسم خارج النشاط) */
 const MODULES = new Set(['pos', 'inventory', 'purchases', 'installments', 'recipes', 'processing', 'jewelry', 'maintenance', 'laundry', 'booking', 'equipment_rental', 'logistics', 'lab', 'contracting', 'clinic', 'cars', 'wallet_services', 'realestate'])
 const CORS = {
@@ -49,9 +61,37 @@ export default {
 
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS })
 
-    /* نقاط العملاء — عامة القراءة فقط (بصمات وأعلام، لا مفاتيح ولا بيانات) */
-    if (url.pathname === '/about') return json(await cfg.kv.get('about') ?? '', CORS)
-    if (url.pathname === '/revoked') return json(await cfg.kv.get('revoked') ?? [], CORS)
+    /* نقاط العملاء — عامة القراءة فقط: محتوى «حول» والإبطال وحالة الاشتراك. */
+    if (url.pathname === '/about') {
+      const fallback = {
+        title: 'TAHAKAM ERP — تَحَكَّم في إدارة أعمالك',
+        body: 'نظام عربي متكامل للمبيعات والمخازن والحسابات العامة — يعمل بلا إنترنت.',
+        supportPhone: '', supportTelegram: '', website: '', updatedAt: new Date().toISOString(),
+      }
+      const raw = await cfg.kv.get('about')
+      if (!raw) return json(fallback, CORS)
+      try {
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return json({ ...fallback, ...parsed }, CORS)
+        }
+      } catch { /* الأمر /حول يحفظ نصاً عادياً، فيُعرض داخل body */ }
+      return json({ ...fallback, body: raw }, CORS)
+    }
+    if (url.pathname === '/revoked') {
+      const raw = await cfg.kv.get('revoked')
+      if (!raw) return json([], CORS)
+      try {
+        const parsed = JSON.parse(raw)
+        return json(Array.isArray(parsed) ? parsed : [], CORS)
+      } catch { return json([], CORS) }
+    }
+    const notifications = url.pathname.match(/^\/notifications\/([^/]+)$/)
+    if (notifications) {
+      if (request.method !== 'GET') return new Response('method not allowed', { status: 405, headers: CORS })
+      const deviceId = decodeURIComponent(notifications[1])
+      return json(await getNotificationsForDevice(cfg, deviceId), CORS)
+    }
     const sub = url.pathname.match(/^\/subscription\/([^/]+)$/)
     if (sub) {
       const state = await cfg.kv.get(`dev:${decodeURIComponent(sub[1])}`)
@@ -99,14 +139,33 @@ async function appendDeviceLog(cfg, deviceId, text) {
 }
 
 async function handleUpdate(update, cfg) {
-  const msg = update.message
-  if (!msg || !msg.text) return null
+  const callback = update.callback_query
+  const msg = update.message ?? callback?.message
+  if (!msg) return null
   const chatId = msg.chat?.id
   if (!chatId) return null
-  // حصر كل أوامر الإدارة بمعرّف المطوّر وحده — أي معرّف آخر يُتجاهل صمتاً (لا تسريب وجود البوت)
-  if (!cfg.adminId || String(msg.from?.id) !== cfg.adminId) return null
+  // حصر كل أدوات الإدارة بمعرّف المطوّر وحده — أي معرّف آخر يُتجاهل صمتاً.
+  const actorId = callback?.from?.id ?? update.message?.from?.id ?? msg.from?.id
+  if (!cfg.adminId || String(actorId) !== cfg.adminId) {
+    if (callback) await acknowledgePanelCallback(cfg.token, callback.id)
+    return null
+  }
+  if (callback) {
+    await acknowledgePanelCallback(cfg.token, callback.id)
+    try { return await handlePanelButton(callback.data, chatId, cfg) }
+    catch (error) { return { chatId, text: `تعذّر تنفيذ الاختيار: ${error.message}` } }
+  }
+  if (typeof msg.text !== 'string') return null
+  const text = msg.text.trim()
+  if (['/start', '/بدء', '/مساعدة'].includes(text)) return panelHome(chatId)
+  try {
+    const flowReply = await handlePanelText(text, chatId, cfg)
+    if (flowReply) return flowReply
+  } catch (error) {
+    return { chatId, text: `تعذّر إكمال الخطوة: ${error.message}` }
+  }
 
-  const [cmd, ...args] = msg.text.trim().split(/\s+/)
+  const [cmd, ...args] = text.split(/\s+/)
   const arg = (i) => (args[i] ?? '').trim()
 
   try {
@@ -310,7 +369,7 @@ async function handleUpdate(update, cfg) {
 const HELP = [
   '🤖 <b>بوت تحكم المطوّر — تَحَكَّم</b>',
   '',
-  '<code>/اصدر SHOP-XXXX-XXXX-XXXX basic «اسم المحل» 365 نشاط1 +2 +1 lan_host,reports_pro</code>',
+  '<code>/اصدر SHOP-XXXX-XXXX-XXXX basic اسم_المحل 365 grocery +2 +1 telegram_bot,cloud_sync</code>',
   '— إصدار/تجديد مفتاح: معرّف الجهاز (عند العميل في شاشة التفعيل) · الخطة trial/basic/pro/lifetime · الأيام (0 = مدى الحياة، الافتراضي 365) · معرّف النشاط اختياري (قصر المفتاح عليه) · +مستخدمون · +فروع · ميزات بفواصل',
   '',
   '<code>/حرق مفتاح-أو-بصمة</code> — إبطال نهائي (قائمة الإبطال السحابية)',

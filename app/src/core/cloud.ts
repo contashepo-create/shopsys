@@ -5,11 +5,19 @@
  *   GET /about                  → محتوى صفحة «حول» يتحكم فيه المطوّر عن بُعد
  *   GET /revoked                → قائمة بصمات المفاتيح المحروقة
  *   GET /subscription/:deviceId → حالة اشتراك العميل (عرض فقط — الحجية للمفتاح الموقّع)
+ *   GET /notifications/:deviceId → تنبيهات المطوّر العامة والخاصة بالجهاز
  * التطبيق يعمل أوفلاين دائماً: الجلب تحسين، وفشله لا يعطل شيئاً،
  * وآخر نتيجة تُخزن محلياً وتُستخدم حتى يتوفر اتصال.
  */
 
-export const DEFAULT_CLOUD_BASE_URL = 'https://shopsys-control.contashepo.workers.dev'
+// عامل الترخيص وصفحة «حول» الجديد.
+export const LICENSE_CLOUD_BASE_URL = 'https://shopsys-control.mobileshop2026.workers.dev'
+
+// الخدمات الأقدم لا تزال على العامل الكامل: أعلام الميزات وقناة الدعم.
+export const APP_SERVICES_CLOUD_BASE_URL = 'https://shopsys-control.contashepo.workers.dev'
+
+/** الاسم السابق يبقى للتوافق مع أي استيراد قديم داخل التطبيق. */
+export const DEFAULT_CLOUD_BASE_URL = LICENSE_CLOUD_BASE_URL
 
 /* ─── صفحة «حول» ─── */
 
@@ -35,9 +43,10 @@ export const FALLBACK_ABOUT: AboutContent = {
 export function parseAbout(raw: unknown): AboutContent {
   const o = (raw ?? {}) as Record<string, unknown>
   const str = (v: unknown, fb: string) => (typeof v === 'string' ? v : fb)
+  // بوت الترخيص القديم يعيد نص «حول» في الحقل text؛ العامل الكامل يعيد body.
   return {
     title: str(o.title, FALLBACK_ABOUT.title),
-    body: str(o.body, FALLBACK_ABOUT.body),
+    body: str(o.body, str(o.text, FALLBACK_ABOUT.body)),
     supportPhone: str(o.supportPhone, ''),
     supportTelegram: str(o.supportTelegram, ''),
     website: str(o.website, ''),
@@ -49,8 +58,16 @@ export function parseAbout(raw: unknown): AboutContent {
 
 /** تنقية استجابة /revoked: مصفوفة بصمات hex فقط */
 export function parseRevocationList(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return []
-  return raw.filter((x): x is string => typeof x === 'string' && /^[0-9a-f]{8}$/.test(x))
+  let value = raw
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const text = (value as Record<string, unknown>).text
+    if (typeof text === 'string') value = text
+  }
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value) } catch { return [] }
+  }
+  if (!Array.isArray(value)) return []
+  return value.filter((x): x is string => typeof x === 'string' && /^[0-9a-f]{8}$/.test(x))
 }
 
 /* ─── حالة الاشتراك (عرض) ─── */
@@ -59,6 +76,38 @@ export interface CloudSubscription {
   plan: string
   expiresAt: string | null
   message: string // رسالة من المطوّر للعميل (تجديد قريب…)
+}
+
+/** تنبيه أرسله المطوّر من البوت إلى جهاز واحد أو إلى جميع العملاء. */
+export interface CloudNotice {
+  id: string
+  title: string
+  body: string
+  createdAt: string
+  expiresAt: string | null
+}
+
+export function parseCloudNotices(raw: unknown): CloudNotice[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'object' && raw !== null && Array.isArray((raw as Record<string, unknown>).notifications)
+      ? (raw as Record<string, unknown>).notifications as unknown[]
+      : []
+  const now = Date.now()
+  return list.flatMap((entry): CloudNotice[] => {
+    if (typeof entry !== 'object' || entry === null) return []
+    const o = entry as Record<string, unknown>
+    if (typeof o.id !== 'string' || typeof o.body !== 'string') return []
+    const expiresAt = typeof o.expiresAt === 'string' ? o.expiresAt : null
+    if (expiresAt && Date.parse(expiresAt) <= now) return []
+    return [{
+      id: o.id,
+      title: typeof o.title === 'string' ? o.title : 'رسالة من المطوّر',
+      body: o.body.slice(0, 1500),
+      createdAt: typeof o.createdAt === 'string' ? o.createdAt : '',
+      expiresAt,
+    }]
+  })
 }
 
 export function parseSubscription(raw: unknown): CloudSubscription | null {
@@ -99,4 +148,9 @@ export async function fetchRevocationList(baseUrl: string): Promise<string[] | n
 export async function fetchSubscription(baseUrl: string, deviceId: string): Promise<CloudSubscription | null> {
   const raw = await getJson(`${baseUrl.replace(/\/$/, '')}/subscription/${encodeURIComponent(deviceId)}`)
   return parseSubscription(raw)
+}
+
+export async function fetchCloudNotices(baseUrl: string, deviceId: string): Promise<CloudNotice[] | null> {
+  const raw = await getJson(`${baseUrl.replace(/\/$/, '')}/notifications/${encodeURIComponent(deviceId)}`)
+  return raw == null ? null : parseCloudNotices(raw)
 }

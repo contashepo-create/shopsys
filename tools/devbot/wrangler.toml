@@ -1,6 +1,6 @@
 # مركز تحكم المطوّر — shopsys-control
 # الاسم مطابق لقاعدة السحابة المضمّنة في العميل:
-# app/src/core/cloud.ts → DEFAULT_CLOUD_BASE_URL = 'https://shopsys-control.contashepo.workers.dev'
+# app/src/core/cloud.ts → LICENSE_CLOUD_BASE_URL = 'https://shopsys-control.mobileshop2026.workers.dev'
 name = "shopsys-control"
 main = "src/worker.js"
 compatibility_date = "2024-12-01"
@@ -10,7 +10,7 @@ compatibility_date = "2024-12-01"
 # ثم انسخ id هنا — ولو أردت نسخة معاينة (اختيارية): npx wrangler kv namespace create SHOPSYS_CONTROL_PREVIEW
 [[kv_namespaces]]
 binding = "SHOPSYS_CONTROL"
-id = "ضع-معرف-مساحة-KV-هنا"
+id = "3ed24436e5844f3d9159b5b823cf9b65"
 
 # ─── الأسرار (لا تُكتب هنا أبداً — تُضبط بأمر wrangler secret put) ───
 #   TELEGRAM_BOT_TOKEN   توكن البوت من @BotFather

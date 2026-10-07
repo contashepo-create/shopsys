@@ -9,7 +9,7 @@ import { Headset, Send, RefreshCw, FileText, ShieldCheck } from 'lucide-react'
 import { useAppStore } from '../../stores/app.store.ts'
 import { useDataStore } from '../../data/repo.ts'
 import { getActivity } from '../../core/activities.ts'
-import { DEFAULT_CLOUD_BASE_URL } from '../../core/cloud.ts'
+import { APP_SERVICES_CLOUD_BASE_URL } from '../../core/cloud.ts'
 import { buildSupportPayload, fetchConversation, sendSupportMessage, SUPPORT_POLL_MS, type SupportMessage } from '../../core/support.ts'
 import { getLogText, getLogLines, logEvent } from '../../core/applog.ts'
 import { getOrCreateSupportToken } from '../../data/supportAuth.ts'
@@ -33,7 +33,7 @@ export function SupportPage() {
 
   const refresh = async () => {
     const token = await getOrCreateSupportToken()
-    const conv = await fetchConversation(DEFAULT_CLOUD_BASE_URL, deviceId, token)
+    const conv = await fetchConversation(APP_SERVICES_CLOUD_BASE_URL, deviceId, token)
     if (conv) setMessages(conv)
     setLoading(false)
   }
@@ -59,7 +59,7 @@ export function SupportPage() {
       })
       setSending(true)
       const token = await getOrCreateSupportToken()
-      const ok = await sendSupportMessage(DEFAULT_CLOUD_BASE_URL, deviceId, token, payload)
+      const ok = await sendSupportMessage(APP_SERVICES_CLOUD_BASE_URL, deviceId, token, payload)
       setSending(false)
       if (!ok) return toast.show('تعذر الإرسال — تأكد من اتصال الإنترنت وحاول ثانية', 'error')
       logEvent('info', `support: أُرسلت رسالة دعم${attachLog ? ' + لوج' : ''}`)
