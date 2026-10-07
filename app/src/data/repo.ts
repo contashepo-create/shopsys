@@ -14,7 +14,7 @@ import { priceFloorViolations, PriceFloorError } from '../core/items.ts'
 import type { ItemFeature } from '../core/activities.ts'
 import { isInvoiceFirst } from '../core/activities.ts'
 import { computeLandedCosts, weightedAverage, allocateExpense, type ExpenseInput, type CostLine } from '../core/costing.ts'
-import { computeTotals, buildSaleEntry, baseQty, exceedsCreditLimit, CreditLimitError, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
+import { computeTotals, applyCashRounding, buildSaleEntry, baseQty, exceedsCreditLimit, CreditLimitError, type CartLine, type PaymentMethod, type CartTotals } from '../core/pos.ts'
 import { buildReturnLines, buildReturnLinesPerLine, buildReturnEntryAlloc, allocationOf, validateRefundAllocation, deriveTaxConfig, returnCashRefundMinor, damagedCostOf, type RefundMode, type RefundAllocation, type ReturnLine, type ReturnLineSpec } from '../core/returns.ts'
 import { saleEditBlocks } from '../core/invoiceEdit.ts'
 import { auditFromPatch, appendAudit, sanitizeText, validateIssue, verifyPin, DEFAULT_OWNER_PROFILE, type OwnerProfile, type AuditEvent, type AppUser, type IssueReport, type IssueStatus } from '../core/audit.ts'
@@ -1295,6 +1295,11 @@ interface DataState {
     creditLimitOverrideBy?: string | null
     /** تجاوز الحد الأدنى لسعر البيع بموافقة مدير (نمط DEXEF/الأمين) */
     priceFloorOverrideBy?: string | null
+    /**
+     * تقريب النقد (إن فُعّل في الإعدادات): يُطبّق فقط على فاتورة نقدية مدفوعة كاملةً بالإجمالي المقرَّب —
+     * المُستدعي الذي لا يمرره (استبدال/مقايضة/مطعم) يبقى على الإجمالي الدقيق.
+     */
+    cashRounding?: boolean
   }) => SaleInvoice
   /**
    * ترحيل مرتجع مبيعات مربوط بفاتورة أصلية:
@@ -2102,6 +2107,18 @@ function readCurrencyDecimals(): number {
   return 2
 }
 
+/** خطوة تقريب النقد (بالوحدة الصغرى) من إعدادات المنشأة — 0 = معطل (الافتراضي) */
+function readCashRoundingStep(): number {
+  try {
+    const raw = localStorage.getItem('shopsys-app')
+    if (raw) {
+      const step = JSON.parse(raw)?.state?.setup?.cashRoundingStepMinor
+      if (Number.isInteger(step) && step > 0) return step
+    }
+  } catch { /* معطل */ }
+  return 0
+}
+
 function shiftRequiredForSales(): boolean {
   try {
     const raw = localStorage.getItem('shopsys-app')
@@ -2831,7 +2848,15 @@ export const useDataStore = create<DataState>()(
           const expected = Math.round((current as number) * (l.unitFactor ?? 1))
           return expected !== l.unitCostMinor ? { ...l, unitCostMinor: expected } : l
         })
-        const totals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
+        let totals = computeTotals(costedLines, args.invoiceDiscountPercent, args.taxPercent, args.taxInclusive)
+        if (args.cashRounding && args.payment === 'cash') {
+          const step = readCashRoundingStep()
+          if (step > 0) {
+            const rounded = applyCashRounding(totals, step)
+            // فاتورة نقدية مدفوعة كاملةً فقط — الجزئي/الآجل يبقى دقيقاً (لا تقريب على دين)
+            if ((args.paidMinor ?? rounded.totalMinor) === rounded.totalMinor) totals = rounded
+          }
+        }
         // دفع مجزأ: جزء نقدي يحتاج خزينة، وأي جزء آجل يحتاج عميلاً محدداً
         const paidM = args.paidMinor ?? (args.payment === 'cash' ? totals.totalMinor : 0)
         if (paidM < totals.totalMinor && args.customerId == null) {
@@ -4165,6 +4190,7 @@ export const useDataStore = create<DataState>()(
         const isDishItem = (id2: number) => state.recipes.some((r) => r.productItemId === id2 && r.mode === 'made_to_order')
         const usesRecipes = sale.lines.some((l) => isDishItem(l.itemId)) || args.lines.some((l) => isDishItem(l.itemId))
         const usesVariants = sale.lines.some((l) => l.variantColor || l.variantSize) || args.lines.some((l) => l.variantColor || l.variantSize)
+        if ((sale.totals.roundingMinor ?? 0) !== 0) throw new Error('فاتورة بتقريب نقدي — صحّحها بمرتجع وفاتورة جديدة حتى يبقى فرق التقريب مطابقاً للمقبوض')
         if (usesRecipes) throw new Error('فاتورة أطباق بوصفات — الخامات صُرفت فعلاً؛ صحّح بمرتجع وفاتورة جديدة')
         if (usesVariants) throw new Error('فاتورة بتركيبات لون/مقاس — صحّح بمرتجع وفاتورة جديدة للحفاظ على أرصدة التركيبات')
 

@@ -10,7 +10,7 @@ import { useDataStore } from '../../data/repo.ts'
 import { useAppStore } from '../../stores/app.store.ts'
 import { getCountry } from '../../core/countries.ts'
 import { formatMinor } from '../../core/money.ts'
-import { computeTotals, CreditLimitError, type CartLine } from '../../core/pos.ts'
+import { computeTotals, applyCashRounding, CreditLimitError, type CartLine } from '../../core/pos.ts'
 import { PriceFloorError } from '../../core/items.ts'
 import { parseScaleBarcodeUniversal, scalePriceToMinor, matchScaleItem } from '../../core/barcode.ts'
 import { availableSerials, findBySerial, warrantyLookup } from '../../core/serials.ts'
@@ -362,21 +362,38 @@ export function PosPage() {
     } catch { return null }
   }, [cart, invoiceDiscount, countryVatPercent, setup.taxInclusive])
 
+  // تقريب النقد (إن فُعّل في الإعدادات): للفاتورة النقدية المدفوعة كاملةً فقط، ومعطل مع الفاتورة
+  // الإلكترونية (الإجمالي المقرَّب لا يطابق الوعاء+الضريبة المرسل للهيئة)
+  const einvoiceOn = useMemo(() => {
+    const lic = evaluateLicense({ activatedPayload, trialStartedAt, lastSeenAt, today: new Date().toISOString() })
+    return hasFeature(lic, 'einvoice_sa') || hasFeature(lic, 'einvoice_eg')
+  }, [activatedPayload, trialStartedAt, lastSeenAt])
+  const roundStep = !einvoiceOn && (setup.cashRoundingStepMinor ?? 0) > 0 ? (setup.cashRoundingStepMinor as number) : 0
+  /** إجمالي الدفع: مقرَّب لو نقدي ومفعّل، وإلا الدقيق نفسه */
+  const payTotals = useMemo(
+    () => (totals && payment === 'cash' && roundStep > 0 ? applyCashRounding(totals, roundStep) : totals),
+    [totals, payment, roundStep],
+  )
+
   // عند فتح شاشة الدفع: المبلغ النقدي يتعبأ تلقائياً بالإجمالي (قابل للتعديل — طلب المالك)
   useEffect(() => {
-    if (payOpen && totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals))
+    if (payOpen && payTotals) setPaidCash(String(payTotals.totalMinor / 10 ** cur.decimals))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payOpen])
 
-  /** المدفوع نقداً بالوحدة الصغرى — مضبوط بين 0 والإجمالي */
+  /**
+   * المدفوع نقداً بالوحدة الصغرى. المدفوع الكامل = إجمالي الدفع (المقرَّب إن فُعّل)، وأي مبلغ أقل منه
+   * جزئي فيُحدّ بالإجمالي الدقيق (لا تقريب على دين) — بلا تقريب الحالتان تتطابقان مع السلوك القديم.
+   */
   const paidCashMinor = useMemo(() => {
-    if (!totals) return 0
+    if (!totals || !payTotals) return 0
     try {
-      const m = toMinor(paidCash || '0', cur.decimals)
-      return Math.max(0, Math.min(m, totals.totalMinor))
+      const m = Math.max(0, toMinor(paidCash || '0', cur.decimals))
+      return m >= payTotals.totalMinor ? payTotals.totalMinor : Math.min(m, totals.totalMinor)
     } catch { return 0 }
-  }, [paidCash, totals, cur.decimals])
-  const creditRemainder = totals ? totals.totalMinor - paidCashMinor : 0
+  }, [paidCash, totals, payTotals, cur.decimals])
+  const paidInFullRounded = !!totals && !!payTotals && roundStep > 0 && payment === 'cash' && paidCashMinor === payTotals.totalMinor
+  const creditRemainder = totals ? (paidInFullRounded ? 0 : totals.totalMinor - paidCashMinor) : 0
 
   /** طباعة إيصال فاتورة (المرحلة 5) — مع رمز QR زاتكا عند تفعيل الميزة (القرار 30) */
   const printSale = async (sale: { invoiceNumber: string; refCode?: string; date: string; lines: CartLine[]; totals: ReturnType<typeof computeTotals>; payment: 'cash' | 'credit'; customerId: number | null; paidMinor?: number }) => {
@@ -459,6 +476,7 @@ export function PosPage() {
         taxInclusive: setup.taxInclusive,
         treasury,
         paidMinor: payment === 'credit' ? 0 : paidCashMinor,
+        cashRounding: paidInFullRounded, // المخزن يقرّب بنفس الخطوة ويتحقق أن المدفوع = المقرَّب
         expiryOverrideBy: expiryOverrideBy ?? null,
         creditLimitOverrideBy: creditLimitOverrideBy ?? null,
         priceFloorOverrideBy: priceFloorOverrideBy ?? null,
@@ -994,11 +1012,16 @@ export function PosPage() {
           <div className="space-y-5">
             <div className="text-center p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/20">
               <div className="text-[12px] text-slate-400">المبلغ المستحق</div>
-              <div className="font-black text-3xl text-emerald-600 dark:text-emerald-400 mt-1">{fmt(totals.totalMinor)} {cur.symbol}</div>
+              <div className="font-black text-3xl text-emerald-600 dark:text-emerald-400 mt-1">{fmt((payTotals ?? totals).totalMinor)} {cur.symbol}</div>
+              {payTotals?.roundingMinor ? (
+                <div className="text-[11px] text-slate-400 mt-1">
+                  الإجمالي {fmt(totals.totalMinor)} · تقريب نقدي {payTotals.roundingMinor > 0 ? '+' : '−'}{fmt(Math.abs(payTotals.roundingMinor))}
+                </div>
+              ) : null}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => { setPayment('cash'); if (totals) setPaidCash(String(totals.totalMinor / 10 ** cur.decimals)) }}
+                onClick={() => { setPayment('cash'); if (totals) setPaidCash(String((roundStep > 0 ? applyCashRounding(totals, roundStep) : totals).totalMinor / 10 ** cur.decimals)) }}
                 className={`p-4 rounded-2xl border-2 font-bold transition-all duration-200 hover:scale-[1.02] ${payment === 'cash' ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-slate-200 dark:border-slate-700 text-slate-400'}`}
               >
                 <Banknote size={22} className="mx-auto mb-1" /> نقدي / مجزأ

@@ -137,6 +137,8 @@ export interface ReceiptModel {
   taxLabel: string | null // «ض.ق.م 14٪ (مشمولة)» أو null
   taxMinor: Minor
   totalMinor: Minor // المستحق النهائي
+  /** فرق تقريب النقد بإشارته (إن وُجد) — يظهر سطراً قبل الإجمالي */
+  roundingMinor?: Minor
   /** المحصل وقت البيع (الدفع المجزأ) — يُطبع «المدفوع/المتبقي» عندما لا يساوي الإجمالي */
   paidMinor: Minor
   remainingMinor: Minor
@@ -203,6 +205,7 @@ export function buildReceiptModel(args: {
     taxLabel,
     taxMinor: totals.taxMinor,
     totalMinor: totals.totalMinor,
+    ...(totals.roundingMinor ? { roundingMinor: totals.roundingMinor } : {}),
     paidMinor: paid,
     remainingMinor: remaining,
     footerText: settings.footerText,

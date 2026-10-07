@@ -159,6 +159,7 @@ function totalsBlock(m: ReceiptModel, cur: CurrencyConfig, s: ReceiptSettings, d
     rows.push(`<div class="tr"><span>الوعاء الضريبي</span><b>${fmt(m.taxBaseMinor)}</b></div>`)
     rows.push(`<div class="tr"><span>${esc(m.taxLabel)}</span><b>${fmt(m.taxMinor)}</b></div>`)
   }
+  if (m.roundingMinor) rows.push(`<div class="tr"><span>تقريب نقدي</span><b>${m.roundingMinor > 0 ? '+' : '-'}${fmt(Math.abs(m.roundingMinor))}</b></div>`)
   // الدفع المجزأ (بلاغ المالك): المدفوع والمتبقي يظهران على المطبوعة
   const paidRows = m.remainingMinor > 0
     ? `<div class="tr"><span>المدفوع</span><b>${fmt(m.paidMinor)}</b></div>

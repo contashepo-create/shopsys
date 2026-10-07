@@ -78,8 +78,31 @@ export interface CartTotals {
   netMinor: Minor // بعد الخصم (هذا ما يدفعه العميل إذا الضريبة شاملة)
   taxBaseMinor: Minor // الأساس الضريبي
   taxMinor: Minor // الضريبة
-  totalMinor: Minor // الإجمالي النهائي المستحق
+  totalMinor: Minor // الإجمالي النهائي المستحق (بعد تقريب النقد إن طُبّق)
   cogsMinor: Minor // تكلفة البضاعة المباعة
+  /**
+   * فرق تقريب النقد بإشارته (المقرَّب − الدقيق) — غياب/0 = لا تقريب. لا يمس الضريبة ولا الأساس الضريبي:
+   * totalMinor = taxBaseMinor + taxMinor + roundingMinor (نمط Odoo: سطر تقريب مستقل).
+   */
+  roundingMinor?: Minor
+}
+
+/** تقريب مبلغ لأقرب مضاعف للخطوة (نصف لأعلى) — خطوة ≤ 0 = بلا تقريب */
+export function roundToStep(amountMinor: Minor, stepMinor: Minor): Minor {
+  if (!Number.isInteger(stepMinor) || stepMinor <= 0) return amountMinor
+  return Math.floor(amountMinor / stepMinor + 0.5) * stepMinor
+}
+
+/**
+ * تقريب النقد (سد فجوة Odoo/Lightspeed: لا فكة أصغر من 5 هللات): يقرّب الإجمالي النهائي لمضاعف الخطوة
+ * ويحفظ الفرق في roundingMinor — الضريبة والمبيعات الصافية لا تتغير (الفرق إيراد/خسارة أخرى 4110).
+ */
+export function applyCashRounding(totals: CartTotals, stepMinor: Minor): CartTotals {
+  if (!Number.isInteger(stepMinor) || stepMinor <= 0) return totals
+  const rounded = roundToStep(totals.totalMinor, stepMinor)
+  const diff = rounded - totals.totalMinor
+  if (diff === 0) return totals
+  return { ...totals, totalMinor: rounded, roundingMinor: diff }
 }
 
 /** إجمالي سطر بعد خصمه */
@@ -211,6 +234,10 @@ export function buildSaleEntry(
   if (paid > 0) lines.push({ accountCode: treasury, debit: paid, credit: 0, note: 'نقدية' })
   if (remainder > 0) lines.push({ accountCode: '1104', debit: remainder, credit: 0, note: 'ذمم عملاء' })
   lines.push({ accountCode: '4101', debit: 0, credit: totals.taxBaseMinor, note: 'مبيعات' })
+  // فرق تقريب النقد: موجب = العميل دفع أكثر (إيراد)، سالب = خصمنا منه (يخفض الإيراد) — نفس الحساب 4110
+  const rounding = totals.roundingMinor ?? 0
+  if (rounding > 0) lines.push({ accountCode: '4110', debit: 0, credit: rounding, note: 'فرق تقريب نقدي' })
+  else if (rounding < 0) lines.push({ accountCode: '4110', debit: -rounding, credit: 0, note: 'فرق تقريب نقدي' })
   if (totals.taxMinor > 0) {
     lines.push({ accountCode: '2102', debit: 0, credit: totals.taxMinor, note: 'ض.ق.م مستحقة' })
   }

@@ -222,6 +222,36 @@ export function GeneralSettingsPage() {
         })()}
       </section>
 
+      {/* تقريب النقد (سد فجوة Odoo/Lightspeed — لا فكة أصغر من أصغر عملة متداولة) */}
+      <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '132ms' }}>
+        <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">
+          <Percent size={17} className="text-emerald-500" /> تقريب الدفع النقدي
+        </h3>
+        <p className="text-[11.5px] text-slate-400 mb-3">
+          يقرّب إجمالي الفاتورة <b>النقدية المدفوعة كاملةً</b> لأقرب خطوة تختارها (مثلاً 0.05)، ويُقيَّد الفرق على «إيرادات أخرى» 4110
+          بسطر مستقل — الضريبة والمبيعات الصافية لا تتغير. لا يُطبَّق على الآجل أو الجزئي، ويتوقف تلقائياً مع الفاتورة الإلكترونية.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {[0, 0.05, 0.1, 0.25, 0.5, 1].map((major) => {
+            const step = Math.round(major * 10 ** cur.decimals)
+            const current = setup.cashRoundingStepMinor ?? 0
+            const active = current === step
+            return (
+              <button
+                key={major}
+                onClick={() => {
+                  useAppStore.setState((s) => ({ setup: { ...s.setup, cashRoundingStepMinor: step } }))
+                  toast.show(step === 0 ? 'أُوقف تقريب النقد — الفواتير بالقرش الدقيق' : `تقريب النقد لأقرب ${fmt(step)} ${cur.symbol} ✓`)
+                }}
+                className={`px-3.5 py-2 rounded-xl border-2 text-[12.5px] font-bold transition-all ${active ? 'border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'border-slate-200 dark:border-slate-700 text-slate-500 hover:border-emerald-500/30'}`}
+              >
+                {step === 0 ? 'معطل' : `${fmt(step)} ${cur.symbol}`}
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
       {/* برنامج نقاط الولاء (نمط Lightspeed Loyalty / Square) */}
       <section className="anim-up rounded-2xl bg-white dark:bg-card-dark border border-slate-200 dark:border-slate-800 p-5" style={{ animationDelay: '135ms' }}>
         <h3 className="font-extrabold text-slate-800 dark:text-white mb-1 flex items-center gap-2">

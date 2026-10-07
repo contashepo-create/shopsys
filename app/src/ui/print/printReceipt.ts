@@ -73,6 +73,7 @@ export function renderReceiptHtml(model: ReceiptModel, cur: CurrencyConfig, sett
   ${settings.showItemCounts ? `<div class="tot"><span>عدد الأصناف / القطع</span><span>${model.itemCount} / ${model.totalQty}</span></div>` : ''}
   ${settings.showDiscount && model.discountMinor > 0 ? `<div class="tot"><span>إجمالي الخصم</span><span>-${fmt(model.discountMinor)}</span></div>` : ''}
   ${model.taxLabel ? `<div class="tot"><span>${esc(model.taxLabel)}</span><span>${fmt(model.taxMinor)}</span></div>` : ''}
+  ${model.roundingMinor ? `<div class="tot"><span>تقريب نقدي</span><span>${model.roundingMinor > 0 ? '+' : '-'}${fmt(Math.abs(model.roundingMinor))}</span></div>` : ''}
   <div class="grand"><span>الإجمالي</span><span>${fmt(model.totalMinor)} ${esc(cur.symbol)}</span></div>
   ${model.remainingMinor > 0 ? `<div class="tot" style="font-weight:800"><span>المدفوع</span><span>${fmt(model.paidMinor)}</span></div><div class="tot" style="font-weight:800"><span>المتبقي (آجل)</span><span>${fmt(model.remainingMinor)} ${esc(cur.symbol)}</span></div>` : ''}
   ${model.qrDataUrl ? `<div class="center" style="margin-top:2mm"><img src="${esc(model.qrDataUrl)}" alt="ZATCA QR" style="width:${paper === '80' ? '26mm' : '20mm'};height:auto"/></div>` : ''}
