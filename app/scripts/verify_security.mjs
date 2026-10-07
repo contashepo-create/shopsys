@@ -8,8 +8,8 @@ import {
   HOURLY_BACKUP_KEEP,
 } from '../src/core/security.ts'
 import {
-  activityMatches, keyFingerprint, isRevoked, canonicalPayload,
-  evaluateLicense, PLAN_LIMITS, effectiveLimits,
+  activityMatches, keyFingerprint, isRevoked, canonicalPayload, b64uDecode,
+  DEVELOPER_PUBLIC_KEY_B64U, evaluateLicense, PLAN_LIMITS, effectiveLimits,
 } from '../src/core/license.ts'
 import { parseAbout, parseRevocationList, parseSubscription, FALLBACK_ABOUT } from '../src/core/cloud.ts'
 
@@ -71,6 +71,9 @@ const c3 = canonicalPayload(activePayload)
 ok(c1 !== c2 && c1 !== c3, 'activityId جزء من التوقيع — لا يُبدل')
 ok(c1.includes('pharmacy'), 'الصيغة القانونية تتضمن النشاط')
 
+/* ═══ المفتاح العام ═══ */
+ok(b64uDecode(DEVELOPER_PUBLIC_KEY_B64U).length === 32, 'المفتاح العام المضمّن صالح بطول Ed25519')
+
 /* ═══ حرق المفاتيح ═══ */
 const keyStr = 'SHOPSYS1.eyJ2IjoxfQ.c2lnbmF0dXJlLXNhbXBsZQ'
 const fp = keyFingerprint(keyStr)
@@ -89,10 +92,12 @@ ok(effectiveLimits(null).maxUsers === 1, 'بلا مفتاح = حدود التج�
 /* ═══ السحابة (Cloudflare) ═══ */
 const about = parseAbout({ title: 'نظامي', body: 'وصف', supportTelegram: '@dev', junk: 'x' })
 ok(about.title === 'نظامي' && about.supportTelegram === '@dev', 'parseAbout ينقي ويقبل الصحيح')
+ok(parseAbout({ text: 'نص من بوت الترخيص' }).body === 'نص من بوت الترخيص', 'parseAbout يقبل نص «حول» من بوت الترخيص')
 ok(parseAbout(null).title === FALLBACK_ABOUT.title, 'استجابة فاسدة ⇒ الاحتياطي')
 ok(parseAbout({ title: 123 }).title === FALLBACK_ABOUT.title, 'نوع خاطئ ⇒ الاحتياطي')
 const rl = parseRevocationList(['deadbeef', 'BAD', 123, 'cafe1234'])
 ok(rl.length === 2 && rl.includes('deadbeef') && rl.includes('cafe1234'), 'قائمة الحرق: بصمات hex فقط')
+ok(parseRevocationList({ text: '["deadbeef"]' }).includes('deadbeef'), 'قراءة استجابة بوت الترخيص القديمة')
 ok(parseRevocationList('not-array').length === 0, 'قائمة فاسدة ⇒ فارغة')
 const sub = parseSubscription({ plan: 'pro', expiresAt: '2026-12-01', message: 'جدد قريباً' })
 ok(sub.plan === 'pro' && sub.message === 'جدد قريباً', 'parseSubscription يعمل')

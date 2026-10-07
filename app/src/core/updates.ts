@@ -1,14 +1,11 @@
 /**
- * التحديث التلقائي عبر Cloudflare (أمر المالك — البند 6):
- * - زر «فحص التحديثات» في «حول» يسأل نقطة /version على عامل Cloudflare.
- * - مقارنة إصدارات دلالية صارمة (semver مبسط: major.minor.patch).
- * - خطة ما قبل التحديث: نسخة احتياطية معزولة في مجلد مؤقت خارج مسار التثبيت،
- *   والتراجع التلقائي عند الفشل — تُمثَّل هنا كخطوات نواة خالصة ينفذها غلاف
- *   Electron لاحقاً (المثبّت مؤجل بأمر المالك حتى يطلبه).
- * - بيانات المستخدم كلها خارج مسار التثبيت (user-data) — الحذف لا يمسها.
+ * معلومات تحديثات التطبيق من إصدارات GitHub؛ البناء والنشر يتمان في GitHub Actions.
+ * Cloudflare يبقى للتراخيص ومحتوى صفحة «حول»، ولا يحدد إصدار التطبيق.
+ * نسخة الواجهة تُحقن من app/package.json أثناء بناء Vite.
  */
 
-export const APP_VERSION = '1.0.0' // إصدار النسخة الحالية — يرتفع مع كل إصدار منشور
+declare const __APP_VERSION__: string
+export const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '1.0.0'
 
 export interface UpdateInfo {
   latestVersion: string
@@ -19,7 +16,7 @@ export interface UpdateInfo {
   publishedAt: string
 }
 
-/** تنقية استجابة /version — لا ثقة بأي شكل خارجي */
+/** تنقية بيانات الإصدار — لا ثقة بأي شكل خارجي */
 export function parseUpdateInfo(raw: unknown): UpdateInfo | null {
   if (typeof raw !== 'object' || raw === null) return null
   const o = raw as Record<string, unknown>
@@ -128,16 +125,52 @@ export function runMigrations(
   return { data: out, version: v, applied }
 }
 
-/** جلب معلومات التحديث من عامل Cloudflare — فشل الشبكة يعيد null (لا يرمي أبداً) */
-export async function fetchUpdateInfo(baseUrl: string): Promise<UpdateInfo | null> {
+export const LATEST_RELEASE_API = 'https://api.github.com/repos/contashepo-create/tahakam-releases/releases/latest'
+
+/** تحويل بيانات أحدث إصدار منشور في GitHub إلى الشكل الذي تعرضه صفحة «حول». */
+export function parseGitHubRelease(raw: unknown): UpdateInfo | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const o = raw as Record<string, unknown>
+  const tag = typeof o.tag_name === 'string' ? o.tag_name.trim() : ''
+  const latestVersion = tag.replace(/^v/, '')
+  if (!isValidVersion(latestVersion)) return null
+
+  const assets = Array.isArray(o.assets) ? o.assets : []
+  const installer = assets.find((asset: unknown) => {
+    if (typeof asset !== 'object' || asset === null) return false
+    const item = asset as Record<string, unknown>
+    return typeof item.name === 'string' && /^tahakom-setup-.*\.exe$/i.test(item.name)
+      && typeof item.browser_download_url === 'string'
+  }) as Record<string, unknown> | undefined
+
+  return parseUpdateInfo({
+    latestVersion,
+    downloadUrl: typeof installer?.browser_download_url === 'string'
+      ? installer.browser_download_url
+      : typeof o.html_url === 'string' ? o.html_url : '',
+    releaseNotesAr: typeof o.body === 'string' ? o.body : '',
+    // GitHub Release API لا يوفّر SHA-256 للأصل؛ electron-updater يفحص بصمة latest.yml.
+    sha256: '',
+    mandatory: false,
+    publishedAt: typeof o.published_at === 'string' ? o.published_at : '',
+  })
+}
+
+/** جلب أحدث إصدار من GitHub — فشل الشبكة يعيد null (لا يرمي أبداً). */
+export async function fetchUpdateInfo(): Promise<UpdateInfo | null> {
+  const ctrl = new AbortController()
+  const timeout = setTimeout(() => ctrl.abort(), 8000)
   try {
-    const ctrl = new AbortController()
-    const t = setTimeout(() => ctrl.abort(), 8000)
-    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/version`, { signal: ctrl.signal, cache: 'no-store' })
-    clearTimeout(t)
+    const res = await fetch(LATEST_RELEASE_API, {
+      signal: ctrl.signal,
+      cache: 'no-store',
+      headers: { Accept: 'application/vnd.github+json' },
+    })
     if (!res.ok) return null
-    return parseUpdateInfo(await res.json())
+    return parseGitHubRelease(await res.json())
   } catch {
     return null
+  } finally {
+    clearTimeout(timeout)
   }
 }

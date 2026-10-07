@@ -24,7 +24,7 @@ import { DEFAULT_REPORT_PRINT, type ReportPrintSettings } from '../core/reportPr
 import { DEFAULT_LABEL_SETTINGS, type LabelSettings } from '../core/labels.ts'
 import { DEFAULT_FX_RATES_SETTINGS, normalizeFxRatesSettings, type FxRatesMap, type FxRatesSettings, type FxRateRecord } from '../core/fxRates.ts'
 import { DEFAULT_SCALE_RULES, validateScaleRule, type ScaleRule } from '../core/barcode.ts'
-import type { AboutContent } from '../core/cloud.ts'
+import type { AboutContent, CloudNotice } from '../core/cloud.ts'
 import type { DeviceFlags } from '../core/featureFlags.ts'
 
 export type ThemeMode = 'light' | 'dark'
@@ -190,8 +190,9 @@ interface AppState {
   // ─── السحابة (القرار 28): آخر ما جُلب من Cloudflare — يعمل أوفلاين بآخر نسخة ───
   cloudAbout: AboutContent | null
   revokedKeys: string[] // بصمات المفاتيح المحروقة
+  cloudNotifications: CloudNotice[]
   cloudSyncedAt: string | null
-  setCloudData: (patch: { about?: AboutContent | null; revoked?: string[]; flags?: DeviceFlags | null }) => void
+  setCloudData: (patch: { about?: AboutContent | null; revoked?: string[]; flags?: DeviceFlags | null; notifications?: CloudNotice[] }) => void
   /** أعلام الميزات عن بُعد (البند 5): المطفأ سحابياً من الميزات الممنوحة — kill-switch فقط */
   deviceFlags: DeviceFlags | null
   // ─── النسخ الاحتياطي التلقائي (القرار 28 + جدولة بطلب المالك) ───
@@ -512,12 +513,14 @@ export const useAppStore = create<AppState>()(
         }),
       cloudAbout: null,
       revokedKeys: [],
+      cloudNotifications: [],
       deviceFlags: null,
       cloudSyncedAt: null,
       setCloudData: (patch) =>
         set((s) => ({
           cloudAbout: patch.about !== undefined ? patch.about : s.cloudAbout,
           revokedKeys: patch.revoked !== undefined ? patch.revoked : s.revokedKeys,
+          cloudNotifications: patch.notifications !== undefined ? patch.notifications : s.cloudNotifications,
           deviceFlags: patch.flags !== undefined ? patch.flags : s.deviceFlags,
           cloudSyncedAt: new Date().toISOString(),
         })),

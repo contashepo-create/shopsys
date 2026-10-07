@@ -13,6 +13,9 @@
  */
 import { describe, it, expect } from 'vitest'
 import { webcrypto } from 'node:crypto'
+import devbotWorker from '../../tools/devbot/src/worker.js'
+import { getNotificationsForDevice, handlePanelButton, handlePanelText } from '../../tools/devbot/src/adminPanel.js'
+import { parseCloudNotices } from '../src/core/cloud.ts'
 import {
   issueLicenseKey, canonicalPayload as botCanonical, keyFingerprint as botFingerprint,
   decodeLicenseKey as botDecode, expiresAfterDays, issueActivityChangeKey,
@@ -31,7 +34,20 @@ const PRIV_B64U = Buffer.from(privPkcs8).toString('base64url')
 
 const basePayload: LicensePayload = {
   v: 1, deviceId: 'SHOP-TEST-DEV1-KEY1', customer: 'محل الاختبار', plan: 'basic',
-  features: ['lan_host', 'multi_branch'], issuedAt: '2026-10-05', expiresAt: '2027-10-05',
+  features: ['telegram_bot', 'multi_branch'], issuedAt: '2026-10-05', expiresAt: '2027-10-05',
+}
+
+class MemoryKv {
+  private values = new Map<string, string>()
+  async get(key: string) { return this.values.get(key) ?? null }
+  async put(key: string, value: string) { this.values.set(key, String(value)) }
+  async delete(key: string) { this.values.delete(key) }
+  async list({ prefix = '', limit = 1000 }: { prefix?: string; limit?: number } = {}) {
+    return {
+      keys: [...this.values.keys()].filter((key) => key.startsWith(prefix)).slice(0, limit).map((name) => ({ name })),
+      list_complete: true,
+    }
+  }
 }
 
 describe('التوافق الذهبي: بوت المطوّر ↔ عميل التطبيق', () => {
@@ -100,5 +116,65 @@ describe('التوافق الذهبي: بوت المطوّر ↔ عميل الت
     expect(expiresAfterDays(30, '2026-12-15')).toBe('2027-01-14')
     expect(expiresAfterDays(0)).toBeNull()
     expect(expiresAfterDays(null)).toBeNull()
+  })
+
+  it('واجهتا «حول» والإبطال تعيدان JSON يقرأه التطبيق', async () => {
+    const values: Record<string, string> = {
+      about: 'نص قسم حول من البوت',
+      revoked: '["deadbeef"]',
+    }
+    const env = { SHOPSYS_CONTROL: { get: async (key: string) => values[key] ?? null } }
+    const aboutResponse = await devbotWorker.fetch(new Request('https://shopsys-control/about'), env)
+    const about = await aboutResponse.json() as { body?: string }
+    expect(about.body).toBe('نص قسم حول من البوت')
+
+    const revokedResponse = await devbotWorker.fetch(new Request('https://shopsys-control/revoked'), env)
+    expect(await revokedResponse.json()).toEqual(['deadbeef'])
+  })
+
+  it('لوحة الأزرار تضيف أول عميل وتحفظ تخصيصاته رغم تحديث الإعداد العام', async () => {
+    const kv = new MemoryKv()
+    const cfg = { kv, priv: PRIV_B64U }
+    const chatId = 12345
+    const deviceId = 'SHOP-ABCD-1234-EFGH'
+
+    const empty = await handlePanelButton('panel:clients', chatId, cfg)
+    expect(empty.text).toContain('لا يوجد عملاء')
+    await handlePanelButton('panel:new', chatId, cfg)
+    await handlePanelText('متجر النور', chatId, cfg)
+    const added = await handlePanelText(deviceId, chatId, cfg)
+    expect(added?.text).toContain('أُضيف متجر النور')
+
+    const customers = await handlePanelButton('panel:clients', chatId, cfg)
+    const groupHash = customers.opts.reply_markup.inline_keyboard[0][0].callback_data.split(':')[1]
+    const group = await handlePanelButton(`group:${groupHash}`, chatId, cfg)
+    expect(group.text).toContain('أجهزة العميل')
+
+    await handlePanelButton('g:plan:pro', chatId, cfg)
+    await handlePanelButton('g:feature:telegram_bot', chatId, cfg)
+    await handlePanelButton(`c:${deviceId}:plan:basic`, chatId, cfg)
+    await handlePanelButton(`c:${deviceId}:feature:telegram_bot`, chatId, cfg)
+    await handlePanelButton('g:feature:cloud_sync', chatId, cfg)
+
+    const issued = await handlePanelButton(`issue:${deviceId}`, chatId, cfg)
+    const key = issued.text.match(/<code>(SHOPSYS1\.[^<]+)<\/code>/)?.[1]
+    expect(key).toBeTruthy()
+    const verified = await verifyLicenseKey(key!, deviceId, PUB_B64U)
+    expect(verified.plan).toBe('basic')
+    expect(verified.features).toEqual([])
+
+    await handlePanelButton('panel:notice:all', chatId, cfg)
+    await handlePanelText('تحديث عام للتطبيق', chatId, cfg)
+    await handlePanelButton(`notice:${deviceId}`, chatId, cfg)
+    await handlePanelText('رسالة خاصة للعميل', chatId, cfg)
+    expect((await getNotificationsForDevice(cfg, deviceId)).map((notice) => notice.body)).toEqual([
+      'تحديث عام للتطبيق', 'رسالة خاصة للعميل',
+    ])
+
+    const response = await devbotWorker.fetch(new Request(`https://shopsys-control/notifications/${deviceId}`), { SHOPSYS_CONTROL: kv })
+    expect(response.headers.get('access-control-allow-origin')).toBe('*')
+    expect(parseCloudNotices(await response.json()).map((notice) => notice.body)).toEqual([
+      'تحديث عام للتطبيق', 'رسالة خاصة للعميل',
+    ])
   })
 })

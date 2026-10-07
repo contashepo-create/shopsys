@@ -14,7 +14,7 @@
  * المفتاح العام للمطوّر (base64url — 32 بايت raw).
  * الخاص المقابل عند المطوّر فقط (خارج المستودع — انظر scripts/license_tool.mjs)
  */
-export const DEVELOPER_PUBLIC_KEY_B64U = 'fBHN_qnQPMzYrgYRTYndwwsZUEWfXCASFQHl4G0Td9g'
+export const DEVELOPER_PUBLIC_KEY_B64U = 'mOugSh8oJdc5H6nB9mMTNQYjyXzYle2RJepQkob3msE'
 
 export type LicensePlan = 'trial' | 'basic' | 'pro' | 'lifetime'
 

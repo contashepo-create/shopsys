@@ -13,7 +13,8 @@
  *
  * تشغيل: node --experimental-strip-types scripts/verify_owner_items_core_depth.mjs
  */
-const relDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10)
+const TEST_TODAY = '2026-10-02'
+const relDays = (n) => new Date(Date.parse(`${TEST_TODAY}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10)
 const mem = new Map()
 globalThis.localStorage = { getItem: (k) => (mem.has(k) ? mem.get(k) : null), setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) }
 globalThis.window = globalThis
@@ -117,7 +118,7 @@ console.log('② نواة items الصرفة')
 console.log('③ نواة batches (FEFO)')
 {
   const { sortFefo, planFefo, applyFefo, expiryAlerts, expiredQty, isValidExpiryDate } = batchesCore
-  const today = '2026-10-02'
+  const today = TEST_TODAY
   const mk = (id, expiry, qty, receivedAt = '2026-01-01', warehouseId = null) => ({ id, itemId: 7, expiryDate: expiry, qty, purchaseId: null, receivedAt, warehouseId })
   const list = [mk(1, relDays(400), 5, '2026-03-01'), mk(2, null, 3), mk(3, relDays(10), 4), mk(4, relDays(-5), 2), mk(5, relDays(10), 1, '2026-02-01')]
   /* الترتيب: الأقرب انتهاءً أولاً، بلا تاريخ أخيراً، ثم الأقدم استلاماً */
